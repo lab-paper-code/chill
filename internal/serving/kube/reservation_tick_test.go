@@ -386,11 +386,16 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	if len(decision.Capacity.TransitionReserves) != 1 || !decision.Capacity.TransitionReserves[0].Allowed || decision.Capacity.TransitionReserves[0].Required != 3 {
 		t.Fatalf("reserve judgment missing: %+v", decision.Capacity)
 	}
-	// A: 1 J removal + 5 W for the remaining 9.9 s; Ready reserve B:
-	// 20 W for all H=10 s. Request incremental energy is explicitly zero.
-	wantJoules := 1 + 5*9.9 + 20*10.0
+	// Both nodes are charged over W=H+100ms: removal consumes 1 J,
+	// unloaded A consumes 5 W afterward, and Ready reserve B consumes
+	// 20 W throughout, including the part beyond the configured horizon.
+	window := decision.Capacity.Period.Seconds()
+	if window <= settings.ComparisonPeriod.Seconds() {
+		t.Fatal("transition did not extend the common comparison window")
+	}
+	wantJoules := 1 + 5*(window-.1) + 20*window
 	if decision.Target.ExpectedJoules == nil || math.Abs(*decision.Target.ExpectedJoules-wantJoules) > 1e-6 {
-		t.Fatalf("reserve baseline not included once over H: got %v want %g", decision.Target.ExpectedJoules, wantJoules)
+		t.Fatalf("reserve baseline not included once over W: got %v want %g", decision.Target.ExpectedJoules, wantJoules)
 	}
 	waitReservationTest(t, ctx, func() bool {
 		c.mu.Lock()

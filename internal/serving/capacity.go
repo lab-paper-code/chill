@@ -401,29 +401,30 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 	wanted := []CapacityInput{}
 	pending := make([][]*capacityTask, len(snapshot.Workloads))
 	keys := map[string]bool{}
-	options := schedulerMeasuredOptions(ctx, snapshot)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i, w := range snapshot.Workloads {
 		if !slices.Contains(settings.AutonomousWorkloads, w.UID) {
 			continue
 		}
-		for _, o := range options {
-			if !slices.Contains(o.CompatibleUIDs, w.UID) {
-				continue
+		for _, option := range snapshot.Options {
+			for _, o := range CapacityVariants(option) {
+				if !slices.Contains(o.CompatibleUIDs, w.UID) {
+					continue
+				}
+				in := NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w)
+				wanted = append(wanted, in)
+				key := in.Key()
+				keys[key] = true
+				if _, built := t.rows[key]; built || t.running[key] != nil {
+					continue
+				}
+				taskCtx, cancel := context.WithCancel(ctx)
+				task := &capacityTask{o, w, key, taskCtx, cancel}
+				t.running[key] = task
+				t.wg.Add(1)
+				pending[i] = append(pending[i], task)
 			}
-			in := NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w)
-			wanted = append(wanted, in)
-			key := in.Key()
-			keys[key] = true
-			if _, built := t.rows[key]; built || t.running[key] != nil {
-				continue
-			}
-			taskCtx, cancel := context.WithCancel(ctx)
-			task := &capacityTask{o, w, key, taskCtx, cancel}
-			t.running[key] = task
-			t.wg.Add(1)
-			pending[i] = append(pending[i], task)
 		}
 	}
 	t.wanted = wanted

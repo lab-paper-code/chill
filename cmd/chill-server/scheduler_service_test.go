@@ -24,13 +24,20 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func withSchedulerEstimateFixture(settings serving.SchedulerSettings) serving.SchedulerSettings {
+	settings.DefaultOperationCost = map[string]serving.OperationCostValue{
+		"prepare": {Seconds: 852, Joules: 36371}, "remove": {Seconds: 13, Joules: 1014}, "power": {Seconds: 166, Joules: 2229},
+	}
+	settings.DefaultIdlePower = &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8}
+	return settings
+}
+
 func TestSchedulerConfigurationRequiresActualEvidenceAndInventory(t *testing.T) {
-	settings := serving.SchedulerSettings{
-		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+	settings := withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		CapacityMinimumRequests: 1, PlanSearchWorkers: 1}
+		CapacityMinimumRequests: 1, PlanSearchWorkers: 1})
 	rawSettings, err := json.Marshal(settings)
 	if err != nil {
 		t.Fatal(err)

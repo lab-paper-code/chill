@@ -1,10 +1,8 @@
 package serving
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,6 +23,14 @@ type OperationCostValue struct {
 }
 
 func (s SchedulerSettings) validateEstimateDefaults() error {
+	for _, kind := range []string{schedulerActionPrepare, schedulerActionRemove, schedulerActionPower} {
+		if _, ok := s.DefaultOperationCost[kind]; !ok {
+			return fmt.Errorf("defaultOperationCost.%s required", kind)
+		}
+	}
+	if s.DefaultIdlePower == nil {
+		return fmt.Errorf("defaultIdlePower required")
+	}
 	for kind, value := range s.DefaultOperationCost {
 		if kind != schedulerActionPrepare && kind != schedulerActionRemove && kind != schedulerActionPower {
 			return fmt.Errorf("defaultOperationCost has unsupported kind %q", kind)
@@ -34,8 +40,8 @@ func (s SchedulerSettings) validateEstimateDefaults() error {
 			return fmt.Errorf("defaultOperationCost.%s needs positive finite seconds and nonnegative finite joules", kind)
 		}
 	}
-	if s.DefaultIdlePower != nil && (!schedulerFinite(s.DefaultIdlePower.NodeWatts) || s.DefaultIdlePower.NodeWatts < 0 ||
-		!schedulerFinite(s.DefaultIdlePower.PerInstanceWatts) || s.DefaultIdlePower.PerInstanceWatts < 0) {
+	if !schedulerFinite(s.DefaultIdlePower.NodeWatts) || s.DefaultIdlePower.NodeWatts < 0 ||
+		!schedulerFinite(s.DefaultIdlePower.PerInstanceWatts) || s.DefaultIdlePower.PerInstanceWatts < 0 {
 		return fmt.Errorf("defaultIdlePower needs finite nonnegative nodeWatts and perInstanceWatts")
 	}
 	return nil
@@ -92,56 +98,9 @@ type IdlePowerProvenance struct {
 	Source     string   `json:"source"`
 	Watts      float64  `json:"watts"`
 	References []string `json:"references,omitempty"`
-}
-
-//go:embed scheduler_defaults.json
-var schedulerDefaultsJSON []byte
-
-var schedulerDefaults = func() SchedulerSettings {
-	var defaults SchedulerSettings
-	if err := json.Unmarshal(schedulerDefaultsJSON, &defaults); err != nil {
-		panic(err)
-	}
-	return defaults
-}()
-
-func operationCostDefault(settings SchedulerSettings, kind string) OperationCostValue {
-	if value, ok := settings.DefaultOperationCost[kind]; ok {
-		return value
-	}
-	return schedulerDefaults.DefaultOperationCost[kind]
-}
-
-func schedulerOperationSettings(settings SchedulerSettings) SchedulerSettings {
-	costs := maps.Clone(schedulerDefaults.DefaultOperationCost)
-	maps.Copy(costs, settings.DefaultOperationCost)
-	settings.DefaultOperationCost = costs
-	if settings.DefaultIdlePower == nil {
-		idle := *schedulerDefaults.DefaultIdlePower
-		settings.DefaultIdlePower = &idle
-	}
-	return settings
-}
-
-func idlePowerDefault(settings SchedulerSettings) IdlePowerDefault {
-	if settings.DefaultIdlePower != nil {
-		return *settings.DefaultIdlePower
-	}
-	return *schedulerDefaults.DefaultIdlePower
-}
-
-func idleEstimateProvenance(watts float64, sources []string) IdlePowerProvenance {
-	source := operationSourceExact
-	for _, reference := range sources {
-		if value, ok := strings.CutPrefix(reference, "estimate-source:"); ok {
-			source = value
-		}
-		if strings.HasPrefix(reference, "settings.defaultIdlePower") {
-			source = operationSourceDefault
-			break
-		}
-	}
-	return IdlePowerProvenance{Source: source, Watts: watts, References: slices.Clone(sources)}
+	// Reconstructed distinguishes unloaded + per-instance increments from one
+	// directly used measured row, including a row transferred to another state.
+	Reconstructed bool `json:"reconstructed,omitempty"`
 }
 
 // OperationCostProvenance is additive decision evidence for the selected cost.
@@ -277,6 +236,6 @@ func actionOperationCost(settings SchedulerSettings, costs []OperationCost, a Ac
 	if mean, longest, joules, ok := capacityOperationCost(schedulerCost(costs, a.CostID)); ok {
 		return mean, longest, joules
 	}
-	value := operationCostDefault(settings, a.Kind)
+	value := settings.DefaultOperationCost[a.Kind]
 	return value.Seconds, value.Seconds, value.Joules
 }

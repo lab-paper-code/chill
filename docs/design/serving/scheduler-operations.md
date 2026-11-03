@@ -17,8 +17,10 @@ Actions expose additive `costProvenance.source = exact|node|deviceClass|default`
 and `costRef` or configured `value`; capacity `actionCosts` retains every choice.
 Idle estimates use the same ranking and expose `idleCosts` provenance. Missing
 idle components use `settings.defaultIdlePower.{nodeWatts,perInstanceWatts}`.
-Omitted keys resolve from `internal/serving/scheduler_defaults.json`; no policy
-numbers are compiled into Go constants. Effective settings are frozen in decisions.
+Both estimate blocks, including every operation kind, are required ConfigMap
+scheduler settings. Omitted keys fail settings validation before planning; no
+embedded or Go policy fallback exists. GET/PUT preserves the explicit values,
+and effective settings are frozen in decisions. Main must set both blocks.
 The policy/sample operation defaults are rounded-up maxima of control-324's
 77 prepare, 77 remove and 18 power trials, restoring baseline-delta energy to
 whole-wall. Idle defaults round up the maximum of 19 unloaded readings and

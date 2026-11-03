@@ -254,13 +254,11 @@ func TestEvaluationPreflightValidatesCanonicalSettingsPatch(t *testing.T) {
 		t.Run(test.patch, func(t *testing.T) {
 			service, request := evaluationFixture(t)
 			service.settings = func() (serving.SchedulerSettings, error) {
-				return serving.SchedulerSettings{
-					ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+				return withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 					MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1,
 					CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 					CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-					CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
-				}, nil
+					CapacityMinimumRequests: 1, PlanSearchWorkers: 1}), nil
 			}
 			request.Spec.SettingsPatch = &apiextensionsv1.JSON{Raw: []byte(test.patch)}
 			result, err := service.preflight(context.Background(), request)

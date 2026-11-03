@@ -308,7 +308,7 @@ func TestSchedulerTempoFixedPowerGateIncludesTargetlessKeep(t *testing.T) {
 			}
 		}
 		fixed = false
-		for _, action := range schedulerPlan(SchedulerSettings{}, snap, target) {
+		for _, action := range schedulerPlan(schedulerEstimateSettingsForTest(), snap, target) {
 			fixed = fixed || action.Node == node && action.Fixed
 		}
 		if fixed {

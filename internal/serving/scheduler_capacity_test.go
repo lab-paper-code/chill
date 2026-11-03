@@ -1055,8 +1055,8 @@ func TestCapacityMinimumGainExactBaselineIgnoresProfileCI(t *testing.T) {
 		snap.Instances[1].Profile.IdleBaselineWatts = 1 + float64(trial)*1e6
 		p := capacityPlannerForTest(t, s, snap, rows)
 		n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
-		watts, _, sources, _ := schedulerBaseline(SchedulerSettings{}, p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
-		if watts != loaded.Watts || !slices.Contains(sources, loaded.ID) {
+		watts, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
+		if watts != loaded.Watts || !slices.Contains(sources.References, loaded.ID) {
 			t.Fatalf("fixture did not select exact loaded evidence: %g %v", watts, sources)
 		}
 		choice := make([]int, len(p.plans))
@@ -1113,7 +1113,7 @@ func TestCapacityBaselineUncertaintyPreservesSignedReconstruction(t *testing.T) 
 	snap.Instances[0].Profile.IdleBaselineWatts = 8 // negative loaded-minus-unloaded delta
 	instances := []SchedulerInstance{}
 	for count := 0; count <= 2; count++ {
-		watts, _, sources, _ := schedulerBaseline(SchedulerSettings{}, snap.Baselines, snap.Nodes[0], instances, snap.Options)
+		watts, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), snap.Baselines, snap.Nodes[0], instances, snap.Options)
 		bound := schedulerBaselineUncertainty(snap.Baselines, sources, count)
 		if watts != 10-2*float64(count) || bound.watts != 2*(1-float64(count)) {
 			t.Fatalf("%d instances: nominal %g bound %+v", count, watts, bound)
@@ -1124,7 +1124,7 @@ func TestCapacityBaselineUncertaintyPreservesSignedReconstruction(t *testing.T) 
 	loaded.ID, loaded.State, loaded.Watts, loaded.WattsUncertainty = "loaded", []string{schedulerState(snap.Instances[0])}, 8, 3
 	loaded.Reference.Key = "loaded-idle"
 	snap.Baselines = append(snap.Baselines, loaded)
-	_, _, sources, _ := schedulerBaseline(SchedulerSettings{}, snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
+	_, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
 	if got := schedulerBaselineUncertainty(snap.Baselines, sources, 1); got.watts != 3 || got.reference != loaded.Reference {
 		t.Fatalf("exact loaded-state evidence must replace, not add unloaded uncertainty: %+v", got)
 	}

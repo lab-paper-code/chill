@@ -35,7 +35,7 @@ func moveFixture(t *testing.T) (SchedulerSnapshot, SchedulerCandidate) {
 	wanted := prepared
 	wanted.WorkloadUID = "w1"
 	target := SchedulerCandidate{ID: "move", Nodes: snapshot.Nodes, Instances: []SchedulerInstance{wanted}, Routing: map[string]map[string]int32{"w1": {prepared.ID: 1}}}
-	target.Actions = schedulerPlan(SchedulerSettings{}, snapshot, target)
+	target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	return snapshot, target
 }
 
@@ -76,7 +76,7 @@ func TestCompletedSemanticRouteSurvivesWitnessAndOrdinalRefresh(t *testing.T) {
 	snapshot.At = snapshot.At.Add(10 * time.Second)
 	target.ID = "another-plan-id"
 	target.Instances[0].ObservedAt = snapshot.At
-	target.Actions = schedulerPlan(SchedulerSettings{}, snapshot, target)
+	target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	reused := requireTransitionAction(t, target.Actions, schedulerActionRoute)
 	if reused.ID != route.ID || reused.Status != schedulerActionComplete {
 		t.Fatalf("rolling witness/ID restarted the already applied semantic route: old=%+v new=%+v", route, reused)
@@ -89,7 +89,7 @@ func TestCompletedSemanticRouteSurvivesWitnessAndOrdinalRefresh(t *testing.T) {
 	snapshot.Actions = append(snapshot.Actions, stop)
 	snapshot.Instances[0].Stopped = true
 	snapshot.At = snapshot.At.Add(10 * time.Second)
-	target.Actions = schedulerPlan(SchedulerSettings{}, snapshot, target)
+	target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	if actual := requireTransitionAction(t, target.Actions, schedulerActionStop); actual.ID != stop.ID || actual.Status != schedulerActionComplete {
 		t.Fatalf("completed stop was restarted before drain: %+v", actual)
 	}
@@ -126,7 +126,7 @@ func TestConsumedPolicyAndActualTargetChangesStillReplanRoute(t *testing.T) {
 				target.Instances = []SchedulerInstance{snapshot.Instances[0]}
 				target.Routing = map[string]map[string]int32{"w1": {snapshot.Instances[0].ID: 1}}
 			}
-			target.Actions = schedulerPlan(SchedulerSettings{}, snapshot, target)
+			target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 			if updated := requireTransitionAction(t, target.Actions, schedulerActionRoute); updated.ID == completed.ID || updated.Status != schedulerActionPlanned {
 				t.Fatalf("real consumed quantity/target change reused an old completed route: %+v", updated)
 			}
@@ -204,7 +204,7 @@ func TestCompletedRouteCannotAliasAnotherExecutorWithIdenticalMeasuredCondition(
 	second.Instances = []SchedulerInstance{other}
 	second.Routing = map[string]map[string]int32{"w1": {other.ID: 1}}
 	snapshot.At = snapshot.At.Add(time.Second)
-	second.Actions = schedulerPlan(SchedulerSettings{}, snapshot, second)
+	second.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, second)
 	actual := requireTransitionAction(t, second.Actions, schedulerActionRoute)
 	if actual.ID == route.ID || actual.Status != schedulerActionPlanned {
 		t.Fatalf("same Node/profile/allocation hid the changed physical destination: %+v", actual)
@@ -251,7 +251,7 @@ func TestResumedExecutorCannotReuseHistoricalDrainBeforeNewStopAndHandoff(t *tes
 	source := snapshot.Instances[0]
 	snapshot.Instances[0].Stopped = true
 	snapshot.Routing = target.Routing
-	historical := schedulerPlan(SchedulerSettings{}, snapshot, target)
+	historical := schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	for _, kind := range []string{schedulerActionRoute, schedulerActionStop, schedulerActionDrain} {
 		action := requireTransitionAction(t, historical, kind)
 		action.Status = schedulerActionComplete
@@ -262,7 +262,7 @@ func TestResumedExecutorCannotReuseHistoricalDrainBeforeNewStopAndHandoff(t *tes
 	snapshot.Routing = map[string]map[string]int32{"w1": {source.ID: 1}}
 	snapshot.Outstanding = nil
 	snapshot.At = snapshot.At.Add(10 * time.Second)
-	target.Actions = schedulerPlan(SchedulerSettings{}, snapshot, target)
+	target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	route := requireTransitionAction(t, target.Actions, schedulerActionRoute)
 	stop := requireTransitionAction(t, target.Actions, schedulerActionStop)
 	drain := requireTransitionAction(t, target.Actions, schedulerActionDrain)
@@ -305,7 +305,7 @@ func overlappingResourceFixture(t *testing.T) (SchedulerSettings, SchedulerSnaps
 			Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "overlap-prepare", Size: 1}},
 	}
 	target := SchedulerCandidate{ID: "wide", Nodes: snapshot.Nodes, Instances: []SchedulerInstance{wanted}, Routing: map[string]map[string]int32{"w1": {wanted.ID: 3}}}
-	target.Actions = schedulerPlan(SchedulerSettings{}, snapshot, target)
+	target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	return settings, snapshot, target
 }
 
@@ -460,7 +460,7 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 	if !p.completedEffectPresent(Action{Kind: schedulerActionRemove, Node: NodeReference{Name: bad.Name, UID: "other-uid"}, Instance: "missing", Status: schedulerActionComplete}) {
 		t.Fatal("unavailability leaked across Node UID")
 	}
-	target.Actions = schedulerPlan(SchedulerSettings{}, snapshot, target)
+	target.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	for _, action := range target.Actions {
 		if action.Node == bad {
 			t.Fatalf("uncertain Node produced a new action: %+v", action)
@@ -484,7 +484,7 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 	snapshot.Nodes[0].Reasons = nil
 	snapshot.Instances[0].Ready = true
 	snapshot.Actions = target.Actions
-	recovered := requireTransitionAction(t, schedulerPlan(SchedulerSettings{}, snapshot, target), schedulerActionRoute)
+	recovered := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
 	if recovered.Reason != "" {
 		t.Fatalf("restored observation retained a stale block: %+v", recovered)
 	}
@@ -495,11 +495,11 @@ func TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34(t *testing.T) {
 	target := SchedulerCandidate{ID: "same-effect", Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances),
 		Routing: map[string]map[string]int32{"w1": {snapshot.Instances[0].ID: 1}}}
 	snapshot.Routing = target.Routing
-	route := requireTransitionAction(t, schedulerPlan(SchedulerSettings{}, snapshot, target), schedulerActionRoute)
+	route := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
 	route.Status = schedulerActionComplete
 	snapshot.Actions = []Action{route}
 	snapshot.Instances[0].Reasons = []string{"PolicyAckPending"}
-	reused := requireTransitionAction(t, schedulerPlan(SchedulerSettings{}, snapshot, target), schedulerActionRoute)
+	reused := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
 	if reused.ID != route.ID || reused.Status != schedulerActionComplete {
 		t.Fatalf("ACK marker caused distribution effect retransmission: %+v", reused)
 	}
@@ -510,7 +510,7 @@ func TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34(t *testing.T) {
 	}
 	route.Status = phaseRunning
 	snapshot.Actions = []Action{route}
-	running := requireTransitionAction(t, schedulerPlan(SchedulerSettings{}, snapshot, target), schedulerActionRoute)
+	running := requireTransitionAction(t, schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), schedulerActionRoute)
 	if running.ID != route.ID || running.Status != phaseRunning {
 		t.Fatalf("unacknowledged running route became completed: %+v", running)
 	}
@@ -526,7 +526,7 @@ func TestPowerChangeDrainsPendingAndNormalInstancesAC35(t *testing.T) {
 	nodes := slices.Clone(snapshot.Nodes)
 	nodes[0].PowerMode = schedulerTestEcoMode
 	target := SchedulerCandidate{Nodes: nodes, Instances: []SchedulerInstance{a, b}}
-	actions := schedulerPlan(SchedulerSettings{}, snapshot, target)
+	actions := schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target)
 	power := requireTransitionAction(t, actions, schedulerActionPower)
 	for _, instance := range []SchedulerInstance{a, b} {
 		stopIndex := slices.IndexFunc(actions, func(action Action) bool { return action.Kind == schedulerActionStop && action.Instance == instance.ID })
@@ -538,7 +538,7 @@ func TestPowerChangeDrainsPendingAndNormalInstancesAC35(t *testing.T) {
 	}
 	snapshot.Nodes[0].Reasons = []string{NodeInstanceUnavailable}
 	snapshot.Instances[0].Ready = false
-	if slices.ContainsFunc(schedulerPlan(SchedulerSettings{}, snapshot, target), func(a Action) bool { return a.Kind == schedulerActionPower }) {
+	if slices.ContainsFunc(schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), func(a Action) bool { return a.Kind == schedulerActionPower }) {
 		t.Fatal("actual read failure still planned power")
 	}
 }

@@ -14,13 +14,13 @@ func TestActionExpectedDuration(t *testing.T) {
 	cost.Reference.Store, cost.Reference.Key, cost.Reference.Size = "evidence", "cost/trials", 100
 	snapshot := SchedulerSnapshot{Nodes: []SchedulerNode{{Node: node, PowerMode: "low"}}, Costs: []OperationCost{cost}}
 	action := Action{Kind: schedulerActionPrepare, Node: node, To: "profile", Status: schedulerActionPlanned}
-	got := EstimateAction(SchedulerSettings{}, snapshot, action)
+	got := EstimateAction(schedulerEstimateSettingsForTest(), snapshot, action)
 	if got.ExpectedSeconds == nil || *got.ExpectedSeconds != 2 || got.ExpectedSource == nil || got.ExpectedSource.CostID != cost.ID || got.ExpectedSource.Statistic != "mean" || got.ExpectedSource.TrialCount != 2 || got.ExpectedSource.Reference != cost.Reference {
 		t.Fatalf("duration and provenance: %+v", got)
 	}
 	got.Status, got.Elapsed = phaseRunning, 5*time.Second
 	snapshot.Costs[0].Trials = []OperationTrial{{Duration: 9 * time.Second, Joules: 18}}
-	frozen := EstimateAction(SchedulerSettings{}, snapshot, got)
+	frozen := EstimateAction(schedulerEstimateSettingsForTest(), snapshot, got)
 	if frozen.ExpectedSeconds != got.ExpectedSeconds || *frozen.ExpectedSeconds != 2 || frozen.ExpectedSource != got.ExpectedSource || frozen.Elapsed != 5*time.Second {
 		t.Fatalf("running estimate changed: %+v", frozen)
 	}
@@ -34,7 +34,7 @@ func TestActionExpectedDuration(t *testing.T) {
 	for _, kind := range []string{schedulerActionRoute, schedulerActionStop, schedulerActionDrain} {
 		action.Kind = kind
 		action.To = "unmeasured"
-		missing := EstimateAction(SchedulerSettings{}, snapshot, action)
+		missing := EstimateAction(schedulerEstimateSettingsForTest(), snapshot, action)
 		if missing.ExpectedSeconds != nil || missing.ExpectedSource != nil {
 			t.Fatalf("unmeasured action acquired estimate: %+v", missing)
 		}
@@ -45,12 +45,12 @@ func TestActionExpectedDuration(t *testing.T) {
 	}
 	action.Kind, action.To = schedulerActionPrepare, "profile"
 	snapshot.Costs[0].PowerMode = "other"
-	if mismatch := EstimateAction(SchedulerSettings{}, snapshot, action); mismatch.ExpectedSeconds == nil || mismatch.CostProvenance.Source != operationSourceNode {
+	if mismatch := EstimateAction(schedulerEstimateSettingsForTest(), snapshot, action); mismatch.ExpectedSeconds == nil || mismatch.CostProvenance.Source != operationSourceNode {
 		t.Fatalf("nearest Node measurement was not used: %+v", mismatch)
 	}
 	snapshot.Costs[0].PowerMode = "low"
 	snapshot.Costs[0].Trials[0].Duration = 0
-	if invalid := EstimateAction(SchedulerSettings{}, snapshot, action); invalid.ExpectedSeconds == nil || invalid.CostProvenance.Source != operationSourceDefault {
+	if invalid := EstimateAction(schedulerEstimateSettingsForTest(), snapshot, action); invalid.ExpectedSeconds == nil || invalid.CostProvenance.Source != operationSourceDefault {
 		t.Fatalf("invalid trial did not use the configured fallback: %+v", invalid)
 	}
 }

@@ -261,13 +261,11 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := serving.SchedulerSettings{
-		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+	settings := withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
-	}
+		CapacityMinimumRequests: 1, PlanSearchWorkers: 1})
 	// The native store is unreachable, so listing completed measurements fails.
 	rejected := schedulerConfiguration{Settings: settings}
 	raw, err := json.Marshal(rejected)
@@ -433,13 +431,11 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 
 func schedulerTestConfiguration() schedulerConfiguration {
 	return schedulerConfiguration{
-		Settings: serving.SchedulerSettings{
-			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Second, MaxReplicas: 1,
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 			CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-			CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
-		},
+			CapacityMinimumRequests: 1, PlanSearchWorkers: 1}),
 		Reserved: map[string]serving.SchedulerAllocation{"rpi": {MemoryBytes: 1024}},
 	}
 }

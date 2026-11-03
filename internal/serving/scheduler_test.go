@@ -28,6 +28,8 @@ const (
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
 	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	estimates := schedulerEstimateSettingsForTest()
+	s.DefaultOperationCost, s.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples = 20, .005, 100
 	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
@@ -263,7 +265,7 @@ func TestSchedulerTransitionWallReplacesBaselineAndReadinessGatesRouting(t *test
 	snap.Costs = []OperationCost{cost}
 	snap.Costs[0].Reference = evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionPrepare, Size: 1}
 	c := SchedulerCandidate{ID: schedulerTestNewInstance, Nodes: snap.Nodes, Instances: []SchedulerInstance{target}}
-	c.Actions = schedulerPlan(SchedulerSettings{}, snap, c)
+	c.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	result := schedulerReplayForTest(s, snap, c)
 	if len(result.reasons) > 0 {
 		t.Fatalf("replay %v", result.reasons)
@@ -315,13 +317,13 @@ func TestSchedulerPlanSelectsCostByReplayKey(t *testing.T) {
 		}
 		return ""
 	}
-	added := schedulerPlan(SchedulerSettings{}, snap, SchedulerCandidate{Nodes: snap.Nodes, Instances: []SchedulerInstance{current, target}})
+	added := schedulerPlan(schedulerEstimateSettingsForTest(), snap, SchedulerCandidate{Nodes: snap.Nodes, Instances: []SchedulerInstance{current, target}})
 	if got := costOf(added, schedulerActionPrepare); got != "prepare-fixed" {
 		t.Fatalf("prepare cost ignored the Node power mode: %s", got)
 	}
 	nodes := append([]SchedulerNode(nil), snap.Nodes...)
 	nodes[0].PowerMode = schedulerTestEcoMode
-	lowered := schedulerPlan(SchedulerSettings{}, snap, SchedulerCandidate{Nodes: nodes, Instances: []SchedulerInstance{current}})
+	lowered := schedulerPlan(schedulerEstimateSettingsForTest(), snap, SchedulerCandidate{Nodes: nodes, Instances: []SchedulerInstance{current}})
 	if got := costOf(lowered, schedulerActionPower); got != "power-loaded" {
 		t.Fatalf("power cost ignored the loaded state: %s", got)
 	}
@@ -341,7 +343,7 @@ func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 	target.Profile = &p
 	c := SchedulerCandidate{ID: schedulerTestEcoMode, Nodes: append([]SchedulerNode(nil), snap.Nodes...), Instances: []SchedulerInstance{target}}
 	c.Nodes[0].PowerMode = schedulerTestEcoMode
-	actions := schedulerPlan(SchedulerSettings{}, snap, c)
+	actions := schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	drained := map[string]bool{}
 	var power Action
 	for _, a := range actions {
@@ -368,9 +370,9 @@ func TestSchedulerResourcesAndNodeWidePowerPrerequisites(t *testing.T) {
 	snap.Nodes[0].MemoryBytes = old.Allocation.MemoryBytes
 	c = SchedulerCandidate{ID: "resize", Nodes: snap.Nodes, Instances: []SchedulerInstance{old}}
 	c.Instances[0].ID = "resize-new"
-	c.Actions = schedulerPlan(SchedulerSettings{}, snap, c)
+	c.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	snap.Costs = []OperationCost{{ID: "prep", Node: old.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(old), Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 1}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, PowerMode: "fixed"}}
-	c.Actions = schedulerPlan(SchedulerSettings{}, snap, c)
+	c.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	result := schedulerReplayForTest(s, snap, c)
 	if slices.ContainsFunc(result.reasons, func(r string) bool { return strings.HasPrefix(r, "MissingOperationCost") }) {
 		t.Fatal(result.reasons)
@@ -461,7 +463,7 @@ func TestSchedulerFrozenOldDefinitionPendingSurvivesModelCutover(t *testing.T) {
 	before := 10.0
 	snap.Costs = []OperationCost{{ID: schedulerActionPrepare, Node: target.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(target), PowerMode: "fixed", BeforeBaselineWatts: &before, Trials: []OperationTrial{{Duration: 5 * time.Millisecond, Joules: 0.2}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionPrepare, Size: 1}}, {ID: schedulerActionRemove, Node: target.Node, Kind: schedulerActionRemove, From: SchedulerInstanceState(snap.Instances[0]), To: "unloaded", PowerMode: "fixed", BeforeBaselineWatts: &before, Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 0.1}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionRemove, Size: 1}}}
 	c := SchedulerCandidate{ID: "model-cutover", Nodes: snap.Nodes, Instances: []SchedulerInstance{target}}
-	c.Actions = schedulerPlan(SchedulerSettings{}, snap, c)
+	c.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	result := schedulerReplayForTest(s, snap, c)
 	samples := result.samples[old.Identity()]
 	if len(result.reasons) > 0 || len(samples) != 1 || samples[0] != float64(15*time.Millisecond) {
@@ -490,7 +492,7 @@ func TestSchedulerLoadedPowerWitnessAndNewBundleReadiness(t *testing.T) {
 	snap.Costs = []OperationCost{{ID: "power-loaded", Node: old.Node, Kind: schedulerActionPower, From: "fixed", To: schedulerTestEcoMode, BeforeState: witness, TargetState: witness, Trials: []OperationTrial{{Duration: 20 * time.Millisecond, Joules: 2}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionPower, Size: 1}}, {ID: "remove-old", Node: old.Node, Kind: schedulerActionRemove, From: SchedulerInstanceState(old), To: "unloaded", PowerMode: schedulerTestEcoMode, BeforeState: witness, Trials: []OperationTrial{{Duration: time.Millisecond, Joules: 0.2}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionRemove, Size: 1}}, {ID: "prepare-eco", Node: old.Node, Kind: schedulerActionPrepare, From: "unloaded", To: SchedulerInstanceState(target), PowerMode: schedulerTestEcoMode, Trials: []OperationTrial{{Duration: 5 * time.Millisecond, Joules: 1}}, EnergyScope: "whole-wall", Meter: "wall-n1", Scope: schedulerNodeWallScope, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: schedulerActionPrepare, Size: 1}}}
 	c := SchedulerCandidate{ID: schedulerTestEcoMode, Nodes: append([]SchedulerNode(nil), snap.Nodes...), Instances: []SchedulerInstance{target}}
 	c.Nodes[0].PowerMode = schedulerTestEcoMode
-	c.Actions = schedulerPlan(SchedulerSettings{}, snap, c)
+	c.Actions = schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	result := schedulerReplayForTest(s, snap, c)
 	samples := result.samples[snap.Workloads[0].Identity()]
 	if len(result.reasons) > 0 || len(samples) != 1 || samples[0] != float64(36*time.Millisecond) {
@@ -612,7 +614,7 @@ func TestSchedulerTerminalPrepareDoesNotReuseAbsentEffect(t *testing.T) {
 	target.ID = "reusable-slot"
 	snap.Instances = nil
 	c := SchedulerCandidate{Nodes: snap.Nodes, Instances: []SchedulerInstance{target}}
-	initial := schedulerPlan(SchedulerSettings{}, snap, c)
+	initial := schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	var old Action
 	for _, a := range initial {
 		if a.Kind == schedulerActionPrepare {
@@ -625,7 +627,7 @@ func TestSchedulerTerminalPrepareDoesNotReuseAbsentEffect(t *testing.T) {
 	old.Status = schedulerActionComplete
 	snap.Actions = []Action{old, {ID: "removed", Kind: schedulerActionRemove, Instance: target.ID, Status: schedulerActionComplete}}
 	snap.At = snap.At.Add(time.Second)
-	again := schedulerPlan(SchedulerSettings{}, snap, c)
+	again := schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	for _, a := range again {
 		if a.Kind == schedulerActionPrepare {
 			if a.Status != schedulerActionPlanned || a.ID == old.ID {
@@ -635,7 +637,7 @@ func TestSchedulerTerminalPrepareDoesNotReuseAbsentEffect(t *testing.T) {
 	}
 	old.Status = schedulerActionFailed
 	snap.Actions = []Action{old}
-	retry := schedulerPlan(SchedulerSettings{}, snap, c)
+	retry := schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	for _, a := range retry {
 		if a.Kind == schedulerActionPrepare && (a.Status != schedulerActionPlanned || a.ID == old.ID) {
 			t.Fatalf("failed prepare must not poison retry: %+v", retry)
@@ -646,7 +648,7 @@ func TestSchedulerTerminalPrepareDoesNotReuseAbsentEffect(t *testing.T) {
 	c.Routing = map[string]map[string]int32{"w1": {target.ID: 1}}
 	c.Actions = initial
 	reserveTargetForTest(&snap, &c)
-	independent := schedulerPlan(SchedulerSettings{}, snap, c)
+	independent := schedulerPlan(schedulerEstimateSettingsForTest(), snap, c)
 	if slices.ContainsFunc(independent, func(a Action) bool { return a.Kind == schedulerActionPrepare }) {
 		t.Fatalf("new plan duplicated the owner's preparation: %+v", independent)
 	}

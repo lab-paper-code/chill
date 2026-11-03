@@ -18,10 +18,10 @@ import (
 
 func manualConfigurationFixture(t *testing.T) (*SchedulerController, *kubefake.Clientset) {
 	t.Helper()
-	settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
+	settings := withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
 		MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-		CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, AutonomousWorkloads: []string{"auto", "keep-auto"}}
+		CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, AutonomousWorkloads: []string{"auto", "keep-auto"}})
 	raw, err := json.Marshal(map[string]any{
 		"settings": settings, "staticRouting": map[string]map[string]int{"w": {"old": 3}, "other": {"physical": 7}},
 		"reserved": map[string]any{"node": map[string]any{"cpus": []int{2}}},

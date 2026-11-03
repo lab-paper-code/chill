@@ -166,13 +166,17 @@ type SchedulerNodePlan struct {
 // CapacityTable.Rows returns.
 func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, capacity []CapacityRow) (decision SchedulerDecision, err error) {
 	started := time.Now()
-	settings = schedulerOperationSettings(settings)
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
 	}
 	settings.AutonomousWorkloads = slices.Clone(settings.AutonomousWorkloads)
 	settings.ExcludedNodes = slices.Clone(settings.ExcludedNodes)
 	settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
+	settings.DefaultOperationCost = maps.Clone(settings.DefaultOperationCost)
+	if settings.DefaultIdlePower != nil {
+		idle := *settings.DefaultIdlePower
+		settings.DefaultIdlePower = &idle
+	}
 	snapshot = schedulerCanonical(snapshot)
 	if settings.ScaleDownStabilization > 0 && snapshot.ScaleDown == nil {
 		snapshot.ScaleDown = map[string]SchedulerDownState{}
@@ -408,14 +412,14 @@ type schedulerBaselineBound struct {
 	watts     float64 // signed coefficient of the exact baseline reconstruction
 }
 
-func schedulerBaselineUncertainty(baselines []NodeBaseline, sources []string, instances int) schedulerBaselineBound {
-	if len(sources) == 0 {
+func schedulerBaselineUncertainty(baselines []NodeBaseline, provenance IdlePowerProvenance, instances int) schedulerBaselineBound {
+	if len(provenance.References) == 0 {
 		return schedulerBaselineBound{}
 	}
 	for _, b := range baselines {
-		if b.ID == sources[0] {
+		if b.ID == provenance.References[0] {
 			coefficient := 1.0
-			if len(b.State) == 0 {
+			if provenance.Reconstructed {
 				// unloaded + sum(loaded idle - unloaded), not n independent errors
 				coefficient -= float64(instances)
 			}
@@ -664,7 +668,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	before, _, beforeSources, _ := schedulerBaseline(p.settings, p.snapshot.Baselines, common[n], current, p.snapshot.Options)
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
-	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": idleEstimateProvenance(before, beforeSources)}
+	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": beforeSources}
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
@@ -926,14 +930,14 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			mid = append(mid, i)
 		}
 	}
-	var midSources, afterSources []string
+	var midSources, afterSources IdlePowerProvenance
 	plan.mid, _, midSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, mid, p.snapshot.Options)
 	plan.after, _, afterSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
 	plan.midBound = schedulerBaselineUncertainty(p.snapshot.Baselines, midSources, len(mid))
 	plan.afterBound = schedulerBaselineUncertainty(p.snapshot.Baselines, afterSources, len(plan.instances))
 	plan.record.IdleCosts = map[string]IdlePowerProvenance{
-		"mid":   idleEstimateProvenance(plan.mid, midSources),
-		"after": idleEstimateProvenance(plan.after, afterSources),
+		"mid":   midSources,
+		"after": afterSources,
 	}
 	plan.record.Eligible = true
 	return plan

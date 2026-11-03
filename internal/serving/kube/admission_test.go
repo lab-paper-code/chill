@@ -123,10 +123,10 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*Scheduler
 	}
 	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
-			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 				MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
 				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
-				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1},
+				CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1}),
 			MeasurementNamespaces: []string{"chill-system"},
 		})
 	if err != nil {

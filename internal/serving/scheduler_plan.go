@@ -366,7 +366,7 @@ func (p *schedulerPlanState) selectCosts() {
 					a.CostProvenance = &OperationCostProvenance{Source: operationSourceNode, CostRef: cost.ID}
 				}
 			} else {
-				value := operationCostDefault(p.settings, a.Kind)
+				value := p.settings.DefaultOperationCost[a.Kind]
 				a.ExpectedSource = nil
 				a.CostID = ""
 				a.ExpectedSeconds = &value.Seconds

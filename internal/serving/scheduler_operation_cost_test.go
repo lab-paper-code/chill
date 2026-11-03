@@ -12,13 +12,22 @@ import (
 	"time"
 )
 
-func TestOperationCostDefaultAndAbsentSettings(t *testing.T) {
+func schedulerEstimateSettingsForTest() SchedulerSettings {
+	return SchedulerSettings{
+		DefaultOperationCost: map[string]OperationCostValue{
+			"prepare": {Seconds: 852, Joules: 36371}, "remove": {Seconds: 13, Joules: 1014}, "power": {Seconds: 166, Joules: 2229},
+		},
+		DefaultIdlePower: &IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8},
+	}
+}
+
+func TestOperationCostDefaultAndRequiredSettings(t *testing.T) {
 	s, snap := schedulerFixture()
 	n := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	wanted := poolsInstance(snap.Instances[0], "new", n, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(wanted))
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
-	s.DefaultOperationCost = map[string]OperationCostValue{"prepare": {Seconds: .001, Joules: .01}}
+	s.DefaultOperationCost["prepare"] = OperationCostValue{Seconds: .001, Joules: .01}
 	rows := capacityRowsForTest(s, snap, nil)
 	d := capacityDecideForTest(t, s, snap, rows)
 	if d.Target == nil || !poolsOn(*d.Target, n) {
@@ -28,26 +37,8 @@ func TestOperationCostDefaultAndAbsentSettings(t *testing.T) {
 	if a.CostProvenance == nil || a.CostProvenance.Source != operationSourceDefault || a.CostProvenance.Value.Seconds != .001 || a.CostID != "" {
 		t.Fatalf("default provenance: %+v", a)
 	}
-	s.DefaultOperationCost = nil
-	absent := capacityDecideForTest(t, s, snap, rows)
-	if !slices.ContainsFunc(absent.Capacity.Plans, func(p SchedulerNodePlan) bool {
-		return p.Node == n && p.Eligible && len(p.ActionCosts) > 0 && p.ActionCosts[0].Provenance.Source == operationSourceDefault
-	}) {
-		t.Fatal("absent key rejected an unmeasured operation")
-	}
-	raw, err := json.Marshal(s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded SchedulerSettings
-	if err = json.Unmarshal(raw, &decoded); err != nil || decoded.Validate() != nil {
-		t.Fatalf("absent settings unsafe: %v", err)
-	}
-	if got := operationCostDefault(decoded, "prepare"); got != schedulerDefaults.DefaultOperationCost["prepare"] {
-		t.Fatalf("absent key did not use policy block: %+v", got)
-	}
 	target := SchedulerCandidate{Nodes: snap.Nodes, Instances: append(slices.Clone(snap.Instances), wanted)}
-	s.DefaultOperationCost = map[string]OperationCostValue{"prepare": {Seconds: .001, Joules: .01}}
+	s.DefaultOperationCost["prepare"] = OperationCostValue{Seconds: .001, Joules: .01}
 	target.Actions = schedulerPlan(s, snap, target)
 	if result := schedulerReplayForTest(s, snap, target); len(result.reasons) != 0 {
 		t.Fatalf("default replay blocked: %v", result.reasons)
@@ -126,12 +117,12 @@ func TestOperationCostPowerAndIdleHistoricalLoadedState(t *testing.T) {
 	baseline.StateIdentities = ids
 	baseline.Watts = 17
 	watts, _, refs, _ := schedulerBaseline(s, []NodeBaseline{baseline}, snap.Nodes[0], []SchedulerInstance{i}, snap.Options)
-	if watts != 17 || !slices.Equal(refs, []string{"loaded-old"}) {
+	if watts != 17 || !slices.Equal(refs.References, []string{"loaded-old"}) {
 		t.Fatalf("historical idle stranded: %g %v", watts, refs)
 	}
 	watts, _, refs, _ = schedulerBaseline(s, nil, snap.Nodes[0], []SchedulerInstance{i}, snap.Options)
-	if got := idleEstimateProvenance(watts, refs); got.Source != operationSourceDefault || watts != idlePowerDefault(s).NodeWatts+idlePowerDefault(s).PerInstanceWatts {
-		t.Fatalf("idle default missing: %+v", got)
+	if refs.Source != operationSourceDefault || watts != s.DefaultIdlePower.NodeWatts+s.DefaultIdlePower.PerInstanceWatts {
+		t.Fatalf("idle default missing: %+v", refs)
 	}
 }
 
@@ -177,7 +168,7 @@ func TestOperationCostHorizonIsScoredOverCommonWindow(t *testing.T) {
 	n := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	wanted := poolsInstance(snap.Instances[0], "new", n, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(wanted))
-	s.DefaultOperationCost = map[string]OperationCostValue{"prepare": {Seconds: 2, Joules: 30}}
+	s.DefaultOperationCost["prepare"] = OperationCostValue{Seconds: 2, Joules: 30}
 	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
 	choice := capacityChoiceForTest(t, p, map[string]string{n.UID: planKey([]SchedulerInstance{wanted})})
 	res := p.evaluate(choice, p.routeOf(choice))
@@ -190,23 +181,63 @@ func TestOperationCostHorizonIsScoredOverCommonWindow(t *testing.T) {
 	}
 }
 
+func TestIdleTransferredBaselinePreservesUncertainty(t *testing.T) {
+	s, snap := schedulerFixture()
+	snap.Baselines[0].PowerMode = "old-mode"
+	snap.Baselines[0].WattsUncertainty = 2
+	watts, _, provenance, reasons := schedulerBaseline(s, snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
+	bound := schedulerBaselineUncertainty(snap.Baselines, provenance, 1)
+	if len(reasons) != 1 || watts != 10 || provenance.Source != operationSourceNode || provenance.Reconstructed || bound.watts != 2 {
+		t.Fatalf("transferred measurement lost uncertainty: watts=%g provenance=%+v bound=%+v reasons=%v", watts, provenance, bound, reasons)
+	}
+}
+
+func TestIdleNegativeReconstructionUsesNearestMeasurement(t *testing.T) {
+	s, snap := schedulerFixture()
+	profile := *snap.Instances[0].Profile
+	profile.IdleBaselineWatts = 3
+	snap.Instances[0].Profile = &profile
+	snap.Options[0].Instance.Profile = &profile
+	instances := append(slices.Clone(snap.Instances), snap.Instances[0])
+	snap.Baselines[0].WattsUncertainty = 2
+	watts, _, provenance, reasons := schedulerBaseline(s, snap.Baselines, snap.Nodes[0], instances, snap.Options)
+	bound := schedulerBaselineUncertainty(snap.Baselines, provenance, len(instances))
+	if len(reasons) != 1 || watts != 10 || provenance.Source != operationSourceNode || provenance.Reconstructed || bound.watts != 2 {
+		t.Fatalf("negative reconstruction skipped usable measurement: watts=%g provenance=%+v bound=%+v reasons=%v", watts, provenance, bound, reasons)
+	}
+}
+
 func TestOperationCostSettingsValidation(t *testing.T) {
 	for _, v := range []OperationCostValue{{Seconds: 0, Joules: 1}, {Seconds: -1, Joules: 1}, {Seconds: 1, Joules: -1}, {Seconds: 1e100, Joules: 1}, {Seconds: 1e-20, Joules: 1}} {
 		s, _ := schedulerFixture()
-		s.DefaultOperationCost = map[string]OperationCostValue{"prepare": v}
+		s.DefaultOperationCost["prepare"] = v
 		if s.Validate() == nil {
 			t.Fatalf("accepted invalid default %+v", v)
 		}
 	}
 	s, _ := schedulerFixture()
-	s.DefaultOperationCost = map[string]OperationCostValue{"unknown": {Seconds: 1, Joules: 1}}
+	s.DefaultOperationCost["unknown"] = OperationCostValue{Seconds: 1, Joules: 1}
 	if s.Validate() == nil {
 		t.Fatal("unknown operation accepted")
 	}
-	resolved := schedulerOperationSettings(schedulerDefaults)
-	resolved.DefaultOperationCost["prepare"] = OperationCostValue{Seconds: 1}
-	if schedulerDefaults.DefaultOperationCost["prepare"].Seconds == 1 {
-		t.Fatal("settings mutated embedded policy")
+	for _, key := range []string{"prepare", "remove", "power", "idle"} {
+		s, _ := schedulerFixture()
+		if key == "idle" {
+			s.DefaultIdlePower = nil
+		} else {
+			delete(s.DefaultOperationCost, key)
+		}
+		raw, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var input SchedulerSettingsInput
+		if err = json.Unmarshal(raw, &input); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = input.Settings(); err == nil {
+			t.Fatalf("absent required %s setting accepted", key)
+		}
 	}
 }
 
@@ -230,32 +261,9 @@ func TestOperationCostLiveSnapshotReplay(t *testing.T) {
 	if err = json.Unmarshal(raw, &capture); err != nil {
 		t.Fatal(err)
 	}
-	s, snap := schedulerOperationSettings(capture.Settings), capture.State.Snapshot
-	if filename := os.Getenv("CHILL_OPERATION_COST_PROFILES"); filename != "" {
-		raw, err := os.ReadFile(filename)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var catalog struct {
-			Profiles []Profile `json:"profiles"`
-		}
-		if err = json.Unmarshal(raw, &catalog); err != nil {
-			t.Fatal(err)
-		}
-		ids, classes := map[string]string{}, map[string]string{}
-		for j := range catalog.Profiles {
-			p := &catalog.Profiles[j]
-			ids[p.ID] = MeasurementProfileIdentity(p)
-			classes[p.Condition.NodeUID] = p.Condition.DeviceClass
-		}
-		for j := range snap.Costs {
-			snap.Costs[j].StateIdentities = ids
-			snap.Costs[j].DeviceClass = classes[snap.Costs[j].Node.UID]
-		}
-		for j := range snap.Baselines {
-			snap.Baselines[j].StateIdentities = ids
-			snap.Baselines[j].DeviceClass = classes[snap.Baselines[j].Node.UID]
-		}
+	s, snap := capture.Settings, capture.State.Snapshot
+	if err := s.Validate(); err != nil {
+		t.Fatalf("capture must contain explicit proposed scheduler settings: %v", err)
 	}
 	table, cachedCount := operationCostReplayTable(t)
 	table.Ensure(context.Background(), s, snap)

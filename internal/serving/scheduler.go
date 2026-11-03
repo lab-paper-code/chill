@@ -52,7 +52,7 @@ type SchedulerSettings struct {
 	// measurement matches. Throughput and replay add batch size × d once.
 	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
 	// DefaultOperationCost supplies whole-wall costs for unmeasured operations.
-	// Missing kinds use the configured scheduler_defaults.json policy block.
+	// Every operation kind and DefaultIdlePower must be configured explicitly.
 	DefaultOperationCost map[string]OperationCostValue `json:"defaultOperationCost,omitempty"`
 	DefaultIdlePower     *IdlePowerDefault             `json:"defaultIdlePower,omitempty"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
@@ -587,7 +587,6 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
 	settings := in.SchedulerSettings
-	settings = schedulerOperationSettings(settings)
 	settings.CapacityGridSteps, settings.CapacityBisectionWidth, settings.CapacityTailSamples = 20, 0.005, 100
 	if in.CapacityGridSteps != nil {
 		settings.CapacityGridSteps = *in.CapacityGridSteps
