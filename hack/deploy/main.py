@@ -478,6 +478,9 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             time.sleep(min(5, max(0, deadline - time.monotonic())))
         stage('accept')
         accept_out = out / 'after'
+        import evaluation_rbac
+        state['evaluationRbac'] = evaluation_rbac.check(
+            after.decode(), recipe['namespace'], kube, run.run, out / 'evaluation-rbac.json')
         snapshot = acceptance.wait_capture(config, recipe['namespace'], accept_out, deadline)
         report = acceptance.compare(baseline, snapshot, recipe['allowedLostProfileIDs'], accept_out, recipe.get('expectedCoverageUsable'))
         report['checks']['expectedProfileCount'] = 'expectedProfileCount' not in recipe or report.get('after') == recipe['expectedProfileCount']
