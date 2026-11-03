@@ -992,6 +992,317 @@ spec:
                   - workloadUID
                   type: object
                 type: array
+              provisionalD1:
+                description: EvaluationProvisionalD1 is the latest closed-minute request
+                  projection, not a verdict.
+                properties:
+                  asOf:
+                    type: string
+                  closedThrough:
+                    type: string
+                  generatorQuality:
+                    additionalProperties:
+                      properties:
+                        achievedRequestsPerSecond:
+                          nullable: true
+                          type: number
+                        actualGapNS:
+                          properties:
+                            max:
+                              nullable: true
+                              type: number
+                            mean:
+                              nullable: true
+                              type: number
+                            p50:
+                              nullable: true
+                              type: number
+                            p95:
+                              nullable: true
+                              type: number
+                            p99:
+                              nullable: true
+                              type: number
+                            samples:
+                              format: int64
+                              type: integer
+                          required:
+                          - max
+                          - mean
+                          - p50
+                          - p95
+                          - p99
+                          - samples
+                          type: object
+                        duplicateIndexes:
+                          format: int64
+                          type: integer
+                        durationNS:
+                          format: int64
+                          type: integer
+                        extraClientRows:
+                          format: int64
+                          type: integer
+                        failurePolicy:
+                          type: string
+                        generatorQuality:
+                          properties:
+                            denominator:
+                              format: int64
+                              type: integer
+                            exceeding:
+                              format: int64
+                              type: integer
+                            exceedingFraction:
+                              nullable: true
+                              type: number
+                            policy:
+                              nullable: true
+                              properties:
+                                latenessToleranceNS:
+                                  format: int64
+                                  type: integer
+                                maxExceedingFraction:
+                                  type: number
+                              required:
+                              - latenessToleranceNS
+                              - maxExceedingFraction
+                              type: object
+                            reason:
+                              nullable: true
+                              type: string
+                            status:
+                              type: string
+                            thresholdLabel:
+                              type: string
+                          required:
+                          - denominator
+                          - exceeding
+                          - exceedingFraction
+                          - policy
+                          - reason
+                          - status
+                          - thresholdLabel
+                          type: object
+                        invalidScheduleRows:
+                          format: int64
+                          type: integer
+                        issuanceFraction:
+                          nullable: true
+                          type: number
+                        issued:
+                          format: int64
+                          type: integer
+                        missingClientRows:
+                          format: int64
+                          type: integer
+                        missingSendTimestamps:
+                          format: int64
+                          type: integer
+                        offered:
+                          format: int64
+                          type: integer
+                        plannedGapNS:
+                          properties:
+                            max:
+                              nullable: true
+                              type: number
+                            mean:
+                              nullable: true
+                              type: number
+                            p50:
+                              nullable: true
+                              type: number
+                            p95:
+                              nullable: true
+                              type: number
+                            p99:
+                              nullable: true
+                              type: number
+                            samples:
+                              format: int64
+                              type: integer
+                          required:
+                          - max
+                          - mean
+                          - p50
+                          - p95
+                          - p99
+                          - samples
+                          type: object
+                        sendLatenessNS:
+                          properties:
+                            max:
+                              nullable: true
+                              type: number
+                            mean:
+                              nullable: true
+                              type: number
+                            p50:
+                              nullable: true
+                              type: number
+                            p95:
+                              nullable: true
+                              type: number
+                            p99:
+                              nullable: true
+                              type: number
+                            samples:
+                              format: int64
+                              type: integer
+                          required:
+                          - max
+                          - mean
+                          - p50
+                          - p95
+                          - p99
+                          - samples
+                          type: object
+                        sendsAfterWindow:
+                          format: int64
+                          type: integer
+                        status:
+                          type: string
+                        supplied:
+                          type: boolean
+                        thresholdNS:
+                          format: int64
+                          type: integer
+                        unissued:
+                          format: int64
+                          type: integer
+                      required:
+                      - achievedRequestsPerSecond
+                      - actualGapNS
+                      - duplicateIndexes
+                      - durationNS
+                      - extraClientRows
+                      - failurePolicy
+                      - generatorQuality
+                      - invalidScheduleRows
+                      - issuanceFraction
+                      - issued
+                      - missingClientRows
+                      - missingSendTimestamps
+                      - offered
+                      - plannedGapNS
+                      - sendLatenessNS
+                      - sendsAfterWindow
+                      - status
+                      - supplied
+                      - thresholdNS
+                      - unissued
+                      type: object
+                    type: object
+                  provisional:
+                    type: boolean
+                  workloads:
+                    additionalProperties:
+                      properties:
+                        deadlineSuccess:
+                          format: int64
+                          type: integer
+                        offered:
+                          format: int64
+                          type: integer
+                        outcomes:
+                          additionalProperties:
+                            format: int64
+                            type: integer
+                          type: object
+                        reachable:
+                          type: boolean
+                        requiredSuccessfulRank:
+                          format: int64
+                          type: integer
+                        slo:
+                          properties:
+                            percentile:
+                              type: number
+                            targetLatencyNanos:
+                              format: int64
+                              type: integer
+                          required:
+                          - percentile
+                          - targetLatencyNanos
+                          type: object
+                        substages:
+                          items:
+                            properties:
+                              completedLatencyNS:
+                                properties:
+                                  max:
+                                    nullable: true
+                                    type: number
+                                  mean:
+                                    nullable: true
+                                    type: number
+                                  p50:
+                                    nullable: true
+                                    type: number
+                                  p95:
+                                    nullable: true
+                                    type: number
+                                  p99:
+                                    nullable: true
+                                    type: number
+                                  samples:
+                                    format: int64
+                                    type: integer
+                                required:
+                                - max
+                                - mean
+                                - p50
+                                - p95
+                                - p99
+                                - samples
+                                type: object
+                              deadlineSuccess:
+                                format: int64
+                                type: integer
+                              durationSeconds:
+                                type: number
+                              id:
+                                type: string
+                              offered:
+                                format: int64
+                                type: integer
+                              rate:
+                                type: number
+                              requiredSuccessfulRank:
+                                format: int64
+                                type: integer
+                            required:
+                            - completedLatencyNS
+                            - deadlineSuccess
+                            - durationSeconds
+                            - id
+                            - offered
+                            - rate
+                            - requiredSuccessfulRank
+                            type: object
+                          type: array
+                        unfinishedOrUnsent:
+                          format: int64
+                          type: integer
+                      required:
+                      - deadlineSuccess
+                      - offered
+                      - outcomes
+                      - reachable
+                      - requiredSuccessfulRank
+                      - slo
+                      - substages
+                      - unfinishedOrUnsent
+                      type: object
+                    type: object
+                required:
+                - asOf
+                - closedThrough
+                - generatorQuality
+                - provisional
+                - workloads
+                type: object
               residualStateRef:
                 description: EvaluationEvidenceReference identifies immutable evidence,
                   never an endpoint.

@@ -218,3 +218,40 @@ def collect(folder, phase, collection, io, timeout_seconds):
         manifest['status'] = 'CAPTURED_NOT_EVALUATED'
     _save(folder / 'archive-collection.json', manifest)
     return manifest
+
+
+def collect_requests_snapshot(folder, phase, io, timeout_seconds):
+    """Capture closed-minute requests separately from immutable final evidence."""
+    folder = Path(folder).resolve()
+    deadline = time.monotonic() + timeout_seconds
+    current = io.api('GET', RAW_PATH + '?hour=' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H'),
+                     timeout=_remaining(deadline))
+    closed = _time_ns(current['at']) // 60_000_000_000 * 60_000_000_000
+    cutoff = dt.datetime.fromtimestamp(closed / 1e9, dt.timezone.utc).isoformat()
+    if closed <= _time_ns(phase['startUTC']):
+        raise ValueError('No closed stage minute available')
+    hour = lambda stamp: dt.datetime.fromtimestamp(stamp / 1e9, dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    hours = _hours(hour(_time_ns(phase['startUTC'])), hour(closed))
+    index = {'visibility': PRIVATE, 'complete': True, 'sources': [], 'errors': [], 'absentStreams': [],
+             'requestPopulation': {'startUTC': phase['startUTC'], 'endUTC': cutoff, 'drainedUTC': cutoff},
+             'requestedHours': hours, 'supportingHours': []}
+    for value in hours:
+        inventory = io.api('GET', RAW_PATH + '?hour=' + value, timeout=_remaining(deadline))
+        if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
+            raise ValueError('Invalid exact-hour raw API inventory')
+        entry = next(item for item in inventory['kinds'] if item['kind'] == 'requests')
+        if entry.get('available') is False:
+            index['absentStreams'].append({'visibility': PRIVATE, 'hour': value, 'stream': 'requests',
+                                          'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'})
+        elif entry.get('available') is True:
+            source = _download(folder, io, RAW_PATH + '/' + value + '/requests',
+                               folder / 'obs' / value / 'requests.jsonl.gz', deadline)
+            index['sources'].append({**source, 'hour': value, 'stream': 'requests'})
+        else:
+            raise ValueError('Invalid raw availability')
+    # A minute rollover could mix cutoffs between inventory and download.
+    final = io.api('GET', RAW_PATH + '?hour=' + hour(closed).strftime('%Y%m%dT%H'), timeout=_remaining(deadline))
+    if _time_ns(final['at']) // 60_000_000_000 * 60_000_000_000 != closed:
+        raise ValueError('Closed-minute snapshot changed during capture')
+    _save(folder / 'raw-source-index.json', index)
+    return cutoff

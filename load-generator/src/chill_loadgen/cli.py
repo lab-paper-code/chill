@@ -114,6 +114,7 @@ def replay_open_loop(
             row.update(sentMonotonicNS=sent, sentAtUnixNS=time.time_ns(),
                        latenessNs=sent - scheduled,
                        delayed=sent - scheduled > DELAY_TOLERANCE_NS, issued=True)
+            emit({**row, "evaluationEvent": "send"})
             try:
                 response = client.infer(workload, inputs)
                 row.update(status=response.status_code, requestID=response.request_id,

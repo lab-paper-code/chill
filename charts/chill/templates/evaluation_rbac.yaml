@@ -32,6 +32,9 @@ rules:
   - apiGroups: [apps]
     resources: [deployments]
     verbs: [get]
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationstages/status]
+    verbs: [patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

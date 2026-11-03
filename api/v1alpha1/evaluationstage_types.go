@@ -178,8 +178,102 @@ type EvaluationProducerReference struct {
 	PodRef *EvaluationObjectReference `json:"podRef,omitempty"`
 }
 
+// EvaluationProvisionalD1 is the latest closed-minute request projection, not a verdict.
+type EvaluationProvisionalD1 struct {
+	AsOf             string                                   `json:"asOf"`
+	ClosedThrough    string                                   `json:"closedThrough"`
+	Provisional      bool                                     `json:"provisional"`
+	Workloads        map[string]EvaluationProvisionalRequests `json:"workloads"`
+	GeneratorQuality map[string]EvaluationIssuanceFidelity    `json:"generatorQuality"`
+}
+
+type EvaluationProvisionalRequests struct {
+	Offered                int64                           `json:"offered"`
+	DeadlineSuccess        int64                           `json:"deadlineSuccess"`
+	RequiredSuccessfulRank int64                           `json:"requiredSuccessfulRank"`
+	Outcomes               map[string]int64                `json:"outcomes"`
+	UnfinishedOrUnsent     int64                           `json:"unfinishedOrUnsent"`
+	SLO                    EvaluationRequestSLO            `json:"slo"`
+	Reachable              bool                            `json:"reachable"`
+	Substages              []EvaluationProvisionalSubstage `json:"substages"`
+}
+
+type EvaluationRequestSLO struct {
+	Percentile         float64 `json:"percentile"`
+	TargetLatencyNanos int64   `json:"targetLatencyNanos"`
+}
+
+type EvaluationProvisionalSubstage struct {
+	ID                     string                 `json:"id"`
+	DurationSeconds        float64                `json:"durationSeconds"`
+	Rate                   float64                `json:"rate"`
+	Offered                int64                  `json:"offered"`
+	DeadlineSuccess        int64                  `json:"deadlineSuccess"`
+	RequiredSuccessfulRank int64                  `json:"requiredSuccessfulRank"`
+	CompletedLatencyNS     EvaluationRequestStats `json:"completedLatencyNS"`
+}
+
+type EvaluationRequestStats struct {
+	Samples int64 `json:"samples"`
+	// +nullable
+	Mean *float64 `json:"mean"`
+	// +nullable
+	P50 *float64 `json:"p50"`
+	// +nullable
+	P95 *float64 `json:"p95"`
+	// +nullable
+	P99 *float64 `json:"p99"`
+	// +nullable
+	Max *float64 `json:"max"`
+}
+
+type EvaluationGeneratorQualityPolicy struct {
+	LatenessToleranceNS  int64   `json:"latenessToleranceNS"`
+	MaxExceedingFraction float64 `json:"maxExceedingFraction"`
+}
+
+type EvaluationGeneratorQuality struct {
+	Status string `json:"status"`
+	// +nullable
+	Policy      *EvaluationGeneratorQualityPolicy `json:"policy"`
+	Exceeding   int64                             `json:"exceeding"`
+	Denominator int64                             `json:"denominator"`
+	// +nullable
+	ExceedingFraction *float64 `json:"exceedingFraction"`
+	ThresholdLabel    string   `json:"thresholdLabel"`
+	// +nullable
+	Reason *string `json:"reason"`
+}
+
+type EvaluationIssuanceFidelity struct {
+	FailurePolicy         string `json:"failurePolicy"`
+	Status                string `json:"status"`
+	ThresholdNS           int64  `json:"thresholdNS"`
+	Offered               int64  `json:"offered"`
+	Issued                int64  `json:"issued"`
+	Unissued              int64  `json:"unissued"`
+	MissingClientRows     int64  `json:"missingClientRows"`
+	ExtraClientRows       int64  `json:"extraClientRows"`
+	DuplicateIndexes      int64  `json:"duplicateIndexes"`
+	InvalidScheduleRows   int64  `json:"invalidScheduleRows"`
+	MissingSendTimestamps int64  `json:"missingSendTimestamps"`
+	Supplied              bool   `json:"supplied"`
+	// +nullable
+	IssuanceFraction *float64 `json:"issuanceFraction"`
+	DurationNS       int64    `json:"durationNS"`
+	// +nullable
+	AchievedRequestsPerSecond *float64                   `json:"achievedRequestsPerSecond"`
+	SendsAfterWindow          int64                      `json:"sendsAfterWindow"`
+	SendLatenessNS            EvaluationRequestStats     `json:"sendLatenessNS"`
+	ActualGapNS               EvaluationRequestStats     `json:"actualGapNS"`
+	PlannedGapNS              EvaluationRequestStats     `json:"plannedGapNS"`
+	GeneratorQuality          EvaluationGeneratorQuality `json:"generatorQuality"`
+}
+
 type EvaluationStageStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// +optional
+	ProvisionalD1 *EvaluationProvisionalD1 `json:"provisionalD1,omitempty"`
 	// +optional
 	// +listType=map
 	// +listMapKey=type

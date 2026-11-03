@@ -9,35 +9,38 @@ import evidence_io
 HERE = Path(__file__).resolve().parent
 
 
-def judge(binding, folder):
-    bound = evidence_io.load_binding(binding)
-    config = bound['config']
-    phase = evidence_io.load(folder / 'phase.json')
+def join_client_events(rows):
+    """Join sends to results by frozen index; retain conflicting evidence."""
+    sends, results = {}, []
+    for row in rows:
+        if row.get('evaluationEvent') != 'send':
+            results.append(dict(row))
+            continue
+        group = sends.setdefault(row.get('requestIndex'), [])
+        if row not in group:
+            group.append(row)
+    joined = []
+    for row in results:
+        group = sends.get(row.get('requestIndex'), [])
+        if len(group) == 1 and all(row.get(key) == group[0].get(key) for key in ('requestIndex', 'scheduledOffsetNs', 'sentMonotonicNS')):
+            merged = {**group[0], **row}
+            merged.pop('evaluationEvent', None)
+            joined.append(merged)
+            sends.pop(row.get('requestIndex'))
+        else:
+            joined.append(row)
+    return joined + [row for group in sends.values() for row in group]
+
+
+def reduce_requests(config, phase, clients, indexes):
+    """Pure request judgment shared by provisional and drained publication."""
     stage = phase['stage']
-    raw = evidence_io.module('evaluation_raw', HERE / 'raw.py')
     analysis = evidence_io.module('evaluation_analysis', HERE / 'request_analysis.py')
-    clients = {}
-    unknown = []
     results = {}
     for workload in config['workloads']:
         name = workload['name']
-        path = folder / (name + '-client.jsonl')
-        rows = []
-        if path.exists():
-            for index, line in enumerate(path.read_text().splitlines(), 1):
-                try:
-                    row = json.loads(line)
-                    if 'scheduledOffsetNs' in row:
-                        rows.append(row)
-                except (ValueError, TypeError):
-                    unknown.append(name + ': malformed client JSONL line ' + str(index))
-        clients[name] = rows
-    indexes = raw.iter_request_indexes(folder, [w['uid'] for w in config['workloads']], phase['startUTC'], phase['endUTC'],
-                                      actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']] for w in config['workloads']})
-    for workload in config['workloads']:
-        name = workload['name']
         trace = stage['traces'][name]
-        rows = clients[name]
+        rows = join_client_events(clients[name])
         indexed = indexes[workload['uid']]
         returned_ids = [row['requestID'] for row in rows if isinstance(row.get('requestID'), str) and row['requestID']]
         counts = Counter(returned_ids)
@@ -46,7 +49,11 @@ def judge(binding, folder):
         quarantined.update(indexed['summary'].get('invalidFinalRequestIDs', []))
         if any(row.get('workloadUID') not in (None, workload['uid']) for row in rows):
             raise ValueError('IdentityMismatch: returned Workload UID differs from frozen identity')
-        usable = [row for row in rows if row.get('requestID') not in quarantined]
+        index_counts = Counter(row.get('requestIndex') for row in rows)
+        usable = [row for row in rows if row.get('requestID') not in quarantined
+                  and type(row.get('requestIndex')) is int and 0 <= row['requestIndex'] < len(trace['offsetsNS'])
+                  and row.get('scheduledOffsetNs') == trace['offsetsNS'][row['requestIndex']]
+                  and index_counts[row['requestIndex']] == 1]
         supported = any(row.get('requestID') in indexed['finals'] for row in usable)
         start = phase['starts'].get(name, {}).get('monotonicNS')
         quality = analysis.issuance_fidelity(rows, trace['offsetsNS'], start, round(stage['seconds'] * 1e9), analysis.stats, config['generatorQuality'])
@@ -92,6 +99,7 @@ def judge(binding, folder):
                          'latencyScope': 'CHILL HTTP receipt to final elapsedNanos; client RTT and scheduled latency are references only',
                          'deadlineSuccess': hits, 'deadlineSuccessFraction': hits / offered if offered else None, 'requiredSuccessfulRank': required,
                          'unfinishedOrUnsent': max(0, offered - len(completed)), 'issuanceFidelity': quality,
+                         'reachable': hits + max(0, offered - sum(row.get('requestID') in indexed['finals'] for row in usable)) >= required,
                          'D1': 'NOT_OFFERED' if not offered else 'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
                                'NOT_EVALUATED' if not supported else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',
                          'slo': workload['slo'], 'workload': {key: workload[key] for key in ('name', 'uid', 'generation')},
@@ -103,6 +111,43 @@ def judge(binding, folder):
                          'rawEvidenceErrorCount': len(indexed['errors']), 'quarantinedRequestCount': len(quarantined),
                          'unkeyedRawRowCount': len(indexed['summary'].get('unkeyedRows', [])),
                          'identityMissingReason': None if identity_known else 'Actual returned request IDs lack one complete frozen-UID definition identity'}
+    return results
+
+
+def provisional_requests(config, phase, clients, indexes, as_of, closed_through):
+    """Bounded projection of the same request reducer; never publish a verdict."""
+    results = reduce_requests(config, phase, clients, indexes)
+    keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'slo', 'reachable')
+    return {'asOf': as_of, 'closedThrough': closed_through, 'provisional': True,
+            'workloads': {name: {**{key: row[key] for key in keys},
+                                'substages': [{key: value for key, value in part.items() if key != 'D1'} for part in row['substages']]}
+                          for name, row in results.items()},
+            'generatorQuality': {name: row['issuanceFidelity'] for name, row in results.items()}}
+
+
+def judge(binding, folder):
+    bound = evidence_io.load_binding(binding)
+    config = bound['config']
+    phase = evidence_io.load(folder / 'phase.json')
+    raw = evidence_io.module('evaluation_raw', HERE / 'raw.py')
+    clients = {}
+    unknown = []
+    for workload in config['workloads']:
+        name = workload['name']
+        path = folder / (name + '-client.jsonl')
+        rows = []
+        if path.exists():
+            for index, line in enumerate(path.read_text().splitlines(), 1):
+                try:
+                    row = json.loads(line)
+                    if 'scheduledOffsetNs' in row:
+                        rows.append(row)
+                except (ValueError, TypeError):
+                    unknown.append(name + ': malformed client JSONL line ' + str(index))
+        clients[name] = join_client_events(rows)
+    indexes = raw.iter_request_indexes(folder, [w['uid'] for w in config['workloads']], phase['startUTC'], phase['endUTC'],
+                                      actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']] for w in config['workloads']})
+    results = reduce_requests(config, phase, clients, indexes)
     power = evidence_io.load(folder / 'power.json')
     tail_power = evidence_io.load(folder / 'power-drain-inclusive.json')
     failures = None
