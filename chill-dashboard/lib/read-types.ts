@@ -121,8 +121,9 @@ export type SchedulerObservationSummary = Pick<SchedulerObservation,"at"|"offset
   action?:Pick<SchedulerActionObservation,"id"|"kind"|"node"|"phase"|"startedAt">;power?:Pick<PowerResult,"startedAt">
 }
 export type SchedulerObservationSummaryPage = Omit<SchedulerObservationPage,"events"> & {events:SchedulerObservationSummary[]|null}
-export type OperatingPowerNode = {node:NodeRef;meter:string;scope:"node-exclusive-wall";joules:number|null;meanWatts:number|null;samples:number;sourceTimestampAbsent:boolean;reasons:string[]}
-export type OperatingPower = {from:string;to:string;scope:"whole-pool-wall";nodes:OperatingPowerNode[];wholePoolJoules:number|null;wholePoolMeanWatts:number|null;activePoolJoules:number|null;activePoolMeanWatts:number|null;complete:boolean;reasons:string[];gapUntil?:string}
+export type OperatingPowerNode = {node:NodeRef;meter:string;scope:"node-exclusive-wall";joules:number|null;meanWatts:number|null;samples:number;readFailures:number;maximumSampleGapSeconds:number;sourceTimestampAbsent:boolean;observedSamples?:number;firstObservedAt?:string;lastObservedAt?:string;reasons:string[]}
+export type OperatingPower = {from:string;to:string;scope:"whole-pool-wall";nodes:OperatingPowerNode[];wholePoolJoules:number|null;wholePoolMeanWatts:number|null;activePoolJoules:number|null;activePoolMeanWatts:number|null;complete:boolean;readFailures:number;maximumSampleGapSeconds:number;reasons:string[];gapUntil?:string;coverage:{from:string|null;to:string|null;sources:{from:string;to:string;stream:string;source:string;store?:string;key?:string}[]|null;gaps:{from:string;to:string;stream:string;reason:string}[]|null}}
+export type OperatingPowerSeries = {from:string;to:string;bucketNanos:WireInteger;buckets:OperatingPower[]}
 export type LoadWindow = {from:string;to:string;durationNanos:WireInteger;population:string;workloads:{uid:string;received:number;accepted:number;assigned:number;completed:number;receivedInputsPerSecond:number;acceptedInputsPerSecond:number;assignedInputsPerSecond:number;completionEventsPerSecond:number;instanceAssignments:Record<string,number>|null}[]|null;arrivals:SchedulerArrival[]|null;gapUntil?:string}
 // internal/serving/httpapi/profiles.go: the latest profile per measured condition and the measurements that contribute none.
 // source is a Go types.NamespacedName, encoded without JSON tags.

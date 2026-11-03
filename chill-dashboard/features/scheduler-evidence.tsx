@@ -94,8 +94,8 @@ export function SchedulerPowerPage() {
         <SourceExport filename="scheduler-power-page-summary.json" value={{projection:"summary",scope:"현재 페이지",source:"v1/observations/scheduler",from:history.submitted.from,to:history.submitted.to,cursor:history.cursor,filterNode:node,rows}}/>
       </RowDialog>}
     </HistoryControls>
+    <section aria-label="기간 전력 관측"><PowerInterval from={history.submitted.from} to={history.submitted.to}/></section>
     <QueryGate query={history.query}>{history.query.data&&<>
-      <section aria-label="기간 전력 집계"><PowerInterval from={history.submitted.from} to={history.submitted.to}/></section>
       <details><summary className="min-h-11 cursor-pointer py-2">전력 원자료 · 현재 페이지 {rows.length}건</summary>
       {rows.length?<div className="rounded-lg border"><table className="block w-full text-sm sm:table"><thead className="hidden sm:table-header-group"><tr>{["시각 KST","노드","실측 에너지 (J)","근거"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody className="block sm:table-row-group">{rows.map(row=><tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(row.event.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">노드 </span>{row.event.node?.name??"미기록"}</td><td className="tabular-nums sm:p-3 sm:text-right"><span className="text-muted-foreground sm:hidden">실측 에너지 (J) </span>{powerNumber(row.event.powerJoules)}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{
         opener.current=document.activeElement as HTMLElement|null

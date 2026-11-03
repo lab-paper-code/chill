@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import { useLive } from "@/lib/use-live"
 import type { LiveAction, LiveEvent, LiveMetrics, LiveSnapshot, LiveState, LiveWorkload } from "@/lib/live"
+import { eventKey } from "@/lib/live"
 import type { SchedulerCandidate, SchedulerDecision, SchedulerObservationPage } from "@/lib/read-types"
 import { decisionRange, evidenceError } from "@/lib/experiments"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
@@ -17,6 +18,7 @@ import { STATUS_AXES, type StatusTone } from "@/lib/status"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { EvaluationStatusCell } from "./evaluation-active"
 import { evaluationInjectionMatch, type ActiveEvaluations } from "@/lib/evaluation-active"
+import { LivePowerTrend } from "./power-series"
 import "./live-board.css"
 
 type Zone="UTC"|"KST"
@@ -102,7 +104,7 @@ function SideRail({state,select,zone,now}:{state:LiveState;select:Select;zone:Zo
         const operation=row.kind==="gap"?"관측":event?.kind==="action"?actionKinds[event.action.kind]??(event.action.kind==="measurement-handback"?"측정 장치 반환":"구성 변경"):event?.kind==="cluster"?liveReason(event.cluster.event):"구성 판단"
         const result=row.kind==="gap"?row.gap.lost?"기록 손실":row.gap.recovered?"회복":"관측 공백":event?.kind==="action"?event.action.phase==="started"?"시작":event.action.phase==="completed"?"완료":"실패":event?.kind==="decision"?judgmentLabels[event.decision.state]??"판정 미제공":row.kind==="event"?clusterResult(row.members):"미확인"
         const reason=row.kind==="gap"?liveReason(row.gap.reason):event?.kind==="decision"?liveReason(event.decision.reason):incidentDiagnosis(event?.kind==="cluster"?event.cluster.reason:event?.action.result?.error).reason
-        return <tr key={row.key}><td data-label="최근 KST">{displayTime(row.at,zone)}{row.kind==="event"&&row.count>1&&<details><summary>×{row.count}</summary><Facts items={[["최초 KST",displayTime(row.from,zone)],["최근 KST",displayTime(row.at,zone)]]}/>{row.members.map(item=><button key={item.seq} type="button" onClick={click=>item.kind==="decision"?select("at",item.decision.at,click.currentTarget):select("open",`event:${eventIdentity(item)}`,click.currentTarget)}>{displayTime(item.at,zone)}</button>)}</details>}</td><th scope="row" data-label="대상"><button type="button" onClick={click=>event?.kind==="decision"?select("at",event.decision.at,click.currentTarget):select("open",row.kind==="gap"?`gap:${JSON.stringify([row.gap.scope,row.gap.from])}`:`event:${eventIdentity(event!)}`,click.currentTarget)}>{target}</button></th><td data-label="동작">{operation}{event&&evaluationInjectionMatch(event,active.error?[]:active.data?.items??[])&&<span className="live-injection-tag">주입</span>}</td><td data-label="결과">{result}</td><td data-label="사유">{reason}</td></tr>
+        return <tr key={row.key}><td data-label="최근 KST">{displayTime(row.at,zone)}{row.kind==="event"&&row.count>1&&<details><summary>×{row.count}</summary><Facts items={[["최초 KST",displayTime(row.from,zone)],["최근 KST",displayTime(row.at,zone)]]}/>{row.members.map(item=><button key={eventKey(item)} type="button" onClick={click=>item.kind==="decision"?select("at",item.decision.at,click.currentTarget):select("open",`event:${eventIdentity(item)}`,click.currentTarget)}>{displayTime(item.at,zone)}</button>)}</details>}</td><th scope="row" data-label="대상"><button type="button" onClick={click=>event?.kind==="decision"?select("at",event.decision.at,click.currentTarget):select("open",row.kind==="gap"?`gap:${JSON.stringify([row.gap.scope,row.gap.from])}`:`event:${eventIdentity(event!)}`,click.currentTarget)}>{target}</button></th><td data-label="동작">{operation}{event&&evaluationInjectionMatch(event,active.error?[]:active.data?.items??[])&&<span className="live-injection-tag">주입</span>}</td><td data-label="결과">{result}</td><td data-label="사유">{reason}</td></tr>
       })}
     </tbody></table>
     {!actions.length&&!incidents.length&&<p className="live-muted">진행·사건 없음</p>}
@@ -213,6 +215,7 @@ export function LiveBoardPage() {
     </section>
     <p className="sr-only" aria-live={paused?"off":"polite"} aria-atomic="true">{summary}</p>
     <div className="live-board-grid">{snapshot?<ServiceTable state={state} rows={rows} select={select}/>:<section className="live-services"><h2>서비스 상태</h2><p className="live-empty">서비스 구성 수신 대기</p></section>}<SideRail state={state} select={select} zone={zone} now={clock}/></div>
+    <LivePowerTrend state={state}/>
     <Sheet open={sheetOpen} onOpenChange={value=>{if(!value)select(at?"at":"open",null)}}><SheetContent className="live-stage live-sheet" aria-describedby={undefined} onCloseAutoFocus={event=>{event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else heading.current?.focus()}}><SheetHeader><SheetTitle>{title}</SheetTitle></SheetHeader><div className="live-sheet-body">
       {at?<Evidence key={at} at={at} state={state} zone={zone}/>:<>{open&&<Selection open={open} state={open==="reservations"&&params.get("workload")&&snapshot?{...state,snapshot:scopeSnapshot(snapshot,params.get("workload")!)}:state} select={select} zone={zone} end={end} now={clock}/>} {(open?.startsWith("service:")||evidence)&&<nav className="live-detail-links" aria-label="판단 근거 종류">{([["candidates","구성 후보"],["estimates","성능 추정"],["load","유입 근거"],["capacity","처리 용량"]] as const).map(([kind,label])=><button type="button" key={kind} aria-pressed={evidence===kind} onClick={()=>chooseEvidence(kind)}>{label}</button>)}</nav>}{evidence?<SchedulerEvidence kind={evidence}/>:open?.startsWith("service:")&&snapshot?.decision&&<Evidence at={snapshot.decision.at} state={state} zone={zone}/>}</>}
       {!at&&selectedWorkload&&<Source value={selectedWorkload}/>}

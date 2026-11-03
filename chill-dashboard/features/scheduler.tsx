@@ -18,8 +18,7 @@ import { Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
 import { liveReason, candidatePlans, candidateEvaluation } from "@/lib/live-display"
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
+import { PowerTimeline } from "./power-series"
 
 export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"실행 가능",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
@@ -156,9 +155,8 @@ export function PowerInterval({from,to}:{from:string;to:string}) {
   const data=query.data,measuredEnergy=(value:number|null)=>value==null?"미제공":joules(value),watts=(value:number|null)=>value==null?"미제공":`${value.toLocaleString("ko-KR",{maximumFractionDigits:2})} W`
   const nodes=data?.nodes??[],commonReasons=new Set(data?.reasons??[])
   if(nodes.length>1)for(const reason of nodes[0].reasons??[])if(nodes.every(row=>row.reasons?.includes(reason)))commonReasons.add(reason)
-  return <QueryGate query={query}>{data&&<div className="space-y-4">
+  return <><PowerTimeline from={from} to={to}/><QueryGate query={query}>{data&&<div className="space-y-4">
     <Facts items={[["집계 시작",time(data.from)],["집계 종료",time(data.to)],["전력 범위","노드 벽전력"],["집계",data.complete?"계측 집계 완료":"관측 공백 있음"],["전체 실행 그룹 J",measuredEnergy(data.wholePoolJoules)],["전체 평균 W",watts(data.wholePoolMeanWatts)],["활성 실행 그룹 J",measuredEnergy(data.activePoolJoules)],["활성 평균 W",watts(data.activePoolMeanWatts)],["원본 시각 없는 장치 개",(data.nodes??[]).filter(row=>row.sourceTimestampAbsent).length]]}/>
-    <section aria-label="노드별 평균 전력" className="space-y-2"><h3>노드별 평균 전력 (W)</h3>{nodes.some(row=>row.meanWatts!=null)?<ChartContainer config={{watts:{label:"평균 전력 (W)",color:"var(--chart-2)"}}} className="aspect-auto h-[280px] w-full"><BarChart accessibilityLayer data={nodes.map(row=>({node:row.node.name||row.node.uid,watts:row.meanWatts}))}><CartesianGrid vertical={false}/><XAxis dataKey="node" tickLine={false}/><YAxis unit="W"/><ChartTooltip content={<ChartTooltipContent/>}/><Bar dataKey="watts" fill="var(--color-watts)" isAnimationActive={false}/></BarChart></ChartContainer>:<p>전력 관측 없음</p>}</section>
     {data.nodes?.some(row=>row.sourceTimestampAbsent)&&<StatusBadge tone="warn">수집 시각 기준 · 신선도 미확인</StatusBadge>}
     {commonReasons.size>0&&<div role="status"><h3>측정 공백과 집계 사유</h3><Lines values={Array.from(commonReasons)}/></div>}{data.gapUntil&&<p role="status">{gapNotice(data.gapUntil)}</p>}
     <DataTable data={data.nodes??[]} columns={[
@@ -170,5 +168,5 @@ export function PowerInterval({from,to}:{from:string;to:string}) {
       {key:"coverage",label:"시각 기준·공백",value:row=>{const reasons=row.reasons?.filter(reason=>!commonReasons.has(reason))??[];return <>{row.sourceTimestampAbsent?"수집 시각":"원본 시각"}{reasons.length>0&&<Lines values={reasons}/>}</>}},
     ]}/>{!data.nodes?.length&&<p>기대 장치·계측 범위 미제공</p>}
     <SourceExport filename="chill-operating-power.json" value={{source:"v1/observations/power",conditions:{from,to},result:data}}/><SourceJSON title="정확한 구간의 집계 원본" value={data}/>
-  </div>}</QueryGate>
+  </div>}</QueryGate></>
 }

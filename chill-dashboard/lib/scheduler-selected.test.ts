@@ -26,6 +26,7 @@ test("selected service evidence retains configured percentile, zero prediction, 
     "@/lib/scheduler":scheduler,"@/lib/workload-identity":identity,"@/lib/date-time":dates,
     "@/lib/live-display":liveDisplay,
     "@/components/ui/chart":{},"recharts":{},
+    "./power-series":{PowerTimeline:()=>null},
     "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},"@/lib/capacity":{},"@/lib/labels":{statusLabel:(value:string)=>value},"@/lib/source-export":{},
     "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null,StatusBadge:container},
     "@/components/ui/button":{Button:container},"@/components/screen":{Facts:()=>null},
@@ -61,6 +62,7 @@ test("snapshot deep links freeze the first response and require explicit latest 
     "@/lib/labels":{},"@/lib/capacity":{},"@/lib/date-time":{},"@/lib/workload-identity":{},
     "@/lib/live-display":liveDisplay,
     "@/components/ui/chart":{},"recharts":{},
+    "./power-series":{PowerTimeline:()=>null},
     "@/features/scheduler-profiles":{},"@/features/scheduler-capacity":{},
     "@/components/read-region":{},"@/components/screen":{},"@/components/ui/button":{},
     "@/components/data-table":{},"@/lib/source-export":{},"next/link":{},
@@ -111,6 +113,7 @@ test("power overview preserves server interval aggregates and zero versus unavai
     "@/components/data-table":{DataTable:({data,columns}:{data:unknown[];columns:{key:string;value:(row:unknown)=>ReactNode}[]})=>createElement("table",null,createElement("tbody",null,data.map((row,index)=>createElement("tr",{key:index},columns.map(column=>createElement("td",{key:column.key},column.value(row)))))))},
     "@/components/ui/button":{Button:wrap},"@/components/ui/chart":{ChartContainer:wrap,ChartTooltip:()=>null,ChartTooltipContent:()=>null},
     recharts:{BarChart:wrap,Bar:()=>null,CartesianGrid:()=>null,XAxis:()=>null,YAxis:()=>null},
+    "./power-series":{PowerTimeline:()=>null},
   }
   const exports:Record<string,unknown>={}
   const compiled=transpileModule(readFileSync(new URL("../features/scheduler.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
@@ -122,7 +125,7 @@ test("power overview preserves server interval aggregates and zero versus unavai
   assert.match(html,/0 W/)
   assert.match(html,/미제공/)
   assert.match(html,/관측 공백 있음/)
-  assert.match(html,/노드별 평균 전력/)
+  assert.doesNotMatch(html,/노드별 평균 전력/)
   const request=new URL(calls[0],"https://dashboard.invalid")
   assert.equal(request.searchParams.get("from"),power.from)
   assert.equal(request.searchParams.get("to"),power.to)

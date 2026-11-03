@@ -1,0 +1,66 @@
+import assert from "node:assert/strict"
+import test from "node:test"
+import { readFileSync } from "node:fs"
+import { createRequire } from "node:module"
+import { transpileModule, ModuleKind, JsxEmit } from "typescript"
+import { createElement, type ReactElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import * as powerSeries from "./power-series.ts"
+import { displayTime } from "./live-display.ts"
+import type { LiveMetrics } from "./live.ts"
+
+const require=createRequire(import.meta.url)
+function load(file:string,modules:Record<string,unknown>){
+  const exports:Record<string,(props:Record<string,unknown>)=>ReactElement>={}
+  const code=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")||name.startsWith("./")?{}:require(name)),exports)
+  return exports
+}
+test("rendered power chart retains interval timestamps, breaks nulls and labels measured zero",()=>{
+  const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":{displayTime}})
+  const points=[{from:1000,to:6000,wholeWatts:0,nodes:{}},{from:6000,to:11000,wholeWatts:null,nodes:{}},{from:11000,to:12000,wholeWatts:20,nodes:{}}]
+  const html=renderToStaticMarkup(createElement(chart.PowerTrend,{points}))
+  assert.match(html,/전력 추세/)
+  assert.match(html,/0 W/)
+  assert.equal((html.match(/<polyline/g)??[]).length,2)
+  assert.match(html,/data-from="1000"/)
+  assert.match(html,/data-to="6000"/)
+  assert.match(html,/관측 공백/)
+})
+
+test("power hook seeds bounded recent history on reentry then retains appended live intervals",()=>{
+  const cells:unknown[]=[],effects:(()=>void)[]=[],requests:string[]=[]
+  let cursor=0
+  const now=Date.now(),stamp=(offset:number)=>new Date(now+offset*1000).toISOString()
+  const seed={from:stamp(-900),to:stamp(0),buckets:[{from:stamp(-900),to:stamp(-895),wholePoolMeanWatts:0,activePoolMeanWatts:0,nodes:[]}]}
+  const modules={
+    react:{useState:(initial:unknown)=>{const index=cursor++;if(!(index in cells))cells[index]=typeof initial==="function"?initial():initial;return [cells[index],(value:unknown)=>{cells[index]=typeof value==="function"?value(cells[index]):value} ]},useEffect:(effect:()=>void)=>effects.push(effect)},
+    "@/lib/client":{useChillQuery:(path:string)=>{requests.push(path);return {data:seed}}},
+    "@/lib/power-series":powerSeries,
+  }
+  const hook=load("../features/power-series.tsx",modules).usePowerSeries as unknown as (state:{status:string;metrics:LiveMetrics[]})=>{points:powerSeries.PowerPoint[]}
+  let state={status:"live",metrics:[] as LiveMetrics[]}
+  let value=hook(state)
+  const request=new URL(requests[0],"https://local")
+  assert.equal(request.searchParams.get("bucket"),"5s")
+  assert.equal(Date.parse(request.searchParams.get("to")!)-Date.parse(request.searchParams.get("from")!),900000)
+  assert.equal(value.points[0].wholeWatts,0)
+  const metric:LiveMetrics={type:"metrics",seq:1,at:stamp(1),bucketAt:stamp(0),workloads:{},nodes:{},pool:{wholeWatts:0,activeWatts:0}}
+  state={...state,metrics:[metric]};cursor=0;hook(state);effects.splice(0).forEach(effect=>effect())
+  cursor=0;value=hook({...state,metrics:[]})
+  assert.equal(value.points.at(-1)!.from,Date.parse(metric.bucketAt))
+  assert.equal(value.points.at(-1)!.wholeWatts,0)
+})
+
+test("records power interval renders bucket timeline independently from period summary",()=>{
+  const timeline=()=>null
+  const screen=load("../features/scheduler.tsx",{"./power-series":{PowerTimeline:timeline},"@/lib/client":{useChillQuery:()=>({data:undefined})}})
+  const tree=screen.PowerInterval({from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:15:00Z"})
+  function contains(value:unknown):boolean{
+    if(Array.isArray(value))return value.some(contains)
+    if(!value||typeof value!=="object"||!("props" in value))return false
+    const element=value as {type:unknown;props:{children?:unknown}}
+    return element.type===timeline||contains(element.props.children)
+  }
+  assert.equal(contains(tree),true)
+})
