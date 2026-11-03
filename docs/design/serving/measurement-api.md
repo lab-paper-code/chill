@@ -313,6 +313,10 @@ Query의 DOM reader는 경로와 schema를 함께 구분한다. legacy v1alpha1�
 웹의 셀 상세는 스케줄러 d와 관측 d(B)를 분리하고, 선택 기간의 집계 행은
 Node UID·모델·전력모드·실행 경로·배치·profileID로 연결한다. 이미지가 다르다는
 이유로 행을 숨기지 않는다.
+Query API의 estimate/window/profile/statistics는 `internal/queryapi` 소유 read 타입이다.
+`cmd/chill-query` 구성 루트 한 곳에서 Serving 값을 변환하며 Query 패키지는
+Serving 구현을 import하지 않는다. 모든 수치·null·근거 참조·ns 시각의 JSON 형태를
+변환 회귀로 보존하고 기존 architecture 의존 경계를 완화하지 않는다.
 
 
 ### 4.1 observer와 coherent replacement

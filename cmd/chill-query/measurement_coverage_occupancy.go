@@ -197,7 +197,8 @@ func (p *coverageProjection) addCatalogOccupancy(
 	}
 	for i := range p.base.observedOccupancy {
 		observed := &p.base.observedOccupancy[i]
-		if !occupancyTupleMatches(observed.Node, observed.Model, observed.PowerMode, observed.ExecutionPath,
+		if !occupancyTupleMatches(serving.NodeReference(observed.Node),
+			observed.Model, observed.PowerMode, observed.ExecutionPath,
 			observed.Profile.ProfileID, cell, nodes, current) {
 			continue
 		}
@@ -229,7 +230,7 @@ func (p *coverageProjection) addCatalogOccupancy(
 		provenance := selected.Provenance
 		entry.SchedulerD = &queryapi.SchedulerOccupancy{
 			Source: provenance.Source, Value: provenance.Value, Pairs: provenance.Pairs,
-			Window: provenance.Window, UpdatedAt: provenance.UpdatedAt,
+			Window: (*queryapi.OccupancyMeasurementWindow)(provenance.Window), UpdatedAt: provenance.UpdatedAt,
 		}
 		entries[id] = entry
 	}

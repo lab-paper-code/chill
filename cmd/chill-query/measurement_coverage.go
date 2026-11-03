@@ -49,7 +49,7 @@ type measurementCoverageBase struct {
 	preprocessors     api.PreprocessorList
 	adopted           map[string]bool
 	acceptedOccupancy []serving.DispatchOccupancy // nil is unavailable; empty confirms no selection.
-	observedOccupancy []serving.OccupancyEstimate
+	observedOccupancy []queryapi.OccupancyEstimate
 	checked           map[string]time.Time
 	failures          map[string]error
 }
@@ -257,7 +257,12 @@ func (o *measurementService) readCoverage(
 			}
 			if err == nil && read.Accepted != nil {
 				next.acceptedOccupancy = read.Accepted.DispatchOccupancy
-				next.observedOccupancy = read.Accepted.OccupancyEstimates
+				if read.Accepted.OccupancyEstimates != nil {
+					next.observedOccupancy = make([]queryapi.OccupancyEstimate, len(read.Accepted.OccupancyEstimates))
+					for i := range read.Accepted.OccupancyEstimates {
+						next.observedOccupancy[i] = *queryOccupancyEstimate(&read.Accepted.OccupancyEstimates[i])
+					}
+				}
 			}
 		}
 		results <- sourceResult{coverageCatalogSource, err, at}

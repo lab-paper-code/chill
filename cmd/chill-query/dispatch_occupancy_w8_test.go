@@ -127,7 +127,7 @@ func TestW8CoverageWithoutDOM(t *testing.T) {
 			if tc.change != nil {
 				tc.change(&observed)
 			}
-			base.observedOccupancy = []serving.OccupancyEstimate{observed}
+			base.observedOccupancy = []queryapi.OccupancyEstimate{*queryOccupancyEstimate(&observed)}
 			entry := findCoverageOccupancy(t, base, cell, task)
 			if entry.Request != nil || entry.D != nil || entry.SchedulerD == nil ||
 				entry.SchedulerD.Value != 2000 || entry.Adopted == nil || *entry.Adopted {
@@ -220,5 +220,33 @@ func assertBurstOccupancyWire(
 	}
 	if verdict == measurementVerdictObserved && assessment.Status != queryapi.MeasurementComplete {
 		t.Fatalf("factual Observed record was not Complete: %+v", assessment)
+	}
+}
+
+func TestOccupancyEstimateQueryConversionPreservesJSON(t *testing.T) {
+	const raw = `{"node":{"name":"node","uid":"physical"},"workloadUID":"workload",
+		"model":"model","powerMode":"mode","executionPath":"cpu","runtimeImage":"image","batch":4,
+		"profile":{"profileID":"profile","reference":{"store":"evidence","key":"profile","size":42},
+		"evidence":[{"store":"evidence","key":"raw","size":99}],"meanNanos":123.5},
+		"pairs":9,"batches":10,"completeBatches":8,"requests":40,"completeRequests":32,
+		"rawRows":80,"completeRawRows":64,"enrichedCompleteRawRows":60,"finalRows":40,"completeFinalRows":32,
+		"statistics":{"median":-2.5,"p25":-4,"p75":1,"iqr":5,"p10":-8,"p90":3,"mean":-1,"negativeFraction":0.75},
+		"window":{"start":"2026-11-04T00:00:00.000000001Z","end":"2026-11-04T00:01:00.000000002Z"}}`
+	var estimate serving.OccupancyEstimate
+	if err := json.Unmarshal([]byte(raw), &estimate); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []*serving.OccupancyEstimate{&estimate, nil, {}} {
+		want, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := json.Marshal(queryOccupancyEstimate(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("occupancy conversion changed JSON:\ngot %s\nwant %s", got, want)
+		}
 	}
 }

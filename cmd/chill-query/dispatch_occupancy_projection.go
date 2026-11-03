@@ -10,6 +10,7 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
@@ -85,7 +86,7 @@ func projectBurstOccupancy(
 			input.Observed = record.Verdict == measurementVerdictObserved
 			projection.burst = &record
 			projection.SchemaVersion, projection.Verdict = record.SchemaVersion, record.Verdict
-			projection.ProfileID, projection.Estimate = record.ProfileID, record.Estimate
+			projection.ProfileID, projection.Estimate = record.ProfileID, queryOccupancyEstimate(record.Estimate)
 			if record.Estimate != nil {
 				window := record.Estimate.Window
 				projection.MeasurementWindow = &queryapi.OccupancyMeasurementWindow{Start: window.Start, End: window.End}
@@ -108,4 +109,22 @@ func projectBurstOccupancy(
 	var err error
 	projection.Assessment, err = json.Marshal(queryapi.AssessMeasurement(input))
 	return projection, err
+}
+
+func queryOccupancyEstimate(value *serving.OccupancyEstimate) *queryapi.OccupancyEstimate {
+	if value == nil {
+		return nil
+	}
+	return &queryapi.OccupancyEstimate{
+		Node: queryapi.MeasurementIdentity(value.Node), WorkloadUID: value.WorkloadUID,
+		Model: value.Model, PowerMode: value.PowerMode, ExecutionPath: value.ExecutionPath,
+		RuntimeImage: value.RuntimeImage, Batch: value.Batch, Profile: queryapi.OccupancyProfile(value.Profile),
+		Pairs: value.Pairs, Batches: value.Batches, CompleteBatches: value.CompleteBatches,
+		Requests: value.Requests, CompleteRequests: value.CompleteRequests,
+		RawRows: value.RawRows, CompleteRawRows: value.CompleteRawRows,
+		EnrichedCompleteRawRows: value.EnrichedCompleteRawRows,
+		FinalRows:               value.FinalRows, CompleteFinalRows: value.CompleteFinalRows,
+		Statistics: (*queryapi.OccupancyStatistics)(value.Statistics),
+		Window:     queryapi.OccupancyMeasurementWindow(value.Window),
+	}
 }
