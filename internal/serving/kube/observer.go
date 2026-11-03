@@ -549,6 +549,9 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		probeCtx, cancel := context.WithTimeout(ctx, nativeProbeTimeout)
 		o.mu.Unlock()
 		instance, probeErr := o.native.Probe(probeCtx, spec)
+		if err := probeCtx.Err(); err != nil {
+			probeErr = err
+		}
 		cancel()
 		o.mu.Lock()
 		source := o.sources[string(pod.UID)]
