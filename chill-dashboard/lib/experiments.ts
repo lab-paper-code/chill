@@ -21,6 +21,13 @@ export function decodeExperiments(text:string):{items:Experiment[]} {
   const list=object(parseSchedulerJSON(text))
   return {...list,items:Array.isArray(list.items)?list.items.map(readExperiment):[]}
 }
+export type ExperimentPage = {items:Experiment[];page?:{offset:number;limit:number;total:number;nextOffset?:number}}
+export function decodeExperimentPage(text:string):ExperimentPage {
+  const list=decodeExperiments(text),page=object(object(list).page)
+  if(!Object.hasOwn(list,"page"))return list
+  if(!Number.isSafeInteger(page.offset)||Number(page.offset)<0||!Number.isSafeInteger(page.limit)||Number(page.limit)<1||Number(page.limit)>50||!Number.isSafeInteger(page.total)||Number(page.total)<0||list.items.length>Number(page.limit)||(page.nextOffset!==undefined&&(!Number.isSafeInteger(page.nextOffset)||Number(page.nextOffset)<=Number(page.offset))))throw new Error("실험 목록 페이지 정보 미제공")
+  return {...list,page} as ExperimentPage
+}
 export const object = (value:unknown):Published => value && typeof value === "object" && !Array.isArray(value) ? value as Published : {}
 function readOutcome(value:unknown):ExperimentOutcome|undefined {
   if(!value||typeof value!=="object"||Array.isArray(value))return undefined
@@ -281,10 +288,16 @@ export function commitExperimentSelection(location:Pick<Location,"search">,histo
   history.replaceState(null,"",`/experiments/results?${experimentSelection(location.search,values)}`)
 }
 export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
-  const uid=row.original.workloadUID
-  if(typeof uid!=="string"||!uid)return null
-  const matches=run?.facts?.sloSources?.filter(source=>source.uid===uid)
-  const slo=run?.facts?(matches?.length===1?matches[0].slo:undefined):run?.definition?.workloads.find(w=>w.uid===uid)?.slo
+  const {workloadUID:uid,definitionID,identitySource}=row.original
+  if(typeof uid!=="string"||!uid||typeof definitionID!=="string"||!definitionID)return null
+  const source=object(identitySource)
+  if(typeof source.store!=="string"||typeof source.key!=="string"||!run?.sources.some(item=>item.store===source.store&&item.key===source.key))return null
+  const workloads=run.definition?.workloads.filter(w=>w.uid===uid)
+  const workload=workloads?.length===1?workloads[0]:undefined
+  const definition=object(workload),model=object(definition.model),preprocessor=object(definition.preprocessor)
+  const parts=[definition.uid,definition.generation,model.uid,model.generation,preprocessor.uid,preprocessor.generation]
+  if(parts.some(value=>value===undefined||value===null)||definitionID!==parts.map(String).join("/"))return null
+  const slo=workload?.slo
   return slo?.percentile===95&&(typeof slo.targetLatencyNanos==="number"||typeof slo.targetLatencyNanos==="bigint")?Number(slo.targetLatencyNanos)/1e6:null
 }
 

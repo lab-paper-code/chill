@@ -12,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { EvaluationPermission, EvaluationSubmit } from "@/features/evaluation-request"
 import { object, records, specValue, patchSpec, parseSpec, specJSON, copyAuthorDraft, type Spec, type LoadScenario, type EvidenceInput } from "@/lib/evaluation-author"
 import { parseSchedulerJSON } from "@/lib/scheduler"
+import { decodeExperimentPage, type ExperimentPage } from "@/lib/experiments"
 
 
 export function useUnsavedAuthor(dirty:boolean) {
@@ -137,7 +138,8 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
   const [sourcePublication,setSourcePublication]=useState<{uid:string;name:string}>()
   const [baseline]=useState(()=>specJSON({name:existing?.name??"",spec:initialSpec?copyAuthorDraft({spec:initialSpec}).spec:{}}))
   useUnsavedAuthor(!valid||ready&&specJSON({name,spec})!==baseline)
-  const publications=useChillQuery<{items:{id:string}[]}>("v1/experiments",{enabled:!initialSpec}),publication=useChillQuery<{definition?:{run?:{name?:string};spec?:Spec}}>(`v1/experiments/${encodeURIComponent(source)}`,{enabled:!!source,decoder:parseSchedulerJSON})
+  const {config}=useSession(),[publicationOffsets,setPublicationOffsets]=useState([0])
+  const publications=useChillQuery<ExperimentPage>(`v1/experiments?${new URLSearchParams({offset:String(publicationOffsets.at(-1)??0),limit:String(Math.min(5,config.maxPageSize))})}`,{enabled:!initialSpec,decoder:decodeExperimentPage}),publication=useChillQuery<{definition?:{run?:{name?:string};spec?:Spec}}>(`v1/experiments/${encodeURIComponent(source)}`,{enabled:!!source,decoder:parseSchedulerJSON})
   const template=useChillQuery<{spec:Spec;sources:Spec;sourcePublication?:{uid:string;name:string}}>("v1/evaluations/template",{enabled:false,decoder:parseSchedulerJSON})
   async function loadTemplate() {
     const result=await template.refetch()
@@ -148,7 +150,9 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
     {!ready&&<EvaluationPermission/>}
     <div className="flex justify-end"><AuthorHelp/></div>
     {!initialSpec&&<section className="grid gap-3" aria-label="정의 출처">
-      <AuthorSelect label="게시에서 복사" value={source} onChange={setSource}><option value="">게시 선택</option>{publications.data?.items.map(item=><option key={item.id} value={item.id}>{item.id}</option>)}</AuthorSelect>
+      <AuthorSelect label="게시에서 복사" value={source} onChange={setSource}><option value="">게시 선택</option>{source&&!publications.data?.items.some(item=>item.id===source)&&<option value={source}>{source}</option>}{publications.data?.items.map(item=><option key={item.id} value={item.id}>{item.id}</option>)}</AuthorSelect>
+      {publications.data?.page&&<nav aria-label="복사할 게시 페이지" className="flex gap-2"><Button type="button" variant="outline" disabled={publicationOffsets.length===1||publications.isFetching} onClick={()=>setPublicationOffsets(publicationOffsets.slice(0,-1))}>이전</Button><Button type="button" variant="outline" disabled={publications.data.page.nextOffset===undefined||publications.isFetching} onClick={()=>{const next=publications.data?.page?.nextOffset;if(next!==undefined)setPublicationOffsets([...publicationOffsets,next])}}>다음</Button></nav>}
+      {publications.data&&<table aria-label="복사할 게시 수" className="w-full text-sm tabular-nums"><tbody><tr><th className="text-left font-normal">전체 게시 (개)</th><td className="text-right">{publications.data.page?.total??publications.data.items.length}</td></tr><tr><th className="text-left font-normal">현재 게시 (개)</th><td className="text-right">{publications.data.items.length}</td></tr></tbody></table>}
       <QueryGate query={publications}>{null}</QueryGate>{source&&<QueryGate query={publication}>{null}</QueryGate>}{(template.isFetching||template.error)&&<QueryGate query={template}>{null}</QueryGate>}
       <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={!publication.data?.definition?.spec} onClick={()=>{const definition=publication.data?.definition;if(definition?.spec){setSpec(copyAuthorDraft({spec:definition.spec}).spec);setSources({});setSourcePublication(undefined);setName("");setOrigin(definition.run?.name??"");setReady(true);setValid(true);setVersion(v=>v+1)}}}>게시 복사</Button>
         <Button type="button" variant="outline" disabled={template.isFetching} onClick={()=>void loadTemplate()}>빈 템플릿</Button>{publication.data&&!publication.data.definition?.spec&&<span role="status" className="text-sm">정의 미기록</span>}</div>

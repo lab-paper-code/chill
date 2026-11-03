@@ -42,7 +42,7 @@ test("R18: list facts render without per-item detail requests and absent facts s
   for(const value of ["기록된 실험","고정 구성","control-source","기록 부하"])assert.ok(listHTML.includes(value),value)
   assert.equal(definitionPolicy(run.stages[0],run),"고정 구성")
   const sloRow=experimentRows({...run.stages[0],kpis:{requests:{camera:{workloadUID:"camera"}}}})[0]
-  assert.equal(frozenP95SLO(sloRow,run),50)
+  assert.equal(frozenP95SLO(sloRow,run),null)
   const absent=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run:{...run,facts:undefined}}))
   assert.match(absent,/미기록/)
   const absentValues=Array.from(absent.matchAll(/<td\b[^>]*>(.*?)<\/td>/gs),match=>match[1])
@@ -105,7 +105,7 @@ function definitionFixture(stages:ExperimentStage[],pairs:DeclaredPair[]=[]) {
       comparisons:pairs.map(([left,right])=>({left:{stageID:left},right:{stageID:right},reason:`${left}와 ${right}의 선언된 비교`})),
     },
     loadScenarios:[{name:"camera-load",uid:"camera-load-uid",spec:{workloads:[workload],parts:[{id:"steady",durationSeconds:60,rates:{camera:10}}],arrivalDistribution:{camera:"poisson"},seedRef:{...evidenceRef,key:"frozen/seed.json"},payloadManifestRef:{...evidenceRef,key:"frozen/payload.json"}}}],
-    workloads:[{...workload,slo:{percentile:95,targetLatencyNanos:50000000},model:"image-classifier",preprocessor:"image-preprocessor",dataset:"evaluation-images"}],
+    workloads:[{...workload,slo:{percentile:95,targetLatencyNanos:50000000},model:{uid:"model",generation:2},preprocessor:{uid:"preprocessor",generation:3},dataset:"evaluation-images"}],
   }
 }
 
@@ -113,7 +113,7 @@ function definedRun(stages:ExperimentStage[],pairs:DeclaredPair[]=[]):Experiment
   return decodeExperiment(JSON.stringify({
     schemaVersion:"serving-experiment.v1alpha1",id:"evaluation-fixture-uid",
     from:"2026-10-30T00:00:00Z",to:"2026-10-30T01:00:00Z",status:"FAIL",stages,
-    sources:[{store:"evaluation-archive",key:"runs/evaluation-fixture-uid/summary.json"}],
+    sources:[{store:"evaluation-archive",key:"runs/evaluation-fixture-uid/summary.json"},evidenceRef],
     definition:definitionFixture(stages,pairs),
   }))
 }
@@ -123,6 +123,26 @@ function withDefinition(run:Experiment,change:(definition:EvaluationDefinition)=
   change(definition)
   return decodeExperiment(JSON.stringify({...run,definition}))
 }
+test("R19: published observed identity joins only its frozen p95 definition and evidence source",()=>{
+  const source={store:"store",key:"experiments/run/run/prepare/input-snapshot.json"}
+  const definition=definitionFixture([stage])
+  definition.workloads[0]={...definition.workloads[0],uid:"historical",generation:1,model:{uid:"model",generation:2},preprocessor:{uid:"preprocessor",generation:3},slo:{percentile:95,targetLatencyNanos:1000000000}}
+  const run=decodeExperiment(JSON.stringify({...recorded.publication,definition,sources:[source]}))
+  const published={workloadUID:"historical",definitionID:"historical/1/model/2/preprocessor/3",identitySource:source,offered:1,deadlineSuccess:0,actualGatewayIdentities:1,missingReasons:{identity:null}}
+  const applied=(value:Record<string,unknown>,owner=run)=>frozenP95SLO(experimentRows({...stage,kpis:{requests:{service:value}}})[0],owner)
+  assert.equal(applied(published),1000)
+  assert.equal(applied({...published,workloadUID:"wrong"}),null)
+  assert.equal(applied({...published,definitionID:"historical/2/model/2/preprocessor/3"}),null)
+  assert.equal(applied({...published,identitySource:{...source,key:"different.json"}}),null)
+  assert.equal(applied({...published,identitySource:{...source,store:"other"}}),null)
+  assert.equal(applied({...published,workloadUID:null,definitionID:null,identitySource:null}),null)
+  assert.equal(applied(published,withDefinition(run,d=>d.workloads[0].slo.percentile=90)),null)
+  for(const field of ["workloadUID","definitionID","identitySource"]) {
+    assert.equal(applied({...published,[field]:null}),null)
+    const missing:Record<string,unknown>={...published};delete missing[field]
+    assert.equal(applied(missing),null)
+  }
+})
 test("interval selection distinguishes historical left publications with identical stage IDs",()=>{
   const local=definedRun([{...stage,id:"x"},{...stage,id:"y"}],[["x","y"]])
   const historical={...definedRun([{...stage,id:"x"}]),id:"historical"}
@@ -321,7 +341,7 @@ test("same-load validity requires frozen scenario UID and the complete load gene
 })
 
 test("historical comparisons join publication ID and stage ID and carry both definitions through every projection",()=>{
-  const make=(id:string,energy:number,p95:number):ExperimentStage=>({id,from:stage.from,to:stage.to,kpis:{wholePoolJoules:energy,measurementRules:{population:"offered"},requests:{camera:{workloadUID:"camera",definitionID:"camera-v1",offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:p95*1e6}}}}})
+  const make=(id:string,energy:number,p95:number):ExperimentStage=>({id,from:stage.from,to:stage.to,kpis:{wholePoolJoules:energy,measurementRules:{population:"offered"},requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/2/preprocessor/3",identitySource:evidenceRef,offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:p95*1e6}}}}})
   const historical=withDefinition({...definedRun([make("baseline",100,10)]),id:"control-222-223-first-20261030"},d=>{
     d.run={name:"same-display-name",uid:"different-run-uid"}
     d.workloads[0].slo.targetLatencyNanos=80000000
@@ -711,8 +731,8 @@ test("R5: direct A/B direction names the actual policy in both orders without cl
 test("p95 SLO joins the frozen workload UID, never a name, legacy UID or retained KPI SLO",()=>{
   const run=definedRun([{...stage,id:"baseline"}])
   const row=(original:Record<string,unknown>,name="camera")=>experimentRows({...stage,kpis:{workloads:{[name]:original}}})[0]
-  assert.equal(frozenP95SLO(row({workloadUID:"camera",measurementSLO:{percentile:95,targetLatencyNanos:999999999}}),run),50)
-  assert.equal(frozenP95SLO(row({workloadUID:"camera"},"renamed-camera"),run),50)
+  assert.equal(frozenP95SLO(row({workloadUID:"camera",measurementSLO:{percentile:95,targetLatencyNanos:999999999}}),run),null)
+  assert.equal(frozenP95SLO(row({workloadUID:"camera"},"renamed-camera"),run),null)
   assert.equal(frozenP95SLO(row({uid:"camera"}),run),null)
   assert.equal(frozenP95SLO(row({measurementSLO:{percentile:95,targetLatencyNanos:50000000}}),run),null)
   assert.equal(frozenP95SLO(row({workloadUID:"replacement-camera"}),run),null)
@@ -920,7 +940,7 @@ test("duration icon ignores rounding differences and appears only beyond one per
 })
 
 test("selected-service chart and heatmap share ordered intervals and frozen targets",()=>{
-  const make=(id:string,minute:number,energy:number,p95:number|null):ExperimentStage=>({id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`,kpis:{wholePoolJoules:energy,requests:{camera:{workloadUID:"camera",offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
+  const make=(id:string,minute:number,energy:number,p95:number|null):ExperimentStage=>({id,from:`2026-10-30T00:0${minute}:00Z`,to:`2026-10-30T00:0${minute+1}:00Z`,kpis:{wholePoolJoules:energy,requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/2/preprocessor/3",identitySource:evidenceRef,offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}}})
   const later=make("candidate-later",4,120,20),fixedLater=make("baseline-later",5,100,10),early=make("candidate-early",0,90,10),fixedEarly=make("baseline-early",1,100,null)
   const run=definedRun([later,fixedLater,early,fixedEarly],[["candidate-later","baseline-later"],["candidate-early","baseline-early"]])
   const rows=experimentHeatmap(run),chart=experimentChartData(run,"camera")
@@ -1145,7 +1165,7 @@ test("R18 review: interval Sheet renders each stage policy and service SLO only 
   const shared={"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{},"@/components/ui/button":{Button:element("button")},"next/link":{__esModule:true,default:element("a")}}
   const conclusion=load("../features/experiments-conclusion.tsx",shared)
   const features=load("../features/experiments.tsx",{...shared,"next/navigation":{},"lucide-react":icons,"recharts":{},"@/components/read-region":{SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{},"@/components/ui/sheet":Object.fromEntries(["Sheet","SheetContent","SheetHeader","SheetTitle"].map(name=>[name,element("div")])),"@/features/experiments-conclusion":conclusion,"@/features/scheduler-evidence":{SchedulerIntervalEvents:()=>null},"@/features/evaluation-request":{}},"\nexports.IntervalDrawer=IntervalDrawer;")
-  const run=definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{workloadUID:"camera",offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}}])
+  const run=definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/2/preprocessor/3",identitySource:evidenceRef,offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}}])
   const Drawer=features.IntervalDrawer as ComponentType<{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow;service:string;onClose:()=>void;restoreFocus:()=>void}>
   const markup=renderToStaticMarkup(createElement(Drawer,{run,runs:[run],row:experimentHeatmap(run)[0],service:"",onClose:()=>{},restoreFocus:()=>{}}))
   assert.equal((markup.match(/자동 운영/g)??[]).length,1)

@@ -10,6 +10,7 @@ import * as scheduler from "./scheduler.ts"
 import * as activeHelpers from "./evaluation-active.ts"
 import * as experimentHelpers from "./experiments.ts"
 import * as measurementHelpers from "./measurements.ts"
+import * as icons from "lucide-react"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -40,6 +41,66 @@ function load(path:string,modules:Record<string,unknown>):Record<string,(props:R
 }
 const containers={Dialog:"dialog",DialogContent:"div",DialogHeader:"header",DialogTitle:"h2",DialogDescription:"p"}
 const primitives={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"div"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/dialog":containers,"@/components/ui/sheet":{Sheet:"aside",SheetContent:"div",SheetHeader:"header",SheetTitle:"h2"},"@/lib/evaluation-author":author,"@/lib/evaluation-request":request,"@/lib/scheduler":scheduler}
+test("R19: publication copy selector pages without losing its selected publication",()=>{
+  const runner=hookRunner(),calls:string[]=[]
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}}, "@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
+    calls.push(path)
+    const offset=new URLSearchParams(path.split("?")[1]).get("offset")
+    return {data:path.startsWith("v1/experiments?")?{items:[{id:offset==="5"?"second":"first"}],page:{offset:Number(offset),limit:5,total:6,...(offset==="0"?{nextOffset:5}:{})}}:undefined}
+  }},"@/features/evaluation-request":{}}
+  const {EvaluationAuthor}=load("../features/evaluation-author.tsx",modules)
+  let tree=elements(runner.render(EvaluationAuthor))
+  assert.ok(calls.includes("v1/experiments?offset=0&limit=5"))
+  const picker=tree.find(item=>item.props.label==="게시에서 복사")!
+  ;(picker.props.onChange as (value:string)=>void)("first")
+  tree=elements(runner.render(EvaluationAuthor))
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="다음")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(EvaluationAuthor))
+  assert.ok(calls.includes("v1/experiments?offset=5&limit=5"))
+  const selected=tree.find(item=>item.props.label==="게시에서 복사")!
+  assert.equal(selected.props.value,"first")
+  assert.ok(elements(selected).some(item=>item.type==="option"&&item.props.value==="first"))
+  assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="다음")?.props.disabled,true)
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="이전")!.props.onClick as ()=>void)()
+  runner.render(EvaluationAuthor)
+  assert.equal(calls.filter(path=>path==="v1/experiments").length,0)
+})
+
+test("R19: experiment results request pages and navigate without catalog hydration",()=>{
+  const runner=hookRunner(),calls:string[]=[]
+  const run={schemaVersion:"serving-experiment.v1alpha1",id:"first",from:"2026-11-03T00:00:00Z",to:"2026-11-03T00:01:00Z",status:"FAIL",stages:[],sources:[]}
+  const modules={...primitives,"lucide-react":icons,react:runner.react,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
+    calls.push(path)
+    const offset=new URLSearchParams(path.split("?")[1]).get("offset")
+    return {data:path.startsWith("v1/experiments?")?{items:[{...run,id:offset==="5"?"second":"first"}],page:{offset:Number(offset),limit:5,total:6,...(offset==="0"?{nextOffset:5}:{})}}:undefined}
+  }},"@/features/experiments-conclusion":{useHistoricalExperiments:(selected:unknown[])=>({runs:selected,pending:false}),ExperimentResultRow:"result"}}
+  const {ExperimentsPage}=load("../features/experiments.tsx",modules)
+  let tree=elements(runner.render(ExperimentsPage))
+  assert.ok(calls.includes("v1/experiments?offset=0&limit=5"))
+  assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="이전")?.props.disabled,true)
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="다음")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(ExperimentsPage))
+  assert.ok(calls.includes("v1/experiments?offset=5&limit=5"))
+  assert.equal(experimentHelpers.object(tree.find(item=>item.type==="result")?.props.run).id,"second")
+  assert.equal(tree.find(item=>item.type==="button"&&item.props.children==="다음")?.props.disabled,true)
+  ;(tree.find(item=>item.type==="button"&&item.props.children==="이전")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(ExperimentsPage))
+  assert.equal(experimentHelpers.object(tree.find(item=>item.type==="result")?.props.run).id,"first")
+  assert.equal(calls.filter(path=>path==="v1/experiments").length,0)
+  assert.ok(calls.every(path=>path.includes("?")||path==="v1/experiments/_"))
+})
+test("R19: old-server full catalogs stay full and do not invent pagination",()=>{
+  const data=experimentHelpers.decodeExperimentPage(JSON.stringify({items:[{id:"first"},{id:"second"}]}))
+  assert.equal(data.items.length,2)
+  assert.equal(Object.hasOwn(data,"page"),false)
+  const runner=hookRunner()
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data})},"@/features/evaluation-request":{}}
+  const {EvaluationAuthor}=load("../features/evaluation-author.tsx",modules)
+  const tree=elements(runner.render(EvaluationAuthor))
+  const picker=tree.find(item=>item.props.label==="게시에서 복사")!
+  assert.deepEqual(elements(picker).filter(item=>item.type==="option"&&item.props.value).map(item=>item.props.value),["first","second"])
+  assert.ok(!tree.some(item=>item.type==="nav"))
+})
 test("load PUT denial preserves operator permission status and keeps the draft editable",async()=>{
   class ApiError extends Error {
     status:number
@@ -259,7 +320,7 @@ test("R17b: result detail keeps outcome independent and labels every mobile comp
   const runner=hookRunner(),params=new URLSearchParams("a=publication")
   const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:60,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:1000000}}}}})
   let run:Record<string,unknown>={id:"publication",stages:[],outcome:{execution:{status:"Failed"},measurement:{verdict:"NOT_EVALUATED"},cleanup:{status:"Complete"}}}
-  const modules={...primitives,react:{...runner.react,useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useChillQuery:()=>({data:run})},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
+  const modules={...primitives,react:{...runner.react,useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
   const {ExperimentsPage}=load("../features/experiments.tsx",modules)
   assert.ok(elements(runner.render(ExperimentsPage)).some(element=>element.type==="outcome"))
   run={...run,stages:[stage("candidate"),stage("baseline")],comparisons:[{left:{stageID:"candidate"},right:{stageID:"baseline"},reason:"저장된 비교"}]}
@@ -271,7 +332,7 @@ test("R17b: result detail keeps outcome independent and labels every mobile comp
 })
 
 test("R17b: template missing inputs stay visible while copied question text is folded as original",async()=>{
-  const runner=hookRunner(),modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useChillQuery:()=>({data:{items:[]},refetch:async()=>({data:{spec:{question:""},sources:{target:"none",harness:"latestPublication"},sourcePublication:{uid:"published-uid",name:"published-name"}}})})},"@/features/evaluation-request":{EvaluationPermission:"permission",EvaluationSubmit:"submit"}}
+  const runner=hookRunner(),modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:{items:[],page:{offset:0,limit:25,total:0}},refetch:async()=>({data:{spec:{question:""},sources:{target:"none",harness:"latestPublication"},sourcePublication:{uid:"published-uid",name:"published-name"}}})})},"@/features/evaluation-request":{EvaluationPermission:"permission",EvaluationSubmit:"submit"}}
   const {EvaluationAuthor}=load("../features/evaluation-author.tsx",modules)
   let tree=elements(runner.render(EvaluationAuthor))
   await (tree.find(element=>element.type==="button"&&element.props.children==="빈 템플릿")!.props.onClick as ()=>Promise<void>)()
