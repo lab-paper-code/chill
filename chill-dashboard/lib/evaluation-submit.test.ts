@@ -50,7 +50,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
     new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)
     function render() {
       cursor=0;mutationIndex=0;buttons.clear()
-      return renderToStaticMarkup(exports.EvaluationSubmit!({name:"run",spec,existing:{name:"run",uid:"old"},onSpecChange:()=>{},onSubmitted:value=>{submitted=value.uid}}))
+      return renderToStaticMarkup(exports.EvaluationSubmit!({name:"run",spec,existing:{name:"run",uid:"old"},onSubmitted:value=>{submitted=value.uid}}))
     }
     render();(buttons.get("사전 점검")!.onClick as ()=>void)();render()
     await (buttons.get("수정 제출")!.onClick as ()=>Promise<void>)()
@@ -277,7 +277,7 @@ test("execution acceptance links to the actual response UID and never submits af
     react:runner.react,"@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>({refetch:async()=>({})})},
   })
   let spec={question:"first"}
-  const render=()=>{mutationIndex=0;return elements(runner.render(EvaluationSubmit,{name:"draft",spec,onSpecChange:()=>{},onSubmitted:(value:unknown)=>accepted.push(value)}))}
+  const render=()=>{mutationIndex=0;return elements(runner.render(EvaluationSubmit,{name:"draft",spec,onSubmitted:(value:unknown)=>accepted.push(value)}))}
   let tree=render()
   assert.equal(tree.find(item=>item.props.children==="실험 시작")?.props.disabled,true)
   ;(tree.find(item=>item.props.children==="사전 점검")!.props.onClick as ()=>void)()

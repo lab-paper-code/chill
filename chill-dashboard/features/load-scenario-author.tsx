@@ -25,10 +25,10 @@ function PartsPreview({spec}:{spec:Spec}) {
   const parts=records(spec.parts),workloads=records(spec.workloads),total=parts.reduce((sum,part)=>sum+(typeof part.durationSeconds==="number"&&part.durationSeconds>0?part.durationSeconds:0),0)
   if(parts.length&&workloads.length&&parts.every(part=>workloads.every(workload=>object(part.rates)[String(workload.name)]===0)))return <div className="min-w-0 overflow-x-auto"><table aria-label="무부하 구간" className="w-full text-left text-sm tabular-nums"><thead><tr><th>구간</th><th>길이 (s)</th><th>발행 요청률 (요청/s)</th></tr></thead><tbody>{parts.map((part,index)=><tr key={index} className="border-t"><th className="break-all py-2 font-normal">{String(part.id)}</th><td>{String(part.durationSeconds??"미기록")}</td><td>0</td></tr>)}</tbody></table></div>
   return <div className="grid gap-3" aria-label="구간 길이·요청률 미리보기">{workloads.map((workload,i)=>{
-    const name=String(workload.name??""),max=Math.max(0,...parts.map(part=>typeof object(part.rates)[name]==="number"?Number(object(part.rates)[name]):0)),alphaMax=Math.max(0,...parts.map(part=>typeof object(part.alpha)[name]==="number"?Number(object(part.alpha)[name]):0))
-    return <div key={i} className="grid gap-1"><span className="text-sm">{name}</span><div className="flex h-20 items-end gap-px border-b" role="img" aria-label={`${name} · 구간 폭: s, 높이: 요청/s 또는 α`}>{parts.map((part,index)=>{
-      const alpha=part.alpha!==undefined,rawValue=object(alpha?part.alpha:part.rates)[name],value=typeof rawValue==="number"?rawValue:undefined,duration=typeof part.durationSeconds==="number"&&part.durationSeconds>0?part.durationSeconds:0,ceiling=alpha?alphaMax:max
-      return <div key={index} className="flex h-full items-end" style={{width:total?`${duration/total*100}%`:0}}><div className={`w-full ${alpha?"border border-primary bg-primary/20":"bg-primary"}`} style={{height:value!==undefined&&ceiling>0?`${Math.max(0,value/ceiling)*100}%`:0}} title={`${String(part.id)} · ${part.durationSeconds??"미기록"} s · ${value??"미기록"} ${alpha?"α":"요청/s"}`}/></div>
+    const name=String(workload.name??""),max=Math.max(0,...parts.map(part=>typeof object(part.rates)[name]==="number"?Number(object(part.rates)[name]):0))
+    return <div key={i} className="grid gap-1"><span className="text-sm">{name}</span><div className="flex h-20 items-end gap-px border-b" role="img" aria-label={`${name} · 구간 폭: s, 높이: 절대 요청률 req/s`}>{parts.map((part,index)=>{
+      const rawValue=object(part.rates)[name],value=typeof rawValue==="number"?rawValue:undefined,duration=typeof part.durationSeconds==="number"&&part.durationSeconds>0?part.durationSeconds:0
+      return <div key={index} className="flex h-full items-end" style={{width:total?`${duration/total*100}%`:0}}><div className="w-full bg-primary" style={{height:value!==undefined&&max>0?`${Math.max(0,value/max)*100}%`:0}} title={`${String(part.id)} · ${part.durationSeconds??"미기록"} s · ${value??"미기록"} req/s`}/></div>
     })}</div></div>
   })}</div>
 }
@@ -39,10 +39,9 @@ function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(sp
   return <div className="grid min-w-0 gap-4"><div className="flex flex-wrap gap-2" role="group" aria-label="부하 편집 항목">{[["parts","구간"],["workloads","서비스·도착 분포"],["inputs","입력 객체"],["json","JSON"]].map(([key,label])=><Button key={key} type="button" disabled={invalid&&key!==tab} aria-pressed={tab===key} variant={tab===key?"default":"outline"} onClick={()=>setTab(key)}>{label}</Button>)}</div>
     {tab==="json"&&<AuthorJSON label="부하 정의 원문" value={spec} onChange={onChange} onValidityChange={valid=>{setInvalid(!valid);onValidityChange(valid)}}/>}
     {tab==="parts"&&<><PartsPreview spec={spec}/>{parts.map((part,index)=>{
-      const mode=part.alpha!==undefined?"alpha":"rates"
       return <section key={index} className="grid min-w-0 gap-3 rounded border p-3"><Button type="button" variant="ghost" className="min-h-11 justify-start" aria-expanded={index===Math.min(selectedPart,parts.length-1)} onClick={()=>setSelectedPart(index)}>{String(part.id||`구간 ${index+1}`)} · {String(part.durationSeconds??"미기록")} s</Button>{index===Math.min(selectedPart,parts.length-1)&&<>
-        <div className="grid min-w-0 gap-3 md:grid-cols-3"><AuthorField label="구간 이름" spec={spec} path={["parts",index,"id"]} onChange={onChange}/><AuthorField label="길이 (s)" spec={spec} path={["parts",index,"durationSeconds"]} numeric onChange={onChange}/><AuthorSelect label="부하 단위" value={mode} onChange={value=>{const next={...part,[value]:structuredClone(object(part[mode]))};delete next[value==="alpha"?"rates":"alpha"];onChange(patchSpec(spec,["parts",index],next))}}><option value="rates">요청/s</option><option value="alpha">α</option></AuthorSelect></div>
-        <div className="grid min-w-0 gap-3 md:grid-cols-3">{workloads.map((w,i)=><AuthorField key={i} label={`${String(w.name)} (${mode==="rates"?"요청/s":"α"})`} spec={spec} path={["parts",index,mode,String(w.name)]} numeric onChange={onChange}/>)}</div>
+        <div className="grid min-w-0 gap-3 md:grid-cols-2"><AuthorField label="구간 이름" spec={spec} path={["parts",index,"id"]} onChange={onChange}/><AuthorField label="길이 (s)" spec={spec} path={["parts",index,"durationSeconds"]} numeric onChange={onChange}/></div>
+        <div className="grid min-w-0 gap-3 md:grid-cols-3">{workloads.map((w,i)=><AuthorField key={i} label={`${String(w.name)} (req/s)`} spec={spec} path={["parts",index,"rates",String(w.name)]} numeric onChange={onChange}/>)}</div>
         <Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["parts"],parts.filter((_,i)=>i!==index)))}>구간 삭제</Button>
       </>}</section>
     })}<Button type="button" variant="outline" onClick={()=>{setSelectedPart(parts.length);onChange(patchSpec(spec,["parts"],[...parts,{id:"",rates:{}}]))}}>구간 추가</Button></>}
@@ -52,7 +51,7 @@ function LoadSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(sp
       <Button type="button" variant="outline" onClick={()=>onChange(removeLoadWorkload(spec,index))}>서비스 삭제</Button>
       <EvidencePicker label={`${String(w.name)} 요청 시각 입력`} value={object(spec.traceRefs)[String(w.name)]} onChange={value=>onChange(patchSpec(spec,["traceRefs",String(w.name)],value))}/>
     </fieldset>)}<Button type="button" variant="outline" onClick={()=>onChange(patchSpec(spec,["workloads"],[...workloads,{name:"",uid:""}]))}>서비스 추가</Button></>}
-    {tab==="inputs"&&[["seedRef","난수"],["payloadManifestRef","입력 번들"],["rateBasisRef","요청률 기준"],["kappaRef","분배 계수"]].map(([key,label])=><EvidencePicker key={key} label={label} value={spec[key]} onChange={value=>onChange(patchSpec(spec,[key],value))}/>)}
+    {tab==="inputs"&&[["seedRef","난수"],["payloadManifestRef","입력 번들"]].map(([key,label])=><EvidencePicker key={key} label={label} value={spec[key]} onChange={value=>onChange(patchSpec(spec,[key],value))}/>)}
   </div>
 }
 export function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadScenario;editing:boolean;onSaved:()=>Promise<unknown>;onConfirmed?:(value:{name:string;uid:string})=>void}) {

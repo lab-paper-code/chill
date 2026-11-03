@@ -9,10 +9,10 @@ import { BrandMark } from "@/components/brand"
 
 // Every screen belongs to exactly one section by its longest path prefix.
 export const navigation = [
-  {title:"운영",url:"/",icon:BrainCircuit,prefixes:["/operations","/scheduler/candidates","/scheduler/estimates","/scheduler/load","/scheduler/capacity","/resources","/pools"]},
+  {title:"운영",scope:"CHILL 자율 제어",url:"/",icon:BrainCircuit,prefixes:["/operations","/scheduler/candidates","/scheduler/estimates","/scheduler/load","/scheduler/capacity","/resources","/pools"]},
   {title:"서비스",url:"/workloads",icon:Layers,prefixes:["/workloads"]},
   {title:"측정",url:"/measurements",icon:Ruler,prefixes:["/measurements","/scheduler/profiles"]},
-  {title:"실험",url:"/experiments",icon:FlaskConical,prefixes:["/experiments","/evaluations"]},
+  {title:"실험",scope:"외부 평가",url:"/experiments",icon:FlaskConical,prefixes:["/experiments","/evaluations"]},
   {title:"기록",url:"/records",icon:History,prefixes:["/records","/observations","/changes","/transitions","/scheduler/history","/scheduler/power","/scheduler/compare"]},
   {title:"설정",url:"/settings",icon:SlidersHorizontal,prefixes:["/settings","/models","/preprocessors","/datasets","/configuration"]},
 ]
@@ -30,7 +30,7 @@ export function AppSidebar({...props}:React.ComponentProps<typeof Sidebar>) {
   const {setOpenMobile} = useSidebar()
   function menuItem(item:typeof navigation[number]) {
     const active=item===current
-    return <SidebarMenuItem key={item.url} className={item.url==="/settings"?"mt-6 border-t pt-3":undefined}><SidebarMenuButton asChild isActive={active} className="h-11 gap-3 text-base data-[active=true]:bg-card data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:shadow-[inset_3px_0_0_var(--primary)] dark:data-[active=true]:bg-sidebar-accent"><Link href={item.url} aria-current={active?"page":undefined} onClick={()=>setOpenMobile(false)}><item.icon/><span>{item.title}</span></Link></SidebarMenuButton></SidebarMenuItem>
+    return <SidebarMenuItem key={item.url} className={item.url==="/settings"?"mt-6 border-t pt-3":undefined}><SidebarMenuButton asChild isActive={active} className="h-auto min-h-11 gap-3 py-2 text-base data-[active=true]:bg-card data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:shadow-[inset_3px_0_0_var(--primary)] dark:data-[active=true]:bg-sidebar-accent"><Link href={item.url} aria-current={active?"page":undefined} onClick={()=>setOpenMobile(false)}><item.icon/><span className="min-w-0"><span className="block">{item.title}</span>{item.scope&&<span className="block text-xs font-normal text-muted-foreground">{item.scope}</span>}</span></Link></SidebarMenuButton></SidebarMenuItem>
   }
   return <Sidebar collapsible="offcanvas" {...props}>
     <SidebarHeader className="px-3 pt-4"><Link href="/" onClick={() => setOpenMobile(false)} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-lg font-bold tracking-tight"><BrandMark className="size-6 text-primary" />CHILL</Link></SidebarHeader>

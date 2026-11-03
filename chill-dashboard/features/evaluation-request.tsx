@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
-import { evaluationActions, evaluationAdoptDigests, evaluationCanSubmit, evaluationDigestChanges, evaluationOperation, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec, type EvaluationSpec } from "@/lib/evaluation-request"
+import { evaluationActions, evaluationCanSubmit, evaluationOperation, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec, type EvaluationSpec } from "@/lib/evaluation-request"
 import { decodeExperiment, experimentPath, type Experiment, type OutcomeAxis } from "@/lib/experiments"
 import { evaluationReplacement } from "@/lib/evaluation-author"
 import { formatMeasurementTime } from "@/lib/measurements"
@@ -40,15 +40,13 @@ export function EvaluationPermission({denied=false}:{denied?:boolean}) {
   return <dl aria-label="실험 작업 권한" className="flex flex-wrap gap-x-4 gap-y-1 text-xs"><div className="flex gap-2"><dt>필요 권한</dt><dd>평가 운영자</dd></div><div className="flex gap-2"><dt>현재 권한</dt><dd className={denied?"text-destructive":"text-muted-foreground"}>{denied?"권한 없음":"미확인"}</dd></div></dl>
 }
 
-export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,onSpecChange}:{name:string;spec:EvaluationSpec;disabled?:boolean;existing?:Created;onSubmitted?:(value:Created)=>void;onSpecChange:(spec:EvaluationSpec)=>void}) {
+export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}:{name:string;spec:EvaluationSpec;disabled?:boolean;existing?:Created;onSubmitted?:(value:Created)=>void}) {
   const pre=useChillMutation(),send=useChillMutation(),cache=useQueryClient()
-  const [checkedBody,setCheckedBody]=React.useState(""),[unknown,setUnknown]=React.useState(false),[selected,setSelected]=React.useState<string[]>([]),[created,setCreated]=React.useState<Created|null>(null)
-  const [images,setImages]=React.useState<Record<string,string>>({})
+  const [checkedBody,setCheckedBody]=React.useState(""),[unknown,setUnknown]=React.useState(false),[created,setCreated]=React.useState<Created|null>(null)
   const [replacement,setReplacement]=React.useState<"unchanged"|"deleted"|"unknown"|"blocked"|null>(null)
   const [attempt,setAttempt]=React.useState<{name:string;spec:EvaluationSpec}|null>(null)
   const body=encode({name,spec}),answer=checkedBody===body?evaluationPreflight(pre.data?.data):null
   const lookup=useChillQuery<Run>(`v1/evaluations/${encodeURIComponent((unknown?attempt?.name:name)||"_")}`,{enabled:false,decoder:parseSchedulerJSON})
-  const changes=evaluationDigestChanges(spec,answer?.liveTarget)
   const unsupported=answer?.liveTarget!==undefined&&!Array.isArray(answer.liveTarget)
   const confirmed=unknown&&attempt&&lookup.data?.name===attempt.name&&!!lookup.data.uid&&evaluationSameSpec(lookup.data.spec,attempt.spec)&&(!existing||lookup.data.uid!==existing.uid)
   const busy=pre.isPending||send.isPending
@@ -69,7 +67,7 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,
   }
   function verify() {
     if(disabled||busy||unknown||created)return
-    setCheckedBody(body);setSelected([]);setImages({})
+    setCheckedBody(body)
     pre.mutate({path:"v1/evaluations/preflight",method:"POST",body})
   }
   async function submit() {
@@ -90,7 +88,6 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted,
   }
   return <div className="space-y-3">
     {answer&&<table className="w-full text-left text-sm"><thead><tr><th>검사</th><th>상태</th><th>사유</th></tr></thead><tbody>{answer.checks.map((check,index)=><tr key={`${check.id}/${index}`} className="border-t"><th className="py-2 font-normal">{check.id}</th><td>{check.passed?"통과":"실패"}</td><td>{check.reason??"미기록"}</td></tr>)}</tbody></table>}
-    {!!changes.length&&<div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="text-left">이미지 digest 차이</caption><thead><tr><th>반영</th><th>구성요소</th><th>정의</th><th>현재 imageID</th></tr></thead><tbody>{changes.map(change=><tr key={change.name} className="border-t"><td><input type="checkbox" aria-label={`${change.name} digest 반영`} disabled={!change.images.length} checked={selected.includes(change.name)} onChange={event=>setSelected(values=>event.target.checked?[...values,change.name]:values.filter(name=>name!==change.name))}/></td><th className="p-2 font-normal">{change.name}</th><td className="max-w-60 break-all p-2">{change.before}</td><td className="max-w-60 break-all p-2">{change.images.length>1?<select className="max-w-60 rounded border bg-background p-2" aria-label={`${change.name} imageID 선택`} value={images[change.name]??""} onChange={event=>setImages(values=>({...values,[change.name]:event.target.value}))}><option value="">선택</option>{change.images.map(image=><option key={image} value={image}>{image}</option>)}</select>:change.after||"미관측"}</td></tr>)}</tbody></table><Button variant="outline" disabled={!selected.length||busy||unknown||selected.some(name=>{const change=changes.find(change=>change.name===name);return !change?.after&&!images[name]})} onClick={()=>{onSpecChange(evaluationAdoptDigests(spec,changes.map(change=>({...change,after:images[change.name]??change.after})),selected));setSelected([])}}>선택 반영</Button></div>}
     {unsupported&&<><strong role="alert">대상 형식 미확인</strong><SourceJSON inline title="현재 대상" value={answer?.liveTarget}/></>}
     {pre.data&&checkedBody===body&&!answer&&<strong role="alert">점검 응답 형식 오류</strong>}
     <Failure error={pre.error}/><Failure error={send.error}/>

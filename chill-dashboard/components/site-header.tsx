@@ -12,9 +12,11 @@ import { EvaluationStatusCell } from "@/features/evaluation-active"
 // The global header contains controls; each screen owns its single title.
 export function SiteHeader() {
   const {resolvedTheme,setTheme} = useTheme(),pathname=usePathname()
+  const scope=pathname.startsWith("/experiments")||pathname.startsWith("/evaluations")?"외부 평가":pathname==="/"||pathname.startsWith("/operations")?"CHILL 자율 제어":""
   return <header className="sticky top-0 z-20 flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-background/85 backdrop-blur md:rounded-t-2xl">
     <div className="flex w-full min-w-0 items-center gap-3 px-4 lg:px-6">
       <SidebarTrigger className="-ml-1 size-9" aria-label="메뉴 열기" />
+      {scope&&<span className="shrink-0 text-xs text-muted-foreground">{scope}</span>}
       {pathname!=="/"&&!pathname.startsWith("/experiments")&&<Link href="/experiments" className="hidden min-w-0 truncate text-sm md:block" aria-label="실험 상태"><EvaluationStatusCell/></Link>}
       <div className="ml-auto flex items-center gap-2">
         <Link href="/?open=terms" className="text-sm underline underline-offset-4">용어 도움말</Link>

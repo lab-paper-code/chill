@@ -145,40 +145,35 @@ test("load PUT denial preserves operator permission status and keeps the draft e
   assert.equal(gets,0,"a definitive denial is not an unknown replacement outcome")
 })
 
-test("invalid stage control JSON prevents stage removal and reordering until repaired",()=>{
+test("invalid definition JSON keeps the editor on the original until repaired",()=>{
   const runner=hookRunner()
   const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]}})},"@/features/evaluation-request":{}}
   const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",modules)
   const validity:boolean[]=[]
   const props={spec:{stages:[{id:"a",control:{}},{id:"b",control:{}}]},onChange:()=>{},onValidityChange:(valid:boolean)=>validity.push(valid)}
   let tree=runner.render(EvaluationSpecEditor,props)
-  const control=elements(tree).find(element=>Array.isArray(element.props.path)&&element.props.path.join("/")==="stages/0/control"&&typeof element.props.onValidityChange==="function")!
-  ;(control.props.onValidityChange as (valid:boolean)=>void)(false)
+  ;(elements(tree).find(element=>element.type==="button"&&element.props.children==="원문")!.props.onClick as ()=>void)()
   tree=runner.render(EvaluationSpecEditor,props)
-  const destructive=elements(tree).filter(element=>element.type==="button"&&["단계 삭제","앞으로 이동"].includes(String(element.props.children)))
-  assert.equal(destructive.length,2)
-  assert.ok(destructive.every(element=>element.props.disabled===true))
+  const json=elements(tree).find(element=>element.props.label==="실험 정의 원문")!
+  ;(json.props.onValidityChange as (valid:boolean)=>void)(false)
+  tree=runner.render(EvaluationSpecEditor,props)
+  assert.ok(elements(tree).filter(element=>element.type==="button"&&["단계","비교","측정 기준"].includes(String(element.props.children))).every(element=>element.props.disabled))
   assert.equal(validity.at(-1),false)
-  const invalidControl=elements(tree).find(element=>Array.isArray(element.props.path)&&element.props.path.join("/")==="stages/0/control"&&typeof element.props.onValidityChange==="function")!
-  ;(invalidControl.props.onValidityChange as (valid:boolean)=>void)(true)
+  ;(elements(tree).find(element=>element.props.label==="실험 정의 원문")!.props.onValidityChange as (valid:boolean)=>void)(true)
   tree=runner.render(EvaluationSpecEditor,props)
-  assert.ok(elements(tree).filter(element=>element.type==="button"&&element.props.children==="단계 삭제").every(element=>!element.props.disabled))
+  assert.ok(elements(tree).filter(element=>element.type==="button"&&element.props.children==="단계").every(element=>!element.props.disabled))
   assert.equal(validity.at(-1),true)
 })
 
-test("evaluation load generator resources expose memory only",()=>{
-  const runner=hookRunner(),changes:unknown[]=[]
-  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]}})},"@/features/evaluation-request":{}}
-  const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",modules)
-  const props={spec:{loadGenerator:{resources:{requests:{memory:"256Mi"},limits:{memory:"512Mi"}}}},onChange:(value:unknown)=>changes.push(value)}
+test("legacy execution resource definitions remain in the raw draft, not structured controls",()=>{
+  const runner=hookRunner()
+  const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]}})}})
+  const props={spec:{loadGenerator:{resources:{requests:{memory:"256Mi"},limits:{memory:"512Mi"}}}},onChange:()=>{}}
   let tree=elements(runner.render(EvaluationSpecEditor,props))
-  ;(tree.find(element=>element.type==="button"&&element.props.children==="실행 환경")!.props.onClick as ()=>void)()
+  assert.ok(!tree.some(element=>Array.isArray(element.props.path)&&element.props.path[0]==="loadGenerator"))
+  ;(tree.find(element=>element.type==="button"&&element.props.children==="원문")!.props.onClick as ()=>void)()
   tree=elements(runner.render(EvaluationSpecEditor,props))
-  const fields=tree.filter(element=>Array.isArray(element.props.path)&&element.props.path.slice(0,2).join("/")==="loadGenerator/resources")
-  assert.deepEqual(fields.map(element=>element.props.path),[["loadGenerator","resources","requests","memory"],["loadGenerator","resources","limits","memory"]])
-  const field=fields[0],input=(field.type as (props:Record<string,unknown>)=>unknown)(field.props)
-  ;(elements(input).find(element=>element.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"1Gi"}})
-  assert.deepEqual((changes.at(-1) as typeof props.spec).loadGenerator.resources,{requests:{memory:"1Gi"},limits:{memory:"512Mi"}})
+  assert.deepEqual(tree.find(element=>element.props.label==="실험 정의 원문")?.props.value,props.spec)
 })
 
 test("dedicated author pages restore copy and edit identity from bookmarked URLs",()=>{
@@ -297,8 +292,8 @@ test("R17: load parts expose every service rate as labeled fields without a wide
   modules.react.useState=partRunner.react.useState
   const form=elements(partRunner.render(specEditor.type as (props:Record<string,unknown>)=>unknown,specEditor.props))
   assert.ok(form.some(element=>element.type==="section"))
-  assert.ok(form.some(element=>element.props.label==="camera (요청/s)"))
-  assert.ok(form.some(element=>element.props.label==="plc (요청/s)"))
+  assert.ok(form.some(element=>element.props.label==="camera (req/s)"))
+  assert.ok(form.some(element=>element.props.label==="plc (req/s)"))
   assert.ok(!form.some(element=>element.type==="table"))
 })
 
@@ -480,7 +475,7 @@ test("IA: experiment definition changes cannot reuse an earlier successful prefl
   const send={isPending:false,mutateAsync:async(value:unknown)=>{writes.push(value);return {data:{name:"run",uid:"new"}}}}
   const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>mutationIndex++===0?pre:send}}
   const {EvaluationSubmit}=load("../features/evaluation-request.tsx",modules)
-  const props={name:"run",spec:{question:"before"},onSpecChange:()=>{}}
+  const props={name:"run",spec:{question:"before"}}
   let tree=elements(runner.render(EvaluationSubmit,props))
   ;(tree.find(item=>item.type==="button"&&item.props.children==="사전 점검")!.props.onClick as ()=>void)()
   mutationIndex=0
@@ -537,4 +532,63 @@ test("IA review: load completion respects closed or replaced Sheet sessions and 
     assert.equal(props.spec.question,"edited while save was pending",phase)
     assert.deepEqual(props.spec.stages,[{id:"later",...(phase==="active"?{loadScenarioRef:{name:"created",uid:"confirmed"}}:{})}],phase)
   }
+})
+
+test("black-box evaluation forms exclude internal controls and preserve stored backend fields",()=>{
+  const runner=hookRunner(),changes:author.Spec[]=[]
+  const legacy={control:{controls:{power:true}},target:{components:[{name:"scheduler",image:"stored"}]},harness:{image:"stored"},loadGenerator:{image:"stored"},stages:[{id:"stage",mode:"autonomous",startState:{evidenceRef:{store:"snapshots",key:"old"}},control:{controls:{placement:false}},failureInjection:[{id:"old"}]}]}
+  const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]}})}})
+  const props={spec:legacy,onChange:(spec:author.Spec)=>changes.push(spec)}
+  let tree=elements(runner.render(EvaluationSpecEditor,props))
+  const tabs=elements(tree.find(element=>element.props["aria-label"]==="편집 항목")).filter(element=>element.type==="button")
+  assert.deepEqual(tabs.map(element=>element.props.children),["단계","비교","측정 기준","원문"])
+  for(const label of ["단계","비교","측정 기준"]) {
+    ;(tree.find(element=>element.type==="button"&&element.props.children===label)!.props.onClick as ()=>void)()
+    tree=elements(runner.render(EvaluationSpecEditor,props))
+    const fields=tree.filter(element=>typeof element.type==="function"&&Array.isArray(element.props.path))
+    const rendered=fields.flatMap(element=>elements((element.type as (props:Record<string,unknown>)=>unknown)(element.props)))
+    const text=rendered.flatMap(element=>element.props.children).filter(value=>typeof value==="string").join(" ")
+    assert.doesNotMatch(text,/시작 상태|제어|모드|이미지|profile|스냅샷|분배 계수|요청률 기준|α/i)
+  }
+  ;(tree.find(element=>element.type==="button"&&element.props.children==="단계")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(EvaluationSpecEditor,props))
+  const id=tree.find(element=>element.props.label==="단계 ID")!
+  const field=elements((id.type as (props:Record<string,unknown>)=>unknown)(id.props)).find(element=>element.type==="input")!
+  ;(field.props.onChange as (event:unknown)=>void)({target:{value:"renamed"}})
+  assert.deepEqual(changes.at(-1),{...legacy,stages:[{...legacy.stages[0],id:"renamed"}]})
+  ;(tree.find(element=>element.type==="button"&&element.props.children==="원문")!.props.onClick as ()=>void)()
+  tree=elements(runner.render(EvaluationSpecEditor,props))
+  assert.deepEqual(tree.find(element=>element.props.label==="실험 정의 원문")?.props.value,legacy)
+})
+
+test("black-box load forms use absolute rates and only external evidence without deleting legacy inputs",()=>{
+  const parent=hookRunner(),child=hookRunner(),react={...parent.react}
+  const legacy={workloads:[{name:"camera",uid:"uid"}],parts:[{id:"part",durationSeconds:10,alpha:{camera:.5}}],kappaRef:{store:"old",key:"k"},rateBasisRef:{store:"old",key:"d25"}}
+  const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:()=>({data:[]})},"@/features/evaluation-author":{useUnsavedAuthor:()=>{}}})
+  const outer=elements(parent.render(LoadEditor,{source:{name:"load",uid:"load-uid",spec:legacy,inUse:[]},editing:true,onSaved:async()=>{}}))
+  const editor=outer.find(element=>element.props.spec&&typeof element.props.onValidityChange==="function")!
+  react.useState=child.react.useState
+  let changed:author.Spec|undefined
+  const props={...editor.props,onChange:(spec:author.Spec)=>{changed=spec}}
+  let tree=elements(child.render(editor.type as (props:Record<string,unknown>)=>unknown,props))
+  assert.ok(!tree.some(element=>element.props.label==="부하 단위"))
+  const rate=tree.find(element=>element.props.label==="camera (req/s)")!
+  assert.ok(rate)
+  ;(rate.props.onChange as (spec:author.Spec)=>void)(author.patchSpec(legacy,rate.props.path as string[],7))
+  assert.deepEqual(changed,{...legacy,parts:[{...legacy.parts[0],rates:{camera:7}}]})
+  ;(tree.find(element=>element.type==="button"&&element.props.children==="입력 객체")!.props.onClick as ()=>void)()
+  tree=elements(child.render(editor.type as (props:Record<string,unknown>)=>unknown,props))
+  assert.deepEqual(tree.filter(element=>element.props.label).map(element=>element.props.label),["난수","입력 번들"])
+})
+
+test("black-box navigation and header label autonomous operation separately from external evaluation",()=>{
+  const sidebar=load("../components/app-sidebar.tsx",{"next/navigation":{usePathname:()=>"/experiments"},"next/link":{default:"a"},"lucide-react":icons,"@/components/ui/sidebar":{useSidebar:()=>({setOpenMobile:()=>{}}),Sidebar:"aside",SidebarContent:"div",SidebarHeader:"header",SidebarMenu:"ul",SidebarMenuButton:"button",SidebarMenuItem:"li"},"@/components/brand":{BrandMark:"svg"}})
+  const text=elements(sidebar.AppSidebar({})).flatMap(element=>element.props.children).filter(value=>typeof value==="string")
+  assert.ok(text.includes("CHILL 자율 제어"))
+  assert.ok(text.includes("외부 평가"))
+  let pathname="/experiments/new"
+  const header=load("../components/site-header.tsx",{...primitives,"next/navigation":{usePathname:()=>pathname},"next-themes":{useTheme:()=>({resolvedTheme:"light",setTheme:()=>{}})},"lucide-react":icons,"@/components/ui/sidebar":{SidebarTrigger:"button"},"@/lib/client":{AccountControl:"account"},"@/features/evaluation-active":{EvaluationStatusCell:"status"}})
+  assert.ok(elements(header.SiteHeader({})).some(element=>element.props.children==="외부 평가"))
+  pathname="/"
+  assert.ok(elements(header.SiteHeader({})).some(element=>element.props.children==="CHILL 자율 제어"))
 })
