@@ -208,10 +208,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	occupancy, err := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
-	if err != nil {
-		return err
-	}
+	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
 	sources := costs.Sources
 	sources = append(sources, "profiler-facts:"+factsVersion)
 	for _, meter := range config.Meters {
@@ -273,7 +270,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	published := ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
 		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
-		Occupancy:    occupancy,
+		Occupancy:    occupancy, OccupancySkipped: skipped,
 	}
 	for id, spec := range preparations {
 		spec.Instance.Profile = nil // the profile body is in Profiles

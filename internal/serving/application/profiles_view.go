@@ -6,6 +6,7 @@ import servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 type ProfilesView struct {
 	ConfigVersion string `json:"configVersion"`
 	servingkube.CatalogView
-	Preparations map[string]servingkube.PrepareSpec `json:"preparations"`
-	Occupancy    []servingkube.OccupancySelection   `json:"-"`
+	Preparations     map[string]servingkube.PrepareSpec `json:"preparations"`
+	Occupancy        []servingkube.OccupancySelection   `json:"-"`
+	OccupancySkipped []servingkube.OccupancySkipped     `json:"-"`
 }
