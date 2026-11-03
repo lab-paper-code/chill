@@ -454,9 +454,6 @@ class CPO:
     def factor(self):
         return factor_apply(self.api, self.c['evaluation']['settingsPatch'], self.out / 'settings-patch.json')
 
-    def factor_restore(self):
-        return factor_revert(self.api, self.out / 'settings-patch.json')
-
     def producer_job_name(self, name, stage):
         execution = self.c['evaluation']['execution']
         return 'load-' + execution['stageUID'].replace('-', '')[:16] + '-' + str(list(self.ws).index(name)) + '-0'
@@ -739,6 +736,42 @@ class CPO:
             self.go_callback(value)
 
     def cleanup_jobs(self):
+        # Job cleanup and settings restoration are independent obligations.
+        # A failed delete must retain the pool, not retain our control patch.
+        attempt = {'startedAt': now(), 'cleanup': {}, 'restore': {'status': 'Complete', 'receipts': []}}
+        failure = None
+        try:
+            self._cleanup_jobs()
+            attempt['cleanup'] = {'status': 'Complete'}
+        except Exception as error:
+            failure = error
+            attempt['cleanup'] = {'status': 'Failed', 'error': str(error)}
+        attempt['cleanup']['finishedAt'] = now()
+        attempt['cleanup']['residuals'] = copy.deepcopy(self.residuals)
+        for path in sorted(self.out.rglob('settings-patch.json')):
+            receipt = {'path': str(path.relative_to(self.out)), 'startedAt': now()}
+            try:
+                factor_revert(self.api, path)
+                receipt['status'] = 'Complete'
+            except Exception as error:
+                if failure is None:
+                    failure = error
+                receipt.update(status='Failed', error=str(error))
+                attempt['restore']['status'] = 'Failed'
+                residual = {'kind': 'SchedulerSettings', 'name': SETTINGS, 'reason': 'RemoteEffectUnknown'}
+                if residual not in self.residuals:
+                    self.residuals.append(residual)
+            receipt['finishedAt'] = now()
+            attempt['restore']['receipts'].append(receipt)
+        attempt['finishedAt'] = now()
+        path = self.out / 'cleanup-outcome.json'
+        evidence = load(path) if path.exists() else {'attempts': []}
+        evidence['attempts'].append(attempt)
+        save(path, evidence)
+        if failure is not None:
+            raise failure
+
+    def _cleanup_jobs(self):
         execution = self.c['evaluation']['execution']
         selector = 'edge.dacs.io/workload-role=load-generator,edge.dacs.io/evaluation-run-uid=' + execution['runUID']
         if execution.get('stageID'):
@@ -752,7 +785,11 @@ class CPO:
                 self.residuals.append({'kind': 'Job', 'name': job['metadata']['name'], 'reason': 'RemoteEffectUnknown'})
                 raise RuntimeError('RemoteEffectUnknown: Job lacks exact evaluator creation UID evidence')
             name, uid = job['metadata']['name'], job['metadata']['uid']
-            self.io.delete_job(name, uid)
+            try:
+                self.io.delete_job(name, uid)
+            except Exception:
+                self.residuals.append({'kind': 'Job', 'name': name, 'uid': uid, 'reason': 'RemoteEffectUnknown'})
+                raise
             while True:
                 remaining = self.io.k(['get', 'jobs', '-l', selector, '-o', 'json'])['items']
                 pods = self.io.k(['get', 'pods', '-l', 'job-name=' + name, '-o', 'json'])['items']
@@ -775,14 +812,10 @@ class CPO:
                 self.residuals.extend({'kind': 'Pod', 'name': pod['metadata']['name'], 'reason': 'ResidualState'} for pod in pods)
                 raise RuntimeError('ResidualState: evaluator Pods remain after Job disappearance')
             time.sleep(.2)
-        self.factor_restore()
 
     def finish(self):
         # Cleanup only evaluation-owned effects and the deliberately patched settings paths.
         self.cleanup_jobs()
-        root = self.out if self.c['evaluation']['execution'].get('stageID') else self.out / 'stages'
-        for path in root.rglob('settings-patch.json'):
-            factor_revert(self.api, path)
 
 
 def judge(binding, folder):

@@ -414,6 +414,12 @@ Applied path values come from the PUT response's canonical settings, including
 defaults materialized from null patches. Newly created objects are tracked by
 member: revert removes only evaluator-added members, preserves operator-added
 members, and removes an originally absent parent only when it becomes empty.
+Job cleanup is attempted before settings restoration, but cannot prevent it:
+cleanup-jobs and run finish independently attempt every receipt in their scope.
+`cleanup-outcome.json` retains each attempt's cleanup and restore results.
+Either failure keeps the step failed and blocks Returned; restoring settings
+does not declare a remaining Job cleaned up. Finish retries honor `revertedAt`
+and never reapply or rewrite an already restored patch.
 
 The generator Job is assembled directly. Its Dataset init container copies the
 carrier's evaluation directory to `/evaluation`; Preprocessor input names

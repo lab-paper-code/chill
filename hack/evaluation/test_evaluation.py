@@ -612,6 +612,77 @@ class EvaluationTests(unittest.TestCase):
                 controller.cleanup_jobs()
             self.assertEqual(controller.residuals, [{'kind': 'Pod', 'name': 'residual', 'reason': 'ResidualState'}])
 
+    def test_cleanup_and_restore_failures_are_independent_and_finish_is_idempotent(self):
+        for cleanup_failure, restore_failure in ((False, False), (True, False), (True, True), (False, True)):
+            with self.subTest(cleanup_failure=cleanup_failure, restore_failure=restore_failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                api = SettingsAPI()
+                receipt_path = root / 'stages/one/settings-patch.json'
+                conductor.factor_apply(api, {'controls': {'power': False}}, receipt_path)
+                api.value['controls']['routing'] = False  # unrelated operator change
+                api.revision += 1
+                api.fail_put = restore_failure
+                controller = object.__new__(conductor.CPO)
+                controller.out = root
+                controller.c = {'evaluation': {'execution': {'runUID': 'run', 'childRefs': [{'uid': 'stage'}]}}}
+                controller.tb, controller.residuals = {'drainSeconds': 0}, []
+                job = {'kind': 'Job', 'metadata': {'name': 'load-one', 'uid': 'job',
+                       'labels': {'edge.dacs.io/evaluation-run-uid': 'run'},
+                       'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]}}
+                conductor.save(root / 'stages/one/measured/created-one.json', job)
+                jobs, order = [job], []
+                def delete(name, uid):
+                    order.append('delete')
+                    if cleanup_failure:
+                        raise RuntimeError('ToolFailed: delete denied')
+                    jobs.clear()
+                def settings(*args, **kwargs):
+                    order.append('settings-' + args[0])
+                    return api(*args, **kwargs)
+                controller.api = settings
+                controller.io = SimpleNamespace(k=lambda args: {'items': list(jobs) if args[1] == 'jobs' else []},
+                                                delete_job=delete)
+                harness = object.__new__(evaluation.Harness)
+                harness.run = harness.root = root
+                harness.scope, harness.prefix = 'run', 'experiments/run/run'
+                harness.spec = {}
+                harness.execution = {'runUID': 'run', 'namespace': 'evaluation-ns', 'prepareCompleted': True}
+                harness.open_snapshot = lambda: None
+                harness.controller = lambda: controller
+                harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
+                with patch('builtins.print'):
+                    self.assertEqual(harness.execute('finish'), int(cleanup_failure or restore_failure))
+                result = conductor.load(root / 'results/run/finish.json')
+                self.assertEqual(result['cleanup']['status'], 'Failed' if cleanup_failure or restore_failure else 'Complete')
+                self.assertEqual(order[0], 'delete')
+                self.assertIn('settings-GET', order)
+                evidence = conductor.load(root / 'cleanup-outcome.json')['attempts']
+                self.assertEqual(evidence[0]['cleanup']['status'], 'Failed' if cleanup_failure else 'Complete')
+                self.assertEqual(evidence[0]['restore']['status'], 'Failed' if restore_failure else 'Complete')
+                self.assertEqual(api.value['controls']['power'], not restore_failure)
+                self.assertFalse(api.value['controls']['routing'])
+                if cleanup_failure:
+                    self.assertIn('delete denied', evidence[0]['cleanup']['error'])
+                    self.assertIn('delete denied', result['execution']['message'])
+                    self.assertTrue(any(residual['kind'] == 'Job' for residual in result['residuals']))
+                if restore_failure:
+                    self.assertIn('Forbidden', evidence[0]['restore']['receipts'][0]['error'])
+                    self.assertTrue(any(residual['kind'] == 'SchedulerSettings' for residual in result['residuals']))
+                else:
+                    reverted_at = conductor.load(receipt_path)['revertedAt']
+                    calls_before_retry = len(api.calls)
+                    api.value['controls']['power'] = False  # operator changed it after our successful revert
+                    api.revision += 1
+                    controller.residuals = []  # a fresh finish Job has a fresh controller
+                    with patch('builtins.print'):
+                        self.assertEqual(harness.execute('finish'), int(cleanup_failure))
+                    self.assertEqual(len(api.calls), calls_before_retry)
+                    self.assertFalse(api.value['controls']['power'])
+                    self.assertEqual(conductor.load(receipt_path)['revertedAt'], reverted_at)
+                    evidence = conductor.load(root / 'cleanup-outcome.json')['attempts']
+                    self.assertEqual(len(evidence), 2)
+                    self.assertEqual(evidence[0]['cleanup']['status'], 'Failed' if cleanup_failure else 'Complete')
+
     def test_slo_failure_is_valid_without_internal_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
