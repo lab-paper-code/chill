@@ -112,6 +112,9 @@ calibration copied from host campaign files or a guarantee for every profile.
 `refillSeconds` is the additional consumed planner coefficient: faster profile
 populations need more outstanding supply to hide the same refill/jitter bound.
 It must be selected from generator measurements for the intended deployment.
+Zero is permitted for idle fraction, job setup, collection and seed, but those
+four keys must still be explicitly present and non-null. Omission is not a Go
+zero-value fallback for a measurement policy.
 
 The sample's specific lifetime/delivery/refill choices have these limited bases:
 

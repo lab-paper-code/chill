@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"math"
 )
@@ -29,6 +31,32 @@ type dispatchOccupancyPolicy struct {
 	Seed          uint64  `json:"seed"`
 }
 
+// Preserve omission separately from zero for the four zero-valued policy inputs.
+func (p *dispatchOccupancyPolicy) UnmarshalJSON(raw []byte) error {
+	type policy dispatchOccupancyPolicy
+	var wire struct {
+		policy
+		MaximumIdleFraction *float64 `json:"maximumIdleFraction"`
+		JobSetupSeconds     *int32   `json:"jobSetupSeconds"`
+		CollectionSeconds   *int32   `json:"collectionSeconds"`
+		Seed                *uint64  `json:"seed"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return err
+	}
+	if wire.MaximumIdleFraction == nil || wire.JobSetupSeconds == nil ||
+		wire.CollectionSeconds == nil || wire.Seed == nil {
+		return errors.New("dispatchOccupancy requires explicit idle, job setup, collection and seed values; " +
+			"zero is allowed")
+	}
+	*p = dispatchOccupancyPolicy(wire.policy)
+	p.MaximumIdleFraction = *wire.MaximumIdleFraction
+	p.JobSetupSeconds, p.CollectionSeconds, p.Seed = *wire.JobSetupSeconds, *wire.CollectionSeconds, *wire.Seed
+	return nil
+}
+
 func (p dispatchOccupancyPolicy) validate() error {
 	for _, v := range []float64{p.WindowFloorSeconds, p.LoadPreparationFloorSeconds, p.PlannedElapsedCapSeconds,
 		p.TimeMargin, p.RelativeXPlanningPrecision, p.PlanningConfidence, p.MaximumIdleBaseFraction,
@@ -50,9 +78,8 @@ func (p dispatchOccupancyPolicy) validate() error {
 	// Reject a policy whose irreducible segments cannot fit even before profile timing.
 	extension := int64(p.RequestLifetimeSeconds) + (int64(p.DeliveryMarginMillis)+999)/1000
 	minimum := int64(p.PreparationSeconds) + int64(p.JobSetupSeconds) + int64(p.CollectionSeconds) + extension +
-		int64(
-			p.RequestLifetimeSeconds,
-		) + int64(math.Ceil(p.WindowFloorSeconds)) + int64(math.Ceil(p.LoadPreparationFloorSeconds))
+		int64(p.RequestLifetimeSeconds) + int64(math.Ceil(p.WindowFloorSeconds)) +
+		int64(math.Ceil(p.LoadPreparationFloorSeconds))
 	if minimum > int64(math.Floor(p.PlannedElapsedCapSeconds)) {
 		return errors.New("dispatchOccupancy elapsed cap cannot hold its configured segments and supply extension")
 	}

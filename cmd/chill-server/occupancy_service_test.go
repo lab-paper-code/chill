@@ -113,6 +113,7 @@ func TestOccupancyServiceDryRunSameFrozenObjectWithoutCreate(t *testing.T) {
 func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 	for _, mode := range []string{
 		"missing block", "invalid block", "unknown field", "unaccepted revision", "missing ConfigMap", "missing scheduler",
+		"missing allowance",
 	} {
 		t.Run(mode, func(t *testing.T) {
 			service, f, _ := occupancyTestService(t)
@@ -141,6 +142,8 @@ func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 					delete(wire, "dispatchOccupancy")
 				case "invalid block":
 					wire["dispatchOccupancy"].(map[string]any)["minimumBatches"] = 1
+				case "missing allowance":
+					delete(wire["dispatchOccupancy"].(map[string]any), "collectionSeconds")
 				case "unknown field":
 					wire["dispatchOccupancy"].(map[string]any)["workers"] = 6
 				case "unaccepted revision":

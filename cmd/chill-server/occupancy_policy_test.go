@@ -58,3 +58,44 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOccupancyPolicyZeroInputsAreExplicitNotGoFallbacks(t *testing.T) {
+	for _, field := range []string{"maximumIdleFraction", "jobSetupSeconds", "collectionSeconds", "seed"} {
+		raw, err := json.Marshal(syntheticOccupancyPolicy())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var block map[string]json.RawMessage
+		if err = json.Unmarshal(raw, &block); err != nil {
+			t.Fatal(err)
+		}
+		original := block[field]
+		for _, value := range []json.RawMessage{nil, json.RawMessage("null")} {
+			block[field] = value
+			if value == nil {
+				delete(block, field)
+			}
+			raw, err = json.Marshal(block)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var policy dispatchOccupancyPolicy
+			if err = json.Unmarshal(raw, &policy); err == nil {
+				t.Fatalf("omitted/null %s silently became a Go default", field)
+			}
+			block[field] = original
+		}
+		block[field] = json.RawMessage("0")
+		raw, err = json.Marshal(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var policy dispatchOccupancyPolicy
+		if err = json.Unmarshal(raw, &policy); err != nil {
+			t.Fatal(err)
+		}
+		if err = policy.validate(); err != nil {
+			t.Fatal("explicit zero rejected", field, err)
+		}
+	}
+}
