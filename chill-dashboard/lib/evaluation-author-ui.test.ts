@@ -200,10 +200,10 @@ test("pool occupancy is observed independently from the cleanup failure phase",(
 test("active progress preserves selected UID isolation without exposing duplicate stop controls",()=>{
   const runner=hookRunner(),active={name:"run",uid:"new",stageIndex:1,stagesTotal:1}
   const modules={...primitives,react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/client":{useChillQuery:()=>({data:{items:[active]}})}}
-  const {EvaluationActive}=load("../features/evaluation-active.tsx",modules)
-  let tree=elements(runner.render(EvaluationActive,{name:"run",uid:"old",now:0}))
+  const {EvaluationActiveDetails}=load("../features/evaluation-active.tsx",modules)
+  let tree=elements(runner.render(EvaluationActiveDetails,{active:{data:{items:[active]}},name:"run",uid:"old",now:0}))
   assert.ok(!tree.some(element=>element.type==="details"),"same-name active replacement must not display under the old selection")
-  tree=elements(runner.render(EvaluationActive,{name:"run",uid:"new",now:0}))
+  tree=elements(runner.render(EvaluationActiveDetails,{active:{data:{items:[active]}},name:"run",uid:"new",now:0}))
   assert.ok(!tree.some(element=>element.type==="button"&&["실험 중지","중지 요청"].includes(String(element.props.children))))
 })
 

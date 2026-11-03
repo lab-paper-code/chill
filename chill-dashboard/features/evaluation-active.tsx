@@ -17,10 +17,6 @@ export function EvaluationStatusCell() {
 const actions:Record<string,string>={"delete-serving-pod":"서비스 Pod 삭제","cordon-delete":"노드 차단·Pod 삭제",uncordon:"노드 차단 해제"}
 const outcomes:Record<string,string>={Executed:"실행됨",Cancelled:"취소됨",Invalid:"무효"}
 
-export function EvaluationActive({now,name,uid}:{now:number;name?:string;uid?:string}) {
-  const active=useChillQuery<ActiveEvaluations>("v1/evaluations/active",{poll:true})
-  return <EvaluationActiveDetails active={active} now={now} name={name} uid={uid}/>
-}
 
 export function EvaluationActiveDetails({active,now,name,uid}:{active:Pick<UseQueryResult<ActiveEvaluations,ApiError>,"data"|"error"|"isPending"|"refetch">;now:number;name?:string;uid?:string}) {
   const runs=active.data?.items.filter(run=>(!name||run.name===name)&&(!uid||run.uid===uid))??[]
@@ -35,15 +31,15 @@ export function EvaluationActiveDetails({active,now,name,uid}:{active:Pick<UseQu
       const planned=run.stage?.plannedSeconds
       const afterLoad=elapsed!==null&&typeof planned==="number"&&Number.isFinite(planned)&&elapsed>=planned
       return <details key={run.uid} className="live-evaluation" open>
-        <summary>{afterLoad?"부하 종료 · 후처리 중":"부하 진행"}</summary>
+        <summary>{afterLoad?"계획 시간 경과":"부하 계획 시간"}</summary>
         <div className="live-evaluation-details space-y-3">
           <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm tabular-nums">
             <div><dt className="text-muted-foreground">현재 단계</dt><dd>{run.stage?.id??"미기록"} <span className="text-muted-foreground">({run.stageIndex}/{run.stagesTotal})</span></dd></div>
             <div><dt className="text-muted-foreground">GO 이후 경과 (초)</dt><dd>{elapsed??"미기록"}</dd></div>
             <div><dt className="text-muted-foreground">계획상 남은 시간 (초)</dt><dd>{remaining??"미기록"}</dd></div>
           </dl>
-          {!afterLoad&&elapsed!==null&&typeof planned==="number"&&Number.isFinite(planned)&&planned>0&&<progress className="h-2 w-full accent-primary" aria-label={`${run.stage?.id} 부하 진행`} max={planned} value={Math.min(planned,elapsed)}/>}
-          {!!run.stage?.injections.length&&<details><summary className="min-h-11 cursor-pointer py-3 text-sm">주입 계획·결과</summary><div className="live-table-wrap"><table><thead><tr><th>주입</th><th>동작</th><th>시작 후 초</th><th>노드</th><th>파드</th><th>결과</th></tr></thead><tbody>{run.stage.injections.map(injection=><tr key={injection.id}><th scope="row">{injection.id}</th><td title={injection.action}>{actions[injection.action]??"미기록"}</td><td>{injection.offsetSeconds}</td><td>{injection.nodeName??"미기록"}</td><td>{injection.podName??"미기록"}</td><td title={injection.outcome}>{injection.outcome?outcomes[injection.outcome]??"미기록":"대기"}</td></tr>)}</tbody></table></div></details>}
+          {!afterLoad&&elapsed!==null&&typeof planned==="number"&&Number.isFinite(planned)&&planned>0&&<progress className="h-2 w-full accent-primary" aria-label={`${run.stage?.id} 계획 시간 경과`} max={planned} value={Math.min(planned,elapsed)}/>}
+          {!!run.stage?.injections.length&&<details><summary className="min-h-11 cursor-pointer py-3 text-sm">주입 계획·결과</summary><div className="live-table-wrap"><table><thead><tr><th>주입</th><th>동작</th><th>시작 후 초</th><th>노드</th><th>파드</th><th>결과</th></tr></thead><tbody>{run.stage.injections.map(injection=><tr key={injection.id}><th scope="row">{injection.id}</th><td title={injection.action}>{actions[injection.action]??injection.action}</td><td>{injection.offsetSeconds}</td><td>{injection.nodeName??"미기록"}</td><td>{injection.podName??"미기록"}</td><td title={injection.outcome}>{injection.outcome?outcomes[injection.outcome]??injection.outcome:"미기록"}</td></tr>)}</tbody></table></div></details>}
         </div>
       </details>
     })}

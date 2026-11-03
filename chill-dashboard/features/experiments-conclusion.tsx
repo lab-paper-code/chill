@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query"
 import { ApiError, decodeResponse, relay, useChillQueries, useSession, warmingRetry, warmingDelay } from "@/lib/client"
 import { Button } from "@/components/ui/button"
 import { decodeExperiment, decodeExperimentPage, experimentOutcome, experimentPath, finite, historicalPublicationIDs, injectionRows, object, publishedText, recordedComparisons, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
-import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, experimentServiceResults, ratio, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts } from "@/lib/experiment-comparison"
+import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, experimentServiceResults, ratio, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts, stageSeconds } from "@/lib/experiment-comparison"
 import { formatMeasurementDuration, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
 export function usePublishedExperimentFacts(id:string,enabled=true) {
@@ -67,11 +67,12 @@ function ExperimentEnergy({stage}:{stage:ExperimentStage}) {
   const nodes=Array.isArray(power.nodes)?power.nodes.map(object):[],reasons=Array.isArray(power.reasons)?power.reasons.filter((reason):reason is string=>typeof reason==="string"):[]
   const affected=nodes.filter(node=>reasons.some(reason=>reason.startsWith(`Declared Node ${object(node.node).name}:`)&&reason.includes("partial/unavailable source or coverage below reporting policy"))).length
   const coverage=object(power.energyCoverage),gap=finite(coverage.maximumGapSeconds),joules=finite(power.wholePoolJoules??stage.kpis.wholePoolJoules)
+  const seconds=stageSeconds(stage),meanWatts=joules!==null&&seconds!==null?joules/seconds:null
   const drainReasons=Array.isArray(drain.reasons)?drain.reasons.filter((reason):reason is string=>typeof reason==="string"):[]
   const drainPower=object(stage.kpis.powerDrainInclusive)
   return <section aria-label="에너지·배출" className="space-y-1 border-y py-3 text-sm">
     <p><strong>에너지 {publishedText(power.energyStatus??energy.offered)||"미기록"}</strong>{joules!==null&&` · ${resultNumber(joules)} J`}{affected>0?` · ${affected}/${nodes.length} 노드 계측 출처 또는 공백 기준 미충족`:reasons.length?` · ${reasons[0]}${reasons.length>1?` 외 ${reasons.length-1}개`:""}`:""}{gap!==null&&` · 최대 공백 ${gap.toLocaleString("ko-KR",{minimumFractionDigits:1,maximumFractionDigits:1})} s`}</p>
-    <p>풀 평균 전력 {resultNumber(power.wholePoolMeanWatts??stage.kpis.wholePoolMeanWatts,"W")} W</p>
+    <p>풀 평균 전력 {resultNumber(meanWatts,"W")} W</p>
     <p className={drain.complete===false?"text-destructive":"text-muted-foreground"}>요청 배출 {drain.complete===true?"완료":drain.complete===false?"미완료":"미기록"}{drainReasons.length?` · ${drainReasons.map(reason=>reason==="ProducerEOFWithoutCompleteDrain"?"생성기 종료 후 요청 배출 미완료":reason).join(", ")}`:""}</p>
     <details className="text-xs"><summary className="min-h-11 cursor-pointer">에너지 계측 근거·배출 포함 범위</summary>
       <div className="space-y-2 pb-2">

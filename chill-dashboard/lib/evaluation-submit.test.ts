@@ -75,7 +75,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
 
 test("active evaluation injection table translates wire action names",()=>{
   const container=({children}:{children?:React.ReactNode})=>React.createElement("div",null,children)
-  const active={items:[{name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",plannedSeconds:60,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0},{id:"cordon",action:"cordon-delete",offsetSeconds:0},{id:"restore",action:"uncordon",offsetSeconds:10}]}}]}
+  const active={items:[{name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",plannedSeconds:60,injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0},{id:"cordon",action:"cordon-delete",offsetSeconds:0},{id:"restore",action:"uncordon",offsetSeconds:10},{id:"future",action:"FutureAction",outcome:"FutureOutcome",offsetSeconds:20}]}}]}
   const modules:Record<string,unknown>={
     "@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/evaluations/active"?active:{items:[]}}),useChillMutation:()=>({})},
     "@/lib/evaluation-active":activeHelpers,
@@ -84,12 +84,15 @@ test("active evaluation injection table translates wire action names",()=>{
   }
   const source=readFileSync(new URL("../features/evaluation-active.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-  const exports:{EvaluationActive?:React.ComponentType<{now:number}>}={}
+  const exports:{EvaluationActiveDetails?:React.ComponentType<{now:number;active:unknown}>}={}
   new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)
-  const html=renderToStaticMarkup(React.createElement(exports.EvaluationActive!,{now:0}))
+  const html=renderToStaticMarkup(React.createElement(exports.EvaluationActiveDetails!,{now:0,active:{data:active}}))
   assert.match(html,/노드 차단·Pod 삭제/)
   assert.match(html,/노드 차단 해제/)
   assert.match(html,/서비스 Pod 삭제/)
+  assert.match(html,/FutureAction/)
+  assert.match(html,/FutureOutcome/)
+  assert.doesNotMatch(html,/>대기</)
 })
 
 test("compact experiment status keeps cleanup, running, empty and denied states separate",()=>{
@@ -260,17 +263,16 @@ test("single execution control preserves UID, denied responses and uncertain out
   }
 })
 
-test("active progress queries only active evaluations and never creates a mutation",()=>{
+test("active details use the provided query and never create a mutation",()=>{
   const runner=hookRunner(),calls:string[]=[]
   let mutations=0
   const run={name:"run",uid:"uid",stageIndex:1,stagesTotal:1,stage:{id:"base",injections:[{id:"kill",action:"delete-serving-pod",offsetSeconds:0}]}}
-  const {EvaluationActive,EvaluationActiveDetails}=loadUI("../features/evaluation-active.tsx",{
+  const {EvaluationActiveDetails}=loadUI("../features/evaluation-active.tsx",{
     react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/status":{STATUS_AXES},
     "@/lib/client":{useChillQuery:(path:string)=>{calls.push(path);return {data:{items:[run,{...run,uid:"replacement"},{...run,name:"other"}]}}},useChillMutation:()=>{mutations++;return {}}},
   })
-  const wrapper=runner.render(EvaluationActive,{now:0,name:"run",uid:"uid"}) as React.ReactElement<Record<string,unknown>>
-  const tree=elements(runner.render(EvaluationActiveDetails,wrapper.props))
-  assert.deepEqual(calls,["v1/evaluations/active"])
+  const tree=elements(runner.render(EvaluationActiveDetails,{now:0,name:"run",uid:"uid",active:{data:{items:[run,{...run,uid:"replacement"},{...run,name:"other"}]}}}))
+  assert.deepEqual(calls,[])
   assert.equal(mutations,0)
   assert.ok(tree.some(item=>item.type==="table"))
   const progress=tree.filter(item=>item.type==="details"&&item.props.className==="live-evaluation")
