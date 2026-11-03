@@ -28,7 +28,13 @@ function hookRunner() {
       const index=cursor++
       if(!Object.hasOwn(values,index))values[index]=typeof initial==="function"?initial():initial
       return [values[index],(next:unknown)=>{values[index]=typeof next==="function"?next(values[index]):next}]
-    }},
+    },
+    useRef(initial:unknown) {
+      const index=cursor++
+      if(!Object.hasOwn(values,index))values[index]={current:initial}
+      return values[index]
+    },
+    useEffect(effect:()=>void) {effect()}},
     render(Component:(props:Record<string,unknown>)=>unknown,props:Record<string,unknown>={}) {cursor=0;return Component(props)},
   }
 }
@@ -496,4 +502,39 @@ test("IA: a bookmarked replaced load UID requires explicit current identity sele
   assert.ok(tree.some(element=>element.props.children==="설정 교체 확인"))
   assert.equal(tree.find(element=>element.type==="a"&&element.props.children==="현재 설정 선택")?.props.href,"/experiments/load-scenarios?name=load&uid=current")
   assert.ok(!tree.some(element=>element.props.spec===item.spec),"an old UID must not silently display its replacement definition")
+})
+
+test("IA review: load completion respects closed or replaced Sheet sessions and patches only the latest active draft",async()=>{
+  for(const phase of ["create","reconcile","list","active","reopened"]) {
+    const parent=hookRunner(),child=hookRunner()
+    const {promise:pending,resolve:finish}=Promise.withResolvers<void>()
+    const saved={name:"created",uid:"confirmed",spec:{workloads:[],parts:[],arrivalDistribution:{}}}
+    const client={useChillQuery:()=>({data:{items:[]},refetch:async()=>{if(phase==="reconcile")await pending;return {data:saved}}}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string})=>{
+      if(input.path.endsWith("/preflight"))return {data:{checks:[{id:"valid",passed:true}]}}
+      if(phase==="create")await pending
+      return {data:phase==="reconcile"?{}:{uid:saved.uid}}
+    }})}
+    const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:child.react,"@/lib/client":client,"@/features/evaluation-author":{useUnsavedAuthor:()=>{}}})
+    const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",{...primitives,react:parent.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]},refetch:async()=>{if(["list","active","reopened"].includes(phase))await pending}})},"@/features/load-scenario-author":{LoadEditor}})
+    const props={spec:{question:"before",stages:[{id:"stage"}]} as author.Spec,onChange:(value:author.Spec)=>{props.spec=value}}
+    let tree=elements(parent.render(EvaluationSpecEditor,props))
+    ;(tree.find(element=>element.type==="button"&&element.props.children==="새 부하")!.props.onClick as ()=>void)()
+    tree=elements(parent.render(EvaluationSpecEditor,props))
+    const editor=tree.find(element=>element.type===LoadEditor)!
+    let childTree=elements(child.render(LoadEditor,editor.props))
+    ;(childTree.find(element=>element.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"created"}})
+    childTree=elements(child.render(LoadEditor,editor.props))
+    ;(childTree.find(element=>element.type==="button"&&element.props.children==="사전점검")!.props.onClick as ()=>void)()
+    await setImmediate()
+    childTree=elements(child.render(LoadEditor,editor.props))
+    ;(childTree.find(element=>element.type==="button"&&element.props.children==="생성")!.props.onClick as ()=>void)()
+    await setImmediate()
+    if(phase!=="active")(tree.find(element=>element.type==="aside")!.props.onOpenChange as (open:boolean)=>void)(false)
+    props.spec={...props.spec,question:"edited while save was pending",stages:[{id:"later"}]}
+    tree=elements(parent.render(EvaluationSpecEditor,props))
+    if(phase==="reopened")(tree.find(element=>element.type==="button"&&element.props.children==="새 부하")!.props.onClick as ()=>void)()
+    finish();await setImmediate();await setImmediate()
+    assert.equal(props.spec.question,"edited while save was pending",phase)
+    assert.deepEqual(props.spec.stages,[{id:"later",...(phase==="active"?{loadScenarioRef:{name:"created",uid:"confirmed"}}:{})}],phase)
+  }
 })

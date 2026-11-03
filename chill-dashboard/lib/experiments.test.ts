@@ -2,11 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
-import { campaignGroups, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, stageSeconds, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
+import { commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, stageSeconds, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
 import { campaignScoreboard, campaignTradeoffs, stageHistoryLink, stageActivity, stageLabel, definitionPolicy, definitionStage, definitionComparisons, definitionComparisonReason, decodeExperiment, decodeExperiments, historicalPublicationIDs, experimentOutcome, injectionRows, type ExperimentHeatmapRow } from "./experiments.ts"
 import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
-import { experimentDifference } from "./experiments.ts"
 import { createRequire } from "node:module"
 import { createElement, type ComponentType, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
@@ -57,15 +56,11 @@ test("R18: partial controls distinguish explicit off from unrecorded",()=>{
   const enabled:Experiment={...run,facts:{control:{controls:{power:true}},stages:[{id:stage.id,mode:"controls-disabled"}]}}
   assert.equal(definitionPolicy(stage,enabled),"제어요소 · 미기록: 배치, 자원, 복제본, 라우팅, 배칭, 구성원")
 })
-test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
-  for(const [value,baseline] of [[-.004,0],[1.004,1]]) {
-    assert.equal(experimentDifference(value,baseline).text,baseline===1?"1.00":"0.01 미만")
-    assert.match(experimentDifference(value,baseline).tone,/text-muted-foreground/)
-  }
-})
-test("R11: closing a shared interval removes all stage selection parameters",()=>{
-  const params=experimentSelection("?a=run&al=historical&as=full-steady-mixed&b=run&bs=static-baseline-steady-mixed",{al:"",as:"",b:"",bs:""})
-  assert.equal(params.toString(),"a=run")
+test("IA: closing a shared interval keeps its identity independently from the Sheet",()=>{
+  const params=experimentSelection("?a=run&al=historical&as=full-steady-mixed&b=run&bs=static-baseline-steady-mixed",{sheet:"closed"})
+  assert.equal(params.get("as"),"full-steady-mixed")
+  assert.equal(params.get("bs"),"static-baseline-steady-mixed")
+  assert.equal(params.get("sheet"),"closed")
 })
 
 test("IA: opening a shared interval pushes once, service changes replace and closing preserves list context",()=>{
@@ -76,11 +71,11 @@ test("IA: opening a shared interval pushes once, service changes replace and clo
   assert.deepEqual(calls,["push","replace"])
   assert.equal(location.searchParams.get("offset"),"5")
   assert.equal(location.searchParams.get("returnTo"),"/experiments?view=published")
-  commitExperimentSelection(location,history,{al:"",as:"",b:"",bs:""})
+  commitExperimentSelection(location,history,{sheet:"closed"})
   assert.deepEqual(calls,["push","replace","replace"])
   const direct={replaceState(_data:unknown,_unused:string,url?:string|URL|null){location.href=new URL(String(url),location).href}}
-  commitExperimentSelection(location,direct,{al:"",as:"",b:"",bs:""})
-  assert.equal(location.searchParams.get("as"),null)
+  commitExperimentSelection(location,direct,{sheet:"closed"})
+  assert.equal(location.searchParams.get("as"),"stage")
   assert.equal(location.searchParams.get("service"),"other")
   assert.equal(location.searchParams.get("offset"),"5")
 })
@@ -378,9 +373,7 @@ test("historical comparisons join publication ID and stage ID and carry both def
   assert.deepEqual(historicalPublicationIDs(run),[historical.id])
   assert.deepEqual(historicalPublicationIDs(recorded.publication),[])
   assert.deepEqual(definitionComparisons(run,runs),[pair])
-  assert.equal(campaignGroups(runs).find(group=>group.run===run)!.pairs[0].rightRun,historical)
   assert.equal(campaignTradeoffs(run,runs)[0].energyDelta,-10)
-  assert.equal(campaignScoreboard(run,runs).summary.energyPercent,-10)
   assert.equal(campaignScoreboard(run,runs).coverageCounts.unpaired,0)
   const heatmap=experimentHeatmap(run,runs)[0]
   assert.equal(heatmap.leftRun,run)
@@ -673,17 +666,13 @@ test("R3: rapid A/B selections preserve the preceding URL selection and clear on
   assert.equal(experimentSelection("a=one&as=chosen&b=two&bs=keep",{as:"next"}).get("bs"),"keep")
 })
 
-test("declared comparisons alone populate campaign groups, independent of names or observed rates",()=>{
+test("declared comparisons alone define pairs, independent of names or observed rates",()=>{
   const left={...stage,id:"candidate"},right={...stage,id:"baseline"},unlisted={...stage,id:"full-steady-mixed"}
   const run=definedRun([left,right,unlisted],[["candidate","baseline"]])
   assert.deepEqual(definitionComparisons(run).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
   assert.equal(definitionComparisons({...run,stages:[left,left,right]}).length,0)
-  const groups=campaignGroups([run,demo])
-  assert.equal(groups.length,2)
-  assert.equal(groups.find(group=>group.run.id===run.id)!.pairs.length,1)
-  assert.equal(groups.find(group=>group.run.id===demo.id)!.pairs.length,0)
-  assert.equal(groups.find(group=>group.run.id===demo.id)!.comparisonReason,"미기록")
-  assert.equal(groups.find(group=>group.run.id===run.id)!.question,run.definition!.spec.question)
+  assert.deepEqual(definitionComparisons(demo),[])
+  assert.equal(definitionComparisonReason(demo),"미기록")
 })
 
 
@@ -772,23 +761,13 @@ test("heatmap retains all stages without fabricated missing service values",()=>
   assert.equal(experimentChartData({...recorded.publication,stages:[missing]},"camera")[0].leftP95,null)
 })
 
-test("operator conclusion includes every paired stage and reports energy losses alongside gains",()=>{
+test("coverage includes every recorded paired stage",()=>{
   const stage=(id:string,energy:number,from:string):ExperimentStage=>({id,from,to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:energy}} as ExperimentStage)
   const run=definedRun([stage("candidate-1",90,"2026-10-30T00:00:00Z"),stage("baseline-1",100,"2026-10-30T00:00:00Z"),stage("candidate-2",120,"2026-10-30T00:00:00Z"),stage("baseline-2",100,"2026-10-30T00:00:00Z")],[["candidate-1","baseline-1"],["candidate-2","baseline-2"]])
   const score=campaignScoreboard(run)
   assert.equal(score.coverageCounts.stages,4)
-  assert.deepEqual(score.energyCounts,{decreased:1,increased:1,equal:0,missing:0,delta:10})
 })
 
-test("operator conclusion names the worst service loss and does not treat missing success as zero",()=>{
-  const make=(id:string,success:unknown,p95:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:100,requests:{camera:{deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
-  const run=definedRun([make("full-steady-mixed",.8,20),make("static-baseline-steady-mixed",.9,10)],[["full-steady-mixed","static-baseline-steady-mixed"]])
-  const score=campaignScoreboard(run)
-  assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
-  assert.equal(score.referenceSummary.p95Ratio,2)
-  assert.equal(score.quality[0].service,"camera")
-  assert.equal(campaignScoreboard({...run,stages:[make("full-steady-mixed",null,20),run.stages[1]]}).referenceSummary.successDelta,null)
-})
 
 test("declared mismatched stage names retain numeric gains, losses and worst service quality",()=>{
   const make=(id:string,energy:number,success:number,p95:number,offered:number):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{wholePoolJoules:energy,requests:{camera:{offered,deadlineSuccessFraction:success,successDenominator:offered,completedLatencyNS:{p95:p95*1e6}}}}})
@@ -818,7 +797,7 @@ test("R7: stage record links retain the exact range and activity counts never cl
   assert.deepEqual(stageActivity({from:stage.from,to:stage.to,events:null}),{decisions:0,actions:0,partial:false,statuses:[],kinds:[]})
 })
 
-test("R8: campaign scoreboard separates energy, worst service losses, missing metrics and incomparable stages",()=>{
+test("R8: campaign coverage retains paired, unmatched and unavailable stages",()=>{
   const make=(id:string,energy:number|null,success:number|null,p95:number|null):ExperimentStage=>({
     id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",
     kpis:{wholePoolJoules:energy,measurementRules:{population:"offered"},requests:{camera:{offered:600,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95===null?null:p95*1e6}}}},
@@ -830,22 +809,11 @@ test("R8: campaign scoreboard separates energy, worst service losses, missing me
     make("manual",50,1,5),
   ],[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"],["full-ramp-up","static-baseline-ramp-up"]])
   const scoreboard=campaignScoreboard(run)
-  assert.deepEqual(scoreboard.energyCounts,{decreased:1,increased:1,equal:0,missing:1,delta:0})
-  assert.ok(Math.abs(scoreboard.referenceSummary.successDelta!+10)<1e-10)
-  assert.equal(scoreboard.referenceSummary.p95Ratio,2)
-  assert.equal(scoreboard.quality[0].service,"camera")
-  assert.equal(scoreboard.quality[0].stage,definitionComparisons(run)[0].key)
-  assert.equal(scoreboard.quality[0].missing,1)
-  assert.equal(scoreboard.quality[1].value,10)
-  assert.equal(scoreboard.quality[1].missing,1)
   assert.equal(scoreboard.coverageCounts.stages,7)
   assert.equal(scoreboard.coverageCounts.pairs,3)
   assert.equal(scoreboard.coverageCounts.unpaired,1)
   const unavailable=campaignScoreboard({...run,stages:[make("manual",50,1,5)]})
-  assert.deepEqual(unavailable.summary,{energyPercent:null,successDelta:null,p95Ratio:null})
   assert.equal(unavailable.coverageCounts.unpaired,1)
-  const missing=campaignScoreboard({...run,stages:[make("full-steady-mixed",null,null,null),make("static-baseline-steady-mixed",100,1,10)]})
-  assert.deepEqual(missing.summary,{energyPercent:null,successDelta:null,p95Ratio:null})
 })
 
 test("declared comparison order is retained while heatmap intervals follow recorded time without mutating the publication",()=>{
@@ -857,13 +825,11 @@ test("declared comparison order is retained while heatmap intervals follow recor
   assert.equal(run.stages[0].id,"later")
 })
 
-test("campaign groups expose declared comparison reasons and missing targets without inventing counterparts",()=>{
+test("declared comparison reasons retain missing targets without inventing counterparts",()=>{
   const paired={...definedRun([{...stage,id:"candidate"},{...stage,id:"baseline"}],[["candidate","baseline"]]),from:"2026-10-29T00:00:00Z"}
   const unpaired={...paired,id:"unpaired",from:"2026-10-31T00:00:00Z",stages:paired.stages.slice(0,1)}
-  const groups=campaignGroups([unpaired,paired])
-  assert.deepEqual(groups.map(group=>group.run.id),["unpaired",paired.id])
-  assert.match(groups[0].comparisonReason,/대상 게시 없음/)
-  assert.equal(groups[1].comparisonReason,paired.definition!.spec.comparisons![0].reason)
+  assert.match(definitionComparisonReason(unpaired),/대상 게시 없음/)
+  assert.equal(definitionComparisonReason(paired),paired.definition!.spec.comparisons![0].reason)
 })
 
 test("R9: published FAIL means a failed request target, never a failed result query",()=>{
@@ -890,15 +856,6 @@ test("R9: selected published results use the experiment endpoint without stage f
   assert.throws(()=>relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"?stage=ramp-up",config),/DashboardQueryInvalid/)
 })
 
-test("campaign summary scopes relative energy to available pairs and preserves quality loss",()=>{
-  const make=(id:string,joules:number|null,success:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:joules,requests:{camera:{offered:10,deadlineSuccessFraction:success,completedLatencyNS:{p95:1000000}}}}})
-  const run=definedRun([make("full-steady-mixed",90,.8),make("static-baseline-steady-mixed",100,.9),make("full-burst",null,1),make("static-baseline-burst",100,1)],[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"]])
-  const score=campaignScoreboard(run)
-  assert.equal(score.referenceSummary.energyPercent,-10)
-  assert.ok(Math.abs(score.referenceSummary.successDelta!+10)<1e-10)
-  assert.equal(score.energyCounts.missing,1)
-  assert.deepEqual(campaignScoreboard({...run,stages:[]}).summary,{energyPercent:null,successDelta:null,p95Ratio:null})
-})
 
 test("R10: comparison limits retain missing rules, unequal durations and uncertain identity with declared load",()=>{
   const make=(id:string):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{measurementRules:{population:"offered"},requests:{camera:{uid:"camera",definitionID:"v1",offered:600,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
@@ -934,14 +891,9 @@ test("R10: duration validity and scoreboard use the same precision as displayed 
   assert.match(comparisonValidity(a,{...b,to:"invalid"}).duration,/미제공/)
 })
 
-test("R10: scoreboard projects numeric counts and quality deltas without sentence parsing",()=>{
+test("R10: coverage projects numeric pair and stage counts without sentence parsing",()=>{
   const make=(id:string,energy:number,success:number,p95:number):ExperimentStage=>({...stage,id,kpis:{wholePoolJoules:energy,requests:{camera:{offered:100,deadlineSuccessFraction:success,completedLatencyNS:{p95:p95*1e6}}}}})
   const score=campaignScoreboard(definedRun([make("full-steady-mixed",90,.8,20),make("static-baseline-steady-mixed",100,.9,10)],[["full-steady-mixed","static-baseline-steady-mixed"]]))
-  assert.deepEqual(score.energyCounts,{decreased:1,increased:0,equal:0,missing:0,delta:-10})
-  assert.equal(score.quality[0].unit,"%p")
-  assert.ok(Math.abs(score.quality[0].value!+10)<1e-10)
-  assert.equal(score.quality[1].value,10)
-  assert.equal(score.quality[1].unit,"ms")
   assert.equal(score.coverageCounts.pairs,1)
   assert.equal(score.coverageCounts.stages,2)
 })
@@ -974,17 +926,15 @@ test("selected-service chart and heatmap share ordered intervals and frozen targ
   assert.ok(duplicates.every(row=>row.other===null))
 })
 
-test("R13: conclusion chips isolate matched definitions and rules from limited reference comparisons",()=>{
+test("R13: coverage separates matched definitions and rules from limited comparisons",()=>{
   const make=(id:string,energy:number,definition="same"):ExperimentStage=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:00:10Z",kpis:{wholePoolJoules:energy,measurementRules:{window:10},requests:{camera:{uid:"camera",definitionID:definition,offered:10,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}})
   const run=definedRun([make("full-steady-mixed",90),make("static-baseline-steady-mixed",100),make("full-burst",1,"changed"),make("static-baseline-burst",100)],[["full-steady-mixed","static-baseline-steady-mixed"],["full-burst","static-baseline-burst"]])
   const score=campaignScoreboard(run)
-  assert.equal(score.summary.energyPercent,-10)
-  assert.equal(score.referenceSummary.energyPercent,-99)
   assert.equal(score.coverageCounts.matched,1)
   assert.equal(score.coverageCounts.limited,1)
   const limited=campaignScoreboard({...run,stages:run.stages.slice(2)})
-  assert.equal(limited.summary.energyPercent,null)
-  assert.equal(limited.reference,true)
+  assert.equal(limited.coverageCounts.matched,0)
+  assert.equal(limited.coverageCounts.limited,1)
 })
 
 test("IA: measured quality differences remain facts, never threshold-based SLO conclusions",()=>{

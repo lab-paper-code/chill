@@ -271,9 +271,6 @@ export function definitionComparisonReason(run:Experiment,runs:Experiment[]=[run
   if(!comparisons.length)return "비교 없음"
   return comparisons.map(c=>`${c.reason}${!resolveComparison(run,c.left,runs)||!resolveComparison(run,c.right,runs)?" · 대상 게시 없음":""}`).join(" / ")
 }
-export function campaignGroups(runs:Experiment[]) {
-  return runs.map(run=>({run,pairs:definitionComparisons(run,runs),title:run.definition?.run.name??run.id,question:run.definition?.spec.question??"미기록",comparisonReason:definitionComparisonReason(run,runs)})).sort((a,b)=>Date.parse(b.run.from)-Date.parse(a.run.from))
-}
 export function experimentSelection(search:string,values:Record<string,string>):URLSearchParams {
   const next=new URLSearchParams(search)
   for(const [key,value] of Object.entries(values)) {
@@ -326,38 +323,18 @@ export function campaignTradeoffs(run:Experiment,runs:Experiment[]=[run]) {
 }
 
 export function campaignScoreboard(run:Experiment,runs:Experiment[]=[run]) {
-  const comparisons=campaignTradeoffs(run,runs),services=comparisons.flatMap(pair=>pair.services.map(service=>({...service,pair})))
-  const energies=comparisons.filter(pair=>pair.energyDelta!==null)
-  const successes=services.filter(service=>service.successDelta!==null),latencies=services.filter(service=>service.p95Delta!==null)
-  const worstSuccess=successes.reduce<typeof successes[number]|null>((worst,service)=>!worst||service.successDelta!<worst.successDelta!?service:worst,null)
-  const worstLatency=latencies.reduce<typeof latencies[number]|null>((worst,service)=>!worst||service.p95Delta!>worst.p95Delta!?service:worst,null)
-  const compared=new Set(comparisons.flatMap(pair=>[pair.chill,pair.control]))
-  const ruleMissing=comparisons.filter(pair=>!Object.keys(object(pair.chill.kpis.measurementRules)).length||!Object.keys(object(pair.control.kpis.measurementRules)).length).length
-  const ruleDifferences=comparisons.filter(pair=>differentMeasurementRules(pair.chill,pair.control).length).length
-  const durationDifferences=comparisons.filter(pair=>!sameDisplayedDuration(pair.chill,pair.control)).length
-  const summarize=(pairs:typeof comparisons)=>{
-    const energies=pairs.filter(pair=>pair.energyDelta!==null),services=pairs.flatMap(pair=>pair.services)
-    const base=energies.reduce((sum,pair)=>sum+Number(pair.control.kpis.wholePoolJoules),0)
-    const successes=services.flatMap(service=>service.successDelta===null?[]:[service.successDelta]),ratios=services.flatMap(service=>service.p95Ratio===null?[]:[service.p95Ratio])
-    return {energyPercent:energies.length&&base>0?100*energies.reduce((sum,pair)=>sum+pair.energyDelta!,0)/base:null,successDelta:successes.length?Math.min(...successes):null,p95Ratio:ratios.length?Math.max(...ratios):null}
-  }
-  const validities=comparisons.map(pair=>({pair,validity:comparisonValidity(pair.chill,pair.control,pair.leftRun,pair.rightRun)}))
-  const matched=validities.filter(row=>!row.validity.limited).map(row=>row.pair),limited=validities.filter(row=>row.validity.limited).map(row=>row.pair)
-  const summary=summarize(matched),referenceSummary=summarize(limited)
-  const reference=!matched.length&&limited.length>0
-  return {
-    summary,referenceSummary,reference,
-    energyCounts:{decreased:energies.filter(pair=>pair.energyDelta!<0).length,increased:energies.filter(pair=>pair.energyDelta!>0).length,equal:energies.filter(pair=>pair.energyDelta===0).length,missing:comparisons.length-energies.length,
-      delta:energies.length?energies.reduce((sum,pair)=>sum+pair.energyDelta!,0):null},
-    quality:[
-      {label:"최대 성공률 하락",unit:"%p",value:worstSuccess?.successDelta==null?null:Math.min(0,worstSuccess.successDelta),service:worstSuccess?.name??"—",stage:worstSuccess?.pair.key??"—",compared:successes.length,missing:services.length-successes.length},
-      {label:"최대 p95 증가",unit:"ms",value:worstLatency?.p95Delta==null?null:Math.max(0,worstLatency.p95Delta),ratio:worstLatency?.p95Ratio??null,service:worstLatency?.name??"—",stage:worstLatency?.pair.key??"—",compared:latencies.length,missing:services.length-latencies.length},
-    ],
-    coverageCounts:{stages:run.stages.length,pairs:comparisons.length,unpaired:run.stages.filter(stage=>!compared.has(stage)).length,ruleMissing,ruleDifferences,durationDifferences,
-      identityUnknown:validities.filter(row=>row.validity.identityUnknown).length,identityDifferences:validities.filter(row=>row.validity.identityDifferent).length,
-      loadUnknown:validities.filter(row=>row.validity.conditions.load==="미기록").length,loadDifferences:validities.filter(row=>row.validity.conditions.load==="다름").length,
-      matched:matched.length,limited:limited.length},
-  }
+  const comparisons=definitionComparisons(run,runs),compared=new Set(comparisons.flatMap(pair=>[pair.chill,pair.control]))
+  const validities=comparisons.map(pair=>comparisonValidity(pair.chill,pair.control,pair.leftRun,pair.rightRun))
+  const limited=validities.filter(validity=>validity.limited).length
+  return {coverageCounts:{
+    stages:run.stages.length,pairs:comparisons.length,unpaired:run.stages.filter(stage=>!compared.has(stage)).length,
+    ruleMissing:comparisons.filter(pair=>!Object.keys(object(pair.chill.kpis.measurementRules)).length||!Object.keys(object(pair.control.kpis.measurementRules)).length).length,
+    ruleDifferences:comparisons.filter(pair=>differentMeasurementRules(pair.chill,pair.control).length).length,
+    durationDifferences:comparisons.filter(pair=>!sameDisplayedDuration(pair.chill,pair.control)).length,
+    identityUnknown:validities.filter(validity=>validity.identityUnknown).length,identityDifferences:validities.filter(validity=>validity.identityDifferent).length,
+    loadUnknown:validities.filter(validity=>validity.conditions.load==="미기록").length,loadDifferences:validities.filter(validity=>validity.conditions.load==="다름").length,
+    matched:comparisons.length-limited,limited,
+  }}
 }
 
 export function durationMismatch(a:ExperimentStage,b:ExperimentStage):boolean {
@@ -384,11 +361,6 @@ export function experimentHeatmap(run:Experiment,runs:Experiment[]=[run]):Experi
       energyPercent:base!==null&&base>0&&energy!==null?100*(energy-base)/base:null,
       services:comparison?.services??[]}
   })
-}
-export function experimentDifference(value:number|null,baseline=0,higherIsBetter=false) {
-  const delta=value===null?null:value-baseline
-  const small=delta!==null&&delta!==0&&Math.abs(delta)<.01
-  return {text:value===null?"미기록":small&&baseline===0?"0.01 미만":formatMeasurementNumber(value,"%"),tone:delta===null||small||delta===0?"bg-muted/50 text-muted-foreground":(delta>0)===higherIsBetter?"bg-ok/10 text-ok":"bg-destructive/10 text-destructive"}
 }
 
 export function experimentChartData(run:Experiment,service:string,runs:Experiment[]=[run]) {

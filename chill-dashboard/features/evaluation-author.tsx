@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useId, useState, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, type ReactNode } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Screen } from "@/components/screen"
@@ -116,7 +116,9 @@ function ComparisonSide({label,spec,path,onChange,stages}:{label:string;spec:Spe
 export function EvaluationSpecEditor({spec,onChange,onValidityChange}:{spec:Spec;onChange:(spec:Spec)=>void;onValidityChange?:(valid:boolean)=>void}) {
   const loads=useChillQuery<{items:LoadScenario[]}>("v1/evaluations/load-scenarios",{decoder:parseSchedulerJSON}),stages=records(spec.stages),comparisons=records(spec.comparisons)
   const [tab,setTab]=useState("stages"),[invalid,setInvalid]=useState<string[]>([])
-  const [selectedStage,setSelectedStage]=useState(0),[newLoadStage,setNewLoadStage]=useState<number|null>(null)
+  const [selectedStage,setSelectedStage]=useState(0),[newLoad,setNewLoad]=useState<{stage:number;session:symbol}|null>(null)
+  const activeLoad=useRef<symbol|null>(null),draft=useRef({spec,onChange})
+  useEffect(()=>{draft.current={spec,onChange}},[spec,onChange])
   function reportValidity(key:string,valid:boolean) {
     const next=valid?invalid.filter(item=>item!==key):[...new Set([...invalid,key])]
     setInvalid(next);onValidityChange?.(next.length===0)
@@ -127,7 +129,7 @@ export function EvaluationSpecEditor({spec,onChange,onValidityChange}:{spec:Spec
       {tab==="stages"&&<div className="grid gap-4"><QueryGate query={loads}>{null}</QueryGate>{stages.map((stage,index)=>{const p:(string|number)[]=["stages",index],ref=object(stage.loadScenarioRef),start=object(stage.startState),selected=index===Math.min(selectedStage,stages.length-1);return <section key={index} className="rounded-md border p-3"><Button type="button" variant="ghost" className="min-h-11 w-full justify-start whitespace-normal text-left" aria-expanded={selected} disabled={invalid.length>0&&!selected} onClick={()=>setSelectedStage(index)}>{String(stage.id||`단계 ${index+1}`)} · {{autonomous:"자율",fixed:"고정","controls-disabled":"제어요소 끔"}[String(stage.mode)]??"미선택"} · {String(ref.name??"부하 미선택")}</Button>{selected&&<div className="mt-3 grid gap-4">
         <div className="grid gap-3 sm:grid-cols-3"><AuthorField label="단계 ID" spec={spec} path={[...p,"id"]} onChange={onChange}/><AuthorField label="행 이름" spec={spec} path={[...p,"row"]} onChange={onChange}/><AuthorSelect label="모드" value={String(stage.mode??"")} onChange={mode=>onChange(patchSpec(spec,[...p,"mode"],mode))}><option value="">미선택</option><option value="autonomous">자율</option><option value="fixed">고정</option><option value="controls-disabled">제어요소 끔</option></AuthorSelect></div>
         <AuthorSelect label="부하 설정" value={String(ref.uid??"")} onChange={uid=>{const selected=loads.data?.items.find(x=>x.uid===uid);if(selected)onChange(patchSpec(spec,[...p,"loadScenarioRef"],{...ref,name:selected.name,uid:selected.uid}))}}><option value="">미선택</option>{ref.uid&&!loads.data?.items.some(x=>x.uid===ref.uid)?<option value={String(ref.uid)}>{String(ref.name)} · 저장된 참조</option>:null}{loads.data?.items.map(item=><option key={item.uid} value={item.uid}>{item.name}</option>)}</AuthorSelect>
-        <Button type="button" variant="outline" disabled={invalid.length>0} onClick={()=>setNewLoadStage(index)}>새 부하</Button>
+        <Button type="button" variant="outline" disabled={invalid.length>0} onClick={()=>{const session=Symbol();activeLoad.current=session;setNewLoad({stage:index,session})}}>새 부하</Button>
         <AuthorSelect label="시작 상태" value={start.stageResultRef!==undefined?"stage":"evidence"} onChange={kind=>{const next={...start};delete next.evidenceRef;delete next.stageResultRef;onChange(patchSpec(spec,[...p,"startState"],{...next,[kind==="stage"?"stageResultRef":"evidenceRef"]:{}}))}}><option value="evidence">증거 객체</option><option value="stage">앞선 단계 출력</option></AuthorSelect>
         {start.stageResultRef!==undefined?<div className="grid gap-3 sm:grid-cols-2"><AuthorField label="앞선 단계 ID" spec={spec} path={[...p,"startState","stageResultRef","stageID"]} onChange={onChange}/><AuthorField label="출력 이름" spec={spec} path={[...p,"startState","stageResultRef","output"]} onChange={onChange}/></div>:<EvidencePicker label="시작 상태 증거" value={start.evidenceRef} onChange={value=>onChange(patchSpec(spec,[...p,"startState","evidenceRef"],value))}/>}
         <details><summary className="cursor-pointer text-sm">단계 제어 · {stage.control===undefined?"기본 상속":"전체 대체"}</summary><div className="mt-3 grid gap-3"><label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={stage.control!==undefined} onChange={event=>{onChange(patchSpec(spec,[...p,"control"],event.target.checked?structuredClone(object(spec.control)):undefined));reportValidity(`stage-${index}`,true)}}/>단계 제어 사용</label>{stage.control!==undefined&&<ControlFields spec={spec} path={[...p,"control"]} onChange={onChange} onValidityChange={valid=>reportValidity(`stage-${index}`,valid)}/>}</div></details>
@@ -148,7 +150,7 @@ export function EvaluationSpecEditor({spec,onChange,onValidityChange}:{spec:Spec
         <details><summary className="cursor-pointer text-sm">실행 환경 원문</summary>{[["target","대상 구성요소"],["harness","실행기"],["loadGenerator","부하 발생기"],["powerMeasurement","전력 측정"]].map(([key,label])=><AuthorJSON key={key} disabled={invalid.length>0&&!invalid.includes(key)} label={label} value={object(spec[key])} onChange={value=>onChange(patchSpec(spec,[key],value))} onValidityChange={valid=>reportValidity(key,valid)}/>)}</details>
       </div>}
     </>}
-    <Sheet open={newLoadStage!==null} onOpenChange={open=>{if(!open)setNewLoadStage(null)}}><SheetContent className="w-full overflow-y-auto sm:max-w-3xl" aria-describedby={undefined}><SheetHeader><SheetTitle>새 부하</SheetTitle></SheetHeader>{newLoadStage!==null&&<div className="p-4"><LoadEditor editing={false} onSaved={()=>loads.refetch()} onConfirmed={value=>{const path=["stages",newLoadStage,"loadScenarioRef"];onChange(patchSpec(spec,path,{...object(specValue(spec,path)),...value}));setNewLoadStage(null)}}/></div>}</SheetContent></Sheet>
+    <Sheet open={newLoad!==null} onOpenChange={open=>{if(!open){activeLoad.current=null;setNewLoad(null)}}}><SheetContent className="w-full overflow-y-auto sm:max-w-3xl" aria-describedby={undefined}><SheetHeader><SheetTitle>새 부하</SheetTitle></SheetHeader>{newLoad!==null&&<div className="p-4"><LoadEditor editing={false} onSaved={()=>loads.refetch()} onConfirmed={value=>{if(activeLoad.current!==newLoad.session)return;const path=["stages",newLoad.stage,"loadScenarioRef"],current=draft.current;current.onChange(patchSpec(current.spec,path,{...object(specValue(current.spec,path)),...value}));activeLoad.current=null;setNewLoad(null)}}/></div>}</SheetContent></Sheet>
   </div>
 }
 export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:{initialSpec?:Spec;initialName?:string;existing?:{name:string;uid:string};onSubmitted?:(value:{name:string;uid:string})=>void}) {

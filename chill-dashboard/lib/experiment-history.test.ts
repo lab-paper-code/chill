@@ -28,11 +28,13 @@ const run:Experiment={...fixture,id:"candidate",comparisons:[{left:{stageID:fixt
 function harness(publication:Experiment=run) {
   let params=new URLSearchParams("a=candidate"),queries:Array<{error:Error|null;data?:Experiment;isPending:boolean;refetch?:()=>void}>=[]
   const paths:string[]=[],historicalPaths:string[][]=[],buttons:Array<{text:string;click:()=>void}>=[],charts:Array<{dataKey:string;onClick?:(entry:{payload:{key:string}})=>void}>=[],events:Array<{from:string;to:string;returnTo?:string;label?:string}>=[]
+  const selects:Array<{value:string;onChange:(event:{target:{value:string}})=>void}>=[],sheets:Array<{open:boolean;onOpenChange:(open:boolean)=>void}>=[]
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const Button=({children,onClick,asChild,...props}:{children?:ReactNode;onClick?:()=>void;asChild?:boolean})=>{if(onClick)buttons.push({text:renderToStaticMarkup(createElement("span",null,children)),click:onClick});return asChild?children:createElement("button",props,children)}
   const runtime=require("react/jsx-runtime")
-  const track=(method:"jsx"|"jsxs")=>(type:unknown,props:{children?:ReactNode;onClick?:()=>void},key?:string)=>{
+  const track=(method:"jsx"|"jsxs")=>(type:unknown,props:{children?:ReactNode;onClick?:()=>void;value?:string;onChange?:(event:{target:{value:string}})=>void},key?:string)=>{
     if(type==="button"&&props.onClick)buttons.push({text:renderToStaticMarkup(createElement("span",null,props.children)),click:props.onClick})
+    if(type==="select"&&props.onChange)selects.push({value:props.value??"",onChange:props.onChange})
     return runtime[method](type,props,key)
   }
   const modules:Record<string,unknown>={
@@ -42,7 +44,7 @@ function harness(publication:Experiment=run) {
     "next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"next/navigation":{useSearchParams:()=>params},
     "recharts":{...Object.fromEntries(["CartesianGrid","ComposedChart","ResponsiveContainer","Tooltip","XAxis","YAxis"].map(name=>[name,container])),Bar:(props:typeof charts[number])=>{charts.push(props);return null},Line:(props:typeof charts[number])=>{charts.push(props);return null}},
     "@/components/screen":{Screen:({children,action,back}:{children?:ReactNode;action?:ReactNode;back?:[string,string]})=>createElement("main",null,back&&createElement("a",{href:back[0]},back[1]),action,children),Empty:container},"@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
-    "@/components/ui/button":{Button},"@/components/ui/sheet":{Sheet:({children,open}:{children?:ReactNode;open:boolean})=>open?container({children}):null,SheetContent:container,SheetHeader:container,SheetTitle:container},
+    "@/components/ui/button":{Button},"@/components/ui/sheet":{Sheet:({children,...props}:{children?:ReactNode;open:boolean;onOpenChange:(open:boolean)=>void})=>{sheets.push(props);return props.open?container({children}):null},SheetContent:container,SheetHeader:container,SheetTitle:container},
     "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogContent","DialogHeader","DialogTitle"].map(name=>[name,container])),
     "@/components/ui/tooltip":{Tooltip:container,TooltipTrigger:container,TooltipContent:()=>null},
     "@/features/evaluation-request":{EvaluationCleanup:()=>null,EvaluationLaunch:()=>null},
@@ -51,7 +53,7 @@ function harness(publication:Experiment=run) {
   const conclusion=load<typeof ConclusionModule>("../features/experiments-conclusion.tsx",modules)
   modules["@/features/experiments-conclusion"]=conclusion
   const pages=load<typeof ExperimentsModule>("../features/experiments.tsx",modules)
-  return {conclusion,pages,paths,historicalPaths,buttons,charts,events,setSearch:(search:string)=>{params=new URLSearchParams(search)},setQueries:(value:typeof queries)=>{queries=value},render:(published=false)=>{paths.length=0;historicalPaths.length=0;buttons.length=0;charts.length=0;events.length=0;return renderToStaticMarkup(createElement(published?pages.PublishedExperimentsPage:pages.ExperimentsPage))}}
+  return {conclusion,pages,paths,historicalPaths,buttons,charts,events,selects,sheets,setSearch:(search:string)=>{params=new URLSearchParams(search)},setQueries:(value:typeof queries)=>{queries=value},render:(published=false)=>{paths.length=0;historicalPaths.length=0;buttons.length=0;charts.length=0;events.length=0;selects.length=0;sheets.length=0;return renderToStaticMarkup(createElement(published?pages.PublishedExperimentsPage:pages.ExperimentsPage))}}
 }
 
 test("historical errors retain candidate measurements and retry only failed explicit references",()=>{
@@ -162,5 +164,55 @@ test("all measured chart lanes select the publication and stage identity rather 
     assert.equal(location.searchParams.get("as"),row.stage.id)
   } finally {
     for(const [key,descriptor] of [["window",previousWindow],["document",previousDocument],["HTMLElement",previousHTMLElement]] as const)if(descriptor)Object.defineProperty(globalThis,key,descriptor);else Reflect.deleteProperty(globalThis,key)
+  }
+})
+
+function withSelectionBrowser(app:{setSearch:(search:string)=>void},search:string,check:(location:URL)=>void) {
+  const location=new URL(`https://dashboard.invalid/experiments/results?${search}`)
+  const change=(_data:unknown,_unused:string,url?:string|URL|null)=>{location.href=new URL(String(url),location).href;app.setSearch(location.search)}
+  const saved=["window","document","HTMLElement"].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)] as const)
+  Object.defineProperty(globalThis,"window",{configurable:true,value:{location,history:{replaceState:change,pushState:change}}})
+  Object.defineProperty(globalThis,"document",{configurable:true,value:{activeElement:null,body:null}})
+  Object.defineProperty(globalThis,"HTMLElement",{configurable:true,value:class {}})
+  app.setSearch(search)
+  try {check(location)} finally {
+    for(const [key,descriptor] of saved)if(descriptor)Object.defineProperty(globalThis,key,descriptor);else Reflect.deleteProperty(globalThis,key)
+  }
+}
+
+test("IA review: closed comparison changes persist identity and reload without opening a Sheet",()=>{
+  const stages=["first","base-first","later","base-later"].map((id,index)=>({...fixture.stages[0],id,kpis:{wholePoolJoules:100+index}}))
+  const publication:Experiment={...fixture,id:"candidate",stages,comparisons:[{left:{stageID:"first"},right:{stageID:"base-first"},reason:"first pair"},{left:{stageID:"later"},right:{stageID:"base-later"},reason:"later pair"}]}
+  const app=harness(publication),row=helpers.experimentHeatmap(publication).find(row=>row.stage.id==="later")!
+  withSelectionBrowser(app,"a=candidate&offset=5&service=camera",location=>{
+    app.render()
+    app.selects[0].onChange({target:{value:row.key}})
+    assert.equal(location.searchParams.get("as"),"later")
+    const html=app.render()
+    assert.match(html,/later · 단계 집계/)
+    assert.equal(app.sheets.at(-1)?.open,false)
+    const reload=harness(publication);reload.setSearch(location.search)
+    assert.match(reload.render(),/later · 단계 집계/)
+    assert.equal(reload.sheets.at(-1)?.open,false)
+  })
+})
+
+test("IA review: opening then closing a nondefault interval preserves its values, including direct deep links",()=>{
+  const publication:Experiment={...fixture,id:"candidate",comparisons:[],stages:["first","later"].map((id,index)=>({...fixture.stages[0],id,kpis:{wholePoolJoules:100+index}}))}
+  for(const direct of [false,true]) {
+    const app=harness(publication)
+    withSelectionBrowser(app,`a=candidate&service=camera&offset=5${direct?"&al=candidate&as=later":""}`,location=>{
+      app.render()
+      if(!direct)app.charts.find(chart=>chart.dataKey==="leftEnergy")!.onClick!({payload:{key:helpers.experimentHeatmap(publication).find(row=>row.stage.id==="later")!.key}})
+      assert.match(app.render(),/later · 단계 집계/)
+      assert.equal(app.sheets.at(-1)?.open,true)
+      app.sheets.at(-1)!.onOpenChange(false)
+      assert.match(app.render(),/later · 단계 집계/)
+      assert.equal(location.searchParams.get("as"),"later")
+      assert.equal(app.sheets.at(-1)?.open,false)
+      assert.equal(app.events.length,0)
+      assert.equal(location.searchParams.get("offset"),"5")
+      assert.equal(location.searchParams.get("service"),"camera")
+    })
   }
 })
