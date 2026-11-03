@@ -47,11 +47,6 @@ export function coverageFilterVisible(cell:MeasurementCoverageCell,inventory?:In
 export function coverageSupportReasons(cell:MeasurementCoverageCell) {
   return cell.support.reasons.length?cell.support.reasons:[{code:"DeclarationMismatch",message:"장치·실행 경로 불일치"}]
 }
-export function coverageUsageAssessment(cells:MeasurementCoverageCell[],spec:MeasurementPlanSpec) {
-  const candidate=spec.state.candidate
-  return cells.find(cell=>cell.model.name===candidate.modelSpec&&cell.deviceClass.name===candidate.deviceClass&&cell.executionPath===candidate.executionPath&&cell.powerMode===candidate.powerMode&&
-    (cell.support.node?.name===spec.state.targetNode||cell.variants.some(variant=>((variant.condition.metricSource as {nodeName?:string}|undefined)?.nodeName??(variant.condition.state as {targetNode?:string}|undefined)?.targetNode)===spec.state.targetNode)))?.assessment
-}
 export function coverageWatts(cells:MeasurementCoverageCell[]) {
   return cells.flatMap(cell=>cell.variants.flatMap(variant=>variant.resultRows.flatMap(row=>row.activeWatts!==null&&Number.isFinite(row.activeWatts)?[row.activeWatts]:[])))
 }

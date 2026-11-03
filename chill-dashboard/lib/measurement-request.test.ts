@@ -375,7 +375,7 @@ test("advanced timing shows actual measurement and observation windows without i
   assert.doesNotMatch(unknown,/width:NaN|width:Infinity/)
 })
 
-function renderRequestList(kind:"requests"|"runs",record:unknown) {
+function renderRequestList(kind:"requests"|"runs",record:unknown,cells:MeasurementCoverageCell[]=[]) {
   const source=readFileSync(new URL(`../features/measurement-${kind}.tsx`,import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
@@ -389,14 +389,14 @@ function renderRequestList(kind:"requests"|"runs",record:unknown) {
     "@/lib/measurement-request":requestHelpers,
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-summary":measurementSummary,
-    "@/features/measurement-coverage":{MeasurementFilters:()=>null,useMeasurementCoverage:()=>({})},
+    "@/features/measurement-coverage":{MeasurementFilters:()=>null,useMeasurementCoverage:()=>({data:{cells}})},
     "@/features/measurement-plans":{MeasurementPlanSheet:()=>null},
     "@/components/read-region":{QueryGate:container,SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>inline?createElement("pre",null,JSON.stringify(value)):null,SourceExport:()=>null},
     "@/components/screen":{Screen:container},
     "@/components/data-table":{DataTable:table,useServerTable:()=>({query:""})},
     "@/components/ui/button":{Button:container},
     "@/components/status-cell":{StatusCell:({label}:{label:string})=>createElement("span",null,label)},
-    "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementStatus:()=>createElement("span",null,"상태")},
+    "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementStatus:({assessment}:{assessment?:MeasurementAssessment})=>createElement("span",null,assessment?.scope.schedulerUsed?"사용 중":"미사용")},
   }
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   return renderToStaticMarkup(createElement(exports[kind==="requests"?"MeasurementRequestsPage":"MeasurementRunsPage"] as ComponentType))
@@ -522,4 +522,10 @@ test("compatibility diagnostics are displayed without adding a request gate",()=
   assert.match(html,/aria-label="실행 선언 진단"/)
   assert.match(html,/node: Last runtime entry selected\./)
   assert.equal((html.match(/disabled=""/g)??[]).length,(renderRequest().match(/disabled=""/g)??[]).length)
+})
+
+test("historical request rows retain their own usage instead of inheriting another current result in the same cell",()=>{
+  const html=renderRequestList("requests",{...plan,assessment:{...retainedAssessment,scope:{...retainedAssessment.scope,schedulerUsed:false}}},[retainedCell])
+  assert.match(html,/>미사용</)
+  assert.doesNotMatch(html,/>사용 중</)
 })

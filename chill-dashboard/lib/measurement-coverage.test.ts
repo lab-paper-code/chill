@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageUsageAssessment, coverageFilterVisible, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
+import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageFilterVisible, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
 import { requestBatches, requestTargetBatches } from "./measurement-request.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
@@ -223,11 +223,6 @@ test("unsupported status and reason drilldown retain the combinations hidden by 
   assert.equal(coverageFilterVisible(unsupported,inventory,"unsupported","Other"),false)
   assert.equal(coverageFilterVisible(unsupported,inventory,""),false)
   assert.equal(coverageMeasurementStatus(unsupported),"unsupported")
-})
-test("request usage shares exact condition facts",()=>{
-  const used={...cell,assessment:{...cell.assessment,scope:{...cell.assessment.scope,schedulerUsed:true}}}
-  assert.equal(coverageUsageAssessment([used],plan.spec),used.assessment)
-  assert.equal(coverageUsageAssessment([used],{...plan.spec,state:{...plan.spec.state,targetNode:"other"}}),undefined)
 })
 
 test("scope counts use the same measurement state as visible cells, with unsupported counted separately",()=>{
