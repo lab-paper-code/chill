@@ -10,13 +10,14 @@ from pathlib import Path
 import tempfile
 
 import conductor
+import evidence_io
 
 
 def preview(config, destination):
     if destination.exists():
         raise ValueError('No preview overwrite')
     binding = conductor.bind(config)
-    conductor.save(destination, binding)
+    evidence_io.save(destination, binding)
     return binding
 
 

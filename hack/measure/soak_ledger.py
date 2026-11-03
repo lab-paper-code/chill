@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sys
 import time
 from types import SimpleNamespace
 
@@ -305,6 +306,7 @@ def main():
     repository = Path(config['paths']['repository']).resolve()
     if args.out.resolve() == repository or repository in args.out.resolve().parents:
         parser.error('--out must be outside repository')
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'evaluation'))
     spec = importlib.util.spec_from_file_location('soak_transport', Path(__file__).resolve().parents[1] / 'evaluation/conductor.py')
     helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
     operation = config['d2']

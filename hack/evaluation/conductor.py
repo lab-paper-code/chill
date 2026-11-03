@@ -2,12 +2,10 @@
 """Black-box evaluation: absolute load, public feature controls and owned Jobs only."""
 import argparse
 import base64
-from collections import Counter
 import copy
 import datetime as dt
 import gzip
 import hashlib
-import importlib.util
 import json
 import math
 import os
@@ -22,39 +20,10 @@ import urllib.parse
 import urllib.request
 import zlib
 
+import evidence_io
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-SETTINGS = '/api/v1/scheduler/settings'
-# GET projects these read-only fields beside the writable SchedulerSettings.
-SETTINGS_PROJECTIONS = {'staticRouting', 'staticRoutingValidatedAt', 'powerObservation', 'meters', 'requestTimeout'}
-
-
-def module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    value = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(value)
-    return value
-
-
-def load(path):
-    return json.loads(Path(path).read_text(), parse_constant=lambda value: (_ for _ in ()).throw(ValueError('Nonfinite JSON: ' + value)))
-
-
-def save(path, value):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + '.tmp')
-    temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
-    temporary.replace(path)
-
-
-def now():
-    return dt.datetime.now(dt.timezone.utc).isoformat()
-
-
-def ref(path):
-    path = Path(path)
-    return {'path': str(path), 'bytes': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 class Client:
@@ -63,7 +32,7 @@ class Client:
         origin = urllib.parse.urlsplit(config['endpoint'])
         if origin.scheme != 'https' or not origin.hostname or origin.username or origin.password or origin.path not in ('', '/') or origin.query or origin.fragment:
             raise ValueError('FrozenInputInvalid: API requires an HTTPS origin')
-        auth = module('evaluation_auth', HERE / 'auth.py')
+        auth = evidence_io.module('evaluation_auth', HERE / 'auth.py')
         self.http = urllib.request.build_opener(auth.NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=config['caFile'])))
         self.collector_token_file = config['collectorTokenFile']
 
@@ -108,7 +77,7 @@ class Client:
         request = urllib.request.Request(host + '/apis/batch/v1/namespaces/' + self.config['namespace'] + '/jobs/' + name,
                                          data=json.dumps(body).encode(), method='DELETE',
                                          headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
-        auth = module('evaluation_delete_auth', HERE / 'auth.py')
+        auth = evidence_io.module('evaluation_delete_auth', HERE / 'auth.py')
         opener = urllib.request.build_opener(auth.NoRedirect(), urllib.request.HTTPSHandler(
             context=ssl.create_default_context(cafile='/var/run/secrets/kubernetes.io/serviceaccount/ca.crt')))
         with opener.open(request, timeout=self.config.get('timeboxes', {}).get('apiSeconds', 30)) as response:
@@ -130,7 +99,7 @@ def parse_seeds(seeds, names):
 
 
 def bind(path):
-    config = load(path)
+    config = evidence_io.load(path)
     names = [w['name'] for w in config['workloads']]
     if len(set(names)) != len(names) or not names:
         raise ValueError('FrozenInputInvalid: workload names')
@@ -164,206 +133,9 @@ def bind(path):
                             'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
         schedule.append({'id': stage['id'], 'parts': parts, 'seconds': sum(p['seconds'] for p in parts),
                          'rates': {name: max(p['rates'][name] for p in parts) for name in names}, 'traces': traces})
-    return {'schema': 'e5-binding.v4', 'failurePolicy': 'v2', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'config': config,
-            'schedule': schedule, 'sources': {name: ref(HERE / name) for name in ('conductor.py', 'producer.py', 'raw.py', 'archive.py')},
+    return {'schema': 'e5-binding.v4', 'failurePolicy': 'v2', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': evidence_io.now(), 'config': config,
+            'schedule': schedule, 'sources': {name: evidence_io.ref(HERE / name) for name in ('conductor.py', 'producer.py', 'raw.py', 'archive.py')},
             'limitations': ['Single frozen seed set; no independent-repetition claim', 'Meter wall energy is not scheduler ownership energy']}
-
-
-def load_binding(path):
-    value = load(path)
-    if value.get('schema') != 'e5-binding.v4':
-        raise ValueError('FrozenInputInvalid: binding v4 required')
-    return value
-
-
-def merge_patch(current, patch):
-    """RFC 7396: objects recurse, arrays/scalars replace, null deletes keys."""
-    if not isinstance(patch, dict):
-        return copy.deepcopy(patch)
-    result = copy.deepcopy(current) if isinstance(current, dict) else {}
-    for key, value in patch.items():
-        if value is None:
-            result.pop(key, None)
-        else:
-            result[key] = merge_patch(result.get(key), value)
-    return result
-
-
-def path_value(value, path):
-    for key in path:
-        if not isinstance(value, dict):
-            return {'exists': False, 'blockedBy': copy.deepcopy(value)}
-        if key not in value:
-            return {'exists': False}
-        value = value[key]
-    return {'exists': True, 'value': copy.deepcopy(value)}
-
-
-def patch_changes(before, after, patch, prefix=(), created_parents=()):
-    """Track patched members, including members of newly created objects."""
-    changed = []
-    for key, value in patch.items():
-        path = (*prefix, key)
-        left, right = path_value(before, (key,)), path_value(after, (key,))
-        if isinstance(value, dict) and (not left['exists'] or isinstance(before.get(key), dict)):
-            parents = (*created_parents, path) if not left['exists'] else created_parents
-            members = patch_changes(before.get(key, {}), after[key], value, path, parents)
-            if members:
-                changed.extend(members)
-                continue
-            if left == right:
-                continue
-        if left != right:
-            changed.append({'path': list(path), 'before': left, 'applied': right,
-                            'createdParents': [list(parent) for parent in created_parents]})
-    return changed
-
-
-def restore_paths(current, changed):
-    result = copy.deepcopy(current)
-    for change in changed:
-        target = result
-        for key in change['path'][:-1]:
-            if key not in target:
-                target[key] = {}
-            if not isinstance(target[key], dict):
-                raise RuntimeError('ControlConflict: patched settings parent changed')
-            target = target[key]
-        key, original = change['path'][-1], change['before']
-        if original['exists']:
-            target[key] = copy.deepcopy(original['value'])
-        else:
-            target.pop(key, None)
-    parents = {tuple(parent) for change in changed for parent in change['createdParents']}
-    for path in sorted(parents, key=len, reverse=True):
-        if path_value(result, path) == {'exists': True, 'value': {}}:
-            target = result
-            for key in path[:-1]:
-                target = target[key]
-            target.pop(path[-1])
-    return result
-
-
-def settings_get(api):
-    metadata = {}
-    current = api('GET', SETTINGS, response=metadata)
-    etag = metadata.get('etag')
-    if metadata.get('statusCode') != 200 or not isinstance(etag, str) or len(etag) < 3 or not etag.startswith('"') or not etag.endswith('"'):
-        raise RuntimeError('ObservationUnavailable: public settings GET lacks HTTP 200 and quoted ETag')
-    return current, metadata
-
-
-def settings_put(api, request, etag, attempt):
-    attempt.update(ifMatch=etag, request=request, requestedAt=now())
-    metadata = {}
-    try:
-        value = api('PUT', SETTINGS, request, headers={'If-Match': etag}, response=metadata)
-        if metadata.get('statusCode') != 200 or not metadata.get('etag') or not isinstance(value, dict) or not isinstance(value.get('after'), dict) or not value.get('appliedAt'):
-            raise RuntimeError('RemoteEffectUnknown: settings PUT lacks application/ETag evidence')
-        return value
-    finally:
-        attempt.update(statusCode=metadata.get('statusCode'), responseETag=metadata.get('etag'), response=metadata.get('body'))
-
-
-def factor_apply(api, declared, path):
-    """Apply exactly once with the operator's public optimistic concurrency API."""
-    path = Path(path)
-    if path.exists():
-        raise RuntimeError('ControlConflict: settings receipt already exists')
-    if not isinstance(declared, dict) or set(declared) & SETTINGS_PROJECTIONS:
-        raise ValueError('FrozenInputInvalid: settingsPatch requires writable SchedulerSettings fields')
-    current, metadata = settings_get(api)
-    writable = {key: value for key, value in current.items() if key not in SETTINGS_PROJECTIONS}
-    request = merge_patch(writable, declared)
-    changed = patch_changes(current, request, declared)
-    receipt = {'settingsPatch': declared, 'before': current, 'beforeETag': metadata['etag'], 'changed': changed,
-               'request': request, 'requestedAt': now(), 'effectUncertain': bool(changed), 'put': {}}
-    save(path, receipt)
-    if changed:
-        receipt['put'] = {'ifMatch': metadata['etag'], 'request': request, 'requestedAt': now()}
-        save(path, receipt)
-        try:
-            receipt['response'] = settings_put(api, request, metadata['etag'], receipt['put'])
-            receipt['applied'] = receipt['response']['after']
-            for change in changed:
-                change['applied'] = path_value(receipt['applied'], change['path'])
-            receipt['appliedAt'] = receipt['response']['appliedAt']
-            receipt['effectUncertain'] = False
-        except Exception as error:
-            rejected = receipt['put'].get('statusCode') in (400, 401, 403, 404, 405, 409, 422, 428)
-            receipt.update(error=str(error), failedAt=now(), effectUncertain=not rejected)
-            save(path, receipt)
-            raise
-        save(path, receipt)
-    receipt['readback'], readback_meta = settings_get(api)
-    receipt['readbackETag'] = readback_meta['etag']
-    receipt['accepted'] = all(path_value(receipt['readback'], change['path']) == change['applied'] for change in changed)
-    save(path, receipt)
-    if not receipt['accepted']:
-        raise RuntimeError('ControlConflict: public settings patch readback differs')
-    return receipt
-
-
-def factor_revert(api, path):
-    path = Path(path)
-    if not path.exists():
-        return
-    receipt = load(path)
-    if receipt.get('effectUncertain'):
-        raise RuntimeError('RemoteEffectUnknown: settings PUT outcome not confirmed; no rollback or retry')
-    if receipt.get('revertedAt') or not receipt.get('appliedAt'):
-        return
-    attempts = receipt.setdefault('revertAttempts', [])
-    if attempts and attempts[-1].get('statusCode') != 409:
-        if attempts[-1].get('statusCode') != 200:
-            raise RuntimeError('RemoteEffectUnknown: prior settings revert outcome unconfirmed')
-        # Successful PUT already has server-side application evidence. Readback only;
-        # never repeat it after a lost local write or an external subsequent change.
-        receipt['revertReadback'], metadata = settings_get(api)
-        receipt['revertReadbackETag'] = metadata['etag']
-        receipt['revertedAt'] = receipt['revertResponse']['appliedAt']
-        save(path, receipt)
-        return
-    while len(attempts) < 2:
-        current, metadata = settings_get(api)
-        eligible, skipped = [], []
-        for change in receipt['changed']:
-            observed = path_value(current, change['path'])
-            if observed == change['applied']:
-                eligible.append(change)
-            else:
-                skipped.append({'path': change['path'], 'observed': observed, 'reason': 'external-change-revert-skipped'})
-        receipt['revertSkipped'] = skipped
-        if not eligible:
-            receipt.update(revertReadback=current, revertReadbackETag=metadata['etag'], revertedAt=now(), revertedPaths=[])
-            save(path, receipt)
-            return
-        writable = {key: value for key, value in current.items() if key not in SETTINGS_PROJECTIONS}
-        request = restore_paths(writable, eligible)
-        attempt = {'ifMatch': metadata['etag'], 'request': request, 'requestedAt': now()}
-        attempts.append(attempt)
-        receipt.update(revertRequest=request, revertRequestedAt=attempt['requestedAt'])
-        save(path, receipt)
-        try:
-            receipt['revertResponse'] = settings_put(api, request, metadata['etag'], attempt)
-        except Exception as error:
-            receipt.update(revertError=str(error), revertFailedAt=now())
-            save(path, receipt)
-            if attempt.get('statusCode') == 409:
-                continue
-            raise
-        save(path, receipt)
-        receipt['revertReadback'], readback_meta = settings_get(api)
-        receipt['revertReadbackETag'] = readback_meta['etag']
-        receipt['revertedPaths'] = [change['path'] for change in eligible]
-        receipt['revertReadbackExternalChanges'] = [
-            {'path': change['path'], 'observed': path_value(receipt['revertReadback'], change['path']),
-             'reason': 'external-change-after-revert'} for change in eligible
-            if path_value(receipt['revertReadback'], change['path']) != change['before']]
-        receipt['revertedAt'] = receipt['revertResponse']['appliedAt']
-        save(path, receipt)
-        return
-    raise RuntimeError('SettingsConflict: second revert If-Match conflict; Returned blocked')
 
 
 def resource_telemetry(resources, producers):
@@ -387,7 +159,7 @@ class ProducerResources:
     """Read only the evaluator's exact Pod/container cumulative counters."""
     def __init__(self, io, pods, api_seconds, evidence):
         self.io, self.pods, self.api_seconds, self.evidence = io, list(pods.values()), api_seconds, evidence
-        self.archive = module('evaluation_producer_archive', HERE / 'archive.py')
+        self.archive = evidence_io.module('evaluation_producer_archive', HERE / 'archive.py')
         self.first = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
         self.minute = None
         self.rows = []
@@ -422,7 +194,7 @@ class ProducerResources:
                     raise
         self.rows = resource_telemetry(resources, self.pods)
         self.minute = minute
-        save(self.evidence, {'at': now(), 'rows': self.rows})
+        evidence_io.save(self.evidence, {'at': evidence_io.now(), 'rows': self.rows})
         return self.rows
 
 
@@ -430,7 +202,7 @@ class ProducerResources:
 class CPO:
     def __init__(self, args, *, go_callback=None):
         self.a, self.out = args, Path(args.out)
-        self.b = load_binding(args.binding)
+        self.b = evidence_io.load_binding(args.binding)
         self.c = self.b['config']
         self.ws = {w['name']: w for w in self.c['workloads']}
         self.tb = self.c['timeboxes']
@@ -445,7 +217,8 @@ class CPO:
             raise RuntimeError('EvidenceCapacityInsufficient: workspace free bytes')
 
     def factor(self):
-        return factor_apply(self.api, self.c['evaluation']['settingsPatch'], self.out / 'settings-patch.json')
+        import settings_patch
+        return settings_patch.factor_apply(self.api, self.c['evaluation']['settingsPatch'], self.out / 'settings-patch.json')
 
     def producer_job_name(self, name, stage):
         execution = self.c['evaluation']['execution']
@@ -470,12 +243,12 @@ class CPO:
             if not volume:
                 raise ValueError('FrozenInputInvalid: explicit arrivals require the frozen workspace volume')
             path = Path(folder) / ('arrivals-' + name + '.json')
-            save(path, trace['offsetsNS'])
+            evidence_io.save(path, trace['offsetsNS'])
             try:
                 subpath = path.resolve().relative_to(Path(volume['mountPath']).resolve()).as_posix()
             except ValueError as error:
                 raise ValueError('FrozenInputInvalid: explicit arrivals outside frozen workspace') from error
-            policy.update(offsetsFile='/evaluation/.chill-arrivals.json', offsetsFileSHA256=ref(path)['sha256'])
+            policy.update(offsetsFile='/evaluation/.chill-arrivals.json', offsetsFileSHA256=evidence_io.ref(path)['sha256'])
             trace_volumes.append({'name': 'evaluation-arrivals',
                                   'persistentVolumeClaim': {'claimName': volume['claimName'], 'readOnly': True}})
             trace_mounts.append({'name': 'evaluation-arrivals', 'mountPath': policy['offsetsFile'],
@@ -512,7 +285,7 @@ class CPO:
                   'spec': {'backoffLimit': 0, 'parallelism': 1, 'completions': 1,
                            'activeDeadlineSeconds': math.ceil(sum(self.tb.values()) + stage['seconds']),
                            'template': {'metadata': {'labels': labels}, 'spec': pod}}}
-        save(folder / ('job-' + name + '.json'), result)
+        evidence_io.save(folder / ('job-' + name + '.json'), result)
         return result
 
     def owned(self, obj):
@@ -549,12 +322,12 @@ class CPO:
                    and pod.get('status',{}).get('phase') == 'Running'
                    and any(status.get('state',{}).get('running') is not None for status in pod.get('status',{}).get('containerStatuses',[]))
                    and any(ref.get('kind')=='Job' and ref.get('uid') in uids for ref in pod['metadata'].get('ownerReferences',[]))]
-        fact = {'at': now(), 'jobs': [{'name': job['metadata']['name'], 'uid': job['metadata']['uid']} for job in foreign],
+        fact = {'at': evidence_io.now(), 'jobs': [{'name': job['metadata']['name'], 'uid': job['metadata']['uid']} for job in foreign],
                 'otherProducerRunningOnGeneratorNode': running}
         path = Path(folder) / 'generator-interference.json'
-        history = load(path) if path.exists() else []
+        history = evidence_io.load(path) if path.exists() else []
         history.append(fact)
-        save(path, history)
+        evidence_io.save(path, history)
         return fact
 
     def sample_resources(self, telemetry, deadline, phase):
@@ -563,7 +336,7 @@ class CPO:
         except Exception as error:
             if isinstance(error, urllib.error.HTTPError) and error.code in (401, 403):
                 raise
-            phase.setdefault('diagnosticErrors', []).append({'at': now(), 'error': str(error)})
+            phase.setdefault('diagnosticErrors', []).append({'at': evidence_io.now(), 'error': str(error)})
             return []
 
     def monitor(self, offset, folder):
@@ -572,18 +345,18 @@ class CPO:
 
     def run(self):
         stage = next(row for row in self.b['schedule'] if row['id'] == self.a.stage)
-        parse_ns = module('evaluation_run_time', HERE / 'raw.py')._time
+        parse_ns = evidence_io.module('evaluation_run_time', HERE / 'raw.py')._time
         folder = Path(self.c['evaluation']['stageFolder'])
         if folder.exists():
             raise RuntimeError('FrozenInputInvalid: no implicit stage overwrite/retry')
-        receipt = load(self.out / 'settings-patch.json')
+        receipt = evidence_io.load(self.out / 'settings-patch.json')
         if not receipt.get('accepted'):
             raise RuntimeError('ControlConflict: settings patch not read back')
         # Provenance labels and shared-generator activity qualify the result;
         # neither is permission to discard an otherwise observable experiment.
-        auth = module('evaluation_auth', HERE / 'auth.py')
+        auth = evidence_io.module('evaluation_auth', HERE / 'auth.py')
         budget = auth.lifetime_budget([stage], self.tb, self.c.get('tokenSafetyMarginSeconds', 60))
-        save(self.out / 'token-preflight.json', auth.check(self.c['tokenFile'], budget, endpoint=self.c['endpoint'], ca_file=self.c['caFile']))
+        evidence_io.save(self.out / 'token-preflight.json', auth.check(self.c['tokenFile'], budget, endpoint=self.c['endpoint'], ca_file=self.c['caFile']))
         folder.mkdir(parents=True)
         phase = {'failurePolicy': 'v2', 'stage': stage, 'status': 'RUNNING', 'starts': {}, 'startUTC': None, 'endUTC': None,
                  'sourceObservations': {'declared': self.b['sources'], 'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')},
@@ -600,7 +373,7 @@ class CPO:
                 if not self.owned(job):
                     raise RuntimeError('IdentityMismatch: created Job ownership')
                 jobs[name] = job
-                save(folder / ('created-' + name + '.json'), job)
+                evidence_io.save(folder / ('created-' + name + '.json'), job)
             for name, job in jobs.items():
                 while True:
                     self.monitor(0, folder)
@@ -614,7 +387,7 @@ class CPO:
                         if not load_status.get('imageID', '').endswith(digest) or load_status.get('restartCount'):
                             raise RuntimeError('IdentityMismatch: generator image or restart')
                         pods[name] = pod
-                        save(folder / ('producer-' + name + '.json'), pod)
+                        evidence_io.save(folder / ('producer-' + name + '.json'), pod)
                         break
                     if time.monotonic() >= deadline:
                         raise RuntimeError('BarrierTimeout: generator setup')
@@ -629,7 +402,7 @@ class CPO:
             telemetry = ProducerResources(self.io, pods, self.tb['apiSeconds'], folder / 'producer-resources.json') if pods else None
             released = not jobs
             if released:
-                phase['startUTC'] = phase['goUTC'] = now()
+                phase['startUTC'] = phase['goUTC'] = evidence_io.now()
                 phase['endUTC'] = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=stage['seconds'])).isoformat()
                 deadline = time.monotonic() + stage['seconds']
                 self.record_go(folder, jobs, pods, phase['goUTC'])
@@ -660,7 +433,7 @@ class CPO:
                             if name in ready or row['offered'] != trace['offered'] or row['arrivalSHA256'] != trace['arrivalSHA256'] or not row['payload']:
                                 raise RuntimeError('IdentityMismatch: producer Ready input identity')
                             ready[name] = row
-                            save(folder / ('payload-' + name + '.json'), row)
+                            evidence_io.save(folder / ('payload-' + name + '.json'), row)
                         elif event == 'start':
                             if not released or name in phase['starts']:
                                 raise RuntimeError('IdentityMismatch: producer start protocol')
@@ -679,7 +452,7 @@ class CPO:
                         self.assert_pod(current, pod)
                         if time.time_ns() >= parse_ns(ready[name]['at']) + round(ready[name]['barrierSeconds'] * 1e9):
                             raise RuntimeError('BarrierTimeout: Ready expired')
-                    phase['goUTC'] = now()
+                    phase['goUTC'] = evidence_io.now()
                     for pod in pods.values():
                         self.io.k(['exec', pod['metadata']['name'], '-c', 'load', '--', 'python3', '-c', "from pathlib import Path; Path('/tmp/evaluation-start').touch()"])
                     released = True
@@ -697,8 +470,8 @@ class CPO:
                     for name in drained:
                         matching = [row for row in counters if row.get('podUID') == pods[name]['metadata']['uid']]
                         if matching:
-                            save(folder / (name + '-client-end-counter.json'), matching[-1])
-                save(folder / 'phase.json', phase)
+                            evidence_io.save(folder / (name + '-client-end-counter.json'), matching[-1])
+                evidence_io.save(folder / 'phase.json', phase)
                 if released and not jobs and time.monotonic() >= deadline:
                     break
                 if jobs and not selector.get_map() and all(p.poll() is not None for p, _, _ in streams):
@@ -718,12 +491,12 @@ class CPO:
                 current = self.io.k(['get', 'job', job['metadata']['name'], '-o', 'json'])
                 if current['metadata']['uid'] != job['metadata']['uid']:
                     raise RuntimeError('IdentityMismatch: generator Job UID')
-                save(folder / ('terminal-' + name + '.json'), current)
+                evidence_io.save(folder / ('terminal-' + name + '.json'), current)
                 if any(c['type']=='Failed' and c['status']=='True' for c in current.get('status',{}).get('conditions',[])):
                     phase['drain']['reasons'].append('ProducerJobFailed:' + name)
             phase['drain']['complete'] = not phase['drain']['reasons'] and drained == set(jobs)
             if not phase['drain']['complete']:
-                cutoff = now()
+                cutoff = evidence_io.now()
                 phase['plannedEndUTC'] = phase['endUTC']
                 if phase['endUTC'] and parse_ns(phase['endUTC']) > parse_ns(cutoff):
                     phase['endUTC'] = cutoff
@@ -737,24 +510,24 @@ class CPO:
                     if process.poll() is None:
                         process.terminate()
                     process.wait(timeout=self.tb['apiSeconds'])
-            phase.update(drainedUTC=now(), status='DRAINED_NOT_EVALUATED' if phase['drain']['complete'] else 'PARTIAL_DRAIN_NOT_EVALUATED',
+            phase.update(drainedUTC=evidence_io.now(), status='DRAINED_NOT_EVALUATED' if phase['drain']['complete'] else 'PARTIAL_DRAIN_NOT_EVALUATED',
                          drainScope='Drain completion is independent of diagnostic CPU/throttle counters')
-            save(folder / 'phase.json', phase)
+            evidence_io.save(folder / 'phase.json', phase)
             time.sleep(self.tb['flushSeconds'])
-            archive = module('evaluation_archive', HERE / 'archive.py')
-            save(folder / 'collected.json', archive.collect(folder, phase, self.c['collection'], self.io, self.tb['collectSeconds']))
+            archive = evidence_io.module('evaluation_archive', HERE / 'archive.py')
+            evidence_io.save(folder / 'collected.json', archive.collect(folder, phase, self.c['collection'], self.io, self.tb['collectSeconds']))
         except Exception as error:
-            phase.update(status='STOP', error=str(error), failureUTC=now())
+            phase.update(status='STOP', error=str(error), failureUTC=evidence_io.now())
             for name, job in jobs.items():
                 try:
                     current = self.io.k(['get', 'job', job['metadata']['name'], '-o', 'json'])
                     if current['metadata']['uid'] != job['metadata']['uid'] or not self.owned(current):
                         raise RuntimeError('ForeignOwnership: producer changed before STOP')
-                    save(folder / ('stopped-job-' + name + '.json'), current)
+                    evidence_io.save(folder / ('stopped-job-' + name + '.json'), current)
                     self.io.delete_job(job['metadata']['name'], job['metadata']['uid'])
                 except Exception as stop_error:
                     phase.setdefault('cleanupErrors', []).append(str(stop_error))
-            save(folder / 'phase.json', phase)
+            evidence_io.save(folder / 'phase.json', phase)
             raise
         finally:
             selector.close()
@@ -770,14 +543,15 @@ class CPO:
         value = {'goUTC': at, 'producerRefs': [{'workloadUID': self.ws[name]['uid'], 'shard': 0,
                  'jobRef': {key: job['metadata'][key] for key in ('name', 'uid')},
                  'podRef': {key: pods[name]['metadata'][key] for key in ('name', 'uid')}} for name, job in jobs.items()]}
-        save(folder / 'go.json', value)
+        evidence_io.save(folder / 'go.json', value)
         if self.go_callback:
             self.go_callback(value)
 
     def cleanup_jobs(self):
+        import settings_patch
         # Job cleanup and settings restoration are independent obligations.
         # A failed delete must retain the pool, not retain our control patch.
-        attempt = {'startedAt': now(), 'cleanup': {}, 'restore': {'status': 'Complete', 'receipts': []}}
+        attempt = {'startedAt': evidence_io.now(), 'cleanup': {}, 'restore': {'status': 'Complete', 'receipts': []}}
         failure = None
         try:
             self._cleanup_jobs()
@@ -785,28 +559,28 @@ class CPO:
         except Exception as error:
             failure = error
             attempt['cleanup'] = {'status': 'Failed', 'error': str(error)}
-        attempt['cleanup']['finishedAt'] = now()
+        attempt['cleanup']['finishedAt'] = evidence_io.now()
         attempt['cleanup']['residuals'] = copy.deepcopy(self.residuals)
         for path in sorted(self.out.rglob('settings-patch.json')):
-            receipt = {'path': str(path.relative_to(self.out)), 'startedAt': now()}
+            receipt = {'path': str(path.relative_to(self.out)), 'startedAt': evidence_io.now()}
             try:
-                factor_revert(self.api, path)
+                settings_patch.factor_revert(self.api, path)
                 receipt['status'] = 'Complete'
             except Exception as error:
                 if failure is None:
                     failure = error
                 receipt.update(status='Failed', error=str(error))
                 attempt['restore']['status'] = 'Failed'
-                residual = {'kind': 'SchedulerSettings', 'name': SETTINGS, 'reason': 'RemoteEffectUnknown'}
+                residual = {'kind': 'SchedulerSettings', 'name': settings_patch.SETTINGS, 'reason': 'RemoteEffectUnknown'}
                 if residual not in self.residuals:
                     self.residuals.append(residual)
-            receipt['finishedAt'] = now()
+            receipt['finishedAt'] = evidence_io.now()
             attempt['restore']['receipts'].append(receipt)
-        attempt['finishedAt'] = now()
+        attempt['finishedAt'] = evidence_io.now()
         path = self.out / 'cleanup-outcome.json'
-        evidence = load(path) if path.exists() else {'attempts': []}
+        evidence = evidence_io.load(path) if path.exists() else {'attempts': []}
         evidence['attempts'].append(attempt)
-        save(path, evidence)
+        evidence_io.save(path, evidence)
         if failure is not None:
             raise failure
 
@@ -818,7 +592,7 @@ class CPO:
         jobs = self.io.k(['get', 'jobs', '-l', selector, '-o', 'json'])['items']
         deadline = time.monotonic() + self.tb['drainSeconds']
         recorded = {record['metadata']['uid']: record for path in self.out.rglob('created-*.json')
-                    for record in [load(path)] if record.get('kind') == 'Job'}
+                    for record in [evidence_io.load(path)] if record.get('kind') == 'Job'}
         for job in jobs:
             if not self.owned(job) or job['metadata']['uid'] not in recorded or recorded[job['metadata']['uid']]['metadata']['name'] != job['metadata']['name']:
                 self.residuals.append({'kind': 'Job', 'name': job['metadata']['name'], 'reason': 'RemoteEffectUnknown'})
@@ -857,157 +631,6 @@ class CPO:
         self.cleanup_jobs()
 
 
-def judge(binding, folder):
-    bound = load_binding(binding)
-    config = bound['config']
-    phase = load(folder / 'phase.json')
-    stage = phase['stage']
-    raw = module('evaluation_raw', HERE / 'raw.py')
-    analysis = module('evaluation_analysis', HERE / 'd2/analyze_before.py')
-    clients = {}
-    unknown = []
-    results = {}
-    for workload in config['workloads']:
-        name = workload['name']
-        path = folder / (name + '-client.jsonl')
-        rows = []
-        if path.exists():
-            for index, line in enumerate(path.read_text().splitlines(), 1):
-                try:
-                    row = json.loads(line)
-                    if 'scheduledOffsetNs' in row:
-                        rows.append(row)
-                except (ValueError, TypeError):
-                    unknown.append(name + ': malformed client JSONL line ' + str(index))
-        clients[name] = rows
-    indexes = raw.iter_request_indexes(folder, [w['uid'] for w in config['workloads']], phase['startUTC'], phase['endUTC'],
-                                      actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']] for w in config['workloads']})
-    for workload in config['workloads']:
-        name = workload['name']
-        trace = stage['traces'][name]
-        rows = clients[name]
-        indexed = indexes[workload['uid']]
-        returned_ids = [row['requestID'] for row in rows if isinstance(row.get('requestID'), str) and row['requestID']]
-        counts = Counter(returned_ids)
-        quarantined = {rid for rid, count in counts.items() if count > 1}
-        quarantined.update(item['requestID'] for item in indexed['summary'].get('finalConflicts', []))
-        quarantined.update(indexed['summary'].get('invalidFinalRequestIDs', []))
-        if any(row.get('workloadUID') not in (None, workload['uid']) for row in rows):
-            raise ValueError('IdentityMismatch: returned Workload UID differs from frozen identity')
-        usable = [row for row in rows if row.get('requestID') not in quarantined]
-        supported = any(row.get('requestID') in indexed['finals'] for row in usable)
-        start = phase['starts'].get(name, {}).get('monotonicNS')
-        quality = analysis.issuance_fidelity(rows, trace['offsetsNS'], start, round(stage['seconds'] * 1e9), analysis.stats, config['generatorQuality'])
-        completed, actual, scheduled, outcomes = [], [], [], Counter()
-        for row in usable:
-            final = indexed['finals'].get(row.get('requestID'))
-            outcomes[final.get('outcome') if final else 'unfinished-or-no-final'] += 1
-            timing = analysis.request_timing(row, final, None, start)
-            if timing['sloLatencyNS'] is not None:
-                completed.append(timing['sloLatencyNS'])
-            actual.append(timing['actualLatencyNS'])
-            scheduled.append(timing['scheduledLatencyNS'])
-        offered = trace['offered']
-        hits = sum(value <= workload['slo']['targetLatencyNanos'] for value in completed)
-        required = math.ceil(offered * workload['slo']['percentile'] / 100)
-        qstatus = quality['generatorQuality']['status']
-        identities = indexed['identities']
-        identity_known = (supported and len(identities) == 1 and identities[0]['workloadUID'] == workload['uid']
-                          and bool(identities[0]['definitionID']))
-        substages, base = [], 0
-        for part in stage['parts']:
-            stop = base + round(part['seconds'] * 1e9)
-            planned = sum(base <= offset < stop for offset in trace['offsetsNS'])
-            latencies = []
-            part_rows = [row for row in rows if base <= row['scheduledOffsetNs'] < stop]
-            part_issued = analysis.issued_calls(part_rows)
-            part_supported = any(row.get('requestID') in indexed['finals'] for row in usable
-                                 if base <= row['scheduledOffsetNs'] < stop)
-            for row in usable:
-                if base <= row['scheduledOffsetNs'] < stop:
-                    latency = analysis.request_timing(row, indexed['finals'].get(row.get('requestID')), None, start)['sloLatencyNS']
-                    if latency is not None:
-                        latencies.append(latency)
-            successes = sum(value <= workload['slo']['targetLatencyNanos'] for value in latencies)
-            rank = math.ceil(planned * workload['slo']['percentile'] / 100)
-            substages.append({'id': part['id'], 'durationSeconds': part['seconds'], 'rate': part['rates'][name], 'offered': planned,
-                              'completedLatencyNS': analysis.stats(latencies), 'deadlineSuccess': successes, 'requiredSuccessfulRank': rank,
-                              'D1': 'NOT_OFFERED' if not planned else 'INVALID_NO_LOAD' if not part_issued else
-                                    'NOT_EVALUATED' if not part_supported else 'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET'})
-            base = stop
-        results[name] = {'offered': offered, 'clientRows': len(rows), 'outcomes': dict(outcomes), 'completedLatencyNS': analysis.stats(completed),
-                         'gatewayCompletedLatencyNS': analysis.stats(completed), 'actualLatencyNS': analysis.stats(actual), 'scheduledLatencyNS': analysis.stats(scheduled),
-                         'latencyScope': 'CHILL HTTP receipt to final elapsedNanos; client RTT and scheduled latency are references only',
-                         'deadlineSuccess': hits, 'deadlineSuccessFraction': hits / offered if offered else None, 'requiredSuccessfulRank': required,
-                         'unfinishedOrUnsent': max(0, offered - len(completed)), 'issuanceFidelity': quality,
-                         'D1': 'NOT_OFFERED' if not offered else 'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
-                               'NOT_EVALUATED' if not supported else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',
-                         'slo': workload['slo'], 'workload': {key: workload[key] for key in ('name', 'uid', 'generation')},
-                         'workloadUID': workload['uid'],
-                         'definitionID': identities[0]['definitionID'] if identity_known else None,
-                         'actualGatewayIdentities': len(identities), 'observedDefinitions': identities, 'substages': substages,
-                         'rawEvidenceErrors': indexed['errors'], 'quarantinedRequestIDs': sorted(quarantined),
-                         'quarantinedClientRows': len(rows)-len(usable),
-                         'rawEvidenceErrorCount': len(indexed['errors']), 'quarantinedRequestCount': len(quarantined),
-                         'unkeyedRawRowCount': len(indexed['summary'].get('unkeyedRows', [])),
-                         'identityMissingReason': None if identity_known else 'Actual returned request IDs lack one complete frozen-UID definition identity'}
-    power = load(folder / 'power.json')
-    tail_power = load(folder / 'power-drain-inclusive.json')
-    failures = None
-    if config['evaluation'].get('failureInjection'):
-        failures = load(folder / 'failure-events.json')
-    statuses = [row['D1'] for row in results.values()]
-    measured = any(status in ('FAIL', 'OBSERVED_THRESHOLD_MET') for status in statuses)
-    slo_status = ('FAIL' if 'FAIL' in statuses else 'PASS' if measured else
-                  'INVALID_NO_LOAD' if 'INVALID_NO_LOAD' in statuses else 'NOT_EVALUATED')
-    result = {'schema': 'e5-judgment.v3', 'failurePolicy': 'v2', 'at': now(),
-              'status': 'FAIL' if slo_status=='FAIL' else 'MEASURED_DESCRIPTIVE' if measured else 'PARTIAL',
-              'notReadyReasons': [], 'clientParseErrors': unknown, 'requests': results, 'power': power, 'powerDrainInclusive': tail_power,
-              'components': {'slo': {'status': slo_status, 'workloads': {name: row['D1'] for name,row in results.items()}},
-                             'loadFidelity': {name: row['issuanceFidelity'] for name,row in results.items()},
-                             'energy': {'offered': power.get('energyStatus'), 'drainInclusive': tail_power.get('energyStatus')},
-                             'drain': phase.get('drain', {}),
-                             'injection': {'status': 'NOT_REQUESTED' if failures is None else 'REALIZED' if
-                                 len(failures.get('records', [])) == len(config['evaluation']['failureInjection']) and
-                                 all(item.get('record', {}).get('outcome') == 'Complete' for item in failures.get('records', []))
-                                 else 'NOT_REALIZED', 'evidence': failures}},
-              'ignoredKeys': config.get('ignoredKeys', []), 'failureScenarioEvidence': failures,
-              'limitations': bound['limitations'], 'judgmentCriteria': ['independent SLO, load fidelity, energy, injection and drain facts']}
-    resources = folder / 'producer-resources.json'
-    result['cgroups'] = load(resources) if resources.exists() else {'rows': [], 'meaning': 'No generator offered in this window'}
-    save(folder / 'judgment.json', result)
-    return result
-
-
-def summarize(binding, root, *, evaluation=None):
-    stages = evaluation['stages'] if evaluation else []
-    results = evaluation.get('results', {}) if evaluation else {}
-    measurements = [value.get('measurement', {}).get('verdict', 'NOT_EVALUATED') for value in results.values()]
-    slo_statuses = measurements + [stage['kpis'].get('components', {}).get('slo', {}).get('status') for stage in stages]
-    status = 'FAIL' if 'FAIL' in slo_statuses else 'MEASURED_DESCRIPTIVE' if 'PASS' in slo_statuses else 'NOT_EVALUATED'
-    result = {'schema': 'e5-summary.v4', 'failurePolicy': 'v2', 'stages': stages, 'status': status, 'results': results,
-              'completeness': 'PARTIAL' if 'NOT_EVALUATED' in measurements or len(stages) < len(results) or any(
-                  stage['kpis'].get('power', {}).get('complete') is False or stage['kpis']['status']=='PARTIAL' for stage in stages) else 'OBSERVED',
-              'components': {'measurement': {key: value.get('measurement') for key,value in results.items()},
-                             'execution': {key: value.get('execution') for key,value in results.items()},
-                             'energy': {stage['id']: stage['kpis'].get('power') for stage in stages}}}
-    save(root / 'e5-summary.json', result)
-    return result
-
-
-def publication_measurements(binding, power):
-    return {'measurementContract': {'binding': 'e5-binding.v4', 'judgment': 'e5-judgment.v3', 'failurePolicy': 'v2', 'energyScope': 'declared-node-meters', 'energyCoverage': binding['config']['collection']['energyCoverage']}}
-
-
-def publication_stage_metadata(binding, phase, definitions, identity_source, phase_source, folder, root, rows):
-    workloads = {w['name']: w for w in definitions['workloads']}
-    for name, row in rows.items():
-        workload = workloads[name]
-        known = row.get('workloadUID') == workload['uid'] and row.get('definitionID') is not None
-        row.update(workload={key: workload[key] for key in ('name', 'uid', 'generation')}, slo=workload['slo'],
-                   identitySource=identity_source if known else None)
-
-
 def self_check():
     import unittest
     suite = unittest.defaultTestLoader.discover(str(HERE), pattern='test_evaluation.py')
@@ -1025,11 +648,12 @@ def main():
     if args.command == 'self-check':
         self_check()
     elif args.command == 'bind':
-        save(args.out, bind(args.config))
+        evidence_io.save(args.out, bind(args.config))
     elif args.command == 'judge':
-        return 2 if judge(args.binding, args.out)['components']['slo']['status'] in ('INVALID_NO_LOAD','NOT_EVALUATED') else 0
+        import judgment
+        return 2 if judgment.judge(args.binding, args.out)['components']['slo']['status'] in ('INVALID_NO_LOAD','NOT_EVALUATED') else 0
     else:
-        print(module('evaluation_tables', HERE / 'tables.py').render(args.out, REPO))
+        print(evidence_io.module('evaluation_tables', HERE / 'tables.py').render(args.out, REPO))
     return 0
 
 
