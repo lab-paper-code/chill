@@ -74,8 +74,14 @@ if name=='helm':
   for i,arg in enumerate(args):
    if arg=='-f' and pathlib.Path(args[i+1]).name=='image-overlay.json':overlay=pathlib.Path(args[i+1])
   state['publication']=str(overlay.parent/'publication.json');state['upgraded']=True;save();print('upgraded')
+ if verb=='template' or verb=='get' and args[args.index('get')+1]=='manifest':
+  for item in state.get('evaluationRbac',[]):
+   print('---\n# Source: chill/templates/evaluation_rbac.yaml\n'+json.dumps(item))
  sys.exit(0)
 if name=='kubectl':
+ if 'auth' in args and 'can-i' in args:
+  denied=state.get('denyEvaluationPermission') and '/chill/api/v1/workloads' in args and '--as=system:serviceaccount:review:custom-action' in args
+  print('no' if denied else 'yes');sys.exit(1 if denied else 0)
  if 'current-context' in args:print(state.get('currentContext','isolated-review'));sys.exit(0)
  if 'get' in args and 'profilingruns,batchenergyoptimizations,modelloadedidlebaselines,dispatchoccupancymeasurements,evaluationruns' in args and '--all-namespaces' in args:
   state['inflightChecks']=state.get('inflightChecks',0)+1;save()
@@ -256,6 +262,25 @@ class DeploymentCLI(unittest.TestCase):
         self.assertEqual(auth['query-unauthenticated']['status'], 401)
         self.assertEqual(auth['query-authenticated']['status'], 200)
         self.assertTrue(json.loads((self.out / 'state.json').read_text())['ready'])
+
+    def test_evaluation_sa_permission_denial_stops_accept_and_retains_evidence(self):
+        from test_evaluation_rbac import documents
+        for denied in (False, True):
+            with self.subTest(denied=denied):
+                self.state(evaluationRbac=documents(), denyEvaluationPermission=denied)
+                evidence = self.out / ('denied' if denied else 'allowed')
+                self.cli('--execute', '--evidence', str(evidence), expected=1 if denied else 0)
+                receipt = json.loads((evidence / 'evaluation-rbac.json').read_text())
+                self.assertEqual(receipt['passed'], not denied)
+                if denied:
+                    failures = [x for x in receipt['checks'] if x['status'] == 'failed']
+                    self.assertEqual([(x['serviceAccount'], x['verb'], x['target']) for x in failures],
+                                     [('custom-action', 'get', '/chill/api/v1/workloads')])
+                    self.assertEqual(json.loads((evidence / 'failure.json').read_text())['stage'], 'accept')
+                    self.assertFalse((evidence / 'post-values.json').exists())
+                else:
+                    self.assertTrue(json.loads((evidence / 'state.json').read_text())['ready'])
+                    self.assertTrue(all(x['status'] == 'allowed' for x in receipt['checks']))
 
     def test_inspect_drift_is_read_only_and_requires_exact_approval(self):
         self.state(chartDrift=True)
