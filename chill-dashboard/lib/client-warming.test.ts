@@ -65,3 +65,15 @@ test("data-dependent polling stops for terminal measurements, hidden tabs and de
   client.useChillQuery<{phase:string}>("v1/measurements",{poll:data=>data?.phase==="Measuring"})
   assert.equal(interval?.({state:{data:{phase:"Measuring"}}}),false)
 })
+
+test("poll predicates receive a failed detail status while retaining the cached measurement",()=>{
+  let interval:(query:{state:{data?:{phase:string|null};error?:Client.ApiError|null}})=>number|false=()=>false
+  const client={} as typeof Client
+  const dependencies:Record<string,unknown>={...modules,react:{...require("react"),useContext:()=>({token:"token",config:{pollIntervalMs:5000}}),useSyncExternalStore:()=>true},"@tanstack/react-query":{useQuery:(options:{refetchInterval:typeof interval})=>{interval=options.refetchInterval;return {data:undefined,error:null}}}}
+  new Function("require","exports",transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText)((name:string)=>dependencies[name]??require(name),client)
+  client.useChillQuery<{phase:string|null}>("v1/namespaces/ns/dispatch-occupancy-measurements/removed",{poll:(data,error?:Client.ApiError|null)=>error?.status!==404&&(!data?.phase||data.phase==="Measuring")})
+  const pending={phase:null}
+  assert.equal(interval({state:{data:pending}}),5000)
+  assert.equal(interval({state:{data:pending,error:new exports.ApiError(404,"missing",null)}}),false)
+  assert.equal(interval({state:{data:pending,error:new exports.ApiError(503,"unavailable",null)}}),5000)
+})

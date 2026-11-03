@@ -46,7 +46,11 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 `occupancy[]`는 실제 DOM tuple만 포함한다. 빈 배열은 d 없음이며 Node×배치 항목을 브라우저에서 만들지 않는다. `ProfileSuperseded`는 원자료가 있는 이전 프로파일, `EvidenceInvalid`는 Complete 근거 검증 실패다. 같은 tuple은 서버의 present > measuring > failed > none 및 동률 생성 시각 최신 선택을 그대로 표시한다.
 
-2026-11-03 통합 검증: Node 24.14.0 offline frozen 설치(479개 재사용·다운로드 0), typecheck·eslint·운영 summary 회귀 포함 전체 테스트 487개와 기본 build 통과. 로컬 production + 운영 GET으로 결과·커버리지 목록/Sheet를 1440×900에서 확인했다. 서버·Query 미배포 상태의 읽기 회귀이므로 새 d 상태나 생성·삭제 E2E를 검증한 것은 아니다. DOM POST·DELETE는 실행하지 않았으며 배포 후 수용 범위는 [측정 API §13.8](../docs/design/serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03)에 남긴다.
+셀별 d 요청은 부분 커버리지에서도 항상 제공하며 호환성 대표 Node를 넘기지 않는다. 요청 화면은 BEO의 실제 `targetNode`로 Node를 제한한다. 선택적 요청 이름도 검사 identity에 포함되므로 같은 조건의 재측정은 새 이름으로 검사해 과거 실패를 보존한다. profile 의존 조회가 실패해도 종류 선택은 가능하지만 진행 중·결과 미확인 요청에서는 전환을 막는다.
+
+DOM `phase`·`d`는 필수 nullable projection이며 구 `status`를 복원하는 fallback은 없다. 삭제된 단건의 404, 권한 오류 401/403, 종료 상태에서는 해당 polling을 중단한다. 실제 POST·DELETE 처리는 **서버 DOM mutation 커밋 의존**이며 relay 허용만으로 서버 구현이 완료된 것은 아니다.
+
+2026-11-03 통합·리뷰 보정 검증: Node 24.14.0 offline frozen 설치(479개 재사용·다운로드 0), typecheck·eslint·운영 summary 회귀 포함 전체 테스트 499개와 기본 build 통과. 리뷰 보정은 Go 변경이 없어 Go 게이트를 재실행하지 않았다(최초 통합 게이트 통과). 로컬 production + 운영 GET으로 요청·결과·커버리지 목록/Sheet를 1440×900에서 확인했다. 서버·Query 미배포 상태이므로 생성·삭제 E2E와 새 진행값 검증은 아니다. 구 운영 응답에는 최상위 phase/d가 없어 보정 후 결과가 대기·미제공으로 보이므로 Query와 대시보드는 동시 cutover한다. DOM POST·DELETE는 실행하지 않았으며 배포 후 수용 범위는 [측정 API §13.8](../docs/design/serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03)에 남긴다.
 
 ### CPU 공유 실행·전력 표본 계약
 

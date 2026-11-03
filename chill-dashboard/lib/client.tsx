@@ -179,13 +179,13 @@ function subscribeVisibility(notify:()=>void) {
   return () => document.removeEventListener("visibilitychange",notify)
 }
 
-export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boolean|((data:T|undefined)=>boolean);decoder?:(body:string)=>unknown}={}) {
+export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boolean|((data:T|undefined,error:ApiError|null)=>boolean);decoder?:(body:string)=>unknown}={}) {
   const {token,config} = useSession()
   const visible = React.useSyncExternalStore(subscribeVisibility,() => document.visibilityState === "visible",() => true)
   const query = useQuery<T,ApiError>({queryKey:["chill",path],enabled:!!token && options.enabled !== false,queryFn:async ({signal}) => {
     const response = await relay(path,token,signal)
     return (options.decoder ? decodeResponse(response.body,options.decoder) : response.data) as T
-  },retry:warmingRetry,retryDelay:warmingDelay,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => (typeof options.poll==="function"?options.poll(query.state.data):options.poll) && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
+  },retry:warmingRetry,retryDelay:warmingDelay,refetchOnWindowFocus:false,refetchOnReconnect:false,refetchInterval:query => (typeof options.poll==="function"?options.poll(query.state.data,query.state.error):options.poll) && visible && ![401,403].includes(query.state.error?.status ?? 0) ? config.pollIntervalMs : false,refetchIntervalInBackground:false})
   return {...query,data:query.error && [401,403].includes(query.error.status) ? undefined : query.data}
 }
 export function useChillQueries<T>(paths:readonly string[],options:{enabled?:boolean;decoder?:(body:string)=>unknown}={}) {

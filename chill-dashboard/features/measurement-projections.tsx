@@ -22,7 +22,7 @@ import { MeasurementNavigation, measurementStates } from "@/components/measureme
 import { AssessmentDetails, ResultRows } from "@/features/measurement-plans"
 import { MeasurementFilters } from "@/features/measurement-coverage"
 import { SchedulerProfilesPage } from "@/features/scheduler-profiles"
-import { occupancyDisplayReason, occupancyElapsed, occupancyMetrics, occupancyMilliseconds, occupancyNumber, occupancyPhase, occupancyPhaseValue, occupancyRunning, occupancyRequestHref } from "@/lib/dispatch-occupancy"
+import { occupancyDisplayReason, occupancyElapsed, occupancyMilliseconds, occupancyNumber, occupancyPhase, occupancyRunning, occupancyRequestHref } from "@/lib/dispatch-occupancy"
 
 const resultKinds = [["throughput","처리 성능"],["operation-cost","변경 비용"],["dispatch-occupancy","분배 처리시간"]] as const
 const projectionTitles = {"operation-cost-measurements":"변경 비용","dispatch-occupancy-measurements":"분배 처리시간"}
@@ -62,7 +62,7 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
   const path=measurementPath(kind,namespace)
   const query=useChillQuery<MeasurementProjectionList>(path,{decoder:parseSchedulerJSON,poll:data=>kind==="dispatch-occupancy-measurements"&&!!data?.items?.some(item=>item.kind==="DispatchOccupancyMeasurement"&&occupancyRunning(item))})
   const name=params.get("measurement"),expectedUID=params.get("uid")
-  const detail=useChillQuery<MeasurementProjection>(measurementPath(kind,namespace,name??""),{enabled:!!name,decoder:parseSchedulerJSON,poll:data=>data?.kind==="DispatchOccupancyMeasurement"&&occupancyRunning(data)})
+  const detail=useChillQuery<MeasurementProjection>(measurementPath(kind,namespace,name??""),{enabled:!!name,decoder:parseSchedulerJSON,poll:(data,error)=>error?.status!==404&&data?.kind==="DispatchOccupancyMeasurement"&&occupancyRunning(data)})
   const all=query.data?.items??[]
   const axes=[{key:"node",label:"장치",values:all.map(item=>item.node)},...(kind==="operation-cost-measurements"?[{key:"model",label:"모델",values:all.flatMap(item=>item.kind==="OperationCostMeasurement"?operationSteps(item).flatMap(step=>step.results.flatMap(result=>result.model?[result.model]:[])):[])}]:[{key:"workload",label:"서비스",values:all.flatMap(item=>item.kind==="DispatchOccupancyMeasurement"?[item.conditions.workload]:[])}])]
   const items=all.filter(item=>(!params.get("q")||item.metadata.name.toLocaleLowerCase().includes(params.get("q")!.toLocaleLowerCase()))&&(!params.get("status")||item.assessment?.displayStatus===params.get("status"))&&(!params.get("node")||item.node===params.get("node"))&&(!params.get("model")||kind!=="operation-cost-measurements"||(item.kind==="OperationCostMeasurement"&&operationSteps(item).some(step=>step.results.some(result=>result.model===params.get("model")))))&&(!params.get("workload")||(item.kind==="DispatchOccupancyMeasurement"&&item.conditions.workload===params.get("workload"))))
@@ -80,8 +80,8 @@ function ProjectionResults({kind,namespace}:{kind:ProjectionMeasurementKind;name
     {key:"node",label:"장치",value:item=>item.node,sortValue:item=>item.node},
     {key:"workload",label:"서비스",value:item=>item.conditions.workload,sortValue:item=>item.conditions.workload},
     {key:"batch",label:"배치",unit:"건",numeric:true,value:item=>item.batch??item.conditions.batch},
-    {key:"d",label:"점유시간",unit:"ms/요청",numeric:true,value:item=><OccupancyValue value={occupancyMilliseconds(occupancyMetrics(item)?.perRequestNanos)} unverified={item.assessment?.displayStatus==="problem"||occupancyPhaseValue(item)==="Failed"||occupancyPhaseValue(item)==="Insufficient"}/>,sortValue:item=>occupancyMetrics(item)?.perRequestNanos??undefined},
-    {key:"x",label:"완료 처리량",unit:"req/s",numeric:true,value:item=><OccupancyValue value={occupancyNumber(occupancyMetrics(item)?.throughput)} unverified={item.assessment?.displayStatus==="problem"||occupancyPhaseValue(item)==="Failed"||occupancyPhaseValue(item)==="Insufficient"}/>,sortValue:item=>occupancyMetrics(item)?.throughput??undefined},
+    {key:"d",label:"점유시간",unit:"ms/요청",numeric:true,value:item=><OccupancyValue value={occupancyMilliseconds(item.d?.perRequestNanos)} unverified={item.assessment?.displayStatus==="problem"||item.phase==="Failed"||item.phase==="Insufficient"}/>,sortValue:item=>item.d?.perRequestNanos??undefined},
+    {key:"x",label:"완료 처리량",unit:"req/s",numeric:true,value:item=><OccupancyValue value={occupancyNumber(item.d?.throughput)} unverified={item.assessment?.displayStatus==="problem"||item.phase==="Failed"||item.phase==="Insufficient"}/>,sortValue:item=>item.d?.throughput??undefined},
     {key:"phase",label:"측정",value:item=><ProjectionStatus data={item}/>},
     {key:"elapsed",label:"경과",value:item=>occupancyElapsed(item)},
     {key:"reason",label:"사유",value:item=>occupancyDisplayReason(item)==="—"?"해당 없음":occupancyDisplayReason(item)},
@@ -127,7 +127,7 @@ function CostMarkers({summary,operation,explainInsufficient}:{summary:OperationC
 }
 function ProjectionStatus({data}:{data:MeasurementProjection}) {
   if(data.kind==="DispatchOccupancyMeasurement") {
-    const phase=occupancyPhaseValue(data)
+    const phase=data.phase
     return <StatusCell axis="측정" label={occupancyPhase(phase)} tone={phase==="Failed"||phase==="Insufficient"?"fail":phase==="Complete"?"ok":phase==="Measuring"?"info":"idle"}/>
   }
   const status=data.assessment?.displayStatus??"unknown"
@@ -205,7 +205,7 @@ function OperationResult({data}:{data:OperationCostMeasurement}) {
   </>
 }
 function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
-  const c=data.conditions,s=data.status,result=occupancyMetrics(data),phase=occupancyPhaseValue(data),unverified=data.assessment?.displayStatus==="problem"||phase==="Failed"||phase==="Insufficient"
+  const c=data.conditions,s=data.status,result=data.d,phase=data.phase,unverified=data.assessment?.displayStatus==="problem"||phase==="Failed"||phase==="Insufficient"
   return <>
     <table aria-label="분배 처리시간 결과" className="w-full table-fixed text-left text-sm [&_th]:p-2 [&_th]:[overflow-wrap:anywhere] [&_td]:p-2 [&_td]:[overflow-wrap:anywhere]">{unverified&&<caption className="pb-2 text-left text-sm text-muted-foreground"><TriangleAlert className="mr-1 inline size-4" aria-hidden="true"/>미검증 원자료 · 채택값 아님</caption>}<thead><tr><th className="text-right">d (ms/요청)</th><th className="text-right">완료 처리량 (req/s)</th><th className="text-right">유휴 비율 (%)</th><th>판정</th></tr></thead><tbody><tr><td className="text-right tabular-nums"><OccupancyValue value={occupancyMilliseconds(result?.perRequestNanos)} unverified={unverified}/></td><td className="text-right tabular-nums">{occupancyNumber(result?.throughput)}</td><td className="text-right tabular-nums">{occupancyNumber(result?.idleFraction,true)}</td><td>{result?.verdict?measurementReasonSummary(result.verdict):"미제공"}</td></tr></tbody></table>
     <Facts items={[["사유",occupancyDisplayReason(data)],["경과",occupancyElapsed(data)],["시작",data.measurementWindow?formatMeasurementTime(data.measurementWindow.start):"미기록"],["종료",data.measurementWindow?formatMeasurementTime(data.measurementWindow.end):"미기록"],["결과 전력모드",s.powerMode||"미기록"]]}/>
@@ -214,7 +214,7 @@ function OccupancyResult({data}:{data:DispatchOccupancyMeasurement}) {
 }
 function DeleteOccupancy({data,refresh,onDeleted}:{data:DispatchOccupancyMeasurement;refresh:()=>void;onDeleted:()=>void}) {
   const mutation=useChillMutation(),[open,setOpen]=React.useState(false),[understood,setUnderstood]=React.useState(false),[unknown,setUnknown]=React.useState(false)
-  const blocked=occupancyPhaseValue(data)==="Measuring",identity=data.metadata
+  const blocked=data.phase==="Measuring",identity=data.metadata
   const error=mutation.error
   function remove() {
     if(blocked||!understood||unknown||!identity.uid||!identity.resourceVersion)return

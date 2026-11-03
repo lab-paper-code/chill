@@ -68,6 +68,7 @@ const operation:OperationCostMeasurement = {
 }
 const occupancy:DispatchOccupancyMeasurement = {
   kind:"DispatchOccupancyMeasurement",metadata,node:"node-1",references:{...references,cr:{...references.cr,kind:"DispatchOccupancyMeasurement"},evidence:[]},
+  phase:"Complete",d:null,
   conditions:{workload:"demo",batchEnergyOptimization:"beo",batch:4,warmupSeconds:2,durationSeconds:10,workers:8},status:{phase:"Complete"},
 }
 

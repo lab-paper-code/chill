@@ -157,7 +157,8 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET, POST /namespaces/{namespace}/batch-energy-optimizations`, `DELETE .../{name}` | 측정 목록, `dryRun=All` 검증과 접수, `uid`와 `If-Match`의 영구 삭제 | 측정 목록, 요청과 삭제에 재사용한다. |
 | `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 관측 기록 | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 ChillServer 조회 대기다. |
 | `GET, POST /scheduler/profiles`, `DELETE /scheduler/profiles/{namespace}/{name}` | 채택 프로파일과 조건, 채택 결과와 `configVersion` | 측정 결과 처리 성능의 현재 사용·채택·해제에 재사용한다. |
-| `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 projection. 원본 spec 전체가 아니다. | relay GET 허용됨. 두 측정 화면으로 연결한다. |
+| `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 읽기 projection. DOM은 최상위 진행·결과 필드를 포함한다. 원본 spec 전체가 아니다. | 두 결과 화면에 연결한다. 아래 DOM 쓰기 계약과 읽기 projection을 구별한다. |
+| `POST /namespaces/{namespace}/dispatch-occupancy-measurements[?dryRun=All]`, `DELETE .../{name}?uid=…` | 대상·선택적 이름만 제출, dry-run의 완성 `task.spec`, UID·`If-Match` 영구 삭제, Measuring 409 | 요청·검사·진행·삭제 UI를 제공한다. 실행 중단/취소가 아니며 실제 처리는 서버 DOM mutation 커밋과 함께 배포해야 한다. 상세는 [측정 API §13.8](../serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03). |
 | `GET /scheduler/capacity` | `{rows:CapacityRow[]}`. 자동제어 워크로드가 필요로 하는 행과 입력, κ 및 탐색 판정 | relay GET 허용됨, query 없음. 용량 근거 화면과 현재 settings 대조에 연결한다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
@@ -197,16 +198,18 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 
 ## 5. 측정 projection과 용량 필드 계약
 
-[측정 projection](../../../internal/serving/httpapi/measurement_projections.go)과
+[측정 공통 projection](../../../internal/serving/httpapi/measurement_projections.go),
+[DOM 진행 필드](../../../internal/queryapi/dispatch_occupancy.go),
+[DOM evidence projection](../../../cmd/chill-query/measurement_entity_assessment.go),
 `internal/serving/capacity.go`, `httpapi/profiles.go:schedulerCapacity`가 wire 필드의 권위다.
 두 측정 목록은 `{items:MeasurementProjection[]}`, 단건은 projection 자체, 용량은 `{rows:CapacityRow[]}`.
-모두 GET·body/API query 없음; UI namespace/uid/workload/row query를 upstream에 전달하지 않는다.
+이 문단의 읽기 projection은 GET·body/API query 없음이다. UI namespace/uid/workload/row query를 upstream에 전달하지 않는다. DOM POST/DELETE는 위 별도 쓰기 계약을 사용한다.
 측정 uid 불일치는 다른 객체로 차단, uid 없는 이름 참조는 현재 객체다. namespace별 응답만 클라이언트 정렬/페이지 처리한다.
 
 | 공통 표시 | 정확한 소스 필드 | 표시 규칙 |
 |---|---|---|
-| 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`, `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, KST 시각(UTC tooltip). UID는 상세 원본 identity에 표시 |
-| 상세 결론·사유 | `kind`, `status.phase`, `status.reason` | 한국어 요약을 주표기하고 제공된 reason 원문을 펼침 안에 보존. 임의 원인을 확정하지 않음 |
+| 목록 identity·대상·상태·시각 | `metadata.name`, `metadata.namespace`, `metadata.uid`, `node`; DOM `phase`, `createdAt`, 변경 비용 `status.phase`, `metadata.creationTimestamp` | 이름/Node, 상태 문장·기호, KST 시각(UTC tooltip). DOM `phase:null`은 대기이며 구 status로 복원하지 않는다. UID는 상세 원본 identity에 표시 |
+| 상세 결론·사유 | `kind`; DOM `phase`, `reason`, `assessment`, 변경 비용 `status.phase`, `status.reason` | 한국어 요약을 주표기하고 제공된 reason 원문을 펼침 안에 보존. 임의 원인을 확정하지 않음 |
 | CR 출처 | `metadata.resourceVersion`; `references.cr.{apiVersion,kind,namespace,name,uid}` | “원본 CR 식별자”. 전체 CR 수신 주장·Kubernetes 직접 링크 없음 |
 | 근거 위치 | `references.evidence[].{store,key}` | 논리 위치 복사/JSON 내보내기. raw HTTP URL·Passport 경로 생성 없음 |
 
@@ -223,9 +226,18 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 | 배치·공급 방식·동시 송신자 | `conditions.batch`, `.supplyMode`, `.workers` | 건/batch, closed-loop=고정 동시 요청, poisson=포아송 공급, 미제공=“기록되지 않았어요”; workers=명 |
 | 예열·측정 구간 | `conditions.warmupSeconds`, `.durationSeconds` | s, 예열은 측정 시작에서 제외 |
 | 결과 전력모드 | `status.powerMode` | 없으면 “결과 없음” |
-| 요청당 분배 점유시간 d | `status.perRequestNanos` | 기존 nanosToMilliseconds 변환 후 3자리 유효숫자 ms/request 주표기. 정확 ns는 원본/내보내기만. 누락과 0 구별 |
-| 지속 완료 처리량 X | `status.throughput` | 수치 검증 후 3자리 유효숫자 + req/s. 원 문자열은 원본 보존. 누락/빈 문자열=“결과 없음”. d나 κ 재계산 없음 |
-| 결과 위치 | `status.result.{store,key}`, `references.evidence[]` | 논리 위치 그대로, 중복은 한 번 표시; 빈 evidence=“아직 저장된 근거 위치가 없어요” |
+| 요청당 분배 점유시간 d | `d.perRequestNanos` | signed 정밀 정수를 표시할 때만 ms/request로 변환한다. `d:null`과 측정된 0을 구별하고 `status`로 복원하거나 음수를 clamp하지 않는다. 정확 ns는 원본/내보내기에 보존 |
+| 지속 완료 처리량 X·유휴 비율·판정 | `d.throughput`, `d.idleFraction`, `d.verdict` | req/s, %, 서버 판정. nullable 수치는 미제공이며 브라우저에서 d나 κ를 재계산하지 않는다 |
+| 측정창·경과 | `measurementWindow.{start,end}`, `createdAt`, `phase` | 검증된 evidence의 실제 측정창만 시작·종료로 쓴다. 대기/측정 중 경과는 생성 시각부터 표시할 수 있으나 예정 측정창·진행률은 만들지 않는다 |
+| 결과 위치 | `evidence.{store,key,size}`, `references.evidence[]` | 논리 위치 그대로 보존. d/측정창 검증 실패를 원본 native ref 손실로 바꾸지 않는다 |
+
+DOM 목록·단건은 `phase:null/Measuring` 동안 보이는 탭에서만 제한 polling한다. 종료 phase와 401/403에서 중단하며 삭제된 단건의 404도 중단한다. 삭제는 확인 후 UID query와 `If-Match:resourceVersion`을 보내고 Measuring은 비활성화한다. 409는 최신 상태 조회, 응답 미수신은 결과 미확인으로 재삭제를 차단한다.
+
+커버리지의 `cells[].occupancy[]`는 실제 Node UID × profileID × batch DOM tuple만 포함한다. 각 항목의 `state`, `request`, `phase`, `reason`, `d`, `evidence`, `adopted`를 그대로 표시하며 빈 배열에서 가짜 tuple을 만들지 않는다. 상태 우선순위는 present > measuring > failed > none, 동률은 생성 시각 최신이다. 이전 profile은 `none/ProfileSuperseded`, Complete의 근거 검증 실패는 `failed/EvidenceInvalid`, 채택 미확인은 `adopted:null`이다. 셀의 d 요약은 접근 가능한 이름에도 포함한다.
+
+셀은 occupancy 유무와 무관하게 조건을 보존한 d 요청 링크를 제공한다. 호환성 대표 `support.node`를 측정 Node로 추측하지 않으며 요청 화면이 해석한 BEO의 `spec.state.targetNode`를 사용한다. 요청 이름은 선택적이고 검사 identity에 포함된다. 같은 조건 재측정은 새 이름으로 생성해 이전 실패 기록을 보존한다. 측정 종류 선택은 profile 의존 조회 오류와 독립적으로 접근 가능하되 변경 진행·결과 미확인 중에는 전환하지 않는다.
+
+리뷰 보정 검증(2026-11-03): 삭제 단건 404·부분 d 커버리지·대표 Node 불일치·권한 오류·요청 이름·조회 실패 종류 전환의 실패-먼저 회귀 후 Node 24.14.0 typecheck/eslint/운영 summary 포함 테스트 499개/기본 build가 통과했다. Go 변경은 없어 기존 통합 게이트를 재실행하지 않았다. 로컬 production과 운영 GET의 1440×900 렌더에서 조건 링크가 대표 Node를 생략하고 BEO 대상 genesis3로 해석됨을 확인했다. API GET 200, 콘솔 오류·가로 넘침 없음(Next prefetch abort만 관측). 운영 Query는 최상위 phase/d 미배포이므로 결과 대기·미제공은 구 응답에 대한 표시이며 새 진행값 검증이 아니다. 서버 DOM mutation 커밋과 Query/dash 동시 cutover 후 POST/DELETE E2E가 남는다.
 
 | 구역 | 정확한 필드 | 표시 단위·의미 |
 |---|---|---|

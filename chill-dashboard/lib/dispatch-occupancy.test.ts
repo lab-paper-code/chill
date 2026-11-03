@@ -201,7 +201,6 @@ test("reused profile IDs resolve through server cell lineage, never by treating 
   click(stale.render(),"검사")
   assert.equal(stale.calls[0].length,0)
   assert.match(text(stale.render()),/식별자 불일치/)
-  assert.equal(occupancy.occupancyMetrics({...dom,d:null,status:{perRequestNanos:999}}),null)
   assert.equal(occupancy.occupancyNumber(-1),"미제공")
   assert.equal(occupancy.occupancyNumber(1.1,true),"미제공")
 })
@@ -216,4 +215,61 @@ test("dry-run protocol retains uint64 values and rejects unreadable previews bef
   click(h.render(),"검사")
   h.calls[0][1].options?.onSuccess?.({body:"not-json"})
   assert.equal(button(h.render(),"측정 요청").props.disabled,true)
+})
+
+test("P2 d custom names remeasure failed conditions and changing the name invalidates the check",()=>{
+  const h=harness()
+  h.responses["v1/namespaces/ns/dispatch-occupancy-measurements"]={items:[{...dom,phase:"Failed"}]}
+  const nameInput=(tree:unknown)=>nodes(tree).find(node=>node.type==="input"&&node.props.type!=="number")!
+  const changeName=(value:string)=>{const input=nameInput(h.render());assert.ok(input,"optional request name input");(input.props.onChange as (event:unknown)=>void)({target:{value}})}
+  changeName("occ-remeasure.2")
+  click(h.render(),"검사")
+  assert.deepEqual(h.calls[0][0].input.body,{name:"occ-remeasure.2",node:"node",batchEnergyOptimization:"beo",workload:"workload",batch:4})
+  const fresh={...task,metadata:{...task.metadata,name:"occ-remeasure.2"}}
+  h.calls[0][0].options?.onSuccess?.({body:JSON.stringify({request:"NOT_SUBMITTED",task:fresh})})
+  assert.equal(button(h.render(),"측정 요청").props.disabled,false)
+  changeName("occ-remeasure.3")
+  assert.equal(button(h.render(),"측정 요청").props.disabled,true)
+  click(h.render(),"검사")
+  const newer={...fresh,metadata:{...fresh.metadata,name:"occ-remeasure.3"}}
+  h.calls[0][1].options?.onSuccess?.({body:JSON.stringify({request:"NOT_SUBMITTED",task:newer})})
+  click(h.render(),"측정 요청")
+  assert.deepEqual(h.calls[1][0].input.body,{name:"occ-remeasure.3",node:"node",batchEnergyOptimization:"beo",workload:"workload",batch:4})
+  assert.equal(h.calls.flat().some(call=>call.input.method==="DELETE"),false)
+  for(const value of ["Bad_Name","-bad","bad..name","a".repeat(201)]) {
+    changeName(value);const count=h.calls[0].length;click(h.render(),"검사")
+    assert.equal(h.calls[0].length,count)
+    assert.match(text(h.render()),/이름.*200자.*소문자/)
+  }
+})
+
+test("P2 d resolves only the BEO target in a multi-node class and rejects pinned target mismatches",()=>{
+  const inventory={useCoverageInventory:()=>({isPending:false,data:{classes:[{name:"class",nodes:[{name:"representative",uid:"representative-uid",ready:"True"},{name:"node",uid:"node-uid",ready:"True",resourceVersion:"1"}]}]}})}
+  for(const suffix of ["","&node=representative&nodeUID=representative-uid","&node=node&nodeUID=old-uid","&nodeUID=old-uid"]) {
+    const h=harness(`namespace=ns&measurementID=ns%2Fbeo%2Fbeo-uid&workloadUID=workload-uid&batch=4${suffix}`)
+    Object.assign(h.modules["@/features/measurement-coverage"] as object,inventory)
+    const tree=h.render(),label=nodes(tree).find(node=>node.type==="label"&&text(node).startsWith("Node"))!
+    const select=nodes(label).find(node=>node.type==="select")!
+    assert.equal(select.props.value,"node")
+    assert.deepEqual(nodes(select).filter(node=>node.type==="option"&&node.props.value).map(node=>node.props.value),["node"])
+    click(tree,"검사")
+    if(suffix) {
+      assert.equal(h.calls[0].length,0)
+      assert.match(text(h.render()),/식별자 불일치/)
+    } else assert.deepEqual(h.calls[0][0].input.body,{node:"node",batchEnergyOptimization:"beo",workload:"workload",batch:4})
+  }
+})
+
+test("P2 d kind transition remains blocked while a mutation is pending or submission is uncertain",()=>{
+  const h=harness()
+  const selector=(tree:unknown)=>{const node=nodes(tree).find(node=>typeof node.type==="function"&&node.props.kind==="dispatch-occupancy")!;return nodes((node.type as Component)(node.props)).find(node=>node.type==="select")!}
+  assert.equal(selector(h.render()).props.disabled,false)
+  for(const mutation of h.mutations) {
+    mutation.isPending=true
+    assert.equal(selector(h.render()).props.disabled,true)
+    mutation.isPending=false
+  }
+  click(h.render(),"검사");h.calls[0][0].options?.onSuccess?.({body:JSON.stringify({request:"NOT_SUBMITTED",task})})
+  click(h.render(),"측정 요청");h.calls[1][0].options?.onError?.({status:0,unknownOutcome:true})
+  assert.equal(selector(h.render()).props.disabled,true)
 })

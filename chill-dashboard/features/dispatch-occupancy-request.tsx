@@ -41,7 +41,7 @@ export function DispatchOccupancyRequestPage() {
   const workloads=useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary"),inventory=useCoverageInventory()
   const coverage=useMeasurementCoverage(namespace)
   const dry=useChillMutation(),send=useChillMutation()
-  const [selection,setSelection]=React.useState<{plan?:string;node?:string;workload?:string;batch?:string}>({})
+  const [selection,setSelection]=React.useState<{plan?:string;workload?:string;batch?:string;name?:string}>({})
   const [checked,setChecked]=React.useState<{key:string;body:OccupancyRequest}|null>(null),[issue,setIssue]=React.useState(""),[unknown,setUnknown]=React.useState(false)
   const [response,setResponse]=React.useState<OccupancyMutation|undefined>(undefined)
   const listPath=`v1/namespaces/${encodeURIComponent(namespace)}/dispatch-occupancy-measurements`
@@ -54,18 +54,19 @@ export function DispatchOccupancyRequestPage() {
   const candidates=allPlans.filter(plan=>{const c=plan.spec.state.candidate;return currentIDs.has(`${plan.metadata.namespace}/${plan.metadata.name}/${plan.metadata.uid}`)&&(!params.get("model")||c.modelSpec===params.get("model"))&&(!params.get("deviceClass")||c.deviceClass===params.get("deviceClass"))&&(!params.get("path")||c.executionPath===params.get("path"))&&(!params.get("powerMode")||c.powerMode===params.get("powerMode"))})
   const initialPlan=params.get("batchEnergyOptimization")??profilePlan?.metadata.name??(candidates.length===1?candidates[0].metadata.name:"")
   const planName=selection.plan??initialPlan,plan=candidates.find(plan=>plan.metadata.name===planName)
-  const nodeName=selection.node??params.get("node")??plan?.spec.state.targetNode??""
-  const nodes=inventory.data?.classes.find(cls=>cls.name===plan?.spec.state.candidate.deviceClass)?.nodes??[]
-  const node=nodes.find(node=>node.name===nodeName)
+  const nodeName=plan?.spec.state.targetNode??""
+  const nodes=(inventory.data?.classes.find(cls=>cls.name===plan?.spec.state.candidate.deviceClass)?.nodes??[]).filter(node=>node.name===nodeName)
+  const node=nodes[0]
   const workloadChoices=(workloads.data??[]).filter(workload=>!plan||workload.desired.spec.modelRef.name===plan.spec.state.candidate.modelSpec)
   const workloadName=selection.workload??params.get("workload")??workloadChoices.find(workload=>workload.desired.metadata.uid===params.get("workloadUID"))?.desired.metadata.name??""
   const workload=workloadChoices.find(workload=>workload.desired.metadata.name===workloadName)
   const batchText=selection.batch??params.get("batch")??"",batch=Number(batchText)
-  const body=occupancyBody({node:nodeName,batchEnergyOptimization:planName,workload:workloadName,batch})
+  const name=selection.name??""
+  const body=occupancyBody({name,node:nodeName,batchEnergyOptimization:planName,workload:workloadName,batch})
   const key=JSON.stringify({body,planUID:plan?.metadata.uid,planRV:plan?.metadata.resourceVersion,nodeUID:node?.uid,nodeRV:node?.resourceVersion,workloadUID:workload?.desired.metadata.uid,workloadRV:workload?.desired.metadata.resourceVersion})
-  const passed=occupancyChecked(key,checked?.key??null,response),pending=dry.isPending||send.isPending
-  const prefillMismatch=!!(params.get("measurementID")||profileID)&&!profilePlan||!!params.get("nodeUID")&&nodeName===params.get("node")&&node?.uid!==params.get("nodeUID")
-  const invalid=!plan?"측정할 셀을 선택하세요.":!node?"Node를 선택하세요.":node.ready!=="True"||node.schedulingDisabled?"Node 준비 안 됨":!workload?"워크로드를 선택하세요.":!/^\d+$/.test(batchText)||!Number.isSafeInteger(batch)||batch<1||batch>2147483647?"배치 범위 확인":prefillMismatch?"선택한 근거 식별자 불일치":""
+  const passed=occupancyChecked(key,checked?.key??null,response)&&(!name||response?.task?.metadata.name===name),pending=dry.isPending||send.isPending
+  const prefillMismatch=!!(params.get("measurementID")||profileID)&&!profilePlan||!!params.get("node")&&params.get("node")!==nodeName||!!params.get("nodeUID")&&node?.uid!==params.get("nodeUID")
+  const invalid=prefillMismatch?"선택한 근거 식별자 불일치":!plan?"측정할 셀을 선택하세요.":!node?"Node를 선택하세요.":node.ready!=="True"||node.schedulingDisabled?"Node 준비 안 됨":!workload?"워크로드를 선택하세요.":!/^\d+$/.test(batchText)||!Number.isSafeInteger(batch)||batch<1||batch>2147483647?"배치 범위 확인":name&&(name.length>200||!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/.test(name))?"요청 이름은 200자 이하의 영문 소문자, 숫자, '-', '.'로 적고, 처음과 끝은 영문 소문자나 숫자여야 해요.":""
   const frozenName=response?.task?.metadata.name
   function update(patch:typeof selection) {setSelection(current=>({...current,...patch}));setChecked(null);setResponse(undefined);setIssue("");dry.reset();send.reset()}
   function verify() {
@@ -89,10 +90,11 @@ export function DispatchOccupancyRequestPage() {
   return <Screen width="data" title="측정 요청" back={["/measurements","측정"]}>
     <MeasurementNavigation active="requests" namespace={namespace}/><MeasurementKindSelector kind="dispatch-occupancy" disabled={pending||unknown}/>
     <section className="grid gap-4" aria-label="d 측정 대상"><fieldset disabled={pending||unknown} className="grid gap-4 disabled:opacity-60 sm:grid-cols-2">
-      <QueryGate query={coverage}><QueryGate query={plans}><label className="grid gap-1.5 text-sm sm:col-span-2">셀<select className="min-h-11 min-w-0 rounded-md border bg-background px-3" value={planName} onChange={event=>update({plan:event.target.value,node:params.get("node")??undefined,workload:undefined})}><option value="">셀 선택</option>{candidates.map(plan=>{const c=plan.spec.state.candidate;return <option key={plan.metadata.uid} value={plan.metadata.name}>{c.modelSpec} / {c.deviceClass} / {executionPathLabel(c.executionPath)} / {c.powerMode}</option>})}</select></label>{!candidates.length&&<p role="status">현재 프로파일 없음 · 프로파일 측정 필요</p>}</QueryGate></QueryGate>
-      <QueryGate query={inventory}><label className="grid gap-1.5 text-sm">Node<select className="min-h-11 rounded-md border bg-background px-3" value={nodeName} onChange={event=>update({node:event.target.value})}><option value="">Node 선택</option>{nodes.map(node=><option key={node.uid} value={node.name}>{node.name}{node.ready!=="True"||node.schedulingDisabled?" · 준비 안 됨":""}</option>)}</select></label></QueryGate>
+      <QueryGate query={coverage}><QueryGate query={plans}><label className="grid gap-1.5 text-sm sm:col-span-2">셀<select className="min-h-11 min-w-0 rounded-md border bg-background px-3" value={planName} onChange={event=>update({plan:event.target.value,workload:undefined})}><option value="">셀 선택</option>{candidates.map(plan=>{const c=plan.spec.state.candidate;return <option key={plan.metadata.uid} value={plan.metadata.name}>{c.modelSpec} / {c.deviceClass} / {executionPathLabel(c.executionPath)} / {c.powerMode} / {plan.spec.state.targetNode}</option>})}</select></label>{!candidates.length&&<p role="status">현재 프로파일 없음 · 프로파일 측정 필요</p>}</QueryGate></QueryGate>
+      <QueryGate query={inventory}><label className="grid gap-1.5 text-sm">Node<select className="min-h-11 rounded-md border bg-background px-3" value={nodeName} disabled aria-describedby="occupancy-node-help"><option value="">Node 선택</option>{nodes.map(node=><option key={node.uid} value={node.name}>{node.name}{node.ready!=="True"||node.schedulingDisabled?" · 준비 안 됨":""}</option>)}</select><span id="occupancy-node-help" className="text-xs text-muted-foreground">선택한 BEO의 대상 Node · 다른 장비는 셀을 바꿔 선택하세요.</span></label></QueryGate>
       <QueryGate query={workloads}><label className="grid gap-1.5 text-sm">워크로드<select className="min-h-11 rounded-md border bg-background px-3" value={workloadName} onChange={event=>update({workload:event.target.value})}><option value="">워크로드 선택</option>{workloadChoices.map(workload=><option key={workload.desired.metadata.uid} value={workload.desired.metadata.name}>{workload.desired.metadata.name}</option>)}</select></label></QueryGate>
       <label className="grid gap-1.5 text-sm">배치 (건)<Input className="min-h-11" type="number" inputMode="numeric" min={1} max={2147483647} step={1} value={batchText} onChange={event=>update({batch:event.target.value})}/></label>
+      <label className="grid gap-1.5 text-sm sm:col-span-2">요청 이름 (선택)<Input type="text" maxLength={200} pattern="[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)*" value={name} onChange={event=>update({name:event.target.value})}/><span className="text-xs text-muted-foreground">비우면 서버에서 정해요. 같은 조건을 다시 측정하려면 새 이름을 적어 기존 실패 기록을 보존하세요.</span></label>
     </fieldset>{prefillMismatch&&<p role="alert">선택한 근거 식별자 불일치 · 커버리지 또는 용량 근거에서 다시 선택하세요.</p>}{issue&&<p role="alert">{issue}</p>}<Button className="justify-self-start" variant="outline" disabled={pending||unknown||plans.isPending||coverage.isPending||workloads.isPending||inventory.isPending} onClick={verify}>{dry.isPending?"검사 중":"검사"}</Button><MutationError error={dry.error}/></section>
     {passed&&response?.task&&<OccupancyProtocol task={response.task}/>}
     <section className="grid gap-3" aria-label="검사·제출">{passed&&<Facts items={[["검사","완료"],["접수",occupancyResponseState(undefined,response?.request)],["요청 이름",frozenName]]}/>}<Button className="justify-self-start" disabled={!passed||pending||unknown||!!invalid} onClick={submit}>{send.isPending?"제출 중":"측정 요청"}</Button><MutationError error={send.error}/>{!!sent&&typeof sent==="object"&&"request" in sent&&sent.request==="NOT_SUBMITTED"&&<p role="status">미제출</p>}{unknown&&<div role="alert" className="grid gap-3"><p>접수 결과 미확인 · 자동 재제출 차단</p><Button variant="outline" disabled={records.isFetching} onClick={()=>void records.refetch()}>접수 기록 조회</Button><QueryGate query={records}>{found?<Link className="underline" href={occupancyResultHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 측정 열기</Link>:<p>같은 이름의 접수 기록 미확인</p>}</QueryGate></div>}</section>

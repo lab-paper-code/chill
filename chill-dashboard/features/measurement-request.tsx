@@ -209,9 +209,9 @@ export function MeasurementRequestPage() {
     const pinned=requestCopyQuery(new URLSearchParams(params),copy.source)
     if(pinned!==params.toString())router.replace(`/measurements/requests/new?${pinned}`,{scroll:false})
   },[copy?.source,namespace,params,router])
-  if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen title="측정 요청"><p role="status">선택 조건 조회 중</p></Screen>
-  if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data || profiles.isPending || profiles.error) return <Screen back={back} title="측정 요청">
-    <MeasurementNavigation active="requests" namespace={namespace}/>
+  if(params.get("variantId")&&!coverage.data&&!coverage.error)return <Screen back={back} title="측정 요청"><MeasurementNavigation active="requests" namespace={namespace}/><MeasurementKindSelector kind="profile"/><p role="status">선택 조건 조회 중</p></Screen>
+  if (!plans.data || !models.data || !workloads.data || !inventory.data || !preprocessors.data || !datasets.data || !profiles.data) return <Screen back={back} title="측정 요청">
+    <MeasurementNavigation active="requests" namespace={namespace}/><MeasurementKindSelector kind="profile"/>
     <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}><QueryGate query={preprocessors}><QueryGate query={datasets}><QueryGate query={profiles}>{null}</QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
   const prefill = resolveMeasurementPrefill(new URLSearchParams(params), namespace, inventory.data)

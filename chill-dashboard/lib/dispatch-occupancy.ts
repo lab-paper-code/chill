@@ -3,11 +3,9 @@ import { formatMeasurementNumber, occupancyReason, significant } from "./measure
 
 export const occupancyStates={none:"없음",measuring:"측정 중",failed:"실패",present:"있음"} as const
 export const occupancyPhase=(phase?:string|null)=>({Measuring:"측정 중",Complete:"완료",Insufficient:"근거 부족",Failed:"실패"}[phase??""]??(phase?"미확인":"대기"))
-export const occupancyRunning=(data:DispatchOccupancyMeasurement)=>!occupancyPhaseValue(data)||occupancyPhaseValue(data)==="Measuring"
-export const occupancyPhaseValue=(data:DispatchOccupancyMeasurement)=>data.phase===undefined?data.status.phase:data.phase
-export const occupancyMetrics=(data:DispatchOccupancyMeasurement)=>data.d===undefined?{perRequestNanos:data.status.perRequestNanos,throughput:data.status.throughput?Number(data.status.throughput):null,idleFraction:null,verdict:""}:data.d
+export const occupancyRunning=(data:DispatchOccupancyMeasurement)=>!data.phase||data.phase==="Measuring"
 export function occupancyDisplayReason(data:DispatchOccupancyMeasurement) {
-  const result=occupancyMetrics(data)
+  const result=data.d
   return occupancyReason({assessment:data.assessment,status:{reason:data.reason??data.status.reason,perRequestNanos:result?.perRequestNanos??undefined,throughput:result?.throughput==null?undefined:String(result.throughput)}})
 }
 export function occupancyMilliseconds(value?:WireInteger|null) {

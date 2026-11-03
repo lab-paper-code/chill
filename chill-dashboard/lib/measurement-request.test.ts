@@ -131,14 +131,14 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>) {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>,unknown=false) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel, fillDefaults };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
-  let mutationIndex=0
+  let mutationIndex=0,stateIndex=0
   const modules:Record<string,unknown>={
-    "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);if(patch&&state[0]&&typeof state[0]==="object"&&"workload" in state[0])return [(exports.fillDefaults as (draft:unknown,context:unknown)=>unknown)({...state[0],...patch},props.context),state[1]];return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
+    "react":{...require("react"),useState:(initial:unknown)=>{const index=stateIndex++,state=require("react").useState(initial);if(index===3&&unknown)return [true,state[1]];if(patch&&state[0]&&typeof state[0]==="object"&&"workload" in state[0])return [(exports.fillDefaults as (draft:unknown,context:unknown)=>unknown)({...state[0],...patch},props.context),state[1]];return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@/lib/client":{useChillMutation:()=>mutations[mutationIndex++]??({isPending:false}),isCoverageWarming:()=>false},
@@ -154,7 +154,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "@/lib/measurement-coverage":coverageHelpers,
     "@/features/measurement-coverage":{useModelCompatibility:()=>({data:compatibility})},
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
-    "@/features/dispatch-occupancy-request":{MeasurementKindSelector:()=>null},
+    "@/features/dispatch-occupancy-request":{MeasurementKindSelector:({disabled}:{disabled?:boolean})=>createElement("select",{"aria-label":"측정 종류",disabled},createElement("option",{value:"dispatch-occupancy"},"d · 분배 점유시간"))},
     "@/lib/measurements":measurementHelpers,
   }
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
@@ -528,4 +528,37 @@ test("historical request rows retain their own usage instead of inheriting anoth
   const html=renderRequestList("requests",{...plan,assessment:{...retainedAssessment,scope:{...retainedAssessment.scope,schedulerUsed:false}}},[retainedCell])
   assert.match(html,/>미사용</)
   assert.doesNotMatch(html,/>사용 중</)
+})
+
+test("P2 profile kind selector survives profile-only dependency failures and coverage loading",()=>{
+  const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url)
+  for(const dependency of ["v1/preprocessors","v1/datasets","profiles","coverage"]) {
+    const exports:Record<string,unknown>={}
+    const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+    const modules:Record<string,unknown>={
+      "next/navigation":{useSearchParams:()=>new URLSearchParams(dependency==="coverage"?"variantId=selected":""),useRouter:()=>({replace:()=>{}})},
+      "@tanstack/react-query":{useQuery:()=>dependency==="profiles"?{error:{status:503},isPending:false}:{data:{profiles:[]},isPending:false}},
+      "@/lib/client":{useSession:()=>({config:{namespace:"ns"},token:"fixture"}),useChillQuery:(path:string)=>path===dependency?{error:{status:503}}:{data:{items:[]}}},
+      "@/features/measurement-coverage":{useCoverageInventory:()=>({data:{classes:[]}}),useMeasurementCoverage:()=>({})},
+      "@/components/read-region":{QueryGate:({query,children}:{query:{error?:unknown};children?:ReactNode})=>query.error?createElement("p",null,"조회 실패"):children},
+      "@/components/screen":{Screen:container},
+      "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
+      "@/features/dispatch-occupancy-request":{MeasurementKindSelector:({disabled}:{disabled?:boolean})=>createElement("select",{"aria-label":"측정 종류",disabled},createElement("option",{value:"dispatch-occupancy"},"d · 분배 점유시간"))},
+    }
+    runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:name.startsWith("@/")?{}:require(name),URLSearchParams})
+    const html=renderToStaticMarkup(createElement(exports.MeasurementRequestPage as ComponentType))
+    assert.match(html,/<select aria-label="측정 종류">/,dependency)
+    assert.match(html,/value="dispatch-occupancy"/,dependency)
+  }
+})
+
+test("P2 profile kind transition remains blocked during all mutations and unknown submission",()=>{
+  assert.match(renderRequest(),/<select aria-label="측정 종류">/)
+  for(let index=0;index<3;index++) {
+    const mutations=Array.from({length:3},(_,position)=>({isPending:position===index}))
+    assert.match(renderRequest({},"","",0,[],[],mutations),/<select aria-label="측정 종류" disabled="">/)
+  }
+  assert.match(renderRequest({},"","",0,[],[],[],undefined,true),/<select aria-label="측정 종류" disabled="">/)
 })
