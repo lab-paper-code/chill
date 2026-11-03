@@ -1,11 +1,11 @@
 export type DefinitionInjection = {id:string;action:string;offsetSeconds:number}
-export type DefinitionStage = {id:string;row:string;loadScenarioRef:{name:string;uid:string};settingsPatch?:Record<string,unknown>;failureInjection?:DefinitionInjection[]}
+export type DefinitionStage = {id:string;row:string;loadScenarioRef:{name:string;uid:string};settingsPatch?:Record<string,unknown>|null;failureInjection?:DefinitionInjection[]}
 export type ComparisonReference = {stageID:string;historical?:never}|{stageID?:never;historical:{publicationID:string;stageID:string}}
 export type EvaluationComparison = {left:ComparisonReference;right:ComparisonReference;reason:string}
 export type EvaluationDefinition = {
   schema:"evaluation-definition.v1alpha1"
   run:{name:string;uid:string}
-  spec:{question:string;loadGenerator:Record<string,unknown>;settingsPatch?:Record<string,unknown>;stages:DefinitionStage[];comparisons?:EvaluationComparison[]}
+  spec:{question:string;loadGenerator:Record<string,unknown>;settingsPatch?:Record<string,unknown>|null;stages:DefinitionStage[];comparisons?:EvaluationComparison[]}
   loadScenarios:{name:string;uid:string;spec:{parts:{id:string;durationSeconds:number;rates:Record<string,number>}[]}}[]
   workloads:{name:string;uid:string;generation:number|bigint;slo:{percentile:number;targetLatencyNanos:number|bigint}}[]
 }
@@ -27,8 +27,8 @@ export function evaluationComparisons(value:unknown):EvaluationComparison[]|unde
 export function evaluationDefinition(value:unknown):EvaluationDefinition|undefined {
   if(!record(value)||value.schema!=="evaluation-definition.v1alpha1"||!reference(value.run)||!record(value.spec))return undefined
   const spec=value.spec,generator=spec.loadGenerator
-  if(!text(spec.question)||!record(generator)||!text(generator.image)||!text(generator.sourceSHA)||!text(generator.nodeName)||!record(generator.resources)||!record(generator.shards)||!Object.keys(generator.shards).length||!Object.values(generator.shards).every(positiveInteger)||!record(generator.barrier)||!nonnegative(generator.barrier.maxStartSkewNanos)||!Number.isSafeInteger(generator.barrier.maxStartSkewNanos)||!positiveInteger(generator.barrier.minimumReadySamples)||!Array.isArray(spec.stages)||!spec.stages.length||(spec.settingsPatch!==undefined&&!record(spec.settingsPatch)))return undefined
-  if(!spec.stages.every(stage=>record(stage)&&text(stage.id)&&text(stage.row)&&reference(stage.loadScenarioRef)&&(stage.settingsPatch===undefined||record(stage.settingsPatch))))return undefined
+  if(!text(spec.question)||!record(generator)||!text(generator.image)||!text(generator.sourceSHA)||!text(generator.nodeName)||!record(generator.resources)||!record(generator.shards)||!Object.keys(generator.shards).length||!Object.values(generator.shards).every(positiveInteger)||!record(generator.barrier)||!nonnegative(generator.barrier.maxStartSkewNanos)||!Number.isSafeInteger(generator.barrier.maxStartSkewNanos)||!positiveInteger(generator.barrier.minimumReadySamples)||!Array.isArray(spec.stages)||!spec.stages.length||(spec.settingsPatch!=null&&!record(spec.settingsPatch)))return undefined
+  if(!spec.stages.every(stage=>record(stage)&&text(stage.id)&&text(stage.row)&&reference(stage.loadScenarioRef)&&(stage.settingsPatch==null||record(stage.settingsPatch))))return undefined
   if(!spec.stages.every(stage=>stage.failureInjection===undefined||(Array.isArray(stage.failureInjection)&&stage.failureInjection.every((i:unknown)=>record(i)&&text(i.id)&&text(i.action)&&nonnegative(i.offsetSeconds))&&new Set(stage.failureInjection.map((i:DefinitionInjection)=>i.id)).size===stage.failureInjection.length)))return undefined
   const ids=spec.stages.map(stage=>stage.id)
   if(new Set(ids).size!==ids.length)return undefined

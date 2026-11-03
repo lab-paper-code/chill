@@ -347,7 +347,7 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 실험은 DB-FR-66과 [실험 실행 설계](../profiling/experiment-execution.md)를 따른다.
 평가는 CHILL 서빙 파이프라인을 외부 블랙박스로 평가한다. CHILL의 profile·d·κ·배치·전력모드·인스턴스는 상시 자율 운영 대상이고, 실험은 워크로드·절대 rate·도착 분포·기간·seed·payload를 제공하여 SLO·에너지·요청 결과·생성기 품질·에너지 커버리지를 관찰한다. 내비게이션과 헤더는 `운영 / CHILL 자율 제어`와 `실험 / 외부 평가`를 라벨로 구분한다.
 작성·부하의 구조화 폼에는 내부 κ/d/rateBasis/alpha, 시작 상태 복원·스냅샷·이미지/profile 대조·CHILL 제어·장애 주입 입력을 두지 않는다. W1 서버와 같은 cutover이며 옛 LoadScenario/EvaluationRun 객체는 삭제하고 이주·호환 입력을 제공하지 않는다. 부하는 절대 req/s, 워크로드별 uint64 십진 **문자열** `seeds`, Dataset `{name,uid}`의 `datasetRefs`, 선택적 `traceRefs`를 쓴다. 과거 배치·전력·인스턴스 변화와 사건은 결과 Sheet의 `관찰`로 읽고 편집하지 않는다.
-실험 전역·단계 `settingsPatch`는 공개 운영 설정 항목을 선택해서 작성하는 불투명 JSON 객체다. 운영 설정 화면과 같은 항목 정의를 사용하며 최종 값 검증은 서버가 한다. 부하 발생기의 `nodeName`을 명시하고 image/source는 서버 템플릿·보존 정의에서 읽으며 대상 이미지 대조 입력으로 쓰지 않는다.
+실험 전역·단계 `settingsPatch`는 공개 운영 설정 항목을 선택해서 작성하는 불투명 JSON 객체다. 운영 설정 화면과 같은 항목 정의를 사용하며 최종 값 검증은 서버가 한다. 단계의 생략·null은 Run patch 상속, `{}`는 빈 전체 대체다. 부하 발생기의 `nodeName`을 명시하고 image/source는 서버 템플릿·보존 정의에서 읽으며 대상 이미지 대조 입력으로 쓰지 않는다.
 요청 시각 입력 조회는 `kind=trace`만 사용하고 `set`은 해당 부하 시나리오 이름이다. seed·payload를 evidence 종류로 조회하지 않는다.
 사전점검의 `liveTarget[]`는 `{component,resource,liveImageIDs,ready}` 관측 표다. digest 채택·`specImage`·`match`는 없고 변경된 live image ID는 사용자 입력을 바꾸지 않는다. 접수 서버가 `edge.dacs.io/evaluation-live-target` annotation에 관측을 기록한다. 실행 상세의 `평가 대상 CHILL` 표는 EvaluationView.liveTarget의 기록만 표시하고, 없거나 손상된 annotation의 null은 `미기록`이다.
 게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.

@@ -59,8 +59,8 @@ export function ExperimentCoverage({run,runs=[run]}:{run:Experiment;runs?:Experi
 export function ExperimentFacts({run}:{run:Experiment}) {
   const facts=run.facts
   const text=(value:unknown)=>typeof value==="string"||typeof value==="number"||typeof value==="bigint"?String(value):"미기록"
-  const patchRows=(label:string,patch:Published|undefined):[string,string][]=>{
-    if(patch===undefined)return []
+  const patchRows=(label:string,patch:Published|null|undefined):[string,string][]=>{
+    if(patch==null)return []
     const entries=settingsPatchEntries(patch)
     return entries.length?entries.map(([path,value])=>[`${label} · ${settingsPatchKeyLabel(path)} (${path})`,value===null?"null":publishedText(value)]):[[label,"변경 없음"]]
   }

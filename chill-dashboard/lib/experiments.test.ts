@@ -290,6 +290,8 @@ test("settings patches expose recorded key paths with facts present and inherit 
   assert.equal(definitionPolicy(global.stages[2],global),"전력모드")
   const empty=withDefinition(global,d=>{d.spec.stages[0].settingsPatch={}})
   assert.equal(definitionPolicy(empty.stages[0],empty),"변경 없음")
+  const inherited=withDefinition(global,d=>{d.spec.stages[0].settingsPatch=null})
+  assert.equal(definitionPolicy(inherited.stages[0],inherited),"요청 분배")
   const detailed=decodeExperiment(publishedText({...global,facts:{name:"목록 사실",stages:[{id:global.stages[0].id,settingsPatchKeys:["controls.routing"]},{id:global.stages[2].id,settingsPatchKeys:["controls.power"]}]}}))
   assert.equal(definitionPolicy(detailed.stages[0],detailed),"요청 분배")
   assert.equal(definitionPolicy(detailed.stages[2],detailed),"전력모드")
