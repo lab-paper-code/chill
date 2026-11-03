@@ -62,7 +62,7 @@ func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
 			lateRunning = r.NativeRunningAt
 		}
 	})
-	if err != nil || gap != nil || kinds[requestRowFinal] != 2 || kinds[requestRowAssigned] != 1 || kinds[RequestRowNative] != 3 || lateRunning == nil || !lateRunning.Equal(at.Add(20*time.Millisecond)) {
+	if err != nil || gap != nil || kinds[requestRowFinal] != 2 || kinds[requestRowAssigned] != 3 || kinds[requestRowOpen] != 1 || kinds[RequestRowNative] != 3 || lateRunning == nil || !lateRunning.Equal(at.Add(20*time.Millisecond)) {
 		t.Fatalf("scanner lost physical/unknown evidence: kinds=%v running=%v gap=%v err=%v", kinds, lateRunning, gap, err)
 	}
 	if len(l.open) != 1 {
@@ -176,7 +176,7 @@ func TestScanOccupancyRowsAcceptsLocalNowBounds(t *testing.T) {
 					t.Fatalf("unexpected occupancy row: %+v", row)
 				}
 			})
-			if err != nil || gap != nil || rows != 1 {
+			if err != nil || gap != nil || rows != 2 {
 				t.Fatalf("local now lost occupancy coverage: rows=%d gap=%v err=%v", rows, gap, err)
 			}
 		})

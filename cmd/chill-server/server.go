@@ -179,6 +179,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 
 	handlerConfig.ReadCatalog = scheduler.readCatalog
+	handlerConfig.OccupancyObservations = scheduler.occupancyObservations
 	handlerConfig.SubmitMeasurement = measurements.submit
 	handlerConfig.DeleteMeasurement = measurements.delete
 	handlerConfig.BuildOccupancy = measurements.buildOccupancy

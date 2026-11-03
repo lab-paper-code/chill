@@ -88,6 +88,10 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 		if err := result.Task.Spec.ValidateConditions(); err != nil {
 			t.Fatal(err)
 		}
+		if result.Task.Spec.Workers != 8 || result.Task.Spec.WarmupSeconds != 5 ||
+			result.Task.Spec.DurationSeconds != 15 || result.Task.Spec.MinimumPairs != 100 {
+			t.Fatal("POST did not preserve the configured short burst")
+		}
 		if dry {
 			dryResult = result
 			if *creates != 0 || result.Request != measurementRequestNotSubmitted {

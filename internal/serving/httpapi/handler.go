@@ -44,7 +44,8 @@ type HandlerConfig struct {
 	SchedulerMeters                                            func() []servingkube.MeterDeclaration
 	ReceiveResources                                           func(context.Context, serving.ResourceBatch) ([]serving.ResourceTarget, error)
 
-	ReadCatalog func(context.Context) (servingkube.CatalogRead, error)
+	ReadCatalog           func(context.Context) (servingkube.CatalogRead, error)
+	OccupancyObservations OccupancyObservationReader
 
 	SubmitMeasurement     func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
 	DeleteMeasurement     func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
@@ -147,6 +148,7 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
 	h.mux.HandleFunc("POST /api/v1/internal/observations/resources", h.resources)
 	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
+	h.mux.HandleFunc("GET "+occupancyObservationsPath, h.occupancyObservations)
 	h.mux.HandleFunc("GET /api/v1/experiments", h.experiments)
 	h.mux.HandleFunc("GET /api/v1/experiments/{id}", h.experiments)
 	h.mux.HandleFunc("GET /api/v1/evaluations/active", h.activeEvaluations)

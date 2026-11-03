@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -117,7 +116,6 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 	if err != nil {
 		return nil, err
 	}
-	lifetime := float64(policy.RequestLifetimeSeconds)
 	var population []float64
 	for _, batch := range profile.Batches {
 		if batch.Batch == int(intent.Batch) {
@@ -128,96 +126,64 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 	if len(population) == 0 {
 		return nil, occupancyInfeasible("selected batch has no measured service population")
 	}
-	fast, tail, sum := math.Inf(1), 0.0, 0.0
+	tail, sum := 0.0, 0.0
 	for _, nanos := range population {
 		seconds := nanos / 1e9
 		if seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 			return nil, occupancyInfeasible("profile batch times must be finite and positive")
 		}
-		fast, tail, sum = math.Min(fast, seconds), math.Max(tail, seconds), sum+seconds
+		tail, sum = math.Max(tail, seconds), sum+seconds
 	}
 	mean := sum / float64(len(population))
 	if intent.Batch < 1 || math.IsInf(mean, 0) {
 		return nil, occupancyInfeasible("invalid batch population")
 	}
-	// These are the existing native supplySizing contract caps, not scientific defaults.
+	// Retain the native outstanding-supply caps; policy chooses workers, not this formula.
 	const workerCap = 64
-	const queueBytesCap = 64 << 20
-	if preparation.Config.MaxQueueBytes < queueBytesCap || preparation.Config.MaxQueueRequests < 1 ||
-		requestBytes > queueBytesCap {
-		return nil, occupancyInfeasible("native queue cannot support the existing 64/64MiB supply contract")
+	queueBytesCap := min(int64(preparation.Config.MaxQueueBytes), int64(64<<20))
+	workers := int64(policy.Workers)
+	if workers < int64(intent.Batch) || workers > workerCap || requestBytes < 1 ||
+		queueBytesCap < requestBytes || workers > queueBytesCap/requestBytes {
+		return nil, occupancyInfeasible("configured workers cannot fit a complete batch within native supply caps")
+	}
+	outstandingBatches := (workers + int64(intent.Batch) - 1) / int64(intent.Batch)
+	q := outstandingBatches - 1
+	waiting := int64(intent.Batch) * q
+	if preparation.Config.MaxQueueRequests < 1 || waiting > int64(preparation.Config.MaxQueueRequests) ||
+		waiting > queueBytesCap/requestBytes {
+		return nil, occupancyInfeasible("configured outstanding supply exceeds native queue capacity")
 	}
 	margin := float64(policy.DeliveryMarginMillis) / 1000
-	workers, bound := float64(workerCap), "queue-cap"
-	byteWorkers := float64(queueBytesCap / requestBytes)
-	lifetimeWorkers := math.Floor((lifetime - margin) / (float64(intent.Batch) * tail))
-	if byteWorkers < workers {
-		workers, bound = byteWorkers, "bytes-cap"
-	}
-	if lifetimeWorkers < workers {
-		workers, bound = lifetimeWorkers, "lifetime"
-	}
-	if workers < float64(intent.Batch) {
-		return nil, occupancyInfeasible("lifetime or decoded-byte cap cannot hold a complete batch")
-	}
-	q := math.Ceil(workers/float64(intent.Batch)) - 1
-	waiting := int64(intent.Batch) * int64(q)
-	if waiting > int64(preparation.Config.MaxQueueRequests) || waiting > queueBytesCap/requestBytes {
-		return nil, occupancyInfeasible("profile-derived outstanding supply exceeds native queue capacity")
-	}
-	// Conservatively require full queued batches to hide the configured refill bound.
-	// Residual idle I=max(0,F-floor((K-B)/B)*t_fast); I/(t_fast+I)<=idle target.
-	queuedBatches := math.Floor((workers - float64(intent.Batch)) / float64(intent.Batch))
-	residual := math.Max(0, policy.RefillSeconds-queuedBatches*fast)
-	estimatedIdle := residual / (fast + residual)
-	requiredQueuedBatches := 0.0
-	if policy.MaximumIdleFraction < 1 {
-		allowedIdle := policy.MaximumIdleFraction * fast / (1 - policy.MaximumIdleFraction)
-		requiredQueuedBatches = math.Max(0, math.Ceil((policy.RefillSeconds-allowedIdle)/fast))
-	}
-	requiredWorkers := float64(intent.Batch) * (1 + requiredQueuedBatches)
-	saturationBound := bound
-	if bound == "queue-cap" {
-		saturationBound = "worker-cap"
-	}
-	if estimatedIdle > policy.MaximumIdleFraction {
+	minimumLifetime := math.Max(math.Ceil(workload.Spec.SLO.TargetLatency.Duration.Seconds()),
+		math.Ceil(float64(outstandingBatches)*tail+margin))
+	if minimumLifetime > float64(policy.RequestLifetimeSeconds) {
 		return nil, occupancyInfeasible(
-			fmt.Sprintf(
-				"safe supply %.0f workers cannot saturate: estimated idle %.6g exceeds %.6g (refill bound %.6gs)",
-				workers,
-				estimatedIdle,
-				policy.MaximumIdleFraction,
-				policy.RefillSeconds,
-			),
+			"configured request lifetime cannot cover queued profile-tail batches and delivery margin",
 		)
 	}
-	warmup := math.Ceil(math.Max(policy.LoadPreparationFloorSeconds, (q+1)*tail+policy.RefillSeconds))
-	duration := math.Ceil(math.Max(policy.WindowFloorSeconds, policy.TimeMargin*float64(policy.MinimumBatches)*mean))
-	drain := math.Ceil(lifetime + tail + margin)
+	drain := math.Ceil(float64(policy.RequestLifetimeSeconds) + tail + margin)
 	extension := int64(policy.RequestLifetimeSeconds) + (int64(policy.DeliveryMarginMillis)+999)/1000
-	// Reserve supplyExtension BEFORE admitting job/collection allowances; never pad E.
-	known := float64(policy.PreparationSeconds) + warmup + duration + float64(extension) + drain
-	elapsed := known + float64(policy.JobSetupSeconds) + float64(policy.CollectionSeconds)
+	// Include the generator's post-window supply extension, never pad the elapsed cap.
+	elapsed := float64(policy.PreparationSeconds) + float64(policy.JobSetupSeconds) +
+		float64(policy.CollectionSeconds) + float64(policy.WarmupSeconds) + float64(policy.BurstSeconds) +
+		float64(extension) + drain
 	if math.IsInf(elapsed, 0) || elapsed > math.Floor(policy.PlannedElapsedCapSeconds) || elapsed > math.MaxInt32 {
 		return nil, occupancyInfeasible(
-			"elapsed cap cannot hold preparation, warmup, duration, supply extension, drain and job/collection allowances",
+			"elapsed cap cannot hold preparation, warmup, burst, supply extension, drain and job/collection allowances",
 		)
 	}
 	spec := api.DispatchOccupancyMeasurementSpec{
 		Node: intent.Node, BatchEnergyOptimization: intent.BatchEnergyOptimization,
 		Workload: intent.Workload, Batch: intent.Batch,
-		SupplyMode: "closed-loop", Seed: policy.Seed, MinimumBatches: policy.MinimumBatches,
-		MaximumIdleFraction: strconv.FormatFloat(policy.MaximumIdleFraction, 'f', -1, 64), Workers: int32(workers),
+		SupplyMode: "closed-loop", Seed: policy.Seed, MinimumPairs: policy.MinimumPairs, Workers: policy.Workers,
 		RequestLifetimeSeconds: policy.RequestLifetimeSeconds, DeliveryMarginMillis: policy.DeliveryMarginMillis,
 		PreparationSeconds: policy.PreparationSeconds,
 		JobSetupSeconds:    policy.JobSetupSeconds, CollectionSeconds: policy.CollectionSeconds,
-		WarmupSeconds: int32(warmup), DurationSeconds: int32(duration),
+		WarmupSeconds: policy.WarmupSeconds, DurationSeconds: policy.BurstSeconds,
 		DrainSeconds: int32(drain), PlannedElapsedSeconds: int32(elapsed),
 		Conditions: api.DispatchOccupancyConditions{
-			ProfileID:                  profile.ID,
-			WaitingBatches:             int32(q),
-			MinimumCycles:              policy.MinimumBatches - 1,
-			MaximumIdleNanosPerRequest: int64(math.Floor(policy.IdleDErrorSecondsPerRequest * 1e9)),
+			ProfileID:      profile.ID,
+			WaitingBatches: int32(q),
 		},
 	}
 	inputs := map[string]any{
@@ -254,35 +220,11 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 		},
 		"computed": map[string]any{
 			"tailBatchSeconds":               tail,
-			"fastBatchSeconds":               fast,
-			"prefixSeconds":                  margin,
-			"refillSeconds":                  policy.RefillSeconds,
+			"minimumRequestLifetimeSeconds":  minimumLifetime,
 			"framedDecodedRequestUpperBytes": requestBytes,
 			"queueRequestCap":                preparation.Config.MaxQueueRequests,
 			"queueBytesCap":                  queueBytesCap,
-			"qUpper": preparation.Config.MaxQueueRequests / int(
-				intent.Batch,
-			),
-			"estimatedIdleFraction":  estimatedIdle,
-			"supplyExtensionSeconds": extension,
-			"saturationSizing": map[string]any{
-				"requiredWorkers": requiredWorkers, "workerCap": workerCap, "byteCapWorkers": byteWorkers,
-				"lifetimeCapWorkers": lifetimeWorkers, "selectedWorkers": workers, "limitingBound": saturationBound,
-				"fullQueuedBatches": queuedBatches, "refillSeconds": policy.RefillSeconds,
-				"residualIdleSeconds": residual, "estimatedIdleFraction": estimatedIdle,
-				"maximumIdleFraction": policy.MaximumIdleFraction,
-			},
-			"supplySizing": map[string]any{
-				"batch":                          intent.Batch,
-				"profileMaxBatchSeconds":         tail,
-				"serviceTimeSource":              "profile.maxObservedSeconds",
-				"requestLifetimeSeconds":         policy.RequestLifetimeSeconds,
-				"marginSeconds":                  margin,
-				"workerCap":                      workerCap,
-				"queueBytesCap":                  queueBytesCap,
-				"framedDecodedRequestUpperBytes": requestBytes,
-				"limitingBound":                  bound,
-			},
+			"supplyExtensionSeconds":         extension,
 		},
 	}
 	raw, err := json.Marshal(inputs)

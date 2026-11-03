@@ -39,7 +39,7 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 - 기준은 profile 평균이며 fixed `B/(profileMean+B×signed d)=X`다. max0 투영에는 등식이 그대로 성립하지 않는다. rasp5 양수d는 μ26.88/κ25.3(m29)/25.1(m139)이고, service p50 30.7ms 기준 d6.5ms는 μ29.2/κ27.7로 X를 넘었다. profile 평균·signed 추정·정책 출처를 보존한다.
 - 값은 DispatchOccupancyMeasurement가 쓴 record다([measurement-api](measurement-api.md) 3, 4장). `CostEvidence.Refresh`는 `Accepted` record 중 (Node UID, 전력모드, model)마다 최신 `measuredAt` 하나를 snapshot `dispatchOccupancy`에 싣는다. 저장된 `runtimeImage`는 과거 기록으로 유지하지만 매칭·κ 캐시 키에서는 제외한다. `perRequestNanos`는 max(d, 0)이고 source는 record key이며 새 측정은 행을 다시 계산하게 한다.
 - option의 Node UID, profile의 `condition.powerMode`, `condition.logicalModel`이 같은 항목을 쓴다. d는 model의 원시 입출력 크기와 전력모드마다 잰다. 같은 노드·모드·model의 다른 option과 배치는 같은 d를 쓴다. 맞는 항목이 없으면 `MissingDispatchOccupancy`로 κ가 없으며 용량표와 재생은 같은 항목을 쓴다. 이미지 변경만으로 기존 측정을 무효화하지 않는다.
-- occupancy CR은 profile/SLO 유래 N/K/L·창을 동결하고 closed-loop fixed B의 native batch 시작 간격으로 X/signed d를 구한다. HTTP 결과·물리 연속성·unknown/idle 상한과 별도 m 표본은 [측정 API](measurement-api.md)를 따른다.
+- 새 occupancy CR은 명시적 설정 W/K/L/D/minimumPairs를 동결한 짧은 closed-loop fixed-B burst다. shared native backlogged-pair estimator의 signed 통계는 별도 `serving/dispatch-occupancy-observations/` v1alpha2에 `Observed`/`Insufficient`로 남기며 κ 입력이 아니다. 기존 `serving/dispatch-occupancy/` v1alpha1 Accepted d와 `CostEvidence` 소비는 그대로 보존한다. 새 관측→scheduler admission 및 옛 근거 삭제는 별도 승인 전환이다([measurement-api](measurement-api.md) 3, 4장).
 
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. d 없이 profile 실행시간만 재생한 E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s. rasp5 q1은 실측 처리율 26.9 req/s에서 34.3이 과대임이 드러났고, d를 넣은 값은 위 문단의 25.3이다.
 

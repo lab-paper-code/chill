@@ -8,11 +8,11 @@ import (
 )
 
 func syntheticOccupancyPolicy() dispatchOccupancyPolicy {
-	return dispatchOccupancyPolicy{MinimumBatches: 4, MaximumIdleFraction: .01,
-		RequestLifetimeSeconds: 2, DeliveryMarginMillis: 10, PreparationSeconds: 1, JobSetupSeconds: 1, CollectionSeconds: 1,
-		WindowFloorSeconds: 1, LoadPreparationFloorSeconds: 1, PlannedElapsedCapSeconds: 30, TimeMargin: 1.25,
-		RelativeXPlanningPrecision: .1, PlanningConfidence: .9, MaximumIdleBaseFraction: .01,
-		IdleDErrorSecondsPerRequest: .001, RefillSeconds: .02, Seed: 7}
+	return dispatchOccupancyPolicy{WarmupSeconds: 5, BurstSeconds: 15, Workers: 8, MinimumPairs: 100,
+		MaximumObservationWindowSeconds: 3600,
+		RequestLifetimeSeconds:          2, DeliveryMarginMillis: 10, PreparationSeconds: 1,
+		JobSetupSeconds: 1, CollectionSeconds: 1,
+		PlannedElapsedCapSeconds: 30, Seed: 7}
 }
 
 func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
@@ -28,11 +28,15 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	block := wire["dispatchOccupancy"].(map[string]any)
-	for field, value := range map[string]any{"workers": 6, "supplyMode": "closed-loop"} {
-		block[field] = value
+	for _, field := range []string{
+		"supplyMode", "minimumBatches", "maximumIdleFraction", "windowFloorSeconds",
+		"loadPreparationFloorSeconds", "timeMargin", "relativeXPlanningPrecision", "planningConfidence",
+		"maximumIdleBaseFraction", "idleDErrorSecondsPerRequest", "refillSeconds",
+	} {
+		block[field] = 1
 		raw, _ = json.Marshal(wire)
 		if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
-			t.Fatal("accepted server-owned config field", field)
+			t.Fatal("accepted removed or server-owned config field", field)
 		}
 		delete(block, field)
 	}
@@ -43,12 +47,21 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		t.Fatal("missing policy acquired defaults", err)
 	}
 	for _, change := range []func(*dispatchOccupancyPolicy){
-		func(p *dispatchOccupancyPolicy) { p.TimeMargin = math.NaN() },
-		func(p *dispatchOccupancyPolicy) { p.PlanningConfidence = 1 },
-		func(p *dispatchOccupancyPolicy) { p.MaximumIdleFraction = .02 },
+		func(p *dispatchOccupancyPolicy) { p.WarmupSeconds = -1 },
+		func(p *dispatchOccupancyPolicy) { p.BurstSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.Workers = 0 },
+		func(p *dispatchOccupancyPolicy) { p.Workers = 65 },
+		func(p *dispatchOccupancyPolicy) { p.MinimumPairs = 0 },
+		func(p *dispatchOccupancyPolicy) { p.MaximumObservationWindowSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.MaximumObservationWindowSeconds = p.BurstSeconds - 1 },
 		func(p *dispatchOccupancyPolicy) { p.RequestLifetimeSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.DeliveryMarginMillis = 0 },
+		func(p *dispatchOccupancyPolicy) { p.PreparationSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.JobSetupSeconds = -1 },
+		func(p *dispatchOccupancyPolicy) { p.CollectionSeconds = -1 },
 		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = 5 },
-		func(p *dispatchOccupancyPolicy) { p.RefillSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.NaN() },
+		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.Inf(1) },
 		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.MaxInt32 + 1 },
 	} {
 		p := syntheticOccupancyPolicy()
@@ -63,7 +76,7 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 }
 
 func TestOccupancyPolicyZeroInputsAreExplicitNotGoFallbacks(t *testing.T) {
-	for _, field := range []string{"maximumIdleFraction", "jobSetupSeconds", "collectionSeconds", "seed"} {
+	for _, field := range []string{"warmupSeconds", "jobSetupSeconds", "collectionSeconds", "seed"} {
 		raw, err := json.Marshal(syntheticOccupancyPolicy())
 		if err != nil {
 			t.Fatal(err)

@@ -105,10 +105,13 @@ never filled from a prior accepted snapshot. A failed cost refresh retains the
 earlier `accepted` snapshot with its own revision; Query must compare current
 profile identity and evidence before claiming adoption.
 
-No new DOM progress/status fields are stored. Phase/reason/d are existing native
-status, while start/end, signed d, idle fraction and verdict are in the retained
-record's `window`/measurement fields. CreationTimestamp is not a measurement
-start time. Query owns public progress and per-cell coverage projection.
+New native DOM bursts retain their measurement interval in `estimate.window`
+and signed ns/request diagnostics in `estimate.statistics`; their verdict is
+`Observed` or `Insufficient`, not scheduler admission. They publish neither a
+scalar operational d nor idle-fraction evidence. The legacy `Accepted` evidence
+prefix and scheduler reader remain unchanged; burst diagnostics do not replace
+that accepted population. CreationTimestamp is not a measurement start time.
+Query owns public progress and per-cell coverage projection.
 
 `/scheduler/state`의 `costIssues[]`(CostIssue `source/code/reason`)는 비용에 기여하지 못한
 측정이다. decision은 `keep`, `target`, `workloads[]`, `capacity`, snapshot Node의 `measurement`와 `reasons`,
