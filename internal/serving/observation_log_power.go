@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"time"
 
@@ -64,6 +65,9 @@ type operatingPowerHistory struct {
 	samples       map[time.Time]float64
 	policy        powerwindow.Policy
 	hasPolicy     bool
+	hasSource     bool
+	missingSource bool
+	mixedSources  bool
 	before, after operatingPowerNeighbor
 }
 
@@ -329,6 +333,21 @@ func (r *operatingPowerReducer) finish() OperatingPowerWindow {
 	rawComplete := len(r.result.Reasons) == 0
 	snapshots, activeValid := operatingMembership(&r.result, r.baseline, r.snapshots, r.byUID, rawComplete)
 	sumOperatingPower(&r.result, r.history, snapshots, rawComplete, activeValid)
+	for i := range r.result.Nodes {
+		node, raw := &r.result.Nodes[i], &r.history[i]
+		if r.matched > r.limit {
+			node.MeterJoules, node.MeterComplete = nil, false
+			node.Reasons = appendUnique(node.Reasons, "selected raw observation count exceeds query bound")
+		}
+		if !raw.hasSource || raw.missingSource {
+			node.MeterJoules, node.MeterComplete = nil, false
+			node.Reasons = appendUnique(node.Reasons, "meter source identity is unavailable in raw observations")
+		}
+		if raw.mixedSources {
+			node.MeterJoules, node.MeterComplete = nil, false
+			node.Reasons = appendUnique(node.Reasons, "meter source identity changes within selected observations")
+		}
+	}
 	return r.result
 }
 
@@ -344,7 +363,7 @@ func configuredOperatingMeters(result *OperatingPowerWindow, meters []OperatingP
 			continue
 		}
 		byUID[meter.Node.UID] = len(result.Nodes)
-		node := OperatingNodePower{Node: meter.Node, Meter: meter.Meter, Scope: "node-exclusive-wall", SourceIdentity: meter.Source, Reasons: []string{}}
+		node := OperatingNodePower{Node: meter.Node, Meter: meter.Meter, Scope: "node-exclusive-wall", Reasons: []string{}}
 		if meter.Node.UID == "" || meter.Node.Name == "" || meter.Meter == "" || meter.Scope != "node-exclusive-wall" || meter.Source.Kind == "" || meter.Source.Endpoint == "" || meter.Source.Metric == "" {
 			node.Reasons = append(node.Reasons, "configured meter lacks exclusive whole-node identity/scope")
 		}
@@ -364,6 +383,17 @@ func matchesOperatingMeter(meter OperatingPowerMeter, event *SchedulerObservatio
 
 func mergeOperatingPower(node *OperatingNodePower, raw *operatingPowerHistory, event *SchedulerObservation, from, to time.Time) {
 	power := event.Power
+	if len(power.Samples) > 0 {
+		source := power.Source
+		if source.Kind == "" || source.Endpoint == "" || source.Metric == "" {
+			raw.missingSource = true
+		} else if !raw.hasSource {
+			node.SourceIdentity = source
+			raw.hasSource = true
+		} else if !reflect.DeepEqual(node.SourceIdentity, source) {
+			raw.mixedSources = true
+		}
+	}
 	// Failed reads leave gaps between real samples; only the recorded coverage
 	// policy decides whether those gaps invalidate this query.
 	for _, failure := range power.Failures {
