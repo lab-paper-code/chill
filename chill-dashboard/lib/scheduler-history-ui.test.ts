@@ -10,6 +10,7 @@ import * as liveDisplay from "./live-display.ts"
 import * as dates from "./date-time.ts"
 import * as identity from "./workload-identity.ts"
 import * as labels from "./labels.ts"
+import * as occupancy from "./dispatch-occupancy.ts"
 
 type Element = { type: unknown; props: Record<string, unknown> }
 const require=createRequire(import.meta.url)
@@ -26,6 +27,7 @@ function harness(query="",responses:Record<string,unknown>={}){
     "@tanstack/react-query":{useQueryClient:()=>({getQueryState:()=>undefined})},
     "@/lib/client":{useSession:()=>({token:"token",config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:(path:string)=>{calls.push(path);return responses[path]??(path==="v1/workloads?view=summary"?{data:[{desired:{metadata:{name:"서비스 이름",uid:"service-uid"}}}]}:{data:path.startsWith("v1/observations/scheduler?")?{events:[]}:undefined})}},
     "@/lib/scheduler":scheduler,"@/lib/scheduler-history":history,"@/lib/capacity":capacity,"@/lib/live-display":liveDisplay,"@/lib/date-time":dates,"@/lib/workload-identity":identity,"@/lib/labels":labels,
+    "@/lib/dispatch-occupancy":occupancy,
     "@/components/read-region":{QueryGate:"gate",SourceJSON:"source",SourceExport:"export",StatusBadge:"badge"},
     "@/components/screen":{Screen:"main",Rows:"rows",Row:"row",RowDialog:"dialog",Facts:"facts",Empty:"empty"},
     "@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
@@ -107,4 +109,15 @@ test("whole power shows shared reasons once and retains distinct node reasons an
   const exported=nodes(tree).find(node=>node.type==="export")!.props.value
   assert.ok(exported&&typeof exported==="object"&&"result" in exported)
   assert.equal(exported.result,data)
+})
+
+test("missing dispatch occupancy links directly to the matching d request conditions",()=>{
+  const row={key:"missing-d",status:"CapacityRejected",reason:"MissingDispatchOccupancy",mu:0,input:{workloadUID:"service-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node",uid:"node-uid"},powerMode:"15W",profileID:"ns/beo/beo-uid",allocation:{},maxBatch:4}} as capacity.CapacityRow
+  const h=harness("row=missing-d",{"v1/scheduler/capacity":{data:{rows:[row]},dataUpdatedAt:0}})
+  const tree=h.load("../features/scheduler-capacity.tsx").CapacityEvidence({})
+  const details=nodes(tree).find(node=>typeof node.type==="function"&&node.props.row===row)!
+  const link=nodes((details.type as (props:Record<string,unknown>)=>Element)(details.props)).find(node=>node.type==="a"&&node.props.children==="d 측정 요청")!
+  const url=new URL(String(link.props.href),"https://dashboard.invalid")
+  assert.equal(url.pathname,"/measurements/requests/new")
+  for(const [key,value] of Object.entries({kind:"dispatch-occupancy",namespace:"ns",profileID:"ns/beo/beo-uid",node:"node",nodeUID:"node-uid",powerMode:"15W",workloadUID:"service-uid",batch:"4"}))assert.equal(url.searchParams.get(key),value)
 })

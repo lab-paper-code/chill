@@ -15,6 +15,7 @@ import * as coverageHelpers from "./measurement-coverage.ts"
 import * as assessmentHelpers from "./measurement-assessment.ts"
 import * as measurementHelpers from "./measurements.ts"
 import * as measurementSummary from "./measurement-summary.ts"
+import * as occupancyHelpers from "./dispatch-occupancy.ts"
 
 test("power mode labels identify measured watts rather than inventing a declared limit",()=>{
   assert.equal(powerModeLabel("MODE-1",[10,12]),"MODE-1 · 실측 10.0–12.0 W")
@@ -253,6 +254,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,
+    "@/lib/dispatch-occupancy":occupancyHelpers,
     "@/lib/scheduler":{},
     "@/lib/measurement-summary":measurementSummary,
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
@@ -410,4 +412,33 @@ test("R18 quality summary separates 48 measured policy-unset cells from five wit
   assert.equal(counts.noEvidenceCells,5)
   assert.equal(counts.policyUnsetCells,48)
   assert.equal(coverageQuality(measured).reasons[0].label,"전력 기록 정책 미설정")
+})
+
+test("coverage occupancy is a Node/batch table with explicit unknown adoption and targeted retries",()=>{
+  const base={node:{name:"node",uid:"node-uid"},profileID:"ns/beo/beo-uid",request:{name:"occ",uid:"occ-uid"},phase:null,reason:"",d:null,evidence:null,adopted:null}
+  const occupancy:NonNullable<MeasurementCoverageCell["occupancy"]>=[
+    {...base,batch:1,state:"none",request:null},
+    {...base,batch:2,state:"measuring",phase:"Measuring"},
+    {...base,batch:4,state:"failed",phase:"Insufficient",reason:"NotSaturated"},
+    {...base,batch:8,state:"present",phase:"Complete",d:{perRequestNanos:1000000,throughput:100,idleFraction:0.01,verdict:"Accepted"}},
+  ]
+  const html=renderCoverage("cell=d-cell",[{...cell,id:"d-cell",executionPath:"d-cpu",occupancy}])
+  assert.match(html,/d 없음 1 \/ 측정 중 1 \/ 실패 1 \/ 있음 1/)
+  const detail=html.slice(html.indexOf('aria-label="d · 분배 점유시간"')).split("</section>")[0]
+  assert.match(detail,/Node/)
+  assert.match(detail,/d \(ms\/요청\)/)
+  assert.match(detail,/1\.00/)
+  assert.match(detail,/부하 미포화/)
+  assert.equal(detail.split("채택 미확인").length-1,4)
+  const links=[...detail.matchAll(/href="([^"]+)"[^>]*>d 요청<\/a>/g)].map(match=>new URL(match[1].replaceAll("&amp;","&"),"https://dashboard.invalid"))
+  assert.equal(links.length,2)
+  assert.deepEqual(links.map(link=>link.searchParams.get("batch")),["1","4"])
+  for(const link of links) {
+    assert.equal(link.pathname,"/measurements/requests/new")
+    assert.equal(link.searchParams.get("kind"),"dispatch-occupancy")
+    assert.equal(link.searchParams.get("nodeUID"),"node-uid")
+    assert.equal(link.searchParams.get("model"),model.name)
+    assert.equal(link.searchParams.get("powerMode"),"MAXN")
+    assert.equal(link.searchParams.get("path"),"d-cpu")
+  }
 })
