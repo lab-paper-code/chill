@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
@@ -46,15 +48,15 @@ func observerSourceFixture() (*corev1.Pod, *corev1.Node, serving.Profile, edgev1
 	profile := serving.Profile{ID: "chill-system/campaign/campaign-uid", NodeName: "node", RuntimeMetadata: &native.RuntimeMetadata{Runtime: "ort-cpu", IntraOpThreads: 1, InterOpThreads: 1, CPUAffinity: []int{0}}, Condition: profilederivation.CurvePlanSpec{NodeUID: "node-uid", DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "CPUExecutionProvider", RuntimeImage: image, PowerMode: "fixed", Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 4}, Artifact: profilederivation.CurveArtifactContract{Image: image, Files: []string{"/artifact/model.onnx"}}, Preprocessor: profilederivation.CurvePreprocessorContract{Image: image, Path: "/preprocessor/pre"}}, Batches: []serving.BatchProfile{{Batch: 1, MemoryBytes: 1024}}}
 	class := edgev1alpha1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: "cpu"}, Spec: edgev1alpha1.DeviceClassSpec{NodeSelector: map[string]string{"hardware": "cpu"}, Architecture: "amd64", PowerModes: []edgev1alpha1.PowerMode{{Name: "fixed", Actuator: edgev1alpha1.PowerModeActuator{Kind: edgev1alpha1.PowerModeActuatorFixed}}}}}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid", Labels: map[string]string{"hardware": "cpu", corev1.LabelArchStable: "amd64"}, Annotations: map[string]string{chillmeta.OnlineCPUs: "0-3"}}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{Architecture: "amd64"}, Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi"), corev1.ResourceCPU: resource.MustParse("4")}}}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "instance", Namespace: "chill-system", UID: "pod-uid", Annotations: map[string]string{ServingProfileAnnotation: profile.ID, ServingWeightAnnotation: "1"}, Labels: map[string]string{"app.kubernetes.io/component": "serving-instance"}}, Spec: corev1.PodSpec{NodeName: node.Name, Volumes: []corev1.Volume{{Name: "artifact", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}, InitContainers: []corev1.Container{{Name: "artifact", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$@" /chill-artifact/`, "--", "/artifact/model.onnx"}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}}, {Name: "preprocessor", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", "/preprocessor/pre"}, VolumeMounts: []corev1.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}}, {Name: "profile", Image: image}}, Containers: []corev1.Container{{Name: "firstfloor", Image: image, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1024")}, Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1024")}}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "preprocessor", MountPath: "/preprocessor", ReadOnly: true}}}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "firstfloor", ImageID: image, ContainerID: "containerd://running", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "artifact", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "preprocessor", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "profile", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}}}
-	pod.Labels[instancePodUIDLabel] = string(pod.UID)
-	pod.Annotations[ServingRoutingAnnotation] = "{}"
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "instance", Namespace: "chill-system", UID: "pod-uid", Annotations: map[string]string{servingstate.ServingProfileAnnotation: profile.ID, servingstate.ServingWeightAnnotation: "1"}, Labels: map[string]string{"app.kubernetes.io/component": "serving-instance"}}, Spec: corev1.PodSpec{NodeName: node.Name, Volumes: []corev1.Volume{{Name: "artifact", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}, InitContainers: []corev1.Container{{Name: "artifact", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp "$@" /chill-artifact/`, "--", "/artifact/model.onnx"}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}}, {Name: "preprocessor", Image: image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", "/preprocessor/pre"}, VolumeMounts: []corev1.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}}, {Name: "profile", Image: image}}, Containers: []corev1.Container{{Name: "firstfloor", Image: image, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1024")}, Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1024")}}, VolumeMounts: []corev1.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "preprocessor", MountPath: "/preprocessor", ReadOnly: true}}}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}, ContainerStatuses: []corev1.ContainerStatus{{Name: "firstfloor", ImageID: image, ContainerID: "containerd://running", Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}, InitContainerStatuses: []corev1.ContainerStatus{{Name: "artifact", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "preprocessor", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}, {Name: "profile", ImageID: image, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}}}
+	pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
+	pod.Annotations[servingstate.ServingRoutingAnnotation] = "{}"
 	pod.Spec.RestartPolicy = corev1.RestartPolicyNever
 	return pod, node, profile, class
 }
 
 func observerServiceFixture(pod *corev1.Pod) *corev1.Service {
-	service := instanceService(pod)
+	service := servingstate.InstanceService(pod)
 	service.Spec.ClusterIP = "10.96.0.10"
 	return service
 }
@@ -69,7 +71,7 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		t.Fatalf("wrong physical source: %+v", spec)
 	}
 	routed := pod.DeepCopy()
-	routed.Annotations[ServingRoutingAnnotation] = `{"tight":2}`
+	routed.Annotations[servingstate.ServingRoutingAnnotation] = `{"tight":2}`
 	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
 		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
@@ -86,16 +88,16 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		{"node recreation", func(_ *corev1.Pod, n *corev1.Node, _ *serving.Profile) { n.UID = testReplacementUID }},
 		{"architecture", func(_ *corev1.Pod, n *corev1.Node, _ *serving.Profile) { n.Status.NodeInfo.Architecture = "arm64" }},
 		{"explicit weight", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
-			delete(p.Annotations, ServingWeightAnnotation)
+			delete(p.Annotations, servingstate.ServingWeightAnnotation)
 		}},
 		{"applied routing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
-			p.Annotations[ServingRoutingAnnotation] = "null"
+			p.Annotations[servingstate.ServingRoutingAnnotation] = "null"
 		}},
 		{"applied routing absent", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
-			delete(p.Annotations, ServingRoutingAnnotation)
+			delete(p.Annotations, servingstate.ServingRoutingAnnotation)
 		}},
 		{"applied routing names two Workloads", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
-			p.Annotations[ServingRoutingAnnotation] = `{"tight":1,"relaxed":1}`
+			p.Annotations[servingstate.ServingRoutingAnnotation] = `{"tight":1,"relaxed":1}`
 		}},
 		{"image evidence missing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Status.ContainerStatuses[0].ImageID = "" }},
 		{"configured image mismatch", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Spec.Containers[0].Image = "other-image" }},
@@ -137,7 +139,7 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.InstanceID == spec.InstanceID || sameRunningContainer(pod, restarted) {
+	if replacement.InstanceID == spec.InstanceID || servingstate.SameRunningContainer(pod, restarted) {
 		t.Fatal("container restart aliased the old physical executor")
 	}
 }
@@ -208,7 +210,9 @@ func newTestObserver(t *testing.T, objects ...client.Object) *Observer {
 	objects = append(objects, testExecutionFacts())
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&corev1.Pod{}).WithObjects(objects...).Build()}
 	manager, _ := newManagerHarness(t)
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), manager.runtime, &firstfloor.Client{}, testObserverConfig(store))
+	kube := kubefake.NewSimpleClientset()
+	cluster := NewClusterState(store, kube, testObserverConfig(store).Namespace)
+	observer, err := NewObserver(cluster, store, kube, manager.runtime, &firstfloor.Client{}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +285,7 @@ func TestSourceFinalizerDeltaSurvivesStatusRace(t *testing.T) {
 				ctx := context.Background()
 				pod, _, _, _ := observerSourceFixture()
 				if !present {
-					pod.Finalizers = []string{sourceFinalizer}
+					pod.Finalizers = []string{servingstate.SourceFinalizer}
 				}
 				scheme := runtime.NewScheme()
 				if err := corev1.AddToScheme(scheme); err != nil {
@@ -331,7 +335,7 @@ func TestSourceFinalizerDeltaSurvivesStatusRace(t *testing.T) {
 				if err := c.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
 					t.Fatal(err)
 				}
-				err := patchSourceFinalizer(ctx, c, pod, present)
+				err := servingstate.PatchSourceFinalizer(ctx, c, pod, present)
 				if replacement && !apierrors.IsInvalid(err) {
 					t.Fatalf("replacement UID was not rejected: %v", err)
 				}
@@ -345,10 +349,10 @@ func TestSourceFinalizerDeltaSurvivesStatusRace(t *testing.T) {
 				if current.Status.Message != "kubelet status advanced" || !slices.Contains(current.Finalizers, "other.example/protection") {
 					t.Fatal("metadata delta overwrote status or another finalizer")
 				}
-				if !replacement && slices.Contains(current.Finalizers, sourceFinalizer) != present {
+				if !replacement && slices.Contains(current.Finalizers, servingstate.SourceFinalizer) != present {
 					t.Fatalf("source finalizer presence = %v, want %v", current.Finalizers, present)
 				}
-				if replacement && (current.UID != "replacement-pod" || slices.Contains(current.Finalizers, sourceFinalizer) == present) {
+				if replacement && (current.UID != "replacement-pod" || slices.Contains(current.Finalizers, servingstate.SourceFinalizer) == present) {
 					t.Fatal("failed UID precondition mutated replacement Pod")
 				}
 			})
@@ -376,7 +380,7 @@ func TestObserverCleanupHoldsTerminationAndPreservesSharedResources(t *testing.T
 	if err = observer.store.client.Get(ctx, key, current); err != nil {
 		t.Fatal(err)
 	}
-	if current.DeletionTimestamp == nil || !slices.Contains(current.Finalizers, sourceFinalizer) {
+	if current.DeletionTimestamp == nil || !slices.Contains(current.Finalizers, servingstate.SourceFinalizer) {
 		t.Fatal("native termination evidence was not retained")
 	}
 	done, err = observer.CleanupWorkload(ctx, uid)
@@ -419,7 +423,7 @@ func TestObserverOwnershipIncludesUnlabelledControllersAndDirectReplicaSets(t *t
 	pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(rs, appsv1.SchemeGroupVersion.WithKind("ReplicaSet"))}
 	direct := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "direct", Namespace: pod.Namespace, UID: "direct-uid", OwnerReferences: workloadRef}}
 	observer := newTestObserver(t, pod, deployment, rs, direct)
-	owned, err := observer.ownedResources(context.Background(), uid)
+	owned, err := observer.store.OwnedResources(context.Background(), uid, observer.config.Namespace)
 	if err != nil || len(owned) != 4 {
 		t.Fatalf("unlabelled ownership lost: %v %+v", err, owned)
 	}
@@ -467,7 +471,7 @@ func TestObserverCleanupRejectsNonblockingReplicaSetParent(t *testing.T) {
 		if err := observer.store.client.Get(ctx, client.ObjectKeyFromObject(object), object); err != nil {
 			t.Fatal("cleanup removed a resource before validating the complete chain", err)
 		}
-		if object.GetDeletionTimestamp() != nil || slices.Contains(object.GetFinalizers(), sourceFinalizer) {
+		if object.GetDeletionTimestamp() != nil || slices.Contains(object.GetFinalizers(), servingstate.SourceFinalizer) {
 			t.Fatal("cleanup mutated a resource before validating the complete chain")
 		}
 	}
@@ -560,7 +564,7 @@ func TestObserverTerminalFactIsPerContainerAC45(t *testing.T) {
 	source := &nativeSource{uid: pod.UID, containerID: current, podState: pod,
 		terminated: map[string]bool{previous: false},
 		previous: map[string]serving.ReadyInstance{
-			previous: {State: serving.InstanceState{ID: physicalID(pod.UID, previous)}},
+			previous: {State: serving.InstanceState{ID: servingstate.PhysicalID(pod.UID, previous)}},
 		}}
 	observer.sources[string(pod.UID)] = source
 	observer.observeTermination(pod)
@@ -577,7 +581,7 @@ func TestObserverTerminalFactIsPerContainerAC45(t *testing.T) {
 			t.Fatal("terminated container remained executable")
 		}
 	}
-	if !seen[physicalID(pod.UID, current)] || seen[physicalID(pod.UID, previous)] {
+	if !seen[servingstate.PhysicalID(pod.UID, current)] || seen[servingstate.PhysicalID(pod.UID, previous)] {
 		t.Fatalf("terminal proof crossed physical identities: %v", seen)
 	}
 }
@@ -752,11 +756,11 @@ func TestObserverTerminalPreparationDoesNotInventAStartedExecutor(t *testing.T) 
 	pod.Status.InitContainerStatuses[0].State.Terminated.ExitCode = 1
 	pod.Status.ContainerStatuses[0].State = corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}
 	pod.Status.ContainerStatuses[0].ContainerID = ""
-	if !podTerminated(pod) {
+	if !servingstate.PodTerminated(pod) {
 		t.Fatal("failed preparation retained a never-created executor")
 	}
 	pod.Status.ContainerStatuses[0].ContainerID = "containerd://unknown"
-	if podTerminated(pod) {
+	if servingstate.PodTerminated(pod) {
 		t.Fatal("failed Pod phase was treated as proof that an unknown executor stopped")
 	}
 }
@@ -767,7 +771,7 @@ func TestObserverCleanupFollowsActualDeploymentOwnerChain(t *testing.T) {
 	replicaSet := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "native-rs", Namespace: pod.Namespace, UID: "replicaset-uid", Labels: pod.Labels, OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(deployment, appsv1.SchemeGroupVersion.WithKind("Deployment"))}}}
 	pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(replicaSet, appsv1.SchemeGroupVersion.WithKind("ReplicaSet"))}
 	observer := newTestObserver(t, deployment, replicaSet, pod)
-	objects, err := observer.ownedResources(context.Background(), "workload-uid")
+	objects, err := observer.store.OwnedResources(context.Background(), "workload-uid", observer.config.Namespace)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -130,7 +131,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns, transport.MaxIdleConnsPerHost, transport.IdleConnTimeout = 0, 256, 30*time.Second
 	native := &firstfloor.Client{HTTPClient: &http.Client{Transport: transport}, Diagnostics: recorder}
-	observer, err := servingkube.NewObserver(store, kube, execution, native, servingkube.ObserverConfig{
+	cluster := servingkube.NewClusterState(store, kube, opts.servingNamespace)
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, native, servingkube.ObserverConfig{
 		Namespace: opts.servingNamespace,
 		RuntimeImage: func(ctx context.Context, profile *serving.Profile) (string, error) {
 			c := profile.Condition
@@ -147,8 +149,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, observer.Close()) }()
-	manager, err := servingkube.NewManager(store, execution, observationLog, observer,
-		servingkube.ManagerConfig{DrainTimeout: opts.drainTimeout, OnWorkload: publisher.workload})
+	manager, err := management.NewManager(cluster, store, execution, observationLog, observer,
+		management.ManagerConfig{DrainTimeout: opts.drainTimeout, OnWorkload: publisher.workload,
+			Actor: func(ctx context.Context) (string, string) { return servingkube.PrincipalFromContext(ctx).Actor() }})
 	if err != nil {
 		return err
 	}
@@ -172,7 +175,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	scheduler, err := newSchedulerService(
-		ctx, store, kube, reviews, execution, observer, objects, observationLog, opts,
+		ctx, cluster, store, kube, reviews, execution, observer, objects, observationLog, opts,
 		httpapi.MaximumInferenceRequestTimeout, publisher,
 	)
 	if err != nil {
@@ -259,7 +262,7 @@ func removeStagedObservationArchives() {
 }
 
 func initializeServing(ctx context.Context, opts *options,
-	observer *servingkube.Observer, manager *servingkube.Manager, execution *serving.Runtime,
+	observer *servingkube.Observer, manager *management.Manager, execution *serving.Runtime,
 	publisher *livePublisher, scheduler *application.SchedulerService,
 	handlerConfig *httpapi.HandlerConfig,
 ) error {
@@ -307,7 +310,7 @@ func initializeServing(ctx context.Context, opts *options,
 }
 
 func serve(ctx context.Context, opts options, chillServer *initializingHandler, execution *serving.Runtime,
-	observer *servingkube.Observer, manager *servingkube.Manager,
+	observer *servingkube.Observer, manager *management.Manager,
 	observationLog *observation.ObservationLog, scheduler *application.SchedulerService, diagnostics *diagnosticSession,
 	initialize func(context.Context) (http.Handler, error),
 ) error {

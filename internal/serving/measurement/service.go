@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/queryapi"
@@ -64,7 +66,7 @@ type Config struct {
 // DecodePolicy must use the scheduler's full configuration decoder.
 type SchedulerInputs struct {
 	Lock                  *sync.Mutex
-	LoadProfiles          func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool)
+	LoadProfiles          func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool)
 	DecodePolicy          func(string, int64) (*DispatchOccupancyPolicy, error)
 	GatewayRequestTimeout time.Duration
 }
@@ -200,7 +202,7 @@ func (o *Service) Delete(
 	}
 	prefix := namespace + "/" + name + "/"
 	for _, pod := range pods.Items {
-		if strings.HasPrefix(pod.Annotations[servingkube.ServingProfileAnnotation], prefix) &&
+		if strings.HasPrefix(pod.Annotations[servingstate.ServingProfileAnnotation], prefix) &&
 			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
 			return result, measurementInUse("a physical serving Pod still references the measurement")
 		}

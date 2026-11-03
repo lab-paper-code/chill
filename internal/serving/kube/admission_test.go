@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
@@ -116,12 +119,12 @@ func newAdmissionController(t *testing.T, kube kubernetes.Interface) (*Scheduler
 	manager.observer.kube = kube
 	nodes := &nodeAPI{Client: manager.store.client, kube: kube}
 	manager.store.client = nodes
-	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
-		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+		servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
+	controller, err := NewSchedulerController(manager.reservations, manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
 			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 				MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
@@ -169,7 +172,7 @@ func (h *admissionHarness) admit() {
 		h.controller.mu.Lock()
 		running := false
 		for _, run := range h.controller.runs {
-			running = running || run.action.Kind != measurementLeaseKind && run.action.Status == nativeOperationRunning
+			running = running || run.action.Kind != measurementLeaseKind && run.action.Status == servingstate.NativeOperationRunning
 		}
 		h.controller.mu.Unlock()
 		if !running {
@@ -221,7 +224,7 @@ func baselineRoot(name string, created time.Time) *edge.ModelLoadedIdleBaseline 
 
 func servingPod(name string) *core.Pod {
 	return &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: name, UID: types.UID(name + "-uid"),
-		Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}}, Spec: core.PodSpec{NodeName: testNode.Name}}
+		Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}}, Spec: core.PodSpec{NodeName: testNode.Name}}
 }
 
 func TestAdmitGrantsEmptyNodeAndIgnoresPodsCHILLDidNotPlace(t *testing.T) {
@@ -313,8 +316,8 @@ func TestAdmitWaitsForRunningRunAndPendingPowerChange(t *testing.T) {
 	root := baselineRoot("idle", time.Now())
 	h.create(root)
 	release := make(chan struct{})
-	h.controller.startNodeRun(Operation{ID: "prepare", Kind: operationPrepare, Node: serving.NodeReference{Name: "node", UID: "node-uid"}}, SchedulerControllerConfig{},
-		func(context.Context, *OperationResult) error { <-release; return nil })
+	h.controller.startNodeRun(servingstate.Operation{ID: "prepare", Kind: servingstate.OperationPrepare, Node: serving.NodeReference{Name: "node", UID: "node-uid"}}, SchedulerControllerConfig{},
+		func(context.Context, *servingstate.OperationResult) error { <-release; return nil })
 	if err := h.controller.Admit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +420,7 @@ func TestHandBackSetsTheLowestModeBeforeRemovingTheTaint(t *testing.T) {
 			h.controller.mu.Lock()
 			h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: "cpu", PowerMode: lowMode, ActuatorKind: string(actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
 			h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, PowerMode: lowMode, Watts: 5,
-				Meter: "wall", Scope: measurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
+				Meter: "wall", Scope: servingstate.MeasurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
 			h.controller.mu.Unlock()
 			holder := "deleted-uid"
 			if reason != "" {

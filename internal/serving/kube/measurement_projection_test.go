@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -47,10 +50,10 @@ func (b *projectionBody) Close() error {
 	return b.owner.closeErr
 }
 
-func projectionRecord(t *testing.T) (edge.OperationCostMeasurement, OperationMeasurement) {
+func projectionRecord(t *testing.T) (edge.OperationCostMeasurement, servingops.OperationMeasurement) {
 	t.Helper()
 	key, raw := costTestRecord(t, "cr-uid.0.prepare", "fixed", time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC))
-	var record OperationMeasurement
+	var record servingops.OperationMeasurement
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
@@ -60,12 +63,12 @@ func projectionRecord(t *testing.T) (edge.OperationCostMeasurement, OperationMea
 			{Name: "prepare", Kind: edge.OperationCostStepPrepare},
 			{Name: "not-executed", Kind: edge.OperationCostStepRemove},
 		}},
-		Status: edge.OperationCostMeasurementStatus{Phase: edge.MeasurementPhaseFailed, Reason: "sequence stopped", Steps: []edge.OperationCostStepStatus{{Name: "prepare", Key: key, Verdict: measurementAccepted}}},
+		Status: edge.OperationCostMeasurementStatus{Phase: edge.MeasurementPhaseFailed, Reason: "sequence stopped", Steps: []edge.OperationCostStepStatus{{Name: "prepare", Key: key, Verdict: servingstate.MeasurementAccepted}}},
 	}
 	return cr, record
 }
 
-func projectionPayload(t *testing.T, record OperationMeasurement) []byte {
+func projectionPayload(t *testing.T, record servingops.OperationMeasurement) []byte {
 	t.Helper()
 	raw, err := json.Marshal(record)
 	if err != nil {
@@ -75,7 +78,7 @@ func projectionPayload(t *testing.T, record OperationMeasurement) []byte {
 }
 
 func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
-	for _, name := range []string{"accepted", "zero", nativeOperationFailed, "insufficient", "isolation", "not-invoked", "idle"} {
+	for _, name := range []string{"accepted", "zero", servingstate.NativeOperationFailed, "insufficient", "isolation", "not-invoked", "idle"} {
 		t.Run(name, func(t *testing.T) {
 			cr, record := projectionRecord(t)
 			wantJ := true
@@ -87,29 +90,29 @@ func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
 				zero := 0.0
 				record.WallJoules, record.EnergyUncertaintyJoules = &zero, &zero
 				record.PhaseSensitivityJoules, record.MissingGapJoules = &zero, &zero
-			case nativeOperationFailed:
-				record.Verdict, record.Reason, record.Result.Status = operationFailed, "physical action failed", nativeOperationFailed
+			case servingstate.NativeOperationFailed:
+				record.Verdict, record.Reason, record.Result.Status = string(edge.MeasurementPhaseFailed), "physical action failed", servingstate.NativeOperationFailed
 				// An unfinished/failed power window must not be given Accepted's
 				// completeness checks, nor expose a leftover energy value.
 				record.Power.Samples = nil
 				wantJ = false
 			case "insufficient":
-				record.Verdict, record.Reason = measurementInsufficient, "power window insufficient"
+				record.Verdict, record.Reason = servingops.MeasurementInsufficient, "power window insufficient"
 				record.Power.Samples = nil
 				wantJ = false
 			case "isolation":
-				_ = record.applyIsolation(MeasurementIsolation{Node: record.Request.Operation.Node}, errors.New("isolation unconfirmed"))
+				_ = record.ApplyIsolation(servingops.MeasurementIsolation{Node: record.Request.Operation.Node}, errors.New("isolation unconfirmed"))
 				wantJ = false
 			case "not-invoked":
-				record.Verdict, record.Reason, record.Result = measurementInsufficient, "no first sample", OperationResult{}
+				record.Verdict, record.Reason, record.Result = servingops.MeasurementInsufficient, "no first sample", servingstate.OperationResult{}
 				wantJ = false
 			case "idle":
 				cr.Spec.Steps[0].Kind = edge.OperationCostStepIdle
 				planned := int32(99)
 				cr.Spec.Steps[0].IdleDurationSeconds = &planned
-				record.Request.Operation.Kind, record.Result.Operation.Kind = operationIdle, operationIdle
+				record.Request.Operation.Kind, record.Result.Operation.Kind = servingstate.OperationIdle, servingstate.OperationIdle
 				record.Result.Before = record.Result.Actual
-				record.StateObservations = []OperationState{record.Result.Before, record.Result.Actual}
+				record.StateObservations = []servingstate.OperationState{record.Result.Before, record.Result.Actual}
 				record.MeanWatts = record.WallJoules
 			}
 			cr.Status.Steps[0].Verdict = record.Verdict
@@ -150,7 +153,7 @@ func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
 			case "name":
 				cr.Status.Steps[0].Name = projectionForeignIdentity
 			case "kind":
-				record.Request.Operation.Kind = operationRemove
+				record.Request.Operation.Kind = servingstate.OperationRemove
 			case "foreign-node":
 				record.Request.Operation.Node.Name = projectionForeignIdentity
 			case "node-uid":
@@ -162,18 +165,18 @@ func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
 			case "result-id":
 				record.Result.Operation.ID = projectionForeignIdentity
 			case "result-kind":
-				record.Result.Operation.Kind = operationIdle
+				record.Result.Operation.Kind = servingstate.OperationIdle
 			case "result-node":
 				record.Result.Operation.Node.UID = projectionForeignIdentity
 			case "schema":
 				record.SchemaVersion = "unsupported-projection-schema"
 			case "verdict":
-				cr.Status.Steps[0].Verdict = operationFailed
+				cr.Status.Steps[0].Verdict = string(edge.MeasurementPhaseFailed)
 			case "cost":
 				record.WallJoules = nil
 			case "idle":
 				cr.Spec.Steps[0].Kind = edge.OperationCostStepIdle
-				record.Request.Operation.Kind, record.Result.Operation.Kind = operationIdle, operationIdle
+				record.Request.Operation.Kind, record.Result.Operation.Kind = servingstate.OperationIdle, servingstate.OperationIdle
 			}
 			objects := &projectionObjects{payload: projectionPayload(t, record)}
 			bound := int64(1 << 20)
@@ -228,9 +231,9 @@ func TestLoadOperationCostStepsPropagatesIOAndCancellation(t *testing.T) {
 
 func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
 	cr, record := projectionRecord(t)
-	record.Verdict, cr.Status.Steps[0].Verdict = measurementInsufficient, measurementInsufficient
+	record.Verdict, cr.Status.Steps[0].Verdict = servingops.MeasurementInsufficient, servingops.MeasurementInsufficient
 	record.Result.Before.PowerMode, record.Result.Actual.PowerMode = "MAXN", "MODE_15W"
-	record.Request.Operation.Prepare = &PrepareSpec{Instance: serving.SchedulerInstance{Profile: &serving.Profile{}}}
+	record.Request.Operation.Prepare = &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{Profile: &serving.Profile{}}}
 	record.Request.Operation.Prepare.Instance.Profile.Condition.LogicalModel = "frozen-model"
 	got, err := projectOperationStep(cr, 0, "store", record)
 	if err != nil {
@@ -240,7 +243,7 @@ func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
 		t.Fatalf("lost recorded metadata or invented accepted energy: %+v", got)
 	}
 	record.Request.Operation.Prepare = nil
-	record.Result = OperationResult{}
+	record.Result = servingstate.OperationResult{}
 	got, err = projectOperationStep(cr, 0, "store", record)
 	if err != nil || got.FromPowerMode != "" || got.ToPowerMode != "" || got.Model != "" {
 		t.Fatalf("missing metadata inferred from plan or name: %+v, %v", got, err)

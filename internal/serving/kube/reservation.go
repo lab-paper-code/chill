@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -35,7 +37,7 @@ func (s resourceScope) overlaps(other resourceScope) bool {
 		slices.ContainsFunc(s.Instances, func(id string) bool { return slices.Contains(other.Instances, id) })
 }
 
-func (c *SchedulerController) operationScope(operation Operation) resourceScope {
+func (c *reservationState) operationScope(operation servingstate.Operation) resourceScope {
 	scope := resourceScope{Workloads: slices.Clone(operation.WorkloadUIDs), Nodes: slices.Clone(operation.Nodes)}
 	if operation.WorkloadUID != "" {
 		scope.Workloads = append(scope.Workloads, operation.WorkloadUID)
@@ -54,12 +56,12 @@ func (c *SchedulerController) operationScope(operation Operation) resourceScope 
 	}
 	if operation.Target != nil {
 		for uid := range operation.Target.Routing {
-			if isRoutingOperation(operation.Kind) && operation.controlsWorkload(uid) {
+			if servingstate.IsRoutingOperation(operation.Kind) && operation.ControlsWorkload(uid) {
 				scope.Workloads = append(scope.Workloads, uid)
 			}
 		}
 		for _, instance := range operation.Target.Instances {
-			if !isRoutingOperation(operation.Kind) && (instance.ID == operation.Instance || instance.Node == operation.Node) && instance.WorkloadUID != "" {
+			if !servingstate.IsRoutingOperation(operation.Kind) && (instance.ID == operation.Instance || instance.Node == operation.Node) && instance.WorkloadUID != "" {
 				scope.Workloads = append(scope.Workloads, instance.WorkloadUID)
 			}
 		}
@@ -95,8 +97,8 @@ func (c *SchedulerController) operationScope(operation Operation) resourceScope 
 
 // Callers hold mu. No partial acquisition; reset may inherit only terminal owners
 // whose entire responsibility lies inside its admitted cleanup scope.
-func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Operation) bool {
-	if existing := c.runs[id]; existing != nil && (existing.action.Status == nativeOperationRunning || existing.action.Status == nativeOperationCancel) {
+func (c *reservationState) reserveRun(id string, run *actionRun, operation servingstate.Operation) bool {
+	if existing := c.runs[id]; existing != nil && (existing.action.Status == servingstate.NativeOperationRunning || existing.action.Status == servingstate.NativeOperationCancel) {
 		return false
 	}
 	scope := c.operationScope(operation)
@@ -107,16 +109,16 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 		run.owner = id
 	}
 	// Policy ACKs within one owner remain serialized.
-	if operation.Kind == operationRoute {
+	if operation.Kind == servingstate.OperationRoute {
 		for _, other := range c.runs {
-			if other.owner == run.owner && other.action.Kind == operationRoute &&
-				(other.action.Status == nativeOperationRunning || other.action.Status == nativeOperationCancel) {
+			if other.owner == run.owner && other.action.Kind == servingstate.OperationRoute &&
+				(other.action.Status == servingstate.NativeOperationRunning || other.action.Status == servingstate.NativeOperationCancel) {
 				return false
 			}
 		}
 	}
 	var inherited []string
-	if operation.Kind == operationReset {
+	if operation.Kind == servingstate.OperationReset {
 		var err error
 		inherited, err = c.resetReservationOwnersLocked(scope, operation.Nodes)
 		if err != nil {
@@ -138,7 +140,7 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 	run.inheritedReservation = len(inherited) > 0
 	run.scope, run.reserved = scope, true
 	c.runs[id] = run
-	if operation.Kind == operationRoute {
+	if operation.Kind == servingstate.OperationRoute {
 		if parent := c.runs[transitionRunKind+"/"+run.owner]; parent != nil && parent.owner == run.owner {
 			if parent.routeReceipts == nil {
 				parent.routeReceipts = map[string]*actionRun{}
@@ -153,7 +155,7 @@ func (c *SchedulerController) reserveRun(id string, run *actionRun, operation Op
 
 // recordPreparationLocked precedes all terminal publication paths. The result
 // evidence and scope share the owner's mutex and lifetime, not Capture's.
-func (c *SchedulerController) recordPreparationLocked(run *actionRun, evidence *PreparationEvidence) {
+func (c *reservationState) recordPreparationLocked(run *actionRun, evidence *servingstate.PreparationEvidence) {
 	if evidence == nil || evidence.PodUID == "" {
 		return
 	}
@@ -165,7 +167,7 @@ func (c *SchedulerController) recordPreparationLocked(run *actionRun, evidence *
 	}
 }
 
-func (c *SchedulerController) registerMayTouchLocked(run *actionRun, operation Operation, scope resourceScope) {
+func (c *reservationState) registerMayTouchLocked(run *actionRun, operation servingstate.Operation, scope resourceScope) {
 	if operation.Kind == transitionRunKind {
 		return
 	}
@@ -186,20 +188,20 @@ func (c *SchedulerController) registerMayTouchLocked(run *actionRun, operation O
 
 // Effect scope follows executeOperation: local actions write only their Node;
 // routing (including resize) can write every controlled workload's executor.
-func operationMayTouch(operation Operation, scope resourceScope, state serving.InstanceState) bool {
+func operationMayTouch(operation servingstate.Operation, scope resourceScope, state serving.InstanceState) bool {
 	switch operation.Kind {
-	case operationPrepare, operationStop, operationDrain, operationRemove, operationPower:
+	case servingstate.OperationPrepare, servingstate.OperationStop, servingstate.OperationDrain, servingstate.OperationRemove, servingstate.OperationPower:
 		return state.Node == operation.Node
-	case operationRoute, operationUnroute, operationRelease:
+	case servingstate.OperationRoute, servingstate.OperationUnroute, servingstate.OperationRelease:
 		return slices.Contains(scope.Nodes, state.Node) || slices.Contains(scope.Instances, state.ID)
-	case operationResize:
+	case servingstate.OperationResize:
 		return state.Node == operation.Node || slices.Contains(scope.Nodes, state.Node) || slices.Contains(scope.Instances, state.ID)
 	default:
 		return true
 	}
 }
 
-func (c *SchedulerController) returnProofParent(run *actionRun) *actionRun {
+func (c *reservationState) returnProofParent(run *actionRun) *actionRun {
 	if run.action.Kind == transitionRunKind {
 		return run
 	}
@@ -208,26 +210,26 @@ func (c *SchedulerController) returnProofParent(run *actionRun) *actionRun {
 
 // This check also runs when there are no Pods: absence is not permission to
 // release while an authorized sibling can still publish a remote write.
-func (c *SchedulerController) ownerReturnTerminal(run *actionRun) bool {
+func (c *reservationState) ownerReturnTerminal(run *actionRun) bool {
 	if parent := c.returnProofParent(run); parent != nil &&
-		(parent.action.Status == nativeOperationRunning || parent.action.Status == nativeOperationCancel) {
+		(parent.action.Status == servingstate.NativeOperationRunning || parent.action.Status == servingstate.NativeOperationCancel) {
 		return false
 	}
 	for _, sibling := range c.runs {
-		if sibling.owner == run.owner && (sibling.action.Status == nativeOperationRunning || sibling.action.Status == nativeOperationCancel) {
+		if sibling.owner == run.owner && (sibling.action.Status == servingstate.NativeOperationRunning || sibling.action.Status == servingstate.NativeOperationCancel) {
 			return false
 		}
 	}
 	return true
 }
 
-func (c *SchedulerController) authorize(operation Operation) error {
+func (c *reservationState) authorize(operation servingstate.Operation) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	scope := c.operationScope(operation)
 	for _, run := range c.runs {
 		if run.reserved && scope.overlaps(run.scope) {
-			return refused("OperationConflict", "resources are reserved by "+run.owner)
+			return servingstate.Refused("OperationConflict", "resources are reserved by "+run.owner)
 		}
 	}
 	return nil
@@ -236,11 +238,11 @@ func (c *SchedulerController) authorize(operation Operation) error {
 // Fresh observation proves physical return or an exact executor's known effect.
 // Terminal transitions consume this proof in reconcileSnapshot without changing
 // failed receipts. A taint remains owned by the admission lifecycle.
-func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
+func (c *reservationState) releaseObservedScopes(nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, run := range c.runs {
-		if !run.reserved || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(observedAt) || len(run.scope.Nodes) == 0 {
+		if !run.reserved || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(observedAt) || len(run.scope.Nodes) == 0 {
 			continue
 		}
 		if !c.ownerReturnTerminal(run) {
@@ -261,7 +263,7 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 				}
 			}
 			for _, pod := range pods {
-				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, workloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
+				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, servingstate.WorkloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
 					returned = false
 				}
 			}
@@ -276,7 +278,7 @@ func (c *SchedulerController) releaseObservedScopes(nodes []core.Node, pods []co
 
 // Terminal owner members share receipts through their authorization-time parent
 // link, never an owner's name alone. Its baseline bounds previous-policy proof.
-func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
+func (c *reservationState) knownOwnerEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState) bool {
 	parent := c.returnProofParent(run)
 	if parent == nil {
 		return knownEffectConfirmed(run, pod, physical, run.result.EndedAt, true)
@@ -320,11 +322,11 @@ func (c *SchedulerController) knownOwnerEffectConfirmed(run *actionRun, pod *cor
 // Return policy-receipt exemption separately from admission identity: a dirty
 // executor may still use an authorized receipt's unchanged previous policy.
 func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time) (preexisting, untouched bool) {
-	status := firstfloorStatus(pod)
+	status := servingstate.FirstfloorStatus(pod)
 	if status == nil {
 		return false, false
 	}
-	id := physicalID(pod.UID, status.ContainerID)
+	id := servingstate.PhysicalID(pod.UID, status.ContainerID)
 	current := schedulerPhysicalState(id, physical)
 	if current == nil {
 		return false, false
@@ -332,7 +334,7 @@ func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving
 	preexisting = slices.ContainsFunc(parent.result.Before.Instances, func(state serving.InstanceState) bool {
 		return state.ID == id && state.PodUID == string(pod.UID) && state.Node == current.Node
 	})
-	untouched = preexisting && !parent.mayTouch[id] && sameRunningContainer(pod, pod) &&
+	untouched = preexisting && !parent.mayTouch[id] && servingstate.SameRunningContainer(pod, pod) &&
 		current.Node.Name == pod.Spec.NodeName && current.Ready && !current.Stopped &&
 		current.Native != nil && current.Native.Ready && after.Before(current.ObservedAt)
 	return preexisting, untouched
@@ -340,14 +342,14 @@ func untouchedExecutorProof(parent *actionRun, pod *core.Pod, physical []serving
 
 //nolint:gocyclo // Keep exact-executor and known-policy proof together at the reservation release boundary.
 func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.InstanceState, after time.Time, allowPrevious bool) bool {
-	if run.result == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || !sameRunningContainer(pod, pod) {
+	if run.result == nil || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || !servingstate.SameRunningContainer(pod, pod) {
 		return false
 	}
 	operation := run.result.Operation
-	if !isRoutingOperation(operation.Kind) && operation.Kind != operationPrepare && operation.Kind != operationResize {
+	if !servingstate.IsRoutingOperation(operation.Kind) && operation.Kind != servingstate.OperationPrepare && operation.Kind != servingstate.OperationResize {
 		return false
 	}
-	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 	_, beforeKnown := run.result.Before.Native[id]
 	_, actualKnown := run.result.Actual.Native[id]
 	identityKnown := slices.Contains(run.scope.Pods, string(pod.UID)) && slices.Contains(run.scope.Instances, id)
@@ -359,20 +361,20 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 		return false
 	}
 	actual := state.Native.Metadata
-	if (operation.Kind == operationPrepare || operation.Kind == operationResize) && operation.Prepare != nil {
+	if (operation.Kind == servingstate.OperationPrepare || operation.Kind == servingstate.OperationResize) && operation.Prepare != nil {
 		wanted := operation.Prepare.Instance
 		decision := operation.Prepare.Config.Policy.DecisionID
 		if wanted.Profile != nil && state.TargetID == wanted.ID && wanted.Node == state.Node &&
-			operation.controlsWorkload(wanted.WorkloadUID) && operation.Prepare.Owner != nil &&
-			operation.Prepare.Owner.UID == wanted.WorkloadUID && workloadOwner(pod.OwnerReferences) == wanted.WorkloadUID &&
+			operation.ControlsWorkload(wanted.WorkloadUID) && operation.Prepare.Owner != nil &&
+			operation.Prepare.Owner.UID == wanted.WorkloadUID && servingstate.WorkloadOwner(pod.OwnerReferences) == wanted.WorkloadUID &&
 			actual.ProfileID == wanted.Profile.ID && decision != "" && actual.DecisionID == decision &&
 			actual.Policy.DecisionID == decision && schedulerPolicyAcknowledged(wanted, actual) {
 			return true
 		}
 	}
-	if isRoutingOperation(operation.Kind) && operation.Target != nil && actual.DecisionID == operation.Target.ID && actual.Policy.DecisionID == operation.Target.ID {
+	if servingstate.IsRoutingOperation(operation.Kind) && operation.Target != nil && actual.DecisionID == operation.Target.ID && actual.Policy.DecisionID == operation.Target.ID {
 		for _, wanted := range operation.Target.Instances {
-			if wanted.Profile != nil && operation.controlsWorkload(wanted.WorkloadUID) &&
+			if wanted.Profile != nil && operation.ControlsWorkload(wanted.WorkloadUID) &&
 				(wanted.ID == id && (wanted.TargetID == "" || wanted.TargetID == state.TargetID) || wanted.ID == state.TargetID) &&
 				wanted.Node == state.Node && actual.ProfileID == wanted.Profile.ID && schedulerPolicyAcknowledged(wanted, actual) {
 				return true
@@ -395,13 +397,13 @@ func knownEffectConfirmed(run *actionRun, pod *core.Pod, physical []serving.Inst
 // completion is not a return proof until releaseObservedScopes sees Pod absence.
 func (c *SchedulerController) launchFailedPreparationCleanupLocked(config SchedulerControllerConfig) {
 	for _, parent := range c.runs {
-		if parent.action.Kind != transitionRunKind || parent.action.Status != nativeOperationFailed || !parent.reserved || parent.result == nil {
+		if parent.action.Kind != transitionRunKind || parent.action.Status != servingstate.NativeOperationFailed || !parent.reserved || parent.result == nil {
 			continue
 		}
 		// A canceled/finishing sibling can still publish a policy or route.
 		active := false
 		for _, run := range c.runs {
-			if run.owner == parent.owner && (run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel) {
+			if run.owner == parent.owner && (run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel) {
 				active = true
 				break
 			}
@@ -411,8 +413,8 @@ func (c *SchedulerController) launchFailedPreparationCleanupLocked(config Schedu
 		}
 		physical := c.runtime.Instances()
 		for _, child := range c.runs {
-			if child.owner != parent.owner || !child.reserved || child.action.Kind != operationPrepare || child.result == nil ||
-				(child.action.Status != nativeOperationFailed && child.action.Status != nativeOperationPartial) || child.result.Operation.Prepare == nil {
+			if child.owner != parent.owner || !child.reserved || child.action.Kind != servingstate.OperationPrepare || child.result == nil ||
+				(child.action.Status != servingstate.NativeOperationFailed && child.action.Status != servingstate.NativeOperationPartial) || child.result.Operation.Prepare == nil {
 				continue
 			}
 			for _, actual := range physical {
@@ -420,14 +422,14 @@ func (c *SchedulerController) launchFailedPreparationCleanupLocked(config Schedu
 					continue
 				}
 				c.launchTargetLocked(serving.SchedulerCandidate{ID: parent.owner, Actions: []serving.Action{{
-					ID: child.action.ID + "/compensate/" + actual.ID, Kind: operationRemove, Node: actual.Node, Instance: actual.ID,
+					ID: child.action.ID + "/compensate/" + actual.ID, Kind: servingstate.OperationRemove, Node: actual.Node, Instance: actual.ID,
 				}}}, config)
 			}
 		}
 	}
 }
 
-func (c *SchedulerController) failedPreparationUnclaimed(parent, child *actionRun, actual serving.InstanceState) bool {
+func (c *reservationState) failedPreparationUnclaimed(parent, child *actionRun, actual serving.InstanceState) bool {
 	if !actual.Ready || actual.Stopped || actual.Native == nil || !actual.Native.Ready ||
 		!child.result.EndedAt.Before(actual.ObservedAt) || !parent.result.EndedAt.Before(actual.ObservedAt) ||
 		!failedPreparationIdentityMatches(child, actual) || !preparationCreatedSource(child, actual) {
@@ -450,7 +452,7 @@ func failedPreparationIdentityMatches(child *actionRun, actual serving.InstanceS
 	podUID, containerID, exact := strings.Cut(actual.ID, "/")
 	return wanted.Profile != nil && child.result.Operation.Prepare.Owner != nil && child.result.Operation.Prepare.Owner.UID == wanted.WorkloadUID &&
 		actual.OwnerWorkloadUID == wanted.WorkloadUID && actual.Node == wanted.Node && actual.TargetID == wanted.ID && actual.Profile == wanted.Profile.ID &&
-		child.result.Operation.controlsWorkload(wanted.WorkloadUID) && exact && containerID != "" && podUID == actual.PodUID &&
+		child.result.Operation.ControlsWorkload(wanted.WorkloadUID) && exact && containerID != "" && podUID == actual.PodUID &&
 		actual.PodUID != "" && slices.Contains(child.scope.Pods, actual.PodUID) && slices.Contains(child.scope.Instances, actual.ID)
 }
 
@@ -480,7 +482,7 @@ func preparationCreatedSource(child *actionRun, actual serving.InstanceState) bo
 	return true
 }
 
-func (c *SchedulerController) preparationSourceUnclaimed(actual serving.InstanceState) bool {
+func (c *reservationState) preparationSourceUnclaimed(actual serving.InstanceState) bool {
 	if len(actual.Workloads) != 0 {
 		return false
 	}
@@ -502,19 +504,19 @@ func (c *SchedulerController) preparationSourceUnclaimed(actual serving.Instance
 	return true
 }
 
-func (c *SchedulerController) releaseOwnerLocked(owner string) {
+func (c *reservationState) releaseOwnerLocked(owner string) {
 	for _, run := range c.runs {
 		if run.owner == owner {
 			run.reserved = false
 			if run.action.Kind == measurementLeaseKind {
-				run.action.Status = nativeOperationComplete
-				run.result.Status, run.result.EndedAt = nativeOperationComplete, time.Now()
+				run.action.Status = servingstate.NativeOperationComplete
+				run.result.Status, run.result.EndedAt = servingstate.NativeOperationComplete, time.Now()
 			}
 		}
 	}
 }
 
-func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservation {
+func (c *reservationState) reservationsLocked() []serving.SchedulerReservation {
 	byOwner := map[string]*serving.SchedulerReservation{}
 	reasons := map[string][]string{}
 	for _, run := range c.runs {
@@ -542,7 +544,7 @@ func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservatio
 		}
 		if run.action.Kind == transitionRunKind && run.result != nil && run.result.Operation.Target != nil {
 			for _, action := range run.result.Operation.Target.Actions {
-				if c.runs[action.ID] != nil || action.Status == nativeOperationCancel || c.omittedRouteCompleteLocked(action, *run.result.Operation.Target) {
+				if c.runs[action.ID] != nil || action.Status == servingstate.NativeOperationCancel || c.omittedRouteCompleteLocked(action, *run.result.Operation.Target) {
 					continue
 				}
 				reasons[run.owner] = append(reasons[run.owner], action.ID+": dependency/Ready/handoff proof missing; await exact Ready policy ACK")
@@ -566,10 +568,10 @@ func (c *SchedulerController) reservationsLocked() []serving.SchedulerReservatio
 	return reservations
 }
 
-func (c *SchedulerController) runReferencedLocked(id string) bool {
+func (c *reservationState) runReferencedLocked(id string) bool {
 	parent := c.runs[id]
 	for _, run := range c.runs {
-		if !run.reserved && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel {
+		if !run.reserved && run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel {
 			continue
 		}
 		if parent != nil && parent.action.Kind == transitionRunKind && parent.owner != "" && parent.owner == run.owner {
@@ -587,11 +589,11 @@ func (c *SchedulerController) runReferencedLocked(id string) bool {
 	return false
 }
 
-func (c *SchedulerController) nodeExecuting(node *core.Node) bool {
+func (c *reservationState) nodeExecuting(node *core.Node) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, run := range c.runs {
-		if run.action.Kind != measurementLeaseKind && run.action.Status == nativeOperationRunning && slices.Contains(run.scope.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)}) {
+		if run.action.Kind != measurementLeaseKind && run.action.Status == servingstate.NativeOperationRunning && slices.Contains(run.scope.Nodes, serving.NodeReference{Name: node.Name, UID: string(node.UID)}) {
 			return true
 		}
 	}
@@ -600,7 +602,8 @@ func (c *SchedulerController) nodeExecuting(node *core.Node) bool {
 
 // reserveDeletion shares the operation ledger from acceptance through confirmed
 // native deletion. Live owned Pods supplement snapshots after reset/removal.
-func (c *SchedulerController) reserveDeletion(ctx context.Context, uid types.UID) error {
+func (s *ClusterState) ReserveDeletion(ctx context.Context, uid types.UID) error {
+	c := &s.reservation
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
 	id := workloadDeletionKind + "/" + string(uid)
@@ -609,15 +612,15 @@ func (c *SchedulerController) reserveDeletion(ctx context.Context, uid types.UID
 	if run := c.runs[id]; run != nil && run.reserved {
 		return nil
 	}
-	objects, err := c.observer.ownedResources(ctx, uid)
+	objects, err := s.store.OwnedResources(ctx, uid, s.namespace)
 	if err != nil {
 		return err
 	}
-	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
+	nodes, err := s.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err
 	}
-	operation := Operation{ID: id, Kind: workloadDeletionKind, WorkloadUID: string(uid)}
+	operation := servingstate.Operation{ID: id, Kind: workloadDeletionKind, WorkloadUID: string(uid)}
 	for _, object := range objects {
 		if pod, ok := object.(*core.Pod); ok {
 			for _, node := range nodes.Items {
@@ -627,23 +630,23 @@ func (c *SchedulerController) reserveDeletion(ctx context.Context, uid types.UID
 			}
 		}
 	}
-	run := &actionRun{owner: id, action: serving.Action{ID: id, Kind: workloadDeletionKind, Status: nativeOperationRunning}}
+	run := &actionRun{owner: id, action: serving.Action{ID: id, Kind: workloadDeletionKind, Status: servingstate.NativeOperationRunning}}
 	for _, object := range objects {
 		if pod, ok := object.(*core.Pod); ok {
 			run.scope.Pods = append(run.scope.Pods, string(pod.UID))
-			if status := firstfloorStatus(pod); status != nil && status.ContainerID != "" {
-				run.scope.Instances = append(run.scope.Instances, physicalID(pod.UID, status.ContainerID))
+			if status := servingstate.FirstfloorStatus(pod); status != nil && status.ContainerID != "" {
+				run.scope.Instances = append(run.scope.Instances, servingstate.PhysicalID(pod.UID, status.ContainerID))
 			}
 		}
 	}
 	if !c.reserveRun(id, run, operation) {
-		return refused("OperationConflict", "Workload deletion resources are reserved")
+		return servingstate.Refused("OperationConflict", "Workload deletion resources are reserved")
 	}
 	return nil
 }
 
-func (c *SchedulerController) releaseDeletion(uid types.UID) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.runs, workloadDeletionKind+"/"+string(uid))
+func (s *ClusterState) ReleaseDeletion(uid types.UID) {
+	s.reservation.mu.Lock()
+	defer s.reservation.mu.Unlock()
+	delete(s.reservation.runs, workloadDeletionKind+"/"+string(uid))
 }

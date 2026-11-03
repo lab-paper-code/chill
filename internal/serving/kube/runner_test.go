@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -19,7 +21,7 @@ const listVerb = "list"
 func transitionRoot() *edge.PowerModeTransitionCost {
 	o := &edge.PowerModeTransitionCost{ObjectMeta: meta.ObjectMeta{Namespace: "chill-system", Name: "transition", UID: types.UID("transition-uid"), CreationTimestamp: meta.Now()}}
 	o.Spec.TargetNode, o.Spec.ModelSpec, o.Spec.ExecutionPath = "node", "measured-model", "cpu"
-	o.Spec.ServingContainer, o.Spec.ServingService = firstfloorContainerName, "runner"
+	o.Spec.ServingContainer, o.Spec.ServingService = servingstate.FirstfloorContainerName, "runner"
 	o.Spec.Modes = []edge.PowerModeTransitionCostModeSpec{{PowerMode: "fixed"}, {PowerMode: "eco"}}
 	return o
 }
@@ -30,7 +32,7 @@ func runnerHarness(t *testing.T) (*admissionHarness, string) {
 	_, _, _, class := observerSourceFixture()
 	h.create(&class)
 	older, newer := measuredCPUPreparationFixture(), measuredCPUPreparationFixture()
-	for i, spec := range []*PrepareSpec{&older, &newer} {
+	for i, spec := range []*servingstate.PrepareSpec{&older, &newer} {
 		profile := *spec.Instance.Profile
 		profile.ID = []string{"older", "newer"}[i]
 		profile.MeasuredAt = time.Now().Add(time.Duration(i) * time.Hour)
@@ -39,7 +41,7 @@ func runnerHarness(t *testing.T) (*admissionHarness, string) {
 	}
 	h.controller.observer.SetProfiles([]serving.Profile{*older.Instance.Profile, *newer.Instance.Profile})
 	h.controller.mu.Lock()
-	h.controller.config.Preparations = map[string]PrepareSpec{"older": older, "newer": newer}
+	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{"older": older, "newer": newer}
 	h.controller.mu.Unlock()
 	return h, "newer"
 }

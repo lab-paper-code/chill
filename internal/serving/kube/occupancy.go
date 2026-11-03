@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -93,7 +96,7 @@ type DispatchOccupancyRecord struct {
 	Reasons                []string                              `json:"reasons,omitempty"`
 	IdleIdentified         bool                                  `json:"idleIdentified"`
 	DrainError             string                                `json:"drainError,omitempty"`
-	DrainState             *OperationState                       `json:"drainState,omitempty"`
+	DrainState             *servingstate.OperationState          `json:"drainState,omitempty"`
 	Conditions             edge.DispatchOccupancyMeasurementSpec `json:"conditions"`
 	LoadJob                struct {
 		Name  string `json:"name"`
@@ -101,25 +104,25 @@ type DispatchOccupancyRecord struct {
 		State string `json:"state"`
 		Error string `json:"error,omitempty"`
 	} `json:"loadJob"`
-	Isolation  *MeasurementIsolation `json:"isolation,omitempty"`
-	Verdict    string                `json:"verdict"`
-	Reason     string                `json:"reason,omitempty"`
-	MeasuredAt time.Time             `json:"measuredAt"`
+	Isolation  *servingops.MeasurementIsolation `json:"isolation,omitempty"`
+	Verdict    string                           `json:"verdict"`
+	Reason     string                           `json:"reason,omitempty"`
+	MeasuredAt time.Time                        `json:"measuredAt"`
 }
 
 // BurstOccupancyRecord is immutable factual evidence, never scheduler admission.
 type BurstOccupancyRecord struct {
-	SchemaVersion string                     `json:"schemaVersion"`
-	Node          serving.NodeReference      `json:"node"`
-	PowerMode     string                     `json:"powerMode"`
-	RuntimeImage  string                     `json:"runtimeImage"`
-	Model         string                     `json:"model"`
-	ProfileID     string                     `json:"profileID"`
-	Batch         int                        `json:"batch"`
-	Estimate      *serving.OccupancyEstimate `json:"estimate"`
-	Reasons       []string                   `json:"reasons,omitempty"`
-	DrainError    string                     `json:"drainError,omitempty"`
-	DrainState    *OperationState            `json:"drainState,omitempty"`
+	SchemaVersion string                       `json:"schemaVersion"`
+	Node          serving.NodeReference        `json:"node"`
+	PowerMode     string                       `json:"powerMode"`
+	RuntimeImage  string                       `json:"runtimeImage"`
+	Model         string                       `json:"model"`
+	ProfileID     string                       `json:"profileID"`
+	Batch         int                          `json:"batch"`
+	Estimate      *serving.OccupancyEstimate   `json:"estimate"`
+	Reasons       []string                     `json:"reasons,omitempty"`
+	DrainError    string                       `json:"drainError,omitempty"`
+	DrainState    *servingstate.OperationState `json:"drainState,omitempty"`
 	// Conditions is the exact immutable CR, including calculation provenance.
 	Conditions edge.DispatchOccupancyMeasurementSpec `json:"conditions"`
 	LoadJob    struct {
@@ -128,14 +131,14 @@ type BurstOccupancyRecord struct {
 		State string `json:"state"`
 		Error string `json:"error,omitempty"`
 	} `json:"loadJob"`
-	Isolation  *MeasurementIsolation `json:"isolation,omitempty"`
-	Verdict    string                `json:"verdict"`
-	Reason     string                `json:"reason,omitempty"`
-	MeasuredAt time.Time             `json:"measuredAt"`
+	Isolation  *servingops.MeasurementIsolation `json:"isolation,omitempty"`
+	Verdict    string                           `json:"verdict"`
+	Reason     string                           `json:"reason,omitempty"`
+	MeasuredAt time.Time                        `json:"measuredAt"`
 }
 
 // validateOccupancyProfile rejects changed accepted identities or resource bounds.
-func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *serving.Profile, w *edge.Workload, preparation PrepareSpec) error {
+func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *serving.Profile, w *edge.Workload, preparation servingstate.PrepareSpec) error {
 	var inputs struct {
 		Computed struct {
 			FramedDecodedRequestUpperBytes int64 `json:"framedDecodedRequestUpperBytes"`
@@ -185,7 +188,7 @@ func judgeOccupancy(record *BurstOccupancyRecord, spec edge.DispatchOccupancyMea
 	}
 	record.Verdict = occupancyObserved
 	if len(record.Reasons) > 0 {
-		record.Verdict, record.Reason = measurementInsufficient, strings.Join(record.Reasons, "; ")
+		record.Verdict, record.Reason = servingops.MeasurementInsufficient, strings.Join(record.Reasons, "; ")
 	}
 }
 
@@ -221,7 +224,7 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 		return plan, refusedWorkloadMissing, m.Spec.Workload, false
 	}
 	plan.workload = &workload
-	if err := c.authorize(Operation{WorkloadUID: string(workload.UID)}); err != nil {
+	if err := c.authorize(servingstate.Operation{WorkloadUID: string(workload.UID)}); err != nil {
 		return plan, "", "", true
 	}
 	if m.Spec.SupplyMode == occupancyClosedLoop && (m.Spec.Conditions.ProfileID != plan.profile.ID ||
@@ -253,7 +256,7 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 		plan.fields = append(plan.fields, f.Name)
 	}
 	mode := plan.profile.Condition.PowerMode
-	plan.powered = readBackMode(node, nodeClass(node, in.classes)) == mode
+	plan.powered = servingstate.ReadBackMode(node, servingstate.NodeClass(node, in.classes)) == mode
 	maxActuation, ok := nodePowerTargets(node, in.classes, in.config.PowerPolicies)[mode]
 	if !plan.powered && !ok {
 		return plan, refusedPowerModeUnknown, mode, false
@@ -270,8 +273,8 @@ func workloadPod(pods []core.Pod, uid string) string {
 			continue
 		}
 		var routing map[string]int32
-		_ = json.Unmarshal([]byte(p.Annotations[ServingRoutingAnnotation]), &routing)
-		if workloadOwner(p.OwnerReferences) == uid || routing[uid] > 0 {
+		_ = json.Unmarshal([]byte(p.Annotations[servingstate.ServingRoutingAnnotation]), &routing)
+		if servingstate.WorkloadOwner(p.OwnerReferences) == uid || routing[uid] > 0 {
 			return p.Namespace + "/" + p.Name
 		}
 	}
@@ -282,8 +285,8 @@ func workloadPod(pods []core.Pod, uid string) string {
 func (c *SchedulerController) startOccupancy(node *core.Node, m *edge.DispatchOccupancyMeasurement, plan occupancyPlan, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	root := &measurementRoot{object: m, node: node.Name}
-	operation := Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref, WorkloadUID: string(plan.workload.UID), Holder: string(m.UID)}
-	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
+	operation := servingstate.Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref, WorkloadUID: string(plan.workload.UID), Holder: string(m.UID)}
+	c.startNodeRun(operation, config, func(ctx context.Context, result *servingstate.OperationResult) error {
 		err := c.runOccupancy(ctx, m, ref, plan, config)
 		return errors.Join(err, c.handBack(ctx, ref, string(m.UID), root, false, result))
 	})
@@ -315,7 +318,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 			return fail(err)
 		}
 	}
-	_, generation, err := c.measurement.powerModeStart(ctx, ref)
+	_, generation, err := c.measurement.PowerModeStart(ctx, ref)
 	if err != nil {
 		return fail(err)
 	}
@@ -339,7 +342,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 		return fail(err)
 	}
 	var state string
-	err = c.operations.wait(ctx, func() (bool, error) {
+	err = c.operations.Wait(ctx, func() (bool, error) {
 		current, err := c.kube.BatchV1().Jobs(job.Namespace).Get(ctx, job.Name, meta.GetOptions{})
 		if err != nil {
 			return false, err
@@ -377,12 +380,12 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	finalCtx, cancelFinal := context.WithTimeout(context.WithoutCancel(ctx), 6*time.Minute)
 	defer cancelFinal()
 	isolationCtx, cancelIsolation := context.WithTimeout(finalCtx, 30*time.Second)
-	witness, witnessErr := c.measurement.measurementIsolation(isolationCtx, ref, map[string]bool{profile.Condition.LogicalModel: true}, generation, 0)
+	witness, witnessErr := c.measurement.MeasurementIsolation(isolationCtx, ref, map[string]bool{profile.Condition.LogicalModel: true}, generation, 0)
 	cancelIsolation()
 	record.Isolation = &witness
 	if witnessErr != nil {
 		witness.Error = witnessErr.Error()
-		occupancyReason(&record, powerChangedReason)
+		occupancyReason(&record, servingstate.PowerChangedReason)
 	}
 	judgeOccupancy(&record, m.Spec)
 	raw, err := json.Marshal(record)
@@ -402,7 +405,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	})
 }
 
-func (c *SchedulerController) collectOccupancy(ctx context.Context, m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, plan occupancyPlan, started, collected time.Time, drainState *OperationState) (BurstOccupancyRecord, error) {
+func (c *SchedulerController) collectOccupancy(ctx context.Context, m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, plan occupancyPlan, started, collected time.Time, drainState *servingstate.OperationState) (BurstOccupancyRecord, error) {
 	profile, b := plan.profile, int(m.Spec.Batch)
 	origin := serving.NewOccupancyEstimator(nil, nil, started, collected)
 	gap, scanErr := c.observationLog.ScanOccupancyRows(ctx, string(plan.workload.UID), ref.UID, started, collected, origin.Add)
@@ -453,14 +456,14 @@ func (c *SchedulerController) collectOccupancy(ctx context.Context, m *edge.Disp
 	return record, nil
 }
 
-func (c *SchedulerController) waitOccupancyDrain(ctx context.Context, workloadUID string, ref serving.NodeReference, duration time.Duration) (OperationState, error) {
-	var observed OperationState
+func (c *SchedulerController) waitOccupancyDrain(ctx context.Context, workloadUID string, ref serving.NodeReference, duration time.Duration) (servingstate.OperationState, error) {
+	var observed servingstate.OperationState
 	if duration <= 0 {
 		return observed, nil
 	}
 	drainCtx, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
-	err := c.operations.wait(drainCtx, func() (bool, error) {
+	err := c.operations.Wait(drainCtx, func() (bool, error) {
 		if !c.runtime.Drained(workloadUID) {
 			return false, nil
 		}
@@ -525,7 +528,7 @@ func (c *SchedulerController) deleteLoadJobs(ctx context.Context, ref serving.No
 	}
 	for _, job := range jobs.Items {
 		// Background propagation removes the Pods; the default orphans them and the load goes on.
-		if err = eIfNotFound(c.kube.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name,
+		if err = servingstate.IgnoreNotFound(c.kube.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name,
 			meta.DeleteOptions{PropagationPolicy: ptr.To(meta.DeletePropagationBackground)})); err != nil {
 			return err
 		}

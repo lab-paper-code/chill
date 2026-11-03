@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
@@ -17,11 +19,11 @@ import (
 type ProfilesView struct {
 	ConfigVersion string `json:"configVersion"`
 	servingkube.CatalogView
-	Preparations  map[string]servingkube.PrepareSpec `json:"preparations"`
-	Occupancy     []servingkube.OccupancySelection   `json:"-"`
-	Page          *ProfilePage                       `json:"page,omitempty"`
-	Filters       ProfileFilters                     `json:"filters"`
-	DisplayStatus func(serving.Profile) string       `json:"-"`
+	Preparations  map[string]servingstate.PrepareSpec `json:"preparations"`
+	Occupancy     []servingkube.OccupancySelection    `json:"-"`
+	Page          *ProfilePage                        `json:"page,omitempty"`
+	Filters       ProfileFilters                      `json:"filters"`
+	DisplayStatus func(serving.Profile) string        `json:"-"`
 }
 
 type ProfilePage struct {

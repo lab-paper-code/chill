@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
@@ -272,7 +274,7 @@ func TestE2EKindSCHAC26MeasurementAdmission(t *testing.T) {
 	servingNode := kindNode(t, kube, "chill-e2e-serving-"+suffix)
 	externalNode := kindNode(t, kube, "chill-e2e-external-"+suffix)
 	servingInstance := kindPod(t, kube, "chill-system", "chill-e2e-instance-"+suffix, servingNode.Name,
-		map[string]string{"app.kubernetes.io/component": servingInstanceComponent})
+		map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent})
 	external := kindPod(t, kube, "default", "chill-e2e-external-"+suffix, externalNode.Name, map[string]string{"app": "external"})
 
 	controller, _ := newAdmissionController(t, kube)
@@ -378,7 +380,7 @@ func kindScheduler(t *testing.T, kube kubernetes.Interface, autonomous []string,
 	config.Settings.Controls = serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}
 	config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "cpu-eco", DeviceClass: "cpu", PowerMode: "eco",
 		ActuatorKind: nodeactuator.ActuatorKindJetsonNVPModel, SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 30}}
-	config.Preparations = map[string]PrepareSpec{}
+	config.Preparations = map[string]servingstate.PrepareSpec{}
 	for _, profile := range prepared {
 		spec := measuredCPUPreparationFixture()
 		spec.Instance.Profile = profile
@@ -388,13 +390,13 @@ func kindScheduler(t *testing.T, kube kubernetes.Interface, autonomous []string,
 		config.Preparations[profile.ID] = spec
 		c := profile.Condition
 		config.DispatchOccupancy = append(config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fake"})
-		config.Costs = append(config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: operationPrepare, From: "unloaded",
+		config.Costs = append(config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded",
 			To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed",
 			Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, EnergyScope: "whole-wall", Meter: "wall-" + profile.NodeName,
 			Scope: "node-exclusive-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "prepare-" + profile.ID, Size: 1}})
 	}
 	for _, n := range nodes {
-		config.Meters = append(config.Meters, MeterDeclaration{ID: "wall-" + n.Name, Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Scope: measurementWallScope,
+		config.Meters = append(config.Meters, MeterDeclaration{ID: "wall-" + n.Name, Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Scope: servingstate.MeasurementWallScope,
 			Source: kindMeterSource(n.Name)})
 		config.Baselines = append(config.Baselines, serving.NodeBaseline{ID: "idle-" + n.Name, Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)},
 			PowerMode: "fixed", Watts: 10, Meter: "wall-" + n.Name, Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
@@ -470,7 +472,7 @@ func kindDecide(t *testing.T, c *SchedulerController) serving.SchedulerDecision 
 
 func kindPrepares(c *serving.SchedulerCandidate, node *core.Node) bool {
 	return c != nil && slices.ContainsFunc(c.Actions, func(a serving.Action) bool {
-		return a.Kind == operationPrepare && a.Node.UID == string(node.UID)
+		return a.Kind == servingstate.OperationPrepare && a.Node.UID == string(node.UID)
 	})
 }
 
@@ -503,7 +505,7 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 	prepares := 0
 	if first.Target != nil {
 		for _, a := range first.Target.Actions {
-			if a.Kind == operationPrepare {
+			if a.Kind == servingstate.OperationPrepare {
 				prepares++
 			}
 		}

@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
@@ -88,7 +91,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 						return cl.Create(ctx, o, opts...)
 					}
 					pod.UID = types.UID("new-independent-pod")
-					pod.Labels[instancePodUIDLabel] = string(pod.UID)
+					pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
 					pod.Status = old.Status
 					if err := cl.Create(ctx, o, opts...); err != nil {
 						return err
@@ -98,7 +101,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 					}
 					follow, stop := context.WithCancel(c.observer.ctx)
 					c.observer.mu.Lock()
-					c.observer.sources[string(pod.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: firstfloorStatus(pod).ContainerID, follow: follow, cancel: stop}
+					c.observer.sources[string(pod.UID)] = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, containerID: servingstate.FirstfloorStatus(pod).ContainerID, follow: follow, cancel: stop}
 					c.observer.mu.Unlock()
 					created <- pod.DeepCopy()
 					return nil
@@ -129,7 +132,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			settings.Controls = serving.SchedulerControls{Placement: true, Resources: true, Membership: true, Replicas: true, Routing: true, Batching: true}
 			settings.AutonomousWorkloads = []string{w1.UID, w2.UID}
 			settings.MinimumDemand = map[string]float64{w2.UID: 0}
-			c.config.Preparations = map[string]PrepareSpec{}
+			c.config.Preparations = map[string]servingstate.PrepareSpec{}
 			for _, profile := range profiles {
 				profile.IdleBaselineWatts = 10
 				spec := measuredCPUPreparationFixture()
@@ -139,8 +142,8 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: profile.Condition.PowerMode, RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, Source: "AC-39 measured fixture"})
 				ref := evidencestore.ObjectIdentity{Store: "raw", Key: "baseline-" + profile.ID, Size: 1}
 				c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: spec.Instance.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
-				c.config.Meters = append(c.config.Meters, MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
-				c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: operationPrepare, From: "unloaded", To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "prepare-" + profile.ID, Size: 1}})
+				c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
+				c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded", To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "prepare-" + profile.ID, Size: 1}})
 			}
 			// Build real capacity rows from the fixture's measured durations/occupancy.
 			settings.CapacityWindow = 10 * time.Millisecond
@@ -168,9 +171,9 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			waiting.Node = serving.NodeReference{Name: slow.Name, UID: string(slow.UID)}
 			waiting.WorkloadUID = w1.UID
 			frozen := serving.SchedulerCandidate{ID: "slow-w1", Instances: []serving.SchedulerInstance{waiting}, Routing: map[string]map[string]int32{w1.UID: {waiting.ID: 1000}}, Actions: []serving.Action{
-				{ID: "w1-power", Kind: operationPower, Node: waiting.Node, To: "fixed"},
-				{ID: "w1-prepare", Kind: operationPrepare, Node: waiting.Node, Instance: waiting.ID, DependsOn: []string{"w1-power"}},
-				{ID: "w1-route", Kind: operationRoute, DependsOn: []string{"w1-prepare"}},
+				{ID: "w1-power", Kind: servingstate.OperationPower, Node: waiting.Node, To: "fixed"},
+				{ID: "w1-prepare", Kind: servingstate.OperationPrepare, Node: waiting.Node, Instance: waiting.ID, DependsOn: []string{"w1-power"}},
+				{ID: "w1-route", Kind: servingstate.OperationRoute, DependsOn: []string{"w1-prepare"}},
 			}}
 			c.powerTargets = map[string]time.Duration{waiting.Node.UID + "/fixed": time.Hour}
 			c.launch(frozen, c.config)
@@ -186,8 +189,8 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				pending.Name, pending.UID, pending.ResourceVersion = "preparing-w1", "preparing-w1-uid", ""
 				pending.Spec.NodeName = slow.Name
 				pending.Status = core.PodStatus{Phase: core.PodPending}
-				pending.Labels[instancePodUIDLabel] = string(pending.UID)
-				pending.Annotations[ServingSlotAnnotation] = waiting.ID
+				pending.Labels[servingstate.InstancePodUIDLabel] = string(pending.UID)
+				pending.Annotations[servingstate.ServingSlotAnnotation] = waiting.ID
 				pending.OwnerReferences = []meta.OwnerReference{{APIVersion: object.APIVersion, Kind: "Workload", Name: object.Name, UID: object.UID}}
 				if _, err = c.kube.CoreV1().Pods(pending.Namespace).Create(ctx, pending, meta.CreateOptions{}); err != nil {
 					t.Fatal(err)
@@ -219,11 +222,11 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				c.mu.Lock()
 				defer c.mu.Unlock()
 				for _, run := range c.runs {
-					if run.action.Kind == operationPrepare && run.result.Operation.Prepare != nil && run.result.Operation.Prepare.Owner.UID == w2.UID {
-						if run.action.Status == nativeOperationFailed || run.action.Status == nativeOperationPartial {
+					if run.action.Kind == servingstate.OperationPrepare && run.result.Operation.Prepare != nil && run.result.Operation.Prepare.Owner.UID == w2.UID {
+						if run.action.Status == servingstate.NativeOperationFailed || run.action.Status == servingstate.NativeOperationPartial {
 							t.Fatalf("prepare failed: %s physical=%+v", run.result.Error, c.runtime.Instances())
 						}
-						return run.action.Status == nativeOperationComplete
+						return run.action.Status == servingstate.NativeOperationComplete
 					}
 				}
 				return false
@@ -231,7 +234,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			if _, err = c.Tick(ctx, time.Now()); err != nil {
 				t.Fatal(err)
 			}
-			physical := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			physical := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			waitReservationTest(t, ctx, func() bool { route, _ := c.runtime.SchedulerRouting(); return route[w2.UID][physical] > 0 })
 			executed := make(chan native.Request, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +284,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			}
 			c.mu.Lock()
 			defer c.mu.Unlock()
-			if c.runs["w1-power"].action.Status != nativeOperationRunning || c.runs[transitionRunKind+"/slow-w1"].result.Operation.Target.ID != frozen.ID {
+			if c.runs["w1-power"].action.Status != servingstate.NativeOperationRunning || c.runs[transitionRunKind+"/slow-w1"].result.Operation.Target.ID != frozen.ID {
 				t.Fatal("independent native execution completed or replaced W1")
 			}
 			if c.runs["w1-prepare"] != nil {
@@ -337,7 +340,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	if len(initial.Instances) != 2 || !initial.Instances[0].Ready || !initial.Instances[1].Ready {
 		t.Fatalf("Ready supply fixture: %+v", initial.Instances)
 	}
-	c.config.Preparations = map[string]PrepareSpec{}
+	c.config.Preparations = map[string]servingstate.PrepareSpec{}
 	seed := serving.SchedulerCandidate{ID: "reserve-seed", Nodes: initial.Nodes, Instances: slices.Clone(initial.Instances), Routing: map[string]map[string]int32{uid: {}}}
 	for index := range seed.Instances {
 		instance := &seed.Instances[index]
@@ -351,11 +354,11 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		ref := evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-baseline-" + instance.Profile.ID, Size: 1}
 		meter := "reserve-wall-" + instance.Node.Name
 		c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: instance.Node, PowerMode: "fixed", Watts: 5, Meter: meter, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
-		c.config.Meters = append(c.config.Meters, MeterDeclaration{ID: meter, Node: instance.Node, Scope: "node-exclusive-wall", Source: instance.Profile.MetricSource})
-		c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "reserve-remove-" + instance.Profile.ID, Node: instance.Node, Kind: operationRemove, From: serving.SchedulerInstanceState(*instance), To: "unloaded", PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: 100 * time.Millisecond, Joules: 1}}, Meter: meter, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-remove-" + instance.Profile.ID, Size: 1}})
+		c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: meter, Node: instance.Node, Scope: "node-exclusive-wall", Source: instance.Profile.MetricSource})
+		c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "reserve-remove-" + instance.Profile.ID, Node: instance.Node, Kind: servingstate.OperationRemove, From: serving.SchedulerInstanceState(*instance), To: "unloaded", PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: 100 * time.Millisecond, Joules: 1}}, Meter: meter, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "reserve-remove-" + instance.Profile.ID, Size: 1}})
 	}
 	c.runtime.EnableSchedulerRouting()
-	if result, err := c.operations.Execute(ctx, Operation{ID: seed.ID, Kind: operationRoute, Target: &seed}); err != nil {
+	if result, err := c.operations.Execute(ctx, servingstate.Operation{ID: seed.ID, Kind: servingstate.OperationRoute, Target: &seed}); err != nil {
 		t.Fatalf("seed route: %v %+v", err, result)
 	}
 	warm, err := c.capture(ctx, time.Now(), c.config)
@@ -364,9 +367,9 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	}
 	c.capacity.Ensure(ctx, *settings, warm)
 	c.capacity.Wait()
-	removing := make(chan OperationResult, 1)
-	c.config.OnAction = func(result OperationResult) error {
-		if result.Status == starting && result.Operation.Kind == operationStop {
+	removing := make(chan servingstate.OperationResult, 1)
+	c.config.OnAction = func(result servingstate.OperationResult) error {
+		if result.Status == starting && result.Operation.Kind == servingstate.OperationStop {
 			removing <- result
 			select {
 			case <-release:
@@ -401,7 +404,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		return slices.ContainsFunc(c.actionsLocked(time.Now()), func(action serving.Action) bool {
-			return action.Kind == operationRoute && action.Status == nativeOperationComplete
+			return action.Kind == servingstate.OperationRoute && action.Status == servingstate.NativeOperationComplete
 		})
 	})
 	if _, err = c.Tick(ctx, time.Now()); err != nil {

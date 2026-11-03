@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -183,7 +185,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 			if mode == "physical source" {
 				pod := &core.Pod{ObjectMeta: meta.ObjectMeta{
 					Name: "starting", Annotations: map[string]string{
-						servingkube.ServingProfileAnnotation: "allowed/task/native-uid",
+						servingstate.ServingProfileAnnotation: "allowed/task/native-uid",
 					},
 				}}
 				if _, err := kube.CoreV1().Pods("serving").Create(ctx, pod, meta.CreateOptions{}); err != nil {

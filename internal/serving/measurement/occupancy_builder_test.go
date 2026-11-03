@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -28,7 +29,7 @@ type occupancyFixture struct {
 	node         *core.Node
 	workload     *api.Workload
 	preprocessor *api.Preprocessor
-	preparation  servingkube.PrepareSpec
+	preparation  servingstate.PrepareSpec
 	timeout      time.Duration
 }
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -30,7 +32,7 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 		Profiles:         []serving.Profile{profile},
 		MeasurementFacts: map[string]serving.MeasurementFacts{"unselected": {}},
 	}
-	preparations := map[string]servingkube.PrepareSpec{
+	preparations := map[string]servingstate.PrepareSpec{
 		profile.ID: {Name: "restore", Instance: serving.SchedulerInstance{Profile: &profile, ProfileID: profile.ID}},
 	}
 	snapshot := servingkube.ProjectCatalogSnapshot(owner, "rv", preparations)
@@ -125,7 +127,7 @@ func TestAcceptedCatalogProfilesRemainVisibleWithNewerReportingFacts(t *testing.
 						},
 					},
 				},
-				Preparations: map[string]servingkube.PrepareSpec{profile.ID: {Name: "accepted-preparation"}},
+				Preparations: map[string]servingstate.PrepareSpec{profile.ID: {Name: "accepted-preparation"}},
 			}
 			latest := servingkube.CatalogView{
 				Insufficiencies: []servingkube.CatalogIssue{

@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
@@ -31,7 +34,7 @@ type SchedulerControllerConfig struct {
 	ConfigurationName string
 	ConfigurationKey  string
 	Reserved          map[string]serving.SchedulerAllocation
-	Preparations      map[string]PrepareSpec
+	Preparations      map[string]servingstate.PrepareSpec
 	Costs             []serving.OperationCost
 	Baselines         []serving.NodeBaseline
 	CostIssues        []CostIssue
@@ -45,7 +48,7 @@ type SchedulerControllerConfig struct {
 	LoadGenerator LoadGeneratorConfig
 	// GatewayRequestTimeout is the actual HTTP handler lifetime cap.
 	GatewayRequestTimeout time.Duration
-	Meters                []MeterDeclaration
+	Meters                []servingops.MeterDeclaration
 	// PowerPolicies are the configured actuation policies; a non-Fixed
 	// DeviceClass mode with a policy is a mode ChillServer can request.
 	PowerPolicies []nodeactuator.ActuationPolicySpec
@@ -58,55 +61,34 @@ type SchedulerControllerConfig struct {
 	EvidenceStore string
 	MeterSource   func(metricobserver.SourceIdentity) (metricobserver.Source, error)
 	OnDecision    func(serving.SchedulerDecision, serving.SchedulerSnapshot) error
-	OnAction      func(OperationResult) error
+	OnAction      func(servingstate.OperationResult) error
 }
 
 type SchedulerControllerState struct {
-	Snapshot serving.SchedulerSnapshot `json:"snapshot"`
-	Decision serving.SchedulerDecision `json:"decision"`
-	Actions  []serving.Action          `json:"actions"`
-	Results  []OperationResult         `json:"results"`
+	Snapshot serving.SchedulerSnapshot      `json:"snapshot"`
+	Decision serving.SchedulerDecision      `json:"decision"`
+	Actions  []serving.Action               `json:"actions"`
+	Results  []servingstate.OperationResult `json:"results"`
 	// CostIssues are the measurements the configured costs omit.
 	CostIssues []CostIssue `json:"costIssues"`
 }
 
-type actionRun struct {
-	action               serving.Action
-	result               *OperationResult
-	cancel               context.CancelFunc
-	started              time.Time
-	scope                resourceScope
-	owner                string
-	reserved             bool
-	returnObserved       bool
-	prepareIdentity      string
-	inheritedReservation bool
-	routeReceipts        map[string]*actionRun
-	mayTouch             map[string]bool
-	proofParent          *actionRun
-	replacements         []serving.SchedulerReplacement
-	admittedControls     serving.SchedulerControls
-}
-
 type SchedulerController struct {
-	mu         sync.Mutex
-	tickMu     sync.Mutex
+	*reservationState
 	store      *Store
 	kube       kubernetes.Interface
 	runtime    *serving.Runtime
 	observer   *Observer
-	operations *Operations
+	operations *servingops.Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
-	measurement           *Operations
+	measurement           *servingops.Operations
 	observationLog        *observation.ObservationLog
 	capacity              *serving.CapacityTable
 	config                SchedulerControllerConfig
-	state                 SchedulerControllerState
 	bootstrapStartedAt    time.Time
 	tempo                 serving.SchedulerTempo
 	replacements          []serving.SchedulerReplacement
 	replacementObservedAt time.Time
-	runs                  map[string]*actionRun
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	wg                    sync.WaitGroup
@@ -115,7 +97,7 @@ type SchedulerController struct {
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration
 	// measureStep measures one step of an operation-cost measurement.
-	measureStep func(context.Context, SchedulerControllerConfig, MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error)
+	measureStep func(context.Context, SchedulerControllerConfig, servingops.MeasurementRequest) (servingops.OperationMeasurement, evidencestore.Receipt, error)
 	// unrouted holds when each captured instance last lost every route weight.
 	// overloaded holds the slots prepared while keep was in Overload: zero
 	// until the instance is Ready, then the end of its hold.
@@ -124,8 +106,8 @@ type SchedulerController struct {
 
 // NewSchedulerController configures control without taking ownership of routing.
 // The composition root freezes routing after restoring the actual baseline.
-func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *Operations, observationLog *observation.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
-	if store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
+func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes.Interface, runtime *serving.Runtime, observer *Observer, operations *servingops.Operations, observationLog *observation.ObservationLog, config SchedulerControllerConfig) (*SchedulerController, error) {
+	if cluster == nil || store == nil || kube == nil || runtime == nil || observer == nil || operations == nil || observationLog == nil {
 		return nil, errors.New("scheduler requires actual Kubernetes, runtime, observer, operation and observation log owners")
 	}
 	if err := validateSchedulerConfiguration(config); err != nil {
@@ -133,10 +115,9 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	measurement := *operations
-	measurement.config.Measurement = true
-	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
+	measurement.Config.Measurement = true
+	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: &cluster.reservation, ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
-	observer.scheduler = c
 	c.measureStep = c.measureOperation
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
 		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
@@ -177,13 +158,7 @@ func (c *SchedulerController) setRoutingControl(before, after bool) {
 	if after {
 		c.runtime.EnableSchedulerRouting()
 	} else {
-		c.mu.Lock()
-		for _, run := range c.runs {
-			if run.action.Status == nativeOperationRunning && run.action.Cancelable && run.cancel != nil {
-				run.cancel()
-			}
-		}
-		c.mu.Unlock()
+		c.cancelCancelableRuns()
 		c.mu.Lock()
 		static := c.config.StaticRouting
 		c.mu.Unlock()
@@ -199,7 +174,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 	}
 	meters := map[string]serving.NodeReference{}
 	for _, m := range config.Meters {
-		if m.ID == "" || m.Scope != measurementWallScope || m.Node.Name == "" || m.Node.UID == "" || m.Source.NodeName != m.Node.Name {
+		if m.ID == "" || m.Scope != servingstate.MeasurementWallScope || m.Node.Name == "" || m.Node.UID == "" || m.Source.NodeName != m.Node.Name {
 			return errors.New("exact physical meter declaration required")
 		}
 		if node, ok := meters[m.ID]; ok && node != m.Node {
@@ -213,7 +188,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 		}
 	}
 	for _, b := range config.Baselines {
-		if b.Meter == "" || b.Scope != measurementWallScope {
+		if b.Meter == "" || b.Scope != servingstate.MeasurementWallScope {
 			return errors.New("baseline meter declaration required")
 		}
 		if n, ok := meters[b.Meter]; ok && n != b.Node {
@@ -222,7 +197,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 		meters[b.Meter] = b.Node
 	}
 	for _, cost := range config.Costs {
-		if cost.Meter == "" || cost.Scope != measurementWallScope {
+		if cost.Meter == "" || cost.Scope != servingstate.MeasurementWallScope {
 			return errors.New("cost meter declaration required")
 		}
 		if n, ok := meters[cost.Meter]; ok && n != cost.Node {
@@ -239,7 +214,7 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	result := c.state
 	result.Actions = c.actionsLocked(time.Now())
 	result.Snapshot.Reservations = c.reservationsLocked()
-	result.Results = append([]OperationResult(nil), c.state.Results...)
+	result.Results = append([]servingstate.OperationResult(nil), c.state.Results...)
 	result.CostIssues = c.config.CostIssues
 	return result
 }
@@ -256,7 +231,7 @@ func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 			continue
 		}
 		a := r.action
-		if a.Status == nativeOperationRunning {
+		if a.Status == servingstate.NativeOperationRunning {
 			a.Elapsed = now.Sub(r.started)
 		}
 		result = append(result, a)

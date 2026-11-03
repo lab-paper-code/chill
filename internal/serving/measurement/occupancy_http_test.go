@@ -20,6 +20,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authentication "k8s.io/api/authentication/v1"
 	authorization "k8s.io/api/authorization/v1"
@@ -56,7 +57,7 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 		BuildOccupancy:  service.BuildOccupancy,
 		SubmitOccupancy: service.SubmitOccupancy, DeleteOccupancy: service.DeleteOccupancy,
 	}
-	handler, err := httpapi.NewHandler(&servingkube.Manager{}, &serving.Runtime{},
+	handler, err := httpapi.NewHandler(&management.Manager{}, &serving.Runtime{},
 		&servingkube.Authorizer{Client: kube}, log, &servingkube.Observer{}, config)
 	if err != nil {
 		t.Fatal(err)

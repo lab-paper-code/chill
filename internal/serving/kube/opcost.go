@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
@@ -52,7 +55,7 @@ func measurementProfile(namespace, name, node string, in admissionInputs) (profi
 	source := types.NamespacedName{Namespace: namespace, Name: name}
 	id := source.String() + "/" + string(beo.UID)
 	i := slices.IndexFunc(in.profiles, func(p serving.Profile) bool {
-		return p.ID == id || p.Reuse != nil && p.Reuse.Outcome == measurementAccepted && p.Reuse.ConfirmationProfileID == id
+		return p.ID == id || p.Reuse != nil && p.Reuse.Outcome == servingstate.MeasurementAccepted && p.Reuse.ConfirmationProfileID == id
 	})
 	if i < 0 {
 		if i := slices.IndexFunc(in.config.CatalogIssues, func(issue CatalogIssue) bool { return issue.Source == source }); i >= 0 {
@@ -69,7 +72,7 @@ func measurementProfile(namespace, name, node string, in admissionInputs) (profi
 // operationCostRefusal judges an operation-cost measurement before its grant.
 // profiles maps each named BatchEnergyOptimization to its catalog profile ID.
 func (c *SchedulerController) operationCostRefusal(m *edge.OperationCostMeasurement, node *core.Node, in admissionInputs) (profiles map[string]string, reason, detail string, wait bool) {
-	if !slices.ContainsFunc(in.config.Meters, func(meter MeterDeclaration) bool { return meter.Node.UID == string(node.UID) }) {
+	if !slices.ContainsFunc(in.config.Meters, func(meter servingops.MeterDeclaration) bool { return meter.Node.UID == string(node.UID) }) {
 		return nil, MeterUndeclared, node.Name, false
 	}
 	profiles = map[string]string{}
@@ -116,8 +119,8 @@ func (c *SchedulerController) startOperationCost(node *core.Node, m *edge.Operat
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	targets := nodePowerTargets(node, in.classes, in.config.PowerPolicies)
 	root := &measurementRoot{object: m, node: node.Name}
-	operation := Operation{ID: operationCostKind + ":" + node.Name + ":" + string(m.UID), Kind: operationCostKind, Node: ref, Holder: string(m.UID)}
-	c.startNodeRun(operation, in.config, func(ctx context.Context, result *OperationResult) error {
+	operation := servingstate.Operation{ID: operationCostKind + ":" + node.Name + ":" + string(m.UID), Kind: operationCostKind, Node: ref, Holder: string(m.UID)}
+	c.startNodeRun(operation, in.config, func(ctx context.Context, result *servingstate.OperationResult) error {
 		err := c.runOperationCost(ctx, m, ref, targets, profiles, in.config)
 		return errors.Join(err, c.handBack(ctx, ref, string(m.UID), root, false, result))
 	})
@@ -130,7 +133,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		return err
 	}
 	observation := m.Spec.Observation
-	allowance, err := measurementTimingAllowance(observation.Timing)
+	allowance, err := servingops.MeasurementTimingAllowance(observation.Timing)
 	if err != nil {
 		return errors.Join(err, c.failMeasurement(ctx, m, firstLine(err.Error())))
 	}
@@ -144,7 +147,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		return errors.Join(err, c.failMeasurement(ctx, m, err.Error()))
 	}
 	watchdog := duration + 2*allowance + 2*interval + timeout
-	base := MeasurementRequest{
+	base := servingops.MeasurementRequest{
 		Timing: observation.Timing, OperationBudget: duration,
 		Sampling: metricobserver.Request{Interval: interval, Duration: watchdog,
 			RequestTimeout: timeout},
@@ -155,7 +158,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 	prepared := map[string]string{}
 	for i, step := range m.Spec.Steps {
 		request := base
-		request.Operation = Operation{ID: fmt.Sprintf("%s.%d.%s", m.UID, i, step.Name), Kind: string(step.Kind), Node: ref}
+		request.Operation = servingstate.Operation{ID: fmt.Sprintf("%s.%d.%s", m.UID, i, step.Name), Kind: string(step.Kind), Node: ref}
 		switch step.Kind {
 		case edge.OperationCostStepPower:
 			request.Operation.PowerMode, request.Operation.MaxActuationDuration = step.PowerMode, targets[step.PowerMode]
@@ -181,7 +184,7 @@ func (c *SchedulerController) runOperationCost(ctx context.Context, m *edge.Oper
 		}
 		if err != nil {
 			phase, reason = edge.MeasurementPhaseFailed, firstLine(err.Error())
-		} else if record.Verdict != measurementAccepted {
+		} else if record.Verdict != servingstate.MeasurementAccepted {
 			phase, reason = edge.MeasurementPhaseInsufficient, record.Reason
 		}
 		if phase != edge.MeasurementPhaseComplete {
@@ -208,8 +211,8 @@ func (c *SchedulerController) restartedMeasurement(node *core.Node, object clien
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	root := &measurementRoot{object: object, node: node.Name}
 	uid := string(object.GetUID())
-	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + uid, Kind: handBackKind, Node: ref, Holder: uid}
-	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
+	operation := servingstate.Operation{ID: handBackKind + ":" + node.Name + ":" + uid, Kind: handBackKind, Node: ref, Holder: uid}
+	c.startNodeRun(operation, config, func(ctx context.Context, result *servingstate.OperationResult) error {
 		if _, cost := object.(*edge.OperationCostMeasurement); cost {
 			if err := c.recordRestartedSequence(ctx, config, ref, uid); err != nil {
 				return err

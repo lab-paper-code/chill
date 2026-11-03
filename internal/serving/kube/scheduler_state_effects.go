@@ -3,17 +3,19 @@ package kube
 import (
 	"slices"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
 func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnapshot, run *actionRun) bool {
-	if run.result == nil || run.result.Status != nativeOperationComplete {
+	if run.result == nil || run.result.Status != servingstate.NativeOperationComplete {
 		return false
 	}
 	a := run.action
 	physical := c.runtime.Instances()
 	switch a.Kind {
-	case operationPrepare:
+	case servingstate.OperationPrepare:
 		p := run.result.Operation.Prepare
 		if p == nil || p.Instance.Profile == nil {
 			return false
@@ -23,34 +25,34 @@ func (c *SchedulerController) actionEffectPresent(snapshot serving.SchedulerSnap
 				return true
 			}
 		}
-	case operationRemove:
+	case servingstate.OperationRemove:
 		for _, i := range physical {
 			if i.ID == a.Instance {
 				return false
 			}
 		}
 		return true
-	case operationStop:
+	case servingstate.OperationStop:
 		for _, i := range physical {
 			if i.ID == a.Instance {
 				return i.Stopped
 			}
 		}
 		return true
-	case operationDrain:
+	case servingstate.OperationDrain:
 		for _, r := range snapshot.Outstanding {
 			if r.Instance == a.Instance {
 				return false
 			}
 		}
 		return true
-	case operationPower:
+	case servingstate.OperationPower:
 		for _, n := range snapshot.Nodes {
 			if n.Node == a.Node {
 				return n.PowerMode == a.To
 			}
 		}
-	case operationRoute:
+	case servingstate.OperationRoute:
 		return c.routingTargetPresent(controlledTarget(run.result.Operation), snapshot, physical, true)
 	}
 	return false
@@ -62,21 +64,21 @@ func (c *SchedulerController) actionEffectUnknown(snapshot serving.SchedulerSnap
 	if run.result == nil {
 		return false
 	}
-	if run.action.Kind == operationPower {
+	if run.action.Kind == servingstate.OperationPower {
 		return slices.ContainsFunc(snapshot.Nodes, func(node serving.SchedulerNode) bool {
 			return node.Node == run.action.Node && node.PowerMode == ""
 		})
 	}
 	physical := c.runtime.Instances()
-	if run.action.Kind == operationPrepare {
+	if run.action.Kind == servingstate.OperationPrepare {
 		return slices.ContainsFunc(physical, func(instance serving.InstanceState) bool {
 			return (instance.ID == run.action.Instance || instance.TargetID == run.action.Instance) &&
 				instance.Node == run.action.Node && !instance.Stopped && !instance.Ready
 		})
 	}
-	if run.action.Kind == operationRoute && run.result.Operation.Target != nil {
+	if run.action.Kind == servingstate.OperationRoute && run.result.Operation.Target != nil {
 		for _, wanted := range run.result.Operation.Target.Instances {
-			if !run.result.Operation.controlsWorkload(wanted.WorkloadUID) {
+			if !run.result.Operation.ControlsWorkload(wanted.WorkloadUID) {
 				continue
 			}
 			if state := schedulerPhysicalState(wanted.ID, physical); state != nil && !state.Stopped &&

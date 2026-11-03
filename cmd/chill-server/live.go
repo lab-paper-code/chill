@@ -7,11 +7,13 @@ import (
 	"sync"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -87,7 +89,7 @@ func (p *livePublisher) startRuntime(ctx context.Context, runtime *serving.Runti
 	}()
 }
 
-func (p *livePublisher) workload(view servingkube.WorkloadView, removed bool) {
+func (p *livePublisher) workload(view management.WorkloadView, removed bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	w := view.Desired
@@ -325,7 +327,7 @@ func (p *livePublisher) request(event serving.RequestEvent) {
 		p.metrics.Finished(event.WorkloadUID, event.At, event.Outcome == "completed", measured, slo)
 	}
 }
-func (p *livePublisher) powerScope(meters []servingkube.MeterDeclaration, enabled bool) {
+func (p *livePublisher) powerScope(meters []servingops.MeterDeclaration, enabled bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.meters = nil

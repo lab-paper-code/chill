@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -27,7 +29,7 @@ type pendingPreparationAPI struct {
 func (c *pendingPreparationAPI) Create(ctx context.Context, object client.Object, opts ...client.CreateOption) error {
 	if pod, ok := object.(*core.Pod); ok {
 		pod.Status.Phase = core.PodPending
-		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: firstfloorContainerName, State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}
+		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}
 	}
 	if err := c.Client.Create(ctx, object, opts...); err != nil {
 		return err
@@ -46,7 +48,7 @@ func (c *pendingPreparationAPI) Patch(ctx context.Context, object client.Object,
 		current := &core.Pod{}
 		err := c.Client.Get(ctx, client.ObjectKeyFromObject(pod), current)
 		if apierrors.IsNotFound(err) {
-			return eIfNotFound(c.kube.Tracker().Delete(core.SchemeGroupVersion.WithResource("pods"), pod.Namespace, pod.Name))
+			return servingstate.IgnoreNotFound(c.kube.Tracker().Delete(core.SchemeGroupVersion.WithResource("pods"), pod.Namespace, pod.Name))
 		}
 		if err != nil {
 			return err
@@ -92,10 +94,10 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 	h.setNode(func(node *core.Node) {
 		node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: string(measurement.UID), Effect: core.TaintEffectNoSchedule}}
 	})
-	completed := make(chan OperationResult, 1)
+	completed := make(chan servingstate.OperationResult, 1)
 	c.mu.Lock()
-	c.config.Preparations = map[string]PrepareSpec{profile.ID: spec}
-	c.config.OnAction = func(result OperationResult) error { completed <- result; return nil }
+	c.config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: spec}
+	c.config.OnAction = func(result servingstate.OperationResult) error { completed <- result; return nil }
 	config := c.config
 	c.mu.Unlock()
 	c.startOccupancy(h.node, measurement, occupancyPlan{profile: profile, workload: workload, powered: true}, config)
@@ -107,13 +109,13 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	if deleting.DeletionTimestamp == nil || len(deleting.Finalizers) != 1 || deleting.Finalizers[0] != sourceFinalizer || podTerminated(deleting) || !podAwaitingExecutor(deleting) {
+	if deleting.DeletionTimestamp == nil || len(deleting.Finalizers) != 1 || deleting.Finalizers[0] != servingstate.SourceFinalizer || servingstate.PodTerminated(deleting) || !servingstate.PodAwaitingExecutor(deleting) {
 		t.Fatalf("pending deletion did not retain termination proof: %+v", deleting)
 	}
 	if h.holder() != string(measurement.UID) {
 		t.Fatal("hand-back released taint before terminal status")
 	}
-	if err := c.authorize(Operation{Node: testNode}); err == nil {
+	if err := c.authorize(servingstate.Operation{Node: testNode}); err == nil {
 		t.Fatal("hand-back released reservation before terminal status")
 	}
 	c.observer.mu.Lock()
@@ -128,14 +130,14 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 	if err := bridge.Client.Status().Update(ctx, deleting); err != nil {
 		t.Fatal(err)
 	}
-	var result OperationResult
+	var result servingstate.OperationResult
 	select {
 	case result = <-completed:
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
 	c.wg.Wait()
-	if result.Status != nativeOperationFailed || !strings.Contains(result.Error, context.DeadlineExceeded.Error()) {
+	if result.Status != servingstate.NativeOperationFailed || !strings.Contains(result.Error, context.DeadlineExceeded.Error()) {
 		t.Fatalf("prepare timeout was not preserved: %+v", result)
 	}
 	if !strings.Contains(strings.Join(result.Progress, ";"), "taint removed") || h.holder() != "" {
@@ -148,7 +150,7 @@ func TestOccupancyPreparationTimeoutHandsBackPendingPod(t *testing.T) {
 	if err != nil || len(pods.Items) != 0 {
 		t.Fatalf("native Pods remain: %v, %v", pods, err)
 	}
-	if err := c.authorize(Operation{Node: testNode, WorkloadUID: string(workload.UID)}); err != nil {
+	if err := c.authorize(servingstate.Operation{Node: testNode, WorkloadUID: string(workload.UID)}); err != nil {
 		t.Fatal("hand-back retained reservation", err)
 	}
 	c.observer.mu.Lock()

@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 )
 
 // Completions coalesces action outcomes; receiving is not proof of success.
@@ -38,7 +40,7 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 func (c *SchedulerController) launchRunningParentsLocked(config SchedulerControllerConfig, continuation bool) {
 	parents := []*actionRun{}
 	for _, run := range c.runs {
-		if run.action.Kind == transitionRunKind && run.action.Status == nativeOperationRunning {
+		if run.action.Kind == transitionRunKind && run.action.Status == servingstate.NativeOperationRunning {
 			parents = append(parents, run)
 		}
 	}

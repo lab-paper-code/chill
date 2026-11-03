@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
@@ -33,7 +36,7 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 			}
 			pod, node, _, _ := observerSourceFixture()
 			pod.Name, pod.UID = "instance-a", "pod-uid-a"
-			pod.Labels[instancePodUIDLabel] = string(pod.UID)
+			pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "w", UID: api.owner}}
 			c := o.store.client.(*managerAPI).Client
 			if err := c.Create(ctx, pod); err != nil {
@@ -77,9 +80,9 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 				err := c.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: action.(ktesting.GetAction).GetName()}, current)
 				return true, current, err
 			})
-			operations := &Operations{store: o.store, kube: kube, runtime: o.runtime, observer: o, native: o.native,
-				config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
-			id := physicalID(pod.UID, status.ContainerID)
+			operations := &servingops.Operations{Cluster: o.cluster, Store: o.store, Kube: kube, Runtime: o.runtime, Observer: o, Native: o.native,
+				Config: servingops.OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
+			id := servingstate.PhysicalID(pod.UID, status.ContainerID)
 			if err := operations.RemoveInstance(ctx, serving.NodeReference{Name: node.Name, UID: string(node.UID)}, id); err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +92,7 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 				fresh.UID, fresh.ResourceVersion, fresh.DeletionTimestamp = "late-probe-replacement-uid", "", nil
 				fresh.Finalizers = nil
 				fresh.OwnerReferences = nil
-				fresh.Labels[instancePodUIDLabel] = string(fresh.UID)
+				fresh.Labels[servingstate.InstancePodUIDLabel] = string(fresh.UID)
 				fresh.Status.ContainerStatuses[0].State = core.ContainerState{Running: &core.ContainerStateRunning{}}
 				fresh.Status.ContainerStatuses[0].Ready = true
 				if err := c.Create(ctx, fresh); err != nil {
@@ -133,16 +136,15 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 func TestClearNodeCannotStripUnobservedRunningSourceFinalizer(t *testing.T) {
 	ctx := context.Background()
 	pod, node, _, _ := observerSourceFixture()
-	pod.Finalizers = []string{sourceFinalizer}
+	pod.Finalizers = []string{servingstate.SourceFinalizer}
 	o := newTestObserver(t, pod)
 	kube := kubefake.NewSimpleClientset(node, pod, observerServiceFixture(pod))
-	operations := &Operations{store: o.store, kube: kube, runtime: o.runtime, observer: o,
-		config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
-	if err := operations.clearNode(ctx, serving.NodeReference{Name: node.Name, UID: string(node.UID)}); err == nil {
+	operations := &servingops.Operations{Cluster: o.cluster, Store: o.store, Kube: kube, Runtime: o.runtime, Observer: o, Config: servingops.OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
+	if err := operations.ClearNode(ctx, serving.NodeReference{Name: node.Name, UID: string(node.UID)}); err == nil {
 		t.Fatal("unobserved running executor was cleared without termination proof")
 	}
 	current, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
-	if err != nil || len(current.Finalizers) != 1 || current.Finalizers[0] != sourceFinalizer || current.DeletionTimestamp != nil {
+	if err != nil || len(current.Finalizers) != 1 || current.Finalizers[0] != servingstate.SourceFinalizer || current.DeletionTimestamp != nil {
 		t.Fatalf("clearNode bypassed retained termination evidence: %v, %v", current, err)
 	}
 	for _, action := range kube.Actions() {
@@ -158,26 +160,27 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 	uid := types.UID("workload-uid")
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: uid}}
 	o := newTestObserver(t, pod)
-	c := &SchedulerController{store: o.store, observer: o, kube: kubefake.NewSimpleClientset(node), runs: map[string]*actionRun{}}
+	cluster := NewClusterState(o.store, kubefake.NewSimpleClientset(node), o.config.Namespace)
+	c := &cluster.reservation
 	c.mu.Lock()
-	held := c.reserveRun("physical-only", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{PodUID: string(pod.UID)})
+	held := c.reserveRun("physical-only", &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{PodUID: string(pod.UID)})
 	c.mu.Unlock()
 	if !held {
 		t.Fatal("failed to reserve Pod")
 	}
-	if err := c.reserveDeletion(ctx, uid); err == nil {
+	if err := cluster.ReserveDeletion(ctx, uid); err == nil {
 		t.Fatal("deletion ignored live Pod absent from snapshot")
 	}
 	c.mu.Lock()
 	delete(c.runs, "physical-only")
 	c.mu.Unlock()
-	if err := c.reserveDeletion(ctx, uid); err != nil {
+	if err := cluster.ReserveDeletion(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []Operation{
+	for _, operation := range []servingstate.Operation{
 		{WorkloadUID: string(uid)},
 		{PodUID: string(pod.UID)},
-		{Instance: physicalID(pod.UID, firstfloorStatus(pod).ContainerID)},
+		{Instance: servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)},
 		{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}},
 	} {
 		if err := c.authorize(operation); err == nil {
@@ -185,11 +188,11 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 		}
 	}
 	// Scope remains idempotently owned while cleanup is still pending.
-	if err := c.reserveDeletion(ctx, uid); err != nil {
+	if err := cluster.ReserveDeletion(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
-	c.releaseDeletion(uid)
-	if err := c.authorize(Operation{PodUID: string(pod.UID)}); err != nil {
+	cluster.ReleaseDeletion(uid)
+	if err := c.authorize(servingstate.Operation{PodUID: string(pod.UID)}); err != nil {
 		t.Fatal(err)
 	}
 }

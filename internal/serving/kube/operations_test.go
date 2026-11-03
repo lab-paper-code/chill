@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -32,7 +35,7 @@ import (
 // actors. State ACKs come through the production handler and SDK, not annotations.
 // Success withdraws routing after both ACKs; synthetic echo is never admitted
 // by the observer as newly measured execution capacity.
-func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCandidate, []*core.Pod) {
+func routeAcknowledgmentFixture(t *testing.T) (*servingops.Operations, serving.SchedulerCandidate, []*core.Pod) {
 	t.Helper()
 	ctx := context.Background()
 	manager, _ := newManagerHarness(t)
@@ -57,9 +60,9 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		pod := fixture.DeepCopy()
 		pod.Name, pod.UID = name, types.UID("pod-"+name)
 		pod.ResourceVersion = "1"
-		pod.Labels[instancePodUIDLabel] = string(pod.UID)
-		pod.Annotations[ServingProfileAnnotation] = profile.ID
-		pod.Annotations[ServingPolicyAnnotation] = "old-route"
+		pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
+		pod.Annotations[servingstate.ServingProfileAnnotation] = profile.ID
+		pod.Annotations[servingstate.ServingPolicyAnnotation] = "old-route"
 		cfg := native.Config{Model: "chill_model", Mode: "serving",
 			Inputs: []string{"input"}, Outputs: []string{"output"},
 			RunnerCommand:   []string{"python3", "../../../runtime/firstfloor/runner.py", "--echo", "--preprocessor", "../../../runtime/firstfloor/testdata/echo", "--warmup-iterations", "1"},
@@ -105,7 +108,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		if err != nil {
 			t.Fatal(err)
 		}
-		id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+		id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 		spec := sdk.Spec{Endpoint: "http://" + service.Spec.ClusterIP + ":8080", ModelName: cfg.Model}
 		instance := serving.SchedulerInstance{ID: id, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
 			WorkloadUID: definition.UID, MaxBatch: 1, Capacity: 4, MaxWait: time.Millisecond}
@@ -156,7 +159,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*Operations, serving.SchedulerCan
 		t.Fatal(err)
 	}
 	manager.runtime.EnableSchedulerRouting()
-	operations, err := NewOperations(manager.store, kube, manager.runtime, manager.observer, nativeClient, OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond})
+	operations, err := servingops.NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, nativeClient, servingops.OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,10 +175,10 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 		wantACKs      int
 		wantPersisted int
 	}{
-		{name: "withdrawal needs no new policy", unavailable: -1, wantStatus: nativeOperationComplete},
-		{name: "second unavailable after first ACK", unavailable: 1, wantStatus: nativeOperationPartial, wantACKs: 1, wantPersisted: 1},
-		{name: "first unavailable before mutation", unavailable: 0, wantStatus: nativeOperationFailed},
-		{name: "first endpoint lost after desired persistence", unavailable: 0, loseEndpoint: true, wantStatus: nativeOperationPartial, wantPersisted: 1},
+		{name: "withdrawal needs no new policy", unavailable: -1, wantStatus: servingstate.NativeOperationComplete},
+		{name: "second unavailable after first ACK", unavailable: 1, wantStatus: servingstate.NativeOperationPartial, wantACKs: 1, wantPersisted: 1},
+		{name: "first unavailable before mutation", unavailable: 0, wantStatus: servingstate.NativeOperationFailed},
+		{name: "first endpoint lost after desired persistence", unavailable: 0, loseEndpoint: true, wantStatus: servingstate.NativeOperationPartial, wantPersisted: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			operations, target, pods := routeAcknowledgmentFixture(t)
@@ -186,24 +189,24 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			before, _ := operations.runtime.SchedulerRouting()
+			before, _ := operations.Runtime.SchedulerRouting()
 			if test.unavailable >= 0 {
 				pod := pods[test.unavailable]
 				var err error
 				if test.loseEndpoint {
-					err = operations.kube.CoreV1().Services(pod.Namespace).Delete(ctx, instanceServicePrefix+string(pod.UID), meta.DeleteOptions{})
+					err = operations.Kube.CoreV1().Services(pod.Namespace).Delete(ctx, servingstate.InstanceServicePrefix+string(pod.UID), meta.DeleteOptions{})
 				} else {
-					err = operations.kube.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, meta.DeleteOptions{})
+					err = operations.Kube.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, meta.DeleteOptions{})
 				}
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			kind := operationRoute
+			kind := servingstate.OperationRoute
 			if test.unavailable < 0 {
-				kind = operationUnroute
+				kind = servingstate.OperationUnroute
 			}
-			result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: kind, Target: &target})
+			result, err := operations.Execute(ctx, servingstate.Operation{ID: target.ID, Kind: kind, Target: &target})
 			if (err != nil) != (test.unavailable >= 0) || result.Status != test.wantStatus {
 				t.Fatalf("route status=%s error=%v, want %s", result.Status, err, test.wantStatus)
 			}
@@ -215,14 +218,14 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 			if err != nil {
 				wanted = before
 			}
-			actual, _ := operations.runtime.SchedulerRouting()
+			actual, _ := operations.Runtime.SchedulerRouting()
 			if !maps.EqualFunc(result.Actual.Routing, wanted, func(left, right map[string]int32) bool { return maps.Equal(left, right) }) || !reflect.DeepEqual(actual, result.Actual.Routing) {
 				t.Fatalf("routing evidence differs from actual distribution: result=%v actual=%v wanted=%v", result.Actual.Routing, actual, wanted)
 			}
 			for index, pod := range pods {
 				cm := &core.ConfigMap{}
 				key := types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}
-				if err := operations.store.client.Get(ctx, key, cm); err != nil {
+				if err := operations.Store.Client().Get(ctx, key, cm); err != nil {
 					t.Fatal(err)
 				}
 				var config native.Config
@@ -230,14 +233,14 @@ func TestRouteRetainsOnlyExactNativeAcknowledgmentsAcrossSequentialFailures(t *t
 					t.Fatal(err)
 				}
 				storedPod := &core.Pod{}
-				if err := operations.store.client.Get(ctx, key, storedPod); err != nil {
+				if err := operations.Store.Client().Get(ctx, key, storedPod); err != nil {
 					t.Fatal(err)
 				}
 				decision := "old-route"
 				if index < test.wantPersisted {
 					decision = target.ID
 				}
-				if config.Policy.DecisionID != decision || storedPod.Annotations[ServingPolicyAnnotation] != decision {
+				if config.Policy.DecisionID != decision || storedPod.Annotations[servingstate.ServingPolicyAnnotation] != decision {
 					t.Fatalf("%s persisted desired policy/annotation differs: %+v %v", pod.Name, config.Policy, storedPod.Annotations)
 				}
 			}
@@ -261,8 +264,8 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 		wantStatus string
 		wantACKs   int
 	}{
-		{name: "dead lattepanda zero weight", dead: 0, wantStatus: nativeOperationComplete, wantACKs: 1},
-		{name: "positive jetsono ACK endpoint unavailable", dead: 1, wantStatus: nativeOperationPartial},
+		{name: "dead lattepanda zero weight", dead: 0, wantStatus: servingstate.NativeOperationComplete, wantACKs: 1},
+		{name: "positive jetsono ACK endpoint unavailable", dead: 1, wantStatus: servingstate.NativeOperationPartial},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			controller, prepared := tickReadySubsetController(t, nil)
@@ -282,7 +285,7 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 			}
 			target := serving.SchedulerCandidate{ID: "plan-61f142e72e70", Instances: instances,
 				Routing: map[string]map[string]int32{uid: {instances[0].ID: 0, instances[1].ID: 1000}}}
-			pods, err := operations.kube.CoreV1().Pods(operations.config.Namespace).List(ctx, meta.ListOptions{})
+			pods, err := operations.Kube.CoreV1().Pods(operations.Config.Namespace).List(ctx, meta.ListOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -291,14 +294,14 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 			if test.dead == 0 {
 				target.Instances[0].Ready, target.Instances[0].Stopped, target.Instances[0].Terminated = false, true, true
 				pod.Status.ContainerStatuses[0].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 1, ContainerID: pod.Status.ContainerStatuses[0].ContainerID}}
-				if _, err := operations.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, pod, meta.UpdateOptions{}); err != nil {
+				if _, err := operations.Kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, pod, meta.UpdateOptions{}); err != nil {
 					t.Fatal(err)
 				}
-			} else if err := operations.kube.CoreV1().Services(pod.Namespace).Delete(ctx, instanceServicePrefix+string(pod.UID), meta.DeleteOptions{}); err != nil {
+			} else if err := operations.Kube.CoreV1().Services(pod.Namespace).Delete(ctx, servingstate.InstanceServicePrefix+string(pod.UID), meta.DeleteOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationRoute, Target: &target, WorkloadUIDs: []string{uid}})
-			if (err != nil) != (test.wantStatus == nativeOperationPartial) || result.Status != test.wantStatus {
+			result, err := operations.Execute(ctx, servingstate.Operation{ID: target.ID, Kind: servingstate.OperationRoute, Target: &target, WorkloadUIDs: []string{uid}})
+			if (err != nil) != (test.wantStatus == servingstate.NativeOperationPartial) || result.Status != test.wantStatus {
 				t.Fatalf("route status=%s error=%v, want %s", result.Status, err, test.wantStatus)
 			}
 			if len(result.Actual.Native) != test.wantACKs {
@@ -308,7 +311,7 @@ func TestRouteRequiresPolicyACKOnlyForPositiveDestinationsAC38(t *testing.T) {
 				t.Fatalf("live destination not published: %v", result.Actual.Routing)
 			}
 			cm := &core.ConfigMap{}
-			if err := operations.store.client.Get(ctx, types.NamespacedName{Namespace: pods.Items[0].Namespace, Name: pods.Items[0].Name}, cm); err != nil {
+			if err := operations.Store.Client().Get(ctx, types.NamespacedName{Namespace: pods.Items[0].Namespace, Name: pods.Items[0].Name}, cm); err != nil {
 				t.Fatal(err)
 			}
 			var config native.Config
@@ -329,13 +332,13 @@ func TestRoutePersistsAppliedDistributionOnPods(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	routed := `{"` + target.Instances[0].WorkloadUID + `":1}`
-	if err := operations.persistRouting(ctx, "", nil); err != nil {
+	if err := operations.PersistRouting(ctx, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
 		t.Fatalf("persisted routing %v, want the frozen distribution %s", got, routed)
 	}
-	if _, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationUnroute, Target: &target}); err != nil {
+	if _, err := operations.Execute(ctx, servingstate.Operation{ID: target.ID, Kind: servingstate.OperationUnroute, Target: &target}); err != nil {
 		t.Fatal(err)
 	}
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{`{}`, `{}`}) {
@@ -348,16 +351,16 @@ func TestScopedRouteDoesNotPersistManualPodDefaults(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	uid := target.Instances[0].WorkloadUID
-	if err := operations.persistRouting(ctx, "", nil); err != nil {
+	if err := operations.PersistRouting(ctx, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	stopped := target
 	stopped.Routing = map[string]map[string]int32{uid: {}}
-	if err := operations.runtime.ApplySchedulerUnrouteTarget(stopped, []string{uid}); err != nil {
+	if err := operations.Runtime.ApplySchedulerUnrouteTarget(stopped, []string{uid}); err != nil {
 		t.Fatal(err)
 	}
 	// An explicitly empty scope is not the legacy all-UID scope.
-	result := OperationResult{Operation: Operation{ID: target.ID, Kind: operationRoute, Target: &target, WorkloadUIDs: []string{}}}
+	result := servingstate.OperationResult{Operation: servingstate.Operation{ID: target.ID, Kind: servingstate.OperationRoute, Target: &target, WorkloadUIDs: []string{}}}
 	if err := operations.ApplyTarget(ctx, target, &result); err != nil {
 		t.Fatal(err)
 	}
@@ -365,16 +368,16 @@ func TestScopedRouteDoesNotPersistManualPodDefaults(t *testing.T) {
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
 		t.Fatalf("autonomous routing persisted a manual unroute over Pod defaults: %v", got)
 	}
-	if err := operations.persistRouting(ctx, "", []string{"another-autonomous-uid"}); err != nil {
+	if err := operations.PersistRouting(ctx, "", []string{"another-autonomous-uid"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{routed, routed}) {
 		t.Fatalf("another UID's persistence overwrote manual Pod defaults: %v", got)
 	}
-	if err := operations.runtime.ReleaseSchedulerRouting(uid); err != nil {
+	if err := operations.Runtime.ReleaseSchedulerRouting(uid); err != nil {
 		t.Fatal(err)
 	}
-	if err := operations.persistRouting(ctx, "", []string{uid}); err != nil {
+	if err := operations.PersistRouting(ctx, "", []string{uid}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -386,7 +389,7 @@ func TestStopAndDrainPersistWithdrawnRouting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	routed := `{"` + target.Instances[0].WorkloadUID + `":1}`
-	if err := operations.persistRouting(ctx, "", nil); err != nil {
+	if err := operations.PersistRouting(ctx, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := operations.StopInstance(ctx, target.Instances[0].ID); err != nil {
@@ -395,7 +398,7 @@ func TestStopAndDrainPersistWithdrawnRouting(t *testing.T) {
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{`{}`, routed}) {
 		t.Fatalf("stop persisted %v", got)
 	}
-	if _, err := operations.Execute(ctx, Operation{ID: "drain", Kind: operationDrain, Node: target.Instances[1].Node, Instance: target.Instances[1].ID}); err != nil {
+	if _, err := operations.Execute(ctx, servingstate.Operation{ID: "drain", Kind: servingstate.OperationDrain, Node: target.Instances[1].Node, Instance: target.Instances[1].ID}); err != nil {
 		t.Fatal(err)
 	}
 	if got := podRoutingAnnotations(ctx, t, operations, pods); !slices.Equal(got, []string{`{}`, `{}`}) {
@@ -424,8 +427,8 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 			profile := managerProfile(first.Applied)
 			m.runtime.SetProfiles([]serving.Profile{profile})
 			pod, node, _, _ := observerSourceFixture()
-			pod.Annotations[ServingRoutingAnnotation] = `{"` + first.Applied.UID + `":1}`
-			id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+			pod.Annotations[servingstate.ServingRoutingAnnotation] = `{"` + first.Applied.UID + `":1}`
+			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 			started, finish := make(chan serving.Dispatch, 2), make(chan struct{}, 2)
 			instance := serving.ReadyInstance{State: serving.InstanceState{ID: id, Node: ref, Profile: profile.ID, Ready: true}, Profile: &profile, Routing: map[string]int32{first.Applied.UID: 1}, Capacity: 1,
@@ -468,15 +471,15 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 			}
 			listed := pod.DeepCopy() // the store keeps no status; the listed Pod carries it
 			listed.ResourceVersion = created.ResourceVersion
-			operations := &Operations{store: m.store, kube: kubefake.NewSimpleClientset(listed), runtime: m.runtime, config: OperationConfig{Namespace: pod.Namespace}}
-			if err = operations.persistRouting(ctx, "", nil); err != nil {
+			operations := &servingops.Operations{Store: m.store, Kube: kubefake.NewSimpleClientset(listed), Runtime: m.runtime, Config: servingops.OperationConfig{Namespace: pod.Namespace}}
+			if err = operations.PersistRouting(ctx, "", nil); err != nil {
 				t.Fatal(err)
 			}
 			stored := &core.Pod{}
 			if err = m.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
 				t.Fatal(err)
 			}
-			if got, want := stored.Annotations[ServingRoutingAnnotation], `{"`+second.Applied.UID+`":1}`; got != want {
+			if got, want := stored.Annotations[servingstate.ServingRoutingAnnotation], `{"`+second.Applied.UID+`":1}`; got != want {
 				t.Fatalf("persisted routing %s, want only the declared Workload %s", got, want)
 			}
 			// The kept route still runs the queued request of the old Workload.
@@ -495,20 +498,20 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 	}
 }
 
-func podRoutingAnnotations(ctx context.Context, t *testing.T, operations *Operations, pods []*core.Pod) []string {
+func podRoutingAnnotations(ctx context.Context, t *testing.T, operations *servingops.Operations, pods []*core.Pod) []string {
 	t.Helper()
 	values := []string{}
 	for _, pod := range pods {
 		stored := &core.Pod{}
-		if err := operations.store.client.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
+		if err := operations.Store.Client().Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, stored); err != nil {
 			t.Fatal(err)
 		}
-		values = append(values, stored.Annotations[ServingRoutingAnnotation])
+		values = append(values, stored.Annotations[servingstate.ServingRoutingAnnotation])
 	}
 	return values
 }
 
-func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, result OperationResult, count int) {
+func assertRouteNativeACKs(t *testing.T, target serving.SchedulerCandidate, result servingstate.OperationResult, count int) {
 	t.Helper()
 	if len(result.Actual.Native) != count {
 		t.Fatalf("lost actual ACK or fabricated failed instance: %+v", result.Actual.Native)
@@ -536,7 +539,7 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 	defer cancel()
 	key := types.NamespacedName{Namespace: pods[0].Namespace, Name: pods[0].Name}
 	original := &core.ConfigMap{}
-	if err := operations.store.client.Get(ctx, key, original); err != nil {
+	if err := operations.Store.Client().Get(ctx, key, original); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{profileInitContainerName, "deadline policy"} {
@@ -556,12 +559,12 @@ func TestRouteRejectsImmutableProfileAndDeadlinePolicyBeforePersistence(t *testi
 			if field == profileInitContainerName {
 				wantError = "lacks matching actual readiness"
 			}
-			result, err := operations.Execute(ctx, Operation{ID: wanted.ID, Kind: operationRoute, Target: &wanted})
-			if err == nil || !strings.Contains(err.Error(), wantError) || result.Status != nativeOperationFailed || len(result.Actual.Native) != 0 || len(result.Progress) != 0 {
+			result, err := operations.Execute(ctx, servingstate.Operation{ID: wanted.ID, Kind: servingstate.OperationRoute, Target: &wanted})
+			if err == nil || !strings.Contains(err.Error(), wantError) || result.Status != servingstate.NativeOperationFailed || len(result.Actual.Native) != 0 || len(result.Progress) != 0 {
 				t.Fatalf("immutable %s mutation escaped rejection: result=%+v err=%v", field, result, err)
 			}
 			current := &core.ConfigMap{}
-			if err := operations.store.client.Get(ctx, key, current); err != nil {
+			if err := operations.Store.Client().Get(ctx, key, current); err != nil {
 				t.Fatal(err)
 			}
 			if !maps.Equal(current.Data, original.Data) {
@@ -581,7 +584,7 @@ func TestCaptureRecordsNodePodsWithWorkloadRole(t *testing.T) {
 	}
 	external := pod("external", map[string]string{"app": "external"})
 	system := pod("system", map[string]string{profilingrun.MeasurementWorkloadLabelKey: profilingrun.SystemRole})
-	operations := &Operations{store: manager.store, kube: kubefake.NewSimpleClientset(node, external, system), runtime: manager.runtime}
+	operations := &servingops.Operations{Store: manager.store, Kube: kubefake.NewSimpleClientset(node, external, system), Runtime: manager.runtime}
 	state, err := operations.Capture(context.Background(), serving.NodeReference{Name: node.Name, UID: string(node.UID)})
 	if err != nil {
 		t.Fatal(err)
@@ -597,7 +600,7 @@ func TestCaptureRecordsNodePodsWithWorkloadRole(t *testing.T) {
 }
 
 func TestRouteAndBridgeRejectEmptyBeforePolicyOrSeedMutation(t *testing.T) {
-	for _, kind := range []string{operationRoute, operationResize} {
+	for _, kind := range []string{servingstate.OperationRoute, servingstate.OperationResize} {
 		for _, allZero := range []bool{false, true} {
 			operations, target, pods := routeAcknowledgmentFixture(t)
 			uid := target.Instances[0].WorkloadUID
@@ -608,13 +611,13 @@ func TestRouteAndBridgeRejectEmptyBeforePolicyOrSeedMutation(t *testing.T) {
 				}
 			}
 			target.Routing = map[string]map[string]int32{uid: weights}
-			before, _ := operations.runtime.SchedulerRouting()
+			before, _ := operations.Runtime.SchedulerRouting()
 			seeds := podRoutingAnnotations(context.Background(), t, operations, pods)
-			result := OperationResult{Operation: Operation{Kind: kind, Target: &target, WorkloadUIDs: []string{uid}}}
+			result := servingstate.OperationResult{Operation: servingstate.Operation{Kind: kind, Target: &target, WorkloadUIDs: []string{uid}}}
 			if err := operations.ApplyTarget(context.Background(), target, &result); err == nil {
 				t.Fatal("empty/all-zero route or bridge/resize passed preflight")
 			}
-			after, _ := operations.runtime.SchedulerRouting()
+			after, _ := operations.Runtime.SchedulerRouting()
 			if !reflect.DeepEqual(before, after) || !slices.Equal(seeds, podRoutingAnnotations(context.Background(), t, operations, pods)) || len(result.Steps) != 0 {
 				t.Fatal("rejected empty distribution mutated runtime, seeds, or policy")
 			}
@@ -632,7 +635,7 @@ func (c routingPersistenceFailureClient) Patch(ctx context.Context, object clien
 		if err := c.Get(ctx, client.ObjectKeyFromObject(pod), before); err != nil {
 			return err
 		}
-		if before.Annotations[ServingRoutingAnnotation] != pod.Annotations[ServingRoutingAnnotation] {
+		if before.Annotations[servingstate.ServingRoutingAnnotation] != pod.Annotations[servingstate.ServingRoutingAnnotation] {
 			return errors.New("injected routing persistence failure")
 		}
 	}
@@ -643,13 +646,13 @@ func TestUnroutePersistenceFailureIsNotSuccessfulACK(t *testing.T) {
 	operations, target, pods := routeAcknowledgmentFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := operations.persistRouting(ctx, "", nil); err != nil {
+	if err := operations.PersistRouting(ctx, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	seeds := podRoutingAnnotations(ctx, t, operations, pods)
-	operations.store.client = routingPersistenceFailureClient{operations.store.client}
-	result, err := operations.Execute(ctx, Operation{ID: target.ID, Kind: operationUnroute, Target: &target})
-	if err == nil || result.Status == nativeOperationComplete || !strings.Contains(err.Error(), "injected routing persistence failure") {
+	operations.Store.(*Store).client = routingPersistenceFailureClient{operations.Store.Client()}
+	result, err := operations.Execute(ctx, servingstate.Operation{ID: target.ID, Kind: servingstate.OperationUnroute, Target: &target})
+	if err == nil || result.Status == servingstate.NativeOperationComplete || !strings.Contains(err.Error(), "injected routing persistence failure") {
 		t.Fatalf("persistence failure promoted to ACK: status=%s err=%v", result.Status, err)
 	}
 	if !slices.Equal(seeds, podRoutingAnnotations(ctx, t, operations, pods)) {

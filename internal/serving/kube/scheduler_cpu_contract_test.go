@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
@@ -16,12 +19,12 @@ import (
 
 const measuredTwoCoreCPUMax = "max 100000"
 
-func measuredCPUPreparationFixture() PrepareSpec {
+func measuredCPUPreparationFixture() servingstate.PrepareSpec {
 	pod, node, profile, _ := observerSourceFixture()
 	profile.RuntimeMetadata.CPUAffinity = []int{0, 1, 2, 3}
 	profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = 0, 0
 	profile.RuntimeMetadata.CgroupCPUMax = measuredTwoCoreCPUMax
-	return PrepareSpec{
+	return servingstate.PrepareSpec{
 		Name: pod.Name, MemoryBytes: 1024,
 		Instance: serving.SchedulerInstance{ID: "measured-slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
 		Store:    storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
@@ -40,7 +43,7 @@ func TestNativePodReadbackUsesMemoryAndGPUWithoutCPUAllocation(t *testing.T) {
 	}
 	at := time.Unix(100, 0)
 	sn := serving.SchedulerNode{Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, MemoryBytes: 1 << 30, Ready: true, PowerMode: "fixed", ObservedAt: at}
-	id := physicalID(pod.UID, firstfloorStatus(pod).ContainerID)
+	id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 	state := serving.InstanceState{ID: id, Node: sn.Node, Profile: profile.ID, Ready: true, ObservedAt: at, Native: &native.State{Ready: true, Metadata: native.Metadata{ProfileID: profile.ID, Runtime: *profile.RuntimeMetadata, MaxQueueRequests: 4, MaxBatchSize: 1, Policy: native.Policy{MaxBatchSize: 1}}}}
 	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at}
 	captureNodePods(&snapshot, &sn, node, &core.PodList{Items: []core.Pod{*pod}}, map[string]serving.InstanceState{id: state}, map[string]*serving.Profile{profile.ID: &profile})
@@ -57,18 +60,18 @@ func TestNativePodReadbackUsesMemoryAndGPUWithoutCPUAllocation(t *testing.T) {
 }
 
 func TestPreparationSharedCPURetainsMemoryAndDeviceAdmission(t *testing.T) {
-	if err := ValidatePreparation(measuredCPUPreparationFixture()); err != nil {
+	if err := servingops.ValidatePreparation(measuredCPUPreparationFixture()); err != nil {
 		t.Fatal("runtime automatic threads rejected", err)
 	}
-	for _, change := range []func(*PrepareSpec){
-		func(s *PrepareSpec) { s.MemoryBytes-- },
-		func(s *PrepareSpec) { s.Instance.Allocation.GPUUUID = "unmeasured" },
-		func(s *PrepareSpec) { s.Instance.Node.UID = "wrong-node" },
+	for _, change := range []func(*servingstate.PrepareSpec){
+		func(s *servingstate.PrepareSpec) { s.MemoryBytes-- },
+		func(s *servingstate.PrepareSpec) { s.Instance.Allocation.GPUUUID = "unmeasured" },
+		func(s *servingstate.PrepareSpec) { s.Instance.Node.UID = "wrong-node" },
 	} {
 		spec := measuredCPUPreparationFixture()
 		change(&spec)
 		kube := kubefake.NewSimpleClientset()
-		operations := &Operations{kube: kube}
+		operations := &servingops.Operations{Kube: kube}
 		if _, err := operations.PrepareInstance(context.Background(), spec); err == nil {
 			t.Fatal("unsafe preparation admitted")
 		}

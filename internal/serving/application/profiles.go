@@ -13,6 +13,9 @@ import (
 	"strings"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
@@ -28,8 +31,8 @@ const preparationUnavailable = "PreparationUnavailable"
 // prepared becomes its own CatalogIssue; the other profiles remain usable.
 func (o *SchedulerService) preparations(
 	ctx context.Context, config SchedulerConfiguration, profiles []serving.Profile,
-) (map[string]servingkube.PrepareSpec, []servingkube.CatalogIssue) {
-	preparations := make(map[string]servingkube.PrepareSpec, len(profiles))
+) (map[string]servingstate.PrepareSpec, []servingkube.CatalogIssue) {
+	preparations := make(map[string]servingstate.PrepareSpec, len(profiles))
 	var issues []servingkube.CatalogIssue
 	for _, profile := range profiles {
 		spec, err := o.preparation(ctx, config, profile)
@@ -48,9 +51,9 @@ func (o *SchedulerService) preparations(
 
 func (o *SchedulerService) preparation(
 	ctx context.Context, config SchedulerConfiguration, profile serving.Profile,
-) (servingkube.PrepareSpec, error) {
+) (servingstate.PrepareSpec, error) {
 	if profile.RuntimeMetadata == nil {
-		return servingkube.PrepareSpec{}, errors.New("verified physical allocation unavailable")
+		return servingstate.PrepareSpec{}, errors.New("verified physical allocation unavailable")
 	}
 	spec, err := o.measuredPreparation(ctx, profile, config.Settings.ServingMemoryBytes)
 	if err != nil {
@@ -67,7 +70,7 @@ func (o *SchedulerService) preparation(
 	spec.Bundle = evidencestore.ObjectIdentity{
 		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
 	}
-	if err = servingkube.ValidatePreparation(spec); err != nil {
+	if err = servingops.ValidatePreparation(spec); err != nil {
 		return spec, err
 	}
 	_, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw))
@@ -136,8 +139,8 @@ func reproducibleRuntimeAccess(p serving.Profile) error {
 // servingMemory, the headroom for the requests firstfloor queues.
 func (o *SchedulerService) measuredPreparation(
 	ctx context.Context, p serving.Profile, servingMemory uint64,
-) (servingkube.PrepareSpec, error) {
-	var spec servingkube.PrepareSpec
+) (servingstate.PrepareSpec, error) {
+	var spec servingstate.PrepareSpec
 	if p.RuntimeMetadata == nil || p.Condition.Firstfloor == nil {
 		return spec, fmt.Errorf("verified native runtime/settings unavailable")
 	}
@@ -186,7 +189,7 @@ func (o *SchedulerService) measuredPreparation(
 			"preparation override required for measured backend %s host delivery contract", p.Condition.Backend,
 		)
 	}
-	spec = servingkube.PrepareSpec{
+	spec = servingstate.PrepareSpec{
 		Name: name, Store: binding, MemoryBytes: memory,
 		Instance: serving.SchedulerInstance{
 			ID: name, Node: serving.NodeReference{Name: p.NodeName, UID: p.Condition.NodeUID},
@@ -230,7 +233,7 @@ func (o *SchedulerService) measuredPreparation(
 	checked := spec.Config
 	checked.Policy.Batches = p.NativeBundle().Batches
 	if err = native.ValidateConfig(&checked); err != nil {
-		return servingkube.PrepareSpec{}, err
+		return servingstate.PrepareSpec{}, err
 	}
 	return spec, nil
 }

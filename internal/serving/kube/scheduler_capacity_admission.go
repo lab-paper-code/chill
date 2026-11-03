@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
 )
@@ -35,7 +37,7 @@ func ValidatePreparationCapacity(
 	for _, pod := range pods.Items {
 		if pod.Namespace == servingNamespace && pod.Spec.NodeName == node.Name &&
 			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed &&
-			pod.Labels["app.kubernetes.io/component"] == servingInstanceComponent {
+			pod.Labels["app.kubernetes.io/component"] == servingstate.ServingInstanceComponent {
 			return errors.New("preparation target already has an active serving Pod")
 		}
 	}

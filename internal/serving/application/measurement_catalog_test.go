@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -98,7 +100,7 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 				{Code: preparationUnavailable, Reason: "accepted preparation failed"},
 			},
 		},
-		Preparations: map[string]servingkube.PrepareSpec{"accepted-only": {Name: "accepted-preparation"}},
+		Preparations: map[string]servingstate.PrepareSpec{"accepted-only": {Name: "accepted-preparation"}},
 		Occupancy: []servingkube.OccupancySelection{{
 			Node:      serving.NodeReference{Name: "node", UID: "node-uid"},
 			PowerMode: "fixed", Model: "model", ProfileID: "accepted-only", Batch: 2,

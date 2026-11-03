@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
@@ -41,7 +43,7 @@ func (h *Handler) operations(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	request, err := servingkube.DecodeManualOperation(raw)
+	request, err := servingstate.DecodeManualOperation(raw)
 	if err != nil {
 		sendError(w, err)
 		return

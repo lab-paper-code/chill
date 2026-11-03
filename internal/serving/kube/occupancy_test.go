@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -107,8 +110,8 @@ func TestOccupancyIsolatesTheLoadNode(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	// A run holds gw so its taint stays while the occupancy is judged.
-	o.controller.startNodeRun(Operation{ID: "gw-run", Kind: handBackKind, Node: serving.NodeReference{Name: "gw", UID: "gw-uid"}}, SchedulerControllerConfig{},
-		func(context.Context, *OperationResult) error { <-release; return nil })
+	o.controller.startNodeRun(servingstate.Operation{ID: "gw-run", Kind: handBackKind, Node: serving.NodeReference{Name: "gw", UID: "gw-uid"}}, SchedulerControllerConfig{},
+		func(context.Context, *servingstate.OperationResult) error { <-release; return nil })
 	m := occupancyRoot("occ", time.Now(), 1)
 	o.create(m)
 	if err = o.controller.Admit(context.Background()); err != nil {
@@ -117,8 +120,8 @@ func TestOccupancyIsolatesTheLoadNode(t *testing.T) {
 	if o.holder() != "" || o.admission(m) != "" {
 		t.Fatalf("occupancy granted while the load Node is measured: holder %q", o.holder())
 	}
-	o.controller.startNodeRun(Operation{ID: "load", Kind: occupancyKind, Node: testNode}, SchedulerControllerConfig{},
-		func(context.Context, *OperationResult) error { <-release; return nil })
+	o.controller.startNodeRun(servingstate.Operation{ID: "load", Kind: occupancyKind, Node: testNode}, SchedulerControllerConfig{},
+		func(context.Context, *servingstate.OperationResult) error { <-release; return nil })
 	gw.Spec.Taints = nil
 	if _, err = o.kube.CoreV1().Nodes().Update(context.Background(), gw, meta.UpdateOptions{}); err != nil {
 		t.Fatal(err)
@@ -172,10 +175,10 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 		objects.objects[key] = raw
 		return key
 	}
-	put("old", "max", measurementAccepted, 9_000_000, at)
-	newest := put("new", "max", measurementAccepted, 9_410_000, at.Add(time.Hour))
-	put("later-insufficient", "max", measurementInsufficient, 1, at.Add(2*time.Hour))
-	negative := put("low", "low", measurementAccepted, -5, at)
+	put("old", "max", servingstate.MeasurementAccepted, 9_000_000, at)
+	newest := put("new", "max", servingstate.MeasurementAccepted, 9_410_000, at.Add(time.Hour))
+	put("later-insufficient", "max", servingops.MeasurementInsufficient, 1, at.Add(2*time.Hour))
+	negative := put("low", "low", servingstate.MeasurementAccepted, -5, at)
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +203,7 @@ func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 	put := func(name, profileID string, d int64, measuredAt time.Time) string {
 		t.Helper()
 		record := DispatchOccupancyRecord{SchemaVersion: DispatchOccupancySchema, Node: testNode, PowerMode: "max", RuntimeImage: "image", Model: "m",
-			ProfileID: profileID, PerRequestNanos: d, Verdict: measurementAccepted, MeasuredAt: measuredAt}
+			ProfileID: profileID, PerRequestNanos: d, Verdict: servingstate.MeasurementAccepted, MeasuredAt: measuredAt}
 		raw, err := json.Marshal(record)
 		if err != nil {
 			t.Fatal(err)
@@ -275,7 +278,7 @@ func TestOccupancyJudgesWorkloadServingByListedPods(t *testing.T) {
 
 	pod := servingPod("serving-plc")
 	pod.Spec.NodeName = "gw"
-	pod.Annotations = map[string]string{ServingRoutingAnnotation: `{"` + string(w.UID) + `":1}`}
+	pod.Annotations = map[string]string{servingstate.ServingRoutingAnnotation: `{"` + string(w.UID) + `":1}`}
 	if _, err := o.kube.CoreV1().Pods("chill-system").Create(context.Background(), pod, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}

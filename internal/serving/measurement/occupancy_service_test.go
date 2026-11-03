@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -63,8 +65,8 @@ func occupancyTestService(t *testing.T) (*Service, occupancyFixture, *int) {
 		}}).
 		Build()
 	scheduler := &SchedulerInputs{Lock: &sync.Mutex{}, GatewayRequestTimeout: 2 * time.Second, DecodePolicy: decodeTestPolicy,
-		LoadProfiles: func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool) {
-			return f.cm.ResourceVersion, []serving.Profile{*f.profile}, map[string]servingkube.PrepareSpec{f.profile.ID: f.preparation}, true
+		LoadProfiles: func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool) {
+			return f.cm.ResourceVersion, []serving.Profile{*f.profile}, map[string]servingstate.PrepareSpec{f.profile.ID: f.preparation}, true
 		},
 	}
 	service := &Service{

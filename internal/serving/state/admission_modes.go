@@ -1,16 +1,16 @@
-package kube
+package state
 
 import (
-	"reflect"
+	reflect "reflect"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	core "k8s.io/api/core/v1"
 )
 
-// nodeClass returns the one DeviceClass of the Node, or nil when none or
+// NodeClass returns the one DeviceClass of the Node, or nil when none or
 // several match.
-func nodeClass(n *core.Node, classes []edge.DeviceClass) *edge.DeviceClass {
+func NodeClass(n *core.Node, classes []edge.DeviceClass) *edge.DeviceClass {
 	var class *edge.DeviceClass
 	for i := range classes {
 		if classes[i].Spec.Architecture == n.Status.NodeInfo.Architecture && nodeClassMatches(n, &classes[i]) {
@@ -23,11 +23,11 @@ func nodeClass(n *core.Node, classes []edge.DeviceClass) *edge.DeviceClass {
 	return class
 }
 
-// readBackMode is the mode the Node is in now: the mode whose actuator the
+// ReadBackMode is the mode the Node is in now: the mode whose actuator the
 // actuation agent read back from the host, or the Fixed mode of a Node without
 // a read-back. A requested mode still pending, or several matching modes,
 // leave it unknown.
-func readBackMode(n *core.Node, class *edge.DeviceClass) string {
+func ReadBackMode(n *core.Node, class *edge.DeviceClass) string {
 	if class == nil || n.Labels[chillmeta.PowerModeState] == chillmeta.PowerModePending {
 		return ""
 	}
@@ -50,4 +50,16 @@ func readBackMode(n *core.Node, class *edge.DeviceClass) string {
 		}
 	}
 	return found
+}
+
+func nodeClassMatches(node *core.Node, class *edge.DeviceClass) bool {
+	if len(class.Spec.NodeSelector) == 0 {
+		return false
+	}
+	for key, value := range class.Spec.NodeSelector {
+		if node.Labels[key] != value {
+			return false
+		}
+	}
+	return true
 }

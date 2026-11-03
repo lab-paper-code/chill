@@ -16,11 +16,15 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -34,6 +38,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+const completedWorkloadPhase = "Completed"
 
 // The fake native client does not allocate registration UIDs or generations.
 // Supply only those API-server semantics, not lifecycle/runtime behavior.
@@ -95,7 +101,18 @@ func (a managerArchive) PutImmutable(_ context.Context, identity evidencestore.O
 	return evidencestore.Receipt{SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: outcome}, nil
 }
 
-func newManagerHarness(t *testing.T) (*Manager, observation.ObservationLogConfig) {
+// Integration fixtures keep adapter/runtime handles without exposing management
+// internals or replacing any lifecycle behavior.
+type managerHarness struct {
+	*management.Manager
+	store          *Store
+	runtime        *serving.Runtime
+	observationLog *observation.ObservationLog
+	observer       *Observer
+	reservations   *ClusterState
+}
+
+func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLogConfig) {
 	t.Helper()
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -114,14 +131,18 @@ func newManagerHarness(t *testing.T) (*Manager, observation.ObservationLogConfig
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(store))
+	kube := kubefake.NewSimpleClientset()
+	cluster := NewClusterState(store, kube, testObserverConfig(store).Namespace)
+	observer, err := NewObserver(cluster, store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(store))
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := NewManager(store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
+	owner, err := management.NewManager(cluster, store, rt, observationLog, observer, management.ManagerConfig{DrainTimeout: time.Hour,
+		Actor: func(ctx context.Context) (string, string) { return PrincipalFromContext(ctx).Actor() }})
 	if err != nil {
 		t.Fatal(err)
 	}
+	manager := &managerHarness{Manager: owner, store: store, runtime: rt, observationLog: observationLog, observer: observer, reservations: cluster}
 	if err := manager.Initialize(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +172,7 @@ func managerDatasetSpec() api.DatasetSpec {
 }
 
 // createManagerCatalog registers the model, preprocessor and dataset managerWorkloadSpec names.
-func createManagerCatalog(t *testing.T, m *Manager) *api.ModelSpec {
+func createManagerCatalog(t *testing.T, m *managerHarness) *api.ModelSpec {
 	t.Helper()
 	ctx := context.Background()
 	model, err := m.CreateModel(ctx, "model", managerModelSpec())
@@ -204,7 +225,7 @@ func managerSample(t *testing.T) *serving.InferenceInput {
 	return &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "image", Datatype: "BYTES", Data: picture.Bytes()}}}
 }
 
-func startManagerCalls(t *testing.T, m *Manager, profile serving.Profile, names ...string) ([]serving.Receipt, []*serving.Call, chan struct{}, map[string]serving.Dispatch) {
+func startManagerCalls(t *testing.T, m *managerHarness, profile serving.Profile, names ...string) ([]serving.Receipt, []*serving.Call, chan struct{}, map[string]serving.Dispatch) {
 	t.Helper()
 	m.observer.SetProfiles([]serving.Profile{profile})
 	m.runtime.SetProfiles([]serving.Profile{profile})
@@ -253,7 +274,7 @@ func startManagerCalls(t *testing.T, m *Manager, profile serving.Profile, names 
 	return receipts, calls, finish, dispatched
 }
 
-func completeManagerResponses(t *testing.T, m *Manager, receipts []serving.Receipt, calls []*serving.Call) {
+func completeManagerResponses(t *testing.T, m *managerHarness, receipts []serving.Receipt, calls []*serving.Call) {
 	t.Helper()
 	for i, call := range calls {
 		wait, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -351,7 +372,7 @@ func TestManagerSLOUpdatePreservesAcceptedSnapshot(t *testing.T) {
 	if err != nil || accepted {
 		t.Fatalf("SLO-only update = %v, %v", accepted, err)
 	}
-	if dispatched["first"].Definition.SLO.TargetLatency != time.Second || first.Applied.SLO.TargetLatency != 2*time.Second || first.Operation.Phase != operationCompleted || first.Operation.AppliedAt == nil {
+	if dispatched["first"].Definition.SLO.TargetLatency != time.Second || first.Applied.SLO.TargetLatency != 2*time.Second || first.Operation.Phase != completedWorkloadPhase || first.Operation.AppliedAt == nil {
 		t.Fatal("SLO replacement changed the accepted snapshot or was not actually completed")
 	}
 	finish <- struct{}{}
@@ -426,13 +447,13 @@ func TestManagerSharedModelBarrier(t *testing.T) {
 	}
 	for _, name := range []string{"first", "second"} {
 		view, err := m.GetWorkload(ctx, name)
-		if err != nil || view.Applied.Model.Generation != model.Generation || view.Operation.Phase != operationCompleted || view.Reason != "MissingEvidence" {
+		if err != nil || view.Applied.Model.Generation != model.Generation || view.Operation.Phase != completedWorkloadPhase || view.Reason != "MissingEvidence" {
 			t.Fatalf("new shared definition %s = %+v, %v", name, view, err)
 		}
 		if view.Operation.ActorUsername != "model-editor" || view.Operation.ActorUID != "model-editor-uid" {
 			t.Fatalf("durable shared update actor lost: %+v", view.Operation)
 		}
-		assertObservationLogActor(t, m.observationLog, string(view.Desired.UID), operationModelUpdate, "model-editor", "model-editor-uid")
+		assertObservationLogActor(t, m.observationLog, string(view.Desired.UID), "ModelUpdate", "model-editor", "model-editor-uid")
 	}
 }
 
@@ -464,11 +485,14 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observer, err := NewObserver(m.store, kubefake.NewSimpleClientset(), rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(m.store))
+	kube := kubefake.NewSimpleClientset()
+	cluster := NewClusterState(m.store, kube, testObserverConfig(m.store).Namespace)
+	observer, err := NewObserver(cluster, m.store, kube, rt, &firstfloor.Client{HTTPClient: &http.Client{Timeout: time.Second}}, testObserverConfig(m.store))
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewManager(m.store, rt, observationLog, observer, ManagerConfig{DrainTimeout: time.Hour})
+	restarted, err := management.NewManager(cluster, m.store, rt, observationLog, observer, management.ManagerConfig{DrainTimeout: time.Hour,
+		Actor: func(ctx context.Context) (string, string) { return PrincipalFromContext(ctx).Actor() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,13 +504,13 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err = restarted.GetWorkload(ctx, "service")
-	if err != nil || view.Admission || view.Operation.Phase != operationFailed || view.Applied.Identity() != old.Identity() {
+	if err != nil || view.Admission || view.Operation.Phase != "Failed" || view.Applied.Identity() != old.Identity() {
 		t.Fatalf("interrupted operation auto-resumed: %+v %v", view, err)
 	}
 	if view.Operation.ActorUsername != "original-editor" || view.Operation.ActorUID != "original-uid" {
 		t.Fatalf("restart lost accepted actor: %+v", view.Operation)
 	}
-	assertObservationLogActor(t, observationLog, string(view.Desired.UID), operationModelUpdate, "original-editor", "original-uid")
+	assertObservationLogActor(t, observationLog, string(view.Desired.UID), "ModelUpdate", "original-editor", "original-uid")
 	_, accepted, err := restarted.UpdateWorkload(ctx, "service", view.Desired.ResourceVersion, view.Desired.Spec)
 	if err != nil || !accepted {
 		t.Fatalf("explicit new PUT = %v %v", accepted, err)
@@ -495,7 +519,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err = restarted.GetWorkload(ctx, "service")
-	if err != nil || view.Operation.Phase != operationCompleted || view.Applied.Model.Generation != model.Generation {
+	if err != nil || view.Operation.Phase != completedWorkloadPhase || view.Applied.Model.Generation != model.Generation {
 		t.Fatalf("explicit replacement did not apply: %+v %v", view, err)
 	}
 }
@@ -635,7 +659,7 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 		t.Fatalf("referenced preprocessor update = %v, %v", accepted, err)
 	}
 	view, err := m.GetWorkload(ctx, "first")
-	if err != nil || view.Admission || view.Operation.Kind != operationPreprocessorUpdate || view.Operation.TargetCatalogUID != pre.UID {
+	if err != nil || view.Admission || view.Operation.Kind != "PreprocessorUpdate" || view.Operation.TargetCatalogUID != pre.UID {
 		t.Fatalf("preprocessor barrier = %+v, %v", view, err)
 	}
 	if _, err := m.CreateWorkload(ctx, "during-barrier", managerWorkloadSpec()); managerCode(err) != testOperationConflict {
@@ -664,7 +688,7 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err = m.GetWorkload(ctx, "first")
-	if err != nil || view.Operation.Phase != operationCompleted || view.Applied.Preprocessor.Generation != pre.Generation || view.Applied.Model.Paths[0].Preprocessor.Path != "/artifact/changed" {
+	if err != nil || view.Operation.Phase != completedWorkloadPhase || view.Applied.Preprocessor.Generation != pre.Generation || view.Applied.Model.Paths[0].Preprocessor.Path != "/artifact/changed" {
 		t.Fatalf("new preprocessor definition = %+v, %v", view, err)
 	}
 	if dispatched["first"].Definition.Preprocessor.Generation == pre.Generation {
@@ -673,7 +697,7 @@ func TestManagerPreprocessorUpdateBarrier(t *testing.T) {
 	if _, err := m.UpdateDataset(ctx, "data", dataset.ResourceVersion, larger); err != nil {
 		t.Fatalf("dataset update after the new preprocessor applied = %v", err)
 	}
-	if view, err = m.GetWorkload(ctx, "first"); err != nil || view.Operation.Phase != operationCompleted || view.Operation.Kind != operationPreprocessorUpdate {
+	if view, err = m.GetWorkload(ctx, "first"); err != nil || view.Operation.Phase != completedWorkloadPhase || view.Operation.Kind != "PreprocessorUpdate" {
 		t.Fatalf("dataset update started an operation: %+v, %v", view.Operation, err)
 	}
 }
@@ -688,7 +712,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	}
 	pod, node, _, _ := observerSourceFixture()
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "Workload", Name: w.Desired.Name, UID: w.Desired.UID}}
-	pod.Finalizers = []string{sourceFinalizer}
+	pod.Finalizers = []string{servingstate.SourceFinalizer}
 	c := m.store.client.(*managerAPI).Client
 	if err := c.Create(ctx, pod); err != nil {
 		t.Fatal(err)
@@ -714,20 +738,18 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 		err := c.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: action.(ktesting.GetAction).GetName()}, current)
 		return true, current, err
 	})
-	operations := &Operations{store: m.store, kube: kube, runtime: m.runtime, observer: o,
-		config: OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
+	operations := &servingops.Operations{Cluster: o.cluster, Store: m.store, Kube: kube, Runtime: m.runtime, Observer: o, Config: servingops.OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond}}
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	if err := operations.RemoveInstance(ctx, ref, physicalID(pod.UID, status.ContainerID)); err != nil {
+	if err := operations.RemoveInstance(ctx, ref, servingstate.PhysicalID(pod.UID, status.ContainerID)); err != nil {
 		t.Fatal(err)
 	}
 	if len(o.sources) != 0 || len(m.runtime.Instances()) != 0 {
 		t.Fatal("completed remove retained physical executor")
 	}
-	controller := &SchedulerController{store: m.store, kube: kube, runtime: m.runtime, observer: o, runs: map[string]*actionRun{}}
-	o.scheduler = controller
+	controller := &m.reservations.reservation
 	// A prior operation on this Workload conflicts even after all Pods vanished.
 	controller.mu.Lock()
-	held := controller.reserveRun("held", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{WorkloadUID: string(w.Desired.UID)})
+	held := controller.reserveRun("held", &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{WorkloadUID: string(w.Desired.UID)})
 	controller.mu.Unlock()
 	if !held {
 		t.Fatal("failed to reserve test operation")
@@ -745,7 +767,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if err != nil || current.DeletionTimestamp == nil || len(current.Finalizers) == 0 {
 		t.Fatalf("DELETE did not retain finalizer: %v, %v", current, err)
 	}
-	if err := controller.authorize(Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
+	if err := controller.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
 		t.Fatal("deletion released scope before finalizer and 404")
 	}
 	if err := m.Advance(ctx); err != nil {
@@ -754,7 +776,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if _, err := m.GetWorkload(ctx, w.Desired.Name); !apierrors.IsNotFound(err) {
 		t.Fatalf("deleted Workload = %v", err)
 	}
-	if err := controller.authorize(Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
+	if err := controller.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
 		t.Fatal("404 retained deletion reservation", err)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	core "k8s.io/api/core/v1"
@@ -35,7 +37,7 @@ func TestNvidiaObservationWithoutRequestKeepsFixedMode(t *testing.T) {
 		}
 		node := &core.Node{ObjectMeta: meta.ObjectMeta{Labels: map[string]string{},
 			Annotations: map[string]string{chillmeta.PowerActuator: string(raw)}}}
-		if mode := readBackMode(node, class); mode != class.Spec.PowerModes[0].Name {
+		if mode := servingstate.ReadBackMode(node, class); mode != class.Spec.PowerModes[0].Name {
 			t.Fatalf("unrequested %d MHz removed fixed support: %q", mhz, mode)
 		}
 		if node.Annotations[chillmeta.PowerActuator] != string(raw) {
@@ -46,7 +48,7 @@ func TestNvidiaObservationWithoutRequestKeepsFixedMode(t *testing.T) {
 		if mhz == 900 {
 			want = nvidiaLowMode
 		}
-		if mode := readBackMode(node, class); mode != want {
+		if mode := servingstate.ReadBackMode(node, class); mode != want {
 			t.Fatalf("requested mode read-back=%q want=%q", mode, want)
 		}
 	}

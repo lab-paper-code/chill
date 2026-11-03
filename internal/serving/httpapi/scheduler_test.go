@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/serving/application"
@@ -143,8 +145,8 @@ func settingsServiceForTest(
 			t.Error(err)
 		}
 	})
-	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{},
-		servingkube.ObserverConfig{Namespace: "serving"})
+	cluster := servingkube.NewClusterState(store, kube, "serving")
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{}, servingkube.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,13 +155,11 @@ func settingsServiceForTest(
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
-		servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := servingkube.NewSchedulerController(store, kube, execution, observer, operations, observationLog,
-		servingkube.SchedulerControllerConfig{Settings: settings})
+	controller, err := servingkube.NewSchedulerController(cluster, store, kube, execution, observer, operations, observationLog, servingkube.SchedulerControllerConfig{Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,11 +498,11 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	})
 	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
 	controller := service.Controller
-	meters := []servingkube.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
+	meters := []servingops.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
 		SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20, ChangeSchedulerSettings: service.ChangeSchedulerSettings,
-		SchedulerMeters: func() []servingkube.MeterDeclaration { return meters },
+		SchedulerMeters: func() []servingops.MeterDeclaration { return meters },
 		RequestTimeout:  73125 * time.Millisecond,
 	}}
 	put := func(extra string) *httptest.ResponseRecorder {
@@ -538,10 +538,10 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	got := httptest.NewRecorder()
 	handler.scheduler(got, request)
 	var shown struct {
-		StaticRouting    map[string]map[string]int      `json:"staticRouting"`
-		PowerObservation map[string]map[string]float64  `json:"powerObservation"`
-		Meters           []servingkube.MeterDeclaration `json:"meters"`
-		RequestTimeout   time.Duration                  `json:"requestTimeout"`
+		StaticRouting    map[string]map[string]int     `json:"staticRouting"`
+		PowerObservation map[string]map[string]float64 `json:"powerObservation"`
+		Meters           []servingops.MeterDeclaration `json:"meters"`
+		RequestTimeout   time.Duration                 `json:"requestTimeout"`
 	}
 	if err := json.Unmarshal(got.Body.Bytes(), &shown); err != nil || got.Code != http.StatusOK || !reflect.DeepEqual(shown.StaticRouting, declared) {
 		t.Fatalf("GET settings lost the stored declaration: status=%d body=%s", got.Code, got.Body)

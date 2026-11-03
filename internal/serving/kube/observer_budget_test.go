@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -65,7 +68,7 @@ func newObserverAPI(t *testing.T, instances int) *observerAPI {
 		pod := base.DeepCopy()
 		pod.Name = "instance-" + string(rune('a'+i))
 		pod.UID = types.UID("pod-uid-" + string(rune('a'+i)))
-		pod.Labels[instancePodUIDLabel] = string(pod.UID)
+		pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
 		service := observerServiceFixture(pod)
 		pods[pod.Name], services[service.Name] = pod, service
 		podList.Items = append(podList.Items, *pod)
@@ -175,12 +178,12 @@ func (a *observerAPI) listPods(inventory core.PodList, labelSelector string, own
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	list := core.PodList{TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"}}
-	selector := strings.TrimPrefix(labelSelector, instancePodUIDLabel+"=")
+	selector := strings.TrimPrefix(labelSelector, servingstate.InstancePodUIDLabel+"=")
 	for _, pod := range inventory.Items {
 		if owner != "" {
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", Name: "w", UID: owner}}
 		}
-		if labelSelector == "" || pod.Labels[instancePodUIDLabel] == selector {
+		if labelSelector == "" || pod.Labels[servingstate.InstancePodUIDLabel] == selector {
 			list.Items = append(list.Items, pod)
 		}
 	}
@@ -260,8 +263,8 @@ func TestObserverProbeListsOnlyUIDLabel(t *testing.T) {
 			}
 			continue
 		}
-		uid := strings.TrimPrefix(selector, instancePodUIDLabel+"=")
-		if selector != instancePodUIDLabel+"="+uid || seen[uid] || len(api.podListUIDs[i]) != 1 || string(api.podListUIDs[i][0]) != uid {
+		uid := strings.TrimPrefix(selector, servingstate.InstancePodUIDLabel+"=")
+		if selector != servingstate.InstancePodUIDLabel+"="+uid || seen[uid] || len(api.podListUIDs[i]) != 1 || string(api.podListUIDs[i][0]) != uid {
 			t.Fatalf("probe selector=%q returned UIDs=%v", selector, api.podListUIDs[i])
 		}
 		seen[uid] = true
@@ -282,7 +285,7 @@ func TestObserverProbeRejectsUIDLabelDuplicates(t *testing.T) {
 			}
 			api.mu.Lock()
 			defer api.mu.Unlock()
-			if len(api.podSelectors) != 2 || api.podSelectors[1] != instancePodUIDLabel+"=pod-uid-a" || len(api.podListUIDs[1]) != 2 {
+			if len(api.podSelectors) != 2 || api.podSelectors[1] != servingstate.InstancePodUIDLabel+"=pod-uid-a" || len(api.podListUIDs[1]) != 2 {
 				t.Fatalf("duplicate verification selectors=%v UIDs=%v", api.podSelectors, api.podListUIDs)
 			}
 		})
@@ -437,7 +440,7 @@ func TestOperationsCaptureListsOnlyTheNodePods(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	node := &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}
 	kube := kubefake.NewSimpleClientset(node)
-	operations := &Operations{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: "chill-system"}}
+	operations := &servingops.Operations{Cluster: manager.observer.cluster, Store: manager.store, Kube: kube, Runtime: manager.runtime, Observer: manager.observer, Config: servingops.OperationConfig{Namespace: "chill-system"}}
 	_, _ = operations.Capture(context.Background(), serving.NodeReference{Name: node.Name, UID: string(node.UID)})
 	for _, action := range kube.Actions() {
 		if list, ok := action.(ktesting.ListAction); ok && action.GetResource().Resource == string(core.ResourcePods) {

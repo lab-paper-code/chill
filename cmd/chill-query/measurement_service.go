@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-
 	"slices"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -13,6 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -128,7 +128,7 @@ func catalogView(read servingkube.CatalogSnapshot) httpapi.ProfilesView {
 	out := httpapi.ProfilesView{
 		ConfigVersion: read.ConfigVersion,
 		CatalogView:   read.CatalogView(),
-		Preparations:  map[string]servingkube.PrepareSpec{},
+		Preparations:  map[string]servingstate.PrepareSpec{},
 	}
 	out.CurrentMeasurements = read.CurrentMeasurements
 	for id, p := range read.Preparations {

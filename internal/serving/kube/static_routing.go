@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"slices"
 	"strings"
 	"time"
 
-	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,88 +18,88 @@ import (
 )
 
 // manualRoutingOperationLocked admits one explicit declaration while tickMu is held.
-func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (Operation, error) {
+func (c *SchedulerController) manualRoutingOperationLocked(ctx context.Context, request servingstate.ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (servingstate.Operation, error) {
 	if strings.TrimSpace(request.Reason) == "" || request.ProfileID != "" || request.Instance != "" || request.Node != (serving.NodeReference{}) || request.FixedBatchSize != 0 || request.MaxBatch != nil || len(request.WorkloadUIDs) != 0 || request.Scope != "" {
-		return Operation{}, refused("InvalidInput", "routing requires a reason and only workloadUID and route weights")
+		return servingstate.Operation{}, servingstate.Refused("InvalidInput", "routing requires a reason and only workloadUID and route weights")
 	}
 	if !slices.ContainsFunc(snapshot.Workloads, func(d *serving.Definition) bool { return d.UID == request.WorkloadUID }) {
-		return Operation{}, refused("InvalidInput", "workloadUID must name a current Workload")
+		return servingstate.Operation{}, servingstate.Refused("InvalidInput", "workloadUID must name a current Workload")
 	}
 	if slices.Contains(config.Settings.AutonomousWorkloads, request.WorkloadUID) {
-		return Operation{}, refused("OperationConflict", "the Workload is under autonomous control")
+		return servingstate.Operation{}, servingstate.Refused("OperationConflict", "the Workload is under autonomous control")
 	}
-	if err := c.authorize(Operation{WorkloadUID: request.WorkloadUID}); err != nil {
-		return Operation{}, err
+	if err := c.authorize(servingstate.Operation{WorkloadUID: request.WorkloadUID}); err != nil {
+		return servingstate.Operation{}, err
 	}
 	weights := map[string]int{}
 	positive := false
 	for id, weight := range request.Weights {
 		if weight < 0 {
-			return Operation{}, refused("InvalidInput", "route weights must be nonnegative int32")
+			return servingstate.Operation{}, servingstate.Refused("InvalidInput", "route weights must be nonnegative int32")
 		}
 		weights[id] = int(weight)
 		positive = positive || weight > 0
 	}
 	switch request.Kind {
-	case operationRoute:
+	case servingstate.OperationRoute:
 		if !positive {
-			return Operation{}, refused("InvalidInput", "route requires a positive weight")
+			return servingstate.Operation{}, servingstate.Refused("InvalidInput", "route requires a positive weight")
 		}
-	case operationUnroute, operationRelease:
+	case servingstate.OperationUnroute, servingstate.OperationRelease:
 		if request.Weights != nil {
-			return Operation{}, refused("InvalidInput", "unroute and release do not take weights")
+			return servingstate.Operation{}, servingstate.Refused("InvalidInput", "unroute and release do not take weights")
 		}
 	default:
-		return Operation{}, refused("InvalidInput", "kind must be route, unroute or release")
+		return servingstate.Operation{}, servingstate.Refused("InvalidInput", "kind must be route, unroute or release")
 	}
-	operation := Operation{ID: "manual-" + request.Kind + ":" + string(uuid.NewUUID()), Kind: request.Kind, WorkloadUID: request.WorkloadUID, Reason: request.Reason, ActorUsername: request.ActorUsername, ActorUID: request.ActorUID}
+	operation := servingstate.Operation{ID: "manual-" + request.Kind + ":" + string(uuid.NewUUID()), Kind: request.Kind, WorkloadUID: request.WorkloadUID, Reason: request.Reason, ActorUsername: request.ActorUsername, ActorUID: request.ActorUID}
 	target, err := serving.StaticRoutingTarget(snapshot, map[string]map[string]int{request.WorkloadUID: weights}, config.Settings.AutonomousWorkloads, operation.ID)
 	if err != nil {
-		return Operation{}, refused("OperationConflict", err.Error())
+		return servingstate.Operation{}, servingstate.Refused("OperationConflict", err.Error())
 	}
 	if err = c.validateManualRoutingNodes(ctx, request, snapshot, weights); err != nil {
-		return Operation{}, err
+		return servingstate.Operation{}, err
 	}
 	validate := c.runtime.ValidateSchedulerWorkloadsTarget
-	if request.Kind == operationUnroute || request.Kind == operationRelease {
+	if request.Kind == servingstate.OperationUnroute || request.Kind == servingstate.OperationRelease {
 		validate = c.runtime.ValidateSchedulerUnrouteTarget
 	}
 	if err = validate(target, []string{request.WorkloadUID}); err != nil {
-		return Operation{}, refused("OperationConflict", err.Error())
+		return servingstate.Operation{}, servingstate.Refused("OperationConflict", err.Error())
 	}
-	if request.Kind != operationRelease {
-		if err = c.operations.validateRoutingPolicies(ctx, target, request.WorkloadUID); err != nil {
-			return Operation{}, refused("OperationConflict", err.Error())
+	if request.Kind != servingstate.OperationRelease {
+		if err = c.operations.ValidateRoutingPolicies(ctx, target, request.WorkloadUID); err != nil {
+			return servingstate.Operation{}, servingstate.Refused("OperationConflict", err.Error())
 		}
-		operation.Target = controlledTarget(Operation{Target: &target, WorkloadUID: request.WorkloadUID})
+		operation.Target = controlledTarget(servingstate.Operation{Target: &target, WorkloadUID: request.WorkloadUID})
 	}
 	return operation, nil
 }
 
 // Validate withdrawn routes and destinations before persisting any declaration.
-func (c *SchedulerController) validateManualRoutingNodes(ctx context.Context, request ManualOperation, snapshot serving.SchedulerSnapshot, weights map[string]int) error {
+func (c *SchedulerController) validateManualRoutingNodes(ctx context.Context, request servingstate.ManualOperation, snapshot serving.SchedulerSnapshot, weights map[string]int) error {
 	nodes := map[serving.NodeReference]bool{}
-	if request.Kind == operationRelease {
-		pods, err := c.kube.CoreV1().Pods(c.operations.config.Namespace).List(ctx, meta.ListOptions{})
+	if request.Kind == servingstate.OperationRelease {
+		pods, err := c.kube.CoreV1().Pods(c.operations.Config.Namespace).List(ctx, meta.ListOptions{})
 		if err != nil {
 			return err
 		}
 		for _, pod := range pods.Items {
 			var seeds map[string]int32
-			if raw := pod.Annotations[ServingRoutingAnnotation]; raw != "" {
+			if raw := pod.Annotations[servingstate.ServingRoutingAnnotation]; raw != "" {
 				if err = json.Unmarshal([]byte(raw), &seeds); err != nil {
 					return err
 				}
 			}
-			status := firstfloorStatus(&pod)
+			status := servingstate.FirstfloorStatus(&pod)
 			if status == nil || seeds[request.WorkloadUID] <= 0 {
 				continue
 			}
 			for _, instance := range snapshot.Instances {
-				if instance.ID == physicalID(pod.UID, status.ContainerID) {
+				if instance.ID == servingstate.PhysicalID(pod.UID, status.ContainerID) {
 					nodes[instance.Node] = true
 					if manualWorkloadConflict(instance, request.WorkloadUID) {
-						return refused("OperationConflict", "release default target serves another Workload")
+						return servingstate.Refused("OperationConflict", "release default target serves another Workload")
 					}
 				}
 			}
@@ -108,7 +108,7 @@ func (c *SchedulerController) validateManualRoutingNodes(ctx context.Context, re
 	for _, instance := range snapshot.Instances {
 		if snapshot.Routing[request.WorkloadUID][instance.ID] > 0 || weights[instance.ID] > 0 || instance.OwnerWorkloadUID == request.WorkloadUID || instance.WorkloadUID == request.WorkloadUID {
 			if weights[instance.ID] > 0 && manualWorkloadConflict(instance, request.WorkloadUID) {
-				return refused("OperationConflict", "route target serves another Workload")
+				return servingstate.Refused("OperationConflict", "route target serves another Workload")
 			}
 			nodes[instance.Node] = true
 		}
@@ -139,7 +139,7 @@ func configurationUpdateRejected(err error) bool {
 
 // persistManualConfiguration updates only the selected declaration/settings field
 // using the ConfigMap's resourceVersion. A conflict is returned, never retried.
-func (c *SchedulerController) persistManualConfiguration(ctx context.Context, operation *Operation) (err error) {
+func (c *SchedulerController) persistManualConfiguration(ctx context.Context, operation *servingstate.Operation) (err error) {
 	updateAttempted := false
 	defer func() {
 		if err != nil && (!updateAttempted || configurationUpdateRejected(err)) {
@@ -152,7 +152,7 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 	if config.ConfigurationName == "" || config.ConfigurationKey == "" {
 		return errors.New("manual operation requires the scheduler ConfigMap name and key")
 	}
-	cm, err := c.kube.CoreV1().ConfigMaps(c.operations.config.Namespace).Get(ctx, config.ConfigurationName, meta.GetOptions{})
+	cm, err := c.kube.CoreV1().ConfigMaps(c.operations.Config.Namespace).Get(ctx, config.ConfigurationName, meta.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -180,14 +180,14 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 	operation.BeforeStaticRouting = maps.Clone(routing)
 	changed := false
 	switch operation.Kind {
-	case operationRoute, operationUnroute, operationRelease:
+	case servingstate.OperationRoute, servingstate.OperationUnroute, servingstate.OperationRelease:
 		if slices.Contains(settings.AutonomousWorkloads, operation.WorkloadUID) {
-			return refused("OperationConflict", "the Workload is under autonomous control")
+			return servingstate.Refused("OperationConflict", "the Workload is under autonomous control")
 		}
 		if routing == nil {
 			routing = map[string]map[string]int{}
 		}
-		if operation.Kind == operationRelease {
+		if operation.Kind == servingstate.OperationRelease {
 			_, changed = routing[operation.WorkloadUID]
 			delete(routing, operation.WorkloadUID)
 		} else {
@@ -210,7 +210,7 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 			operation.SettingsValidatedAt = &now
 			document["staticRoutingValidatedAt"], _ = json.Marshal(now)
 		}
-	case operationReset:
+	case servingstate.OperationReset:
 		before := len(settings.AutonomousWorkloads)
 		settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(settings.AutonomousWorkloads), func(uid string) bool { return slices.Contains(operation.WorkloadUIDs, uid) })
 		changed = before != len(settings.AutonomousWorkloads)
@@ -238,7 +238,7 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 	operation.SourceConfigRV = committed.ResourceVersion
 	operation.StaticRouting = routing
 	c.mu.Lock()
-	if operation.Kind == operationReset {
+	if operation.Kind == servingstate.OperationReset {
 		c.config.Settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(c.config.Settings.AutonomousWorkloads),
 			func(uid string) bool { return slices.Contains(operation.WorkloadUIDs, uid) })
 	}
@@ -248,14 +248,14 @@ func (c *SchedulerController) persistManualConfiguration(ctx context.Context, op
 }
 
 // executeManualRouting uses the caller's run and observation-log ownership.
-func (c *SchedulerController) executeManualRouting(ctx context.Context, operation Operation) (OperationResult, error) {
-	result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}
+func (c *SchedulerController) executeManualRouting(ctx context.Context, operation servingstate.Operation) (servingstate.OperationResult, error) {
+	result := servingstate.OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: servingstate.NativeOperationRunning}
 	result.Before.At = result.StartedAt
 	result.Before.Routing, _ = c.runtime.SchedulerRouting()
 	beforeDeclared := c.runtime.InstanceRouting()
 	err := c.persistManualConfiguration(ctx, &result.Operation)
 	var rejected *configurationNotApplied
-	result.effectsNotStarted = errors.As(err, &rejected)
+	result.EffectsNotStarted = errors.As(err, &rejected)
 	if err == nil {
 		result.Progress = append(result.Progress, "manual declaration persisted; physical acknowledgement pending")
 		physical, executeErr := c.operations.Execute(ctx, result.Operation)
@@ -274,7 +274,7 @@ func (c *SchedulerController) executeManualRouting(ctx context.Context, operatio
 		for _, weights := range expected {
 			delete(weights, operation.WorkloadUID)
 		}
-		if operation.Kind != operationRelease {
+		if operation.Kind != servingstate.OperationRelease {
 			for id, weight := range operation.Target.Routing[operation.WorkloadUID] {
 				if weight <= 0 {
 					continue
@@ -285,7 +285,7 @@ func (c *SchedulerController) executeManualRouting(ctx context.Context, operatio
 				expected[id][operation.WorkloadUID] = weight
 			}
 		}
-		if operation.Kind != operationRelease {
+		if operation.Kind != servingstate.OperationRelease {
 			want, got := map[string]int32{}, map[string]int32{}
 			for id, weights := range expected {
 				if weights[operation.WorkloadUID] > 0 {
@@ -303,51 +303,14 @@ func (c *SchedulerController) executeManualRouting(ctx context.Context, operatio
 		}
 	}
 	if err != nil {
-		result.Status = nativeOperationFailed
+		result.Status = servingstate.NativeOperationFailed
 		if len(result.Progress) > 0 || len(result.Actual.Native) > 0 {
-			result.Status = nativeOperationPartial
+			result.Status = servingstate.NativeOperationPartial
 		}
 		result.Error = err.Error()
 	} else {
-		result.Status = nativeOperationComplete
+		result.Status = servingstate.NativeOperationComplete
 		result.Progress = append(result.Progress, "physical routing acknowledged and read back")
 	}
 	return result, err
-}
-
-// validateRoutingPolicies checks immutable native policy compatibility before a
-// manual declaration or physical policy can be changed.
-func (o *Operations) validateRoutingPolicies(ctx context.Context, target serving.SchedulerCandidate, workloadUID string) error {
-	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
-	if err != nil {
-		return err
-	}
-	for _, instance := range target.Instances {
-		if instance.WorkloadUID != workloadUID {
-			continue
-		}
-		found := false
-		for _, pod := range pods.Items {
-			status := firstfloorStatus(&pod)
-			if status == nil || physicalID(pod.UID, status.ContainerID) != instance.ID {
-				continue
-			}
-			found = true
-			cm, err := o.kube.CoreV1().ConfigMaps(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
-			if err != nil {
-				return err
-			}
-			var config native.Config
-			if err = json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
-				return err
-			}
-			if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil || config.Policy.ProfileID != instance.Profile.ID || native.EffectiveDeadlinePolicy(config.Policy.DeadlinePolicy) != native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy) || config.Policy.FixedBatchSize != instance.FixedBatchSize {
-				return fmt.Errorf("instance %s has incompatible immutable native policy", instance.ID)
-			}
-		}
-		if !found {
-			return fmt.Errorf("actual policy target %s unavailable", instance.ID)
-		}
-	}
-	return nil
 }

@@ -5,6 +5,8 @@ import (
 	"runtime/debug"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -16,7 +18,8 @@ import (
 )
 
 func newSchedulerService(
-	ctx context.Context, store *servingkube.Store, kube, settingsKube kubernetes.Interface,
+	ctx context.Context, cluster *servingkube.ClusterState, store *servingkube.Store,
+	kube, settingsKube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
 	observationLog *observation.ObservationLog, opts options,
 	gatewayRequestTimeout time.Duration, publisher *livePublisher,
@@ -24,8 +27,8 @@ func newSchedulerService(
 	if opts.schedulerConfigMap == "" {
 		return nil, nil
 	}
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
-		servingkube.OperationConfig{
+	operations, err := servingops.NewOperations(
+		cluster, store, kube, execution, observer, &sdk.Client{}, servingops.OperationConfig{
 			Namespace:    opts.servingNamespace,
 			PollInterval: opts.sourceInterval,
 			MetricLimits: metricobserver.Limits{
@@ -51,6 +54,7 @@ func newSchedulerService(
 			}}
 	}
 	return application.NewSchedulerService(ctx, application.Dependencies{
+		Cluster:    cluster,
 		Operations: operations, Store: store, Kube: kube, SettingsKube: settingsKube,
 		Execution: execution, Observer: observer, Objects: objects,
 		ObservationLog: observationLog, GatewayRequestTimeout: gatewayRequestTimeout, Live: live,

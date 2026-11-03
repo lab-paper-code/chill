@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -47,14 +49,14 @@ func TestAuthorizerUsesReviewedIdentityAndFailsClosed(t *testing.T) {
 				return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
 					Authenticated: tc.authenticated,
 					Error:         tc.tokenError,
-					User:          authenticationv1.UserInfo{Username: "reviewed-user", UID: "reviewed-uid", Groups: []string{"operators"}, Extra: map[string]authenticationv1.ExtraValue{"scope": {nativeServingMode}}},
+					User:          authenticationv1.UserInfo{Username: "reviewed-user", UID: "reviewed-uid", Groups: []string{"operators"}, Extra: map[string]authenticationv1.ExtraValue{"scope": {servingstate.NativeServingMode}}},
 				}}, nil
 			})
 			sarCalls := 0
 			client.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 				sarCalls++
 				obj := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
-				if obj.Spec.User != "reviewed-user" || obj.Spec.UID != "reviewed-uid" || len(obj.Spec.Groups) != 1 || obj.Spec.Groups[0] != "operators" || obj.Spec.Extra["scope"][0] != nativeServingMode {
+				if obj.Spec.User != "reviewed-user" || obj.Spec.UID != "reviewed-uid" || len(obj.Spec.Groups) != 1 || obj.Spec.Groups[0] != "operators" || obj.Spec.Extra["scope"][0] != servingstate.NativeServingMode {
 					t.Fatalf("unexpected reviewed identity: %#v", obj.Spec)
 				}
 				if obj.Spec.ResourceAttributes != nil || obj.Spec.NonResourceAttributes.Path != "/chill/api/v1/workloads/detector/infer" || obj.Spec.NonResourceAttributes.Verb != "post" {

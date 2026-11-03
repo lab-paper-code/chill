@@ -5,6 +5,8 @@ import (
 	"slices"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -79,7 +81,7 @@ func (p ProfileSummary) Profile() serving.Profile {
 }
 
 type PreparationSummary struct {
-	PrepareSpec
+	servingstate.PrepareSpec
 	Instance PreparationInstance `json:"instance"`
 }
 type PreparationInstance struct {
@@ -87,7 +89,7 @@ type PreparationInstance struct {
 	Profile *ProfileSummary `json:"profile,omitempty"`
 }
 
-func SummarizePreparations(input map[string]PrepareSpec) map[string]PreparationSummary {
+func SummarizePreparations(input map[string]servingstate.PrepareSpec) map[string]PreparationSummary {
 	if input == nil {
 		return nil
 	}
@@ -158,7 +160,7 @@ func (e *CostEvidence) OccupancySelections(selected []serving.DispatchOccupancy,
 		for identity, record := range e.occupancy {
 			if identity.Key != selection.Source || record.Node != selection.Node ||
 				record.PowerMode != selection.PowerMode || record.Model != selection.Model ||
-				record.Verdict != measurementAccepted {
+				record.Verdict != servingstate.MeasurementAccepted {
 				continue
 			}
 			executionPath := record.ExecutionPath
@@ -213,7 +215,7 @@ type CatalogSnapshot struct {
 func ProjectCatalogSnapshot(
 	view CatalogView,
 	configVersion string,
-	preparations map[string]PrepareSpec,
+	preparations map[string]servingstate.PrepareSpec,
 ) CatalogSnapshot {
 	out := CatalogSnapshot{ConfigVersion: configVersion, Profiles: make([]ProfileSummary, 0, len(view.Profiles)),
 		Insufficiencies: view.Insufficiencies, ReuseChecks: view.ReuseChecks, Preparations: SummarizePreparations(preparations),

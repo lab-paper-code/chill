@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -70,7 +72,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			sn.Reasons = append(sn.Reasons, serving.NodeExcluded)
 		}
 		captureNodeInventory(&sn, n, profiles)
-		sn.PowerMode = readBackMode(n, nodeClass(n, classes.Items))
+		sn.PowerMode = servingstate.ReadBackMode(n, servingstate.NodeClass(n, classes.Items))
 		lowest := serving.SchedulerLowestMode(config.Baselines, sn.Node)
 		targets := nodePowerTargets(n, classes.Items, config.PowerPolicies)
 		if _, ok := targets[lowest]; sn.PowerMode == "" || len(targets) == 0 || lowest != "" && lowest != sn.PowerMode && !ok {

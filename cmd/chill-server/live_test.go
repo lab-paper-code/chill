@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving/application"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
@@ -40,8 +41,8 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	if err := service.RecordDecision(d, serving.SchedulerSnapshot{At: at}); err != nil {
 		t.Fatal(err)
 	}
-	result := servingkube.OperationResult{
-		Operation: servingkube.Operation{ID: "same", Kind: "prepare", Node: serving.NodeReference{UID: "node"}},
+	result := servingstate.OperationResult{
+		Operation: servingstate.Operation{ID: "same", Kind: "prepare", Node: serving.NodeReference{UID: "node"}},
 		StartedAt: at, Status: "running",
 	}
 	if err := service.RecordAction(result); err != nil {

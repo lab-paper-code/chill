@@ -1,4 +1,4 @@
-package kube
+package management
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,8 +33,48 @@ const (
 
 type ManagerConfig struct {
 	DrainTimeout time.Duration
+	// Actor projects only the verified context identity at the composition root.
+	Actor func(context.Context) (string, string)
 	// OnWorkload projects a recorded change without I/O or reentering Manager.
 	OnWorkload func(WorkloadView, bool)
+}
+
+type deletionReserver interface {
+	ReserveDeletion(context.Context, types.UID) error
+	ReleaseDeletion(types.UID)
+}
+
+type workloadStore interface {
+	Client() client.Client
+	GetWorkload(context.Context, string) (*api.Workload, error)
+	ListWorkloads(context.Context) (*api.WorkloadList, error)
+	CreateWorkload(context.Context, *api.Workload) error
+	UpdateWorkload(context.Context, *api.Workload) error
+	DeleteWorkload(context.Context, *api.Workload) error
+	UpdateWorkloadStatus(context.Context, *api.Workload, api.WorkloadStatus) (*api.Workload, error)
+	EnsureWorkloadFinalizer(context.Context, *api.Workload) error
+	RemoveWorkloadFinalizer(context.Context, *api.Workload) error
+	WorkloadDeleted(context.Context, string, types.UID) (bool, error)
+	GetModel(context.Context, string) (*api.ModelSpec, error)
+	ListModels(context.Context) (*api.ModelSpecList, error)
+	CreateModel(context.Context, *api.ModelSpec) error
+	UpdateModel(context.Context, *api.ModelSpec) error
+	DeleteModel(context.Context, *api.ModelSpec) error
+	GetPreprocessor(context.Context, string) (*api.Preprocessor, error)
+	ListPreprocessors(context.Context) (*api.PreprocessorList, error)
+	CreatePreprocessor(context.Context, *api.Preprocessor) error
+	UpdatePreprocessor(context.Context, *api.Preprocessor) error
+	DeletePreprocessor(context.Context, *api.Preprocessor) error
+	GetDataset(context.Context, string) (*api.Dataset, error)
+	ListDatasets(context.Context) (*api.DatasetList, error)
+	CreateDataset(context.Context, *api.Dataset) error
+	UpdateDataset(context.Context, *api.Dataset) error
+	DeleteDataset(context.Context, *api.Dataset) error
+}
+
+type workloadObserver interface {
+	Profiles() []serving.Profile
+	CleanupWorkload(context.Context, types.UID) (bool, error)
 }
 
 // Manager is the only definition writer. It observes drain without holding this
@@ -44,10 +83,11 @@ type ManagerConfig struct {
 // Split locks only if management contention is measured.
 type Manager struct {
 	mu             sync.Mutex
-	store          *Store
+	store          workloadStore
 	runtime        *serving.Runtime
 	observationLog *observation.ObservationLog
-	observer       *Observer
+	observer       workloadObserver
+	reservations   deletionReserver
 	config         ManagerConfig
 	initialized    bool
 	// A failed status write must not let a subsequent poll resume the operation.
@@ -58,16 +98,18 @@ type Manager struct {
 	deletionChecks map[types.UID]*api.Workload
 }
 
-func NewManager(store *Store, runtime *serving.Runtime, observationLog *observation.ObservationLog, observer *Observer, config ManagerConfig) (*Manager, error) {
-	if store == nil || store.client == nil || runtime == nil || observationLog == nil || observer == nil || config.DrainTimeout <= 0 {
+func NewManager(reservations deletionReserver, store workloadStore, runtime *serving.Runtime, observationLog *observation.ObservationLog, observer workloadObserver, config ManagerConfig) (*Manager, error) {
+	if nilDependency(reservations) || nilDependency(store) || store.Client() == nil || runtime == nil || observationLog == nil || nilDependency(observer) || config.Actor == nil || config.DrainTimeout <= 0 {
 		return nil, errors.New("native store, runtime, observation log, observer and positive drain timeout are required")
 	}
-	return &Manager{store: store, runtime: runtime, observationLog: observationLog, observer: observer, config: config,
+	return &Manager{reservations: reservations, store: store, runtime: runtime, observationLog: observationLog, observer: observer, config: config,
 		failed: map[types.UID]api.WorkloadStatus{}, deletionChecks: map[types.UID]*api.Workload{}}, nil
 }
 
-func managementError(code, message, field string) error {
-	return &serving.Error{Code: code, Message: message, Field: field}
+// Interfaces retain the concrete constructors' typed-nil rejection.
+func nilDependency(value any) bool {
+	v := reflect.ValueOf(value)
+	return !v.IsValid() || v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 func failureReason(err error) string {
@@ -143,14 +185,14 @@ func (m *Manager) persist(ctx context.Context, w *api.Workload, status api.Workl
 
 func (m *Manager) record(ctx context.Context, w *api.Workload, phase string, before, target, after *serving.Definition, at time.Time, err error) error {
 	kind := "Registration"
-	actor := PrincipalFromContext(ctx)
+	actorUsername, actorUID := m.config.Actor(ctx)
 	if op := m.status(w).Operation; op != nil {
 		kind = op.Kind
 		// Polling and restart must retain the original accepted-operation actor.
-		actor = Principal{username: op.ActorUsername, uid: op.ActorUID}
+		actorUsername, actorUID = op.ActorUsername, op.ActorUID
 	}
 	event := serving.ManagementEvent{WorkloadUID: string(w.UID), Kind: kind, Phase: phase, Before: before, Target: target, After: after, At: at,
-		ActorUsername: actor.username, ActorUID: actor.uid}
+		ActorUsername: actorUsername, ActorUID: actorUID}
 	if err != nil {
 		event.Error = failureReason(err)
 	}
@@ -167,8 +209,8 @@ func (m *Manager) fail(ctx context.Context, w *api.Workload, cause error) error 
 	_ = m.runtime.StopAdmission(string(w.UID), failureReason(cause))
 	status := m.status(w)
 	if status.Operation == nil {
-		actor := PrincipalFromContext(ctx)
-		status.Operation = &api.WorkloadOperation{Kind: "Update", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actor.username, ActorUID: actor.uid}
+		actorUsername, actorUID := m.config.Actor(ctx)
+		status.Operation = &api.WorkloadOperation{Kind: "Update", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actorUsername, ActorUID: actorUID}
 	}
 	failedPhase := status.Operation.Phase
 	status.Operation.Phase = operationFailed
@@ -271,7 +313,7 @@ func (m *Manager) loadReferences(ctx context.Context, spec api.WorkloadSpec) (ca
 	if err := checkReference(refs.model, err, "Model", "spec.modelRef.name"); err != nil {
 		return refs, err
 	}
-	if err := management.ValidateModel(refs.model); err != nil {
+	if err := ValidateModel(refs.model); err != nil {
 		return refs, err
 	}
 	refs.preprocessor, err = m.store.GetPreprocessor(ctx, spec.PreprocessorRef.Name)
@@ -377,7 +419,7 @@ func (m *Manager) restoreDefinition(ctx context.Context, w *api.Workload, status
 	if err != nil {
 		return nil, err
 	}
-	return management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
+	return Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 }
 
 func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, sharedInterrupted bool) error {
@@ -404,7 +446,7 @@ func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, sharedIn
 		refs, err := m.loadReferences(ctx, w.Spec)
 		var want *serving.Definition
 		if err == nil {
-			want, err = management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
+			want, err = Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 		}
 		if err != nil || want.Identity() != d.Identity() || want.SLO != d.SLO || !reflect.DeepEqual(want.Dataset, d.Dataset) {
 			return managementError("AppliedStateUnconfirmed", "desired and recorded applied definitions differ", "status.appliedDefinition")
@@ -440,7 +482,7 @@ func (m *Manager) CreateWorkload(ctx context.Context, name string, spec api.Work
 	if err := m.store.CreateWorkload(ctx, w); err != nil {
 		return WorkloadView{}, err
 	}
-	d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
+	d, err := Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 	if err == nil {
 		err = m.record(ctx, w, "Accepted", nil, d, nil, time.Now().UTC(), nil)
 	}
@@ -499,9 +541,9 @@ func (m *Manager) UpdateWorkload(ctx context.Context, name, resourceVersion stri
 	}
 	delete(m.failed, w.UID)
 	status := w.Status
-	actor := PrincipalFromContext(ctx)
-	status.Operation = &api.WorkloadOperation{Kind: "Update", Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actor.username, ActorUID: actor.uid}
-	d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
+	actorUsername, actorUID := m.config.Actor(ctx)
+	status.Operation = &api.WorkloadOperation{Kind: "Update", Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actorUsername, ActorUID: actorUID}
+	d, err := Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 	if err != nil {
 		err = m.failAccepted(ctx, w, status, err)
 		return m.view(w), false, err
@@ -552,22 +594,18 @@ func (m *Manager) DeleteWorkload(ctx context.Context, name, resourceVersion stri
 	if err := m.checkOperation(w); err != nil {
 		return m.view(w), err
 	}
-	if m.observer.scheduler != nil {
-		if err := m.observer.scheduler.reserveDeletion(ctx, w.UID); err != nil {
-			return m.view(w), err
-		}
+	if err := m.reservations.ReserveDeletion(ctx, w.UID); err != nil {
+		return m.view(w), err
 	}
 	before := m.applied(w)
 	if err := m.stop(w, "Deleting"); err != nil {
-		if m.observer.scheduler != nil {
-			m.observer.scheduler.releaseDeletion(w.UID)
-		}
+		m.reservations.ReleaseDeletion(w.UID)
 		return m.view(w), err
 	}
 	if err := m.store.DeleteWorkload(ctx, w); err != nil {
-		actor := PrincipalFromContext(ctx)
+		actorUsername, actorUID := m.config.Actor(ctx)
 		status := w.Status
-		status.Operation = &api.WorkloadOperation{Kind: operationDelete, Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actor.username, ActorUID: actor.uid}
+		status.Operation = &api.WorkloadOperation{Kind: operationDelete, Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actorUsername, ActorUID: actorUID}
 		err = m.failAccepted(ctx, w, status, err)
 		return m.view(w), err
 	}
@@ -581,8 +619,8 @@ func (m *Manager) DeleteWorkload(ctx context.Context, name, resourceVersion stri
 	}
 	delete(m.failed, w.UID)
 	status := w.Status
-	actor := PrincipalFromContext(ctx)
-	status.Operation = &api.WorkloadOperation{Kind: operationDelete, Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actor.username, ActorUID: actor.uid}
+	actorUsername, actorUID := m.config.Actor(ctx)
+	status.Operation = &api.WorkloadOperation{Kind: operationDelete, Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actorUsername, ActorUID: actorUID}
 	if err := m.persist(ctx, w, status); err != nil {
 		err = m.failAccepted(ctx, w, status, err)
 		return m.view(w), err
@@ -654,8 +692,8 @@ func (m *Manager) apply(ctx context.Context, w *api.Workload, d *serving.Definit
 
 func (m *Manager) advanceWorkload(ctx context.Context, w *api.Workload) error {
 	op := m.status(w).Operation
-	if op.Kind == operationDelete && m.observer.scheduler != nil {
-		if err := m.observer.scheduler.reserveDeletion(ctx, w.UID); err != nil {
+	if op.Kind == operationDelete {
+		if err := m.reservations.ReserveDeletion(ctx, w.UID); err != nil {
 			return err
 		}
 	}
@@ -700,7 +738,7 @@ func (m *Manager) advanceWorkload(ctx context.Context, w *api.Workload) error {
 		if err != nil {
 			return err
 		}
-		d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
+		d, err := Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 		if err != nil {
 			return err
 		}
@@ -718,9 +756,7 @@ func (m *Manager) confirmDeletion(ctx context.Context, w *api.Workload) error {
 	if err := m.runtime.Forget(string(w.UID)); err != nil {
 		return err
 	}
-	if m.observer.scheduler != nil {
-		m.observer.scheduler.releaseDeletion(w.UID)
-	}
+	m.reservations.ReleaseDeletion(w.UID)
 	delete(m.deletionChecks, w.UID)
 	delete(m.failed, w.UID)
 	return m.record(ctx, w, operationCompleted, before, nil, nil, time.Now().UTC(), nil)
@@ -791,7 +827,7 @@ func (m *Manager) advanceGroup(ctx context.Context, group []*api.Workload) error
 		if uid != target.TargetCatalogUID || generation != target.TargetCatalogGeneration {
 			return managementError("CatalogIdentityConflict", "shared update target identity changed", "operation")
 		}
-		if definitions[i], err = management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset); err != nil {
+		if definitions[i], err = Snapshot(w, refs.model, refs.preprocessor, refs.dataset); err != nil {
 			return err
 		}
 	}
@@ -895,7 +931,7 @@ func (m *Manager) CreateModel(ctx context.Context, name string, spec api.ModelSp
 		return nil, err
 	}
 	model := &api.ModelSpec{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}
-	if err := management.ValidateModel(model); err != nil {
+	if err := ValidateModel(model); err != nil {
 		return nil, err
 	}
 	if err := m.store.CreateModel(ctx, model); err != nil {
@@ -989,7 +1025,7 @@ func (m *Manager) UpdateModel(ctx context.Context, name, resourceVersion string,
 	}
 	proposed := model.DeepCopy()
 	proposed.Spec = spec
-	if err := management.ValidateModel(proposed); err != nil {
+	if err := ValidateModel(proposed); err != nil {
 		return model, false, err
 	}
 	if err := m.keepTargetedArtifacts(ctx, proposed); err != nil {
@@ -1057,13 +1093,13 @@ func (m *Manager) settled(group []*api.Workload, current func(*serving.Definitio
 // member's accepted target. Advance drains and applies the group together (WM-16).
 func (m *Manager) startSharedUpdate(ctx context.Context, kind string, uid types.UID, generation int64, group []*api.Workload) error {
 	acceptedAt := metav1.Now()
-	actor := PrincipalFromContext(ctx)
+	actorUsername, actorUID := m.config.Actor(ctx)
 	statuses := make([]api.WorkloadStatus, len(group))
 	for i, w := range group {
 		delete(m.failed, w.UID)
 		statuses[i] = *w.Status.DeepCopy()
 		statuses[i].Operation = &api.WorkloadOperation{Kind: kind, Phase: "Draining", TargetGeneration: w.Generation,
-			TargetCatalogUID: uid, TargetCatalogGeneration: generation, AcceptedAt: acceptedAt, ActorUsername: actor.username, ActorUID: actor.uid}
+			TargetCatalogUID: uid, TargetCatalogGeneration: generation, AcceptedAt: acceptedAt, ActorUsername: actorUsername, ActorUID: actorUID}
 	}
 	fail := func(cause error) error {
 		for i, w := range group {
@@ -1084,7 +1120,7 @@ func (m *Manager) startSharedUpdate(ctx context.Context, kind string, uid types.
 		if err != nil {
 			return fail(err)
 		}
-		d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
+		d, err := Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 		if err != nil {
 			return fail(err)
 		}

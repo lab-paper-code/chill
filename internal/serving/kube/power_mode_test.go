@@ -8,6 +8,9 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -22,7 +25,7 @@ import (
 
 // powerWriter is the power-mode writer of Operations on a store that holds
 // node; beforePatch runs before each Node patch and afterPatch after it.
-func powerWriter(t *testing.T, node *core.Node, measurement bool, beforePatch, afterPatch func(context.Context, client.WithWatch)) (*Operations, *int) {
+func powerWriter(t *testing.T, node *core.Node, measurement bool, beforePatch, afterPatch func(context.Context, client.WithWatch)) (*servingops.Operations, *int) {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := core.AddToScheme(scheme); err != nil {
@@ -44,7 +47,7 @@ func powerWriter(t *testing.T, node *core.Node, measurement bool, beforePatch, a
 			return nil
 		},
 	}).Build()
-	return &Operations{store: &Store{client: c}, config: OperationConfig{PollInterval: time.Millisecond, Measurement: measurement}}, &patches
+	return &servingops.Operations{Store: &Store{client: c}, Config: servingops.OperationConfig{PollInterval: time.Millisecond, Measurement: measurement}}, &patches
 }
 
 // changeNode applies change to the stored Node.
@@ -85,7 +88,7 @@ func TestPowerModeWriterPatchesOnlyAnAdmittedNode(t *testing.T) {
 				node.Spec.Taints = []core.Taint{{Key: profilingrun.MeasurementTaintKey, Value: "root-uid", Effect: core.TaintEffectNoSchedule}}
 			}
 			operations, patches := powerWriter(t, node, test.measurement, nil, func(ctx context.Context, c client.WithWatch) { changeNode(ctx, c, settle) })
-			err := operations.requestPowerMode(context.Background(), serving.NodeReference{Name: "node", UID: test.uid}, test.holder, lowMode, time.Minute)
+			err := operations.RequestPowerMode(context.Background(), serving.NodeReference{Name: "node", UID: test.uid}, test.holder, lowMode, time.Minute)
 			if (err == nil) != test.patched || (*patches == 1) != test.patched {
 				t.Fatalf("err=%v patches=%d", err, *patches)
 			}
@@ -98,7 +101,7 @@ func TestPowerModeWriterPatchesOnlyAnAdmittedNode(t *testing.T) {
 func TestPowerModeWriterFailsPastDeadlineOrFailure(t *testing.T) {
 	_, node, _, _ := observerSourceFixture()
 	operations, _ := powerWriter(t, node, false, nil, nil)
-	if err := operations.requestPowerMode(context.Background(), testNode, "", lowMode, 20*time.Millisecond); err == nil || !strings.Contains(err.Error(), "did not reach power mode eco") {
+	if err := operations.RequestPowerMode(context.Background(), testNode, "", lowMode, 20*time.Millisecond); err == nil || !strings.Contains(err.Error(), "did not reach power mode eco") {
 		t.Fatalf("past deadline: %v", err)
 	}
 	_, node, _, _ = observerSourceFixture()
@@ -108,7 +111,7 @@ func TestPowerModeWriterFailsPastDeadlineOrFailure(t *testing.T) {
 				PowerMode: lowMode, RequestedAt: n.Annotations[chillmeta.PowerModeRequestedAt], Failure: "nvpmodel exited 1"})
 		})
 	})
-	if err := operations.requestPowerMode(context.Background(), testNode, "", lowMode, time.Minute); err == nil || !strings.Contains(err.Error(), "nvpmodel exited 1") {
+	if err := operations.RequestPowerMode(context.Background(), testNode, "", lowMode, time.Minute); err == nil || !strings.Contains(err.Error(), "nvpmodel exited 1") {
 		t.Fatalf("failed apply: %v", err)
 	}
 }
@@ -118,21 +121,21 @@ func TestPowerModeWriterFailsPastDeadlineOrFailure(t *testing.T) {
 func TestMeasurementIsolationJudgesPowerModeGeneration(t *testing.T) {
 	for _, test := range []struct {
 		name      string
-		operation Operation
+		operation servingstate.Operation
 		current   string
-		start     *PowerModeGeneration
+		start     *servingops.PowerModeGeneration
 		end       int64
 		changed   bool
 	}{
-		{name: "power into another mode", operation: Operation{Kind: operationPower, PowerMode: maxMode}, current: "low", start: &PowerModeGeneration{Start: 3}, end: 4},
-		{name: "power into the same mode", operation: Operation{Kind: operationPower, PowerMode: maxMode}, current: maxMode, start: &PowerModeGeneration{Start: 3}, end: 3},
-		{name: "power changed twice", operation: Operation{Kind: operationPower, PowerMode: maxMode}, current: "low", start: &PowerModeGeneration{Start: 3}, end: 5, changed: true},
-		{name: "prepare", operation: Operation{Kind: operationPrepare}, start: &PowerModeGeneration{Start: 3}, end: 3},
-		{name: "prepare changed", operation: Operation{Kind: operationPrepare}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "idle changed", operation: Operation{Kind: operationIdle}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "remove changed", operation: Operation{Kind: operationRemove}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "occupancy load window changed", operation: Operation{Kind: occupancyKind}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "Fixed Node", operation: Operation{Kind: operationPrepare}, end: 4},
+		{name: "power into another mode", operation: servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: maxMode}, current: "low", start: &servingops.PowerModeGeneration{Start: 3}, end: 4},
+		{name: "power into the same mode", operation: servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: maxMode}, current: maxMode, start: &servingops.PowerModeGeneration{Start: 3}, end: 3},
+		{name: "power changed twice", operation: servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: maxMode}, current: "low", start: &servingops.PowerModeGeneration{Start: 3}, end: 5, changed: true},
+		{name: "prepare", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, start: &servingops.PowerModeGeneration{Start: 3}, end: 3},
+		{name: "prepare changed", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "idle changed", operation: servingstate.Operation{Kind: servingstate.OperationIdle}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "remove changed", operation: servingstate.Operation{Kind: servingstate.OperationRemove}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "occupancy load window changed", operation: servingstate.Operation{Kind: occupancyKind}, start: &servingops.PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "Fixed Node", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, end: 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, node, _, _ := observerSourceFixture()
@@ -142,19 +145,19 @@ func TestMeasurementIsolationJudgesPowerModeGeneration(t *testing.T) {
 			if err := edge.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}
-			operations := &Operations{kube: kubefake.NewSimpleClientset(node), store: &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}}
+			operations := &servingops.Operations{Kube: kubefake.NewSimpleClientset(node), Store: &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}}
 			changes := expectedPowerModeChanges(test.operation, test.current)
-			witness, err := operations.measurementIsolation(context.Background(), testNode, nil, test.start, changes)
-			if changed := err != nil && strings.HasPrefix(err.Error(), powerChangedReason); changed != test.changed || !changed && err != nil {
+			witness, err := operations.MeasurementIsolation(context.Background(), testNode, nil, test.start, changes)
+			if changed := err != nil && strings.HasPrefix(err.Error(), servingstate.PowerChangedReason); changed != test.changed || !changed && err != nil {
 				t.Fatalf("changes=%d err=%v", changes, err)
 			}
-			if (witness.PowerModeGeneration == nil) != (test.start == nil) || test.start != nil && *witness.PowerModeGeneration != (PowerModeGeneration{Start: test.start.Start, End: test.end}) {
+			if (witness.PowerModeGeneration == nil) != (test.start == nil) || test.start != nil && *witness.PowerModeGeneration != (servingops.PowerModeGeneration{Start: test.start.Start, End: test.end}) {
 				t.Fatalf("generation %+v", witness.PowerModeGeneration)
 			}
 			// An operation record keeps the witness and loses its cost.
 			joules := 1.0
-			record := OperationMeasurement{Verdict: measurementAccepted, WallJoules: &joules, Request: MeasurementRequest{Operation: Operation{Node: testNode}}}
-			if applied := record.applyIsolation(witness, err); !errors.Is(applied, err) || test.changed != (record.Verdict == measurementInsufficient && strings.Contains(record.Reason, powerChangedReason) && record.WallJoules == nil) {
+			record := servingops.OperationMeasurement{Verdict: servingstate.MeasurementAccepted, WallJoules: &joules, Request: servingops.MeasurementRequest{Operation: servingstate.Operation{Node: testNode}}}
+			if applied := record.ApplyIsolation(witness, err); !errors.Is(applied, err) || test.changed != (record.Verdict == servingops.MeasurementInsufficient && strings.Contains(record.Reason, servingstate.PowerChangedReason) && record.WallJoules == nil) {
 				t.Fatalf("record %+v", record)
 			}
 		})

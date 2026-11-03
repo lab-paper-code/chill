@@ -12,6 +12,9 @@ import (
 	"strings"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
@@ -20,19 +23,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// OperationMeasurementPrefix holds every serving-operation measurement record.
-const OperationMeasurementPrefix = "serving/operation-measurements/"
-
 // Cost issue codes.
 const (
 	CostEvidenceInvalid = "CostEvidenceInvalid"
 	MeterUndeclared     = "MeterUndeclared"
 )
-
-// OperationMeasurementKey is the fixed store key of one operation measurement.
-func OperationMeasurementKey(operation Operation) string {
-	return OperationMeasurementPrefix + operation.Node.UID + "/" + operation.ID + ".json"
-}
 
 // CostIssue is one measurement that contributes no cost, or, with code
 // SequenceIncomplete, a record of an operation sequence that stopped early;
@@ -73,7 +68,7 @@ type CostEvidence struct {
 }
 
 type operationEvidence struct {
-	meter    MeterDeclaration
+	meter    servingops.MeterDeclaration
 	cost     *serving.OperationCost
 	baseline *serving.NodeBaseline
 	profile  *serving.Profile // retained immutable preparation body, including old catalog versions
@@ -101,9 +96,9 @@ func NewCostEvidence(store *Store, objects costObjects, maxBytes int64) (*CostEv
 // Refresh lists operation measurements under the fixed prefix and Complete
 // PowerModeTransitionCost objects in namespaces. A listing failure fails the
 // refresh; one failed record or measurement becomes its own CostIssue.
-func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters []MeterDeclaration, profiles []serving.Profile) (CostView, error) {
+func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters []servingops.MeterDeclaration, profiles []serving.Profile) (CostView, error) {
 	view := CostView{Issues: []CostIssue{}}
-	identities, err := e.objects.List(ctx, OperationMeasurementPrefix)
+	identities, err := e.objects.List(ctx, servingops.OperationMeasurementPrefix)
 	if err != nil {
 		return CostView{}, err
 	}
@@ -134,7 +129,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 		case evidence.skip:
 		case evidence.err != nil:
 			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: evidence.err.Error()})
-		case !slices.ContainsFunc(meters, func(m MeterDeclaration) bool { return reflect.DeepEqual(m, evidence.meter) }):
+		case !slices.ContainsFunc(meters, func(m servingops.MeterDeclaration) bool { return reflect.DeepEqual(m, evidence.meter) }):
 			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: MeterUndeclared, Reason: "record meter " + evidence.meter.ID + " differs from every configured meter"})
 		case evidence.baseline != nil:
 			view.Baselines = append(view.Baselines, *evidence.baseline)
@@ -187,7 +182,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 	return view, nil
 }
 
-func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, meters []MeterDeclaration, profiles []serving.Profile, view *CostView) error {
+func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, meters []servingops.MeterDeclaration, profiles []serving.Profile, view *CostView) error {
 	listed := map[string]bool{}
 	for _, namespace := range namespaces {
 		measurements := &edge.PowerModeTransitionCostList{}
@@ -218,7 +213,7 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 				}
 				e.power[identity] = evidence
 			}
-			i := slices.IndexFunc(meters, func(m MeterDeclaration) bool {
+			i := slices.IndexFunc(meters, func(m servingops.MeterDeclaration) bool {
 				return m.Node == evidence.node && reflect.DeepEqual(m.Source, evidence.source)
 			})
 			if i < 0 {
@@ -264,7 +259,7 @@ func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) err
 			}
 			e.occupancy[identity] = record
 		}
-		if record.Verdict == measurementAccepted {
+		if record.Verdict == servingstate.MeasurementAccepted {
 			accepted = append(accepted, measured{record: record, key: identity.Key})
 		}
 	}
@@ -300,13 +295,13 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 	if err != nil {
 		return operationEvidence{}, err
 	}
-	var record OperationMeasurement
+	var record servingops.OperationMeasurement
 	evidence := operationEvidence{err: decodeCostJSON(raw, &record)}
 	if evidence.err != nil {
 		return evidence, nil
 	}
-	if record.Verdict != measurementAccepted {
-		if record.Isolation != nil && strings.HasPrefix(record.Isolation.Error, powerChangedReason) {
+	if record.Verdict != servingstate.MeasurementAccepted {
+		if record.Isolation != nil && strings.HasPrefix(record.Isolation.Error, servingstate.PowerChangedReason) {
 			return operationEvidence{skip: true, invalid: record.Isolation.Error}, nil
 		}
 		return operationEvidence{skip: true}, nil
@@ -318,12 +313,12 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 	if prepare := record.Request.Operation.Prepare; prepare != nil {
 		evidence.profile = prepare.Instance.Profile
 	}
-	if record.Request.Operation.Kind == operationIdle {
+	if record.Request.Operation.Kind == servingstate.OperationIdle {
 		baseline, err := idleMeasurementBaseline(record, ref)
 		evidence.baseline, evidence.err = &baseline, err
 		return evidence, nil
 	}
-	cost, err := measurementCost(record, ref)
+	cost, err := servingops.MeasurementCost(record, ref)
 	evidence.cost, evidence.err = &cost, err
 	return evidence, nil
 }
@@ -334,7 +329,7 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 func latestCosts(costs []serving.OperationCost) []serving.OperationCost {
 	key := func(c serving.OperationCost) string {
 		condition := c.PowerMode
-		if c.Kind == operationPower {
+		if c.Kind == servingstate.OperationPower {
 			states := make([]string, len(c.BeforeState))
 			for j, state := range c.BeforeState {
 				states[j] = serving.MeasurementStateIdentity(state, c.StateIdentities)
@@ -379,8 +374,8 @@ func latestBy[T any](items []T, key func(T) string, order func(T) (string, int64
 	}
 	return result
 }
-func validateRetainedMeasurement(record OperationMeasurement, ref evidencestore.ObjectIdentity) error {
-	if ref.Key != OperationMeasurementKey(record.Request.Operation) {
+func validateRetainedMeasurement(record servingops.OperationMeasurement, ref evidencestore.ObjectIdentity) error {
+	if ref.Key != servingops.OperationMeasurementKey(record.Request.Operation) {
 		return errors.New("record is not at its fixed operation measurement key")
 	}
 	if record.Result.Operation.ID != record.Request.Operation.ID || record.Result.Operation.Node != record.Request.Operation.Node || record.Result.Operation.Kind != record.Request.Operation.Kind || !record.Result.EndedAt.After(record.Result.StartedAt) {
@@ -392,33 +387,33 @@ func validateRetainedMeasurement(record OperationMeasurement, ref evidencestore.
 	if err := record.Request.Sampling.Validate(); err != nil {
 		return err
 	}
-	if _, err := record.Request.powerTimingAllowance(); err != nil {
+	if _, err := record.Request.PowerTimingAllowance(); err != nil {
 		return err
 	}
 	meter := record.Request.Meter
-	if meter.ID == "" || meter.Scope != measurementWallScope || meter.Node != record.Request.Operation.Node || meter.Source.NodeName != meter.Node.Name || !reflect.DeepEqual(record.Power.Source, meter.Source) {
+	if meter.ID == "" || meter.Scope != servingstate.MeasurementWallScope || meter.Node != record.Request.Operation.Node || meter.Source.NodeName != meter.Node.Name || !reflect.DeepEqual(record.Power.Source, meter.Source) {
 		return errors.New("raw operation meter scope/node mismatch")
 	}
 	return nil
 }
-func idleMeasurementBaseline(record OperationMeasurement, ref evidencestore.ObjectIdentity) (serving.NodeBaseline, error) {
-	if record.SchemaVersion != OperationMeasurementSchema || record.Verdict != measurementAccepted || record.MeanWatts == nil || math.IsNaN(*record.MeanWatts) || math.IsInf(*record.MeanWatts, 0) || *record.MeanWatts < 0 || len(record.StateObservations) < 2 {
+func idleMeasurementBaseline(record servingops.OperationMeasurement, ref evidencestore.ObjectIdentity) (serving.NodeBaseline, error) {
+	if record.SchemaVersion != servingops.OperationMeasurementSchema || record.Verdict != servingstate.MeasurementAccepted || record.MeanWatts == nil || math.IsNaN(*record.MeanWatts) || math.IsInf(*record.MeanWatts, 0) || *record.MeanWatts < 0 || len(record.StateObservations) < 2 {
 		return serving.NodeBaseline{}, errors.New("idle baseline lacks accepted measured stability evidence")
 	}
 	for _, state := range record.StateObservations {
-		if err := stableIdle(record.Result.Before, state); err != nil {
+		if err := servingops.StableIdle(record.Result.Before, state); err != nil {
 			return serving.NodeBaseline{}, err
 		}
 	}
-	measurement, err := record.energyMeasurement()
+	measurement, err := record.EnergyMeasurement()
 	if err != nil {
 		return serving.NodeBaseline{}, err
 	}
 	joules := measurement.Joules
-	if record.WallJoules == nil || joules != *record.WallJoules || joules/record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds() != *record.MeanWatts || record.Result.Status != nativeOperationComplete {
+	if record.WallJoules == nil || joules != *record.WallJoules || joules/record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds() != *record.MeanWatts || record.Result.Status != servingstate.NativeOperationComplete {
 		return serving.NodeBaseline{}, errors.New("idle aggregate differs from retained raw integral/window")
 	}
-	keys := stateProfileKeys(record.Result.Actual)
+	keys := servingops.StateProfileKeys(record.Result.Actual)
 	slices.Sort(keys)
 	meter := record.Request.Meter
 	return serving.NodeBaseline{ID: record.Request.Operation.ID, Node: meter.Node, PowerMode: record.Result.Actual.PowerMode, State: keys, Watts: *record.MeanWatts, WattsUncertainty: measurement.UncertaintyJoules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds(), Meter: meter.ID, Scope: meter.Scope, MeasuredAt: record.Result.EndedAt, Reference: ref}, nil

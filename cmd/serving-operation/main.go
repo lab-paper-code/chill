@@ -18,7 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"k8s.io/client-go/rest"
 )
 
@@ -63,10 +64,10 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if err = readManifest(executeFile, &operation); err != nil {
 		return err
 	}
-	if _, err = servingkube.DecodeManualOperation(operation); err != nil {
+	if _, err = servingstate.DecodeManualOperation(operation); err != nil {
 		return err
 	}
-	var result servingkube.OperationResult
+	var result servingstate.OperationResult
 	if err = post(ctx, c, server, operationsPath, operation, &result, out); err != nil {
 		return err
 	}

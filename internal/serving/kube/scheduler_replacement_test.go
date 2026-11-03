@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -13,8 +15,8 @@ func TestReplacementCompletionHistoryIndependentOfDemandWindow(t *testing.T) {
 	instance := serving.SchedulerInstance{ID: "new", Node: node, WorkloadUID: "w", Profile: &serving.Profile{ID: "new-profile"}, Ready: true}
 	replacement := serving.SchedulerReplacement{NodeUID: node.UID, WorkloadUID: "w", ProfileID: instance.Profile.ID}
 	target := serving.SchedulerCandidate{ID: "replacement", Instances: []serving.SchedulerInstance{instance}}
-	parent := &actionRun{owner: target.ID, action: serving.Action{Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: Operation{Target: &target}}, replacements: []serving.SchedulerReplacement{replacement}}
-	c := &SchedulerController{runs: map[string]*actionRun{"parent": parent}, config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{ControlInterval: 10 * time.Second, MaxObservationAge: time.Minute}}}
+	parent := &actionRun{owner: target.ID, action: serving.Action{Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &target}}, replacements: []serving.SchedulerReplacement{replacement}}
+	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{"parent": parent}}, config: SchedulerControllerConfig{Settings: serving.SchedulerSettings{ControlInterval: 10 * time.Second, MaxObservationAge: time.Minute}}}
 	snapshot := serving.SchedulerSnapshot{Instances: target.Instances, ScaleDown: map[string]serving.SchedulerDownState{"w": {Allowed: true}}}
 	got, _ := c.reconcileSnapshot(snapshot, now, time.Second)
 	if len(got.Replacements) != 1 || !got.Replacements[0].CompletedAt.Equal(now) || !got.ScaleDown["w"].Allowed {

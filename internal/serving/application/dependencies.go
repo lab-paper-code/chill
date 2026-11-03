@@ -3,6 +3,8 @@ package application
 import (
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -35,12 +37,13 @@ type Options struct {
 type Live struct {
 	Decision    func(serving.SchedulerDecision, serving.SchedulerSnapshot)
 	Action      func(observation.SchedulerActionObservation, time.Time)
-	PowerScope  func([]servingkube.MeterDeclaration, bool)
+	PowerScope  func([]servingops.MeterDeclaration, bool)
 	MeterSource func(metricobserver.Source, string) metricobserver.Source
 }
 
 type Dependencies struct {
-	Operations *servingkube.Operations
+	Cluster    *servingkube.ClusterState
+	Operations *servingops.Operations
 	Store      *servingkube.Store
 	Kube       kubernetes.Interface
 	// SettingsKube preserves the HTTP mutation client's budget independently of control refreshes.

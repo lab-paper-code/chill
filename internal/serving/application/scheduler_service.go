@@ -15,6 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving/measurement"
 
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
@@ -41,7 +44,7 @@ type SchedulerConfiguration struct {
 	Settings serving.SchedulerSettings              `json:"settings"`
 	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
 	// Meters are derived from the Profiler metric sources, never configured.
-	Meters            []servingkube.MeterDeclaration       `json:"-"`
+	Meters            []servingops.MeterDeclaration        `json:"-"`
 	PowerObservation  *powerObservationConfig              `json:"powerObservation,omitempty"`
 	DispatchOccupancy *measurement.DispatchOccupancyPolicy `json:"dispatchOccupancy,omitempty"`
 	StaticRouting     map[string]map[string]int            `json:"staticRouting,omitempty"`
@@ -52,7 +55,8 @@ type SchedulerConfiguration struct {
 type SchedulerService struct {
 	Lock                     sync.Mutex
 	Controller               *servingkube.SchedulerController
-	operations               *servingkube.Operations
+	cluster                  *servingkube.ClusterState
+	operations               *servingops.Operations
 	store                    *servingkube.Store
 	kube                     kubernetes.Interface
 	settingsKube             kubernetes.Interface
@@ -80,6 +84,7 @@ type SchedulerService struct {
 func NewSchedulerService(ctx context.Context, dependencies Dependencies) *SchedulerService {
 	serviceCtx, cancel := context.WithCancel(ctx)
 	return &SchedulerService{
+		cluster:    dependencies.Cluster,
 		operations: dependencies.Operations, store: dependencies.Store, kube: dependencies.Kube,
 		settingsKube: dependencies.SettingsKube,
 		execution:    dependencies.Execution, observer: dependencies.Observer, objects: dependencies.Objects,
@@ -255,7 +260,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 		OnDecision: o.RecordDecision, OnAction: o.RecordAction,
 	}
 	if o.Controller == nil {
-		o.Controller, err = servingkube.NewSchedulerController(o.store, o.kube, o.execution,
+		o.Controller, err = servingkube.NewSchedulerController(o.cluster, o.store, o.kube, o.execution,
 			o.observer, o.operations, o.observationLog, controllerConfig)
 	} else {
 		err = o.Controller.SetConfiguration(controllerConfig)
@@ -269,7 +274,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	o.configuration.Store(&config)
 	published := ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
-		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
+		Preparations: make(map[string]servingstate.PrepareSpec, len(preparations)),
 		Occupancy:    occupancy, OccupancySkipped: skipped,
 	}
 	for id, spec := range preparations {
@@ -339,7 +344,7 @@ func (o *SchedulerService) profilerFacts(
 	}
 	for _, s := range sources {
 		if uid := uids[s.Node]; uid != "" {
-			config.Meters = append(config.Meters, servingkube.MeterDeclaration{
+			config.Meters = append(config.Meters, servingops.MeterDeclaration{
 				ID: s.MeterID, Node: serving.NodeReference{Name: s.Node, UID: uid}, Scope: "node-exclusive-wall",
 				Source: metricobserver.SourceIdentity{
 					Kind: s.Kind, NodeName: s.Node, Endpoint: s.Endpoint, Metric: s.PowerMetric, MetricLabels: s.MetricLabels,
@@ -351,7 +356,7 @@ func (o *SchedulerService) profilerFacts(
 }
 
 // schedulerMeters projects only the complete configuration accepted by refresh.
-func (o *SchedulerService) SchedulerMeters() []servingkube.MeterDeclaration {
+func (o *SchedulerService) SchedulerMeters() []servingops.MeterDeclaration {
 	config := o.configuration.Load()
 	if config == nil {
 		return nil
@@ -396,7 +401,7 @@ func (o *SchedulerService) RecordDecision(
 	}
 	return nil
 }
-func (o *SchedulerService) RecordAction(result servingkube.OperationResult) error {
+func (o *SchedulerService) RecordAction(result servingstate.OperationResult) error {
 	expected, err := json.Marshal(result.Operation)
 	if err != nil {
 		return err
@@ -442,7 +447,7 @@ func (o *SchedulerService) restartPower(config SchedulerConfiguration) {
 	o.powerCancel = cancel
 	for _, meter := range config.Meters {
 		o.powerWG.Add(1)
-		go func(meter servingkube.MeterDeclaration) {
+		go func(meter servingops.MeterDeclaration) {
 			defer o.powerWG.Done()
 			source, err := metricSource(meter.Source)
 			if err != nil {

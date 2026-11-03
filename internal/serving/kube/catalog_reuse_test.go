@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -75,7 +77,7 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 	target.RuntimeMetadata.CPUSet, target.RuntimeMetadata.CgroupCPUMax = "4-7", "max 100000"
 	target.RuntimeMetadata.IntraOpThreads, target.RuntimeMetadata.InterOpThreads = 0, 0
 	view := reuseView(t, source, target, .05)
-	if len(view.Profiles) != 2 || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != measurementAccepted || len(view.Insufficiencies) != 0 {
+	if len(view.Profiles) != 2 || len(view.ReuseChecks) != 1 || view.ReuseChecks[0].Outcome != servingstate.MeasurementAccepted || len(view.Insufficiencies) != 0 {
 		t.Fatalf("equivalent confirmation rejected: %+v", view)
 	}
 	profile := view.Profiles[1]
@@ -183,7 +185,7 @@ func TestProfileReuseToleranceIsConfiguredAndInclusive(t *testing.T) {
 	}
 	source, target := reuseProfilesFixture(t)
 	source.IdleBaselineWatts, target.IdleBaselineWatts = 100, 105
-	if view := reuseView(t, source, target, .05); view.ReuseChecks[0].Outcome != measurementAccepted {
+	if view := reuseView(t, source, target, .05); view.ReuseChecks[0].Outcome != servingstate.MeasurementAccepted {
 		t.Fatalf("inclusive configured boundary rejected: %+v", view.ReuseChecks)
 	}
 	if view := reuseView(t, source, target, .03); view.ReuseChecks[0].Outcome != profileReuseRejected {
@@ -270,7 +272,7 @@ func TestProfileReuseConnectsTargetPlannerOptionAndGPUInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := controller.config
-	config.Preparations = map[string]PrepareSpec{profile.ID: {Instance: serving.SchedulerInstance{
+	config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: {Instance: serving.SchedulerInstance{
 		ID: "target-option", Node: serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}, Profile: &profile,
 		MaxBatch: 1, Capacity: 32,
 	}}}
@@ -305,11 +307,11 @@ func installReuseMeasurementProfile(t *testing.T, harness *opcostHarness) string
 	profile.ID += "/reuse-confirmed"
 	profile.Reuse = &serving.ProfileReuseCheck{
 		SourceProfileID: "chill-system/original/original-uid", ConfirmationProfileID: confirmationID,
-		Outcome: measurementAccepted,
+		Outcome: servingstate.MeasurementAccepted,
 	}
 	spec.Instance.Profile = &profile
 	spec.Config.Policy.ProfileID = profile.ID
-	harness.controller.config.Preparations = map[string]PrepareSpec{profile.ID: spec}
+	harness.controller.config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: spec}
 	harness.controller.mu.Unlock()
 	harness.controller.observer.SetProfiles([]serving.Profile{profile})
 	return profile.ID
@@ -364,17 +366,17 @@ func TestProfileReuseSelectedMinimumsAndIdentity(t *testing.T) {
 		t.Fatal("explicit defaults differ")
 	}
 	for _, view := range []CatalogView{apply(29, 3), apply(30, 2)} {
-		if view.ReuseChecks[0].Outcome != measurementAccepted || view.Profiles[1].ID == defaults.Profiles[1].ID {
+		if view.ReuseChecks[0].Outcome != servingstate.MeasurementAccepted || view.Profiles[1].ID == defaults.Profiles[1].ID {
 			t.Fatal("policy change did not change identity")
 		}
 	}
 	target.Condition.ActiveProtocol.DurationSeconds = 20
 	target.Condition.IdleProtocol.DurationSeconds = 20
 	target.TrialsPerBatch = 2
-	if view := reuseView(t, source, target, .05); view.ReuseChecks[0].Outcome == measurementAccepted {
+	if view := reuseView(t, source, target, .05); view.ReuseChecks[0].Outcome == servingstate.MeasurementAccepted {
 		t.Fatal("historical minimum accepted short confirmation")
 	}
-	if view := apply(20, 2); view.ReuseChecks[0].Outcome != measurementAccepted || view.ReuseChecks[0].ConfirmationTrialsPerBatch != 2 || view.ReuseChecks[0].ConfirmationActiveSeconds != 20 || view.ReuseChecks[0].ConfirmationIdleSeconds != 20 {
+	if view := apply(20, 2); view.ReuseChecks[0].Outcome != servingstate.MeasurementAccepted || view.ReuseChecks[0].ConfirmationTrialsPerBatch != 2 || view.ReuseChecks[0].ConfirmationActiveSeconds != 20 || view.ReuseChecks[0].ConfirmationIdleSeconds != 20 {
 		t.Fatalf("selected minimums not applied: %+v", view)
 	}
 	for _, raw := range []string{

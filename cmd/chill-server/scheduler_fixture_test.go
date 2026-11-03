@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
+
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
@@ -120,7 +122,8 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 		},
 		Data: map[string]string{"scheduler.json": string(raw), "unrelated": "operator value"},
 	})
-	observer, err := servingkube.NewObserver(store, kube, execution, &sdk.Client{},
+	cluster := servingkube.NewClusterState(store, kube, "serving")
+	observer, err := servingkube.NewObserver(cluster, store, kube, execution, &sdk.Client{},
 		servingkube.ObserverConfig{Namespace: "serving"})
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +133,8 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 			t.Error(err)
 		}
 	})
-	operations, err := servingkube.NewOperations(store, kube, execution, observer, &sdk.Client{},
-		servingkube.OperationConfig{Namespace: "serving", PollInterval: time.Second})
+	operations, err := servingops.NewOperations(cluster, store, kube, execution, observer, &sdk.Client{},
+		servingops.OperationConfig{Namespace: "serving", PollInterval: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +143,8 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 	if err != nil {
 		t.Fatal(err)
 	}
-	return application.Dependencies{Kube: kube, Store: store, Execution: execution, Observer: observer, Objects: objects,
+	return application.Dependencies{
+		Cluster: cluster, Kube: kube, Store: store, Execution: execution, Observer: observer, Objects: objects,
 		Catalog: catalog, Operations: operations, ObservationLog: observationLog,
 		Options: application.Options{ServingNamespace: "serving", SchedulerConfigMap: "scheduler",
 			SchedulerConfigKey: "scheduler.json",

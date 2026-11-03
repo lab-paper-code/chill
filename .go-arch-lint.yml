@@ -80,6 +80,8 @@ components:
   serving-live: { in: internal/serving/live }
   serving-kube: { in: internal/serving/kube }
   serving-management: { in: internal/serving/management }
+  serving-state: { in: internal/serving/state }
+  serving-operations: { in: internal/serving/operations }
   serving-measurement: { in: internal/serving/measurement }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
@@ -334,6 +336,8 @@ deps:
   serving-application:
     mayDependOn:
       - serving-core
+      - serving-state
+      - serving-operations
       - serving-observation
       - serving-measurement
       - serving-kube
@@ -351,6 +355,8 @@ deps:
   serving-httpapi:
     mayDependOn:
       - serving-core
+      - serving-state
+      - serving-operations
       - serving-observation
       - api
       - serving-kube
@@ -358,6 +364,7 @@ deps:
       - evaluation-service
       - serving-measurement
       - serving-application
+      - serving-management
 
   serving-live:
     anyVendorDeps: true
@@ -373,6 +380,7 @@ deps:
       - profiler-evidence
       - query-api
       - serving-core
+      - serving-state
       - serving-kube
   serving-core:
     mayDependOn:
@@ -401,6 +409,34 @@ deps:
       - api
       - model-catalog
       - serving-core
+      - evidence-core
+      - profile-derivation
+      - serving-observation
+
+  serving-state:
+    mayDependOn:
+      - serving-core
+      - api
+      - platform-core
+      - evidence-core
+      - evidence-kube
+      - firstfloor
+      - workload-core
+
+  serving-operations:
+    mayDependOn:
+      - api
+      - platform-core
+      - evidence-core
+      - firstfloor
+      - metric-core
+      - power-window
+      - profiling-run
+      - serving-core
+      - serving-firstfloor
+      - serving-state
+      - workload-core
+      - workload-kube
 
   serving-kube:
     mayDependOn:
@@ -416,6 +452,8 @@ deps:
       - profiler-projection
       - profiling-run
       - serving-core
+      - serving-state
+      - serving-operations
       - serving-observation
       - serving-management
       - serving-firstfloor

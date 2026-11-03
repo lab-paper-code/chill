@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
@@ -99,7 +101,7 @@ func TestSchedulerSummaryPoolReturnFacts(t *testing.T) {
 				{Status: "running"}, {Status: "cancel"}, {Status: "complete"}, {Status: "planned"},
 			},
 		},
-		Results: []servingkube.OperationResult{
+		Results: []servingstate.OperationResult{
 			{EndedAt: at.Add(-time.Second)}, {EndedAt: at}, {EndedAt: at.Add(-time.Minute)},
 		},
 	}

@@ -1,28 +1,38 @@
-package kube
+package operations
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"math"
-	"math/big"
-	"reflect"
-	"slices"
-	"strings"
-	"time"
+	bytes "bytes"
+	context "context"
+	json "encoding/json"
+	errors "errors"
+	fmt "fmt"
+	math "math"
+	big "math/big"
+	reflect "reflect"
+	slices "slices"
+	strings "strings"
+	time "time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
+	evidencestore "github.com/lab-paper-code/chill/internal/evidencestore"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/metricobserver"
-	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
-	"github.com/lab-paper-code/chill/internal/serving"
+	metricobserver "github.com/lab-paper-code/chill/internal/metricobserver"
+	powerwindow "github.com/lab-paper-code/chill/internal/profiling/powerwindow"
+	serving "github.com/lab-paper-code/chill/internal/serving"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 )
 
+// OperationMeasurementPrefix holds every serving-operation measurement record.
+const OperationMeasurementPrefix = "serving/operation-measurements/"
+
+// OperationMeasurementKey is the fixed store key of one operation measurement.
+func OperationMeasurementKey(operation servingstate.Operation) string {
+	return OperationMeasurementPrefix + operation.Node.UID + "/" + operation.ID + ".json"
+}
+
 const OperationMeasurementSchema = "chill.dacs.io/serving-operation-measurement.v1alpha2"
-const measurementInsufficient = "Insufficient"
+
+const MeasurementInsufficient = "Insufficient"
 
 // MeterDeclaration is explicit evidence scope, never inferred from an URL.
 type MeterDeclaration struct {
@@ -31,8 +41,9 @@ type MeterDeclaration struct {
 	Scope  string                        `json:"scope"`
 	Source metricobserver.SourceIdentity `json:"source"`
 }
+
 type MeasurementRequest struct {
-	Operation       Operation                   `json:"operation"`
+	Operation       servingstate.Operation      `json:"operation"`
 	Meter           MeterDeclaration            `json:"meter"`
 	Sampling        metricobserver.Request      `json:"sampling"`
 	Coverage        powerwindow.Policy          `json:"coverage"`
@@ -42,21 +53,22 @@ type MeasurementRequest struct {
 	Store        string        `json:"store"`
 	IdleDuration time.Duration `json:"idleDurationNanos,omitempty"`
 }
+
 type OperationMeasurement struct {
-	SchemaVersion           string                `json:"schemaVersion"`
-	Request                 MeasurementRequest    `json:"request"`
-	Result                  OperationResult       `json:"result"`
-	Power                   metricobserver.Result `json:"power"`
-	StateObservations       []OperationState      `json:"stateObservations"`
-	Verdict                 string                `json:"verdict"`
-	Reason                  string                `json:"reason,omitempty"`
-	WallJoules              *float64              `json:"wallJoules,omitempty"`
-	MeanWatts               *float64              `json:"meanWatts,omitempty"`
-	EnergyUncertaintyJoules *float64              `json:"energyUncertaintyJoules,omitempty"`
-	PhaseSensitivityJoules  *float64              `json:"phaseSensitivityJoules,omitempty"`
-	MissingGapJoules        *float64              `json:"missingGapJoules,omitempty"`
-	EnergyUncertaintyRatio  *float64              `json:"energyUncertaintyRatio,omitempty"`
-	Isolation               *MeasurementIsolation `json:"isolation,omitempty"`
+	SchemaVersion           string                        `json:"schemaVersion"`
+	Request                 MeasurementRequest            `json:"request"`
+	Result                  servingstate.OperationResult  `json:"result"`
+	Power                   metricobserver.Result         `json:"power"`
+	StateObservations       []servingstate.OperationState `json:"stateObservations"`
+	Verdict                 string                        `json:"verdict"`
+	Reason                  string                        `json:"reason,omitempty"`
+	WallJoules              *float64                      `json:"wallJoules,omitempty"`
+	MeanWatts               *float64                      `json:"meanWatts,omitempty"`
+	EnergyUncertaintyJoules *float64                      `json:"energyUncertaintyJoules,omitempty"`
+	PhaseSensitivityJoules  *float64                      `json:"phaseSensitivityJoules,omitempty"`
+	MissingGapJoules        *float64                      `json:"missingGapJoules,omitempty"`
+	EnergyUncertaintyRatio  *float64                      `json:"energyUncertaintyRatio,omitempty"`
+	Isolation               *MeasurementIsolation         `json:"isolation,omitempty"`
 }
 
 // MeasurementIsolation witnesses the measured Node at the end: it still carries
@@ -83,18 +95,18 @@ type PowerModeGeneration struct {
 // actual successful read. Failure records are immutable too; insufficient
 // windows never become a zero-valued accepted cost.
 func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, source metricobserver.Source, writer evidencestore.ImmutableWriter, finalIsolation func(context.Context) (MeasurementIsolation, error)) (OperationMeasurement, evidencestore.Receipt, error) {
-	record := OperationMeasurement{SchemaVersion: OperationMeasurementSchema, Request: request, Verdict: measurementInsufficient}
+	record := OperationMeasurement{SchemaVersion: OperationMeasurementSchema, Request: request, Verdict: MeasurementInsufficient}
 	if err := validateMeasurementRequest(request, source, writer); err != nil {
 		return record, evidencestore.Receipt{}, err
 	}
-	if _, err := metricobserver.RequiredCapacity(request.Sampling, source.Identity(), o.config.MetricLimits, true); err != nil {
+	if _, err := metricobserver.RequiredCapacity(request.Sampling, source.Identity(), o.Config.MetricLimits, true); err != nil {
 		return record, evidencestore.Receipt{}, fmt.Errorf("admit operation power observation: %w", err)
 	}
-	observer, err := metricobserver.New(source, o.config.MetricLimits)
+	observer, err := metricobserver.New(source, o.Config.MetricLimits)
 	if err != nil {
 		return record, evidencestore.Receipt{}, err
 	}
-	allowance, _ := measurementTimingAllowance(request.Timing)
+	allowance, _ := MeasurementTimingAllowance(request.Timing)
 	sampleCtx, cancelSamples := context.WithTimeout(ctx, request.Sampling.Duration)
 	defer cancelSamples()
 	started := make(chan struct{})
@@ -114,7 +126,7 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 			}
 			operationCtx, cancelOperation := context.WithTimeout(sampleCtx, request.OperationBudget)
 			defer cancelOperation()
-			if request.Operation.Kind == operationIdle {
+			if request.Operation.Kind == servingstate.OperationIdle {
 				record.Result, record.StateObservations, operationErr = o.measureIdle(operationCtx, request.Operation, request.IdleDuration, request.Sampling.Interval)
 			} else {
 				record.Result, operationErr = o.Execute(operationCtx, request.Operation)
@@ -133,12 +145,12 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	default:
 		record.Reason = "no successful first power sample; operation was not invoked"
 	}
-	operationErr = record.judge(operationErr, observeErr)
+	operationErr = record.Judge(operationErr, observeErr)
 	if finalIsolation != nil {
 		checkCtx, cancelCheck := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		witness, isolationErr := finalIsolation(checkCtx)
 		cancelCheck()
-		operationErr = errors.Join(operationErr, record.applyIsolation(witness, isolationErr))
+		operationErr = errors.Join(operationErr, record.ApplyIsolation(witness, isolationErr))
 	}
 	raw, encodeErr := json.Marshal(record)
 	if encodeErr != nil {
@@ -159,24 +171,24 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	return record, receipt, errors.Join(operationErr, observeErr, writeErr)
 }
 
-// judge sets the verdict from the actual result and power window. A generic
+// Judge sets the verdict from the actual result and power window. A generic
 // operation is Accepted only with the primitive state effect its cost needs.
-func (record *OperationMeasurement) judge(operationErr, observeErr error) error {
-	generic := record.Request.Operation.Kind != operationIdle
+func (record *OperationMeasurement) Judge(operationErr, observeErr error) error {
+	generic := record.Request.Operation.Kind != servingstate.OperationIdle
 	if operationErr == nil && generic {
 		operationErr = operationZeroInference(record.Result)
 	}
 	if record.Result.StartedAt.IsZero() {
-		record.Verdict = measurementInsufficient
+		record.Verdict = MeasurementInsufficient
 	} else if operationErr != nil {
-		record.Verdict = operationFailed
+		record.Verdict = string(edge.MeasurementPhaseFailed)
 		record.Reason = operationErr.Error()
 	} else {
 		var effectErr error
 		if generic {
-			_, _, effectErr = operationCostKeys(record.Result)
+			_, _, effectErr = OperationCostKeys(record.Result)
 		}
-		measurement, integrationErr := record.energyMeasurement()
+		measurement, integrationErr := record.EnergyMeasurement()
 		if effectErr != nil {
 			record.Reason = effectErr.Error()
 		} else if integrationErr != nil {
@@ -184,14 +196,14 @@ func (record *OperationMeasurement) judge(operationErr, observeErr error) error 
 		} else if observeErr != nil {
 			record.Reason = observeErr.Error()
 		} else {
-			record.Verdict = measurementAccepted
+			record.Verdict = servingstate.MeasurementAccepted
 			joules := measurement.Joules
 			record.WallJoules = &joules
 			record.EnergyUncertaintyJoules = &measurement.UncertaintyJoules
 			record.PhaseSensitivityJoules = &measurement.SensitivityJoules
 			record.MissingGapJoules = &measurement.MissingGapJoules
 			record.EnergyUncertaintyRatio = powerwindow.RelativeUncertainty(joules, measurement.UncertaintyJoules)
-			if record.Request.Operation.Kind == operationIdle {
+			if record.Request.Operation.Kind == servingstate.OperationIdle {
 				watts := joules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds()
 				record.MeanWatts = &watts
 			}
@@ -199,6 +211,7 @@ func (record *OperationMeasurement) judge(operationErr, observeErr error) error 
 	}
 	return operationErr
 }
+
 func validateMeasurementRequest(request MeasurementRequest, source metricobserver.Source, writer evidencestore.ImmutableWriter) error {
 	if writer == nil || source == nil {
 		return errors.New("actual metric source and immutable writer required")
@@ -212,10 +225,10 @@ func validateMeasurementRequest(request MeasurementRequest, source metricobserve
 	if err := (evidencestore.ObjectLocation{Store: request.Store, Key: OperationMeasurementKey(request.Operation)}).Validate(); err != nil {
 		return err
 	}
-	if request.Meter.ID == "" || request.Meter.Scope != measurementWallScope || request.Meter.Node != request.Operation.Node || !reflect.DeepEqual(request.Meter.Source, source.Identity()) || source.Identity().NodeName != request.Operation.Node.Name {
+	if request.Meter.ID == "" || request.Meter.Scope != servingstate.MeasurementWallScope || request.Meter.Node != request.Operation.Node || !reflect.DeepEqual(request.Meter.Source, source.Identity()) || source.Identity().NodeName != request.Operation.Node.Name {
 		return errors.New("exact node-exclusive wall meter declaration required")
 	}
-	allowance, err := request.powerTimingAllowance()
+	allowance, err := request.PowerTimingAllowance()
 	if err != nil {
 		return err
 	}
@@ -239,7 +252,7 @@ func waitMeasurementSupport(ctx context.Context, duration time.Duration) error {
 	}
 }
 
-func measurementTimingAllowance(timing *edge.MeasurementTimingSpec) (time.Duration, error) {
+func MeasurementTimingAllowance(timing *edge.MeasurementTimingSpec) (time.Duration, error) {
 	if timing == nil || strings.TrimSpace(timing.Source) == "" {
 		return 0, errors.New("empirical power timing observation source required")
 	}
@@ -265,17 +278,17 @@ func measurementTimingAllowance(timing *edge.MeasurementTimingSpec) (time.Durati
 	return time.Duration(nanos.Int64()), nil
 }
 
-func (request MeasurementRequest) powerTimingAllowance() (time.Duration, error) {
+func (request MeasurementRequest) PowerTimingAllowance() (time.Duration, error) {
 	if request.Coverage.MaximumGap <= 0 {
 		return 0, errors.New("explicit abnormal power-gap allowance required")
 	}
-	return measurementTimingAllowance(request.Timing)
+	return MeasurementTimingAllowance(request.Timing)
 }
 
-// energyMeasurement derives actual expanded support and B=S+G from the
+// EnergyMeasurement derives actual expanded support and B=S+G from the
 // required empirical timing inputs.
-func (record OperationMeasurement) energyMeasurement() (powerwindow.Measurement, error) {
-	allowance, err := record.Request.powerTimingAllowance()
+func (record OperationMeasurement) EnergyMeasurement() (powerwindow.Measurement, error) {
+	allowance, err := record.Request.PowerTimingAllowance()
 	if err != nil {
 		return powerwindow.Measurement{}, err
 	}
@@ -292,7 +305,7 @@ func (record OperationMeasurement) energyMeasurement() (powerwindow.Measurement,
 	if err != nil {
 		return powerwindow.Measurement{}, err
 	}
-	if record.Verdict == measurementAccepted && (record.EnergyUncertaintyJoules == nil || record.PhaseSensitivityJoules == nil || record.MissingGapJoules == nil) {
+	if record.Verdict == servingstate.MeasurementAccepted && (record.EnergyUncertaintyJoules == nil || record.PhaseSensitivityJoules == nil || record.MissingGapJoules == nil) {
 		return powerwindow.Measurement{}, errors.New("accepted timing measurement lacks separate uncertainty evidence")
 	}
 	for _, pair := range []struct {
@@ -345,7 +358,8 @@ func originalPowerGaps(
 	}
 	return gaps, nil
 }
-func stableIdle(before, after OperationState) error {
+
+func StableIdle(before, after servingstate.OperationState) error {
 	if before.Node != after.Node || before.PowerMode == "" || before.PowerMode != after.PowerMode || !reflect.DeepEqual(before.Pods, after.Pods) || !reflect.DeepEqual(before.States, after.States) || len(before.Reasons) > 0 || len(after.Reasons) > 0 || len(before.Native) != len(after.Native) {
 		return errors.New("idle physical state changed or native observation incomplete")
 	}
@@ -372,9 +386,10 @@ func sameLoadedMetadata(a, b native.Metadata) bool {
 	a.Runtime.CPUAffinity, a.Runtime.CPUSet, a.Runtime.CgroupCPUMax = b.Runtime.CPUAffinity, b.Runtime.CPUSet, b.Runtime.CgroupCPUMax
 	return reflect.DeepEqual(a, b)
 }
-func (o *Operations) measureIdle(ctx context.Context, operation Operation, duration, interval time.Duration) (OperationResult, []OperationState, error) {
-	result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}
-	var observations []OperationState
+
+func (o *Operations) measureIdle(ctx context.Context, operation servingstate.Operation, duration, interval time.Duration) (servingstate.OperationResult, []servingstate.OperationState, error) {
+	result := servingstate.OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: servingstate.NativeOperationRunning}
+	var observations []servingstate.OperationState
 	if duration <= 0 {
 		return result, nil, errors.New("idle duration must be positive")
 	}
@@ -382,7 +397,7 @@ func (o *Operations) measureIdle(ctx context.Context, operation Operation, durat
 	result.Before = before
 	observations = append(observations, before)
 	if err == nil {
-		err = stableIdle(before, before)
+		err = StableIdle(before, before)
 	}
 	result.StartedAt = time.Now().UTC()
 	if err == nil {
@@ -402,7 +417,7 @@ func (o *Operations) measureIdle(ctx context.Context, operation Operation, durat
 				state, e := o.Capture(ctx, operation.Node)
 				observations = append(observations, state)
 				if e == nil {
-					e = stableIdle(before, state)
+					e = StableIdle(before, state)
 				}
 				if e != nil {
 					err = e
@@ -415,31 +430,32 @@ func (o *Operations) measureIdle(ctx context.Context, operation Operation, durat
 	result.Actual = after
 	observations = append(observations, after)
 	if e == nil {
-		e = stableIdle(before, after)
+		e = StableIdle(before, after)
 	}
 	err = errors.Join(err, e)
 	result.EndedAt = time.Now().UTC()
-	result.Status = nativeOperationComplete
+	result.Status = servingstate.NativeOperationComplete
 	if err != nil {
-		result.Status = nativeOperationFailed
+		result.Status = servingstate.NativeOperationFailed
 		result.Error = err.Error()
 	}
 	return result, observations, err
 }
-func measurementCost(record OperationMeasurement, reference evidencestore.ObjectIdentity) (serving.OperationCost, error) {
-	if record.SchemaVersion != OperationMeasurementSchema || record.Verdict != measurementAccepted || record.Result.Status != nativeOperationComplete || record.WallJoules == nil || math.IsNaN(*record.WallJoules) || math.IsInf(*record.WallJoules, 0) || *record.WallJoules < 0 || !record.Result.EndedAt.After(record.Result.StartedAt) {
+
+func MeasurementCost(record OperationMeasurement, reference evidencestore.ObjectIdentity) (serving.OperationCost, error) {
+	if record.SchemaVersion != OperationMeasurementSchema || record.Verdict != servingstate.MeasurementAccepted || record.Result.Status != servingstate.NativeOperationComplete || record.WallJoules == nil || math.IsNaN(*record.WallJoules) || math.IsInf(*record.WallJoules, 0) || *record.WallJoules < 0 || !record.Result.EndedAt.After(record.Result.StartedAt) {
 		return serving.OperationCost{}, errors.New("operation cost lacks accepted actual window")
 	}
-	if record.Request.Operation.Kind == operationIdle {
+	if record.Request.Operation.Kind == servingstate.OperationIdle {
 		return serving.OperationCost{}, errors.New("idle baselines use their distinct cost contract")
 	}
 	if err := operationZeroInference(record.Result); err != nil {
 		return serving.OperationCost{}, err
 	}
-	if record.Request.Operation.Kind != operationPower && (record.Result.Before.PowerMode == "" || record.Result.Before.PowerMode != record.Result.Actual.PowerMode) {
+	if record.Request.Operation.Kind != servingstate.OperationPower && (record.Result.Before.PowerMode == "" || record.Result.Before.PowerMode != record.Result.Actual.PowerMode) {
 		return serving.OperationCost{}, errors.New("generic operation host power condition unknown or changed")
 	}
-	measurement, err := record.energyMeasurement()
+	measurement, err := record.EnergyMeasurement()
 	joules := measurement.Joules
 	if err != nil {
 		return serving.OperationCost{}, err
@@ -447,7 +463,7 @@ func measurementCost(record OperationMeasurement, reference evidencestore.Object
 	if joules != *record.WallJoules {
 		return serving.OperationCost{}, errors.New("stored cost differs from retained raw integral")
 	}
-	from, to, err := operationCostKeys(record.Result)
+	from, to, err := OperationCostKeys(record.Result)
 	if err != nil {
 		return serving.OperationCost{}, err
 	}
@@ -460,10 +476,14 @@ func measurementCost(record OperationMeasurement, reference evidencestore.Object
 			beforeBaseline = &watts
 		}
 	}
-	return serving.OperationCost{ID: record.Request.Operation.ID, Node: record.Request.Operation.Node, Kind: record.Request.Operation.Kind, From: from, To: to, Trials: []serving.OperationTrial{{Duration: record.Result.EndedAt.Sub(record.Result.StartedAt), Joules: joules, EnergyUncertaintyJoules: measurement.UncertaintyJoules}}, EnergyScope: "whole-wall", Meter: record.Request.Meter.ID, Scope: record.Request.Meter.Scope, Reference: reference, PowerMode: record.Result.Before.PowerMode, BeforeState: stateProfileKeys(record.Result.Before), TargetState: stateProfileKeys(record.Result.Actual), BeforeBaselineWatts: beforeBaseline, MeasuredAt: record.Result.EndedAt}, nil
+	return serving.OperationCost{ID: record.Request.Operation.ID, Node: record.Request.Operation.Node, Kind: record.Request.Operation.Kind, From: from, To: to, Trials: []serving.OperationTrial{{Duration: record.Result.EndedAt.Sub(record.Result.StartedAt), Joules: joules, EnergyUncertaintyJoules: measurement.UncertaintyJoules}}, EnergyScope: "whole-wall", Meter: record.Request.Meter.ID, Scope: record.Request.Meter.Scope, Reference: reference, PowerMode: record.Result.Before.PowerMode, BeforeState: StateProfileKeys(record.Result.Before), TargetState: StateProfileKeys(record.Result.Actual), BeforeBaselineWatts: beforeBaseline, MeasuredAt: record.Result.EndedAt}, nil
 }
-func stateProfileKeys(state OperationState) []string { return append([]string(nil), state.States...) }
-func operationCostKeys(result OperationResult) (string, string, error) {
+
+func StateProfileKeys(state servingstate.OperationState) []string {
+	return append([]string(nil), state.States...)
+}
+
+func OperationCostKeys(result servingstate.OperationResult) (string, string, error) {
 	difference := func(a, b []string) []string {
 		remaining := slices.Clone(b)
 		var diff []string
@@ -478,19 +498,19 @@ func operationCostKeys(result OperationResult) (string, string, error) {
 		return diff
 	}
 	switch result.Operation.Kind {
-	case operationPrepare:
+	case servingstate.OperationPrepare:
 		added := difference(result.Actual.States, result.Before.States)
 		removed := difference(result.Before.States, result.Actual.States)
 		if len(added) == 1 && len(removed) == 0 {
-			return nativeStateUnloaded, added[0], nil
+			return servingstate.NativeStateUnloaded, added[0], nil
 		}
-	case operationRemove:
+	case servingstate.OperationRemove:
 		removed := difference(result.Before.States, result.Actual.States)
 		added := difference(result.Actual.States, result.Before.States)
 		if len(removed) == 1 && len(added) == 0 {
-			return removed[0], nativeStateUnloaded, nil
+			return removed[0], servingstate.NativeStateUnloaded, nil
 		}
-	case operationPower:
+	case servingstate.OperationPower:
 		// The measured power change is the empty-Node transition; the loaded one is a PowerModeTransitionCost.
 		if before, after := result.Before.PowerMode, result.Actual.PowerMode; before != "" && after != "" && before != after && len(result.Before.States) == 0 && len(result.Actual.States) == 0 {
 			return before, after, nil
@@ -498,7 +518,8 @@ func operationCostKeys(result OperationResult) (string, string, error) {
 	}
 	return "", "", errors.New("cost requires exactly one proven primitive state effect; resize uses measured prepare/remove composition")
 }
-func operationZeroInference(result OperationResult) error {
+
+func operationZeroInference(result servingstate.OperationResult) error {
 	if len(result.Before.Reasons) > 0 || len(result.Actual.Reasons) > 0 {
 		return errors.New("operation native observations incomplete")
 	}
@@ -518,14 +539,15 @@ func operationZeroInference(result OperationResult) error {
 	}
 	return nil
 }
-func (record *OperationMeasurement) applyIsolation(witness MeasurementIsolation, err error) error {
+
+func (record *OperationMeasurement) ApplyIsolation(witness MeasurementIsolation, err error) error {
 	record.Isolation = &witness
 	if err == nil && (witness.Node != record.Request.Operation.Node || !witness.Tainted || witness.CheckedAt.Before(record.Result.EndedAt)) {
 		err = errors.New("final actual isolation witness does not match operation boundary")
 	}
 	if err != nil {
 		record.Isolation.Error = err.Error()
-		record.Verdict = measurementInsufficient
+		record.Verdict = MeasurementInsufficient
 		record.Reason = "measurement isolation unconfirmed: " + err.Error()
 		record.WallJoules = nil
 		record.MeanWatts = nil

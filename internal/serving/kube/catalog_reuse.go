@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"k8s.io/apimachinery/pkg/types"
@@ -78,7 +80,7 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 			if err := compareReuseProfiles(source, target, &check); err != nil {
 				check.Reason = err.Error()
 			} else {
-				check.Outcome = measurementAccepted
+				check.Outcome = servingstate.MeasurementAccepted
 				reused := reusedProfile(source, target, check)
 				view.Profiles = append(view.Profiles, reused)
 				// Keep confirmation measurements independent from the referenced
@@ -89,7 +91,7 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 			}
 		}
 		view.ReuseChecks = append(view.ReuseChecks, check)
-		if check.Outcome != measurementAccepted {
+		if check.Outcome != servingstate.MeasurementAccepted {
 			namespace, nameUID, _ := strings.Cut(target.ID, "/")
 			name, _, _ := strings.Cut(nameUID, "/")
 			view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{

@@ -3,11 +3,13 @@ package kube
 import (
 	"testing"
 
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
 func TestTargetlessFixedActionsRequireObservedAuthorization(t *testing.T) {
-	old := serving.Action{ID: "authorized", Kind: operationPower, Node: serving.NodeReference{Name: "node", UID: "node-uid"}, From: "max", To: "eco", Fixed: true, Status: nativeOperationRunning}
+	old := serving.Action{ID: "authorized", Kind: servingstate.OperationPower, Node: serving.NodeReference{Name: "node", UID: "node-uid"}, From: "max", To: "eco", Fixed: true, Status: servingstate.NativeOperationRunning}
 	if authorizedFixedContinuation(old, nil) {
 		t.Fatal("new Fixed saving was authorized without a selected target")
 	}
