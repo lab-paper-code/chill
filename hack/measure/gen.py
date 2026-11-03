@@ -12,22 +12,19 @@ Legacy approved derivations still require the already-installed scipy.
 """
 import argparse
 import copy
-import hashlib
+import importlib.util
 import json
 import math
 import os
-import ssl
-import subprocess
-import urllib.error
-import urllib.request
-from collections import Counter, defaultdict
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
-import yaml
 from scipy.stats import t
 
 HERE = Path(__file__).resolve().parent
+_coverage_spec = importlib.util.spec_from_file_location("coverage_plan", HERE / "coverage_plan.py")
+coverage_plan = importlib.util.module_from_spec(_coverage_spec)
+_coverage_spec.loader.exec_module(coverage_plan)
 CONFIG = json.loads(Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
 ENV = CONFIG["measure"]
 DATA = Path(CONFIG["paths"]["campaign"])
@@ -62,25 +59,6 @@ MISSING_PROFILES = ["rasp5-018-smolvlm-int8-q3", "orangepi-018-smolvlm-int8-q2",
                     "orangepi-019-smolvlm-int8-q6", "orangepi-020-mnv2-cpu-q2",
                     "orangepi-021-mnv2-cpu-q4"]
 AUTHORITY = ENV["authority"]
-
-
-def load(path):
-    return json.loads(Path(path).read_text())
-
-
-def identity(path):
-    path = Path(path)
-    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-
-
-def write_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
-
-
-def write_docs(path, docs):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join("---\n" + json.dumps(d, ensure_ascii=False) + "\n" for d in docs))
 
 
 def read_docs(path):
@@ -249,8 +227,8 @@ def generate(output):
     inputs_path = EVIDENCE / "d-method/d-inputs-and-calculations.json"
     floor_path = EVIDENCE / "d-method/legacy-floor-scenario.json"
     arithmetic_path = CURRENT / "cost-shift-approved/arithmetic.json"
-    inputs, floor, arithmetic = load(inputs_path), load(floor_path), load(arithmetic_path)
-    provenance = [identity(p) for p in (inputs_path, floor_path, CAPTURED_VALUES)]
+    inputs, floor, arithmetic = coverage_plan.load(inputs_path), coverage_plan.load(floor_path), coverage_plan.load(arithmetic_path)
+    provenance = [coverage_plan.identity(p) for p in (inputs_path, floor_path, CAPTURED_VALUES)]
     floors = {r["caseID"]: r for r in floor["rows"]}
     source = [d for node in sorted({r["node"] for r in inputs["rows"]}) for d in read_docs(PHASE / f"{node}.yaml")]
     by_name = {d["metadata"]["name"]: d for d in source}
@@ -271,26 +249,26 @@ def generate(output):
             staged["d-pre-d2"].append(cr)
     for group, docs in staged.items():
         for d in docs:
-            write_docs(output / group / (d["metadata"]["name"] + ".yaml"), [d])
+            coverage_plan.write_docs(output / group / (d["metadata"]["name"] + ".yaml"), [d])
     # 012 B4 is unmeasured: the frozen readiness envelope is an explicit conservative
     # tail fallback, never a claim that B4 was observed or has this physical bound.
-    handling = load(EVIDENCE / "cost-methods/012-handling.json")
-    original012 = load(handling["B2Trials"][0]["localRaw"])["runConfig"]
+    handling = coverage_plan.load(EVIDENCE / "cost-methods/012-handling.json")
+    original012 = coverage_plan.load(handling["B2Trials"][0]["localRaw"])["runConfig"]
     reference017 = next(r for r in rows if r["caseID"] == "D21")
     replacement_docs = []
     for old, new in REPLACEMENTS.items():
         is012 = old.startswith("jetsono")
         evidence = {
-            "source": identity(EVIDENCE / ("cost-methods/012-handling.json" if is012 else "beo-policy/evidence-trace.json")),
+            "source": coverage_plan.identity(EVIDENCE / ("cost-methods/012-handling.json" if is012 else "beo-policy/evidence-trace.json")),
             "originalUID": handling["BEOUID"] if is012 else "a4f082ce-45a7-4656-a601-5f6a6626eaae",
             "basis": "captured frozen-runtime readiness envelope as conservative unmeasured-batch tail fallback",
-            "capturedPolicy": identity(CAPTURED_VALUES),
+            "capturedPolicy": coverage_plan.identity(CAPTURED_VALUES),
             "observedB2Seconds": handling["captureCause"]["ninthBatchSeconds"] if is012 else None,
             "frozenInputIdentity": original012 if is012 else reference017["inputIdentity"],
             "identityScope": "original012 trial" if is012 else "historical same-node/model/runtime q1 reference; new replacement uses shared CPU"}
         replacement_docs.append(replacement_beo(by_name[old], new, POLICY["observerReadyTimeoutSeconds"], evidence))
     for d in replacement_docs:
-        write_docs(output / "replacements" / (d["metadata"]["name"] + ".yaml"), [d])
+        coverage_plan.write_docs(output / "replacements" / (d["metadata"]["name"] + ".yaml"), [d])
     missing_names = {}
     for i, name in enumerate(MISSING_PROFILES):
         node, tail = name.split("-", 1)[0], name.split("-", 2)[2]
@@ -303,7 +281,7 @@ def generate(output):
                              "basis": "conservative captured readiness envelope; different CPU quota tail unmeasured"})
         d["metadata"]["annotations"].pop("chill.dacs.io/replaces-batch-energy-optimization")
         d["metadata"]["annotations"]["chill.dacs.io/source-planned-spec"] = name
-        write_docs(output / "prerequisites" / (new + ".yaml"), [d])
+        coverage_plan.write_docs(output / "prerequisites" / (new + ".yaml"), [d])
     name_map = dict(REPLACEMENTS, **missing_names)
     costs = [copy.deepcopy(d) for d in source if d["kind"] == "OperationCostMeasurement"]
     if len(costs) != 14:
@@ -330,7 +308,7 @@ def generate(output):
         doc["metadata"]["name"] = name
         doc["metadata"]["annotations"] = {"chill.dacs.io/source-planned-spec": old_name,
             "chill.dacs.io/measurement-conditions": json.dumps({"authority": AUTHORITY,
-                "timingEvidence": identity(arithmetic_path), "coefficients": COEFFICIENTS,
+                "timingEvidence": coverage_plan.identity(arithmetic_path), "coefficients": COEFFICIENTS,
                 "costUncertainty": "B=S+G; exact all-phase knot/stationary extrema; report-only10%",
                 "operationBudgetSeconds": math.ceil(1.25 * 1800),
                 "operationBudgetBasis": "1.25*captured1800s runner envelope; conservative planning, not operation duration observation",
@@ -347,9 +325,9 @@ def generate(output):
         per_node[node].append(doc)
         cost_index.append({"node": node, "name": name, "source": old_name, "scope": "(a)",
                            "path": str(output / "cost-a14" / (name + ".yaml"))})
-        write_docs(output / "cost-a14" / (name + ".yaml"), [doc])
+        coverage_plan.write_docs(output / "cost-a14" / (name + ".yaml"), [doc])
     representative_cost = next(d for d in costs if d["metadata"]["name"] == "rasp5-960-cost-approved")
-    write_docs(output / "representative/rasp5-960-cost-approved.yaml", [representative_cost])
+    coverage_plan.write_docs(output / "representative/rasp5-960-cost-approved.yaml", [representative_cost])
     # Same immutable name in the representative view: resume must reuse its outcome,
     # not schedule a fifteenth cost or repeat the sequence under a second identity.
     replacement_sharing = []
@@ -360,8 +338,8 @@ def generate(output):
             "original": old, "replacement": new, "newReplacementSpecificD": False,
             "meaning": "legacy d-sharing relationship only; not a measurement derived from the replacement profile",
             "actualMeasuredDInputs": [{"caseID": r["caseID"], "BEO": r["BEO"], "profileID": r["profileID"]} for r in measured]})
-    write_json(output / "conditions.json", {"authority": AUTHORITY, "coefficients": COEFFICIENTS,
-        "sources": provenance + [identity(arithmetic_path)], "all34": conditions,
+    coverage_plan.write_json(output / "conditions.json", {"authority": AUTHORITY, "coefficients": COEFFICIENTS,
+        "sources": provenance + [coverage_plan.identity(arithmetic_path)], "all34": conditions,
         "legacyMobilenetCPU8Preserved": True, "diagnosticRasp944Adopted": False,
         "idlePlan": idle_plan, "profilingPolicy": POLICY, "costSequences": cost_index,
         "replacementDSharing": replacement_sharing,
@@ -388,7 +366,7 @@ def generate(output):
     resume["retainedOrangepi017Cleanup"] = {
         "beforeStage": 3, "exactlyOnce": True, "executionOwner": "CampaignOps", "namespace": NS,
         "rootName": "orangepi-017-plc-cpu-q4", "rootUID": "a4f082ce-45a7-4656-a601-5f6a6626eaae",
-        "rootSnapshot": identity(EVIDENCE / "ops-state/orangepi017/root-current.json"),
+        "rootSnapshot": coverage_plan.identity(EVIDENCE / "ops-state/orangepi017/root-current.json"),
         "preserveRootAdmissionAnnotation": "chill.dacs.io/admission=Granted 2026-10-23T06:48:46.160313542Z",
         "node": "orangepi", "capturedNodeUID": "3cbe367f-2511-47fc-9b34-67c98fac69fd",
         "staleTaint": {"key": "chill.dacs.io/measurement", "effect": "NoSchedule",
@@ -419,913 +397,14 @@ def generate(output):
         "postD2": "only after D2 acceptance start the separate stage7 command",
         "preserve": "existing drop rule always remains unchanged; no new hold bypass fields",
         "originalHoldEditedByGenerator": False}
-    write_json(output / "resume-plan.json", resume)
+    coverage_plan.write_json(output / "resume-plan.json", resume)
     return conditions
-
-
-def coverage_api(path, body=None):
-    """Only GET and the audited read-only preflight POST are available here."""
-    namespace = "/api/v1/namespaces/" + NS
-    if body is not None and path != namespace + "/batch-energy-optimizations/preflight":
-        raise ValueError("only read-only preflight POST is allowed")
-    class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
-    d2 = CONFIG["d2"]
-    opener = urllib.request.build_opener(
-        urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=d2["caFile"])),
-        NoRedirect())
-    request = urllib.request.Request(
-        d2["apiBase"].rstrip("/") + path,
-        data=None if body is None else json.dumps(body).encode(),
-        headers={"Authorization": "Bearer " + Path(d2["tokenFile"]).read_text().strip(),
-                 "Content-Type": "application/json"})
-    with opener.open(request, timeout=120) as response:
-        return json.load(response)
-
-
-def coverage_runtime_images(path):
-    import yaml
-    declarations = yaml.safe_load(path.read_text())["profiling"]["executionDeclarations"]
-    images = defaultdict(set)
-    for declaration in declarations:
-        images[declaration["deviceClass"]].add(json.loads(declaration["runtime"]["payload"])["image"])
-    if not images or any(not image for values in images.values() for image in values):
-        raise ValueError("current runtime declarations must contain image identities")
-    return {device: sorted(values) for device, values in images.items()}
-
-
-def coverage_declared_on_node(cell, node, device, model, declarations, has_policy):
-    """Resolve only a representative Node's missing runtime declaration."""
-    reasons = {r["code"] for r in cell["support"].get("reasons", [])}
-    if not node or reasons != {"RuntimeDeclarationMissing"}:
-        return False
-    path = cell["executionPath"]
-    if (device["name"], path) not in has_policy and ("*", path) not in has_policy:
-        return False
-    execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == path)
-    artifact = next(a for a in model["spec"]["artifacts"] if a["name"] == execution["artifact"])
-    if artifact["source"]["architecture"] != device["architecture"]:
-        return False
-    for declaration in declarations:
-        if declaration["deviceClass"] != device["name"] or declaration.get("node", node) != node:
-            continue
-        payload = json.loads(declaration["runtime"]["payload"])
-        if (payload["architecture"] == device["architecture"] and
-                payload["runtime"]["family"] == execution["runtime"]["family"] and
-                execution["runtime"]["backend"] in payload["runtime"]["backends"]):
-            return True
-    return False
-
-
-SHARED_CURVE_SCHEMA = "chill.dacs.io/curve-plan.v1alpha10"
-SHARED_EVIDENCE_SCHEMA = "chill.dacs.io/profiling-execution-evidence.v1alpha16"
-EXECUTION_CONDITIONS_ANNOTATION = "chill.dacs.io/coverage-execution-conditions"
-
-
-def coverage_shared_result(result):
-    """Current finalized evidence seals RunConfig v1alpha18; old CPU runs never cover shared cells."""
-    record = result.get("result") or {}
-    trials = record.get("completedTrials") or []
-    return (record.get("curvePlan", {}).get("schemaVersion") == SHARED_CURVE_SCHEMA and bool(trials) and
-            all(t.get("evidence", {}).get("schemaVersion") == SHARED_EVIDENCE_SCHEMA for t in trials))
-
-
-def coverage_condition_matches(observed, required):
-    """Compare execution validity; image identity remains historical metadata."""
-    return bool(observed and required) and all(observed.get(key) == required.get(key)
-        for key in ("curveSchema", "evidenceSchema"))
-
-
-def coverage_required_condition(cell, node, model, declarations):
-    execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == cell["executionPath"])
-    runtime = execution["runtime"]
-    image = None
-    for declaration in declarations:
-        if (declaration["deviceClass"] != cell["deviceClass"]["name"] or
-                declaration.get("node", node) != node):
-            continue
-        payload = json.loads(declaration["runtime"]["payload"])
-        if (payload["runtime"]["family"] == runtime["family"] and
-                runtime["backend"] in payload["runtime"]["backends"]):
-            image = payload["image"]  # last matching declaration overwrites this scope
-    if image is None:
-        return None
-    return {"runtimeImage": image, "curveSchema": SHARED_CURVE_SCHEMA,
-            "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
-
-
-def coverage_targets(coverage, policy, required_conditions, node_declared=(), profile_conditions=None):
-    targets, unknown, stale, measured_current = [], [], [], []
-    if coverage["completeness"] != "complete":
-        raise ValueError("incomplete coverage cannot define a complete plan")
-    for cell in coverage["cells"]:
-        verdict = cell["support"]["verdict"]
-        if "currentMeasurement" not in cell:
-            unknown.append(dict(cell, selectionReason="currentMeasurement unavailable; cell held"))
-        elif verdict == policy["unknownVerdict"] and cell["id"] not in node_declared:
-            unknown.append(cell)
-        elif verdict == policy["supportedVerdict"] or cell["id"] in node_declared:
-            required = required_conditions.get(cell["id"])
-            selected = cell["currentMeasurement"]
-            observed = (profile_conditions or {}).get(selected["id"]) if selected else None
-            if coverage_condition_matches(observed, required):
-                measured_current.append(cell)
-                continue
-            if selected and observed:
-                stale.append(cell)
-            # Coverage presentation (usable/problem/insufficient) is diagnostic,
-            # not an execution gate or permission to revive historical success.
-            targets.append(cell)
-    return targets, unknown, stale, measured_current
-
-
-def coverage_defaults(cell, node, plans, profiles):
-    """Inherit protocols and inputs, never CPU allocation, even on the same node."""
-    model, device, path, mode = (cell["model"]["name"], cell["deviceClass"]["name"],
-                                 cell["executionPath"], cell["powerMode"])
-    newest = sorted(plans, key=lambda p: p["metadata"]["name"])
-    newest.sort(key=lambda p: p["metadata"]["creationTimestamp"], reverse=True)
-    def exact(candidate, target):
-        return (candidate["modelSpec"], candidate["deviceClass"], target,
-                candidate["executionPath"], candidate["powerMode"]) == (model, device, node, path, mode)
-    for plan in newest:
-        if exact(plan["spec"]["state"]["candidate"], plan["spec"]["state"]["targetNode"]):
-            spec = copy.deepcopy(plan["spec"])
-            spec.pop("cpuAffinity", None)
-            spec.pop("cpuQuota", None)
-            spec["state"].pop("cpuRequest", None)
-            return spec, "request:" + plan["metadata"]["name"]
-    matches = [p for p in profiles if
-               (p["condition"]["logicalModel"], p["condition"]["deviceClass"], p["nodeName"],
-                p["condition"]["artifact"]["executionPath"], p["condition"]["powerMode"]) ==
-               (model, device, node, path, mode)]
-    matches.sort(key=lambda p: p["id"])
-    matches.sort(key=lambda p: p["measuredAt"], reverse=True)
-    successful = [p for p in newest if p.get("status", {}).get("phase") == "Complete"]
-    source = next((p for p in successful if p["spec"]["state"]["candidate"]["modelSpec"] == model), None)
-    if source is None:
-        source = next((p for p in successful if p["spec"]["state"]["candidate"]["executionPath"] == path), None)
-    if matches:
-        profile = matches[0]
-        c = profile["condition"]
-        spec = {"state": {"candidate": {"preprocessor": c["preprocessor"]["name"]}}}
-        for field in ("activeProtocol", "idleProtocol"):
-            protocol = c[field]
-            spec[field] = {key: protocol[key] for key in
-                           ("warmupIterations", "settlingDurationSeconds", "durationSeconds")
-                           if key in protocol}
-            if field == "activeProtocol":
-                spec[field].pop("settlingDurationSeconds", None)
-                spec[field]["dataset"] = protocol["dataset"]["name"]
-            spec[field]["metricObservation"] = {
-                "intervalMilliseconds": protocol["metricIntervalMilliseconds"],
-                "timeoutMilliseconds": protocol["metricTimeoutMilliseconds"],
-                "durationSeconds": protocol["metricDurationSeconds"]}
-        if source is None:
-            raise ValueError("no inherited retryLimit for " + cell["id"])
-        spec["retryLimit"] = source["spec"]["retryLimit"]
-        return spec, "profile:" + profile["id"]
-    if source is None:
-        raise ValueError("no inherited protocol for " + cell["id"])
-    spec = copy.deepcopy(source["spec"])
-    for field in ("cpuQuota", "cpuAffinity", "batchSizes"):
-        spec.pop(field, None)
-    spec["state"].pop("cpuRequest", None)
-    if source["spec"]["state"]["candidate"]["modelSpec"] != model:
-        spec["state"]["candidate"].pop("preprocessor", None)
-        spec["activeProtocol"].pop("dataset", None)
-    return spec, "request:" + source["metadata"]["name"]
-
-
-def coverage_batches(model, path, policy):
-    execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == path)
-    artifact = next(a for a in model["spec"]["artifacts"] if a["name"] == execution["artifact"])
-    declared = artifact.get("derivation", {}).get("declaredBatchSizes", [])
-    maximum = execution["runtime"]["settings"]["firstfloor"]["maxBatchSize"]
-    batches = sorted(declared) if declared else sorted(b for b in policy["undeclaredBatchSizes"] if b <= maximum)
-    if not batches or any(type(b) is not int or b < 1 for b in batches) or len(set(batches)) != len(batches):
-        raise ValueError("invalid artifact batch set")
-    return batches, bool(declared), artifact["name"]
-
-
-def coverage_inputs(spec, model, artifact, preprocessors, datasets):
-    candidates = [p for p in preprocessors if any(
-        a["target"]["model"] == model and a["target"]["artifact"] == artifact
-        for a in p["spec"]["artifacts"])]
-    pre = next((p for p in candidates if p["metadata"]["name"] ==
-                spec["state"]["candidate"].get("preprocessor")), None)
-    if pre is None and len(candidates) == 1:
-        pre = candidates[0]
-    if pre is None:
-        raise ValueError("no unambiguous compatible preprocessor for " + model + "/" + artifact)
-    compatible = []
-    for dataset in datasets:
-        fields = {f["name"]: f for f in dataset["spec"]["fields"]}
-        if all(f["name"] in fields and fields[f["name"]]["format"] == f["format"] and
-               fields[f["name"]]["maxBytes"] <= f["maxBytes"] for f in pre["spec"]["input"]["fields"]):
-            compatible.append(dataset["metadata"]["name"])
-    dataset = spec["activeProtocol"].get("dataset")
-    if dataset not in compatible:
-        if len(compatible) != 1:
-            raise ValueError("no unambiguous compatible dataset for " + model)
-        dataset = compatible[0]
-    spec["state"]["candidate"]["preprocessor"] = pre["metadata"]["name"]
-    spec["activeProtocol"]["dataset"] = dataset
-
-
-def coverage_timings(results):
-    timings = []
-    for result in results:
-        facts = result.get("measurementFacts")
-        if not facts or not coverage_shared_result(result):
-            continue
-        condition = facts["condition"]
-        execution_conditions = {"runtimeImage": condition.get("runtimeImage"),
-                                "curveSchema": SHARED_CURVE_SCHEMA,
-                                "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
-        for batch in facts["batches"]:
-            active = [q for q in batch["quality"] if q["workloadMode"] == "saturated-serial-fixed-batch"]
-            calls = batch.get("completedCalls", 0)
-            seconds = sum(q["windowSeconds"] for q in active)
-            if calls > 0 and active and math.isfinite(seconds) and seconds > 0:
-                timings.append({"model": condition["logicalModel"], "deviceClass": condition["deviceClass"],
-                                "batch": batch["batch"], "secondsPerCall": seconds / calls,
-                                "executionPath": condition["artifact"]["executionPath"],
-                                "powerMode": condition["powerMode"], "sourceUID": facts["request"]["uid"],
-                                "source": facts["request"]["name"], "executionConditions": execution_conditions})
-    return timings
-
-
-def coverage_existing(cell, plans, policy, required, completed_conditions=None):
-    expected = (cell["model"]["name"], cell["deviceClass"]["name"], cell["executionPath"], cell["powerMode"])
-    for plan in plans:
-        spec = plan.get("spec", {})
-        state = spec.get("state", {})
-        # A Failed request measured nothing; its cell is planned again once the cause is fixed.
-        phase = plan.get("status", {}).get("phase")
-        if (phase == "Failed" or any(key in spec for key in ("cpuQuota", "cpuAffinity")) or
-                "cpuRequest" in state):
-            continue
-        selected = cell.get("currentMeasurement")
-        if phase == "Complete" and (not selected or selected["id"] != "/".join(
-                plan["metadata"].get(key, "") for key in ("namespace", "name", "uid"))):
-            continue
-        if phase == "Complete":
-            observed = (completed_conditions or {}).get(plan["metadata"].get("uid"))
-        else:
-            encoded = plan["metadata"].get("annotations", {}).get(EXECUTION_CONDITIONS_ANNOTATION, "")
-            try:
-                observed = json.loads(encoded)
-            except (TypeError, ValueError):
-                observed = None
-            if not isinstance(observed, dict):
-                observed = None
-        if not coverage_condition_matches(observed, required):
-            continue
-        metadata = plan["metadata"]
-        if metadata.get("annotations", {}).get(policy["cellAnnotation"]) == cell["id"]:
-            return plan
-        candidate = plan.get("spec", {}).get("state", {}).get("candidate", {})
-        if metadata["name"].startswith(policy["requestNamePrefix"]) and tuple(
-                candidate.get(key) for key in ("modelSpec", "deviceClass", "executionPath", "powerMode")) == expected:
-            return plan
-    return None
-
-
-def coverage_lane_order(lane, policy):
-    return sorted(lane, key=lambda pair: (
-        pair[1]["spec"]["state"]["candidate"]["executionPath"] in policy["laneLastExecutionPaths"] or
-        pair[1]["spec"]["state"]["candidate"]["executionPath"] in
-        policy["laneLastModelExecutionPaths"].get(pair[0]["model"], []),
-        pair[0]["powerMode"] not in policy["laneFirstPowerModes"],
-        pair[0]["powerMode"], pair[0]["model"], pair[0]["cellId"]))
-
-
-def coverage_manifest(output, lanes, policy):
-    sequence = []
-    priorities = sorted({r["priority"] for lane in lanes.values() for r, _ in lane})
-    for stage, priority in enumerate(priorities, 1):
-        paths = []
-        for node, lane in sorted(lanes.items()):
-            ordered = coverage_lane_order([(r, d) for r, d in lane if r["priority"] == priority], policy)
-            if ordered:
-                path = output / "lanes" / f"{node}-stage{stage}.yaml"
-                write_docs(path, [d for _, d in ordered])
-                paths.append(str(path))
-        sequence.append({"stage": stage, "priority": priority, "paths": paths})
-    cells = [{"name": r["name"], "batches": r["batches"]} for lane in lanes.values() for r, _ in lane]
-    write_json(output / "resume-plan.json", {
-        "schemaVersion": "coverage-feeder-plan.v1", "sequence": sequence, "cells": cells})
-
-
-def coverage_runtime_family(candidate, device):
-    path, arch = candidate["executionPath"].lower(), device["architecture"]
-    if "rknn" in path:
-        return "RKNN"
-    if "cuda" in path:
-        if arch == "amd64":
-            return "CUDA amd64"
-        if device.get("accelerator") == "nvidia-jetson-nano":
-            return "L4T r32"
-        if device.get("accelerator", "").startswith("nvidia-jetson-"):
-            return "L4T r35"
-    elif "cpu" in path and arch in ("arm64", "amd64"):
-        return "CPU " + arch
-    raise ValueError("unknown pilot runtime family: " + str(candidate))
-
-
-def coverage_memory(value):
-    for base, suffixes in ((1024, ("Ki", "Mi", "Gi", "Ti", "Pi", "Ei")),
-                           (1000, ("k", "M", "G", "T", "P", "E"))):
-        for exponent, suffix in enumerate(suffixes, 1):
-            if value.endswith(suffix):
-                return Decimal(value[:-len(suffix)]) * base ** exponent
-    return Decimal(value)
-
-
-def coverage_pilot(lanes, policy, classes):
-    pairs = [pair for lane in lanes.values() for pair in lane]
-    if not pairs:
-        return {}
-    families = defaultdict(list)
-    for row, doc in pairs:
-        candidate = doc["spec"]["state"]["candidate"]
-        family = coverage_runtime_family(candidate, classes[candidate["deviceClass"]])
-        families[family].append((row, doc))
-    chosen = {}
-    for family in sorted(families):
-        pair = min(families[family], key=lambda pair: (pair[0]["estimatedSeconds"], pair[0]["cellId"]))
-        chosen[pair[0]["cellId"]] = pair
-    # Model priority orders light models before the heaviest model in this plan.
-    heavy = max(policy["models"][row["model"]]["priority"] for row, _ in pairs)
-    stress = min((pair for pair in pairs if policy["models"][pair[0]["model"]]["priority"] == heavy),
-                 key=lambda pair: (coverage_memory(classes[pair[1]["spec"]["state"]["candidate"]["deviceClass"]]["memory"]),
-                                   pair[0]["estimatedSeconds"], pair[0]["cellId"]))
-    chosen[stress[0]["cellId"]] = stress
-    selected = defaultdict(list)
-    for row, doc in sorted(chosen.values(), key=lambda pair: (pair[0]["priority"], pair[0]["cellId"])):
-        selected[row["node"]].append((row, doc))
-    return dict(selected)
-
-
-def coverage_memory_rule(cell, execution_conditions, policy):
-    matches = [rule for rule in policy["memoryMaxBatch"] if
-               rule["model"] == cell["model"]["name"] and
-               rule["deviceClass"] == cell["deviceClass"]["name"] and
-               rule["executionPath"] in (None, cell["executionPath"])]
-    if not matches:
-        return None, None
-    exact = [rule for rule in matches if rule["executionPath"] == cell["executionPath"]]
-    selected = exact or matches
-    if len(selected) != 1:
-        raise ValueError("ambiguous memory exclusion for " + cell["id"])
-    rule = selected[0]
-    observed = rule["conditions"]
-    current = dict(execution_conditions or {}, executionPath=cell["executionPath"])
-    if any(observed[key] is not None and current.get(key) is not None and
-           observed[key] != current[key] for key in observed):
-        return rule, "conditions-changed"
-    if any(observed[key] is None or current.get(key) is None for key in observed):
-        return rule, "conditions-unknown"
-    return rule, "applied"
-
-
-def coverage_memory_limit(cell, policies, node, memory_fraction):
-    """Mirror ExecutionJobs' min(policy, int64(float64(allocatable.Value()) * fraction))."""
-    matches = [p for p in policies if p["deviceClass"] in ("*", cell["deviceClass"]["name"]) and
-               p["executionPath"] == cell["executionPath"] and
-               p["workloadMode"] == "saturated-serial-fixed-batch"]
-    exact = [p for p in matches if p["deviceClass"] == cell["deviceClass"]["name"]]
-    selected = exact or matches
-    if len(selected) != 1:
-        return None
-    limit = selected[0].get("runtimeMemoryLimitBytes")
-    if (type(limit) is not int or limit <= 0 or type(memory_fraction) not in (int, float) or
-            not math.isfinite(memory_fraction) or not 0 < memory_fraction < 1):
-        return None
-    memory = node.get("status", {}).get("allocatable", {}).get("memory")
-    if not isinstance(memory, str):
-        return None
-    try:
-        allocatable = coverage_memory(memory)
-        if not allocatable.is_finite() or allocatable <= 0:
-            return None
-        # Quantity.Value rounds positive fractional bytes up; Go then uses float64 and truncates.
-        allocatable_bytes = math.ceil(allocatable)
-        node_limit = int(float(allocatable_bytes) * memory_fraction)
-    except (InvalidOperation, ValueError, OverflowError):
-        return None
-    return min(limit, node_limit) if node_limit > 0 else None
-
-
-def coverage_batch_plan(cell, batches, timings, policy, declared=False, execution_conditions=None):
-    model, device = cell["model"]["name"], cell["deviceClass"]["name"]
-    rule, memory_status = coverage_memory_rule(cell, execution_conditions, policy)
-    memory_max = rule["maxBatch"] if memory_status == "applied" else None
-    review = rule is not None and memory_status != "applied"
-    estimates = []
-    excluded_from = None
-    for batch in sorted(batches):
-        # CPU and accelerator paths of one model differ by orders of magnitude; never borrow across paths.
-        measured = [r for r in timings if r["model"] == model and r["deviceClass"] == device and
-                    r["batch"] == batch and r.get("executionPath") == cell["executionPath"] and
-                    r.get("powerMode") == cell["powerMode"] and
-                    coverage_condition_matches(r.get("executionConditions"), execution_conditions)]
-        source = max(measured, key=lambda r: r["secondsPerCall"]) if measured else None
-        calls = math.floor(policy["windowSeconds"] / source["secondsPerCall"]) if source else None
-        if calls is not None and calls < policy["minCallsInWindow"] and excluded_from is None:
-            excluded_from = batch
-        over_memory = memory_max is not None and batch > memory_max
-        included = excluded_from is None and not over_memory and not review
-        estimates.append({"batch": batch, "secondsPerCall": source["secondsPerCall"] if source else None,
-                          "estimatedCallsInWindow": calls, "timingSource": source, "included": included,
-                          "reason": None if included else (
-                              policy["memoryReviewReason"] if review else
-                              policy["memoryExcludedBatchReason"] if over_memory else policy["excludedBatchReason"]),
-                          "excludedFromBatch": excluded_from,
-                          "memoryPolicy": None if rule is None else {
-                              "status": memory_status, "rule": rule, "currentConditions": dict(
-                                  execution_conditions or {}, executionPath=cell["executionPath"])}})
-    included = [r["batch"] for r in estimates if r["included"]]
-    reason = None if included else (
-        policy["memoryReviewReason"] if review else policy["memoryExcludedBatchReason"] if all(
-            r["reason"] == policy["memoryExcludedBatchReason"] for r in estimates) else policy["excludedBatchReason"])
-    if declared and included and included != sorted(batches):
-        included, reason = [], policy["declaredBatchConflictReason"]
-    return included, estimates, reason
-
-
-def coverage_active_protocol(active, estimates, policy):
-    seconds = policy["windowSeconds"]
-    padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
-    tail = max((r["secondsPerCall"] * policy["callDurationEstimateMultiplier"]
-                if r["secondsPerCall"] is not None else policy["unknownCallDurationSeconds"])
-               for r in estimates if r["included"])
-    active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
-    active["metricObservation"]["durationSeconds"] = seconds + math.ceil(tail) + padding
-
-
-def generate_coverage(output, policy_path, preflight=False, pilot=False):
-    output = output.resolve()
-    policy = load(policy_path)
-    if policy["schemaVersion"] != "coverage-plan.v2":
-        raise ValueError("coverage-plan.v2 required; migrate the policy in one cutover")
-    for rule in policy["memoryMaxBatch"]:
-        if (type(rule["maxBatch"]) is not int or rule["maxBatch"] < 0 or
-                set(rule["conditions"]) != {"runtimeImage", "executionPath", "memoryLimitBytes"} or
-                rule["basis"] not in ("observed-failure", "conservative-exclusion") or not rule["observations"]):
-            raise ValueError("invalid memory exclusion rule")
-        conditions = rule["conditions"]
-        if any(conditions[key] is not None and (not isinstance(conditions[key], str) or not conditions[key])
-               for key in ("runtimeImage", "executionPath")):
-            raise ValueError("memory exclusion image/path must be known or null")
-        limit = conditions["memoryLimitBytes"]
-        if limit is not None and (type(limit) is not int or limit < 1):
-            raise ValueError("memory exclusion limit must be positive bytes or null")
-    if policy["sessions"] != 3 or policy["warmupIterations"] != 1:
-        raise ValueError("coverage requires three independent sessions and one warmup iteration")
-    for key in ("windowSeconds", "minCallsInWindow", "idleSeconds"):
-        if type(policy[key]) is not int or policy[key] < 1:
-            raise ValueError(key + " must be a positive integer")
-    for key in ("callDurationEstimateMultiplier", "unknownCallDurationSeconds"):
-        if type(policy[key]) not in (int, float) or not math.isfinite(policy[key]) or policy[key] < 1:
-            raise ValueError(key + " must be finite and at least one")
-    namespace = "/api/v1/namespaces/" + NS
-    inputs = {}
-    for name, path in (
-            ("coverage", namespace + "/measurement-coverage"),
-            ("plans", namespace + "/batch-energy-optimizations"),
-            ("profiles", "/api/v1/scheduler/profiles"), ("inventory", "/api/v1/inventory"),
-            ("models", "/api/v1/models"), ("preprocessors", "/api/v1/preprocessors"),
-            ("datasets", "/api/v1/datasets")):
-        inputs[name] = coverage_api(path)
-        write_json(output / "inputs" / (name + ".json"), inputs[name])
-    write_json(output / "coverage-plan.json", policy)
-    runtime_values = (HERE.parents[1] / policy["runtimeValues"]).resolve()
-    current_images = coverage_runtime_images(runtime_values)
-    runtime_doc = yaml.safe_load(runtime_values.read_text())
-    declarations = runtime_doc["profiling"]["executionDeclarations"]
-    write_json(output / "inputs" / "current-runtime-images.json", {
-        "source": identity(runtime_values), "imagesByDeviceClass": current_images,
-        "executionDeclarations": declarations})
-    results = []
-    completed_conditions, profile_conditions = {}, {}
-    for profile in inputs["profiles"]["profiles"]:
-        name = profile["id"].split("/")[1]
-        result = coverage_api(namespace + "/batch-energy-optimizations/" + name + "/result")
-        results.append(result)
-        campaign = next((p for p in inputs["plans"]["items"]
-                         if p["metadata"].get("uid") == result["campaign"]["uid"]), {})
-        if coverage_shared_result(result) and campaign.get("status", {}).get("phase") == "Complete":
-            observed = {"runtimeImage": profile["condition"]["runtimeImage"],
-                        "curveSchema": SHARED_CURVE_SCHEMA, "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
-            completed_conditions[result["campaign"]["uid"]] = observed
-            profile_conditions[profile["id"]] = observed
-        write_json(output / "inputs" / "results" / (name + ".json"), result)
-    timings = coverage_timings(results)
-    write_json(output / "timings.json", timings)
-    classes = {c["name"]: c for c in inputs["inventory"]["classes"]}
-    models = {m["metadata"]["name"]: m for m in inputs["models"]["items"]}
-    lanes, rows, no_node, no_policy = defaultdict(list), [], [], []
-    # The Profiler refuses a RunConfig without a (deviceClass, executionPath) policy; the values comments name the reason per omission.
-    facts = json.loads(subprocess.check_output([ENV["kubectl"], "--kubeconfig", ENV["kubeconfig"], "--context", ENV["kubeContext"], "-n", NS,
-                                                "get", "configmap", "chill-profiler-facts", "-o", "json"]))
-    policies = yaml.safe_load(facts["data"]["execution-policies.yaml"])
-    policies = policies if isinstance(policies, list) else policies["policies"]
-    write_json(output / "inputs" / "execution-policies.json", facts)
-    memory_inputs = {}
-    kubectl = [ENV["kubectl"], "--kubeconfig", ENV["kubeconfig"], "--context", ENV["kubeContext"], "-n", NS]
-    for key, args in (
-            ("nodes", ["get", "nodes", "-o", "json"]),
-            ("profilerDeployments", ["get", "deployments", "-l", "app.kubernetes.io/component=profiler", "-o", "json"])):
-        try:
-            memory_inputs[key] = json.loads(subprocess.check_output(kubectl + args))
-        except subprocess.CalledProcessError as error:
-            memory_inputs[key] = {"readError": str(error)}
-    write_json(output / "inputs" / "memory-limit-inputs.json", memory_inputs)
-    nodes = {n["metadata"]["name"]: n for n in memory_inputs["nodes"].get("items", [])}
-    fractions = [
-        arg.split("=", 1)[1]
-        for deployment in memory_inputs["profilerDeployments"].get("items", [])
-        for container in deployment["spec"]["template"]["spec"]["containers"]
-        if "--fact-source-config-map=chill-profiler-facts" in container.get("args", [])
-        for arg in container["args"] if arg.startswith("--measurement-memory-fraction=")]
-    try:
-        memory_fraction = float(fractions[0]) if len(fractions) == 1 else None
-    except ValueError:
-        memory_fraction = None
-    has_policy = {(p["deviceClass"], p["executionPath"]) for p in policies}
-    eligible_by_class = {
-        device: sorted(n["name"] for n in c["nodes"] if n["name"] not in policy["excludedNodes"] and
-                       n["ready"] == "True" and not n["schedulingDisabled"])
-        for device, c in classes.items()}
-    node_declared = {
-        cell["id"]: eligible_by_class[cell["deviceClass"]["name"]][0]
-        for cell in inputs["coverage"]["cells"]
-        if cell["support"]["verdict"] == policy["unknownVerdict"] and
-        eligible_by_class[cell["deviceClass"]["name"]] and coverage_declared_on_node(
-            cell, eligible_by_class[cell["deviceClass"]["name"]][0], classes[cell["deviceClass"]["name"]],
-            models[cell["model"]["name"]], declarations, has_policy)}
-    required_conditions = {
-        cell["id"]: coverage_required_condition(cell, eligible_by_class[cell["deviceClass"]["name"]][0],
-            models[cell["model"]["name"]], declarations)
-        for cell in inputs["coverage"]["cells"] if eligible_by_class[cell["deviceClass"]["name"]]}
-    write_json(output / "inputs" / "required-execution-conditions.json", required_conditions)
-    targets, unknown, stale, measured_current = coverage_targets(
-        inputs["coverage"], policy, required_conditions, node_declared, profile_conditions)
-    stale_ids = {cell["id"] for cell in stale}
-    write_json(output / "node-declared-cells.json", node_declared)
-    existing, excluded_batches, excluded_cells = [], [], []
-    plan_hash = hashlib.sha256(json.dumps(
-        [policy, inputs["coverage"]["snapshotId"], required_conditions], sort_keys=True).encode()).hexdigest()[:12]
-    for cell in targets:
-        model, device = cell["model"]["name"], cell["deviceClass"]["name"]
-        eligible = eligible_by_class[device]
-        if (device, cell["executionPath"]) not in has_policy and ("*", cell["executionPath"]) not in has_policy:
-            no_policy.append(cell["id"])
-            continue
-        if not eligible:
-            no_node.append({"cellId": cell["id"], "reason": "노드 없음",
-                            "nodes": classes[device]["nodes"]})
-            continue
-        node = eligible[0]
-        required = required_conditions.get(cell["id"])
-        if required is None:
-            no_policy.append(cell["id"])
-            continue
-        previous = coverage_existing(cell, inputs["plans"]["items"], policy, required, completed_conditions)
-        if previous:
-            existing.append({"cellId": cell["id"], "name": previous["metadata"]["name"],
-                             "status": previous.get("status", {}).get("phase")})
-            continue
-        candidate_batches, declared, artifact = coverage_batches(models[model], cell["executionPath"], policy)
-        node_memory = nodes.get(node, {})
-        inventory_node = next(n for n in classes[device]["nodes"] if n["name"] == node)
-        if not inventory_node.get("uid") or node_memory.get("metadata", {}).get("uid") != inventory_node["uid"]:
-            node_memory = {}
-        memory_limit = coverage_memory_limit(cell, policies, node_memory, memory_fraction)
-        batches, estimates, reason = coverage_batch_plan(
-            cell, candidate_batches, timings, policy, declared,
-            dict(required, memoryLimitBytes=memory_limit,
-                 memoryLimitStatus="confirmed" if memory_limit is not None else "unconfirmed"))
-        excluded_batches.extend(dict(r, cellId=cell["id"], model=model, node=node)
-                                for r in estimates if not r["included"])
-        if reason:
-            excluded_cells.append({"cellId": cell["id"], "model": model, "node": node,
-                                   "reason": reason, "batchEstimates": estimates})
-            continue
-        spec, inherited = coverage_defaults(cell, node, inputs["plans"]["items"], inputs["profiles"]["profiles"])
-        spec["state"]["targetNode"] = node
-        spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
-                                         executionPath=cell["executionPath"], powerMode=cell["powerMode"])
-        spec.pop("batchSizes", None)
-        if not declared:
-            spec["batchSizes"] = batches
-        coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
-        seconds = policy["windowSeconds"]
-        coverage_active_protocol(spec["activeProtocol"], estimates, policy)
-        idle = spec["idleProtocol"]
-        idle_padding = max(0, idle["metricObservation"]["durationSeconds"] - idle.get("durationSeconds", policy["idleSeconds"]))
-        idle["durationSeconds"] = idle.get("durationSeconds") or policy["idleSeconds"]
-        idle["metricObservation"]["durationSeconds"] = idle["durationSeconds"] + idle_padding
-        spec["trialsPerBatch"] = policy["sessions"]
-        name = policy["requestNamePrefix"] + plan_hash + "-" + hashlib.sha256(cell["id"].encode()).hexdigest()[:12]
-        doc = {"apiVersion": "edge.dacs.io/v1alpha1", "kind": "BatchEnergyOptimization",
-               "metadata": {"name": name, "namespace": NS, "annotations": {
-                   policy["cellAnnotation"]: cell["id"],
-                   EXECUTION_CONDITIONS_ANNOTATION: json.dumps(required, separators=(",", ":"))}}, "spec": spec}
-        priority = policy["models"][model]["priority"]
-        row = {"cellId": cell["id"], "name": name, "model": model, "node": node, "priority": priority,
-               "deviceClass": device,
-               "powerMode": cell["powerMode"], "inheritedProtocol": inherited, "batches": batches,
-               "activeSecondsPerSession": seconds, "candidateBatches": candidate_batches, "batchEstimates": estimates,
-               "activeSeconds": seconds * len(batches) * policy["sessions"],
-               "idleSeconds": policy["sessions"] * (idle["durationSeconds"] + idle.get("settlingDurationSeconds", 0)),
-               "runCount": (len(batches) + 1) * policy["sessions"]}
-        row["runtimeMeasurementMissing"] = cell["id"] in stale_ids
-        row["estimatedSeconds"] = row["activeSeconds"] + row["idleSeconds"] + row["runCount"] * policy["runOverheadSeconds"]
-        row["remeasures"] = [
-            {"name": p["metadata"]["name"], "phase": p.get("status", {}).get("phase")}
-            for p in inputs["plans"]["items"]
-            if p["metadata"]["name"].startswith(policy["requestNamePrefix"]) and
-            p["metadata"].get("annotations", {}).get(policy["cellAnnotation"]) == cell["id"] and
-            p.get("status", {}).get("phase") in ("Complete", "Measuring") and
-            not coverage_condition_matches(completed_conditions.get(p["metadata"].get("uid")), required)]
-        rows.append(row)
-        lanes[node].append((row, doc))
-    coverage_manifest(output, lanes, policy)
-    summary = {"targetCellCount": len(targets), "manifestCellCount": len(rows),
-               "cellsByModel": dict(Counter(r["model"] for r in rows)), "noNodeCellCount": len(no_node), "noPolicyCellCount": len(no_policy),
-               "unknownSupportCount": len(unknown), "existingCellCount": len(existing),
-               "nodeDeclaredCellCount": len(node_declared),
-               "remeasurementCellCount": sum(bool(r["remeasures"]) for r in rows),
-               "remeasurementsByDeviceClass": dict(Counter(r["deviceClass"] for r in rows if r["remeasures"])),
-               "precisionMeaning": policy["precisionMeaning"],
-               "staleRuntimeCellCount": len(stale), "currentRuntimeMeasuredCellCount": len(measured_current),
-               "excludedBatchCount": len(excluded_batches), "excludedCellCount": len(excluded_cells),
-               "memoryPolicyReviewCellCount": sum(c["reason"] == policy["memoryReviewReason"] for c in excluded_cells),
-               "excludedBatchesByModel": dict(Counter(r["model"] for r in excluded_batches)),
-               "excludedCellsByModel": dict(Counter(r["model"] for r in excluded_cells)),
-               "unknownTimingBatchCount": sum(r["secondsPerCall"] is None for cell in rows for r in cell["batchEstimates"]),
-               "estimateMeaning": f"active + shared idle (including settling) + {policy['runOverheadSeconds']}s/run; excludes variable load/warmup and feeder polling",
-               "lanes": {node: {"cellCount": len(lane),
-                                  "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
-                                  "idleSeconds": sum(r["idleSeconds"] for r, _ in lane),
-                                  "runCount": sum(r["runCount"] for r, _ in lane),
-                                  "estimatedSeconds": sum(r["estimatedSeconds"] for r, _ in lane),
-                                  "models": {model: {
-                                      "cellCount": sum(r["model"] == model for r, _ in lane),
-                                      "estimatedSeconds": sum(r["estimatedSeconds"] for r, _ in lane
-                                                              if r["model"] == model)}
-                                      for model in policy["models"]}}
-                         for node, lane in sorted(lanes.items())}}
-    summary["totalNodeHours"] = sum(r["estimatedSeconds"] for r in rows) / 3600
-    summary["longestLaneSeconds"] = max((lane["estimatedSeconds"] for lane in summary["lanes"].values()), default=0)
-    write_json(output / "unknown-support.json", unknown)
-    write_json(output / "no-node.json", no_node)
-    write_json(output / "no-policy.json", no_policy)
-    write_json(output / "cells.json", rows)
-    write_json(output / "remeasurement-cells.json", [r for r in rows if r["remeasures"]])
-    write_json(output / "existing-cells.json", existing)
-    write_json(output / "excluded-batches.json", excluded_batches)
-    write_json(output / "excluded-cells.json", excluded_cells)
-    write_json(output / "stale-runtime-cells.json", [
-        {"cellId": cell["id"], "previousStatus": cell["assessment"]["displayStatus"],
-         "runtimeImages": sorted({v["condition"].get("runtimeImage", "") for v in cell["variants"]}),
-         "reason": "현재 runtime 측정 없음"} for cell in stale])
-    write_json(output / "current-runtime-measured-cells.json", [cell["id"] for cell in measured_current])
-    if pilot:
-        pilot_lanes = coverage_pilot(lanes, policy, classes)
-        coverage_manifest(output / "pilot", pilot_lanes, policy)
-        write_json(output / "pilot" / "coverage-plan.json", policy)
-        pilot_rows = [r for lane in pilot_lanes.values() for r, _ in lane]
-        summary["pilot"] = {"cells": pilot_rows, "estimatedSeconds": sum(r["estimatedSeconds"] for r in pilot_rows)}
-        write_json(output / "pilot" / "summary.json", summary["pilot"])
-    if preflight:
-        # Audited read-only: readapi/handler.go -> kube preflight query (client.Reader)
-        # -> cmd/chill-query/run.go projector.Project; projected transitions are discarded.
-        # Query API assembly only lists requests and reads typed catalog/evidence.
-        checks = []
-        for model in sorted(summary["cellsByModel"]):
-            doc = next(d for lane in lanes.values() for r, d in lane if r["model"] == model)
-            try:
-                answer = coverage_api(namespace + "/batch-energy-optimizations/preflight", doc)
-                checks.append({"name": doc["metadata"]["name"], "model": model, "response": answer})
-            except urllib.error.HTTPError as error:
-                checks.append({"name": doc["metadata"]["name"], "model": model,
-                               "httpStatus": error.code, "error": error.read().decode()})
-        write_json(output / "preflight.json", checks)
-        summary["preflight"] = [{"model": r["model"], "resolves": r.get("response", {}).get("resolves"),
-                                 "reason": r.get("response", {}).get("reason") or r.get("error")}
-                                for r in checks]
-    write_json(output / "summary.json", summary)
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
-    for cell in unknown:
-        print("unknown-support: " + cell["id"])
-    for cell in no_node:
-        print("노드 없음: " + cell["cellId"])
-
-
-def coverage_self_check():
-    import runpy
-    import sys
-    runpy.run_path(str(HERE / "smoke" / "test_coverage.py"))["generation_self_check"](sys.modules[__name__])
-    policy = load(HERE / "coverage-plan.json")
-    model = "mobilenet-v2-050"
-    cell = {"id": "cell", "model": {"name": model}, "deviceClass": {"name": "device"},
-            "executionPath": "path", "powerMode": "mode", "support": {"verdict": "Compatible"},
-            "assessment": {"displayStatus": "unmeasured", "reasons": []}}
-    cell["currentMeasurement"] = None
-    partial = copy.deepcopy(cell)
-    partial["assessment"] = {"displayStatus": "insufficient", "reasons": [{"code": "TargetBatchMissing"}]}
-    unknown = copy.deepcopy(cell)
-    unknown["support"]["verdict"] = "Unknown"
-    unsupported = copy.deepcopy(cell)
-    unsupported["support"]["verdict"] = "Incompatible"
-    other = copy.deepcopy(partial)
-    other["assessment"]["reasons"] = [{"code": "Unrelated"}]
-    running = dict(cell, assessment={"displayStatus": "running", "reasons": []})
-    assert coverage_targets({"completeness": "complete", "cells": [cell, partial, running, unknown, unsupported, other]},
-                            policy, {}) == ([cell, partial, running, other], [unknown], [], [])
-    missing = copy.deepcopy(unknown)
-    missing["support"]["reasons"] = [{"code": "RuntimeDeclarationMissing"}]
-    missing["assessment"]["displayStatus"] = "unknown"
-    device = {"name": "device", "architecture": "amd64"}
-    native_model = {"spec": {
-        "executionPaths": [{"name": "path", "artifact": "a",
-                            "runtime": {"family": "firstfloor", "backend": "ort-cuda"}}],
-        "artifacts": [{"name": "a", "source": {"architecture": "amd64"}}]}}
-    declarations = [{"deviceClass": "device", "node": "actual-node", "runtime": {"payload": json.dumps({
-        "architecture": "amd64", "runtime": {"family": "firstfloor", "backends": ["ort-cuda"]}})}}]
-    assert coverage_declared_on_node(missing, "actual-node", device, native_model, declarations, {("device", "path")})
-    assert not coverage_declared_on_node(missing, "other-node", device, native_model, declarations, {("device", "path")})
-    assert not coverage_declared_on_node(missing, "actual-node", device, native_model, declarations, set())
-    assert not coverage_declared_on_node(unknown, "actual-node", device, native_model, declarations, {("device", "path")})
-    assert not coverage_declared_on_node(missing, "actual-node", dict(device, architecture="arm64"),
-                                        native_model, declarations, {("device", "path")})
-    assert coverage_targets({"completeness": "complete", "cells": [missing]}, policy,
-                            {}, {missing["id"]: "actual-node"}) == ([missing], [], [], [])
-    older = copy.deepcopy(declarations[0])
-    newer = copy.deepcopy(older)
-    older["runtime"]["payload"] = json.dumps(dict(json.loads(older["runtime"]["payload"]), image="old-image"))
-    newer["runtime"]["payload"] = json.dumps(dict(json.loads(newer["runtime"]["payload"]), image="new-image"))
-    assert coverage_required_condition(cell, "actual-node", native_model, [older, newer])["runtimeImage"] == "new-image"
-    result = {"result": {"curvePlan": {"schemaVersion": SHARED_CURVE_SCHEMA},
-                         "completedTrials": [{"evidence": {"schemaVersion": SHARED_EVIDENCE_SCHEMA}}]}}
-    assert coverage_shared_result(result)
-    old_result = copy.deepcopy(result)
-    old_result["result"]["curvePlan"]["schemaVersion"] = "chill.dacs.io/curve-plan.v1alpha9"
-    assert not coverage_shared_result(old_result)
-    old_result = copy.deepcopy(result)
-    old_result["result"]["completedTrials"][0]["evidence"]["schemaVersion"] = "chill.dacs.io/profiling-execution-evidence.v1alpha15"
-    assert not coverage_shared_result(old_result)
-    assert coverage_runtime_images(HERE.parents[1] / policy["runtimeValues"])
-    plan = {"metadata": {"name": "old", "creationTimestamp": "2026-01-01"},
-            "status": {"phase": "Complete"},
-            "spec": {"state": {"targetNode": "node", "cpuRequest": "4", "candidate": {
-                "modelSpec": model, "deviceClass": "device", "executionPath": "path",
-                "powerMode": "mode", "preprocessor": "pre"}},
-                "activeProtocol": {"durationSeconds": 10, "dataset": "dataset"},
-                "idleProtocol": {"durationSeconds": 10}, "cpuQuota": "4", "cpuAffinity": [3],
-                "batchSizes": [1], "retryLimit": 1}}
-    newer = copy.deepcopy(plan)
-    newer["metadata"] = {"name": "new", "creationTimestamp": "2026-02-01"}
-    spec, source = coverage_defaults(cell, "node", [plan, newer], [])
-    assert source == "request:new" and "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
-    assert "cpuAffinity" not in spec
-    spec, source = coverage_defaults(cell, "different-node", [plan, newer], [])
-    assert source == "request:new" and "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
-    assert "batchSizes" not in spec and spec["activeProtocol"]["dataset"] == "dataset"
-    assert "cpuAffinity" in plan["spec"]  # inheritance never mutates retained requests
-    profile = {"id": "profile", "nodeName": "node", "measuredAt": "2026-03-01", "condition": {
-        "logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
-        "powerMode": "mode", "preprocessor": {"name": "pre"}, "cpu": {"request": "2", "limit": "2"}}}
-    for field in ("activeProtocol", "idleProtocol"):
-        profile["condition"][field] = {"durationSeconds": 10, "warmupIterations": 2,
-                                      "settlingDurationSeconds": 2, "dataset": {"name": "dataset"},
-                                      "metricIntervalMilliseconds": 1000, "metricTimeoutMilliseconds": 500,
-                                      "metricDurationSeconds": 12}
-    different = copy.deepcopy(plan)
-    different["spec"]["state"]["targetNode"] = "other"
-    spec, source = coverage_defaults(cell, "node", [different], [profile])
-    assert source == "profile:profile" and spec["retryLimit"] == 1
-    assert "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
-    assert "settlingDurationSeconds" not in spec["activeProtocol"]
-    catalog = {"spec": {"executionPaths": [{"name": "path", "artifact": "artifact", "runtime": {
-        "settings": {"firstfloor": {"maxBatchSize": 4}}}}],
-        "artifacts": [{"name": "artifact", "derivation": {"declaredBatchSizes": [4, 1, 2]}}]}}
-    assert coverage_batches(catalog, "path", policy) == ([1, 2, 4], True, "artifact")
-    catalog["spec"]["artifacts"][0].pop("derivation")
-    assert coverage_batches(catalog, "path", policy) == ([1, 2, 4], False, "artifact")
-    catalog["spec"]["executionPaths"][0]["runtime"]["settings"]["firstfloor"]["maxBatchSize"] = 3
-    assert coverage_batches(catalog, "path", policy) == ([1, 2], False, "artifact")
-    execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": SHARED_CURVE_SCHEMA,
-                            "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
-    historical_conditions = dict(execution_conditions, runtimeImage="historical-runtime")
-    assert coverage_condition_matches(historical_conditions, execution_conditions)
-    assert not coverage_condition_matches(dict(historical_conditions, curveSchema="old-schema"), execution_conditions)
-    timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
-                "executionPath": "path", "powerMode": cell["powerMode"], "source": device,
-                "executionConditions": execution_conditions}
-               for device, batch, seconds in
-               [("device", 1, .1), ("device", 4, .4), ("slow", 16, 10)]]
-    other_cells = [dict(timings[0], **{key: "other"}, secondsPerCall=600)
-                   for key in ("model", "deviceClass", "executionPath", "powerMode")]
-    assert coverage_batch_plan(cell, [1], timings + other_cells, policy,
-                               execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .1
-    historical_timing = dict(timings[0], executionConditions=historical_conditions, secondsPerCall=.2)
-    assert coverage_batch_plan(cell, [1], [historical_timing], policy,
-                               execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .2
-    included, estimates, reason = coverage_batch_plan(
-        cell, [1, 3, 16], timings, policy, execution_conditions=execution_conditions)
-    assert included == [1, 3, 16] and reason is None
-    assert estimates[-1]["secondsPerCall"] is None  # another class is not grounds for exclusion
-    assert estimates[1]["estimatedCallsInWindow"] is None
-    slow = dict(timings[0], secondsPerCall=60)
-    assert coverage_batch_plan(cell, [1], [slow], policy, execution_conditions=execution_conditions)[0] == [1]
-    slow["secondsPerCall"] = 60.001
-    included, estimates, reason = coverage_batch_plan(
-        cell, [1], [slow], policy, execution_conditions=execution_conditions)
-    assert included == [] and reason == policy["excludedBatchReason"] and estimates[0]["estimatedCallsInWindow"] == 0
-    included, estimates, reason = coverage_batch_plan(
-        cell, [1, 2], [slow], policy, execution_conditions=execution_conditions)
-    assert included == [] and estimates[1]["secondsPerCall"] is None and estimates[1]["excludedFromBatch"] == 1
-    fast = timings[0]
-    mixed = [fast, dict(fast, batch=2, secondsPerCall=61), dict(fast, batch=4, secondsPerCall=.1)]
-    included, estimates, reason = coverage_batch_plan(
-        cell, [4, 1, 2], mixed, policy, execution_conditions=execution_conditions)
-    assert included == [1] and estimates[-1]["excludedFromBatch"] == 2 and estimates[-1]["estimatedCallsInWindow"] == 600
-    assert coverage_batch_plan(cell, [1, 2, 4], mixed, policy, declared=True,
-                               execution_conditions=execution_conditions)[2] == policy["declaredBatchConflictReason"]
-    two_calls = dict(policy, minCallsInWindow=2)
-    assert coverage_batch_plan(cell, [1], [dict(fast, secondsPerCall=40)], two_calls,
-                               execution_conditions=execution_conditions)[0] == []
-    active = {"durationSeconds": 60, "durationToleranceSeconds": 0,
-              "metricObservation": {"durationSeconds": 62}}
-    coverage_active_protocol(active, [{"included": True, "secondsPerCall": 37.294},
-                                     {"included": False, "secondsPerCall": 900}], policy)
-    assert active["durationSeconds"] == 60 and active["durationToleranceSeconds"] == 0
-    assert active["metricObservation"]["durationSeconds"] == 137
-    active["metricObservation"]["durationSeconds"] = 62
-    coverage_active_protocol(active, [{"included": True, "secondsPerCall": None}], policy)
-    assert active["metricObservation"]["durationSeconds"] == 662
-    facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
-                          "powerMode": "mode", "runtimeImage": execution_conditions["runtimeImage"]},
-             "request": {"name": "source", "uid": "source-uid"},
-             "batches": [{"batch": 1, "completedCalls": 100, "quality": [
-                 {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},
-                 {"workloadMode": "idle-model-loaded", "windowSeconds": 500}]}]}
-    timed_result = dict(result, measurementFacts=facts)
-    assert coverage_timings([timed_result])[0]["secondsPerCall"] == .1
-    assert coverage_timings([timed_result])[0]["executionConditions"] == execution_conditions
-    assert coverage_timings([dict(old_result, measurementFacts=facts)]) == []
-    assert coverage_timings([{"measurementFacts": None}]) == []
-    assert coverage_batch_plan(cell, [1], [], policy)[0] == [1]
-    heavy_model = max(policy["models"], key=lambda name: policy["models"][name]["priority"])
-    classes = {
-        "arm": {"architecture": "arm64", "memory": "64Gi"},
-        "amd": {"architecture": "amd64", "memory": "8Gi"},
-        "gpu": {"architecture": "amd64", "memory": "64Gi"},
-        "nano": {"architecture": "arm64", "memory": "4096Mi", "accelerator": "nvidia-jetson-nano"},
-        "orin": {"architecture": "arm64", "memory": "8Gi", "accelerator": "nvidia-jetson-agx-orin"},
-        "rk": {"architecture": "arm64", "memory": "16Gi", "accelerator": "rk3588-npu"}}
-    pilot_lanes = defaultdict(list)
-    cases = [("arm", "ort-cpu", "CPU arm64"), ("amd", "ort-cpu", "CPU amd64"),
-             ("gpu", "ort-cuda", "CUDA amd64"), ("nano", "ort-cuda", "L4T r32"),
-             ("orin", "ort-cuda", "L4T r35"), ("rk", "rknnlite", "RKNN"),
-             ("nano", "ort-cpu", "CPU arm64"), ("orin", "ort-cpu", "CPU arm64")]
-    for index, (node, path, family) in enumerate(cases):
-        m = heavy_model if index >= 6 else model
-        row = {"node": node, "model": m, "cellId": str(index),
-               "priority": policy["models"][m]["priority"], "estimatedSeconds": 100 if index >= 6 else 1}
-        candidate = {"deviceClass": node, "executionPath": path}
-        assert coverage_runtime_family(candidate, classes[node]) == family
-        pilot_lanes[node].append((row, {"spec": {"state": {"candidate": candidate}}}))
-    selected = coverage_pilot(pilot_lanes, policy, classes)
-    assert {r["cellId"] for lane in selected.values() for r, _ in lane} == set(map(str, range(7)))
-    assert len(selected["nano"]) == 2  # CUDA family and heavy CPU model share an ordered lane
-    assert selected["nano"][0][1] is pilot_lanes["nano"][0][1]
-    assert coverage_pilot({"arm": pilot_lanes["arm"]}, policy, classes) == {"arm": pilot_lanes["arm"]}
-    assert coverage_pilot({}, policy, classes) == {}
-    assert coverage_memory("4Gi") == coverage_memory("4096Mi") == coverage_memory("4294967296")
-    lane = [
-        ({"powerMode": "fixed", "model": model, "cellId": str(index)},
-         {"spec": {"state": {"candidate": {"executionPath": path}}}})
-        for index, path in enumerate(("firstfloor-ort-cuda-vlm-arm64", "firstfloor-ort-cpu-arm64",
-                                     "firstfloor-ort-cuda-arm64", "firstfloor-ort-cuda-vlm-arm64",
-                                     "firstfloor-ort-cpu-int8-arm64"))]
-    for index, m in ((5, "smolvlm2-500m-video-instruct"), (6, model)):
-        lane.append(({"powerMode": "fixed", "model": m, "cellId": str(index)},
-                     {"spec": {"state": {"candidate": {"executionPath": "firstfloor-ort-cuda-amd64"}}}}))
-    assert [r["cellId"] for r, _ in coverage_lane_order(lane, policy)] == ["1", "2", "4", "6", "0", "3", "5"]
-    print("coverage generation/reuse, scoped memory exclusions, inheritance, batches and runtime-family pilot checked")
 
 
 def self_check():
     """Small runnable derivation regression, reserved for the coordinated gate."""
-    inp = load(EVIDENCE / "d-method/d-inputs-and-calculations.json")
-    floor = load(EVIDENCE / "d-method/legacy-floor-scenario.json")
+    inp = coverage_plan.load(EVIDENCE / "d-method/d-inputs-and-calculations.json")
+    floor = coverage_plan.load(EVIDENCE / "d-method/legacy-floor-scenario.json")
     floors = {r["caseID"]: r for r in floor["rows"]}
     count = 0
     for row in inp["rows"]:
@@ -1393,9 +472,10 @@ if __name__ == "__main__":
         parser.error("--preflight and --pilot require --coverage")
     if args.coverage:
         if args.self_check:
-            coverage_self_check()
+            import runpy
+            runpy.run_path(str(HERE / "smoke" / "test_coverage.py"))["coverage_self_check"](coverage_plan)
         else:
-            generate_coverage(args.output_dir, args.plan_config, args.preflight, args.pilot)
+            coverage_plan.generate_coverage(args.output_dir, args.plan_config, args.preflight, args.pilot)
     elif args.self_check:
         self_check()
     else:

@@ -45,6 +45,9 @@ def generate():
     module = importlib.util.spec_from_file_location('approved_d_generator', CODE / 'gen.py')
     gen = importlib.util.module_from_spec(module)
     module.loader.exec_module(gen)
+    coverage_module = importlib.util.spec_from_file_location('coverage_plan', CODE / 'coverage_plan.py')
+    coverage_plan = importlib.util.module_from_spec(coverage_module)
+    coverage_module.loader.exec_module(coverage_plan)
     inputs, floors = load(INPUT), {r['caseID']: r for r in load(FLOOR)['rows']}
     snapshot, runtime, inventory = load(STATE)['snapshot'], load(RUNTIME), load(INVENTORY)
     options = {o['instance']['profile']['id']: o['instance'] for o in snapshot['options']}
@@ -76,7 +79,7 @@ def generate():
             cr['metadata']['annotations'] = {'chill.dacs.io/preparation-scope': 'post-d2-approved25',
                 'chill.dacs.io/source-case': case}
             filename = OUT / 'cr' / (cr['metadata']['name'] + '.yaml')
-            gen.write_docs(filename, [cr])
+            coverage_plan.write_docs(filename, [cr])
             related = [o['instance']['profile']['id'] for o in snapshot['options']
                        if (o['instance']['node']['uid'], o['instance']['profile']['condition']['powerMode'],
                            o['instance']['profile']['condition']['runtimeImage'], o['instance']['profile']['condition']['logicalModel'])

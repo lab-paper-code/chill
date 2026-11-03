@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 
 _parser_spec = importlib.util.spec_from_file_location(
-    'soak_timestamp_parser', Path(__file__).resolve().parents[1] / 'evaluation/d2/analyze_before.py')
+    'soak_timestamp_parser', Path(__file__).resolve().parents[1] / 'evaluation/request_analysis.py')
 _parser = importlib.util.module_from_spec(_parser_spec)
 _parser_spec.loader.exec_module(_parser)
 
