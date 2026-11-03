@@ -158,7 +158,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정, 실제 snapshot과 판단, 동작과 결과, 전체 설정 적용 및 행위자 관측 기록 | 고정 BFF 경로에 연결한다. 버전 조건과 dry-run 계약은 ChillServer 조회 대기다. |
 | `GET, POST /scheduler/profiles`, `DELETE /scheduler/profiles/{namespace}/{name}` | 채택 프로파일과 조건, 채택 결과와 `configVersion` | 측정 결과 처리 성능의 현재 사용·채택·해제에 재사용한다. |
 | `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 읽기 projection. DOM은 최상위 진행·결과 필드를 포함한다. 원본 spec 전체가 아니다. | 두 결과 화면에 연결한다. 아래 DOM 쓰기 계약과 읽기 projection을 구별한다. |
-| `POST /namespaces/{namespace}/dispatch-occupancy-measurements[?dryRun=All]`, `DELETE .../{name}?uid=…` | 대상·선택적 이름만 제출, dry-run의 완성 `task.spec`, UID·`If-Match` 영구 삭제, Measuring 409 | 요청·검사·진행·삭제 UI를 제공한다. 실행 중단/취소가 아니며 실제 처리는 서버 DOM mutation 커밋과 함께 배포해야 한다. 상세는 [측정 API §13.8](../serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03). |
+| `POST /namespaces/{namespace}/dispatch-occupancy-measurements[?dryRun=All]`, `DELETE .../{name}?uid=…` | 대상·선택적 이름만 제출, dry-run의 완성 `task.spec`, UID·`If-Match` 영구 삭제, Measuring 409 | 요청·검사·진행·삭제 UI는 서버 DOM API 변경(`ea6899ef`) 위로 rebase되어 통합됐다. 운영 서버·Query 미배포 및 운영 생성·삭제 E2E 미수행과 구별하며 실행 중단/취소는 아니다. 상세는 [측정 API §13.8](../serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03). |
 | `GET /scheduler/capacity` | `{rows:CapacityRow[]}`. 자동제어 워크로드가 필요로 하는 행과 입력, κ 및 탐색 판정 | relay GET 허용됨, query 없음. 용량 근거 화면과 현재 settings 대조에 연결한다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
@@ -175,6 +175,10 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 디코더는 dictionary 항목별 논리적 노드 수·깊이를 메모하고 각 항목과 최종 응답의 상한을 2,000,000노드·깊이 64로 제한한다. 반복 참조는 매번 합산하며 인라인 과도한 중첩도 재귀 진입 전에 거부한다. 저장된 운영 GET 8개를 Go projection에 적용한 최대 확장 크기는 커버리지 230,362노드/깊이 11, 측정 요청 180,000/9, 프로파일 149,331/11이다.
 
 2026-11-02 운영 원문을 로컬 projection에 적용한 크기(B): workloads 17,227,584→422,048(29개), 커버리지 9,218,406→1,893,956, 측정 요청 11,941,797→1,677,154, 프로파일 `limit=50&offset=100&sort=model&order=asc` 8,550,682→921,387. 각 표시 응답은 2,000,000 B 미만이다. `internal/queryapi` 회귀는 운영 GET fixture 디렉터리 `CHILL_MEASUREMENT_FIXTURE_DIR`를 제공하면 이 상한과 모든 유지 필드의 round-trip을 함께 검사한다.
+
+DOM 읽기 전용 프로토콜 표는 동결된 `task.spec.conditions.inputsJSON` 문자열을 기존 정밀 정수 파서 `parseSchedulerJSON`으로 읽은 `computed.saturationSizing`을 사용한다. 선택/필요 송신자, 송신자·바이트·수명 상한, 제한 요인, 가득 찬 대기 배치, 재충전·잔여 유휴 시간, 예상/최대 유휴 비율을 서버 원값으로 표시한다. 큰 정수는 정확히 유지하고 누락·null·해석 불가 값은 `미제공`이며 현재 정책으로 추정하지 않는다. 출처 메타데이터는 기존 원본 disclosure에만 남고 프로토콜 입력이나 mutation 본문은 추가하지 않는다.
+
+DOM `occupancy[].adopted`는 실제 scheduler 선택 카탈로그에 연결된 tri-state다. Node UID·profileID·배치와 evidence store/key, 현재 셀의 모델·전력모드·실행 경로 identity가 일치하면 `true`=채택, 조회 가능한 선택 목록에 없으면(빈 목록 포함) `false`=미채택, 필드 누락 또는 카탈로그 오류이면 `null`=채택 미확인이다. runtimeImage는 유효성 키가 아니며 catalog checkedAt/error는 기존 freshness에 반영한다. 코드 rebase 통합은 운영 배포·운영 mutation 검증을 뜻하지 않는다.
 
 ### 연결 예정 API (서버 책임)
 
@@ -237,7 +241,7 @@ DOM 목록·단건은 `phase:null/Measuring` 동안 보이는 탭에서만 제�
 
 셀은 occupancy 유무와 무관하게 조건을 보존한 d 요청 링크를 제공한다. 호환성 대표 `support.node`를 측정 Node로 추측하지 않으며 요청 화면이 해석한 BEO의 `spec.state.targetNode`를 사용한다. 요청 이름은 선택적이고 검사 identity에 포함된다. 같은 조건 재측정은 새 이름으로 생성해 이전 실패 기록을 보존한다. 측정 종류 선택은 profile 의존 조회 오류와 독립적으로 접근 가능하되 변경 진행·결과 미확인 중에는 전환하지 않는다.
 
-리뷰 보정 검증(2026-11-03): 삭제 단건 404·부분 d 커버리지·대표 Node 불일치·권한 오류·요청 이름·조회 실패 종류 전환의 실패-먼저 회귀 후 Node 24.14.0 typecheck/eslint/운영 summary 포함 테스트 499개/기본 build가 통과했다. Go 변경은 없어 기존 통합 게이트를 재실행하지 않았다. 로컬 production과 운영 GET의 1440×900 렌더에서 조건 링크가 대표 Node를 생략하고 BEO 대상 genesis3로 해석됨을 확인했다. API GET 200, 콘솔 오류·가로 넘침 없음(Next prefetch abort만 관측). 운영 Query는 최상위 phase/d 미배포이므로 결과 대기·미제공은 구 응답에 대한 표시이며 새 진행값 검증이 아니다. 서버 DOM mutation 커밋과 Query/dash 동시 cutover 후 POST/DELETE E2E가 남는다.
+서버 통합 검증(2026-11-03): 실패-먼저 회귀 후 Node 24.14.0 typecheck/eslint/운영 summary 포함 테스트 500개/기본 build가 통과했다. ea6899ef 위 rebase는 충돌 없었고 Go focused Query/Server/HTTP/Kube 테스트, make lint·arch-check·test를 재실행해 통과했다. 로컬 TLS의 실제 handler·builder·service 경로에서 dry-run 200 NOT_SUBMITTED→생성 202 Accepted·동결 spec 동일성과 삭제 fence/Measuring 거절 테스트가 통과했다(인메모리 Kubernetes fixture이며 실제 Job E2E 아님). 로컬 production+운영 GET의 1440×900 렌더에서는 대표 Node를 생략한 조건 링크가 BEO 대상 genesis3로 해석됐고 API 200·콘솔 오류/가로 넘침 없음(Next prefetch abort만 관측)을 확인했다. 운영 Query는 phase/d 미배포라 결과 대기·미제공이며 새 진행값 검증이 아니다. 운영 mutation은 없었고 로컬 클러스터에는 DOM CRD·BEO가 없어 실제 Job 진행 E2E는 남는다. 서버·Query·대시보드는 함께 cutover한다.
 
 | 구역 | 정확한 필드 | 표시 단위·의미 |
 |---|---|---|

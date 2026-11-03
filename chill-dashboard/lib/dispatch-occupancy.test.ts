@@ -132,7 +132,7 @@ test("Measuring deletion is disabled; confirmed deletion sends pinned UID and If
   ;(confirm.props.onClick as ()=>void)()
   const call=h.calls[0][0]
   assert.equal(call.input.method,"DELETE")
-  assert.equal(call.input.version,"7")
+  assert.equal(call.input.version,'"7"')
   assert.equal(new URL(call.input.path,"https://dashboard.invalid").searchParams.get("uid"),"occ-uid")
   call.options?.onError?.({status:409})
   h.mutations[0].error={status:409}
@@ -203,6 +203,25 @@ test("reused profile IDs resolve through server cell lineage, never by treating 
   assert.match(text(stale.render()),/식별자 불일치/)
   assert.equal(occupancy.occupancyNumber(-1),"미제공")
   assert.equal(occupancy.occupancyNumber(1.1,true),"미제공")
+})
+
+test("frozen saturation sizing supplies read-only rows with exact integers and unavailable values",()=>{
+  const h=harness()
+  const feature=load("../features/dispatch-occupancy-request.tsx",h.modules)
+  const inputsJSON='{"computed":{"saturationSizing":{"requiredWorkers":9007199254740993,"workerCap":31,"byteCapWorkers":23,"lifetimeCapWorkers":19,"selectedWorkers":17,"limitingBound":"lifetime","fullQueuedBatches":9007199254740995,"refillSeconds":1.25,"residualIdleSeconds":0,"estimatedIdleFraction":0.025,"maximumIdleFraction":0.04}},"source":{"name":"raw-only"}}'
+  const render=(inputsJSON:unknown)=>feature.OccupancyProtocol({task:{...task,spec:{...task.spec,conditions:{...task.spec.conditions,inputsJSON}}}})
+  const rows=(tree:unknown)=>new Map(nodes(tree).filter(node=>node.type==="tr").map(node=>nodes(node.props.children).filter(child=>child.type==="th"||child.type==="td").map(text) as [string,string]))
+  const tree=render(inputsJSON),values=rows(tree)
+  for(const [label,value] of [["필요 송신자 (명)","9007199254740993"],["선택 송신자 (명)","17"],["송신자 상한 (명)","31"],["바이트 한도 송신자 (명)","23"],["수명 한도 송신자 (명)","19"],["제한 요인","lifetime"],["가득 찬 대기 배치 (개)","9007199254740995"],["재충전 (s)","1.25"],["잔여 유휴 (s)","0"],["예상 유휴 비율","0.025"],["포화 산정 최대 유휴 비율","0.04"]])assert.equal(values.get(label),value,label)
+  assert.equal(nodes(tree).filter(node=>["input","select"].includes(String(node.type))).length,0)
+  assert.equal(nodes(tree).find(node=>node.type==="source-json")?.props.value!==undefined,true)
+  assert.doesNotMatch(text(tree),/raw-only/)
+  for(const missing of [undefined,null,"not-json","null","{}",'{"computed":{"saturationSizing":null}}','{"computed":{"saturationSizing":{"requiredWorkers":null}}}']) {
+    const unavailable=rows(render(missing))
+    assert.equal(unavailable.get("필요 송신자 (명)"),"미제공")
+    assert.equal(unavailable.get("선택 송신자 (명)"),"미제공")
+    assert.equal(unavailable.get("예상 유휴 비율"),"미제공")
+  }
 })
 
 test("dry-run protocol retains uint64 values and rejects unreadable previews before submission",()=>{
