@@ -244,9 +244,18 @@ func (o *schedulerService) readCatalog(ctx context.Context) (servingkube.Catalog
 	read := servingkube.CatalogRead{
 		CatalogSnapshot: servingkube.ProjectCatalogSnapshot(view.CatalogView, view.ConfigVersion, nil),
 	}
-	if current := o.profiles.Load(); current != nil {
+	current := o.profiles.Load()
+	occupancy := o.occupancy.published.Load()
+	if occupancy != nil {
+		current = occupancy.input.catalog
+	}
+	if current != nil {
 		accepted := servingkube.ProjectCatalogSnapshot(current.CatalogView, current.ConfigVersion, current.Preparations)
 		accepted.Occupancy = current.Occupancy
+		if occupancy != nil {
+			accepted.DispatchOccupancy = occupancy.selected
+			accepted.OccupancyEstimates = occupancy.estimates
+		}
 		read.Accepted = &accepted
 	}
 	return read, nil

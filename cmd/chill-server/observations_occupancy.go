@@ -18,9 +18,9 @@ func (o *schedulerService) occupancyObservations(
 	if config == nil || config.DispatchOccupancy == nil {
 		return nil, &serving.Error{Code: "ObservationUnavailable", Message: "dispatchOccupancy configuration is unavailable"}
 	}
-	if to.Sub(from) > time.Duration(config.DispatchOccupancy.MaximumObservationWindowSeconds)*time.Second {
+	if to.Sub(from) > time.Duration(config.DispatchOccupancy.AggregationWindowSeconds)*time.Second {
 		return nil, &serving.Error{
-			Code: "InvalidQuery", Message: "occupancy window exceeds dispatchOccupancy.maximumObservationWindowSeconds",
+			Code: "InvalidQuery", Message: "occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds",
 		}
 	}
 	policies := make(map[string]firstfloor.Metadata)

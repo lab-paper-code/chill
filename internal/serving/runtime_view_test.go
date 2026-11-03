@@ -1,6 +1,11 @@
 package serving
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
+)
 
 func TestCurrentSnapshotKeepsExistingChangeSubscriber(t *testing.T) {
 	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
@@ -38,5 +43,25 @@ func TestCurrentSnapshotKeepsExistingChangeSubscriber(t *testing.T) {
 	_, _, after := r.Current()
 	if after["w1"][instance.ID] != 1 {
 		t.Fatal("reader mutated live routing")
+	}
+}
+
+func TestOccupancyPoliciesSnapshotsOnlyNativeInstanceMetadata(t *testing.T) {
+	metadata := firstfloor.Metadata{ProfileID: "policy-profile", DecisionID: "decision",
+		AppliedAt: time.Now(), Policy: firstfloor.Policy{FixedBatchSize: 2}}
+	r := &Runtime{instances: map[string]*runtimeInstance{
+		"native":  {ReadyInstance: ReadyInstance{State: InstanceState{Native: &firstfloor.State{Metadata: metadata}}}},
+		"unknown": {},
+	}}
+	policies := r.OccupancyPolicies()
+	if len(policies) != 1 || policies["native"].ProfileID != metadata.ProfileID ||
+		policies["native"].Policy.FixedBatchSize != 2 {
+		t.Fatalf("native policy snapshot: %+v", policies)
+	}
+	delete(policies, "native")
+	replacement := firstfloor.Metadata{ProfileID: "updated-profile"}
+	r.instances["native"].State.Native = &firstfloor.State{Metadata: replacement}
+	if r.OccupancyPolicies()["native"].ProfileID != replacement.ProfileID {
+		t.Fatal("policy snapshot mutated or retained replaced native metadata")
 	}
 }

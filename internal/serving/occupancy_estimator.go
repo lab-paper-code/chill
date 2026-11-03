@@ -247,8 +247,18 @@ func sameDirectConfiguration(a, b *occupancyRequest) bool {
 // restart, configuration change, policy wait, overlap or unknown timestamp can
 // be bridged to manufacture a backlogged pair.
 func (e *OccupancyEstimator) Results() []OccupancyEstimate {
+	return e.results(false)
+}
+
+// ResultsByCell pools the actual pair samples across Workload UIDs, never
+// medians of strata. Pair eligibility still requires unchanged workload/config.
+func (e *OccupancyEstimator) ResultsByCell() []OccupancyEstimate {
+	return e.results(true)
+}
+
+func (e *OccupancyEstimator) results(poolWorkloads bool) []OccupancyEstimate {
 	cells := map[directCellKey]*OccupancyEstimate{}
-	batches := e.physicalBatches(cells)
+	batches := e.physicalBatches(cells, poolWorkloads)
 	sequence := make([]*directBatch, 0, len(batches))
 	for _, b := range batches {
 		b.valid = b.valid && b.members == b.member.size
@@ -296,12 +306,15 @@ func (e *OccupancyEstimator) Results() []OccupancyEstimate {
 	return out
 }
 
-func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*OccupancyEstimate) *OccupancyEstimate {
+func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*OccupancyEstimate, poolWorkloads bool) *OccupancyEstimate {
 	p := e.profiles[r.profile]
 	if p == nil || r.node.UID != p.Condition.NodeUID || r.node.Name != p.NodeName {
 		return nil
 	}
 	key := directCellKey{r.node.UID, r.workload, r.profile, r.size}
+	if poolWorkloads {
+		key.workload = ""
+	}
 	if out := cells[key]; out != nil {
 		return out
 	}
@@ -310,7 +323,7 @@ func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*
 		return nil
 	}
 	out := &OccupancyEstimate{
-		Node: r.node, WorkloadUID: r.workload, Model: p.Condition.LogicalModel,
+		Node: r.node, WorkloadUID: key.workload, Model: p.Condition.LogicalModel,
 		PowerMode: p.Condition.PowerMode, ExecutionPath: p.Condition.Artifact.ExecutionPath,
 		RuntimeImage: p.Condition.RuntimeImage, Batch: r.size,
 		Profile: OccupancyProfile{p.ID, p.Reference, p.Evidence, mean}, Window: e.window,
@@ -319,13 +332,13 @@ func (e *OccupancyEstimator) cell(r *occupancyRequest, cells map[directCellKey]*
 	return out
 }
 
-func (e *OccupancyEstimator) physicalBatches(cells map[directCellKey]*OccupancyEstimate) map[directBatchKey]*directBatch {
+func (e *OccupancyEstimator) physicalBatches(cells map[directCellKey]*OccupancyEstimate, poolWorkloads bool) map[directBatchKey]*directBatch {
 	batches := map[directBatchKey]*directBatch{}
 	for _, r := range e.requests {
 		if !e.requestInWindow(r) {
 			continue
 		}
-		out := e.cell(r, cells)
+		out := e.cell(r, cells, poolWorkloads)
 		if out == nil {
 			continue
 		}
@@ -342,7 +355,7 @@ func (e *OccupancyEstimator) physicalBatches(cells map[directCellKey]*OccupancyE
 		b := batches[key]
 		if b == nil {
 			b = &directBatch{key: key, member: r, valid: true,
-				cell: directCellKey{r.node.UID, r.workload, r.profile, r.size}}
+				cell: directCellKey{r.node.UID, out.WorkloadUID, r.profile, r.size}}
 			batches[key] = b
 		}
 		b.add(r)

@@ -210,8 +210,8 @@ func TestObservationArchiveLateFinalAndLocalFastPath(t *testing.T) {
 	if err := log.RequestClosed("late"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.RemoveAll(filepath.Join(log.root, observationHour(at))); err != nil {
-		t.Fatal(err)
+	if removed, err := log.removeHour(at.Truncate(time.Hour)); err != nil || !removed {
+		t.Fatalf("remove retained hour: removed=%v err=%v", removed, err)
 	}
 	got, err := log.Query(ctx, archiveTestUID, at, at.Add(time.Second), nil, nil, 0, "")
 	if err != nil || got.Total != 1 || len(got.Requests) != 1 || got.Requests[0].Kind != requestRowFinal {

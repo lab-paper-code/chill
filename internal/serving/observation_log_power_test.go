@@ -497,6 +497,13 @@ func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	hours, err := observationLog.hours()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := observationLog.indexSegments(hours); err != nil {
+		t.Fatal(err)
+	}
 	got, err := observationLog.OperatingPower(context.Background(), from, to, meters, 20)
 	if err != nil {
 		t.Fatal(err)

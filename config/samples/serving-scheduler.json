@@ -51,11 +51,14 @@
     }
   },
   "dispatchOccupancy": {
+    "aggregationWindowSeconds": 120,
+    "refreshIntervalSeconds": 60,
+    "scanTimeoutSeconds": 30,
+    "maximumRequests": 250000,
     "warmupSeconds": 5,
     "burstSeconds": 15,
     "workers": 8,
     "minimumPairs": 100,
-    "maximumObservationWindowSeconds": 3600,
     "requestLifetimeSeconds": 8,
     "deliveryMarginMillis": 25,
     "preparationSeconds": 2,

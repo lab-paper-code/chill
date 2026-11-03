@@ -230,9 +230,12 @@ func TestScanOccupancyRowsBoundsRetainedPopulationAndTail(t *testing.T) {
 	if err := os.WriteFile(late, []byte("not JSON\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := log.indexSegments([]time.Time{from.UTC().Truncate(time.Hour), from.Add(24 * time.Hour).UTC().Truncate(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
 	estimator := NewOccupancyEstimator(map[string]*Profile{p.ID: p}, policies, from, from.Add(time.Second))
 	visited := 0
-	_, err := log.ScanOccupancyRows(context.Background(), "", "", from, from.Add(time.Second), func(row RequestRow) {
+	_, err := log.ScanOccupancyRowsBounded(context.Background(), "", "", from, from.Add(time.Second), 1, func(row RequestRow) {
 		visited++
 		estimator.Add(row)
 	})
@@ -247,5 +250,34 @@ func TestScanOccupancyRowsBoundsRetainedPopulationAndTail(t *testing.T) {
 		result[0].CompleteFinalRows != 0 || result[0].CompleteRequests != 1 ||
 		result[0].EnrichedCompleteRawRows != 2 {
 		t.Fatalf("joined denominators=%+v", result)
+	}
+}
+
+func TestScanOccupancyRowsCapRejectsBeforePublishing(t *testing.T) {
+	_, _, from := directFixture(1)
+	log, _ := clockedObservationLog(t, ObservationLogConfig{}, from)
+	var rows bytes.Buffer
+	encoder := json.NewEncoder(&rows)
+	for id := uint64(1); id <= 2; id++ {
+		if err := encoder.Encode(directRow(from, id, 1, 0, 0, 20)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	name := log.segment(observationRequestStream, from)
+	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(name, rows.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.indexSegments([]time.Time{from.UTC().Truncate(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	visited := 0
+	_, err := log.ScanOccupancyRowsBounded(context.Background(), "", "", from, from.Add(time.Second), 1, func(RequestRow) {
+		visited++
+	})
+	if err == nil || visited != 0 {
+		t.Fatalf("partial request population published: err=%v visited=%d", err, visited)
 	}
 }

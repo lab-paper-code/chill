@@ -83,6 +83,87 @@ func TestObservationReadAllowsIngressAndSchedulerAppendWhilePaused(t *testing.T)
 	}
 }
 
+func TestObservationCaptureOpensOutsideWriterLock(t *testing.T) {
+	recorder := NewDiagnostics()
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Diagnostics: recorder}, observationTestHour)
+	at := observationTestHour.Add(time.Second)
+	clock.set(at)
+	if err := log.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
+		t.Fatal(err)
+	}
+	recorder.Start()
+	read, err := log.capture(map[string][2]time.Time{observationSchedulerStream: {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read.close()
+	recorder.Stop()
+	held, opens, captures := false, 0, 0
+	for _, event := range recorder.events[:recorder.written] {
+		if event.kind == DiagnosticMutex && event.lock == 2 {
+			if event.phase == DiagnosticAcquired {
+				held = true
+			}
+			if event.phase == DiagnosticReleased {
+				held = false
+			}
+		}
+		if event.kind == DiagnosticCapture && event.phase == DiagnosticBegin {
+			captures++
+		}
+		if event.kind == DiagnosticFileOpen && event.phase == DiagnosticBegin {
+			opens++
+			if held || event.lock != 0 || event.owner != 0 {
+				t.Fatal("capture opened a file under the writer lock")
+			}
+		}
+		if event.kind == DiagnosticFileStat {
+			t.Fatal("capture statted a file instead of using its complete append offset")
+		}
+	}
+	if held || opens != 1 || captures != 1 || recorder.dropped.Load() != 0 {
+		t.Fatalf("capture diagnostic edges missing: held=%v opens=%d captures=%d dropped=%d", held, opens, captures, recorder.dropped.Load())
+	}
+}
+
+func TestObservationCaptureFreezesPathsAndOffsetsBeforeOpening(t *testing.T) {
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	at := observationTestHour.Add(time.Second)
+	clock.set(at)
+	if err := log.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
+		t.Fatal(err)
+	}
+	// Pause exactly after the in-memory snapshot, before any read handle opens.
+	read, segments := log.captureSnapshot(map[string][2]time.Time{observationSchedulerStream: {}}, nil)
+	defer read.close()
+	for _, next := range []time.Time{at.Add(time.Minute), at} {
+		clock.set(next)
+		if err := log.SchedulerRecord(SchedulerObservation{At: next}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(segments[observationSchedulerStream]) != 1 {
+		t.Fatalf("snapshot did not retain exactly its original path: %+v", segments)
+	}
+	for stream, files := range segments {
+		for _, segment := range files {
+			if err := log.openReadFile(read, stream, segment); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	rows := 0
+	if err := log.scanStream(read, observationSchedulerStream, func([]byte) error {
+		rows++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("opening after rotation/reopen included post-snapshot appends: %d", rows)
+	}
+}
+
 // scanLargeLines requires every captured scheduler line to arrive in the one
 // buffer the first line grew. Buffer identity shows reuse; AllocsPerRun would
 // also count allocations the runtime makes on other goroutines.

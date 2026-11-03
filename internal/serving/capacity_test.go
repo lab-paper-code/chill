@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"math/rand/v2"
 	"os"
 	"reflect"
 	"sync"
@@ -245,40 +246,99 @@ func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 	s.DefaultDispatchOccupancyNanos = int64(time.Millisecond)
 	row := capacityBuildForTest(t, s, snap)
 	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 || row.Mu != 500 {
-		t.Fatalf("configured default did not produce κ: %+v", row)
+		t.Fatalf("default d did not produce capacity: %+v", row)
 	}
 	d := row.Input.DispatchOccupancy
-	if d == nil || d.PerRequest != time.Millisecond || d.Provenance.Source != occupancySourceDefault || d.Provenance.Value != int64(time.Millisecond) {
-		t.Fatalf("missing configured-default provenance: %+v", d)
+	if d == nil || d.PerRequest != time.Millisecond || d.Provenance.Source != "default" || d.Provenance.Value != int64(time.Millisecond) {
+		t.Fatalf("missing default provenance: %+v", d)
 	}
 	s.DefaultDispatchOccupancyNanos = 0
 	zero := capacityBuildForTest(t, s, snap)
-	if zero.Kappa == nil || *zero.Kappa != capacityFixtureKappa || zero.Mu != 1000 || zero.Key == row.Key {
-		t.Fatalf("explicit zero/default value change not honored: %+v", zero)
+	if zero.Mu != 1000 || zero.Kappa == nil || *zero.Kappa != capacityFixtureKappa || zero.Key == row.Key {
+		t.Fatalf("zero scalar default not used exactly once per request: %+v", zero)
 	}
 }
 
-func TestCapacityDOMPriorityAndLegacyMatching(t *testing.T) {
+func TestCapacityRowUsesQualifiedMeasuredCacheEntryBeforeDOM(t *testing.T) {
 	s, snap := capacityFixture()
 	s.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
+	i := snap.Options[0].Instance
 	snap.DispatchOccupancy[0].PerRequest = time.Millisecond
-	snap.DispatchOccupancy[0].RuntimeImage = "historical-image"
+	window := OccupancyWindow{Start: snap.At.Add(-time.Minute), End: snap.At}
+	// The incoming cache publishes only entries meeting its minimumPairs policy.
+	entry := DispatchOccupancy{
+		Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, Model: i.Profile.Condition.LogicalModel,
+		ProfileID: i.Profile.ID, ExecutionPath: i.Profile.Condition.Artifact.ExecutionPath, Batch: i.MaxBatch,
+		PerRequest: 500 * time.Microsecond, Source: "rolling-cache",
+		Provenance: &DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Window: &window, UpdatedAt: snap.At, Value: 500000},
+	}
+	snap.DispatchOccupancy = append(snap.DispatchOccupancy, entry)
 	row := capacityBuildForTest(t, s, snap)
 	d := row.Input.DispatchOccupancy
-	if row.Kappa == nil || row.Mu != 500 || d.Provenance.Source != occupancySourceDOM || d.Provenance.Value != int64(time.Millisecond) || d.Source != "fixture" {
-		t.Fatalf("DOM did not beat configured fallback: %+v", row)
+	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 || math.Abs(row.Mu-1e9/1.5e6) > 1e-9 ||
+		d.Source != entry.Source || !reflect.DeepEqual(d.Provenance, entry.Provenance) {
+		t.Fatalf("qualified measured entry lost priority/provenance: %+v", row)
 	}
-	for _, change := range []func(*DispatchOccupancy){
-		func(d *DispatchOccupancy) { d.Node.UID = schedulerTestOther },
-		func(d *DispatchOccupancy) { d.PowerMode = schedulerTestEcoMode },
-		func(d *DispatchOccupancy) { d.Model = "other-model" },
+}
+
+func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
+	s, snap := capacityFixture()
+	s.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
+	i := snap.Options[0].Instance
+	dom := snap.DispatchOccupancy[0]
+	dom.RuntimeImage, dom.PerRequest = "historical-image", time.Millisecond
+	measured := dom
+	measured.ProfileID, measured.ExecutionPath, measured.Batch = i.Profile.ID, i.Profile.Condition.Artifact.ExecutionPath, i.MaxBatch
+	measured.PerRequest = 500 * time.Microsecond
+	measured.Provenance = &DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Value: 500000}
+	for _, tc := range []struct {
+		name   string
+		change func(*DispatchOccupancy)
+	}{
+		{"node", func(d *DispatchOccupancy) { d.Node.UID = schedulerTestOther }},
+		{"model", func(d *DispatchOccupancy) { d.Model = schedulerTestOther }},
+		{"mode", func(d *DispatchOccupancy) { d.PowerMode = schedulerTestOther }},
+		{"profile", func(d *DispatchOccupancy) { d.ProfileID = schedulerTestOther }},
+		{"path", func(d *DispatchOccupancy) { d.ExecutionPath = schedulerTestOther }},
+		{"batch", func(d *DispatchOccupancy) { d.Batch++ }},
 	} {
-		other := snap.DispatchOccupancy[0]
-		change(&other)
-		got := dispatchOccupancy(s, []DispatchOccupancy{other}, snap.Options[0].Instance)
-		if got.Provenance.Source != occupancySourceDefault || got.PerRequest != 2*time.Millisecond {
-			t.Fatalf("nonmatching DOM masked fallback: %+v", got)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			mismatch := measured
+			tc.change(&mismatch)
+			got := ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch, dom}, i)
+			if got.PerRequest != dom.PerRequest || got.Provenance.Source != "dom" || got.Source != dom.Source {
+				t.Fatalf("nonmatching measured entry beat legacy DOM: %+v", got)
+			}
+			got = ResolveDispatchOccupancy(s, []DispatchOccupancy{mismatch}, i)
+			if got.Provenance.Source != "default" || got.PerRequest != 2*time.Millisecond {
+				t.Fatalf("nonmatching measured entry blocked configured fallback: %+v", got)
+			}
+		})
+	}
+	// DOM retains wildcard batch/profile matching and ignores image history.
+	other := i
+	profile := *i.Profile
+	profile.ID, profile.Condition.Artifact.ExecutionPath = "another-profile", "another-path"
+	other.Profile, other.MaxBatch = &profile, 8
+	got := ResolveDispatchOccupancy(s, []DispatchOccupancy{dom}, other)
+	if got.PerRequest != time.Millisecond || got.Provenance.Source != "dom" || got.ProfileID != profile.ID || got.Batch != 8 {
+		t.Fatalf("legacy DOM wildcard changed: %+v", got)
+	}
+	// A recorded resolved default retains its source/value on readback, even
+	// when a caller supplies unrelated current settings.
+	s.DefaultDispatchOccupancyNanos = 0
+	projected := ResolveDispatchOccupancy(s, nil, other)
+	s.DefaultDispatchOccupancyNanos = 123
+	if got := ResolveDispatchOccupancy(s, []DispatchOccupancy{*projected}, other); got.PerRequest != 0 ||
+		got.Provenance.Source != occupancySourceDefault || got.Provenance.Value != 0 || got.Provenance == projected.Provenance {
+		t.Fatalf("recorded default provenance/value lost or aliased: %+v", got)
+	}
+	// Clamp operational d only; never rewrite the incoming signed measurement.
+	measured.PerRequest, measured.Provenance.Value = -100, -100
+	got = ResolveDispatchOccupancy(s, []DispatchOccupancy{measured, dom}, i)
+	if got.PerRequest != 0 || got.Provenance.Value != 0 || got.Provenance.Source != "measured" ||
+		measured.PerRequest != -100 || measured.Provenance.Value != -100 {
+		t.Fatalf("signed fact mutated or operational d not clamped: %+v %+v", measured, got)
 	}
 }
 
@@ -682,9 +742,12 @@ func TestDecisionRecordIncludesSelectedDOMAndDefaultOccupancy(t *testing.T) {
 			if d.Provenance == nil || d.Provenance.Source != source || d.Provenance.Value != expected || int64(d.PerRequest) != expected {
 				t.Fatalf("recorded decision lost selected source/value: %+v", d)
 			}
-			replayed := NewCapacityInput(settings, page[0].Snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0]).DispatchOccupancy
-			if replayed.Provenance.Source != source || replayed.Provenance.Value != expected {
-				t.Fatalf("recorded source was relabeled on replay: %+v", replayed)
+			recorded := page[0].Snapshot
+			option := recorded.Options[0]
+			option.Instance.Profile = snapshot.Options[0].Instance.Profile
+			roundtrip := NewCapacityInput(page[0].Decision.Settings, recorded.DispatchOccupancy, option, snapshot.Workloads[0])
+			if !reflect.DeepEqual(*roundtrip.DispatchOccupancy, d) || roundtrip.DispatchOccupancy.Provenance == d.Provenance {
+				t.Fatalf("record/read/capacity roundtrip lost source/value or aliased provenance: %+v want %+v", roundtrip.DispatchOccupancy, d)
 			}
 			if source == occupancySourceDOM && snapshot.DispatchOccupancy[0].Provenance != nil || source == occupancySourceDefault && snapshot.DispatchOccupancy != nil {
 				t.Fatal("decision recording mutated incoming evidence")
@@ -695,5 +758,97 @@ func TestDecisionRecordIncludesSelectedDOMAndDefaultOccupancy(t *testing.T) {
 				t.Fatalf("option-only decision lost provenance: %+v", got)
 			}
 		})
+	}
+}
+
+func TestCapacityKeyAndTableReuseIgnoreProvenanceRefresh(t *testing.T) {
+	s, snap := capacityFixture()
+	i := snap.Options[0].Instance
+	window := OccupancyWindow{Start: snap.At.Add(-time.Minute), End: snap.At}
+	snap.DispatchOccupancy = []DispatchOccupancy{{
+		Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, Model: i.Profile.Condition.LogicalModel,
+		ProfileID: i.Profile.ID, ExecutionPath: i.Profile.Condition.Artifact.ExecutionPath, Batch: i.MaxBatch,
+		Source: "cache-before", Provenance: &DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Window: &window, UpdatedAt: snap.At},
+	}}
+	var recorded int
+	table := NewCapacityTable(1, func(CapacityRow) error { recorded++; return nil }, nil)
+	table.Ensure(context.Background(), s, snap)
+	table.Wait()
+	before := table.Rows()[0]
+	refreshedWindow := OccupancyWindow{Start: window.Start.Add(time.Second), End: window.End.Add(time.Second)}
+	snap.DispatchOccupancy[0].Source = "cache-after"
+	snap.DispatchOccupancy[0].Provenance = &DispatchOccupancyProvenance{Source: "measured", Pairs: 2000, Window: &refreshedWindow, UpdatedAt: snap.At.Add(time.Second)}
+	table.Ensure(context.Background(), s, snap)
+	table.Wait()
+	after := table.Rows()[0]
+	if recorded != 1 || before.Key != after.Key || !before.BuiltAt.Equal(after.BuiltAt) || *before.Kappa != *after.Kappa ||
+		!reflect.DeepEqual(after.Input.DispatchOccupancy.Provenance, snap.DispatchOccupancy[0].Provenance) ||
+		after.Input.DispatchOccupancy.Source != "cache-after" || before.Input.DispatchOccupancy.Provenance.Pairs != 1000 {
+		t.Fatalf("refresh rebuilt κ or lost current/original provenance: %+v %+v records=%d", before, after, recorded)
+	}
+	after.Input.DispatchOccupancy.PerRequest++
+	if after.Input.Key() == before.Key {
+		t.Fatal("numerical d change failed to invalidate capacity")
+	}
+}
+
+func TestConfiguredDispatchOccupancyMultipliesBatchOnceInThroughputAndReplay(t *testing.T) {
+	settings, snapshot := capacityFixture()
+	settings.DefaultDispatchOccupancyNanos = 500000
+	snapshot.DispatchOccupancy = nil
+	snapshot.Instances[0].MaxBatch = 4
+	snapshot.Instances[0].Profile.Batches = []BatchProfile{{Batch: 4, DurationNanos: []float64{4e6}}}
+	state := schedulerReplayState{settings: settings, snap: snapshot, rng: rand.New(rand.NewPCG(1, 0)), now: 100}
+	state.initializeInstances()
+	instance := state.instances[0]
+	for n := range 4 {
+		instance.queue = append(instance.queue, &schedulerReplayRequest{
+			source:   SchedulerRequest{ID: string(rune('a' + n)), Definition: snapshot.Workloads[0]},
+			identity: snapshot.Workloads[0].Identity(), queueAt: state.now,
+		})
+	}
+	if !state.chooseBatches(context.Background()) || len(instance.batch) != 4 || instance.finish != 100+4e6+4*500000 {
+		t.Fatalf("replay must add B*d once, not a batch total or B²*d: %+v", instance)
+	}
+	mu := capacityThroughput(instance.config.Profile, 4, time.Duration(settings.DefaultDispatchOccupancyNanos))
+	if math.Abs(mu-4e9/(4e6+4*500000)) > 1e-9 {
+		t.Fatalf("throughput used different batch multiplier: %g", mu)
+	}
+}
+
+func TestSelectedDispatchOccupancyProvenanceSurvivesDecisionRecord(t *testing.T) {
+	settings, snapshot := capacityFixture()
+	settings.DefaultDispatchOccupancyNanos = int64(2 * time.Millisecond)
+	log, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	instance := snapshot.Options[0].Instance
+	dom := snapshot.DispatchOccupancy[0]
+	measured := *ResolveDispatchOccupancy(settings, []DispatchOccupancy{dom}, instance)
+	window := OccupancyWindow{Start: observationTestHour.Add(-time.Minute), End: observationTestHour}
+	measured.PerRequest = 500000
+	measured.Source = "rolling"
+	measured.Provenance = &DispatchOccupancyProvenance{Source: "measured", Pairs: 1000, Window: &window, UpdatedAt: observationTestHour, Value: 500000}
+	for n, tc := range []struct {
+		source   string
+		incoming []DispatchOccupancy
+	}{
+		{"measured", []DispatchOccupancy{dom, measured}},
+		{"dom", []DispatchOccupancy{dom}},
+		{"default", nil},
+	} {
+		at := observationTestHour.Add(time.Duration(n) * time.Millisecond)
+		selected := ResolveDispatchOccupancy(settings, tc.incoming, instance)
+		recordedSnapshot := SchedulerSnapshot{At: at, DispatchOccupancy: []DispatchOccupancy{*selected}}
+		decision := SchedulerDecision{At: at, Settings: settings}
+		if err := log.SchedulerRecord(SchedulerObservation{At: at, Decision: &decision, Snapshot: &recordedSnapshot}); err != nil {
+			t.Fatal(err)
+		}
+		page, _, _, _, err := log.SchedulerObservationPage(context.Background(), at, at.Add(time.Millisecond), 1, 0, SchedulerObservationSelection{})
+		if err != nil || len(page) != 1 || page[0].Snapshot == nil || len(page[0].Snapshot.DispatchOccupancy) != 1 {
+			t.Fatalf("missing %s decision snapshot: %+v %v", tc.source, page, err)
+		}
+		got := page[0].Snapshot.DispatchOccupancy[0]
+		if got.Provenance.Source != tc.source || !reflect.DeepEqual(got, *selected) {
+			t.Fatalf("%s selection lost provenance during recording: %+v want %+v", tc.source, got, selected)
+		}
 	}
 }

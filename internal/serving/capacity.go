@@ -41,7 +41,8 @@ type CapacityInput struct {
 	GridSteps          int                 `json:"capacityGridSteps"`
 	BisectionWidth     float64             `json:"capacityBisectionWidth"`
 	TailSamples        int                 `json:"capacityTailSamples"`
-	// DispatchOccupancy carries selected DOM or configured default d and provenance.
+	// DispatchOccupancy carries selected operational d and provenance; evidence
+	// refresh facts are retained here but do not change the numerical row key.
 	DispatchOccupancy *DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
 }
 
@@ -92,14 +93,14 @@ func CapacityVariants(o SchedulerOption) []SchedulerOption {
 }
 
 // NewCapacityInput keys option variant o for Workload w under settings and the
-// selected DOM or configured default dispatch occupancy.
+// selected measured, DOM or configured default dispatch occupancy.
 func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition) CapacityInput {
 	i := o.Instance
 	return CapacityInput{
 		WorkloadUID: w.UID, SLO: w.SLO, Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, ProfileID: i.Profile.ID,
 		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS,
 		Window: settings.CapacityWindow, Windows: settings.CapacityWindows, PassingWindows: settings.CapacityPassingWindows,
-		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: dispatchOccupancy(settings, occupancy, o.Instance),
+		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: ResolveDispatchOccupancy(settings, occupancy, o.Instance),
 		GridSteps: settings.CapacityGridSteps, BisectionWidth: settings.CapacityBisectionWidth, TailSamples: settings.CapacityTailSamples,
 	}
 }
@@ -529,7 +530,7 @@ func (t *CapacityTable) Rows() []CapacityRow {
 		if !built {
 			row = CapacityRow{Key: key, Input: in, Status: CapacityPending}
 		}
-		row.Input = in // Preserve current source when the same numerical κ is reused.
+		row.Input = in // Keep current provenance even when numerical κ is reused.
 		out = append(out, row)
 	}
 	return out

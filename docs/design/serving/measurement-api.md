@@ -252,12 +252,11 @@ verdict, estimated-idle planning gate or achieved-CI gate.
 It contains `estimate`, frozen conditions, load/drain/isolation and factual
 verdict. It does not contain a fallback scalar d. Existing
 `DispatchOccupancyRecord` v1alpha1 under `serving/dispatch-occupancy/` remains
-unchanged for `CostEvidence`; new observations cannot silently reach κ/replay.
-Legacy optional spec fields remain solely for decoding old accepted objects.
-Old accepted objects and CRs are **not deleted now**. Future deletion candidates
-are detectable by the old prefix/result schema and old CR specs without
-`minimumPairs`; inventory their exact keys/UIDs before a separately approved
-scheduler admission cutover.
+unchanged for `CostEvidence`; raw `Observed` burst records do not themselves
+authorize κ/replay. Scheduler adoption now uses the separately qualified rolling
+native-pair cache described below. Legacy optional spec fields remain solely for
+decoding old accepted objects. Old accepted objects and CRs are **not deleted**;
+the legacy reader remains the fallback consumer, not a v1alpha2 burst reader.
 
 The burst sample is an experimental protocol, not proof that100pairs/15seconds
 is sufficient for every cell. The retrospective fixed-batch PLC result supports
@@ -271,9 +270,12 @@ minute drift do not establish universal stationarity or scheduler admission.
 ## 4. 계획기의 d 수집
 
 - `CostEvidence.Refresh`는 `serving/dispatch-occupancy/`를 prefix 목록/불변 identity cache로 읽는다. `Accepted`이면서 기록의 `profileID`가 현재 catalog의 검증된 공유 실행 profile인 근거만 (Node UID, mode, runtime image, model)별 최신 `measuredAt` 선택에 참여한다. 과거 quota/thread 제어 profile의 d는 tuple이 같아도 새 κ 입력이 되지 않는다. 동률은 key 순(`latestBy` 규칙)이며 원 기록은 보존한다.
-- `serving.DispatchOccupancy` retains the DOM record key in `source`, with `perRequestNanos=max(d,0)`; signed facts remain in the original record. Selection adds `provenance{source:dom|default,value}` to the capacity input.
-- Legacy accepted DOM keeps Node UID/profile power-mode/model matching across profiles and batches; runtime image is history, not a matching/key constraint. Matching DOM always has priority.
-- Without matching DOM, configured `settings.defaultDispatchOccupancyNanos` supplies ns/request and the row is computed rather than rejected. Source/provenance-only changes reuse numerical capacity; value changes invalidate it. New Observed burst evidence remains separate and is not adopted by this fallback change. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
+- Scheduler selection is **rolling measured B median meeting configured `minimumPairs` > legacy Accepted DOM > configured default**. Measured matches exact Node UID/model/power mode/execution path/batch/profile ID; runtime image remains historical evidence. Legacy DOM retains Node UID/mode/model wildcard matching across profiles/batches.
+- The sole default authority is scalar `settings.defaultDispatchOccupancyNanos` (sample 2,000,000), shared by every batch. Public settings GET/PUT and canonical PATCH validation retain this value; `dispatchOccupancy` cannot shadow it. Only measured B supplies batch-specific values. That separate block explicitly configures `minimumPairs` (100), `aggregationWindowSeconds` (120), `refreshIntervalSeconds` (60), `scanTimeoutSeconds` (30), and `maximumRequests` (250,000), alongside burst policy. These are sample choices, not Go policy defaults or universal precision guarantees.
+- One asynchronous worker scans/reduces outside Tick and writer locks. Selected request IDs are capped before estimator allocation; scans do not overlap. Idle cooldown is at least total scan+reduction time, and errors/timeouts/cap overflow discard partial/stale measured output in favor of DOM/default. Tick reads only the atomic published cache.
+- The public occupancy GET uses the same `aggregationWindowSeconds` cap (sample120) as rolling aggregation. Over-limit requests return `400 InvalidQuery` before scanning. Longer historical analysis uses raw observation export and offline reduction; extending a manual serving-process GET is not the offline path.
+- `serving.DispatchOccupancy` keeps the evidence record key in `source` and adds `provenance{source:measured|dom|default,pairs,window,updatedAt,value}`; `value` is operational ns/request, `round(max(median,0))` for measured B. Raw signed statistics remain untouched. κ input and recorded decisions retain the selected exact-cell tuple and provenance; record→read→capacity preserves resolved sources rather than relabeling defaults as DOM.
+- `/api/v1/catalog-read` exposes the actual selected list in `accepted.dispatchOccupancy` and signed pooled-cell facts in `accepted.occupancyEstimates`. Pair samples pool across workload UIDs, never medians-of-medians; eligibility still requires unchanged workload/config across adjacent physical batches. Metadata-only refreshes reuse numerical κ; value changes invalidate it. Throughput and replay add actual batch size × d once. 상세 용량 소비는 [계획기](analytic-planner.md)를 따른다.
 
 ### 4.1 observer와 coherent replacement
 
