@@ -195,6 +195,8 @@ DOM `occupancy[].adopted`는 실제 scheduler 선택 `accepted.dispatchOccupancy
 
 셀 상세는 **스케줄러 d**(출처 측정/DOM/기본값·선택값·pairs·window·갱신 시각)와 **관측 d(B)**(signed median·IQR·p10/p90·negativeFraction·pairs)를 독립 표로 표시한다. 관측 통계는 `accepted.occupancyEstimates`에서 읽으며 채택값으로 대체하거나 판정을 추가하지 않는다. 별도 기간 조회 `GET /observations/occupancy?from=&to=`의 기본 구간은 실제 스케줄러 d의 provenance.window이며 상한 숫자를 만들지 않는다. 기간 변경이 400이면 서버 code·message를 표시하고 직전 적용 기간을 유지한다. 400 본문에 양의 정수 `maximumWindowSeconds`가 있으면 이후 선택의 상한으로 기억해 제한·안내하며, 없으면 사유만 표시한다. 응답 행은 Node UID·모델·전력모드·실행 경로·배치·profileID로 해당 셀에 연결하며 runtimeImage는 표시만 한다. null과 측정된 0, 빈 행과 조회 실패를 구별한다. relay는 이 경로의 GET과 from/to만 허용한다.
 
+기간의 선후·상한은 relay와 공유하는 나노초 정밀 RFC3339 파서로 비교하며 URL에는 입력 원문을 유지한다. 정상 Observed의 `d:null`은 “결과 없음” 사유가 아니다. direct 상세는 통계와 별도로 실제 실행·근거 오류를 표시하되 포화/품질 판정을 복원하지 않는다. 일치하는 선택 행에 provenance가 없으면 채택은 `null`이며 확인된 빈 선택·명시 default만 `false`다.
+
 ### 연결 예정 API (서버 책임)
 
 |---|---|---|

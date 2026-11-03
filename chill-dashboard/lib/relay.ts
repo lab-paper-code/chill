@@ -1,6 +1,7 @@
 import { request as httpsRequest } from "node:https"
 import type { IncomingMessage } from "node:http"
 import { serverConfig, type PublicConfig } from "./server-config.ts"
+import { timestampNanos } from "./date-time.ts"
 
 class RelayFailure extends Error {
   readonly code: string
@@ -21,19 +22,10 @@ export function relayFailure(code: string, status: number, unknownOutcome = fals
 }
 
 
-function timestampNanos(value: string): bigint {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(value)
-  if (!match) throw new RelayFailure("DashboardQueryInvalid", 400)
-  const [, year, month, day, hour, minute, second, fraction = "", zone] = match
-  const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`)
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 19) !== `${year}-${month}-${day}T${hour}:${minute}:${second}`) throw new RelayFailure("DashboardQueryInvalid", 400)
-  let offset = 0
-  if (zone !== "Z") {
-    const h = Number(zone.slice(1, 3)), m = Number(zone.slice(4, 6))
-    if (h > 23 || m > 59) throw new RelayFailure("DashboardQueryInvalid", 400)
-    offset = (h * 60 + m) * (zone[0] === "+" ? 1 : -1)
-  }
-  return BigInt(date.getTime() - offset * 60000) * 1000000n + BigInt(fraction.padEnd(9, "0"))
+function queryTimestampNanos(value: string): bigint {
+  const nanos = timestampNanos(value)
+  if (nanos === null) throw new RelayFailure("DashboardQueryInvalid", 400)
+  return nanos
 }
 
 type RelayPlan = { path: string; kind: "query" | "mutation" | "infer"; timeoutMs: number; bodyAllowed: boolean }
@@ -149,9 +141,9 @@ export function relayPlan(method: string, segments: string[], search: string, co
   if (query === "compatibility" && allowed.some(key => !params.get(key))) throw new RelayFailure("DashboardQueryInvalid", 400)
   if (query === "event" && params.has("at")) {
     if (params.size!==1) throw new RelayFailure("DashboardQueryInvalid",400)
-    timestampNanos(params.get("at") ?? "")
+    queryTimestampNanos(params.get("at") ?? "")
   } else if (query === "event") {
-    const from=timestampNanos(params.get("from")??""),to=timestampNanos(params.get("to")??"")
+    const from=queryTimestampNanos(params.get("from")??""),to=queryTimestampNanos(params.get("to")??"")
     if (to<=from||to-from>86400000000000n) throw new RelayFailure("DashboardQueryInvalid",400)
     if (!params.has("limit")) params.set("limit",String(Math.min(100,config.pageSize)))
   }
@@ -160,12 +152,12 @@ export function relayPlan(method: string, segments: string[], search: string, co
     if(query==="power"&&params.has("format")&&!params.has("bucket"))throw new RelayFailure("DashboardQueryInvalid",400)
     const from = params.get("from"), to = params.get("to")
     if (!from || !to) throw new RelayFailure("DashboardQueryInvalid", 400)
-    const window = timestampNanos(to) - timestampNanos(from)
+    const window = queryTimestampNanos(to) - queryTimestampNanos(from)
     if (window <= 0n || window > BigInt(config.maxWindowHours * 3600000) * 1000000n) throw new RelayFailure("DashboardQueryInvalid", 400)
     if (query === "power" && params.has("bucket")) {
       const bucket=powerBucket!
       // Go Time.Truncate measures duration multiples from year 1, not the Unix epoch.
-      const start=timestampNanos(from)+62135596800000000000n,remainder=((start%bucket)+bucket)%bucket
+      const start=queryTimestampNanos(from)+62135596800000000000n,remainder=((start%bucket)+bucket)%bucket
       if (window>3600000000000n||(window+remainder+bucket-1n)/bucket>900n) throw new RelayFailure("DashboardQueryInvalid",400)
     }
   }

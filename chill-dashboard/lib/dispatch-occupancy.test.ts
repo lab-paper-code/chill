@@ -302,6 +302,79 @@ test("W8 DOM renders signed observed facts without scalar fallback or saturation
   }
 })
 
+test("P2 review normal Observed reasons use the estimate, never the absent or stale scalar",()=>{
+  const h=harness()
+  Object.assign(h.modules,{
+    "@/lib/client":{useChillQuery:(_path:string,options:{enabled?:boolean})=>({data:options.enabled===false?undefined:{items:[]},dataUpdatedAt:Date.parse("2026-11-03T00:00:00Z"),error:null,refetch(){}})},
+    "@/features/measurement-coverage":{MeasurementFilters:"filters"},
+    "@/components/data-table":{DataTable:"data-table"},
+  })
+  const feature=load("../features/measurement-projections.tsx",h.modules,["ProjectionResults"])
+  const table=nodes(h.render(feature.ProjectionResults,{kind:"dispatch-occupancy-measurements",namespace:"ns"})).find(node=>node.type==="data-table")!
+  const column=(table.props.columns as {key:string;value:(item:unknown)=>unknown}[]).find(column=>column.key==="reason")!
+  for(const d of [null,{perRequestNanos:-999,throughput:0,idleFraction:1,verdict:"Insufficient"}]) {
+    const projected={...dom,schemaVersion:"chill.dacs.io/dispatch-occupancy-measurement.v1alpha2",phase:"Complete",verdict:"Observed",estimate:{pairs:10,statistics:{median:-1}},d} as DispatchOccupancyMeasurement
+    assert.equal(occupancy.occupancyDisplayReason(projected),"해당 없음")
+    assert.equal(text(column.value(projected)),"해당 없음")
+    assert.equal(projected.d,d,"reason rendering must not synthesize a scalar")
+  }
+})
+
+test("P2 review direct detail exposes execution and evidence causes without quality verdicts",()=>{
+  const h=harness(),feature=load("../features/measurement-projections.tsx",h.modules,["OccupancyResult"])
+  for(const [phase,reason,label] of [["Failed","NativeExecutionError","실행 오류"],["Insufficient","TooFewPairs","TooFewPairs"],["Complete","OccupancyEvidenceMissing","점유시간 근거 파일 없음"]] as const) {
+    const projected={...dom,schemaVersion:"chill.dacs.io/dispatch-occupancy-measurement.v1alpha2",phase,reason,minimumPairs:10,estimate:null}
+    const tree=h.render(feature.OccupancyResult,{data:projected})
+    const facts=nodes(tree).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
+    assert.match(String(facts.find(([key])=>key==="사유")?.[1]),new RegExp(label))
+    assert.doesNotMatch(text(tree),/유휴|포화|판정|Accepted/)
+  }
+  const projected={...dom,schemaVersion:"chill.dacs.io/dispatch-occupancy-measurement.v1alpha2",phase:"Complete",estimate:null,assessment:{status:"failed",displayStatus:"problem",label:"근거 오류",execution:null,evidence:{available:false,accepted:false,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:null,reused:false,facts:[]},reasons:[{code:"OccupancyEvidenceMissing",message:"missing burst evidence",sourceIds:[]},{code:"OccupancyEvidenceMismatch",message:"different request identity",sourceIds:[]}]}} as DispatchOccupancyMeasurement
+  const tree=h.render(feature.OccupancyResult,{data:projected})
+  const facts=nodes(tree).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
+  const reason=String(facts.find(([key])=>key==="사유")?.[1])
+  for(const label of ["점유시간 근거 파일 없음","missing burst evidence","요청·점유시간 근거 불일치","different request identity"])assert.ok(reason.includes(label),label)
+})
+
+test("P2 review occupancy periods accept positive sub-millisecond windows and preserve raw URLs",()=>{
+  for(const [from,to] of [
+    ["2026-11-03T00:00:00.000000001Z","2026-11-03T00:00:00.000000002Z"],
+    ["2026-11-03T09:00:00.000000001+09:00","2026-11-03T00:00:00.000000002Z"],
+  ]) {
+    const path=occupancy.occupancyObservationPath(from,to,1)
+    assert.ok(path)
+    const query=new URL(path,"https://dashboard.invalid").searchParams
+    assert.equal(query.get("from"),from)
+    assert.equal(query.get("to"),to)
+    assert.equal(occupancy.occupancyObservationPath(to,from,1),null)
+    assert.equal(occupancy.occupancyObservationPath(from,from,1),null)
+  }
+  for(const from of ["2026-02-30T00:00:00Z","2026-11-03T00:00:00+24:00","2026-11-03T00:00:00.0000000001Z"])assert.equal(occupancy.occupancyObservationPath(from,"2026-11-04T00:00:00Z",undefined),null)
+})
+
+test("P2 review occupancy period rejects a server cap exceeded by one nanosecond",()=>{
+  const from="2026-11-03T00:00:00.000000001Z",atCap="2026-11-03T00:01:00.000000001Z",overCap="2026-11-03T00:01:00.000000002Z"
+  assert.ok(occupancy.occupancyObservationPath(from,atCap,60))
+  assert.ok(occupancy.occupancyObservationPath(from,overCap,undefined))
+  assert.equal(occupancy.occupancyObservationPath(from,overCap,60),null)
+})
+
+test("P2 review occupancy period query stays enabled for a positive nanosecond interval",()=>{
+  const h=harness(),paths:string[]=[]
+  const window={start:"2026-11-03T00:00:00.000000001Z",end:"2026-11-03T00:00:00.000000002Z"}
+  const cell={model:{name:"model"},powerMode:"fixed",executionPath:"cpu",occupancy:[{schedulerD:{window}}]} as MeasurementCoverageCell
+  Object.assign(h.modules.react as object,{useEffect:(effect:()=>void)=>effect()})
+  h.modules["./measurement-coverage.css"]={}
+  h.modules["@tanstack/react-query"]={}
+  h.modules["@/lib/client"]={useChillQuery:(path:string)=>{paths.push(path);return {isFetching:false,refetch(){}}}}
+  const feature=load("../features/measurement-coverage.tsx",h.modules)
+  const tree=h.render(feature.CoverageOccupancyPeriod,{cell})
+  assert.equal(button(tree,"관측 조회").props.disabled,false)
+  const query=new URL(paths[0],"https://dashboard.invalid").searchParams
+  assert.equal(query.get("from"),window.start)
+  assert.equal(query.get("to"),window.end)
+})
+
 test("dry-run protocol retains uint64 values and rejects unreadable previews before submission",()=>{
   const h=harness();click(h.render(),"검사")
   h.calls[0][0].options?.onSuccess?.({body:'{"request":"NOT_SUBMITTED","task":{"metadata":{"name":"precision"},"spec":{"seed":9007199254740993}}}'})

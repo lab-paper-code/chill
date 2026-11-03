@@ -46,9 +46,9 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 커버리지 셀의 Node UID·profileID·배치별 `occupancy[]`는 두 근거를 분리한다. **스케줄러 d**는 `schedulerD` provenance의 측정/DOM/기본값 출처·값·쌍·갱신 시각이고, **관측 d(B)**는 `observedD`의 signed 중앙값·IQR·p10/p90·음수 비율·쌍이다. 단위는 원래 ns/request이며 화면에서 ms/요청으로 변환한다. 음수는 그대로 표시하며 채택·품질 판정을 만들지 않는다. 구형 `d`·`adopted`만으로 스케줄러 사용 값을 복원하지 않는다. DOM 외에도 서버가 제공한 스케줄러/관측 tuple을 그대로 표시하고 Node×배치 항목을 브라우저에서 만들지 않는다.
 
-셀 상세의 기간 조회는 `GET /api/v1/observations/occupancy?from=&to=`만 사용하며 기본 구간은 `schedulerD.window`를 나노초 문자열까지 그대로 전달한다. RFC3339 시작·종료 시각을 직접 바꿀 수 있다. 모델·전력모드·실행 경로 및 Node UID·배치·profileID가 정확히 일치하는 행만 표시하며 runtimeImage는 표시 전용이다. 서버가 구간을 거부하면 원래 HTTP 상태·code/message 본문을 표시하고 이전 적용 구간·결과를 유지한다. 400 본문에 양의 정수 `maximumWindowSeconds`가 있으면 이후 선택에 그 상한을 적용하며, 없으면 임의 기본 상한을 만들지 않는다.
+셀 상세의 기간 조회는 `GET /api/v1/observations/occupancy?from=&to=`만 사용하며 기본 구간은 `schedulerD.window`를 나노초 문자열까지 그대로 전달한다. RFC3339 시작·종료 시각을 직접 바꿀 수 있다. relay와 공유하는 순수 `timestampNanos`로 실제 달력·오프셋을 검증하고 순서·상한을 정확한 ns로 비교하므로 양의 1 ns 구간도 허용하며 상한 1 ns 초과는 거부한다. URL에는 입력 원문을 유지한다. 모델·전력모드·실행 경로 및 Node UID·배치·profileID가 정확히 일치하는 행만 표시하며 runtimeImage는 표시 전용이다. 서버가 구간을 거부하면 원래 HTTP 상태·code/message 본문을 표시하고 이전 적용 구간·결과를 유지한다. 400 본문에 양의 정수 `maximumWindowSeconds`가 있으면 이후 선택에 그 상한을 적용하며, 없으면 임의 기본 상한을 만들지 않는다.
 
-`/measurements/results?kind=dispatch-occupancy`는 대기/측정 중에 갱신한다. v1alpha2/`minimumPairs`/estimate 근거가 있는 새 DOM은 짧은 버스트의 signed 통계·쌍·최소 쌍·완료 배치/요청 사실만 표시하고, 유휴·포화·scalar d·판정으로 되돌리지 않는다. 구형 evidence 표시는 그대로다. 삭제는 영구 삭제 확인 후 UID 쿼리와 `If-Match: resourceVersion`을 전달한다. Measuring은 비활성이고 409는 최신 상태 조회로 연결한다. 실행 중단/취소 API는 없다.
+`/measurements/results?kind=dispatch-occupancy`는 대기/측정 중에 갱신한다. v1alpha2/`minimumPairs`/estimate 근거가 있는 새 DOM은 짧은 버스트의 signed 통계·쌍·최소 쌍·완료 배치/요청 사실과 실행·근거 오류 사유를 표시하고, 유휴·포화·scalar d·품질 판정으로 되돌리지 않는다. 정상 `Observed`의 사유는 scalar가 `null`이어도 estimate를 기준으로 “해당 없음”이며, `Failed`·`Insufficient` 원인과 완료 후 근거 누락·불일치의 모든 사유·메시지도 상세에서 직접 확인한다. 구형 evidence 표시는 그대로다. 삭제는 영구 삭제 확인 후 UID 쿼리와 `If-Match: resourceVersion`을 전달한다. Measuring은 비활성이고 409는 최신 상태 조회로 연결한다. 실행 중단/취소 API는 없다.
 
 셀별 d 요청은 부분 커버리지에서도 항상 제공하며 호환성 대표 Node를 넘기지 않는다. 요청 화면은 BEO의 실제 `targetNode`로 Node를 제한한다. 선택적 요청 이름도 검사 identity에 포함되므로 같은 조건의 재측정은 새 이름으로 검사해 과거 실패를 보존한다. profile 의존 조회가 실패해도 종류 선택은 가능하지만 진행 중·결과 미확인 요청에서는 전환을 막는다.
 
