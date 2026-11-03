@@ -5,33 +5,22 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
-type SettingsDependencies struct {
-	Runtime                   *serving.Runtime
-	Scheduler                 *servingkube.SchedulerController
-	Lock                      *sync.Mutex
-	Kube                      kubernetes.Interface
-	Namespace, ConfigMap, Key string
-	ObservationLog            *serving.ObservationLog
-	Refresh                   func(context.Context) error
-}
 type SettingsInput struct {
 	serving.SchedulerSettingsInput
 	StaticRouting            json.RawMessage `json:"staticRouting"`
 	StaticRoutingValidatedAt json.RawMessage `json:"staticRoutingValidatedAt"`
 }
 
-func ChangeSchedulerSettings(ctx context.Context, dependencies SettingsDependencies, input SettingsInput,
+func (o *SchedulerService) ChangeSchedulerSettings(ctx context.Context, input SettingsInput,
 	versionMatch string, preconditionValid bool, actorUsername, actorUID string,
 ) (serving.SchedulerSettingsChange, string, error) {
 	for _, field := range [...]struct {
@@ -55,7 +44,7 @@ func ChangeSchedulerSettings(ctx context.Context, dependencies SettingsDependenc
 		}
 	}
 	current := map[string]bool{}
-	for _, d := range dependencies.Runtime.SchedulerInputs(time.Now).Workloads {
+	for _, d := range o.execution.SchedulerInputs(time.Now).Workloads {
 		current[d.UID] = true
 	}
 	// The stored list names only current Workloads.
@@ -63,7 +52,7 @@ func ChangeSchedulerSettings(ctx context.Context, dependencies SettingsDependenc
 		func(uid string) bool { return !current[uid] },
 	)
 	if err := serving.SchedulerFixedBatchAutonomy(
-		dependencies.Scheduler.State().Snapshot, settings.AutonomousWorkloads,
+		o.Controller.State().Snapshot, settings.AutonomousWorkloads,
 	); err != nil {
 		return serving.SchedulerSettingsChange{}, "", &serving.Error{
 			Code:    "InvalidBody",
@@ -71,10 +60,10 @@ func ChangeSchedulerSettings(ctx context.Context, dependencies SettingsDependenc
 			Field:   "autonomousWorkloads",
 		}
 	}
-	dependencies.Lock.Lock()
-	defer dependencies.Lock.Unlock()
-	cm, config, err := SchedulerConfigMap(ctx, dependencies.Kube, dependencies.Namespace,
-		dependencies.ConfigMap, dependencies.Key)
+	o.Lock.Lock()
+	defer o.Lock.Unlock()
+	cm, config, err := SchedulerConfigMap(ctx, o.settingsKube, o.opts.ServingNamespace,
+		o.opts.SchedulerConfigMap, o.opts.SchedulerConfigKey)
 	if err != nil {
 		return serving.SchedulerSettingsChange{}, "", err
 	}
@@ -87,17 +76,17 @@ func ChangeSchedulerSettings(ctx context.Context, dependencies SettingsDependenc
 	username, uid := actorUsername, actorUID
 	now := time.Now().UTC()
 	change := serving.SchedulerSettingsChange{
-		ActorUsername: username, ActorUID: uid, Before: dependencies.Scheduler.Settings(), After: settings,
+		ActorUsername: username, ActorUID: uid, Before: o.Controller.Settings(), After: settings,
 		ValidatedAt: now, Affected: []serving.NodeReference{},
 	}
-	for _, node := range dependencies.Scheduler.State().Snapshot.Nodes {
+	for _, node := range o.Controller.State().Snapshot.Nodes {
 		change.Affected = append(change.Affected, node.Node)
 	}
 	// Persist intent before touching either ConfigMap or running policy.
-	if err := dependencies.ObservationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Settings: &change}); err != nil {
+	if err := o.observationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Settings: &change}); err != nil {
 		return serving.SchedulerSettingsChange{}, "", err
 	}
-	version, err := persistSchedulerSettings(ctx, dependencies.Kube, cm, config, dependencies.Key, settings)
+	version, err := persistSchedulerSettings(ctx, o.settingsKube, cm, config, o.opts.SchedulerConfigKey, settings)
 	if apierrors.IsConflict(err) {
 		err = &serving.Error{
 			Code:    "SettingsConflict",
@@ -108,7 +97,7 @@ func ChangeSchedulerSettings(ctx context.Context, dependencies SettingsDependenc
 		// Only the scheduler service's full refresh can accept a configuration. Applying
 		// settings alone could enable a catalog whose selection was removed by
 		// a previously persisted change that has not refreshed successfully.
-		err = dependencies.Refresh(ctx)
+		err = o.refreshLocked(ctx)
 	}
 	if err != nil {
 		change.Error = err.Error()
@@ -118,13 +107,14 @@ func ChangeSchedulerSettings(ctx context.Context, dependencies SettingsDependenc
 	}
 	// Failure after refresh does not imply rollback: the selected policy
 	// may already be active even when its completion record cannot be appended.
-	recordErr := dependencies.ObservationLog.SchedulerRecord(
+	recordErr := o.observationLog.SchedulerRecord(
 		serving.SchedulerObservation{At: time.Now().UTC(), Settings: &change},
 	)
 	if err = errors.Join(err, recordErr); err != nil {
 		return serving.SchedulerSettingsChange{}, "", err
 	}
 
+	// Freeze body and ETag under the lock, but release it before potentially blocking HTTP writes.
 	return change, version, nil
 }
 

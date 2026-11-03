@@ -24,7 +24,6 @@ type Options struct {
 	SchedulerConfigKey     string
 	SchedulerConfigMap     string
 	ServingNamespace       string
-	SourceInterval         time.Duration
 	StoreBucket            string
 	StoreCredentialsSecret string
 	StoreEndpoint          string
@@ -40,9 +39,11 @@ type Live struct {
 }
 
 type Dependencies struct {
-	Operations            *servingkube.Operations
-	Store                 *servingkube.Store
-	Kube                  kubernetes.Interface
+	Operations *servingkube.Operations
+	Store      *servingkube.Store
+	Kube       kubernetes.Interface
+	// SettingsKube preserves the HTTP mutation client's budget independently of control refreshes.
+	SettingsKube          kubernetes.Interface
 	Execution             *serving.Runtime
 	Observer              *servingkube.Observer
 	Objects               *stores3.Store

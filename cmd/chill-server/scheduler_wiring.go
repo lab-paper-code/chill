@@ -14,7 +14,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kubernetes.Interface,
+func newSchedulerService(
+	ctx context.Context, store *servingkube.Store, kube, settingsKube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
 	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration, publisher *livePublisher,
 ) (*application.SchedulerService, error) {
@@ -48,7 +49,8 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 			}}
 	}
 	return application.NewSchedulerService(ctx, application.Dependencies{
-		Operations: operations, Store: store, Kube: kube, Execution: execution, Observer: observer, Objects: objects,
+		Operations: operations, Store: store, Kube: kube, SettingsKube: settingsKube,
+		Execution: execution, Observer: observer, Objects: objects,
 		ObservationLog: observationLog, GatewayRequestTimeout: gatewayRequestTimeout, Live: live,
 		Catalog: catalog, Costs: costs,
 		Options: application.Options{
@@ -65,7 +67,6 @@ func newSchedulerService(ctx context.Context, store *servingkube.Store, kube kub
 			SchedulerConfigKey:     opts.schedulerConfigKey,
 			SchedulerConfigMap:     opts.schedulerConfigMap,
 			ServingNamespace:       opts.servingNamespace,
-			SourceInterval:         opts.sourceInterval,
 			StoreBucket:            opts.storeBucket,
 			StoreCredentialsSecret: opts.storeCredentialsSecret,
 			StoreEndpoint:          opts.storeEndpoint,

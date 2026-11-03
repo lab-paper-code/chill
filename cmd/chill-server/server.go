@@ -162,20 +162,20 @@ func run(ctx context.Context, opts options) (retErr error) {
 			maxThermal: opts.resourceMaxThermal, maxErrors: opts.resourceMaxErrors,
 		}).receive,
 	}
-	scheduler, err := newSchedulerService(
-		ctx, store, kube, execution, observer, objects, observationLog, opts,
-		httpapi.MaximumInferenceRequestTimeout, publisher,
-	)
-	if err != nil {
-		return fmt.Errorf("initialize scheduler service: %w", err)
-	}
-	defer scheduler.Close()
 	// HTTP-boundary calls (reviews, settings ConfigMap) take their own client
 	// budget so ingress and control calls never queue behind each other.
 	reviews, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return err
 	}
+	scheduler, err := newSchedulerService(
+		ctx, store, kube, reviews, execution, observer, objects, observationLog, opts,
+		httpapi.MaximumInferenceRequestTimeout, publisher,
+	)
+	if err != nil {
+		return fmt.Errorf("initialize scheduler service: %w", err)
+	}
+	defer scheduler.Close()
 	authorizer := &servingkube.Authorizer{Client: reviews}
 	measurements, err := newMeasurementService(store.Client(), kube, scheduler, objects, opts)
 	if err != nil {
@@ -294,7 +294,7 @@ func initializeServing(ctx context.Context, opts *options,
 		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
 		handlerConfig.SchedulerNamespace = opts.servingNamespace
 		handlerConfig.SchedulerLock = &scheduler.Lock
-		handlerConfig.RefreshScheduler = scheduler.RefreshLocked
+		handlerConfig.ChangeSchedulerSettings = scheduler.ChangeSchedulerSettings
 		handlerConfig.SchedulerMeters = scheduler.SchedulerMeters
 		handlerConfig.OperatingPower = scheduler.OperatingPower
 		handlerConfig.OperatingPowerSeries = scheduler.OperatingPowerSeries

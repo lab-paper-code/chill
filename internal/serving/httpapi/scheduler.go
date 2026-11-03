@@ -66,7 +66,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if h.config.RefreshScheduler == nil {
+	if h.config.ChangeSchedulerSettings == nil {
 		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler configuration refresh is not enabled"})
 		return
 	}
@@ -88,11 +88,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	versionMatch, parseErr := strconv.Unquote(r.Header.Get("If-Match"))
 	validMatch := len(r.Header.Values("If-Match")) == 1 && parseErr == nil && r.Header.Get("If-Match") == strconv.Quote(versionMatch)
 	username, uid := principal.Actor()
-	change, version, err := application.ChangeSchedulerSettings(r.Context(), application.SettingsDependencies{
-		Runtime: h.runtime, Scheduler: h.config.Scheduler, Lock: h.config.SchedulerLock,
-		Kube: h.authorizer.Client, Namespace: h.config.SchedulerNamespace, ConfigMap: h.config.SchedulerConfigMap,
-		Key: h.config.SchedulerConfigKey, ObservationLog: h.observationLog, Refresh: h.config.RefreshScheduler,
-	}, input, versionMatch, validMatch, username, uid)
+	change, version, err := h.config.ChangeSchedulerSettings(r.Context(), input, versionMatch, validMatch, username, uid)
 	if err != nil {
 		sendError(w, err)
 		return

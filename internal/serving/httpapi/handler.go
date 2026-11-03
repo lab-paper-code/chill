@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving/measurement"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -42,7 +44,7 @@ type HandlerConfig struct {
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
 	SchedulerLock                                              *sync.Mutex
-	RefreshScheduler                                           func(context.Context) error
+	ChangeSchedulerSettings                                    func(context.Context, application.SettingsInput, string, bool, string, string) (serving.SchedulerSettingsChange, string, error)
 	SchedulerMeters                                            func() []servingkube.MeterDeclaration
 	ReceiveResources                                           func(context.Context, serving.ResourceBatch) ([]serving.ResourceTarget, error)
 

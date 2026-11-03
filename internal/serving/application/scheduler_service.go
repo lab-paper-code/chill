@@ -54,6 +54,7 @@ type SchedulerService struct {
 	operations               *servingkube.Operations
 	store                    *servingkube.Store
 	kube                     kubernetes.Interface
+	settingsKube             kubernetes.Interface
 	execution                *serving.Runtime
 	observer                 *servingkube.Observer
 	objects                  *stores3.Store
@@ -79,7 +80,8 @@ func NewSchedulerService(ctx context.Context, dependencies Dependencies) *Schedu
 	serviceCtx, cancel := context.WithCancel(ctx)
 	return &SchedulerService{
 		operations: dependencies.Operations, store: dependencies.Store, kube: dependencies.Kube,
-		execution: dependencies.Execution, observer: dependencies.Observer, objects: dependencies.Objects,
+		settingsKube: dependencies.SettingsKube,
+		execution:    dependencies.Execution, observer: dependencies.Observer, objects: dependencies.Objects,
 		observationLog: dependencies.ObservationLog, opts: dependencies.Options, ctx: serviceCtx, cancel: cancel,
 		GatewayRequestTimeout: dependencies.GatewayRequestTimeout, live: dependencies.Live,
 		catalog: dependencies.Catalog, costs: dependencies.Costs,
@@ -159,12 +161,12 @@ func metricSource(identity metricobserver.SourceIdentity) (metricobserver.Source
 func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	o.Lock.Lock()
 	defer o.Lock.Unlock()
-	return o.RefreshLocked(ctx)
+	return o.refreshLocked(ctx)
 }
 
 // refreshLocked publishes the complete accepted configuration while the service
 // excludes Tick and operator mutations.
-func (o *SchedulerService) RefreshLocked(ctx context.Context) (err error) {
+func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.ServingNamespace).Get(ctx, o.opts.SchedulerConfigMap, meta.GetOptions{})
 	if err != nil {
 		return err
