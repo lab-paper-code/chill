@@ -6,6 +6,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
 func (o *schedulerService) occupancyObservations(
@@ -19,8 +20,8 @@ func (o *schedulerService) occupancyObservations(
 		return nil, &serving.Error{Code: "ObservationUnavailable", Message: "dispatchOccupancy configuration is unavailable"}
 	}
 	if to.Sub(from) > time.Duration(config.DispatchOccupancy.AggregationWindowSeconds)*time.Second {
-		return nil, &serving.Error{
-			Code: "InvalidQuery", Message: "occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds",
+		return nil, &httpapi.OccupancyWindowError{
+			MaximumWindowSeconds: config.DispatchOccupancy.AggregationWindowSeconds,
 		}
 	}
 	policies := make(map[string]firstfloor.Metadata)

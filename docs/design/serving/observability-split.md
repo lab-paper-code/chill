@@ -77,6 +77,9 @@ returns `{window:{start,end},rows:[OccupancyEstimate...]}` without caching.
 Exactly one `from` and `to` are required, with `from < to`; unknown or duplicate
 parameters and windows exceeding the accepted scheduler configuration's
 `dispatchOccupancy.aggregationWindowSeconds` return `400 InvalidQuery`.
+Only an over-limit window adds integer `maximumWindowSeconds` to that error
+body, for example `{"code":"InvalidQuery","message":"occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds","maximumWindowSeconds":120}`.
+Successful responses and other query-error bodies are unchanged.
 The same setting bounds both the public query and rolling aggregation; the
 sample is120 seconds. Queries above this cap fail before scanning. Longer
 historical analysis must export raw observations and reduce them offline, not

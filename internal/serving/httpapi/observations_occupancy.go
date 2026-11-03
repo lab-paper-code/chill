@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
@@ -19,6 +20,15 @@ type OccupancyObservations struct {
 // OccupancyObservationReader applies the accepted configuration's window bound
 // and estimates all cells from one ScanOccupancyRows invocation.
 type OccupancyObservationReader func(context.Context, time.Time, time.Time) ([]serving.OccupancyEstimate, error)
+
+// OccupancyWindowError reports the accepted policy's query limit.
+type OccupancyWindowError struct {
+	MaximumWindowSeconds int32
+}
+
+func (*OccupancyWindowError) Error() string {
+	return "occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds"
+}
 
 func (h *Handler) occupancyObservations(w http.ResponseWriter, r *http.Request) {
 	if err := h.authorize(r); err != nil {
@@ -42,6 +52,17 @@ func (h *Handler) occupancyObservations(w http.ResponseWriter, r *http.Request) 
 	}
 	rows, err := h.config.OccupancyObservations(r.Context(), from, to)
 	if err != nil {
+		var limit *OccupancyWindowError
+		if errors.As(err, &limit) {
+			sendJSON(w, http.StatusBadRequest, struct {
+				serving.Error
+				MaximumWindowSeconds int32 `json:"maximumWindowSeconds"`
+			}{
+				Error:                serving.Error{Code: "InvalidQuery", Message: limit.Error()},
+				MaximumWindowSeconds: limit.MaximumWindowSeconds,
+			})
+			return
+		}
 		sendError(w, err)
 		return
 	}
