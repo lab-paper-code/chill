@@ -421,6 +421,15 @@ select the existing record fields. Actual record order/IDs/bytes/hash are Ready
 evidence, not host inputs. Every generator Pod uses the frozen
 `loadGenerator.nodeName` verbatim. Memory and shard/barrier declarations remain.
 
+Generated arrivals travel as compact segment/rate/seed declarations, not an argv
+array of every offset. Conductor and producer use the same load-generator
+`segmented_arrivals_ns` function; producer checks the regenerated SHA and count
+before any inference. Explicit `traceRefs` instead travel as a file: preparation
+freezes the evaluator Pod's existing workspace PVC identity, and the producer
+mounts its staged trace read-only at `/evaluation/.chill-arrivals.json`.
+Both file-byte SHA and logical arrival SHA/count must match. The existing Pod
+get and Job creation grants suffice; no ConfigMap or new RBAC is required.
+
 At prepare start, freeze the participating nodes' Running/Pending Pod facts in
 `environment-start.json` and `snapshot.environmentStart`: namespace, name, UID,
 assigned node, phase and ownerReference summary. Participating nodes are exactly

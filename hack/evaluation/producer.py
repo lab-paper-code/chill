@@ -12,6 +12,21 @@ import zlib
 from chill_loadgen import cli
 
 
+def arrival_trace(binding, arrivals, seed):
+    if 'offsetsFile' in binding:
+        data = Path(binding['offsetsFile']).read_bytes()
+        if hashlib.sha256(data).hexdigest() != binding['offsetsFileSHA256']:
+            raise ValueError('Explicit arrival file SHA differs; no inference sent')
+        offsets = json.loads(data)
+        duration_ns = sum(round(segment['seconds'] * 1e9) for segment in binding['segments'])
+    else:
+        offsets, duration_ns = cli.segmented_arrivals_ns(arrivals, binding['segments'], seed)
+    encoded = json.dumps(offsets, separators=(',', ':')).encode()
+    if hashlib.sha256(encoded).hexdigest() != binding['arrivalSHA256'] or len(offsets) != binding['offered']:
+        raise ValueError('Installed CLI arrival generation differs; no inference sent')
+    return offsets, duration_ns
+
+
 def identity(records):
     return [{'recordID': rid, 'fields': {k: {'bytes': len(v), 'sha256': hashlib.sha256(v).hexdigest()} for k, v in inputs.items()}} for rid, inputs in records]
 
@@ -100,17 +115,7 @@ def main():
         # The immutable Dataset carrier is materialized in-cluster. Actual IDs,
         # record order and field bytes are evidence, never a host-built manifest.
         binding['payload'] = identity(records)
-        offsets = []
-        base = 0
-        for segment in binding['segments']:
-            if segment['rate'] > 0:
-                offsets.extend(base+x for x in cli.arrival_offsets_ns(kw['arrivals'], segment['rate'], segment['seconds'], kw['seed']))
-            base += round(segment['seconds']*1e9)
-        if 'offsetsNS' in binding:
-            offsets = binding['offsetsNS']
-        encoded = json.dumps(offsets, separators=(',', ':')).encode()
-        if hashlib.sha256(encoded).hexdigest() != binding['arrivalSHA256'] or len(offsets) != binding['offered']:
-            raise ValueError('Installed CLI arrival generation differs; no inference sent')
+        offsets, base = arrival_trace(binding, kw['arrivals'], kw['seed'])
         replay_shards(records, offsets, base, binding, kw)
         # Preserve the same process/cgroup until CPO saves the real post-end
         # counter and removes the existing start marker. Original Job/watchdog

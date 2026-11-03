@@ -337,6 +337,92 @@ class EvaluationTests(unittest.TestCase):
             policy = json.loads(zlib.decompress(base64.b64decode(pod['containers'][0]['args'][0])))
             self.assertEqual(policy['datasetRef'], scenario['spec']['datasetRefs'][NAME])
             self.assertEqual(policy['shards'], 3)
+            self.assertNotIn('offsetsNS', policy)
+
+    def test_campaign_generated_arrivals_fit_exec_argv_and_reproduce_sha(self):
+        # Rates copied from the archived 20261103-a1 LoadScenarios in
+        # deployB/control-323-plan/eval-objects-backup.json; never read that host file.
+        names = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
+        campaigns = {
+            '3-7': [('e5-3-50', 600, [53.075340806062236, 19.36827038762583, 0.28916889079534397]),
+                    ('e5-3-70', 600, [74.30547712848713, 27.11557854267616, 0.40483644711348155]),
+                    ('e5-3-90', 600, [95.53561345091202, 34.862886697726495, 0.5205040034316192])],
+            '7-7': [('e5-7', 900, [31.84520448363734, 11.620962232575499, 0.17350133447720636])],
+        }
+        producer = evaluation.module('producer_arrival_test', evaluation.HERE / 'producer.py')
+        for row, parts in campaigns.items():
+            with self.subTest(row=row), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                _, _, _, _, config = fixture(root)
+                template = config['workloads'][0]
+                config['workloads'] = [{**copy.deepcopy(template), 'name': name, 'uid': name + '-uid'} for name in names]
+                config['seeds'] = dict.fromkeys(names, '202')
+                config['arrivals'] = dict.fromkeys(names, 'poisson')
+                config['loadGenerator']['shards'] = dict.fromkeys(names, 3)
+                config['stages'] = [{'id': row, 'parts': [
+                    {'id': part, 'seconds': seconds, 'rates': dict(zip(names, rates))} for part, seconds, rates in parts]}]
+                path = root / 'config.json'
+                conductor.save(path, config)
+                controller = object.__new__(conductor.CPO)
+                controller.b = conductor.bind(path)
+                controller.c, controller.tb = config, config['timeboxes']
+                controller.ws = {workload['name']: workload for workload in config['workloads']}
+                stage = controller.b['schedule'][0]
+                sizes = []
+                for name in names:
+                    container = controller.job(name, stage, root)['spec']['template']['spec']['containers'][0]
+                    argv = container['command'] + container['args']
+                    sizes.append(sum(len(arg.encode()) + 1 for arg in argv))
+                    self.assertLessEqual(max(len(arg.encode()) for arg in argv), 120000)
+                    self.assertLessEqual(sizes[-1], 120000)
+                    policy = json.loads(zlib.decompress(base64.b64decode(container['args'][0])))
+                    self.assertNotIn('offsetsNS', policy)
+                    self.assertNotIn('offsetsFile', policy)
+                    offsets, duration = producer.arrival_trace(policy, 'poisson', 202)
+                    self.assertEqual(offsets, stage['traces'][name]['offsetsNS'])
+                    self.assertEqual(duration, round(stage['seconds'] * 1e9))
+                    policy['arrivalSHA256'] = '0' * 64
+                    with self.assertRaisesRegex(ValueError, 'arrival generation differs'):
+                        producer.arrival_trace(policy, 'poisson', 202)
+                print(row + ': maximum producer argv bytes=' + str(max(sizes)))
+
+    def test_explicit_arrivals_use_workspace_file_and_validate_both_shas(self):
+        producer = evaluation.module('producer_explicit_test', evaluation.HERE / 'producer.py')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec, scenario, execution, config, _ = fixture(root)
+            workspace = evaluation.trace_workspace({'spec': {
+                'volumes': [{'name': 'work', 'persistentVolumeClaim': {'claimName': 'run-workspace'}}],
+                'containers': [{'volumeMounts': [{'name': 'work', 'mountPath': str(root)}]}]}})
+            scenario['traceOffsets'] = {NAME: list(range(0, 1000000000, 10000))}
+            config['traceVolume'] = workspace
+            assembled = evaluation.stage_config(spec, scenario, execution, config, root)
+            path = root / 'config.json'
+            conductor.save(path, assembled)
+            controller = object.__new__(conductor.CPO)
+            controller.b = conductor.bind(path)
+            controller.c, controller.tb = assembled, assembled['timeboxes']
+            controller.ws = {workload['name']: workload for workload in assembled['workloads']}
+            stage = controller.b['schedule'][0]
+            pod = controller.job(NAME, stage, root)['spec']['template']['spec']
+            container = pod['containers'][0]
+            policy = json.loads(zlib.decompress(base64.b64decode(container['args'][0])))
+            self.assertNotIn('offsetsNS', policy)
+            mount = next(mount for mount in container['volumeMounts'] if mount['name'] == 'evaluation-arrivals')
+            self.assertEqual(mount['mountPath'], '/evaluation/.chill-arrivals.json')
+            self.assertTrue(mount['readOnly'])
+            volume = next(volume for volume in pod['volumes'] if volume['name'] == mount['name'])
+            self.assertEqual(volume['persistentVolumeClaim'], {'claimName': 'run-workspace', 'readOnly': True})
+            self.assertLess(sum(len(arg.encode()) + 1 for arg in container['command'] + container['args']), 120000)
+            policy['offsetsFile'] = str(root / mount['subPath'])
+            offsets, _ = producer.arrival_trace(policy, 'poisson', 202)
+            self.assertEqual(offsets, scenario['traceOffsets'][NAME])
+            policy['arrivalSHA256'] = '0' * 64
+            with self.assertRaisesRegex(ValueError, 'arrival generation differs'):
+                producer.arrival_trace(policy, 'poisson', 202)
+            Path(policy['offsetsFile']).write_text('[]')
+            with self.assertRaisesRegex(ValueError, 'arrival file SHA differs'):
+                producer.arrival_trace(policy, 'poisson', 202)
 
     def test_materialized_dataset_actual_bytes_are_producer_evidence(self):
         producer = evaluation.module('producer_test', evaluation.HERE / 'producer.py')
@@ -347,7 +433,10 @@ class EvaluationTests(unittest.TestCase):
                 (data / record / 'input').write_bytes(content)
             records = cli.load_records(data, ['input'])
             offsets = [1, 2]
-            policy = {'segments': [{'rate': 1, 'seconds': 1}], 'offsetsNS': offsets, 'offered': 2,
+            trace_path = data / '.chill-arrivals.json'
+            conductor.save(trace_path, offsets)
+            policy = {'segments': [{'rate': 1, 'seconds': 1}], 'offsetsFile': str(trace_path),
+                      'offsetsFileSHA256': conductor.ref(trace_path)['sha256'], 'offered': 2,
                       'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest(),
                       'datasetRef': {'name': 'records', 'uid': 'dataset'}, 'shards': 1, 'barrierSeconds': 10}
             encoded = base64.b64encode(zlib.compress(json.dumps(policy).encode())).decode()
@@ -367,6 +456,7 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec, scenario, execution, config, _ = fixture(root)
+            scenario['spec']['traceRefs'] = {NAME: {'store': 'store', 'key': 'trace.json', 'size': 9}}
             execution = {key: value for key, value in execution.items() if key not in ('stageUID', 'stageID', 'stageName')}
             execution.update(runName='run', childRefs=[])
             spec.update(target={'components': []}, evidenceStore='store', stages=[{'id': 'one', 'row': 'e5-test', 'loadScenarioRef': {'name': 'load', 'uid': 'load-uid'}}])
@@ -374,7 +464,8 @@ class EvaluationTests(unittest.TestCase):
             for name, value in (('spec', spec), ('execution', execution), ('config', config)):
                 conductor.save(specdir / (name + '.json'), value)
             uploads = []
-            store = SimpleNamespace(put=lambda key, path: uploads.append(key) or {'store': 'store', 'key': key, 'size': Path(path).stat().st_size})
+            store = SimpleNamespace(put=lambda key, path: uploads.append(key) or {'store': 'store', 'key': key, 'size': Path(path).stat().st_size},
+                                    get=lambda reference, path: conductor.save(path, [1, 2, 3]))
             harness = evaluation.Harness(root / 'campaign/run', specdir, store)
             harness.run.mkdir(parents=True)
             objects = {
@@ -385,19 +476,24 @@ class EvaluationTests(unittest.TestCase):
                 'pods': {'items': [{'metadata': {'namespace': 'tenant', 'name': 'resident', 'uid': 'resident-uid'},
                                     'spec': {'nodeName': 'genesis1'}, 'status': {'phase': 'Pending'}}]},
                 'jobs': {'items': []},
+                'pod': {'spec': {'volumes': [{'name': 'work', 'persistentVolumeClaim': {'claimName': 'workspace'}}],
+                                 'containers': [{'volumeMounts': [{'name': 'work', 'mountPath': str(root)}]}]}},
             }
             def k(namespace, verb, kind, *args):
                 if kind == 'node':
                     return {'metadata': {'name': args[0], 'uid': next((node['uid'] for node in spec['powerMeasurement']['nodes'] if node['name'] == args[0]), 'generator-node')},
                             'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
                 return copy.deepcopy(objects[kind])
-            with patch.object(evaluation, 'kubectl', side_effect=k), patch.object(evaluation, 'api', return_value={'appliedDefinition': scenario['workloads'][0]}), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA=spec['harness']['sourceSHA']):
+            with patch.object(evaluation, 'kubectl', side_effect=k), patch.object(evaluation, 'api', return_value={'appliedDefinition': scenario['workloads'][0]}), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA=spec['harness']['sourceSHA'], HOSTNAME='harness-pod'):
                 harness.prepare()
             snapshot = conductor.load(harness.inputs / 'snapshot.json')
             self.assertEqual(snapshot['schemaVersion'], 'evaluation-snapshot.v2alpha1')
             self.assertEqual(snapshot['inputsVersion'], 'evaluation-inputs.v2alpha1')
             self.assertEqual(snapshot['environmentStart'], conductor.load(harness.root / 'environment-start.json'))
             self.assertEqual([pod['uid'] for pod in snapshot['environmentStart']['pods']], ['resident-uid'])
+            self.assertEqual(snapshot['bindings']['one']['config']['traceVolume'],
+                             {'claimName': 'workspace', 'mountPath': str(root)})
+            self.assertEqual(snapshot['bindings']['one']['config']['traceOffsets'], {NAME: [1, 2, 3]})
             frozen = snapshot['bindings']['one']['config']['workloads'][0]
             self.assertEqual(frozen['datasetRef'], {'name': 'records', 'uid': 'dataset'})
             self.assertEqual(frozen['dataset']['source']['path'], '/records')
@@ -410,6 +506,7 @@ class EvaluationTests(unittest.TestCase):
             spec, scenario, execution, _, config = fixture(root)
             config['stages'][0]['parts'][0]['seconds'] = .01
             config['traceOffsets'] = {NAME: [1]}
+            config['traceVolume'] = {'claimName': 'workspace', 'mountPath': str(root)}
             config['timeboxes'] = dict.fromkeys(config['timeboxes'], 5)
             config['timeboxes']['flushSeconds'] = .001
             path = root / 'config.json'

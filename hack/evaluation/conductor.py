@@ -136,7 +136,7 @@ def bind(path):
         raise ValueError('FrozenInputInvalid: workload names')
     seeds = parse_seeds(config['seeds'], names)
     sys.path.insert(0, str(REPO / 'load-generator/src'))
-    from chill_loadgen.cli import arrival_offsets_ns
+    from chill_loadgen.cli import segmented_arrivals_ns
     schedule = []
     for stage in config['stages']:
         parts = stage['parts']
@@ -144,7 +144,7 @@ def bind(path):
             raise ValueError('FrozenInputInvalid: explicit load parts required')
         traces = {}
         for name in names:
-            offsets, base = [], 0
+            segments = []
             for part in parts:
                 seconds, rates = part['seconds'], part['rates']
                 if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0 or set(rates) != set(names):
@@ -152,13 +152,14 @@ def bind(path):
                 rate = rates[name]
                 if type(rate) not in (int, float) or not math.isfinite(rate) or rate < 0:
                     raise ValueError('FrozenInputInvalid: finite nonnegative rate required')
-                if rate:
-                    offsets.extend(base + value for value in arrival_offsets_ns(config['arrivals'][name], rate, seconds, seeds[name]))
-                base += round(seconds * 1e9)
+                segments.append({'rate': rate, 'seconds': seconds})
             if name in config.get('traceOffsets', {}):
+                base = sum(round(segment['seconds'] * 1e9) for segment in segments)
                 offsets = config['traceOffsets'][name]
                 if not isinstance(offsets, list) or any(type(x) is not int or x < 0 or x >= base for x in offsets) or offsets != sorted(offsets):
                     raise ValueError('FrozenInputInvalid: explicit arrival offsets')
+            else:
+                offsets, base = segmented_arrivals_ns(config['arrivals'][name], segments, seeds[name])
             traces[name] = {'seed': seeds[name], 'offsetsNS': offsets, 'offered': len(offsets),
                             'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
         schedule.append({'id': stage['id'], 'parts': parts, 'seconds': sum(p['seconds'] for p in parts),
@@ -469,10 +470,26 @@ class CPO:
                   'edge.dacs.io/evaluation-stage': execution['stageID'], 'edge.dacs.io/evaluation-step': 'stage'}
         owner = {'apiVersion': 'edge.dacs.io/v1alpha1', 'kind': 'EvaluationStage', 'name': execution['stageName'],
                  'uid': execution['stageUID'], 'controller': True, 'blockOwnerDeletion': True}
-        policy = {'arrivalSHA256': trace['arrivalSHA256'], 'offered': trace['offered'], 'offsetsNS': trace['offsetsNS'],
+        policy = {'arrivalSHA256': trace['arrivalSHA256'], 'offered': trace['offered'],
                   'shards': generator['shards'][name], 'barrierSeconds': self.tb['barrierSeconds'],
                   'segments': [{'rate': part['rates'][name], 'seconds': part['seconds']} for part in stage['parts']],
                   'datasetRef': workload['datasetRef'], 'sourceSHA': generator['sourceSHA']}
+        trace_mounts, trace_volumes = [], []
+        if name in self.c.get('traceOffsets', {}):
+            volume = self.c.get('traceVolume')
+            if not volume:
+                raise ValueError('FrozenInputInvalid: explicit arrivals require the frozen workspace volume')
+            path = Path(folder) / ('arrivals-' + name + '.json')
+            save(path, trace['offsetsNS'])
+            try:
+                subpath = path.resolve().relative_to(Path(volume['mountPath']).resolve()).as_posix()
+            except ValueError as error:
+                raise ValueError('FrozenInputInvalid: explicit arrivals outside frozen workspace') from error
+            policy.update(offsetsFile='/evaluation/.chill-arrivals.json', offsetsFileSHA256=ref(path)['sha256'])
+            trace_volumes.append({'name': 'evaluation-arrivals',
+                                  'persistentVolumeClaim': {'claimName': volume['claimName'], 'readOnly': True}})
+            trace_mounts.append({'name': 'evaluation-arrivals', 'mountPath': policy['offsetsFile'],
+                                 'subPath': subpath, 'readOnly': True})
         encoded = base64.b64encode(zlib.compress(json.dumps(policy, separators=(',', ':'), allow_nan=False).encode())).decode('ascii')
         if len(encoded) > 120000:
             raise RuntimeError('FrozenInputInvalid: arrival policy exceeds safe exec argument size')
@@ -493,13 +510,13 @@ class CPO:
             raise ValueError('FrozenInputInvalid: unsupported operational Pod fields')
         mounts = copy.deepcopy(workload.get('volumeMounts', []))
         data = {'name': 'evaluation-data', 'mountPath': '/evaluation'}
-        pod.setdefault('volumes', []).append({'name': 'evaluation-data', 'emptyDir': {}})
+        pod.setdefault('volumes', []).extend([{'name': 'evaluation-data', 'emptyDir': {}}, *trace_volumes])
         pod.update(restartPolicy='Never', nodeName=generator['nodeName'],
                    initContainers=[{'name': 'dataset', 'image': workload['dataset']['source']['image'],
                                     'command': ['sh', '-ec', 'cp -R "$1"/. /evaluation/', '--', workload['dataset']['source']['path'].rstrip('/') + '/evaluation'],
                                     'volumeMounts': [data], 'resources': copy.deepcopy(generator['resources'])}],
                    containers=[{'name': 'load', 'image': generator['image'], 'command': ['python3', '-u', '-c', (HERE / 'producer.py').read_text()],
-                                'args': args, 'volumeMounts': [data, *mounts], 'resources': copy.deepcopy(generator['resources'])}])
+                                'args': args, 'volumeMounts': [data, *mounts, *trace_mounts], 'resources': copy.deepcopy(generator['resources'])}])
         result = {'apiVersion': 'batch/v1', 'kind': 'Job', 'metadata': {'name': label, 'namespace': self.c['namespace'], 'labels': labels, 'ownerReferences': [owner]},
                   'spec': {'backoffLimit': 0, 'parallelism': 1, 'completions': 1,
                            'activeDeadlineSeconds': math.ceil(sum(self.tb.values()) + stage['seconds']),

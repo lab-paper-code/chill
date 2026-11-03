@@ -63,6 +63,15 @@ def kubectl(namespace,*args):
     return json.loads(result.stdout)
 
 
+def trace_workspace(pod):
+    volume = next((volume for volume in pod['spec']['volumes'] if volume['name'] == 'work'), {})
+    mounts = [mount for container in pod['spec']['containers'] for mount in container.get('volumeMounts', [])
+              if mount['name'] == 'work']
+    if 'persistentVolumeClaim' not in volume or len(mounts) != 1 or any(key in mounts[0] for key in ('subPath', 'subPathExpr')):
+        raise ValueError('FrozenInputInvalid: explicit arrivals require the evaluator workspace PVC mount')
+    return {'claimName': volume['persistentVolumeClaim']['claimName'], 'mountPath': mounts[0]['mountPath']}
+
+
 def pod_environment(items, nodes):
     """Freeze only active Pods actually assigned to participating nodes."""
     return [{'namespace': pod['metadata']['namespace'], 'name': pod['metadata']['name'],
@@ -171,6 +180,7 @@ def stage_config(spec, scenario, execution, config, root):
             'tokenSafetyMarginSeconds': operational.get('tokenSafetyMarginSeconds', 60), 'workloads': workloads,
             'loadGenerator': generator, 'seeds': scenario['spec']['seeds'], 'arrivals': scenario['spec']['arrivalDistribution'],
             'traceOffsets': scenario.get('traceOffsets', {}),
+            'traceVolume': copy.deepcopy(config.get('traceVolume')),
             'stages': [{'id': spec['row'], 'parts': [{'id': p['id'], 'seconds': p['durationSeconds'], 'rates': p['rates']} for p in scenario['spec']['parts']]}],
             'generatorQuality': {'latenessToleranceNS': quality['latenessToleranceNanos'], 'maxExceedingFraction': quality['maxExceedingFraction']},
             'collection': {**collection, 'energyCoverage': spec['judgment']['energyCoverage'], 'powerMeasurement': spec['powerMeasurement']},
@@ -270,6 +280,8 @@ class Harness:
                 path = folder / ('trace-' + name + '.json')
                 self.store.get(reference, path)
                 traces[name] = load(path)
+            if traces and 'traceVolume' not in self.config:
+                self.config['traceVolume'] = trace_workspace(kubectl(self.execution['namespace'], 'get', 'pod', os.environ['HOSTNAME']))
             scenarios[identity] = {'ref': {'name': obj['metadata']['name'], 'uid': identity}, 'spec': scenario,
                                    'workloads': workloads, 'datasets': datasets, 'fields': fields, 'traceOffsets': traces}
         scientific = {'nodes': [node['name'] for node in self.spec['powerMeasurement']['nodes']]}

@@ -54,6 +54,18 @@ def arrival_offsets_ns(arrivals: str, rate: float, duration: float, seed: int) -
     return offsets
 
 
+def segmented_arrivals_ns(arrivals: str, segments: Sequence[dict], seed: int) -> Tuple[List[int], int]:
+    """Generate the frozen segment schedule, restarting the declared seed per segment."""
+    offsets: List[int] = []
+    base = 0
+    for segment in segments:
+        if segment["rate"] > 0:
+            offsets.extend(base + offset for offset in
+                           arrival_offsets_ns(arrivals, segment["rate"], segment["seconds"], seed))
+        base += round(segment["seconds"] * 1_000_000_000)
+    return offsets, base
+
+
 def shard_schedule(offsets: Sequence[int], shard_index: int, shard_count: int) -> List[ScheduledRequest]:
     """Partition the frozen trace by global index; never regenerate arrivals."""
     if type(shard_count) is not int or shard_count < 1 or type(shard_index) is not int or not 0 <= shard_index < shard_count:
