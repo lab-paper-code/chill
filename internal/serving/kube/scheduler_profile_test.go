@@ -47,28 +47,35 @@ func TestSchedulerCaptureReusesImmutableProfileReferences(t *testing.T) {
 	if second.Instances[0].Profile != original {
 		t.Fatal("unchanged catalog produced a new profile pointer on the next capture")
 	}
-	controller.observer.SetProfiles(controller.observer.Profiles())
-	republished := capture()
-	if republished.Instances[0].Profile != original {
-		t.Fatal("identical catalog publication replaced the immutable profile pointer")
-	}
-	profiles := controller.observer.Profiles()
-	profiles[0].IdleBaselineWatts++ // Same identity, genuinely different persisted body.
-	controller.observer.SetProfiles(profiles)
-	changed := capture()
-	if changed.Instances[0].Profile == original || original.IdleBaselineWatts != profiles[0].IdleBaselineWatts-1 {
-		t.Fatal("catalog change reused or mutated the old immutable profile")
-	}
-
 	if !diagnostics.Start() {
 		t.Fatal("diagnostics did not start")
 	}
-	for stage, snapshot := range []serving.SchedulerSnapshot{first, second, republished, changed} {
+	record := func(stage int, snapshot serving.SchedulerSnapshot) {
+		t.Helper()
 		diagnostics.Mark(serving.DiagnosticTraceAnchor, serving.DiagnosticBegin, "", int64(stage))
 		if err := log.SchedulerRecord(serving.SchedulerObservation{At: snapshot.At, Snapshot: &snapshot}); err != nil {
 			t.Fatal(err)
 		}
 	}
+	record(0, first)
+	record(1, second)
+	controller.observer.SetProfiles(controller.observer.Profiles())
+	republished := capture()
+	if republished.Instances[0].Profile != original {
+		t.Fatal("identical catalog publication replaced the immutable profile pointer")
+	}
+	record(2, republished)
+	profiles := controller.observer.Profiles()
+	profiles[0].Condition.Firstfloor.MaxBatchSize++
+	profiles[0].RuntimeMetadata.InitializedBatches[0]++
+	controller.observer.SetProfiles(profiles)
+	changed := capture()
+	if changed.Instances[0].Profile == original || original.Condition.Firstfloor.MaxBatchSize != profiles[0].Condition.Firstfloor.MaxBatchSize-1 ||
+		original.RuntimeMetadata.InitializedBatches[0] != profiles[0].RuntimeMetadata.InitializedBatches[0]-1 {
+		t.Fatal("catalog change reused or mutated the old immutable profile")
+	}
+
+	record(3, changed)
 	var events bytes.Buffer
 	metadata, err := diagnostics.WriteEvents(&events)
 	if err != nil {

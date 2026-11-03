@@ -142,7 +142,18 @@ func (o *Observer) SetProfiles(profiles []serving.Profile) {
 		profile := &o.profiles[i]
 		canonical := previous[profile.ID]
 		if canonical == nil || !reflect.DeepEqual(canonical, profile) {
-			frozen := *profile
+			frozen := cloneCatalogProfile(*profile)
+			// Catalog cloning defaults preparation settings; evidence keeps the
+			// original policy and nil/empty slice shapes exactly as published.
+			if profile.Condition.Firstfloor != nil {
+				frozen.Condition.Firstfloor.DeadlinePolicy = profile.Condition.Firstfloor.DeadlinePolicy
+			}
+			if len(profile.Condition.PlannedBatchSizes) == 0 {
+				frozen.Condition.PlannedBatchSizes = profile.Condition.PlannedBatchSizes
+			}
+			if access := profile.Condition.RuntimeAccess; access != nil && len(access.SupplementalGroups) == 0 {
+				frozen.Condition.RuntimeAccess.SupplementalGroups = access.SupplementalGroups
+			}
 			canonical = &frozen
 		}
 		o.profileByID[profile.ID] = canonical
