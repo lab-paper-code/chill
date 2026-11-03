@@ -13,6 +13,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -228,82 +229,11 @@ func (m *Manager) checkOperation(w *api.Workload) error {
 	return nil
 }
 
-func validateModel(model *api.ModelSpec) error {
-	if messages := validation.IsDNS1123Subdomain(model.Name); len(messages) != 0 {
-		return managementError("InvalidModel", fmt.Sprint(messages), "metadata.name")
-	}
-	if len(model.Spec.Artifacts) == 0 || len(model.Spec.ExecutionPaths) == 0 {
-		return managementError("InvalidModel", "artifacts and executionPaths must not be empty", "spec")
-	}
-	for _, artifact := range model.Spec.Artifacts {
-		if artifact.Name == "" || artifact.Format == "" {
-			return managementError("InvalidModel", "artifact name and format are required", "spec.artifacts")
-		}
-	}
-	for _, path := range model.Spec.ExecutionPaths {
-		if path.Name == "" || path.Runtime.Family == "" || path.Runtime.Backend == "" {
-			return managementError("InvalidModel", "execution path name, runtime family and backend are required", "spec.executionPaths")
-		}
-	}
-	if err := modelcatalog.Validate(model); err != nil {
-		return managementError("InvalidModel", err.Error(), "spec")
-	}
-	return nil
-}
-
 // catalogRefs holds the catalog objects one Workload spec names.
 type catalogRefs struct {
 	model        *api.ModelSpec
 	preprocessor *api.Preprocessor
 	dataset      *api.Dataset
-}
-
-// snapshot keeps only the execution paths whose artifact the preprocessor
-// provides code for (WM-08).
-func snapshot(w *api.Workload, refs catalogRefs) (*serving.Definition, error) {
-	model, p := refs.model, refs.preprocessor
-	if err := validateModel(model); err != nil {
-		return nil, err
-	}
-	if w.UID == "" || model.UID == "" || p.UID == "" {
-		return nil, managementError("IdentityUnavailable", "native registration UID is unavailable", "metadata.uid")
-	}
-	d := &serving.Definition{Name: w.Name, UID: string(w.UID), Generation: w.Generation,
-		Model:        serving.Model{Name: model.Name, UID: string(model.UID), Generation: model.Generation},
-		Preprocessor: serving.Preprocessor{Name: p.Name, UID: string(p.UID), Generation: p.Generation},
-		SLO:          serving.SLO{Percentile: w.Spec.SLO.Percentile, TargetLatency: w.Spec.SLO.TargetLatency.Duration}}
-	if w.Spec.RequestLifetime != nil {
-		lifetime := w.Spec.RequestLifetime.Duration
-		d.RequestLifetime = &lifetime
-	}
-	for _, field := range p.Spec.Input.Fields {
-		d.Preprocessor.Input = append(d.Preprocessor.Input, serving.RawField{Name: field.Name, Format: field.Format, MaxBytes: field.MaxBytes})
-	}
-	for _, field := range p.Spec.Output.Fields {
-		d.Preprocessor.Output = append(d.Preprocessor.Output, serving.RawField{Name: field.Name, Format: field.Format})
-	}
-	if p.Spec.MaxNewTokens != nil {
-		d.Preprocessor.MaxNewTokens = *p.Spec.MaxNewTokens
-	}
-	if refs.dataset != nil {
-		d.Dataset = &serving.DatasetReference{Name: refs.dataset.Name, UID: string(refs.dataset.UID)}
-	}
-	for _, path := range model.Spec.ExecutionPaths {
-		for _, artifact := range model.Spec.Artifacts {
-			if artifact.Name != path.Artifact {
-				continue
-			}
-			code, ok := modelcatalog.PreprocessorArtifact(p, model.Name, artifact.Name)
-			if ok {
-				d.Model.Paths = append(d.Model.Paths, serving.ModelPath{Name: path.Name, Artifact: artifact.Name, Format: artifact.Format,
-					Image: artifact.Source.Image, Architecture: artifact.Source.Architecture, Files: slices.Clone(artifact.Source.Files),
-					RuntimeFamily: path.Runtime.Family, Backend: path.Runtime.Backend, Firstfloor: modelcatalog.FirstfloorSettings(path.Runtime),
-					Preprocessor: serving.PreprocessorArtifact{Image: code.Source.Image, Architecture: code.Source.Architecture, Path: code.Source.Path}})
-			}
-			break
-		}
-	}
-	return d, nil
 }
 
 // catalogBusy reports an active shared update targeting the catalog object.
@@ -340,7 +270,7 @@ func (m *Manager) loadReferences(ctx context.Context, spec api.WorkloadSpec) (ca
 	if err := checkReference(refs.model, err, "Model", "spec.modelRef.name"); err != nil {
 		return refs, err
 	}
-	if err := validateModel(refs.model); err != nil {
+	if err := management.ValidateModel(refs.model); err != nil {
 		return refs, err
 	}
 	refs.preprocessor, err = m.store.GetPreprocessor(ctx, spec.PreprocessorRef.Name)
@@ -446,7 +376,7 @@ func (m *Manager) restoreDefinition(ctx context.Context, w *api.Workload, status
 	if err != nil {
 		return nil, err
 	}
-	return snapshot(w, refs)
+	return management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 }
 
 func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, sharedInterrupted bool) error {
@@ -473,7 +403,7 @@ func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, sharedIn
 		refs, err := m.loadReferences(ctx, w.Spec)
 		var want *serving.Definition
 		if err == nil {
-			want, err = snapshot(w, refs)
+			want, err = management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 		}
 		if err != nil || want.Identity() != d.Identity() || want.SLO != d.SLO || !reflect.DeepEqual(want.Dataset, d.Dataset) {
 			return managementError("AppliedStateUnconfirmed", "desired and recorded applied definitions differ", "status.appliedDefinition")
@@ -509,7 +439,7 @@ func (m *Manager) CreateWorkload(ctx context.Context, name string, spec api.Work
 	if err := m.store.CreateWorkload(ctx, w); err != nil {
 		return WorkloadView{}, err
 	}
-	d, err := snapshot(w, refs)
+	d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 	if err == nil {
 		err = m.record(ctx, w, "Accepted", nil, d, nil, time.Now().UTC(), nil)
 	}
@@ -570,7 +500,7 @@ func (m *Manager) UpdateWorkload(ctx context.Context, name, resourceVersion stri
 	status := w.Status
 	actor := PrincipalFromContext(ctx)
 	status.Operation = &api.WorkloadOperation{Kind: "Update", Phase: "Draining", TargetGeneration: w.Generation, AcceptedAt: metav1.Now(), ActorUsername: actor.username, ActorUID: actor.uid}
-	d, err := snapshot(w, refs)
+	d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 	if err != nil {
 		err = m.failAccepted(ctx, w, status, err)
 		return m.view(w), false, err
@@ -769,7 +699,7 @@ func (m *Manager) advanceWorkload(ctx context.Context, w *api.Workload) error {
 		if err != nil {
 			return err
 		}
-		d, err := snapshot(w, refs)
+		d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 		if err != nil {
 			return err
 		}
@@ -860,7 +790,7 @@ func (m *Manager) advanceGroup(ctx context.Context, group []*api.Workload) error
 		if uid != target.TargetCatalogUID || generation != target.TargetCatalogGeneration {
 			return managementError("CatalogIdentityConflict", "shared update target identity changed", "operation")
 		}
-		if definitions[i], err = snapshot(w, refs); err != nil {
+		if definitions[i], err = management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset); err != nil {
 			return err
 		}
 	}
@@ -964,7 +894,7 @@ func (m *Manager) CreateModel(ctx context.Context, name string, spec api.ModelSp
 		return nil, err
 	}
 	model := &api.ModelSpec{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}
-	if err := validateModel(model); err != nil {
+	if err := management.ValidateModel(model); err != nil {
 		return nil, err
 	}
 	if err := m.store.CreateModel(ctx, model); err != nil {
@@ -1058,7 +988,7 @@ func (m *Manager) UpdateModel(ctx context.Context, name, resourceVersion string,
 	}
 	proposed := model.DeepCopy()
 	proposed.Spec = spec
-	if err := validateModel(proposed); err != nil {
+	if err := management.ValidateModel(proposed); err != nil {
 		return model, false, err
 	}
 	if err := m.keepTargetedArtifacts(ctx, proposed); err != nil {
@@ -1153,7 +1083,7 @@ func (m *Manager) startSharedUpdate(ctx context.Context, kind string, uid types.
 		if err != nil {
 			return fail(err)
 		}
-		d, err := snapshot(w, refs)
+		d, err := management.Snapshot(w, refs.model, refs.preprocessor, refs.dataset)
 		if err != nil {
 			return fail(err)
 		}
