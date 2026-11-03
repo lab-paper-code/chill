@@ -214,8 +214,11 @@ func assessOperationCost(
 
 func (o *measurementService) projectDispatchOccupancy(
 	ctx context.Context, cr api.DispatchOccupancyMeasurement,
-) (httpapi.MeasurementProjection, error) {
-	projection := httpapi.ProjectDispatchOccupancyMeasurement(cr)
+) (dispatchOccupancyProjection, error) {
+	projection := dispatchOccupancyProjection{
+		MeasurementProjection:     httpapi.ProjectDispatchOccupancyMeasurement(cr),
+		DispatchOccupancyProgress: occupancyProgress(cr),
+	}
 	input := queryapi.MeasurementAssessmentInput{
 		Execution:        &queryapi.MeasurementExecution{Phase: string(cr.Status.Phase), Generation: cr.Generation},
 		ExecutionCurrent: true, Attempted: true,
@@ -244,6 +247,7 @@ func (o *measurementService) projectDispatchOccupancy(
 			if errors.Is(err, evidencestore.ErrNotFound) {
 				code, message = "OccupancyEvidenceMissing", "분배 점유 근거 파일이 없습니다. 원래 결과 위치와 보존 상태를 확인하세요."
 			}
+			projection.evidenceReason = code
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
 				Code: code, Message: message, SourceIDs: []string{ref.Key},
 			})
@@ -252,6 +256,7 @@ func (o *measurementService) projectDispatchOccupancy(
 		}
 		var record servingkube.DispatchOccupancyRecord
 		if err := json.Unmarshal(raw, &record); err != nil {
+			projection.evidenceReason = "OccupancyEvidenceInvalid"
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
 				Code: "OccupancyEvidenceInvalid", Message: "분배 점유 근거 파일을 해석하지 못했습니다. 보존된 원본을 확인하세요.", SourceIDs: []string{ref.Key},
 			})
@@ -260,13 +265,23 @@ func (o *measurementService) projectDispatchOccupancy(
 		}
 		input.Available = true
 		input.Facts = append(input.Facts, "Retained occupancy: "+ref.Store+"/"+ref.Key)
-		matches := record.SchemaVersion == servingkube.DispatchOccupancySchema &&
-			record.Node.Name == cr.Spec.Node && record.Node.UID != "" &&
-			ref.Key == servingkube.DispatchOccupancyPrefix+record.Node.UID+"/"+string(cr.UID)+".json" &&
-			reflect.DeepEqual(record.Conditions, cr.Spec) && record.Batch == int(cr.Spec.Batch) &&
-			cr.Status.PerRequestNanos != nil && record.PerRequestNanos == *cr.Status.PerRequestNanos
+		matches := occupancyRecordMatches(cr, record)
 		input.Accepted = matches && record.Verdict == measurementVerdictAccepted
+		if matches {
+			projection.record = &record
+			projection.ProfileID = record.ProfileID
+			projection.D = &queryapi.OccupancyValue{
+				PerRequestNanos: &record.PerRequestNanos, Throughput: finiteOccupancyValue(record.Throughput),
+				IdleFraction: finiteOccupancyValue(record.IdleFraction), Verdict: record.Verdict,
+			}
+			if !record.Window.Start.IsZero() && !record.Window.End.IsZero() {
+				projection.MeasurementWindow = &queryapi.OccupancyMeasurementWindow{
+					Start: record.Window.Start, End: record.Window.End,
+				}
+			}
+		}
 		if !matches {
+			projection.evidenceReason = "OccupancyEvidenceMismatch"
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
 				Code: "OccupancyEvidenceMismatch", Message: "Stored occupancy does not match this request and status",
 				SourceIDs: []string{ref.Key},
@@ -304,6 +319,15 @@ func (o *measurementService) projectDispatchOccupancy(
 	var err error
 	projection.Assessment, err = json.Marshal(queryapi.AssessMeasurement(input))
 	return projection, err
+}
+
+func occupancyRecordMatches(cr api.DispatchOccupancyMeasurement, record servingkube.DispatchOccupancyRecord) bool {
+	return record.SchemaVersion == servingkube.DispatchOccupancySchema &&
+		record.Node.Name == cr.Spec.Node && record.Node.UID != "" &&
+		cr.Status.Result.Key == servingkube.DispatchOccupancyPrefix+record.Node.UID+"/"+string(cr.UID)+".json" &&
+		reflect.DeepEqual(record.Conditions, cr.Spec) && record.Batch == int(cr.Spec.Batch) &&
+		(cr.Spec.Conditions.ProfileID == "" || record.ProfileID == cr.Spec.Conditions.ProfileID) &&
+		cr.Status.PerRequestNanos != nil && record.PerRequestNanos == *cr.Status.PerRequestNanos
 }
 
 type profileProjection struct {

@@ -207,6 +207,7 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 			Node:          serving.NodeReference{Name: "node", UID: "node-uid"}, Batch: 1,
 			PerRequestNanos: d, Throughput: 10, Conditions: cr.Spec, Verdict: measurementVerdictAccepted,
 		}
+		record.Window.Start, record.Window.End = time.Unix(100, 0).UTC(), time.Unix(200, 0).UTC()
 		raw, err := json.Marshal(record)
 		if err != nil {
 			t.Fatal(err)
@@ -227,6 +228,13 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 		if !reflect.DeepEqual(list.Items[0], detail) {
 			t.Fatal("occupancy list/detail diverged")
 		}
+		if detail.D == nil || *detail.D.PerRequestNanos != d || detail.MeasurementWindow == nil ||
+			!detail.MeasurementWindow.Start.Equal(record.Window.Start) ||
+			!detail.MeasurementWindow.End.Equal(record.Window.End) ||
+			detail.Name != cr.Name || detail.UID != string(cr.UID) || detail.Phase == nil || *detail.Phase != "Complete" {
+			t.Fatalf("progress lost signed value, evidence window or identity: %+v", detail.DispatchOccupancyProgress)
+		}
+		assertOccupancyWireFields(t, detail)
 		var assessment queryapi.MeasurementAssessment
 		if err := json.Unmarshal(detail.Assessment, &assessment); err != nil {
 			t.Fatal(err)
@@ -241,17 +249,65 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 		if *cr.Status.PerRequestNanos != d || len(storage.reads) != 2 {
 			t.Fatal("projection changed signed d or did not read exact evidence")
 		}
-		cr.Status.Result = nil
-		without, err := service.projectDispatchOccupancy(context.Background(), cr)
-		if err != nil {
-			t.Fatal(err)
+		assertOccupancyRejectedEvidence(t, service, storage, cr, record)
+	}
+}
+
+func assertOccupancyWireFields(t *testing.T, detail dispatchOccupancyProjection) {
+	t.Helper()
+	wire, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(wire, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		"metadata", "conditions", "status", "references", "assessment",
+		"node", "d", "measurementWindow", "profileID", "createdAt",
+	} {
+		if _, exists := fields[key]; !exists {
+			t.Fatalf("wire field %s missing", key)
 		}
-		if err := json.Unmarshal(without.Assessment, &assessment); err != nil {
-			t.Fatal(err)
-		}
-		if assessment.Evidence.Accepted {
-			t.Fatal("Complete without retained record became accepted")
-		}
+	}
+}
+
+func assertOccupancyRejectedEvidence(
+	t *testing.T, service *measurementService, storage *operationProjectionStore,
+	cr api.DispatchOccupancyMeasurement, record servingkube.DispatchOccupancyRecord,
+) {
+	t.Helper()
+	d := *cr.Status.PerRequestNanos
+	record.Node.UID = "foreign-node"
+	var err error
+	storage.payload, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatched, err := service.projectDispatchOccupancy(context.Background(), cr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mismatched.record != nil || mismatched.MeasurementWindow != nil ||
+		mismatched.evidenceReason != "OccupancyEvidenceMismatch" || mismatched.Evidence == nil ||
+		mismatched.D == nil || *mismatched.D.PerRequestNanos != d {
+		t.Fatal("foreign evidence became verified or hid recorded status/reference")
+	}
+	cr.Status.Result = nil
+	without, err := service.projectDispatchOccupancy(context.Background(), cr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assessment queryapi.MeasurementAssessment
+	if err := json.Unmarshal(without.Assessment, &assessment); err != nil {
+		t.Fatal(err)
+	}
+	if assessment.Evidence.Accepted {
+		t.Fatal("Complete without retained record became accepted")
+	}
+	if without.MeasurementWindow != nil || without.Evidence != nil {
+		t.Fatal("missing evidence invented measurement timing or reference")
 	}
 }
 

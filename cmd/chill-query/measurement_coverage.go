@@ -17,7 +17,7 @@ import (
 )
 
 var measurementCoverageSourceKinds = [...]string{
-	"inventory", "compatibility", "catalog", "BEO", "Run", "input-contract",
+	"inventory", "compatibility", "catalog", "BEO", "Run", "DOM", "input-contract",
 }
 
 type measurementCoverageCache struct {
@@ -33,16 +33,18 @@ type measurementCoverageEntry struct {
 	refreshed   chan struct{}
 }
 type measurementCoverageBase struct {
-	inventory     queryapi.InventoryView
-	compatibility queryapi.ModelCompatibilityMatrixView
-	requests      api.BatchEnergyOptimizationList
-	runs          api.ProfilingRunList
-	catalog       httpapi.ProfilesView
-	datasets      api.DatasetList
-	preprocessors api.PreprocessorList
-	adopted       map[string]bool
-	checked       map[string]time.Time
-	failures      map[string]error
+	inventory        queryapi.InventoryView
+	compatibility    queryapi.ModelCompatibilityMatrixView
+	requests         api.BatchEnergyOptimizationList
+	runs             api.ProfilingRunList
+	occupancies      api.DispatchOccupancyMeasurementList
+	occupancyResults map[string]dispatchOccupancyProjection
+	catalog          httpapi.ProfilesView
+	datasets         api.DatasetList
+	preprocessors    api.PreprocessorList
+	adopted          map[string]bool
+	checked          map[string]time.Time
+	failures         map[string]error
 }
 
 func (o *measurementService) coverage(
@@ -192,6 +194,25 @@ func (o *measurementService) readCoverage(
 			next.runs = value
 		}
 		results <- sourceResult{"Run", err, time.Now().UTC()}
+	}()
+	go func() {
+		var value api.DispatchOccupancyMeasurementList
+		err := o.client.List(ctx, &value, client.InNamespace(namespace))
+		projected := make(map[string]dispatchOccupancyProjection, len(value.Items))
+		if err == nil {
+			for _, task := range value.Items {
+				var result dispatchOccupancyProjection
+				result, err = o.projectDispatchOccupancy(ctx, task)
+				if err != nil {
+					break
+				}
+				projected[string(task.UID)] = result
+			}
+		}
+		if err == nil {
+			next.occupancies, next.occupancyResults = value, projected
+		}
+		results <- sourceResult{"DOM", err, time.Now().UTC()}
 	}()
 	go func() {
 		var datasets api.DatasetList

@@ -106,7 +106,7 @@ func TestCoverageWithinStaleWindowReturnsWhileRefreshing(t *testing.T) {
 	}
 }
 
-func TestReadCoverageReturnsSnapshotWhenAllSixSourcesSucceed(t *testing.T) {
+func TestReadCoverageReturnsSnapshotWhenAllSourcesSucceed(t *testing.T) {
 	base := coverageSizeBase()
 	catalog := &servingkube.Catalog{}
 	view, err := catalog.Refresh(context.Background(), nil)
@@ -136,9 +136,10 @@ func TestReadCoverageReturnsSnapshotWhenAllSixSourcesSucceed(t *testing.T) {
 
 	got, err := service.readCoverage(context.Background(), "allowed", nil)
 	if err != nil || got == nil {
-		t.Fatalf("six successful sources discarded the snapshot: snapshot=%v error=%v", got, err)
+		t.Fatalf("successful sources discarded the snapshot: snapshot=%v error=%v", got, err)
 	}
-	if len(got.checked) != 6 || len(got.failures) != 0 || len(got.inventory.Models) == 0 {
+	if len(got.checked) != len(measurementCoverageSourceKinds) ||
+		len(got.failures) != 0 || len(got.inventory.Models) == 0 {
 		t.Fatalf("incomplete source snapshot: checked=%v failures=%v", got.checked, got.failures)
 	}
 	if !reflect.DeepEqual(got.catalog.MeasurementFacts, view.MeasurementFacts) ||

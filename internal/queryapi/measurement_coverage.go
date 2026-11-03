@@ -129,6 +129,7 @@ type MeasurementCoverageCell struct {
 	FailureSummary     []MeasurementFailure                    `json:"failureSummary"`
 	CurrentMeasurement *profilederivation.MeasurementSelection `json:"currentMeasurement"`
 	History            []MeasurementHistory                    `json:"history"`
+	Occupancy          []MeasurementOccupancy                  `json:"occupancy"`
 }
 type MeasurementCoverageSourceError struct {
 	Code      string `json:"code"`

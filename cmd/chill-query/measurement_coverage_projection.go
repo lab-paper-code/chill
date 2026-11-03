@@ -42,6 +42,7 @@ type coverageProjection struct {
 	profiles  map[string][]serving.Profile
 	adopted   map[string]bool
 	replaced  map[string]bool
+	occupancy []api.DispatchOccupancyMeasurement
 }
 
 func buildMeasurementCoverage(
@@ -58,6 +59,7 @@ func buildMeasurementCoverage(
 	p.addRuns()
 	for i := range p.out.Cells {
 		p.assessCell(&p.out.Cells[i])
+		p.addOccupancy(&p.out.Cells[i])
 	}
 	coverageSummarize(&p.out, base)
 	compactCoverageResponse(&p.out)
@@ -65,6 +67,13 @@ func buildMeasurementCoverage(
 }
 
 func (p *coverageProjection) initialize() {
+	p.occupancy = append([]api.DispatchOccupancyMeasurement{}, p.base.occupancies.Items...)
+	slices.SortFunc(p.occupancy, func(a, b api.DispatchOccupancyMeasurement) int {
+		if compared := a.CreationTimestamp.Compare(b.CreationTimestamp.Time); compared != 0 {
+			return compared
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
 	basis, supportBasis := "requested", "representative-node-static"
 	if len(p.query.Batches) > 0 {
 		basis = "explicit"
@@ -75,7 +84,7 @@ func (p *coverageProjection) initialize() {
 	p.out = queryapi.MeasurementCoverageResponse{
 		SchemaVersion: "measurement-coverage.v1", AssessmentVersion: "result-checklist.v1",
 		SnapshotID: p.namespace + "/" + p.base.catalog.Revision + "/" +
-			p.base.requests.ResourceVersion + "/" + p.base.runs.ResourceVersion,
+			p.base.requests.ResourceVersion + "/" + p.base.runs.ResourceVersion + "/" + p.base.occupancies.ResourceVersion,
 		DataAsOf:  p.base.oldest().UTC().Format(time.RFC3339Nano),
 		Freshness: "fresh", Completeness: queryapi.MeasurementComplete,
 		Scope: queryapi.MeasurementCoverageScope{
@@ -113,6 +122,8 @@ func (p *coverageProjection) addSources() {
 			source.ResourceVersions = []string{p.base.requests.ResourceVersion}
 		case "Run":
 			source.ResourceVersions = []string{p.base.runs.ResourceVersion}
+		case "DOM":
+			source.ResourceVersions = []string{p.base.occupancies.ResourceVersion}
 		case "compatibility":
 			for _, row := range p.base.compatibility.NodeRows {
 				if row.Inputs.RuntimeDeclaration != nil {
