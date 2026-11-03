@@ -12,9 +12,10 @@ trap 'rm -f "${rendered}"' EXIT
 
 check() {
 	local expected_caller="$1"
-	shift
+	local expected_reader="$2"
+	shift 2
 	"${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}"
-	python3 - "${rendered}" "${expected_caller}" <<'PY'
+	python3 - "${rendered}" "${expected_caller}" "${expected_reader}" <<'PY'
 import sys, yaml
 documents = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 identities = [(d["kind"], d["metadata"].get("namespace", ""), d["metadata"]["name"]) for d in documents]
@@ -40,6 +41,41 @@ def effective(account):
                     resources.update((scope, group, resource, verb, tuple(rule.get("resourceNames", [])))
                                      for resource in rule.get("resources", []))
     return resources, urls
+
+reader = sys.argv[3]
+reader_objects = [d for d in documents if d["metadata"]["name"] == "chill-dashboard-reader"]
+if reader:
+    assert any(d["kind"] == "ServiceAccount" and d["metadata"]["name"] == reader
+               and d["metadata"]["namespace"] == "chill-system" for d in documents)
+    reader_resources, reader_urls = effective(reader)
+    assert reader_objects and reader_urls
+    assert all(verb == "get" for verb, _ in reader_urls), "reader acquired HTTP writes"
+    assert all(row[3] in {"get", "list", "watch"} for row in reader_resources), "reader acquired native writes"
+    assert not any(row[2] == "secrets" for row in reader_resources)
+    manager = next(d for d in documents if d["kind"] == "ClusterRole"
+                   and d["metadata"]["name"] == "chill-serving-manager")
+    expected = {("get", path) for rule in manager["rules"] if "get" in rule["verbs"]
+                for path in rule.get("nonResourceURLs", [])}
+    assert reader_urls == expected, (reader_urls - expected, expected - reader_urls)
+    assert not any("/observations/raw" in path or "catalog-read" in path for _, path in reader_urls)
+    for obj in reader_objects:
+        for rule in obj.get("rules", []):
+            assert set(rule["verbs"]) <= {"get", "list", "watch"}, "reader role contains writes"
+    namespaces = {d["metadata"]["namespace"] for d in documents if d["kind"] == "Role"
+                  and d["metadata"]["name"] == "chill-serving-manager"}
+    for namespace in namespaces:
+        for resource in ("profilingruns", "batchenergyoptimizations", "operationcostmeasurements",
+                         "dispatchoccupancymeasurements"):
+            for verb in ("get", "list"):
+                assert (namespace, "edge.dacs.io", resource, verb, ()) in reader_resources
+        evaluation_enabled = any(d["kind"] == "Role" and d["metadata"]["name"] == "chill-serving-manager"
+                                 and any("evaluationruns" in r.get("resources", []) for r in d["rules"])
+                                 for d in documents)
+        for resource in ("evaluationruns", "loadscenarios", "evaluationstages"):
+            for verb in ("get", "list", "watch"):
+                assert ((namespace, "edge.dacs.io", resource, verb, ()) in reader_resources) == evaluation_enabled
+else:
+    assert not reader_objects, "disabled reader rendered RBAC"
 
 dashboard_bindings = [d for d in documents if d["kind"] == "ClusterRoleBinding"
                       and d["metadata"]["name"] == "chill-dashboard-evaluation-operator"]
@@ -194,19 +230,24 @@ PY
 serving=(--set servingEntrypoint.enabled=true --set query.enabled=true --set servingEntrypoint.tls.secretName=chill-tls
 	--set evidenceStore.connection.bucket=chill --set evidenceStore.connection.region=local
 	--set servingEntrypoint.scheduler.configMap=chill-scheduler)
-check ""
-check "" -f "${repo_root}/charts/chill/values-profiler.yaml"
-check "" -f "${repo_root}/charts/chill/values-profiler.yaml" --set evaluation.enabled=true
-check "" "${serving[@]}"
-check "" "${serving[@]}" --set evaluation.enabled=true
-check "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+check "" ""
+check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml"
+check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml" --set evaluation.enabled=true
+check "" "" "${serving[@]}"
+check "" "" "${serving[@]}" --set evaluation.enabled=true
+check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set 'servingEntrypoint.profileNamespaces={chill-system,measurements}'
-check "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true
-check chill-dashboard-user "${serving[@]}" --set dashboard.callerServiceAccount=chill-dashboard-user
-check chill-dashboard-user -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+check chill-dashboard-user "" "${serving[@]}" --set dashboard.callerServiceAccount=chill-dashboard-user
+check chill-dashboard-user "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true --set dashboard.enabled=true --set servingEntrypoint.namespace=serving \
 	--set dashboard.callerServiceAccount=chill-dashboard-user
+check "" chill-smoke "${serving[@]}" --set dashboard.readerServiceAccount=chill-smoke
+check chill-dashboard-user chill-smoke -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+	--set evaluation.enabled=true --set servingEntrypoint.namespace=serving \
+	--set 'servingEntrypoint.profileNamespaces={serving,measurements}' \
+	--set dashboard.callerServiceAccount=chill-dashboard-user --set dashboard.readerServiceAccount=chill-smoke
 
 reject_caller() {
 	if "${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}" 2>&1; then
@@ -215,6 +256,19 @@ reject_caller() {
 	fi
 	[[ "$(<"${rendered}")" == *"dashboard.callerServiceAccount"* ]]
 }
+
+reject_reader() {
+	if "${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}" 2>&1; then
+		echo "invalid dashboard reader configuration unexpectedly rendered" >&2
+		exit 1
+	fi
+	[[ "$(<"${rendered}")" == *"dashboard.readerServiceAccount"* ]]
+}
+reject_reader --set dashboard.readerServiceAccount=chill-smoke
+reject_reader "${serving[@]}" --set dashboard.readerServiceAccount=true
+reject_reader "${serving[@]}" --set dashboard.readerServiceAccount=other-namespace/chill-smoke
+reject_reader "${serving[@]}" --set dashboard.readerServiceAccount=chill-smoke \
+	--set dashboard.callerServiceAccount=chill-smoke
 reject_caller --set dashboard.callerServiceAccount=chill-dashboard-user
 reject_caller "${serving[@]}" --set dashboard.callerServiceAccount=true
 reject_caller "${serving[@]}" --set dashboard.callerServiceAccount=other-namespace/chill-dashboard-user

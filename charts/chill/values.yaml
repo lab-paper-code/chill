@@ -578,6 +578,8 @@ dashboard:
   # Existing caller SA in the release namespace; opt-in evaluation mutation rights.
   # Requires servingEntrypoint.enabled; does not create an SA or bind scheduler editing.
   callerServiceAccount: ""
+  # Chart-owned read-only identity for short-lived smoke tokens; no write grants.
+  readerServiceAccount: ""
   replicaCount: 1
   image:
     repository: daclab/chill-dashboard

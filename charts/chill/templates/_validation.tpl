@@ -67,6 +67,20 @@
 {{- fail "dashboard.callerServiceAccount must be a ServiceAccount name in the release namespace" -}}
 {{- end -}}
 {{- end -}}
+{{- if not (kindIs "string" .Values.dashboard.readerServiceAccount) -}}
+{{- fail "dashboard.readerServiceAccount must be a string" -}}
+{{- end -}}
+{{- if .Values.dashboard.readerServiceAccount -}}
+{{- if not .Values.servingEntrypoint.enabled -}}
+{{- fail "dashboard.readerServiceAccount requires servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if or (gt (len .Values.dashboard.readerServiceAccount) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" .Values.dashboard.readerServiceAccount)) -}}
+{{- fail "dashboard.readerServiceAccount must be a ServiceAccount name in the release namespace" -}}
+{{- end -}}
+{{- if eq .Values.dashboard.readerServiceAccount .Values.dashboard.callerServiceAccount -}}
+{{- fail "dashboard.readerServiceAccount must differ from dashboard.callerServiceAccount" -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.dashboard.enabled -}}
 {{- if or (lt (int .Values.dashboard.replicaCount) 1) (empty .Values.dashboard.image.repository) -}}
 {{- fail "dashboard requires a positive replicaCount and image.repository" -}}
