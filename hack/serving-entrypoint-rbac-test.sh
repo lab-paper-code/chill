@@ -55,6 +55,11 @@ if not profiles:
 for kind in ("operationcostmeasurements", "dispatchoccupancymeasurements"):
     if not all(grants(r, kind, "patch") and grants(r, kind + "/status", "patch") for r in profiles):
         sys.exit("a profile namespace Role lacks " + kind + " and status patch")
+# occupancy_service.go / BEO create and delete natively as the server's own SA.
+for kind in ("batchenergyoptimizations", "dispatchoccupancymeasurements"):
+    for verb in ("get", "list", "create", "delete"):
+        if not all(grants(r, kind, verb) for r in profiles):
+            sys.exit("server SA profile Role lacks " + verb + " " + kind)
 
 # measurements.go requires create (collection) / delete (named) as the caller.
 # authorizer.go separately checks the lowercase HTTP verb and /chill-prefixed path.

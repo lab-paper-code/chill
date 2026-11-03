@@ -199,13 +199,13 @@ metadata:
     {{- include "chill.labels" $ | nindent 4 }}
 rules:
   - apiGroups: [edge.dacs.io]
-    resources: [batchenergyoptimizations]
+    resources: [batchenergyoptimizations, dispatchoccupancymeasurements]
     verbs: [get, list, create, delete]
   - apiGroups: [edge.dacs.io]
     resources: [profilingruns]
     verbs: [get]
   - apiGroups: [edge.dacs.io]
-    resources: [operationcostmeasurements, dispatchoccupancymeasurements]
+    resources: [operationcostmeasurements]
     verbs: [get, list]
   # ChillServer admits measurements by annotating them.
   - apiGroups: [edge.dacs.io]
