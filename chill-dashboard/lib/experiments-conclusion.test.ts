@@ -85,3 +85,15 @@ test("R19: projected list load references are not mislabeled as missing publicat
   assert.match(html,/목록 미제공/)
   assert.doesNotMatch(html,/<td colSpan="5">미기록<\/td>/)
 })
+
+test("R19 review: definition sources retain p90 and p99 without applying them as p95",()=>{
+  const publication={...run,stages:[{...stage("candidate"),kpis:{requests:{camera:{workloadUID:"camera",definitionID:"definition"}}}}],definition:{workloads:[{name:"camera",uid:"camera",generation:1,slo:{percentile:90,targetLatencyNanos:1000000000}},{name:"other",uid:"other",generation:1,slo:{percentile:99,targetLatencyNanos:7034000000}}],spec:{stages:[]},loadScenarios:[]}} as unknown as Experiment
+  const html=renderToStaticMarkup(createElement(components.ExperimentMetadata,{run:publication,stage:publication.stages[0]}))
+  const source=html.match(/<table aria-label="정의 출처 SLO"[\s\S]*?<\/table>/)?.[0]??""
+  assert.match(source,/>분위수<\/th>/)
+  assert.match(source,/>목표 지연 \(ms\)<\/th>/)
+  assert.match(source,/>90<\/td><td[^>]*>1,000<\/td>/)
+  assert.match(source,/>99<\/td><td[^>]*>7,034<\/td>/)
+  assert.doesNotMatch(source,/미기록|SLO p95/)
+  assert.equal(experiments.frozenP95SLO(experiments.experimentRows(publication.stages[0])[0],publication),null)
+})
