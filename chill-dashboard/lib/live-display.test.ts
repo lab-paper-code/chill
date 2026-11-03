@@ -307,7 +307,7 @@ test("event history loss cannot recover from metrics or disappear as a short gap
   assert.equal(gapEpisodes([gap],now,metrics)[0].recovered,false)
   assert.equal(incidentFlow([],[gap],now,false,metrics).length,1)
 })
-test("operations board keeps service SLO and scoped autonomy visible before device and incident details",()=>{
+test("operations board keeps service SLO and scoped autonomy visible before device and incident details",async context=>{
   const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
   const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
   const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at}},pool:{wholeWatts:40,activeWatts:0}}
@@ -317,6 +317,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   let archived:LiveState["events"]=[]
   let recordedDecision:Record<string,unknown>|undefined
   let summaryHasScopes=false,fullSchedulerReads=0
+  let summaryRead:"pending"|"ready"|"error"="ready",compactPending=false
   const compile=(path:string,modules:Record<string,unknown>)=>{
     const exports:Record<string,ComponentType<Record<string,unknown>>>={}
     const source=readFileSync(new URL(path,import.meta.url),"utf8")
@@ -333,7 +334,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   const modules:Record<string,unknown>={
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
-    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};if(path==="v1/scheduler/state?view=summary")return {data:{decision:summaryHasScopes?(recordedDecision??{at,workloads:[]}):{at}}};if(path==="v1/scheduler"){fullSchedulerReads++;return {data:recordedDecision?{state:{decision:recordedDecision}}:undefined}}return path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}}},
+    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};if(path==="v1/scheduler/state?view=summary")return summaryRead==="pending"?{}:summaryRead==="error"?{error:new Error("summary unavailable")}:{data:{decision:summaryHasScopes?(recordedDecision??{at,workloads:[]}):{at}}};if(path==="v1/scheduler"){fullSchedulerReads++;return {data:!compactPending&&recordedDecision?{state:{decision:recordedDecision}}:undefined}}return path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,
     "@/lib/scheduler-history":schedulerHistoryHelpers,
@@ -351,6 +352,48 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx",{"@/lib/live-display":displayHelpers})
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
+  summaryRead="pending"
+  await context.test("summary pending does not claim a missing scope",()=>{
+    const html=render()
+    assert.match(html,/자율 상태 조회 중/)
+    assert.doesNotMatch(html,/자율 상태 미기록/)
+  })
+  summaryRead="error"
+  await context.test("summary errors remain query failures",()=>assert.match(render(),/자율 상태 조회 실패/))
+  summaryRead="ready";compactPending=true
+  await context.test("legacy compact pending does not claim a missing scope",()=>assert.match(render(),/자율 상태 조회 중/))
+  compactPending=false;summaryHasScopes=true;recordedDecision={at,workloads:[]}
+  await context.test("received decisions establish a missing scope",()=>assert.match(render(),/자율 상태 미기록/))
+  summaryHasScopes=false;recordedDecision=undefined
+  state.snapshot=null;state.metrics=[]
+  await context.test("unreceived snapshots keep operational counts unknown",()=>{
+    const html=render()
+    assert.match(html,/진행 변경 미확인/)
+    assert.match(html,/보관 중 실패 미확인/)
+    assert.match(html,/<span aria-live="polite">미확인<\/span>/)
+    assert.doesNotMatch(html,/진행 변경 0건|보관 중 실패 0건|미확인<\/span>건|진행·사건 없음/)
+    assert.match(html,/기준 <time>미수신<\/time>/)
+  })
+  query=new URLSearchParams({open:"reservations"})
+  await context.test("reservation absence is unknown before a snapshot",()=>assert.doesNotMatch(render(),/예약 없음/))
+  query=new URLSearchParams({open:"service:service-0"})
+  await context.test("deep-linked configuration waits for its snapshot",()=>assert.match(render().split('data-sheet="true"')[1],/구성 수신 대기/))
+  query=new URLSearchParams({at:"2026-10-30T12:00:01Z"})
+  await context.test("evidence facts wait for their response",()=>{
+    const html=render().split('data-sheet="true"')[1]
+    assert.match(html,/근거 조회 중/)
+    assert.doesNotMatch(html,/결정 전체|미기록/)
+  })
+  state.snapshot=snapshot
+  query=new URLSearchParams()
+  await context.test("received empty snapshots allow zero counts but not unreceived power",()=>{
+    const html=render()
+    assert.match(html,/<td data-label="전력">미확인<\/td>/)
+    assert.match(html,/진행 변경 0건/)
+    assert.match(html,/보관 중 실패 0건/)
+    assert.match(html,/<span aria-live="polite">0건<\/span>/)
+  })
+  state.metrics=[sample]
   const idle=render()
   assert.match(idle,/최근 5분/)
   assert.match(idle,/부하 없음/)
@@ -359,7 +402,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   assert.match(idle,/성능 판정<\/span><strong>판정 불가/)
   assert.match(idle,/풀·장치/)
   assert.match(idle,/새로고침 시 실시간 복귀/)
-  assert.match(idle,/자율 상태 미기록/)
+  assert.match(idle,/자율 상태 조회 중/)
   assert.doesNotMatch(idle,/live-node-power|data-sheet/)
   const keep={id:"keep",keep:true,status:"Feasible",expectedJoules:0,slo:[],nodes:[],instances:[]}
   recordedDecision={at,status:"Keep",workloads:[],keep,target:structuredClone(keep),search:{windowStart:at,windowEnd:at,received:0,accepted:0,computeInputs:0,examined:0}}

@@ -33,6 +33,27 @@ test("rendered power chart retains interval timestamps, breaks nulls and labels 
   assert.match(html,/관측 공백/)
 })
 
+test("live power distinguishes a pending history from a received empty response",()=>{
+  const from="2026-11-03T03:00:00Z",to="2026-11-03T03:15:00Z"
+  const query:{data?:OperatingPowerSeries;refetch:()=>void}={refetch:()=>{}}
+  const chart=load("../features/power-series.tsx",{
+    "@/lib/client":{useChillQuery:()=>query},
+    "@/lib/power-series":powerSeries,"@/lib/live-display":{displayTime},
+  })
+  const state=initialLiveState(),stamp=new Date(Date.now()-1000).toISOString()
+  const render=()=>renderToStaticMarkup(createElement(chart.LivePowerTrend,{state}))
+  const pending=render()
+  assert.match(pending,/전력 이력 조회 중/)
+  assert.doesNotMatch(pending,/전력 관측 없음/)
+  state.metrics=[{type:"metrics",seq:1,at:stamp,bucketAt:stamp,workloads:{},nodes:{},pool:{wholeWatts:null,activeWatts:null}}]
+  assert.match(render(),/전력 이력 조회 중/,"a null live sample cannot establish empty history")
+  state.metrics=[{...state.metrics[0],pool:{wholeWatts:0,activeWatts:0}}]
+  assert.match(render(),/0 W/,"measured zero remains an observed value")
+  state.metrics=[]
+  query.data={from,to,bucketNanos:5_000_000_000,buckets:[]}
+  assert.match(render(),/전력 관측 없음/)
+})
+
 test("power hook seeds bounded recent history on reentry then retains appended live intervals",()=>{
   const cells:unknown[]=[],effects:(()=>void)[]=[],requests:string[]=[]
   let cursor=0
@@ -196,5 +217,6 @@ test("live power visibly identifies an old bucket response after the real decode
   })
   const html=renderToStaticMarkup(createElement(chart.LivePowerTrend,{state:initialLiveState()}))
   assert.match(html.replace(/<[^>]+>/g,""),/전력 형식 불일치/)
-  assert.match(html,/실시간 관측만 표시/)
+  assert.match(html,/실시간 관측 미확인/)
+  assert.doesNotMatch(html,/전력 관측 없음/)
 })

@@ -37,7 +37,8 @@ export function PowerTrend({points,nodeUID}:{points:PowerPoint[];nodeUID?:string
 
 export function LivePowerTrend({state}:{state:LiveState}) {
   const {points,query}=usePowerSeries(state)
-  return <section aria-label="운영 전력 추세"><h2>전력 추세</h2><table><thead><tr><th>최근 (min)</th><th>기록 간격 (s)</th><th>실시간 간격 (s)</th></tr></thead><tbody><tr><td>15</td><td>5</td><td>1</td></tr></tbody></table><PowerTrend points={points}/>{query.error&&<p role="alert" title={query.error.body}>{query.error.status===0&&query.error.body.includes("형식 불일치")?"전력 형식 불일치":"전력 이력 조회 실패"} · 실시간 관측만 표시 <button type="button" onClick={()=>void query.refetch()}>다시 조회</button></p>}</section>
+  const observed=points.some(point=>point.wholeWatts!==null)
+  return <section aria-label="운영 전력 추세"><h2>전력 추세</h2><table><thead><tr><th>최근 (min)</th><th>기록 간격 (s)</th><th>실시간 간격 (s)</th></tr></thead><tbody><tr><td>15</td><td>5</td><td>1</td></tr></tbody></table>{observed||query.data||state.status==="fixture"?<PowerTrend points={points}/>:!query.error&&<p role="status">전력 이력 조회 중</p>}{query.error&&<p role="alert" title={query.error.body}>{query.error.status===0&&query.error.body.includes("형식 불일치")?"전력 형식 불일치":"전력 이력 조회 실패"} · {observed?"실시간 관측만 표시":"실시간 관측 미확인"} <button type="button" onClick={()=>void query.refetch()}>다시 조회</button></p>}</section>
 }
 
 export function PowerTimeline({from,to}:{from:string;to:string}) {
