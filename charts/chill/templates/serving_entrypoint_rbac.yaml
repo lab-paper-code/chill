@@ -83,6 +83,10 @@ rules:
   - apiGroups: [""]
     resources: [pods/log]
     verbs: [get]
+  # Startup failure classification reads only Events for the failed serving Pod.
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [list]
   # Hand-back lists the transition-cost runner Services of a measured Node.
   - apiGroups: [""]
     resources: [services]

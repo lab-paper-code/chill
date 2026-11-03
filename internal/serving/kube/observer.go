@@ -449,6 +449,11 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 		instance.State.Terminated = source.terminated[source.containerID] || source.containerID == "" && source.stopped
 		instance.State.Stopped = source.stopped || instance.State.Terminated
 		instance.State.Ready = instance.State.Ready && !instance.State.Terminated
+		failure, failed := servingstate.ClassifyPreparationFailure(pod, nil, nil, nil, false)
+		instance.State.StartupFailure = nil
+		if failed {
+			instance.State.StartupFailure = &failure
+		}
 		if source.containerID != "" {
 			instance.State.ID = servingstate.PhysicalID(source.uid, source.containerID)
 		}

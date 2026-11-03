@@ -254,16 +254,17 @@ const (
 // SchedulerNode is one Node of the entire POOL. Measurement marks the
 // measurement POOL; Reasons name configuration the Node lacks.
 type SchedulerNode struct {
-	Node        NodeReference         `json:"node"`
-	PowerMode   string                `json:"powerMode"`
-	Ready       bool                  `json:"ready"`
-	Measurement bool                  `json:"measurement,omitempty"`
-	GPUUUIDs    []string              `json:"gpuUUIDs"`
-	MemoryBytes uint64                `json:"memoryBytes"`
-	Reserved    SchedulerAllocation   `json:"reserved"`
-	NonServing  []SchedulerAllocation `json:"nonServing"`
-	ObservedAt  time.Time             `json:"observedAt"`
-	Reasons     []string              `json:"reasons,omitempty"`
+	Node            NodeReference         `json:"node"`
+	PowerMode       string                `json:"powerMode"`
+	Ready           bool                  `json:"ready"`
+	ReadyTransition time.Time             `json:"readyTransition,omitempty"`
+	Measurement     bool                  `json:"measurement,omitempty"`
+	GPUUUIDs        []string              `json:"gpuUUIDs"`
+	MemoryBytes     uint64                `json:"memoryBytes"`
+	Reserved        SchedulerAllocation   `json:"reserved"`
+	NonServing      []SchedulerAllocation `json:"nonServing"`
+	ObservedAt      time.Time             `json:"observedAt"`
+	Reasons         []string              `json:"reasons,omitempty"`
 }
 
 type SchedulerInstance struct {
@@ -274,25 +275,28 @@ type SchedulerInstance struct {
 	OwnerWorkloadUID string        `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference `json:"node"`
 	// Profile is the catalog body in memory; stored records keep only ProfileID.
-	Profile   *Profile `json:"profile,omitempty"`
-	ProfileID string   `json:"profileID,omitempty"`
+	Profile         *Profile `json:"profile,omitempty"`
+	ProfileID       string   `json:"profileID,omitempty"`
+	RuntimeImage    string   `json:"runtimeImage,omitempty"`
+	WarmupArguments []string `json:"warmupArguments,omitempty"`
 	// WorkloadUID is the one Workload the instance serves; empty when unrouted.
 	WorkloadUID string              `json:"workloadUID"`
 	Allocation  SchedulerAllocation `json:"allocation"`
 	Ready       bool                `json:"ready"`
 	Stopped     bool                `json:"stopped"`
 	// Terminated retains exact physical termination without erasing occupancy.
-	Terminated     bool            `json:"terminated,omitempty"`
-	Routable       map[string]bool `json:"routable"`
-	Reasons        []string        `json:"reasons,omitempty"`
-	Capacity       int             `json:"capacity"`
-	Weight         int32           `json:"weight"`
-	MaxBatch       int             `json:"maxBatch"`
-	FixedBatchSize int             `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
-	MaxWait        time.Duration   `json:"maxWaitNanos"`
-	ObservedAt     time.Time       `json:"observedAt"`
-	IdleMeter      string          `json:"idleMeter"`
-	IdleScope      string          `json:"idleScope"`
+	Terminated     bool                           `json:"terminated,omitempty"`
+	StartupFailure *PreparationFailureObservation `json:"startupFailure,omitempty"`
+	Routable       map[string]bool                `json:"routable"`
+	Reasons        []string                       `json:"reasons,omitempty"`
+	Capacity       int                            `json:"capacity"`
+	Weight         int32                          `json:"weight"`
+	MaxBatch       int                            `json:"maxBatch"`
+	FixedBatchSize int                            `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
+	MaxWait        time.Duration                  `json:"maxWaitNanos"`
+	ObservedAt     time.Time                      `json:"observedAt"`
+	IdleMeter      string                         `json:"idleMeter"`
+	IdleScope      string                         `json:"idleScope"`
 	// UnroutedSince is when the instance last lost every positive route weight
 	// (nil while routed); after one observation window unrouted it is removed.
 	UnroutedSince *time.Time `json:"unroutedSince,omitempty"`
@@ -404,11 +408,12 @@ type Action struct {
 	// final goal. It contains no Actions and only routes already-prepared peers.
 	RouteTarget *SchedulerCandidate `json:"routeTarget,omitempty"`
 	// Fixed lowers an available Node to its lowest power mode; every candidate shares it.
-	Fixed      bool          `json:"fixed,omitempty"`
-	Status     string        `json:"status"` // planned, running, complete, failed, cancel
-	Elapsed    time.Duration `json:"elapsedNanos"`
-	Cancelable bool          `json:"cancelable"`
-	Reason     string        `json:"reason,omitempty"`
+	Fixed              bool                `json:"fixed,omitempty"`
+	Status             string              `json:"status"` // planned, running, complete, failed, cancel
+	Elapsed            time.Duration       `json:"elapsedNanos"`
+	Cancelable         bool                `json:"cancelable"`
+	Reason             string              `json:"reason,omitempty"`
+	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
 }
 
 // SchedulerReplacement is the last observed completed replacement of a

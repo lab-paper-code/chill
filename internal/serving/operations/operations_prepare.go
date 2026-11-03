@@ -95,7 +95,27 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 		}
 		pod = existing
 	}
-	evidence = &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID, Created: created}
+	evidence = &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID,
+		Created: created, RuntimeImage: desiredImage, WarmupArguments: serving.RunnerWarmupArguments(spec.Config.RunnerCommand)}
+	defer func() {
+		if err == nil || errors.Is(err, context.Canceled) {
+			return
+		}
+		observed := pod
+		var failed *servingstate.PreparationPodError
+		if errors.As(err, &failed) {
+			observed = failed.Pod
+		}
+		currentNode, _ := o.Kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
+		events, _ := o.Kube.CoreV1().Events(pod.Namespace).List(ctx, meta.ListOptions{FieldSelector: "involvedObject.uid=" + string(pod.UID)})
+		var related []core.Event
+		if events != nil {
+			related = events.Items
+		}
+		if failure, failed := servingstate.ClassifyPreparationFailure(observed, currentNode, related, err, true); failed {
+			evidence.Failure = &failure
+		}
+	}()
 	err = o.Observer.PublishPreparedSource(pod, spec.Instance.Node)
 	if err != nil {
 		return evidence, err
@@ -127,8 +147,8 @@ func (o *Operations) PrepareObserved(ctx context.Context, pod *core.Pod) (bool, 
 	if current.UID != pod.UID {
 		return false, errors.New("prepared Pod identity changed")
 	}
-	if current.Status.Phase == core.PodFailed {
-		return false, fmt.Errorf("native preparation Pod failed%s", terminationMessages(current))
+	if failure, failed := servingstate.ClassifyPreparationFailure(current, nil, nil, nil, true); failed {
+		return false, &servingstate.PreparationPodError{Pod: current, Reason: fmt.Sprintf("native preparation failed: %s", failure.Reason)}
 	}
 	for _, i := range o.Runtime.Instances() {
 		if strings.HasPrefix(i.ID, string(pod.UID)+"/") && i.Ready {

@@ -81,6 +81,7 @@ func (c *reservationState) completeRun(run *actionRun, result *servingstate.Oper
 		}
 	}
 	run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
+	c.recordPreparationFailureLocked(run, result, c.state.Snapshot)
 	c.state.Results = append(c.state.Results, *result)
 	c.mu.Unlock()
 }
@@ -113,6 +114,7 @@ func (c *reservationState) completeAdmittedRun(run *actionRun, result *servingst
 	c.mu.Lock()
 	run.result = result
 	run.action.Status, run.action.Reason = result.Status, result.Error
+	c.recordPreparationFailureLocked(run, result, c.state.Snapshot)
 	if err == nil && result.Status == servingstate.NativeOperationComplete || result.EffectsNotStarted && !run.inheritedReservation {
 		run.reserved = false
 		if kind != runnerKind {
@@ -124,11 +126,47 @@ func (c *reservationState) completeAdmittedRun(run *actionRun, result *servingst
 	c.mu.Unlock()
 }
 
-func (c *reservationState) retireRunsLocked(cutoff time.Time) {
+func (c *reservationState) retireRunsLocked(cutoff time.Time, snapshot serving.SchedulerSnapshot) {
 	c.state.Results = slices.DeleteFunc(c.state.Results, func(r servingstate.OperationResult) bool { return r.EndedAt.Before(cutoff) })
 	for id, run := range c.runs {
+		if run.result != nil {
+			c.recordPreparationFailureLocked(run, run.result, snapshot)
+		}
+		if serving.PreparationFailurePresent(run.action, snapshot) && !c.preparationFailureSupersededLocked(run.action) {
+			continue
+		}
 		if !run.reserved && run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel && run.result != nil && run.result.EndedAt.Before(cutoff) && !c.runReferencedLocked(id) {
 			delete(c.runs, id)
 		}
 	}
+}
+
+func (c *reservationState) recordPreparationFailureLocked(run *actionRun, result *servingstate.OperationResult, snapshot serving.SchedulerSnapshot) {
+	if run.action.PreparationFailure != nil {
+		return
+	}
+	run.action.PreparationFailure = result.PreparationFailure(snapshot)
+	if run.action.PreparationFailure == nil {
+		return
+	}
+	var previous *actionRun
+	for _, candidate := range c.runs {
+		if candidate.result != nil && !candidate.result.EndedAt.After(result.EndedAt) &&
+			serving.PreparationFailureReproduces(run.action, candidate.action) &&
+			(previous == nil || previous.result.EndedAt.Before(candidate.result.EndedAt)) {
+			previous = candidate
+		}
+	}
+	if previous != nil {
+		serving.ObserveRepeatedPreparationFailure(&run.action, previous.action)
+	}
+}
+
+func (c *reservationState) preparationFailureSupersededLocked(action serving.Action) bool {
+	for _, run := range c.runs {
+		if serving.PreparationFailureSupersedes(run.action, action) {
+			return true
+		}
+	}
+	return false
 }

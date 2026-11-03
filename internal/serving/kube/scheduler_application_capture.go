@@ -66,6 +66,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		for _, condition := range n.Status.Conditions {
 			if condition.Type == core.NodeReady {
 				sn.Ready = condition.Status == core.ConditionTrue
+				sn.ReadyTransition = condition.LastTransitionTime.Time
 			}
 		}
 		if slices.Contains(config.Settings.ExcludedNodes, n.Name) {

@@ -7,7 +7,6 @@ import (
 	maps "maps"
 	reflect "reflect"
 	slices "slices"
-	strings "strings"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -71,18 +70,6 @@ func measuredRuntimeDelivery(p *serving.Profile) (profilingrun.RuntimeDeliveryPr
 		return profilingrun.RuntimeDeliveryProjection{}, nil, err
 	}
 	return host, p.RuntimeDelivery, nil
-}
-
-// terminationMessages names each failed container with its termination
-// message, so runner start errors (DP-03) reach the preparation failure.
-func terminationMessages(pod *core.Pod) string {
-	text := ""
-	for _, status := range slices.Concat(pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses) {
-		if t := status.State.Terminated; t != nil && t.ExitCode != 0 && t.Message != "" {
-			text += fmt.Sprintf("; %s: %s", status.Name, strings.TrimSpace(t.Message))
-		}
-	}
-	return text
 }
 
 // ValidatePreparation checks a preparation against its measured profile.

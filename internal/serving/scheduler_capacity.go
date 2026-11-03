@@ -134,10 +134,11 @@ type SchedulerCapacityWorkload struct {
 // are the longest chains before and after the route; Joules is the mean chain
 // energy.
 type SchedulerNodePlan struct {
-	Node     NodeReference `json:"node"`
-	Key      string        `json:"key"`
-	Eligible bool          `json:"eligible"`
-	Reason   string        `json:"reason,omitempty"`
+	Node               NodeReference       `json:"node"`
+	Key                string              `json:"key"`
+	Eligible           bool                `json:"eligible"`
+	Reason             string              `json:"reason,omitempty"`
+	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
 	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
 	RequiresRecovery        []string                       `json:"requiresRecovery,omitempty"`

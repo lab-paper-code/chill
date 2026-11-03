@@ -29,7 +29,9 @@ type pendingPreparationAPI struct {
 func (c *pendingPreparationAPI) Create(ctx context.Context, object client.Object, opts ...client.CreateOption) error {
 	if pod, ok := object.(*core.Pod); ok {
 		pod.Status.Phase = core.PodPending
-		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}
+		// An ordinary delivery wait must exhaust the preparation deadline;
+		// observed pull failures now end preparation and are separately retryable.
+		pod.Status.ContainerStatuses = []core.ContainerStatus{{Name: servingstate.FirstfloorContainerName, State: core.ContainerState{Waiting: &core.ContainerStateWaiting{Reason: "ContainerCreating"}}}}
 	}
 	if err := c.Client.Create(ctx, object, opts...); err != nil {
 		return err

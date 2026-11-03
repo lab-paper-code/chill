@@ -1535,10 +1535,9 @@ func TestCapacityPrepareCostIgnoresQueueMemory(t *testing.T) {
 	}
 }
 
-// m4 r2: a preparation whose instance died fails the goal; while that failure
-// stays in snapshot.Actions (one observation window) no plan prepares the same
-// state on that Node again.
-func TestCapacityFailedPreparationWaitsOneWindow(t *testing.T) {
+// A concrete failed-start fact, rather than a generic action error, excludes
+// this physical placement without freezing its Workload.
+func TestCapacityPreparationFailureFactExcludesPlacement(t *testing.T) {
 	s, snap := schedulerFixture()
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
@@ -1551,6 +1550,8 @@ func TestCapacityFailedPreparationWaitsOneWindow(t *testing.T) {
 	}
 	snap.Actions = []Action{{ID: "prepare-lost", Kind: schedulerActionPrepare, Node: n2, Instance: "target-w1-" + add.Profile.ID + "-1",
 		From: "unloaded", To: schedulerState(add), Status: schedulerActionFailed, Reason: "completed effect lost"}}
+	snap.Actions[0].PreparationFailure = NewPreparationFailure(add, snap.Nodes[len(snap.Nodes)-1].MemoryBytes, "failed-pod",
+		PreparationFailureObservation{Classification: PreparationDeterministic, ReasonKey: "process-exit:firstfloor:OOMKilled:137", Reason: "OOMKilled"})
 	d := capacityDecideForTest(t, s, snap, rows)
 	if d.Target == nil || poolsOn(*d.Target, n2) {
 		t.Fatalf("failed preparation planned again: %+v", d.Target)

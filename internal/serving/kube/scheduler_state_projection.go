@@ -92,6 +92,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			Node: state.Node, Profile: profileByID[state.Profile], Allocation: state.Allocation, Ready: state.Ready && !state.Terminated,
 			Stopped: state.Stopped, Terminated: state.Terminated, ObservedAt: state.ObservedAt, Routable: state.Routable, Weight: 1}
 		instance.PodUID = state.PodUID
+		instance.StartupFailure = state.StartupFailure
 		if state.Reason != "" {
 			instance.Reasons = []string{state.Reason}
 		}
