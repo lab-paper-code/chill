@@ -132,17 +132,6 @@ func TestSchedulerSummaryLargeState(t *testing.T) {
 	if len(full) <= 4<<20 || len(summary) >= 4096 {
 		t.Fatalf("full bytes=%d, summary bytes=%d", len(full), len(summary))
 	}
-	evidence := newSchedulerReadEvidence()
-	projected := evidence.state(&state)
-	compact, err := json.Marshal(struct {
-		Settings serving.SchedulerSettings `json:"settings"`
-		State    schedulerReadState        `json:"state"`
-		schedulerReadEvidence
-	}{serving.SchedulerSettings{}, projected, evidence})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("compact bytes=%d, summary bytes=%d", len(compact), len(summary))
 	t.Logf("full bytes=%d, summary bytes=%d", len(full), len(summary))
 }
 
