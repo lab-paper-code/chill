@@ -666,6 +666,12 @@ superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사
 `과거 측정`으로 표시한다. 상세는 서버의 `label`(예: 사용 가능)을 그대로 측정 상태에 두고,
 품질 판정·현재 사용을 독립 축으로 표시한다. 품질 unknown을 서버 사용 가능의 대체 판정으로 쓰지 않는다.
 
+요청 단건 `/batch-energy-optimizations/{name}/result`의 현재 사용도 accepted catalog의
+`currentMeasurements[].id`를 요청 `namespace/name/UID`와 정확히 대조한다. 재사용 확인 결과는
+확인 요청 자신의 identity로 대조하며 원본 참조 행의 현재 사용을 상속하지 않는다.
+catalog/선택 정보를 읽을 수 없으면 `scope.schedulerUsed:null`이며 조건 일치로 false/true를
+추정하지 않는다. 이는 조회 시점의 선택 사실이고 봉인된 결과·그 기준 시각은 바꾸지 않는다.
+
 **결과 체크리스트 v1**: 정확 조건/lineage, 목표 batch 충족, 독립 active/shared idle 각각
 `max(3,동결 MinimumTrials)` 반복, 유한한 기존 CI/level(0폭 허용), pooled client p95·N>1,
 모든 사용 trial의 동결 전력창/표본/gap/실패 정책 통과, 실제 전력 출처를 확인한다.
@@ -748,6 +754,9 @@ namespace별 프로세스 메모리 base snapshot 한 개, atomic 교체, namesp
 응답이 불확실한 mutation은 자동 재시도하지 않는다. 컴포넌트 unmount 또는 session
 변경은 대기 구간을 포함한 요청 수명을 취소하고 다음 HTTP 시도 전에 동일 token/session을
 다시 확인한다. 한도 소진 후에는 초기화 중 상태와 명시 재조회를 제공하며 무기한 polling하지 않는다.
+운영 화면의 기간 사건 seed도 같은 warming 정책을 적용한다. 재시도 중에는 `초기화 중`을
+표시하고, 고정 from/to/cursor와 성공 페이지 최대 5개를 유지한다. 이동·세션 변경은 같은
+AbortSignal로 HTTP와 Retry-After 대기를 함께 취소한다.
 source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패면 분모 null,
 목록 불완전이면 미측정 수 null, catalog 오래됨이면 현재 사용 판정을 stale로 표시한다.
 단건 비용/점유 장애가 무관한 coverage를 막지 않는다. 인증 변경/401/403 후 이전 cache 표시 금지다.
