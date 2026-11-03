@@ -543,7 +543,7 @@ catalog 밖 단건 → Query API /result → retained loader·같은 통계 help
   inventory LIST seed와 fact-source GET의 UID/RV 집합이 같으면 기존 `rows`/`nodeRows`를 재사용한다.
   성공 조회 시각만 바뀐 경우 지원 판정을 재계산하지 않는다. 성능·배포 수용은 §13.6의 별도 실측 대상이다.
 - Run은 namespace LIST 한 번에서 UID/owner index를 만든다. 공개 page마다 전체 LIST를 반복하지 않는다.
-  owner는 §12.2의 정확 controller UID 규칙이다. operation/occupancy 전체 evidence scan은 coverage에 넣지 않는다.
+  owner는 §12.2의 정확 controller UID 규칙이다. operation 전체 evidence scan은 coverage에 넣지 않는다. DOM은 namespace LIST와 각 CR의 정확한 result ref만 읽고 prefix/raw scan은 하지 않는다(§13.8).
 - 순수 공통 판정/DTO는 `internal/queryapi/measurement_coverage*.go`에 둔다.
   `internal/serving/httpapi`는 queryapi을 직접 import하지 않는다. `cmd/chill-query` adapter가
   공통 판정을 transport DTO에 연결한다. 기존 package 방향과 `.go-arch-lint.yml`은 변경할 필요가 없다.
@@ -565,7 +565,7 @@ cache 접근 전 기존 TokenReview와 정확
 `get /chill/api/v1/namespaces/{namespace}/measurement-coverage` URL SAR를 수행한다.
 이 grant는 inventory와 해당 namespace의 catalog/측정 요약을 읽는 명시적 권한이며 다른 URL grant에서 유추하지 않는다.
 또한 기존 `h.authorizer.AuthorizeResource`로 **같은 namespace의 `edge.dacs.io/v1alpha1`
-`batchenergyoptimizations` list와 `profilingruns` list**를 검사한다. 단순 URL ClusterRole만으로 namespaced Role을 우회하지 않는다.
+`batchenergyoptimizations`, `profilingruns`, `dispatchoccupancymeasurements` list**를 검사한다. 단순 URL ClusterRole만으로 namespaced Role을 우회하지 않는다.
 `measurementService.namespace` 허용 범위도 유지한다. 다른 namespace reuse 원본은 별도 권한 없이 노출하지 않는다.
 
 | 상황 | 응답 |
@@ -592,15 +592,15 @@ atomic 다중 source snapshot이라고 주장하지 않는다. null은 이유 �
 | `schemaVersion`, `snapshotId`, `assessmentVersion` | `"measurement-coverage.v1"`, namespace revision, `"result-checklist.v1"` |
 | `dataAsOf`, `freshness`, `completeness` | 기준 시각, fresh/stale, complete/partial |
 | `scope` | `{namespace,supportBasis:"representative-node-static"\|"selected-node-static",goalBasis:"requested"\|"explicit",targetBatches:[]}` |
-| `sources[]` | `{kind,resourceVersions,complete,error:{code,message,retryable}\|null}`. inventory/compatibility/catalog/BEO/Run/input-contract 구별 |
+| `sources[]` | `{kind,resourceVersions,complete,error:{code,message,retryable}\|null}`. inventory/compatibility/catalog/BEO/Run/DOM/input-contract 구별 |
 | `summary` | supportedCellCount, completeCellCount, criteriaMetCellCount, reusedCellCount, unknownSupportCount, unsupportedCellCount, countsByDisplayStatus, requestCount, runCount, profileCount, failedCellCount, currentFailedRequestCount, historicalFailedRequestCount. 미확정 수 null |
 | `groups[]` | 모델×class `{model:{name,uid},deviceClass:{name,uid},cellIds:[],complete,supported,unknownSupport}`. 장치 열 이름순 고정 |
 | `cells[]` | 아래 Cell |
 | `entities` | requests/profiles는 `{uid,id,status,label,cellIds}`, runs는 `{uid,status,label,cellIds}`인 scalar 화면 요약만 제공한다. assessment/checks/resultRows/원문/log 없음 |
 | `nextActions[]` | `{kind,cellId,variantId,entityId,reasonCode,message}`. 미해결 실패/부족 batch/근거 확인만 각 최대 3건 |
 
-operationCosts/dispatchOccupancies는 coverage index에서 제외한다. 기존 각각의 list/detail response에
-동일 reducer assessment를 붙인다. 이들 source 실패가 BEO coverage를 막지 않아야 한다.
+operationCosts는 coverage index에서 제외한다. dispatch occupancy는 셀의 `occupancy[]`로 제공하며,
+기존 각각의 list/detail response에는 동일 reducer assessment를 붙인다. DOM 근거 읽기 실패는 원래 assessment 사유로 남고 BEO profile 판정을 바꾸지 않는다.
 Run 상세도 기존 허용 조회 경로에서 assessment를 얻을 수 있어야 하며 aggregate grant를 강제하지 않는다.
 모든 entities의 status는 서버의 화면 displayStatus이며 label도 서버 값이다. 원본 phase/세부 사유는 기존 단건에서 읽는다.
 catalog 내부 메모리 facts 타입은 기존 serving 경계에 두고 cmd adapter에서 공통 HTTP DTO로 변환한다.
@@ -802,12 +802,12 @@ AbortSignal로 HTTP와 Retry-After 대기를 함께 취소한다.
 5페이지 상한과 유한 warming 재시도는 그대로 유지한다.
 source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패면 분모 null,
 목록 불완전이면 미측정 수 null, catalog 오래됨이면 현재 사용 판정을 stale로 표시한다.
-단건 비용/점유 장애가 무관한 coverage를 막지 않는다. 인증 변경/401/403 후 이전 cache 표시 금지다.
+단건 비용/점유 장애가 무관한 profile 판정을 바꾸지 않는다. DOM 목록 source 실패는 coverage의 partial/source 오류로 표시한다. 인증 변경/401/403 후 이전 cache 표시 금지다.
 
 구현의 namespace cache는 처음 준비 중 503/`Retry-After: 2`를 반환하고, source별 성공 입력을
 한 번의 갱신에 모아 교체한다. 실패 source는 최대 5분의 기존 입력과 마지막 성공 기준 시각을
 유지하며 partial/stale로 보인다. Run LIST는 한 번의 namespace 갱신에서 UID/owner index로
-사용하고 공개 page별 전수 LIST를 하지 않는다. 동작 비용/점유 source는 집계에 접근하지 않는다.
+사용하고 공개 page별 전수 LIST를 하지 않는다. DOM도 namespace LIST와 정확 ref 검증을 같은 base에 보존하고 동작 비용 source는 집계에 접근하지 않는다.
 
 5분을 넘긴 snapshot을 읽은 요청은 namespace의 동일 in-flight 갱신 완료를 기다린 뒤
 새 snapshot으로 응답한다. 갱신 시작 직후 오래된 지역 변수만 보고 503을 반환하지 않는다.
@@ -871,3 +871,101 @@ model/deviceClass/node/powerMode/path/cpu/created/status, order는 asc/desc다.
 부분 결과는 전체 합계로 올리지 않고 미제공으로 둔다. 유휴를 포함한 전체 순서임을 표시한다.
 점유 목록 d는 ms, 처리량은 req/s이며 결측에는 단위를 붙인 가짜 수치를 만들지 않는다.
 음수 duration/점유·비유한 값은 값 오류, 결측은 미제공, 관측 0은 0으로 구별한다.
+
+### 13.8 네이티브 d 요청·진행·셀 커버리지 (2026-11-03)
+
+공개 생성은 `POST /api/v1/namespaces/{ns}/dispatch-occupancy-measurements[?dryRun=All]`,
+본문은 `{name?,node,batchEnergyOptimization,workload,batch}`뿐이다. 셀에서 선택하면 그 셀의
+BEO 이름을 보낸다. 서버가 scheduler ConfigMap의 `dispatchOccupancy` 정책으로 완성·동결한
+DOM을 `{request:"Accepted"|"NOT_SUBMITTED",task:<DOM>}`으로 돌려준다. 프로토콜 필드를
+본문에 넣으면 400, 불가능한 조건은 `400 OccupancyInfeasible`, 설정 미제공/오류는
+`503 OccupancyPolicyUnavailable`이며 UI 기본값으로 대체하지 않는다.
+삭제는 `DELETE .../dispatch-occupancy-measurements/{name}?uid=...`와
+`If-Match: resourceVersion`이다. Measuring이면 409이고 실행 취소 API는 없다.
+
+**진행 projection.** Query의 기존 목록 `{items:[...]}`과 단건 GET은
+`kind,metadata,conditions,status,references,assessment,node`를 그대로 유지하며 다음 최상위
+필드를 추가한다. `metadata.resourceVersion`도 유지하여 삭제의 precondition에 쓴다.
+
+```text
+name, uid, node, batchEnergyOptimization, workload, batch, profileID,
+phase: null | Measuring | Complete | Insufficient | Failed,
+reason, createdAt,
+measurementWindow: {start,end} | null,
+d: {perRequestNanos: signed int64 | null, throughput: number | null,
+    idleFraction: number | null, verdict: string} | null,
+evidence: {store,key,size} | null
+```
+
+`createdAt`은 CR 생성 시각이다. 측정 시작/종료는 검증된 해당 evidence의 `window`만 사용한다.
+Measuring에 생성 시각/예상 duration으로 가짜 측정창이나 퍼센트를 만들지 않는다.
+`profileID`는 동결 조건 또는 일치 확인한 record에서 읽는다. d가 status에만 있으면 signed 값과
+유효 throughput은 보존하되 idleFraction은 null, verdict는 빈 문자열이다. evidence 읽기/identity
+검증에 실패해도 목록 전체를 숨기지 않고 기존 assessment와 원래 status·ref를 보존한다.
+음수 d를 0으로 바꾸지 않으며 정확 정수 파서를 사용하는 클라이언트가 int64를 무손실로 소비한다.
+
+**커버리지 projection.** 무쿼리 GET과 `view=summary`의 모든 셀에
+`occupancy: [{node:{name,uid},profileID,batch,state,request:{name,uid}|null,
+phase,reason,d,evidence,adopted}]`를 추가한다. `d/evidence`는 위와 같은 형식이며
+adopted는 스케줄러가 실제 선택한 occupancy tuple/evidence ref의 catalog-read 계약이
+연결되기 전까지 **항상 null**이다. profile의 schedulerUsed로 d 채택을 추측하지 않는다.
+
+- 단위는 Node UID × profileID × batch다. 같은 Node/batch에서 현재 profile의 present > measuring > failed > none 순으로 선택·정렬하며 같은 상태는 createdAt 최신이 우선한다. 과거 profile tuple 원자료도 별도 항목으로 유지한다.
+- `present`: 현재 셀의 `currentMeasurement`에 속한 profileID이고, 현재 물리 Node UID의
+  일치 확인된 Accepted evidence가 있다. 더 새로운 Failed/Insufficient 요청보다 이 값이 우선한다.
+- `failed`: phase Failed/Insufficient 또는 Complete인데 evidence 누락/불일치다.
+  후자는 reason을 `EvidenceInvalid`로 표시하고 구체적인 누락·읽기·해석·identity 오류는
+  원래 DOM assessment에 보존한다. `measuring`: phase 미기록 또는 Measuring.
+- `none`: 논리적으로 현재 d가 없음을 뜻한다. **요청도 evidence도 없는 tuple은 항목을 만들지 않는다.**
+  셀의 `occupancy:[]` 또는 해당 tuple 부재가 d 없음이며 UI는 요청 화면에서 Node/batch를 선택한다.
+  원자료가 있는 과거 profile tuple만 `state:"none",reason:"ProfileSuperseded"`로 남기고
+  request/phase/d/evidence 원자료를 보존한다.
+- Node query는 해당 Node만 포함한다. 과거 물리 UID와 새 물리 UID를 합치지 않는다.
+  현재 profile 선택은 기존 결정 A를 그대로 쓰므로 최신 실패 profile을 옛 성공으로 대체하지 않는다.
+- DOM 목록은 namespace base snapshot의 독립 source이며 SAR에 같은 namespace DOM list가 필요하다.
+  chart의 Query Role/추가 namespace Role(`templates/query.yaml`)과 viewer ClusterRole
+  (`templates/query_viewer_rbac.yaml`)은 이미 DOM get/list를 허용하므로 chart 변경은 없다.
+
+**크기 영향 추정(실행 검증 아님).** 셀×Node×batch의 Cartesian product를 생성하지 않는다.
+항목 수는 **실제 DOM 요청이 가리키는 distinct Node UID/profileID/batch tuple 수 이하**이며
+최악에도 DOM 요청 수에 비례한다. 요청 없는 390셀은 빈 배열 390개뿐이다.
+보존 운영 `deployB/refactor-cutover-20261103/cutover-crs.json`에는 DOM 150개,
+동결 `(node 이름,profileID,batch)` tuple 51개가 있다. phase별 Complete 89,
+Failed 23, Insufficient 38이며 result ref는 127개다. 같은 이름의 물리 Node 교체를
+검증하기 전까지 51개를 정확한 UID tuple 수라고 단정하지 않고, 150개를 보수적 항목 수로 쓴다.
+
+대표 Node UID/profileID/ref 문자열의 present 항목은 원본 JSON 569 B/22 논리 노드다.
+문자열 길이에 따라 달라지며 실제 record/full protocol/raw는 응답에 넣지 않는다.
+`evidence`는 `{store,key,size}` ref만, `d`는 signed 값·처리량·idle 비율과 원래 verdict만 담는다.
+
+| 가정 | 항목 수 | present 원본 항목 증가 추정 | baseline 포함 논리 노드 추정 |
+|---|---:|---:|---:|
+| 보존 snapshot의 이름 기반 tuple마다 물리 UID가 동일 | 51 | 29,019 B | 231,874 |
+| 모든 보존 DOM 요청이 서로 다른 물리 tuple | 150 | 85,350 B | 234,052 |
+
+논리 노드 추정은 기존 운영 디코더 실측 baseline 230,362에 항목당 22와 셀 배열 390을 더한 값이다.
+빈 배열 필드의 원본 JSON 증가는 셀당 15 B, 390셀 약 5,850 B다(항목 byte 추정과 별도).
+기존 상한 2,000,000노드/깊이 64와 서버 응답 8MiB는 올리지 않는다.
+summary는 기존 `measurement-summary.v1` values/shapes dictionary를 그대로 쓰며 Node·profileID·
+상태 shape·ref를 공유한다. 위 byte 수는 **dictionary 압축 후 실측이 아닌 원본 항목 추정**이다.
+`TestOccupancySummaryRetainsSignedTuplesWithinDecoderBudget`는 390셀에 실제 요청 수 기준
+150항목만 배치해 summary 256KiB, 확장 노드/깊이, signed/null/tuple round-trip을 검사한다.
+`TestCoverageOccupancyExecutionStates`의 공통 fixture는 요청 없는 모든 셀이 빈 배열임을 검사한다.
+`TestCoverageOccupancyEqualPriorityUsesNewestCreatedAt`는 입력 순서와 무관한 동률 최신 선택,
+`TestCoverageOccupancyInvalidEvidenceReason`은 해석·identity 검증 실패의 `failed/EvidenceInvalid`를 검사한다.
+서버 배포 후 실제 물리 tuple 수·summary byte 증가·cold refresh 시간은 별도로 수용한다.
+
+**통합 검증 범위(2026-11-03).** Node 24.14.0의 offline frozen 설치는 479개 재사용·다운로드 0개였다.
+Go는 gofmt, `go test ./internal/queryapi/... ./cmd/chill-query/...`, `make lint`,
+`make arch-check`(67/67 production packages), `make test`(envtest 1.31.0 포함)가 통과했다.
+대시보드 `tsc --noEmit`, `eslint .`, 운영 summary 디렉터리를 지정한 전체 테스트 487개와
+기본 `next build`가 통과했다. 빌드의 Asta Sans fallback 경고는 남는다.
+로컬 production 대시보드에서 운영 HTTPS GET만 사용해 DOM 결과 25개·결과 Sheet·기존 커버리지와
+상세를 1440×900으로 확인했다. API GET은 200, 브라우저 콘솔 오류와 문서 가로 넘침은 없었으며
+Next 링크 prefetch의 `net::ERR_ABORTED`만 관측했다. 스크린샷은 외부 운영 근거
+`dom-e2e/render-{results,result-detail,coverage,coverage-detail}.png`에 보존한다.
+운영 Query에는 새 occupancy projection이 아직 없으므로 이 렌더는 기존 읽기 화면 회귀이며,
+표시된 `d 없음`으로 운영 evidence 부재를 판정하지 않는다.
+DOM POST·DELETE는 실행하지 않았다. 서버·Query 배포 후 dry-run의 정책 동결·불가능 조건·권한,
+실제 제출→Job→evidence→진행/종료 polling, 셀 d 상태·우선순위·이전 profile 보존,
+UID/If-Match 삭제·Measuring 409와 삭제 후 자체 evidence 정리를 실서버에서 수용해야 한다.

@@ -38,6 +38,16 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 - 측정 요청 목록은 실행 실패 사유가 있어도 `CatalogUnavailable`을 별도의 `카탈로그 상태: 카탈로그 조회 불가`로 표시한다. 카탈로그 조회 실패를 요청 실행 실패로 바꾸거나 숨기지 않는다.
 - 2026-11-02 운영 GET을 로컬 production projection에 적용한 UTF-8 본문 크기: workloads **17,227,584 → 422,048 B**(29개), 커버리지 **9,218,406 → 1,893,956 B**, 측정 요청 **11,941,797 → 1,677,154 B**, 프로파일 `limit=50&offset=100&sort=model&order=asc` **8,550,682 → 921,387 B**. 배포 후 수치가 아니라 같은 운영 원문에 대한 로컬 projection 결과다.
 
+### d · 분배 점유시간
+
+측정은 서비스와 함께 사이드바의 **운영 영역**에 속한다. `/measurements/requests/new?kind=dispatch-occupancy`에서 셀에 대응하는 BEO·워크로드·Node·배치만 선택한다. `POST /api/v1/namespaces/{ns}/dispatch-occupancy-measurements?dryRun=All` 응답의 완성된 `task.spec`를 읽기 전용 표로 보여 주며, 프로토콜 필드를 요청 본문에 넣지 않는다. 검사 입력 identity가 바뀌면 제출을 막는다. `NOT_SUBMITTED`는 미제출, `OccupancyInfeasible`은 측정 조건 불충족, `OccupancyPolicyUnavailable`은 측정 정책 사용 불가다. 응답 미수신은 자동 재제출하지 않고 동일 이름의 접수 기록을 조회한다.
+
+커버리지 셀의 `occupancy[]`는 Node UID·profileID·배치별 없음/측정 중/실패/있음을 표시하고 없음·실패에서 해당 조건의 d 요청으로 이동한다. `adopted:null`은 채택 미확인으로 유지한다. `/measurements/results?kind=dispatch-occupancy`의 목록·Sheet는 phase·사유·evidence 측정 구간·경과와 signed d(ms/요청)·처리량·유휴 비율·판정을 표시하며 대기/측정 중에 주기 갱신한다. 삭제는 영구 삭제 확인 후 UID 쿼리와 `If-Match: resourceVersion`을 전달한다. Measuring은 비활성이고 409는 최신 상태 조회로 연결한다. 실행 중단/취소 API는 없다.
+
+`occupancy[]`는 실제 DOM tuple만 포함한다. 빈 배열은 d 없음이며 Node×배치 항목을 브라우저에서 만들지 않는다. `ProfileSuperseded`는 원자료가 있는 이전 프로파일, `EvidenceInvalid`는 Complete 근거 검증 실패다. 같은 tuple은 서버의 present > measuring > failed > none 및 동률 생성 시각 최신 선택을 그대로 표시한다.
+
+2026-11-03 통합 검증: Node 24.14.0 offline frozen 설치(479개 재사용·다운로드 0), typecheck·eslint·운영 summary 회귀 포함 전체 테스트 487개와 기본 build 통과. 로컬 production + 운영 GET으로 결과·커버리지 목록/Sheet를 1440×900에서 확인했다. 서버·Query 미배포 상태의 읽기 회귀이므로 새 d 상태나 생성·삭제 E2E를 검증한 것은 아니다. DOM POST·DELETE는 실행하지 않았으며 배포 후 수용 범위는 [측정 API §13.8](../docs/design/serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03)에 남긴다.
+
 ### CPU 공유 실행·전력 표본 계약
 
 측정 요청·프로파일 조건은 CPU 예약량·상한·코어 고정을 받거나 재생성하지 않는다. 요청 작성·복사·조건 그룹과 필터에서도 이 축을 제거한다. 스케줄러 설정의 CPU 수 상한과 할당의 CPU·스레드 표시는 없으며 GPU·메모리 계약만 사용한다. 평가 정의의 부하 발생기 자원 입력은 요청·한도 메모리만 제공한다. 과거 게시·관측 fixture 원문은 변경하지 않는다.
