@@ -503,6 +503,9 @@ servingEntrypoint:
     directory: /data
     # Positive Go duration, measured from the start of each hourly segment.
     retention: 2h
+    # One append hour per at= call; hourly archive prefixes avoid the whole-store List.
+    # Continue nextCursor for delayed appends; keep calls below the 10s relay budget.
+    eventLookupHours: 1
     size: 1Gi
     # null uses the cluster default; "" explicitly requests no StorageClass.
     storageClassName: null

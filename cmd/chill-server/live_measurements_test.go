@@ -120,7 +120,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 		MaxRequestBytes: 1 << 20, RequestTimeout: time.Second, OperationTimeout: time.Second, MaxQueryEvents: 100,
 		Live: publisher.hub,
 		OnMutationAction: func(action observation.SchedulerActionObservation, at time.Time) {
-			records, err := log.EventObservations(ctx, at, 10)
+			records, _, _, err := log.EventObservations(ctx, at, 10, "")
 			if err != nil || len(records) != 1 || !reflect.DeepEqual(records[0].Action, &action) {
 				t.Fatalf("publication preceded durable commit: %+v err=%v", records, err)
 			}
