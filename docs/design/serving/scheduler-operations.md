@@ -2,6 +2,42 @@
 
 physical instance transport와 수동 실행 계약이다. 배분/reset의 구현 목표·수용 조건을 포함하며 문서만으로 구현 완료를 선언하지 않는다. 자동 판단/DAG/장부·예약은 [구현 설계](scheduler-implementation.md), 측정 적격성은 [실행기와 측정](scheduler-runtime-measurement.md), 과거 관측은 [실행 결과](scheduler-execution-history.md)를 따른다. 수동 성공은 automatic 판단/power 측정/FULL 수용이 아니다.
 
+## Operation and idle estimates
+
+Missing measurements do not make a plan ineligible. Operation estimates select
+the latest completed usable measurement at the first available tier: same Node
+and exact model/execution-path/power condition, same Node and operation, same
+device class and operation, then `settings.defaultOperationCost.{prepare,remove,power}`
+(`{seconds,joules}`, whole-wall). Equal completion times use the smaller cost ID.
+Historical profile bodies resolve model/path identities; profile ID, runtime
+image, CPU tokens and memory headroom are not measurement-validity conditions.
+Physical instance count remains part of exact loaded-state matching; a nearby
+measurement is explicitly a transferred estimate, not an exact measurement.
+Actions expose additive `costProvenance.source = exact|node|deviceClass|default`
+and `costRef` or configured `value`; capacity `actionCosts` retains every choice.
+Idle estimates use the same ranking and expose `idleCosts` provenance. Missing
+idle components use `settings.defaultIdlePower.{nodeWatts,perInstanceWatts}`.
+Both estimate blocks, including every operation kind, are required ConfigMap
+scheduler settings. Omitted keys fail settings validation before planning; no
+embedded or Go policy fallback exists. GET/PUT preserves the explicit values,
+and effective settings are frozen in decisions. Main must set both blocks.
+The policy/sample operation defaults are rounded-up maxima of control-324's
+77 prepare, 77 remove and 18 power trials, restoring baseline-delta energy to
+whole-wall. Idle defaults round up the maximum of 19 unloaded readings and
+67 loaded-minus-corresponding-unloaded increments. These are estimates, not bounds.
+
+An operation chain longer than the configured comparison period is displayed
+as `TransitionExceedsHorizon`, not removed. Every choice is compared with keep
+over the same window `W = route + max(postMax) + comparisonPeriod`; all transition
+energy and actual transient capacity shortfall remain included. Energy ordering
+uses the difference from keep over that same window. W9 `steps[].joules` now means
+total energy over that step's `comparisonWindowNanos`, with additive `keepJoules`;
+raw joules need not decrease between steps with different windows. Compare
+`joules - keepJoules` for the energy ordering. Request ownership, drain, resource
+and transition-reserve safety checks are unchanged.
+Executed-action duration updates are deferred: attach them to ingestion of the
+completed native operation receipt, retaining its actual start/end and cost cell.
+
 ## Why concealment forces routing
 
 Power mode applies to a whole node; on a memory-constrained device the old model must leave before a new one fits. The [transition specification](../../spec/05_transition_control.md) therefore requires planning request handling during state changes and routing to other ready nodes when the changing node cannot serve.

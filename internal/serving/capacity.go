@@ -409,10 +409,10 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 			continue
 		}
 		for _, option := range snapshot.Options {
-			if !slices.Contains(option.CompatibleUIDs, w.UID) {
-				continue
-			}
 			for _, o := range CapacityVariants(option) {
+				if !slices.Contains(o.CompatibleUIDs, w.UID) {
+					continue
+				}
 				in := NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w)
 				wanted = append(wanted, in)
 				key := in.Key()

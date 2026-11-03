@@ -42,6 +42,10 @@ const actorUsername = "operator"
 
 func schedulerSettingsForTest() serving.SchedulerSettings {
 	return serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		DefaultOperationCost: map[string]serving.OperationCostValue{
+			"prepare": {Seconds: 852, Joules: 36371}, "remove": {Seconds: 13, Joules: 1014}, "power": {Seconds: 166, Joules: 2229},
+		},
+		DefaultIdlePower:  &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8},
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		ReplacementDwell:       17 * time.Second,
 		ScaleDownStabilization: 120 * time.Second, TransitionReserveFraction: .25,

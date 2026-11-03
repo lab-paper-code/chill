@@ -14,7 +14,7 @@ import (
 // target, or a target whose actions come from schedulerPlan.
 func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult) SchedulerDecision {
 	keepChoice := make([]int, len(p.plans))
-	keepResult := p.evaluate(keepChoice, 0)
+	keepResult := p.evaluateAtWindow(keepChoice, 0, nil, best.period)
 	keep := &decision.Keep
 	keep.ExpectedJoules, keep.WorstExceedance, keep.Status = &keepResult.joules, capacityWorst(keepResult.worst), schedulerStatusFeasible
 	if !keepResult.feasible {
@@ -27,7 +27,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 		}
 	}
 	search := p.searched
-	record := &SchedulerCapacity{Period: time.Duration(p.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
+	record := &SchedulerCapacity{Period: time.Duration(best.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
 	record.TransitionReserves = best.reserves
 	for n, plans := range p.plans {
 		for _, plan := range plans {
@@ -110,7 +110,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	sum := sha256.Sum256([]byte(best.key + fmt.Sprint(target.Routing)))
 	target.ID = "plan-" + hex.EncodeToString(sum[:6])
-	target.Actions = best.bridge.actionsFor(p.snapshot, target)
+	target.Actions = best.bridge.actionsFor(p.settings, p.snapshot, target)
 	if best.bridge != nil {
 		record.BridgeStages = best.bridge.stages
 	}

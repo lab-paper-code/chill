@@ -73,6 +73,8 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 	}
 	// Read historical raw only to prove its controlled-execution rows cannot
 	// enter the shared planner; never rewrite its row keys into current keys.
+	estimates := schedulerEstimateSettingsForTest()
+	f.Settings.DefaultOperationCost, f.Settings.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	margin := f.Settings.CompletionMarginMS
 	f.Settings, err = (SchedulerSettingsInput{SchedulerSettings: f.Settings, CompletionMarginMS: &margin, BootstrapCapacityWait: &f.Settings.BootstrapCapacityWait, ScaleDownStabilization: &f.Settings.ScaleDownStabilization, ReplacementDwell: &f.Settings.ReplacementDwell}).Settings()
 	if err != nil {

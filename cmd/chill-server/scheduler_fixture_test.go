@@ -53,6 +53,12 @@ func (a schedulerPowerArchive) PutImmutable(
 func schedulerTestConfiguration() application.SchedulerConfiguration {
 	return application.SchedulerConfiguration{
 		Settings: serving.SchedulerSettings{
+			DefaultOperationCost: map[string]serving.OperationCostValue{
+				"prepare": {Seconds: 852, Joules: 36371},
+				"remove":  {Seconds: 13, Joules: 1014},
+				"power":   {Seconds: 166, Joules: 2229},
+			},
+			DefaultIdlePower:  &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8},
 			ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Second, MaxReplicas: 1,
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,

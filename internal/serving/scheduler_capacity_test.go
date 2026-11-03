@@ -351,11 +351,11 @@ func TestCapacityRecentDemandExpandsWithOutstandingOnce(t *testing.T) {
 	background := 0.0
 	for n, j := range choice {
 		if p.compared[n] {
-			background += p.plans[n][j].energy(res.route, p.period)
+			background += p.plans[n][j].energy(res.route, res.period)
 		}
 	}
-	// Both instances share batch-1 energy, so every λT input has that cost.
-	want := rate * p.period * capacityInputEnergy(snap.Instances[0])
+	// Both instances share batch-1 energy, so every λW input has that cost.
+	want := rate * res.period * capacityInputEnergy(snap.Instances[0])
 	if math.Abs(res.joules-background-want) > 1e-8 {
 		t.Fatalf("energy used another rate: request J %g want %g", res.joules-background, want)
 	}
@@ -499,7 +499,7 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 // m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
 // queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
 // expands whatever the comparison period: the SLO judgment orders plans before
-// energy. The decision records the same configured H for every candidate.
+// energy. Each decision records its actual chain plus the configured period.
 func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	s, snap, _, genesis3 := capacityE1Fixture()
 	s.ObservationWindow = time.Minute
@@ -515,7 +515,7 @@ func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	for _, period := range []time.Duration{time.Minute, 10 * time.Minute} {
 		s.ComparisonPeriod = period
 		got := capacityDecideForTest(t, s, snap, rows)
-		if got.Target == nil || got.Target.Keep || !poolsOn(*got.Target, genesis3) || got.Capacity == nil || got.Capacity.Period != period {
+		if got.Target == nil || got.Target.Keep || !poolsOn(*got.Target, genesis3) || got.Capacity == nil || got.Capacity.Period < period+got.Capacity.Route {
 			t.Fatalf("T %v: no expansion on the first decision: %s %+v", period, got.Status, got.Capacity)
 		}
 		if chosen != "" && got.Target.ID != chosen {
@@ -788,9 +788,9 @@ func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch) {
 			}
 			// This is the recorded projection of better's priority order:
 			// feasible cannot regress; while infeasible, final cannot regress.
-			// Exceedances precede energy, so only feasible points promise J↓.
+			// Exceedances precede energy; feasible points promise same-window net J↓.
 			if previous.Feasible && !step.Feasible || !previous.Feasible && !step.Feasible && previous.Final && !step.Final ||
-				previous.Feasible && step.Feasible && step.Joules > previous.Joules {
+				previous.Feasible && step.Feasible && step.Joules-step.KeepJoules > previous.Joules-previous.KeepJoules {
 				t.Fatalf("accepted point worsened: %+v after %+v", step, previous)
 			}
 		} else if step.K != 0 || step.Evaluated != 0 || len(step.ChangedNodes) != 0 {
@@ -848,6 +848,7 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 		p.compared = append(p.compared, len(plans) > 1)
 	}
 	p.period = p.settings.ComparisonPeriod.Seconds()
+	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
 	return p
 }
 
@@ -1055,9 +1056,9 @@ func TestCapacityMinimumGainExactBaselineIgnoresProfileCI(t *testing.T) {
 		snap.Instances[1].Profile.IdleBaselineWatts = 1 + float64(trial)*1e6
 		p := capacityPlannerForTest(t, s, snap, rows)
 		n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
-		watts, _, sources, _, reason := schedulerBaseline(p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
-		if reason != "" || watts != loaded.Watts || !slices.Contains(sources, loaded.ID) {
-			t.Fatalf("fixture did not select exact loaded evidence: %g %v %s", watts, sources, reason)
+		watts, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), p.snapshot.Baselines, p.snapshot.Nodes[n], []SchedulerInstance{snap.Instances[1]}, p.snapshot.Options)
+		if watts != loaded.Watts || !slices.Contains(sources.References, loaded.ID) {
+			t.Fatalf("fixture did not select exact loaded evidence: %g %v", watts, sources)
 		}
 		choice := make([]int, len(p.plans))
 		choice[n] = slices.IndexFunc(p.plans[n], func(plan *capacityPlan) bool {
@@ -1113,10 +1114,10 @@ func TestCapacityBaselineUncertaintyPreservesSignedReconstruction(t *testing.T) 
 	snap.Instances[0].Profile.IdleBaselineWatts = 8 // negative loaded-minus-unloaded delta
 	instances := []SchedulerInstance{}
 	for count := 0; count <= 2; count++ {
-		watts, _, sources, _, reason := schedulerBaseline(snap.Baselines, snap.Nodes[0], instances, snap.Options)
+		watts, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), snap.Baselines, snap.Nodes[0], instances, snap.Options)
 		bound := schedulerBaselineUncertainty(snap.Baselines, sources, count)
-		if reason != "" || watts != 10-2*float64(count) || bound.watts != 2*(1-float64(count)) {
-			t.Fatalf("%d instances: nominal %g bound %+v reason %s", count, watts, bound, reason)
+		if watts != 10-2*float64(count) || bound.watts != 2*(1-float64(count)) {
+			t.Fatalf("%d instances: nominal %g bound %+v", count, watts, bound)
 		}
 		instances = append(instances, snap.Instances[0])
 	}
@@ -1124,9 +1125,9 @@ func TestCapacityBaselineUncertaintyPreservesSignedReconstruction(t *testing.T) 
 	loaded.ID, loaded.State, loaded.Watts, loaded.WattsUncertainty = "loaded", []string{schedulerState(snap.Instances[0])}, 8, 3
 	loaded.Reference.Key = "loaded-idle"
 	snap.Baselines = append(snap.Baselines, loaded)
-	_, _, sources, _, reason := schedulerBaseline(snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
-	if got := schedulerBaselineUncertainty(snap.Baselines, sources, 1); reason != "" || got.watts != 3 || got.reference != loaded.Reference {
-		t.Fatalf("exact loaded-state evidence must replace, not add unloaded uncertainty: %+v %s", got, reason)
+	_, _, sources, _ := schedulerBaseline(schedulerEstimateSettingsForTest(), snap.Baselines, snap.Nodes[0], snap.Instances, snap.Options)
+	if got := schedulerBaselineUncertainty(snap.Baselines, sources, 1); got.watts != 3 || got.reference != loaded.Reference {
+		t.Fatalf("exact loaded-state evidence must replace, not add unloaded uncertainty: %+v", got)
 	}
 	// Signed operation delta adds the SAME stored baseline back exactly once.
 	base := 10.0
@@ -1497,10 +1498,10 @@ func TestCapacityPrepareCostIgnoresQueueMemory(t *testing.T) {
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(measured), "fixed")}
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	if d.Target == nil || !poolsOn(*d.Target, n2) || slices.ContainsFunc(poolsPlans(d, n2), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanMissingOperationCost }) {
+	if d.Target == nil || !poolsOn(*d.Target, n2) {
 		t.Fatalf("prepare cost missed on memory: %+v plans %+v", d.Target, poolsPlans(d, n2))
 	}
-	if !schedulerEqualState([]string{schedulerState(planned)}, []string{schedulerState(measured)}) {
+	if !measurementEqualState([]string{schedulerState(planned)}, []string{schedulerState(measured)}, map[string]string{planned.Profile.ID: MeasurementProfileIdentity(planned.Profile)}) {
 		t.Fatal("replay loaded-state witness compares memory")
 	}
 }
@@ -1548,17 +1549,21 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
 	choice := capacityChoiceForTest(t, p, map[string]string{"n2": add.Profile.ID + "/b1/w1"})
 	res := p.evaluate(choice, 10)
-	node := p.plans[1][choice[1]].energy(10, p.period)
-	// [0,10]: 100 req/s on i1 (e 1) = 1,000 J; overflow 50 × 10 at the target mean
-	// e 2; [10,60]: κ-proportional weights 500/500 send 75 req/s to each = 300 W.
-	want := 1000.0 + 500*2 + 300*50
+	node := 0.0
+	for n, j := range choice {
+		if p.compared[n] {
+			node += p.plans[n][j].energy(res.route, res.period)
+		}
+	}
+	// The target runs for the full configured steady window after routing.
+	want := 1000.0 + 500*2 + 300*(res.period-res.route)
 	if p.period != 60 || math.Abs(res.joules-node-want) > 1e-6 {
 		t.Fatalf("request energy %g, want %g (T %g)", res.joules-node, want, p.period)
 	}
 }
 
-// SCH-58: a long unselected chain cannot extend keep or any common candidate.
-func TestCapacityPeriodExcludesTheLongestChain(t *testing.T) {
+// A long unselected chain cannot extend keep, but remains an eligible estimate.
+func TestCapacityPeriodScoresTheLongestChain(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = time.Minute
 	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
@@ -1579,19 +1584,22 @@ func TestCapacityPeriodExcludesTheLongestChain(t *testing.T) {
 	for _, plan := range d.Capacity.Plans {
 		if plan.Node == reentry && plan.Reason == "TransitionExceedsHorizon" {
 			excluded = true
-			if plan.Eligible {
-				t.Fatal("long transition eligible")
+			if !plan.Eligible {
+				t.Fatal("long transition rejected instead of scored")
 			}
 		}
 	}
 	if !excluded {
-		t.Fatal("missing explicit horizon exclusion")
+		t.Fatal("missing explicit horizon annotation")
 	}
 	without := snap
 	without.Options = slices.DeleteFunc(slices.Clone(snap.Options), func(o SchedulerOption) bool { return o.Instance.Node == reentry })
 	common := capacityDecideForTest(t, s, without, capacityRowsForTest(s, without, nil))
-	if common.Capacity.Period != d.Capacity.Period || *common.Keep.ExpectedJoules != *d.Keep.ExpectedJoules {
-		t.Fatalf("unselected long candidate changed common cost: %v/%v", common.Keep.ExpectedJoules, d.Keep.ExpectedJoules)
+	// Enabling a candidate adds its Node's measured idle energy to the
+	// comparison universe, but its unselected chain must not extend W.
+	extraIdle := 6 * d.Capacity.Period.Seconds()
+	if common.Capacity.Period != d.Capacity.Period || math.Abs(*d.Keep.ExpectedJoules-*common.Keep.ExpectedJoules-extraIdle) > 1e-8 {
+		t.Fatalf("unselected chain changed window or idle accounting: %v/%v", common.Keep.ExpectedJoules, d.Keep.ExpectedJoules)
 	}
 }
 
@@ -1712,12 +1720,17 @@ func TestCapacityRecordsExcludedPlans(t *testing.T) {
 	}
 	d := capacityDecideForTest(t, s, snap, rows)
 	for node, reason := range map[NodeReference]string{
-		noCost.Node: schedulerPlanMissingOperationCost, pending.Node: CapacityPending, rejected.Node: CapacityRejected,
+		pending.Node: CapacityPending, rejected.Node: CapacityRejected,
 		offline: schedulerPlanInfeasibleResources, fixed: schedulerPlanFixedWorkload, inventory: NodePlacementInventoryMissing,
 	} {
 		if !slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return !p.Eligible && p.Reason == reason }) {
 			t.Fatalf("%s: no plan excluded with %s: %+v", node.UID, reason, poolsPlans(d, node))
 		}
+	}
+	if !slices.ContainsFunc(poolsPlans(d, noCost.Node), func(p SchedulerNodePlan) bool {
+		return p.Eligible && len(p.ActionCosts) > 0 && p.ActionCosts[0].Provenance != nil
+	}) {
+		t.Fatal("unmeasured operation excluded a physically usable plan")
 	}
 }
 
@@ -1762,9 +1775,7 @@ func TestCapacityTargetAndIdleDAGProjectOnlyPowerMode(t *testing.T) {
 	n = slices.IndexFunc(planner.snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
 	choice := capacityChoiceForTest(t, planner, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"})
 	best := planner.evaluate(choice, 0)
-	if _, _, reason := planner.chain(n, planner.plans[n][choice[n]]); reason != "" {
-		t.Fatalf("chain failed without CPU inventory: %s", reason)
-	}
+	planner.chain(n, planner.plans[n][choice[n]])
 	if reason, _ := planner.idleTransition(best, nil); reason != "" {
 		t.Fatalf("idle DAG failed without CPU inventory: %s", reason)
 	}
@@ -1947,6 +1958,9 @@ func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
 // after one unrouted window. One a disabled Workload routes to stays.
 func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	s, snap, rows, genesis3, orangepi := capacityR5Fixture()
+	// Otherwise routing may legitimately bind the Ready owned slot to w1,
+	// making it active rather than an unrouted cleanup candidate.
+	s.Controls.Routing = false
 	since := snap.At.Add(-time.Minute)
 	for k := 1; k < 3; k++ {
 		snap.Instances[k].WorkloadUID, snap.Instances[k].TargetID, snap.Instances[k].UnroutedSince = "", "target-w1-"+snap.Instances[k].Profile.ID+"-1", &since
@@ -1960,6 +1974,8 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	profile := *snap.Instances[2].Profile
 	profile.IdleBaselineWatts = 60
 	snap.Instances[2].Profile = &profile
+	optionIndex := slices.IndexFunc(snap.Options, func(o SchedulerOption) bool { return o.Instance.ID == snap.Instances[2].ID })
+	snap.Options[optionIndex].Instance.Profile = &profile
 	blocked := capacityDecideForTest(t, s, snap, rows)
 	if blocked.Target != nil && !poolsOn(*blocked.Target, orangepi) {
 		t.Fatalf("unowned physical removal bypassed the common gate: %+v", blocked.Target)
@@ -1975,9 +1991,10 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 			slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == node })
 	}
 	if d := capacityDecideForTest(t, s, snap, rows); !removed(d, genesis3) || !removed(d, orangepi) {
-		t.Fatalf("unrouted planner instances kept: %s %+v %v", d.Status, d.Target, d.Reasons)
+		t.Fatalf("unrouted instances: removed genesis3=%v orangepi=%v plans=%+v reasons=%v", removed(d, genesis3), removed(d, orangepi), poolsPlans(d, orangepi), d.Reasons)
 	}
 	snap.Instances[2].Profile = originalProfile
+	snap.Options[optionIndex].Instance.Profile = originalProfile
 	other := poolsAddWorkload(&snap, "w2")
 	other.Model.UID = "m2"
 	snap.Routing["w2"] = map[string]int32{"opi": 1}
@@ -2110,10 +2127,10 @@ func TestCapacityEmptyFixedUsesCommonEnergyAdmission(t *testing.T) {
 		gain        float64
 		admitted    bool
 	}{
-		{name: "minus-699J", joules: 964.2, gain: -699},
-		{name: "positive", joules: 100, gain: 165.2, admitted: true},
-		{name: "positive-below-minimumGain", joules: 100, uncertainty: 200, gain: 165.2},
-		{name: "zero-gain", joules: 265.2},
+		{name: "negative", joules: 964.2, gain: -696.2},
+		{name: "positive", joules: 100, gain: 168, admitted: true},
+		{name: "positive-below-minimumGain", joules: 100, uncertainty: 200, gain: 168},
+		{name: "zero-gain", joules: 268},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, snap, node := capacityEmptyFixedFixture()
@@ -2127,9 +2144,10 @@ func TestCapacityEmptyFixedUsesCommonEnergyAdmission(t *testing.T) {
 			if !p.compared[n] || plan.record.Tempo != schedulerTempoSlow || math.Abs(plan.record.Joules-tc.joules) > 1e-9 {
 				t.Fatalf("Fixed saving missing from comparison or chain costs: %+v", plan.record)
 			}
-			gain := p.evaluate(make([]int, len(p.plans)), 0).joules - p.evaluate(choice, p.routeOf(choice)).joules
+			result := p.evaluate(choice, p.routeOf(choice))
+			gain := result.keepJoules - result.joules
 			if math.Abs(gain-tc.gain) > 1e-8 {
-				t.Fatalf("gain=%g, want %g over the common H", gain, tc.gain)
+				t.Fatalf("gain=%g, want %g over the common W", gain, tc.gain)
 			}
 			paid := p.minimumGain(p.payback(p.evaluate(choice, p.routeOf(choice))))
 			if (paid.choice[n] != 0) != tc.admitted {
@@ -2142,7 +2160,11 @@ func TestCapacityEmptyFixedUsesCommonEnergyAdmission(t *testing.T) {
 			admitted := d.Target != nil && slices.ContainsFunc(d.Target.Actions, func(a Action) bool {
 				return a.Node == node && a.Kind == schedulerActionPower && a.Fixed
 			})
-			if admitted != tc.admitted || d.Capacity == nil || d.Capacity.Period != s.ComparisonPeriod || !slices.Contains(d.Search.ComparedNodes, node) {
+			wantWindow := s.ComparisonPeriod
+			if tc.admitted {
+				wantWindow = time.Duration(result.period * 1e9)
+			}
+			if admitted != tc.admitted || d.Capacity == nil || d.Capacity.Period != wantWindow || !slices.Contains(d.Search.ComparedNodes, node) {
 				t.Fatalf("admission=%v, want %v: target=%+v capacity=%+v", admitted, tc.admitted, d.Target, d.Capacity)
 			}
 		})

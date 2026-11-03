@@ -21,6 +21,12 @@ configmap = {
         "comparisonPeriodNanos": 1000000000, "maxObservationAgeNanos": 1000000000,
         "maxReplicas": 1, "maxInstances": 1, "completionMarginMS": 0,
         "defaultDispatchOccupancyNanos": 0,
+        "defaultOperationCost": {
+            "prepare": {"seconds": 852, "joules": 36371},
+            "remove": {"seconds": 13, "joules": 1014},
+            "power": {"seconds": 166, "joules": 2229},
+        },
+        "defaultIdlePower": {"nodeWatts": 54, "perInstanceWatts": 8},
         "capacityWindowNanos": 1000000000, "capacityWindows": 1,
         "capacityPassingWindows": 1, "capacityMinimumRequests": 1, "planSearchWorkers": 3,
     }})},

@@ -76,6 +76,7 @@ type operationEvidence struct {
 	meter    MeterDeclaration
 	cost     *serving.OperationCost
 	baseline *serving.NodeBaseline
+	profile  *serving.Profile // retained immutable preparation body, including old catalog versions
 	err      error
 	skip     bool // a recorded non-Accepted attempt: valid history, never a cost or issue
 	// invalid is the isolation failure of a record another power change invalidated.
@@ -142,11 +143,43 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 		}
 	}
 	maps.DeleteFunc(e.measurements, func(identity evidencestore.ObjectIdentity, _ operationEvidence) bool { return !listed[identity] })
+	profiles = slices.Clone(profiles)
+	for _, evidence := range e.measurements {
+		if evidence.profile != nil {
+			profiles = append(profiles, *evidence.profile)
+		}
+	}
 	if err = e.refreshPower(ctx, namespaces, meters, profiles, &view); err != nil {
 		return CostView{}, err
 	}
-	if err = e.refreshOccupancy(ctx, profiles, &view); err != nil {
+	if err = e.refreshOccupancy(ctx, &view); err != nil {
 		return CostView{}, err
+	}
+	profileIdentities := map[string]string{}
+	nodeClasses := map[string]string{}
+	for index := range profiles {
+		profile := &profiles[index]
+		profileIdentities[profile.ID] = serving.MeasurementProfileIdentity(profile)
+		nodeClasses[profile.Condition.NodeUID] = profile.Condition.DeviceClass
+	}
+	for index := range view.Costs {
+		cost := &view.Costs[index]
+		cost.DeviceClass = nodeClasses[cost.Node.UID]
+		cost.StateIdentities = retainedStateIdentities(append(slices.Clone(cost.BeforeState), cost.TargetState...), profileIdentities)
+		for _, state := range []string{cost.From, cost.To} {
+			id, _, _ := strings.Cut(state, ":")
+			if cell := profileIdentities[id]; cell != "" {
+				if cost.StateIdentities == nil {
+					cost.StateIdentities = map[string]string{}
+				}
+				cost.StateIdentities[id] = cell
+			}
+		}
+	}
+	for index := range view.Baselines {
+		baseline := &view.Baselines[index]
+		baseline.DeviceClass = nodeClasses[baseline.Node.UID]
+		baseline.StateIdentities = retainedStateIdentities(baseline.State, profileIdentities)
 	}
 	view.Costs = latestCosts(view.Costs)
 	view.Baselines = latestBaselines(view.Baselines)
@@ -203,17 +236,11 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 }
 
 // refreshOccupancy keeps the latest accepted shared-execution occupancy record
-// per Node, power mode, runtime image and model; a negative d counts as 0.
-func (e *CostEvidence) refreshOccupancy(ctx context.Context, profiles []serving.Profile, view *CostView) error {
+// per Node, power mode and model; a negative d counts as 0.
+func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) error {
 	identities, err := e.objects.List(ctx, DispatchOccupancyPrefix)
 	if err != nil {
 		return err
-	}
-	// The catalog admits only current shared-execution evidence. Matching the
-	// tuple alone would also admit historical controlled-execution records.
-	sharedProfiles := make(map[string]bool, len(profiles))
-	for i := range profiles {
-		sharedProfiles[profiles[i].ID] = true
 	}
 	listed := map[evidencestore.ObjectIdentity]bool{}
 	type measured struct {
@@ -237,7 +264,7 @@ func (e *CostEvidence) refreshOccupancy(ctx context.Context, profiles []serving.
 			}
 			e.occupancy[identity] = record
 		}
-		if record.Verdict == measurementAccepted && sharedProfiles[record.ProfileID] {
+		if record.Verdict == measurementAccepted {
 			accepted = append(accepted, measured{record: record, key: identity.Key})
 		}
 	}
@@ -288,6 +315,9 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 	if evidence.err = validateRetainedMeasurement(record, ref); evidence.err != nil {
 		return evidence, nil
 	}
+	if prepare := record.Request.Operation.Prepare; prepare != nil {
+		evidence.profile = prepare.Instance.Profile
+	}
 	if record.Request.Operation.Kind == operationIdle {
 		baseline, err := idleMeasurementBaseline(record, ref)
 		evidence.baseline, evidence.err = &baseline, err
@@ -305,9 +335,14 @@ func latestCosts(costs []serving.OperationCost) []serving.OperationCost {
 	key := func(c serving.OperationCost) string {
 		condition := c.PowerMode
 		if c.Kind == operationPower {
-			condition = strings.Join(c.BeforeState, "\x00")
+			states := make([]string, len(c.BeforeState))
+			for j, state := range c.BeforeState {
+				states[j] = serving.MeasurementStateIdentity(state, c.StateIdentities)
+			}
+			slices.Sort(states)
+			condition = strings.Join(states, "\x00")
 		}
-		return strings.Join([]string{c.Node.UID, c.Kind, c.From, c.To, condition}, "\x01")
+		return strings.Join([]string{c.Node.UID, c.Kind, serving.MeasurementStateIdentity(c.From, c.StateIdentities), serving.MeasurementStateIdentity(c.To, c.StateIdentities), condition}, "\x01")
 	}
 	return latestBy(costs, key, func(c serving.OperationCost) (string, int64) { return c.ID, c.MeasuredAt.UnixNano() })
 }
@@ -315,7 +350,12 @@ func latestCosts(costs []serving.OperationCost) []serving.OperationCost {
 // latestBaselines keeps one unloaded or loaded baseline per Node, mode and state.
 func latestBaselines(baselines []serving.NodeBaseline) []serving.NodeBaseline {
 	key := func(b serving.NodeBaseline) string {
-		return strings.Join(append([]string{b.Node.UID, b.PowerMode}, b.State...), "\x01")
+		states := make([]string, len(b.State))
+		for j, state := range b.State {
+			states[j] = serving.MeasurementStateIdentity(state, b.StateIdentities)
+		}
+		slices.Sort(states)
+		return strings.Join(append([]string{b.Node.UID, b.PowerMode}, states...), "\x01")
 	}
 	return latestBy(baselines, key, func(b serving.NodeBaseline) (string, int64) { return b.ID, b.MeasuredAt.UnixNano() })
 }
@@ -382,4 +422,18 @@ func idleMeasurementBaseline(record OperationMeasurement, ref evidencestore.Obje
 	slices.Sort(keys)
 	meter := record.Request.Meter
 	return serving.NodeBaseline{ID: record.Request.Operation.ID, Node: meter.Node, PowerMode: record.Result.Actual.PowerMode, State: keys, Watts: *record.MeanWatts, WattsUncertainty: measurement.UncertaintyJoules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds(), Meter: meter.ID, Scope: meter.Scope, MeasuredAt: record.Result.EndedAt, Reference: ref}, nil
+}
+
+func retainedStateIdentities(states []string, identities map[string]string) map[string]string {
+	var retained map[string]string
+	for _, state := range states {
+		id, _, _ := strings.Cut(state, ":")
+		if cell := identities[id]; cell != "" {
+			if retained == nil {
+				retained = map[string]string{}
+			}
+			retained[id] = cell
+		}
+	}
+	return retained
 }

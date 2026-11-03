@@ -103,15 +103,15 @@ func (p *capacityPlanner) build() error {
 		p.plans[n] = p.nodePlans(n, common)
 		for _, plan := range p.plans[n][1:] {
 			if plan.record.Eligible {
-				if plan.preMax+plan.postMax > p.period {
-					plan.record.Eligible, plan.record.Reason = false, schedulerTransitionHorizon
-					continue
+				if plan.preMax+plan.postMax > p.settings.ComparisonPeriod.Seconds() {
+					plan.record.Reason = schedulerTransitionHorizon
 				}
 				p.compared[n] = true
 			}
 		}
 		p.examined += len(p.plans[n])
 	}
+	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
 	return nil
 }
 
@@ -174,9 +174,10 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	keep := &capacityPlan{mode: m0, keep: true, instances: current, record: SchedulerNodePlan{Node: node.Node, Key: "keep", Eligible: true}}
 	p.annotate(keep, nil)
 	p.sum(keep)
-	before, _, beforeSources, _, beforeReason := schedulerBaseline(p.snapshot.Baselines, common[n], current, p.snapshot.Options)
+	before, _, beforeSources, _ := schedulerBaseline(p.settings, p.snapshot.Baselines, common[n], current, p.snapshot.Options)
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
+	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": beforeSources}
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
@@ -200,8 +201,6 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	case slices.ContainsFunc(current, p.fixed):
 		// Disabled Workloads keep their SLO: their Node takes no plan action.
 		reason = schedulerPlanFixedWorkload
-	case beforeReason != "":
-		reason = beforeReason
 	}
 	groups, names := map[string][]capacityChoice{}, []string{}
 	for _, o := range p.options {
@@ -239,6 +238,11 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	walk = func(j int, chosen []capacityChoice) {
 		if j == len(names) {
 			if plan := p.plan(n, m0, current, chosen); plan != nil && (plan.record.Key != currentKey || plan.mode != m0 || hasTerminal) {
+				plan.before, plan.beforeBound = keep.before, keep.beforeBound
+				if plan.record.IdleCosts == nil {
+					plan.record.IdleCosts = map[string]IdlePowerProvenance{}
+				}
+				plan.record.IdleCosts["before"] = keep.record.IdleCosts["before"]
 				plans = append(plans, plan)
 			}
 			return
@@ -372,11 +376,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			return plan
 		}
 	}
-	stopped, removedPre, reason := p.chain(n, plan)
-	if reason != "" {
-		plan.record.Reason = reason
-		return plan
-	}
+	stopped, removedPre := p.chain(n, plan)
 	// A same-mode routed blocker remains a veto unless a globally compiled
 	// Ready/ACK handoff can precede its stop. Power outages keep their existing
 	// κ_ret accounting and are never treated as bridge supply.
@@ -439,15 +439,14 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 			mid = append(mid, i)
 		}
 	}
-	var midReason, afterReason string
-	var midSources, afterSources []string
-	plan.mid, _, midSources, _, midReason = schedulerBaseline(p.snapshot.Baselines, at, mid, p.snapshot.Options)
-	plan.after, _, afterSources, _, afterReason = schedulerBaseline(p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
+	var midSources, afterSources IdlePowerProvenance
+	plan.mid, _, midSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, mid, p.snapshot.Options)
+	plan.after, _, afterSources, _ = schedulerBaseline(p.settings, p.snapshot.Baselines, at, plan.instances, p.snapshot.Options)
 	plan.midBound = schedulerBaselineUncertainty(p.snapshot.Baselines, midSources, len(mid))
 	plan.afterBound = schedulerBaselineUncertainty(p.snapshot.Baselines, afterSources, len(plan.instances))
-	if reason := cmp.Or(midReason, afterReason); reason != "" {
-		plan.record.Reason = reason
-		return plan
+	plan.record.IdleCosts = map[string]IdlePowerProvenance{
+		"mid":   midSources,
+		"after": afterSources,
 	}
 	plan.record.Eligible = true
 	return plan
@@ -461,6 +460,17 @@ func (p *capacityPlanner) currentKappa(i SchedulerInstance) (float64, string) {
 		return 0, ""
 	}
 	v, ok := p.variants[fmt.Sprint(i.Profile.ID, "/", i.MaxBatch)]
+	if !ok {
+		cell, mode := MeasurementProfileIdentity(i.Profile), schedulerNodeMode(p.snapshot.Nodes, i.Node)
+		for _, option := range p.options {
+			j := option.Instance
+			if j.Profile != nil && j.Node.UID == i.Node.UID && j.MaxBatch == i.MaxBatch &&
+				j.Profile.Condition.PowerMode == mode && MeasurementProfileIdentity(j.Profile) == cell {
+				v, ok = option, true
+				break
+			}
+		}
+	}
 	if !ok {
 		return 0, ""
 	}

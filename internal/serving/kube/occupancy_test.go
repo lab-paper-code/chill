@@ -194,7 +194,7 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	}
 }
 
-func TestCostEvidenceExcludesControlledOccupancyFromSharedCapacity(t *testing.T) {
+func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 	at := time.Unix(2000, 0).UTC()
 	objects := &costTestObjects{objects: map[string][]byte{}, opens: map[string]int{}}
 	put := func(name, profileID string, d int64, measuredAt time.Time) string {
@@ -209,15 +209,14 @@ func TestCostEvidenceExcludesControlledOccupancyFromSharedCapacity(t *testing.T)
 		objects.objects[key] = raw
 		return key
 	}
-	// The current catalog admits only shared-execution profiles. The old
-	// controlled profile has a different immutable ID despite the same tuple.
+	// Profile IDs and runtime images do not invalidate a measured node cell.
 	profile := serving.Profile{ID: "shared-profile"}
 	profile.Condition.PowerMode = "max"
-	profile.Condition.RuntimeImage = "image"
+	profile.Condition.RuntimeImage = "new-image"
 	profile.Condition.LogicalModel = "m"
 	option := serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile}}
 	workload := &serving.Definition{UID: "workload"}
-	put("controlled", "controlled-profile", 9_410_000, at.Add(time.Hour))
+	legacy := put("controlled", "controlled-profile", 9_410_000, at.Add(time.Hour))
 	evidence, err := NewCostEvidence(&Store{client: fake.NewClientBuilder().Build()}, objects, 1<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -228,22 +227,21 @@ func TestCostEvidenceExcludesControlledOccupancyFromSharedCapacity(t *testing.T)
 	}
 	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: int64(time.Millisecond)}
 	input := serving.NewCapacityInput(settings, view.DispatchOccupancy, option, workload)
-	if len(view.DispatchOccupancy) != 0 || input.DispatchOccupancy == nil ||
-		input.DispatchOccupancy.Source != "" || input.DispatchOccupancy.Provenance.Source != "default" ||
-		input.DispatchOccupancy.PerRequest != time.Millisecond {
-		t.Fatalf("controlled occupancy did not use configured fallback: %+v", input.DispatchOccupancy)
+	if len(view.DispatchOccupancy) != 1 || input.DispatchOccupancy == nil ||
+		input.DispatchOccupancy.Provenance.Source != "dom" || input.DispatchOccupancy.Source != legacy ||
+		input.DispatchOccupancy.PerRequest != 9_410_000*time.Nanosecond {
+		t.Fatalf("historical occupancy was stranded by profile/image: %+v", input.DispatchOccupancy)
 	}
-	// Filter eligibility before latest selection, including on cache hits:
-	// even a newer controlled record must not hide the shared measurement.
-	shared := put("shared", profile.ID, 2_000_000, at)
+	// Adding an older current-profile measurement must not hide the latest cell.
+	put("shared", profile.ID, 2_000_000, at)
 	view, err = evidence.Refresh(context.Background(), nil, nil, []serving.Profile{profile})
 	if err != nil {
 		t.Fatal(err)
 	}
 	input = serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
 	if len(view.DispatchOccupancy) != 1 || input.DispatchOccupancy == nil ||
-		input.DispatchOccupancy.Source != shared || input.DispatchOccupancy.PerRequest != 2*time.Millisecond {
-		t.Fatalf("shared capacity input did not recover: %+v", input.DispatchOccupancy)
+		input.DispatchOccupancy.Source != legacy || input.DispatchOccupancy.PerRequest != 9_410_000*time.Nanosecond {
+		t.Fatalf("latest stable occupancy cell was not preserved: %+v", input.DispatchOccupancy)
 	}
 }
 
