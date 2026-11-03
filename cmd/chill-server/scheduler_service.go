@@ -222,6 +222,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	occupancy, err := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
+	if err != nil {
+		return err
+	}
 	sources := costs.Sources
 	sources = append(sources, "profiler-facts:"+factsVersion)
 	for _, meter := range config.Meters {
@@ -282,6 +286,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	published := httpapi.ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
 		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
+		Occupancy: occupancy,
 	}
 	for id, spec := range preparations {
 		spec.Instance.Profile = nil // the profile body is in Profiles
