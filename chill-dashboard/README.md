@@ -25,6 +25,10 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
+실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
+
+2026-11-04 책임 분리 통합 검증: Node 24.14.0 offline frozen install은 479개 재사용·다운로드 0이며 tsc·eslint·기본 Next build가 통과했다. 운영 summary를 포함한 전체 테스트는 `origin/main` 기준 `d533ca3e`의 572/572에서 이동 후 572/572로 유지했다. 로컬 production + 운영 GET만 사용한 1440×900 브라우저에서 서비스 목록·상세, 카탈로그 편집 열기·저장 없이 이탈, 운영 설정, 게시 결과·구간 Sheet, 실험 작성의 단계 패치(ms→ns)를 관찰했다. 해당 관찰의 콘솔 error·pageerror·HTTP 오류·API 실패·쓰기 요청은 0이며, 차트 초기 크기 경고 3건과 화면 전환 시 취소된 Next prefetch는 별도 기록했다. 스크린샷은 운영 산출물 `intent/sep-refactor/w1-*.png`에 보관한다. 이후 토큰 회전으로 브라우저를 종료했으며 smoke의 최종 수용 확인은 새 토큰 재검증 대기다.
+
 ### 표시용 읽기 projection
 
 - 서비스 목록은 `GET /api/v1/workloads?view=summary`를 사용한다. `supportedInputs`는 path·artifact·profiles `{id}`만 전송하며 프로파일 수는 `profiles.length`로 계산한다. 원 조건·근거는 무쿼리 목록/단건 조회에 남는다.
@@ -161,12 +165,15 @@ retain integer literals while removing credentials.
 | 고급 | 구성 탐색 동시 계산 수 |
 
 항목 정의는 `lib/scheduler-settings.ts` 한 곳에 둔다. 실험의 전역·단계 운영 설정 패치도 같은 항목 정의와 ms↔ns 정밀 변환을 사용한다. 최소 수요는 서비스 UID별 0 이상 유한한 req/s이며 상한은 없다. 미설정과 0은 별개이고, 현재 서비스 목록에 없는 UID도 운영자가 해제하기 전에는 유지한다. 초기 용량 대기는 0~1시간이며 ns 정밀도를 보존한다.
+실험 운영 설정 패치의 상태·항목 선택·값 변환 UI는 `features/settings-patch-editor.tsx`가 담당한다. 공용 작성 필드와 원문 JSON·이탈 경고는 `components/evaluation-author-fields.tsx`에서 실험·부하 작성 화면이 직접 가져온다. 설정 항목 정의와 ms↔ns 변환 구현은 기존 `lib/scheduler-settings.ts`·`lib/scheduler.ts`를 그대로 재사용한다.
 저장은 작성값 누적 → 현재 설정 재조회 → 변경 전/후 표 → 운영자 확인 → 직전 재조회 → 전체 설정 PUT 순서다. 서비스 편집 Sheet는 첫 입력 전에는 GET과 동기화하고, 첫 입력 시 실제 표시한 설정과 ETag를 함께 고정한다. 이후 설정·버전 변경은 제출을 차단하고 작성값을 유지한다. 최소 수요의 현재값도 서비스명·req/s 소형 표로 표시하며 미설정과 0을 구분한다.
 조회 설정과 ETag는 하나의 스냅샷으로 보관한다. 성공 PUT 뒤 재조회한 최신 스냅샷을 이전 PUT 응답의 ETag로 덮어쓰지 않으며, 결과 미확인 복구에서 현재값을 채택할 때도 설정과 ETag를 함께 기준으로 삼는다.
 PUT 성공 뒤 GET 재조회가 실패하면 편집 필드는 `change.after`로 전체 교체한다(생략된 편집 필드는 미설정). 이전 스냅샷에서는 GET 전용 `staticRouting`·`powerObservation`·`meters`·`requestTimeout` 네 값만 유지한다. 분배 선언을 아직 GET으로 확인하지 못했으면 `조회 필요`와 비활성 동작을 표시하며, 성공 GET에서 확인한 빈 선언과 구분한다.
 W1 서버 계약: GET `/api/v1/scheduler/settings`의 `ETag: "<ConfigMap resourceVersion>"`를 보관하여 PUT `If-Match`에 그대로 보내며 성공 응답의 새 ETag로 갱신한다. 버전은 ConfigMap 전체의 버전이므로 설정 외 변경에도 바뀐다. 409 `SettingsConflict`는 재조회 후 작성값을 보존한 충돌 비교로 이동하고, 428 `SettingsPreconditionRequired`는 `버전 없음`과 명시적 재조회 동작을 제공한다. 자동 재제출은 없다. ETag 없는 구 서버에는 If-Match 없이 보내며, 그때만 원자적 동시 변경 방지 불가 도움말을 한 곳에 제공한다. 이 대시보드는 W1 서버보다 먼저 또는 함께 배포해야 한다.
 PUT 본문 계약은 변경하지 않는다. `internal/serving/scheduler.go:17-51,409-512`의 SchedulerSettings 필드만 보내고 GET 부가 읽기 전용 필드 `staticRouting`·`powerObservation`·`meters`·`requestTimeout`은 절대 보내지 않는다. 원래 전체 PUT·검증·감사·적용·ConfigMap 갱신 근거는 `internal/serving/httpapi/scheduler.go:60-78,99-175,196-215`이며, W1 변경은 버전 헤더와 428/409 계약이다. 요청 분배 변경은 별도 scheduler operations 계약을 유지한다.
 구 최상위 목록은 설정 탭으로 이동하며 등록·상세·수정 전용 경로와 변경 충돌/결과 미확인 안전 계약은 유지한다.
+
+카탈로그 조회·변경과 If-Match/UID 기준은 `hooks/use-catalog-resource.ts`, 편집·변경 피드백 UI는 `features/catalog-editor.tsx`, 서비스 목록·상세와 `WorkloadState`는 `features/services.tsx`가 담당한다. `features/management.tsx`에는 모델·카탈로그 상세와 설정 목록만 남긴다. 라우트와 추론 화면은 각 담당 모듈을 직접 import하며 기존 쿼리 키, 충돌 시 작성값 유지, 삭제 대상 UID 고정과 결과 미확인 처리는 그대로 유지한다.
 
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
 작성·수정은 전용 페이지이며 필수값·출처·변경 요약·점검을 보이고 입력 변경은 점검을 무효화한다. 목록은 breadcrumb 없이, 상세는 상위 맥락 하나다.

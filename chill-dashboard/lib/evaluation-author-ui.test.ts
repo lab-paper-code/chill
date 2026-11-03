@@ -1,8 +1,8 @@
+import * as comparisonHelpers from "./experiment-comparison.ts"
+import * as routeHelpers from "./dashboard-routes.ts"
 import assert from "node:assert/strict"
 import test from "node:test"
-import { readFileSync } from "node:fs"
-import { createRequire } from "node:module"
-import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
+import { elements, hookRunner, load, type Tree } from "./evaluation-author-test-helpers.ts"
 import { setImmediate } from "node:timers/promises"
 import * as author from "./evaluation-author.ts"
 import * as request from "./evaluation-request.ts"
@@ -13,45 +13,12 @@ import * as measurementHelpers from "./measurements.ts"
 import * as icons from "lucide-react"
 import * as settings from "./scheduler-settings.ts"
 
-type Tree={type:unknown;props:Record<string,unknown>}
-const require=createRequire(import.meta.url)
-function elements(node:unknown):Tree[] {
-  if(Array.isArray(node))return node.flatMap(elements)
-  if(!node||typeof node!=="object"||!("props" in node))return []
-  const element=node as Tree
-  return [element,...elements(element.props.children)]
-}
-function hookRunner() {
-  const values:unknown[]=[]
-  let cursor=0
-  return {
-    react:{useState(initial:unknown) {
-      const index=cursor++
-      if(!Object.hasOwn(values,index))values[index]=typeof initial==="function"?initial():initial
-      return [values[index],(next:unknown)=>{values[index]=typeof next==="function"?next(values[index]):next}]
-    },
-    useRef(initial:unknown) {
-      const index=cursor++
-      if(!Object.hasOwn(values,index))values[index]={current:initial}
-      return values[index]
-    },
-    useEffect(effect:()=>void) {effect()}},
-    render(Component:(props:Record<string,unknown>)=>unknown,props:Record<string,unknown>={}) {cursor=0;return Component(props)},
-  }
-}
-function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
-  const source=readFileSync(new URL(path,import.meta.url),"utf8")
-  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-  const exports={}
-  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name.startsWith("@/")?{}:require(name),exports)
-  return exports
-}
 const containers={Dialog:"dialog",DialogContent:"div",DialogHeader:"header",DialogTitle:"h2",DialogDescription:"p"}
 const primitives={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"div"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/dialog":containers,"@/components/ui/sheet":{Sheet:"aside",SheetContent:"div",SheetHeader:"header",SheetTitle:"h2"},"@/lib/evaluation-author":author,"@/lib/evaluation-request":request,"@/lib/scheduler":scheduler}
 Object.assign(primitives,{"@/lib/scheduler-settings":settings})
 test("R19: publication copy selector pages without losing its selected publication",()=>{
   const runner=hookRunner(),calls:string[]=[]
-  const modules={...primitives,react:{...runner.react,useEffect:()=>{}}, "@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}}, "@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
     calls.push(path)
     const offset=new URLSearchParams(path.split("?")[1]).get("offset")
     return {data:path.startsWith("v1/experiments?")?{items:[{id:offset==="5"?"second":"first"}],page:{offset:Number(offset),limit:5,total:6,...(offset==="0"?{nextOffset:5}:{})}}:undefined}
@@ -78,7 +45,7 @@ test("IA: published results request URL pages without catalog hydration",()=>{
   const runner=hookRunner(),calls:string[]=[]
   let params=new URLSearchParams("view=published&offset=0")
   const run={schemaVersion:"serving-experiment.v1alpha1",id:"first",from:"2026-11-03T00:00:00Z",to:"2026-11-03T00:01:00Z",status:"FAIL",stages:[],sources:[]}
-    const modules={...primitives,"lucide-react":icons,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{
+    const modules={...primitives,"lucide-react":icons,react:{...runner.react,useEffect:()=>{}},"next/navigation":{useSearchParams:()=>params},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{
       if(options?.enabled!==false)calls.push(path)
       const offset=new URLSearchParams(path.split("?")[1]).get("offset")
       return {data:path.startsWith("v1/experiments?")?{items:[{...run,id:offset==="5"?"second":"first"}],page:{offset:Number(offset),limit:5,total:6,...(offset==="0"?{nextOffset:5}:{})}}:undefined}
@@ -106,7 +73,7 @@ test("R19: old-server full catalogs stay full and do not invent pagination",()=>
   assert.equal(data.items.length,2)
   assert.equal(Object.hasOwn(data,"page"),false)
   const runner=hookRunner()
-  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data})},"@/features/evaluation-request":{}}
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data})},"@/features/evaluation-request":{}}
   const {EvaluationAuthor}=load("../features/evaluation-author.tsx",modules)
   const tree=elements(runner.render(EvaluationAuthor))
   const picker=tree.find(item=>item.props.label==="게시에서 복사")!
@@ -127,7 +94,7 @@ test("load PUT denial preserves operator permission status and keeps the draft e
     throw new ApiError(403,"Forbidden",null)
   }}),useChillQuery:(path:string)=>({data:path==="v1/evaluations/load-scenarios/load"?source:undefined,refetch:async()=>{gets++;return {data:source,error:null}}})}
   const parent=hookRunner(),child=hookRunner()
-  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
+  const modules={...primitives,react:parent.react,"@/lib/client":client,"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",useUnsavedAuthor:()=>{}},"@/features/evaluation-author":{AuthorHelp:"help",EvidencePicker:"select"}}
   const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
   const editor=elements(parent.render(LoadScenarioAuthorPage,{name:"load"})).find(element=>element.props.editing===true&&typeof element.props.onSaved==="function")!
   // The child shares the module's mocked React bindings, but has an independent hook state.
@@ -253,7 +220,7 @@ test("R17: unsaved author edits install and remove a cancellable beforeunload gu
   Object.defineProperty(globalThis,"window",{value:events,configurable:true,writable:true})
   try {
     const modules={...primitives,react:{useEffect:(effect:()=>undefined|(()=>void))=>{cleanup=effect()}}}
-    const {useUnsavedAuthor}=load("../features/evaluation-author.tsx",modules)
+    const {useUnsavedAuthor}=load("../components/evaluation-author-fields.tsx",modules)
     useUnsavedAuthor(true as unknown as Record<string,unknown>)
     const event=new Event("beforeunload",{cancelable:true})
     events.dispatchEvent(event)
@@ -280,7 +247,7 @@ test("R17: list rows do not expose rerun or removal until a run is selected",()=
 
 test("R17: load parts expose every service rate as labeled fields without a wide table",()=>{
   const runner=hookRunner(),source={name:"load",uid:"load-uid",spec:{parts:[{id:"zero",durationSeconds:1,rates:{camera:0,plc:0}}],workloads:[{name:"camera",uid:"camera-uid"},{name:"plc",uid:"plc-uid"}]},inUse:["original"]}
-  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads?view=summary"?[]:source}),useChillMutation:()=>({isPending:false})},"@/features/evaluation-author":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/workloads?view=summary"?[]:source}),useChillMutation:()=>({isPending:false})},"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",useUnsavedAuthor:()=>{}},"@/features/evaluation-author":{AuthorHelp:"help",EvidencePicker:"select"}}
   const {LoadScenarioAuthorPage}=load("../features/load-scenario-author.tsx",modules)
   const page=elements(runner.render(LoadScenarioAuthorPage,{name:"load"}))
   const editor=page.find(element=>element.props.editing===true)!
@@ -323,7 +290,7 @@ test("R17b: result detail keeps outcome independent and labels every mobile comp
   const runner=hookRunner(),params=new URLSearchParams("a=publication")
   const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:60,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:1000000}}}}})
   let run:Record<string,unknown>={id:"publication",stages:[],outcome:{execution:{status:"Failed"},measurement:{verdict:"NOT_EVALUATED"},cleanup:{status:"Complete"}}}
-  const modules={...primitives,react:{...runner.react,useEffect:()=>{},useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",usePublishedExperimentFacts:()=>({data:null}),useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{},useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",usePublishedExperimentFacts:()=>({data:null}),useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
   const {ExperimentsPage}=load("../features/experiments.tsx",modules)
   const emptyPage=elements(runner.render(ExperimentsPage)),emptyDetail=emptyPage.find(element=>element.props.run===run&&typeof element.type==="function")!
   assert.ok(elements(runner.render(emptyDetail.type as (props:Record<string,unknown>)=>unknown,emptyDetail.props)).some(element=>element.type==="outcome"))
@@ -416,7 +383,7 @@ test("IA: only the selected stage is edited and dependent load creation preserve
 test("IA: historical references query pages and the selected detail without hiding missing references",()=>{
   const runner=hookRunner(),paths:string[]=[],changes:author.Spec[]=[]
   let missing=false
-  const modules={...primitives,react:runner.react,"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
+  const modules={...primitives,react:runner.react,"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
     paths.push(path)
     return path.includes("?")?{data:{items:[{id:"visible"}],page:{nextOffset:5}}}:missing?{error:{status:404}}:{data:{stages:[{id:"saved-stage"},{id:"other"}]}}
   }}}
@@ -439,7 +406,7 @@ test("IA: shared LoadEditor returns the saved UID and rejects stale preflight af
   const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string})=>{
     writes.push(input.path)
     return {data:input.path.endsWith("/preflight")?{checks:[{id:"server",passed:true}]}:{uid:"actual-uid"}}
-  }})},"@/features/evaluation-author":{useUnsavedAuthor:()=>{}}}
+  }})},"@/components/evaluation-author-fields":{useUnsavedAuthor:()=>{}}}
   const {LoadEditor}=load("../features/load-scenario-author.tsx",modules)
   const props={editing:false,onSaved:async()=>{},onConfirmed:(value:unknown)=>confirmed.push(value)}
   let tree=elements(runner.render(LoadEditor,props))
@@ -506,7 +473,7 @@ test("IA review: load completion respects closed or replaced Sheet sessions and 
       if(phase==="create")await pending
       return {data:phase==="reconcile"?{}:{uid:saved.uid}}
     }})}
-    const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:child.react,"@/lib/client":client,"@/features/evaluation-author":{useUnsavedAuthor:()=>{}}})
+    const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:child.react,"@/lib/client":client,"@/components/evaluation-author-fields":{useUnsavedAuthor:()=>{}}})
     const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",{...primitives,react:parent.react,"@/lib/client":{useChillQuery:()=>({data:{items:[]},refetch:async()=>{if(["list","active","reopened"].includes(phase))await pending}})},"@/features/load-scenario-author":{LoadEditor}})
     const props={spec:{question:"before",stages:[{id:"stage"}]} as author.Spec,onChange:(value:author.Spec)=>{props.spec=value}}
     let tree=elements(parent.render(EvaluationSpecEditor,props))
@@ -554,8 +521,8 @@ test("cutover stage assembly adds only id, row and the pinned load reference",()
 
 test("cutover load inputs serialize max uint64 seed as a string and pinned dataset name and UID",()=>{
   const runner=hookRunner(),fieldRunner=hookRunner()
-  const fields=load("../features/evaluation-author.tsx",{...primitives,react:fieldRunner.react})
-  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/datasets"?{items:[{metadata:{name:"images",uid:"dataset-uid"}}]}:[]})},"@/features/evaluation-author":{...fields,EvidencePicker:"trace"}}
+  const fields=load("../components/evaluation-author-fields.tsx",{...primitives,react:fieldRunner.react})
+  const modules={...primitives,react:runner.react,"@/lib/client":{useChillQuery:(path:string)=>({data:path==="v1/datasets"?{items:[{metadata:{name:"images",uid:"dataset-uid"}}]}:[]})},"@/components/evaluation-author-fields":fields,"@/features/evaluation-author":{EvidencePicker:"trace"}}
   const {LoadSpecEditor}=load("../features/load-scenario-author.tsx",modules)
   const props={spec:{workloads:[{name:"camera",uid:"workload",generation:1}],parts:[{id:"steady",durationSeconds:10,rates:{camera:7}}],arrivalDistribution:{camera:"poisson"},traceRefs:{camera:{store:"archive",key:"trace",size:9007199254740993n}},future:true} as author.Spec,onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:()=>{}}
   let tree=elements(runner.render(LoadSpecEditor,props))
@@ -576,26 +543,6 @@ test("cutover load inputs serialize max uint64 seed as a string and pinned datas
   assert.deepEqual(Object.keys(roundtrip).sort(),["arrivalDistribution","datasetRefs","future","parts","seeds","traceRefs","workloads"])
 })
 
-test("settings patch choices exactly reuse operating settings and retain opaque precise JSON",()=>{
-  const runner=hookRunner(),validity:boolean[]=[]
-  const {SettingsPatchEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react})
-  const props={spec:{settingsPatch:{future:{exact:9007199254740993n}}} as author.Spec,path:["settingsPatch"],onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:(valid:boolean)=>validity.push(valid)}
-  let tree=elements(runner.render(SettingsPatchEditor,props))
-  const picker=tree.find(item=>item.props.label==="설정 항목")!
-  assert.deepEqual(elements(picker).filter(item=>item.type==="option"&&item.props.value).map(item=>item.props.value),settings.editableSettingKeys)
-  ;(picker.props.onChange as (key:string)=>void)("observationWindowNanos")
-  tree=elements(runner.render(SettingsPatchEditor,props))
-  ;(tree.find(item=>item.type==="textarea")!.props.onChange as (event:unknown)=>void)({target:{value:"9007199254.740993"}})
-  tree=elements(runner.render(SettingsPatchEditor,props))
-  assert.equal(tree.find(item=>item.props.label==="설정 패치 원문 (ns)")?.props.disabled,true)
-  assert.equal(validity.at(-1),false)
-  ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
-  assert.deepEqual(props.spec.settingsPatch,{future:{exact:9007199254740993n},observationWindowNanos:9007199254740993n})
-  assert.equal(validity.at(-1),true)
-  tree=elements(runner.render(SettingsPatchEditor,props))
-  ;(tree.find(item=>item.props.children==="패치 미설정")!.props.onClick as ()=>void)()
-  assert.equal(Object.hasOwn(props.spec,"settingsPatch"),false)
-})
 
 test("black-box navigation and header label autonomous operation separately from external evaluation",()=>{
   const sidebar=load("../components/app-sidebar.tsx",{"next/navigation":{usePathname:()=>"/experiments"},"next/link":{default:"a"},"lucide-react":icons,"@/components/ui/sidebar":{useSidebar:()=>({setOpenMobile:()=>{}}),Sidebar:"aside",SidebarContent:"div",SidebarHeader:"header",SidebarMenu:"ul",SidebarMenuButton:"button",SidebarMenuItem:"li"},"@/components/brand":{BrandMark:"svg"}})
@@ -612,7 +559,7 @@ test("black-box navigation and header label autonomous operation separately from
 test("cutover load preflight and creation send the same complete external load contract",async()=>{
   const runner=hookRunner(),writes:{path:string;method:string;body:string}[]=[]
   const spec={workloads:[{name:"camera",uid:"workload-uid",generation:9007199254740993n}],parts:[{id:"steady",durationSeconds:10,rates:{camera:7}}],arrivalDistribution:{camera:"poisson"},seeds:{camera:"18446744073709551615"},datasetRefs:{camera:{name:"images",uid:"dataset-uid"}},traceRefs:{camera:{store:"archive",key:"trace",size:9007199254740993n}}}
-  const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:runner.react,"@/features/evaluation-author":{useUnsavedAuthor:()=>{}},"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string;body:string})=>{writes.push(input);return {data:input.path.endsWith("/preflight")?{checks:[{id:"spec",passed:true}]}:{uid:"created-uid"}}}})}})
+  const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:runner.react,"@/components/evaluation-author-fields":{useUnsavedAuthor:()=>{}},"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string;body:string})=>{writes.push(input);return {data:input.path.endsWith("/preflight")?{checks:[{id:"spec",passed:true}]}:{uid:"created-uid"}}}})}})
   const props={source:{name:"source",uid:"source-uid",spec,inUse:[]},editing:false,onSaved:async()=>{}}
   let tree=elements(runner.render(LoadEditor,props))
   ;(tree.find(item=>item.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"new-load"}})
@@ -629,7 +576,8 @@ test("cutover load preflight and creation send the same complete external load c
 test("P2 author: deleting the selected stage cannot apply its buffered patch to the next stage",()=>{
   const parent=hookRunner()
   const modules={...primitives,react:{...parent.react},"@/lib/client":{useChillQuery:()=>({data:{items:[]}})}}
-  const {EvaluationSpecEditor,SettingsPatchEditor}=load("../features/evaluation-author.tsx",modules)
+  const {SettingsPatchEditor}=load("../features/settings-patch-editor.tsx",modules)
+  const {EvaluationSpecEditor}=load("../features/evaluation-author.tsx",{...modules,"@/features/settings-patch-editor":{SettingsPatchEditor}})
   const props={spec:{stages:[{id:"a",settingsPatch:{maxReplicas:4}},{id:"b",settingsPatch:{maxReplicas:9}}]} as author.Spec,onChange:(value:author.Spec)=>{props.spec=value}}
   let child=hookRunner(),identity:unknown
   function renderPatch(tree:Tree[]) {
@@ -654,73 +602,6 @@ test("P2 author: deleting the selected stage cannot apply its buffered patch to 
   assert.equal(patch.find(item=>item.props.label==="설정 항목")?.props.value,"")
 })
 
-test("P2 author: inherited null or omitted stage patches differ from explicit empty replacement after last-key removal",()=>{
-  for(const value of [undefined,null,{}, {maxReplicas:2}]) {
-    const runner=hookRunner(),props={spec:{settingsPatch:{maxReplicas:8},stages:[{id:"a",...(value===undefined?{}:{settingsPatch:value})}]} as author.Spec,path:["stages",0,"settingsPatch"],onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:()=>{}}
-    const {SettingsPatchEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react})
-    let tree=elements(runner.render(SettingsPatchEditor,props))
-    assert.ok(tree.some(item=>item.props.children===(value==null?"전체 실험 설정 상속":"단계 패치로 전체 대체")))
-    if(value&&Object.hasOwn(value,"maxReplicas")) {
-      ;(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)("maxReplicas")
-      tree=elements(runner.render(SettingsPatchEditor,props))
-      ;(tree.find(item=>item.props.children==="항목 제거")!.props.onClick as ()=>void)()
-      tree=elements(runner.render(SettingsPatchEditor,props))
-      assert.deepEqual(author.specValue(props.spec,props.path),{})
-      assert.ok(tree.some(item=>item.props.children==="단계 패치로 전체 대체"))
-    }
-    ;(tree.find(item=>item.props.children==="전체 실험 설정 상속")?.props.onClick as (()=>void)|undefined)?.()
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    const unset=tree.find(item=>item.type==="button"&&item.props.children==="패치 미설정")
-    if(unset)(unset.props.onClick as ()=>void)()
-    assert.equal(author.specValue(props.spec,props.path),undefined)
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    ;(tree.find(item=>item.type==="button"&&item.props.children==="빈 단계 패치로 전체 대체")!.props.onClick as ()=>void)()
-    assert.deepEqual(author.specValue(props.spec,props.path),{})
-  }
-})
-
-test("P2 author: patch durations use exact operating milliseconds and do not add a second help tooltip",()=>{
-  for(const field of settings.settingFields.filter(field=>field.key.endsWith("Nanos"))) {
-    const runner=hookRunner(),props={spec:{settingsPatch:{[field.key]:9007199254740993n}} as author.Spec,path:["settingsPatch"],onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:()=>{}}
-    const {SettingsPatchEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react})
-    let tree=elements(runner.render(SettingsPatchEditor,props))
-    assert.ok(!tree.some(item=>item.props.children==="패치 도움말"))
-    ;(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)(field.key)
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    assert.ok(tree.some(item=>item.type==="label"&&elements(item).some(item=>item.type==="textarea")&&JSON.stringify(item.props.children).includes("ms")))
-    assert.equal(tree.find(item=>item.type==="textarea")?.props.value,"9007199254.740993")
-    ;(tree.find(item=>item.type==="textarea")!.props.onChange as (event:unknown)=>void)({target:{value:"1000.000001"}})
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
-    assert.equal(author.specValue(props.spec,["settingsPatch",field.key]),1000000001n)
-  }
-})
-
-test("P2 author: invalid raw nanoseconds clear the previous setting value without throwing",()=>{
-  for(const invalid of [1.5,Number.POSITIVE_INFINITY,Number.NaN]) {
-    const runner=hookRunner(),validity:boolean[]=[],props={spec:{settingsPatch:{maxReplicas:4,controlIntervalNanos:invalid}} as author.Spec,path:["settingsPatch"],onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:(value:boolean)=>validity.push(value)}
-    const {SettingsPatchEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react})
-    let tree=elements(runner.render(SettingsPatchEditor,props))
-    ;(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)("maxReplicas")
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    assert.equal(tree.find(item=>item.type==="textarea")?.props.value,"4")
-    assert.doesNotThrow(()=>(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)("controlIntervalNanos"))
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    assert.equal(tree.find(item=>item.type==="textarea")?.props.value,"")
-    assert.equal(tree.find(item=>item.type==="textarea")?.props["aria-invalid"],true)
-    assert.ok(tree.some(item=>item.props.role==="alert"&&typeof item.props.children==="string"))
-    assert.equal(validity.at(-1),false)
-    ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
-    assert.equal(author.specValue(props.spec,["settingsPatch","controlIntervalNanos"]),invalid)
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    ;(tree.find(item=>item.type==="textarea")!.props.onChange as (event:unknown)=>void)({target:{value:"1000"}})
-    tree=elements(runner.render(SettingsPatchEditor,props))
-    ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
-    assert.equal(author.specValue(props.spec,["settingsPatch","controlIntervalNanos"]),1000000000n)
-    assert.equal(author.specValue(props.spec,["settingsPatch","maxReplicas"]),4)
-    assert.equal(validity.at(-1),true)
-  }
-})
 
 test("P2 author: copied legacy run preflight excludes deleted fields and visibly lists exclusions while edit preserves them",()=>{
   const legacy={question:"legacy",control:{old:true},target:{components:[{name:"server",image:"old",sourceSHA:"sha",resource:{name:"server"},future:true}]},harness:{image:"retained",sourceSHA:"retained"},stages:[{id:"a",mode:"fixed",startState:{old:true},control:{old:true},settingsPatch:{controls:{power:false}},future:true}],future:9007199254740993n}
@@ -765,7 +646,7 @@ test("P2 author: copied legacy scenario preflight strips only obsolete load fiel
   const legacy={workloads:[{name:"camera",uid:"w",generation:1}],parts:[{id:"p",durationSeconds:1,rates:{camera:1},alpha:{camera:1},future:true}],alpha:{camera:1},kappaRef:{key:"old"},rateBasisRef:{key:"old"},seedRef:{key:"old"},payloadManifestRef:{key:"old"},seeds:{camera:"18446744073709551615"},datasetRefs:{camera:{name:"images",uid:"dataset"}},future:9007199254740993n}
   for(const editing of [false,true]) {
     const runner=hookRunner(),writes:{body:string}[]=[]
-    const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:runner.react,"@/features/evaluation-author":{useUnsavedAuthor:()=>{}},"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{body:string})=>{writes.push(input);return {data:{checks:[{id:"spec",passed:true}]}}}})}})
+    const {LoadEditor}=load("../features/load-scenario-author.tsx",{...primitives,react:runner.react,"@/components/evaluation-author-fields":{useUnsavedAuthor:()=>{}},"@/lib/client":{useChillQuery:()=>({}),useChillMutation:()=>({isPending:false,mutateAsync:async(input:{body:string})=>{writes.push(input);return {data:{checks:[{id:"spec",passed:true}]}}}})}})
     const props={source:{name:"old",uid:"uid",spec:legacy,inUse:[]},editing,onSaved:async()=>{}}
     let tree=elements(runner.render(LoadEditor,props))
     if(!editing){(tree.find(item=>item.type==="input")!.props.onChange as (event:unknown)=>void)({target:{value:"copy"}});tree=elements(runner.render(LoadEditor,props))}

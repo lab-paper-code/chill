@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Screen } from "@/components/screen"
@@ -12,39 +12,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { LoadEditor } from "@/features/load-scenario-author"
 import { EvaluationPermission, EvaluationSubmit } from "@/features/evaluation-request"
-import { object, records, specValue, patchSpec, parseSpec, specJSON, copyAuthorDraft, type Spec, type LoadScenario, type EvidenceInput } from "@/lib/evaluation-author"
-import { millisecondsToNanos, nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
+import { object, records, specValue, patchSpec, specJSON, copyAuthorDraft, type Spec, type LoadScenario, type EvidenceInput } from "@/lib/evaluation-author"
+import { parseSchedulerJSON } from "@/lib/scheduler"
 import { decodeExperimentPage, type ExperimentPage } from "@/lib/experiments"
-import { editableSettingKeys, settingFields, settingTargets } from "@/lib/scheduler-settings"
+import { AuthorSelect, AuthorField, AuthorJSON, useUnsavedAuthor } from "@/components/evaluation-author-fields"
+import { SettingsPatchEditor } from "@/features/settings-patch-editor"
 
 
-export function useUnsavedAuthor(dirty:boolean) {
-  useEffect(()=>{
-    if(!dirty)return
-    const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue=""}
-    window.addEventListener("beforeunload",warn)
-    return ()=>window.removeEventListener("beforeunload",warn)
-  },[dirty])
-}
-const selectClass="min-h-11 w-full min-w-0 max-w-full rounded-md border bg-background px-3 text-sm"
-export function AuthorSelect({label,value,onChange,children,disabled=false,compact=false}:{label:string;value:string;onChange:(value:string)=>void;children:ReactNode;disabled?:boolean;compact?:boolean}) {
-  return <label className="grid min-w-0 gap-1 text-sm"><span className={compact?"sr-only":undefined}>{label}</span><select className={selectClass} value={value} disabled={disabled} onChange={event=>onChange(event.target.value)}>{children}</select></label>
-}
-export function AuthorField({label,spec,path,onChange,numeric=false,compact=false}:{label:string;spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void;numeric?:boolean;compact?:boolean}) {
-  const value=specValue(spec,path)
-  return <label className="grid min-w-0 gap-1 text-sm"><span className={compact?"sr-only":undefined}>{label}</span><Input type={numeric?"number":"text"} step={numeric?"any":undefined} value={value===undefined||value===null?"":String(value)} onChange={event=>{
-    const text=event.target.value
-    onChange(patchSpec(spec,path,text===""?undefined:numeric?parseSchedulerJSON(text):text))
-  }}/></label>
-}
-export function AuthorJSON({label,value,onChange,onValidityChange,disabled=false}:{label:string;value:Spec;onChange:(value:Spec)=>void;onValidityChange?:(valid:boolean)=>void;disabled?:boolean}) {
-  const canonical=specJSON(value),[draft,setDraft]=useState<{text:string;base:string}|null>(null),[error,setError]=useState("")
-  return <div className="grid gap-2 text-sm"><label className="grid gap-2">{label}<textarea disabled={disabled} className="min-h-48 w-full rounded-md border bg-background p-3 font-mono text-xs" spellCheck={false} value={error?draft?.text??canonical:draft?.base===canonical?draft.text:canonical} aria-invalid={!!error} onChange={event=>{
-    const text=event.target.value
-    try {const next=parseSpec(text);setDraft({text,base:specJSON(next)});setError("");onChange(next);onValidityChange?.(true)}
-    catch {setDraft({text,base:canonical});setError("JSON 객체 형식 확인");onValidityChange?.(false)}
-  }}/></label>{error&&<><span role="alert" className="text-destructive">{error}</span><Button type="button" variant="outline" onClick={()=>{setDraft(null);setError("");onValidityChange?.(true)}}>JSON 변경 취소</Button></>}</div>
-}
 export function EvidencePicker({label,value,onChange}:{label:string;value:unknown;onChange:(value:Spec|undefined)=>void}) {
   const [set,setSet]=useState(""),[offsets,setOffsets]=useState([0]),[chosen,setChosen]=useState<EvidenceInput|null>(null),setList=useId()
   const {config}=useSession()
@@ -81,40 +55,6 @@ export function HistoricalComparison({spec,path,onChange}:{spec:Spec;path:(strin
     <QueryGate query={page}>{null}</QueryGate>
     {publicationID&&<>{selected.error?.status===404?<span role="status">대상 게시 없음</span>:<QueryGate query={selected}>{null}</QueryGate>}<AuthorSelect label="과거 단계" value={stageID} onChange={value=>onChange(patchSpec(spec,[...path,"stageID"],value))}><option value="">미선택</option>{stageID&&!stages.some(stage=>stage.id===stageID)&&<option value={stageID}>{stageID} · 저장된 참조</option>}{stages.map(stage=><option key={stage.id} value={stage.id}>{stage.id}</option>)}</AuthorSelect></>}
   </div>
-}
-export function SettingsPatchEditor({spec,path,onChange,onValidityChange}:{spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void;onValidityChange:(valid:boolean)=>void}) {
-  const raw=specValue(spec,path),patch=object(raw),stage=path[0]==="stages",[key,setKey]=useState(""),[text,setText]=useState(""),[error,setError]=useState(""),[pending,setPending]=useState(false),[rawInvalid,setRawInvalid]=useState(false)
-  const field=settingFields.find(field=>field.key===key),nanos=!!field?.key.endsWith("Nanos"),unit=nanos?"ms":key==="servingMemoryBytes"?"bytes":field?.unit
-  const labels=new Map<string,string>([...settingFields,...settingTargets].map(field=>[field.key,field.label]))
-  function replace(value:Spec|undefined) {
-    onChange(patchSpec(spec,path,value));setKey("");setText("");setPending(false);setError("");onValidityChange(true)
-  }
-  return <fieldset className="grid min-w-0 gap-3 rounded-md border p-3"><legend className="text-sm">운영 설정 패치</legend>
-    <span role="status" className="text-sm">{stage?(raw==null?"전체 실험 설정 상속":"단계 패치로 전체 대체"):raw==null?"전체 실험 패치 미설정":"전체 실험 패치 설정"}</span>
-    <AuthorSelect label="설정 항목" value={key} disabled={pending||rawInvalid} onChange={value=>{
-      setKey(value);setText("");setError("")
-      const current=patch[value]
-      if(Object.hasOwn(patch,value)) {
-        if(value.endsWith("Nanos")) {
-          if(typeof current!=="bigint"&&(typeof current!=="number"||!Number.isFinite(current)||!Number.isInteger(current))) {
-            setError("시간 값은 유한한 정수 ns로 입력해 주세요.");onValidityChange(false);return
-          }
-          setText(nanosToMilliseconds(current))
-        } else setText(specJSON(current))
-      }
-      onValidityChange(true)
-    }}><option value="">항목 선택</option>{editableSettingKeys.map(value=><option key={value} value={value}>{labels.get(value)??(value==="controls"?"제어 항목":value)}</option>)}</AuthorSelect>
-    {key&&<><label className="grid gap-1 text-sm">{`항목 값 (${unit??"JSON"})`}<textarea disabled={rawInvalid} className="min-h-24 w-full rounded-md border bg-background p-3 font-mono text-xs" value={text} aria-invalid={!!error} onChange={event=>{setText(event.target.value);setPending(true);setError("");onValidityChange(false)}}/></label>
-      <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>{try {
-        const value=nanos?millisecondsToNanos(text,["scaleDownStabilizationNanos","replacementDwellNanos","bootstrapCapacityWaitNanos"].includes(key)?0n:1n):parseSchedulerJSON(text)
-        if(key==="bootstrapCapacityWaitNanos"&&typeof value==="bigint"&&value>3600000000000n)throw new Error("초기 용량 대기는 0~3600000 ms로 적어 주세요.")
-        onChange(patchSpec(spec,path,patchSpec(patch,[key],value)));setPending(false);setError("");onValidityChange(true)
-      } catch(error) {setError(error instanceof Error?error.message:"JSON 값 형식 확인");onValidityChange(false)}}}>항목 반영</Button>
-      <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>replace(patchSpec(patch,[key],undefined))}>항목 제거</Button></>}
-    {error&&<span role="alert" className="text-destructive">{error}</span>}
-    <AuthorJSON label="설정 패치 원문 (ns)" value={patch} disabled={pending} onChange={value=>replace(value)} onValidityChange={valid=>{setRawInvalid(!valid);onValidityChange(valid)}}/>
-    <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>replace(undefined)}>패치 미설정</Button>{stage&&<Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>replace({})}>빈 단계 패치로 전체 대체</Button>}</div>
-  </fieldset>
 }
 function ComparisonSide({label,spec,path,onChange,stages}:{label:string;spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void;stages:Spec[]}) {
   const ref=object(specValue(spec,path)),historical=ref.historical!==undefined
