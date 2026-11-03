@@ -197,10 +197,6 @@ func (c *reservationState) snapshotLocked() serving.SchedulerSnapshot {
 	return c.state.Snapshot
 }
 
-func (c *reservationState) snapshotWorkloadsLocked() []*serving.Definition {
-	return c.state.Snapshot.Workloads
-}
-
 func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnapshot) {
 	c.state.Snapshot = *snapshot
 }

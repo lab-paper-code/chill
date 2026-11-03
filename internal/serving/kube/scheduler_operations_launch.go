@@ -80,7 +80,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			if !c.dependenciesReady(action, *dependencyTarget, c.runtime) {
 				continue
 			}
-			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.snapshotWorkloadsLocked())
+			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.snapshotLocked().Workloads)
 			if action.Kind == servingstate.OperationRoute {
 				scope, empty := c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
 				operation.WorkloadUIDs = scope
