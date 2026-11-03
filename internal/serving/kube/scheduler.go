@@ -69,27 +69,8 @@ type SchedulerControllerState struct {
 	CostIssues []CostIssue `json:"costIssues"`
 }
 
-type actionRun struct {
-	action               serving.Action
-	result               *OperationResult
-	cancel               context.CancelFunc
-	started              time.Time
-	scope                resourceScope
-	owner                string
-	reserved             bool
-	returnObserved       bool
-	prepareIdentity      string
-	inheritedReservation bool
-	routeReceipts        map[string]*actionRun
-	mayTouch             map[string]bool
-	proofParent          *actionRun
-	replacements         []serving.SchedulerReplacement
-	admittedControls     serving.SchedulerControls
-}
-
 type SchedulerController struct {
-	mu         sync.Mutex
-	tickMu     sync.Mutex
+	reservationState
 	store      *Store
 	kube       kubernetes.Interface
 	runtime    *serving.Runtime
@@ -100,12 +81,10 @@ type SchedulerController struct {
 	observationLog        *serving.ObservationLog
 	capacity              *serving.CapacityTable
 	config                SchedulerControllerConfig
-	state                 SchedulerControllerState
 	bootstrapStartedAt    time.Time
 	tempo                 serving.SchedulerTempo
 	replacements          []serving.SchedulerReplacement
 	replacementObservedAt time.Time
-	runs                  map[string]*actionRun
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	wg                    sync.WaitGroup
@@ -133,7 +112,7 @@ func NewSchedulerController(store *Store, kube kubernetes.Interface, runtime *se
 	ctx, cancel := context.WithCancel(context.Background())
 	measurement := *operations
 	measurement.config.Measurement = true
-	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, runs: map[string]*actionRun{}, ctx: ctx, cancel: cancel}
+	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: reservationState{runs: map[string]*actionRun{}}, ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
 	observer.scheduler = c
 	c.measureStep = c.measureOperation

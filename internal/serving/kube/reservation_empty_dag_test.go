@@ -14,7 +14,7 @@ import (
 func TestEmptyRouteAdmissionAC38(t *testing.T) {
 	for _, kind := range []string{"", operationPrepare, operationPower, operationResize, operationStop} {
 		t.Run(kind, func(t *testing.T) {
-			c := &SchedulerController{runs: map[string]*actionRun{}, runtime: &serving.Runtime{}}
+			c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
 			route := serving.Action{ID: "empty-route", Kind: operationRoute}
 			target := serving.SchedulerCandidate{ID: "raw-empty", Actions: []serving.Action{route}}
 			if kind != "" {
@@ -39,7 +39,7 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 
 func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 	target := serving.SchedulerCandidate{ID: "empty-replan", Actions: []serving.Action{{ID: "empty-route", Kind: operationRoute}}}
-	c := &SchedulerController{runs: map[string]*actionRun{}, runtime: &serving.Runtime{}}
+	c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
 	for range 2 {
 		c.launch(target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
@@ -98,7 +98,7 @@ func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
 
 func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 	for _, ready := range []int{0, 1, 2} {
-		c := &SchedulerController{runs: map[string]*actionRun{}, runtime: &serving.Runtime{}}
+		c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
 		instances := []serving.SchedulerInstance{{ID: "a", WorkloadUID: "w", Ready: ready > 0}, {ID: "b", WorkloadUID: "w", Ready: ready > 1}}
 		routing := map[string]map[string]int32{"w": {"a": 500, "b": 500}}
 		c.state.Snapshot = serving.SchedulerSnapshot{Instances: instances, Routing: routing}
@@ -117,7 +117,7 @@ func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 }
 
 func TestReservationReasonsDeterministicAC38(t *testing.T) {
-	c := &SchedulerController{runs: map[string]*actionRun{}}
+	c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{}}}
 	for _, id := range []string{"z", "a"} {
 		c.runs[id] = &actionRun{owner: "owner", reserved: true, action: serving.Action{ID: id, Reason: "missing proof"}}
 	}
@@ -136,7 +136,7 @@ func TestStateReportsCurrentReservations(t *testing.T) {
 		action: serving.Action{ID: "reset", Status: nativeOperationRunning},
 		scope:  resourceScope{Nodes: []serving.NodeReference{{Name: "node"}}},
 	}
-	c := &SchedulerController{runs: map[string]*actionRun{"reset": run}}
+	c := &SchedulerController{reservationState: reservationState{runs: map[string]*actionRun{"reset": run}}}
 	c.state.Snapshot = serving.SchedulerSnapshot{At: at}
 	c.state.Snapshot.Reservations = c.reservationsLocked()
 	c.state.Decision.At = at

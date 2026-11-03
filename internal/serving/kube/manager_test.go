@@ -722,7 +722,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if len(o.sources) != 0 || len(m.runtime.Instances()) != 0 {
 		t.Fatal("completed remove retained physical executor")
 	}
-	controller := &SchedulerController{store: m.store, kube: kube, runtime: m.runtime, observer: o, runs: map[string]*actionRun{}}
+	controller := &SchedulerController{store: m.store, kube: kube, runtime: m.runtime, observer: o, reservationState: reservationState{runs: map[string]*actionRun{}}}
 	o.scheduler = controller
 	// A prior operation on this Workload conflicts even after all Pods vanished.
 	controller.mu.Lock()

@@ -769,7 +769,7 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 func TestManualRoutingBarrierIsNotAnAutonomousGoalEffect(t *testing.T) {
 	for _, kind := range []string{operationRoute, operationUnroute, operationRelease, operationReset} {
 		t.Run(kind, func(t *testing.T) {
-			controller := &SchedulerController{ctx: context.Background(), runs: map[string]*actionRun{}}
+			controller := &SchedulerController{ctx: context.Background(), reservationState: reservationState{runs: map[string]*actionRun{}}}
 			release := make(chan struct{})
 			operation := Operation{ID: "manual-" + kind, Kind: kind}
 			done, result := controller.startNodeRun(operation, SchedulerControllerConfig{}, func(context.Context, *OperationResult) error {

@@ -158,7 +158,7 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 	uid := types.UID("workload-uid")
 	pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: uid}}
 	o := newTestObserver(t, pod)
-	c := &SchedulerController{store: o.store, observer: o, kube: kubefake.NewSimpleClientset(node), runs: map[string]*actionRun{}}
+	c := &SchedulerController{store: o.store, observer: o, kube: kubefake.NewSimpleClientset(node), reservationState: reservationState{runs: map[string]*actionRun{}}}
 	c.mu.Lock()
 	held := c.reserveRun("physical-only", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{PodUID: string(pod.UID)})
 	c.mu.Unlock()

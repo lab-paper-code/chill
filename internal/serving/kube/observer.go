@@ -93,7 +93,7 @@ func (s *nativeSource) stopFollow() {
 // ponytail: one source lock serializes refresh/cleanup for this single owner;
 // split locks only if observed cluster size makes refresh contention material.
 type Observer struct {
-	mu          sync.Mutex
+	observerState
 	refreshMu   sync.Mutex
 	store       *Store
 	kube        kubernetes.Interface
@@ -106,16 +106,15 @@ type Observer struct {
 	scheduler   *SchedulerController
 	// issueMu guards issues, so log followers record progress and its issues
 	// while a refresh holds mu.
-	issueMu           sync.Mutex
-	issues            map[string]ObserverIssue
-	recordedIssues    map[string]ObserverIssue
-	ctx               context.Context
-	cancel            context.CancelFunc
-	wg                sync.WaitGroup
-	podWatch          watch.Interface
-	closed            bool
-	movingNodes       map[string]bool
-	removingInstances map[string]bool
+	issueMu        sync.Mutex
+	issues         map[string]ObserverIssue
+	recordedIssues map[string]ObserverIssue
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	podWatch       watch.Interface
+	closed         bool
+	movingNodes    map[string]bool
 	// refreshed is when the last successful refresh finished.
 	refreshed   time.Time
 	clusterPods map[types.UID]serving.ClusterPod
@@ -129,7 +128,7 @@ func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runti
 		return nil, errors.New("cluster observations require a CHILL Pod selector")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Observer{store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, removingInstances: map[string]bool{}, ctx: ctx, cancel: cancel}, nil
+	return &Observer{store: store, kube: kube, runtime: runtime, native: native, config: config, sources: map[string]*nativeSource{}, issues: map[string]ObserverIssue{}, movingNodes: map[string]bool{}, observerState: observerState{removingInstances: map[string]bool{}}, ctx: ctx, cancel: cancel}, nil
 }
 
 func (o *Observer) SetProfiles(profiles []serving.Profile) {
