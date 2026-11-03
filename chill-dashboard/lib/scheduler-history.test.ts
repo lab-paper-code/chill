@@ -47,13 +47,10 @@ test("power display rounds only presented values and translates duration policie
   ])
 })
 
-test("consecutive Keep judgments collapse without crossing a transition or losing the first record reference",()=>{
+test("summary Keep records remain individually readable when service scopes were not returned",()=>{
   const keep:SchedulerObservationSummary={at:event.at,decision:{at:event.at,status:"Keep"}}
   const rows=[keep,keep,event,keep].map((event,index)=>({event,ref:schedulerRecordRef(event,from,to,String(index))}))
-  const grouped=groupHistoryKeeps(rows)
-  assert.deepEqual(grouped.map(row=>row.keepCount),[2,0,1])
-  assert.equal(grouped[0].ref.offset,"0")
-  assert.equal(grouped[1].event,event)
+  assert.deepEqual(groupHistoryKeeps(rows).map(row=>row.keepCount),[1,1,0,1])
 })
 
 test("filtered latest-first rows retain original append offset for evidence lookup",()=>{

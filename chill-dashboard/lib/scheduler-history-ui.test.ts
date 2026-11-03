@@ -43,6 +43,7 @@ function harness(query="",responses:Record<string,unknown>={}){
     new Function("require","exports",compiled)((name:string)=>modules[name]??(name.startsWith("@/")||name.startsWith("./")?{}:require(name)),exports)
     return exports
   }
+  modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx")
   return {load,calls,urls,modules}
 }
 

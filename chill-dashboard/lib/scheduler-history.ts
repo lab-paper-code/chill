@@ -1,5 +1,6 @@
-import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary } from "./read-types.ts"
+import type { SchedulerDecision, SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary } from "./read-types.ts"
 import { object, type ExperimentStage } from "./experiments.ts"
+import { compareAt } from "./live.ts"
 
 export type SchedulerRecordRef = {from:string;to:string;offset:string;kind:string;at:string;id:string;node?:string;startedAt?:string}
 
@@ -21,15 +22,32 @@ export function schedulerHistoryNodeMatches(filter:string,event:SchedulerObserva
   return !filter||!!node&&(node.uid===filter||node.name===filter)
 }
 
-/** Server kind filters include Keep; collapse only adjacent judgments in the loaded page. */
-export function groupHistoryKeeps<T extends {event:SchedulerObservationSummary}>(rows:T[]):(T&{keepCount:number})[] {
+type ScopeObservation=SchedulerObservationSummary&{decision?:Pick<SchedulerDecision,"at"|"status">&Partial<Pick<SchedulerDecision,"workloads"|"reasons">>}
+function scopeSignature(event:ScopeObservation,codesOnly=false):string|null {
+  const workloads=event.decision?.workloads
+  return workloads==null?null:JSON.stringify(workloads.map(row=>[row.uid,row.state,codesOnly?row.reason?.split(":")[0]??null:row.reason??null]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))))
+}
+
+/** Never hide a scope/reason change behind a run of Keep judgments. */
+export function groupHistoryKeeps<T extends {event:ScopeObservation}>(rows:T[]):(T&{keepCount:number})[] {
   const grouped:(T&{keepCount:number})[]=[]
   for(const row of rows) {
-    const keep=row.event.decision?.status==="Keep",previous=grouped.at(-1)
-    if(keep&&previous?.keepCount)previous.keepCount++
+    const keep=row.event.decision?.status==="Keep",previous=grouped.at(-1),scope=scopeSignature(row.event)
+    if(keep&&previous?.keepCount&&scope!==null&&scope===scopeSignature(previous.event)&&JSON.stringify(row.event.decision?.reasons)===JSON.stringify(previous.event.decision?.reasons))previous.keepCount++
     else grouped.push({...row,keepCount:keep?1:0})
   }
   return grouped
+}
+
+/** Chronological baseline + changes within one loaded page, not a period-wide history. */
+export function schedulerScopeChanges<T extends {event:ScopeObservation;ref:SchedulerRecordRef}>(rows:T[]):T[] {
+  const decisions=rows.filter(row=>row.event.decision).sort((a,b)=>compareAt(a.event.decision!.at,b.event.decision!.at))
+  let previous:string|null=null
+  return decisions.filter((row,index)=>{
+    const signature=scopeSignature(row.event,true),changed=index===0||signature===null||signature!==previous
+    previous=signature
+    return changed
+  })
 }
 
 export function schedulerRecordRef(event:SchedulerObservationSummary,from:string,to:string,offset:string):SchedulerRecordRef {

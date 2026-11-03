@@ -337,6 +337,7 @@ test("operations board keeps independent axes, idle summary, service placement a
     "./live-board.css":{},
     "./power-series":{LivePowerTrend:()=>null},
   }
+  modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx",{"@/lib/live-display":displayHelpers})
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
   const idle=render()
@@ -358,6 +359,22 @@ test("operations board keeps independent axes, idle summary, service placement a
   assert.match(candidateEvidence,/변경 없음/)
   assert.equal((candidateEvidence.match(/<h3>유지안<\/h3>/g)??[]).length,1)
   assert.doesNotMatch(candidateEvidence,/목표 충족/)
+  const controlFixture=JSON.parse(readFileSync(new URL("./fixtures/e5-scheduler-control.json",import.meta.url),"utf8"))
+  recordedDecision={...controlFixture.decision,keep,target:null,search:{windowStart:at,windowEnd:at}}
+  query=new URLSearchParams({at:controlFixture.at})
+  const previousWorkloads=snapshot.workloads
+  snapshot.workloads=controlFixture.snapshot.workloads.map((row:{uid:string;name:string})=>({...pool,...row,autonomous:true}))
+  const controls=render()
+  const controlRows=controls.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)??[]
+  for(const name of ["plc-anomaly","smolvlm2-vqa"]){
+    const row=controlRows.find(row=>row.includes(name)&&row.includes("Controlled"))!
+    assert.ok(row)
+    assert.doesNotMatch(row,/Fixed|UnconfirmedInstance/)
+  }
+  assert.ok(controlRows.some(row=>row.includes("image-classification-tight-slo")&&row.includes("Fixed")&&row.includes("UnconfirmedInstance")))
+  assert.match(controls,/결정 전체/)
+  assert.match(controls,/Keep/)
+  snapshot.workloads=previousWorkloads
   recordedDecision=undefined
   query=new URLSearchParams({services:"확인 필요"})
   assert.match(render(),/해당 서비스 없음/)
@@ -402,7 +419,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const detail=render()
   assert.equal((detail.match(/data-sheet="true"/g)??[]).length,1)
   assert.ok(detail.indexOf("서비스 SLO")<detail.indexOf("근거 조회 중"))
-  assert.match(detail,/선택 시각 KST/)
+  assert.match(detail,/판단 근거 · 선택 당시/)
   query=new URLSearchParams({at})
   assert.match(render(),/21:00:00 KST/)
   const around=new URL(displayHelpers.incidentHistoryHref(undefined,at),"http://local")
