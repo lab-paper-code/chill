@@ -56,9 +56,6 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	events := make([]observationEvent, 0, len(records))
-	if records == nil {
-		events = nil
-	}
 	for _, record := range records {
 		event := observationEvent{Type: "event", At: record.At}
 		if action := record.Action; action != nil {

@@ -112,29 +112,27 @@ func (r *observationRead) archivePrefixes(ranges map[string][2]time.Time) []stri
 func (l *ObservationLog) archiveSources(read *observationRead, ranges map[string][2]time.Time) (map[string]map[time.Time]evidencestore.ObjectIdentity, error) {
 	objects := map[string]map[time.Time]evidencestore.ObjectIdentity{}
 	if read.needsArchive(ranges) && read.archive != nil {
-		var listed []evidencestore.ObjectIdentity
 		for _, prefix := range read.archivePrefixes(ranges) {
 			page, err := read.archive.List(read.ctx, prefix)
 			if err != nil {
 				return nil, err
 			}
-			listed = append(listed, page...)
-		}
-		for _, object := range listed {
-			if err := read.ctx.Err(); err != nil {
-				return nil, err
+			for _, object := range page {
+				if err := read.ctx.Err(); err != nil {
+					return nil, err
+				}
+				hour, stream, valid := observationObjectHour(object)
+				if !valid || read.localHours[hour] {
+					continue
+				}
+				if objects[stream] == nil {
+					objects[stream] = map[time.Time]evidencestore.ObjectIdentity{}
+				}
+				if previous, exists := objects[stream][hour]; exists && previous.Store != object.Store {
+					return nil, &serving.Error{Code: "IncompleteObservation", Message: fmt.Sprintf("multiple archive objects for %s %s", observationHour(hour), stream)}
+				}
+				objects[stream][hour] = object
 			}
-			hour, stream, valid := observationObjectHour(object)
-			if !valid || read.localHours[hour] {
-				continue
-			}
-			if objects[stream] == nil {
-				objects[stream] = map[time.Time]evidencestore.ObjectIdentity{}
-			}
-			if previous, exists := objects[stream][hour]; exists && previous.Store != object.Store {
-				return nil, &serving.Error{Code: "IncompleteObservation", Message: fmt.Sprintf("multiple archive objects for %s %s", observationHour(hour), stream)}
-			}
-			objects[stream][hour] = object
 		}
 	}
 	return objects, nil

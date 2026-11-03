@@ -183,7 +183,7 @@ func TestObservationEventsEmptyPageContinuesAppendHours(t *testing.T) {
 		}
 		from := at.Truncate(time.Hour).Add(time.Duration(page) * time.Hour)
 		to := from.Add(time.Hour)
-		if string(result.Events) != "null" || result.Next != to.Format(time.RFC3339Nano) || result.Coverage.From == nil || !result.Coverage.From.Equal(from) || result.Coverage.To == nil || !result.Coverage.To.Equal(to) || len(result.Coverage.Gaps) != 2 {
+		if string(result.Events) != "[]" || result.Next != to.Format(time.RFC3339Nano) || result.Coverage.From == nil || !result.Coverage.From.Equal(from) || result.Coverage.To == nil || !result.Coverage.To.Equal(to) || len(result.Coverage.Gaps) != 2 {
 			t.Fatalf("empty exact continuation contract: %s", response.Body)
 		}
 		query.Set("cursor", result.Next)

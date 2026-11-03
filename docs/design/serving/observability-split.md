@@ -74,7 +74,7 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 #### Exact event recovery
 `GET /api/v1/observations/events?at=<RFC3339Nano>[&cursor=<nextCursor>]`
 keeps `events` and adds the range query's `ObservationCoverage`. An empty exact
-page is `{"events":null,"nextCursor":"2026-11-03T20:00:00Z","coverage":{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","sources":[],"gaps":[{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"cluster","reason":"StreamUnavailable"},{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"scheduler","reason":"StreamUnavailable"}]}}`.
+page preserves the existing array shape: `{"events":[],"nextCursor":"2026-11-03T20:00:00Z","coverage":{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","sources":[],"gaps":[{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"cluster","reason":"StreamUnavailable"},{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"scheduler","reason":"StreamUnavailable"}]}}`.
 Coverage bounds describe the append-time interval attempted, including absent
 archive hours; `to` is exclusive and clamped to the captured append head.
 `nextCursor` is the next append-hour RFC3339Nano timestamp, accepted only by
