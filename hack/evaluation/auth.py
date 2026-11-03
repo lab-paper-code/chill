@@ -46,7 +46,7 @@ def check(token_file, expected_seconds, *, endpoint=None, ca_file=None, timeout=
         origin = urllib.parse.urlsplit(endpoint)
         if origin.scheme != 'https' or not origin.hostname or origin.username or origin.password or origin.path not in ('', '/') or origin.query or origin.fragment:
             raise ValueError('Authenticated expiry probe requires an HTTPS origin')
-        request = urllib.request.Request(endpoint.rstrip('/') + '/api/v1/scheduler/state',
+        request = urllib.request.Request(endpoint.rstrip('/') + '/api/v1/workloads',
                                          headers={'Authorization': 'Bearer ' + token})
         opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=str(ca_file))))
         try:
@@ -60,7 +60,7 @@ def check(token_file, expected_seconds, *, endpoint=None, ca_file=None, timeout=
             expires = instant.timestamp()
         except Exception:
             raise ValueError('Token lacks proven expiry: authenticated HTTP 200 with X-Token-Expires-At UTC required') from None
-        source = 'Authenticated scheduler response X-Token-Expires-At'
+        source = 'Authenticated public API response X-Token-Expires-At'
     current = clock()
     remaining = expires - current
     record = {'checkedUTC': dt.datetime.fromtimestamp(current, dt.timezone.utc).isoformat(),

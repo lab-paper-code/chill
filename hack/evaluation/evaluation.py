@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""EvaluationRun Job adapter. Only prepare resolves live scientific definitions.
+"""EvaluationRun Job adapter for frozen black-box declarations and Dataset carriers.
 
-Inputs are an evaluation-inputs.v1alpha1 payload manifest (evaluation_inputs.py),
-LoadScenario pins, and frozen operational ConfigMap values. All mutable state is
-inside the execution PVC. Result objects are immutable and always uploaded last.
+Operational ConfigMap values contain client budgets and credential projections,
+never scientific host files. Immutable result objects are uploaded last.
 """
 import argparse
 import copy
 import datetime as dt
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import ssl
@@ -63,91 +63,87 @@ def kubectl(namespace,*args):
     return json.loads(result.stdout)
 
 
-def expand(value,inputs):
-    if isinstance(value,dict): return {key:expand(child,inputs) for key,child in value.items()}
-    if isinstance(value,list): return [expand(child,inputs) for child in value]
-    if isinstance(value,str) and value.startswith('$files/'):
-        relative=Path(value[7:])
-        if relative.is_absolute() or '..' in relative.parts: raise ValueError('FrozenInputInvalid: input path traversal')
-        return str(inputs/'files'/relative)
-    return value
-
-
-def environment(run,config,scientific,workloads):
-    work=run.parent.parent
-    env={'paths':{'repository':str(REPO),'ops':str(work),'campaign':str(run.parent),'d2State':str(work/'d2'),'inputs':str(work/'inputs')},
-         'evaluation':{**scientific,'publishExecutable':str(REPO/'bin/evaluation-publish')},
-         'd2':{'kubectl':['/usr/bin/kubectl'],'namespace':config['namespace'],'apiBase':config['chillAPIURL'],'caFile':CA,'tokenFile':TOKEN,'collectorTokenFile':TOKEN,'repoBin':str(REPO/'bin'),'jobTemplate':workloads[0]['jobTemplate'],'workloadUID':workloads[0]['uid'],'workloadName':workloads[0]['name']}}
-    env['d2']['nodes']=scientific['nodes']
-    path=work/'environment.json';save(path,env);os.environ['CHILL_EXPERIMENT_CONFIG']=str(path)
+def environment(run, scientific):
+    work = run.parent.parent
+    env = {'paths': {'repository': str(REPO), 'ops': str(work), 'campaign': str(run.parent), 'inputs': str(work / 'inputs')},
+           'evaluation': scientific}
+    path = work / 'environment.json'
+    save(path, env)
+    os.environ['CHILL_EXPERIMENT_CONFIG'] = str(path)
     return env
 
 
-def stage_config(base,spec,scenario,execution,config,root):
-    value=copy.deepcopy(base);operational=json.loads(config['operational'])
-    rules=module('evaluation_input_rules',HERE/'evaluation_inputs.py')
-    timebox_keys={'setupSeconds','barrierSeconds','drainSeconds','flushSeconds','collectSeconds','apiSeconds','settleSeconds','finishResetWaitSeconds','powerDownSeconds','factorAckWaitSeconds','maxActuationSeconds','nativeCallerSeconds'}
-    if set(operational.get('timeboxes',{}))-timebox_keys:
-        raise ValueError('FrozenInputInvalid: unknown operational timebox fields')
-    if set(operational)-(rules.OPERATIONAL|{'workloads','collection'}):
+def stage_config(spec, scenario, execution, config, root):
+    operational = json.loads(config['operational'])
+    if set(operational) - {'timeboxes', 'tokenSafetyMarginSeconds', 'workloads', 'collection'}:
         raise ValueError('FrozenInputInvalid: unknown operational fields')
-    if set(operational.get('collection',{}))-{'maximumDurationSeconds'}:
-        raise ValueError('FrozenInputInvalid: unknown operational collection fields')
-    for workload in operational.get('workloads',{}).values():
-        if set(workload)-rules.WORKLOAD_OPERATIONAL:
+    timeboxes = {'setupSeconds': 300, 'barrierSeconds': 300, 'drainSeconds': 120, 'flushSeconds': 5,
+                 'collectSeconds': 300, 'apiSeconds': 30}
+    if set(operational.get('timeboxes', {})) - set(timeboxes):
+        raise ValueError('FrozenInputInvalid: unknown operational timeboxes')
+    timeboxes.update(operational.get('timeboxes', {}))
+    if 'drainTimeoutSeconds' in config:
+        timeboxes['drainSeconds'] = float(config['drainTimeoutSeconds'])
+    if any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in timeboxes.values()):
+        raise ValueError('FrozenInputInvalid: positive finite timeboxes required')
+    generator = copy.deepcopy(spec['loadGenerator'])
+    resources = generator['resources']
+    if (not isinstance(generator.get('nodeName'), str) or not generator['nodeName'] or not isinstance(resources, dict) or set(resources) - {'requests', 'limits'} or
+            any(not isinstance(values, dict) or set(values) - {'memory'} for values in resources.values())):
+        raise ValueError('FrozenInputInvalid: generator nodeName and memory-only resources required')
+    names = {w['name'] for w in scenario['workloads']}
+    if set(generator['shards']) != names or any(type(n) is not int or n < 1 for n in generator['shards'].values()):
+        raise ValueError('FrozenInputInvalid: declared generator shard coverage')
+    if set(operational.get('workloads', {})) != names:
+        raise ValueError('FrozenInputInvalid: operational workload coverage')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,39}', spec['row']):
+        raise ValueError('FrozenInputInvalid: safe row label required')
+    workloads = []
+    allowed = {'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'deliverySeconds', 'socketSeconds',
+               'workers', 'lifetimeSeconds', 'gatewayCapSeconds', 'podSpec', 'volumeMounts'}
+    for pinned in scenario['workloads']:
+        operation = operational['workloads'][pinned['name']]
+        if set(operation) - allowed:
             raise ValueError('FrozenInputInvalid: unknown operational workload fields')
-    value.update({key:child for key,child in operational.items() if key not in ('workloads','collection','timeboxes')})
-    value.setdefault('timeboxes',{}).update(operational.get('timeboxes',{}))
-    value.update(endpoint=config['chillAPIURL'],caFile=CA,tokenFile=TOKEN,collectorTokenFile=TOKEN,kubeContext='in-cluster',namespace=execution['namespace'])
-    value['collection'].update(operational.get('collection',{}))
-    value['collection'].update(powerExecutable=str(REPO/'bin/observation-power-source-d39c9576'),powerReceipt=str(REPO/'bin/observation-power-source-d39c9576.receipt.json'))
-    value['timeboxes'].update({key:float(config[key]) for key in ('finishResetWaitSeconds','factorAckWaitSeconds') if key in config})
-    if 'drainTimeoutSeconds' in config: value['timeboxes']['drainSeconds']=float(config['drainTimeoutSeconds'])
-    if value['approval']['sources']['power'] not in ('bin/observation-power-source-d39c9576','d39c9576f5b2f4ee6a48034e6b95eba28e43cd4e'):
-        raise ValueError('IdentityMismatch: bundled power reducer source differs from image')
-    value['approval']['sources']['power']='bin/observation-power-source-d39c9576'
-    value['seeds']=scenario['seeds'];value['arrivals']=scenario['spec']['arrivalDistribution']
-    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,39}',spec['row']):
-        raise ValueError('FrozenInputInvalid: row requires a safe evaluation row label')
-    value['stages']=[{'id':spec['row'],'parts':[{'id':part['id'],'seconds':part['durationSeconds'],**{key:part[key] for key in ('rates','alpha') if key in part}} for part in scenario['spec']['parts']]}]
-    value['generatorQuality']={'latenessToleranceNS':spec['judgment']['generatorQuality']['latenessToleranceNanos'],'maxExceedingFraction':spec['judgment']['generatorQuality']['maxExceedingFraction']}
-    value['collection']['energyCoverage']=spec['judgment']['energyCoverage']
-    aliases={'mobilenet':'image-classification-tight-slo','plc':'plc-anomaly','smolvlm2':'smolvlm2-vqa'}
-    value['producerShards']={alias:spec['loadGenerator']['shards'][name] for alias,name in aliases.items()}
-    resources=spec['loadGenerator']['resources'];value['producerResources']=copy.deepcopy(resources)
-    if (not isinstance(resources, dict) or set(resources) - {'requests', 'limits'} or
-            any(not isinstance(values, dict) or 'cpu' in values for values in resources.values())):
-        raise ValueError('FrozenInputInvalid: producer CPU requests/limits are not supported')
-    for workload in value['workloads']:
-        operation=operational['workloads'][workload['name']]
-        workload.update({key:child for key,child in operation.items() if key!='podSpec'})
-        template=load(workload['jobTemplate']);pod=copy.deepcopy(operation['podSpec'])
-        pod.pop('affinity', None)
-        for group in ('containers','initContainers'):
-            images={container['name']:container['image'] for container in template['spec']['template']['spec'].get(group,[])}
-            if set(images)!={container['name'] for container in pod.get(group,[])}:
-                raise ValueError('FrozenInputInvalid: operational producer containers differ from frozen template')
-            for container in pod.get(group,[]):
-                if 'image' in container: raise ValueError('FrozenInputInvalid: operational template cannot override images')
-                container['image']=images[container['name']]
-                container['resources']=copy.deepcopy(resources)
-        template['spec']['template']['spec']=pod
-        destination=root/('producer-template-'+workload['name']+'.json');save(destination,template)
-        workload['jobTemplate']=str(destination)
-        pinned=next(w for w in scenario['workloads'] if w['name']==workload['name'])
-        for key in ('uid','generation','slo'): workload[key]=pinned[key]
-        workload['seed']=value['seeds'][workload['name']];workload['arrivals']=value['arrivals'][workload['name']]
-    value['evaluation']={'execution':execution,'sourceSHA':spec['harness']['sourceSHA'],'jobActiveDeadlineSeconds':int(config['jobActiveDeadlineSeconds']),'minimumFreeBytes':int(config['minimumFreeBytes']),'stageFolder':str(root/'measured'),'mode':spec['mode'],'control':spec['control'],'resources':resources}
-    value['evaluation']['traceOffsets']=scenario.get('traceOffsets',{})
-    value['evaluation']['failureInjection']=spec.get('failureInjection',[])
-    value['evaluation']['barrier']=spec['loadGenerator']['barrier']
-    if value['approval']['sources']['loadgen']!=spec['loadGenerator']['sourceSHA']:
-        raise ValueError('IdentityMismatch: load generator source differs from frozen producer receipt')
-    for workload in value['workloads']:
-        template=load(workload['jobTemplate'])
-        if template['spec']['template']['spec']['containers'][0]['image']!=spec['loadGenerator']['image']:
-            raise ValueError('IdentityMismatch: load generator image differs from frozen producer template')
-    return value
+        workload = {**copy.deepcopy(pinned), **copy.deepcopy(operation)}
+        required = {'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'deliverySeconds', 'socketSeconds', 'workers'}
+        if required - operation.keys():
+            raise ValueError('FrozenInputInvalid: missing operational client fields')
+        if type(workload['workers']) is not int or workload['workers'] <= 0 or any(
+                type(workload[key]) not in (int, float) or not math.isfinite(workload[key]) or workload[key] <= 0
+                for key in ('deliverySeconds', 'socketSeconds')):
+            raise ValueError('FrozenInputInvalid: positive client worker/time budgets required')
+        lifetime = workload.get('lifetimeSeconds')
+        if lifetime is not None and (type(lifetime) not in (int, float) or not math.isfinite(lifetime) or
+                                     lifetime < pinned['slo']['targetLatencyNanos'] / 1e9 or workload['socketSeconds'] <= lifetime + workload['deliverySeconds']):
+            raise ValueError('FrozenInputInvalid: lifetime/socket must cover frozen SLO and delivery')
+        if 'gatewayCapSeconds' in workload and (type(workload['gatewayCapSeconds']) not in (int, float) or
+                                               not math.isfinite(workload['gatewayCapSeconds']) or workload['gatewayCapSeconds'] <= 0 or
+                                               lifetime is not None and lifetime > workload['gatewayCapSeconds']):
+            raise ValueError('FrozenInputInvalid: configured client lifetime cap')
+        dataset = scenario['datasets'][pinned['name']]
+        workload.update(datasetRef=scenario['spec']['datasetRefs'][pinned['name']], dataset=dataset['spec'],
+                        fields=scenario['fields'][pinned['name']])
+        workloads.append(workload)
+    quality = spec['judgment']['generatorQuality']
+    collection = operational.get('collection', {})
+    if set(collection) - {'maximumDurationSeconds'}:
+        raise ValueError('FrozenInputInvalid: unknown collection fields')
+    if 'maximumDurationSeconds' in collection and (type(collection['maximumDurationSeconds']) not in (int, float) or
+                                                   not math.isfinite(collection['maximumDurationSeconds']) or collection['maximumDurationSeconds'] <= 0):
+        raise ValueError('FrozenInputInvalid: positive collection duration bound required')
+    return {'namespace': execution['namespace'], 'endpoint': config['chillAPIURL'], 'caFile': CA,
+            'tokenFile': TOKEN, 'collectorTokenFile': TOKEN, 'timeboxes': timeboxes,
+            'tokenSafetyMarginSeconds': operational.get('tokenSafetyMarginSeconds', 60), 'workloads': workloads,
+            'loadGenerator': generator, 'seeds': scenario['spec']['seeds'], 'arrivals': scenario['spec']['arrivalDistribution'],
+            'traceOffsets': scenario.get('traceOffsets', {}),
+            'stages': [{'id': spec['row'], 'parts': [{'id': p['id'], 'seconds': p['durationSeconds'], 'rates': p['rates']} for p in scenario['spec']['parts']]}],
+            'generatorQuality': {'latenessToleranceNS': quality['latenessToleranceNanos'], 'maxExceedingFraction': quality['maxExceedingFraction']},
+            'collection': {**collection, 'energyCoverage': spec['judgment']['energyCoverage'], 'powerMeasurement': spec['powerMeasurement']},
+            'evaluation': {'execution': execution, 'sourceSHA': spec['harness']['sourceSHA'],
+                           'minimumFreeBytes': int(config['minimumFreeBytes']), 'stageFolder': str(root / 'measured'),
+                           'settingsPatch': spec.get('settingsPatch', {}), 'barrier': generator['barrier'],
+                           'failureInjection': spec.get('failureInjection', [])}}
 
 
 def result_record(execution,step,started,status='Complete',reason='ProcedureComplete',measurement=None,artifacts=None,outputs=None):
@@ -187,115 +183,137 @@ class Harness:
         usage=os.statvfs(self.run)
         if usage.f_bavail*usage.f_frsize<int(self.config['minimumFreeBytes']):
             raise ValueError('EvidenceCapacityInsufficient: workspace free bytes')
-        bundle_module=module('evaluation_inputs',HERE/'evaluation_inputs.py');scenarios={};bases={}
-        for template in self.spec['stages']:
-            pin=template['loadScenarioRef'];identity=pin['uid']
-            if identity in scenarios: continue
-            obj=kubectl(self.execution['namespace'],'get','loadscenario',pin['name'])
-            if obj['metadata']['uid']!=identity: raise ValueError('IdentityMismatch: LoadScenario UID')
-            scenario=obj['spec'];folder=self.inputs/identity;folder.mkdir(parents=True,exist_ok=True)
-            bundle_path=folder/'bundle.json';self.store.get(scenario['payloadManifestRef'],bundle_path)
-            bundle=bundle_module.validate(load(bundle_path))
-            for name,ref in bundle['files'].items():
-                path=folder/'files'/name;path.parent.mkdir(parents=True,exist_ok=True);self.store.get(ref,path)
-            for path in (folder/'files').rglob('*.json'): save(path,expand(load(path),folder))
-            scientific=expand(bundle['environment'],folder);base=expand(bundle['config'],folder)
-            workloads=[]
-            for pin_workload in scenario['workloads']:
-                view=api(self.config,'/api/v1/workloads/'+pin_workload['name']);applied=view.get('appliedDefinition') or {}
-                actual={key:applied.get(key) for key in ('name','uid','generation','slo','model','preprocessor','dataset')}
-                if any(actual.get(key)!=pin_workload[key] for key in ('name','uid','generation')): raise ValueError('IdentityMismatch: applied Workload '+pin_workload['name'])
-                workloads.append(actual)
-            seeds_path=folder/'seeds.json';self.store.get(scenario['seedRef'],seeds_path);seeds=load(seeds_path)
-            if set(seeds)!=set(scenario['arrivalDistribution']): raise ValueError('FrozenInputInvalid: seed workload keys')
-            traces={}
-            for name,ref in scenario.get('traceRefs',{}).items():
-                path=folder/('trace-'+name+'.json');self.store.get(ref,path);traces[name]=load(path)
-            for field in ('rateBasisRef','kappaRef'):
-                if scenario.get(field):
-                    path=folder/(field+'.json');self.store.get(scenario[field],path)
-                    actual=load(path)
-                    if field=='kappaRef':
-                        if actual!=load(base['inputs']['capacity']): raise ValueError('FrozenInputInvalid: kappaRef differs from supplied capacity rows')
-                    else:
-                        shares=base.get('poolShares',{'MNV':.45,'PLC':.1,'Smol':.45})
-                        expected={w['name']:w['R']*share for w,share in zip(base['workloads'],(shares['MNV'],shares['PLC'],shares['Smol']))}
-                        if actual!=expected: raise ValueError('FrozenInputInvalid: rateBasisRef differs from capacity-derived pool rates')
-            scenarios[identity]={'ref':{'name':obj['metadata']['name'],'uid':identity},'spec':scenario,'workloads':workloads,'seeds':seeds,'bundle':bundle,'traceOffsets':traces}
-            for workload in base['workloads']:
-                actual=next(value for value in workloads if value['name']==workload['name'])
-                workload.update({key:actual[key] for key in ('uid','generation','slo')})
-            bases[identity]=(base,scientific)
-        first=next(iter(bases.values()));environment(self.run,self.config,first[1],first[0]['workloads']);self.harness_module=module('evaluation_harness',HERE/'conductor.py')
-        self.run.mkdir(parents=True,exist_ok=True)
-        initial={'state':api(self.config,'/api/v1/scheduler/state'),'settings':api(self.config,'/api/v1/scheduler/settings'),'at':now()};save(self.run/'initial.json',initial)
-        if self.spec['harness']['sourceSHA']!=os.environ.get('CHILL_HARNESS_SOURCE_SHA'):
+        scenarios = {}
+        self.harness_module = module('evaluation_harness', HERE / 'conductor.py')
+        if self.spec['harness']['sourceSHA'] != os.environ.get('CHILL_HARNESS_SOURCE_SHA'):
             raise ValueError('IdentityMismatch: harness source differs from image revision')
-        settings=initial['settings'];snapshot=initial['state']['snapshot']
-        current=api(self.config,'/api/v1/scheduler');current['settings']=copy.deepcopy(settings)
-        scheduler_path=self.inputs/'current-scheduler.json';save(scheduler_path,current)
-        power_path=self.inputs/'current-power-policy.json';save(power_path,{'schedulerSettings':{'powerObservation':settings['powerObservation']}})
-        bindings={}
         for template in self.spec['stages']:
-            stage={**{key:self.spec[key] for key in ('target','harness','loadGenerator','powerMeasurement','control','judgment','evidenceStore')},**template}
-            base,scientific=bases[template['loadScenarioRef']['uid']]
-            for key in scientific:
-                left,right=scientific[key],first[1][key]
-                if key in ('d25Manifest','operationalRecipe'): left,right=load(left),load(right)
-                if left!=right: raise ValueError('FrozenInputInvalid: inconsistent equipment environments')
-            root=self.run/'stages'/template['id'];root.mkdir(parents=True,exist_ok=True)
-            config=stage_config(base,stage,scenarios[template['loadScenarioRef']['uid']],self.execution,self.config,root)
-            targets=self.check_target(stage['target'])
-            serving=[(component,container) for component in stage['target']['components'] for target in targets if target['name']==component['name'] for pod in target['pods'] for container in pod['containers'] if container['name']=='serving-entrypoint']
-            if len(serving)!=1: raise ValueError('IdentityMismatch: exactly one serving-entrypoint identity required')
-            component,container=serving[0]
-            config['approval']['sources']['server']=component['sourceSHA'];config['approval']['controlImageDigest']=container['imageID']
-            gateway=root/'current-gateway.json';save(gateway,{'requestTimeoutSeconds':settings['requestTimeout']/1e9,'sourceSHA':component['sourceSHA'],'controlImageDigest':container['imageID'],'capturedUTC':now(),'target':targets})
-            config['inputs'].update(scheduler=str(scheduler_path),powerObservation=str(power_path),gateway=str(gateway))
-            path=root/'prepared-config.json';save(path,config)
-            binding=self.harness_module.bind(path)
-            if binding['payload']!=scenarios[template['loadScenarioRef']['uid']]['bundle']['payload']:
-                raise ValueError('FrozenInputInvalid: payload manifest differs from materialized dataset')
-            expected=stage['powerMeasurement']
-            if {node['uid'] for node in expected['nodes']}!={row['node']['uid'] for row in snapshot['nodes'] if row['node']['name'] in scientific['nodes']}: raise ValueError('IdentityMismatch: power Nodes')
-            meters={meter['id']:meter for meter in settings['meters']}
-            for meter in expected['meters']:
-                actual=meters.get(meter['id'])
-                if not actual or json.loads(meter['sourceIdentity'])!=actual['source'] or actual['source']['metric']!=expected['series']:
-                    raise ValueError('IdentityMismatch: configured power meter source or series')
-            if settings['powerObservation']['sampling']['Interval']!=expected['sampling']['intervalNanos']:
-                raise ValueError('IdentityMismatch: operating power sampling interval')
-            bindings[template['id']]=binding
-        usage=os.statvfs(self.run)
-        if usage.f_bavail*usage.f_frsize<int(self.config['minimumFreeBytes']): raise ValueError('EvidenceCapacityInsufficient: workspace free bytes')
-        snapshot={'schemaVersion':'evaluation-snapshot.v1alpha1','runUID':self.execution['runUID'],'runSpec':self.spec,'scenarios':scenarios,'environment':first[1],'bootstrapWorkload':first[0]['workloads'][0],'bindings':bindings,'initial':initial,'config':self.config}
+            pin = template['loadScenarioRef']
+            identity = pin['uid']
+            if identity in scenarios:
+                continue
+            obj = kubectl(self.execution['namespace'], 'get', 'loadscenario', pin['name'])
+            if obj['metadata']['uid'] != identity:
+                raise ValueError('IdentityMismatch: LoadScenario UID')
+            scenario = obj['spec']
+            folder = self.inputs / identity
+            folder.mkdir(parents=True, exist_ok=True)
+            names = [w['name'] for w in scenario['workloads']]
+            self.harness_module.parse_seeds(scenario['seeds'], names)
+            if set(scenario['datasetRefs']) != set(names) or set(scenario['arrivalDistribution']) != set(names):
+                raise ValueError('FrozenInputInvalid: workload key coverage')
+            workloads, datasets, fields = [], {}, {}
+            for workload_pin in scenario['workloads']:
+                view = api(self.config, '/api/v1/workloads/' + workload_pin['name'])
+                applied = view.get('appliedDefinition') or {}
+                actual = {key: applied.get(key) for key in ('name', 'uid', 'generation', 'slo', 'model', 'preprocessor', 'dataset')}
+                if any(actual.get(key) != workload_pin[key] for key in ('name', 'uid', 'generation')):
+                    raise ValueError('IdentityMismatch: applied Workload ' + workload_pin['name'])
+                workloads.append(actual)
+                dataset_pin = scenario['datasetRefs'][workload_pin['name']]
+                if set(dataset_pin) != {'name', 'uid'}:
+                    raise ValueError('FrozenInputInvalid: Dataset reference fields')
+                dataset = kubectl(self.execution['namespace'], 'get', 'dataset', dataset_pin['name'])
+                if dataset['metadata']['uid'] != dataset_pin['uid']:
+                    raise ValueError('IdentityMismatch: Dataset UID')
+                source = dataset['spec']['source']
+                if not re.fullmatch(r'.+@sha256:[0-9a-f]{64}', source['image']) or not source['path'].startswith('/') or '..' in Path(source['path']).parts:
+                    raise ValueError('FrozenInputInvalid: immutable Dataset carrier and clean absolute path required')
+                declared = kubectl(self.execution['namespace'], 'get', 'workload', workload_pin['name'])
+                if declared['metadata']['uid'] != workload_pin['uid']:
+                    raise ValueError('IdentityMismatch: Workload resource UID')
+                preprocessor = kubectl(self.execution['namespace'], 'get', 'preprocessor', declared['spec']['preprocessorRef']['name'])
+                required_fields = [field['name'] for field in preprocessor['spec']['input']['fields']]
+                if not required_fields or len(set(required_fields)) != len(required_fields) or not set(required_fields) <= {f['name'] for f in dataset['spec']['fields']}:
+                    raise ValueError('FrozenInputInvalid: Dataset/preprocessor record fields')
+                datasets[workload_pin['name']] = dataset
+                fields[workload_pin['name']] = required_fields
+            traces = {}
+            for name, reference in scenario.get('traceRefs', {}).items():
+                path = folder / ('trace-' + name + '.json')
+                self.store.get(reference, path)
+                traces[name] = load(path)
+            scenarios[identity] = {'ref': {'name': obj['metadata']['name'], 'uid': identity}, 'spec': scenario,
+                                   'workloads': workloads, 'datasets': datasets, 'fields': fields, 'traceOffsets': traces}
+        scientific = {'nodes': [node['name'] for node in self.spec['powerMeasurement']['nodes']]}
+        environment(self.run, scientific)
+        self.run.mkdir(parents=True, exist_ok=True)
+        started = now()
+        bindings, targets = {}, {}
+        for template in self.spec['stages']:
+            stage = {**{key: self.spec[key] for key in ('target', 'harness', 'loadGenerator', 'powerMeasurement', 'judgment', 'evidenceStore')}, 'settingsPatch': self.spec.get('settingsPatch', {}), **template}
+            targets[template['id']] = self.check_target(stage['target'])
+            self.check_fleet(stage)
+            root = self.run / 'stages' / template['id']
+            root.mkdir(parents=True, exist_ok=True)
+            config = stage_config(stage, scenarios[template['loadScenarioRef']['uid']], self.execution, self.config, root)
+            path = root / 'prepared-config.json'
+            save(path, config)
+            bindings[template['id']] = self.harness_module.bind(path)
+        snapshot = {'schemaVersion': 'evaluation-snapshot.v2alpha1', 'inputsVersion': 'evaluation-inputs.v2alpha1',
+                    'runUID': self.execution['runUID'], 'runSpec': self.spec, 'scenarios': scenarios,
+                    'environment': scientific, 'bindings': bindings, 'targets': targets, 'generatorNode': self.generator_node,
+                    'preparedAt': started, 'config': self.config}
         path=self.inputs/'snapshot.json';save(path,snapshot)
         ref=self.upload(path,'experiments/'+self.execution['runUID']+'/run/prepare/input-snapshot.json')
         self.outputs={'inputSnapshot':ref}
-    def check_target(self,target):
-        identities=[]
+    def check_target(self, target):
+        identities = []
         for component in target['components']:
-            resource=component['resource'];obj=kubectl(resource['namespace'],'get',resource['kind'],resource['name'])
-            podspec=obj['spec'].get('template',{}).get('spec',obj['spec'])
-            expected_digest=component['image'].split('@')[-1]
-            repository=re.sub(r':[^/:]+$','',component['image'].split('@')[0])
-            container_names={c['name'] for c in podspec['containers'] if re.sub(r':[^/:]+$','',c['image'].split('@')[0])==repository}
-            labels=obj['metadata'].get('labels',{});annotations=obj['metadata'].get('annotations',{})
-            source=labels.get('org.opencontainers.image.revision',annotations.get('org.opencontainers.image.revision'))
-            if source is not None and source!=component['sourceSHA']: raise ValueError('IdentityMismatch: target source '+component['name'])
-            pods=kubectl(resource['namespace'],'get','pods','-l',','.join(k+'='+v for k,v in obj['spec'].get('selector',{}).get('matchLabels',{}).items())) if obj['kind']!='Pod' else {'items':[obj]}
-            current=[pod for pod in pods['items'] if not pod['metadata'].get('deletionTimestamp')]
-            if not current: raise ValueError('IdentityMismatch: target image '+component['name']+' observed=[]')
+            resource = component['resource']
+            obj = kubectl(resource['namespace'], 'get', resource['kind'], resource['name'])
+            if resource.get('uid') and obj['metadata']['uid'] != resource['uid']:
+                raise ValueError('IdentityMismatch: external target UID')
+            stage_id = self.execution.get('stageID')
+            expected = next((item for item in getattr(self, 'snapshot', {}).get('targets', {}).get(stage_id, [])
+                             if item['name'] == component['name']), None)
+            if expected and obj['metadata']['uid'] != expected['uid']:
+                raise ValueError('IdentityMismatch: external target resource recreated')
+            selector = obj['spec'].get('selector', {}).get('matchLabels', {})
+            pods = {'items': [obj]} if obj['kind'] == 'Pod' else kubectl(resource['namespace'], 'get', 'pods', '-l', ','.join(k + '=' + v for k, v in selector.items()))
+            current = [pod for pod in pods['items'] if not pod['metadata'].get('deletionTimestamp')]
+            if not current:
+                raise RuntimeError('TargetUnavailable: no target Pods')
             for pod in current:
-                statuses=pod.get('status',{}).get('containerStatuses',[])
-                observed={status['name']:status.get('imageID') for status in statuses if status['name'] in container_names}
-                if not observed or any(not image or image.rsplit('://',1)[-1].split('@')[-1]!=expected_digest for image in observed.values()):
-                    raise ValueError('IdentityMismatch: target image '+component['name']+' observed='+json.dumps(observed,sort_keys=True))
-                if not statuses or any(not status.get('ready') or status.get('restartCount') or not status.get('imageID') for status in statuses) or not any(condition['type']=='Ready' and condition['status']=='True' for condition in pod.get('status',{}).get('conditions',[])):
-                    raise RuntimeError('TargetUnavailable: target Pod not Ready or restarted')
-            pods['items']=sorted(current,key=lambda pod:pod['metadata']['uid'])
-            identities.append({'name':component['name'],'uid':obj['metadata']['uid'],'spec':obj['spec'],'pods':[{'uid':pod['metadata']['uid'],'containers':[{key:status.get(key) for key in ('name','imageID','restartCount')} for status in pod.get('status',{}).get('containerStatuses',[])]} for pod in pods['items']]})
+                statuses = pod.get('status', {}).get('containerStatuses', [])
+                if not statuses or any(not status.get('ready') for status in statuses) or not any(c['type'] == 'Ready' and c['status'] == 'True' for c in pod.get('status', {}).get('conditions', [])):
+                    raise RuntimeError('TargetUnavailable: target Pod not Ready')
+            identities.append({'name': component['name'], 'uid': obj['metadata']['uid'],
+                               'pods': [{'uid': pod['metadata']['uid'], 'containers': pod.get('status', {}).get('containerStatuses', [])} for pod in current]})
         return identities
+
+    def check_fleet(self, spec):
+        nodes = list(spec['powerMeasurement']['nodes'])
+        generator = getattr(self, 'snapshot', {}).get('generatorNode')
+        if generator is None:
+            node = kubectl(self.execution['namespace'], 'get', 'node', spec['loadGenerator']['nodeName'])
+            generator = {key: node['metadata'][key] for key in ('name', 'uid')}
+        self.generator_node = generator
+        nodes.append(generator)
+        for pin in nodes:
+            node = kubectl(self.execution['namespace'], 'get', 'node', pin['name'])
+            if node['metadata']['uid'] != pin['uid']:
+                raise ValueError('IdentityMismatch: participating Node UID')
+            if not any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', [])):
+                raise RuntimeError('TargetUnavailable: participating Node NotReady')
+        owners = {self.execution['runUID'], self.execution.get('stageUID')}
+        owners.update(child['uid'] for child in self.execution.get('childRefs', []))
+        jobs = kubectl(self.execution['namespace'], 'get', 'jobs', '-l', 'edge.dacs.io/evaluation-run-uid=' + self.execution['runUID'])['items']
+        job_uids = {job['metadata']['uid'] for job in jobs if job['metadata'].get('labels', {}).get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID']
+                    and any(owner.get('uid') in owners for owner in job['metadata'].get('ownerReferences', []))}
+        pods = kubectl(self.execution['namespace'], 'get', 'pods', '--all-namespaces')['items']
+        for pod in pods:
+            meta = pod['metadata']
+            labels = meta.get('labels', {})
+            own = labels.get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID'] and any(
+                owner.get('uid') in job_uids | owners
+                for owner in meta.get('ownerReferences', []))
+            if own:
+                continue
+            fleet = meta['name'].startswith(('vib-', 'bff-')) or any(key in ('baseline-fleet', 'vib-fleet-run') or key.startswith(('vib-', 'bff-')) for key in labels)
+            external = meta.get('namespace') not in ('kube-system', 'chill-system') and meta.get('creationTimestamp', '') >= '2026-11-02T00:00:00Z'
+            if fleet or external:
+                raise RuntimeError('TargetUnavailable: external fleet Pod ' + meta['name'])
     def open_snapshot(self):
         path=self.inputs/'snapshot.json'
         reference=self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef')
@@ -312,67 +330,57 @@ class Harness:
             if not path.exists(): self.store.get(reference,path)
             self.snapshot=load(path)
         try:
-            if self.snapshot.get('schemaVersion')!='evaluation-snapshot.v1alpha1' or self.snapshot.get('runUID')!=self.execution['runUID']:
+            if self.snapshot.get('schemaVersion') != 'evaluation-snapshot.v2alpha1' or self.snapshot.get('inputsVersion') != 'evaluation-inputs.v2alpha1' or self.snapshot.get('runUID') != self.execution['runUID']:
                 raise ValueError('FrozenInputInvalid: input snapshot execution identity')
         except Exception as error:
             if self.step=='finish': raise RuntimeError('EvidenceUnreadable: '+str(error)) from error
             raise
         if self.execution.get('stageID'):
             template=next(stage for stage in self.snapshot['runSpec']['stages'] if stage['id']==self.execution['stageID'])
-            expected={**{key:self.snapshot['runSpec'][key] for key in ('target','harness','loadGenerator','powerMeasurement','control','judgment','evidenceStore')},**template}
+            expected={**{key:self.snapshot['runSpec'][key] for key in ('target','harness','loadGenerator','powerMeasurement','judgment','evidenceStore')},**({'settingsPatch':self.snapshot['runSpec']['settingsPatch']} if 'settingsPatch' in self.snapshot['runSpec'] else {}),**template}
             for key,value in expected.items():
-                if key not in ('id','startState') and self.spec.get(key)!=value:
+                if key != 'id' and self.spec.get(key) != value:
                     raise ValueError('FrozenInputInvalid: child differs from frozen '+key)
             if self.spec['stageID']!=self.execution['stageID']:
                 raise ValueError('FrozenInputInvalid: child stage ID differs from execution')
-        environment(self.run,self.config,self.snapshot['environment'],[self.snapshot['bootstrapWorkload']]);self.harness_module=module('evaluation_harness',HERE/'conductor.py')
+        environment(self.run,self.snapshot['environment']);self.harness_module=module('evaluation_harness',HERE/'conductor.py')
     def controller(self):
         stage_id=self.execution.get('stageID',self.snapshot['runSpec']['stages'][0]['id'])
         binding=copy.deepcopy(self.snapshot['bindings'][stage_id]);config=binding['config']
         config['evaluation']['execution']=self.execution
         if 'stageID' not in self.execution: config['evaluation'].pop('stageFolder',None)
         path=self.root/'binding.json';save(path,binding)
-        release=self.root/'release.json';save(release,{'executor':'EvaluationRun','execution':self.execution,'bindingPath':str(path),'mainInstructionUTC':self.snapshot['initial']['at']})
-        args=SimpleNamespace(binding=path,release=release,out=self.root,mode='full',stage=self.spec.get('row',binding['schedule'][0]['id']),row_tag=self.execution.get('stageUID','').replace('-',''),pre_state=None,command=self.step)
-        return self.harness_module.CPO(args,restore_control_on_error=False,go_callback=self.go)
+        args=SimpleNamespace(binding=path,out=self.root,stage=self.spec.get('row',binding['schedule'][0]['id']))
+        return self.harness_module.CPO(args,go_callback=self.go)
     def go(self,value):
         value.update({key:self.execution[key] for key in ('runUID','stageUID','stageID')})
         path=self.root/'measured/go.json';save(path,value)
         ref=self.upload(path,self.prefix+'/go.json');print('EVALUATION_GO '+ref['store']+'/'+ref['key']+' '+str(ref['size']),flush=True)
     def factor(self):
-        path=self.root/'start-state.json';self.store.get(self.spec['startState']['evidenceRef'],path)
-        state=load(path)
-        if not isinstance(state,dict) or 'settings' not in state or not ('state' in state or 'snapshot' in state):
-            raise ValueError('FrozenInputInvalid: startState requires state and settings')
-        controller=self.controller();controller.a.pre_state=path;controller.factor()
-        self.emit(controller.state(),'restored-state.json')
+        self.check_fleet(self.spec)
+        self.controller().factor()
     def stage(self):
-        controller=self.controller();baseline=self.check_target(self.spec['target']);last=[0];first=[False]
-        def monitor(instance,offset,folder):
-            if time.monotonic()-last[0]>=30:
-                instance.disk_boundary(self.execution['stageID'],'watch')
-                if self.check_target(self.spec['target'])!=baseline: raise RuntimeError('IdentityMismatch: target restarted or deployment changed')
-                last[0]=time.monotonic()
-            phase_path=folder/'phase.json'
-            if not first[0] and phase_path.exists():
-                phase=load(phase_path)
-                if phase.get('goUTC'):
-                    scheduler=instance.api('GET','/api/v1/scheduler');decision=scheduler['state']['decision']
-                    if instance.d.epoch(decision.get('at')) is not None and instance.d.epoch(decision['at'])>=instance.d.epoch(phase['goUTC']):
-                        settings=decision.get('settings',{})
-                        for key in ('scaleDownHeadroomFraction','minimumDemand'):
-                            if settings.get(key)!=self.spec['control'][key]: raise RuntimeError('FrozenInputInvalid: first Decision '+key)
-                        save(folder/'first-load-tick.json',scheduler);first[0]=True
+        controller = self.controller()
+        self.check_target(self.spec['target'])
+        self.check_fleet(self.spec)
+        last = [0]
+        def monitor(instance, offset, folder):
+            instance.disk_boundary()
+            if time.monotonic() - last[0] >= 30:
+                targets = self.check_target(self.spec['target'])
+                save(folder / 'target-observations.json', {'at': now(), 'targets': targets})
+                self.check_fleet(self.spec)
+                last[0] = time.monotonic()
             return offset
-        controller.monitor=MethodType(monitor,controller)
+        controller.monitor = MethodType(monitor, controller)
         controller.run()
-        phase=load(self.root/'measured/phase.json')
-        parser=self.harness_module.module('evaluation_start_times',HERE/'raw.py')._time
-        starts=[parser(value['at']) for value in phase['starts'].values()]
-        skew=max(starts)-min(starts) if starts else 0
-        save(self.root/'measured/generator-barrier.json',{'startSkewNanos':skew,'maximumStartSkewNanos':self.spec['loadGenerator']['barrier']['maxStartSkewNanos'],'accepted':skew<=self.spec['loadGenerator']['barrier']['maxStartSkewNanos']})
-        if not first[0] and self.spec['mode']!='fixed': raise RuntimeError('ObservationUnavailable: missing first load Decision')
-        state={'state':controller.state(),'settings':controller.settings()};self.outputs={'startState':self.emit(state,'output-start-state.json')}
+        phase = load(self.root / 'measured/phase.json')
+        parser = module('evaluation_start_times', HERE / 'raw.py')._time
+        starts = [parser(value['at']) for value in phase['starts'].values()]
+        skew = max(starts) - min(starts) if starts else 0
+        save(self.root / 'measured/generator-barrier.json',
+             {'startSkewNanos': skew, 'maximumStartSkewNanos': self.spec['loadGenerator']['barrier']['maxStartSkewNanos'],
+              'accepted': skew <= self.spec['loadGenerator']['barrier']['maxStartSkewNanos']})
     def judge(self):
         controller_binding=self.root/'binding.json';folder=self.root/'measured'
         if self.spec.get('failureInjection'): self.injections(folder)
@@ -400,11 +408,8 @@ class Harness:
         finally: self.residuals=controller.residuals if hasattr(controller,'residuals') else []
     def finish(self):
         if self.execution.get('prepareCompleted') is False:
-            initial_path=self.run/'initial.json'
-            if not initial_path.exists() or api(self.config,'/api/v1/scheduler/settings')==load(initial_path)['settings']:
-                self.reason='NoControlEffects'
-                return
-            raise RuntimeError('ResidualState: scheduler settings changed before prepare completed')
+            self.reason='NoControlEffects'
+            return
         self.controller().finish()
     def publish(self):
         tables=module('evaluation_tables',HERE/'tables.py');stages=[];results={};artifacts=[];procedures={};actual_specs={};stage_outcomes=[]
@@ -463,10 +468,10 @@ class Harness:
                     self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef'),
                     phase_source,scope/'measured',self.run,requests)
                 power=judgment.get('power') or {}
-                kpis={'status':judgment['status'],'requests':requests,'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'activePoolJoules':power.get('activePoolJoules') if power.get('complete') else None,'power':{key:power.get(key) for key in ('complete','wholePoolJoules','activePoolJoules','energyCoverage','gapErrorBoundJoules')},'schedulerSettings':bound['schedulerSettings'],'limitations':bound['limitations']}
+                kpis={'status':judgment['status'],'requests':requests,'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'power':{key:power.get(key) for key in ('scope','complete','wholePoolJoules','energyCoverage')},'limitations':bound['limitations']}
                 kpis.update(self.harness_module.publication_measurements(bound,power))
                 stages.append({'id':sid,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis})
-        generated=now();start=min((stage['from'] for stage in stages),default=generated if prepare_failed else self.snapshot['initial']['at']);end=max((stage['to'] for stage in stages),default=generated)
+        generated=now();start=min((stage['from'] for stage in stages),default=generated if prepare_failed else self.snapshot['preparedAt']);end=max((stage['to'] for stage in stages),default=generated)
         prefix='serving/experiments.v1alpha1/'+self.execution['runUID']+'/'
         for step in ('prepare','finish'):
             path=self.run/('publish-run-'+step+'.json')
@@ -486,7 +491,7 @@ class Harness:
             aggregated={'stages':[],'results':{},'status':'NOT_EVALUATED','reason':procedures['prepare']['execution']['reason']}
         else:
             first_binding=next(iter(self.snapshot['bindings'].values()));save(self.run/'binding.json',first_binding)
-            aggregated=self.harness_module.summarize(None,self.run,evaluation={'stages':stages,'results':results,'physicalRestoration':procedures.get('finish',{}).get('cleanup')})
+            aggregated=self.harness_module.summarize(None,self.run,evaluation={'stages':stages,'results':results})
         measurement=aggregated['status']
         scenarios=[] if prepare_failed else list(self.snapshot['scenarios'].values())
         definitions={workload['uid']:workload for scenario in scenarios for workload in scenario['workloads']}

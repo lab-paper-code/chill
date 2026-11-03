@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PRIVATE_OPERATIONAL_ONLY: read archived v1alpha5 facts, never live APIs.
 
-RequestRow, schedulerLine and CatalogRow follow internal/serving/observation_log*.go.
+RequestRow follows internal/serving/observation_log*.go.
 HTTP finals are returned verbatim; late native records never amend them. All refs
 are one-based uncompressed JSONL line numbers in the immutable collected files.
 """
@@ -18,7 +18,6 @@ import sys
 
 _PRIVATE = 'PRIVATE_OPERATIONAL_ONLY'
 _REQUEST_CACHE = None
-_SCHEDULER_CACHE = None
 _STAMP = re.compile(r'^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$')
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
@@ -74,12 +73,8 @@ def _observed_absences(root, index, streams, available, errors):
             hour = entry.get('hour')
             if not isinstance(hour, str) or not re.fullmatch(r'\d{8}T\d{2}', hour):
                 raise ValueError('observed absence has invalid hour')
-            if stream == 'scheduler':
-                raise ValueError('scheduler stream cannot be replaced by an absence proof')
             if (hour, stream) in available:
                 raise ValueError('stream declared both present and absent')
-            if (hour, 'scheduler') not in available:
-                raise ValueError('stream absence lacks an actual scheduler source for its hour')
             if entry.get('reason') != 'source-hour-has-no-stream-segments':
                 raise ValueError('observed absence lacks source-grounded reason')
             if entry.get('origin') != 'api':
@@ -115,7 +110,7 @@ def _manifest(root, streams):
         if not isinstance(entry, dict):
             _error(errors, 'invalid raw source entry', {'path': str(path)})
             continue
-        if entry.get('stream') not in streams | {'scheduler'}:
+        if entry.get('stream') not in streams:
             continue
         try:
             raw_path = Path(entry['path'])
@@ -152,7 +147,7 @@ def _manifest(root, streams):
     available = {(s['hour'], s['stream']) for s in sources}
     absent = _observed_absences(root, index, streams, available, errors)
     for hour in sorted(set(hours)):
-        for stream in sorted(streams | {'scheduler'}):
+        for stream in sorted(streams):
             if (hour, stream) not in available and (hour, stream) not in absent:
                 _error(errors, 'missing required ' + stream + ' hourly stream or API-observed absence', {'hour': hour})
     index['_observedAbsences'] = list(absent.values())
@@ -413,26 +408,9 @@ def index_requests(folder, uid, startUTC, endUTC, actual_response_ids=None, *, a
     return results[uid]
 
 
-def _catalog_refs(value):
-    if isinstance(value, dict):
-        for field, item in value.items():
-            kind = {'profileID': 'profile', 'definitionID': 'definition', 'meter': 'meter'}.get(field)
-            if kind and isinstance(item, str) and item:
-                yield kind, item
-            list_kind = {'workloadIDs': 'definition', 'costRefs': 'cost', 'baselineRefs': 'baseline'}.get(field)
-            if list_kind and isinstance(item, list):
-                for key in item:
-                    if isinstance(key, str) and key:
-                        yield list_kind, key
-            yield from _catalog_refs(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _catalog_refs(item)
-
-
 def stream_events(folder, kind, *, approved_root=None):
     """Return every original stream row with its one-based immutable source ref."""
-    if kind not in ('requests', 'management', 'scheduler', 'catalog', 'resources', 'cluster'):
+    if kind not in ('requests', 'resources'):
         raise ValueError('Unknown raw observation stream')
     root = _root(folder, approved_root)
     index, sources, errors = _manifest(root, {kind})
@@ -443,69 +421,11 @@ def stream_events(folder, kind, *, approved_root=None):
                   'observedAbsences': index.get('_observedAbsences', [])}
 
 
-def scheduler_events(folder, *, approved_root=None):
-    """Return raw schedulerLine dictionaries with refs, never expanded catalog bodies."""
-    global _SCHEDULER_CACHE
-    root = _root(folder, approved_root)
-    signature = _signature(root)
-    if _SCHEDULER_CACHE is not None and _SCHEDULER_CACHE[0] == signature:
-        return _SCHEDULER_CACHE[1]
-    index, sources, errors = _manifest(root, {'scheduler', 'catalog'})
-    catalog, seen, events = {}, {}, []
-    raw_counts = Counter()
-    duplicates = 0
-    for stream, row, ref in _rows(sources, errors):
-        raw_counts[stream] += 1
-        try:
-            _time(row.get('at'))
-            if stream == 'catalog':
-                kind, key = row.get('kind'), row.get('key')
-                if not isinstance(kind, str) or not kind or not isinstance(key, str) or not key or 'body' not in row:
-                    raise ValueError('catalog row requires kind, key, at and body')
-                identity = kind, key
-                stamp = _time(row['at'])
-                digest = _digest({'body': row['body']})
-                versions = catalog.setdefault(identity, {})
-                if stamp in versions and versions[stamp][0] != digest:
-                    _error(errors, 'conflicting catalog body at the same kind/key/time', ref)
-                else:
-                    versions.setdefault(stamp, (digest, ref))
-                continue
-            if '_rawRefs' in row:
-                raise ValueError('reserved _rawRefs field already exists in raw scheduler record')
-            digest = _digest(row)
-            if digest in seen:
-                duplicates += 1
-                events[seen[digest]]['_rawRefs'].append(ref)
-            else:
-                seen[digest] = len(events)
-                events.append({**row, '_rawRefs': [ref]})
-        except (ValueError, RecursionError) as exc:
-            _error(errors, 'invalid ' + stream + ' record: ' + str(exc), ref)
-    missing = defaultdict(list)
-    for event in events:
-        for identity in set(_catalog_refs(event)):
-            if identity not in catalog:
-                missing[identity].extend(event['_rawRefs'])
-    for (kind, key), refs in sorted(missing.items()):
-        _error(errors, 'missing referenced catalog body', {'kind': kind, 'key': key, 'refs': refs})
-    provenance = {'classification': _PRIVATE, 'complete': not errors,
-                  'sources': sources, 'errors': errors, 'rawRows': dict(raw_counts),
-                  'uniqueEvents': len(events), 'duplicateSchedulerRows': duplicates,
-                  'catalogReferences': [{'kind': kind, 'key': key,
-                                         'refs': [ref for _, ref in versions.values()]}
-                                        for (kind, key), versions in sorted(catalog.items())],
-                  'requestPopulation': index.get('requestPopulation'),
-                  'observedAbsences': index.get('_observedAbsences', []),
-                  'meaning': 'Raw schedulerLine fields retained; _rawRefs identifies original records. Catalog bodies remain in archived catalog streams; no profiles or power results expanded/synthesized.'}
-    result = events, provenance
-    _SCHEDULER_CACHE = signature, result
-    return result
 
 
 def _main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=('requests', 'scheduler'))
+    parser.add_argument('kind', choices=('requests', 'resources'))
     parser.add_argument('--folder', required=True)
     parser.add_argument('--uid', action='append', default=[])
     parser.add_argument('--start')
@@ -519,7 +439,7 @@ def _main():
                   for uid, result in results.items()}
         bad = any(result['errors'] for result in results.values())
     else:
-        events, output = scheduler_events(args.folder)
+        events, output = stream_events(args.folder, 'resources')
         output = {**output, 'returnedEvents': len(events)}
         bad = bool(output['errors'])
     json.dump(output, sys.stdout, indent=2, ensure_ascii=False)

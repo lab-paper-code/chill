@@ -1,58 +1,29 @@
 {
-  "controlSourceSHA": "24f4ff4f3639dd03ad16067df926ed48320240d6",
-  "sources": {
-    "server": "24f4ff4f3639dd03ad16067df926ed48320240d6",
-    "loadgen": "e8ed3cff31510e6cc8105c840f9ce99b962cde0e",
-    "power": "bin/observation-power-source-f8c3d2b4"
+  "workloads": [
+    {"name": "image-classification-tight-slo"},
+    {"name": "plc-anomaly"},
+    {"name": "smolvlm2-vqa"}
+  ],
+  "seeds": {
+    "image-classification-tight-slo": "101",
+    "plc-anomaly": "202",
+    "smolvlm2-vqa": "303"
   },
-  "generatorQuality": {"latenessToleranceNS": 50000000, "maxExceedingFraction": 0.01},
-  "g0Evidence": {"status": "UNKNOWN"},
-  "timeboxes": {
-    "setupSeconds": 194,
-    "barrierSeconds": 300,
-    "drainSeconds": 194,
-    "flushSeconds": 15,
-    "collectSeconds": 240,
-    "apiSeconds": 129,
-    "settleSeconds": 194,
-    "finishResetWaitSeconds": 600,
-    "powerDownSeconds": 1800
+  "arrivals": {
+    "image-classification-tight-slo": "poisson",
+    "plc-anomaly": "poisson",
+    "smolvlm2-vqa": "poisson"
   },
-  "minimumDemand": {
-    "image-classification-tight-slo": 20,
-    "smolvlm2-vqa": 0.3,
-    "plc-anomaly": 40
-  },
-  "measurementSLO": {
-    "mobilenet": {"percentile": 95, "targetLatencyNanos": 1000000000},
-    "smolvlm2": {"percentile": 99, "targetLatencyNanos": 60000000000},
-    "plc": {"percentile": 95, "targetLatencyNanos": 50000000}
-  },
-  "requestTiming": {
-    "mobilenet": {"workers": 320, "lifetimeSeconds": 2, "deliverySeconds": 0.01, "socketSeconds": 2.02},
-    "smolvlm2": {"workers": 320, "lifetimeSeconds": 75, "deliverySeconds": 0.01, "socketSeconds": 75.02},
-    "plc": {"workers": 320, "lifetimeSeconds": 1, "deliverySeconds": 0.01, "socketSeconds": 1.02}
-  },
-  "stages": [
-    {
-      "id": "E0",
-      "seconds": 180,
-      "rates": {"mobilenet": 0, "smolvlm2": 0, "plc": 0}
-    },
-    {
-      "id": "A",
-      "seconds": 300,
-      "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}
-    },
-    {
-      "id": "B",
-      "seconds": 360,
-      "rates": {"mobilenet": 100, "smolvlm2": 0.3, "plc": 40}
-    },
-    {
-      "id": "C",
-      "seconds": 360,
-      "rates": {"mobilenet": 20, "smolvlm2": 0.3, "plc": 40}
-    }
-  ]
+  "stages": [{
+    "id": "e5-7-7",
+    "parts": [{
+      "id": "e5-7",
+      "seconds": 900,
+      "rates": {
+        "image-classification-tight-slo": 31.84520448363734,
+        "plc-anomaly": 11.620962232575499,
+        "smolvlm2-vqa": 0.17350133447720636
+      }
+    }]
+  }]
 }

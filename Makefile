@@ -153,8 +153,7 @@ test-serving-entrypoint-rbac: ## Verify the rendered ChillServer grants measurem
 .PHONY: test-deploy
 test-deploy: ## Exercise the deployment CLI offline with process-backed tools and TLS fixtures.
 	python3 -B -m unittest discover -s hack/deploy -p 'test_*.py'
-	python3 -B -m unittest discover -s hack/evaluation -p test_round_deploy.py
-	python3 -B hack/evaluation/round.py --self-check
+	python3 -B hack/evaluation/test_evaluation.py
 
 .PHONY: test
 test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac test-deployment-config test-deploy ## Run tests.

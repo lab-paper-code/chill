@@ -70,7 +70,7 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 
 비용은 새 하네스 이미지의 빌드·배포, EvaluationRun과 Job/Pod·주입 대상에 대한 범위 제한 RBAC 확장, profiler leader election 유지다. 조건·상태·증거 연결을 끝까지 구현해야 하며 반환 미확인은 운영자 확인·해제 전까지 후속 실행을 막는다.
 
-현재 최적화 측정은 `round.py`로 계속한다. 새 경로 완성 후 기존 증거의 오프라인 judge 동일성과 controller 경로 **1회**의 `*.command.json`·표·정리 증거를 비교한다. 필요한 `Round.reports` 표 조립만 tables 경계로 옮기고 수용 뒤 `round.py`, `run-ab` 스크립트와 대시보드 비교 추측 함수를 삭제한다. 배포와의 flock 소실을 고려해 실행 중 신원 감시는 유지한다. 과거 필드 부재는 미기록이며 이름·요청률로 복원하지 않는다.
+평가 실행은 EvaluationRun/Stage controller와 `evaluation.py`의 factor/stage/judge/cleanup/finish/publish Job 경계로 통합한다. 절대 요청률·inline seed·Dataset carrier를 동결하고, 선언한 `settingsPatch`만 공개 settings API로 적용·readback·원복한다. 표 조립은 `tables.py`가 맡는다. 기존 로컬 deployment/calibration/restoration orchestration은 제거했으며 운영에서도 사용하지 않는다. 외부 target/Node readiness와 평가자 Job/Pod UID·실행 이미지 신원 감시는 유지하되 CHILL image/profile exact-match나 내부 상태 복원을 실행 조건으로 삼지 않는다. 과거 필드 부재는 미기록이며 이름·요청률로 복원하지 않는다.
 
 과거 게시·과학 원시·실행 기록은 수정·삭제·재게시하지 않는다. [ADR 0019](0019-durable-stored-contract-compatibility.md)의 단일 버전 원칙을 유지하고 구계약 reader·dual decoder·호환 shim은 두지 않는다. 영향받는 작업용 객체만 의존 캠페인이 없는 전환 시점에 운영자가 정리한다. 과거 과학 기록 보존과 혼동하지 않는다.
 

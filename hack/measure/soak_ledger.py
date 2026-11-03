@@ -7,7 +7,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import ssl
 import time
 from types import SimpleNamespace
 
@@ -306,13 +305,15 @@ def main():
     repository = Path(config['paths']['repository']).resolve()
     if args.out.resolve() == repository or repository in args.out.resolve().parents:
         parser.error('--out must be outside repository')
-    spec = importlib.util.spec_from_file_location('soak_conductor', Path(__file__).resolve().parents[1] / 'evaluation/d2/conduct_before.py')
+    spec = importlib.util.spec_from_file_location('soak_transport', Path(__file__).resolve().parents[1] / 'evaluation/conductor.py')
     helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
-    client = object.__new__(helper.Conductor)
-    client.http = helper.urllib.request.build_opener(helper.NoRedirect(), helper.urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=str(helper.CA))))
-    client.record = lambda value: None
-    client.phase_out = args.out
-    client.a = SimpleNamespace(command='soak-ledger')
+    operation = config['d2']
+    transport = helper.Client({'endpoint': operation['apiBase'], 'caFile': operation['caFile'],
+                               'tokenFile': operation['tokenFile'], 'collectorTokenFile': operation.get('collectorTokenFile', operation['tokenFile']),
+                               'namespace': config['measure']['namespace']})
+    client = SimpleNamespace(api=transport.api, k=transport.k,
+                             state=lambda: transport.api('GET', '/api/v1/scheduler/state'),
+                             settings=lambda: transport.api('GET', '/api/v1/scheduler/settings'))
     # Fail closed before any mutation, then recheck every cycle.
     if client.settings().get('autonomousWorkloads'):
         parser.error('Disable all autonomous workloads before the manual soak')
