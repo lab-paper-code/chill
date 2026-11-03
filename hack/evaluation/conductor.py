@@ -198,15 +198,23 @@ def path_value(value, path):
     return {'exists': True, 'value': copy.deepcopy(value)}
 
 
-def patch_changes(before, after, patch, prefix=()):
+def patch_changes(before, after, patch, prefix=(), created_parents=()):
+    """Track patched members, including members of newly created objects."""
     changed = []
     for key, value in patch.items():
         path = (*prefix, key)
         left, right = path_value(before, (key,)), path_value(after, (key,))
-        if isinstance(value, dict) and isinstance(before.get(key), dict):
-            changed.extend(patch_changes(before[key], after[key], value, path))
-        elif left != right:
-            changed.append({'path': list(path), 'before': left, 'applied': right})
+        if isinstance(value, dict) and (not left['exists'] or isinstance(before.get(key), dict)):
+            parents = (*created_parents, path) if not left['exists'] else created_parents
+            members = patch_changes(before.get(key, {}), after[key], value, path, parents)
+            if members:
+                changed.extend(members)
+                continue
+            if left == right:
+                continue
+        if left != right:
+            changed.append({'path': list(path), 'before': left, 'applied': right,
+                            'createdParents': [list(parent) for parent in created_parents]})
     return changed
 
 
@@ -225,6 +233,13 @@ def restore_paths(current, changed):
             target[key] = copy.deepcopy(original['value'])
         else:
             target.pop(key, None)
+    parents = {tuple(parent) for change in changed for parent in change['createdParents']}
+    for path in sorted(parents, key=len, reverse=True):
+        if path_value(result, path) == {'exists': True, 'value': {}}:
+            target = result
+            for key in path[:-1]:
+                target = target[key]
+            target.pop(path[-1])
     return result
 
 
@@ -269,6 +284,8 @@ def factor_apply(api, declared, path):
         try:
             receipt['response'] = settings_put(api, request, metadata['etag'], receipt['put'])
             receipt['applied'] = receipt['response']['after']
+            for change in changed:
+                change['applied'] = path_value(receipt['applied'], change['path'])
             receipt['appliedAt'] = receipt['response']['appliedAt']
             receipt['effectUncertain'] = False
         except Exception as error:

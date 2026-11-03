@@ -38,6 +38,7 @@ class SettingsAPI:
         self.fail_put = self.drift = self.transport_error = self.omit_get_etag = False
         self.revision = 1
         self.on_conflict = lambda: None
+        self.normalize = lambda value: value
 
     def __call__(self, method, path, body=None, *, headers=None, response=None):
         assert path == '/api/v1/scheduler/settings'
@@ -60,11 +61,11 @@ class SettingsAPI:
         assert not set(body) & conductor.SETTINGS_PROJECTIONS
         before = copy.deepcopy(self.value)
         projection = {key: value for key, value in self.value.items() if key in conductor.SETTINGS_PROJECTIONS}
-        self.value = {**copy.deepcopy(body), **projection}
-        if self.drift:
-            self.value['controlIntervalNanos'] += 1
+        self.value = self.normalize({**copy.deepcopy(body), **projection})
         self.revision += 1
         result = {'before': before, 'after': copy.deepcopy(self.value), 'appliedAt': START}
+        if self.drift:
+            self.value['controlIntervalNanos'] += 1
         metadata.update(statusCode=200, etag='"' + str(self.revision) + '"', body=result)
         return result
 
@@ -240,6 +241,44 @@ class EvaluationTests(unittest.TestCase):
             conductor.factor_apply(api, {'minimumDemand': {'new': 7}}, path)
             conductor.factor_revert(api, path)
             self.assertNotIn('new', api.value['minimumDemand'])
+
+    def test_null_control_uses_canonical_applied_value_for_readback_and_revert(self):
+        api = SettingsAPI()
+        def normalize(value):
+            value['controls'].setdefault('power', False)
+            return value
+        api.normalize = normalize
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            receipt = conductor.factor_apply(api, {'controls': {'power': None}}, path)
+            self.assertTrue(receipt['accepted'])
+            self.assertNotIn('power', receipt['request']['controls'])
+            self.assertEqual(receipt['changed'][0]['applied'], {'exists': True, 'value': False})
+            self.assertFalse(api.value['controls']['power'])
+            conductor.factor_revert(api, path)
+            self.assertTrue(api.value['controls']['power'])
+            self.assertEqual(conductor.load(path)['revertSkipped'], [])
+
+    def test_new_map_reverts_only_own_members_and_preserves_external_entry(self):
+        api = SettingsAPI()
+        del api.value['minimumDemand']
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            receipt = conductor.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
+            self.assertEqual(receipt['changed'][0]['path'], ['minimumDemand', 'evaluation'])
+            api.value['minimumDemand']['operator'] = 9
+            conductor.factor_revert(api, path)
+            self.assertEqual(api.value['minimumDemand'], {'operator': 9})
+            self.assertEqual(conductor.load(path)['revertSkipped'], [])
+
+    def test_new_map_is_removed_when_own_member_cleanup_leaves_it_empty(self):
+        api = SettingsAPI()
+        del api.value['minimumDemand']
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            conductor.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
+            conductor.factor_revert(api, path)
+            self.assertNotIn('minimumDemand', api.value)
 
     def test_empty_patch_is_read_only(self):
         api = SettingsAPI()

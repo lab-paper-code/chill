@@ -354,6 +354,10 @@ Revert restores only paths still equal to our applied values; external changes
 are recorded and skipped. One 409 revert conflict permits one fresh GET and
 re-evaluation; a second blocks Returned. Each PUT records If-Match, status and
 response ETag alongside request/response/readback and apply/revert timestamps.
+Applied path values come from the PUT response's canonical settings, including
+defaults materialized from null patches. Newly created objects are tracked by
+member: revert removes only evaluator-added members, preserves operator-added
+members, and removes an originally absent parent only when it becomes empty.
 
 The generator Job is assembled directly. Its Dataset init container copies the
 carrier's evaluation directory to `/evaluation`; Preprocessor input names
