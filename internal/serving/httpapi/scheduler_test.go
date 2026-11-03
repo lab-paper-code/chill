@@ -685,8 +685,9 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 	if stale.Code != http.StatusConflict || updates != 1 {
 		t.Fatalf("replayed version status=%d body=%s", stale.Code, stale.Body)
 	}
+	latestETag := assertSettingsReadAfterExternalUpdate(t, kube, controller, request)
 	conflict = true
-	raced := request(http.MethodPut, put.Header().Get("ETag"))
+	raced := request(http.MethodPut, latestETag)
 	var failure serving.Error
 	if err := json.Unmarshal(raced.Body.Bytes(), &failure); err != nil {
 		t.Fatal(err)
@@ -694,4 +695,41 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 	if raced.Code != http.StatusConflict || failure.Code != "SettingsConflict" {
 		t.Fatalf("kube conflict status=%d body=%s", raced.Code, raced.Body)
 	}
+}
+
+func assertSettingsReadAfterExternalUpdate(
+	t *testing.T, kube kubernetes.Interface, controller *servingkube.SchedulerController,
+	request func(string, string) *httptest.ResponseRecorder,
+) string {
+	t.Helper()
+	current := controller.Settings()
+	external, err := kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired := current
+	desired.MaxInstances = 9
+	desiredRaw, err := json.Marshal(desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external.Data["scheduler.json"] = `{"settings":` + string(desiredRaw) + `}`
+	external, err = kube.CoreV1().ConfigMaps("serving").Update(context.Background(), external, meta.UpdateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if controller.Settings().MaxInstances != current.MaxInstances {
+		t.Fatal("external ConfigMap update unexpectedly refreshed runtime")
+	}
+	latest := request(http.MethodGet, "")
+	var shown serving.SchedulerSettings
+	if err := json.Unmarshal(latest.Body.Bytes(), &shown); err != nil {
+		t.Fatal(err)
+	}
+	if latest.Code != http.StatusOK || shown.MaxInstances != desired.MaxInstances ||
+		latest.Header().Get("ETag") != strconv.Quote(external.ResourceVersion) {
+		t.Fatalf("GET paired stale settings with current version: status=%d etag=%q body=%s",
+			latest.Code, latest.Header().Get("ETag"), latest.Body)
+	}
+	return latest.Header().Get("ETag")
 }

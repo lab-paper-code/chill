@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -366,6 +367,18 @@ func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) 
 		sendError(w, err)
 		return
 	}
+	var input serving.SchedulerSettingsInput
+	decoder := json.NewDecoder(bytes.NewReader(config["settings"]))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		sendError(w, err)
+		return
+	}
+	settings, err := input.Settings()
+	if err != nil {
+		sendError(w, err)
+		return
+	}
 	meters := []servingkube.MeterDeclaration{}
 	if h.config.SchedulerMeters != nil {
 		meters = append(meters, h.config.SchedulerMeters()...)
@@ -377,5 +390,5 @@ func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) 
 		PowerObservation json.RawMessage                `json:"powerObservation,omitempty"` // Stored operating-power policy; read-only.
 		Meters           []servingkube.MeterDeclaration `json:"meters"`
 		RequestTimeout   time.Duration                  `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
-	}{h.config.Scheduler.Settings(), config["staticRouting"], config["powerObservation"], meters, h.config.RequestTimeout})
+	}{settings, config["staticRouting"], config["powerObservation"], meters, h.config.RequestTimeout})
 }

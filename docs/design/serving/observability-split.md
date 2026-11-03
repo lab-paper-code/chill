@@ -139,6 +139,7 @@ selectCosts가 고른 CostID/Trials/Reference로 capacityOperationCost의 평균
 GET `/api/v1/scheduler/settings`는 기존 body를 유지하고 `ETag: "<scheduler ConfigMap resourceVersion>"`을 반환한다. PUT은 그 값을 `If-Match`로 반드시 보낸다. 누락은 **428 SettingsPreconditionRequired**, 다른 버전·약한 ETag·복수 조건 또는 실제 Kubernetes Update conflict는 **409 SettingsConflict**다. 성공한 PUT은 새 ConfigMap 버전의 `ETag`를 반환한다. 권한은 종전 URL·정확한 ConfigMap update SAR를 그대로 따른다.
 
 버전은 settings 블록만이 아니라 **ConfigMap 전체 버전**이다. routing 작업이나 다른 설정 블록의 변경도 충돌을 일으키므로 운영자/평가자는 다시 GET한 현재 값·ETag를 바탕으로 자신이 바꾸려던 키를 재선택해야 한다. 서버는 stale body를 재적용·retry하거나 다른 writer의 값을 몰래 덮어쓰지 않는다. GET의 read-only projection `staticRouting/powerObservation/meters/requestTimeout`은 클라이언트가 PUT body에서 뺀다. body에 새 resourceVersion 필드는 추가하지 않는다.
+Settings의 정본은 ConfigMap의 `settings`다. GET은 한 번 읽은 ConfigMap의 settings를 PUT과 같은 `SchedulerSettingsInput` strict decode·`Settings()`로 검증하여 본문을 만들고 그 객체의 resourceVersion을 ETag로 묶는다. 외부 ConfigMap 갱신 직후 runtime snapshot이 뒤처져 있어도 GET은 새 선언을 반환하며 scheduler는 refresh로 따라온다. Patch preflight 역시 merge 결과에 같은 PUT decode·validation 경로를 사용하여 null·누락·기본값 의미가 달라지지 않는다.
 
 ## 7. 측정 표 산출
 과거 오프라인 경로의 원자료는 S3 시간 catalog/streams와 loadgen JSONL이다. `hack/observations/fetch.sh <from시> <to시> <dir>`는 obs 시간 prefix와 power용 앞뒤1시간을 받고 단계 loadgen은 `<dir>/loadgen/<단계>.jsonl`에 둔다. `e1.sql`은 요청/포화/Tick(evaluationElapsedNanos) 표, 완료 여유는 [계획기](analytic-planner.md)다. `power/main.go --dir <dir>/obs --scheduler-config <file> --from --to`는 전체/활성 POOL J이며 수락된 meters와[from−1분,to+1분] segment가 필수다. evaluation 새 수집은17장 API만 쓴다.

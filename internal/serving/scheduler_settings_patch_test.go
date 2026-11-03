@@ -1,8 +1,12 @@
 package serving
 
 import (
+	"bytes"
+	"encoding/json"
 	"reflect"
 	"testing"
+
+	jsonpatch "github.com/evanphx/json-patch/v5"
 )
 
 func TestValidateSchedulerSettingsPatch(t *testing.T) {
@@ -38,6 +42,44 @@ func TestValidateSchedulerSettingsPatch(t *testing.T) {
 				if !reflect.DeepEqual(got, expected) {
 					t.Fatalf("undeclared settings changed: %+v", got)
 				}
+			}
+		})
+	}
+}
+
+func TestSettingsPatchMatchesPUTDecode(t *testing.T) {
+	current, _ := schedulerFixture()
+	before, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, patch string
+		valid       bool
+	}{
+		{"required null", `{"completionMarginMS":null}`, false},
+		{"omitted patch field keeps current value", `{}`, true},
+		{"normal required value", `{"completionMarginMS":0}`, true},
+		{"optional null uses PUT default", `{"bootstrapCapacityWaitNanos":null}`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body, err := jsonpatch.MergePatch(before, []byte(test.patch))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var input SchedulerSettingsInput
+			decoder := json.NewDecoder(bytes.NewReader(body))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			put, putErr := input.Settings()
+			preflight, preflightErr := ValidateSchedulerSettingsPatch(current, []byte(test.patch))
+			if (putErr == nil) != test.valid || (preflightErr == nil) != test.valid {
+				t.Fatalf("PUT=%v preflight=%v wantValid=%v", putErr, preflightErr, test.valid)
+			}
+			if test.valid && !reflect.DeepEqual(preflight, put) {
+				t.Fatalf("preflight=%+v PUT=%+v", preflight, put)
 			}
 		})
 	}

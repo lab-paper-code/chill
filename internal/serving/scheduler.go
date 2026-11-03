@@ -62,7 +62,7 @@ func ValidateSchedulerSettingsPatch(current SchedulerSettings, patch json.RawMes
 		return SchedulerSettings{}, fmt.Errorf("settingsPatch must be a JSON object of at most 65536 bytes")
 	}
 	// Validate the patch too: an unknown key with null would disappear at merge.
-	var partial SchedulerSettings
+	var partial SchedulerSettingsInput
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&partial); err != nil {
@@ -76,13 +76,13 @@ func ValidateSchedulerSettingsPatch(current SchedulerSettings, patch json.RawMes
 	if err != nil {
 		return SchedulerSettings{}, err
 	}
-	var settings SchedulerSettings
+	var settings SchedulerSettingsInput
 	decoder = json.NewDecoder(bytes.NewReader(merged))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&settings); err != nil {
 		return SchedulerSettings{}, err
 	}
-	return settings, settings.Validate()
+	return settings.Settings()
 }
 
 // DispatchOccupancy is the measured time per request that an instance of
