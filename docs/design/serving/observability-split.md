@@ -105,6 +105,12 @@ retained는 실제 ring의 event/metrics 프레임 각각 첫·마지막 sequenc
 
 일치한 resume의 bounded replay는 기존과 동일하며 별도 history 응답을 삽입하지 않는다. snapshot 선택/구독 등록은 같은 hub 잠금에서 처리하며 기존 600프레임/8MiB ring·602프레임/2MiB 큐·1MiB 프레임 상한, slow-consumer snapshot barrier, 저장 commit 성공 후 publish 순서를 유지한다.
 
+#### 측정 mutation의 라이브 사건 (R19)
+
+측정 POST/DELETE의 `validated`와 실제 종결 audit는 `SchedulerRecord`의 durable commit 성공 뒤 `HandlerConfig.OnMutationAction`으로 기존 live action publisher에 전달한다. evaluation mutation도 같은 audit 저장 경로를 사용한다. 저장 실패에는 callback/WS 발행이 없으며 최종 audit 저장 실패의 기존 오류 응답을 유지한다. decision의 commit-before-publish 순서와 같은 방식이며 새 event bus/outbox/설정은 없다.
+
+`live.ProjectAction`은 committed `SchedulerActionObservation` 한 행을 라이브와 `/api/v1/observations/events` 양쪽에서 동일하게 투영한다. 원본 phase/status·시작/종료 시각·오류·Node/Workload identity·예상 시간 출처를 유지한다. live snapshot의 최근 action 100개, 기존 sequence·bounded replay·ring/큐 상한을 그대로 사용하며 REST 이력을 라이브에서 재구성하지 않는다.
+
 
 ### 6.3 측정 CR 두 종류의 읽기 projection (API B1, `SCH-44`, `DB-FR-45`)
 GET `/api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]`, `.../dispatch-occupancy-measurements[/{name}]`: 목록 `{items:[projection]}` 이름순/빈[], 상세 projection/없으면404. whitelist=`{kind,metadata:{namespace,name,uid,resourceVersion,creationTimestamp},node,conditions,status,references}`. cost status=`{phase,reason,steps:[{name,key,verdict}]}`, occupancy=`{phase,reason,powerMode,perRequestNanos,throughput,result}`; 실패/미완료/결과 없음은 그대로,0 대체 없음.

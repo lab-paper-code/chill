@@ -422,7 +422,7 @@ func (o *schedulerService) recordAction(result servingkube.OperationResult) erro
 		return err
 	}
 	if o.live != nil {
-		o.live.action(result, recordedAt)
+		o.live.action(event, recordedAt)
 	}
 	return nil
 }

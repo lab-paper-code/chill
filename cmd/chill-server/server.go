@@ -181,6 +181,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.ReadCatalog = scheduler.readCatalog
 	handlerConfig.SubmitMeasurement = measurements.submit
 	handlerConfig.DeleteMeasurement = measurements.delete
+	handlerConfig.OnMutationAction = publisher.action
 
 	experiments := &experimentService{
 		reader: objects, lister: objects, store: opts.storeName, maxBytes: opts.maxRequestBytes,
