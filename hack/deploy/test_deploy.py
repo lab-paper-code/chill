@@ -87,7 +87,10 @@ if name=='kubectl':
    def log_message(self,*args):pass
    def do_GET(self):
     status=200 if self.headers.get('Authorization')=='Bearer '+(root/'token').read_text().strip() else 401
-    self.send_response(status);self.end_headers();self.wfile.write(b'{}')
+    body=b'{}' if status==401 or self.path=='/api/v1/scheduler/profiles?view=summary&limit=1' else b' '*(9<<20)
+    self.send_response(status);self.send_header('Content-Length',str(len(body)));self.end_headers()
+    try:self.wfile.write(body)
+    except (BrokenPipeError,ConnectionResetError):pass
   server=http.server.HTTPServer(('127.0.0.1',0),Query)
   print('Forwarding from 127.0.0.1:%d -> 8080'%server.server_port,flush=True);server.serve_forever()
  if 'get' in args and args[args.index('get')+1]=='pods' and state.get('publication'):
@@ -244,6 +247,15 @@ class DeploymentCLI(unittest.TestCase):
                 else:
                     self.assertEqual(json.loads((evidence / 'failure.json').read_text())['stage'], 'upgrade')
                     self.assertFalse((evidence / 'after/acceptance.json').exists())
+
+    def test_query_auth_does_not_download_unbounded_catalog_and_continues_acceptance(self):
+        self.recipe.update(queryService='chill-query', dashboardCheck=True)
+        self.cli('--execute', '--evidence', str(self.out))
+        auth = json.loads((self.out / 'query-auth/query-check.json').read_text())
+        self.assertTrue(auth['passed'])
+        self.assertEqual(auth['query-unauthenticated']['status'], 401)
+        self.assertEqual(auth['query-authenticated']['status'], 200)
+        self.assertTrue(json.loads((self.out / 'state.json').read_text())['ready'])
 
     def test_inspect_drift_is_read_only_and_requires_exact_approval(self):
         self.state(chartDrift=True)

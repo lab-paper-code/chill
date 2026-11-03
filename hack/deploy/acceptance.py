@@ -251,8 +251,7 @@ def check_query(config, kube, namespace, out, timeout=60, query_service='chill-q
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             start_new_session=True, bufsize=0)
         port = _forward_port(process, deadline, out / 'query-port-forward.log')
-        url = ('http://127.0.0.1:%d/api/v1/namespaces/' % port +
-               urllib.parse.quote(namespace, safe='') + '/batch-energy-optimizations')
+        url = 'http://127.0.0.1:%d/api/v1/scheduler/profiles?view=summary&limit=1' % port
         opener = urllib.request.build_opener(auth.NoRedirect(), urllib.request.ProxyHandler({}))
         for name, headers, expected in (
                 ('query-unauthenticated', {}, 401),
