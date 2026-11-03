@@ -64,6 +64,38 @@ per-UID/definition batch isolation and shared actor/replay batching decisions.
 Reviewed allowed directions and current `go list` edges are recorded in the
 [architecture contract](../docs/design/code-intelligence/README.md#package-architecture-contract).
 
+Capacity decisions retain the live search trajectory at
+`schedulerLine.decision.capacity.search.steps` in the existing ObservationLog
+scheduler JSONL stream (no separate log or schema bump).
+Each `keep`/`empty` start has an origin (`k: 0`, `evaluated: 0`); the unchanged
+aggregate excludes initial evaluations. Later entries are accepted moves only.
+Across both starts, sum of step `evaluated` plus `search.trailingEvaluated`
+equals `search.evaluated`: trailing counts every unaccepted sweep, including
+intermediate k=2 local optima. Both origins precede k=2 then k=3 moves; a
+neighborhood without an accepted move has no entry.
+
+Step fields are `start`, `k`, `changedNodes` (existing name/UID references),
+`joules`, `feasible`, `final`, `evaluated`, `durationNanos`, and optional
+`budgetCut`. Times are measured on the main goroutine around each origin
+evaluation or accepting sweep; their sum is at most `search.durationNanos`.
+Compare consecutive points of the same start using the actual `better` order
+(feasible, final, descending exceedances, then joules/keep/key), not energy
+alone. Energy cannot increase between feasible points but may increase when
+improving infeasible points. `final` means final-capacity feasible, not the
+selected endpoint. `terminationReason` is `noImprovement` or `budgetCut`;
+errors return no persisted decision. The last recorded point alone carries
+`budgetCut: true` when the search is cut, even if another start wins. Cuts
+retain the prefix, including improvements accepted from partial sweeps.
+
+`TestCapacitySearchStepRecordSize` measures the existing eight-Node,
+three-Workload evaluation fixture (two power modes on the Jetson stand-ins):
+15 steps added 3,021 JSON bytes per decision (3,083 bytes total search JSON).
+Timing digit counts vary between runs. At one decision every 10 seconds,
+this is approximately 26.1 MB/day of additional uncompressed JSON.
+This is not a size cap: accepted moves are retained through the search budget,
+and larger trajectories increase serialization/write work under the
+ObservationLog lock at every decision (normally every 10 seconds).
+
 ## Layer vocabulary
 
 - A capability root such as `profiling/run` or `nodeactuator` contains plain
