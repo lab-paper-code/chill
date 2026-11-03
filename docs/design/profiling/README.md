@@ -51,6 +51,19 @@ Runs remain pending. Campaign retries/result publication and idle-baseline
 attempt limits/publication remain separate parent policies. This does not
 replace the Profiler's current-generation pre-Job failure check.
 
+`internal/profiling/campaign/evidence` reconstructs retained campaign results,
+frozen plans and completed active/model-loaded-idle trials. It owns campaign
+state/result/plan consistency and Run ownership, protocol, current-generation
+completion, evidence-reference and recorded-execution binding checks. Reads
+remain bounded to eight concurrent trials with input-ordered errors and lineage.
+Its object/trial callbacks keep the caller's store binding and byte limits.
+This boundary depends inward on the campaign, derivation, profiler evidence,
+Run, Evidence Store and API contracts; the existing profiler evidence package
+stays campaign-independent. Serving catalog selection, firstfloor admissibility,
+energy/memory/profile construction and query reporting completeness/derivation
+remain separate consumer policies. The reader's result/plan stage precedes trial
+loading so serving still rejects unsupported runtime families without trial IO.
+
 Campaign Runs now freeze `spec.campaignTrial.batch` and `.attempt`; workload mode
 in `spec.measurement` identifies active versus idle, and `measurement.batch`
 remains the actual execution batch. Names provide deterministic object lookup,

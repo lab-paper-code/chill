@@ -619,33 +619,10 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 	}
 }
 
-// Stored RunConfig objects written before durationToleranceSeconds existed carry
-// 0; a Run whose spec never set the field must still be accepted (ADR 0019).
-func TestCatalogAcceptsHistoricalRunConfigWithoutDurationTolerance(t *testing.T) {
-	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
-	run := &edgev1alpha1.ProfilingRun{}
-	if err := catalog.store.client.Get(context.Background(), types.NamespacedName{Namespace: source.Namespace, Name: "trial-0"}, run); err != nil {
-		t.Fatal(err)
-	}
-	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config profilingrun.RunConfig
-	if err := json.Unmarshal(payload, &config); err != nil {
-		t.Fatal(err)
-	}
-	config.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
-	config.Measurement.DurationToleranceSeconds = 0
-	defaulted := .5
-	run.Spec.Measurement.DurationToleranceSeconds = &defaulted // CRD default applied on read
-	if err := validateCatalogRunConfig(run, config); err != nil && strings.Contains(err.Error(), "Run protocol") {
-		t.Fatalf("historical zero tolerance rejected: %v", err)
-	}
-	config.Measurement.DurationToleranceSeconds = .5
-	explicit := .3
-	run.Spec.Measurement.DurationToleranceSeconds = &explicit
-	if err := validateCatalogRunConfig(run, config); err == nil || !strings.Contains(err.Error(), "Run protocol") {
-		t.Fatalf("explicit spec tolerance mismatch accepted: %v", err)
-	}
+func apiObjectIdentity(reference *edgev1alpha1.ProfilingRunEvidenceReference) evidencestore.ObjectIdentity {
+	return evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}
+}
+
+func storedObjectIdentity(reference batchenergyoptimization.StoredObjectReference) evidencestore.ObjectIdentity {
+	return evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}
 }

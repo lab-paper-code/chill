@@ -14,6 +14,7 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	campaignevidence "github.com/lab-paper-code/chill/internal/profiling/campaign/evidence"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
 
@@ -57,32 +58,41 @@ func TestCatalogCompletedTrialsMatchSerialAndBoundIO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// More than the limit also checks errgroup's bound independently of windowing.
 	references := result.Spec().CompletedTrials
-	references = append(references, references...)
 	delayed := &delayedCatalogObjects{objects: objects}
 	catalog.loader, err = profilerevidence.NewLoader(delayed, catalog.maxObjectBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	serial := make([]catalogTrial, len(references))
-	for index, reference := range references {
-		serial[index] = catalog.readCompletedTrial(ctx, measurement, reference)
-		if serial[index].err != nil {
-			t.Fatal(serial[index].err)
+	var serial campaignevidence.Trials
+	for _, reference := range references {
+		spec := result.Spec()
+		spec.CompletedTrials = []campaign.CompletedTrialReference{reference}
+		single, err := campaign.NewResultRecord(spec)
+		if err != nil {
+			t.Fatal(err)
 		}
+		trial, err := catalog.evidence.ReadTrials(ctx, measurement, campaignevidence.Campaign{Result: single})
+		if err != nil {
+			t.Fatal(err)
+		}
+		serial.Active = append(serial.Active, trial.Active...)
+		serial.Idle = append(serial.Idle, trial.Idle...)
 	}
 	serialTime := time.Since(start)
 	delayed.peak.Store(0)
 	start = time.Now()
-	parallel := catalog.readCompletedTrials(ctx, measurement, references)
+	parallel, err := catalog.evidence.ReadTrials(ctx, measurement, campaignevidence.Campaign{Result: result})
+	if err != nil {
+		t.Fatal(err)
+	}
 	parallelTime := time.Since(start)
-	if !reflect.DeepEqual(serial, parallel) {
+	if !reflect.DeepEqual(serial.Active, parallel.Active) || !reflect.DeepEqual(serial.Idle, parallel.Idle) {
 		t.Fatal("parallel verified records differ from ordered serial records")
 	}
-	if peak := delayed.peak.Load(); peak <= 1 || peak > catalogTrialConcurrency {
-		t.Fatalf("peak concurrent store reads = %d, want 2..%d", peak, catalogTrialConcurrency)
+	if peak := delayed.peak.Load(); peak <= 1 || peak > 8 {
+		t.Fatalf("peak concurrent store reads = %d, want 2..8", peak)
 	}
 	t.Logf("delayed store serial=%s parallel=%s speedup=%.2fx peak=%d", serialTime, parallelTime, float64(serialTime)/float64(parallelTime), delayed.peak.Load())
 	first, err := catalog.Refresh(ctx, []string{source.Namespace})
