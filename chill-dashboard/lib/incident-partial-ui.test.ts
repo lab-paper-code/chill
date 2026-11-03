@@ -25,7 +25,8 @@ function harness(){
     const element=node as Element
     if(typeof element.type==="function")return resolve(element.type(element.props))
     if(element.type==="button")buttons.push(element)
-    return React.createElement(element.type as React.ElementType,{...element.props,key:element.key,children:resolve(element.props.children)})
+    const {children,...props}=element.props
+    return React.createElement(element.type as React.ElementType,{...props,key:element.key},resolve(children))
   }
   return {at,cursor,calls,event,setPage:(value:Record<string,unknown>)=>{page=value},setError:(value:unknown)=>{error=value},render:()=>{index=0;buttons.length=0;return renderToStaticMarkup(resolve(exports.IncidentRecord({identity:JSON.stringify(["cluster",at,"serving-instance","raised"])})))},more:()=>{const button=buttons.find(row=>row.props.children==="더 찾기");assert.ok(button,"user can explicitly search the next append window");(button.props.onClick as ()=>void)()}}
 }
