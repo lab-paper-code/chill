@@ -134,3 +134,13 @@ test("device power presents one observation range and no explanatory paragraph",
   assert.equal((html.match(/aria-label="전력 관측 범위"/g)??[]).length,1)
   assert.doesNotMatch(html,/<p>최근 15분/)
 })
+
+test("live power visibly identifies a column format mismatch instead of silent empty history",()=>{
+  const chart=load("../features/power-series.tsx",{
+    "@/lib/client":{useChillQuery:()=>({error:new Error("전력 형식 불일치"),refetch:()=>{}})},
+    "@/lib/power-series":powerSeries,"@/lib/live-display":{displayTime},
+  })
+  const html=renderToStaticMarkup(createElement(chart.LivePowerTrend,{state:initialLiveState()}))
+  assert.match(html.replace(/<[^>]+>/g,""),/전력 형식 불일치/)
+  assert.match(html,/실시간 관측만 표시/)
+})
