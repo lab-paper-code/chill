@@ -281,8 +281,9 @@ minute drift do not establish universal stationarity or scheduler admission.
 
 `GET /api/v1/observations/occupancy?from=<RFC3339>&to=<RFC3339>`는
 `{window:{start,end},rows:[...]}`를 반환한다. 기간은 현재
-`settings.dispatchOccupancy.aggregationWindowSeconds` 이하이며 초과는
-`400 InvalidQuery`다. 각 행은 `node:{name,uid}`, `workloadUID`, `model`,
+`dispatchOccupancy.aggregationWindowSeconds` 이하이며 초과는
+`400 InvalidQuery`다. 웹은 400의 선택적 정수 `maximumWindowSeconds`를 상한으로
+기억하고 없으면 서버 사유만 표시한다(정상 응답 형태는 동일). 각 행은 `node:{name,uid}`, `workloadUID`, `model`,
 `powerMode`, `executionPath`, `runtimeImage`, `batch`,
 `profile:{profileID,reference,evidence,meanNanos}`, `window`와 `pairs`,
 `batches`, `completeBatches`, `requests`, `completeRequests`, `rawRows`,

@@ -193,7 +193,7 @@ DOM은 고정 동시 송신자로 실행하는 짧은 closed-loop burst다. 프�
 
 DOM `occupancy[].adopted`는 실제 scheduler 선택 `accepted.dispatchOccupancy[].provenance`에 연결된 tri-state다. Node UID·모델·전력모드·실행 경로·배치·profileID의 일치와 실제 선택 출처를 사용하며 `accepted.occupancy`의 legacy scalar 목록만으로 채택을 추론하지 않는다. 새 선택 목록이 없거나 카탈로그 오류이면 `null`=채택 미확인이다. runtimeImage는 유효성 키가 아니며 catalog checkedAt/error는 기존 freshness에 반영한다. 코드 통합은 운영 배포·운영 mutation 검증을 뜻하지 않는다.
 
-셀 상세는 **스케줄러 d**(출처 측정/DOM/기본값·선택값·pairs·window·갱신 시각)와 **관측 d(B)**(signed median·IQR·p10/p90·negativeFraction·pairs)를 독립 표로 표시한다. 관측 통계는 `accepted.occupancyEstimates`에서 읽으며 채택값으로 대체하거나 판정을 추가하지 않는다. 별도 기간 선택은 현재 설정의 `aggregationWindowSeconds` 이내에서 `GET /observations/occupancy?from=&to=`를 조회한다. 응답 행은 Node UID·모델·전력모드·실행 경로·배치·profileID로 해당 셀에 연결하며 runtimeImage는 표시만 한다. null과 측정된 0, 빈 행과 조회 실패를 구별한다. relay는 이 경로의 GET과 from/to만 허용한다.
+셀 상세는 **스케줄러 d**(출처 측정/DOM/기본값·선택값·pairs·window·갱신 시각)와 **관측 d(B)**(signed median·IQR·p10/p90·negativeFraction·pairs)를 독립 표로 표시한다. 관측 통계는 `accepted.occupancyEstimates`에서 읽으며 채택값으로 대체하거나 판정을 추가하지 않는다. 별도 기간 조회 `GET /observations/occupancy?from=&to=`의 기본 구간은 실제 스케줄러 d의 provenance.window이며 상한 숫자를 만들지 않는다. 기간 변경이 400이면 서버 code·message를 표시하고 직전 적용 기간을 유지한다. 400 본문에 양의 정수 `maximumWindowSeconds`가 있으면 이후 선택의 상한으로 기억해 제한·안내하며, 없으면 사유만 표시한다. 응답 행은 Node UID·모델·전력모드·실행 경로·배치·profileID로 해당 셀에 연결하며 runtimeImage는 표시만 한다. null과 측정된 0, 빈 행과 조회 실패를 구별한다. relay는 이 경로의 GET과 from/to만 허용한다.
 
 ### 연결 예정 API (서버 책임)
 
