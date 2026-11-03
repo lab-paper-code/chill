@@ -253,6 +253,11 @@ operational data. Execute shares `/tmp/chill-heavy.lock`; inspect does not.
 The disk gates require `minFreeBytes` and `maxDiskUsedPercent` (default 85).
 Builds record `docker buildx du` before/after on their actual builders; the
 runner does not prune unrelated or supposedly local images/cache/data.
+Firstfloor installs apt before Python-package arguments and shares the pinned
+Python dependency layer between CPU and RKNN; optional extras are installed
+afterward with the same pins enforced. This uses only the existing BuildKit
+layer cache: GC can still evict it, and cold vendor base pulls/installations
+are unchanged. No quantitative speedup is claimed without measured builds.
 `performance.json` and `command-timings.jsonl` retain measured stage/command durations. Coverage is checked
 before profiles to avoid repeated profile captures while warming; this is not
 evidence of a global speedup.

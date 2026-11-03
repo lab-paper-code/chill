@@ -57,17 +57,22 @@ RUN --mount=from=l4t-r32-downloads,target=/downloads apt-get update \
 # targets; see docs/design/code-intelligence/README.md.
 FROM ${RUNTIME_IMAGE}
 ARG APT_PACKAGES
+# RUN implicitly consumes every preceding ARG; Python changes must not bust apt.
+RUN if [ -n "${APT_PACKAGES}" ]; then apt-get update \
+    && apt-get install -y --no-install-recommends ${APT_PACKAGES} && rm -rf /var/lib/apt/lists/*; fi
 ARG NUMPY_VERSION=2.2.6
 ARG ONNXRUNTIME_VERSION=1.27.0
 ARG ORT_PACKAGE=onnxruntime
 ARG PIP_EXTRA_INDEX_URL
-ARG EXTRA_PACKAGES
 # Preprocessor module libraries. transformers 4.50.0 is the first release with
 # SmolVLM; its processor module imports without torch (4.57.6 requires torch).
 ARG MODULE_PACKAGES="pillow==12.3.0 transformers==4.50.0 num2words==0.5.14 jinja2==3.1.6"
-RUN if [ -n "${APT_PACKAGES}" ]; then apt-get update \
-    && apt-get install -y --no-install-recommends ${APT_PACKAGES} && rm -rf /var/lib/apt/lists/*; fi
-RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${EXTRA_PACKAGES} ${MODULE_PACKAGES}
+# CPU and RKNN share this dependency layer; keep vendor extras out of its key.
+RUN python3 -m pip install --no-cache-dir numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${MODULE_PACKAGES}
+ARG EXTRA_PACKAGES
+# Repeat the pins so extras cannot silently replace a required runtime version.
+RUN if [ -n "${EXTRA_PACKAGES}" ]; then python3 -m pip install --no-cache-dir \
+    numpy==${NUMPY_VERSION} ${ORT_PACKAGE}==${ONNXRUNTIME_VERSION} ${MODULE_PACKAGES} ${EXTRA_PACKAGES}; fi
 COPY --from=builder /out/serving-worker /opt/chill/bin/serving-worker
 # Materializer path is part of the measured runtime-image contract.
 COPY --from=builder /out/chill-server /opt/chill/bin/serving-entrypoint
