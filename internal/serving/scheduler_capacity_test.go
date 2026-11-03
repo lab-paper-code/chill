@@ -351,11 +351,11 @@ func TestCapacityRecentDemandExpandsWithOutstandingOnce(t *testing.T) {
 	background := 0.0
 	for n, j := range choice {
 		if p.compared[n] {
-			background += p.plans[n][j].energy(res.route, p.period)
+			background += p.plans[n][j].energy(res.route, res.period)
 		}
 	}
-	// Both instances share batch-1 energy, so every λT input has that cost.
-	want := rate * p.period * capacityInputEnergy(snap.Instances[0])
+	// Both instances share batch-1 energy, so every λW input has that cost.
+	want := rate * res.period * capacityInputEnergy(snap.Instances[0])
 	if math.Abs(res.joules-background-want) > 1e-8 {
 		t.Fatalf("energy used another rate: request J %g want %g", res.joules-background, want)
 	}
@@ -499,7 +499,7 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 // m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
 // queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
 // expands whatever the comparison period: the SLO judgment orders plans before
-// energy. The decision records the same configured H for every candidate.
+// energy. Each decision records its actual chain plus the configured period.
 func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	s, snap, _, genesis3 := capacityE1Fixture()
 	s.ObservationWindow = time.Minute
@@ -515,7 +515,7 @@ func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	for _, period := range []time.Duration{time.Minute, 10 * time.Minute} {
 		s.ComparisonPeriod = period
 		got := capacityDecideForTest(t, s, snap, rows)
-		if got.Target == nil || got.Target.Keep || !poolsOn(*got.Target, genesis3) || got.Capacity == nil || got.Capacity.Period != period {
+		if got.Target == nil || got.Target.Keep || !poolsOn(*got.Target, genesis3) || got.Capacity == nil || got.Capacity.Period < period+got.Capacity.Route {
 			t.Fatalf("T %v: no expansion on the first decision: %s %+v", period, got.Status, got.Capacity)
 		}
 		if chosen != "" && got.Target.ID != chosen {
@@ -1548,17 +1548,21 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
 	choice := capacityChoiceForTest(t, p, map[string]string{"n2": add.Profile.ID + "/b1/w1"})
 	res := p.evaluate(choice, 10)
-	node := p.plans[1][choice[1]].energy(10, p.period)
-	// [0,10]: 100 req/s on i1 (e 1) = 1,000 J; overflow 50 × 10 at the target mean
-	// e 2; [10,60]: κ-proportional weights 500/500 send 75 req/s to each = 300 W.
-	want := 1000.0 + 500*2 + 300*50
+	node := 0.0
+	for n, j := range choice {
+		if p.compared[n] {
+			node += p.plans[n][j].energy(res.route, res.period)
+		}
+	}
+	// The target runs for the full configured steady window after routing.
+	want := 1000.0 + 500*2 + 300*(res.period-res.route)
 	if p.period != 60 || math.Abs(res.joules-node-want) > 1e-6 {
 		t.Fatalf("request energy %g, want %g (T %g)", res.joules-node, want, p.period)
 	}
 }
 
-// SCH-58: a long unselected chain cannot extend keep or any common candidate.
-func TestCapacityPeriodExcludesTheLongestChain(t *testing.T) {
+// A long unselected chain cannot extend keep, but remains an eligible estimate.
+func TestCapacityPeriodScoresTheLongestChain(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ComparisonPeriod = time.Minute
 	reentry := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
@@ -1579,13 +1583,13 @@ func TestCapacityPeriodExcludesTheLongestChain(t *testing.T) {
 	for _, plan := range d.Capacity.Plans {
 		if plan.Node == reentry && plan.Reason == "TransitionExceedsHorizon" {
 			excluded = true
-			if plan.Eligible {
-				t.Fatal("long transition eligible")
+			if !plan.Eligible {
+				t.Fatal("long transition rejected instead of scored")
 			}
 		}
 	}
 	if !excluded {
-		t.Fatal("missing explicit horizon exclusion")
+		t.Fatal("missing explicit horizon annotation")
 	}
 	without := snap
 	without.Options = slices.DeleteFunc(slices.Clone(snap.Options), func(o SchedulerOption) bool { return o.Instance.Node == reentry })
@@ -2130,9 +2134,10 @@ func TestCapacityEmptyFixedUsesCommonEnergyAdmission(t *testing.T) {
 			if !p.compared[n] || plan.record.Tempo != schedulerTempoSlow || math.Abs(plan.record.Joules-tc.joules) > 1e-9 {
 				t.Fatalf("Fixed saving missing from comparison or chain costs: %+v", plan.record)
 			}
-			gain := p.evaluate(make([]int, len(p.plans)), 0).joules - p.evaluate(choice, p.routeOf(choice)).joules
+			result := p.evaluate(choice, p.routeOf(choice))
+			gain := result.keepJoules - result.joules
 			if math.Abs(gain-tc.gain) > 1e-8 {
-				t.Fatalf("gain=%g, want %g over the common H", gain, tc.gain)
+				t.Fatalf("gain=%g, want %g over the common W", gain, tc.gain)
 			}
 			paid := p.minimumGain(p.payback(p.evaluate(choice, p.routeOf(choice))))
 			if (paid.choice[n] != 0) != tc.admitted {

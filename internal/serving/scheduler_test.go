@@ -441,7 +441,9 @@ func TestSchedulerInProgressPairedContinuationAndCompletedPrerequisite(t *testin
 	}
 	c.Actions[0].Elapsed = 20 * time.Millisecond
 	outside := schedulerReplayForTest(s, snap, c)
-	schedulerRequireReason(t, outside.reasons, "OperationElapsedOutsideProfileRange")
+	if len(outside.reasons) != 0 || len(outside.assumptions) == 0 || outside.energy <= 0 {
+		t.Fatalf("elapsed measurement range must yield a labeled estimate: %+v", outside)
+	}
 }
 
 func TestSchedulerFrozenOldDefinitionPendingSurvivesModelCutover(t *testing.T) {
@@ -689,7 +691,10 @@ func TestSchedulerDerivedBaselinePreservesMeasuredSignedIdleDelta(t *testing.T) 
 	other.ID = schedulerTestOther
 	snap.Instances = append(snap.Instances, other)
 	keep.Instances = snap.Instances
-	schedulerRequireReason(t, schedulerReplayForTest(s, snap, keep).reasons, "DerivedNodeBaselineOutsidePhysicalRange")
+	result := schedulerReplayForTest(s, snap, keep)
+	if len(result.reasons) != 0 || math.Abs(result.energy-1) > 1e-9 {
+		t.Fatalf("negative reconstruction must use the measured 10 W node baseline: %+v", result)
+	}
 }
 
 func TestSchedulerEnergyOverflowRemainsUnknownNotJSONInfinity(t *testing.T) {

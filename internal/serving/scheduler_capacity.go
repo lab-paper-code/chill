@@ -1735,6 +1735,10 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 	for s, choice := range starts {
 		stepStart := time.Now()
 		ends[s] = p.evaluate(slices.Clone(choice), p.routeOf(choice))
+		if s == 0 {
+			// Seed the common-window baseline before any parallel neighbor search.
+			p.keepWatts = ends[s].joules / ends[s].period
+		}
 		p.searched.Steps = append(p.searched.Steps, SchedulerPlanSearchStep{
 			Start: startNames[s], Joules: ends[s].joules,
 			ComparisonWindow: time.Duration(ends[s].period * 1e9), KeepJoules: ends[s].keepJoules,
