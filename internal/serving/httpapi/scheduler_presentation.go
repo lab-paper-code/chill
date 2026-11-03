@@ -8,6 +8,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 const schedulerSummaryView = "summary"
@@ -172,12 +173,12 @@ func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerStat
 }
 
 type schedulerReadObservation struct {
-	*serving.SchedulerObservation
+	*observation.SchedulerObservation
 	Decision *schedulerReadDecision `json:"decision,omitempty"`
 	Snapshot *schedulerReadSnapshot `json:"snapshot,omitempty"`
 }
 
-func (e *schedulerReadEvidence) observations(records []serving.SchedulerObservation) []schedulerReadObservation {
+func (e *schedulerReadEvidence) observations(records []observation.SchedulerObservation) []schedulerReadObservation {
 	result := make([]schedulerReadObservation, len(records))
 	for i := range records {
 		result[i] = schedulerReadObservation{&records[i], e.decision(records[i].Decision), e.snapshot(records[i].Snapshot)}
@@ -227,7 +228,7 @@ type schedulerHistoryObservation struct {
 	PowerJoules *float64                  `json:"powerJoules,omitempty"`
 }
 
-func schedulerHistoryObservations(records []serving.SchedulerObservation) []schedulerHistoryObservation {
+func schedulerHistoryObservations(records []observation.SchedulerObservation) []schedulerHistoryObservation {
 	result := make([]schedulerHistoryObservation, len(records))
 	for i, record := range records {
 		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Node: record.Node, PowerJoules: record.PowerJoules}

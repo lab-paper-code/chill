@@ -113,13 +113,13 @@ func (e *OccupancyEstimator) retainRequest(row *RequestRow) *occupancyRequest {
 		return nil
 	}
 	r := e.requests[row.RequestID]
-	if row.Kind == requestRowOccupancySelected {
+	if row.Kind == RequestRowOccupancySelected {
 		if r == nil {
 			e.requests[row.RequestID] = &occupancyRequest{}
 		}
 		return nil
 	}
-	if r == nil && !occupancyRowInWindow(row, e.window.Start, e.window.End) {
+	if r == nil && !OccupancyRowInWindow(row, e.window.Start, e.window.End) {
 		return nil
 	}
 	if r == nil {
@@ -140,7 +140,7 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 	if r == nil {
 		return
 	}
-	if row.Kind != requestRowOpen {
+	if row.Kind != RequestRowOpen {
 		r.rows++
 	}
 	raw := occupancyRequest{id: row.BatchID, size: row.BatchSize}
@@ -153,9 +153,9 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 	if row.NativeFinishedAt != nil {
 		raw.finished = *row.NativeFinishedAt
 	}
-	if directComplete(&raw) && row.Kind != requestRowOpen {
+	if directComplete(&raw) && row.Kind != RequestRowOpen {
 		r.completeRows++
-		if row.Kind == requestRowFinal {
+		if row.Kind == RequestRowFinal {
 			r.completeFinals++
 		}
 	}
@@ -199,7 +199,7 @@ func (e *OccupancyEstimator) Add(row RequestRow) {
 	stamp(&r.queued, raw.queued)
 	stamp(&r.running, raw.running)
 	stamp(&r.finished, raw.finished)
-	if row.Kind == requestRowFinal {
+	if row.Kind == RequestRowFinal {
 		r.finals++
 		r.execution = row.ExecutionComplete
 		r.success = row.Outcome == outcomeCompleted && row.Error == ""
@@ -222,7 +222,7 @@ func (e *OccupancyEstimator) inside(t time.Time) bool {
 func (e *OccupancyEstimator) FirstRunningAt(receivedFrom, receivedTo time.Time) time.Time {
 	var first time.Time
 	for _, r := range e.requests {
-		if r.finals == 0 || r.running.IsZero() || !observationInInterval(r.received, receivedFrom, receivedTo) {
+		if r.finals == 0 || r.running.IsZero() || !ObservationInInterval(r.received, receivedFrom, receivedTo) {
 			continue
 		}
 		if first.IsZero() || r.running.Before(first) {

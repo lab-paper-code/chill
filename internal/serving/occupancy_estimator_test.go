@@ -24,7 +24,7 @@ func directFixture(batch int) (*Profile, map[string]firstfloor.Metadata, time.Ti
 func directRow(at time.Time, id uint64, batch, member int, start, finish time.Duration) RequestRow {
 	q, s, f := at, at.Add(start), at.Add(finish)
 	// Receipt anchors incomplete-request facts; worker timestamps anchor execution.
-	return RequestRow{Kind: requestRowFinal, RequestID: fmt.Sprintf("%d/%d", id, member), ReceivedAt: at, Node: &NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: batch, Outcome: outcomeCompleted, ExecutionComplete: true, NativeOutcome: outcomeCompleted, NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f}
+	return RequestRow{Kind: RequestRowFinal, RequestID: fmt.Sprintf("%d/%d", id, member), ReceivedAt: at, Node: &NodeReference{Name: "node", UID: "node-uid"}, Instance: "instance", WorkloadUID: "workload", ProfileID: "profile", DecisionID: "decision", DefinitionID: "definition", BatchID: id, BatchSize: batch, Outcome: outcomeCompleted, ExecutionComplete: true, NativeOutcome: outcomeCompleted, NativeExecutionComplete: true, NativeQueuedAt: &q, NativeRunningAt: &s, NativeFinishedAt: &f}
 }
 
 func TestOccupancyEstimatorPairEligibilityAndLateJoin(t *testing.T) {
@@ -124,7 +124,7 @@ func TestOccupancyEstimatorExactQuantilesCompletenessAndWorkerWindow(t *testing.
 		// Gateway clocks may precede or follow the worker by an arbitrary offset.
 		r.ReceivedAt = at.Add(24 * time.Hour)
 		assigned := r
-		assigned.Kind = requestRowAssigned
+		assigned.Kind = RequestRowAssigned
 		assigned.BatchID = 0
 		assigned.BatchSize = 0
 		assigned.NativeQueuedAt = nil
@@ -134,7 +134,7 @@ func TestOccupancyEstimatorExactQuantilesCompletenessAndWorkerWindow(t *testing.
 		assigned.NativeExecutionComplete = false
 		assigned.ExecutionComplete = false
 		assigned.Outcome = ""
-		e.Add(RequestRow{Kind: requestRowOccupancySelected, RequestID: r.RequestID})
+		e.Add(RequestRow{Kind: RequestRowOccupancySelected, RequestID: r.RequestID})
 		e.Add(assigned)
 		e.Add(r)
 		start += cycle
@@ -190,7 +190,7 @@ func TestOccupancyEstimatorRejectsOutsidePopulation(t *testing.T) {
 	// Even explicitly selected receipt-cohort rows with a later-known native
 	// start outside the execution window must not create a cell/denominator.
 	row := directRow(at.Add(-time.Hour), 20000, 1, 0, 0, 20)
-	e.Add(RequestRow{Kind: requestRowOccupancySelected, RequestID: row.RequestID})
+	e.Add(RequestRow{Kind: RequestRowOccupancySelected, RequestID: row.RequestID})
 	e.Add(row)
 	if len(e.Results()) != 0 {
 		t.Fatal("outside native start created an empty cell")
@@ -227,5 +227,25 @@ func TestOccupancyEstimatorPoolsSamplesAcrossWorkloads(t *testing.T) {
 	if len(pooled) != 1 || pooled[0].WorkloadUID != "" || pooled[0].Pairs != 3 ||
 		pooled[0].Statistics.Median != 50 || pooled[0].Requests != 5 {
 		t.Fatalf("pooled raw residuals=%+v", pooled)
+	}
+}
+
+// Storage checks the exact selected callback population; this inward check
+// preserves the bounded retained-request assertion without a production accessor.
+func TestOccupancyEstimatorRetainsOnlySelectedRequest(t *testing.T) {
+	profile, policies, from := directFixture(1)
+	estimator := NewOccupancyEstimator(map[string]*Profile{profile.ID: profile}, policies, from, from.Add(time.Second))
+	first := directRow(from, 1, 1, 0, 0, 20)
+	first.NativeRunningAt = nil
+	estimator.Add(RequestRow{Kind: RequestRowOccupancySelected, RequestID: first.RequestID})
+	estimator.Add(first)
+	supplement := directRow(from, 1, 1, 0, 0, 20)
+	supplement.Kind, supplement.ReceivedAt = RequestRowNative, time.Time{}
+	estimator.Add(supplement)
+	for i := range 10000 {
+		estimator.Add(directRow(from.Add(-time.Hour), uint64(i+2), 1, 0, 0, 20))
+	}
+	if len(estimator.requests) != 1 {
+		t.Fatalf("outside rows retained: requests=%d", len(estimator.requests))
 	}
 }

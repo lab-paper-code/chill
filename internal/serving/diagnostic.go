@@ -182,45 +182,45 @@ func (d *Diagnostics) Mark(kind DiagnosticKind, phase DiagnosticPhase, requestID
 	d.record(kind, phase, 0, 0, uint64(pc), diagnosticRequest(requestID), value)
 }
 
-// diagnosticMutex retains the original lock scope. Owner and request fields are
+// DiagnosticLock retains the original lock scope. Owner and request fields are
 // accessed only while that same mutex is held. Caller PCs distinguish every
 // holder, including query, management and scheduler paths without request IDs.
-type diagnosticMutex struct {
+type DiagnosticLock struct {
 	mutex    sync.Mutex
-	recorder *Diagnostics
-	id       uint8
+	Recorder *Diagnostics
+	ID       uint8
 	owner    uint64
 	caller   uint64
 	request  [16]byte
 }
 
-func (m *diagnosticMutex) Lock()                 { m.lock("") }
-func (m *diagnosticMutex) LockRequest(id string) { m.lock(id) }
-func (m *diagnosticMutex) lock(id string) {
-	d := m.recorder
+func (m *DiagnosticLock) Lock()                 { m.lock("") }
+func (m *DiagnosticLock) LockRequest(id string) { m.lock(id) }
+func (m *DiagnosticLock) lock(id string) {
+	d := m.Recorder
 	if !d.Active() {
 		m.mutex.Lock()
 		return
 	}
 	pc, _, _, _ := runtime.Caller(2)
 	owner, request := d.sequence.Add(1), diagnosticRequest(id)
-	d.record(DiagnosticMutex, DiagnosticAttempt, m.id, owner, uint64(pc), request, 0)
+	d.record(DiagnosticMutex, DiagnosticAttempt, m.ID, owner, uint64(pc), request, 0)
 	m.mutex.Lock()
 	m.owner, m.caller, m.request = owner, uint64(pc), request
-	d.record(DiagnosticMutex, DiagnosticAcquired, m.id, owner, uint64(pc), request, 0)
+	d.record(DiagnosticMutex, DiagnosticAcquired, m.ID, owner, uint64(pc), request, 0)
 }
-func (m *diagnosticMutex) Unlock() {
+func (m *DiagnosticLock) Unlock() {
 	if m.owner != 0 {
-		m.recorder.record(DiagnosticMutex, DiagnosticReleased, m.id, m.owner, m.caller, m.request, 0)
+		m.Recorder.record(DiagnosticMutex, DiagnosticReleased, m.ID, m.owner, m.caller, m.request, 0)
 		m.owner = 0
 	}
 	m.mutex.Unlock()
 }
-func (m *diagnosticMutex) mark(kind DiagnosticKind, phase DiagnosticPhase) {
-	if !m.recorder.Active() {
+func (m *DiagnosticLock) Mark(kind DiagnosticKind, phase DiagnosticPhase) {
+	if !m.Recorder.Active() {
 		return
 	}
-	m.recorder.record(kind, phase, m.id, m.owner, m.caller, m.request, 0)
+	m.Recorder.record(kind, phase, m.ID, m.owner, m.caller, m.request, 0)
 }
 
 type DiagnosticCaller struct {

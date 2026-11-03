@@ -21,6 +21,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
@@ -65,7 +66,7 @@ func TestServeDuringColdStart(t *testing.T) {
 		t.Run(map[bool]string{false: "complete", true: "failed"}[fail], func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+			log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 				Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 				Writer: schedulerPowerArchive{directory: t.TempDir()},
 			})

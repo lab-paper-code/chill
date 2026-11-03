@@ -13,6 +13,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 const (
@@ -24,7 +25,7 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p := newLivePublisher(ctx)
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
@@ -265,7 +266,7 @@ func TestLiveDecisionReservationsAndNodeAvailability(t *testing.T) {
 	}
 	p.decision(decision, snapshot)
 	noProjection(t, sub)
-	result := serving.SchedulerActionObservation{
+	result := observation.SchedulerActionObservation{
 		ID: "operation", Kind: "prepare", Node: node,
 		Expected:  json.RawMessage(`{"workloadUID":"a"}`),
 		StartedAt: at, Phase: "running",
@@ -312,7 +313,7 @@ func TestLiveClusterIssueEventHasNoEmptyDelta(t *testing.T) {
 	}
 	defer sub.Close()
 	baseline := nextProjection(t, sub)
-	for index, row := range []serving.ClusterObservation{
+	for index, row := range []observation.ClusterObservation{
 		{Kind: "issue", At: at, Event: "raised", Source: "observer", Reason: "NodeUnavailable"},
 		{Kind: "issue", At: at.Add(time.Second), Event: "resolved", Source: "observer", PreviousReason: "NodeUnavailable"},
 	} {

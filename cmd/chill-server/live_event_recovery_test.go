@@ -10,13 +10,14 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	publisher := newLivePublisher(ctx)
-	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})

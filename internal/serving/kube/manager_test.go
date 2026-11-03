@@ -21,6 +21,7 @@ import (
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -94,7 +95,7 @@ func (a managerArchive) PutImmutable(_ context.Context, identity evidencestore.O
 	return evidencestore.Receipt{SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: outcome}, nil
 }
 
-func newManagerHarness(t *testing.T) (*Manager, serving.ObservationLogConfig) {
+func newManagerHarness(t *testing.T) (*Manager, observation.ObservationLogConfig) {
 	t.Helper()
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -104,8 +105,8 @@ func newManagerHarness(t *testing.T) (*Manager, serving.ObservationLogConfig) {
 		}
 	}
 	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(testExecutionFacts()).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}, &api.OperationCostMeasurement{}, &api.DispatchOccupancyMeasurement{}).Build()}}
-	config := serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}}
-	observationLog, err := serving.NewObservationLog(config)
+	config := observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}}
+	observationLog, err := observation.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +456,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	if err := m.observationLog.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	observationLog, err := serving.NewObservationLog(config)
+	observationLog, err := observation.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -499,7 +500,7 @@ func TestManagerInterruptedOperationIsTerminalUntilExplicitPut(t *testing.T) {
 	}
 }
 
-func assertObservationLogActor(t *testing.T, observationLog *serving.ObservationLog, uid, kind, username, actorUID string) {
+func assertObservationLogActor(t *testing.T, observationLog *observation.ObservationLog, uid, kind, username, actorUID string) {
 	t.Helper()
 	observed, err := observationLog.Query(context.Background(), uid, time.Time{}, time.Time{}, nil, nil, 0, "")
 	if err != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -63,7 +64,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	observationOwner, err := serving.AcquireObservationOwnership(opts.observationDirectory, ctrl.Log.Info)
+	observationOwner, err := observation.AcquireObservationOwnership(opts.observationDirectory, ctrl.Log.Info)
 	if err != nil {
 		return err
 	}
@@ -79,7 +80,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		recorder = diagnostics.recorder
 	}
 	publisher := newLivePublisher(ctx)
-	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
 		OccupancyTail:  httpapi.MaximumInferenceRequestTimeout + opts.drainTimeout,
@@ -137,7 +138,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 				Namespace: opts.factsNamespace, ConfigMapName: opts.factsConfigMap, ConfigMapKey: opts.executionFactsKey,
 			}, c.DeviceClass, profile.NodeName, c.RuntimeFamily, c.Backend)
 		},
-		OnCluster:        func(row serving.ClusterObservation) error { return recordCluster(observationLog, publisher, row) },
+		OnCluster: func(row observation.ClusterObservation) error {
+			return recordCluster(observationLog, publisher, row)
+		},
 		SelectClusterPod: selectedPod,
 	})
 	if err != nil {
@@ -305,7 +308,7 @@ func initializeServing(ctx context.Context, opts *options,
 
 func serve(ctx context.Context, opts options, chillServer *initializingHandler, execution *serving.Runtime,
 	observer *servingkube.Observer, manager *servingkube.Manager,
-	observationLog *serving.ObservationLog, scheduler *application.SchedulerService, diagnostics *diagnosticSession,
+	observationLog *observation.ObservationLog, scheduler *application.SchedulerService, diagnostics *diagnosticSession,
 	initialize func(context.Context) (http.Handler, error),
 ) error {
 	certificate, err := tls.LoadX509KeyPair(opts.tlsCert, opts.tlsKey)

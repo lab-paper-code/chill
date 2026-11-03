@@ -19,7 +19,7 @@ func routingRuntime(t *testing.T, seed map[string]int32) (*Runtime, SchedulerIns
 	controlled := snapshot.Workloads[0]
 	disabled := *controlled
 	disabled.Name, disabled.UID = "disabled", "w2"
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 	second := schedulerTestCPU(snapshot.Instances[0])
 	second.ID, second.Weight = "i2", 2
 	snapshot.Instances = append(snapshot.Instances, second)
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	settings.AutonomousWorkloads = nil
 	settings.CompletionMarginMS = 100
 	d := snapshot.Workloads[0]
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +484,7 @@ func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +589,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +624,7 @@ func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRedi
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -692,7 +692,7 @@ func TestControlledRoutingExecutesSeededWorkloadAbsentFromAppliedDistribution(t 
 	_, snapshot := schedulerFixture()
 	d := snapshot.Workloads[0]
 	p := snapshot.Instances[0].Profile
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -822,7 +822,7 @@ func assertSchedulerCandidateDistribution(t *testing.T, snapshot SchedulerSnapsh
 		}
 	}
 
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

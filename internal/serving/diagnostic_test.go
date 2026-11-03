@@ -14,10 +14,10 @@ const diagnosticTestRequest = "0123456789abcdef0123456789abcdef"
 
 func TestDiagnosticInactiveBoundariesDoNotAllocateOrEmit(t *testing.T) {
 	for _, recorder := range []*Diagnostics{nil, NewDiagnostics()} {
-		mutex := diagnosticMutex{recorder: recorder, id: 1}
+		mutex := DiagnosticLock{Recorder: recorder, ID: 1}
 		if n := testing.AllocsPerRun(1000, func() {
 			mutex.LockRequest(diagnosticTestRequest)
-			mutex.mark(DiagnosticDispatch, DiagnosticBegin)
+			mutex.Mark(DiagnosticDispatch, DiagnosticBegin)
 			mutex.Unlock()
 			recorder.Mark(DiagnosticWait, DiagnosticBegin, diagnosticTestRequest, 0)
 		}); n != 0 {
@@ -37,12 +37,12 @@ func TestDiagnosticMutexCorrelatesEveryOwnerAndRequest(t *testing.T) {
 	if !d.Start() || d.Start() {
 		t.Fatal("capture activation is not one-shot")
 	}
-	runtimeLock := diagnosticMutex{recorder: d, id: 1}
-	observationLock := diagnosticMutex{recorder: d, id: 2}
+	runtimeLock := DiagnosticLock{Recorder: d, ID: 1}
+	observationLock := DiagnosticLock{Recorder: d, ID: 2}
 	runtimeLock.LockRequest(diagnosticTestRequest)
 	observationLock.LockRequest(diagnosticTestRequest)
-	observationLock.mark(DiagnosticMarshal, DiagnosticBegin)
-	observationLock.mark(DiagnosticMarshal, DiagnosticEnd)
+	observationLock.Mark(DiagnosticMarshal, DiagnosticBegin)
+	observationLock.Mark(DiagnosticMarshal, DiagnosticEnd)
 	observationLock.Unlock()
 	runtimeLock.Unlock()
 	var output bytes.Buffer

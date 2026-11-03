@@ -7,6 +7,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -33,7 +34,7 @@ type Options struct {
 
 type Live struct {
 	Decision    func(serving.SchedulerDecision, serving.SchedulerSnapshot)
-	Action      func(serving.SchedulerActionObservation, time.Time)
+	Action      func(observation.SchedulerActionObservation, time.Time)
 	PowerScope  func([]servingkube.MeterDeclaration, bool)
 	MeterSource func(metricobserver.Source, string) metricobserver.Source
 }
@@ -47,7 +48,7 @@ type Dependencies struct {
 	Execution             *serving.Runtime
 	Observer              *servingkube.Observer
 	Objects               *stores3.Store
-	ObservationLog        *serving.ObservationLog
+	ObservationLog        *observation.ObservationLog
 	Options               Options
 	GatewayRequestTimeout time.Duration
 	Live                  *Live

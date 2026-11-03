@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 // SCH-AC-53: a failed batch is sent once; the next call rereads rotated SA tokens.
@@ -38,9 +39,9 @@ func TestResourcePostFailureAndTokenRotation(t *testing.T) {
 	}))
 	defer server.Close()
 	config := resourceAgentConfig{URL: server.URL, TokenFile: tokenFile, MaxResponseBytes: 1024}
-	batch := serving.ResourceBatch{
+	batch := observation.ResourceBatch{
 		Node:    serving.NodeReference{Name: "edge", UID: "edge-uid"},
-		Samples: []serving.ResourceSample{},
+		Samples: []observation.ResourceSample{},
 	}
 	if _, err := sendResourceBatch(context.Background(), server.Client(), config, batch); err == nil {
 		t.Fatal("failed POST accepted")

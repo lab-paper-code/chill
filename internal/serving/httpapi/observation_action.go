@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 const (
@@ -15,7 +15,7 @@ const (
 )
 
 // ProjectAction projects the committed observation identically for live and history.
-func ProjectAction(action serving.SchedulerActionObservation) (*live.ActionEvent, error) {
+func ProjectAction(action observation.SchedulerActionObservation) (*live.ActionEvent, error) {
 	var operation servingkube.Operation
 	if len(action.Expected) != 0 {
 		if err := json.Unmarshal(action.Expected, &operation); err != nil {

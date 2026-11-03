@@ -25,6 +25,7 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -140,7 +141,7 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 	controller := schedulerCaptureClockController(t, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	history, err := serving.NewObservationLog(serving.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}})
+	history, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +312,7 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 		if fixtureTarget(controller) == nil || len(fixtureTarget(controller).Actions) == 0 {
 			t.Fatal("fixture did not produce an actionable ON continuation")
 		}
-		if err := controller.observationLog.SchedulerRecord(serving.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
+		if err := controller.observationLog.SchedulerRecord(observation.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
 			return err
 		}
 		publishedAt = decision.At

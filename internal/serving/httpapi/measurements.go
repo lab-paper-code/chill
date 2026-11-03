@@ -11,6 +11,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -50,7 +51,7 @@ func (h *Handler) measurements(w http.ResponseWriter, r *http.Request) {
 	}
 	var value any
 	var err error
-	var audit *serving.SchedulerActionObservation
+	var audit *observation.SchedulerActionObservation
 	status := http.StatusOK
 	switch r.Method {
 	case http.MethodPost:
@@ -82,7 +83,7 @@ func (h *Handler) measurements(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) submitMeasurement(
 	w http.ResponseWriter, r *http.Request,
-) (measurement.MeasurementMutationResult, *serving.SchedulerActionObservation, error) {
+) (measurement.MeasurementMutationResult, *observation.SchedulerActionObservation, error) {
 	var task api.BatchEnergyOptimization
 	if err := h.decode(w, r, &task); err != nil {
 		return measurement.MeasurementMutationResult{}, nil, err
@@ -115,7 +116,7 @@ func (h *Handler) submitMeasurement(
 
 func (h *Handler) deleteMeasurement(
 	r *http.Request,
-) (measurement.MeasurementMutationResult, *serving.SchedulerActionObservation, error) {
+) (measurement.MeasurementMutationResult, *observation.SchedulerActionObservation, error) {
 	version, err := precondition(r)
 	if err != nil {
 		return measurement.MeasurementMutationResult{}, nil, err
@@ -139,7 +140,7 @@ func (h *Handler) deleteMeasurement(
 }
 
 func (h *Handler) finishMeasurementAudit(
-	audit *serving.SchedulerActionObservation, value any, mutationErr error,
+	audit *observation.SchedulerActionObservation, value any, mutationErr error,
 ) error {
 	now := time.Now().UTC()
 	audit.CompletedAt = &now
@@ -188,7 +189,7 @@ func (h *Handler) finishMeasurementAudit(
 
 func (h *Handler) beginMeasurementAudit(
 	r *http.Request, name, uid, version string, dryRun bool, spec any,
-) (*serving.SchedulerActionObservation, error) {
+) (*observation.SchedulerActionObservation, error) {
 	if h.observationLog == nil {
 		return nil, &serving.Error{Code: "MeasurementAuditUnavailable", Message: "durable measurement audit is unavailable"}
 	}
@@ -207,7 +208,7 @@ func (h *Handler) beginMeasurementAudit(
 		return nil, err
 	}
 	now := time.Now().UTC()
-	action := &serving.SchedulerActionObservation{
+	action := &observation.SchedulerActionObservation{
 		ID:   "measurement/" + r.Method + "/" + r.PathValue("namespace") + "/" + name + "/" + now.Format(time.RFC3339Nano),
 		Kind: "measurement-" + strings.ToLower(r.Method), Phase: "validated", StartedAt: now, Expected: expected,
 	}
@@ -221,12 +222,12 @@ func (h *Handler) beginMeasurementAudit(
 	return action, nil
 }
 
-func (h *Handler) recordMutationAudit(action *serving.SchedulerActionObservation) error {
+func (h *Handler) recordMutationAudit(action *observation.SchedulerActionObservation) error {
 	at := action.StartedAt
 	if action.CompletedAt != nil {
 		at = *action.CompletedAt
 	}
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: at, Action: action}); err != nil {
+	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: at, Action: action}); err != nil {
 		return err
 	}
 	if h.config.OnMutationAction != nil {

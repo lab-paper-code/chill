@@ -11,13 +11,15 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/application"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	"k8s.io/client-go/kubernetes"
 )
 
 func newSchedulerService(
 	ctx context.Context, store *servingkube.Store, kube, settingsKube kubernetes.Interface,
 	execution *serving.Runtime, observer *servingkube.Observer, objects *stores3.Store,
-	observationLog *serving.ObservationLog, opts options, gatewayRequestTimeout time.Duration, publisher *livePublisher,
+	observationLog *observation.ObservationLog, opts options,
+	gatewayRequestTimeout time.Duration, publisher *livePublisher,
 ) (*application.SchedulerService, error) {
 	if opts.schedulerConfigMap == "" {
 		return nil, nil

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func TestProjectActionNeutralNotSubmittedPreservesOtherTerminalStates(t *testing.T) {
@@ -28,7 +28,7 @@ func TestProjectActionNeutralNotSubmittedPreservesOtherTerminalStates(t *testing
 		{mutationDeletionRequested, "", "started", false},
 	} {
 		t.Run(tc.status+"/"+tc.failure+"/"+tc.phase, func(t *testing.T) {
-			observation := serving.SchedulerActionObservation{
+			observation := observation.SchedulerActionObservation{
 				ID: "preflight", Kind: "measurement-post", Phase: tc.status, Error: tc.failure, StartedAt: at,
 			}
 			if tc.completed {

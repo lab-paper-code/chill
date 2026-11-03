@@ -23,6 +23,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -52,7 +53,7 @@ const (
 type ObserverConfig struct {
 	Namespace        string
 	RuntimeImage     func(context.Context, *serving.Profile) (string, error)
-	OnCluster        func(serving.ClusterObservation) error
+	OnCluster        func(observation.ClusterObservation) error
 	SelectClusterPod func(*corev1.Pod) bool
 }
 type ObserverIssue struct {
@@ -118,7 +119,7 @@ type Observer struct {
 	removingInstances map[string]bool
 	// refreshed is when the last successful refresh finished.
 	refreshed   time.Time
-	clusterPods map[types.UID]serving.ClusterPod
+	clusterPods map[types.UID]observation.ClusterPod
 }
 
 func NewObserver(store *Store, kube kubernetes.Interface, runtime *serving.Runtime, native *firstfloor.Client, config ObserverConfig) (*Observer, error) {

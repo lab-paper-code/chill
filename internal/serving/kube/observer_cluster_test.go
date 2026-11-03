@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -12,11 +12,11 @@ import (
 
 // AC-54: baseline, physical restart/image evidence, deletion, and issue recovery.
 func TestClusterPodAndIssueTransitions(t *testing.T) {
-	var rows []serving.ClusterObservation
+	var rows []observation.ClusterObservation
 	fail := false
 	o := &Observer{issues: map[string]ObserverIssue{}, config: ObserverConfig{
 		SelectClusterPod: func(p *corev1.Pod) bool { return p.Labels["selected"] == "yes" },
-		OnCluster: func(row serving.ClusterObservation) error {
+		OnCluster: func(row observation.ClusterObservation) error {
 			if fail {
 				return errors.New("disk full")
 			}
@@ -73,7 +73,7 @@ func TestClusterWatchIncludesSeparateControlNamespace(t *testing.T) {
 	if o.clusterWatchNamespace() != "serving" {
 		t.Fatal("native watch lost namespace scope")
 	}
-	o.config.OnCluster = func(serving.ClusterObservation) error { return nil }
+	o.config.OnCluster = func(observation.ClusterObservation) error { return nil }
 	if o.clusterWatchNamespace() != metav1.NamespaceAll {
 		t.Fatal("cluster watch omitted release control namespace")
 	}

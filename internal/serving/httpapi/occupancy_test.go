@@ -15,6 +15,7 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	authentication "k8s.io/api/authentication/v1"
 	authorization "k8s.io/api/authorization/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,8 +29,8 @@ const occupancyActorTest = "actor-uid"
 
 func occupancyHandler(t *testing.T, deny string) (*Handler, *[]authorization.ResourceAttributes) {
 	t.Helper()
-	log, err := serving.NewObservationLog(
-		serving.ObservationLogConfig{
+	log, err := observation.NewObservationLog(
+		observation.ObservationLogConfig{
 			Directory: t.TempDir(),
 			Store:     "evidence",
 			Retention: time.Hour,
@@ -131,14 +132,14 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 			}
 			h, reviews := occupancyHandler(t, "")
 			start := time.Now().Add(-time.Second)
-			observations := func() []serving.SchedulerObservation {
+			observations := func() []observation.SchedulerObservation {
 				page, _, _, _, err := h.observationLog.SchedulerObservationPage(
 					context.Background(),
 					start,
 					time.Now().Add(time.Second),
 					10,
 					0,
-					serving.SchedulerObservationSelection{},
+					observation.SchedulerObservationSelection{},
 				)
 				if err != nil {
 					t.Fatal(err)
@@ -162,7 +163,7 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 				}
 				return &task, nil
 			}
-			h.config.OnMutationAction = func(action serving.SchedulerActionObservation, _ time.Time) {
+			h.config.OnMutationAction = func(action observation.SchedulerActionObservation, _ time.Time) {
 				liveCalls++
 				page := observations()
 				if len(page) != liveCalls || page[len(page)-1].Action.Phase != action.Phase {
@@ -218,7 +219,7 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 }
 
 func assertOccupancyAudit(t *testing.T, reviews []authorization.ResourceAttributes,
-	page []serving.SchedulerObservation, method string, spec api.DispatchOccupancyMeasurementSpec,
+	page []observation.SchedulerObservation, method string, spec api.DispatchOccupancyMeasurementSpec,
 ) {
 	t.Helper()
 	if len(reviews) != 1 || reviews[0].Resource != "dispatchoccupancymeasurements" ||
