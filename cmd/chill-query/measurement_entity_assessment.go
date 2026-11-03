@@ -368,7 +368,17 @@ func (o *measurementService) buildProfiles(ctx context.Context, view httpapi.Pro
 func assessCatalogProfile(
 	view httpapi.ProfilesView, profile serving.Profile,
 ) (queryapi.MeasurementAssessment, []queryapi.ResultRow) {
-	used := true
+	id := profile.ID
+	if profile.Reuse != nil {
+		id = profile.Reuse.ConfirmationProfileID
+	}
+	used := false
+	for _, current := range view.CurrentMeasurements {
+		if current.ID == id {
+			used = true
+			break
+		}
+	}
 	input := queryapi.MeasurementAssessmentInput{
 		Accepted: true, Available: true, Reused: profile.Reuse != nil, SchedulerUsed: &used,
 		Facts: []string{
@@ -384,6 +394,7 @@ func assessCatalogProfile(
 		}
 		for _, batch := range facts.Batches {
 			row := coverageResultRow(profile, facts, batch, kind)
+			row.Assessment.Scope.SchedulerUsed = &used
 			if profile.Reuse != nil {
 				sourceID := profile.Reuse.SourceProfileID
 				row.SourceProfileID, row.Reuse = &sourceID, profile.Reuse

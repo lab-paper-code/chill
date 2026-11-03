@@ -86,7 +86,7 @@ export function coverageQuality(cell:MeasurementCoverageCell) {
   const assessments=cell.variants.length?cell.variants.map(variant=>variant.assessment):[cell.assessment]
   const checks=assessments.flatMap(assessment=>assessment.checklist?.checks??[])
   const labels:Record<string,string>={ActiveTrials:"실행 반복 부족",IdleTrials:"유휴 반복 부족",IncrementalConfidence:"오차 범위 미확인",ClientLatency:"지연 표본 미확인",PowerSource:"전력 출처 미확인",FrozenPowerWindowPolicy:"전력 기록 기준 미확인",ExactConditionLineage:"측정 조건 연결 미확인",TargetBatch:"배치 근거 미확인",DatasetInputContract:"입력 연결 미확인"}
-  const reasons=[...new Map(checks.filter(check=>check.result!=="pass").map(check=>[check.code,{code:check.code,label:labels[check.code]??"기타 품질 확인"}])).values()]
+  const reasons=[...new Map(checks.filter(check=>check.result!=="pass").map(check=>{const code=check.reason==="PolicyUnset"&&check.result==="unknown"?"PolicyUnset":check.code;return [code,{code,label:code==="PolicyUnset"?"전력 기록 정책 미설정":labels[check.code]??"기타 품질 확인"}]})).values()]
   if(!checks.length)reasons.push({code:"QualityUnavailable",label:"품질 근거 없음"})
   return {...measurementQuality(assessments),reasons}
 }
@@ -99,6 +99,9 @@ export function coverageQualityReasons(cells:MeasurementCoverageCell[]) {
   return [...counts.values()].sort((a,b)=>b.count-a.count)
 }
 
+export function coverageHasEvidence(cell:MeasurementCoverageCell) {
+  return cell.assessment.evidence?.available||cell.variants.some(variant=>variant.assessment.evidence?.available||variant.resultRows.length>0||variant.assessment.checklist?.checks.length>0)
+}
 export function coverageScopeCounts(scope:MeasurementCoverageCell[],inventory?:InventoryView) {
   const cells=scope.filter(cell=>coveragePathVisible(cell,inventory))
   let measuredCells=0,measuredBatches=0,targetBatches=0
@@ -113,7 +116,9 @@ export function coverageScopeCounts(scope:MeasurementCoverageCell[],inventory?:I
   return {cells:cells.length,unsupportedCells:scope.length-cells.length,measuredCells,measuredBatches,targetBatches,
     missingTargetCells:cells.filter(cell=>!coverageProgress(cell)?.target.length).length,
     usedCells:cells.filter(cell=>measurementSchedulerUsed(cell.assessment)===true).length,
-    unknownQualityCells:cells.filter(cell=>coverageQuality(cell).state==="unknown").length,
+    unknownQualityCells:cells.filter(cell=>coverageHasEvidence(cell)&&coverageQuality(cell).state==="unknown").length,
+    noEvidenceCells:cells.filter(cell=>!coverageHasEvidence(cell)).length,
+    policyUnsetCells:cells.filter(cell=>coverageHasEvidence(cell)&&coverageQuality(cell).state==="unknown"&&coverageQuality(cell).reasons.some(reason=>reason.code==="PolicyUnset")).length,
     failedCells:cells.filter(cell=>coverageMeasurementStatus(cell,inventory)==="problem").length}
 }
 export function coverageBatchState(progress:BatchProgress|null,batch:number) {

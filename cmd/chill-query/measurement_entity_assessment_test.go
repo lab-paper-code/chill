@@ -21,6 +21,34 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+func TestR18HistoricalProfilesUseOnlyCurrentMeasurement(t *testing.T) {
+	view := httpapi.ProfilesView{}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/current/uid"}}
+	view.MeasurementFacts = map[string]serving.MeasurementFacts{}
+	for _, id := range []string{"ns/old/uid", "ns/current/uid", "ns/current/uid/reuse-target"} {
+		profile := serving.Profile{ID: id}
+		if id == "ns/current/uid/reuse-target" {
+			profile.Reuse = &serving.ProfileReuseCheck{ConfirmationProfileID: "ns/current/uid"}
+		}
+		view.MeasurementFacts[id] = serving.MeasurementFacts{Batches: []profilederivation.MeasurementBatchFacts{{Batch: 1}}}
+		assessment, rows := assessCatalogProfile(view, profile)
+		want := id != "ns/old/uid"
+		if assessment.Scope.SchedulerUsed == nil || *assessment.Scope.SchedulerUsed != want {
+			t.Fatalf("%s current use=%+v want=%v", id, assessment.Scope, want)
+		}
+		for _, row := range rows {
+			if row.Assessment.Scope.SchedulerUsed == nil || *row.Assessment.Scope.SchedulerUsed != want {
+				t.Fatalf("%s batch use differs", id)
+			}
+		}
+	}
+	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/newest-failed/uid"}}
+	got, _ := assessCatalogProfile(view, serving.Profile{ID: "ns/current/uid"})
+	if got.Scope.SchedulerUsed == nil || *got.Scope.SchedulerUsed {
+		t.Fatal("latest failed measurement revived historical success")
+	}
+}
+
 func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	task := api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1},

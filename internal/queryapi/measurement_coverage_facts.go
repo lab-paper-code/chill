@@ -47,6 +47,10 @@ func AssessMeasurementBatch(
 	for _, trial := range facts.Quality {
 		if trial.PolicyPassed != nil && !*trial.PolicyPassed {
 			qualityCheck.Result = measurementCheckFailed
+			qualityCheck.Reason = trial.PolicyReason
+		} else if trial.PolicyPassed == nil && qualityCheck.Result != measurementCheckFailed &&
+			(qualityCheck.Reason == "" || trial.PolicyReason == "PolicyUnset") {
+			qualityCheck.Reason = trial.PolicyReason
 		}
 	}
 	checks = append(checks, qualityCheck)

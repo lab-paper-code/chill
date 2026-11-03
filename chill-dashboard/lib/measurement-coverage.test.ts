@@ -192,7 +192,7 @@ test("quality reasons come from variant checks, count each cell once and never i
   const measured={...cell,assessment:{...cell.assessment,displayStatus:"usable" as const},variants:[variant,{...variant,id:"v2"}]}
   assert.equal(coverageQuality(measured).label,"판정 불가")
   assert.deepEqual(coverageQualityReasons([measured,cell]),[{code:"FrozenPowerWindowPolicy",label:"전력 기록 기준 미확인",count:1},{code:"QualityUnavailable",label:"품질 근거 없음",count:1}])
-  assert.equal(coverageQuality(cell).label,"판정 불가")
+  assert.equal(coverageQuality(cell).label,"측정 근거 없음")
   assert.equal(coverageMeasurementStatus(measured),"insufficient")
   const met={...variant,assessment:{...assessment,checklist:{...assessment.checklist,criteriaMet:true,checks:[{...assessment.checklist.checks[0],result:"pass" as const}]}}}
   assert.equal(coverageQuality({...cell,variants:[met]}).label,"기준 충족")
@@ -210,10 +210,10 @@ test("all current condition checks affect quality while explicit detail selectio
   assert.equal(coverageQuality({...cell,variants:[failing]}).label,"기준 미충족")
 })
 
-test("only explicit failing checks fail quality; absent or unknown evidence stays undecidable",()=>{
-  for(const checks of [[],[{code:"threshold",result:"unknown" as const,message:"허용 기준 미제공",sourceIds:[]}]]) {
-    assert.equal(coverageQuality({...cell,assessment:{...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks}}}).label,"판정 불가")
-  }
+test("only explicit failing checks fail quality; absent measurements and unknown checks stay distinct",()=>{
+  assert.equal(coverageQuality(cell).label,"측정 근거 없음")
+  const checks=[{code:"threshold",result:"unknown" as const,message:"허용 기준 미제공",sourceIds:[]}]
+  assert.equal(coverageQuality({...cell,assessment:{...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks}}}).label,"판정 불가")
   assert.equal(coverageQuality({...cell,assessment:{...cell.assessment,checklist:{...cell.assessment.checklist,criteriaMet:false,checks:[{code:"threshold",result:"fail",message:"초과",sourceIds:[]}]}}}).label,"기준 미충족")
 })
 test("unsupported status and reason drilldown retain the combinations hidden by default",()=>{
@@ -310,7 +310,8 @@ test("M1–M2 unsupported cells stay visible but only supported cells contribute
   assert.match(html,/지원 안 함/)
   assert.match(html,/측정 있음 \/ 지원 조합/)
   assert.match(html,/배치 측정 \/ 목표/)
-  assert.match(html,/품질 판정 불가 \/ 지원 조합/)
+  assert.match(html,/정책 미설정 \/ 측정 근거/)
+  assert.match(html,/측정 근거 없음 \(조합\)/)
   assert.match(html,/<td data-label="측정 있음 \/ 지원 조합">0\/2<\/td><td data-label="배치 측정 \/ 목표">2\/8<\/td>/)
   assert.match(html,/<td data-label="지원 안 함 \(집계 제외\)">1<\/td>/)
   const unsupported=renderCoverage("status=unsupported&supportReason=RuntimeUnsupported")
@@ -404,4 +405,14 @@ test("progressing cell shows recorded run progress without inventing a planned t
   assert.match(html,/예정 회차/)
   assert.match(html,/미제공/)
   assert.doesNotMatch(html,/완료 예정/)
+})
+
+test("R18 quality summary separates 48 measured policy-unset cells from five without evidence",()=>{
+  const assessment={...cell.assessment,evidence:{available:true,accepted:true,reasons:[]},checklist:{...cell.assessment.checklist,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown" as const,reason:"PolicyUnset",message:"policy",sourceIds:[]}]}}
+  const measured={...cell,assessment,variants:[{id:"measured",condition:{},assessment,batchProgress:cell.batchProgress!,resultRows:[resultRow(10)],requestIds:[],runIds:[],profileIds:[]}]}
+  const counts=coverageHelpers.coverageScopeCounts([...Array.from({length:48},()=>measured),...Array.from({length:5},()=>cell)])
+  assert.equal(counts.unknownQualityCells,48)
+  assert.equal(counts.noEvidenceCells,5)
+  assert.equal(counts.policyUnsetCells,48)
+  assert.equal(coverageQuality(measured).reasons[0].label,"전력 기록 정책 미설정")
 })

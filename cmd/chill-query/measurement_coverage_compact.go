@@ -39,7 +39,7 @@ func compactCoverageAssessment(assessment *queryapi.MeasurementAssessment) {
 }
 
 func coverageVariantChecklist(variant *queryapi.MeasurementCoverageVariant) []queryapi.MeasurementCheck {
-	type checkIdentity struct{ code, result, message string }
+	type checkIdentity struct{ code, result, reason, message string }
 	checks := []queryapi.MeasurementCheck{}
 	indices := map[checkIdentity]int{}
 	for _, check := range variant.Assessment.Checklist.Checks {
@@ -51,7 +51,7 @@ func coverageVariantChecklist(variant *queryapi.MeasurementCoverageVariant) []qu
 					check.SourceIDs = append(check.SourceIDs, row.ID)
 				}
 			}
-			indices[checkIdentity{check.Code, check.Result, check.Message}] = len(checks)
+			indices[checkIdentity{check.Code, check.Result, check.Reason, check.Message}] = len(checks)
 			checks = append(checks, check)
 			break
 		}
@@ -62,7 +62,7 @@ func coverageVariantChecklist(variant *queryapi.MeasurementCoverageVariant) []qu
 			continue
 		}
 		for _, check := range row.Assessment.Checklist.Checks {
-			key := checkIdentity{check.Code, check.Result, check.Message}
+			key := checkIdentity{check.Code, check.Result, check.Reason, check.Message}
 			index, exists := indices[key]
 			if !exists {
 				index = len(checks)

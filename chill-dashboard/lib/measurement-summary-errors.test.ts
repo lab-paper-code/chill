@@ -83,7 +83,10 @@ test("paged request defaults and coverage timestamps render second-page summary 
   const invalid=JSON.stringify({readProjection:{version:"measurement-summary.v1",values,shapes:[]},profiles:"~30"})
   for(const kind of ["request","coverage"]) await t.test(kind,async()=>{
     const calls:string[]=[]
-    const fetch=async(path:string)=>{calls.push(path);return {ok:true,status:200,text:async()=>calls.length===1?JSON.stringify({profiles:[{id:"first-page",measuredAt:"2026-11-01T00:00:00Z"}],page:{nextOffset:50}}):invalid}}
+    const fetch=async(path:string)=>{calls.push(path);return {ok:true,status:200,headers:new Headers(),text:async()=>calls.length===1?JSON.stringify({profiles:[{id:"first-page",measuredAt:"2026-11-01T00:00:00Z"}],page:{nextOffset:50}}):invalid}}
+    const pagedClient=load<typeof client>("./client.tsx",{
+      "@/lib/scheduler":scheduler,"@/lib/measurement-summary":summary,
+    },{fetch,performance})
     let queryFn:((context:{signal:AbortSignal})=>Promise<unknown>)|undefined
     let state:Record<string,unknown>={isPending:true,error:null,data:undefined,isFetching:false,dataUpdatedAt:0,refetch:()=>{}}
     const modules={
@@ -91,7 +94,7 @@ test("paged request defaults and coverage timestamps render second-page summary 
       "next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},
       "next/link":{__esModule:true,default:container},
       "@tanstack/react-query":{useQuery:({queryFn:fn}:{queryFn:typeof queryFn})=>{queryFn=fn;return state}},
-      "@/lib/client":{...client,useSession:()=>({token:"test",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]},error:null}),useChillMutation:()=>({isPending:false})},
+      "@/lib/client":{...pagedClient,useSession:()=>({token:"test",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]},error:null}),useChillMutation:()=>({isPending:false})},
       "@/lib/measurement-summary":summary,"@/lib/measurement-coverage":coverageHelpers,"@/lib/measurement-assessment":assessment,
       "@/lib/measurements":measurements,"@/lib/measurement-request":requestHelpers,
       "@/components/read-region":region,"@/components/screen":{Screen:container},

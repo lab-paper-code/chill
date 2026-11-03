@@ -558,11 +558,11 @@ Preprocessor/Dataset GET·LIST와 namespaced 비용/점유 GET·LIST를 조회 �
 
 `MeasurementAssessment={status,displayStatus,label,reasons,execution,evidence,checklist,scope}`다.
 execution은 원문 phase/generation/observedGeneration, evidence는 available/accepted와 사유,
-checklist는 `{criteriaMet:true|false|null,version:"result-checklist.v1",checks:[{code,result,message,sourceIds}]}`다.
+checklist는 `{criteriaMet:true|false|null,version:"result-checklist.v1",checks:[{code,result,reason?,message,sourceIds}]}`다.
 check result는 pass/warn/fail/unknown이다. **서버가 displayStatus와 label까지 제공**하며 UI는 다시 매핑하지 않는다.
 
 coverage 응답에서는 **variant.assessment.checklist.checks에만** 전체 체크리스트를 한 번 둔다.
-동일 `(code,result,message)` 항목은 variant 안에서 합치고 `sourceIds`는 해당 항목에 기여한
+동일 `(code,result,reason,message)` 항목은 variant 안에서 합치고 `sourceIds`는 해당 항목에 기여한
 정확한 `ResultRow.id` 집합이다. 원본 기록은 해당 `resultRows[].sources`로 찾아간다.
 Cell과 ResultRow의 assessment는 status/displayStatus/label, execution/evidence, reasons/scope와
 checklist의 criteriaMet/version을 유지하되 `checks:[]`로 요약한다. 이 compact projection은
@@ -594,6 +594,12 @@ superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사
 실패 요청 자체는 failed, 후속 포함 셀은 다른 범위임을 명시한다. idle 3회를 active 3회로 세지 않는다.
 여러 자식은 실제 문제→부족→검토 필요→전부 기준 충족→전부 complete 순으로 요약하고, 판정 불가 자식은
 미확인 수/범위를 보존한다. unknown 통계·시각 부재만으로 채택 결과의 상태를 내리지 않는다.
+
+처리 성능 결과 목록·상세의 `scope.schedulerUsed`는 catalog의 `currentMeasurements[].id`와
+정확히 일치하는 profile에만 true다. reuse는 `confirmationProfileID`로 대조한다.
+조건이 같은 과거 profile, 최신 실패 때문에 선택되지 않은 과거 성공은 false이며 화면에는
+`과거 측정`으로 표시한다. 상세는 서버의 `label`(예: 사용 가능)을 그대로 측정 상태에 두고,
+품질 판정·현재 사용을 독립 축으로 표시한다. 품질 unknown을 서버 사용 가능의 대체 판정으로 쓰지 않는다.
 
 **결과 체크리스트 v1**: 정확 조건/lineage, 목표 batch 충족, 독립 active/shared idle 각각
 `max(3,동결 MinimumTrials)` 반복, 유한한 기존 CI/level(0폭 허용), pooled client p95·N>1,
@@ -636,6 +642,12 @@ raw/vector/log/Secret은 응답에 넣지 않는다. 기존 8MiB 한도는 유�
 `FrozenPowerWindowPolicy`는 unknown을 유지한다. 이는 기준이 있는데 평가를 생략했다는 뜻이나
 불합격이 아니다. 저장 계약·원본 evidence·관측 수치는 바꾸지 않으며, 현재 관측값에 새 정책을
 소급해 기준 충족으로 만들지 않는다. timestamp 부재/node-wall은 이 unknown의 원인이 아니다.
+이 `policyReason`은 Query 체크의 `reason`으로 전달한다. `PolicyUnset`은
+`result:"unknown",reason:"PolicyUnset"`이며 화면의 `정책 미설정`이다.
+사유 없는 null 판정은 일반 미확인, 명시적 false는 기준 미충족으로 유지한다.
+coverage 집계는 측정 근거가 있는 조합만 품질 분모에 넣고 정책 미설정·그 밖의 품질 미확인을
+구분한다. 측정 근거 없는 조합은 별도 수로 표시한다(예: 근거 있는 48 중 정책 미설정 48,
+측정 근거 없음 5). 체크가 없다는 이유로 기준·반복·표본 전체가 없다고 추정하지 않는다.
 정상 superseded의 이미 검증한 메모리 facts는 현재 스케줄러 미사용으로 보존하며,
 읽기 전 replacement 제외에는 확인하지 않은 과거 facts를 만들어 넣지 않는다.
 
