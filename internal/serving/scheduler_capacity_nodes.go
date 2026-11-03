@@ -488,7 +488,7 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 	plan.items, plan.retained = make([][]capacityItem, k), make([][]capacityItem, k)
 	for _, i := range plan.instances {
 		w, ok := p.index[i.WorkloadUID]
-		if !ok || i.Terminated || plan.keep && i.Stopped {
+		if !ok || i.Terminated || plan.keep && (!i.Ready || i.Stopped) {
 			plan.others++
 			continue
 		}

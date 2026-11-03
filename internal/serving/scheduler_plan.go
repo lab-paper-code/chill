@@ -735,15 +735,19 @@ func schedulerFixedReason(snapshot SchedulerSnapshot, uid string) string {
 			return "ReservedScope:" + reservation.Owner
 		}
 	}
-	for _, instance := range snapshot.Instances {
-		if (instance.WorkloadUID == uid || instance.OwnerWorkloadUID == uid) && !instance.Ready && !instance.Stopped && !instance.Terminated {
-			return "UnconfirmedInstance:" + instance.ID
-		}
-	}
 	return ""
 }
 
 func fixSchedulerWorkloads(decision *SchedulerDecision, snapshot SchedulerSnapshot, rows []CapacityRow) {
+	for _, instance := range snapshot.Instances {
+		if !instance.Ready && !instance.Stopped && !instance.Terminated {
+			reason := "UnconfirmedInstance:" + instance.ID
+			if len(instance.Reasons) > 0 {
+				reason += ":" + strings.Join(instance.Reasons, ";")
+			}
+			decision.Reasons = appendUnique(decision.Reasons, reason)
+		}
+	}
 	for index, state := range decision.Workloads {
 		if state.State != WorkloadControlled {
 			continue

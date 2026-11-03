@@ -748,6 +748,35 @@ func TestCapacityRoutingOffKeepsWeightsAndChecksKappa(t *testing.T) {
 	}
 }
 
+func TestCapacityUnconfirmedInstanceDoesNotFreezeWorkload(t *testing.T) {
+	for _, routing := range []bool{true, false} {
+		t.Run(fmt.Sprint("routing=", routing), func(t *testing.T) {
+			s, snap := schedulerFixture()
+			s.Controls.Routing = routing
+			bad := snap.Instances[0]
+			bad.ID, bad.Node, bad.Ready = "unconfirmed", poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1}), false
+			bad.Reasons = []string{"probe timed out"}
+			bad.ObservedAt = time.Time{} // No successful native observation is usable capacity.
+			bad.OwnerWorkloadUID = bad.WorkloadUID
+			snap.Instances = append(snap.Instances, bad)
+			snap.Nodes[1].Reasons = []string{NodeInstanceUnavailable}
+			snap.Routing = map[string]map[string]int32{"w1": {"i1": 1, bad.ID: 1}}
+			capacityLoad(s, &snap, snap.Workloads[0], 10)
+			d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+			if d.Workloads[0].State != WorkloadControlled {
+				t.Fatalf("one unconfirmed instance froze autonomous control: %+v", d.Workloads)
+			}
+			if d.Target == nil || d.Target.Routing["w1"][bad.ID] != 0 || d.Target.Routing["w1"]["i1"] <= 0 {
+				t.Fatalf("unconfirmed capacity remains routed: %+v", d.Target)
+			}
+			if len(d.Capacity.Workloads) != 1 || d.Capacity.Workloads[0].KappaNew != 100 {
+				t.Fatalf("unconfirmed capacity counted as serving: %+v", d.Capacity.Workloads)
+			}
+			schedulerRequireReason(t, d.Reasons, "UnconfirmedInstance:"+bad.ID+":"+bad.Reasons[0])
+		})
+	}
+}
+
 // A UID without κ is fixed rather than blocking independent Workloads.
 func TestCapacityPendingWithoutRows(t *testing.T) {
 	s, snap := schedulerFixture()
