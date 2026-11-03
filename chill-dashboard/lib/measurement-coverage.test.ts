@@ -254,7 +254,7 @@ function renderCoverage(query="",extraCells:MeasurementCoverageCell[]=[],freshne
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@tanstack/react-query":{useQuery:({queryKey}:{queryKey:string[]})=>({data:queryKey[1]==="coverage-inventory"?inventory:queryKey[1]==="model-compatibility"?[]:queryKey[1]==="coverage-profile-times"?{profiles:[]}:data,error:null,isFetching,refetch:()=>{}})},
-    "@/lib/client":{useSession:()=>({config:{namespace:"ns"}}),useChillQuery:()=>({data:{runs:[]},error:null})},
+    "@/lib/client":{useSession:()=>({config:{namespace:"ns"}}),useChillQuery:()=>({data:{runs:[]},error:null}),isCoverageWarming:()=>false},
     "@/lib/measurement-coverage":coverageHelpers,
     "@/lib/measurement-assessment":assessmentHelpers,
     "@/lib/measurements":measurementHelpers,

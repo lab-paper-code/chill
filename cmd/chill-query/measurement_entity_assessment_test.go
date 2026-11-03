@@ -49,6 +49,44 @@ func TestR18HistoricalProfilesUseOnlyCurrentMeasurement(t *testing.T) {
 	}
 }
 
+func TestR18SnapshotProfilesEndpointRetainsCurrentSelection(t *testing.T) {
+	for _, current := range []string{"ns/current/uid", "ns/newest-failed/uid"} {
+		t.Run(current, func(t *testing.T) {
+			owner := servingkube.CatalogView{
+				Profiles:            []serving.Profile{{ID: "ns/old/uid"}, {ID: "ns/current/uid"}},
+				CurrentMeasurements: []profilederivation.MeasurementSelection{{ID: current}},
+			}
+			snapshot := servingkube.ProjectCatalogSnapshot(owner, "rv", nil)
+			raw, err := json.Marshal(servingkube.CatalogRead{CatalogSnapshot: snapshot, Accepted: &snapshot})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var read servingkube.CatalogRead
+			if err := json.Unmarshal(raw, &read); err != nil {
+				t.Fatal(err)
+			}
+			service := &measurementService{catalog: func(context.Context) (servingkube.CatalogRead, error) { return read, nil }}
+			mux := http.NewServeMux()
+			service.register(mux)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/scheduler/profiles", nil))
+			var got profileResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != http.StatusOK || len(got.Profiles) != 2 {
+				t.Fatalf("profiles response: %d %s", response.Code, response.Body.String())
+			}
+			for _, profile := range got.Profiles {
+				used := profile.Assessment.Scope.SchedulerUsed
+				if used == nil || *used != (profile.ID == current) {
+					t.Fatalf("snapshot current=%s profile=%s schedulerUsed=%v", current, profile.ID, used)
+				}
+			}
+		})
+	}
+}
+
 func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	task := api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1},

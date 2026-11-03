@@ -677,8 +677,10 @@ namespace별 프로세스 메모리 base snapshot 한 개, atomic 교체, namesp
 진입/명시 갱신에서 30초 fresh TTL을 적용하고 stale 최대 5분, 별도 DB/Query API crawler/worker pool은 없다.
 지원 snapshot은 입력 identity/RV가 바뀔 때만 재계산한다. catalog는 기존 refresh 흐름과 성공 확인 시각을 쓴다.
 동일 서버 namespace TTL 안의 여러 탭은 한 갱신을 공유하고 브라우저 **30초 polling은 하지 않는다**.
-재진입/명시적 갱신만 GET한다. 최초 GET이 warming이면 Retry-After 후 한 번의 완료 확인을 허용하되
-지속 warming은 오류와 명시 재시도이며 숨은 무기한 polling으로 바꾸지 않는다.
+재진입/명시적 갱신만 GET한다. HTTP 503이며 정확히 `CoverageWarming` 코드인 GET만
+`Retry-After` 간격으로 최대 180회 재시도한다. 일반 503과 응답이 불확실한 mutation은
+자동 재시도하지 않는다. 컴포넌트 unmount 또는 session 변경 시 진행 중인 요청과 재시도를
+취소한다. 한도 소진 후에는 초기화 중 상태와 명시 재조회를 제공하며 무기한 polling하지 않는다.
 source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패면 분모 null,
 목록 불완전이면 미측정 수 null, catalog 오래됨이면 현재 사용 판정을 stale로 표시한다.
 단건 비용/점유 장애가 무관한 coverage를 막지 않는다. 인증 변경/401/403 후 이전 cache 표시 금지다.

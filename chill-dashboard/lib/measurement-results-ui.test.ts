@@ -325,3 +325,29 @@ test("R18 selected result retains server usable assessment alongside policy-unse
   assert.ok(statuses.some(element=>element.props.axis==="현재 사용"&&element.props.label==="과거 측정"))
   assert.doesNotMatch(rendered,/현재 조회 계약에 해당 필드 없음|기준·표본 미제공/)
 })
+
+test("R18 AssessmentDetails check table renders PolicyUnset as 정책 미설정",()=>{
+  const h=harness("",()=>undefined)
+  Object.assign(h.modules,{
+    "@/components/measurement-navigation":{MeasurementEvidenceChecks:()=>null},
+    "@/components/ui/table":Object.fromEntries(["Table","TableHeader","TableRow","TableHead","TableBody","TableCell"].map(name=>[name,name])),
+  })
+  const tree=load("../features/measurement-plans.tsx",h.modules).AssessmentDetails({assessment:{...accepted,checklist:{criteriaMet:false,checks:[{code:"FrozenPowerWindowPolicy",result:"unknown",reason:"PolicyUnset",message:"policy",sourceIds:[]}]}}})
+  const row=elements(tree).find(element=>element.type==="TableRow"&&text(element).includes("FrozenPowerWindowPolicy"))!
+  assert.match(text(row),/정책 미설정/)
+  assert.doesNotMatch(text(row),/미확인/)
+})
+
+test("R18 request status retains its own catalog identity instead of same-target coverage scope",()=>{
+  const own={...accepted,scope:{schedulerUsed:false}}
+  const spec={state:{candidate:{modelSpec:"model",deviceClass:"class",executionPath:"cpu",powerMode:"fixed"},targetNode:"node"},activeProtocol:{},idleProtocol:{}}
+  const h=harness("uid=old",()=>({campaign:{uid:"old",name:"request",phase:"Complete",spec},assessment:own,resultRows:[]}))
+  Object.assign(h.modules,{
+    "@/lib/measurement-request":requests,
+    "@/features/measurement-coverage":{useMeasurementCoverage:()=>({data:{cells:[]}})},
+    "@/components/measurement-navigation":{MeasurementStatus:"measurement-status"},
+  })
+  const tree=load("../features/measurement-plans.tsx",h.modules).MeasurementPlanDetails({namespace:"ns",name:"request"})
+  const status=elements(tree).find(element=>element.type==="measurement-status")!
+  assert.equal(status.props.assessment,own)
+})

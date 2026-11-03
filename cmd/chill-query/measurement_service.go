@@ -181,6 +181,7 @@ func catalogView(read servingkube.CatalogSnapshot) httpapi.ProfilesView {
 		CatalogView:   read.CatalogView(),
 		Preparations:  map[string]servingkube.PrepareSpec{},
 	}
+	out.CurrentMeasurements = read.CurrentMeasurements
 	for id, p := range read.Preparations {
 		spec := p.PrepareSpec
 		spec.Instance = p.Instance.SchedulerInstance
