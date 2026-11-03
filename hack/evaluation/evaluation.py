@@ -302,6 +302,9 @@ class Harness:
         """Resolve controller UIDs; labels on the Pod itself never prove ownership."""
         namespace = pod['metadata']['namespace']
         run_namespace = self.execution['namespace']
+        if any(target['resource']['kind'] == 'Pod' and target['resource']['namespace'] == namespace and
+               target['uid'] == pod['metadata']['uid'] for target in targets):
+            return True, []
         stage_uids = {uid for uid in [self.execution.get('stageUID'),
                                      *(child['uid'] for child in self.execution.get('childRefs', []))] if uid}
         roots = {(target['resource']['namespace'], target['resource']['kind'], target['uid'])

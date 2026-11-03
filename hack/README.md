@@ -431,6 +431,8 @@ The evaluator owner chain must reach a live Job UID whose controller reference
 matches this Run or one of its frozen Stage UIDs. Pod labels never establish
 ownership. CHILL release ownership must reach a controller ancestor matching a
 frozen target UID or release instance; the Pod's own release label is ignored.
+A directly declared Pod target is recognized by its frozen namespace/UID,
+without requiring a controller owner; reusing its name or labels is not enough.
 The declared target resources' `app.kubernetes.io/instance` values are frozen in
 the existing target snapshot at prepare, scoped to their declared namespaces.
 Read-only ReplicaSet/Deployment/StatefulSet/Job/CronJob lookup verifies UIDs.

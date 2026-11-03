@@ -683,6 +683,35 @@ class EvaluationTests(unittest.TestCase):
                         harness.check_fleet(spec)
                         self.assertEqual(set(queries), {'spec.nodeName=' + node for node in nodes})
 
+    def test_direct_pod_target_requires_frozen_uid_not_name_or_labels(self):
+        spec = {'powerMeasurement': {'nodes': [{'name': 'node', 'uid': 'node-uid'}]},
+                'loadGenerator': {'nodeName': 'node'}}
+        target = {'uid': 'frozen-pod-uid', 'resource': {'apiVersion': 'v1', 'kind': 'Pod',
+                                                      'namespace': 'target-ns', 'name': 'server'},
+                  'releaseInstance': 'frozen-release'}
+        for uid in ('frozen-pod-uid', 'replacement-pod-uid'):
+            with self.subTest(uid=uid):
+                harness = object.__new__(evaluation.Harness)
+                harness.execution = {'namespace': 'evaluation-ns', 'runUID': 'run-uid', 'stageID': 'stage'}
+                harness.snapshot = {'targets': {'stage': [target]}, 'generatorNode': {'name': 'node', 'uid': 'node-uid'}}
+                pod = {'apiVersion': 'v1', 'kind': 'Pod',
+                       'metadata': {'namespace': 'target-ns', 'name': 'server', 'uid': uid,
+                                    'labels': {'app.kubernetes.io/instance': 'frozen-release',
+                                               'edge.dacs.io/evaluation-run-uid': 'run-uid'}},
+                       'spec': {'nodeName': 'node'}, 'status': {'phase': 'Running'}}
+                def k(namespace, verb, kind, *args):
+                    if kind == 'node':
+                        return {'metadata': {'name': 'node', 'uid': 'node-uid'},
+                                'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
+                    self.assertEqual(kind, 'pods')
+                    return {'items': [pod]}
+                with patch.object(evaluation, 'kubectl', side_effect=k):
+                    if uid == target['uid']:
+                        harness.check_fleet(spec)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'external Pod on participating Node'):
+                            harness.check_fleet(spec)
+
     def test_unknown_owner_errors_produce_recorded_prepare_rejection(self):
         for failure, stderr in [('NotFound', 'Error from server (NotFound): replica set not found'),
                                 ('Forbidden', 'Error from server (Forbidden): replica set access denied')]:
