@@ -67,3 +67,56 @@ for(const outcome of ["recover","unmount","session"] as const)test(`provider eve
     }
   } finally {cleanups.forEach(dispose=>dispose?.());globalThis.fetch=previous}
 })
+
+test("exhausted event seed offers an explicit retry that restores the archive",async t=>{
+  t.mock.timers.enable({apis:["setTimeout"]})
+  let state=live.initialLiveState(),attempt=0,ready=false
+  const effects:{run:()=>void|(()=>void);deps:readonly unknown[]}[]=[],signals=new Set<AbortController>(),requests:{path:string;signal:AbortSignal}[]=[]
+  const queryClient={getQueryData:()=>state,setQueryData:(_key:unknown,change:(value:live.LiveState)=>live.LiveState)=>{state=change(state)}}
+  const modules={
+    react:{...React,useMemo:(create:()=>unknown)=>create(),useCallback:(callback:unknown)=>callback,useRef:(current:unknown)=>({current}),useState:()=>[attempt,(next:number|((value:number)=>number))=>{attempt=typeof next==="function"?next(attempt):next}],useEffect:(run:()=>void|(()=>void),deps:readonly unknown[])=>{effects.push({run,deps})}},
+    "@tanstack/react-query":{skipToken:Symbol(),useQuery:()=>({data:state}),useQueryClient:()=>queryClient},
+    "next/navigation":{useSearchParams:()=>new URLSearchParams(),usePathname:()=>"/"},
+    "@/lib/client":{...client,useSession:()=>({token:"token",epoch:1,config:{},signals})},
+    "@/lib/live":{...live,connectLive:()=>({close:()=>{},reconnect:()=>{}})},
+    "@/lib/live-fixture":{},"@/lib/live-history":history,
+  }
+  const provider=load<{LiveProvider:(props:{children:React.ReactNode})=>React.ReactElement}>("./use-live.tsx",modules)
+  const previous=globalThis.fetch
+  globalThis.fetch=async(path,options)=>{
+    requests.push({path:String(path),signal:options!.signal!})
+    if(!ready)return Response.json({code:"CoverageWarming"},{status:503,headers:{"Retry-After":"2"}})
+    const bounds=new URL(String(path),"https://local").searchParams,to=bounds.get("to")!,at=new Date(Date.parse(to)-1000).toISOString()
+    return Response.json({from:bounds.get("from"),to,events:[{type:"event",at,kind:"cluster",cluster:{kind:"pod",at,event:"changed",pod:{uid:"restored-pod",ready:"True"}}}],coverage:{from:null,to:null,sources:[],gaps:[]}})
+  }
+  const render=()=>{effects.length=0;return provider.LiveProvider({children:"operating"})}
+  const elements=(node:unknown):React.ReactElement<{children?:React.ReactNode;onClick?:()=>void}>[]=>{
+    if(Array.isArray(node))return node.flatMap(elements)
+    if(!React.isValidElement<{children?:React.ReactNode;onClick?:()=>void}>(node))return []
+    return [node,...elements(node.props.children)]
+  }
+  let cleanups:(void|(()=>void))[]=[]
+  try {
+    render();const initialDeps=effects[1].deps;cleanups=effects.map(effect=>effect.run())
+    await nextTurn()
+    for(let retry=0;retry<180;retry++){t.mock.timers.tick(2000);await nextTurn()}
+    assert.equal(requests.length,181)
+    t.mock.timers.tick(100000);await nextTurn();assert.equal(requests.length,181)
+    assert.ok(requests.every(request=>request.path===requests[0].path))
+    const button=elements(render()).find(node=>node.type==="button"&&node.props.children==="다시 조회")
+    assert.ok(button?.props.onClick,"exhaustion must leave an explicit archive retry action")
+    ready=true
+    button.props.onClick()
+    render()
+    assert.notDeepEqual(effects[1].deps,initialDeps,"the action must restart the seed effect")
+    cleanups[1]?.()
+    cleanups[1]=effects[1].run()
+    await nextTurn()
+    assert.equal(requests.length,182)
+    assert.equal(requests[0].signal.aborted,true)
+    assert.notEqual(requests.at(-1)!.signal,requests[0].signal)
+    assert.equal(state.events.length,1)
+    assert.equal(state.eventArchiveError,null)
+    assert.ok(!elements(render()).some(node=>node.type==="button"&&node.props.children==="다시 조회"))
+  } finally {cleanups.forEach(dispose=>dispose?.());globalThis.fetch=previous}
+})

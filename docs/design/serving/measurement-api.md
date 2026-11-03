@@ -757,6 +757,9 @@ namespace별 프로세스 메모리 base snapshot 한 개, atomic 교체, namesp
 운영 화면의 기간 사건 seed도 같은 warming 정책을 적용한다. 재시도 중에는 `초기화 중`을
 표시하고, 고정 from/to/cursor와 성공 페이지 최대 5개를 유지한다. 이동·세션 변경은 같은
 AbortSignal로 HTTP와 Retry-After 대기를 함께 취소한다.
+사건 seed의 오류·초기화 재시도 소진 안내에는 `다시 조회` 동작을 제공한다. 사용자가 실행하면
+이전 seed 수명을 취소하고 새 최근 구간 seed를 시작한다. 각 seed 안의 고정 범위·cursor,
+5페이지 상한과 유한 warming 재시도는 그대로 유지한다.
 source 실패는 partial/stale와 기존 dataAsOf를 유지한다. 지원 실패면 분모 null,
 목록 불완전이면 미측정 수 null, catalog 오래됨이면 현재 사용 판정을 stale로 표시한다.
 단건 비용/점유 장애가 무관한 coverage를 막지 않는다. 인증 변경/401/403 후 이전 cache 표시 금지다.
