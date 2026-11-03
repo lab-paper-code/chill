@@ -82,8 +82,8 @@ func TestCompletedSemanticRouteSurvivesWitnessAndOrdinalRefresh(t *testing.T) {
 		t.Fatalf("rolling witness/ID restarted the already applied semantic route: old=%+v new=%+v", route, reused)
 	}
 	stop := requireTransitionAction(t, target.Actions, schedulerActionStop)
-	if !slices.Contains(stop.DependsOn, route.ID) {
-		t.Fatalf("cleanup lost the completed actual handoff prerequisite: %+v", stop)
+	if len(stop.DependsOn) != 0 {
+		t.Fatalf("already unrouted source still waits for the refreshed route: %+v", stop)
 	}
 	stop.Status = schedulerActionComplete
 	snapshot.Actions = append(snapshot.Actions, stop)
@@ -209,7 +209,13 @@ func TestCompletedRouteCannotAliasAnotherExecutorWithIdenticalMeasuredCondition(
 	if actual.ID == route.ID || actual.Status != schedulerActionPlanned {
 		t.Fatalf("same Node/profile/allocation hid the changed physical destination: %+v", actual)
 	}
-	if stop := requireTransitionAction(t, second.Actions, schedulerActionStop); !slices.Contains(stop.DependsOn, actual.ID) {
+	index := slices.IndexFunc(second.Actions, func(action Action) bool {
+		return action.Kind == schedulerActionStop && action.Instance == first.Instances[0].ID
+	})
+	if index < 0 {
+		t.Fatal("missing retirement of the currently routed executor")
+	}
+	if stop := second.Actions[index]; !slices.Contains(stop.DependsOn, actual.ID) {
 		t.Fatalf("old executor could stop before the changed destination was routed: %+v", stop)
 	}
 }
@@ -555,5 +561,45 @@ func TestPowerChangeDrainsPendingAndNormalInstancesAC35(t *testing.T) {
 	snapshot.Instances[0].Ready = false
 	if slices.ContainsFunc(schedulerPlan(schedulerEstimateSettingsForTest(), snapshot, target), func(a Action) bool { return a.Kind == schedulerActionPower }) {
 		t.Fatal("actual read failure still planned power")
+	}
+}
+
+func TestIdleRetirementDoesNotWaitForUnrelatedPreparation(t *testing.T) {
+	for _, weight := range []int32{0, 1000} {
+		t.Run(fmt.Sprint(weight), func(t *testing.T) {
+			settings, snapshot := schedulerFixture()
+			old := snapshot.Instances[0]
+			old.OwnerWorkloadUID = old.WorkloadUID
+			snapshot.Instances[0] = old
+			snapshot.Routing = map[string]map[string]int32{old.WorkloadUID: {old.ID: weight}}
+			node := poolsAddNode(&snapshot, "preparing", map[string]float64{"fixed": 10})
+			wanted := poolsInstance(old, "new-destination", node, "fixed", "other-workload")
+			target := SchedulerCandidate{Nodes: snapshot.Nodes, Instances: []SchedulerInstance{wanted},
+				Routing: map[string]map[string]int32{wanted.WorkloadUID: {wanted.ID: 1000}}}
+			target.Actions = schedulerPlan(settings, snapshot, target)
+			stop := requireTransitionAction(t, target.Actions, schedulerActionStop)
+			drain := requireTransitionAction(t, target.Actions, schedulerActionDrain)
+			remove := requireTransitionAction(t, target.Actions, schedulerActionRemove)
+			prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
+			route := requireTransitionAction(t, target.Actions, schedulerActionRoute)
+			if !slices.Contains(drain.DependsOn, stop.ID) || !slices.Contains(remove.DependsOn, drain.ID) {
+				t.Fatal("retirement lost its stop/drain/remove order")
+			}
+			state := schedulerReplayState{settings: settings, snap: snapshot, c: target, rng: rand.New(rand.NewPCG(schedulerTestSeed, 0))}
+			state.initializeInstances()
+			state.initializeActions()
+			if !state.startActions() {
+				t.Fatalf("could not start the plan: %v", state.out.reasons)
+			}
+			if state.actionByID[prepare.ID].done || state.actionByID[route.ID].done {
+				t.Fatal("unrelated preparation/route must still be pending")
+			}
+			if got := state.byID[old.ID].stopped; got != (weight == 0) {
+				t.Fatalf("current route weight %d: obsolete source stopped=%t while unrelated preparation is pending", weight, got)
+			}
+			if weight == 0 && !state.actionByID[remove.ID].started {
+				t.Fatal("drained idle instance was not released for removal")
+			}
+		})
 	}
 }
