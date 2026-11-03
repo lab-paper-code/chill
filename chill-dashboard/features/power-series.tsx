@@ -1,17 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { useChillQuery } from "@/lib/client"
-import { parseSchedulerJSON } from "@/lib/scheduler"
+import { useChillQuery, useChillQueries } from "@/lib/client"
 import type { LiveState } from "@/lib/live"
 import type { OperatingPowerSeries } from "@/lib/read-types"
-import { POWER_BUCKETS, mergePowerSeries, powerSegments, powerSeriesPath, type PowerBucket, type PowerPoint } from "@/lib/power-series"
+import { POWER_BUCKETS, mergePowerSeries, mergePowerSeriesChunks, parsePowerSeriesJSON, powerSegments, powerSeriesPath, powerSeriesPaths, type PowerBucket, type PowerPoint } from "@/lib/power-series"
 import { displayTime } from "@/lib/live-display"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
 
 export function usePowerSeries(state:LiveState) {
   const [range]=React.useState(()=>{const to=state.status==="fixture"&&state.metrics.length?Date.parse(state.metrics.at(-1)!.bucketAt)+1000:Date.now();return {from:new Date(to-900000).toISOString(),to:new Date(to).toISOString()}})
-  const query=useChillQuery<OperatingPowerSeries>(powerSeriesPath(range.from,range.to)!,{decoder:parseSchedulerJSON,enabled:state.status!=="fixture"})
+  const query=useChillQuery<OperatingPowerSeries>(powerSeriesPath(range.from,range.to)!,{decoder:parsePowerSeriesJSON,enabled:state.status!=="fixture"})
   const [history,setHistory]=React.useState(()=>({input:state.metrics,rows:state.metrics}))
   let retained=history.rows
   if(history.input!==state.metrics) {
@@ -42,11 +41,19 @@ export function LivePowerTrend({state}:{state:LiveState}) {
 }
 
 export function PowerTimeline({from,to}:{from:string;to:string}) {
-  const [bucket,setBucket]=React.useState<PowerBucket>("5s"),path=powerSeriesPath(from,to,bucket)
-  const query=useChillQuery<OperatingPowerSeries>(path??"v1/observations/power",{enabled:!!path,decoder:parseSchedulerJSON})
+  const [bucket,setBucket]=React.useState<PowerBucket>("5s"),paths=powerSeriesPaths(from,to,bucket)
+  const queries=useChillQueries<OperatingPowerSeries>(paths??[],{enabled:!!paths,decoder:parsePowerSeriesJSON})
+  const error=queries.find(query=>query.error)?.error??null,isPending=queries.some(query=>query.isPending)
+  const query={
+    data:error||isPending?undefined:mergePowerSeriesChunks(queries.map(query=>query.data)),
+    error,isPending,isFetching:queries.some(query=>query.isFetching),
+    failureReason:queries.find(query=>query.failureReason)?.failureReason,
+    dataUpdatedAt:queries.length?Math.min(...queries.map(query=>query.dataUpdatedAt)):0,
+    refetch:()=>Promise.all(queries.map(query=>query.refetch())),
+  }
   // The series endpoint owns timeline buckets; the independent period reducer owns the summary.
   const points=mergePowerSeries(query.data,[],Date.parse(to),3600000)
   return <section aria-label="기간 전력 추세"><h3>기간 전력 추세 (W)</h3><label>집계 간격 <select value={bucket} onChange={event=>setBucket(event.target.value as PowerBucket)}>{(Object.keys(POWER_BUCKETS) as PowerBucket[]).map(value=><option key={value} value={value} disabled={!powerSeriesPath(from,to,value)}>{POWER_BUCKETS[value]/1000}초</option>)}</select></label>
-    {!path?<p role="status" title="최대 1시간·900구간까지 조회합니다. 기간을 줄이거나 집계 간격을 늘려 주세요. 기간 요약은 별도 집계입니다.">조회 범위 초과</p>:<QueryGate query={query}>{query.data&&<><PowerTrend points={points}/><SourceExport filename="chill-power-timeline.json" value={{source:"v1/observations/power",conditions:{from,to,bucket},result:query.data}}/><SourceJSON title="전력 시간 구간 원본" value={query.data}/></>}</QueryGate>}
+    {!paths?<p role="status" title="최대 1시간·900구간까지 조회합니다. 기간을 줄이거나 집계 간격을 늘려 주세요. 기간 요약은 별도 집계입니다.">조회 범위 초과</p>:<QueryGate query={query}>{query.data&&<><PowerTrend points={points}/><SourceExport filename="chill-power-timeline.json" value={{source:"v1/observations/power",conditions:{from,to,bucket,format:"columns"},requests:paths,result:query.data}}/><SourceJSON title="전력 시간 구간 원본" value={query.data}/></>}</QueryGate>}
   </section>
 }

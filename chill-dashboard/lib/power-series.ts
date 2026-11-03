@@ -1,14 +1,92 @@
 import type { LiveMetrics } from "./live"
-import type { OperatingPowerSeries } from "./read-types"
+import type { OperatingPower, OperatingPowerSeries } from "./read-types"
+import { parseSchedulerJSON } from "./scheduler.ts"
 
 export const POWER_BUCKETS = {"1s":1000,"5s":5000,"30s":30000,"1m":60000,"5m":300000,"1h":3600000} as const
 export type PowerBucket = keyof typeof POWER_BUCKETS
 export type PowerPoint = {from:number;to:number;wholeWatts:number|null;activeWatts:number|null;nodes:Record<string,number|null>}
 
 export function powerSeriesPath(from:string,to:string,bucket:PowerBucket="5s") {
-  const start=Date.parse(from),end=Date.parse(to),width=POWER_BUCKETS[bucket]
-  if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>3600000||Math.ceil((end-Math.floor(start/width)*width)/width)>900)return null
-  return `v1/observations/power?${new URLSearchParams({from,to,bucket})}`
+  const start=timestampNanos(from),end=timestampNanos(to),width=BigInt(POWER_BUCKETS[bucket])*1000000n
+  if(start===null||end===null||end<=start||end-start>3600000000000n||(end-start+start%width+width-1n)/width>900n)return null
+  return `v1/observations/power?${new URLSearchParams({from,to,bucket,format:"columns"})}`
+}
+
+function timestampNanos(at:string):bigint|null {
+  const match=/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$/.exec(at)
+  if(!match)return null
+  const seconds=Date.parse(`${match[1]}${match[3]}`)
+  return Number.isFinite(seconds)?BigInt(seconds)*1000000n+BigInt((match[2]??"").padEnd(9,"0")):null
+}
+function nanosTimestamp(at:bigint):string {
+  const seconds=at/1000000000n,fraction=String(at%1000000000n).padStart(9,"0").replace(/0+$/,"")
+  return new Date(Number(seconds)*1000).toISOString().replace(".000Z",`${fraction?`.${fraction}`:""}Z`)
+}
+
+/** Split only between UTC buckets, never through a measured bucket. */
+export function powerSeriesPaths(from:string,to:string,bucket:PowerBucket="5s"):string[]|null {
+  if(!powerSeriesPath(from,to,bucket))return null
+  const width=BigInt(POWER_BUCKETS[bucket])*1000000n,limit=900000000000n,end=timestampNanos(to)!
+  let left=timestampNanos(from)!,start=from
+  const paths:string[]=[]
+  while(left<end) {
+    // A coarse 1h bucket has at most two rows: keep it whole rather than change its resolution.
+    const right=end-left<=limit||width>limit?end:(left+limit)/width*width
+    const finish=right===end?to:nanosTimestamp(right)
+    paths.push(powerSeriesPath(start,finish,bucket)!)
+    left=right;start=finish
+  }
+  return paths
+}
+
+const windowKeys=["scope","wholePoolJoules","wholePoolMeanWatts","activePoolJoules","activePoolMeanWatts","complete","readFailures","maximumSampleGapSeconds","reasons","gapUntil","coverage"] as const
+const nodeKeys=["node","meter","scope","joules","meanWatts","samples","readFailures","maximumSampleGapSeconds","sourceTimestampAbsent","observedSamples","firstObservedAt","lastObservedAt","reasons"] as const
+const optionalNodeKeys:Record<string,true>={observedSamples:true,firstObservedAt:true,lastObservedAt:true}
+function record(value:unknown):value is Record<string,unknown> {return !!value&&typeof value==="object"&&!Array.isArray(value)}
+
+/** Reverse Go OperatingPowerSeries.Columns without rounding timestamps or measured values. */
+export function parsePowerSeriesJSON(text:string):OperatingPowerSeries {
+  const wire=parseSchedulerJSON(text)
+  if(!record(wire)||wire.format!=="columns"||typeof wire.from!=="string"||typeof wire.to!=="string"||
+    (typeof wire.bucketNanos!=="number"&&typeof wire.bucketNanos!=="bigint")||!record(wire.windows)||!record(wire.nodes))throw new Error("전력 형식 불일치: columns 응답이 필요해요.")
+  const {from,to,bucketNanos,windows,nodes}=wire,start=timestampNanos(from),end=timestampNanos(to),width=BigInt(bucketNanos)
+  if(start===null||end===null||end<=start||width<=0n||!Array.isArray(windows.scope))throw new Error("전력 구간이 올바르지 않아요.")
+  const count=windows.scope.length
+  const windowColumns=windowKeys.map(key=> {
+    const values=windows[key]
+    if(!Array.isArray(values)||values.length!==count)throw new Error("전력 구간 열 길이가 일치하지 않아요.")
+    return {key,values}
+  })
+  const nodeColumns=nodeKeys.map(key=>{
+    const values=nodes[key]
+    if(!Array.isArray(values)||values.length!==count)throw new Error("전력 장치 열 길이가 일치하지 않아요.")
+    return {key,values}
+  })
+  const aligned=start-start%width
+  const buckets=Array.from({length:count},(_,index)=>{
+    const left=aligned+BigInt(index)*width,right=left+width,identities=nodeColumns[0].values[index]
+    if(identities!==null&&!Array.isArray(identities))throw new Error("전력 장치 열이 올바르지 않아요.")
+    const length=identities?.length??0
+    for(const column of nodeColumns) {
+      const values=column.values[index]
+      if(identities===null?values!==null:!Array.isArray(values)||values.length!==length)throw new Error("전력 장치 열 길이가 일치하지 않아요.")
+    }
+    const restoredNodes=identities===null?null:Array.from({length},(_,nodeIndex)=>Object.fromEntries(nodeColumns.flatMap(({key,values})=>{
+      const value=values[index][nodeIndex]
+      return value===null&&optionalNodeKeys[key]?[]:[[key,value]]
+    })))
+    // Column lengths and required fields were checked above; reconstruction retains the DTO field types.
+    const row=Object.fromEntries(windowColumns.flatMap(({key,values})=>key==="gapUntil"&&values[index]===null?[]:[[key,values[index]]])) as Omit<OperatingPower,"from"|"to"|"nodes">
+    return {...row,from:left<=start?from:nanosTimestamp(left),to:right>=end?to:nanosTimestamp(right),nodes:restoredNodes} as OperatingPower
+  })
+  return {from,to,bucketNanos,buckets}
+}
+
+/** No partial timeline: every requested chunk must have succeeded. */
+export function mergePowerSeriesChunks(chunks:readonly (OperatingPowerSeries|undefined)[]):OperatingPowerSeries|undefined {
+  if(!chunks.length||chunks.some(chunk=>!chunk))return undefined
+  const complete=chunks as OperatingPowerSeries[]
+  return {from:complete[0].from,to:complete.at(-1)!.to,bucketNanos:complete[0].bucketNanos,buckets:complete.flatMap(chunk=>chunk.buckets)}
 }
 
 /** Keep true historical intervals only where they do not overlap a live interval. */

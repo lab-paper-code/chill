@@ -11,6 +11,7 @@ import type { LiveMetrics } from "./live.ts"
 import * as displayHelpers from "./live-display.ts"
 import { initialLiveState } from "./live.ts"
 import * as resourcesData from "../features/resources-data.ts"
+import type { OperatingPowerSeries } from "./read-types.ts"
 
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){
@@ -46,6 +47,7 @@ test("power hook seeds bounded recent history on reentry then retains appended l
   let value=hook(state)
   const request=new URL(requests[0],"https://local")
   assert.equal(request.searchParams.get("bucket"),"5s")
+  assert.equal(request.searchParams.get("format"),"columns")
   assert.equal(Date.parse(request.searchParams.get("to")!)-Date.parse(request.searchParams.get("from")!),900000)
   assert.equal(value.points[0].wholeWatts,0)
   const metric:LiveMetrics={type:"metrics",seq:1,at:stamp(1),bucketAt:stamp(0),workloads:{},nodes:{},pool:{wholeWatts:0,activeWatts:0}}
@@ -53,6 +55,52 @@ test("power hook seeds bounded recent history on reentry then retains appended l
   cursor=0;value=hook({...state,metrics:[]})
   assert.equal(value.points.at(-1)!.from,Date.parse(metric.bucketAt))
   assert.equal(value.points.at(-1)!.wholeWatts,0)
+})
+
+test("timeline requests selected five-second chunks, blocks partial results and refreshes every chunk",()=>{
+  const from="2026-11-01T00:00:00Z",to="2026-11-01T01:00:00Z"
+  const requests:{paths:string[];decoder?:(body:string)=>unknown}[]=[],refreshed:number[]=[]
+  let results:{data?:OperatingPowerSeries;error:Error|null;isPending:boolean;refetch:()=>void}[]=[]
+  let gate:{data?:OperatingPowerSeries;error?:Error|null;isPending?:boolean;refetch?:()=>void}|undefined
+  const modules={
+    react:{...require("react"),useState:()=>["5s",()=>{}]},
+    "@/lib/client":{
+      useChillQuery:()=>({data:undefined}),
+      useChillQueries:(paths:string[],options:{decoder?:(body:string)=>unknown})=>{requests.push({paths,...options});return results},
+    },
+    "@/lib/power-series":powerSeries,
+    "@/lib/live-display":{displayTime},
+    "@/components/read-region":{
+      QueryGate:({query,children}:{query:typeof gate;children:ReactNode})=>{gate=query;return query?.error||query?.isPending?null:children},
+      SourceJSON:()=>null,SourceExport:()=>null,
+    },
+  }
+  const screen=load("../features/power-series.tsx",modules)
+  renderToStaticMarkup(createElement(screen.PowerTimeline,{from,to}))
+  assert.equal(requests[0].paths.length,4)
+  assert.equal(typeof requests[0].decoder,"function")
+  results=requests[0].paths.map((path,index)=>{
+    const params=new URL(path,"https://local").searchParams
+    assert.equal(params.get("format"),"columns")
+    assert.equal(params.get("bucket"),"5s")
+    return {data:{from:params.get("from")!,to:params.get("to")!,bucketNanos:5000000000,buckets:[]},error:null,isPending:false,refetch:()=>{refreshed.push(index)}}
+  })
+  let html=renderToStaticMarkup(createElement(screen.PowerTimeline,{from,to}))
+  assert.match(html,/<option value="5s" selected="">5초<\/option>/)
+  assert.equal(gate!.data!.from,from)
+  assert.equal(gate!.data!.to,to)
+  const warming=new Error("ArchiveWarming")
+  results[1]={...results[1],data:undefined,error:warming}
+  html=renderToStaticMarkup(createElement(screen.PowerTimeline,{from,to}))
+  assert.equal(gate!.error,warming)
+  assert.equal(gate!.data,undefined)
+  assert.doesNotMatch(html,/aria-label="전력 관측 범위"/)
+  gate!.refetch!()
+  assert.deepEqual(refreshed,[0,1,2,3])
+  results[1]={...results[1],error:null,isPending:true}
+  renderToStaticMarkup(createElement(screen.PowerTimeline,{from,to}))
+  assert.equal(gate!.isPending,true)
+  assert.equal(gate!.data,undefined)
 })
 
 test("records power interval renders bucket timeline independently from period summary",()=>{
