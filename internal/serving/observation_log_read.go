@@ -1,11 +1,15 @@
 package serving
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -368,4 +372,197 @@ func observationScanError(err error) error {
 		return nil
 	}
 	return err
+}
+
+// observationRead holds files opened outside the writer lock at frozen complete
+// append offsets. Deleting an hour does not affect an open file.
+type observationRead struct {
+	files           map[string][]observationOpenFile
+	open            map[string]*RequestRow
+	definitions     map[string]*Definition
+	start           time.Time
+	ctx             context.Context
+	now             time.Time
+	localHours      map[time.Time]bool
+	sources         map[string][]observationSource
+	archive         ObservationArchive
+	catalogs        map[time.Time]*ObservationCatalog
+	scanningHour    time.Time
+	definitionsOnly bool
+}
+
+type observationOpenFile struct {
+	file *os.File
+	at   time.Time
+	size int64
+}
+
+func (r *observationRead) close() {
+	for _, files := range r.files {
+		for _, file := range files {
+			_ = file.file.Close()
+		}
+	}
+}
+
+// capture snapshots stream paths and complete lengths under the writer lock;
+// directory listing and file opens run outside it. A zero to reads the latest
+// captured file. captureMu excludes retention until selected paths are open,
+// without waiting for archive uploads or delaying appends.
+func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRead, error) {
+	l.captureMu.RLock()
+	defer l.captureMu.RUnlock()
+	hours, err := l.hours()
+	if err != nil {
+		return nil, err
+	}
+	read, segments := l.captureSnapshot(ranges, hours)
+	for stream, files := range segments {
+		sort.Slice(files, func(a, b int) bool { return files[a].at.Before(files[b].at) })
+		for _, segment := range files {
+			if err := l.openReadFile(read, stream, segment); err != nil {
+				read.close()
+				return nil, err
+			}
+		}
+	}
+	return read, nil
+}
+
+func (l *ObservationLog) captureSnapshot(ranges map[string][2]time.Time, hours []time.Time) (*observationRead, map[string][]observationSegment) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.mu.recorder.Active() {
+		l.mu.mark(DiagnosticCapture, DiagnosticBegin)
+		defer l.mu.mark(DiagnosticCapture, DiagnosticEnd)
+	}
+	read := &observationRead{
+		files: map[string][]observationOpenFile{}, open: map[string]*RequestRow{}, definitions: map[string]*Definition{},
+		start: l.floor, now: l.now(), ctx: context.Background(), localHours: map[time.Time]bool{},
+	}
+	l.requestMu.Lock()
+	for id, row := range l.open {
+		copied := *row
+		read.open[id] = &copied
+	}
+	l.requestMu.Unlock()
+	for id, d := range l.retained {
+		read.definitions[id] = d
+	}
+	read.localHours[read.now.Truncate(time.Hour)] = true
+	for _, hour := range hours {
+		read.localHours[hour] = true
+	}
+	segments := map[string][]observationSegment{}
+	for _, segment := range l.segments {
+		hour := segment.at.Truncate(time.Hour)
+		read.localHours[hour] = true
+		bounds, wanted := ranges[segment.stream]
+		if segment.stream == observationCatalogStream {
+			for stream, requested := range ranges {
+				if stream != observationCatalogStream && observationHourWanted(hour, requested) {
+					bounds, wanted = [2]time.Time{hour, hour.Add(time.Hour)}, true
+					break
+				}
+			}
+		}
+		if wanted && !segment.at.Before(bounds[0].Truncate(time.Minute)) && (bounds[1].IsZero() || !segment.at.After(bounds[1])) {
+			segments[segment.stream] = append(segments[segment.stream], segment)
+		}
+	}
+	return read, segments
+}
+
+func (l *ObservationLog) openReadFile(r *observationRead, stream string, segment observationSegment) error {
+	l.config.Diagnostics.Mark(DiagnosticFileOpen, DiagnosticBegin, "", 0)
+	file, err := os.Open(segment.path)
+	l.config.Diagnostics.Mark(DiagnosticFileOpen, DiagnosticEnd, "", 0)
+	if err != nil {
+		return err
+	}
+	r.files[stream] = append(r.files[stream], observationOpenFile{file: file, at: segment.at, size: segment.size})
+	return nil
+}
+
+// errObservationStop ends a scan early without an error.
+var errObservationStop = errors.New("observation scan stopped")
+
+func (l *ObservationLog) scanStream(read *observationRead, stream string, visit func([]byte) error) error {
+	if l.config.Diagnostics.Active() {
+		l.config.Diagnostics.Mark(DiagnosticQuery, DiagnosticBegin, "", 0)
+		defer l.config.Diagnostics.Mark(DiagnosticQuery, DiagnosticEnd, "", 0)
+	}
+	var scanner observationScanner
+	if read.sources != nil {
+		for _, source := range read.sources[stream] {
+			if err := read.scanSource(stream, source, &scanner, visit); err != nil {
+				return observationScanError(err)
+			}
+		}
+		return read.ctx.Err()
+	}
+	for _, file := range read.files[stream] {
+		read.scanningHour = file.at.Truncate(time.Hour)
+		err := scanner.scan(observationContextReader{ctx: read.ctx, source: file.file}, file.size, visit)
+		if err != nil {
+			return observationScanError(fmt.Errorf("read %s: %w", file.file.Name(), err))
+		}
+	}
+	return read.ctx.Err()
+}
+
+func scanObservationFile(name string, size int64, visit func([]byte) error) (result error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, file.Close()) }()
+	var scanner observationScanner
+	return scanner.scan(file, size, visit)
+}
+
+// observationScanner keeps its read and long-line buffers across files.
+type observationScanner struct {
+	reader         *bufio.Reader
+	long           []byte
+	requireNewline bool
+}
+
+// scan visits newline-terminated lines of a captured prefix; a negative size
+// reads to the end. A line still being written has no newline and is skipped.
+// Visitor bytes are borrowed for that call.
+func (s *observationScanner) scan(source io.Reader, size int64, visit func([]byte) error) error {
+	if size >= 0 {
+		source = io.LimitReader(source, size)
+	}
+	if s.reader == nil {
+		s.reader = bufio.NewReaderSize(source, 1<<16)
+	} else {
+		s.reader.Reset(source)
+	}
+	for {
+		line, err := s.reader.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			s.long = append(s.long[:0], line...)
+			for errors.Is(err, bufio.ErrBufferFull) {
+				line, err = s.reader.ReadSlice('\n')
+				s.long = append(s.long, line...)
+			}
+			line = s.long
+		}
+		if err == io.EOF {
+			if s.requireNewline && len(line) != 0 {
+				return io.ErrUnexpectedEOF
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if len(line) > 1 {
+			if err := visit(line[:len(line)-1]); err != nil {
+				return err
+			}
+		}
+	}
 }
