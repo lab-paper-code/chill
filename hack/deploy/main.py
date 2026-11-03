@@ -28,7 +28,7 @@ PHASES = ('preflight', 'stage', 'quiesce', 'migrate', 'configure', 'accept')
 FIELDS = {'source', 'context', 'kubeconfig', 'namespace', 'release', 'registry', 'registryScheme',
           'builder', 'tag', 'images', 'values', 'replaceValues', 'apiEnvironment', 'expectedRevision',
           'minFreeBytes', 'commands', 'toolSources', 'allowedLostProfileIDs', 'expectedCoverageUsable',
-          'apiChecks', 'chartDiffApproved', 'readinessSeconds', 'buildSeconds',
+          'apiChecks', 'chartDiffApproved', 'readinessSeconds', 'upgradeSeconds', 'buildSeconds',
           'helm', 'kubectl', 'lock', 'generatedValues', 'maxDiskUsedPercent',
           'queryService', 'dashboardCheck', 'runtimeDeclarations', 'runtimeInspectionSeconds', 'publicationOnly',
           'baselineDirectory', 'expectedProfileCount', 'stagedDiffApproved', 'checkConfiguration', 'schedulerConfigMapFile', 'waitFor',
@@ -60,7 +60,7 @@ def load(path, source):
             raise ValueError(field + ' must be boolean')
     positive(recipe.get('expectedRevision'), 'expectedRevision')
     positive(recipe.get('minFreeBytes'), 'minFreeBytes')
-    for field, default in (('readinessSeconds', 480), ('buildSeconds', 1800)):
+    for field, default in (('readinessSeconds', 480), ('upgradeSeconds', 900), ('buildSeconds', 1800)):
         recipe[field] = positive(recipe.get(field, default), field)
     positive(recipe.get('runtimeInspectionSeconds', 3600), 'runtimeInspectionSeconds')
     percent = recipe.get('maxDiskUsedPercent', 85)
@@ -332,7 +332,8 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             import runtime
             state['probeNodesPreflight'] = runtime.check_nodes(src, out, kube, run.run, 'preflight')
         config = acceptance.load_config(recipe['apiEnvironment'])
-        budget = 120 + recipe['readinessSeconds'] + 510 + len(recipe['images']) * recipe['buildSeconds'] + sum(x['seconds'] for steps in recipe['commands'].values() for x in steps)
+        upgrade_process_seconds = recipe['upgradeSeconds'] + 30
+        budget = 120 + recipe['readinessSeconds'] + upgrade_process_seconds + len(recipe['images']) * recipe['buildSeconds'] + sum(x['seconds'] for steps in recipe['commands'].values() for x in steps)
         budget += (recipe.get('runtimeInspectionSeconds', 3600) if recipe.get('runtimeDeclarations') else 0) + 60 * (len(recipe['apiChecks']) + 2)
         budget += 360 if recipe.get('checkConfiguration') else 0
         if not inspect:
@@ -447,7 +448,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         state['crdRetention'] = crd_retention(live, after, kube, run.run, out)
         run.run(kube + ['apply', '--dry-run=server', '-f', out / 'render-final.yaml'], 'server-dry-run.log')
         revision()
-        acceptance.preflight(config, 120 + recipe['readinessSeconds'] + 510 + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
+        acceptance.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
         for phase in ('quiesce', 'migrate'):
             stage(phase)
             commands(phase)
@@ -456,7 +457,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         revision()
         state['inflightPreUpgrade'] = inflight.check(kube, run.run, out, 'inflight-pre-upgrade')
         stage('upgrade')
-        run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, '--wait', '--timeout', '8m'], 'upgrade.log', timeout=510)
+        run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, '--wait', '--timeout', str(recipe['upgradeSeconds']) + 's'], 'upgrade.log', timeout=upgrade_process_seconds)
         stage('readiness')
         deadline = time.monotonic() + recipe['readinessSeconds']
         for resource in recipe['waitFor']:

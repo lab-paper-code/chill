@@ -71,6 +71,7 @@
 main의 관측에서 서버 Pod는 23:30:03Z Ready가 됐으나 첫 accept(23:30:09Z)는 transport 오류였고, TLS listener는 약 6–7분 뒤 열렸다. 당시 chart에 readinessProbe가 없었다. 별도 R18 조사에서 초기 catalog 검증은 329.015초/8,556 S3 GET을 사용했다. 동기 catalog refresh와 serving 초기화가 끝나야 listener가 열린다는 서버 소스와 일치한다.
 
 - chart: 기존 named port `https`에 **HTTPS `/healthz` readinessProbe**를 추가한다. 새 endpoint나 liveness restart는 만들지 않는다. `/readyz`는 observation health로 흔들릴 수 있어 사용하지 않는다.
+- Helm: probe가 초기화를 실제로 기다리므로 기존 고정 8분 대신 recipe `upgradeSeconds`(기본 900초)를 `--wait --timeout`에 사용한다. 프로세스 제한은 선택값+30초이며 양쪽 토큰 사전 예산도 같은 값을 반영한다. 큰 catalog에는 운영자가 더 긴 값을 지정할 수 있다. timeout 후 자동 재시도·failed release 숨기기는 하지 않는다.
 - runner: rollout·Pod 검사와 accept가 하나의 readiness deadline을 공유한다. connection refused/reset/timeout, TLS handshake EOF, HTTP 503 `CoverageWarming`은 남은 시간 안에서 GET 대기한다. coverage가 warming이면 profiles 다운로드를 반복하지 않는다.
 - TLS 인증서·프로토콜 오류, 401/403, 다른 503, 잘못된 JSON/source는 즉시 실패한다. 전체 오류를 삼키거나 배포 자체를 재시도하지 않는다.
 - 시도별 HTTP/body와 transport 종류·errno·대기 가능 여부를 보존한다. kubelet probe의 인증서 비검증과 runner의 CA/hostname 검증을 혼동하지 않는다.

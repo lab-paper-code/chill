@@ -67,6 +67,9 @@ if name=='helm':
    print(json.dumps(result))
  elif verb=='upgrade':
   if state.get('failUpgrade'):sys.exit(19)
+  duration=argument('--timeout');wait_seconds=int(duration[:-1])*{'s':1,'m':60}[duration[-1]]
+  if state.get('serverReadySeconds',0)>wait_seconds:
+   print('timed out waiting for server listener',file=sys.stderr);sys.exit(20)
   overlay=pathlib.Path(args[args.index('-f')+1])
   for i,arg in enumerate(args):
    if arg=='-f' and pathlib.Path(args[i+1]).name=='image-overlay.json':overlay=pathlib.Path(args[i+1])
@@ -221,6 +224,26 @@ class DeploymentCLI(unittest.TestCase):
         self.assertFalse((self.out / 'after/attempt-000/profiles.json').exists())
         self.assertEqual((self.out / 'after/attempt-001/profiles.http-status').read_text().strip(), '200')
         self.assertEqual(sum(path.endswith('/profiles') for path, _ in self.requests), 2)
+
+    def test_cold_listener_wait_budget_and_operator_override(self):
+        for label, cold_start, configured, success in (
+                ('default', 700, None, True),
+                ('larger-catalog', 1100, 1200, True),
+                ('explicit-short-budget', 700, 600, False)):
+            with self.subTest(label=label):
+                self.state(serverReadySeconds=cold_start)
+                if configured is None:
+                    self.recipe.pop('upgradeSeconds', None)
+                else:
+                    self.recipe['upgradeSeconds'] = configured
+                evidence = self.out / label
+                self.cli('--execute', '--evidence', str(evidence), expected=0 if success else 1)
+                if success:
+                    self.assertTrue(json.loads((evidence / 'state.json').read_text())['ready'])
+                    self.assertTrue(json.loads((evidence / 'after/acceptance.json').read_text())['passed'])
+                else:
+                    self.assertEqual(json.loads((evidence / 'failure.json').read_text())['stage'], 'upgrade')
+                    self.assertFalse((evidence / 'after/acceptance.json').exists())
 
     def test_inspect_drift_is_read_only_and_requires_exact_approval(self):
         self.state(chartDrift=True)

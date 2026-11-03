@@ -2,7 +2,7 @@
 
 - **증거 먼저:** 기존 `O=/home/genesis1/.cache/chill-assets/ops/pools-deploy` 기록과 라이브 값의 출처를 확인한다. 명령·실패 원형을 보존하며 관측과 추론을 구분한다.
 - **공용 잠금:** 배포/빌드는 `/tmp/chill-heavy.lock`의 배타 잠금을 공유한다. 점유 중이면 중단한다. 다른 운영자의 작업과 겹쳐 실행하지 않는다.
-- **시간 상한:** 배포 명령은 제한 시간 안에 종료한다. recipe의 `buildSeconds` 기본 1800초, Helm 8분(프로세스 제한 510초), `readinessSeconds` 기본 480초이며 각 사용자 명령에 양의 `seconds`를 명시한다. timeout의 stdout/stderr도 보존하고 실패 시 증거 경로를 보고한 뒤 멈춘다.
+- **시간 상한:** 배포 명령은 제한 시간 안에 종료한다. recipe의 `buildSeconds` 기본 1800초, `upgradeSeconds` 기본 900초(Helm `--wait --timeout`, 프로세스 제한은 선택값+30초), `readinessSeconds` 기본 480초이며 각 사용자 명령에 양의 `seconds`를 명시한다. 서버 초기화가 길어지면 운영자가 `upgradeSeconds`를 늘린다. timeout의 stdout/stderr도 보존하고 실패 시 증거 경로를 보고한 뒤 멈춘다.
 - **금지:** 강제 삭제, finalizer 제거, 자동 재시도, 암묵적인 reset/rollback 금지. 실패 후에는 부분 상태와 증거를 검토하고 새 recipe/새 증거 디렉터리로 명시적인 roll-forward만 수행한다.
 - **측정 progress 캡처:** CR 생성 직후 `python3 hack/measure/capture-progress.py --node NODE --measurement CR_NAME --output-dir /tmp/NEW --wait-for-pod 300 --capture-load`를 실행한다(또는 백그라운드 선실행 후 CR 생성). CR의 Workload 소유 Pod를 2초 간격으로 최대 300초 기다리고 첫 행부터 timestamped follow를 시작한 뒤 `READY`를 출력한다.
 
@@ -79,7 +79,7 @@ CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/evaluation/demo.py preflight --confi
 
 **시작 전 토큰 만료 검사:** E5 `CPO.start/run`과 demo prepare/start/run은 같은 `hack/evaluation/auth.py`를 사용한다. 예상 실행 시간은 남은 단계 초 합 + 각 단계별 timeboxes 합 + `tokenSafetyMarginSeconds`(생략 시 60초)이며 campaign 시작은 정적 기준선/제어요소 단계도 포함한다. ServiceAccount JWT의 `exp`를 읽어 남은 시간이 예산보다 짧으면 API 변경/부하 시작 전에 거부한다. 이는 수명 검사이며 서명/권한 검증을 대체하지 않는다. JWT 형식이 아니거나 exp가 없으면 기존 CA·Bearer·redirect 금지로 scheduler state를 GET하여 **HTTP 200 + `X-Token-Expires-At`의 timezone 포함 시각**을 대안 증거로 요구한다. 서버가 만료 시각을 제공하지 않으면 추측하거나 무기한 토큰으로 처리하지 않고 거부한다. 토큰 신규 발급·TokenReview POST는 하지 않는다.
 
-binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.json`에 검사 시각/만료 시각/남은 초/필요 초/출처만 기록한다(토큰 원문 미기록). 배포는 명시 이미지 빌드 예산, Helm 510초, readiness 예산, 사용자 phase 예산과 여유를 포함하여 사전 확인하고 변경 직전 다시 확인한다. 배포의 실제 고정 예산/증거 계약은 `hack/deploy/main.py`와 `acceptance.py`가 소유한다.
+binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.json`에 검사 시각/만료 시각/남은 초/필요 초/출처만 기록한다(토큰 원문 미기록). 배포는 명시 이미지 빌드 예산, 선택한 Helm `upgradeSeconds`+30초, readiness 예산, 사용자 phase 예산과 여유를 포함하여 사전 확인하고 변경 직전 다시 확인한다. 배포의 실제 고정 예산/증거 계약은 `hack/deploy/main.py`와 `acceptance.py`가 소유한다.
 
 로컬 회귀 확인(클러스터 접근/쓰기 없음): `python3 hack/evaluation/smoke_preflight.py`, 기존 전체 lifecycle 확인은 `python3 hack/evaluation/demo.py --self-check`, 배포 확인은 `python3 -B hack/deploy/test_deploy.py`와 `python3 -B hack/deploy/test_acceptance.py`다.
 
