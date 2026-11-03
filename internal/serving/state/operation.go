@@ -91,17 +91,15 @@ type Operation struct {
 }
 
 type OperationState struct {
-	At                  time.Time                   `json:"at"`
-	Node                serving.NodeReference       `json:"node"`
-	PowerMode           string                      `json:"powerMode"`
-	NodeMemoryBytes     uint64                      `json:"nodeMemoryBytes"`
-	NodeReadyTransition time.Time                   `json:"nodeReadyTransition,omitempty"`
-	Instances           []serving.InstanceState     `json:"instances"`
-	Native              map[string]native.State     `json:"native"`
-	Pods                []workloadobserver.Pod      `json:"pods"`
-	States              []string                    `json:"states"`
-	Reasons             []string                    `json:"reasons,omitempty"`
-	Routing             map[string]map[string]int32 `json:"routing,omitempty"`
+	At        time.Time                   `json:"at"`
+	Node      serving.NodeReference       `json:"node"`
+	PowerMode string                      `json:"powerMode"`
+	Instances []serving.InstanceState     `json:"instances"`
+	Native    map[string]native.State     `json:"native"`
+	Pods      []workloadobserver.Pod      `json:"pods"`
+	States    []string                    `json:"states"`
+	Reasons   []string                    `json:"reasons,omitempty"`
+	Routing   map[string]map[string]int32 `json:"routing,omitempty"`
 }
 
 type OperationStep struct {
@@ -173,12 +171,9 @@ func (r OperationResult) PreparationFailure(snapshot serving.SchedulerSnapshot) 
 		observation = &failure
 	}
 	observed := *observation
-	if observed.NodeReadyTransition.IsZero() {
-		observed.NodeReadyTransition = r.Before.NodeReadyTransition
-	}
 	wanted := r.Operation.Prepare.Instance
 	wanted.Allocation.MemoryBytes = r.Operation.Prepare.MemoryBytes
 	wanted.RuntimeImage = r.Preparation.RuntimeImage
 	wanted.RunnerCommand = r.Preparation.RunnerCommand
-	return serving.NewPreparationFailure(wanted, r.Before.NodeMemoryBytes, r.Preparation.PodUID, observed)
+	return serving.NewPreparationFailure(wanted, r.Preparation.PodUID, observed)
 }

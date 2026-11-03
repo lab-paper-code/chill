@@ -9,7 +9,8 @@ import (
 
 func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 	const unchanged = "unchanged"
-	for _, change := range []string{unchanged, "allocation", "profile-memory", "node-memory", "runtime-image", "warmup-arguments", "runner-command", "runner-flag", "runner-iterations"} {
+	const nodeMemoryDrift = "node-memory"
+	for _, change := range []string{unchanged, "allocation", "profile-memory", nodeMemoryDrift, "observation-time", "runtime-image", "warmup-arguments", "runner-command", "runner-flag", "runner-iterations"} {
 		t.Run(change, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			failedNode := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 10})
@@ -21,7 +22,7 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 			snapshot.Options = append(snapshot.Options, poolsOption(failed), poolsOption(other))
 			capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
 			nodeIndex := slices.IndexFunc(snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == failedNode })
-			fact := NewPreparationFailure(failed, snapshot.Nodes[nodeIndex].MemoryBytes, "oom-pod-uid",
+			fact := NewPreparationFailure(failed, "oom-pod-uid",
 				PreparationFailureObservation{Classification: PreparationDeterministic, ReasonKey: "process-exit:firstfloor:OOMKilled:137", Reason: "firstfloor: OOMKilled (exit 137)"})
 			snapshot.Actions = []Action{{ID: "failed-start", Kind: schedulerActionPrepare, Node: failedNode,
 				Status: "partial", To: schedulerState(failed), PreparationFailure: fact}}
@@ -35,8 +36,11 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 					profile.Batches[i].MemoryBytes++
 				}
 				failed.Profile = &profile
-			case "node-memory":
+			case nodeMemoryDrift:
 				snapshot.Nodes[nodeIndex].MemoryBytes++
+			case "observation-time":
+				snapshot.At = snapshot.At.Add(1)
+				snapshot.Nodes[nodeIndex].ObservedAt = snapshot.At
 			case "runtime-image":
 				failed.RuntimeImage = "runtime-after"
 			case "warmup-arguments":
@@ -57,23 +61,17 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 					p.PreparationFailure.PodUID == fact.PodUID && p.PreparationFailure.Allocation.MemoryBytes == fact.Allocation.MemoryBytes &&
 					p.PreparationFailure.Reason == fact.Reason
 			})
-			if excluded != (change == unchanged) {
+			blocked := change == unchanged || change == nodeMemoryDrift || change == "observation-time"
+			if excluded != blocked {
 				t.Fatalf("wrong exclusion for %s: %+v", change, plans)
 			}
 			if !slices.ContainsFunc(poolsPlans(decision, otherNode), func(p SchedulerNodePlan) bool { return p.Eligible }) {
 				t.Fatal("failed start froze another placement of the same workload")
 			}
-			if change == unchanged && (decision.Target == nil || poolsOn(*decision.Target, failedNode) || !poolsOn(*decision.Target, otherNode)) {
+			if blocked && (decision.Target == nil || poolsOn(*decision.Target, failedNode) || !poolsOn(*decision.Target, otherNode)) {
 				t.Fatalf("next decision retried failed placement instead of alternative: %+v", decision.Target)
 			}
-			if change == unchanged {
-				snapshot.Nodes[nodeIndex].ReadyTransition = snapshot.At
-				readyChanged := capacityDecideForTest(t, settings, snapshot, rows)
-				if !slices.ContainsFunc(poolsPlans(readyChanged, failedNode), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanPreparationFailed }) {
-					t.Fatal("a Node Ready transition erased a proven OOM without changing startup inputs")
-				}
-			}
-			if change != unchanged && !slices.ContainsFunc(plans, func(p SchedulerNodePlan) bool { return p.Eligible }) {
+			if !blocked && !slices.ContainsFunc(plans, func(p SchedulerNodePlan) bool { return p.Eligible }) {
 				t.Fatalf("changed evidence did not restore eligibility: %+v", plans)
 			}
 		})
@@ -88,10 +86,9 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 			wanted := poolsInstance(snapshot.Instances[0], "retry", node, "fixed", "w1")
 			snapshot.Options = append(snapshot.Options, poolsOption(wanted))
 			capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
-			memory := snapshot.Nodes[len(snapshot.Nodes)-1].MemoryBytes
 			observed := PreparationFailureObservation{Classification: classification, ReasonKey: "delivery:ErrImagePull", Reason: "image pull network timeout"}
 			first := Action{ID: "first-attempt", Kind: schedulerActionPrepare, Node: node, Status: schedulerActionFailed,
-				PreparationFailure: NewPreparationFailure(wanted, memory, "pod-one", observed)}
+				PreparationFailure: NewPreparationFailure(wanted, "pod-one", observed)}
 			snapshot.Actions = []Action{first}
 			rows := capacityRowsForTest(settings, snapshot, nil)
 			initial := capacityDecideForTest(t, settings, snapshot, rows)
@@ -101,7 +98,7 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 				t.Fatal("first transient/unknown observation prevented the next retry or lost its classification")
 			}
 			second := Action{ID: "second-attempt", Kind: schedulerActionPrepare, Node: node, Status: schedulerActionFailed,
-				PreparationFailure: NewPreparationFailure(wanted, memory, "pod-two", observed)}
+				PreparationFailure: NewPreparationFailure(wanted, "pod-two", observed)}
 			ObserveRepeatedPreparationFailure(&second, first)
 			snapshot.Actions = append(snapshot.Actions, second)
 			reproduced := capacityDecideForTest(t, settings, snapshot, rows)
@@ -116,12 +113,13 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 				t.Fatal("known transient stopped retrying, or unknown reproduction lost its promoted constraint/UID evidence")
 			}
 			if classification == PreparationUnknownTransient {
-				snapshot.Nodes[len(snapshot.Nodes)-1].ReadyTransition = snapshot.At
+				snapshot.Nodes[len(snapshot.Nodes)-1].MemoryBytes++
+				snapshot.At = snapshot.At.Add(1)
+				snapshot.Nodes[len(snapshot.Nodes)-1].ObservedAt = snapshot.At
 				recovered := capacityDecideForTest(t, settings, snapshot, rows)
-				if !slices.ContainsFunc(poolsPlans(recovered, node), func(p SchedulerNodePlan) bool { return p.Eligible }) {
-					t.Fatal("observed Node Ready recovery did not release an unknown promoted failure")
+				if !slices.ContainsFunc(poolsPlans(recovered, node), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanPreparationFailed }) {
+					t.Fatal("unrelated observation drift erased a reproduced unknown failure")
 				}
-				snapshot.Nodes[len(snapshot.Nodes)-1].ReadyTransition = observed.NodeReadyTransition
 			}
 			snapshot.Options[len(snapshot.Options)-1].Instance.RunnerCommand = []string{"runner", "--warmup-batch=1"}
 			changed := capacityDecideForTest(t, settings, snapshot, rows)
@@ -140,13 +138,13 @@ func TestTransientPreparationRepetitionEvidenceStaysBounded(t *testing.T) {
 	capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
 	observed := PreparationFailureObservation{Classification: PreparationTransient, ReasonKey: "delivery:ErrImagePull", Reason: "image pull network timeout"}
 	previous := Action{ID: "attempt-0000", Kind: schedulerActionPrepare, Node: node, Status: schedulerActionFailed,
-		PreparationFailure: NewPreparationFailure(wanted, snapshot.Nodes[len(snapshot.Nodes)-1].MemoryBytes, "pod-0000", observed)}
+		PreparationFailure: NewPreparationFailure(wanted, "pod-0000", observed)}
 	const repetitions = 1000
 	var sizeBound int
 	for repetition := 1; repetition <= repetitions; repetition++ {
 		current := previous
 		current.ID = fmt.Sprintf("attempt-%04d", repetition)
-		current.PreparationFailure = NewPreparationFailure(wanted, snapshot.Nodes[len(snapshot.Nodes)-1].MemoryBytes, fmt.Sprintf("pod-%04d", repetition), observed)
+		current.PreparationFailure = NewPreparationFailure(wanted, fmt.Sprintf("pod-%04d", repetition), observed)
 		ObserveRepeatedPreparationFailure(&current, previous)
 		fact := current.PreparationFailure
 		if fact.Classification != PreparationTransient || fact.RepeatCount != uint64(repetition) || fact.PreviousPodUID != previous.PreparationFailure.PodUID {

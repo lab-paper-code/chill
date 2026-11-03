@@ -1550,7 +1550,7 @@ func TestCapacityPreparationFailureFactExcludesPlacement(t *testing.T) {
 	}
 	snap.Actions = []Action{{ID: "prepare-lost", Kind: schedulerActionPrepare, Node: n2, Instance: "target-w1-" + add.Profile.ID + "-1",
 		From: "unloaded", To: schedulerState(add), Status: schedulerActionFailed, Reason: "completed effect lost"}}
-	snap.Actions[0].PreparationFailure = NewPreparationFailure(add, snap.Nodes[len(snap.Nodes)-1].MemoryBytes, "failed-pod",
+	snap.Actions[0].PreparationFailure = NewPreparationFailure(add, "failed-pod",
 		PreparationFailureObservation{Classification: PreparationDeterministic, ReasonKey: "process-exit:firstfloor:OOMKilled:137", Reason: "OOMKilled"})
 	d := capacityDecideForTest(t, s, snap, rows)
 	if d.Target == nil || poolsOn(*d.Target, n2) {

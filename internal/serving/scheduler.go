@@ -254,17 +254,16 @@ const (
 // SchedulerNode is one Node of the entire POOL. Measurement marks the
 // measurement POOL; Reasons name configuration the Node lacks.
 type SchedulerNode struct {
-	Node            NodeReference         `json:"node"`
-	PowerMode       string                `json:"powerMode"`
-	Ready           bool                  `json:"ready"`
-	ReadyTransition time.Time             `json:"readyTransition,omitempty"`
-	Measurement     bool                  `json:"measurement,omitempty"`
-	GPUUUIDs        []string              `json:"gpuUUIDs"`
-	MemoryBytes     uint64                `json:"memoryBytes"`
-	Reserved        SchedulerAllocation   `json:"reserved"`
-	NonServing      []SchedulerAllocation `json:"nonServing"`
-	ObservedAt      time.Time             `json:"observedAt"`
-	Reasons         []string              `json:"reasons,omitempty"`
+	Node        NodeReference         `json:"node"`
+	PowerMode   string                `json:"powerMode"`
+	Ready       bool                  `json:"ready"`
+	Measurement bool                  `json:"measurement,omitempty"`
+	GPUUUIDs    []string              `json:"gpuUUIDs"`
+	MemoryBytes uint64                `json:"memoryBytes"`
+	Reserved    SchedulerAllocation   `json:"reserved"`
+	NonServing  []SchedulerAllocation `json:"nonServing"`
+	ObservedAt  time.Time             `json:"observedAt"`
+	Reasons     []string              `json:"reasons,omitempty"`
 }
 
 type SchedulerInstance struct {

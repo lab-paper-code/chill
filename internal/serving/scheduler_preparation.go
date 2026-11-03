@@ -2,7 +2,6 @@ package serving
 
 import (
 	"slices"
-	"time"
 )
 
 const (
@@ -13,10 +12,9 @@ const (
 )
 
 type PreparationFailureObservation struct {
-	Classification      string    `json:"classification"`
-	ReasonKey           string    `json:"reasonKey"`
-	Reason              string    `json:"reason"`
-	NodeReadyTransition time.Time `json:"nodeReadyTransition,omitempty"`
+	Classification string `json:"classification"`
+	ReasonKey      string `json:"reasonKey"`
+	Reason         string `json:"reason"`
 }
 
 // PreparationFailure is an observed inability to start one placement, not a
@@ -27,20 +25,19 @@ type PreparationFailure struct {
 	RunnerCommand      []string            `json:"runnerCommand,omitempty"`
 	Allocation         SchedulerAllocation `json:"allocation"`
 	ProfileMemoryBytes uint64              `json:"profileMemoryBytes"`
-	NodeMemoryBytes    uint64              `json:"nodeMemoryBytes"`
 	PodUID             string              `json:"podUID"`
 	PreparationFailureObservation
 	RepeatCount    uint64 `json:"repeatCount,omitempty"`
 	PreviousPodUID string `json:"previousPodUID,omitempty"`
 }
 
-func NewPreparationFailure(i SchedulerInstance, nodeMemory uint64, podUID string, observation PreparationFailureObservation) *PreparationFailure {
-	if i.Profile == nil || nodeMemory == 0 {
+func NewPreparationFailure(i SchedulerInstance, podUID string, observation PreparationFailureObservation) *PreparationFailure {
+	if i.Profile == nil {
 		return nil
 	}
 	return &PreparationFailure{ProfileID: i.Profile.ID, RuntimeImage: i.RuntimeImage, Allocation: i.Allocation,
-		ProfileMemoryBytes: preparationProfileMemory(i.Profile), NodeMemoryBytes: nodeMemory,
-		PodUID: podUID, PreparationFailureObservation: observation, RunnerCommand: i.RunnerCommand}
+		ProfileMemoryBytes: preparationProfileMemory(i.Profile),
+		PodUID:             podUID, PreparationFailureObservation: observation, RunnerCommand: i.RunnerCommand}
 }
 
 func preparationProfileMemory(profile *Profile) uint64 {
@@ -51,17 +48,16 @@ func preparationProfileMemory(profile *Profile) uint64 {
 	return memory
 }
 
-// Matches compares Node name/UID (through node/instance/action), profile ID,
-// allocation bytes/GPU UUID, measured profile peak memory, Node allocatable
-// memory, actual execution image and complete rendered RunnerCommand argv.
-// NodeReady transitions release unknown/promoted environmental evidence, not
-// a proven physical OOM. Time, cleanup and a power round-trip are not new inputs.
+// Matches compares only inputs determining startup: Node name/UID (through
+// node/instance/action), profile ID, allocation limit/GPU UUID, measured profile
+// peak memory, actual image and complete rendered RunnerCommand argv.
+// Allocatable and observation/Ready timestamps can drift without changing a
+// container's limit or startup. They do not release even a promoted unknown;
+// known environmental failures remain retryable and are never promoted.
 func (f *PreparationFailure) Matches(node SchedulerNode, i SchedulerInstance) bool {
 	return f != nil && i.Profile != nil && i.Node == node.Node && f.ProfileID == i.Profile.ID &&
 		f.Allocation == i.Allocation && f.ProfileMemoryBytes == preparationProfileMemory(i.Profile) &&
-		f.NodeMemoryBytes == node.MemoryBytes && f.RuntimeImage == i.RuntimeImage &&
-		slices.Equal(f.RunnerCommand, i.RunnerCommand) &&
-		(f.Classification == PreparationDeterministic || f.NodeReadyTransition.Equal(node.ReadyTransition))
+		f.RuntimeImage == i.RuntimeImage && slices.Equal(f.RunnerCommand, i.RunnerCommand)
 }
 
 // PreparationFailurePresent retains retry evidence until comparable inputs
@@ -99,9 +95,8 @@ func PreparationFailureReproduces(current, previous Action) bool {
 	if f == nil || old == nil || current.ID == previous.ID || f.PodUID == old.PodUID ||
 		current.Node != previous.Node || f.Classification == PreparationDeterministic ||
 		f.ReasonKey != old.ReasonKey || f.ProfileID != old.ProfileID || f.Allocation != old.Allocation ||
-		f.ProfileMemoryBytes != old.ProfileMemoryBytes || f.NodeMemoryBytes != old.NodeMemoryBytes ||
-		f.RuntimeImage != old.RuntimeImage || !slices.Equal(f.RunnerCommand, old.RunnerCommand) ||
-		!f.NodeReadyTransition.Equal(old.NodeReadyTransition) {
+		f.ProfileMemoryBytes != old.ProfileMemoryBytes ||
+		f.RuntimeImage != old.RuntimeImage || !slices.Equal(f.RunnerCommand, old.RunnerCommand) {
 		return false
 	}
 	return f.Classification == old.Classification ||
