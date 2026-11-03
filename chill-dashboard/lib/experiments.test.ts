@@ -3,7 +3,7 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { campaignGroups, commitExperimentSelection, comparisonDirection, experimentSelection, frozenP95SLO, serviceDelta, alphaText, object, comparisonRows, difference, formatResult, ratio, relativeEnergy, resultMetric, stageRate, experimentRows, energyText, differentMeasurementRules, decisionRange, decisionIdentity, evidenceError, publishedText, type Experiment, type ExperimentStage } from "./experiments.ts"
-import { campaignScoreboard, campaignTradeoffs, stageHistoryLink, stageActivity, stageLoadLabel, stageLabel, definitionPolicy, definitionStage, definitionComparisons, definitionComparisonReason, decodeExperiment, decodeExperiments, historicalPublicationIDs, experimentOutcome, injectionRows } from "./experiments.ts"
+import { campaignScoreboard, campaignTradeoffs, stageHistoryLink, stageActivity, stageLabel, definitionPolicy, definitionStage, definitionComparisons, definitionComparisonReason, decodeExperiment, decodeExperiments, historicalPublicationIDs, experimentOutcome, injectionRows, type ExperimentHeatmapRow } from "./experiments.ts"
 import { publishedVerdict, selectedExperimentStage, experimentPath, stageEvidencePath, experimentHeatmap, experimentChartData, durationMismatch } from "./experiments.ts"
 import { comparisonValidity } from "./experiments.ts"
 import { experimentDifference } from "./experiments.ts"
@@ -120,7 +120,6 @@ test("past publications and malformed definition envelopes remain 미기록 inst
     assert.equal(run.definition,undefined)
     assert.equal(definitionPolicy(run.stages[0],run),"미기록")
     assert.equal(stageLabel(run.stages[0],run),`${run.stages[0].id} / 미기록`)
-    assert.equal(stageLoadLabel(run.stages[0],run),"미기록")
     assert.equal(alphaText(run.stages[0],run),"미기록")
     assert.equal(definitionComparisonReason(run),"미기록")
     assert.deepEqual(definitionComparisons(run),[])
@@ -245,9 +244,7 @@ test("declared ordered rates and alpha include zero without using offered counts
     object(scenario.spec).kappaRef={...evidenceRef,key:"frozen/kappa.json"}
     scenario.spec.parts=[{id:"idle",durationSeconds:10,rates:{camera:0}},{id:"steady",durationSeconds:30,rates:{camera:12.5}},{id:"ramp",durationSeconds:20,alpha:{camera:.7}},{id:"zero-alpha",durationSeconds:10,alpha:{camera:0}}]
   })
-  assert.equal(stageLoadLabel(run.stages[0],run),"idle: camera 0 req/s / steady: camera 12.5 req/s / ramp: camera α 0.7 / zero-alpha: camera α 0")
   assert.equal(alphaText(run.stages[0],run),"idle: 직접 요청률 · α 없음 / steady: 직접 요청률 · α 없음 / ramp: camera α 0.7 / zero-alpha: camera α 0")
-  assert.equal(stageLoadLabel({...run.stages[0],to:"invalid",kpis:{}},run),stageLoadLabel(run.stages[0],run))
 })
 
 test("target rate is duration-weighted declared direct rates, never observed offered divided by time",()=>{
@@ -348,7 +345,6 @@ test("list comparisons join local and historical KPI without definitions and do 
   assert.equal(pairs[1].control.id,historical.stages[0].id)
   assert.deepEqual(historicalPublicationIDs(run),[historical.id])
   assert.equal(definitionPolicy(run.stages[0],run),"미기록")
-  assert.equal(stageLoadLabel(run.stages[0],run),"미기록")
   assert.equal(comparisonValidity(pairs[0].chill,pairs[0].control,run,run).conditions.load,"미기록")
   assert.ok(experimentRows(run.stages[0]).every(row=>frozenP95SLO(row,run)===null))
   assert.match(definitionComparisonReason(run,[run]),/대상 게시 없음/)
@@ -1044,7 +1040,7 @@ test("R18: frozen load parts produce separate chart bars without repeating stage
 })
 
 test("R18: list hydration, solo measured values, SLO verdict and frozen metadata render real objects",()=>{
-  const run=definedRun([{...stage,id:"candidate",kpis:{wholePoolJoules:54776.5,measurementRules:{harnessCommit:"abc123"},requests:{camera:{workloadUID:"camera",offered:100,successNumerator:25,successDenominator:100,completedLatencyNS:{p95:1986480000,samples:25}}}}}])
+  const run=definedRun([{...stage,id:"candidate",kpis:{wholePoolJoules:54776.5,measurementRules:{harnessRepositoryCommit:"abc123"},requests:{camera:{workloadUID:"camera",offered:100,successNumerator:25,successDenominator:100,completedLatencyNS:{p95:1986480000,samples:25}}}}}])
   run.outcome={execution:{status:"Complete"},measurement:{verdict:"FAIL",reason:"SLOFailed"}}
   run.definition!.loadScenarios[0].spec.parts=[{id:"half",durationSeconds:180,rates:{camera:53.075340806062236}},{id:"high",durationSeconds:300,rates:{camera:106.15068161212447}}]
   const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
@@ -1065,10 +1061,54 @@ test("R18: list hydration, solo measured values, SLO verdict and frozen metadata
   assert.match(metadata,/half/)
   assert.match(metadata,/high/)
   assert.match(metadata,/53\.08/)
-  assert.match(metadata,/harnessCommit/)
+  assert.match(metadata,/실행기 소스 버전/)
   assert.match(metadata,/abc123/)
-  assert.match(metadata,/50/)
   const historic=renderToStaticMarkup(createElement(exports.ExperimentMetadata,{run:listed,stage:listed.stages[0]}))
   assert.match(historic,/미기록/)
   assert.doesNotMatch(historic,/자동 운영|53\.08/)
+})
+
+test("R18 review: frozen rules render Korean item/value/unit rows without policy or SLO duplication",()=>{
+  const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports={} as {ExperimentMetadata:ComponentType<{run:Experiment;stage:ExperimentStage}>}
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:require(name),exports)
+  const rules={harnessRepositoryCommit:"abc123",energyCoverage:object(stage.kpis.measurementRules).energyCoverage,evidenceSource:"api",gcMeaning:"runtime-metrics-delta"}
+  const run=definedRun([{...stage,id:"candidate",kpis:{measurementRules:rules,requests:{camera:{workloadUID:"camera",definitionID:"camera-v1"}}}}])
+  const markup=renderToStaticMarkup(createElement(exports.ExperimentMetadata,{run,stage:run.stages[0]}))
+  assert.match(markup,/<table aria-label="측정 규칙"/)
+  for(const label of ["항목","값","단위","실행기 소스 버전","전력 결손 비율 상한","단일 전력 공백 상한","근거 출처","GC 집계 방식"])assert.ok(markup.includes(label),label)
+  assert.match(markup,/전력 결손 비율 상한<\/th><td[^>]*>1<\/td><td[^>]*>%<\/td>/)
+  assert.match(markup,/단일 전력 공백 상한<\/th><td[^>]*>30<\/td><td[^>]*>s<\/td>/)
+  assert.match(markup,/abc123/)
+  assert.match(markup,/공개 API/)
+  assert.match(markup,/런타임 누적값 차이/)
+  assert.match(markup,/aria-label="서비스 식별자·정의"/)
+  assert.doesNotMatch(markup,/harnessRepositoryCommit|energyCoverage|maxGapFraction|runtime-metrics-delta|자동 운영|SLO/)
+  assert.deepEqual(run.stages[0].kpis.measurementRules,rules)
+  const missing=renderToStaticMarkup(createElement(exports.ExperimentMetadata,{run,stage:{...run.stages[0],kpis:{measurementRules:{energyCoverage:{maxGapFraction:0,maxSingleGapSeconds:null}}}}}))
+  assert.match(missing,/전력 결손 비율 상한<\/th><td[^>]*>0<\/td>/)
+  assert.match(missing,/단일 전력 공백 상한<\/th><td[^>]*>미기록<\/td>/)
+})
+
+test("R18 review: interval Sheet renders each stage policy and service SLO only once",()=>{
+  const require=createRequire(import.meta.url)
+  const load=(file:string,dependencies:Record<string,unknown>,extra="")=>{
+    const source=readFileSync(new URL(file,import.meta.url),"utf8")
+    const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+    const exports:Record<string,unknown>={}
+    new Function("require","exports",compiled+extra)((name:string)=>name in dependencies?dependencies[name]:require(name),exports)
+    return exports
+  }
+  const element=(tag:string)=>(props:Record<string,unknown>)=>createElement(tag,{},props.children as never)
+  const shared={"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{},"@/components/ui/button":{Button:element("button")},"next/link":{__esModule:true,default:element("a")}}
+  const conclusion=load("../features/experiments-conclusion.tsx",shared)
+  const features=load("../features/experiments.tsx",{...shared,"next/navigation":{},"lucide-react":{},"recharts":{},"@/components/read-region":{SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{},"@/components/ui/sheet":Object.fromEntries(["Sheet","SheetContent","SheetHeader","SheetTitle"].map(name=>[name,element("div")])),"@/features/experiments-conclusion":conclusion,"@/features/scheduler-evidence":{SchedulerIntervalEvents:()=>null},"@/features/evaluation-request":{}},"\nexports.IntervalDrawer=IntervalDrawer;")
+  const run=definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{workloadUID:"camera",offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}}])
+  const Drawer=features.IntervalDrawer as ComponentType<{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow;service:string;onClose:()=>void;restoreFocus:()=>void}>
+  const markup=renderToStaticMarkup(createElement(Drawer,{run,runs:[run],row:experimentHeatmap(run)[0],service:"",onClose:()=>{},restoreFocus:()=>{}}))
+  assert.equal((markup.match(/자동 운영/g)??[]).length,1)
+  const sloCells=[...markup.matchAll(/<td data-label="SLO \(ms\)"[^>]*>([^<]+)<\/td>/g)].map(match=>match[1])
+  assert.deepEqual(sloCells,[measurementHelpers.formatMeasurementNumber(50,"ms")])
+  assert.match(markup,/서비스 식별자·정의/)
 })

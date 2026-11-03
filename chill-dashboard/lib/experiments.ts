@@ -413,7 +413,3 @@ export function stageLoadParts(stage:ExperimentStage,run:Experiment) {
   const spec=definitionStage(run,stage)
   return run.definition?.loadScenarios.find(s=>s.uid===spec?.loadScenarioRef.uid)?.spec.parts??[]
 }
-export function stageLoadLabel(stage:ExperimentStage,run:Experiment):string {
-  const parts=stageLoadParts(stage,run)
-  return parts.length?parts.map(part=>`${part.id}: ${Object.entries(part.rates??part.alpha??{}).map(([name,value])=>`${name} ${part.rates?`${value.toLocaleString("ko-KR",{maximumFractionDigits:2})} req/s`:`α ${value}`}`).join(", ")}`).join(" / "):"미기록"
-}
