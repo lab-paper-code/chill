@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -37,9 +38,9 @@ import (
 
 func withSchedulerEstimateFixture(settings serving.SchedulerSettings) serving.SchedulerSettings {
 	settings.DefaultOperationCost = map[string]serving.OperationCostValue{
-		operationPrepare: {Seconds: 852, Joules: 36371},
-		operationRemove:  {Seconds: 13, Joules: 1014},
-		operationPower:   {Seconds: 166, Joules: 2229},
+		servingstate.OperationPrepare: {Seconds: 852, Joules: 36371},
+		servingstate.OperationRemove:  {Seconds: 13, Joules: 1014},
+		servingstate.OperationPower:   {Seconds: 166, Joules: 2229},
 	}
 	settings.DefaultIdlePower = &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8}
 	return settings
@@ -302,7 +303,7 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 		t.Fatal(err)
 	}
 	installTestTransition(controller, &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: controller.State().Snapshot.Nodes,
-		Routing: map[string]map[string]int32{}, Actions: []serving.Action{{ID: "unfinished-route", Kind: operationRoute, Status: "planned"}}})
+		Routing: map[string]map[string]int32{}, Actions: []serving.Action{{ID: "unfinished-route", Kind: servingstate.OperationRoute, Status: "planned"}}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var publishedAt time.Time
@@ -457,7 +458,7 @@ func TestSchedulerCaptureDoesNotRequireOnlineCPUInventory(t *testing.T) {
 func TestScheduledPowerRequestNamesTheMode(t *testing.T) {
 	node := serving.NodeReference{Name: "jetson", UID: "jetson-uid"}
 	power := map[string]time.Duration{"jetson-uid/eco": 30 * time.Second}
-	action := serving.Action{ID: "lower", Kind: operationPower, Node: node, To: "eco"}
+	action := serving.Action{ID: "lower", Kind: servingstate.OperationPower, Node: node, To: "eco"}
 	if op := scheduledOperation(action, &serving.SchedulerCandidate{}, SchedulerControllerConfig{}, power, nil); op.PowerMode != "eco" || op.MaxActuationDuration != 30*time.Second {
 		t.Fatalf("power request %+v", op)
 	}
@@ -473,8 +474,8 @@ func TestScheduledPowerRequestNamesTheMode(t *testing.T) {
 func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 	profile := &serving.Profile{ID: "profile", Condition: profilederivation.CurvePlanSpec{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 8}}}
 	wanted := serving.SchedulerInstance{ID: "target-w1-profile-1", WorkloadUID: "w1", Profile: profile, Weight: 1, MaxBatch: 1}
-	action := serving.Action{ID: "prepare", Kind: operationPrepare, Instance: wanted.ID}
-	config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{profile.ID: {}}}
+	action := serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, Instance: wanted.ID}
+	config := SchedulerControllerConfig{Preparations: map[string]servingstate.PrepareSpec{profile.ID: {}}}
 	workloads := []*serving.Definition{{Name: "tight", UID: "w1"}}
 	op := scheduledOperation(action, &serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{wanted}}, config, nil, workloads)
 	if op.Prepare == nil || op.Prepare.Owner == nil || *op.Prepare.Owner != (serving.WorkloadReference{Name: "tight", UID: "w1"}) {
@@ -497,7 +498,7 @@ func TestSchedulerLaunchReservesFixedAndNonFixedDAGs(t *testing.T) {
 		controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &reservationState{runs: map[string]*actionRun{}}}
 		// Completed actions are skipped, so launch starts no operation.
 		controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
-			{ID: "lower", Kind: operationPower, Fixed: fixed, Status: nativeOperationComplete},
+			{ID: "lower", Kind: servingstate.OperationPower, Fixed: fixed, Status: servingstate.NativeOperationComplete},
 		}}, SchedulerControllerConfig{})
 		if fixtureTarget(controller) == nil {
 			t.Fatalf("fixed=%v: missing owner reservation", fixed)
@@ -538,7 +539,7 @@ func TestRemoveRejectsPhysicalInstanceOnDifferentNodeBeforeMutation(t *testing.T
 				TypeMeta: meta.TypeMeta{Kind: "PodList", APIVersion: "v1"},
 				Items: []core.Pod{{
 					ObjectMeta: meta.ObjectMeta{Name: "other", Namespace: observer.config.Namespace,
-						UID: "pod-b", Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}},
+						UID: "pod-b", Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}},
 					Spec: core.PodSpec{NodeName: "b"},
 					Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{
 						Name: "firstfloor", ContainerID: "containerd://b",
@@ -569,7 +570,7 @@ func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	controller := &SchedulerController{reservationState: &reservationState{}, capacity: serving.NewCapacityTable(1, nil, nil), runtime: observer.runtime}
 	profile := &serving.Profile{ID: "profile"}
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
-	run := &actionRun{action: serving.Action{Kind: "prepare", Instance: "slot", Node: node}, result: &OperationResult{Status: "complete", Operation: Operation{Prepare: &PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot", Node: node, Profile: profile}}}}}
+	run := &actionRun{action: serving.Action{Kind: "prepare", Instance: "slot", Node: node}, result: &servingstate.OperationResult{Status: "complete", Operation: servingstate.Operation{Prepare: &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot", Node: node, Profile: profile}}}}}
 	if controller.actionEffectPresent(serving.SchedulerSnapshot{}, run) {
 		t.Fatal("history treated as current prepared effect")
 	}
@@ -635,7 +636,7 @@ func TestCaptureNodePodsAggregatesNonServingBudget(t *testing.T) {
 				pods.Items = append(pods.Items, core.Pod{Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Resources: core.ResourceRequirements{Requests: requests}}}}})
 			}
 			// An actual native instance is not part of the non-serving sum.
-			pods.Items = append(pods.Items, core.Pod{ObjectMeta: meta.ObjectMeta{UID: "native-pod", Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent}}, Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: firstfloorContainerName, Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse("2"), core.ResourceMemory: resource.MustParse("500")}}}}}, Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: firstfloorContainerName, ContainerID: "container"}}}})
+			pods.Items = append(pods.Items, core.Pod{ObjectMeta: meta.ObjectMeta{UID: "native-pod", Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}}, Spec: core.PodSpec{NodeName: node.Name, Containers: []core.Container{{Name: firstfloorContainerName, Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceCPU: resource.MustParse("2"), core.ResourceMemory: resource.MustParse("500")}}}}}, Status: core.PodStatus{ContainerStatuses: []core.ContainerStatus{{Name: firstfloorContainerName, ContainerID: "container"}}}})
 			physical := map[string]serving.InstanceState{"native-pod/container": {ID: "native-pod/container", Node: sn.Node, Profile: "profile", Native: &native.State{}}}
 			snapshot := serving.SchedulerSnapshot{At: at}
 			captureNodePods(&snapshot, &sn, node, pods, physical, map[string]*serving.Profile{"profile": {ID: "profile"}})
@@ -723,12 +724,12 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 			instance := serving.SchedulerInstance{
 				Node: node, Profile: &serving.Profile{MetricSource: profileSource},
 			}
-			meter := MeterDeclaration{ID: "wall-meter", Node: node, Scope: measurementWallScope, Source: source}
+			meter := MeterDeclaration{ID: "wall-meter", Node: node, Scope: servingstate.MeasurementWallScope, Source: source}
 			if test.mutate != nil {
 				test.mutate(&meter)
 			}
 			bindProfileMeter(&instance, []MeterDeclaration{meter})
-			if got := instance.IdleMeter == meter.ID && instance.IdleScope == measurementWallScope; got != test.binds {
+			if got := instance.IdleMeter == meter.ID && instance.IdleScope == servingstate.MeasurementWallScope; got != test.binds {
 				t.Fatalf("wall quantity binding = %v, want %v: %+v", got, test.binds, instance)
 			}
 			if instance.Profile.MetricSource.ThermalEndpoint != "http://thermal/metrics" ||
@@ -745,7 +746,7 @@ func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {
 	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
 	t0, window := time.Unix(1000, 0).UTC(), time.Minute
 	c.markOverloadPrepares(serving.SchedulerDecision{Keep: serving.SchedulerCandidate{Status: serving.SchedulerStatusOverload},
-		Target: &serving.SchedulerCandidate{Actions: []serving.Action{{Kind: operationPrepare, Instance: "slot-b"}}}})
+		Target: &serving.SchedulerCandidate{Actions: []serving.Action{{Kind: servingstate.OperationPrepare, Instance: "slot-b"}}}})
 	snapshot := func(at time.Time, routed ...string) serving.SchedulerSnapshot {
 		weights := map[string]int32{}
 		for _, id := range routed {
@@ -784,29 +785,29 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 	goal := serving.SchedulerCandidate{ID: "goal",
 		Nodes:     []serving.SchedulerNode{{Node: used, PowerMode: "fixed"}, {Node: idle, PowerMode: "eco"}},
 		Instances: []serving.SchedulerInstance{instance}, Routing: map[string]map[string]int32{"w": {"slot": 1000}},
-		Actions: []serving.Action{{ID: "route-goal", Kind: operationRoute, Status: "planned"}}}
+		Actions: []serving.Action{{ID: "route-goal", Kind: servingstate.OperationRoute, Status: "planned"}}}
 	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at, Reservations: []serving.SchedulerReservation{{Owner: goal.ID, Nodes: []serving.NodeReference{used}, WorkloadUIDs: []string{"w"}, Target: &goal}},
 		Nodes:     []serving.SchedulerNode{{Node: used, Ready: true, ObservedAt: at}, {Node: idle, Ready: true, ObservedAt: at}},
 		Baselines: []serving.NodeBaseline{{Node: used, PowerMode: "eco", Watts: 1}, {Node: idle, PowerMode: "eco", Watts: 1}},
 		Actions: []serving.Action{
-			{ID: "used-lowering", Node: used, Kind: operationPower, From: "boost", To: "eco", Fixed: true, Status: nativeOperationRunning},
-			{ID: "idle-lowering", Node: idle, Kind: operationPower, From: "boost", To: "eco", Fixed: true, Status: nativeOperationRunning},
+			{ID: "used-lowering", Node: used, Kind: servingstate.OperationPower, From: "boost", To: "eco", Fixed: true, Status: servingstate.NativeOperationRunning},
+			{ID: "idle-lowering", Node: idle, Kind: servingstate.OperationPower, From: "boost", To: "eco", Fixed: true, Status: servingstate.NativeOperationRunning},
 		}}
 	target := goal
 	target.Actions = append(slices.Clone(snapshot.Actions),
-		serving.Action{ID: "raise", Kind: operationPower, Node: used, DependsOn: []string{"used-lowering"}},
-		serving.Action{ID: "prepare", Kind: operationPrepare, Node: used, Instance: "slot", DependsOn: []string{"raise"}},
-		serving.Action{ID: "route", Kind: operationRoute, DependsOn: []string{"prepare"}})
+		serving.Action{ID: "raise", Kind: servingstate.OperationPower, Node: used, DependsOn: []string{"used-lowering"}},
+		serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, Node: used, Instance: "slot", DependsOn: []string{"raise"}},
+		serving.Action{ID: "route", Kind: servingstate.OperationRoute, DependsOn: []string{"prepare"}})
 	controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
 	var raise, prepare, route serving.Action
 	for _, a := range target.Actions {
 		controller.runs[a.ID] = &actionRun{action: a}
 		switch {
-		case a.Kind == operationPower && !a.Fixed && a.Node == used:
+		case a.Kind == servingstate.OperationPower && !a.Fixed && a.Node == used:
 			raise = a
-		case a.Kind == operationPrepare:
+		case a.Kind == servingstate.OperationPrepare:
 			prepare = a
-		case a.Kind == operationRoute:
+		case a.Kind == servingstate.OperationRoute:
 			route = a
 		}
 	}
@@ -816,16 +817,16 @@ func TestSchedulerRouteIgnoresUnusedCommonLowering(t *testing.T) {
 	if controller.dependenciesReady(raise, target) || controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
 		t.Fatal("used Node's unfinished lowering/raise/prepare chain was bypassed")
 	}
-	controller.runs["used-lowering"].action.Status = nativeOperationComplete
+	controller.runs["used-lowering"].action.Status = servingstate.NativeOperationComplete
 	if !controller.dependenciesReady(raise, target) || controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
 		t.Fatal("lowering must unlock only the used Node's raise")
 	}
-	controller.runs[raise.ID].action.Status = nativeOperationComplete
+	controller.runs[raise.ID].action.Status = servingstate.NativeOperationComplete
 	if !controller.dependenciesReady(prepare, target) || controller.dependenciesReady(route, target) {
 		t.Fatal("raise must unlock preparation, not routing")
 	}
-	controller.runs[prepare.ID].action.Status = nativeOperationComplete
-	if !controller.dependenciesReady(route, target) || controller.runs["idle-lowering"].action.Status != nativeOperationRunning {
+	controller.runs[prepare.ID].action.Status = servingstate.NativeOperationComplete
+	if !controller.dependenciesReady(route, target) || controller.runs["idle-lowering"].action.Status != servingstate.NativeOperationRunning {
 		t.Fatal("unused lowering blocked a prepared target's route or stopped running")
 	}
 }

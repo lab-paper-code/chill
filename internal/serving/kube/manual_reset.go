@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"maps"
 	"slices"
 	"strings"
@@ -26,13 +27,13 @@ type manualResetPlan struct {
 	instances []serving.SchedulerInstance
 }
 
-func (c *SchedulerController) manualResetOperationLocked(request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (Operation, error) {
+func (c *SchedulerController) manualResetOperationLocked(request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (servingstate.Operation, error) {
 	if strings.TrimSpace(request.Reason) == "" || request.WorkloadUID != "" || request.Node != (serving.NodeReference{}) || request.ProfileID != "" || request.Instance != "" || request.FixedBatchSize != 0 || request.MaxBatch != nil || request.Weights != nil {
-		return Operation{}, refused("InvalidInput", "reset requires a reason and only workloadUIDs or scope")
+		return servingstate.Operation{}, refused("InvalidInput", "reset requires a reason and only workloadUIDs or scope")
 	}
 	if (request.WorkloadUIDs != nil) == (request.Scope != "") || request.WorkloadUIDs != nil && len(request.WorkloadUIDs) == 0 ||
 		request.Scope != "" && request.Scope != nonAutonomousResetScope {
-		return Operation{}, refused("InvalidInput", "reset requires workloadUIDs or scope all-non-autonomous, exclusively")
+		return servingstate.Operation{}, refused("InvalidInput", "reset requires workloadUIDs or scope all-non-autonomous, exclusively")
 	}
 	uids := make([]string, len(request.WorkloadUIDs))
 	copy(uids, request.WorkloadUIDs)
@@ -46,15 +47,15 @@ func (c *SchedulerController) manualResetOperationLocked(request ManualOperation
 	slices.Sort(uids)
 	for index, uid := range uids {
 		if uid == "" || index > 0 && uid == uids[index-1] || !slices.ContainsFunc(snapshot.Workloads, func(d *serving.Definition) bool { return d != nil && d.UID == uid }) {
-			return Operation{}, refused("InvalidInput", "reset UIDs must be unique current Workload UIDs")
+			return servingstate.Operation{}, refused("InvalidInput", "reset UIDs must be unique current Workload UIDs")
 		}
 	}
-	return Operation{ID: "manual-reset:" + string(uuid.NewUUID()), Kind: operationReset, WorkloadUIDs: uids, Reason: request.Reason, ActorUsername: request.ActorUsername, ActorUID: request.ActorUID}, nil
+	return servingstate.Operation{ID: "manual-reset:" + string(uuid.NewUUID()), Kind: servingstate.OperationReset, WorkloadUIDs: uids, Reason: request.Reason, ActorUsername: request.ActorUsername, ActorUID: request.ActorUID}, nil
 }
 
 // Admission freezes the affected Nodes and refuses in-flight ownership instead
 // of overlapping a reset with an already executing route or Node operation.
-func (c *SchedulerController) planManualResetLocked(ctx context.Context, operation Operation) (manualResetPlan, error) {
+func (c *SchedulerController) planManualResetLocked(ctx context.Context, operation servingstate.Operation) (manualResetPlan, error) {
 	plan := manualResetPlan{}
 	owned, err := c.resetOwnedTargets(ctx, operation.WorkloadUIDs)
 	if err != nil {
@@ -98,7 +99,7 @@ func (c *reservationState) resetReservationOwnersLocked(scope resourceScope, adm
 		if !slices.Contains(owners, run.owner) {
 			continue
 		}
-		if run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel {
+		if run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel {
 			return nil, refused("OperationConflict", "resources are reserved by active owner "+run.owner)
 		}
 		if !run.reserved {
@@ -136,7 +137,7 @@ func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids [
 			continue
 		}
 		if slices.ContainsFunc(pods.Items, func(p core.Pod) bool {
-			return p.Spec.NodeName == node.Node.Name && p.Labels["app.kubernetes.io/component"] == servingInstanceComponent
+			return p.Spec.NodeName == node.Node.Name && p.Labels["app.kubernetes.io/component"] == servingstate.ServingInstanceComponent
 		}) {
 			continue
 		}
@@ -158,7 +159,7 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 	owned := []serving.SchedulerInstance{}
 	physical := c.runtime.Instances()
 	for _, pod := range pods.Items {
-		if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
+		if pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent {
 			continue
 		}
 		owner := workloadOwner(pod.OwnerReferences)
@@ -202,8 +203,8 @@ func (c *SchedulerController) resetOwnedTargets(ctx context.Context, uids []stri
 	return owned, nil
 }
 
-func (c *SchedulerController) resetState(ctx context.Context, plan manualResetPlan) (OperationState, error) {
-	state := OperationState{At: time.Now().UTC(), Instances: c.runtime.Instances(), Native: map[string]native.State{}}
+func (c *SchedulerController) resetState(ctx context.Context, plan manualResetPlan) (servingstate.OperationState, error) {
+	state := servingstate.OperationState{At: time.Now().UTC(), Instances: c.runtime.Instances(), Native: map[string]native.State{}}
 	state.Routing, _ = c.runtime.SchedulerRouting()
 	for _, node := range plan.nodes {
 		actual, err := c.operations.Capture(ctx, node)
@@ -223,7 +224,7 @@ func (c *SchedulerController) resetState(ctx context.Context, plan manualResetPl
 	return state, nil
 }
 
-func (c *SchedulerController) executeManualReset(ctx context.Context, operation Operation, config SchedulerControllerConfig, plan manualResetPlan, result *OperationResult) error {
+func (c *SchedulerController) executeManualReset(ctx context.Context, operation servingstate.Operation, config SchedulerControllerConfig, plan manualResetPlan, result *servingstate.OperationResult) error {
 	var err error
 	phases := []struct {
 		name string
@@ -235,7 +236,7 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 			}
 			return nil
 		}},
-		{"unroute", func() error { return c.resetRouting(ctx, operation, operationUnroute, result) }},
+		{"unroute", func() error { return c.resetRouting(ctx, operation, servingstate.OperationUnroute, result) }},
 		{"drain", func() error {
 			return c.operations.wait(ctx, func() (bool, error) {
 				for _, request := range c.runtime.SchedulerInputs(time.Now).Outstanding {
@@ -264,7 +265,7 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 				if !slices.Contains(plan.nodes, instance.Node) {
 					return refused("OperationConflict", "reset ownership moved outside the admitted Nodes")
 				}
-				outcome, err := c.operations.Execute(ctx, Operation{ID: operation.ID + "/remove/" + instance.PodUID, Kind: operationRemove, Node: instance.Node, PodUID: instance.PodUID, Instance: instance.ID})
+				outcome, err := c.operations.Execute(ctx, servingstate.Operation{ID: operation.ID + "/remove/" + instance.PodUID, Kind: servingstate.OperationRemove, Node: instance.Node, PodUID: instance.PodUID, Instance: instance.ID})
 				if result.DrainNative == nil {
 					result.DrainNative = map[string]native.State{}
 				}
@@ -276,11 +277,11 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 			}
 			return nil
 		}},
-		{"release", func() error { return c.resetRouting(ctx, operation, operationRelease, result) }},
+		{"release", func() error { return c.resetRouting(ctx, operation, servingstate.OperationRelease, result) }},
 		{"lower-power", func() error { return c.resetLowerNodes(ctx, plan.nodes, config, result) }},
 	}
 	for index, phase := range phases {
-		step := OperationStep{Name: phase.name, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}
+		step := servingstate.OperationStep{Name: phase.name, StartedAt: time.Now().UTC(), Status: servingstate.NativeOperationRunning}
 		step.Before, err = c.resetState(ctx, plan)
 		if index == 0 {
 			result.Before = step.Before
@@ -293,19 +294,19 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 		if err == nil {
 			err = ctx.Err()
 		}
-		result.effectsNotStarted = index == 0
+		result.EffectsNotStarted = index == 0
 		if err == nil {
 			err = phase.run()
 			var rejected *configurationNotApplied
-			result.effectsNotStarted = index == 0 && errors.As(err, &rejected)
+			result.EffectsNotStarted = index == 0 && errors.As(err, &rejected)
 		}
 		step.EndedAt = time.Now().UTC()
 		var observeErr error
 		step.Actual, observeErr = c.resetState(ctx, plan)
 		err = errors.Join(err, observeErr)
-		step.Status = nativeOperationComplete
+		step.Status = servingstate.NativeOperationComplete
 		if err != nil {
-			step.Status, step.Error = nativeOperationFailed, err.Error()
+			step.Status, step.Error = servingstate.NativeOperationFailed, err.Error()
 		}
 		result.Steps[stepIndex] = step
 		result.Actual = step.Actual
@@ -313,9 +314,9 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 			err = errors.Join(err, config.OnAction(*result))
 		}
 		if err != nil {
-			result.Status = nativeOperationFailed
+			result.Status = servingstate.NativeOperationFailed
 			if len(result.Steps) > 1 {
-				result.Status = nativeOperationPartial
+				result.Status = servingstate.NativeOperationPartial
 			}
 			return err
 		}
@@ -323,12 +324,12 @@ func (c *SchedulerController) executeManualReset(ctx context.Context, operation 
 	return nil
 }
 
-func (c *SchedulerController) resetRouting(ctx context.Context, root Operation, kind string, result *OperationResult) error {
+func (c *SchedulerController) resetRouting(ctx context.Context, root servingstate.Operation, kind string, result *servingstate.OperationResult) error {
 	for _, uid := range root.WorkloadUIDs {
 		c.mu.Lock()
 		config := c.config
 		c.mu.Unlock()
-		if kind == operationUnroute {
+		if kind == servingstate.OperationUnroute {
 			declared, active, err := c.resetRoutingPresent(ctx, uid, config)
 			if err != nil {
 				return err
@@ -347,7 +348,7 @@ func (c *SchedulerController) resetRouting(ctx context.Context, root Operation, 
 		if err != nil {
 			return err
 		}
-		operation := Operation{ID: target.ID, Kind: kind, WorkloadUID: uid, Reason: root.Reason, ActorUsername: root.ActorUsername, ActorUID: root.ActorUID, Target: &target}
+		operation := servingstate.Operation{ID: target.ID, Kind: kind, WorkloadUID: uid, Reason: root.Reason, ActorUsername: root.ActorUsername, ActorUID: root.ActorUID, Target: &target}
 		outcome, err := c.executeManualRouting(ctx, operation)
 		result.Operation.SourceConfigRV, result.Operation.StaticRouting = outcome.Operation.SourceConfigRV, outcome.Operation.StaticRouting
 		result.Progress = append(result.Progress, outcome.Progress...)
@@ -385,7 +386,7 @@ func (c *SchedulerController) resetRoutingPresent(ctx context.Context, uid strin
 	return declared, false, nil
 }
 
-func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []serving.NodeReference, config SchedulerControllerConfig, result *OperationResult) error {
+func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []serving.NodeReference, config SchedulerControllerConfig, result *servingstate.OperationResult) error {
 	var classes edge.DeviceClassList
 	if err := c.store.client.List(ctx, &classes); err != nil {
 		return err
@@ -403,7 +404,7 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 			return err
 		}
 		if slices.ContainsFunc(pods.Items, func(p core.Pod) bool {
-			return p.Spec.NodeName == node.Name && p.Labels["app.kubernetes.io/component"] == servingInstanceComponent
+			return p.Spec.NodeName == node.Name && p.Labels["app.kubernetes.io/component"] == servingstate.ServingInstanceComponent
 		}) {
 			result.Progress = append(result.Progress, node.Name+": power skipped; another serving Pod remains")
 			continue
@@ -432,7 +433,7 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 		if !supported {
 			return fmt.Errorf("Node %s has no actuation policy for lowest mode %s", node.Name, lowest)
 		}
-		outcome, err := c.operations.Execute(ctx, Operation{ID: result.Operation.ID + "/power/" + ref.UID, Kind: operationPower, Node: ref, PowerMode: lowest, MaxActuationDuration: duration})
+		outcome, err := c.operations.Execute(ctx, servingstate.Operation{ID: result.Operation.ID + "/power/" + ref.UID, Kind: servingstate.OperationPower, Node: ref, PowerMode: lowest, MaxActuationDuration: duration})
 		result.Progress = append(result.Progress, outcome.Progress...)
 		if err != nil {
 			return err

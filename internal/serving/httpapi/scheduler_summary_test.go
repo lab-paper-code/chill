@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -99,7 +100,7 @@ func TestSchedulerSummaryPoolReturnFacts(t *testing.T) {
 				{Status: "running"}, {Status: "cancel"}, {Status: "complete"}, {Status: "planned"},
 			},
 		},
-		Results: []servingkube.OperationResult{
+		Results: []servingstate.OperationResult{
 			{EndedAt: at.Add(-time.Second)}, {EndedAt: at}, {EndedAt: at.Add(-time.Minute)},
 		},
 	}

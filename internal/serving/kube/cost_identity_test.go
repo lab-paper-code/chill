@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
@@ -22,12 +23,12 @@ func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
 	profile.Condition.RuntimeFamily = "firstfloor"
 	profile.Condition.Backend = "ort-cpu"
 	profile.Condition.Artifact.ExecutionPath = catalogOccupancyPath
-	key, raw := costTestRecord(t, operationPrepare, identityTestMode, time.Now().UTC())
+	key, raw := costTestRecord(t, servingstate.OperationPrepare, identityTestMode, time.Now().UTC())
 	var record OperationMeasurement
 	if err := json.Unmarshal(raw, &record); err != nil {
 		t.Fatal(err)
 	}
-	record.Request.Operation.Prepare = &PrepareSpec{Instance: serving.SchedulerInstance{Profile: &profile}}
+	record.Request.Operation.Prepare = &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{Profile: &profile}}
 	raw, err := json.Marshal(record)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +61,7 @@ func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
 		t.Fatalf("baseline cells still use profile IDs: %+v", baselines)
 	}
 	power := view.Costs[0]
-	power.Kind = operationPower
+	power.Kind = servingstate.OperationPower
 	power.From = identityTestMode
 	power.To = lowMode
 	power.BeforeState = old.State

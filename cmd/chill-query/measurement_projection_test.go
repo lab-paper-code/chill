@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"strings"
 	"sync"
@@ -131,7 +132,7 @@ func (*operationProjectionStore) Delete(context.Context, evidencestore.ObjectLoc
 
 func operationProjectionService(t *testing.T) (*measurementService, *operationProjectionStore) {
 	t.Helper()
-	operation := servingkube.Operation{
+	operation := servingstate.Operation{
 		ID:   "cost-uid.0.prepare",
 		Kind: "prepare",
 		Node: serving.NodeReference{Name: "node", UID: "node-uid"},
@@ -156,7 +157,7 @@ func operationProjectionService(t *testing.T) (*measurementService, *operationPr
 		SchemaVersion: servingkube.OperationMeasurementSchema,
 		Verdict:       string(api.MeasurementPhaseFailed), Reason: "original-step-reason",
 		Request: servingkube.MeasurementRequest{Operation: operation, Store: "evidence"},
-		Result: servingkube.OperationResult{
+		Result: servingstate.OperationResult{
 			Operation: operation,
 			StartedAt: start,
 			EndedAt:   start.Add(123456789 * time.Nanosecond),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"strings"
 
@@ -102,7 +103,7 @@ func projectOperationStep(cr edge.OperationCostMeasurement, index int, store str
 		p.DurationNanos = &duration
 	}
 	switch record.Verdict {
-	case measurementAccepted:
+	case servingstate.MeasurementAccepted:
 		var err error
 		p.WallJoules, err = acceptedOperationStepEnergy(record, evidencestore.ObjectIdentity{Store: store, Key: saved.Key})
 		if err != nil {
@@ -117,7 +118,7 @@ func projectOperationStep(cr edge.OperationCostMeasurement, index int, store str
 	return p, nil
 }
 
-func emptyOperationResult(result *OperationResult) bool {
+func emptyOperationResult(result *servingstate.OperationResult) bool {
 	return result.Operation.ID == "" && result.Operation.Kind == "" && result.Operation.Node.Name == "" && result.Operation.Node.UID == "" && result.StartedAt.IsZero() && result.EndedAt.IsZero() && result.Status == ""
 }
 
@@ -128,7 +129,7 @@ func acceptedOperationStepEnergy(record OperationMeasurement, ref evidencestore.
 	if err := validateRetainedMeasurement(record, ref); err != nil {
 		return nil, err
 	}
-	if record.Request.Operation.Kind == operationIdle {
+	if record.Request.Operation.Kind == servingstate.OperationIdle {
 		if _, err := idleMeasurementBaseline(record, ref); err != nil {
 			return nil, err
 		}

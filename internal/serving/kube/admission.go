@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
 	"time"
@@ -123,7 +124,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 		return err
 	}
 	pods, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).List(ctx, meta.ListOptions{
-		LabelSelector: "app.kubernetes.io/component=" + servingInstanceComponent,
+		LabelSelector: "app.kubernetes.io/component=" + servingstate.ServingInstanceComponent,
 	})
 	if err != nil {
 		return err
@@ -195,7 +196,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			continue
 		}
 		transition, _ := root.object.(*edge.PowerModeTransitionCost)
-		var runner PrepareSpec
+		var runner servingstate.PrepareSpec
 		if transition != nil {
 			if runner, reason = c.runnerPreparation(transition, node, classes.Items, config); reason != "" {
 				errs = append(errs, c.annotate(ctx, root.object, profilingrun.AdmissionAnnotation, profilingrun.RefusedAdmission(reason, "")))
@@ -210,7 +211,7 @@ func (c *SchedulerController) Admit(ctx context.Context) error {
 			errs = append(errs, err)
 			c.mu.Lock()
 			lease := c.runs[measurementLeaseKind+"/"+string(root.object.GetUID())]
-			lease.action.Status = nativeOperationFailed
+			lease.action.Status = servingstate.NativeOperationFailed
 			lease.result.EndedAt, lease.result.Error = time.Now(), err.Error()
 			c.mu.Unlock()
 			continue
@@ -345,7 +346,7 @@ func servingPodsOn(pods []core.Pod, node string) []string {
 	for i := range pods {
 		p := &pods[i]
 		if p.Spec.NodeName == node && p.Status.Phase != core.PodSucceeded && p.Status.Phase != core.PodFailed &&
-			p.Labels["app.kubernetes.io/component"] == servingInstanceComponent {
+			p.Labels["app.kubernetes.io/component"] == servingstate.ServingInstanceComponent {
 			names = append(names, p.Namespace+"/"+p.Name)
 		}
 	}
@@ -387,8 +388,8 @@ func (c *SchedulerController) setMeasurementTaint(ctx context.Context, node *cor
 // startHandBack registers the hand-back of the Node as its run.
 func (c *SchedulerController) startHandBack(node *core.Node, holder string, root *measurementRoot, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	operation := Operation{ID: handBackKind + ":" + node.Name + ":" + holder, Kind: handBackKind, Node: ref, Holder: holder}
-	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
+	operation := servingstate.Operation{ID: handBackKind + ":" + node.Name + ":" + holder, Kind: handBackKind, Node: ref, Holder: holder}
+	c.startNodeRun(operation, config, func(ctx context.Context, result *servingstate.OperationResult) error {
 		return c.handBack(ctx, ref, holder, root, root == nil, result)
 	})
 }
@@ -396,18 +397,18 @@ func (c *SchedulerController) startHandBack(node *core.Node, holder string, root
 // startNodeRun registers a run on the Node and executes it outside the locks.
 // Callers hold tickMu, so Tick and Admit see the run before they look again.
 // The returned result is final once done is closed.
-func (c *SchedulerController) startNodeRun(operation Operation, config SchedulerControllerConfig, body func(context.Context, *OperationResult) error) (<-chan struct{}, *OperationResult) {
+func (c *SchedulerController) startNodeRun(operation servingstate.Operation, config SchedulerControllerConfig, body func(context.Context, *servingstate.OperationResult) error) (<-chan struct{}, *servingstate.OperationResult) {
 	done := make(chan struct{})
 	started := time.Now()
-	result := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: nativeOperationRunning}
+	result := servingstate.OperationResult{Operation: operation, StartedAt: started.UTC(), Status: servingstate.NativeOperationRunning}
 	runCtx, cancel := context.WithCancel(c.ctx)
 	initial := result
 	kind := operation.Kind
 	switch kind {
-	case operationUnroute, operationRelease, operationReset:
-		kind = operationRoute
+	case servingstate.OperationUnroute, servingstate.OperationRelease, servingstate.OperationReset:
+		kind = servingstate.OperationRoute
 	}
-	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: kind, Node: operation.Node, From: externalActionSource, Status: nativeOperationRunning}, result: &initial, cancel: cancel, started: started}
+	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: kind, Node: operation.Node, From: externalActionSource, Status: servingstate.NativeOperationRunning}, result: &initial, cancel: cancel, started: started}
 	if operation.Holder != "" {
 		run.owner = operation.Holder
 	}
@@ -415,7 +416,7 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 	if !c.reserveRun(operation.ID, run, operation) {
 		c.mu.Unlock()
 		cancel()
-		result.Status, result.Error = nativeOperationFailed, "OperationConflict: resources are reserved"
+		result.Status, result.Error = servingstate.NativeOperationFailed, "OperationConflict: resources are reserved"
 		result.EndedAt = time.Now().UTC()
 		close(done)
 		return done, &result
@@ -430,12 +431,12 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		if result.EndedAt.IsZero() {
 			result.EndedAt = time.Now().UTC()
 		}
-		if result.Status == nativeOperationRunning {
-			result.Status = nativeOperationComplete
+		if result.Status == servingstate.NativeOperationRunning {
+			result.Status = servingstate.NativeOperationComplete
 		}
 		if err != nil {
-			if result.Status == nativeOperationComplete {
-				result.Status = nativeOperationFailed
+			if result.Status == servingstate.NativeOperationComplete {
+				result.Status = servingstate.NativeOperationFailed
 			}
 			result.Error = err.Error()
 		}
@@ -445,15 +446,15 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 		if config.OnAction != nil {
 			if recordErr := config.OnAction(result); recordErr != nil {
 				result.Error = errors.Join(err, fmt.Errorf("record operation outcome: %w", recordErr)).Error()
-				if result.Status == nativeOperationComplete {
-					result.Status = nativeOperationPartial
+				if result.Status == servingstate.NativeOperationComplete {
+					result.Status = servingstate.NativeOperationPartial
 				}
 			}
 		}
 		c.mu.Lock()
 		run.result = &result
 		run.action.Status, run.action.Reason = result.Status, result.Error
-		if err == nil && result.Status == nativeOperationComplete || result.effectsNotStarted && !run.inheritedReservation {
+		if err == nil && result.Status == servingstate.NativeOperationComplete || result.EffectsNotStarted && !run.inheritedReservation {
 			run.reserved = false
 			if operation.Kind != runnerKind {
 				c.releaseOwnerLocked(run.owner)
@@ -474,7 +475,7 @@ func (c *SchedulerController) startNodeRun(operation Operation, config Scheduler
 //
 // interrupted is set when the measurement object vanished: it is recorded as
 // Interrupted.
-func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *OperationResult) error {
+func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeReference, holder string, root *measurementRoot, interrupted bool, result *servingstate.OperationResult) error {
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
@@ -541,7 +542,7 @@ func (c *SchedulerController) handBack(ctx context.Context, node serving.NodeRef
 // independent read-back, so a measurement that rebooted or failed hands back a
 // known mode. A Node without a requestable lowest mode (a Fixed actuator, no
 // unloaded baseline) skips the step.
-func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.Node, holder string, result *OperationResult) error {
+func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.Node, holder string, result *servingstate.OperationResult) error {
 	c.mu.Lock()
 	config := c.config
 	c.mu.Unlock()
@@ -567,7 +568,7 @@ func (c *SchedulerController) lowerMeasuredNode(ctx context.Context, node *core.
 // removal when the runtime observes the instance, otherwise by deleting the Pod.
 func (o *Operations) clearNode(ctx context.Context, node serving.NodeReference) error {
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{
-		LabelSelector: "app.kubernetes.io/component=" + servingInstanceComponent,
+		LabelSelector: "app.kubernetes.io/component=" + servingstate.ServingInstanceComponent,
 	})
 	if err != nil {
 		return err
@@ -597,9 +598,9 @@ func (o *Operations) clearNode(ctx context.Context, node serving.NodeReference) 
 	return nil
 }
 
-func (c *SchedulerController) measurementRootOperation(root measurementRoot, node *core.Node, nodes map[string]*core.Node, config SchedulerControllerConfig) Operation {
+func (c *SchedulerController) measurementRootOperation(root measurementRoot, node *core.Node, nodes map[string]*core.Node, config SchedulerControllerConfig) servingstate.Operation {
 	holder := string(root.object.GetUID())
-	operation := Operation{ID: measurementLeaseKind + "/" + holder, Kind: measurementLeaseKind, Holder: holder, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
+	operation := servingstate.Operation{ID: measurementLeaseKind + "/" + holder, Kind: measurementLeaseKind, Holder: holder, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
 	if occupancy, ok := root.object.(*edge.DispatchOccupancyMeasurement); ok {
 		for _, definition := range c.runtime.SchedulerInputs(time.Now).Workloads {
 			if definition.Name == occupancy.Spec.Workload {
@@ -621,6 +622,6 @@ func (c *SchedulerController) reserveMeasurementRoot(root measurementRoot, node 
 		return true
 	}
 	now := time.Now()
-	run := &actionRun{owner: operation.Holder, action: serving.Action{ID: operation.ID, Kind: measurementLeaseKind, Node: operation.Node, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, StartedAt: now, Status: nativeOperationRunning}, started: now}
+	run := &actionRun{owner: operation.Holder, action: serving.Action{ID: operation.ID, Kind: measurementLeaseKind, Node: operation.Node, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, StartedAt: now, Status: servingstate.NativeOperationRunning}, started: now}
 	return c.reserveRun(operation.ID, run, operation)
 }

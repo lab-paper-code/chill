@@ -79,6 +79,7 @@ components:
   serving-live: { in: internal/serving/live }
   serving-kube: { in: internal/serving/kube }
   serving-management: { in: internal/serving/management }
+  serving-state: { in: internal/serving/state }
   serving-measurement: { in: internal/serving/measurement }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
@@ -332,6 +333,7 @@ deps:
   serving-application:
     mayDependOn:
       - serving-core
+      - serving-state
       - serving-measurement
       - serving-kube
       - evidence-core
@@ -348,6 +350,7 @@ deps:
   serving-httpapi:
     mayDependOn:
       - serving-core
+      - serving-state
       - api
       - serving-kube
       - serving-live
@@ -370,6 +373,7 @@ deps:
       - profiler-evidence
       - query-api
       - serving-core
+      - serving-state
       - serving-kube
   serving-core:
     mayDependOn:
@@ -395,6 +399,14 @@ deps:
       - evidence-core
       - profile-derivation
 
+  serving-state:
+    mayDependOn:
+      - serving-core
+      - evidence-core
+      - evidence-kube
+      - firstfloor
+      - workload-core
+
   serving-kube:
     mayDependOn:
       - api
@@ -409,6 +421,7 @@ deps:
       - profiler-projection
       - profiling-run
       - serving-core
+      - serving-state
       - serving-firstfloor
       - firstfloor
       - evidence-kube

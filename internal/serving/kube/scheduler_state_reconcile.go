@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
 	"time"
@@ -61,7 +62,7 @@ func (c *SchedulerController) annotateHistory(s *serving.SchedulerSnapshot, wind
 	for key, until := range c.overloaded {
 		preparing := false
 		for _, r := range c.runs {
-			preparing = preparing || r.action.Kind == operationPrepare && r.action.Instance == key
+			preparing = preparing || r.action.Kind == servingstate.OperationPrepare && r.action.Instance == key
 		}
 		if until.IsZero() && !preparing {
 			delete(c.overloaded, key)
@@ -79,17 +80,17 @@ func (c *SchedulerController) markOverloadPrepares(decision serving.SchedulerDec
 		c.unrouted, c.overloaded = map[string]time.Time{}, map[string]time.Time{}
 	}
 	for _, a := range decision.Target.Actions {
-		if _, marked := c.overloaded[a.Instance]; a.Kind == operationPrepare && !marked {
+		if _, marked := c.overloaded[a.Instance]; a.Kind == servingstate.OperationPrepare && !marked {
 			c.overloaded[a.Instance] = time.Time{}
 		}
 	}
 }
 
 // reconcileSnapshot preserves each owner's frozen DAG and reservation independently.
-func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration) (serving.SchedulerSnapshot, []OperationResult) {
+func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration) (serving.SchedulerSnapshot, []servingstate.OperationResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	var lost []OperationResult
+	var lost []servingstate.OperationResult
 	settings := c.config.Settings
 	gap := !c.replacementObservedAt.IsZero() && (now.Before(c.replacementObservedAt) || now.Sub(c.replacementObservedAt) > settings.MaxObservationAge+settings.ControlInterval)
 	if gap {
@@ -106,9 +107,9 @@ func (c *SchedulerController) reconcileSnapshot(snapshot serving.SchedulerSnapsh
 	c.freezePreparingExecutorsLocked(snapshot)
 	lost = c.reconcileOwnersLocked(snapshot, now, gap)
 	cutoff := now.Add(-observationWindow)
-	c.state.Results = slices.DeleteFunc(c.state.Results, func(r OperationResult) bool { return r.EndedAt.Before(cutoff) })
+	c.state.Results = slices.DeleteFunc(c.state.Results, func(r servingstate.OperationResult) bool { return r.EndedAt.Before(cutoff) })
 	for id, run := range c.runs {
-		if !run.reserved && run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel && run.result != nil && run.result.EndedAt.Before(cutoff) && !c.runReferencedLocked(id) {
+		if !run.reserved && run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel && run.result != nil && run.result.EndedAt.Before(cutoff) && !c.runReferencedLocked(id) {
 			delete(c.runs, id)
 		}
 	}
@@ -122,7 +123,7 @@ func (c *SchedulerController) freezePreparingExecutorsLocked(snapshot serving.Sc
 	// API-confirmed RestartPolicyNever Pod identity permits one late container
 	// binding even after failure. Slot/name discovery is not creation evidence.
 	for _, run := range c.runs {
-		if (run.action.Kind != operationPrepare && run.action.Kind != operationResize) || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
+		if (run.action.Kind != servingstate.OperationPrepare && run.action.Kind != servingstate.OperationResize) || run.prepareIdentity != "" || run.result == nil || run.result.Operation.Prepare == nil {
 			continue
 		}
 		wanted := run.result.Operation.Prepare.Instance
@@ -154,16 +155,16 @@ func (c *SchedulerController) freezePreparingExecutorsLocked(snapshot serving.Sc
 	}
 }
 
-func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool) []OperationResult {
-	var lost []OperationResult
+func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool) []servingstate.OperationResult {
+	var lost []servingstate.OperationResult
 	for _, parent := range c.runs {
 		if parent.action.Kind != transitionRunKind || parent.result == nil {
 			continue
 		}
-		if parent.action.Status != nativeOperationRunning {
+		if parent.action.Status != servingstate.NativeOperationRunning {
 			// Adopt only the fresh physical-return/known-effect proof. Keep the
 			// failure receipt and each child's still-unconfirmed responsibility.
-			if parent.action.Status != nativeOperationCancel && parent.returnObserved {
+			if parent.action.Status != servingstate.NativeOperationCancel && parent.returnObserved {
 				parent.reserved = false
 			}
 			continue
@@ -172,13 +173,13 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 		failedEffects, failed := c.failTargetLocked(snapshot, target, now)
 		lost = append(lost, failedEffects...)
 		if failed {
-			parent.action.Status = nativeOperationFailed
-			parent.result.Status, parent.result.EndedAt = nativeOperationFailed, now
+			parent.action.Status = servingstate.NativeOperationFailed
+			parent.result.Status, parent.result.EndedAt = servingstate.NativeOperationFailed, now
 			continue
 		}
 		if c.ownerDAGCompleteLocked(parent) {
-			parent.action.Status = nativeOperationComplete
-			parent.result.Status, parent.result.EndedAt = nativeOperationComplete, now
+			parent.action.Status = servingstate.NativeOperationComplete
+			parent.result.Status, parent.result.EndedAt = servingstate.NativeOperationComplete, now
 			if !gap {
 				for _, r := range parent.replacements {
 					if slices.ContainsFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool {
@@ -200,25 +201,25 @@ func (c *SchedulerController) reconcileOwnersLocked(snapshot serving.SchedulerSn
 }
 
 // failTargetLocked checks only this owner's DAG; terminal receipts beat stale plans.
-func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time) ([]OperationResult, bool) {
-	var lost []OperationResult
+func (c *SchedulerController) failTargetLocked(snapshot serving.SchedulerSnapshot, goal *serving.SchedulerCandidate, now time.Time) ([]servingstate.OperationResult, bool) {
+	var lost []servingstate.OperationResult
 	failed := false
 	for _, desired := range goal.Actions {
 		if desired.From == readySubsetRoute || desired.From == externalActionSource {
 			continue
 		}
 		run := c.runs[desired.ID]
-		if run == nil || run.action.Status == nativeOperationRunning || run.action.Status == nativeOperationCancel || run.result == nil {
+		if run == nil || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || run.result == nil {
 			continue
 		}
 		// Fixed lowering is undone by the goal's own raise of the same Node.
-		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == nativeOperationComplete && !c.actionEffectPresent(snapshot, run) && !c.actionEffectUnknown(snapshot, run) {
+		if desired.RouteTarget == nil && !desired.Fixed && run.result.Status == servingstate.NativeOperationComplete && !c.actionEffectPresent(snapshot, run) && !c.actionEffectUnknown(snapshot, run) {
 			result := *run.result
-			result.Status, result.Error, result.EndedAt = nativeOperationFailed, "completed effect lost", now
-			run.result, run.action.Status, run.action.Reason = &result, nativeOperationFailed, result.Error
+			result.Status, result.Error, result.EndedAt = servingstate.NativeOperationFailed, "completed effect lost", now
+			run.result, run.action.Status, run.action.Reason = &result, servingstate.NativeOperationFailed, result.Error
 			lost = append(lost, result)
 		}
-		failed = failed || run.result.Status != nativeOperationComplete
+		failed = failed || run.result.Status != servingstate.NativeOperationComplete
 	}
 	return lost, failed
 }

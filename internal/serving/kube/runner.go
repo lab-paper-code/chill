@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -30,12 +31,12 @@ const (
 // runnerPreparation selects the runner of a transition-cost measurement: the
 // newest prepared profile measured on the Node with its ModelSpec, execution
 // path and first mode. A reason refuses the measurement.
-func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransitionCost, node *core.Node, classes []edge.DeviceClass, config SchedulerControllerConfig) (PrepareSpec, string) {
+func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransitionCost, node *core.Node, classes []edge.DeviceClass, config SchedulerControllerConfig) (servingstate.PrepareSpec, string) {
 	if transition.Spec.ServingContainer != firstfloorContainerName {
-		return PrepareSpec{}, refusedRunnerContainerUnsupported
+		return servingstate.PrepareSpec{}, refusedRunnerContainerUnsupported
 	}
 	if transition.Namespace != c.observer.config.Namespace {
-		return PrepareSpec{}, refusedRunnerNamespace
+		return servingstate.PrepareSpec{}, refusedRunnerNamespace
 	}
 	var best *serving.Profile
 	for _, p := range c.observer.Profiles() {
@@ -49,7 +50,7 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 		}
 	}
 	if best == nil {
-		return PrepareSpec{}, refusedRunnerProfileMissing
+		return servingstate.PrepareSpec{}, refusedRunnerProfileMissing
 	}
 	var class *edge.DeviceClass
 	for i := range classes {
@@ -59,7 +60,7 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 		}
 	}
 	if class == nil || confirmedPower(node, class, transition.Spec.Modes[0].PowerMode) != nil {
-		return PrepareSpec{}, refusedRunnerSourceStateMismatch
+		return servingstate.PrepareSpec{}, refusedRunnerSourceStateMismatch
 	}
 	spec := config.Preparations[best.ID]
 	sum := sha256.Sum256([]byte(transition.UID))
@@ -71,10 +72,10 @@ func (c *SchedulerController) runnerPreparation(transition *edge.PowerModeTransi
 // startRunner prepares the runner on the tainted Node and creates the Service
 // the measurement observes, then grants the measurement. A failure refuses it
 // and hands the Node back in the same run.
-func (c *SchedulerController) startRunner(node *core.Node, transition *edge.PowerModeTransitionCost, spec PrepareSpec, config SchedulerControllerConfig) {
+func (c *SchedulerController) startRunner(node *core.Node, transition *edge.PowerModeTransitionCost, spec servingstate.PrepareSpec, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
-	operation := Operation{ID: runnerKind + ":" + node.Name + ":" + string(transition.UID), Kind: runnerKind, Node: ref, Prepare: &spec, Holder: string(transition.UID)}
-	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
+	operation := servingstate.Operation{ID: runnerKind + ":" + node.Name + ":" + string(transition.UID), Kind: runnerKind, Node: ref, Prepare: &spec, Holder: string(transition.UID)}
+	c.startNodeRun(operation, config, func(ctx context.Context, result *servingstate.OperationResult) error {
 		err := c.prepareRunner(ctx, transition, ref, spec)
 		if err == nil {
 			result.Progress = append(result.Progress, "runner ready")
@@ -86,8 +87,8 @@ func (c *SchedulerController) startRunner(node *core.Node, transition *edge.Powe
 	})
 }
 
-func (c *SchedulerController) prepareRunner(ctx context.Context, transition *edge.PowerModeTransitionCost, node serving.NodeReference, spec PrepareSpec) error {
-	if _, err := c.measurement.Execute(ctx, Operation{ID: spec.Name, Kind: operationPrepare, Node: node, Prepare: &spec}); err != nil {
+func (c *SchedulerController) prepareRunner(ctx context.Context, transition *edge.PowerModeTransitionCost, node serving.NodeReference, spec servingstate.PrepareSpec) error {
+	if _, err := c.measurement.Execute(ctx, servingstate.Operation{ID: spec.Name, Kind: servingstate.OperationPrepare, Node: node, Prepare: &spec}); err != nil {
 		return err
 	}
 	pod, err := c.kube.CoreV1().Pods(c.observer.config.Namespace).Get(ctx, spec.Name, meta.GetOptions{})

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"path"
 	"slices"
 	"strings"
@@ -80,14 +81,14 @@ func DecodeManualOperation(raw json.RawMessage) (ManualOperation, error) {
 	}
 	allowed := []string{"kind", "workloadUID", "reason"}
 	switch request.Kind {
-	case operationPrepare:
+	case servingstate.OperationPrepare:
 		allowed = append(allowed, "profileID", "node", "fixedBatchSize", "maxBatch")
-	case operationRemove:
+	case servingstate.OperationRemove:
 		allowed = append(allowed, "node", "instance")
-	case operationRoute:
+	case servingstate.OperationRoute:
 		allowed = append(allowed, "weights")
-	case operationUnroute, operationRelease:
-	case operationReset:
+	case servingstate.OperationUnroute, servingstate.OperationRelease:
+	case servingstate.OperationReset:
 		allowed = []string{"kind", "workloadUIDs", "scope", "reason"}
 	default:
 		return request, &serving.Error{Code: "InvalidBody", Message: "kind must be prepare, remove, route, unroute, release or reset", Field: "kind"}
@@ -188,8 +189,8 @@ func (c *SchedulerController) measureOperation(ctx context.Context, config Sched
 
 // expectedPowerModeChanges is the number of power-mode changes a measured
 // operation makes itself: one for a power step into another mode, else none.
-func expectedPowerModeChanges(operation Operation, current string) int64 {
-	if operation.Kind == operationPower && operation.PowerMode != current {
+func expectedPowerModeChanges(operation servingstate.Operation, current string) int64 {
+	if operation.Kind == servingstate.OperationPower && operation.PowerMode != current {
 		return 1
 	}
 	return 0
@@ -286,14 +287,14 @@ func (c *SchedulerController) recordRestartedSequence(ctx context.Context, confi
 
 // ExecuteManual reserves admitted resources before executing outside tickMu.
 // Physical failures retain the OperationResult envelope and partial evidence.
-func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualOperation) (OperationResult, error) {
+func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualOperation) (servingstate.OperationResult, error) {
 	c.tickMu.Lock()
 	c.mu.Lock()
 	config, snapshot := c.config, c.state.Snapshot
 	c.mu.Unlock()
-	var operation Operation
+	var operation servingstate.Operation
 	var err error
-	if request.Kind == operationReset {
+	if request.Kind == servingstate.OperationReset {
 		// Structural/scope refusals need no physical discovery or watcher start.
 		snapshot.Workloads = c.runtime.SchedulerInputs(time.Now).Workloads
 		operation, err = c.manualResetOperationLocked(request, config, snapshot)
@@ -310,10 +311,10 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 	}
 	if err != nil {
 		c.tickMu.Unlock()
-		return OperationResult{}, err
+		return servingstate.OperationResult{}, err
 	}
 	plan := manualResetPlan{}
-	if operation.Kind == operationReset {
+	if operation.Kind == servingstate.OperationReset {
 		plan, err = c.planManualResetLocked(ctx, operation)
 		for _, node := range plan.nodes {
 			if err != nil {
@@ -323,18 +324,18 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 		}
 		if err != nil {
 			c.tickMu.Unlock()
-			return OperationResult{}, err
+			return servingstate.OperationResult{}, err
 		}
 		operation.Nodes = slices.Clone(plan.nodes)
 	}
-	done, outcome := c.startNodeRun(operation, config, func(runCtx context.Context, result *OperationResult) error {
+	done, outcome := c.startNodeRun(operation, config, func(runCtx context.Context, result *servingstate.OperationResult) error {
 		workCtx, cancel := context.WithCancel(runCtx)
 		stop := context.AfterFunc(ctx, cancel)
 		defer stop()
 		defer cancel()
 		if config.OnAction != nil {
 			if err := config.OnAction(*result); err != nil {
-				result.effectsNotStarted = true
+				result.EffectsNotStarted = true
 				return fmt.Errorf("record manual operation before physical effect: %w", err)
 			}
 		}
@@ -348,17 +349,17 @@ func (c *SchedulerController) ExecuteManual(ctx context.Context, request ManualO
 		}
 		return *outcome, nil
 	case <-ctx.Done():
-		return OperationResult{}, ctx.Err()
+		return servingstate.OperationResult{}, ctx.Err()
 	}
 }
 
-func (c *SchedulerController) executeManualOperation(ctx context.Context, operation Operation, config SchedulerControllerConfig, plan manualResetPlan, result *OperationResult) error {
+func (c *SchedulerController) executeManualOperation(ctx context.Context, operation servingstate.Operation, config SchedulerControllerConfig, plan manualResetPlan, result *servingstate.OperationResult) error {
 	startedAt := result.StartedAt
 	defer func() { result.StartedAt = startedAt }()
 	switch operation.Kind {
-	case operationReset:
+	case servingstate.OperationReset:
 		return c.executeManualReset(ctx, operation, config, plan, result)
-	case operationRoute, operationUnroute, operationRelease:
+	case servingstate.OperationRoute, servingstate.OperationUnroute, servingstate.OperationRelease:
 		outcome, err := c.executeManualRouting(ctx, operation)
 		*result = outcome
 		return err
@@ -369,51 +370,51 @@ func (c *SchedulerController) executeManualOperation(ctx context.Context, operat
 	}
 }
 
-func (c *SchedulerController) manualOperationLocked(ctx context.Context, request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (Operation, error) {
+func (c *SchedulerController) manualOperationLocked(ctx context.Context, request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot) (servingstate.Operation, error) {
 	switch request.Kind {
-	case operationRoute, operationUnroute, operationRelease:
+	case servingstate.OperationRoute, servingstate.OperationUnroute, servingstate.OperationRelease:
 		return c.manualRoutingOperationLocked(ctx, request, config, snapshot)
-	case operationPrepare, operationRemove:
+	case servingstate.OperationPrepare, servingstate.OperationRemove:
 	default:
-		return Operation{}, refused("InvalidInput", "unsupported manual operation kind")
+		return servingstate.Operation{}, refused("InvalidInput", "unsupported manual operation kind")
 	}
 	if strings.TrimSpace(request.Reason) == "" || request.Weights != nil || request.WorkloadUIDs != nil || request.Scope != "" {
-		return Operation{}, refused("InvalidInput", "manual instance operation requires a reason and only instance fields")
+		return servingstate.Operation{}, refused("InvalidInput", "manual instance operation requires a reason and only instance fields")
 	}
 	if !slices.ContainsFunc(snapshot.Workloads, func(d *serving.Definition) bool { return d != nil && d.UID == request.WorkloadUID }) {
-		return Operation{}, refused("InvalidInput", "workloadUID must name a current Workload")
+		return servingstate.Operation{}, refused("InvalidInput", "workloadUID must name a current Workload")
 	}
 	if slices.Contains(config.Settings.AutonomousWorkloads, request.WorkloadUID) {
-		return Operation{}, refused("OperationConflict", "the Workload is under autonomous control")
+		return servingstate.Operation{}, refused("OperationConflict", "the Workload is under autonomous control")
 	}
-	if err := c.authorize(Operation{Node: request.Node, WorkloadUID: request.WorkloadUID, Instance: request.Instance}); err != nil {
-		return Operation{}, err
+	if err := c.authorize(servingstate.Operation{Node: request.Node, WorkloadUID: request.WorkloadUID, Instance: request.Instance}); err != nil {
+		return servingstate.Operation{}, err
 	}
 	node, err := c.admitNodeLocked(ctx, request.Node)
 	if err != nil {
-		return Operation{}, err
+		return servingstate.Operation{}, err
 	}
-	operation := Operation{ID: "manual-" + request.Kind + ":" + string(uuid.NewUUID()), Kind: request.Kind, Node: request.Node,
+	operation := servingstate.Operation{ID: "manual-" + request.Kind + ":" + string(uuid.NewUUID()), Kind: request.Kind, Node: request.Node,
 		WorkloadUID: request.WorkloadUID, Reason: request.Reason, ActorUsername: request.ActorUsername, ActorUID: request.ActorUID}
-	if request.Kind == operationPrepare {
+	if request.Kind == servingstate.OperationPrepare {
 		spec, err := c.manualPreparationLocked(ctx, request, config, snapshot, node)
 		if err != nil {
-			return Operation{}, err
+			return servingstate.Operation{}, err
 		}
 		operation.Prepare = &spec
 	} else {
 		if err := manualRemovalAllowed(snapshot, request); err != nil {
-			return Operation{}, err
+			return servingstate.Operation{}, err
 		}
 		operation.Instance = request.Instance
 	}
 	action := serving.Action{Kind: operation.Kind, Node: operation.Node, Instance: operation.Instance}
 	if operation.Prepare != nil {
-		action.From, action.To = nativeStateUnloaded, serving.SchedulerInstanceState(operation.Prepare.Instance)
+		action.From, action.To = servingstate.NativeStateUnloaded, serving.SchedulerInstanceState(operation.Prepare.Instance)
 	} else {
 		for _, instance := range snapshot.Instances {
 			if instance.ID == operation.Instance {
-				action.From, action.To = serving.SchedulerInstanceState(instance), nativeStateUnloaded
+				action.From, action.To = serving.SchedulerInstanceState(instance), servingstate.NativeStateUnloaded
 			}
 		}
 	}
@@ -422,14 +423,14 @@ func (c *SchedulerController) manualOperationLocked(ctx context.Context, request
 	return operation, nil
 }
 
-func (c *SchedulerController) manualPreparationLocked(ctx context.Context, request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot, node *core.Node) (PrepareSpec, error) {
+func (c *SchedulerController) manualPreparationLocked(ctx context.Context, request ManualOperation, config SchedulerControllerConfig, snapshot serving.SchedulerSnapshot, node *core.Node) (servingstate.PrepareSpec, error) {
 	spec, ok := config.Preparations[request.ProfileID]
 	if !ok || spec.Instance.Node != request.Node || request.Instance != "" {
-		return PrepareSpec{}, refused("InvalidInput", "profileID must name a prepared profile of the Node")
+		return servingstate.PrepareSpec{}, refused("InvalidInput", "profileID must name a prepared profile of the Node")
 	}
 	if request.MaxBatch != nil {
 		if *request.MaxBatch <= 0 {
-			return PrepareSpec{}, refused("InvalidInput", "maxBatch must be a positive measured batch")
+			return servingstate.PrepareSpec{}, refused("InvalidInput", "maxBatch must be a positive measured batch")
 		}
 		spec.Config.Policy.MaxBatchSize, spec.Instance.MaxBatch = *request.MaxBatch, *request.MaxBatch
 	}
@@ -440,7 +441,7 @@ func (c *SchedulerController) manualPreparationLocked(ctx context.Context, reque
 		checked := spec.Config
 		checked.Policy.Batches = spec.Instance.Profile.NativeBundle().Batches
 		if err := native.ValidateConfig(&checked); err != nil {
-			return PrepareSpec{}, refused("InvalidInput", err.Error())
+			return servingstate.PrepareSpec{}, refused("InvalidInput", err.Error())
 		}
 	}
 	for _, d := range snapshot.Workloads {
@@ -450,14 +451,14 @@ func (c *SchedulerController) manualPreparationLocked(ctx context.Context, reque
 	}
 	index := slices.IndexFunc(snapshot.Nodes, func(n serving.SchedulerNode) bool { return n.Node == request.Node })
 	if index < 0 {
-		return PrepareSpec{}, refused("OperationConflict", "the Node is absent from the last snapshot")
+		return servingstate.PrepareSpec{}, refused("OperationConflict", "the Node is absent from the last snapshot")
 	}
 	pods, err := c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{})
 	if err != nil {
-		return PrepareSpec{}, err
+		return servingstate.PrepareSpec{}, err
 	}
 	if err = ValidatePreparationCapacity(c.observer.config.Namespace, node, pods, snapshot.Nodes[index], spec.Instance); err != nil {
-		return PrepareSpec{}, refused("OperationConflict", err.Error())
+		return servingstate.PrepareSpec{}, refused("OperationConflict", err.Error())
 	}
 	return spec, nil
 }

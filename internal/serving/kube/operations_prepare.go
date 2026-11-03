@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"slices"
 	"strconv"
@@ -24,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) (evidence *PreparationEvidence, err error) {
+func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.PrepareSpec) (evidence *servingstate.PreparationEvidence, err error) {
 	if err := ValidatePreparation(spec); err != nil {
 		return nil, err
 	}
@@ -57,7 +58,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) (evi
 		requests[host.AcceleratorResource] = resource.MustParse("1")
 		limits[host.AcceleratorResource] = resource.MustParse("1")
 	}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingInstanceComponent, profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: decisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
+	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent, profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole}, Annotations: map[string]string{ServingProfileAnnotation: p.ID, ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), ServingPolicyAnnotation: decisionID, ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{sourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
 		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: append([]string{`cp "$@" /chill-artifact/`, "--"}, p.Condition.Artifact.Files...), Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
 		{Name: "preprocessor", Image: p.Condition.Preprocessor.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", p.Condition.Preprocessor.Path}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}},
 		{Name: "profile", Image: desiredImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
@@ -94,7 +95,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec PrepareSpec) (evi
 		}
 		pod = existing
 	}
-	evidence = &PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID, Created: created}
+	evidence = &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID, Created: created}
 	err = o.observer.publishPreparedSource(pod, spec.Instance.Node)
 	if err != nil {
 		return evidence, err
@@ -137,7 +138,7 @@ func (o *Operations) prepareObserved(ctx context.Context, pod *core.Pod) (bool, 
 	return false, nil
 }
 
-func (o *Operations) ensurePreparationConfig(ctx context.Context, spec PrepareSpec, delivery []byte) (string, error) {
+func (o *Operations) ensurePreparationConfig(ctx context.Context, spec servingstate.PrepareSpec, delivery []byte) (string, error) {
 	raw, err := json.Marshal(spec.Config)
 	if err != nil {
 		return "", err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"reflect"
 	"slices"
@@ -84,7 +85,7 @@ func (e *CostEvidence) loadPowerCost(ctx context.Context, measurement *edge.Powe
 	}
 	evidence := powerEvidence{node: node, source: prepared.PowerSource}
 	for index, direction := range prepared.Directions {
-		cost := serving.OperationCost{ID: key.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: operationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, Reference: identity}
+		cost := serving.OperationCost{ID: key.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: servingstate.OperationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, Reference: identity}
 		for _, finalRef := range result.Directions[index].FinalEvidence {
 			if err := e.appendPowerTrial(ctx, finalRef, direction.FrozenContract, prepared.Policy, prepared.PowerSource, profiles, &cost); err != nil {
 				return powerEvidence{}, err

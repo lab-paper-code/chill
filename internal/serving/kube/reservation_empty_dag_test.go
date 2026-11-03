@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
@@ -12,16 +13,16 @@ import (
 // Raw deployB control-258: empty routes and unproved retirement never create
 // an owner. Pending prepare/power/resize still declare physical work.
 func TestEmptyRouteAdmissionAC38(t *testing.T) {
-	for _, kind := range []string{"", operationPrepare, operationPower, operationResize, operationStop} {
+	for _, kind := range []string{"", servingstate.OperationPrepare, servingstate.OperationPower, servingstate.OperationResize, servingstate.OperationStop} {
 		t.Run(kind, func(t *testing.T) {
 			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
-			route := serving.Action{ID: "empty-route", Kind: operationRoute}
+			route := serving.Action{ID: "empty-route", Kind: servingstate.OperationRoute}
 			target := serving.SchedulerCandidate{ID: "raw-empty", Actions: []serving.Action{route}}
 			if kind != "" {
 				target.Actions = append(target.Actions, serving.Action{ID: "waiting-duty", Kind: kind, DependsOn: []string{route.ID}})
 			}
 			c.launch(target, SchedulerControllerConfig{})
-			if kind == "" || kind == operationStop {
+			if kind == "" || kind == servingstate.OperationStop {
 				if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 					t.Fatal("empty route/unproved retirement acquired ownership")
 				}
@@ -38,7 +39,7 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 }
 
 func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
-	target := serving.SchedulerCandidate{ID: "empty-replan", Actions: []serving.Action{{ID: "empty-route", Kind: operationRoute}}}
+	target := serving.SchedulerCandidate{ID: "empty-replan", Actions: []serving.Action{{ID: "empty-route", Kind: servingstate.OperationRoute}}}
 	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
 	for range 2 {
 		c.launch(target, SchedulerControllerConfig{})
@@ -47,7 +48,7 @@ func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 			t.Fatal("empty declaration left a parent, child, or reservation")
 		}
 	}
-	target.Actions = append(target.Actions, serving.Action{ID: "prepare", Kind: operationPrepare, DependsOn: []string{"empty-route"}})
+	target.Actions = append(target.Actions, serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, DependsOn: []string{"empty-route"}})
 	c.launch(target, SchedulerControllerConfig{})
 	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["prepare"] != nil {
 		t.Fatal("new physical work was not admitted with its frozen dependency")
@@ -77,7 +78,7 @@ func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
 	}
 	target := serving.SchedulerCandidate{ID: "route-only-recovery", Instances: []serving.SchedulerInstance{a, b},
 		Routing: map[string]map[string]int32{uid: {a.ID: 500, b.ID: 500}},
-		Actions: []serving.Action{{ID: "route", Kind: operationRoute}}}
+		Actions: []serving.Action{{ID: "route", Kind: servingstate.OperationRoute}}}
 	c.state.Snapshot = snapshot
 	c.launch(target, c.config)
 	c.wg.Wait()
@@ -90,7 +91,7 @@ func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
 			subset = run
 		}
 	}
-	if subset == nil || subset.action.Status != nativeOperationComplete || subset.result.Actual.Routing[uid][b.ID] != 1000 ||
+	if subset == nil || subset.action.Status != servingstate.NativeOperationComplete || subset.result.Actual.Routing[uid][b.ID] != 1000 ||
 		subset.result.Actual.Routing[uid][a.ID] != 0 {
 		t.Fatalf("Ready survivor did not receive an acknowledged subset: %+v", subset)
 	}
@@ -102,12 +103,12 @@ func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 		instances := []serving.SchedulerInstance{{ID: "a", WorkloadUID: "w", Ready: ready > 0}, {ID: "b", WorkloadUID: "w", Ready: ready > 1}}
 		routing := map[string]map[string]int32{"w": {"a": 500, "b": 500}}
 		c.state.Snapshot = serving.SchedulerSnapshot{Instances: instances, Routing: routing}
-		target := serving.SchedulerCandidate{ID: "unchanged", Instances: instances, Routing: routing, Actions: []serving.Action{{ID: "noop", Kind: operationRoute}}}
+		target := serving.SchedulerCandidate{ID: "unchanged", Instances: instances, Routing: routing, Actions: []serving.Action{{ID: "noop", Kind: servingstate.OperationRoute}}}
 		c.launch(target, SchedulerControllerConfig{})
 		if len(c.runs) != 0 {
 			t.Fatalf("ready=%d: declaration-identical route acquired ownership", ready)
 		}
-		target.Actions = append(target.Actions, serving.Action{ID: "retire", Kind: operationStop, DependsOn: []string{"noop"}})
+		target.Actions = append(target.Actions, serving.Action{ID: "retire", Kind: servingstate.OperationStop, DependsOn: []string{"noop"}})
 		c.launch(target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute)
 		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
@@ -133,16 +134,16 @@ func TestStateReportsCurrentReservations(t *testing.T) {
 	at := time.Now().Add(-time.Minute).UTC()
 	run := &actionRun{
 		owner: "manual-reset:test", reserved: true,
-		action: serving.Action{ID: "reset", Status: nativeOperationRunning},
+		action: serving.Action{ID: "reset", Status: servingstate.NativeOperationRunning},
 		scope:  resourceScope{Nodes: []serving.NodeReference{{Name: "node"}}},
 	}
 	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{"reset": run}}}
 	c.state.Snapshot = serving.SchedulerSnapshot{At: at}
 	c.state.Snapshot.Reservations = c.reservationsLocked()
 	c.state.Decision.At = at
-	for _, status := range []string{nativeOperationRunning, nativeOperationPartial, nativeOperationComplete} {
+	for _, status := range []string{servingstate.NativeOperationRunning, servingstate.NativeOperationPartial, servingstate.NativeOperationComplete} {
 		run.action.Status = status
-		run.reserved = status != nativeOperationComplete
+		run.reserved = status != servingstate.NativeOperationComplete
 		state := c.State()
 		want := 1
 		if !run.reserved {

@@ -3,6 +3,7 @@ package kube
 import (
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -35,7 +36,7 @@ func ValidatePreparationCapacity(
 	for _, pod := range pods.Items {
 		if pod.Namespace == servingNamespace && pod.Spec.NodeName == node.Name &&
 			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed &&
-			pod.Labels["app.kubernetes.io/component"] == servingInstanceComponent {
+			pod.Labels["app.kubernetes.io/component"] == servingstate.ServingInstanceComponent {
 			return errors.New("preparation target already has an active serving Pod")
 		}
 	}

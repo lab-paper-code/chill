@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net"
 
 	core "k8s.io/api/core/v1"
@@ -28,7 +29,7 @@ func instanceService(pod *core.Pod) *core.Service {
 			Namespace: pod.Namespace,
 			Name:      instanceServicePrefix + string(pod.UID),
 			Labels: map[string]string{
-				"app.kubernetes.io/component": servingInstanceComponent,
+				"app.kubernetes.io/component": servingstate.ServingInstanceComponent,
 				instancePodUIDLabel:           string(pod.UID),
 				edgeMeshServiceProxyLabel:     "",
 			},

@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -41,7 +42,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 			instance.WorkloadUID = uid
 			goal := serving.SchedulerCandidate{ID: "completion-chain", Nodes: snapshot.Nodes,
 				Instances: []serving.SchedulerInstance{instance}, Routing: map[string]map[string]int32{uid: {instance.ID: 1000}},
-				Actions: []serving.Action{{ID: "first-route", Kind: operationRoute}, {ID: "second-route", Kind: operationRoute, DependsOn: []string{"first-route"}}}}
+				Actions: []serving.Action{{ID: "first-route", Kind: servingstate.OperationRoute}, {ID: "second-route", Kind: servingstate.OperationRoute, DependsOn: []string{"first-route"}}}}
 			c.runtime.EnableSchedulerRouting()
 			installTestTransition(c, &goal)
 			parent := c.runs[transitionRunKind+"/"+goal.ID]
@@ -59,7 +60,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 					t.Fatal("native ACK did not reach the response boundary")
 				}
 				c.mu.Lock()
-				parent.action.Status = nativeOperationCancel
+				parent.action.Status = servingstate.NativeOperationCancel
 				c.mu.Unlock()
 				close(releaseACK)
 			}
@@ -73,7 +74,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 			requireCompletedContinuationAction(t, first, "first route")
 			switch scenario {
 			case "cancel-owner":
-				parent.action.Status = nativeOperationCancel
+				parent.action.Status = servingstate.NativeOperationCancel
 			case "controls-off":
 				c.config.Settings.Controls.Routing = false
 			case "uid-off":
@@ -83,7 +84,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 			case "capture-failed":
 				cancel()
 			case "partial":
-				first.action.Status, first.result.Status = nativeOperationPartial, nativeOperationPartial
+				first.action.Status, first.result.Status = servingstate.NativeOperationPartial, servingstate.NativeOperationPartial
 			}
 			before := c.State().Decision
 			observedAt := c.replacementObservedAt
@@ -123,7 +124,7 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 
 func requireCompletedContinuationAction(t *testing.T, run *actionRun, message string) {
 	t.Helper()
-	if run == nil || run.action.Status != nativeOperationComplete {
+	if run == nil || run.action.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("%s: %+v", message, run)
 	}
 }

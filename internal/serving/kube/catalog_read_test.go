@@ -2,6 +2,7 @@ package kube
 
 import (
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func TestCatalogOccupancyProjectsOnlyExistingSchedulerSelection(t *testing.T) {
 		ProfileID:       "current",
 		Batch:           2,
 		PerRequestNanos: -5,
-		Verdict:         measurementAccepted,
+		Verdict:         servingstate.MeasurementAccepted,
 	}
 	stale := *record
 	stale.ProfileID = "retired"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"slices"
 	"strings"
@@ -236,7 +237,7 @@ func newResetHarness(t *testing.T) *resetHarness {
 }
 
 func (h *resetHarness) request() ManualOperation {
-	return ManualOperation{Kind: operationReset, WorkloadUIDs: []string{h.selectedUID}, Reason: "finish measured trial", ActorUsername: "operator", ActorUID: "operator-uid"}
+	return ManualOperation{Kind: servingstate.OperationReset, WorkloadUIDs: []string{h.selectedUID}, Reason: "finish measured trial", ActorUsername: "operator", ActorUID: "operator-uid"}
 }
 
 func (h *resetHarness) configuration(t *testing.T) (*core.ConfigMap, map[string]json.RawMessage) {
@@ -252,7 +253,7 @@ func (h *resetHarness) configuration(t *testing.T) (*core.ConfigMap, map[string]
 	return cm, document
 }
 
-func assertResetSteps(t *testing.T, result OperationResult, names ...string) {
+func assertResetSteps(t *testing.T, result servingstate.OperationResult, names ...string) {
 	t.Helper()
 	got := make([]string, len(result.Steps))
 	for i, step := range result.Steps {
@@ -264,7 +265,7 @@ func assertResetSteps(t *testing.T, result OperationResult, names ...string) {
 	if !slices.Equal(got, names) {
 		t.Fatalf("reset phases = %v, want %v", got, names)
 	}
-	if result.Operation.ID == "" || result.Operation.Kind != operationReset || result.StartedAt.IsZero() ||
+	if result.Operation.ID == "" || result.Operation.Kind != servingstate.OperationReset || result.StartedAt.IsZero() ||
 		result.EndedAt.Before(result.StartedAt) || result.Before.At.IsZero() || result.Actual.At.IsZero() {
 		t.Errorf("reset lost root operation envelope: %+v", result)
 	}
@@ -276,12 +277,12 @@ func TestResetTwiceCleansOnlyOwnedPhysicalInstancesAC33(t *testing.T) {
 	defer cancel()
 	_, beforeDocument := h.configuration(t)
 	first, err := h.controller.ExecuteManual(ctx, h.request())
-	if err != nil || first.Status != nativeOperationComplete || first.Error != "" {
+	if err != nil || first.Status != servingstate.NativeOperationComplete || first.Error != "" {
 		t.Fatalf("first reset failed: %+v err=%v", first, err)
 	}
 	assertResetSteps(t, first, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
 	for _, step := range first.Steps {
-		if step.Status != nativeOperationComplete || step.Error != "" {
+		if step.Status != servingstate.NativeOperationComplete || step.Error != "" {
 			t.Errorf("successful reset has unsuccessful phase: %+v", step)
 		}
 	}
@@ -342,7 +343,7 @@ func TestResetTwiceCleansOnlyOwnedPhysicalInstancesAC33(t *testing.T) {
 func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 	const preEffectRefusal = "pre-effect-refusal"
 	const transitionDirty = "transition-dirty"
-	for _, owner := range []string{nativeOperationFailed, nativeOperationPartial, nativeOperationRunning, nativeOperationCancel, "measurement", "outside-workload", "outside-node", "active-sibling", preEffectRefusal, transitionDirty} {
+	for _, owner := range []string{servingstate.NativeOperationFailed, servingstate.NativeOperationPartial, servingstate.NativeOperationRunning, servingstate.NativeOperationCancel, "measurement", "outside-workload", "outside-node", "active-sibling", preEffectRefusal, transitionDirty} {
 		t.Run(owner, func(t *testing.T) {
 			h := newResetHarness(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -363,14 +364,14 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 			oldID := "manual-route:retained-reset"
 			old := &actionRun{owner: oldID, reserved: true,
-				action: serving.Action{Kind: operationRoute, Status: nativeOperationFailed},
+				action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationFailed},
 				scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}, Pods: []string{string(h.owned.UID)},
 					Instances: []string{physicalID(h.owned.UID, firstfloorStatus(h.owned).ContainerID)}},
-				result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second), Status: nativeOperationFailed}}
+				result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second), Status: servingstate.NativeOperationFailed}}
 			switch owner {
-			case nativeOperationPartial:
-				old.action.Status, old.result.Status = nativeOperationPartial, nativeOperationPartial
-			case nativeOperationRunning, nativeOperationCancel:
+			case servingstate.NativeOperationPartial:
+				old.action.Status, old.result.Status = servingstate.NativeOperationPartial, servingstate.NativeOperationPartial
+			case servingstate.NativeOperationRunning, servingstate.NativeOperationCancel:
 				old.action.Status = owner
 			case "measurement":
 				old.action.Kind = measurementLeaseKind
@@ -379,7 +380,7 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 			case "outside-node":
 				old.scope.Nodes = append(old.scope.Nodes, serving.NodeReference{Name: "outside-reset", UID: "outside-reset-uid"})
 			case "active-sibling":
-				h.controller.runs["active-reset-sibling"] = &actionRun{owner: oldID, action: serving.Action{Status: nativeOperationRunning}}
+				h.controller.runs["active-reset-sibling"] = &actionRun{owner: oldID, action: serving.Action{Status: servingstate.NativeOperationRunning}}
 			case transitionDirty:
 				old.action.Kind = transitionRunKind
 				id := old.scope.Instances[0]
@@ -388,10 +389,10 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 				old.mayTouch = map[string]bool{id: true}
 			}
 			h.controller.runs[oldID] = old
-			admitted := owner == nativeOperationFailed || owner == nativeOperationPartial || owner == preEffectRefusal || owner == transitionDirty
+			admitted := owner == servingstate.NativeOperationFailed || owner == servingstate.NativeOperationPartial || owner == preEffectRefusal || owner == transitionDirty
 			seen := false
-			h.controller.config.OnAction = func(result OperationResult) error {
-				if result.Status != nativeOperationRunning || seen {
+			h.controller.config.OnAction = func(result servingstate.OperationResult) error {
+				if result.Status != servingstate.NativeOperationRunning || seen {
 					return nil
 				}
 				seen = true
@@ -403,7 +404,7 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 					t.Error("reset laundered inherited dirty responsibility")
 				}
 				h.controller.mu.Unlock()
-				if !transferred || h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) == nil {
+				if !transferred || h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) == nil {
 					t.Error("reset did not atomically inherit and retain the complete reservation")
 				}
 				if owner == preEffectRefusal {
@@ -432,12 +433,12 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 				t.Fatalf("terminal reservation blocked reset: %+v err=%v", result, err)
 			}
 			if owner == preEffectRefusal {
-				if result.Status != nativeOperationFailed || h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) == nil || h.updates != 0 {
+				if result.Status != servingstate.NativeOperationFailed || h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) == nil || h.updates != 0 {
 					t.Fatalf("pre-effect reset refusal lost inherited responsibility: %+v", result)
 				}
 				return
 			}
-			if result.Status != nativeOperationComplete || h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) != nil {
+			if result.Status != servingstate.NativeOperationComplete || h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) != nil {
 				t.Fatalf("completed reset did not return inherited reservation: %+v", result)
 			}
 			if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
@@ -452,7 +453,7 @@ func (h *resetHarness) assertAlreadyClean(t *testing.T, ctx context.Context, cm 
 	updates, podWrites := h.updates, h.api.podWrites
 	actionStart := len(h.kube.Actions())
 	second, err := h.controller.ExecuteManual(ctx, h.request())
-	if err != nil || second.Status != nativeOperationComplete || second.Error != "" {
+	if err != nil || second.Status != servingstate.NativeOperationComplete || second.Error != "" {
 		t.Fatalf("already-clean reset failed: %+v err=%v", second, err)
 	}
 	assertResetSteps(t, second, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
@@ -486,16 +487,16 @@ func TestResetExecutionFailureStopsWithoutRetryOrRollback(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			result, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || result.Error == "" || result.Status != nativeOperationFailed && result.Status != nativeOperationPartial {
+			if err != nil || result.Error == "" || result.Status != servingstate.NativeOperationFailed && result.Status != servingstate.NativeOperationPartial {
 				t.Fatalf("physical failure did not return failed root result: %+v err=%v", result, err)
 			}
 			index := slices.Index(phases, tc.phase)
 			assertResetSteps(t, result, phases[:index+1]...)
 			for i, step := range result.Steps {
-				if i < index && (step.Status != nativeOperationComplete || step.Error != "") {
+				if i < index && (step.Status != servingstate.NativeOperationComplete || step.Error != "") {
 					t.Errorf("earlier successful phase was changed: %+v", step)
 				}
-				if i == index && (step.Status == nativeOperationComplete || step.Error == "") {
+				if i == index && (step.Status == servingstate.NativeOperationComplete || step.Error == "") {
 					t.Errorf("failure phase lacks failure evidence: %+v", step)
 				}
 			}
@@ -542,18 +543,18 @@ func TestResetPreEffectRejectionReturnsOrRetainsReservationAC38(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			first, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || first.Status != nativeOperationFailed {
+			if err != nil || first.Status != servingstate.NativeOperationFailed {
 				t.Fatalf("first reset: %+v %v", first, err)
 			}
 			assertResetSteps(t, first, "disable-autonomy")
-			held := h.controller.authorize(Operation{WorkloadUID: h.selectedUID}) != nil
+			held := h.controller.authorize(servingstate.Operation{WorkloadUID: h.selectedUID}) != nil
 			if held != uncertain {
 				t.Fatalf("pre-effect certainty=%t: reservation held=%t", !uncertain, held)
 			}
 			// An unknown first write still owns its scope, but a new reset may
 			// atomically inherit it and prove actual cleanup rather than deadlock.
 			retry, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || retry.Status != nativeOperationComplete {
+			if err != nil || retry.Status != servingstate.NativeOperationComplete {
 				t.Fatalf("reset could not finish retained cleanup: %+v %v", retry, err)
 			}
 		})
@@ -578,22 +579,22 @@ func (h *resetHarness) powerReturnCandidate(t *testing.T) *edge.DeviceClass {
 	profile.NodeName, profile.Condition.NodeUID, profile.Condition.PowerMode = testNode.Name, testNode.UID, class.Spec.PowerModes[0].Name
 	h.controller.observer.SetProfiles([]serving.Profile{profile})
 	h.controller.mu.Lock()
-	h.controller.config.Preparations = map[string]PrepareSpec{profile.ID: {Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile}}}
+	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: {Instance: serving.SchedulerInstance{Node: testNode, Profile: &profile}}}
 	h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: lowMode, DeviceClass: class.Name, PowerMode: lowMode,
 		ActuatorKind: string(edge.PowerModeActuatorJetsonNVPModel), MaxActuationDurationSeconds: 1}}
 	h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: testNode, PowerMode: lowMode, Watts: 5,
-		Meter: "wall", Scope: measurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
+		Meter: "wall", Scope: servingstate.MeasurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
 	h.controller.mu.Unlock()
 	return class
 }
 
 func TestResetRetriesPowerReturnAfterPodsDisappearAC33(t *testing.T) {
-	for _, phase := range []string{operationRelease, "lower-power"} {
+	for _, phase := range []string{servingstate.OperationRelease, "lower-power"} {
 		t.Run(phase, func(t *testing.T) {
 			h := newResetHarness(t)
 			class := h.powerReturnCandidate(t)
 			h.api.Client.(*nodeAPI).agent = settleAgent(class)
-			if phase == operationRelease {
+			if phase == servingstate.OperationRelease {
 				h.failUpdate = 3
 			}
 			refusePower, powerRequests := true, 0
@@ -607,7 +608,7 @@ func TestResetRetriesPowerReturnAfterPodsDisappearAC33(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			first, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || first.Status != nativeOperationPartial || first.Error == "" ||
+			if err != nil || first.Status != servingstate.NativeOperationPartial || first.Error == "" ||
 				first.Steps[len(first.Steps)-1].Name != phase {
 				t.Fatalf("initial %s failure lost partial evidence: %+v err=%v", phase, first, err)
 			}
@@ -616,13 +617,13 @@ func TestResetRetriesPowerReturnAfterPodsDisappearAC33(t *testing.T) {
 			}
 			beforeRetry := powerRequests
 			retry, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || retry.Status != nativeOperationPartial || retry.Error == "" || powerRequests != beforeRetry+1 ||
+			if err != nil || retry.Status != servingstate.NativeOperationPartial || retry.Error == "" || powerRequests != beforeRetry+1 ||
 				retry.Steps[len(retry.Steps)-1].Name != "lower-power" || retry.Before.Node != testNode {
 				t.Fatalf("retry forgot empty Node or falsely completed: %+v requests=%d err=%v", retry, powerRequests, err)
 			}
 			refusePower = false
 			completed, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || completed.Status != nativeOperationComplete || completed.Error != "" || completed.Actual.PowerMode != lowMode {
+			if err != nil || completed.Status != servingstate.NativeOperationComplete || completed.Error != "" || completed.Actual.PowerMode != lowMode {
 				t.Fatalf("retry did not verify actual lowest mode: %+v err=%v", completed, err)
 			}
 			node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
@@ -637,7 +638,7 @@ func TestResetRetriesPowerReturnAfterPodsDisappearAC33(t *testing.T) {
 				t.Fatal(err)
 			}
 			notReady, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || notReady.Status != nativeOperationPartial || notReady.Error == "" ||
+			if err != nil || notReady.Status != servingstate.NativeOperationPartial || notReady.Error == "" ||
 				notReady.Steps[len(notReady.Steps)-1].Name != "lower-power" {
 				t.Fatalf("lowest mode without Ready falsely completed: %+v err=%v", notReady, err)
 			}
@@ -666,7 +667,7 @@ func TestResetSkipsFixedOnlyNodeWhileNotReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := h.controller.ExecuteManual(ctx, h.request())
-	if err != nil || result.Status != nativeOperationComplete || result.Error != "" {
+	if err != nil || result.Status != servingstate.NativeOperationComplete || result.Error != "" {
 		t.Fatalf("Fixed-only NotReady Node failed reset: %+v err=%v", result, err)
 	}
 	if !slices.ContainsFunc(result.Progress, func(line string) bool { return strings.HasSuffix(line, "power skipped; fixed-only device class") }) {
@@ -683,7 +684,7 @@ func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			result, err := h.controller.ExecuteManual(ctx, h.request())
-			if err != nil || result.Status != nativeOperationPartial || result.Steps[len(result.Steps)-1].Name != operationRelease {
+			if err != nil || result.Status != servingstate.NativeOperationPartial || result.Steps[len(result.Steps)-1].Name != servingstate.OperationRelease {
 				t.Fatalf("could not leave pending power return: %+v err=%v", result, err)
 			}
 			node, err := h.kube.CoreV1().Nodes().Get(ctx, testNode.Name, meta.GetOptions{})
@@ -713,7 +714,7 @@ func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
 			if _, err := h.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			plan, err := h.controller.planManualResetLocked(ctx, Operation{WorkloadUIDs: []string{h.selectedUID}})
+			plan, err := h.controller.planManualResetLocked(ctx, servingstate.Operation{WorkloadUIDs: []string{h.selectedUID}})
 			if err != nil || len(plan.nodes) != 0 {
 				t.Fatalf("pending power return crossed %s boundary: %+v err=%v", exclude, plan, err)
 			}
@@ -726,7 +727,7 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cleaned, err := h.controller.ExecuteManual(ctx, h.request())
-	if err != nil || cleaned.Status != nativeOperationComplete {
+	if err != nil || cleaned.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("initial cleanup failed: %+v err=%v", cleaned, err)
 	}
 	node, err := h.kube.CoreV1().Nodes().Get(ctx, h.owned.Spec.NodeName, meta.GetOptions{})
@@ -740,10 +741,10 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	oldID := "manual-route:pending-outside-reset"
 	old := &actionRun{owner: oldID, reserved: true,
-		action: serving.Action{Kind: operationRoute, Status: nativeOperationFailed},
+		action: serving.Action{Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationFailed},
 		scope:  resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{h.selectedUID}},
-		result: &OperationResult{Operation: Operation{Kind: operationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second)}}
-	operation := Operation{ID: "manual-reset:pending-outside-plan", Kind: operationReset, WorkloadUIDs: []string{h.selectedUID}}
+		result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, WorkloadUID: h.selectedUID}, EndedAt: time.Now().Add(-time.Second)}}
+	operation := servingstate.Operation{ID: "manual-reset:pending-outside-plan", Kind: servingstate.OperationReset, WorkloadUIDs: []string{h.selectedUID}}
 	h.controller.mu.Lock()
 	h.controller.runs[oldID] = old
 	h.controller.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: "stale-pending-instance", Node: ref, WorkloadUID: h.selectedUID}}
@@ -758,7 +759,7 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 		t.Fatalf("planning inherited a Node outside admission: plan=%+v err=%v held=%t", plan, err, old.reserved)
 	}
 	h.controller.mu.Lock()
-	acquired := h.controller.reserveRun(operation.ID, &actionRun{action: serving.Action{Status: nativeOperationRunning}}, operation)
+	acquired := h.controller.reserveRun(operation.ID, &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, operation)
 	held := old.reserved
 	h.controller.mu.Unlock()
 	if acquired || !held {
@@ -767,12 +768,12 @@ func TestResetRejectsSnapshotOnlyPendingReservationNodeAC38(t *testing.T) {
 }
 
 func TestManualRoutingBarrierIsNotAnAutonomousGoalEffect(t *testing.T) {
-	for _, kind := range []string{operationRoute, operationUnroute, operationRelease, operationReset} {
+	for _, kind := range []string{servingstate.OperationRoute, servingstate.OperationUnroute, servingstate.OperationRelease, servingstate.OperationReset} {
 		t.Run(kind, func(t *testing.T) {
 			controller := &SchedulerController{ctx: context.Background(), reservationState: &reservationState{runs: map[string]*actionRun{}}}
 			release := make(chan struct{})
-			operation := Operation{ID: "manual-" + kind, Kind: kind}
-			done, result := controller.startNodeRun(operation, SchedulerControllerConfig{}, func(context.Context, *OperationResult) error {
+			operation := servingstate.Operation{ID: "manual-" + kind, Kind: kind}
+			done, result := controller.startNodeRun(operation, SchedulerControllerConfig{}, func(context.Context, *servingstate.OperationResult) error {
 				<-release
 				return nil
 			})
@@ -780,7 +781,7 @@ func TestManualRoutingBarrierIsNotAnAutonomousGoalEffect(t *testing.T) {
 			close(release)
 			<-done
 			lost, failed := controller.failTargetLocked(serving.SchedulerSnapshot{}, goal, time.Now())
-			if failed || len(lost) != 0 || result.Status != nativeOperationComplete {
+			if failed || len(lost) != 0 || result.Status != servingstate.NativeOperationComplete {
 				t.Fatalf("planner relabeled a completed manual operation: lost=%+v failed=%v result=%+v", lost, failed, result)
 			}
 		})
@@ -815,7 +816,7 @@ func TestResetScopeResolvesCurrentNonAutonomousWorkloads(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result, err := h.controller.ExecuteManual(ctx, request)
-	if err != nil || result.Status != nativeOperationComplete || !slices.Equal(result.Operation.WorkloadUIDs, []string{h.selectedUID}) {
+	if err != nil || result.Status != servingstate.NativeOperationComplete || !slices.Equal(result.Operation.WorkloadUIDs, []string{h.selectedUID}) {
 		t.Fatalf("scope was not frozen from current non-autonomous Workloads: %+v err=%v", result, err)
 	}
 	if _, err := h.kube.CoreV1().Pods(h.foreign.Namespace).Get(ctx, h.foreign.Name, meta.GetOptions{}); err != nil {
@@ -864,8 +865,8 @@ func TestResetRefusesInvalidScopeBeforeAnyMutation(t *testing.T) {
 func TestResetRefusesConcurrentResetBeforeMutation(t *testing.T) {
 	h := newResetHarness(t)
 	release := make(chan struct{})
-	operation := Operation{ID: "in-flight-reset", Kind: operationReset, WorkloadUIDs: []string{h.selectedUID}}
-	done, _ := h.controller.startNodeRun(operation, h.controller.config, func(context.Context, *OperationResult) error {
+	operation := servingstate.Operation{ID: "in-flight-reset", Kind: servingstate.OperationReset, WorkloadUIDs: []string{h.selectedUID}}
+	done, _ := h.controller.startNodeRun(operation, h.controller.config, func(context.Context, *servingstate.OperationResult) error {
 		<-release
 		return nil
 	})
@@ -921,7 +922,7 @@ func TestResetDoesNotTreatForeignBindingAsOwnership(t *testing.T) {
 	if getErr != nil || !reflect.DeepEqual(stored.OwnerReferences, h.foreign.OwnerReferences) {
 		t.Fatalf("binding was treated as ownership: %+v err=%v result=%+v", stored, getErr, result)
 	}
-	if err == nil && (result.Status == nativeOperationComplete || result.Error == "" || !strings.Contains(strings.ToLower(result.Error), "owner")) {
+	if err == nil && (result.Status == servingstate.NativeOperationComplete || result.Error == "" || !strings.Contains(strings.ToLower(result.Error), "owner")) {
 		t.Errorf("foreign ownership conflict did not fail with evidence: %+v", result)
 	}
 }
@@ -1014,7 +1015,7 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 		t.Fatalf("fixture did not actually route A and foreign C: %v", actual)
 	}
 	foreignBefore := other.DeepCopy()
-	request := ManualOperation{Kind: operationReset, WorkloadUIDs: []string{selected.UID}, Reason: "clean duplicate slot"}
+	request := ManualOperation{Kind: servingstate.OperationReset, WorkloadUIDs: []string{selected.UID}, Reason: "clean duplicate slot"}
 	first, err := controller.ExecuteManual(ctx, request)
 	assertResetComplete(t, first, err)
 	if len(first.DrainNative) != 2 {
@@ -1046,9 +1047,9 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 	}
 }
 
-func assertResetComplete(t *testing.T, result OperationResult, err error) {
+func assertResetComplete(t *testing.T, result servingstate.OperationResult, err error) {
 	t.Helper()
-	if err != nil || result.Status != nativeOperationComplete {
+	if err != nil || result.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("reset failed: status=%s error=%s err=%v", result.Status, result.Error, err)
 	}
 }

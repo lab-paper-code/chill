@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -147,7 +148,7 @@ func TestNativeInstanceServiceRejectsMismatchedExistingResources(t *testing.T) {
 	}{
 		{"another Pod owner", func(service *core.Service) { service.OwnerReferences[0].UID = otherPodUID }, false},
 		{"shared selector", func(service *core.Service) {
-			service.Spec.Selector = map[string]string{"app.kubernetes.io/component": servingInstanceComponent}
+			service.Spec.Selector = map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent}
 		}, true},
 		{"missing proxy label", func(service *core.Service) { delete(service.Labels, edgeMeshServiceProxyLabel) }, true},
 		{"another target port", func(service *core.Service) { service.Spec.Ports[0].TargetPort = intstr.FromInt32(9090) }, true},
@@ -294,7 +295,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		Proxy: http.ProxyURL(proxy),
 	}}
 	operations := &Operations{cluster: manager.observer.cluster, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, config: OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
-	spec := PrepareSpec{Name: fixture.Name, MemoryBytes: 1024,
+	spec := servingstate.PrepareSpec{Name: fixture.Name, MemoryBytes: 1024,
 		Instance: serving.SchedulerInstance{ID: "slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1,
 			Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
 		Store:  storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
@@ -361,9 +362,9 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 		physical := physicalID(fixture.UID, firstfloorStatus(fixture).ContainerID)
 		var removed string
 		controller.measureStep = func(ctx context.Context, _ SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
-			record := OperationMeasurement{Verdict: measurementAccepted}
+			record := OperationMeasurement{Verdict: servingstate.MeasurementAccepted}
 			switch request.Operation.Kind {
-			case operationPrepare:
+			case servingstate.OperationPrepare:
 				result, err := operations.Execute(ctx, request.Operation)
 				if err != nil {
 					t.Fatal(err)
@@ -373,7 +374,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 				if actual == nil || actual.ID != physical {
 					t.Fatalf("prepare did not observe physical executor: %+v", result.Actual.Instances)
 				}
-			case operationRemove:
+			case servingstate.OperationRemove:
 				removed = request.Operation.Instance
 				// Exercise the production boundary against the prepared Pod, not a
 				// synthetic result or an alias-tolerant removal substitute.
@@ -383,7 +384,7 @@ func TestPreparationReusesCurrentPolicyAndRepairsExistingAcknowledgment(t *testi
 			}
 			return record, evidencestore.Receipt{}, nil
 		}
-		config := SchedulerControllerConfig{Preparations: map[string]PrepareSpec{profile.ID: spec}}
+		config := SchedulerControllerConfig{Preparations: map[string]servingstate.PrepareSpec{profile.ID: spec}}
 		if err := controller.runOperationCost(ctx, m, spec.Instance.Node, nil, map[string]string{"beo": profile.ID}, config); err != nil {
 			t.Fatal(err)
 		}
@@ -429,7 +430,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
 	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
-	spec := PrepareSpec{
+	spec := servingstate.PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
 			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
@@ -438,7 +439,7 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 		Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
 		Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
 		Config: native.Config{
-			Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
+			Mode: servingstate.NativeServingMode, ProfilePath: "/profile/bundle.json",
 			RunnerCommand: []string{"python3", "--delivery-json", "/config/delivery.json"},
 			Policy:        native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy},
 		},
@@ -482,12 +483,12 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 		if owner != nil {
 			name, want = "manual-prepared", `{"owner-uid":2}`
 		}
-		spec := PrepareSpec{Name: name, Owner: owner, MemoryBytes: 1 << 20,
+		spec := servingstate.PrepareSpec{Name: name, Owner: owner, MemoryBytes: 1 << 20,
 			Instance: serving.SchedulerInstance{ID: name, Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 2,
 				Allocation: serving.SchedulerAllocation{MemoryBytes: 1 << 20}},
 			Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
 			Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
-			Config: native.Config{Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
+			Config: native.Config{Mode: servingstate.NativeServingMode, ProfilePath: "/profile/bundle.json",
 				Policy: native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy}},
 		}
 		if _, err := operations.PrepareInstance(ctx, spec); err == nil || !strings.Contains(err.Error(), "stop after Pod creation") {
@@ -535,7 +536,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
 	operations := &Operations{store: store, kube: kube, observer: newTestObserver(t), config: OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
-	spec := PrepareSpec{
+	spec := servingstate.PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
 			ID: "measured-rknn", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile,
@@ -544,7 +545,7 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		Bundle: evidencestore.ObjectIdentity{Store: "store", Key: "bundle", Size: 1},
 		Store:  storekube.Binding{Store: "store", Endpoint: "http://store", Bucket: "bucket", Region: "region", CredentialsSecretName: "secret"},
 		Config: native.Config{
-			Mode: nativeServingMode, ProfilePath: "/profile/bundle.json",
+			Mode: servingstate.NativeServingMode, ProfilePath: "/profile/bundle.json",
 			RunnerCommand: []string{"python3", "--delivery-json", "/config/delivery.json"},
 			Policy:        native.Policy{ProfileID: profile.ID, DeadlinePolicy: profile.Condition.Firstfloor.DeadlinePolicy},
 		},
@@ -697,8 +698,8 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := operations.Execute(ctx, Operation{ID: "raise", Kind: operationPower, Node: ref, PowerMode: "boost", MaxActuationDuration: time.Minute})
-	if err != nil || result.Status != nativeOperationComplete {
+	result, err := operations.Execute(ctx, servingstate.Operation{ID: "raise", Kind: servingstate.OperationPower, Node: ref, PowerMode: "boost", MaxActuationDuration: time.Minute})
+	if err != nil || result.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("measured power change on the measurement Node: %v %+v", err, result)
 	}
 	from, to, err := operationCostKeys(result)

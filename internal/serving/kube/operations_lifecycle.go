@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
 	"time"
@@ -54,7 +55,7 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 	if uid == "" || id != "" && containerID == "" {
 		return errors.New("exact Pod UID and optional physical executor required")
 	}
-	if err := o.validateOperationBinding(ctx, Operation{Kind: operationRemove, Node: node, PodUID: uid, Instance: id}); err != nil {
+	if err := o.validateOperationBinding(ctx, servingstate.Operation{Kind: servingstate.OperationRemove, Node: node, PodUID: uid, Instance: id}); err != nil {
 		return err
 	}
 	if id != "" {
@@ -269,7 +270,7 @@ func (o *Operations) admitNode(node *core.Node) error {
 	return nil
 }
 
-func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeReference, before OperationState) error {
+func (o *Operations) waitPowerState(ctx context.Context, node serving.NodeReference, before servingstate.OperationState) error {
 	if err := o.wait(ctx, func() (bool, error) {
 		after, e := o.Capture(ctx, node)
 		if e != nil {

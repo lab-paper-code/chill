@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strconv"
 	"strings"
@@ -186,7 +187,7 @@ func TestBurstWarmupOriginJoinsLateNativeReceiptCohort(t *testing.T) {
 	}
 	controller := &SchedulerController{reservationState: &reservationState{}, observationLog: log}
 	record, err := controller.collectOccupancy(ctx, m, testNode, occupancyPlan{profile: profile, workload: workload},
-		started, collected, &OperationState{})
+		started, collected, &servingstate.OperationState{})
 	if err != nil {
 		t.Fatal(err)
 	}

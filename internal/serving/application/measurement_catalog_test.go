@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -98,7 +99,7 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 				{Code: preparationUnavailable, Reason: "accepted preparation failed"},
 			},
 		},
-		Preparations: map[string]servingkube.PrepareSpec{"accepted-only": {Name: "accepted-preparation"}},
+		Preparations: map[string]servingstate.PrepareSpec{"accepted-only": {Name: "accepted-preparation"}},
 		Occupancy: []servingkube.OccupancySelection{{
 			Node:      serving.NodeReference{Name: "node", UID: "node-uid"},
 			PowerMode: "fixed", Model: "model", ProfileID: "accepted-only", Batch: 2,

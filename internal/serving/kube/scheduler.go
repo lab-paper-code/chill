@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	goruntime "runtime"
 	"slices"
 	"strings"
@@ -30,7 +31,7 @@ type SchedulerControllerConfig struct {
 	ConfigurationName string
 	ConfigurationKey  string
 	Reserved          map[string]serving.SchedulerAllocation
-	Preparations      map[string]PrepareSpec
+	Preparations      map[string]servingstate.PrepareSpec
 	Costs             []serving.OperationCost
 	Baselines         []serving.NodeBaseline
 	CostIssues        []CostIssue
@@ -57,14 +58,14 @@ type SchedulerControllerConfig struct {
 	EvidenceStore string
 	MeterSource   func(metricobserver.SourceIdentity) (metricobserver.Source, error)
 	OnDecision    func(serving.SchedulerDecision, serving.SchedulerSnapshot) error
-	OnAction      func(OperationResult) error
+	OnAction      func(servingstate.OperationResult) error
 }
 
 type SchedulerControllerState struct {
-	Snapshot serving.SchedulerSnapshot `json:"snapshot"`
-	Decision serving.SchedulerDecision `json:"decision"`
-	Actions  []serving.Action          `json:"actions"`
-	Results  []OperationResult         `json:"results"`
+	Snapshot serving.SchedulerSnapshot      `json:"snapshot"`
+	Decision serving.SchedulerDecision      `json:"decision"`
+	Actions  []serving.Action               `json:"actions"`
+	Results  []servingstate.OperationResult `json:"results"`
 	// CostIssues are the measurements the configured costs omit.
 	CostIssues []CostIssue `json:"costIssues"`
 }
@@ -156,7 +157,7 @@ func (c *SchedulerController) setRoutingControl(before, after bool) {
 	} else {
 		c.mu.Lock()
 		for _, run := range c.runs {
-			if run.action.Status == nativeOperationRunning && run.action.Cancelable && run.cancel != nil {
+			if run.action.Status == servingstate.NativeOperationRunning && run.action.Cancelable && run.cancel != nil {
 				run.cancel()
 			}
 		}
@@ -176,7 +177,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 	}
 	meters := map[string]serving.NodeReference{}
 	for _, m := range config.Meters {
-		if m.ID == "" || m.Scope != measurementWallScope || m.Node.Name == "" || m.Node.UID == "" || m.Source.NodeName != m.Node.Name {
+		if m.ID == "" || m.Scope != servingstate.MeasurementWallScope || m.Node.Name == "" || m.Node.UID == "" || m.Source.NodeName != m.Node.Name {
 			return errors.New("exact physical meter declaration required")
 		}
 		if node, ok := meters[m.ID]; ok && node != m.Node {
@@ -190,7 +191,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 		}
 	}
 	for _, b := range config.Baselines {
-		if b.Meter == "" || b.Scope != measurementWallScope {
+		if b.Meter == "" || b.Scope != servingstate.MeasurementWallScope {
 			return errors.New("baseline meter declaration required")
 		}
 		if n, ok := meters[b.Meter]; ok && n != b.Node {
@@ -199,7 +200,7 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 		meters[b.Meter] = b.Node
 	}
 	for _, cost := range config.Costs {
-		if cost.Meter == "" || cost.Scope != measurementWallScope {
+		if cost.Meter == "" || cost.Scope != servingstate.MeasurementWallScope {
 			return errors.New("cost meter declaration required")
 		}
 		if n, ok := meters[cost.Meter]; ok && n != cost.Node {
@@ -216,7 +217,7 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	result := c.state
 	result.Actions = c.actionsLocked(time.Now())
 	result.Snapshot.Reservations = c.reservationsLocked()
-	result.Results = append([]OperationResult(nil), c.state.Results...)
+	result.Results = append([]servingstate.OperationResult(nil), c.state.Results...)
 	result.CostIssues = c.config.CostIssues
 	return result
 }
@@ -233,7 +234,7 @@ func (c *SchedulerController) actionsLocked(now time.Time) []serving.Action {
 			continue
 		}
 		a := r.action
-		if a.Status == nativeOperationRunning {
+		if a.Status == servingstate.NativeOperationRunning {
 			a.Elapsed = now.Sub(r.started)
 		}
 		result = append(result, a)

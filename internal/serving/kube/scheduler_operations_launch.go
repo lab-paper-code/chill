@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"time"
 
@@ -43,27 +44,27 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 		return
 	}
 	if !slices.ContainsFunc(target.Actions, func(action serving.Action) bool {
-		if action.Kind == operationRoute {
+		if action.Kind == servingstate.OperationRoute {
 			_, empty := c.routeOperationScopeLocked(target, *cmp.Or(action.RouteTarget, &target), action.RouteTarget != nil)
 			return !empty
 		}
-		return action.Kind == operationPrepare || action.Kind == operationPower || action.Kind == operationResize ||
+		return action.Kind == servingstate.OperationPrepare || action.Kind == servingstate.OperationPower || action.Kind == servingstate.OperationResize ||
 			c.dependenciesReady(action, target)
 	}) {
 		return
 	}
-	operation := Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
+	operation := servingstate.Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
 	for _, action := range target.Actions {
 		if action.Node.UID != "" {
 			operation.Nodes = append(operation.Nodes, action.Node)
 		}
 	}
 	started := time.Now()
-	before := OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
+	before := servingstate.OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
 	for _, instance := range c.state.Snapshot.Instances {
 		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
 	}
-	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Before: before, Status: nativeOperationRunning, StartedAt: started}, started: started}
+	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, Before: before, Status: servingstate.NativeOperationRunning, StartedAt: started}, started: started}
 	parent.admittedControls = config.Settings.Controls
 	// Freeze only physical same-Node/Workload replacements, not route-only
 	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
@@ -74,7 +75,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 		for _, old := range c.state.Snapshot.Instances {
 			if old.Node == next.Node && old.WorkloadUID == next.WorkloadUID && old.Profile != nil &&
 				old.Profile.ID != next.Profile.ID && slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
-				return a.Kind == operationRemove && a.Instance == old.ID
+				return a.Kind == servingstate.OperationRemove && a.Instance == old.ID
 			}) {
 				parent.replacements = append(parent.replacements, serving.SchedulerReplacement{
 					NodeUID: next.Node.UID, WorkloadUID: next.WorkloadUID, ProfileID: next.Profile.ID,
@@ -94,23 +95,23 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 	// supersede the existing acknowledged handoff proof in this same tick.
 	for phase := range 2 {
 		for _, action := range actions {
-			if (action.Kind == operationStop) != (phase == 0) {
+			if (action.Kind == servingstate.OperationStop) != (phase == 0) {
 				continue
 			}
 			// Evaluation can retain a running snapshot after its live run finishes.
 			// Reconciliation, not a stale target, retires a terminal action identity.
 			if run := c.runs[action.ID]; run != nil && actionEquivalent(run.action, action) &&
-				run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel {
+				run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel {
 				continue
 			}
-			if action.Status == nativeOperationCancel {
+			if action.Status == servingstate.NativeOperationCancel {
 				if r := c.runs[action.ID]; r != nil && r.action.Cancelable && r.cancel != nil {
 					r.cancel()
-					r.action.Status = nativeOperationCancel
+					r.action.Status = servingstate.NativeOperationCancel
 				}
 				continue
 			}
-			if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed || c.omittedRouteCompleteLocked(action, target) {
+			if action.Status == servingstate.NativeOperationComplete || action.Status == servingstate.NativeOperationFailed || c.omittedRouteCompleteLocked(action, target) {
 				continue
 			}
 			selectedTarget := cmp.Or(action.RouteTarget, &target)
@@ -122,7 +123,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				continue
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
-			if action.Kind == operationRoute {
+			if action.Kind == servingstate.OperationRoute {
 				scope, empty := c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
 				operation.WorkloadUIDs = scope
 				if empty {
@@ -130,10 +131,10 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				}
 				operation.Target = controlledTarget(operation)
 			}
-			action.Status = nativeOperationRunning
-			action.Cancelable = action.Kind == operationPrepare
+			action.Status = servingstate.NativeOperationRunning
+			action.Cancelable = action.Kind == servingstate.OperationPrepare
 			started := time.Now()
-			initial := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: "starting"}
+			initial := servingstate.OperationResult{Operation: operation, StartedAt: started.UTC(), Status: "starting"}
 			run := &actionRun{action: action, result: &initial, started: started, owner: target.ID, proofParent: c.runs[transitionRunKind+"/"+target.ID]}
 			if !c.reserveRun(action.ID, run, operation) {
 				continue
@@ -141,7 +142,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			runCtx, cancel := c.runContext(action, config)
 			run.cancel = cancel
 			c.wg.Add(1)
-			go func(operation Operation, run *actionRun) {
+			go func(operation servingstate.Operation, run *actionRun) {
 				defer c.wg.Done()
 				result := initial
 				var err error
@@ -153,7 +154,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 					result, err = c.operations.Execute(runCtx, operation)
 					result.StartedAt = initial.StartedAt
 				} else {
-					result.Status = nativeOperationFailed
+					result.Status = servingstate.NativeOperationFailed
 					result.Error = "persist action start before physical effect: " + err.Error()
 					result.EndedAt = time.Now().UTC()
 				}
@@ -166,8 +167,8 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 					if recordErr := config.OnAction(result); recordErr != nil {
 						err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))
 						result.Error = err.Error()
-						if result.Status == nativeOperationComplete {
-							result.Status = nativeOperationPartial
+						if result.Status == servingstate.NativeOperationComplete {
+							result.Status = servingstate.NativeOperationPartial
 						}
 					}
 				}
@@ -176,12 +177,12 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				if !effectStarted {
 					run.reserved = false
 				}
-				run.action.Status = nativeOperationComplete
+				run.action.Status = servingstate.NativeOperationComplete
 				if err != nil {
 					run.action.Status = result.Status
 					run.action.Reason = err.Error()
 					if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-						run.action.Status, run.action.Reason = nativeOperationFailed, serving.ActionDeadlineExceeded+": "+run.action.Reason
+						run.action.Status, run.action.Reason = servingstate.NativeOperationFailed, serving.ActionDeadlineExceeded+": "+run.action.Reason
 					}
 				}
 				run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
@@ -206,7 +207,7 @@ func (c *SchedulerController) intermediateActions(
 	// The final handoff still waits for its DAG. Independent Ready destinations
 	// can receive traffic meanwhile through the same acknowledged route path.
 	pendingRoute := slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
-		return a.Kind == operationRoute && !c.dependenciesReady(a, target)
+		return a.Kind == servingstate.OperationRoute && !c.dependenciesReady(a, target)
 	})
 	if !pendingRoute {
 		return target.Actions, nil
@@ -219,7 +220,7 @@ func (c *SchedulerController) intermediateActions(
 	if partial == nil {
 		return target.Actions, nil
 	}
-	route := serving.Action{ID: partial.ID, Kind: operationRoute, From: readySubsetRoute, To: partial.ID}
+	route := serving.Action{ID: partial.ID, Kind: servingstate.OperationRoute, From: readySubsetRoute, To: partial.ID}
 	route = c.orderRouteChild(route, target.ID)
 	// Recovery must retain the running route's own frozen target even when the
 	// full goal fails. Only final-goal completion ignores this intermediate action.
@@ -236,7 +237,7 @@ func (c *SchedulerController) readySubset(target serving.SchedulerCandidate, row
 	partial := serving.SchedulerCandidate{Routing: map[string]map[string]int32{}}
 	retiring := map[string]bool{}
 	for _, action := range target.Actions {
-		if action.Kind == operationStop && c.dependenciesReady(action, target) {
+		if action.Kind == servingstate.OperationStop && c.dependenciesReady(action, target) {
 			retiring[action.Instance] = true
 		}
 	}
@@ -322,7 +323,7 @@ func snapshotNodeHasPositiveRoute(snapshot serving.SchedulerSnapshot, node servi
 // runContext bounds a prepare run by serving.ActionDeadline.
 // ponytail: prepare-only deadline, widen when a non-prepare stall is measured
 func (c *SchedulerController) runContext(action serving.Action, config SchedulerControllerConfig) (context.Context, context.CancelFunc) {
-	if action.Kind == operationPrepare {
+	if action.Kind == servingstate.OperationPrepare {
 		return context.WithTimeout(c.ctx, serving.ActionDeadline(config.Settings.ObservationWindow, config.Costs, action))
 	}
 	return context.WithCancel(c.ctx)
@@ -338,7 +339,7 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 	}) {
 		return false
 	}
-	if action.Kind == operationRoute {
+	if action.Kind == servingstate.OperationRoute {
 		uids := c.targetWorkloadsLocked(target)
 		for _, wanted := range target.Instances {
 			if !slices.Contains(uids, wanted.WorkloadUID) || target.Routing[wanted.WorkloadUID][wanted.ID] <= 0 {
@@ -357,10 +358,10 @@ func (c *SchedulerController) dependenciesReady(action serving.Action, target se
 func (c *SchedulerController) dependenciesComplete(action serving.Action, plan serving.SchedulerCandidate) bool {
 	for _, dep := range action.DependsOn {
 		run := c.runs[dep]
-		if run != nil && run.action.Status == nativeOperationComplete {
-			if action.Kind == operationStop && run.action.RouteTarget != nil {
+		if run != nil && run.action.Status == servingstate.NativeOperationComplete {
+			if action.Kind == servingstate.OperationStop && run.action.RouteTarget != nil {
 				uids := c.handoffScope(action, run.action, plan)
-				if run.result == nil || len(uids) == 0 || !run.result.Operation.controlsWorkload(uids[0]) {
+				if run.result == nil || len(uids) == 0 || !run.result.Operation.ControlsWorkload(uids[0]) {
 					return false
 				}
 				proof := run.result.Operation
@@ -372,8 +373,8 @@ func (c *SchedulerController) dependenciesComplete(action serving.Action, plan s
 			}
 			continue
 		}
-		i := slices.IndexFunc(plan.Actions, func(a serving.Action) bool { return a.ID == dep && a.Kind == operationRoute })
-		if run != nil || i < 0 || (action.Kind != operationStop && action.Kind != operationRoute) ||
+		i := slices.IndexFunc(plan.Actions, func(a serving.Action) bool { return a.ID == dep && a.Kind == servingstate.OperationRoute })
+		if run != nil || i < 0 || (action.Kind != servingstate.OperationStop && action.Kind != servingstate.OperationRoute) ||
 			!c.dependenciesComplete(plan.Actions[i], plan) ||
 			!c.completedHandoffPresent(*cmp.Or(plan.Actions[i].RouteTarget, &plan), c.handoffScope(action, plan.Actions[i], plan)) {
 			return false
@@ -383,16 +384,16 @@ func (c *SchedulerController) dependenciesComplete(action serving.Action, plan s
 }
 
 func (c *SchedulerController) handoffScope(action, dependency serving.Action, plan serving.SchedulerCandidate) []string {
-	if dependency.RouteTarget == nil || (action.Kind != operationStop && action.Kind != operationRoute) {
+	if dependency.RouteTarget == nil || (action.Kind != servingstate.OperationStop && action.Kind != servingstate.OperationRoute) {
 		return c.targetWorkloadsLocked(plan)
 	}
 	consumers := plan.Actions
-	if action.Kind == operationStop {
+	if action.Kind == servingstate.OperationStop {
 		consumers = []serving.Action{action}
 	}
 	uids := []string{}
 	for _, stop := range consumers {
-		if stop.Kind == operationStop && slices.Contains(stop.DependsOn, dependency.ID) {
+		if stop.Kind == servingstate.OperationStop && slices.Contains(stop.DependsOn, dependency.ID) {
 			if uid := handoffSourceUID(*dependency.RouteTarget, stop.Instance); uid != "" && !slices.Contains(uids, uid) {
 				uids = append(uids, uid)
 			}
@@ -412,13 +413,13 @@ func handoffSourceUID(target serving.SchedulerCandidate, instance string) string
 
 func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate, uids []string) bool {
 	physical := c.runtime.Instances()
-	selected := controlledTarget(Operation{Target: &target, WorkloadUIDs: uids})
+	selected := controlledTarget(servingstate.Operation{Target: &target, WorkloadUIDs: uids})
 	if !c.routingTargetPresent(selected, c.state.Snapshot, physical, false) {
 		return false
 	}
 	for _, run := range c.runs {
-		if run.action.Kind == operationRoute && run.action.Status == nativeOperationComplete &&
-			run.result != nil && run.result.Status == nativeOperationComplete &&
+		if run.action.Kind == servingstate.OperationRoute && run.action.Status == servingstate.NativeOperationComplete &&
+			run.result != nil && run.result.Status == servingstate.NativeOperationComplete &&
 			c.routingTargetPresent(run.result.Operation.Target, c.state.Snapshot, physical, true) {
 			return true
 		}
@@ -429,10 +430,10 @@ func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCa
 // scheduledOperation builds the operation of one planned action. A preparation
 // names the Workload its target instance serves as the Pod's owner, so the
 // instance keeps its Workload while unrouted.
-func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
-	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
+func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) servingstate.Operation {
+	operation := servingstate.Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
 		ExpectedSeconds: action.ExpectedSeconds, ExpectedSource: action.ExpectedSource}
-	if action.Kind == operationPrepare {
+	if action.Kind == servingstate.OperationPrepare {
 		for _, i := range target.Instances {
 			if i.ID == action.Instance && i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
 				template, ok := config.Preparations[i.Profile.ID]
@@ -457,7 +458,7 @@ func scheduledOperation(action serving.Action, target *serving.SchedulerCandidat
 			}
 		}
 	}
-	if action.Kind == operationPower {
+	if action.Kind == servingstate.OperationPower {
 		if maxDuration, ok := power[action.Node.UID+"/"+action.To]; ok {
 			operation.PowerMode, operation.MaxActuationDuration = action.To, maxDuration
 		}

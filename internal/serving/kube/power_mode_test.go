@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strconv"
 	"strings"
 	"testing"
@@ -118,21 +119,21 @@ func TestPowerModeWriterFailsPastDeadlineOrFailure(t *testing.T) {
 func TestMeasurementIsolationJudgesPowerModeGeneration(t *testing.T) {
 	for _, test := range []struct {
 		name      string
-		operation Operation
+		operation servingstate.Operation
 		current   string
 		start     *PowerModeGeneration
 		end       int64
 		changed   bool
 	}{
-		{name: "power into another mode", operation: Operation{Kind: operationPower, PowerMode: maxMode}, current: "low", start: &PowerModeGeneration{Start: 3}, end: 4},
-		{name: "power into the same mode", operation: Operation{Kind: operationPower, PowerMode: maxMode}, current: maxMode, start: &PowerModeGeneration{Start: 3}, end: 3},
-		{name: "power changed twice", operation: Operation{Kind: operationPower, PowerMode: maxMode}, current: "low", start: &PowerModeGeneration{Start: 3}, end: 5, changed: true},
-		{name: "prepare", operation: Operation{Kind: operationPrepare}, start: &PowerModeGeneration{Start: 3}, end: 3},
-		{name: "prepare changed", operation: Operation{Kind: operationPrepare}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "idle changed", operation: Operation{Kind: operationIdle}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "remove changed", operation: Operation{Kind: operationRemove}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "occupancy load window changed", operation: Operation{Kind: occupancyKind}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
-		{name: "Fixed Node", operation: Operation{Kind: operationPrepare}, end: 4},
+		{name: "power into another mode", operation: servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: maxMode}, current: "low", start: &PowerModeGeneration{Start: 3}, end: 4},
+		{name: "power into the same mode", operation: servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: maxMode}, current: maxMode, start: &PowerModeGeneration{Start: 3}, end: 3},
+		{name: "power changed twice", operation: servingstate.Operation{Kind: servingstate.OperationPower, PowerMode: maxMode}, current: "low", start: &PowerModeGeneration{Start: 3}, end: 5, changed: true},
+		{name: "prepare", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, start: &PowerModeGeneration{Start: 3}, end: 3},
+		{name: "prepare changed", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "idle changed", operation: servingstate.Operation{Kind: servingstate.OperationIdle}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "remove changed", operation: servingstate.Operation{Kind: servingstate.OperationRemove}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "occupancy load window changed", operation: servingstate.Operation{Kind: occupancyKind}, start: &PowerModeGeneration{Start: 3}, end: 4, changed: true},
+		{name: "Fixed Node", operation: servingstate.Operation{Kind: servingstate.OperationPrepare}, end: 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, node, _, _ := observerSourceFixture()
@@ -153,7 +154,7 @@ func TestMeasurementIsolationJudgesPowerModeGeneration(t *testing.T) {
 			}
 			// An operation record keeps the witness and loses its cost.
 			joules := 1.0
-			record := OperationMeasurement{Verdict: measurementAccepted, WallJoules: &joules, Request: MeasurementRequest{Operation: Operation{Node: testNode}}}
+			record := OperationMeasurement{Verdict: servingstate.MeasurementAccepted, WallJoules: &joules, Request: MeasurementRequest{Operation: servingstate.Operation{Node: testNode}}}
 			if applied := record.applyIsolation(witness, err); !errors.Is(applied, err) || test.changed != (record.Verdict == measurementInsufficient && strings.Contains(record.Reason, powerChangedReason) && record.WallJoules == nil) {
 				t.Fatalf("record %+v", record)
 			}

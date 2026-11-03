@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strings"
 	"sync"
 	"testing"
@@ -44,8 +45,8 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 	spec.Instance.Profile = &profile
 	h.controller.observer.SetProfiles([]serving.Profile{profile})
 	h.controller.mu.Lock()
-	h.controller.config.Preparations = map[string]PrepareSpec{profile.ID: spec}
-	h.controller.config.Meters = []MeterDeclaration{{ID: "wall", Node: testNode, Scope: measurementWallScope}}
+	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{profile.ID: spec}
+	h.controller.config.Meters = []MeterDeclaration{{ID: "wall", Node: testNode, Scope: servingstate.MeasurementWallScope}}
 	for _, m := range class.Spec.PowerModes {
 		h.controller.config.PowerPolicies = append(h.controller.config.PowerPolicies, nodeactuator.ActuationPolicySpec{Name: m.Name, DeviceClass: class.Name,
 			PowerMode: m.Name, ActuatorKind: string(m.Actuator.Kind), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60})
@@ -57,7 +58,7 @@ func newOpcostHarness(t *testing.T) *opcostHarness {
 		verdict := o.verdicts[request.Operation.ID[strings.LastIndex(request.Operation.ID, ".")+1:]]
 		o.mu.Unlock()
 		if verdict == "" {
-			verdict = measurementAccepted
+			verdict = servingstate.MeasurementAccepted
 		}
 		key := OperationMeasurementKey(request.Operation)
 		record := OperationMeasurement{Verdict: verdict, Reason: "coverage"}
@@ -109,7 +110,7 @@ func TestOperationCostRunsDeclaredStepsInOrder(t *testing.T) {
 	}
 	for i, step := range status.Steps {
 		want := fmt.Sprintf("%snode-uid/%s.%d.%s.json", OperationMeasurementPrefix, m.UID, i, lane()[i].Name)
-		if step.Key != want || step.Verdict != measurementAccepted {
+		if step.Key != want || step.Verdict != servingstate.MeasurementAccepted {
 			t.Fatalf("step %d %+v, want key %s", i, step, want)
 		}
 	}
@@ -268,7 +269,7 @@ func TestOperationCostStopsOnActualOperationFailure(t *testing.T) {
 	measure := o.controller.measureStep
 	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
 		record, receipt, err := measure(ctx, config, request)
-		if request.Operation.Kind == operationPrepare {
+		if request.Operation.Kind == servingstate.OperationPrepare {
 			record.Verdict = string(edge.MeasurementPhaseFailed)
 			err = fmt.Errorf("physical preparation failed")
 		}

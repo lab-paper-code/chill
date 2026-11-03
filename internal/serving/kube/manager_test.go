@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"image"
 	"image/jpeg"
 	"io"
@@ -743,7 +744,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	controller := &m.reservations.reservation
 	// A prior operation on this Workload conflicts even after all Pods vanished.
 	controller.mu.Lock()
-	held := controller.reserveRun("held", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{WorkloadUID: string(w.Desired.UID)})
+	held := controller.reserveRun("held", &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{WorkloadUID: string(w.Desired.UID)})
 	controller.mu.Unlock()
 	if !held {
 		t.Fatal("failed to reserve test operation")
@@ -761,7 +762,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if err != nil || current.DeletionTimestamp == nil || len(current.Finalizers) == 0 {
 		t.Fatalf("DELETE did not retain finalizer: %v, %v", current, err)
 	}
-	if err := controller.authorize(Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
+	if err := controller.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err == nil {
 		t.Fatal("deletion released scope before finalizer and 404")
 	}
 	if err := m.Advance(ctx); err != nil {
@@ -770,7 +771,7 @@ func TestManagerDeleteAfterPhysicalRemovalHoldsReservationUntil404(t *testing.T)
 	if _, err := m.GetWorkload(ctx, w.Desired.Name); !apierrors.IsNotFound(err) {
 		t.Fatalf("deleted Workload = %v", err)
 	}
-	if err := controller.authorize(Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
+	if err := controller.authorize(servingstate.Operation{WorkloadUID: string(w.Desired.UID)}); err != nil {
 		t.Fatal("404 retained deletion reservation", err)
 	}
 }

@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -40,7 +41,7 @@ func TestSchedulerUpdateRequiresExactReviewedResourceGrant(t *testing.T) {
 				}
 				resourceCalls++
 				r := sar.Spec.ResourceAttributes
-				if r == nil || r.Namespace != nativeServingMode || r.Name != "scheduler" || r.Resource != "configmaps" || r.Group != "" || r.Verb != "update" {
+				if r == nil || r.Namespace != servingstate.NativeServingMode || r.Name != "scheduler" || r.Resource != "configmaps" || r.Group != "" || r.Verb != "update" {
 					t.Fatalf("unexpected update grant: %+v", r)
 				}
 				if tc.failure {
@@ -53,13 +54,13 @@ func TestSchedulerUpdateRequiresExactReviewedResourceGrant(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = a.AuthorizeConfigMapUpdate(context.Background(), principal, nativeServingMode, "scheduler"); !errors.Is(err, tc.want) {
+			if err = a.AuthorizeConfigMapUpdate(context.Background(), principal, servingstate.NativeServingMode, "scheduler"); !errors.Is(err, tc.want) {
 				t.Fatalf("update authorization=%v want %v", err, tc.want)
 			}
 			if resourceCalls != 1 {
 				t.Fatalf("resource grants=%d", resourceCalls)
 			}
-			if err = a.AuthorizeConfigMapUpdate(context.Background(), Principal{}, nativeServingMode, "scheduler"); !errors.Is(err, ErrUnauthenticated) || resourceCalls != 1 {
+			if err = a.AuthorizeConfigMapUpdate(context.Background(), Principal{}, servingstate.NativeServingMode, "scheduler"); !errors.Is(err, ErrUnauthenticated) || resourceCalls != 1 {
 				t.Fatal("unreviewed identity reached resource SAR")
 			}
 		})

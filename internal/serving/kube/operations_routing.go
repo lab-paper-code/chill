@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCandidate, result *OperationResult) error {
+func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCandidate, result *servingstate.OperationResult) error {
 	uids := result.Operation.WorkloadUIDs
 	if result.Operation.WorkloadUID != "" {
 		uids = []string{result.Operation.WorkloadUID}
@@ -26,13 +27,13 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		return nil
 	}
 	validate := o.runtime.ValidateSchedulerWorkloadsTarget
-	if result.Operation.Kind == operationUnroute {
+	if result.Operation.Kind == servingstate.OperationUnroute {
 		validate = o.runtime.ValidateSchedulerUnrouteTarget
 	}
 	if err := validate(target, uids); err != nil {
 		return err
 	}
-	if result.Operation.Kind != operationUnroute {
+	if result.Operation.Kind != servingstate.OperationUnroute {
 		uids = positiveWorkloadScope(target, uids)
 		if len(uids) == 0 {
 			return nil
@@ -57,7 +58,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
 	}()
 	for _, instance := range target.Instances {
-		if !result.Operation.controlsWorkload(instance.WorkloadUID) || target.Routing[instance.WorkloadUID][instance.ID] <= 0 {
+		if !result.Operation.ControlsWorkload(instance.WorkloadUID) || target.Routing[instance.WorkloadUID][instance.ID] <= 0 {
 			continue
 		}
 		if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil {
@@ -74,7 +75,7 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		return err
 	}
 	var applyErr error
-	if result.Operation.Kind == operationUnroute {
+	if result.Operation.Kind == servingstate.OperationUnroute {
 		applyErr = o.runtime.ApplySchedulerUnrouteTarget(target, uids)
 	} else {
 		applyErr = o.runtime.ApplySchedulerWorkloadsTarget(target, uids)
@@ -167,7 +168,7 @@ func (o *Operations) persistRouting(ctx context.Context, only string, uids []str
 	return nil
 }
 
-func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *OperationResult) error {
+func (o *Operations) applyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *servingstate.OperationResult) error {
 	pods, err := o.kube.CoreV1().Pods(o.config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
 		return err

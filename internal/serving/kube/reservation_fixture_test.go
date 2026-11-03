@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -13,7 +14,7 @@ func installTestTransition(c *SchedulerController, target *serving.SchedulerCand
 		panic("a live owner cannot be cleared by assigning a global goal")
 	}
 	id := transitionRunKind + "/" + target.ID
-	operation := Operation{ID: id, Kind: transitionRunKind, Target: target}
+	operation := servingstate.Operation{ID: id, Kind: transitionRunKind, Target: target}
 	for uid := range target.Routing {
 		operation.WorkloadUIDs = append(operation.WorkloadUIDs, uid)
 	}
@@ -23,7 +24,7 @@ func installTestTransition(c *SchedulerController, target *serving.SchedulerCand
 		}
 	}
 	now := time.Now()
-	run := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Status: nativeOperationRunning, StartedAt: now}, started: now}
+	run := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationRunning, StartedAt: now}, started: now}
 	if !c.reserveRun(id, run, operation) {
 		panic("fixture owner conflicts")
 	}
@@ -32,7 +33,7 @@ func installTestTransition(c *SchedulerController, target *serving.SchedulerCand
 func fixtureTarget(c *SchedulerController) *serving.SchedulerCandidate {
 	var target *serving.SchedulerCandidate
 	for _, run := range c.runs {
-		if run.action.Kind == transitionRunKind && run.action.Status == nativeOperationRunning {
+		if run.action.Kind == transitionRunKind && run.action.Status == servingstate.NativeOperationRunning {
 			if target != nil {
 				panic("single-owner fixture contains multiple DAGs")
 			}

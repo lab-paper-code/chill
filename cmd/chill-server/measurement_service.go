@@ -1,12 +1,12 @@
 package main
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 
 	"github.com/lab-paper-code/chill/internal/serving/application"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/measurement"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,7 +36,7 @@ func newMeasurementService(native client.Client, kube kubernetes.Interface, sche
 				config, err := application.DecodeSchedulerConfiguration(raw, maxBytes)
 				return config.DispatchOccupancy, err
 			},
-			LoadProfiles: func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool) {
+			LoadProfiles: func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool) {
 				snapshot := scheduler.Profiles.Load()
 				if snapshot == nil {
 					return "", nil, nil, false

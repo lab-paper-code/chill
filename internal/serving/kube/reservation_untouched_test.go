@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
@@ -24,28 +25,28 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 			state := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref, Ready: true, ObservedAt: ended.Add(time.Second), Native: &native.State{Ready: true}}
 			baseline := serving.InstanceState{ID: id, PodUID: string(pod.UID), Node: ref}
 			target := &serving.SchedulerCandidate{ID: "owner"}
-			parent := &actionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "transition/owner", Kind: transitionRunKind, Status: nativeOperationFailed}, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Pods: []string{string(pod.UID)}, Instances: []string{id}}, result: &OperationResult{Operation: Operation{Kind: transitionRunKind, Target: target}, Before: OperationState{Instances: []serving.InstanceState{baseline}}, EndedAt: ended}}
+			parent := &actionRun{owner: target.ID, reserved: true, action: serving.Action{ID: "transition/owner", Kind: transitionRunKind, Status: servingstate.NativeOperationFailed}, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Pods: []string{string(pod.UID)}, Instances: []string{id}}, result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: transitionRunKind, Target: target}, Before: servingstate.OperationState{Instances: []serving.InstanceState{baseline}}, EndedAt: ended}}
 			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent}}}
 			c.state.Snapshot.Instances = []serving.SchedulerInstance{{ID: id, PodUID: string(pod.UID), Node: ref}}
 			switch evidence {
 			case "local-prepare", "route-cancel", "stop-cancel", "power-cancel", "unknown":
-				kind, effectNode := operationPrepare, serving.NodeReference{Name: "nano", UID: "nano-uid"}
+				kind, effectNode := servingstate.OperationPrepare, serving.NodeReference{Name: "nano", UID: "nano-uid"}
 				switch evidence {
 				case "route-cancel":
-					kind = operationRoute
+					kind = servingstate.OperationRoute
 				case "stop-cancel":
-					kind = operationStop
+					kind = servingstate.OperationStop
 					effectNode = ref
 				case "power-cancel":
-					kind = operationPower
+					kind = servingstate.OperationPower
 					effectNode = ref
 				case "unknown":
 					kind = "future-write"
 				}
-				action := serving.Action{ID: "effect", Kind: kind, Node: effectNode, Status: nativeOperationRunning}
+				action := serving.Action{ID: "effect", Kind: kind, Node: effectNode, Status: servingstate.NativeOperationRunning}
 				target.Actions = []serving.Action{action}
-				op := Operation{Kind: kind, Node: effectNode, Target: target, Nodes: []serving.NodeReference{ref}}
-				run := &actionRun{owner: parent.owner, proofParent: parent, action: action, result: &OperationResult{Operation: op, EndedAt: ended}}
+				op := servingstate.Operation{Kind: kind, Node: effectNode, Target: target, Nodes: []serving.NodeReference{ref}}
+				run := &actionRun{owner: parent.owner, proofParent: parent, action: action, result: &servingstate.OperationResult{Operation: op, EndedAt: ended}}
 				parent.returnObserved = true
 				if !c.reserveRun(action.ID, run, op) {
 					t.Fatal("authorization failed")
@@ -53,7 +54,7 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 				if parent.returnObserved {
 					t.Fatal("new authorization retained an old return proof")
 				}
-				run.action.Status = nativeOperationFailed
+				run.action.Status = servingstate.NativeOperationFailed
 				run.reserved = false // action-view retirement cannot erase the parent's dirty set
 				delete(c.runs, action.ID)
 			case "stale":
@@ -75,9 +76,9 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 			case "not-baseline":
 				parent.result.Before.Instances = nil
 			case "sibling", "cancel-sibling", "absent-sibling":
-				status := nativeOperationRunning
+				status := servingstate.NativeOperationRunning
 				if evidence == "cancel-sibling" {
-					status = nativeOperationCancel
+					status = servingstate.NativeOperationCancel
 				}
 				c.runs["sibling"] = &actionRun{owner: parent.owner, action: serving.Action{Status: status}}
 			case "gc":
@@ -110,9 +111,9 @@ func TestUntouchedAdmissionBaselineAC38(t *testing.T) {
 
 func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	c, api, child, parent := failedPrepareCompensationFixture(t, "policy-ack")
-	child.action.Status, child.result.Status = nativeOperationPartial, nativeOperationPartial
+	child.action.Status, child.result.Status = servingstate.NativeOperationPartial, servingstate.NativeOperationPartial
 	child.result.Error = context.DeadlineExceeded.Error()
-	parent.result.Operation.Target.Actions = append(parent.result.Operation.Target.Actions, serving.Action{ID: "never-started-route", Kind: operationRoute, DependsOn: []string{child.action.ID}})
+	parent.result.Operation.Target.Actions = append(parent.result.Operation.Target.Actions, serving.Action{ID: "never-started-route", Kind: servingstate.OperationRoute, DependsOn: []string{child.action.ID}})
 	// Add two preexisting executors outside nano's capture. Neither has a policy
 	// receipt from this owner, but no authorized action can have written to them.
 	pod, node, _, _ := observerSourceFixture()
@@ -190,7 +191,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	if parent.reserved || child.reserved || len(fresh.Reservations) != 0 || api.deleteCalls != 0 {
 		t.Fatal("eligible fresh tick did not return the owner without compensation")
 	}
-	if c.runs["never-started-route"] != nil || child.result.Status != nativeOperationPartial || parent.result.Status != nativeOperationFailed {
+	if c.runs["never-started-route"] != nil || child.result.Status != servingstate.NativeOperationPartial || parent.result.Status != servingstate.NativeOperationFailed {
 		t.Fatal("return rewrote the failure or started the frozen route")
 	}
 	if _, err := c.kube.CoreV1().Pods("chill-system").Get(c.ctx, "b", meta.GetOptions{}); err != nil {

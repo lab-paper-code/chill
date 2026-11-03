@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"path"
 	"slices"
@@ -92,7 +93,7 @@ type DispatchOccupancyRecord struct {
 	Reasons                []string                              `json:"reasons,omitempty"`
 	IdleIdentified         bool                                  `json:"idleIdentified"`
 	DrainError             string                                `json:"drainError,omitempty"`
-	DrainState             *OperationState                       `json:"drainState,omitempty"`
+	DrainState             *servingstate.OperationState          `json:"drainState,omitempty"`
 	Conditions             edge.DispatchOccupancyMeasurementSpec `json:"conditions"`
 	LoadJob                struct {
 		Name  string `json:"name"`
@@ -108,17 +109,17 @@ type DispatchOccupancyRecord struct {
 
 // BurstOccupancyRecord is immutable factual evidence, never scheduler admission.
 type BurstOccupancyRecord struct {
-	SchemaVersion string                     `json:"schemaVersion"`
-	Node          serving.NodeReference      `json:"node"`
-	PowerMode     string                     `json:"powerMode"`
-	RuntimeImage  string                     `json:"runtimeImage"`
-	Model         string                     `json:"model"`
-	ProfileID     string                     `json:"profileID"`
-	Batch         int                        `json:"batch"`
-	Estimate      *serving.OccupancyEstimate `json:"estimate"`
-	Reasons       []string                   `json:"reasons,omitempty"`
-	DrainError    string                     `json:"drainError,omitempty"`
-	DrainState    *OperationState            `json:"drainState,omitempty"`
+	SchemaVersion string                       `json:"schemaVersion"`
+	Node          serving.NodeReference        `json:"node"`
+	PowerMode     string                       `json:"powerMode"`
+	RuntimeImage  string                       `json:"runtimeImage"`
+	Model         string                       `json:"model"`
+	ProfileID     string                       `json:"profileID"`
+	Batch         int                          `json:"batch"`
+	Estimate      *serving.OccupancyEstimate   `json:"estimate"`
+	Reasons       []string                     `json:"reasons,omitempty"`
+	DrainError    string                       `json:"drainError,omitempty"`
+	DrainState    *servingstate.OperationState `json:"drainState,omitempty"`
 	// Conditions is the exact immutable CR, including calculation provenance.
 	Conditions edge.DispatchOccupancyMeasurementSpec `json:"conditions"`
 	LoadJob    struct {
@@ -134,7 +135,7 @@ type BurstOccupancyRecord struct {
 }
 
 // validateOccupancyProfile rejects changed accepted identities or resource bounds.
-func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *serving.Profile, w *edge.Workload, preparation PrepareSpec) error {
+func validateOccupancyProfile(s edge.DispatchOccupancyMeasurementSpec, profile *serving.Profile, w *edge.Workload, preparation servingstate.PrepareSpec) error {
 	var inputs struct {
 		Computed struct {
 			FramedDecodedRequestUpperBytes int64 `json:"framedDecodedRequestUpperBytes"`
@@ -220,7 +221,7 @@ func (c *SchedulerController) occupancyRefusal(ctx context.Context, m *edge.Disp
 		return plan, refusedWorkloadMissing, m.Spec.Workload, false
 	}
 	plan.workload = &workload
-	if err := c.authorize(Operation{WorkloadUID: string(workload.UID)}); err != nil {
+	if err := c.authorize(servingstate.Operation{WorkloadUID: string(workload.UID)}); err != nil {
 		return plan, "", "", true
 	}
 	if m.Spec.SupplyMode == occupancyClosedLoop && (m.Spec.Conditions.ProfileID != plan.profile.ID ||
@@ -281,8 +282,8 @@ func workloadPod(pods []core.Pod, uid string) string {
 func (c *SchedulerController) startOccupancy(node *core.Node, m *edge.DispatchOccupancyMeasurement, plan occupancyPlan, config SchedulerControllerConfig) {
 	ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 	root := &measurementRoot{object: m, node: node.Name}
-	operation := Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref, WorkloadUID: string(plan.workload.UID), Holder: string(m.UID)}
-	c.startNodeRun(operation, config, func(ctx context.Context, result *OperationResult) error {
+	operation := servingstate.Operation{ID: occupancyKind + ":" + node.Name + ":" + string(m.UID), Kind: occupancyKind, Node: ref, WorkloadUID: string(plan.workload.UID), Holder: string(m.UID)}
+	c.startNodeRun(operation, config, func(ctx context.Context, result *servingstate.OperationResult) error {
 		err := c.runOccupancy(ctx, m, ref, plan, config)
 		return errors.Join(err, c.handBack(ctx, ref, string(m.UID), root, false, result))
 	})
@@ -401,7 +402,7 @@ func (c *SchedulerController) runOccupancy(ctx context.Context, m *edge.Dispatch
 	})
 }
 
-func (c *SchedulerController) collectOccupancy(ctx context.Context, m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, plan occupancyPlan, started, collected time.Time, drainState *OperationState) (BurstOccupancyRecord, error) {
+func (c *SchedulerController) collectOccupancy(ctx context.Context, m *edge.DispatchOccupancyMeasurement, ref serving.NodeReference, plan occupancyPlan, started, collected time.Time, drainState *servingstate.OperationState) (BurstOccupancyRecord, error) {
 	profile, b := plan.profile, int(m.Spec.Batch)
 	origin := serving.NewOccupancyEstimator(nil, nil, started, collected)
 	gap, scanErr := c.observationLog.ScanOccupancyRows(ctx, string(plan.workload.UID), ref.UID, started, collected, origin.Add)
@@ -452,8 +453,8 @@ func (c *SchedulerController) collectOccupancy(ctx context.Context, m *edge.Disp
 	return record, nil
 }
 
-func (c *SchedulerController) waitOccupancyDrain(ctx context.Context, workloadUID string, ref serving.NodeReference, duration time.Duration) (OperationState, error) {
-	var observed OperationState
+func (c *SchedulerController) waitOccupancyDrain(ctx context.Context, workloadUID string, ref serving.NodeReference, duration time.Duration) (servingstate.OperationState, error) {
+	var observed servingstate.OperationState
 	if duration <= 0 {
 		return observed, nil
 	}

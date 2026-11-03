@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,7 @@ import (
 
 func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 	node := serving.NodeReference{Name: "node", UID: "uid"}
-	before := OperationState{Node: node, PowerMode: "fixed", Pods: []workloadobserver.Pod{{UID: "pod"}}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
+	before := servingstate.OperationState{Node: node, PowerMode: "fixed", Pods: []workloadobserver.Pod{{UID: "pod"}}, States: []string{"profile:[0]::1024:1"}, Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 3, CompletedRequests: 3, Executions: 2}}}
 	after := before
 	after.Native = map[string]native.State{"physical": {Ready: true, AcceptedRequests: 4, CompletedRequests: 4, Executions: 3}}
 	if err := stableIdle(before, before); err != nil {
@@ -30,7 +31,7 @@ func TestIdleRejectsInferenceBetweenEmptySnapshots(t *testing.T) {
 	if err := stableIdle(before, after); err == nil {
 		t.Fatal("empty queues hid actual inference inside idle window")
 	}
-	unloaded := OperationState{Node: node, PowerMode: "fixed", Native: map[string]native.State{}}
+	unloaded := servingstate.OperationState{Node: node, PowerMode: "fixed", Native: map[string]native.State{}}
 	if err := stableIdle(unloaded, unloaded); err != nil {
 		t.Fatal("actual unloaded idle rejected", err)
 	}
@@ -46,13 +47,13 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 	record := OperationMeasurement{
 		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
 		Request: MeasurementRequest{
-			Operation: Operation{ID: "prepare", Kind: operationPrepare, Node: serving.NodeReference{Name: "node", UID: "uid"}},
-			Meter:     MeterDeclaration{ID: "meter", Scope: measurementWallScope},
+			Operation: servingstate.Operation{ID: "prepare", Kind: servingstate.OperationPrepare, Node: serving.NodeReference{Name: "node", UID: "uid"}},
+			Meter:     MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
 			Timing:    &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 			Coverage:  powerwindow.Policy{MaximumGap: time.Second},
 		},
-		Result: OperationResult{Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
-			Before: OperationState{States: []string{"other"}}, Actual: OperationState{States: []string{"other", "new:[0]::1024:1"}}},
+		Result: servingstate.OperationResult{Status: servingstate.NativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
+			Before: servingstate.OperationState{States: []string{"other"}}, Actual: servingstate.OperationState{States: []string{"other", "new:[0]::1024:1"}}},
 		Power: metricobserver.Result{Samples: []metricobserver.Sample{
 			{ObservedAt: start.Add(-time.Second), Watts: 20}, {ObservedAt: start, Watts: 20},
 			{ObservedAt: start.Add(time.Second), Watts: 20}, {ObservedAt: start.Add(2 * time.Second), Watts: 20},
@@ -61,7 +62,7 @@ func TestOperationCostUsesActualSingleStateEffectAndWholeWallWindow(t *testing.T
 	record.Result.Operation = record.Request.Operation
 	record.Result.Before.PowerMode = "fixed"
 	record.Result.Actual.PowerMode = "fixed"
-	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
+	if err := record.judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
 		t.Fatalf("invalid current-contract operation fixture: %+v, %v", record, err)
 	}
 	cost, err := measurementCost(record, evidencestore.ObjectIdentity{Store: "store", Key: "raw", Size: 100})
@@ -88,13 +89,13 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 	record := OperationMeasurement{
 		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
 		Request: MeasurementRequest{
-			Operation: Operation{ID: "raise", Kind: operationPower, Node: serving.NodeReference{Name: "node", UID: "uid"}},
-			Meter:     MeterDeclaration{ID: "meter", Scope: measurementWallScope},
+			Operation: servingstate.Operation{ID: "raise", Kind: servingstate.OperationPower, Node: serving.NodeReference{Name: "node", UID: "uid"}},
+			Meter:     MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
 			Timing:    &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 			Coverage:  powerwindow.Policy{MaximumGap: time.Second},
 		},
-		Result: OperationResult{Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(2 * time.Second),
-			Before: OperationState{PowerMode: lowMode}, Actual: OperationState{PowerMode: "boost"}},
+		Result: servingstate.OperationResult{Status: servingstate.NativeOperationComplete, StartedAt: start, EndedAt: start.Add(2 * time.Second),
+			Before: servingstate.OperationState{PowerMode: lowMode}, Actual: servingstate.OperationState{PowerMode: "boost"}},
 		Power: metricobserver.Result{Samples: []metricobserver.Sample{
 			{ObservedAt: start.Add(-time.Second), Watts: 15}, {ObservedAt: start, Watts: 15},
 			{ObservedAt: start.Add(time.Second), Watts: 15}, {ObservedAt: start.Add(2 * time.Second), Watts: 15},
@@ -102,19 +103,19 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 		}},
 	}
 	record.Result.Operation = record.Request.Operation
-	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
+	if err := record.judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != joules {
 		t.Fatalf("invalid current-contract power fixture: %+v, %v", record, err)
 	}
 	cost, err := measurementCost(record, evidencestore.ObjectIdentity{Store: "store", Key: "raw", Size: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cost.Kind != operationPower || cost.From != lowMode || cost.To != "boost" || len(cost.BeforeState) != 0 || len(cost.TargetState) != 0 || cost.Trials[0].Joules != 30 || cost.Trials[0].Duration != 2*time.Second {
+	if cost.Kind != servingstate.OperationPower || cost.From != lowMode || cost.To != "boost" || len(cost.BeforeState) != 0 || len(cost.TargetState) != 0 || cost.Trials[0].Joules != 30 || cost.Trials[0].Duration != 2*time.Second {
 		t.Fatalf("empty-Node power cost %+v", cost)
 	}
 	judged := record
 	judged.Verdict, judged.WallJoules = measurementInsufficient, nil
-	if err = judged.judge(nil, nil); err != nil || judged.Verdict != measurementAccepted || *judged.WallJoules != joules {
+	if err = judged.judge(nil, nil); err != nil || judged.Verdict != servingstate.MeasurementAccepted || *judged.WallJoules != joules {
 		t.Fatalf("empty-Node power change not accepted when measured: %+v", judged)
 	}
 	record.Result.Actual.PowerMode = record.Result.Before.PowerMode
@@ -123,17 +124,17 @@ func TestPowerCostUsesEmptyNodeModeChange(t *testing.T) {
 	}
 	// A loaded power change belongs to PowerModeTransitionCost.
 	loaded := []string{"new:[0]::1024:1"}
-	record.Result.Before.States, record.Result.Actual = loaded, OperationState{PowerMode: "boost", States: loaded}
+	record.Result.Before.States, record.Result.Actual = loaded, servingstate.OperationState{PowerMode: "boost", States: loaded}
 	if _, err = measurementCost(record, cost.Reference); err == nil {
 		t.Fatal("loaded power record became a serving-operation transition cost")
 	}
 	record.Verdict, record.WallJoules = measurementInsufficient, nil
-	if err = record.judge(nil, nil); err != nil || record.Verdict == measurementAccepted {
+	if err = record.judge(nil, nil); err != nil || record.Verdict == servingstate.MeasurementAccepted {
 		t.Fatal("loaded power change accepted when measured")
 	}
 }
 func TestResizeRemovedSourceNeedsRetainedActualZeroInferenceProof(t *testing.T) {
-	result := OperationResult{Operation: Operation{Kind: operationResize}, Before: OperationState{Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 5, CompletedRequests: 5, Executions: 3}}}, Actual: OperationState{Native: map[string]native.State{"replacement": {Ready: true}}}}
+	result := servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationResize}, Before: servingstate.OperationState{Native: map[string]native.State{"physical": {Ready: true, AcceptedRequests: 5, CompletedRequests: 5, Executions: 3}}}, Actual: servingstate.OperationState{Native: map[string]native.State{"replacement": {Ready: true}}}}
 	if err := operationZeroInference(result); err == nil {
 		t.Fatal("removed process disappearance invented zero-inference proof")
 	}
@@ -151,11 +152,11 @@ func TestMeasuredOperationNeedsProvenStateEffect(t *testing.T) {
 	measured := func(before, actual []string) OperationMeasurement {
 		record := OperationMeasurement{
 			Verdict: measurementInsufficient,
-			Request: MeasurementRequest{Operation: Operation{ID: "remove", Kind: operationRemove},
+			Request: MeasurementRequest{Operation: servingstate.Operation{ID: "remove", Kind: servingstate.OperationRemove},
 				Timing:   &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "synthetic empirical fixture"},
 				Coverage: powerwindow.Policy{MaximumGap: time.Second}},
-			Result: OperationResult{Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
-				Before: OperationState{States: before}, Actual: OperationState{States: actual}},
+			Result: servingstate.OperationResult{Status: servingstate.NativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
+				Before: servingstate.OperationState{States: before}, Actual: servingstate.OperationState{States: actual}},
 			Power: metricobserver.Result{Samples: []metricobserver.Sample{
 				{ObservedAt: start.Add(-time.Second), Watts: 20}, {ObservedAt: start, Watts: 20},
 				{ObservedAt: start.Add(time.Second), Watts: 20}, {ObservedAt: start.Add(2 * time.Second), Watts: 20},
@@ -171,14 +172,14 @@ func TestMeasuredOperationNeedsProvenStateEffect(t *testing.T) {
 	if record := measured(nil, nil); record.Verdict != measurementInsufficient || record.WallJoules != nil || record.Reason == "" {
 		t.Fatalf("remove without a state effect was accepted: %+v", record)
 	}
-	if record := measured([]string{"old:[0]::1024:1"}, nil); record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != 20 {
+	if record := measured([]string{"old:[0]::1024:1"}, nil); record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != 20 {
 		t.Fatalf("remove with its state effect was rejected: %+v", record)
 	}
 }
 func TestIsolationFailureCannotPersistAcceptedScientificCost(t *testing.T) {
 	joules, watts := 12.0, 6.0
 	node := serving.NodeReference{Name: "node", UID: "uid"}
-	record := OperationMeasurement{SchemaVersion: OperationMeasurementSchema, Verdict: "Accepted", WallJoules: &joules, MeanWatts: &watts, Request: MeasurementRequest{Operation: Operation{Node: node}}, Result: OperationResult{EndedAt: time.Unix(10, 0)}}
+	record := OperationMeasurement{SchemaVersion: OperationMeasurementSchema, Verdict: "Accepted", WallJoules: &joules, MeanWatts: &watts, Request: MeasurementRequest{Operation: servingstate.Operation{Node: node}}, Result: servingstate.OperationResult{EndedAt: time.Unix(10, 0)}}
 	witness := MeasurementIsolation{Node: node, Tainted: true, CheckedAt: time.Unix(11, 0), Workloads: []serving.WorkloadReference{{Name: "late", UID: "late-uid"}}}
 	if err := record.applyIsolation(witness, errors.New("actual new Workload ownership")); err == nil {
 		t.Fatal("ownership violation ignored")
@@ -200,7 +201,7 @@ func TestIsolationRejectsUntaintedWitness(t *testing.T) {
 	joules := 12.0
 	node := serving.NodeReference{Name: "node", UID: "uid"}
 	for _, tainted := range []bool{true, false} {
-		record := OperationMeasurement{Verdict: "Accepted", WallJoules: &joules, Request: MeasurementRequest{Operation: Operation{Node: node}}, Result: OperationResult{EndedAt: time.Unix(10, 0)}}
+		record := OperationMeasurement{Verdict: "Accepted", WallJoules: &joules, Request: MeasurementRequest{Operation: servingstate.Operation{Node: node}}, Result: servingstate.OperationResult{EndedAt: time.Unix(10, 0)}}
 		err := record.applyIsolation(MeasurementIsolation{Node: node, Tainted: tainted, CheckedAt: time.Unix(11, 0)}, nil)
 		if (err == nil) != tainted || (record.WallJoules == nil) != !tainted {
 			t.Fatalf("tainted=%v: err=%v joules=%v", tainted, err, record.WallJoules)
@@ -210,14 +211,14 @@ func TestIsolationRejectsUntaintedWitness(t *testing.T) {
 
 func timingMeasurementFixture() OperationMeasurement {
 	start := time.Unix(100, 0).UTC()
-	operation := Operation{ID: "remove", Kind: operationRemove, Node: testNode}
+	operation := servingstate.Operation{ID: "remove", Kind: servingstate.OperationRemove, Node: testNode}
 	record := OperationMeasurement{
 		SchemaVersion: OperationMeasurementSchema, Verdict: measurementInsufficient,
-		Request: MeasurementRequest{Operation: operation, Meter: MeterDeclaration{ID: "meter", Scope: measurementWallScope},
+		Request: MeasurementRequest{Operation: operation, Meter: MeterDeclaration{ID: "meter", Scope: servingstate.MeasurementWallScope},
 			Timing:   &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "1", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
 			Coverage: powerwindow.Policy{MaximumGap: 3 * time.Second}},
-		Result: OperationResult{Operation: operation, Status: nativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
-			Before: OperationState{PowerMode: "fixed", States: []string{"old"}}, Actual: OperationState{PowerMode: "fixed"}},
+		Result: servingstate.OperationResult{Operation: operation, Status: servingstate.NativeOperationComplete, StartedAt: start, EndedAt: start.Add(time.Second),
+			Before: servingstate.OperationState{PowerMode: "fixed", States: []string{"old"}}, Actual: servingstate.OperationState{PowerMode: "fixed"}},
 	}
 	for i, watts := range []float64{0, 2, 0, 2} {
 		record.Power.Samples = append(record.Power.Samples, metricobserver.Sample{ObservedAt: start.Add(time.Duration(i-1) * time.Second), Watts: watts})
@@ -227,7 +228,7 @@ func timingMeasurementFixture() OperationMeasurement {
 
 func TestTimingMeasurementAcceptsHighUncertaintyAndProjectsSeparateB(t *testing.T) {
 	record := timingMeasurementFixture()
-	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != 1 || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0.5 || record.EnergyUncertaintyRatio == nil || *record.EnergyUncertaintyRatio != 0.5 {
+	if err := record.judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != 1 || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0.5 || record.EnergyUncertaintyRatio == nil || *record.EnergyUncertaintyRatio != 0.5 {
 		t.Fatalf("50%% uncertainty must remain a valid measurement: %+v, %v", record, err)
 	}
 	cost, err := measurementCost(record, evidencestore.ObjectIdentity{Store: "evidence", Key: "raw", Size: 1})
@@ -245,7 +246,7 @@ func TestTimingMeasurementZeroConstantIsAcceptedWithUndefinedRatio(t *testing.T)
 	for i := range record.Power.Samples {
 		record.Power.Samples[i].Watts = 0
 	}
-	if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.WallJoules == nil || *record.WallJoules != 0 || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0 || record.EnergyUncertaintyRatio != nil {
+	if err := record.judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.WallJoules == nil || *record.WallJoules != 0 || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0 || record.EnergyUncertaintyRatio != nil {
 		t.Fatalf("zero constant trace: %+v, %v", record, err)
 	}
 }
@@ -258,7 +259,7 @@ func TestTimingMeasurementCorrectsFailuresAndLongGapsWithoutCoverageVeto(t *test
 		} else {
 			record.Request.Coverage.MaximumGap = time.Second / 2
 		}
-		if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted || record.MissingGapJoules == nil || *record.MissingGapJoules != 2 || *record.EnergyUncertaintyJoules != 2.5 {
+		if err := record.judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted || record.MissingGapJoules == nil || *record.MissingGapJoules != 2 || *record.EnergyUncertaintyJoules != 2.5 {
 			t.Fatalf("failed=%v: %+v, %v", failed, record, err)
 		}
 	}
@@ -283,18 +284,18 @@ func TestTimingMeasurementRejectsMissingRealSupportButKeepsPhysicalFailure(t *te
 }
 
 func TestMeasurementReadersRequireEmpiricalTiming(t *testing.T) {
-	for _, kind := range []string{operationRemove, operationIdle} {
+	for _, kind := range []string{servingstate.OperationRemove, servingstate.OperationIdle} {
 		t.Run(kind, func(t *testing.T) {
 			record := timingMeasurementFixture()
-			if kind == operationIdle {
+			if kind == servingstate.OperationIdle {
 				record.Request.Operation.Kind, record.Result.Operation.Kind = kind, kind
-				record.Result.Before, record.Result.Actual = OperationState{PowerMode: "fixed"}, OperationState{PowerMode: "fixed"}
-				record.StateObservations = []OperationState{record.Result.Before, record.Result.Actual}
+				record.Result.Before, record.Result.Actual = servingstate.OperationState{PowerMode: "fixed"}, servingstate.OperationState{PowerMode: "fixed"}
+				record.StateObservations = []servingstate.OperationState{record.Result.Before, record.Result.Actual}
 			}
-			if err := record.judge(nil, nil); err != nil || record.Verdict != measurementAccepted {
+			if err := record.judge(nil, nil); err != nil || record.Verdict != servingstate.MeasurementAccepted {
 				t.Fatalf("current-contract fixture was rejected: %+v, %v", record, err)
 			}
-			if kind == operationIdle {
+			if kind == servingstate.OperationIdle {
 				if _, err := idleMeasurementBaseline(record, evidencestore.ObjectIdentity{}); err != nil {
 					t.Fatal(err)
 				}
@@ -305,7 +306,7 @@ func TestMeasurementReadersRequireEmpiricalTiming(t *testing.T) {
 			if _, err := record.energyMeasurement(); err == nil {
 				t.Fatal("missing empirical timing silently produced energy with B=0")
 			}
-			if kind == operationIdle {
+			if kind == servingstate.OperationIdle {
 				if _, err := idleMeasurementBaseline(record, evidencestore.ObjectIdentity{}); err == nil {
 					t.Fatal("missing empirical timing became a zero-uncertainty baseline")
 				}
@@ -354,8 +355,8 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 		h.create(&class)
 		source := &measurementTestSource{identity: metricobserver.SourceIdentity{Kind: "fixture", NodeName: testNode.Name, Endpoint: "http://meter", Metric: "power"}, failAfterFirst: fail}
 		writer := managerArchive{directory: t.TempDir()}
-		request := MeasurementRequest{Operation: Operation{ID: "idle", Kind: operationIdle, Node: testNode},
-			Meter: MeterDeclaration{ID: "meter", Node: testNode, Scope: measurementWallScope, Source: source.Identity()}, Store: "evidence",
+		request := MeasurementRequest{Operation: servingstate.Operation{ID: "idle", Kind: servingstate.OperationIdle, Node: testNode},
+			Meter: MeterDeclaration{ID: "meter", Node: testNode, Scope: servingstate.MeasurementWallScope, Source: source.Identity()}, Store: "evidence",
 			Timing:          &edge.MeasurementTimingSpec{ChangeIntervalP95Seconds: "0.005", MaximumRequestSeconds: "0", MaximumReceiptGapSeconds: "0", Source: "empirical fixture"},
 			Sampling:        metricobserver.Request{Interval: 2 * time.Millisecond, RequestTimeout: time.Millisecond, Duration: time.Second},
 			OperationBudget: 500 * time.Millisecond, IdleDuration: 20 * time.Millisecond, Coverage: powerwindow.Policy{MaximumGap: 10 * time.Millisecond}}
@@ -379,12 +380,12 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 		}
 		assertRetainedOperationMeasurement(t, writer.directory, receipt, request, record, err)
 		if mode == "operation timeout" {
-			if !errors.Is(err, context.DeadlineExceeded) || record.Result.Status != nativeOperationFailed || record.Verdict != string(edge.MeasurementPhaseFailed) {
+			if !errors.Is(err, context.DeadlineExceeded) || record.Result.Status != servingstate.NativeOperationFailed || record.Verdict != string(edge.MeasurementPhaseFailed) {
 				t.Fatalf("finite physical operation budget not enforced: %+v, %v", record, err)
 			}
 			continue
 		}
-		if record.Result.Status != nativeOperationComplete {
+		if record.Result.Status != servingstate.NativeOperationComplete {
 			t.Fatalf("physical idle failed: %+v, %v", record, err)
 		}
 		if fail {
@@ -394,7 +395,7 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 			continue
 		}
 		first, last := record.Power.Samples[0].ObservedAt, record.Power.Samples[len(record.Power.Samples)-1].ObservedAt
-		if err != nil || record.Verdict != measurementAccepted || first.After(record.Result.StartedAt.Add(-5*time.Millisecond)) || last.Before(record.Result.EndedAt.Add(5*time.Millisecond)) || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0 {
+		if err != nil || record.Verdict != servingstate.MeasurementAccepted || first.After(record.Result.StartedAt.Add(-5*time.Millisecond)) || last.Before(record.Result.EndedAt.Add(5*time.Millisecond)) || record.EnergyUncertaintyJoules == nil || *record.EnergyUncertaintyJoules != 0 {
 			t.Fatalf("real expanded support missing: %+v, %v", record, err)
 		}
 	}

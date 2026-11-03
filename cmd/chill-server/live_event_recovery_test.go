@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving/application"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
 func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
@@ -39,8 +39,8 @@ func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 	service := application.NewSchedulerService(context.Background(), application.Dependencies{
 		ObservationLog: log, Live: &application.Live{Decision: publisher.decision, Action: publisher.action},
 	})
-	result := servingkube.OperationResult{
-		Operation: servingkube.Operation{
+	result := servingstate.OperationResult{
+		Operation: servingstate.Operation{
 			ID: "operation", Kind: "power", Node: serving.NodeReference{UID: "node"},
 		},
 		StartedAt: time.Now().UTC(), Status: "running",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"maps"
 	"math"
 	"path"
@@ -30,7 +31,7 @@ const (
 )
 
 // OperationMeasurementKey is the fixed store key of one operation measurement.
-func OperationMeasurementKey(operation Operation) string {
+func OperationMeasurementKey(operation servingstate.Operation) string {
 	return OperationMeasurementPrefix + operation.Node.UID + "/" + operation.ID + ".json"
 }
 
@@ -264,7 +265,7 @@ func (e *CostEvidence) refreshOccupancy(ctx context.Context, view *CostView) err
 			}
 			e.occupancy[identity] = record
 		}
-		if record.Verdict == measurementAccepted {
+		if record.Verdict == servingstate.MeasurementAccepted {
 			accepted = append(accepted, measured{record: record, key: identity.Key})
 		}
 	}
@@ -305,7 +306,7 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 	if evidence.err != nil {
 		return evidence, nil
 	}
-	if record.Verdict != measurementAccepted {
+	if record.Verdict != servingstate.MeasurementAccepted {
 		if record.Isolation != nil && strings.HasPrefix(record.Isolation.Error, powerChangedReason) {
 			return operationEvidence{skip: true, invalid: record.Isolation.Error}, nil
 		}
@@ -318,7 +319,7 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 	if prepare := record.Request.Operation.Prepare; prepare != nil {
 		evidence.profile = prepare.Instance.Profile
 	}
-	if record.Request.Operation.Kind == operationIdle {
+	if record.Request.Operation.Kind == servingstate.OperationIdle {
 		baseline, err := idleMeasurementBaseline(record, ref)
 		evidence.baseline, evidence.err = &baseline, err
 		return evidence, nil
@@ -334,7 +335,7 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 func latestCosts(costs []serving.OperationCost) []serving.OperationCost {
 	key := func(c serving.OperationCost) string {
 		condition := c.PowerMode
-		if c.Kind == operationPower {
+		if c.Kind == servingstate.OperationPower {
 			states := make([]string, len(c.BeforeState))
 			for j, state := range c.BeforeState {
 				states[j] = serving.MeasurementStateIdentity(state, c.StateIdentities)
@@ -396,13 +397,13 @@ func validateRetainedMeasurement(record OperationMeasurement, ref evidencestore.
 		return err
 	}
 	meter := record.Request.Meter
-	if meter.ID == "" || meter.Scope != measurementWallScope || meter.Node != record.Request.Operation.Node || meter.Source.NodeName != meter.Node.Name || !reflect.DeepEqual(record.Power.Source, meter.Source) {
+	if meter.ID == "" || meter.Scope != servingstate.MeasurementWallScope || meter.Node != record.Request.Operation.Node || meter.Source.NodeName != meter.Node.Name || !reflect.DeepEqual(record.Power.Source, meter.Source) {
 		return errors.New("raw operation meter scope/node mismatch")
 	}
 	return nil
 }
 func idleMeasurementBaseline(record OperationMeasurement, ref evidencestore.ObjectIdentity) (serving.NodeBaseline, error) {
-	if record.SchemaVersion != OperationMeasurementSchema || record.Verdict != measurementAccepted || record.MeanWatts == nil || math.IsNaN(*record.MeanWatts) || math.IsInf(*record.MeanWatts, 0) || *record.MeanWatts < 0 || len(record.StateObservations) < 2 {
+	if record.SchemaVersion != OperationMeasurementSchema || record.Verdict != servingstate.MeasurementAccepted || record.MeanWatts == nil || math.IsNaN(*record.MeanWatts) || math.IsInf(*record.MeanWatts, 0) || *record.MeanWatts < 0 || len(record.StateObservations) < 2 {
 		return serving.NodeBaseline{}, errors.New("idle baseline lacks accepted measured stability evidence")
 	}
 	for _, state := range record.StateObservations {
@@ -415,7 +416,7 @@ func idleMeasurementBaseline(record OperationMeasurement, ref evidencestore.Obje
 		return serving.NodeBaseline{}, err
 	}
 	joules := measurement.Joules
-	if record.WallJoules == nil || joules != *record.WallJoules || joules/record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds() != *record.MeanWatts || record.Result.Status != nativeOperationComplete {
+	if record.WallJoules == nil || joules != *record.WallJoules || joules/record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds() != *record.MeanWatts || record.Result.Status != servingstate.NativeOperationComplete {
 		return serving.NodeBaseline{}, errors.New("idle aggregate differs from retained raw integral/window")
 	}
 	keys := stateProfileKeys(record.Result.Actual)

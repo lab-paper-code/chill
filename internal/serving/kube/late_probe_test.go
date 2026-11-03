@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
@@ -160,7 +161,7 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 	cluster := NewClusterState(o.store, kubefake.NewSimpleClientset(node), o.config.Namespace)
 	c := &cluster.reservation
 	c.mu.Lock()
-	held := c.reserveRun("physical-only", &actionRun{action: serving.Action{Status: nativeOperationRunning}}, Operation{PodUID: string(pod.UID)})
+	held := c.reserveRun("physical-only", &actionRun{action: serving.Action{Status: servingstate.NativeOperationRunning}}, servingstate.Operation{PodUID: string(pod.UID)})
 	c.mu.Unlock()
 	if !held {
 		t.Fatal("failed to reserve Pod")
@@ -174,7 +175,7 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 	if err := cluster.ReserveDeletion(ctx, uid); err != nil {
 		t.Fatal(err)
 	}
-	for _, operation := range []Operation{
+	for _, operation := range []servingstate.Operation{
 		{WorkloadUID: string(uid)},
 		{PodUID: string(pod.UID)},
 		{Instance: physicalID(pod.UID, firstfloorStatus(pod).ContainerID)},
@@ -189,7 +190,7 @@ func TestDeletionReservesLiveOwnedResourcesOutsideSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster.ReleaseDeletion(uid)
-	if err := c.authorize(Operation{PodUID: string(pod.UID)}); err != nil {
+	if err := c.authorize(servingstate.Operation{PodUID: string(pod.UID)}); err != nil {
 		t.Fatal(err)
 	}
 }

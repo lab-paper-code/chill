@@ -2,10 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
 )
 
@@ -16,7 +16,7 @@ const (
 
 // ProjectAction projects the committed observation identically for live and history.
 func ProjectAction(action serving.SchedulerActionObservation) (*live.ActionEvent, error) {
-	var operation servingkube.Operation
+	var operation servingstate.Operation
 	if len(action.Expected) != 0 {
 		if err := json.Unmarshal(action.Expected, &operation); err != nil {
 			return nil, err

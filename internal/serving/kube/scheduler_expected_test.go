@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 func TestActionDurationSurvivesExecutionProjection(t *testing.T) {
 	seconds := 2.5
 	source := &serving.ActionExpectedSource{CostID: "cost", Statistic: "mean", TrialCount: 2}
-	action := serving.Action{ID: "action", Kind: operationRemove, Status: nativeOperationRunning, ExpectedSeconds: &seconds, ExpectedSource: source}
+	action := serving.Action{ID: "action", Kind: servingstate.OperationRemove, Status: servingstate.NativeOperationRunning, ExpectedSeconds: &seconds, ExpectedSource: source}
 	operation := scheduledOperation(action, nil, SchedulerControllerConfig{}, nil, nil)
 	if operation.ExpectedSeconds != action.ExpectedSeconds || operation.ExpectedSource != source {
 		t.Fatalf("operation lost frozen estimate: %+v", operation)

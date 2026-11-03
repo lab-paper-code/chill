@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
@@ -16,12 +17,12 @@ import (
 
 const measuredTwoCoreCPUMax = "max 100000"
 
-func measuredCPUPreparationFixture() PrepareSpec {
+func measuredCPUPreparationFixture() servingstate.PrepareSpec {
 	pod, node, profile, _ := observerSourceFixture()
 	profile.RuntimeMetadata.CPUAffinity = []int{0, 1, 2, 3}
 	profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = 0, 0
 	profile.RuntimeMetadata.CgroupCPUMax = measuredTwoCoreCPUMax
-	return PrepareSpec{
+	return servingstate.PrepareSpec{
 		Name: pod.Name, MemoryBytes: 1024,
 		Instance: serving.SchedulerInstance{ID: "measured-slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
 		Store:    storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
@@ -60,10 +61,10 @@ func TestPreparationSharedCPURetainsMemoryAndDeviceAdmission(t *testing.T) {
 	if err := ValidatePreparation(measuredCPUPreparationFixture()); err != nil {
 		t.Fatal("runtime automatic threads rejected", err)
 	}
-	for _, change := range []func(*PrepareSpec){
-		func(s *PrepareSpec) { s.MemoryBytes-- },
-		func(s *PrepareSpec) { s.Instance.Allocation.GPUUUID = "unmeasured" },
-		func(s *PrepareSpec) { s.Instance.Node.UID = "wrong-node" },
+	for _, change := range []func(*servingstate.PrepareSpec){
+		func(s *servingstate.PrepareSpec) { s.MemoryBytes-- },
+		func(s *servingstate.PrepareSpec) { s.Instance.Allocation.GPUUUID = "unmeasured" },
+		func(s *servingstate.PrepareSpec) { s.Instance.Node.UID = "wrong-node" },
 	} {
 		spec := measuredCPUPreparationFixture()
 		change(&spec)

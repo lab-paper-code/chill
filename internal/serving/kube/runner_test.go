@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func runnerHarness(t *testing.T) (*admissionHarness, string) {
 	_, _, _, class := observerSourceFixture()
 	h.create(&class)
 	older, newer := measuredCPUPreparationFixture(), measuredCPUPreparationFixture()
-	for i, spec := range []*PrepareSpec{&older, &newer} {
+	for i, spec := range []*servingstate.PrepareSpec{&older, &newer} {
 		profile := *spec.Instance.Profile
 		profile.ID = []string{"older", "newer"}[i]
 		profile.MeasuredAt = time.Now().Add(time.Duration(i) * time.Hour)
@@ -39,7 +40,7 @@ func runnerHarness(t *testing.T) (*admissionHarness, string) {
 	}
 	h.controller.observer.SetProfiles([]serving.Profile{*older.Instance.Profile, *newer.Instance.Profile})
 	h.controller.mu.Lock()
-	h.controller.config.Preparations = map[string]PrepareSpec{"older": older, "newer": newer}
+	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{"older": older, "newer": newer}
 	h.controller.mu.Unlock()
 	return h, "newer"
 }

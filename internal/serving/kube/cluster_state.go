@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"sync"
 	"time"
 
@@ -43,7 +44,7 @@ type observerState struct {
 
 type actionRun struct {
 	action               serving.Action
-	result               *OperationResult
+	result               *servingstate.OperationResult
 	cancel               context.CancelFunc
 	started              time.Time
 	scope                resourceScope
@@ -65,10 +66,10 @@ func (s *ClusterState) MarkRemoving(id string) {
 	s.observation.mu.Unlock()
 }
 
-func (s *ClusterState) ClearRoutedRemovals(operation Operation, weights map[string]map[string]int32) {
+func (s *ClusterState) ClearRoutedRemovals(operation servingstate.Operation, weights map[string]map[string]int32) {
 	s.observation.mu.Lock()
 	for uid, route := range weights {
-		if !operation.controlsWorkload(uid) {
+		if !operation.ControlsWorkload(uid) {
 			continue
 		}
 		for id, weight := range route {

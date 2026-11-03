@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +30,7 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 		Profiles:         []serving.Profile{profile},
 		MeasurementFacts: map[string]serving.MeasurementFacts{"unselected": {}},
 	}
-	preparations := map[string]servingkube.PrepareSpec{
+	preparations := map[string]servingstate.PrepareSpec{
 		profile.ID: {Name: "restore", Instance: serving.SchedulerInstance{Profile: &profile, ProfileID: profile.ID}},
 	}
 	snapshot := servingkube.ProjectCatalogSnapshot(owner, "rv", preparations)
@@ -124,7 +125,7 @@ func TestAcceptedCatalogProfilesRemainVisibleWithNewerReportingFacts(t *testing.
 						},
 					},
 				},
-				Preparations: map[string]servingkube.PrepareSpec{profile.ID: {Name: "accepted-preparation"}},
+				Preparations: map[string]servingstate.PrepareSpec{profile.ID: {Name: "accepted-preparation"}},
 			}
 			latest := servingkube.CatalogView{
 				Insufficiencies: []servingkube.CatalogIssue{

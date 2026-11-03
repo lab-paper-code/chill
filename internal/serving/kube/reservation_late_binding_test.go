@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"testing"
 	"time"
 
@@ -23,12 +24,12 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
 			ref := serving.NodeReference{Name: node.Name, UID: string(node.UID)}
 			wanted := serving.SchedulerInstance{ID: "late-slot", Node: ref, Profile: &profile, WorkloadUID: "workload", MaxBatch: 2}
-			action := serving.Action{ID: "prepare", Kind: operationPrepare, Node: ref, Instance: wanted.ID, Status: nativeOperationPartial}
+			action := serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, Node: ref, Instance: wanted.ID, Status: servingstate.NativeOperationPartial}
 			target := serving.SchedulerCandidate{ID: "raw-create-cancel", Instances: []serving.SchedulerInstance{wanted}, Actions: []serving.Action{action}}
 			ended := time.Now().Add(-time.Second)
-			evidence := &PreparationEvidence{PodUID: string(pod.UID), NodeUID: ref.UID, DecisionID: target.ID, Created: mode != reusedEvidence}
-			child := &actionRun{owner: target.ID, action: action, reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}}, result: &OperationResult{Status: nativeOperationPartial, Error: context.Canceled.Error(), EndedAt: ended, Preparation: evidence, Operation: Operation{Kind: operationPrepare, Node: ref, WorkloadUIDs: []string{"workload"}, Prepare: &PrepareSpec{Instance: wanted, Owner: &serving.WorkloadReference{UID: "workload"}, Config: native.Config{Policy: native.Policy{DecisionID: target.ID}}}}}}
-			parent := &actionRun{owner: target.ID, reserved: true, returnObserved: true, scope: child.scope, action: serving.Action{ID: transitionRunKind + "/" + target.ID, Kind: transitionRunKind, Status: nativeOperationFailed}, result: &OperationResult{Status: nativeOperationFailed, EndedAt: ended, Operation: Operation{Target: &target, WorkloadUIDs: []string{"workload"}}}}
+			evidence := &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: ref.UID, DecisionID: target.ID, Created: mode != reusedEvidence}
+			child := &actionRun{owner: target.ID, action: action, reserved: true, scope: resourceScope{Nodes: []serving.NodeReference{ref}, Workloads: []string{"workload"}}, result: &servingstate.OperationResult{Status: servingstate.NativeOperationPartial, Error: context.Canceled.Error(), EndedAt: ended, Preparation: evidence, Operation: servingstate.Operation{Kind: servingstate.OperationPrepare, Node: ref, WorkloadUIDs: []string{"workload"}, Prepare: &servingstate.PrepareSpec{Instance: wanted, Owner: &serving.WorkloadReference{UID: "workload"}, Config: native.Config{Policy: native.Policy{DecisionID: target.ID}}}}}}
+			parent := &actionRun{owner: target.ID, reserved: true, returnObserved: true, scope: child.scope, action: serving.Action{ID: transitionRunKind + "/" + target.ID, Kind: transitionRunKind, Status: servingstate.NativeOperationFailed}, result: &servingstate.OperationResult{Status: servingstate.NativeOperationFailed, EndedAt: ended, Operation: servingstate.Operation{Target: &target, WorkloadUIDs: []string{"workload"}}}}
 			child.proofParent = parent
 			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{parent.action.ID: parent, action.ID: child}}}
 			actual := wanted
@@ -77,7 +78,7 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			if parent.reserved || child.reserved {
 				t.Fatal("late exact ACK did not return ownership")
 			}
-			if child.result.Status != nativeOperationPartial || child.result.Error != context.Canceled.Error() {
+			if child.result.Status != servingstate.NativeOperationPartial || child.result.Error != context.Canceled.Error() {
 				t.Fatal("late ACK rewrote original failure")
 			}
 			if mode == reusedEvidence && preparationCreatedSource(child, physical) {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"os"
 	"reflect"
 	"sync"
@@ -63,8 +64,8 @@ func occupancyTestService(t *testing.T) (*Service, occupancyFixture, *int) {
 		}}).
 		Build()
 	scheduler := &SchedulerInputs{Lock: &sync.Mutex{}, GatewayRequestTimeout: 2 * time.Second, DecodePolicy: decodeTestPolicy,
-		LoadProfiles: func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool) {
-			return f.cm.ResourceVersion, []serving.Profile{*f.profile}, map[string]servingkube.PrepareSpec{f.profile.ID: f.preparation}, true
+		LoadProfiles: func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool) {
+			return f.cm.ResourceVersion, []serving.Profile{*f.profile}, map[string]servingstate.PrepareSpec{f.profile.ID: f.preparation}, true
 		},
 	}
 	service := &Service{

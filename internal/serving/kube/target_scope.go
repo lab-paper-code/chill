@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"maps"
 	"slices"
 
@@ -50,7 +51,7 @@ func changedWorkloads(target serving.SchedulerCandidate, snapshot serving.Schedu
 	return changed
 }
 
-func controlledTarget(operation Operation) *serving.SchedulerCandidate {
+func controlledTarget(operation servingstate.Operation) *serving.SchedulerCandidate {
 	if operation.Target == nil {
 		return nil
 	}
@@ -58,12 +59,12 @@ func controlledTarget(operation Operation) *serving.SchedulerCandidate {
 	target.Instances = nil
 	target.Routing = map[string]map[string]int32{}
 	for uid, route := range operation.Target.Routing {
-		if operation.controlsWorkload(uid) {
+		if operation.ControlsWorkload(uid) {
 			target.Routing[uid] = route
 		}
 	}
 	for _, instance := range operation.Target.Instances {
-		if operation.controlsWorkload(instance.WorkloadUID) {
+		if operation.ControlsWorkload(instance.WorkloadUID) {
 			target.Instances = append(target.Instances, instance)
 		}
 	}
@@ -88,7 +89,7 @@ func (c *reservationState) routeOperationScopeLocked(parent, selected serving.Sc
 }
 
 func (c *reservationState) omittedRouteCompleteLocked(action serving.Action, target serving.SchedulerCandidate) bool {
-	if action.Kind != operationRoute || c.runs[action.ID] != nil {
+	if action.Kind != servingstate.OperationRoute || c.runs[action.ID] != nil {
 		return false
 	}
 	if action.RouteTarget == nil {
@@ -100,23 +101,23 @@ func (c *reservationState) omittedRouteCompleteLocked(action serving.Action, tar
 	// a later stage supersedes its routing or policy.
 	return slices.ContainsFunc(target.Actions, func(dependent serving.Action) bool {
 		consumer := c.runs[dependent.ID]
-		return consumer != nil && consumer.action.Status == nativeOperationComplete && slices.Contains(dependent.DependsOn, action.ID)
+		return consumer != nil && consumer.action.Status == servingstate.NativeOperationComplete && slices.Contains(dependent.DependsOn, action.ID)
 	})
 }
 
 func (c *reservationState) ownerDAGCompleteLocked(parent *actionRun) bool {
 	for _, child := range c.runs {
 		if child != parent && child.owner == parent.owner &&
-			(child.action.Status == nativeOperationRunning || child.action.Status == nativeOperationCancel) {
+			(child.action.Status == servingstate.NativeOperationRunning || child.action.Status == servingstate.NativeOperationCancel) {
 			return false
 		}
 	}
 	target := parent.result.Operation.Target
 	for _, action := range target.Actions {
-		if action.Status == nativeOperationCancel || c.omittedRouteCompleteLocked(action, *target) {
+		if action.Status == servingstate.NativeOperationCancel || c.omittedRouteCompleteLocked(action, *target) {
 			continue
 		}
-		if run := c.runs[action.ID]; run == nil || run.action.Status != nativeOperationComplete {
+		if run := c.runs[action.ID]; run == nil || run.action.Status != servingstate.NativeOperationComplete {
 			return false
 		}
 	}
@@ -142,14 +143,14 @@ func positiveWorkloadScope(target serving.SchedulerCandidate, allowed []string) 
 // Routes inside one owner form a chain; a partial ACK never races its final
 // route. Preparations of that owner's other Nodes still proceed independently.
 func (c *reservationState) orderRouteChild(action serving.Action, owner string) serving.Action {
-	if action.Kind != operationRoute {
+	if action.Kind != servingstate.OperationRoute {
 		return action
 	}
-	if run := c.runs[action.ID]; run != nil && run.action.Status == nativeOperationComplete {
+	if run := c.runs[action.ID]; run != nil && run.action.Status == servingstate.NativeOperationComplete {
 		return action
 	}
 	for _, run := range c.runs {
-		if run.owner == owner && run.action.Kind == operationRoute && run.action.Status == nativeOperationRunning && run.action.ID != action.ID {
+		if run.owner == owner && run.action.Kind == servingstate.OperationRoute && run.action.Status == servingstate.NativeOperationRunning && run.action.ID != action.ID {
 			action.DependsOn = append(slices.Clone(action.DependsOn), run.action.ID)
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"math"
 	"net/http"
@@ -273,7 +274,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	o.configuration.Store(&config)
 	published := ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
-		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
+		Preparations: make(map[string]servingstate.PrepareSpec, len(preparations)),
 		Occupancy:    occupancy,
 	}
 	for id, spec := range preparations {
@@ -400,7 +401,7 @@ func (o *SchedulerService) RecordDecision(
 	}
 	return nil
 }
-func (o *SchedulerService) RecordAction(result servingkube.OperationResult) error {
+func (o *SchedulerService) RecordAction(result servingstate.OperationResult) error {
 	expected, err := json.Marshal(result.Operation)
 	if err != nil {
 		return err

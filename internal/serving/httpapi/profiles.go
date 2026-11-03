@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"cmp"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"net/http"
 	"net/url"
 	"sort"
@@ -17,11 +18,11 @@ import (
 type ProfilesView struct {
 	ConfigVersion string `json:"configVersion"`
 	servingkube.CatalogView
-	Preparations  map[string]servingkube.PrepareSpec `json:"preparations"`
-	Occupancy     []servingkube.OccupancySelection   `json:"-"`
-	Page          *ProfilePage                       `json:"page,omitempty"`
-	Filters       ProfileFilters                     `json:"filters"`
-	DisplayStatus func(serving.Profile) string       `json:"-"`
+	Preparations  map[string]servingstate.PrepareSpec `json:"preparations"`
+	Occupancy     []servingkube.OccupancySelection    `json:"-"`
+	Page          *ProfilePage                        `json:"page,omitempty"`
+	Filters       ProfileFilters                      `json:"filters"`
+	DisplayStatus func(serving.Profile) string        `json:"-"`
 }
 
 type ProfilePage struct {

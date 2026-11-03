@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"maps"
 	"reflect"
 	"slices"
@@ -85,7 +86,7 @@ func terminationMessages(pod *core.Pod) string {
 }
 
 // ValidatePreparation checks a preparation against its measured profile.
-func ValidatePreparation(spec PrepareSpec) error {
+func ValidatePreparation(spec servingstate.PrepareSpec) error {
 	p := spec.Instance.Profile
 	if p == nil || p.Condition.Firstfloor == nil || p.RuntimeMetadata == nil || spec.Name == "" || spec.Instance.Node.UID != p.Condition.NodeUID {
 		return errors.New("measured firstfloor preparation contract required")
@@ -96,7 +97,7 @@ func ValidatePreparation(spec PrepareSpec) error {
 	if spec.Bundle.Store != spec.Store.Store || spec.Bundle.Size <= 0 {
 		return errors.New("immutable profile delivery identity required")
 	}
-	if spec.Config.Policy.ProfileID != p.ID || spec.Config.Mode != nativeServingMode || len(spec.Config.Policy.Batches) != 0 || spec.Config.ProfilePath != "/profile/bundle.json" {
+	if spec.Config.Policy.ProfileID != p.ID || spec.Config.Mode != servingstate.NativeServingMode || len(spec.Config.Policy.Batches) != 0 || spec.Config.ProfilePath != "/profile/bundle.json" {
 		return errors.New("small policy must reference immutable startup profile")
 	}
 	if native.EffectiveDeadlinePolicy(spec.Config.Policy.DeadlinePolicy) !=

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 
 	"slices"
@@ -179,7 +180,7 @@ func catalogView(read servingkube.CatalogSnapshot) httpapi.ProfilesView {
 	out := httpapi.ProfilesView{
 		ConfigVersion: read.ConfigVersion,
 		CatalogView:   read.CatalogView(),
-		Preparations:  map[string]servingkube.PrepareSpec{},
+		Preparations:  map[string]servingstate.PrepareSpec{},
 	}
 	out.CurrentMeasurements = read.CurrentMeasurements
 	for id, p := range read.Preparations {

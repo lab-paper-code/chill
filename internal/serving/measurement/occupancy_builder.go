@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"slices"
 	"strings"
@@ -12,7 +13,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -109,7 +109,7 @@ func (o *Service) BuildOccupancy(
 
 func deriveOccupancy(namespace string, intent OccupancyIntent, policy DispatchOccupancyPolicy,
 	cm *core.ConfigMap, key string, profile *serving.Profile, node *core.Node, workload *api.Workload,
-	preprocessor *api.Preprocessor, preparation servingkube.PrepareSpec, gatewayTimeout time.Duration,
+	preprocessor *api.Preprocessor, preparation servingstate.PrepareSpec, gatewayTimeout time.Duration,
 ) (*api.DispatchOccupancyMeasurement, error) {
 	requestBytes, err := occupancyTargetInputs(intent, policy, profile, node, workload, preprocessor, gatewayTimeout)
 	if err != nil {

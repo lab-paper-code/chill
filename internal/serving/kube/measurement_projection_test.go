@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func projectionRecord(t *testing.T) (edge.OperationCostMeasurement, OperationMea
 			{Name: "prepare", Kind: edge.OperationCostStepPrepare},
 			{Name: "not-executed", Kind: edge.OperationCostStepRemove},
 		}},
-		Status: edge.OperationCostMeasurementStatus{Phase: edge.MeasurementPhaseFailed, Reason: "sequence stopped", Steps: []edge.OperationCostStepStatus{{Name: "prepare", Key: key, Verdict: measurementAccepted}}},
+		Status: edge.OperationCostMeasurementStatus{Phase: edge.MeasurementPhaseFailed, Reason: "sequence stopped", Steps: []edge.OperationCostStepStatus{{Name: "prepare", Key: key, Verdict: servingstate.MeasurementAccepted}}},
 	}
 	return cr, record
 }
@@ -75,7 +76,7 @@ func projectionPayload(t *testing.T, record OperationMeasurement) []byte {
 }
 
 func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
-	for _, name := range []string{"accepted", "zero", nativeOperationFailed, "insufficient", "isolation", "not-invoked", "idle"} {
+	for _, name := range []string{"accepted", "zero", servingstate.NativeOperationFailed, "insufficient", "isolation", "not-invoked", "idle"} {
 		t.Run(name, func(t *testing.T) {
 			cr, record := projectionRecord(t)
 			wantJ := true
@@ -87,8 +88,8 @@ func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
 				zero := 0.0
 				record.WallJoules, record.EnergyUncertaintyJoules = &zero, &zero
 				record.PhaseSensitivityJoules, record.MissingGapJoules = &zero, &zero
-			case nativeOperationFailed:
-				record.Verdict, record.Reason, record.Result.Status = string(edge.MeasurementPhaseFailed), "physical action failed", nativeOperationFailed
+			case servingstate.NativeOperationFailed:
+				record.Verdict, record.Reason, record.Result.Status = string(edge.MeasurementPhaseFailed), "physical action failed", servingstate.NativeOperationFailed
 				// An unfinished/failed power window must not be given Accepted's
 				// completeness checks, nor expose a leftover energy value.
 				record.Power.Samples = nil
@@ -101,15 +102,15 @@ func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
 				_ = record.applyIsolation(MeasurementIsolation{Node: record.Request.Operation.Node}, errors.New("isolation unconfirmed"))
 				wantJ = false
 			case "not-invoked":
-				record.Verdict, record.Reason, record.Result = measurementInsufficient, "no first sample", OperationResult{}
+				record.Verdict, record.Reason, record.Result = measurementInsufficient, "no first sample", servingstate.OperationResult{}
 				wantJ = false
 			case "idle":
 				cr.Spec.Steps[0].Kind = edge.OperationCostStepIdle
 				planned := int32(99)
 				cr.Spec.Steps[0].IdleDurationSeconds = &planned
-				record.Request.Operation.Kind, record.Result.Operation.Kind = operationIdle, operationIdle
+				record.Request.Operation.Kind, record.Result.Operation.Kind = servingstate.OperationIdle, servingstate.OperationIdle
 				record.Result.Before = record.Result.Actual
-				record.StateObservations = []OperationState{record.Result.Before, record.Result.Actual}
+				record.StateObservations = []servingstate.OperationState{record.Result.Before, record.Result.Actual}
 				record.MeanWatts = record.WallJoules
 			}
 			cr.Status.Steps[0].Verdict = record.Verdict
@@ -150,7 +151,7 @@ func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
 			case "name":
 				cr.Status.Steps[0].Name = projectionForeignIdentity
 			case "kind":
-				record.Request.Operation.Kind = operationRemove
+				record.Request.Operation.Kind = servingstate.OperationRemove
 			case "foreign-node":
 				record.Request.Operation.Node.Name = projectionForeignIdentity
 			case "node-uid":
@@ -162,7 +163,7 @@ func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
 			case "result-id":
 				record.Result.Operation.ID = projectionForeignIdentity
 			case "result-kind":
-				record.Result.Operation.Kind = operationIdle
+				record.Result.Operation.Kind = servingstate.OperationIdle
 			case "result-node":
 				record.Result.Operation.Node.UID = projectionForeignIdentity
 			case "schema":
@@ -173,7 +174,7 @@ func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
 				record.WallJoules = nil
 			case "idle":
 				cr.Spec.Steps[0].Kind = edge.OperationCostStepIdle
-				record.Request.Operation.Kind, record.Result.Operation.Kind = operationIdle, operationIdle
+				record.Request.Operation.Kind, record.Result.Operation.Kind = servingstate.OperationIdle, servingstate.OperationIdle
 			}
 			objects := &projectionObjects{payload: projectionPayload(t, record)}
 			bound := int64(1 << 20)
@@ -230,7 +231,7 @@ func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
 	cr, record := projectionRecord(t)
 	record.Verdict, cr.Status.Steps[0].Verdict = measurementInsufficient, measurementInsufficient
 	record.Result.Before.PowerMode, record.Result.Actual.PowerMode = "MAXN", "MODE_15W"
-	record.Request.Operation.Prepare = &PrepareSpec{Instance: serving.SchedulerInstance{Profile: &serving.Profile{}}}
+	record.Request.Operation.Prepare = &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{Profile: &serving.Profile{}}}
 	record.Request.Operation.Prepare.Instance.Profile.Condition.LogicalModel = "frozen-model"
 	got, err := projectOperationStep(cr, 0, "store", record)
 	if err != nil {
@@ -240,7 +241,7 @@ func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
 		t.Fatalf("lost recorded metadata or invented accepted energy: %+v", got)
 	}
 	record.Request.Operation.Prepare = nil
-	record.Result = OperationResult{}
+	record.Result = servingstate.OperationResult{}
 	got, err = projectOperationStep(cr, 0, "store", record)
 	if err != nil || got.FromPowerMode != "" || got.ToPowerMode != "" || got.Model != "" {
 		t.Fatalf("missing metadata inferred from plan or name: %+v, %v", got, err)

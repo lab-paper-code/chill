@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"maps"
 	"path"
@@ -402,7 +403,7 @@ func (o *Observer) restoreSources(pods []corev1.Pod) {
 		key := string(pod.UID)
 		source := o.sources[key]
 		if source == nil {
-			if pod.UID == "" || pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
+			if pod.UID == "" || pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent {
 				continue
 			}
 			source = &nativeSource{pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, uid: pod.UID, terminated: map[string]bool{}}
@@ -522,7 +523,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			o.issue("logs/"+id, o.startLogs(pod, owner))
 		}
 	}
-	if pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
+	if pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent {
 		instance, publish := o.sourceUnavailable(pod, errors.New("Pod is not labelled as a serving instance"))
 		return instance, publish, nil
 	}

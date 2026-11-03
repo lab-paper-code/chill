@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"net/http"
 	"net/url"
@@ -64,7 +65,7 @@ type Config struct {
 // DecodePolicy must use the scheduler's full configuration decoder.
 type SchedulerInputs struct {
 	Lock                  *sync.Mutex
-	LoadProfiles          func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool)
+	LoadProfiles          func() (string, []serving.Profile, map[string]servingstate.PrepareSpec, bool)
 	DecodePolicy          func(string, int64) (*DispatchOccupancyPolicy, error)
 	GatewayRequestTimeout time.Duration
 }

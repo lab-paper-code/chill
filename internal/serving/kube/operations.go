@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
-	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -23,130 +22,6 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
-
-const (
-	operationPrepare         = "prepare"
-	operationRemove          = "remove"
-	operationPower           = "power"
-	operationIdle            = "idle"
-	nativeOperationFailed    = "failed"
-	nativeOperationPartial   = "partial"
-	nativeServingMode        = "serving"
-	operationStop            = "stop"
-	operationDrain           = "drain"
-	operationResize          = "resize"
-	operationRoute           = "route"
-	operationUnroute         = "unroute"
-	operationRelease         = "release"
-	operationReset           = "reset"
-	nativeOperationComplete  = "complete"
-	nativeOperationRunning   = "running"
-	nativeOperationCancel    = "cancel"
-	nativeStateUnloaded      = "unloaded"
-	measurementAccepted      = "Accepted"
-	measurementWallScope     = "node-exclusive-wall"
-	servingInstanceComponent = "serving-instance"
-)
-
-func isRoutingOperation(kind string) bool {
-	return kind == operationRoute || kind == operationUnroute || kind == operationRelease
-}
-
-func (operation Operation) controlsWorkload(uid string) bool {
-	if operation.WorkloadUID != "" {
-		return operation.WorkloadUID == uid
-	}
-	return operation.WorkloadUIDs == nil || slices.Contains(operation.WorkloadUIDs, uid)
-}
-
-// PrepareSpec freezes one measured execution and immutable profile delivery.
-// Owner, when set, makes the prepared instance serve only that Workload.
-type PrepareSpec struct {
-	Name        string                       `json:"name"`
-	Instance    serving.SchedulerInstance    `json:"instance"`
-	Bundle      evidencestore.ObjectIdentity `json:"bundle"`
-	Store       storekube.Binding            `json:"store"`
-	Config      native.Config                `json:"config"`
-	MemoryBytes uint64                       `json:"memoryBytes"`
-	Owner       *serving.WorkloadReference   `json:"owner,omitempty"`
-}
-
-type Operation struct {
-	ID       string                  `json:"id"`
-	Kind     string                  `json:"kind"`
-	Node     serving.NodeReference   `json:"node"`
-	Nodes    []serving.NodeReference `json:"nodes,omitempty"`
-	Instance string                  `json:"instance,omitempty"`
-	PodUID   string                  `json:"podUID,omitempty"`
-	Prepare  *PrepareSpec            `json:"prepare,omitempty"`
-	// PowerMode is the DeviceClass mode a power operation requests, within
-	// MaxActuationDuration of its label write (the mode's actuation policy).
-	PowerMode            string        `json:"powerMode,omitempty"`
-	MaxActuationDuration time.Duration `json:"maxActuationDurationNanos,omitempty"`
-	// Holder is the measurement root a measurement power operation acts for;
-	// the Node's measurement taint must name it.
-	Holder              string                        `json:"holder,omitempty"`
-	Target              *serving.SchedulerCandidate   `json:"target,omitempty"`
-	SourceConfigRV      string                        `json:"sourceConfigRV,omitempty"`
-	StaticRouting       map[string]map[string]int     `json:"staticRouting,omitempty"`
-	WorkloadUID         string                        `json:"workloadUID,omitempty"`
-	WorkloadUIDs        []string                      `json:"workloadUIDs"`
-	Reason              string                        `json:"reason,omitempty"`
-	ActorUsername       string                        `json:"actorUsername,omitempty"`
-	ActorUID            string                        `json:"actorUID,omitempty"`
-	BeforeStaticRouting map[string]map[string]int     `json:"beforeStaticRouting,omitempty"`
-	ExpectedSeconds     *float64                      `json:"expectedSeconds"`
-	ExpectedSource      *serving.ActionExpectedSource `json:"expectedSource"`
-	// SettingsValidatedAt names the settings change that declared StaticRouting.
-	SettingsValidatedAt *time.Time `json:"settingsValidatedAt,omitempty"`
-}
-
-type OperationState struct {
-	At        time.Time                   `json:"at"`
-	Node      serving.NodeReference       `json:"node"`
-	PowerMode string                      `json:"powerMode"`
-	Instances []serving.InstanceState     `json:"instances"`
-	Native    map[string]native.State     `json:"native"`
-	Pods      []workloadobserver.Pod      `json:"pods"`
-	States    []string                    `json:"states"`
-	Reasons   []string                    `json:"reasons,omitempty"`
-	Routing   map[string]map[string]int32 `json:"routing,omitempty"`
-}
-
-type OperationStep struct {
-	Name      string         `json:"name"`
-	StartedAt time.Time      `json:"startedAt"`
-	EndedAt   time.Time      `json:"endedAt"`
-	Status    string         `json:"status"`
-	Before    OperationState `json:"before"`
-	Actual    OperationState `json:"actual"`
-	Error     string         `json:"error,omitempty"`
-}
-
-// PreparationEvidence survives a canceled final Capture. Spec remains the
-// authority for slot, owner and policy; these are the API-confirmed identities.
-type PreparationEvidence struct {
-	PodUID     string `json:"podUID"`
-	NodeUID    string `json:"nodeUID"`
-	DecisionID string `json:"decisionID"`
-	Created    bool   `json:"created"`
-}
-
-type OperationResult struct {
-	Operation   Operation               `json:"operation"`
-	Before      OperationState          `json:"before"`
-	Actual      OperationState          `json:"actual"`
-	StartedAt   time.Time               `json:"startedAt"`
-	EndedAt     time.Time               `json:"endedAt"`
-	Status      string                  `json:"status"`
-	Error       string                  `json:"error,omitempty"`
-	Progress    []string                `json:"progress"`
-	DrainNative map[string]native.State `json:"drainNative,omitempty"`
-	Steps       []OperationStep         `json:"steps,omitempty"`
-	Preparation *PreparationEvidence    `json:"preparation,omitempty"`
-	// Only a confirmed pre-effect failure permits immediate reservation return.
-	effectsNotStarted bool
-}
 
 // OperationConfig.Measurement selects measurement operations: they prepare only
 // on a measurement POOL Node and tolerate its taint. Other operations refuse it.
@@ -197,8 +72,8 @@ func (o *Operations) wait(ctx context.Context, step func() (bool, error)) error 
 	}
 }
 
-func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (OperationState, error) {
-	s := OperationState{At: time.Now().UTC(), Node: node, Native: map[string]native.State{}}
+func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (servingstate.OperationState, error) {
+	s := servingstate.OperationState{At: time.Now().UTC(), Node: node, Native: map[string]native.State{}}
 	current, err := o.kube.CoreV1().Nodes().Get(ctx, node.Name, meta.GetOptions{})
 	if err != nil {
 		return s, err
@@ -230,7 +105,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 			return s, e
 		}
 		s.Pods = append(s.Pods, pod)
-		if p.Labels["app.kubernetes.io/component"] != servingInstanceComponent {
+		if p.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent {
 			continue
 		}
 		status := firstfloorStatus(p)
@@ -258,11 +133,11 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (O
 	return s, nil
 }
 
-func (o *Operations) Execute(ctx context.Context, operation Operation) (OperationResult, error) {
-	result := OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: nativeOperationRunning}
-	before := OperationState{At: result.StartedAt}
+func (o *Operations) Execute(ctx context.Context, operation servingstate.Operation) (servingstate.OperationResult, error) {
+	result := servingstate.OperationResult{Operation: operation, StartedAt: time.Now().UTC(), Status: servingstate.NativeOperationRunning}
+	before := servingstate.OperationState{At: result.StartedAt}
 	err := o.validateOperationBinding(ctx, operation)
-	if err == nil && !isRoutingOperation(operation.Kind) {
+	if err == nil && !servingstate.IsRoutingOperation(operation.Kind) {
 		before, err = o.Capture(ctx, operation.Node)
 	}
 	result.Before = before
@@ -272,7 +147,7 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	actual := result.Actual
 	actual.At = time.Now().UTC()
 	var captureErr error
-	if !isRoutingOperation(operation.Kind) {
+	if !servingstate.IsRoutingOperation(operation.Kind) {
 		actual, captureErr = o.Capture(ctx, operation.Node)
 		for id, state := range result.Actual.Native {
 			if _, observed := actual.Native[id]; !observed {
@@ -290,21 +165,21 @@ func (o *Operations) Execute(ctx context.Context, operation Operation) (Operatio
 	err = errors.Join(err, captureErr)
 	result.EndedAt = time.Now().UTC()
 	if err == nil {
-		result.Status = nativeOperationComplete
+		result.Status = servingstate.NativeOperationComplete
 	} else {
-		result.Status = nativeOperationFailed
+		result.Status = servingstate.NativeOperationFailed
 		if !reflect.DeepEqual(before.Pods, actual.Pods) || before.PowerMode != actual.PowerMode || len(result.Progress) > 0 {
-			result.Status = nativeOperationPartial
+			result.Status = servingstate.NativeOperationPartial
 		}
 		result.Error = err.Error()
 	}
 	return result, err
 }
 
-func (o *Operations) executeOperation(ctx context.Context, operation Operation, result *OperationResult) error {
+func (o *Operations) executeOperation(ctx context.Context, operation servingstate.Operation, result *servingstate.OperationResult) error {
 	var err error
 	switch operation.Kind {
-	case operationPrepare:
+	case servingstate.OperationPrepare:
 		if operation.Prepare == nil {
 			err = errors.New("prepare specification required")
 		} else {
@@ -313,21 +188,21 @@ func (o *Operations) executeOperation(ctx context.Context, operation Operation, 
 				result.Progress = append(result.Progress, "prepare observed")
 			}
 		}
-	case operationRemove:
+	case servingstate.OperationRemove:
 		result.DrainNative = map[string]native.State{}
 		err = o.removeInstance(ctx, operation.Node, operation.PodUID, operation.Instance, result.DrainNative)
 		if err == nil {
 			result.Progress = append(result.Progress, "stop/drain/termination/removal observed")
 		}
-	case operationPower:
+	case servingstate.OperationPower:
 		err = o.ChangePower(ctx, operation.Node, operation.Holder, operation.PowerMode, operation.MaxActuationDuration)
-	case operationRoute, operationUnroute:
+	case servingstate.OperationRoute, servingstate.OperationUnroute:
 		if operation.Target == nil {
 			err = errors.New("routing target required")
 		} else {
 			err = o.ApplyTarget(ctx, *operation.Target, result)
 		}
-	case operationRelease:
+	case servingstate.OperationRelease:
 		result.Before.Routing, _ = o.runtime.SchedulerRouting()
 		result.Before.Instances = o.runtime.Instances()
 		err = o.observer.Refresh(ctx)
@@ -337,11 +212,11 @@ func (o *Operations) executeOperation(ctx context.Context, operation Operation, 
 		result.Actual.At = time.Now().UTC()
 		result.Actual.Routing, _ = o.runtime.SchedulerRouting()
 		result.Actual.Instances = o.runtime.Instances()
-	case operationStop:
+	case servingstate.OperationStop:
 		err = o.StopInstance(ctx, operation.Instance)
-	case operationDrain:
+	case servingstate.OperationDrain:
 		err = o.detachInstance(ctx, operation.Instance)
-	case operationResize:
+	case servingstate.OperationResize:
 		if operation.Prepare == nil || operation.Target == nil {
 			err = errors.New("resize requires prepared replacement and routing target")
 		} else {
@@ -362,11 +237,11 @@ func (o *Operations) executeOperation(ctx context.Context, operation Operation, 
 	return err
 }
 
-func (o *Operations) validateOperationBinding(ctx context.Context, operation Operation) error {
-	if isRoutingOperation(operation.Kind) {
+func (o *Operations) validateOperationBinding(ctx context.Context, operation servingstate.Operation) error {
+	if servingstate.IsRoutingOperation(operation.Kind) {
 		return nil
 	}
-	if operation.Kind == operationRemove && operation.WorkloadUID != "" {
+	if operation.Kind == servingstate.OperationRemove && operation.WorkloadUID != "" {
 		current := o.runtime.SchedulerInputs(time.Now)
 		for _, route := range current.Routing {
 			if route[operation.Instance] > 0 {
@@ -386,12 +261,12 @@ func (o *Operations) validateOperationBinding(ctx context.Context, operation Ope
 	if string(actual.UID) != operation.Node.UID || actual.DeletionTimestamp != nil {
 		return errors.New("operation physical Node identity changed")
 	}
-	if operation.Kind == operationPrepare || operation.Kind == operationResize {
+	if operation.Kind == servingstate.OperationPrepare || operation.Kind == servingstate.OperationResize {
 		if operation.Prepare == nil || operation.Prepare.Instance.Node != operation.Node {
 			return errors.New("prepare physical Node differs from operation scope")
 		}
 	}
-	if operation.Kind == operationResize {
+	if operation.Kind == servingstate.OperationResize {
 		if operation.Target == nil {
 			return errors.New("resize routing target unavailable")
 		}
@@ -405,15 +280,15 @@ func (o *Operations) validateOperationBinding(ctx context.Context, operation Ope
 			return errors.New("resize replacement target differs from operation physical scope")
 		}
 	}
-	if operation.Kind != operationRemove && operation.Kind != operationResize && operation.Kind != operationStop && operation.Kind != operationDrain {
+	if operation.Kind != servingstate.OperationRemove && operation.Kind != servingstate.OperationResize && operation.Kind != servingstate.OperationStop && operation.Kind != servingstate.OperationDrain {
 		return nil
 	}
 	return o.validatePhysicalInstanceBinding(ctx, operation, actual)
 }
 
-func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operation Operation, actual *core.Node) error {
+func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operation servingstate.Operation, actual *core.Node) error {
 	uid, containerID, ok := strings.Cut(operation.Instance, "/")
-	if operation.Instance == "" && operation.Kind == operationRemove && operation.PodUID != "" {
+	if operation.Instance == "" && operation.Kind == servingstate.OperationRemove && operation.PodUID != "" {
 		uid = operation.PodUID
 	} else if !ok || containerID == "" || operation.PodUID != "" && operation.PodUID != uid {
 		return errors.New("exact operation Pod/executor identity required")
@@ -427,7 +302,7 @@ func (o *Operations) validatePhysicalInstanceBinding(ctx context.Context, operat
 			continue
 		}
 		status := firstfloorStatus(&pod)
-		if pod.Spec.NodeName != actual.Name || pod.Labels["app.kubernetes.io/component"] != servingInstanceComponent ||
+		if pod.Spec.NodeName != actual.Name || pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent ||
 			operation.Instance != "" && (status == nil || status.ContainerID != containerID) ||
 			operation.Instance == "" && !podTerminated(&pod) && !podAwaitingExecutor(&pod) {
 			return errors.New("operation instance belongs to different physical Node/source")

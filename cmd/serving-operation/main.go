@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"net/http"
 	"net/url"
@@ -66,7 +67,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if _, err = servingkube.DecodeManualOperation(operation); err != nil {
 		return err
 	}
-	var result servingkube.OperationResult
+	var result servingstate.OperationResult
 	if err = post(ctx, c, server, operationsPath, operation, &result, out); err != nil {
 		return err
 	}

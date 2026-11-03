@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"io"
 	"strings"
 	"sync"
@@ -172,7 +173,7 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 		Nodes:     []serving.SchedulerNode{{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Ready: true}},
 	}
 	spec := measuredCPUPreparationFixture()
-	h.controller.config.Preparations = map[string]PrepareSpec{spec.Instance.Profile.ID: spec}
+	h.controller.config.Preparations = map[string]servingstate.PrepareSpec{spec.Instance.Profile.ID: spec}
 	h.controller.mu.Unlock()
 	if err := h.controller.runtime.Publish(h.controller.state.Snapshot.Workloads[0]); err != nil {
 		t.Fatal(err)
@@ -183,7 +184,7 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 var testNode = serving.NodeReference{Name: "node", UID: "node-uid"}
 
 func manualPrepare() ManualOperation {
-	return ManualOperation{Kind: operationPrepare, WorkloadUID: "w-uid", ProfileID: measuredCPUPreparationFixture().Instance.Profile.ID, Node: testNode, Reason: "exercise manual preparation"}
+	return ManualOperation{Kind: servingstate.OperationPrepare, WorkloadUID: "w-uid", ProfileID: measuredCPUPreparationFixture().Instance.Profile.ID, Node: testNode, Reason: "exercise manual preparation"}
 }
 
 func errorCode(err error) string {
@@ -230,10 +231,10 @@ func TestOrderTickDuringMeasurement(t *testing.T) {
 		t.Fatalf("measured Node not marked: %+v", snapshot.Nodes)
 	}
 	release := make(chan struct{})
-	h.controller.startNodeRun(Operation{ID: "held", Kind: operationCostKind, Node: testNode}, SchedulerControllerConfig{},
-		func(context.Context, *OperationResult) error { <-release; return nil })
+	h.controller.startNodeRun(servingstate.Operation{ID: "held", Kind: operationCostKind, Node: testNode}, SchedulerControllerConfig{},
+		func(context.Context, *servingstate.OperationResult) error { <-release; return nil })
 	defer close(release)
-	h.controller.launch(serving.SchedulerCandidate{ID: "target", Actions: []serving.Action{{ID: "remove", Kind: operationRemove, Node: testNode, Instance: "p/c"}}}, h.controller.config)
+	h.controller.launch(serving.SchedulerCandidate{ID: "target", Actions: []serving.Action{{ID: "remove", Kind: servingstate.OperationRemove, Node: testNode, Instance: "p/c"}}}, h.controller.config)
 	h.controller.mu.Lock()
 	_, launched := h.controller.runs["remove"]
 	h.controller.mu.Unlock()
@@ -283,17 +284,17 @@ func TestManualOperationGuards(t *testing.T) {
 		request ManualOperation
 		code    string
 	}{
-		"shared":     {ManualOperation{Kind: operationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "p/c", Reason: "refuse foreign owner"}, testOperationConflict},
-		"routed":     {ManualOperation{Kind: operationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "q/c", Reason: "refuse routed removal"}, testOperationConflict},
-		"autonomous": {ManualOperation{Kind: operationRemove, WorkloadUID: "auto", Node: testNode, Instance: "q/c", Reason: "refuse autonomous workload"}, testOperationConflict},
-		"unknown":    {ManualOperation{Kind: operationPrepare, WorkloadUID: "w-uid", ProfileID: "missing", Node: testNode, Reason: "refuse unknown profile"}, "InvalidInput"},
+		"shared":     {ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "p/c", Reason: "refuse foreign owner"}, testOperationConflict},
+		"routed":     {ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "w-uid", Node: testNode, Instance: "q/c", Reason: "refuse routed removal"}, testOperationConflict},
+		"autonomous": {ManualOperation{Kind: servingstate.OperationRemove, WorkloadUID: "auto", Node: testNode, Instance: "q/c", Reason: "refuse autonomous workload"}, testOperationConflict},
+		"unknown":    {ManualOperation{Kind: servingstate.OperationPrepare, WorkloadUID: "w-uid", ProfileID: "missing", Node: testNode, Reason: "refuse unknown profile"}, "InvalidInput"},
 	} {
 		if _, err := h.controller.manualOperationLocked(context.Background(), tc.request, h.controller.config, h.controller.state.Snapshot); errorCode(err) != tc.code {
 			t.Fatalf("%s refused for wrong reason: got %v, want %s", name, err, tc.code)
 		}
 	}
-	var callbacks []OperationResult
-	h.controller.config.OnAction = func(result OperationResult) error {
+	var callbacks []servingstate.OperationResult
+	h.controller.config.OnAction = func(result servingstate.OperationResult) error {
 		callbacks = append(callbacks, result)
 		return nil
 	}
@@ -313,7 +314,7 @@ func TestManualOperationGuards(t *testing.T) {
 	}
 }
 
-func manualBatchPreparation(t *testing.T) (*admissionHarness, PrepareSpec) {
+func manualBatchPreparation(t *testing.T) (*admissionHarness, servingstate.PrepareSpec) {
 	t.Helper()
 	h, _, _ := sequenceHarness(t)
 	spec := h.controller.config.Preparations[manualPrepare().ProfileID]

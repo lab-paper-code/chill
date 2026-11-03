@@ -1,6 +1,7 @@
 package kube
 
 import (
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"math"
 	"reflect"
 	"slices"
@@ -159,7 +160,7 @@ func bindProfileMeter(instance *serving.SchedulerInstance, meters []MeterDeclara
 		return
 	}
 	for _, meter := range meters {
-		if meter.Node == instance.Node && meter.Scope == measurementWallScope &&
+		if meter.Node == instance.Node && meter.Scope == servingstate.MeasurementWallScope &&
 			meter.Source.NodeName == instance.Profile.MetricSource.NodeName && sameWallSeries(meter.Source, instance.Profile.MetricSource) {
 			instance.IdleMeter = meter.ID
 			instance.IdleScope = meter.Scope

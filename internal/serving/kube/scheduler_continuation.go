@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	"slices"
 	"strings"
 	"time"
@@ -38,7 +39,7 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 func (c *SchedulerController) launchRunningParentsLocked(config SchedulerControllerConfig, continuation bool) {
 	parents := []*actionRun{}
 	for _, run := range c.runs {
-		if run.action.Kind == transitionRunKind && run.action.Status == nativeOperationRunning {
+		if run.action.Kind == transitionRunKind && run.action.Status == servingstate.NativeOperationRunning {
 			parents = append(parents, run)
 		}
 	}
