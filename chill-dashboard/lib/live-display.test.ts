@@ -35,6 +35,7 @@ test("protocol reservations and power-mode failures have Korean causes and check
   assert.equal(diagnosis.mode,"MAXN")
   assert.equal(diagnosis.check,"장치 전원·전력모드 제어기 확인")
   assert.equal(displayHelpers.deviceAlerts(null,[]).length,0)
+  assert.equal(displayHelpers.incidentDiagnosis("native preparation Pod failed; firstfloor: runtime stderr: repeated native diagnostic output").reason,"실행 준비 파드 실패")
 })
 const at="2026-10-30T12:00:00.123456789Z",now=Date.parse(at)
 const instance:LiveInstance={id:"shared",node:{uid:"n",name:"Node"},ownerWorkloadUID:"a",profileID:"p",ready:true,stopped:false,routable:{a:true,b:true},running:{a:1,b:0},waiting:{a:0,b:2},observedAt:at}
@@ -259,6 +260,15 @@ test("idle collapse excludes missing metrics, active instances, reservations and
   assert.equal(serviceRows({...snapshot,reservations:[{owner:"a",nodes:[],workloadUIDs:["a"],podUIDs:[],instances:[],reason:"",explanation:""}]},{a:idleMetric},now)[0].idle,false)
   assert.equal(serviceRows(snapshot,{a:{...idleMetric,failed:1}},now)[0].idle,false)
 })
+test("an unconfirmed instance remains visible even when its node is ready",()=>{
+  const snapshot:LiveSnapshot={workloads:[workload],nodes:[{uid:"n",name:"Node",ready:true,powerMode:"fixed",measurement:false,observedAt:at}],instances:[{...instance,ready:false}],routing:{},decision:null,actions:[],reservations:[]}
+  assert.deepEqual(displayHelpers.deviceAlerts(snapshot,[]),[{uid:"n",name:"Node",reason:"인스턴스 준비 미확인"}])
+  assert.deepEqual(displayHelpers.deviceAlerts({...snapshot,instances:[{...instance,ready:false,stopped:true}]},[]),[])
+  const recorded={id:instance.id,node:instance.node,profile:"p",ready:false,stopped:false,reason:"UnconfirmedInstance",workloads:null,waiting:{},running:{},assignedUnknown:{},observedAt:at}
+  const pools={workloads:[{workload:{uid:workload.uid,name:workload.name},nodes:null,instances:[recorded]}],measurement:null,available:null,other:null,issues:null,observedAt:at}
+  assert.equal(displayHelpers.deviceAlerts(snapshot,[],pools)[0].reason,"인스턴스 미확인")
+  assert.equal(displayHelpers.deviceAlerts(snapshot,[],{...pools,workloads:[{...pools.workloads[0],instances:[{...recorded,id:"replaced-instance"}]}]})[0].reason,"인스턴스 준비 미확인")
+})
 test("contiguous device gaps form one incident rather than one incident per second",()=>{
   const time=(seconds:number)=>new Date(now+seconds*1000).toISOString()
   const gaps=Array.from({length:6},(_,i)=>({from:time(i),to:time(i+1),scope:"node:n",reason:"power sample unavailable"}))
@@ -285,7 +295,7 @@ test("zero arrivals cannot claim an SLO result and product reasons use Korean la
   assert.equal(liveReason("ExcludedNode"),"제외 노드")
   assert.equal(liveReason("Keep"),"유지")
   assert.equal(liveReason(""),"미제공")
-  assert.equal(liveReason("UnregisteredCode"),"상세 사유 원본 참조")
+  assert.equal(liveReason("UnregisteredCode"),"UnregisteredCode")
   assert.equal(liveReason("MissingEvidence"),"측정 근거 없음")
   assert.equal(liveReason("Preparing"),"배치 준비 중")
   assert.equal(displayTime("2026-10-30T15:02:03Z","KST"),"00:02:03 KST")
@@ -297,7 +307,7 @@ test("event history loss cannot recover from metrics or disappear as a short gap
   assert.equal(gapEpisodes([gap],now,metrics)[0].recovered,false)
   assert.equal(incidentFlow([],[gap],now,false,metrics).length,1)
 })
-test("operations board keeps independent axes, idle summary, service placement and selected-time evidence",()=>{
+test("operations board keeps service SLO and scoped autonomy visible before device and incident details",async context=>{
   const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
   const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
   const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at}},pool:{wholeWatts:40,activeWatts:0}}
@@ -306,6 +316,8 @@ test("operations board keeps independent axes, idle summary, service placement a
   let query=new URLSearchParams(),experiment="활성 없음"
   let archived:LiveState["events"]=[]
   let recordedDecision:Record<string,unknown>|undefined
+  let summaryHasScopes=false,fullSchedulerReads=0
+  let summaryRead:"pending"|"ready"|"error"="ready",compactPending=false
   const compile=(path:string,modules:Record<string,unknown>)=>{
     const exports:Record<string,ComponentType<Record<string,unknown>>>={}
     const source=readFileSync(new URL(path,import.meta.url),"utf8")
@@ -322,7 +334,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const modules:Record<string,unknown>={
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
-    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string)=>path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}},
+    "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};if(path==="v1/scheduler/state?view=summary")return summaryRead==="pending"?{}:summaryRead==="error"?{error:new Error("summary unavailable")}:{data:{decision:summaryHasScopes?(recordedDecision??{at,workloads:[]}):{at}}};if(path==="v1/scheduler"){fullSchedulerReads++;return {data:!compactPending&&recordedDecision?{state:{decision:recordedDecision}}:undefined}}return path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}}},
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,
     "@/lib/scheduler-history":schedulerHistoryHelpers,
@@ -340,15 +352,57 @@ test("operations board keeps independent axes, idle summary, service placement a
   modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx",{"@/lib/live-display":displayHelpers})
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
+  summaryRead="pending"
+  await context.test("summary pending does not claim a missing scope",()=>{
+    const html=render()
+    assert.match(html,/자율 상태 조회 중/)
+    assert.doesNotMatch(html,/자율 상태 미기록/)
+  })
+  summaryRead="error"
+  await context.test("summary errors remain query failures",()=>assert.match(render(),/자율 상태 조회 실패/))
+  summaryRead="ready";compactPending=true
+  await context.test("legacy compact pending does not claim a missing scope",()=>assert.match(render(),/자율 상태 조회 중/))
+  compactPending=false;summaryHasScopes=true;recordedDecision={at,workloads:[]}
+  await context.test("received decisions establish a missing scope",()=>assert.match(render(),/자율 상태 미기록/))
+  summaryHasScopes=false;recordedDecision=undefined
+  state.snapshot=null;state.metrics=[]
+  await context.test("unreceived snapshots keep operational counts unknown",()=>{
+    const html=render()
+    assert.match(html,/진행 변경 미확인/)
+    assert.match(html,/보관 중 실패 미확인/)
+    assert.match(html,/<span aria-live="polite">미확인<\/span>/)
+    assert.doesNotMatch(html,/진행 변경 0건|보관 중 실패 0건|미확인<\/span>건|진행·사건 없음/)
+    assert.match(html,/기준 <time>미수신<\/time>/)
+  })
+  query=new URLSearchParams({open:"reservations"})
+  await context.test("reservation absence is unknown before a snapshot",()=>assert.doesNotMatch(render(),/예약 없음/))
+  query=new URLSearchParams({open:"service:service-0"})
+  await context.test("deep-linked configuration waits for its snapshot",()=>assert.match(render().split('data-sheet="true"')[1],/구성 수신 대기/))
+  query=new URLSearchParams({at:"2026-10-30T12:00:01Z"})
+  await context.test("evidence facts wait for their response",()=>{
+    const html=render().split('data-sheet="true"')[1]
+    assert.match(html,/근거 조회 중/)
+    assert.doesNotMatch(html,/결정 전체|미기록/)
+  })
+  state.snapshot=snapshot
+  query=new URLSearchParams()
+  await context.test("received empty snapshots allow zero counts but not unreceived power",()=>{
+    const html=render()
+    assert.match(html,/<td data-label="전력">미확인<\/td>/)
+    assert.match(html,/진행 변경 0건/)
+    assert.match(html,/보관 중 실패 0건/)
+    assert.match(html,/<span aria-live="polite">0건<\/span>/)
+  })
+  state.metrics=[sample]
   const idle=render()
-  assert.match(idle,/최근 5분 · 현재 접속 수신 판단/)
-  assert.match(idle,/유휴 서비스 집계/)
-  assert.match(idle,/접수 허용 개/)
-  assert.match(idle,/CHILL 자동 운영 개/)
+  assert.match(idle,/최근 5분/)
+  assert.match(idle,/부하 없음/)
+  assert.match(idle,/자율 상태/)
+  assert.equal((idle.match(/>서비스-\d+<\/button>/g)??[]).length,29)
   assert.match(idle,/성능 판정<\/span><strong>판정 불가/)
-  assert.match(idle,/전체 미배치/)
+  assert.match(idle,/풀·장치/)
   assert.match(idle,/새로고침 시 실시간 복귀/)
-  assert.match(idle,/서비스별 위치/)
+  assert.match(idle,/자율 상태 조회 중/)
   assert.doesNotMatch(idle,/live-node-power|data-sheet/)
   const keep={id:"keep",keep:true,status:"Feasible",expectedJoules:0,slo:[],nodes:[],instances:[]}
   recordedDecision={at,status:"Keep",workloads:[],keep,target:structuredClone(keep),search:{windowStart:at,windowEnd:at,received:0,accepted:0,computeInputs:0,examined:0}}
@@ -364,6 +418,21 @@ test("operations board keeps independent axes, idle summary, service placement a
   query=new URLSearchParams({at:controlFixture.at})
   const previousWorkloads=snapshot.workloads
   snapshot.workloads=controlFixture.snapshot.workloads.map((row:{uid:string;name:string})=>({...pool,...row,autonomous:true}))
+  query=new URLSearchParams()
+  const firstScreen=render(),serviceTable=firstScreen.slice(firstScreen.indexOf('class="live-service-table"'),firstScreen.indexOf('class="live-operations"'))
+  const serviceRows=serviceTable.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)??[]
+  assert.ok(serviceRows.some(row=>row.includes("plc-anomaly")&&row.includes("Controlled")&&!row.includes("UnconfirmedInstance")))
+  assert.ok(serviceRows.some(row=>row.includes("image-classification-tight-slo")&&row.includes("Fixed")&&row.includes("인스턴스 미확인")))
+  assert.ok(firstScreen.indexOf('class="live-service-table"')<firstScreen.indexOf('class="live-alerts"'))
+  assert.ok(fullSchedulerReads>0,"legacy summary without scopes uses the existing compact read")
+  summaryHasScopes=true;fullSchedulerReads=0
+  const summaryOnly=render()
+  assert.match(summaryOnly,/data-state="Controlled"/);assert.match(summaryOnly,/data-state="Fixed"/)
+  assert.equal(fullSchedulerReads,0,"new summary must not download full scheduler evidence")
+  const withScopes=recordedDecision;recordedDecision={at,workloads:null}
+  assert.match(render(),/자율 상태 미기록/);assert.equal(fullSchedulerReads,0,"an explicit null scope is not a legacy response")
+  recordedDecision=withScopes;summaryHasScopes=false
+  query=new URLSearchParams({at:controlFixture.at})
   const controls=render()
   const controlRows=controls.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)??[]
   for(const name of ["plc-anomaly","smolvlm2-vqa"]){
@@ -403,8 +472,8 @@ test("operations board keeps independent axes, idle summary, service placement a
   snapshot.actions=[{id:"shared-power",kind:"power",node:{uid:"n",name:"장치"},workloadUID:"",status:"running",startedAt:new Date(Date.now()).toISOString(),expectedSeconds:null,expectedSource:null}]
   snapshot.reservations=[{owner:"a",nodes:[],workloadUIDs:["service-1"],podUIDs:[],instances:[],reason:"ReservedScope",explanation:""}]
   const changing=render()
-  assert.match(changing,/변경 건/)
-  assert.match(changing,/예약 건/)
+  assert.match(changing,/진행 변경/)
+  assert.match(changing,/예약/)
   assert.match(changing,/전력모드 변경/)
   assert.match(changing,/>진행<\/td>/)
   assert.match(changing,/예약 상세/)
@@ -436,8 +505,8 @@ test("operations board keeps independent axes, idle summary, service placement a
   const failure:LiveState["events"][number]={type:"event",seq:77,at,kind:"action",action:{id:"attempt",kind:"measurement-handback",node:{uid:"n",name:"장치"},workloadUID:"",status:"failed",startedAt:at,phase:"failed",expectedSeconds:null,expectedSource:null,result:{status:"failed",error:"node n did not reach power mode MAXN within 15m0s"}}}
   state.events=[failure]
   const failedBoard=render()
-  assert.match(failedBoard,/보관 중 실패 건/)
-  assert.match(failedBoard,/장치 확인 개/)
+  assert.match(failedBoard,/보관 중 실패/)
+  assert.match(failedBoard,/장치 확인/)
   assert.match(failedBoard,/전력모드 전환 시간 초과/)
   assert.doesNotMatch(failedBoard,/접속 후 실패/)
   query=new URLSearchParams({open:`event:${JSON.stringify(["action",at,"attempt","n"])}`})

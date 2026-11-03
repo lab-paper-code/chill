@@ -1,6 +1,6 @@
 import { compareAt, eventKey, isLiveActionActive, type LiveAction, type LiveActionEvent, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 import { STATUS_AXES, type StatusValue } from "./status.ts"
-import type { SchedulerCandidate } from "./read-types.ts"
+import type { PoolsView, SchedulerCandidate } from "./read-types.ts"
 
 export const instanceSymbols = [
   ["×", "제거"], ["◌", "분배 해제 뒤 잔여 실행"], ["●", "실제 처리"],
@@ -229,6 +229,7 @@ export function incidentDiagnosis(reason:string|null|undefined) {
   const power=/did not reach power mode (\S+) within (\S+)/.exec(reason??"")
   if(power)return {reason:"전력모드 전환 시간 초과",mode:power[1],check:"장치 전원·전력모드 제어기 확인"}
   if(reason?.includes("Pod is not labelled as a serving instance"))return {reason:"서비스 인스턴스가 아닌 파드",check:"파드 역할·측정 작업 확인"}
+  if(reason?.includes("native preparation Pod failed"))return {reason:"실행 준비 파드 실패",check:"실행 준비 파드 종료 사유·서빙 기록 확인"}
   return {reason:liveReason(reason),check:reason?"장치·변경 원본 확인":"조치 근거 미제공"}
 }
 export function isMeasurementPrecheck(action:LiveActionEvent):boolean {
@@ -256,15 +257,24 @@ export function deviceReasons(reasons:string[],powerMode:string):string[] {
   return reasons.filter(reason=>reason==="PowerModeUnavailable"?!detailed&&powerMode.toLowerCase()!=="fixed":
     reason==="PowerModeObservationUnavailable"||reason==="PowerTransitionUnavailable"?powerMode.toLowerCase()!=="fixed":true)
 }
-export function deviceAlerts(snapshot:LiveSnapshot|null,events:LiveEvent[]) {
-  const alerts=new Map<string,{uid:string;name:string;reason:string}>()
+export type DeviceAlert={uid:string;name:string;reason:string}
+export function deviceAlerts(snapshot:LiveSnapshot|null,events:LiveEvent[],pools?:PoolsView) {
+  const alerts=new Map<string,DeviceAlert>()
   for(const node of snapshot?.nodes??[]) {
     const reasons=deviceReasons(node.reasons??[],node.powerMode)
     if(!node.ready||reasons.length)alerts.set(node.uid,{uid:node.uid,name:node.name,reason:reasons.length?reasons.map(liveReason).join(" / "):"준비 미확인"})
   }
+  const recorded=pools?.workloads?.flatMap(pool=>pool.instances??[])
+  for(const instance of snapshot?.instances??[])if(!instance.stopped&&!instance.ready){
+    const previous=alerts.get(instance.node.uid),source=recorded?.find(row=>row.id===instance.id&&row.node.uid===instance.node.uid&&!row.ready)?.reason,reason=source?incidentDiagnosis(source).reason:"인스턴스 준비 미확인"
+    alerts.set(instance.node.uid,{...instance.node,reason:previous?[...new Set([previous.reason,reason])].join(" / "):reason})
+  }
   const latest=new Map<string,LiveEvent>()
   for(const event of events)if(event.kind==="action"&&event.action.node.uid&&event.action.status!=="validated"&&!isMeasurementPrecheck(event.action))latest.set(JSON.stringify([event.action.node.uid,event.action.kind]),event)
-  for(const event of latest.values())if(event.kind==="action"&&isActionFailure(event.action))alerts.set(event.action.node.uid,{...event.action.node,reason:incidentDiagnosis(event.action.result?.error).reason})
+  for(const event of latest.values())if(event.kind==="action"&&isActionFailure(event.action)) {
+    const previous=alerts.get(event.action.node.uid),reason=incidentDiagnosis(event.action.result?.error).reason
+    alerts.set(event.action.node.uid,{...event.action.node,reason:previous?[...new Set([previous.reason,reason])].join(" / "):reason})
+  }
   return [...alerts.values()]
 }
 export function liveReason(reason:string|null|undefined):string {
@@ -277,8 +287,9 @@ export function liveReason(reason:string|null|undefined):string {
   if(reason.includes("await fresh exact")||reason.includes("creation-outcome-unknown")||reason.includes("identity-awaiting-container")||reason.includes("dependency/Ready/handoff"))return reservationReason(reason)
   if(reason.includes("did not reach power mode"))return "전력모드 전환 시간 초과"
   if(reason.includes("Pod is not labelled as a serving instance"))return "서비스 인스턴스가 아닌 파드"
+  const observedLabels:Record<string,string>={InstanceUnavailable:"인스턴스 상태 확인 불가",UnconfirmedInstance:"인스턴스 미확인",NodeUnavailable:"노드 사용 불가",PlacementBudgetUnavailable:"배치 자원 예산 확인 불가"}
   const labels:Record<string,string>={Running:"실행 중",Pending:"대기",Failed:"실패",Succeeded:"완료",Unknown:"미확인",created:"생성",observed:"관측",changed:"변경",deleted:"삭제","server-start":"서버 시작",raised:"문제 감지",resolved:"해소",ObservationUnavailable:"관측 기록 사용 불가",ShuttingDown:"종료 중",ExcludedNode:"제외 노드",Keep:"유지","power sample unavailable":"전력 표본 누락","resume history unavailable":"재연결 기록 공백","event history limit":"사건 보관 한도",Disabled:"CHILL 자동 운영 꺼짐",NotReady:"준비 안 됨",Ready:"준비됨",MissingDataset:"데이터셋 없음",MissingEvidence:"측정 근거 없음",Preparing:"배치 준비 중",RestartDrain:"재시작 후 요청 정리",AppliedDefinitionUnavailable:"적용된 서비스 정의 없음",ReservedScope:"변경 자원 예약 중",PartialObservationWindow:"관측 시간 부족",BootstrapCapacityPending:"초기 처리 용량 계산 대기",CapacityPending:"처리 용량 계산 대기",NoPlanMeetsSLO:"SLO 충족 구성 없음",EvaluatedCandidatesExceedSLOWithinReportedSearchBounds:"검토 구성 SLO 초과",MissingOperationCost:"변경 비용 근거 없음",HeldAfterOverload:"부하 증가 후 구성 유지",DemandIncreasing:"유입 증가",ReplacementUnpaid:"교체 비용 미회수",ReplacementDwell:"교체 후 최소 유지",TransitionGainWithinUncertainty:"절감량 오차 범위 이내",IdleInstanceRemoved:"유휴 인스턴스 제거",ObservedOperationExecutionError:"변경 실행 오류",PreparationFailed:"배치 준비 실패"}
-  return reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return labels[code]??(/[a-z]/i.test(part)?"상세 사유 원본 참조":part)}).join("; ")
+  return [...new Set(reason.split("; ").map(part=>{const separator=part.indexOf(":"),code=separator<0?part:part.slice(0,separator);return observedLabels[code]??labels[code]??part}))].join("; ")
 }
 
 export function incidentFlow(events:LiveEvent[],gaps:LiveState["gaps"],now:number,keep=false,metrics:LiveMetrics[]=[]) {

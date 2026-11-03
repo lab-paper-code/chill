@@ -206,9 +206,14 @@ update. Deferred requests remain waiting, not running or completed. The actual
 local editor was exercised with all three values and existing limits preserved;
 the browser used an isolated ChillServer-contract fixture and performed no live writes.
 
-`/`는 운영 판독·서비스 상태·진행/사건의 세 영역이다. 서비스 영향과 관측 공백을
-독립 상태 셀과 aria-live 요약으로 함께 제공한다. 전부 유휴이면 집계 표로 압축하고
-보기 전환으로 개별 서비스에 접근한다. 서비스 선택은 공통 Sheet 한 개를 사용한다.
+`/`는 상태 한 줄 → 서비스 상태(SLO·자율 상태) → 장치 확인 → 진행·사건 순서다.
+부하가 없어도 서비스별 행을 유지하고 `부하 없음`을 표시한다. 관측 지연과 목표는 같은 셀에서 비교하며,
+자율 상태는 `/scheduler/state?view=summary`의 서비스 UID별 Controlled/Fixed/Disabled와 그 행의 이유만 표시한다. `decision.workloads` 필드가 없는 구 서버 응답에서만 기존 `/scheduler` compact 조회를 사용한다. 명시적인 null·빈 배열은 필드 부재와 구분하며 전체 근거를 내려받지 않는다. 상세 drawer의 선택 당시 근거 조회는 유지한다.
+결정 전체 이유를 다른 서비스에 적용하지 않는다. 자율 상태의 관측 시각을 표시하고 화면 일시정지에도 함께 고정한다.
+조회 전 부재를 확정하지 않는다. 자율 상태는 summary·구 compact 응답 대기 중 `조회 중`, 받은 결정에 서비스 scope가 없을 때만 `미기록`, 요청 오류는 `조회 실패`다. snapshot 미수신 시 진행 변경·보관 실패·예약과 장치 집계는 `미확인`이며, 응답 후 실제 빈 목록만 0으로 표시한다. 예약·구성·판단 drawer와 전력 이력도 응답 전 `없음`·`미기록`을 표시하지 않으며, 전력 지표 미수신은 `미확인`이다.
+장치 확인은 실제 노드 사유·미확인 인스턴스·변경 실패를 연결하며 제외 설정을 구분한다. `/pools`의 인스턴스 사유는 인스턴스 ID·노드 UID가 모두 일치할 때만 사용하고 이름으로 연결하지 않는다. 실행 준비 파드 실패는 짧은 한국어 상태로 표시하며 긴 native stderr는 선택 사건의 원본에 보존한다.
+진행·사건은 시각 한 줄, 반복 묶음, 최근 3행과 전체 펼치기를 제공한다. 전체 장치의 서비스 배치·전력모드·전력과 전력 추세는 `풀·장치` 펼치기로 한 단계 아래에 둔다.
+서비스 영향과 관측 공백은 독립 상태·aria-live 요약으로 제공하고, 서비스 선택은 공통 Sheet 한 개를 사용한다.
 후보·추정·부하·용량 근거는 `/?open=service:UID&evidence=candidates|estimates|load|capacity`로
 연결하며, `view=snapshot` 직접 진입도 첫 수신 응답을 고정하고 최신 판단을 명시적으로 채택한다.
 `/operations/devices`는 전력 추세와 이름순 장치·배치 표 두 영역이다. 계측 범위와 구성 범위를
