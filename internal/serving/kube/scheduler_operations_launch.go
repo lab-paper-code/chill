@@ -1,0 +1,466 @@
+package kube
+
+import (
+	"cmp"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"time"
+
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving"
+)
+
+func actionEquivalent(a, b serving.Action) bool {
+	return a.Kind == b.Kind && a.Node == b.Node && a.Instance == b.Instance && a.From == b.From && a.To == b.To
+}
+
+func authorizedFixedContinuation(a serving.Action, observed []serving.Action) bool {
+	return a.Fixed && slices.ContainsFunc(observed, func(old serving.Action) bool {
+		return old.Fixed && old.ID == a.ID && actionEquivalent(old, a)
+	})
+}
+
+func slotName(slot string) string {
+	sum := sha256.Sum256([]byte(slot))
+	return "serving-" + hex.EncodeToString(sum[:10])
+}
+
+func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.launchFailedPreparationCleanupLocked(config)
+	c.launchRunningParentsLocked(config, false)
+	if len(target.Actions) == 0 {
+		return
+	}
+	id := transitionRunKind + "/" + target.ID
+	if c.runs[id] != nil {
+		return
+	}
+	if !slices.ContainsFunc(target.Actions, func(action serving.Action) bool {
+		if action.Kind == operationRoute {
+			_, empty := c.routeOperationScopeLocked(target, *cmp.Or(action.RouteTarget, &target), action.RouteTarget != nil)
+			return !empty
+		}
+		return action.Kind == operationPrepare || action.Kind == operationPower || action.Kind == operationResize ||
+			c.dependenciesReady(action, target)
+	}) {
+		return
+	}
+	operation := Operation{ID: id, Kind: transitionRunKind, Target: &target, WorkloadUIDs: changedWorkloads(target, c.state.Snapshot)}
+	for _, action := range target.Actions {
+		if action.Node.UID != "" {
+			operation.Nodes = append(operation.Nodes, action.Node)
+		}
+	}
+	started := time.Now()
+	before := OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
+	for _, instance := range c.state.Snapshot.Instances {
+		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
+	}
+	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: nativeOperationRunning}, result: &OperationResult{Operation: operation, Before: before, Status: nativeOperationRunning, StartedAt: started}, started: started}
+	parent.admittedControls = config.Settings.Controls
+	// Freeze only physical same-Node/Workload replacements, not route-only
+	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
+	for _, next := range target.Instances {
+		if next.Profile == nil {
+			continue
+		}
+		for _, old := range c.state.Snapshot.Instances {
+			if old.Node == next.Node && old.WorkloadUID == next.WorkloadUID && old.Profile != nil &&
+				old.Profile.ID != next.Profile.ID && slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
+				return a.Kind == operationRemove && a.Instance == old.ID
+			}) {
+				parent.replacements = append(parent.replacements, serving.SchedulerReplacement{
+					NodeUID: next.Node.UID, WorkloadUID: next.WorkloadUID, ProfileID: next.Profile.ID,
+				})
+			}
+		}
+	}
+	if !c.reserveRun(id, parent, operation) {
+		return
+	}
+	c.launchTargetLocked(target, config)
+}
+
+func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
+	actions, intermediate := c.intermediateActions(target)
+	// Decide eligible old-source stops before starting policy refreshes that can
+	// supersede the existing acknowledged handoff proof in this same tick.
+	for phase := range 2 {
+		for _, action := range actions {
+			if (action.Kind == operationStop) != (phase == 0) {
+				continue
+			}
+			// Evaluation can retain a running snapshot after its live run finishes.
+			// Reconciliation, not a stale target, retires a terminal action identity.
+			if run := c.runs[action.ID]; run != nil && actionEquivalent(run.action, action) &&
+				run.action.Status != nativeOperationRunning && run.action.Status != nativeOperationCancel {
+				continue
+			}
+			if action.Status == nativeOperationCancel {
+				if r := c.runs[action.ID]; r != nil && r.action.Cancelable && r.cancel != nil {
+					r.cancel()
+					r.action.Status = nativeOperationCancel
+				}
+				continue
+			}
+			if action.Status == nativeOperationComplete || action.Status == nativeOperationFailed || c.omittedRouteCompleteLocked(action, target) {
+				continue
+			}
+			selectedTarget := cmp.Or(action.RouteTarget, &target)
+			dependencyTarget := &target
+			if action.From == readySubsetRoute {
+				selectedTarget, dependencyTarget = intermediate, intermediate
+			}
+			if !c.dependenciesReady(action, *dependencyTarget) {
+				continue
+			}
+			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.state.Snapshot.Workloads)
+			if action.Kind == operationRoute {
+				scope, empty := c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
+				operation.WorkloadUIDs = scope
+				if empty {
+					continue
+				}
+				operation.Target = controlledTarget(operation)
+			}
+			action.Status = nativeOperationRunning
+			action.Cancelable = action.Kind == operationPrepare
+			started := time.Now()
+			initial := OperationResult{Operation: operation, StartedAt: started.UTC(), Status: "starting"}
+			run := &actionRun{action: action, result: &initial, started: started, owner: target.ID, proofParent: c.runs[transitionRunKind+"/"+target.ID]}
+			if !c.reserveRun(action.ID, run, operation) {
+				continue
+			}
+			runCtx, cancel := c.runContext(action, config)
+			run.cancel = cancel
+			c.wg.Add(1)
+			go func(operation Operation, run *actionRun) {
+				defer c.wg.Done()
+				result := initial
+				var err error
+				if config.OnAction != nil {
+					err = config.OnAction(result)
+				}
+				effectStarted := err == nil
+				if err == nil {
+					result, err = c.operations.Execute(runCtx, operation)
+					result.StartedAt = initial.StartedAt
+				} else {
+					result.Status = nativeOperationFailed
+					result.Error = "persist action start before physical effect: " + err.Error()
+					result.EndedAt = time.Now().UTC()
+				}
+				// Publish creation evidence into the responsibility scope before
+				// terminal state or the completion notification becomes visible.
+				c.mu.Lock()
+				c.recordPreparationLocked(run, result.Preparation)
+				c.mu.Unlock()
+				if config.OnAction != nil {
+					if recordErr := config.OnAction(result); recordErr != nil {
+						err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))
+						result.Error = err.Error()
+						if result.Status == nativeOperationComplete {
+							result.Status = nativeOperationPartial
+						}
+					}
+				}
+				c.mu.Lock()
+				run.result = &result
+				if !effectStarted {
+					run.reserved = false
+				}
+				run.action.Status = nativeOperationComplete
+				if err != nil {
+					run.action.Status = result.Status
+					run.action.Reason = err.Error()
+					if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+						run.action.Status, run.action.Reason = nativeOperationFailed, serving.ActionDeadlineExceeded+": "+run.action.Reason
+					}
+				}
+				run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
+				c.state.Results = append(c.state.Results, result)
+				c.mu.Unlock()
+				select {
+				case c.completions <- struct{}{}:
+				default:
+				}
+			}(operation, run)
+		}
+	}
+}
+
+func (c *SchedulerController) intermediateActions(
+	target serving.SchedulerCandidate,
+) ([]serving.Action, *serving.SchedulerCandidate) {
+	target.Actions = slices.Clone(target.Actions)
+	for i := range target.Actions {
+		target.Actions[i] = c.orderRouteChild(target.Actions[i], target.ID)
+	}
+	// The final handoff still waits for its DAG. Independent Ready destinations
+	// can receive traffic meanwhile through the same acknowledged route path.
+	pendingRoute := slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
+		return a.Kind == operationRoute && !c.dependenciesReady(a, target)
+	})
+	if !pendingRoute {
+		return target.Actions, nil
+	}
+	var rows []serving.CapacityRow
+	if c.capacity != nil {
+		rows = c.capacity.Rows()
+	}
+	partial := c.readySubset(target, rows)
+	if partial == nil {
+		return target.Actions, nil
+	}
+	route := serving.Action{ID: partial.ID, Kind: operationRoute, From: readySubsetRoute, To: partial.ID}
+	route = c.orderRouteChild(route, target.ID)
+	// Recovery must retain the running route's own frozen target even when the
+	// full goal fails. Only final-goal completion ignores this intermediate action.
+	partial.Actions = []serving.Action{route}
+	actions := append(slices.Clone(target.Actions), route)
+	return actions, partial
+}
+
+// readySubset preserves serving sources while positive targets prepare, admitting
+// independently placed Ready additions only through the capacity/weight judgment.
+// Without a serving route, it normalizes the goal's matching Ready subset.
+func (c *SchedulerController) readySubset(target serving.SchedulerCandidate, rows []serving.CapacityRow) *serving.SchedulerCandidate {
+	snapshot, physical := c.state.Snapshot, c.runtime.Instances()
+	partial := serving.SchedulerCandidate{Routing: map[string]map[string]int32{}}
+	retiring := map[string]bool{}
+	for _, action := range target.Actions {
+		if action.Kind == operationStop && c.dependenciesReady(action, target) {
+			retiring[action.Instance] = true
+		}
+	}
+	for uid, weights := range target.Routing {
+		positive := 0
+		for _, weight := range weights {
+			if weight > 0 {
+				positive++
+			}
+		}
+		selected := []serving.SchedulerInstance{}
+		for _, wanted := range target.Instances {
+			if wanted.WorkloadUID == uid && weights[wanted.ID] > 0 && !retiring[wanted.ID] && schedulerTargetReady(wanted, snapshot, physical, false) {
+				selected = append(selected, wanted)
+			}
+		}
+		// SCH-20/AC-38: preserve verified serving capacity until this workload's
+		// positive destinations are Ready; never revive stopped/unroutable paths.
+		if len(selected) < positive {
+			current := []serving.SchedulerInstance{}
+			for _, actual := range snapshot.Instances {
+				if actual.WorkloadUID == uid && snapshot.Routing[uid][actual.ID] > 0 && actual.Routable[uid] &&
+					!retiring[actual.ID] && schedulerTargetReady(actual, snapshot, physical, false) {
+					current = append(current, actual)
+				}
+			}
+			if len(current) > 0 {
+				added := []serving.SchedulerInstance{}
+				for _, wanted := range selected {
+					if !snapshotNodeHasPositiveRoute(snapshot, wanted.Node) && schedulerTargetReady(wanted, snapshot, physical, true) {
+						added = append(added, wanted)
+					}
+				}
+				selected, weights = current, snapshot.Routing[uid]
+				if len(added) > 0 {
+					if expanded, ok := serving.SchedulerReadyExpansion(c.config.Settings, snapshot, rows, uid, current, added); ok {
+						selected, weights = append(selected, added...), expanded
+					}
+				}
+			}
+		}
+		if len(selected) == 0 {
+			continue
+		}
+		partial.Routing[uid] = map[string]int32{}
+		var total, cumulative, assigned int64
+		for _, wanted := range selected {
+			total += int64(weights[wanted.ID])
+		}
+		for _, wanted := range selected {
+			cumulative += int64(weights[wanted.ID])
+			normalized := cumulative * 1000 / total
+			partial.Routing[uid][wanted.ID] = int32(normalized - assigned)
+			assigned = normalized
+			partial.Instances = append(partial.Instances, wanted)
+		}
+	}
+	if len(partial.Instances) == 0 || c.routingTargetPresent(&partial, snapshot, physical, true) {
+		return nil
+	}
+	// JSON map keys are sorted; physical identities and weights identify this
+	// immutable subset independently of slow action completion order.
+	raw, _ := json.Marshal(partial.Routing)
+	sum := sha256.Sum256(raw)
+	partial.ID = target.ID + "-ready-" + hex.EncodeToString(sum[:10])
+	return &partial
+}
+
+func snapshotNodeHasPositiveRoute(snapshot serving.SchedulerSnapshot, node serving.NodeReference) bool {
+	for _, instance := range snapshot.Instances {
+		if instance.Node != node {
+			continue
+		}
+		for _, route := range snapshot.Routing {
+			if route[instance.ID] > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// runContext bounds a prepare run by serving.ActionDeadline.
+// ponytail: prepare-only deadline, widen when a non-prepare stall is measured
+func (c *SchedulerController) runContext(action serving.Action, config SchedulerControllerConfig) (context.Context, context.CancelFunc) {
+	if action.Kind == operationPrepare {
+		return context.WithTimeout(c.ctx, serving.ActionDeadline(config.Settings.ObservationWindow, config.Costs, action))
+	}
+	return context.WithCancel(c.ctx)
+}
+
+func (c *SchedulerController) dependenciesReady(action serving.Action, target serving.SchedulerCandidate) bool {
+	plan := target
+	if action.RouteTarget != nil {
+		target = *action.RouteTarget
+	}
+	if action.Node.UID != "" && slices.ContainsFunc(c.state.Snapshot.Instances, func(instance serving.SchedulerInstance) bool {
+		return instance.Node == action.Node && !instance.Ready && !instance.Stopped && !instance.Terminated
+	}) {
+		return false
+	}
+	if action.Kind == operationRoute {
+		uids := c.targetWorkloadsLocked(target)
+		for _, wanted := range target.Instances {
+			if !slices.Contains(uids, wanted.WorkloadUID) || target.Routing[wanted.WorkloadUID][wanted.ID] <= 0 {
+				continue
+			}
+			if slices.ContainsFunc(c.state.Snapshot.Instances, func(actual serving.SchedulerInstance) bool {
+				return (actual.ID == wanted.ID || actual.TargetID == wanted.ID) && !actual.Ready && !actual.Stopped
+			}) {
+				return false
+			}
+		}
+	}
+	return c.dependenciesComplete(action, plan)
+}
+
+func (c *SchedulerController) dependenciesComplete(action serving.Action, plan serving.SchedulerCandidate) bool {
+	for _, dep := range action.DependsOn {
+		run := c.runs[dep]
+		if run != nil && run.action.Status == nativeOperationComplete {
+			if action.Kind == operationStop && run.action.RouteTarget != nil {
+				uids := c.handoffScope(action, run.action, plan)
+				if run.result == nil || len(uids) == 0 || !run.result.Operation.controlsWorkload(uids[0]) {
+					return false
+				}
+				proof := run.result.Operation
+				// Recheck this source's handoff, not unrelated routes.
+				proof.WorkloadUIDs = uids
+				if !c.routingTargetPresent(controlledTarget(proof), c.state.Snapshot, c.runtime.Instances(), true) {
+					return false
+				}
+			}
+			continue
+		}
+		i := slices.IndexFunc(plan.Actions, func(a serving.Action) bool { return a.ID == dep && a.Kind == operationRoute })
+		if run != nil || i < 0 || (action.Kind != operationStop && action.Kind != operationRoute) ||
+			!c.dependenciesComplete(plan.Actions[i], plan) ||
+			!c.completedHandoffPresent(*cmp.Or(plan.Actions[i].RouteTarget, &plan), c.handoffScope(action, plan.Actions[i], plan)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *SchedulerController) handoffScope(action, dependency serving.Action, plan serving.SchedulerCandidate) []string {
+	if dependency.RouteTarget == nil || (action.Kind != operationStop && action.Kind != operationRoute) {
+		return c.targetWorkloadsLocked(plan)
+	}
+	consumers := plan.Actions
+	if action.Kind == operationStop {
+		consumers = []serving.Action{action}
+	}
+	uids := []string{}
+	for _, stop := range consumers {
+		if stop.Kind == operationStop && slices.Contains(stop.DependsOn, dependency.ID) {
+			if uid := handoffSourceUID(*dependency.RouteTarget, stop.Instance); uid != "" && !slices.Contains(uids, uid) {
+				uids = append(uids, uid)
+			}
+		}
+	}
+	return uids
+}
+
+func handoffSourceUID(target serving.SchedulerCandidate, instance string) string {
+	for _, source := range target.Instances {
+		if source.ID == instance {
+			return source.WorkloadUID
+		}
+	}
+	return ""
+}
+
+func (c *SchedulerController) completedHandoffPresent(target serving.SchedulerCandidate, uids []string) bool {
+	physical := c.runtime.Instances()
+	selected := controlledTarget(Operation{Target: &target, WorkloadUIDs: uids})
+	if !c.routingTargetPresent(selected, c.state.Snapshot, physical, false) {
+		return false
+	}
+	for _, run := range c.runs {
+		if run.action.Kind == operationRoute && run.action.Status == nativeOperationComplete &&
+			run.result != nil && run.result.Status == nativeOperationComplete &&
+			c.routingTargetPresent(run.result.Operation.Target, c.state.Snapshot, physical, true) {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduledOperation builds the operation of one planned action. A preparation
+// names the Workload its target instance serves as the Pod's owner, so the
+// instance keeps its Workload while unrouted.
+func scheduledOperation(action serving.Action, target *serving.SchedulerCandidate, config SchedulerControllerConfig, power map[string]time.Duration, workloads []*serving.Definition) Operation {
+	operation := Operation{ID: action.ID, Kind: action.Kind, Node: action.Node, Instance: action.Instance, Target: target,
+		ExpectedSeconds: action.ExpectedSeconds, ExpectedSource: action.ExpectedSource}
+	if action.Kind == operationPrepare {
+		for _, i := range target.Instances {
+			if i.ID == action.Instance && i.Profile != nil && i.Profile.Condition.Firstfloor != nil {
+				template, ok := config.Preparations[i.Profile.ID]
+				if !ok {
+					continue
+				}
+				template.Instance = i
+				// Inventory's positive serving weight is not an applied route.
+				// Planned Pods remain unrouted through their empty routing seed.
+				template.Instance.Weight = max(1, i.Weight)
+				template.Name = slotName(i.ID)
+				template.Config.Policy = native.Policy{ProfileID: i.Profile.ID, DecisionID: target.ID,
+					DeadlinePolicy: native.EffectiveDeadlinePolicy(i.Profile.Condition.Firstfloor.DeadlinePolicy),
+					MaxBatchSize:   i.MaxBatch, MaxBatchWaitMS: float64(i.MaxWait) / float64(time.Millisecond), FixedBatchSize: i.FixedBatchSize}
+				for _, d := range workloads {
+					if d != nil && d.UID == i.WorkloadUID {
+						template.Owner = &serving.WorkloadReference{Name: d.Name, UID: d.UID}
+					}
+				}
+				operation.Prepare = &template
+				break
+			}
+		}
+	}
+	if action.Kind == operationPower {
+		if maxDuration, ok := power[action.Node.UID+"/"+action.To]; ok {
+			operation.PowerMode, operation.MaxActuationDuration = action.To, maxDuration
+		}
+	}
+	return operation
+}

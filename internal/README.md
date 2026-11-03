@@ -64,6 +64,22 @@ per-UID/definition batch isolation and shared actor/replay batching decisions.
 Reviewed allowed directions and current `go list` edges are recorded in the
 [architecture contract](../docs/design/code-intelligence/README.md#package-architecture-contract).
 
+Serving source files mark responsibility boundaries for later package moves,
+not line-count quotas. `scheduler_capacity_*` owns pure capacity judgments,
+`scheduler_capacity_search.go` owns search, and `scheduler_capacity_cost.go` and
+`scheduler_cost_baseline.go` own shared cost calculations. `scheduler_replay_*`
+owns replay simulation, with shared snapshot checks in `scheduler_validate.go`.
+In `serving/kube`, `scheduler_application_capture.go` assembles live sources,
+`scheduler_state_*` owns state projection, history and effect proofs, and
+`scheduler_operations_*` owns operation planning and launch. Preparation
+contracts are separate from execution in `operations_prepare_contract.go`;
+`scheduler_capacity_admission.go` owns the physical budget judgment.
+`observation_log_*` separates request records and events, query reduction,
+durable storage, archiving and queries; local capture and scanning extend the existing
+`observation_log_read.go` reader. Packages, contracts, declarations, locks and
+test ownership are unchanged; legacy DOM evidence and operation-cost
+measurement paths remain supported.
+
 Capacity decisions retain the live search trajectory at
 `schedulerLine.decision.capacity.search.steps` in the existing ObservationLog
 scheduler JSONL stream (no separate log or schema bump).
