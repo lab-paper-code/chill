@@ -36,6 +36,10 @@
 | 측정·전환 | immutable Run/campaign 요청은 기존 schema/admission/controller 사용. 프로파일은 검증된 성공 Run/campaign, Evidence는 RetainedLoader 검증 경계. 자원 제외는 실제 drain/actuator 계약. 저장 계약 변경은 ADR 0019 원칙. |
 | 커버리지 현재 조건 | 이미지 버전은 프로파일 유효성 조건이 아니며 원래 기록된 이미지는 보존한다. 기존 `replaces` annotation의 대상 제외를 먼저 적용한 뒤, 셀(model/class/path/powerMode)마다 `measuredAt`이 가장 최신인 측정 하나를 현재로 선택한다. 최신 측정이 실패·partial이어도 그대로 표시하며 옛 성공으로 fallback하지 않는다. 다른 측정은 모두 history와 단건 원본에 보존한다. usable/problem·checklist 판정은 사실·경고 표시용이며 프로파일 선택이나 측정 요청 진행을 차단하지 않는다. 브라우저는 서버의 현재 조건·판정을 재판정하지 않는다. |
 | 시간·성능 경계 | 브라우저 왕복=fetch→완전 본문, X-Chill-Relay-Timing=서버 대기 포함 중계 왕복, BFF 자체 비용 별도. 목표 p95 표시 2초/BFF 100ms; Workload 10·요청 10,000/1시간·동시 5·5초 갱신 기준이며 달성 증거 아님. |
+| R19 측정 사용 | 채택 catalog에 존재하며 셀의 currentMeasurement identity와 일치하는 요청·profile만 사용 중이다. 최신 실패는 셀의 현재로 남되 게시 profile이 없으면 사용 중이 아니다. reuse 확인 요청과 원본 참조는 별개다. 이미지 버전은 preflight 기측정 배치 유효 조건에서도 제외한다. |
+| R19 목록 밀도 | 실험 목록은 이름·정책·실행/측정·핵심 원값만 기본 표시하고 질문·UID·출처·규칙은 접는다. 이름 없는 링크는 실제 ID다. 적용 UID가 없는 과거 요청에 정의 SLO를 이름으로 연결하지 않고 동결 정의 출처 SLO를 별도 표시한다. |
+| R19 운영 사실 | NOT_SUBMITTED는 측정 사전 검사·미제출이며 실패·장치 점검에서 제외한다. 비서빙 Pod 사건은 묶고 실제 서비스 문제는 남긴다. 판단 수는 현재 접속의 수신 범위다. 보존 공백은 헤더에 실제 제공된 기간/순번만 표시하고 선택 사건→기록은 identity·기간을 유지한다. |
+| R19 자료·사유 | 유휴 회차에는 처리 성능 passport를 자동 요청하지 않는다. 전력 경계·결과 제한은 한국어 코드 라벨과 원문 툴팁을 사용하고 J/W null은 복원하지 않는다. 최초 오류는 이미 확보된 logTail의 첫 구체 오류 줄·기록 시각만 표시하며 원인을 추정하지 않는다. |
 
 ## 3. 라이브 API 계약 v1
 
