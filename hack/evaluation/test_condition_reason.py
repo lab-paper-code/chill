@@ -6,6 +6,9 @@ from pathlib import Path
 import tempfile
 import unittest
 import urllib.error
+from unittest.mock import patch
+
+import input_snapshot
 
 spec = importlib.util.spec_from_file_location('evaluation', Path(__file__).with_name('evaluation.py'))
 evaluation = importlib.util.module_from_spec(spec)
@@ -21,11 +24,10 @@ class ConditionReasonTest(unittest.TestCase):
             harness.execution = {'runUID': 'run'}
             harness.scope = 'run'
             harness.prefix = 'experiments/run/run'
-            def prepare():
-                raise urllib.error.HTTPError('https://chill', 403, 'Forbidden', {}, None)
-            harness.prepare = prepare
             harness.upload = lambda path, key: {'store': 'evidence', 'key': key, 'size': path.stat().st_size}
-            self.assertEqual(harness.execute('prepare'), 1)
+            error = urllib.error.HTTPError('https://chill', 403, 'Forbidden', {}, None)
+            with patch.object(input_snapshot, 'prepare', side_effect=error):
+                self.assertEqual(harness.execute('prepare'), 1)
             result = json.loads((harness.run / 'results/run/prepare.json').read_text())
             self.assertEqual(result['execution'], {'status': 'Failed', 'reason': 'ProcedureFailed', 'message': 'HTTP Error 403: Forbidden'})
 

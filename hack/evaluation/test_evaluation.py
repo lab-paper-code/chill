@@ -18,6 +18,12 @@ import zlib
 import archive
 import conductor
 import evaluation
+import evidence_io
+import input_snapshot
+import judgment as judgment_rules
+import publication
+import request_analysis
+import settings_patch
 import raw
 
 sys.path.insert(0, str(conductor.REPO / 'load-generator/src'))
@@ -100,7 +106,7 @@ def fixture(root):
                   'podSpec': {'serviceAccountName': 'loadgen', 'volumes': [{'name': 'ca', 'secret': {'secretName': 'ca'}}]},
                   'volumeMounts': [{'name': 'ca', 'mountPath': '/ca', 'readOnly': True}]}}}
     config = {'operational': json.dumps(operation), 'chillAPIURL': 'https://serving.invalid', 'minimumFreeBytes': '1'}
-    assembled = evaluation.stage_config(spec, scenario, execution, config, root)
+    assembled = input_snapshot.stage_config(spec, scenario, execution, config, root)
     return spec, scenario, execution, config, assembled
 
 
@@ -119,9 +125,9 @@ class EvaluationTests(unittest.TestCase):
                       {'id': 'two', 'kpis': {'status': 'PARTIAL', 'components': {'slo': {'status': 'NOT_EVALUATED'}}}}]
             results = {stage['id']: {'measurement': {'verdict': 'NOT_EVALUATED'}} for stage in stages}
             for records in (results, {}):
-                summary = conductor.summarize(None, Path(directory), evaluation={'stages': stages, 'results': records})
+                summary = judgment_rules.summarize(None, Path(directory), evaluation={'stages': stages, 'results': records})
                 self.assertEqual(summary['status'], 'NOT_EVALUATED')
-                self.assertEqual(evaluation.verdict(summary)['verdict'], 'NOT_EVALUATED')
+                self.assertEqual(publication.verdict(summary)['verdict'], 'NOT_EVALUATED')
 
     def test_diagnostic_authorization_failures_remain_fatal(self):
         controller = object.__new__(conductor.CPO)
@@ -151,19 +157,19 @@ class EvaluationTests(unittest.TestCase):
             config['traceOffsets'] = dict.fromkeys(names, [1, 2])
             config['evaluation']['failureInjection'] = [{'id': 'unrealized'}]
             path = root / 'config.json'
-            conductor.save(path, config)
+            evidence_io.save(path, config)
             bound = conductor.bind(path)
-            conductor.save(root / 'binding.json', bound)
-            conductor.save(root / 'phase.json', {'stage': bound['schedule'][0], 'startUTC': START, 'endUTC': END,
+            evidence_io.save(root / 'binding.json', bound)
+            evidence_io.save(root / 'phase.json', {'stage': bound['schedule'][0], 'startUTC': START, 'endUTC': END,
                 'drainedUTC': END, 'starts': dict.fromkeys(names, {'at': START, 'monotonicNS': 100}),
                 'drain': {'complete': False, 'reasons': ['DrainWatchdog']}})
-            conductor.save(root / 'failure-events.json', {'status': 'INVALID', 'records': [{'record': {'outcome': 'Cancelled'}}]})
+            evidence_io.save(root / 'failure-events.json', {'status': 'INVALID', 'records': [{'record': {'outcome': 'Cancelled'}}]})
             window = power_window()
             window['nodes'][0].update(meterComplete=False, gapFraction=.2)
             partial = archive.meter_energy(window, spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
             missing = {'complete': False, 'energyStatus': 'UNAVAILABLE', 'observedJoules': None, 'wholePoolJoules': None, 'reasons': ['no samples']}
-            conductor.save(root / 'power.json', partial)
-            conductor.save(root / 'power-drain-inclusive.json', missing)
+            evidence_io.save(root / 'power.json', partial)
+            evidence_io.save(root / 'power-drain-inclusive.json', missing)
             clients, indexed = {}, {}
             for workload in config['workloads']:
                 name, uid = workload['name'], workload['uid']
@@ -176,11 +182,11 @@ class EvaluationTests(unittest.TestCase):
                     'summary': {'uniqueRequests': 2, 'finalConflicts': [{'requestID': name+'0'}] if name==NAME else []},
                     'finals': {name+str(i): {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 100000000}
                                for i in range(2) if name!=NAME or i!=0}}
-            original_module = conductor.module
+            original_module = evidence_io.module
             def modules(name, path):
                 return SimpleNamespace(iter_request_indexes=lambda *args, **kwargs: indexed) if name=='evaluation_raw' else original_module(name, path)
-            with patch.object(conductor, 'module', side_effect=modules):
-                result = conductor.judge(root / 'binding.json', root)
+            with patch.object(evidence_io, 'module', side_effect=modules):
+                result = judgment_rules.judge(root / 'binding.json', root)
                 self.assertEqual(result['requests'][other]['deadlineSuccess'], 2)
                 self.assertEqual(result['requests'][other]['D1'], 'OBSERVED_THRESHOLD_MET')
                 self.assertEqual(result['requests'][NAME]['quarantinedRequestIDs'], [NAME+'0'])
@@ -188,9 +194,9 @@ class EvaluationTests(unittest.TestCase):
                 self.assertEqual(result['components']['energy'], {'offered': 'PARTIAL', 'drainInclusive': 'UNAVAILABLE'})
                 self.assertEqual(result['components']['injection']['status'], 'NOT_REALIZED')
                 self.assertEqual(result['components']['loadFidelity'][other]['generatorQuality']['status'], 'OBSERVED')
-                self.assertEqual(evaluation.verdict(result)['verdict'], 'FAIL')
-                conductor.save(root / 'power.json', missing)
-                no_power = conductor.judge(root / 'binding.json', root)
+                self.assertEqual(publication.verdict(result)['verdict'], 'FAIL')
+                evidence_io.save(root / 'power.json', missing)
+                no_power = judgment_rules.judge(root / 'binding.json', root)
                 self.assertEqual(no_power['requests'][other]['deadlineSuccess'], 2)
                 self.assertEqual(no_power['components']['energy']['offered'], 'UNAVAILABLE')
                 self.assertIsNone(no_power['power']['wholePoolJoules'])
@@ -201,33 +207,32 @@ class EvaluationTests(unittest.TestCase):
                 self.assertEqual(unavailable['energyStatus'], 'UNAVAILABLE')
                 self.assertIsNone(unavailable['observedJoules'])
                 measured = archive.meter_energy(power_window(), spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
-                conductor.save(root / 'power.json', measured)
+                evidence_io.save(root / 'power.json', measured)
                 for name in names:
                     for row in clients[name]:
                         row.update(issued=False, error='UnsentAtWindowEnd')
                     (root / (name + '-client.jsonl')).write_text(''.join(json.dumps(row)+'\n' for row in clients[name]))
-                no_load = conductor.judge(root / 'binding.json', root)
+                no_load = judgment_rules.judge(root / 'binding.json', root)
                 self.assertEqual(no_load['components']['slo']['status'], 'INVALID_NO_LOAD')
-                self.assertEqual(evaluation.verdict(no_load)['verdict'], 'NOT_EVALUATED')
+                self.assertEqual(publication.verdict(no_load)['verdict'], 'NOT_EVALUATED')
                 self.assertEqual(no_load['power']['energyStatus'], 'MEASURED')
                 for name in names:
                     self.assertEqual(no_load['requests'][name]['substages'][0]['D1'], 'INVALID_NO_LOAD')
                 clients[NAME][0]['workloadUID'] = 'wrong-workload'
                 (root / (NAME + '-client.jsonl')).write_text(json.dumps(clients[NAME][0])+'\n')
                 with self.assertRaisesRegex(ValueError, 'Workload UID'):
-                    conductor.judge(root / 'binding.json', root)
+                    judgment_rules.judge(root / 'binding.json', root)
 
     def test_lateness_and_missing_sends_are_quality_facts_not_global_invalidity(self):
-        analysis = conductor.module('policy_analysis_test', conductor.HERE / 'd2/analyze_before.py')
         quality = {'latenessToleranceNS': 50000000, 'maxExceedingFraction': .01}
         rows = [{'requestIndex': 0, 'scheduledOffsetNs': 1, 'sentMonotonicNS': 1000000101, 'issued': True},
                 {'requestIndex': 1, 'scheduledOffsetNs': 2, 'issued': False, 'error': 'UnsentAtWindowEnd'}]
-        result = analysis.issuance_fidelity(rows, [1, 2], 100, 2000000000, analysis.stats, quality)
+        result = request_analysis.issuance_fidelity(rows, [1, 2], 100, 2000000000, request_analysis.stats, quality)
         self.assertEqual(result['generatorQuality']['status'], 'OBSERVED')
         self.assertEqual(result['generatorQuality']['thresholdLabel'], 'EXCEEDS_REPORTED_THRESHOLD')
         self.assertEqual(result['unissued'], 1)
         self.assertEqual(result['sendLatenessNS']['samples'], 1)
-        empty = analysis.issuance_fidelity([], [1, 2], 100, 2000000000, analysis.stats, quality)
+        empty = request_analysis.issuance_fidelity([], [1, 2], 100, 2000000000, request_analysis.stats, quality)
         self.assertEqual(empty['generatorQuality']['status'], 'INVALID_NO_LOAD')
 
     def test_unknown_operational_keys_are_ignored_but_effective_fields_validate(self):
@@ -239,13 +244,13 @@ class EvaluationTests(unittest.TestCase):
             operation['workloads'][NAME].update(uid='wrong-uid', futureClient=True)
             operation['workloads'][NAME]['podSpec']['hostNetwork'] = True
             config['operational'] = json.dumps(operation)
-            assembled = evaluation.stage_config(spec, scenario, execution, config, root)
+            assembled = input_snapshot.stage_config(spec, scenario, execution, config, root)
             self.assertIn('futureFeature', assembled['ignoredKeys'])
             self.assertIn('timeboxes.unusedBudget', assembled['ignoredKeys'])
             self.assertIn('workloads.' + NAME + '.uid', assembled['ignoredKeys'])
             self.assertEqual(assembled['workloads'][0]['uid'], 'workload')
             path = root / 'config.json'
-            conductor.save(path, assembled)
+            evidence_io.save(path, assembled)
             controller = object.__new__(conductor.CPO)
             controller.b = conductor.bind(path)
             controller.c, controller.tb = assembled, assembled['timeboxes']
@@ -256,7 +261,7 @@ class EvaluationTests(unittest.TestCase):
             operation['workloads'][NAME]['workers'] = 0
             config['operational'] = json.dumps(operation)
             with self.assertRaisesRegex(ValueError, 'positive client'):
-                evaluation.stage_config(spec, scenario, execution, config, root)
+                input_snapshot.stage_config(spec, scenario, execution, config, root)
 
     def test_runtime_health_is_recorded_but_wrong_node_uid_remains_fatal(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -266,18 +271,18 @@ class EvaluationTests(unittest.TestCase):
             target = {'components': [{'name': 'server', 'resource': {'kind': 'Pod', 'name': 'server', 'namespace': 'evaluation-ns'}}]}
             pod = {'kind': 'Pod', 'metadata': {'uid': 'target'},
                    'status': {'containerStatuses': [{'name': 'server', 'ready': False}], 'conditions': [{'type': 'Ready', 'status': 'False'}]}}
-            with patch.object(evaluation, 'kubectl', return_value=pod):
-                self.assertFalse(harness.check_target(target)[0]['available'])
+            with patch.object(input_snapshot, 'kubectl', return_value=pod):
+                self.assertFalse(input_snapshot.check_target(harness, target)[0]['available'])
             spec = {'powerMeasurement': {'nodes': [{'name': 'node', 'uid': 'node-uid'}]}, 'loadGenerator': {'nodeName': 'node'}}
             node = {'metadata': {'name': 'node', 'uid': 'node-uid'}, 'status': {'conditions': [{'type': 'Ready', 'status': 'False'}]}}
             def k(namespace, verb, kind, *args):
                 return node if kind == 'node' else {'items': []}
-            with patch.object(evaluation, 'kubectl', side_effect=k):
-                self.assertEqual(harness.participant_pods(spec), [])
-                self.assertFalse(conductor.load(harness.root / 'node-node-observations.json')[-1]['ready'])
+            with patch.object(input_snapshot, 'kubectl', side_effect=k):
+                self.assertEqual(input_snapshot.participant_pods(harness, spec), [])
+                self.assertFalse(evidence_io.load(harness.root / 'node-node-observations.json')[-1]['ready'])
                 node['metadata']['uid'] = 'replacement'
                 with self.assertRaisesRegex(ValueError, 'Node UID'):
-                    harness.participant_pods(spec)
+                    input_snapshot.participant_pods(harness, spec)
 
     def test_energy_windows_collect_independently_of_raw_and_each_other(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -286,7 +291,7 @@ class EvaluationTests(unittest.TestCase):
             folder.mkdir()
             spec, _, _, _, config = fixture(root)
             env = root / 'environment.json'
-            conductor.save(env, {'paths': {'campaign': str(root)}})
+            evidence_io.save(env, {'paths': {'campaign': str(root)}})
             tail_end = '2026-11-03T00:00:11Z'
             phase = {'startUTC': START, 'endUTC': END, 'drainedUTC': tail_end}
             calls = []
@@ -300,15 +305,15 @@ class EvaluationTests(unittest.TestCase):
             with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(archive.time, 'time_ns', return_value=archive._time_ns(tail_end)+180000000000), patch.object(archive, '_raw_get', side_effect=RuntimeError('raw index unavailable')):
                 archive.collect(folder, phase, config['collection'], SimpleNamespace(api=api), 5)
             self.assertEqual(len(calls), 2)
-            self.assertEqual(conductor.load(folder / 'power.json')['energyStatus'], 'UNAVAILABLE')
-            self.assertEqual(conductor.load(folder / 'power-drain-inclusive.json')['energyStatus'], 'MEASURED')
+            self.assertEqual(evidence_io.load(folder / 'power.json')['energyStatus'], 'UNAVAILABLE')
+            self.assertEqual(evidence_io.load(folder / 'power-drain-inclusive.json')['energyStatus'], 'MEASURED')
 
     def test_overwrite_is_still_a_safety_stop(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _, _, _, _, config = fixture(root)
             path = root / 'config.json'
-            conductor.save(path, config)
+            evidence_io.save(path, config)
             controller = object.__new__(conductor.CPO)
             controller.b, controller.c = conductor.bind(path), config
             controller.a = SimpleNamespace(stage='e5-test')
@@ -321,20 +326,20 @@ class EvaluationTests(unittest.TestCase):
         before = copy.deepcopy(api.value)
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / 'patch.json'
-            applied = conductor.factor_apply(api, {'controls': {'power': False}, 'controlIntervalNanos': 42, 'autonomousWorkloads': ['two'], 'minimumDemand': {'remove': None}}, receipt)
+            applied = settings_patch.factor_apply(api, {'controls': {'power': False}, 'controlIntervalNanos': 42, 'autonomousWorkloads': ['two'], 'minimumDemand': {'remove': None}}, receipt)
             self.assertTrue(applied['accepted'])
             self.assertIn('appliedAt', applied)
             self.assertNotIn('remove', api.value['minimumDemand'])
             self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT', 'GET'])
             api.value['controls']['routing'] = False
             api.value['minimumDemand']['other'] = 8
-            conductor.factor_revert(api, receipt)
+            settings_patch.factor_revert(api, receipt)
             self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT', 'GET', 'GET', 'PUT', 'GET'])
             expected = copy.deepcopy(before)
             expected['controls']['routing'] = False
             expected['minimumDemand']['other'] = 8
             self.assertEqual(api.value, expected)
-            final = conductor.load(receipt)
+            final = evidence_io.load(receipt)
             for key in ('request', 'response', 'readback', 'appliedAt', 'revertRequest', 'revertResponse', 'revertReadback', 'revertedAt'):
                 self.assertIn(key, final)
             self.assertNotEqual(final['revertRequest'], before)
@@ -346,36 +351,36 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
             with self.assertRaisesRegex(urllib.error.HTTPError, '403'):
-                conductor.factor_apply(api, {'controls': {'power': False}}, path)
-            conductor.factor_revert(api, path)
+                settings_patch.factor_apply(api, {'controls': {'power': False}}, path)
+            settings_patch.factor_revert(api, path)
             self.assertEqual(api.value, before)
             self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT'])
-            self.assertNotIn('appliedAt', conductor.load(path))
-            self.assertIn('failedAt', conductor.load(path))
+            self.assertNotIn('appliedAt', evidence_io.load(path))
+            self.assertIn('failedAt', evidence_io.load(path))
 
     def test_patch_conflict_preserves_another_writer(self):
         api = SettingsAPI()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            conductor.factor_apply(api, {'controlIntervalNanos': 42}, path)
+            settings_patch.factor_apply(api, {'controlIntervalNanos': 42}, path)
             api.value['controlIntervalNanos'] = 50
-            conductor.factor_revert(api, path)
+            settings_patch.factor_revert(api, path)
             self.assertEqual(api.value['controlIntervalNanos'], 50)
             self.assertEqual(sum(call[0] == 'PUT' for call in api.calls), 1)
-            self.assertEqual(conductor.load(path)['revertSkipped'][0]['reason'], 'external-change-revert-skipped')
-            self.assertIn('revertedAt', conductor.load(path))
+            self.assertEqual(evidence_io.load(path)['revertSkipped'][0]['reason'], 'external-change-revert-skipped')
+            self.assertIn('revertedAt', evidence_io.load(path))
 
     def test_missing_if_match_returns_428_and_changes_nothing(self):
         api = SettingsAPI()
         before, metadata = copy.deepcopy(api.value), {}
         with self.assertRaises(urllib.error.HTTPError) as caught:
-            api('PUT', conductor.SETTINGS, {}, response=metadata)
+            api('PUT', settings_patch.SETTINGS, {}, response=metadata)
         self.assertEqual(caught.exception.code, 428)
         self.assertEqual(metadata['statusCode'], 428)
         self.assertEqual(api.value, before)
         api.omit_get_etag = True
         with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(RuntimeError, 'ETag'):
-            conductor.factor_apply(api, {'controls': {'power': False}}, Path(directory) / 'patch.json')
+            settings_patch.factor_apply(api, {'controls': {'power': False}}, Path(directory) / 'patch.json')
         self.assertEqual(sum(call[0] == 'PUT' for call in api.calls), 1)
 
     def test_apply_conflict_is_recorded_without_retry_or_revert(self):
@@ -384,9 +389,9 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
             with self.assertRaises(urllib.error.HTTPError):
-                conductor.factor_apply(api, {'controls': {'power': False}}, path)
-            conductor.factor_revert(api, path)
-            receipt = conductor.load(path)
+                settings_patch.factor_apply(api, {'controls': {'power': False}}, path)
+            settings_patch.factor_revert(api, path)
+            receipt = evidence_io.load(path)
             self.assertEqual(receipt['put']['ifMatch'], '"1"')
             self.assertEqual(receipt['put']['statusCode'], 409)
             self.assertEqual(receipt['put']['response']['code'], 'SettingsConflict')
@@ -397,11 +402,11 @@ class EvaluationTests(unittest.TestCase):
         api = SettingsAPI()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            conductor.factor_apply(api, {'controls': {'power': False}}, path)
+            settings_patch.factor_apply(api, {'controls': {'power': False}}, path)
             api.reject_codes = [409]
             api.on_conflict = lambda: api.value['controls'].update(routing=False)
-            conductor.factor_revert(api, path)
-            receipt = conductor.load(path)
+            settings_patch.factor_revert(api, path)
+            receipt = evidence_io.load(path)
             self.assertEqual([a['statusCode'] for a in receipt['revertAttempts']], [409, 200])
             self.assertEqual([a['ifMatch'] for a in receipt['revertAttempts']], ['"2"', '"3"'])
             self.assertEqual(receipt['revertAttempts'][-1]['responseETag'], '"4"')
@@ -412,15 +417,15 @@ class EvaluationTests(unittest.TestCase):
         api = SettingsAPI()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            conductor.factor_apply(api, {'controls': {'power': False}}, path)
+            settings_patch.factor_apply(api, {'controls': {'power': False}}, path)
             api.reject_codes = [409, 409]
             with self.assertRaisesRegex(RuntimeError, 'SettingsConflict'):
-                conductor.factor_revert(api, path)
+                settings_patch.factor_revert(api, path)
             count = len(api.calls)
             with self.assertRaisesRegex(RuntimeError, 'SettingsConflict'):
-                conductor.factor_revert(api, path)
+                settings_patch.factor_revert(api, path)
             self.assertEqual(len(api.calls), count)
-            self.assertNotIn('revertedAt', conductor.load(path))
+            self.assertNotIn('revertedAt', evidence_io.load(path))
 
     def test_uncertain_put_is_not_silently_returned_or_rolled_back(self):
         api = SettingsAPI()
@@ -428,9 +433,9 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
             with self.assertRaises(OSError):
-                conductor.factor_apply(api, {'controls': {'power': False}}, path)
+                settings_patch.factor_apply(api, {'controls': {'power': False}}, path)
             with self.assertRaisesRegex(RuntimeError, 'RemoteEffectUnknown'):
-                conductor.factor_revert(api, path)
+                settings_patch.factor_revert(api, path)
             self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT'])
 
     def test_put_readback_mismatch_retains_applied_receipt(self):
@@ -439,16 +444,16 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
             with self.assertRaisesRegex(RuntimeError, 'readback'):
-                conductor.factor_apply(api, {'controlIntervalNanos': 42}, path)
-            self.assertIn('appliedAt', conductor.load(path))
-            self.assertFalse(conductor.load(path)['accepted'])
+                settings_patch.factor_apply(api, {'controlIntervalNanos': 42}, path)
+            self.assertIn('appliedAt', evidence_io.load(path))
+            self.assertFalse(evidence_io.load(path)['accepted'])
 
     def test_patch_added_nested_object_reverts_absence(self):
         api = SettingsAPI()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            conductor.factor_apply(api, {'minimumDemand': {'new': 7}}, path)
-            conductor.factor_revert(api, path)
+            settings_patch.factor_apply(api, {'minimumDemand': {'new': 7}}, path)
+            settings_patch.factor_revert(api, path)
             self.assertNotIn('new', api.value['minimumDemand'])
 
     def test_null_control_uses_canonical_applied_value_for_readback_and_revert(self):
@@ -459,42 +464,42 @@ class EvaluationTests(unittest.TestCase):
         api.normalize = normalize
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            receipt = conductor.factor_apply(api, {'controls': {'power': None}}, path)
+            receipt = settings_patch.factor_apply(api, {'controls': {'power': None}}, path)
             self.assertTrue(receipt['accepted'])
             self.assertNotIn('power', receipt['request']['controls'])
             self.assertEqual(receipt['changed'][0]['applied'], {'exists': True, 'value': False})
             self.assertFalse(api.value['controls']['power'])
-            conductor.factor_revert(api, path)
+            settings_patch.factor_revert(api, path)
             self.assertTrue(api.value['controls']['power'])
-            self.assertEqual(conductor.load(path)['revertSkipped'], [])
+            self.assertEqual(evidence_io.load(path)['revertSkipped'], [])
 
     def test_new_map_reverts_only_own_members_and_preserves_external_entry(self):
         api = SettingsAPI()
         del api.value['minimumDemand']
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            receipt = conductor.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
+            receipt = settings_patch.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
             self.assertEqual(receipt['changed'][0]['path'], ['minimumDemand', 'evaluation'])
             api.value['minimumDemand']['operator'] = 9
-            conductor.factor_revert(api, path)
+            settings_patch.factor_revert(api, path)
             self.assertEqual(api.value['minimumDemand'], {'operator': 9})
-            self.assertEqual(conductor.load(path)['revertSkipped'], [])
+            self.assertEqual(evidence_io.load(path)['revertSkipped'], [])
 
     def test_new_map_is_removed_when_own_member_cleanup_leaves_it_empty(self):
         api = SettingsAPI()
         del api.value['minimumDemand']
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            conductor.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
-            conductor.factor_revert(api, path)
+            settings_patch.factor_apply(api, {'minimumDemand': {'evaluation': 7}}, path)
+            settings_patch.factor_revert(api, path)
             self.assertNotIn('minimumDemand', api.value)
 
     def test_empty_patch_is_read_only(self):
         api = SettingsAPI()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'patch.json'
-            self.assertTrue(conductor.factor_apply(api, {}, path)['accepted'])
-            conductor.factor_revert(api, path)
+            self.assertTrue(settings_patch.factor_apply(api, {}, path)['accepted'])
+            settings_patch.factor_revert(api, path)
             self.assertEqual([c[0] for c in api.calls], ['GET', 'GET'])
 
     def test_inline_uint64_seeds(self):
@@ -513,7 +518,7 @@ class EvaluationTests(unittest.TestCase):
             root = Path(directory)
             _, _, _, _, config = fixture(root)
             path = root / 'config.json'
-            conductor.save(path, config)
+            evidence_io.save(path, config)
             bound = conductor.bind(path)
             self.assertEqual(bound['schema'], 'e5-binding.v4')
             self.assertEqual(bound['schedule'][0]['parts'][0]['rates'], {NAME: 2.5})
@@ -525,7 +530,7 @@ class EvaluationTests(unittest.TestCase):
             root = Path(directory)
             spec, scenario, execution, _, config = fixture(root)
             path = root / 'config.json'
-            conductor.save(path, config)
+            evidence_io.save(path, config)
             controller = object.__new__(conductor.CPO)
             controller.b = conductor.bind(path)
             controller.c = config
@@ -558,7 +563,7 @@ class EvaluationTests(unittest.TestCase):
                     ('e5-3-90', 600, [95.53561345091202, 34.862886697726495, 0.5205040034316192])],
             '7-7': [('e5-7', 900, [31.84520448363734, 11.620962232575499, 0.17350133447720636])],
         }
-        producer = evaluation.module('producer_arrival_test', evaluation.HERE / 'producer.py')
+        producer = input_snapshot.module('producer_arrival_test', evaluation.HERE / 'producer.py')
         for row, parts in campaigns.items():
             with self.subTest(row=row), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -571,7 +576,7 @@ class EvaluationTests(unittest.TestCase):
                 config['stages'] = [{'id': row, 'parts': [
                     {'id': part, 'seconds': seconds, 'rates': dict(zip(names, rates))} for part, seconds, rates in parts]}]
                 path = root / 'config.json'
-                conductor.save(path, config)
+                evidence_io.save(path, config)
                 controller = object.__new__(conductor.CPO)
                 controller.b = conductor.bind(path)
                 controller.c, controller.tb = config, config['timeboxes']
@@ -596,18 +601,18 @@ class EvaluationTests(unittest.TestCase):
                 print(row + ': maximum producer argv bytes=' + str(max(sizes)))
 
     def test_explicit_arrivals_use_workspace_file_and_validate_both_shas(self):
-        producer = evaluation.module('producer_explicit_test', evaluation.HERE / 'producer.py')
+        producer = input_snapshot.module('producer_explicit_test', evaluation.HERE / 'producer.py')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec, scenario, execution, config, _ = fixture(root)
-            workspace = evaluation.trace_workspace({'spec': {
+            workspace = input_snapshot.trace_workspace({'spec': {
                 'volumes': [{'name': 'work', 'persistentVolumeClaim': {'claimName': 'run-workspace'}}],
                 'containers': [{'volumeMounts': [{'name': 'work', 'mountPath': str(root)}]}]}})
             scenario['traceOffsets'] = {NAME: list(range(0, 1000000000, 10000))}
             config['traceVolume'] = workspace
-            assembled = evaluation.stage_config(spec, scenario, execution, config, root)
+            assembled = input_snapshot.stage_config(spec, scenario, execution, config, root)
             path = root / 'config.json'
-            conductor.save(path, assembled)
+            evidence_io.save(path, assembled)
             controller = object.__new__(conductor.CPO)
             controller.b = conductor.bind(path)
             controller.c, controller.tb = assembled, assembled['timeboxes']
@@ -634,7 +639,7 @@ class EvaluationTests(unittest.TestCase):
                 producer.arrival_trace(policy, 'poisson', 202)
 
     def test_materialized_dataset_actual_bytes_are_producer_evidence(self):
-        producer = evaluation.module('producer_test', evaluation.HERE / 'producer.py')
+        producer = input_snapshot.module('producer_test', evaluation.HERE / 'producer.py')
         with tempfile.TemporaryDirectory() as directory:
             data = Path(directory)
             for record, content in (('02', b'second'), ('01', b'first')):
@@ -643,9 +648,9 @@ class EvaluationTests(unittest.TestCase):
             records = cli.load_records(data, ['input'])
             offsets = [1, 2]
             trace_path = data / '.chill-arrivals.json'
-            conductor.save(trace_path, offsets)
+            evidence_io.save(trace_path, offsets)
             policy = {'segments': [{'rate': 1, 'seconds': 1}], 'offsetsFile': str(trace_path),
-                      'offsetsFileSHA256': conductor.ref(trace_path)['sha256'], 'offered': 2,
+                      'offsetsFileSHA256': evidence_io.ref(trace_path)['sha256'], 'offered': 2,
                       'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest(),
                       'datasetRef': {'name': 'records', 'uid': 'dataset'}, 'shards': 1, 'barrierSeconds': 10}
             encoded = base64.b64encode(zlib.compress(json.dumps(policy).encode())).decode()
@@ -671,10 +676,10 @@ class EvaluationTests(unittest.TestCase):
             spec.update(target={'components': []}, evidenceStore='store', stages=[{'id': 'one', 'row': 'e5-test', 'loadScenarioRef': {'name': 'load', 'uid': 'load-uid'}}])
             specdir = root / 'spec'
             for name, value in (('spec', spec), ('execution', execution), ('config', config)):
-                conductor.save(specdir / (name + '.json'), value)
+                evidence_io.save(specdir / (name + '.json'), value)
             uploads = []
             store = SimpleNamespace(put=lambda key, path: uploads.append(key) or {'store': 'store', 'key': key, 'size': Path(path).stat().st_size},
-                                    get=lambda reference, path: conductor.save(path, [1, 2, 3]))
+                                    get=lambda reference, path: evidence_io.save(path, [1, 2, 3]))
             harness = evaluation.Harness(root / 'campaign/run', specdir, store)
             harness.run.mkdir(parents=True)
             objects = {
@@ -693,12 +698,12 @@ class EvaluationTests(unittest.TestCase):
                     return {'metadata': {'name': args[0], 'uid': next((node['uid'] for node in spec['powerMeasurement']['nodes'] if node['name'] == args[0]), 'generator-node')},
                             'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
                 return copy.deepcopy(objects[kind])
-            with patch.object(evaluation, 'kubectl', side_effect=k), patch.object(evaluation, 'api', return_value={'appliedDefinition': {**scenario['workloads'][0], 'generation': 2}}), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA='different-image-revision', HOSTNAME='harness-pod'):
+            with patch.object(input_snapshot, 'kubectl', side_effect=k), patch.object(input_snapshot, 'api', return_value={'appliedDefinition': {**scenario['workloads'][0], 'generation': 2}}), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA='different-image-revision', HOSTNAME='harness-pod'):
                 harness.prepare()
-            snapshot = conductor.load(harness.inputs / 'snapshot.json')
+            snapshot = evidence_io.load(harness.inputs / 'snapshot.json')
             self.assertEqual(snapshot['schemaVersion'], 'evaluation-snapshot.v2alpha1')
             self.assertEqual(snapshot['inputsVersion'], 'evaluation-inputs.v2alpha1')
-            self.assertEqual(snapshot['environmentStart'], conductor.load(harness.root / 'environment-start.json'))
+            self.assertEqual(snapshot['environmentStart'], evidence_io.load(harness.root / 'environment-start.json'))
             self.assertEqual([pod['uid'] for pod in snapshot['environmentStart']['pods']], ['resident-uid'])
             self.assertEqual(snapshot['bindings']['one']['config']['traceVolume'],
                              {'claimName': 'workspace', 'mountPath': str(root)})
@@ -724,7 +729,7 @@ class EvaluationTests(unittest.TestCase):
             if mode == 'watchdog':
                 config['timeboxes'].update(drainSeconds=.01, collectSeconds=.01)
             path = root / 'config.json'
-            conductor.save(path, config)
+            evidence_io.save(path, config)
             controller = object.__new__(conductor.CPO)
             controller.b = conductor.bind(path)
             controller.b['sources']['producer.py']['sha256'] = '0' * 64
@@ -774,7 +779,7 @@ class EvaluationTests(unittest.TestCase):
             def missing_samples(*args):
                 raise RuntimeError('diagnostic counters unavailable')
             telemetry = SimpleNamespace(poll=missing_samples)
-            original_module = conductor.module
+            original_module = evidence_io.module
             auth = original_module('test_auth', conductor.HERE / 'auth.py')
             def modules(name, path):
                 if name == 'evaluation_auth':
@@ -782,11 +787,11 @@ class EvaluationTests(unittest.TestCase):
                 if name == 'evaluation_archive':
                     return SimpleNamespace(collect=lambda *args: {'status': 'CAPTURED_NOT_EVALUATED'})
                 return original_module(name, path)
-            conductor.save(root / 'settings-patch.json', {'accepted': True})
-            with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(conductor, 'module', side_effect=modules):
+            evidence_io.save(root / 'settings-patch.json', {'accepted': True})
+            with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(evidence_io, 'module', side_effect=modules):
                 controller.run()
             process[0].stdin.close()
-            phase = conductor.load(root / 'measured/phase.json')
+            phase = evidence_io.load(root / 'measured/phase.json')
             self.assertEqual(phase['status'], 'DRAINED_NOT_EVALUATED' if mode == 'normal' else 'PARTIAL_DRAIN_NOT_EVALUATED')
             self.assertEqual(set(phase['starts']), {NAME})
             self.assertTrue(phase['diagnosticErrors'])
@@ -828,7 +833,7 @@ class EvaluationTests(unittest.TestCase):
             controller.tb, controller.residuals = {'drainSeconds': 0}, []
             job = {'kind': 'Job', 'metadata': {'name': 'load-one', 'uid': 'job', 'labels': {'edge.dacs.io/evaluation-run-uid': 'run'},
                                              'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]}}
-            conductor.save(root / 'measured/created-one.json', job)
+            evidence_io.save(root / 'measured/created-one.json', job)
             pod = {'metadata': {'name': 'residual', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]}}
             controller.io = SimpleNamespace(k=lambda args: {'items': [] if args[1] == 'jobs' else [pod]})
             with self.assertRaisesRegex(RuntimeError, 'ResidualState'):
@@ -841,7 +846,7 @@ class EvaluationTests(unittest.TestCase):
                 root = Path(directory)
                 api = SettingsAPI()
                 receipt_path = root / 'stages/one/settings-patch.json'
-                conductor.factor_apply(api, {'controls': {'power': False}}, receipt_path)
+                settings_patch.factor_apply(api, {'controls': {'power': False}}, receipt_path)
                 api.value['controls']['routing'] = False  # unrelated operator change
                 api.revision += 1
                 api.fail_put = restore_failure
@@ -852,7 +857,7 @@ class EvaluationTests(unittest.TestCase):
                 job = {'kind': 'Job', 'metadata': {'name': 'load-one', 'uid': 'job',
                        'labels': {'edge.dacs.io/evaluation-run-uid': 'run'},
                        'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]}}
-                conductor.save(root / 'stages/one/measured/created-one.json', job)
+                evidence_io.save(root / 'stages/one/measured/created-one.json', job)
                 jobs, order = [job], []
                 def delete(name, uid):
                     order.append('delete')
@@ -870,16 +875,15 @@ class EvaluationTests(unittest.TestCase):
                 harness.scope, harness.prefix = 'run', 'experiments/run/run'
                 harness.spec = {}
                 harness.execution = {'runUID': 'run', 'namespace': 'evaluation-ns', 'prepareCompleted': True}
-                harness.open_snapshot = lambda: None
                 harness.controller = lambda: controller
                 harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
-                with patch('builtins.print'):
+                with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'):
                     self.assertEqual(harness.execute('finish'), int(cleanup_failure or restore_failure))
-                result = conductor.load(root / 'results/run/finish.json')
+                result = evidence_io.load(root / 'results/run/finish.json')
                 self.assertEqual(result['cleanup']['status'], 'Failed' if cleanup_failure or restore_failure else 'Complete')
                 self.assertEqual(order[0], 'delete')
                 self.assertIn('settings-GET', order)
-                evidence = conductor.load(root / 'cleanup-outcome.json')['attempts']
+                evidence = evidence_io.load(root / 'cleanup-outcome.json')['attempts']
                 self.assertEqual(evidence[0]['cleanup']['status'], 'Failed' if cleanup_failure else 'Complete')
                 self.assertEqual(evidence[0]['restore']['status'], 'Failed' if restore_failure else 'Complete')
                 self.assertEqual(api.value['controls']['power'], not restore_failure)
@@ -892,17 +896,17 @@ class EvaluationTests(unittest.TestCase):
                     self.assertIn('Forbidden', evidence[0]['restore']['receipts'][0]['error'])
                     self.assertTrue(any(residual['kind'] == 'SchedulerSettings' for residual in result['residuals']))
                 else:
-                    reverted_at = conductor.load(receipt_path)['revertedAt']
+                    reverted_at = evidence_io.load(receipt_path)['revertedAt']
                     calls_before_retry = len(api.calls)
                     api.value['controls']['power'] = False  # operator changed it after our successful revert
                     api.revision += 1
                     controller.residuals = []  # a fresh finish Job has a fresh controller
-                    with patch('builtins.print'):
+                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'):
                         self.assertEqual(harness.execute('finish'), int(cleanup_failure))
                     self.assertEqual(len(api.calls), calls_before_retry)
                     self.assertFalse(api.value['controls']['power'])
-                    self.assertEqual(conductor.load(receipt_path)['revertedAt'], reverted_at)
-                    evidence = conductor.load(root / 'cleanup-outcome.json')['attempts']
+                    self.assertEqual(evidence_io.load(receipt_path)['revertedAt'], reverted_at)
+                    evidence = evidence_io.load(root / 'cleanup-outcome.json')['attempts']
                     self.assertEqual(len(evidence), 2)
                     self.assertEqual(evidence[0]['cleanup']['status'], 'Failed' if cleanup_failure else 'Complete')
 
@@ -912,15 +916,15 @@ class EvaluationTests(unittest.TestCase):
             spec, _, _, _, config = fixture(root)
             config['traceOffsets'] = {NAME: [1, 2]}
             path = root / 'config.json'
-            conductor.save(path, config)
+            evidence_io.save(path, config)
             bound = conductor.bind(path)
-            conductor.save(root / 'binding.json', bound)
+            evidence_io.save(root / 'binding.json', bound)
             phase = {'stage': bound['schedule'][0], 'startUTC': START, 'endUTC': END, 'drainedUTC': END,
                      'starts': {NAME: {'at': START, 'monotonicNS': 100}}, 'status': 'DRAINED_NOT_EVALUATED'}
-            conductor.save(root / 'phase.json', phase)
+            evidence_io.save(root / 'phase.json', phase)
             power = archive.meter_energy(power_window(), spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
             for name in ('power.json', 'power-drain-inclusive.json'):
-                conductor.save(root / name, power)
+                evidence_io.save(root / name, power)
             rows = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': i + 1, 'scheduledMonotonicNS': i + 101,
                      'sentMonotonicNS': i + 101, 'finishedMonotonicNS': 3000000000, 'issued': True} for i in range(2)]
             (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
@@ -928,25 +932,25 @@ class EvaluationTests(unittest.TestCase):
                                                      'summary': {'uniqueRequests': 2}, 'finals': {
                 'r0': {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 2000000000},
                 'r1': {'outcome': 'timeout', 'executionComplete': False, 'elapsedNanos': 2000000000}}}}
-            original_module = conductor.module
+            original_module = evidence_io.module
             def modules(name, path):
                 if name == 'evaluation_raw':
                     return SimpleNamespace(iter_request_indexes=lambda *args, **kwargs: indexed)
                 return original_module(name, path)
-            with patch.object(conductor, 'module', side_effect=modules):
-                judgment = conductor.judge(root / 'binding.json', root)
+            with patch.object(evidence_io, 'module', side_effect=modules):
+                judgment = judgment_rules.judge(root / 'binding.json', root)
             self.assertEqual(judgment['schema'], 'e5-judgment.v3')
             self.assertEqual(judgment['status'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['deadlineSuccess'], 0)
             self.assertEqual(judgment['requests'][NAME]['issuanceFidelity']['generatorQuality']['status'], 'OBSERVED')
-            self.assertEqual(evaluation.verdict(judgment)['verdict'], 'FAIL')
+            self.assertEqual(publication.verdict(judgment)['verdict'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['substages'][0]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['definitionID'], 'definition')
             rows[1]['requestID'] = 'r0'
             (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
-            with patch.object(conductor, 'module', side_effect=modules):
-                duplicated = conductor.judge(root / 'binding.json', root)
+            with patch.object(evidence_io, 'module', side_effect=modules):
+                duplicated = judgment_rules.judge(root / 'binding.json', root)
             self.assertEqual(duplicated['status'], 'PARTIAL')
             self.assertIsNone(duplicated['requests'][NAME]['definitionID'])
             self.assertEqual(duplicated['requests'][NAME]['substages'][0]['D1'], 'NOT_EVALUATED')
@@ -956,11 +960,11 @@ class EvaluationTests(unittest.TestCase):
             root = Path(directory)
             stages = [{'id': 'measured', 'kpis': {'status': 'MEASURED_DESCRIPTIVE'}}]
             results = {'measured': {'measurement': {'verdict': 'PASS'}}, 'missing': {'measurement': {'verdict': 'NOT_EVALUATED'}}}
-            summary = conductor.summarize(None, root, evaluation={'stages': stages, 'results': results})
+            summary = judgment_rules.summarize(None, root, evaluation={'stages': stages, 'results': results})
             self.assertEqual(summary['status'], 'MEASURED_DESCRIPTIVE')
             self.assertEqual(summary['completeness'], 'PARTIAL')
             results['missing']['measurement']['verdict'] = 'FAIL'
-            self.assertEqual(conductor.summarize(None, root, evaluation={'stages': stages, 'results': results})['status'], 'FAIL')
+            self.assertEqual(judgment_rules.summarize(None, root, evaluation={'stages': stages, 'results': results})['status'], 'FAIL')
 
     def test_meter_energy_includes_idle_declared_node_without_history(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1002,7 +1006,7 @@ class EvaluationTests(unittest.TestCase):
             root = Path(directory)
             index = {'complete': True, 'sources': [], 'errors': [], 'requestedHours': ['20261103T00'], 'supportingHours': [],
                      'absentStreams': [{'hour': '20261103T00', 'stream': 'requests', 'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'}]}
-            conductor.save(root / 'raw-source-index.json', index)
+            evidence_io.save(root / 'raw-source-index.json', index)
             _, sources, errors = raw._manifest(root, {'requests'})
             self.assertFalse(errors)
             self.assertFalse(sources)
@@ -1016,7 +1020,7 @@ class EvaluationTests(unittest.TestCase):
                     'spec': {'nodeName': node}, 'status': {'phase': phase}}
         resident = pod('resident', refs=[ref('Deployment', 'unrelated', 'apps/v1')])
         ownerless = pod('ownerless')
-        baseline = evaluation.pod_environment([resident, ownerless], {'node'})
+        baseline = input_snapshot.pod_environment([resident, ownerless], {'node'})
         cases = [
             (resident, False), (ownerless, False),
             (pod('external-new'), True),
@@ -1033,8 +1037,8 @@ class EvaluationTests(unittest.TestCase):
         ]
         for candidate, blocked in cases:
             with self.subTest(uid=candidate['metadata']['uid']):
-                current = evaluation.pod_environment([candidate], {'node'})
-                intruders = evaluation.competing_pods(current, baseline, {'own-job'}, {'target-workload'}, 'evaluation-ns')
+                current = input_snapshot.pod_environment([candidate], {'node'})
+                intruders = input_snapshot.competing_pods(current, baseline, {'own-job'}, {'target-workload'}, 'evaluation-ns')
                 self.assertEqual(bool(intruders), blocked)
 
     def test_new_competing_pods_are_recorded_without_stop(self):
@@ -1046,9 +1050,9 @@ class EvaluationTests(unittest.TestCase):
                                 'scenarios': {'scenario': {'spec': {'workloads': [{'uid': 'target-workload'}]}}}}
             current = [{'namespace': 'tenant', 'name': 'intruder', 'uid': 'intruder-uid', 'node': 'node',
                         'phase': 'Running', 'ownerReferences': [], 'mirror': False}]
-            with patch.object(harness, 'participant_pods', return_value=current), patch.object(evaluation, 'kubectl', return_value={'items': []}):
-                harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
-            evidence = conductor.load(harness.root / 'environment-intrusions.json')
+            with patch.object(input_snapshot, 'participant_pods', return_value=current), patch.object(input_snapshot, 'kubectl', return_value={'items': []}):
+                input_snapshot.check_fleet(harness, {'loadScenarioRef': {'uid': 'scenario'}})
+            evidence = evidence_io.load(harness.root / 'environment-intrusions.json')
             self.assertEqual(evidence['pods'], current)
             self.assertEqual(evidence['baselineCapturedAt'], START)
 
@@ -1064,10 +1068,10 @@ class EvaluationTests(unittest.TestCase):
                                                  'uid': 'stage', 'controller': True}]}}
         with tempfile.TemporaryDirectory() as directory:
             harness.root = Path(directory)
-            with patch.object(harness, 'participant_pods', return_value=current), patch.object(evaluation, 'kubectl', return_value={'items': [job]}):
-                harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
+            with patch.object(input_snapshot, 'participant_pods', return_value=current), patch.object(input_snapshot, 'kubectl', return_value={'items': [job]}):
+                input_snapshot.check_fleet(harness, {'loadScenarioRef': {'uid': 'scenario'}})
                 job['metadata']['uid'] = 'different-job'
-                harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
+                input_snapshot.check_fleet(harness, {'loadScenarioRef': {'uid': 'scenario'}})
                 self.assertTrue((harness.root / 'environment-intrusions.json').exists())
 
     def test_other_running_producer_is_observed_not_rejected(self):
@@ -1090,9 +1094,9 @@ class EvaluationTests(unittest.TestCase):
         harness.execution = {}
         target = {'components': [{'name': 'serving', 'resource': {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'namespace': 'tenant', 'name': 'server'}}]}
         deployment = {'kind': 'Deployment', 'metadata': {'uid': 'deployment'}, 'spec': {}}
-        with patch.object(evaluation, 'kubectl', return_value=deployment) as k:
+        with patch.object(input_snapshot, 'kubectl', return_value=deployment) as k:
             with self.assertRaisesRegex(RuntimeError, 'no Pod selector'):
-                harness.check_target(target)
+                input_snapshot.check_target(harness, target)
             k.assert_called_once_with('tenant', 'get', 'Deployment', 'server')
 
     def test_target_uses_declared_match_expression_selector(self):
@@ -1103,8 +1107,8 @@ class EvaluationTests(unittest.TestCase):
             {'key': 'app', 'operator': 'In', 'values': ['server']}, {'key': 'retired', 'operator': 'DoesNotExist'}]}}}
         pod = {'metadata': {'uid': 'pod'}, 'status': {'containerStatuses': [{'name': 'server', 'ready': True}],
                                                   'conditions': [{'type': 'Ready', 'status': 'True'}]}}
-        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]) as k:
-            harness.check_target(target)
+        with patch.object(input_snapshot, 'kubectl', side_effect=[deployment, {'items': [pod]}]) as k:
+            input_snapshot.check_target(harness, target)
             self.assertEqual(k.call_args_list[-1].args, ('tenant', 'get', 'pods', '-l', 'app in (server),!retired'))
 
     def test_target_runtime_changes_are_observations_not_exact_gates(self):
@@ -1115,13 +1119,13 @@ class EvaluationTests(unittest.TestCase):
                       'spec': {'selector': {'matchLabels': {'app': 'server'}}}}
         pod = {'metadata': {'uid': 'pod'}, 'status': {'containerStatuses': [{'name': 'server', 'ready': True, 'restartCount': 7, 'imageID': 'unrelated-current-runtime'}],
                                                            'conditions': [{'type': 'Ready', 'status': 'True'}]}}
-        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]):
-            observed = harness.check_target(target)
+        with patch.object(input_snapshot, 'kubectl', side_effect=[deployment, {'items': [pod]}]):
+            observed = input_snapshot.check_target(harness, target)
         self.assertEqual(observed[0]['pods'][0]['containers'][0]['imageID'], 'unrelated-current-runtime')
         self.assertEqual(observed[0]['resource'], target['components'][0]['resource'])
         pod['status']['conditions'][0]['status'] = 'False'
-        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]):
-            self.assertFalse(harness.check_target(target)[0]['available'])
+        with patch.object(input_snapshot, 'kubectl', side_effect=[deployment, {'items': [pod]}]):
+            self.assertFalse(input_snapshot.check_target(harness, target)[0]['available'])
 
     def test_foreign_job_not_owned(self):
         controller = object.__new__(conductor.CPO)
@@ -1137,6 +1141,73 @@ class EvaluationTests(unittest.TestCase):
             result = evaluation.result_record(execution, 'judge', START, measurement={'verdict': verdict, 'reason': 'Measured'})
             self.assertEqual(evaluation.exit_code(result), code)
         self.assertEqual(evaluation.exit_code(evaluation.result_record(execution, 'stage', START, status='Failed')), 1)
+
+    def test_failed_prepare_publication_keeps_outcomes_references_and_credentials_private(self):
+        temporary_directory = tempfile.TemporaryDirectory
+        for returncode in (0, 1):
+            with self.subTest(returncode=returncode), temporary_directory() as directory:
+                root = Path(directory)
+                run = root / 'campaign/run'
+                run.mkdir(parents=True)
+                at = START.replace('Z', '+00:00')
+                residual_ref = {'store': 'store', 'key': 'experiments/run/run/residual-state.json'}
+                records = {
+                    'experiments/run/run/prepare/result.json': {
+                        'execution': {'status': 'Failed', 'reason': 'FrozenInputInvalid'},
+                        'startedAt': at, 'artifacts': []},
+                    'experiments/run/run/finish/result.json': {
+                        'execution': {'status': 'Complete', 'reason': 'ProcedureComplete'},
+                        'cleanup': {'status': 'Failed', 'reason': 'ResidualState'},
+                        'residualStateRef': residual_ref, 'finishedAt': at, 'artifacts': []},
+                    residual_ref['key']: {
+                        'status': 'Failed', 'reason': 'ResidualState',
+                        'residuals': [{'kind': 'Node', 'name': 'node'}]},
+                }
+                def get(reference, path):
+                    if reference['key'] not in records:
+                        raise FileNotFoundError(reference['key'])
+                    input_snapshot.save(path, records[reference['key']])
+                context = SimpleNamespace(
+                    run=run, spec={'stages': []}, config={'minimumFreeBytes': '1'},
+                    execution={'runUID': 'run', 'runName': 'example', 'prepareCompleted': False, 'childRefs': []},
+                    store=SimpleNamespace(name='store', get=get))
+                credentials_paths = []
+                def publish(args, **kwargs):
+                    credentials = Path(args[args.index('--config') + 1])
+                    credentials_paths.append(credentials)
+                    self.assertEqual(credentials.stat().st_mode & 0o777, 0o600)
+                    private = input_snapshot.load(credentials)
+                    self.assertEqual(private['secretAccessKey'], 'private-secret')
+                    self.assertEqual(private['tempDir'], str(root / '.evidence-tmp'))
+                    self.assertEqual(Path(private['tempDir']).stat().st_mode & 0o777, 0o700)
+                    manifest = input_snapshot.load(args[args.index('--manifest') + 1])
+                    self.assertEqual(manifest['summary']['key'], 'serving/experiments.v1alpha1/run/summary.json')
+                    return SimpleNamespace(returncode=returncode, stderr='publication denied')
+                env = {'CHILL_EVIDENCE_BUCKET': 'bucket', 'CHILL_EVIDENCE_ENDPOINT': 'https://store.invalid',
+                       'CHILL_EVIDENCE_REGION': 'region', 'AWS_ACCESS_KEY_ID': 'private-key',
+                       'AWS_SECRET_ACCESS_KEY': 'private-secret'}
+                def private_directory(**kwargs):
+                    return temporary_directory(prefix=kwargs['prefix'], dir=root)
+                with patch.dict(os.environ, env), patch.object(publication.tempfile, 'TemporaryDirectory', side_effect=private_directory), patch.object(publication.subprocess, 'run', side_effect=publish) as publisher:
+                    if returncode:
+                        with self.assertRaisesRegex(RuntimeError, 'PublicationFailed: publication denied'):
+                            publication.publish(context)
+                    else:
+                        publication.publish(context)
+                        self.assertEqual(context.outputs['summary']['key'], 'serving/experiments.v1alpha1/run/summary.json')
+                    publisher.assert_called_once()
+                self.assertFalse(credentials_paths[0].exists())
+                summary = input_snapshot.load(run / 'publication-summary.json')
+                self.assertEqual(summary['status'], 'NOT_EVALUATED')
+                self.assertEqual(summary['outcome']['execution'], {'status': 'Failed', 'reason': 'FrozenInputInvalid'})
+                self.assertEqual(summary['outcome']['cleanup']['residuals'],
+                                 [{'kind': 'Node', 'name': 'node', 'reason': 'ResidualState'}])
+                self.assertLess(raw._time(summary['from']), raw._time(summary['to']))
+                self.assertEqual(summary['definition']['spec'], context.spec)
+                self.assertEqual([source['key'] for source in summary['sources']],
+                                 ['serving/experiments.v1alpha1/run/execution.json',
+                                  'serving/experiments.v1alpha1/run/evidence-index.json'])
+                self.assertNotIn('private-secret', ''.join(path.read_text() for path in run.rglob('*') if path.is_file()))
 
 
 if __name__ == '__main__':
