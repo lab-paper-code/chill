@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 
@@ -94,6 +95,115 @@ func TestEvaluationViewProjectsOnlyRecordedLiveTarget(t *testing.T) {
 			}
 			if string(fields["liveTarget"]) != test.want {
 				t.Fatalf("liveTarget=%s want=%s", fields["liveTarget"], test.want)
+			}
+		})
+	}
+}
+
+func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
+	start := metav1.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)
+	finish := metav1.Date(2026, 11, 4, 1, 1, 0, 0, time.UTC)
+	first := &api.EvaluationStage{
+		ObjectMeta: metav1.ObjectMeta{Name: "z-stage", Namespace: "ns", UID: "first-uid"},
+		Spec:       api.EvaluationStageSpec{StageID: "first"},
+		Status: api.EvaluationStageStatus{
+			CurrentProcedure: "stage", StartedAt: &start, GoAt: &start,
+			Procedures: []api.EvaluationProcedure{
+				{Step: "factor", StartedAt: &start, FinishedAt: &finish, Reason: "RecordedReason", MeasurementVerdict: api.MeasurementPASS},
+				{Step: "stage", StartedAt: &finish},
+			},
+			Conditions: []metav1.Condition{{
+				Type: api.EvaluationConditionExecutionComplete, Status: metav1.ConditionTrue,
+				Reason: "ExecutionRecorded", Message: "Recorded evidence", LastTransitionTime: finish,
+			}},
+			MeasurementVerdict: api.MeasurementPASS,
+		},
+	}
+	second := &api.EvaluationStage{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-stage", Namespace: "ns", UID: "second-uid"},
+		Spec:       api.EvaluationStageSpec{StageID: "second"},
+	}
+	run := &api.EvaluationRun{
+		ObjectMeta: metav1.ObjectMeta{Name: "run", Namespace: "ns"},
+		Status: api.EvaluationRunStatus{
+			CurrentProcedure: "prepare",
+			Procedures: []api.EvaluationProcedure{
+				{Step: "prepare", StartedAt: &start, FinishedAt: &finish, Reason: "Prepared"},
+			},
+			ChildRefs: []api.EvaluationChildReference{
+				{StageID: "first", EvaluationObjectReference: api.EvaluationObjectReference{Name: first.Name, UID: first.UID}},
+				{StageID: "second", EvaluationObjectReference: api.EvaluationObjectReference{Name: second.Name, UID: second.UID}},
+			},
+		},
+	}
+	unreferenced := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "ns", UID: "other-uid"}}
+	for _, test := range []struct {
+		name string
+		run  *api.EvaluationRun
+		want string
+	}{
+		{"recorded", run, `{
+			"currentProcedure":"prepare",
+			"procedures":[{"step":"prepare","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"Prepared"}],
+			"stages":[
+				{"id":"first","name":"z-stage","uid":"first-uid","currentProcedure":"stage",
+				 "conditions":[{"type":"ExecutionComplete","status":"True","lastTransitionTime":"2026-11-04T01:01:00Z","reason":"ExecutionRecorded","message":"Recorded evidence"}],
+				 "measurementVerdict":"PASS",
+				 "procedures":[
+					{"step":"factor","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"RecordedReason","measurementVerdict":"PASS"},
+					{"step":"stage","startedAt":"2026-11-04T01:01:00Z","finishedAt":null}
+				 ],"startedAt":"2026-11-04T01:00:00Z","finishedAt":null,"goAt":"2026-11-04T01:00:00Z"},
+				{"id":"second","name":"a-stage","uid":"second-uid","conditions":null,"procedures":null,"startedAt":null,"finishedAt":null,"goAt":null}
+			]
+		}`},
+		{"absent", &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "ns"}},
+			`{"procedures":null,"stages":null}`},
+		{"missing or replaced child", &api.EvaluationRun{
+			ObjectMeta: metav1.ObjectMeta{Name: "stale", Namespace: "ns"},
+			Status: api.EvaluationRunStatus{ChildRefs: []api.EvaluationChildReference{
+				{StageID: "missing", EvaluationObjectReference: api.EvaluationObjectReference{Name: "missing", UID: "missing-uid"}},
+				{StageID: "replaced", EvaluationObjectReference: api.EvaluationObjectReference{Name: first.Name, UID: "old-uid"}},
+			}},
+		}, `{"procedures":null,"stages":null}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			if err := api.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(test.run, first, second, unreferenced).Build()
+			var config HandlerConfig
+			ConfigureEvaluations(&config, evaluation.New(native, native, "ns", nil))
+			detail, err := config.GetEvaluation(context.Background(), test.run.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			list, err := config.ListEvaluations(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(list.Items) != 1 {
+				t.Fatalf("got %d runs, want 1", len(list.Items))
+			}
+			for _, view := range []EvaluationView{detail, list.Items[0]} {
+				body, err := json.Marshal(view)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var got, want map[string]any
+				if err := json.Unmarshal(body, &got); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal([]byte(test.want), &want); err != nil {
+					t.Fatal(err)
+				}
+				for _, key := range []string{"currentProcedure", "procedures", "stages"} {
+					value, exists := got[key]
+					expected, wantExists := want[key]
+					if exists != wantExists || !reflect.DeepEqual(value, expected) {
+						t.Fatalf("%s = %#v, want %#v; body=%s", key, value, expected, body)
+					}
+				}
 			}
 		})
 	}

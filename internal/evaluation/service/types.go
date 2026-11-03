@@ -40,16 +40,38 @@ type EvaluationReleaseRequest struct {
 	Reason string
 }
 type EvaluationView struct {
-	Name          string
-	UID           string
-	Spec          api.EvaluationRunSpec
-	Conditions    []metav1.Condition
-	CurrentStage  string
-	StartedAt     *metav1.Time
-	FinishedAt    *metav1.Time
-	Phase         string
-	PublicationID string
-	LiveTarget    []EvaluationLiveTarget
+	Name             string
+	UID              string
+	Spec             api.EvaluationRunSpec
+	Conditions       []metav1.Condition
+	CurrentStage     string
+	CurrentProcedure string
+	Procedures       []EvaluationProcedure
+	Stages           []EvaluationStage
+	StartedAt        *metav1.Time
+	FinishedAt       *metav1.Time
+	Phase            string
+	PublicationID    string
+	LiveTarget       []EvaluationLiveTarget
+}
+type EvaluationProcedure struct {
+	Step               string
+	StartedAt          *metav1.Time
+	FinishedAt         *metav1.Time
+	Reason             string
+	MeasurementVerdict api.MeasurementVerdict
+}
+type EvaluationStage struct {
+	ID                 string
+	Name               string
+	UID                string
+	Conditions         []metav1.Condition
+	MeasurementVerdict api.MeasurementVerdict
+	CurrentProcedure   string
+	Procedures         []EvaluationProcedure
+	StartedAt          *metav1.Time
+	FinishedAt         *metav1.Time
+	GoAt               *metav1.Time
 }
 type ActiveEvaluation struct {
 	Name        string

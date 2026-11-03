@@ -38,11 +38,12 @@ func evaluationPhase(run *api.EvaluationRun) string {
 	}
 	return "Finishing"
 }
-func evaluationView(run *api.EvaluationRun) EvaluationView {
+func (s *Service) evaluationView(ctx context.Context, run *api.EvaluationRun) (EvaluationView, error) {
 	value := EvaluationView{
 		Name: run.Name, UID: string(run.UID), Spec: run.Spec, Phase: evaluationPhase(run),
 		Conditions: run.Status.Conditions, CurrentStage: run.Status.CurrentStage,
 		StartedAt: run.Status.StartedAt, FinishedAt: run.Status.FinishedAt,
+		CurrentProcedure: run.Status.CurrentProcedure, Procedures: evaluationProcedures(run.Status.Procedures),
 	}
 	var liveTarget []EvaluationLiveTarget
 	if json.Unmarshal([]byte(run.Annotations["edge.dacs.io/evaluation-live-target"]), &liveTarget) == nil {
@@ -51,7 +52,37 @@ func evaluationView(run *api.EvaluationRun) EvaluationView {
 	if meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
 		value.PublicationID = string(run.UID)
 	}
-	return value
+	for _, ref := range run.Status.ChildRefs {
+		var stage api.EvaluationStage
+		err := s.reader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: ref.Name}, &stage)
+		// A deleted or replaced child is not evidence about the referenced stage.
+		if apierrors.IsNotFound(err) || err == nil && stage.UID != ref.UID {
+			continue
+		}
+		if err != nil {
+			return EvaluationView{}, err
+		}
+		value.Stages = append(value.Stages, EvaluationStage{
+			ID: stage.Spec.StageID, Name: stage.Name, UID: string(stage.UID),
+			Conditions: stage.Status.Conditions, MeasurementVerdict: stage.Status.MeasurementVerdict,
+			CurrentProcedure: stage.Status.CurrentProcedure, Procedures: evaluationProcedures(stage.Status.Procedures),
+			StartedAt: stage.Status.StartedAt, FinishedAt: stage.Status.FinishedAt, GoAt: stage.Status.GoAt,
+		})
+	}
+	return value, nil
+}
+func evaluationProcedures(procedures []api.EvaluationProcedure) []EvaluationProcedure {
+	if procedures == nil {
+		return nil
+	}
+	result := make([]EvaluationProcedure, len(procedures))
+	for i, procedure := range procedures {
+		result[i] = EvaluationProcedure{
+			Step: procedure.Step, StartedAt: procedure.StartedAt, FinishedAt: procedure.FinishedAt, Reason: procedure.Reason,
+			MeasurementVerdict: procedure.MeasurementVerdict,
+		}
+	}
+	return result
 }
 func (s *Service) List(ctx context.Context) ([]EvaluationView, error) {
 	var runs api.EvaluationRunList
@@ -60,7 +91,11 @@ func (s *Service) List(ctx context.Context) ([]EvaluationView, error) {
 	}
 	result := make([]EvaluationView, 0, len(runs.Items))
 	for i := range runs.Items {
-		result = append(result, evaluationView(&runs.Items[i]))
+		value, err := s.evaluationView(ctx, &runs.Items[i])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, value)
 	}
 	return result, nil
 }
@@ -69,7 +104,7 @@ func (s *Service) Get(ctx context.Context, name string) (EvaluationView, error) 
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &run); err != nil {
 		return EvaluationView{}, err
 	}
-	return evaluationView(&run), nil
+	return s.evaluationView(ctx, &run)
 }
 func (s *Service) Create(
 	ctx context.Context, request EvaluationRequest, actor string,
