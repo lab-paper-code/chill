@@ -7,6 +7,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import selectors
 import shutil
 import ssl
 import subprocess
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # One executable double implements process boundaries; the actual runner, curl,
 # source archives, registry verification and authenticated TLS client still run.
 FAKE = r'''#!/usr/bin/env python3
-import hashlib,json,os,pathlib,sys
+import hashlib,json,os,pathlib,sys,time
 root=pathlib.Path(os.environ['FAKE_DEPLOY_DIR']); args=sys.argv[1:]; name=pathlib.Path(sys.argv[0]).name
 with (root/'calls.jsonl').open('a') as f:f.write(json.dumps([name,*args])+'\n')
 state=json.loads((root/'state.json').read_text())
@@ -32,6 +33,9 @@ def document(image):
 if name=='docker':
  if args[:2]==['buildx','du']:print('Total: 20GB');sys.exit(0)
  if state.get('failBuild'):sys.exit(17)
+ if state.get('buildBarrier'):
+  print('BUILD_PROGRESS_BEFORE_COMPLETION',flush=True)
+  while not pathlib.Path(state['buildBarrier']).exists():time.sleep(.02)
  image=argument('--output').split('name=',1)[1].split(',',1)[0]; host,path=image.split('/',1); repo,tag=path.rsplit(':',1)
  revision=argument('--label').split('=',1)[1]; manifests=[]
  def store(kind,obj):
@@ -191,7 +195,8 @@ class DeploymentCLI(unittest.TestCase):
         recipe_path = self.directory / 'recipe.json'; recipe_path.write_text(json.dumps(self.recipe))
         environment = dict(os.environ, FAKE_DEPLOY_DIR=str(self.directory), PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
         environment.pop('CHILL_EXPERIMENT_CONFIG', None)
-        result = subprocess.run([str(ROOT / 'hack/fast-deploy.sh'), 'run', str(recipe_path), *args], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=90)
+        root = getattr(self, 'repository', ROOT)
+        result = subprocess.run([str(root / 'hack/fast-deploy.sh'), 'run', str(recipe_path), *args], cwd=root, env=environment, capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, expected, result.stdout + '\n' + result.stderr)
         return result
 
@@ -208,6 +213,85 @@ class DeploymentCLI(unittest.TestCase):
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.requests, [])
 
+    def test_cli_reuses_unchanged_images_and_builds_only_changed_copy_inputs(self):
+        self.repository = self.directory / 'reuse-repository'
+        self.repository.mkdir()
+        shutil.copytree(ROOT / 'hack/deploy', self.repository / 'hack/deploy',
+                        ignore=shutil.ignore_patterns('__pycache__'))
+        (self.repository / 'hack/evaluation').mkdir()
+        shutil.copy2(ROOT / 'hack/evaluation/auth.py', self.repository / 'hack/evaluation/auth.py')
+        shutil.copy2(ROOT / 'hack/fast-deploy.sh', self.repository / 'hack/fast-deploy.sh')
+        shutil.copytree(ROOT / 'build/docker', self.repository / 'build/docker')
+        shutil.copy2(ROOT / 'Makefile', self.repository / 'Makefile')
+        for path, body in {'go.mod': 'module fixture\n', 'go.sum': '',
+                           'cmd/chill-server/main.go': 'package main\n',
+                           'chill-dashboard/package.json': '{}\n',
+                           'charts/chill/values.yaml': 'fixture: true\n'}.items():
+            target = self.repository / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(body)
+        def git(*args):
+            return subprocess.check_output(['git', '-C', str(self.repository), *args], stderr=subprocess.STDOUT).decode().strip()
+        git('init')
+        git('config', 'user.name', 'Deployment fixture')
+        git('config', 'user.email', 'fixture@example.invalid')
+        def commit(message):
+            git('add', '.')
+            git('commit', '-m', message)
+            return git('rev-parse', 'HEAD')
+        self.recipe.update(source=commit('initial build inputs'), images=['server', 'dashboard'])
+        original = self.recipe['source']
+        initial = self.out / 'initial'
+        self.cli('--execute', '--evidence', str(initial))
+        before = json.loads((initial / 'publication.json').read_text())
+        self.recipe['reusePublication'] = str(initial / 'publication.json')
+        (self.repository / 'charts/chill/values.yaml').write_text('fixture: changed\n')
+        self.recipe['source'] = commit('chart-only change')
+        call_count = len(self.calls())
+        local = self.cli('--dry-run')
+        planned = json.loads(local.stdout.split('\n', 1)[1])
+        self.assertEqual({x['role']: x['action'] for x in planned['images']},
+                         {'server': 'reuse', 'dashboard': 'reuse'})
+        self.assertEqual(len(self.calls()), call_count)
+        inspected = self.out / 'inspect'
+        self.cli('--inspect', '--evidence', str(inspected))
+        self.assertFalse(any(call[0] == 'docker' for call in self.calls()[call_count:]))
+        reused = self.out / 'reused'
+        self.cli('--execute', '--evidence', str(reused))
+        publication = json.loads((reused / 'publication.json').read_text())
+        for role in ('server', 'dashboard'):
+            self.assertEqual(publication['roles'][role]['digest'], before['roles'][role]['digest'])
+            self.assertEqual(publication['roles'][role]['sourceSHA'], original)
+            self.assertEqual(publication['roles'][role]['action'], 'reuse')
+        self.assertFalse(any(call[0] == 'docker' for call in self.calls()[call_count:]))
+        self.recipe['reusePublication'] = str(reused / 'publication.json')
+        (self.repository / 'cmd/chill-server/main.go').write_text('package main\n// changed code input\n')
+        self.recipe['source'] = commit('server COPY input change')
+        call_count = len(self.calls())
+        changed = self.out / 'changed'
+        self.cli('--execute', '--evidence', str(changed))
+        publication = json.loads((changed / 'publication.json').read_text())
+        self.assertEqual(publication['roles']['server']['action'], 'build')
+        self.assertEqual(publication['roles']['server']['sourceSHA'], self.recipe['source'])
+        self.assertNotEqual(publication['roles']['server']['digest'], before['roles']['server']['digest'])
+        self.assertEqual(publication['roles']['dashboard']['action'], 'reuse')
+        builds = [call for call in self.calls()[call_count:] if call[0] == 'docker' and 'build' in call]
+        self.assertEqual(len(builds), 1)
+        self.recipe['reusePublication'] = str(changed / 'publication.json')
+        self.recipe['commands'] = {'preflight': [{
+            'argv': [sys.executable, '-c',
+                     "from pathlib import Path; Path('chill-dashboard/package.json').write_text('{\"name\":\"generated\"}')"],
+            'seconds': 10}]}
+        local = self.cli('--dry-run')
+        planned = json.loads(local.stdout.split('\n', 1)[1])
+        self.assertTrue(all(x['action'] == 'build' for x in planned['images']))
+        generated = self.out / 'generated'
+        self.cli('--execute', '--evidence', str(generated))
+        publication = json.loads((generated / 'publication.json').read_text())
+        self.assertTrue(all(x['action'] == 'build' for x in publication['roles'].values()))
+        self.assertEqual(json.loads((generated / 'source/chill-dashboard/package.json').read_text()),
+                         {'name': 'generated'})
+
     def test_complete_cli_build_registry_tls_and_acceptance(self):
         self.cli('--execute', '--evidence', str(self.out))
         self.assertTrue(json.loads((self.out / 'state.json').read_text())['ready'])
@@ -223,6 +307,53 @@ class DeploymentCLI(unittest.TestCase):
         previous = len(self.calls())
         self.cli('--execute', '--evidence', str(self.out), expected=1)
         self.assertEqual(len(self.calls()), previous)
+
+    def test_cli_watches_build_before_exit_and_then_completes(self):
+        barrier = self.directory / 'watch-build-release'
+        self.state(buildBarrier=str(barrier))
+        recipe = self.directory / 'watch-recipe.json'
+        recipe.write_text(json.dumps(self.recipe))
+        environment = dict(os.environ, FAKE_DEPLOY_DIR=str(self.directory),
+                           PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
+        environment.pop('CHILL_EXPERIMENT_CONFIG', None)
+        process = subprocess.Popen([str(ROOT / 'hack/fast-deploy.sh'), 'run', str(recipe),
+                                    '--execute', '--evidence', str(self.out)],
+                                   cwd=ROOT, env=environment, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        visible = b''
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                deadline = time.monotonic() + 20
+                while b'BUILD_PROGRESS_BEFORE_COMPLETION' not in visible:
+                    remaining = deadline - time.monotonic()
+                    self.assertGreater(remaining, 0, visible.decode(errors='replace'))
+                    self.assertTrue(selector.select(remaining), visible.decode(errors='replace'))
+                    data = os.read(process.stdout.fileno(), 65536)
+                    self.assertTrue(data, visible.decode(errors='replace'))
+                    visible += data
+            self.assertIsNone(process.poll())
+            self.assertFalse((self.out / 'publication.json').exists())
+        finally:
+            barrier.touch()
+            try:
+                output, errors = process.communicate(timeout=90)
+            except BaseException:
+                process.kill()
+                process.communicate()
+                raise
+        self.assertEqual(process.returncode, 0, errors.decode(errors='replace'))
+        self.assertTrue(json.loads((self.out / 'state.json').read_text())['ready'])
+        self.assertNotIn(self.token.encode(), visible + output)
+
+    def test_custom_command_timeout_does_not_print_secret_arguments(self):
+        secret = 'PRIVATE_TIMEOUT_ARGUMENT_SENTINEL'
+        self.recipe['commands'] = {'preflight': [{
+            'argv': [sys.executable, '-c', 'import time; time.sleep(60)', secret],
+            'seconds': 1}]}
+        result = self.cli('--execute', '--evidence', str(self.out), expected=1)
+        self.assertNotIn(secret, result.stdout + result.stderr)
+        self.assertEqual(json.loads((self.out / 'failure.json').read_text())['stage'], 'preflight')
 
     def test_cli_waits_for_warming_and_records_ready(self):
         self.state(warmingOnce=True)

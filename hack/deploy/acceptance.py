@@ -400,9 +400,14 @@ def wait_capture(config, namespace, out, deadline):
         try:
             # Include setup and validation in the shared elapsed budget, not just sockets.
             with _elapsed_deadline(min(120, remaining)):
-                return capture(config, namespace, Path(out) / ('attempt-%03d' % attempt),
-                               timeout=min(60, remaining / 2))
-        except ReadinessPending:
+                snapshot = capture(config, namespace, Path(out) / ('attempt-%03d' % attempt),
+                                   timeout=min(60, remaining / 2))
+            print('[readiness] attempt=%d ready remaining=%.1fs' %
+                  (attempt + 1, max(0, deadline - time.monotonic())), flush=True)
+            return snapshot
+        except ReadinessPending as error:
+            print('[readiness] attempt=%d pending=%s remaining=%.1fs' %
+                  (attempt + 1, error, max(0, deadline - time.monotonic())), flush=True)
             attempt += 1
             time.sleep(min(5, max(0, deadline - time.monotonic())))
 

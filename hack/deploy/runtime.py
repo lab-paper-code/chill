@@ -35,7 +35,8 @@ def _references(publication):
         child_digest = receipt.get("digest", "")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", child_digest) or child_digest not in entry.get("platformDigests", []):
             raise ValueError("runtime platform receipt digest mismatch: " + role)
-        if receipt.get("revision") != publication.get("sourceSHA"):
+        source_sha = entry.get("sourceSHA")
+        if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha) or receipt.get("revision") != source_sha:
             raise ValueError("runtime platform receipt revision mismatch: " + role)
         references[variable] = repository + "@" + child_digest
     return references
