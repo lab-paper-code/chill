@@ -29,11 +29,14 @@ func fixtureStageExecution(t *testing.T) (Runtime, memoryStore, *api.EvaluationR
 	parent := fixtureRun("review")
 	startRun(parent)
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid"}}
+	node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "serving", Namespace: parent.Namespace, UID: "pod-uid"}, Spec: corev1.PodSpec{NodeName: node.Name}}
+	pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(&api.Workload{ObjectMeta: metav1.ObjectMeta{Name: "workload", UID: "workload-uid"}}, api.GroupVersion.WithKind("Workload"))}
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 	r, store := fixtureRuntime(t, parent, node, pod)
 	stage := fixtureStage(t, &r, parent)
 	stage.Finalizers = []string{api.EvaluationStageFinalizer}
-	stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: api.FaultInjectionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "instance"}}}}
+	stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: api.FaultInjectionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "podUID"}}}}
 	if err := r.Client.Update(ctx, stage); err != nil {
 		t.Fatal(err)
 	}
@@ -61,16 +64,6 @@ func fixtureStageExecution(t *testing.T) (Runtime, memoryStore, *api.EvaluationR
 	if err := r.patchStatus(ctx, stage, beforeStage); err != nil {
 		t.Fatal(err)
 	}
-	r.HTTP = func(_ context.Context, _ string, _ map[string]string, path string, value any) error {
-		body := `{"from":"2026-11-01T11:59:59Z","to":"2026-11-01T12:00:00Z","workloads":[{"uid":"workload-uid","instanceAssignments":{"instance":1}}]}`
-		if strings.Contains(path, "/settings") {
-			body = `{"observationWindowNanos":1000000000}`
-		}
-		if strings.Contains(path, "/state") {
-			body = `{"at":"2026-11-01T12:00:00Z","nodes":[{"node":{"name":"node","uid":"node-uid"},"ready":true}],"instances":[{"id":"instance","workloadUID":"workload-uid","ownerWorkloadUID":"workload-uid","ready":true,"podName":"serving","podUID":"pod-uid","node":{"name":"node","uid":"node-uid"}}],"routing":{"workload-uid":{"instance":1}}}`
-		}
-		return json.Unmarshal([]byte(body), value)
-	}
 	return r, store, parent, stage
 }
 
@@ -79,10 +72,15 @@ func TestReviewCompletedStageNeverInjects(t *testing.T) {
 	resultKey := evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/stage/result.json")
 	store.put(resultKey, map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "stageUID": stage.UID, "stageID": stage.Spec.StageID, "step": api.EvaluationStepStage, "execution": map[string]string{"status": complete}, "startedAt": fixtureTime.Add(-time.Minute), "finishedAt": fixtureTime.Add(-time.Second)})
 	reads := 0
-	r.HTTP = func(context.Context, string, map[string]string, string, any) error {
-		reads++
-		return errors.New("completed stage must not select a target")
-	}
+	r.APIReader = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, options ...client.ListOption) error {
+			if _, ok := list.(*corev1.NodeList); ok {
+				reads++
+				return errors.New("completed stage must not select a target")
+			}
+			return c.List(ctx, list, options...)
+		},
+	})
 	if _, err := (&StageReconciler{Runtime: r}).Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(stage)}); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +123,9 @@ func TestReviewPreMutationErrorsRequeue(t *testing.T) {
 					return readFaultStore{ObjectStore: store, Key: stage.Status.GoRef.Key, Err: transient}, nil
 				}
 			case "observation-read":
-				r.HTTP = func(context.Context, string, map[string]string, string, any) error { return transient }
+				r.APIReader = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+					return transient
+				}})
 			case "intent-status-conflict":
 				r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(ctx context.Context, c client.Client, subresource string, obj client.Object, patch client.Patch, options ...client.SubResourcePatchOption) error {
 					child, ok := obj.(*api.EvaluationStage)
@@ -303,10 +303,6 @@ func TestCompletedStageRecoversRequestedInjection(t *testing.T) {
 				}
 			}
 			store.put(evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/stage/result.json"), map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "stageUID": stage.UID, "stageID": stage.Spec.StageID, "step": api.EvaluationStepStage, "execution": map[string]string{"status": complete}, "startedAt": goAt, "finishedAt": fixtureTime.Add(-time.Second)})
-			r.HTTP = func(context.Context, string, map[string]string, string, any) error {
-				t.Fatal("completion recovery must not select or inject")
-				return nil
-			}
 			_, err := (&StageReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(stage)})
 			if test.readFailure {
 				if err == nil {

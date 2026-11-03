@@ -12,6 +12,8 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+// If-Match is enforced by the HTTP settings boundary; it never replaces either
+// this reviewed URL grant or the named ConfigMap update grant.
 func TestSchedulerUpdateRequiresExactReviewedResourceGrant(t *testing.T) {
 	for _, tc := range []struct {
 		name            string

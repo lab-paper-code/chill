@@ -22,9 +22,8 @@ type EvaluationCheck struct {
 type EvaluationLiveTarget struct {
 	Component    string                          `json:"component"`
 	Resource     api.EvaluationResourceReference `json:"resource"`
-	SpecImage    string                          `json:"specImage"`
 	LiveImageIDs []string                        `json:"liveImageIDs"`
-	Match        bool                            `json:"match"`
+	Ready        bool                            `json:"ready"`
 }
 type EvaluationPreflight struct {
 	Checks     []EvaluationCheck      `json:"checks"`

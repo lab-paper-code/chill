@@ -46,8 +46,6 @@ type EvaluationInputList struct {
 	Page  ProfilePage       `json:"page"`
 }
 
-const evaluationInputOtherKind = "other"
-
 func pageEvaluationInputs(list EvaluationInputList, values url.Values) (EvaluationInputList, error) {
 	paging := url.Values{}
 	for key, values := range values {
@@ -59,7 +57,7 @@ func pageEvaluationInputs(list EvaluationInputList, values url.Values) (Evaluati
 			paging[key] = values
 		case "kind":
 			switch values[0] {
-			case "payload", "seed", "rateBasis", "kappa", evaluationInputOtherKind:
+			case "trace":
 			default:
 				return EvaluationInputList{}, &serving.Error{Code: "InvalidQuery", Message: "invalid input kind"}
 			}

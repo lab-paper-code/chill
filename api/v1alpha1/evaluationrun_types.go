@@ -1,11 +1,14 @@
 package v1alpha1
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -127,9 +130,8 @@ type EvaluationResourceReference struct {
 type EvaluationTargetComponent struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
-	Name            string                      `json:"name"`
-	Resource        EvaluationResourceReference `json:"resource"`
-	EvaluationImage `json:",inline"`
+	Name     string                      `json:"name"`
+	Resource EvaluationResourceReference `json:"resource"`
 }
 
 type TargetIdentity struct {
@@ -146,6 +148,9 @@ type TargetIdentity struct {
 type Generator struct {
 	EvaluationImage `json:",inline"`
 	Resources       corev1.ResourceRequirements `json:"resources"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	NodeName string `json:"nodeName"`
 	// Shards are keyed by Workload name, resolved against LoadScenario at prepare.
 	// +kubebuilder:validation:MinProperties=1
 	// +kubebuilder:validation:MaxProperties=128
@@ -190,27 +195,6 @@ type PowerSampling struct {
 	IntervalNanos int64 `json:"intervalNanos"`
 }
 
-type ControlSettings struct {
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=1
-	ScaleDownHeadroomFraction float64 `json:"scaleDownHeadroomFraction"`
-	// MinimumDemand keys are Workload UIDs, not mutable names.
-	// +kubebuilder:validation:MaxProperties=128
-	MinimumDemand map[string]EvaluationNonNegative `json:"minimumDemand"`
-	Controls      EvaluationControls               `json:"controls"`
-}
-
-// EvaluationControls mirrors the scheduler's named scientific switches.
-type EvaluationControls struct {
-	Placement  bool `json:"placement"`
-	Resources  bool `json:"resources"`
-	Replicas   bool `json:"replicas"`
-	Routing    bool `json:"routing"`
-	Batching   bool `json:"batching"`
-	Power      bool `json:"power"`
-	Membership bool `json:"membership"`
-}
-
 type Judgment struct {
 	GeneratorQuality GeneratorQuality `json:"generatorQuality"`
 	EnergyCoverage   EnergyCoverage   `json:"energyCoverage"`
@@ -233,16 +217,7 @@ type EnergyCoverage struct {
 	MaxSingleGapSeconds float64 `json:"maxSingleGapSeconds"`
 }
 
-// +kubebuilder:validation:Enum=autonomous;fixed;controls-disabled
-type EvaluationMode string
-
-const (
-	EvaluationModeAutonomous       EvaluationMode = "autonomous"
-	EvaluationModeFixed            EvaluationMode = "fixed"
-	EvaluationModeControlsDisabled EvaluationMode = "controls-disabled"
-)
-
-// StageTemplate assembles one child. Control replaces, never partially merges.
+// StageTemplate assembles one child. A stage settingsPatch replaces the Run patch.
 type StageTemplate struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -250,11 +225,11 @@ type StageTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	Row             string                    `json:"row"`
-	Mode            EvaluationMode            `json:"mode"`
 	LoadScenarioRef EvaluationObjectReference `json:"loadScenarioRef"`
 	// +optional
-	Control    *ControlSettings     `json:"control,omitempty"`
-	StartState EvaluationStartState `json:"startState"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
+	SettingsPatch *apiextensionsv1.JSON `json:"settingsPatch,omitempty"`
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=32
@@ -262,24 +237,6 @@ type StageTemplate struct {
 	// +kubebuilder:validation:XValidation:rule="self.all(i, i.action != 'uncordon' || self.exists(p, p.id == i.priorInjectionID && p.action == 'cordon-delete' && p.offsetSeconds < i.offsetSeconds))",message="uncordon requires an earlier cordon-delete in this stage"
 	// +kubebuilder:validation:XValidation:rule="self.all(i, !has(i.selection) || !has(i.selection.differentNodeFrom) || self.exists(p, p.id == i.selection.differentNodeFrom && p.action != 'uncordon' && p.offsetSeconds < i.offsetSeconds))",message="differentNodeFrom requires an earlier target selection in this stage"
 	FailureInjection []FaultInjectionPlan `json:"failureInjection,omitempty"`
-}
-
-// EvaluationStartState is external evidence or an earlier stage's named output.
-// +kubebuilder:validation:XValidation:rule="has(self.evidenceRef) != has(self.stageResultRef)",message="exactly one startState reference is required"
-type EvaluationStartState struct {
-	// +optional
-	EvidenceRef *EvaluationEvidenceReference `json:"evidenceRef,omitempty"`
-	// +optional
-	StageResultRef *EvaluationStageOutputReference `json:"stageResultRef,omitempty"`
-}
-
-type EvaluationStageOutputReference struct {
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	StageID string `json:"stageID"`
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	Output string `json:"output"`
 }
 
 type EvaluationComparison struct {
@@ -318,8 +275,11 @@ type EvaluationRunSpec struct {
 	Harness          EvaluationImage  `json:"harness"`
 	LoadGenerator    Generator        `json:"loadGenerator"`
 	PowerMeasurement PowerMeasurement `json:"powerMeasurement"`
-	Control          ControlSettings  `json:"control"`
-	Judgment         Judgment         `json:"judgment"`
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
+	SettingsPatch *apiextensionsv1.JSON `json:"settingsPatch,omitempty"`
+	Judgment      Judgment              `json:"judgment"`
 	// +kubebuilder:validation:MinLength=1
 	EvidenceStore string `json:"evidenceStore"`
 	// Stages is ordered; do not use map-list equality for immutable execution order.
@@ -337,7 +297,10 @@ func (s *EvaluationRunSpec) Validate() error {
 	if s.Question == "" || s.EvidenceStore == "" || len(s.Stages) == 0 {
 		return fmt.Errorf("question, evidenceStore and stages are required")
 	}
-	if err := validateEvaluationContext(s.Target, s.Harness, s.LoadGenerator, s.PowerMeasurement, s.Control, s.Judgment); err != nil {
+	if err := validateEvaluationContext(s.Target, s.Harness, s.LoadGenerator, s.PowerMeasurement, s.Judgment); err != nil {
+		return err
+	}
+	if err := ValidateEvaluationSettingsPatch(s.SettingsPatch); err != nil {
 		return err
 	}
 	prior := map[string]bool{}
@@ -345,26 +308,11 @@ func (s *EvaluationRunSpec) Validate() error {
 		if len(validation.IsDNS1123Label(stage.ID)) != 0 || prior[stage.ID] {
 			return fmt.Errorf("invalid or duplicate stage ID %q", stage.ID)
 		}
-		if stage.Mode != EvaluationModeAutonomous && stage.Mode != EvaluationModeFixed && stage.Mode != EvaluationModeControlsDisabled {
-			return fmt.Errorf("invalid stage mode %q", stage.Mode)
+		if err := ValidateEvaluationSettingsPatch(stage.SettingsPatch); err != nil {
+			return fmt.Errorf("stage %q: %w", stage.ID, err)
 		}
 		if stage.Row == "" || !validEvaluationObject(stage.LoadScenarioRef) {
 			return fmt.Errorf("row and loadScenarioRef required for %q", stage.ID)
-		}
-		start := stage.StartState
-		if (start.EvidenceRef == nil) == (start.StageResultRef == nil) {
-			return fmt.Errorf("stage %q requires exactly one startState reference", stage.ID)
-		}
-		if start.EvidenceRef != nil && !validEvaluationEvidence(*start.EvidenceRef) {
-			return fmt.Errorf("invalid startState evidence for %q", stage.ID)
-		}
-		if ref := start.StageResultRef; ref != nil && (!prior[ref.StageID] || ref.Output == "") {
-			return fmt.Errorf("stage %q must reference an earlier stage output", stage.ID)
-		}
-		if stage.Control != nil {
-			if err := validateEvaluationControl(*stage.Control); err != nil {
-				return err
-			}
 		}
 		if err := validateFaultInjection(stage.FailureInjection); err != nil {
 			return fmt.Errorf("stage %q: %w", stage.ID, err)
@@ -372,6 +320,19 @@ func (s *EvaluationRunSpec) Validate() error {
 		prior[stage.ID] = true
 	}
 	return validateEvaluationComparisons(s.Comparisons, prior)
+}
+
+// ValidateEvaluationSettingsPatch is deliberately shape-only: the public
+// scheduler settings boundary owns field names, types and value validation.
+func ValidateEvaluationSettingsPatch(patch *apiextensionsv1.JSON) error {
+	if patch == nil {
+		return nil
+	}
+	raw := bytes.TrimSpace(patch.Raw)
+	if len(raw) == 0 || len(raw) > 64*1024 || raw[0] != '{' || !json.Valid(raw) {
+		return fmt.Errorf("settingsPatch must be a JSON object of at most 65536 bytes")
+	}
+	return nil
 }
 
 var evaluationPublicationID = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*$`)
@@ -399,18 +360,7 @@ func validateEvaluationComparisons(comparisons []EvaluationComparison, stages ma
 func validEvaluationObject(ref EvaluationObjectReference) bool {
 	return ref.Name != "" && ref.UID != ""
 }
-func validateEvaluationControl(c ControlSettings) error {
-	if !finiteNonNegative(c.ScaleDownHeadroomFraction) || c.ScaleDownHeadroomFraction > 1 {
-		return fmt.Errorf("scaleDownHeadroomFraction must be in [0,1]")
-	}
-	for uid, value := range c.MinimumDemand {
-		if uid == "" || !finiteNonNegative(float64(value)) {
-			return fmt.Errorf("invalid minimumDemand")
-		}
-	}
-	return nil
-}
-func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, generator Generator, power PowerMeasurement, control ControlSettings, judgment Judgment) error {
+func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, generator Generator, power PowerMeasurement, judgment Judgment) error {
 	if len(target.Components) == 0 {
 		return fmt.Errorf("target components required")
 	}
@@ -421,7 +371,6 @@ func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, g
 			return fmt.Errorf("invalid or duplicate target component %q", c.Name)
 		}
 		names[c.Name] = true
-		images = append(images, c.EvaluationImage)
 	}
 	for _, image := range images {
 		if !strings.Contains(image.Image, "@sha256:") || image.SourceSHA == "" {
@@ -434,9 +383,6 @@ func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, g
 	if err := validateEvaluationPower(power); err != nil {
 		return err
 	}
-	if err := validateEvaluationControl(control); err != nil {
-		return err
-	}
 	q, e := judgment.GeneratorQuality, judgment.EnergyCoverage
 	if q.LatenessToleranceNanos < 0 || !finiteNonNegative(q.MaxExceedingFraction) || q.MaxExceedingFraction > 1 || !finiteNonNegative(e.MaxGapFraction) || e.MaxGapFraction > 1 || !finitePositive(e.MaxSingleGapSeconds) {
 		return fmt.Errorf("invalid judgment numeric ranges")
@@ -445,6 +391,9 @@ func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, g
 }
 
 func validateEvaluationGenerator(generator Generator) error {
+	if len(validation.IsDNS1123Subdomain(generator.NodeName)) != 0 {
+		return fmt.Errorf("valid generator nodeName required")
+	}
 	if len(generator.Shards) == 0 || generator.Barrier.MaxStartSkewNanos < 0 || generator.Barrier.MinimumReadySamples < 1 {
 		return fmt.Errorf("invalid generator shards or barrier")
 	}

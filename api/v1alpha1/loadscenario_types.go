@@ -3,6 +3,8 @@ package v1alpha1
 import (
 	"fmt"
 	"math"
+	"regexp"
+	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -50,7 +52,6 @@ type EvaluationEvidenceReference struct {
 type EvaluationNonNegative float64
 
 // LoadScenarioPart fixes one interval; map keys are Workload names.
-// +kubebuilder:validation:XValidation:rule="has(self.rates) != has(self.alpha)",message="exactly one of rates or alpha is required"
 type LoadScenarioPart struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -58,20 +59,16 @@ type LoadScenarioPart struct {
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:ExclusiveMinimum=true
 	DurationSeconds float64 `json:"durationSeconds"`
-	// +optional
 	// +kubebuilder:validation:MinProperties=1
 	// +kubebuilder:validation:MaxProperties=128
-	Rates map[string]EvaluationNonNegative `json:"rates,omitempty"`
-	// +optional
-	// +kubebuilder:validation:MinProperties=1
-	// +kubebuilder:validation:MaxProperties=128
-	Alpha map[string]EvaluationNonNegative `json:"alpha,omitempty"`
+	Rates map[string]EvaluationNonNegative `json:"rates"`
 }
 
 // LoadScenarioSpec is the sole source of workload identities and declared load.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="LoadScenario spec is immutable"
-// +kubebuilder:validation:XValidation:rule="!self.parts.exists(p, has(p.alpha)) || (has(self.rateBasisRef) && has(self.kappaRef))",message="alpha requires rateBasisRef and kappaRef"
-// +kubebuilder:validation:XValidation:rule="self.parts.all(p, (!has(p.rates) || p.rates.all(k, self.workloads.exists(w, w.name == k))) && (!has(p.alpha) || p.alpha.all(k, self.workloads.exists(w, w.name == k))))",message="load keys must name declared workloads"
+// +kubebuilder:validation:XValidation:rule="self.parts.all(p, p.rates.all(k, self.workloads.exists(w, w.name == k)))",message="load keys must name declared workloads"
+// +kubebuilder:validation:XValidation:rule="self.seeds.all(k, self.workloads.exists(w, w.name == k)) && self.workloads.all(w, w.name in self.seeds)",message="seeds must cover exactly the declared workloads"
+// +kubebuilder:validation:XValidation:rule="self.datasetRefs.all(k, self.workloads.exists(w, w.name == k)) && self.workloads.all(w, w.name in self.datasetRefs)",message="datasetRefs must cover exactly the declared workloads"
 // +kubebuilder:validation:XValidation:rule="self.arrivalDistribution.all(k, self.workloads.exists(w, w.name == k)) && self.workloads.all(w, w.name in self.arrivalDistribution)",message="arrivalDistribution must cover exactly the declared workloads"
 // +kubebuilder:validation:XValidation:rule="self.parts.all(p, self.parts.filter(q, q.id == p.id).size() == 1)",message="part IDs must be unique"
 type LoadScenarioSpec struct {
@@ -90,14 +87,22 @@ type LoadScenarioSpec struct {
 	ArrivalDistribution map[string]string `json:"arrivalDistribution"`
 	// +optional
 	// +kubebuilder:validation:MaxProperties=128
-	TraceRefs          map[string]EvaluationEvidenceReference `json:"traceRefs,omitempty"`
-	SeedRef            EvaluationEvidenceReference            `json:"seedRef"`
-	PayloadManifestRef EvaluationEvidenceReference            `json:"payloadManifestRef"`
-	// +optional
-	RateBasisRef *EvaluationEvidenceReference `json:"rateBasisRef,omitempty"`
-	// +optional
-	KappaRef *EvaluationEvidenceReference `json:"kappaRef,omitempty"`
+	TraceRefs map[string]EvaluationEvidenceReference `json:"traceRefs,omitempty"`
+	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MaxProperties=32
+	Seeds map[string]EvaluationSeed `json:"seeds"`
+	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MaxProperties=32
+	DatasetRefs map[string]EvaluationObjectReference `json:"datasetRefs"`
 }
+
+// EvaluationSeed preserves all uint64 bits through JSON clients.
+// +kubebuilder:validation:Pattern=`^[0-9]+$`
+// +kubebuilder:validation:MaxLength=20
+// +kubebuilder:validation:XValidation:rule="self.size() < 20 || self <= '18446744073709551615'",message="seed must fit uint64"
+type EvaluationSeed string
+
+var evaluationSeedPattern = regexp.MustCompile(`^[0-9]+$`)
 
 // Validate checks declarations once at the controller's creation boundary.
 func (s *LoadScenarioSpec) Validate() error {
@@ -122,12 +127,20 @@ func (s *LoadScenarioSpec) Validate() error {
 			return fmt.Errorf("invalid trace reference %q", name)
 		}
 	}
-	if !validEvaluationEvidence(s.SeedRef) || !validEvaluationEvidence(s.PayloadManifestRef) {
-		return fmt.Errorf("seedRef and payloadManifestRef are required")
+	if len(s.Seeds) != len(names) || len(s.DatasetRefs) != len(names) {
+		return fmt.Errorf("seeds and datasetRefs must cover exactly the declared workloads")
 	}
-	for _, ref := range []*EvaluationEvidenceReference{s.RateBasisRef, s.KappaRef} {
-		if ref != nil && !validEvaluationEvidence(*ref) {
-			return fmt.Errorf("invalid alpha evidence reference")
+	for name := range names {
+		seed := string(s.Seeds[name])
+		if len(seed) > 20 || !evaluationSeedPattern.MatchString(seed) {
+			return fmt.Errorf("invalid seed for %q", name)
+		}
+		if _, err := strconv.ParseUint(seed, 10, 64); err != nil {
+			return fmt.Errorf("invalid seed for %q: %w", name, err)
+		}
+		ref := s.DatasetRefs[name]
+		if len(validation.IsDNS1123Subdomain(ref.Name)) != 0 || ref.UID == "" {
+			return fmt.Errorf("invalid dataset reference for %q", name)
 		}
 	}
 	ids := map[string]bool{}
@@ -136,17 +149,10 @@ func (s *LoadScenarioSpec) Validate() error {
 			return fmt.Errorf("invalid or duplicate part %q", p.ID)
 		}
 		ids[p.ID] = true
-		if (len(p.Rates) == 0) == (len(p.Alpha) == 0) {
-			return fmt.Errorf("part %q requires rates or alpha exclusively", p.ID)
+		if len(p.Rates) == 0 {
+			return fmt.Errorf("part %q requires rates", p.ID)
 		}
-		values := p.Rates
-		if len(p.Alpha) > 0 {
-			if s.RateBasisRef == nil || s.KappaRef == nil {
-				return fmt.Errorf("alpha requires rateBasisRef and kappaRef")
-			}
-			values = p.Alpha
-		}
-		for name, value := range values {
+		for name, value := range p.Rates {
 			if !names[name] || !finiteNonNegative(float64(value)) {
 				return fmt.Errorf("invalid load for %q in part %q", name, p.ID)
 			}
@@ -163,7 +169,6 @@ func validEvaluationEvidence(r EvaluationEvidenceReference) bool {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,shortName=loadscenario
-// +kubebuilder:printcolumn:name="Payload",type=string,JSONPath=`.spec.payloadManifestRef.key`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // LoadScenario is reusable immutable load, without execution status.

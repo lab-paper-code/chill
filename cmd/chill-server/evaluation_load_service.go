@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -25,7 +24,6 @@ type evaluationLoadService struct {
 	client    client.Client
 	namespace string
 	evidence  evidencestore.Statter
-	lister    evidencestore.Lister
 }
 
 func loadError(code, message string) error { return &serving.Error{Code: code, Message: message} }
@@ -108,16 +106,15 @@ func (s *evaluationLoadService) preflight(
 		}
 		add("workload:"+ref.Name, err)
 	}
-	refs := []api.EvaluationEvidenceReference{request.Spec.SeedRef, request.Spec.PayloadManifestRef}
-	for _, ref := range request.Spec.TraceRefs {
-		refs = append(refs, ref)
-	}
-	for _, ref := range []*api.EvaluationEvidenceReference{request.Spec.RateBasisRef, request.Spec.KappaRef} {
-		if ref != nil {
-			refs = append(refs, *ref)
+	for workload, ref := range request.Spec.DatasetRefs {
+		var dataset api.Dataset
+		err := s.client.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: ref.Name}, &dataset)
+		if err == nil && dataset.UID != ref.UID {
+			err = fmt.Errorf("dataset UID differs")
 		}
+		add("dataset:"+workload, err)
 	}
-	for _, ref := range refs {
+	for _, ref := range request.Spec.TraceRefs {
 		object, err := s.evidence.Stat(ctx, evidencestore.ObjectLocation{Store: ref.Store, Key: ref.Key})
 		if err == nil && object.Size != ref.Size {
 			err = fmt.Errorf("evidence size differs: live %d, requested %d", object.Size, ref.Size)
@@ -219,36 +216,24 @@ func (s *evaluationLoadService) replace(
 	}
 	return identity, nil
 }
-func evaluationInputKind(key string) string {
-	switch path.Base(key) {
-	case "bundle.json":
-		return "payload"
-	case "seeds.json":
-		return "seed"
-	case "rate-basis.json":
-		return "rateBasis"
-	case "kappa.json":
-		return "kappa"
-	}
-	return "other"
-}
 func (s *evaluationLoadService) inputs(ctx context.Context) (httpapi.EvaluationInputList, error) {
 	result := httpapi.EvaluationInputList{Items: []httpapi.EvaluationInput{}}
-	objects, err := s.lister.List(ctx, "experiments/_inputs/")
-	if err != nil {
+	var scenarios api.LoadScenarioList
+	if err := s.client.List(ctx, &scenarios, client.InNamespace(s.namespace)); err != nil {
 		return result, err
 	}
-	for _, obj := range objects {
-		relative := strings.TrimPrefix(obj.Key, "experiments/_inputs/")
-		if relative == obj.Key || !strings.Contains(relative, "/") ||
-			strings.HasPrefix(relative, "/") || strings.HasSuffix(relative, "/") {
-			continue
+	seen := map[api.EvaluationEvidenceReference]bool{}
+	for _, scenario := range scenarios.Items {
+		for workload, ref := range scenario.Spec.TraceRefs {
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			result.Items = append(result.Items, httpapi.EvaluationInput{
+				Store: ref.Store, Key: ref.Key, Size: ref.Size, Kind: "trace",
+				Set: scenario.Name, Name: scenario.Name + " / " + workload,
+			})
 		}
-		set, _, _ := strings.Cut(relative, "/")
-		result.Items = append(result.Items, httpapi.EvaluationInput{
-			Store: obj.Store, Key: obj.Key, Size: obj.Size, Kind: evaluationInputKind(obj.Key),
-			Set: set, Name: set + " / " + path.Base(obj.Key),
-		})
 	}
 	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Key < result.Items[j].Key })
 	return result, nil

@@ -154,6 +154,7 @@ func TestServeDuringColdStart(t *testing.T) {
 				} {
 					method, path, _ := strings.Cut(route, " ")
 					request, _ := http.NewRequest(method, "https://"+address+path, nil)
+					request.Header.Set("If-Match", `"startup-version"`)
 					response, err := client.Do(request)
 					if err != nil {
 						t.Fatal(err)

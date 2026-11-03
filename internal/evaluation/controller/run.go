@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -155,7 +156,7 @@ func (r *RunReconciler) reconcileChildren(ctx context.Context, run, before *api.
 	if !failed && run.DeletionTimestamp.IsZero() {
 		for i, t := range run.Spec.Stages {
 			if children[t.ID] == nil {
-				child, err := r.ensureChild(ctx, run, i, children)
+				child, err := r.ensureChild(ctx, run, i)
 				if err != nil {
 					if !permanent(err) {
 						return ctrl.Result{}, err
@@ -372,28 +373,19 @@ func (r *RunReconciler) workspace(ctx context.Context, run *api.EvaluationRun) e
 	run.Status.InputConfigMapRef = ref(cm)
 	return nil
 }
-func (r *RunReconciler) ensureChild(ctx context.Context, run *api.EvaluationRun, index int, children map[string]*api.EvaluationStage) (*api.EvaluationStage, error) {
+func (r *RunReconciler) ensureChild(ctx context.Context, run *api.EvaluationRun, index int) (*api.EvaluationStage, error) {
 	t := run.Spec.Stages[index]
-	start := t.StartState.EvidenceRef
-	if symbolic := t.StartState.StageResultRef; symbolic != nil {
-		prior := children[symbolic.StageID]
-		if prior == nil {
-			return nil, fmt.Errorf("MissingInput: predecessor absent")
-		}
-		value, ok := prior.Status.Outputs[symbolic.Output]
-		if !ok {
-			return nil, fmt.Errorf("MissingInput: predecessor output %s absent", symbolic.Output)
-		}
-		start = &value
+	if run.Status.InputSnapshotRef == nil {
+		return nil, fmt.Errorf("MissingInput: snapshot absent")
 	}
-	if start == nil || run.Status.InputSnapshotRef == nil {
-		return nil, fmt.Errorf("MissingInput: snapshot/start state absent")
+	settingsPatch := run.Spec.SettingsPatch
+	if t.SettingsPatch != nil {
+		settingsPatch = t.SettingsPatch
 	}
-	control := run.Spec.Control
-	if t.Control != nil {
-		control = *t.Control
+	if err := api.ValidateEvaluationSettingsPatch(settingsPatch); err != nil {
+		return nil, fmt.Errorf("FrozenInputInvalid: %w", err)
 	}
-	child := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-s%03d", uidName(run.UID), index), Namespace: run.Namespace}, Spec: api.EvaluationStageSpec{StageID: t.ID, Row: t.Row, Mode: t.Mode, LoadScenarioRef: t.LoadScenarioRef, Target: run.Spec.Target, Harness: run.Spec.Harness, LoadGenerator: run.Spec.LoadGenerator, PowerMeasurement: run.Spec.PowerMeasurement, Control: control, Judgment: run.Spec.Judgment, EvidenceStore: run.Spec.EvidenceStore, FrozenConfigMapRef: *run.Status.FrozenConfigMapRef, InputConfigMapRef: *run.Status.InputConfigMapRef, InputSnapshotRef: *run.Status.InputSnapshotRef, Workspace: *run.Status.Workspace, StartState: api.EvaluationStageStartState{EvidenceRef: *start}, FailureInjection: t.FailureInjection}}
+	child := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("%s-s%03d", uidName(run.UID), index), Namespace: run.Namespace}, Spec: api.EvaluationStageSpec{StageID: t.ID, Row: t.Row, LoadScenarioRef: t.LoadScenarioRef, Target: run.Spec.Target, Harness: run.Spec.Harness, LoadGenerator: run.Spec.LoadGenerator, PowerMeasurement: run.Spec.PowerMeasurement, SettingsPatch: settingsPatch.DeepCopy(), Judgment: run.Spec.Judgment, EvidenceStore: run.Spec.EvidenceStore, FrozenConfigMapRef: *run.Status.FrozenConfigMapRef, InputConfigMapRef: *run.Status.InputConfigMapRef, InputSnapshotRef: *run.Status.InputSnapshotRef, Workspace: *run.Status.Workspace, FailureInjection: t.FailureInjection}}
 	if err := controllerutil.SetControllerReference(run, child, r.Scheme); err != nil {
 		return nil, err
 	}
@@ -469,16 +461,15 @@ func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, ann
 	if err := json.Unmarshal([]byte(annotation), &request); err != nil || request.Reason == "" || request.At.IsZero() {
 		return ctrl.Result{}, fmt.Errorf("release annotation requires reason and at")
 	}
-	// The operator attests prior writers are stopped; independently observe pool return.
-	v := run.Status.FrozenConfig.Values
-	var state schedulerState
-	if err := r.HTTP(ctx, run.Namespace, v, schedulerStatePath, &state); err != nil {
+	// The operator attests controls are reverted; independently check owned writers.
+	stopped, err := r.ownedWritersStopped(ctx, run)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if !state.returned(r.now().Time, v) {
+	if !stopped {
 		return pending, nil
 	}
-	evidence, err := r.audit(ctx, run, "", fmt.Sprintf("run/releases/%03d.json", len(run.Status.ReleaseRecords)), annotation, map[string]any{"status": run.Status, "state": state})
+	evidence, err := r.audit(ctx, run, "", fmt.Sprintf("run/releases/%03d.json", len(run.Status.ReleaseRecords)), annotation, map[string]any{"status": run.Status, "ownedWritersStopped": stopped})
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -491,6 +482,35 @@ func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, ann
 	}
 	condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionPoolAcquired, metav1.ConditionFalse, "OperatorReleased", "")
 	return pending, r.patchStatus(ctx, run, before)
+}
+
+// ownedWritersStopped does not inspect or reset serving resources.
+func (r *Runtime) ownedWritersStopped(ctx context.Context, run *api.EvaluationRun) (bool, error) {
+	var jobs batchv1.JobList
+	if err := r.APIReader.List(ctx, &jobs, client.InNamespace(run.Namespace), client.MatchingLabels{api.EvaluationLabelRunUID: string(run.UID)}); err != nil {
+		return false, err
+	}
+	for _, job := range jobs.Items {
+		terminal := false
+		for _, condition := range job.Status.Conditions {
+			if condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) {
+				terminal = true
+			}
+		}
+		if !terminal {
+			return false, nil
+		}
+	}
+	var pods corev1.PodList
+	if err := r.APIReader.List(ctx, &pods, client.InNamespace(run.Namespace), client.MatchingLabels{api.EvaluationLabelRunUID: string(run.UID)}); err != nil {
+		return false, err
+	}
+	for _, pod := range pods.Items {
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func aggregateReason(run *api.EvaluationRun, children map[string]*api.EvaluationStage, verdict api.MeasurementVerdict) string {

@@ -14,6 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -58,24 +59,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/settings"):
-			// The stored staticRouting is the declaration a routing change starts from.
-			_, config, err := schedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
-				h.config.SchedulerConfigMap, h.config.SchedulerConfigKey)
-			if err != nil {
-				sendError(w, err)
-				return
-			}
-			meters := []servingkube.MeterDeclaration{}
-			if h.config.SchedulerMeters != nil {
-				meters = append(meters, h.config.SchedulerMeters()...)
-			}
-			sendJSON(w, http.StatusOK, struct {
-				serving.SchedulerSettings
-				StaticRouting    json.RawMessage                `json:"staticRouting,omitempty"`
-				PowerObservation json.RawMessage                `json:"powerObservation,omitempty"` // Stored operating-power policy; read-only.
-				Meters           []servingkube.MeterDeclaration `json:"meters"`
-				RequestTimeout   time.Duration                  `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
-			}{h.config.Scheduler.Settings(), config["staticRouting"], config["powerObservation"], meters, h.config.RequestTimeout})
+			h.schedulerSettingsRead(w, r)
 		case strings.HasSuffix(r.URL.Path, "/state"):
 			sendJSON(w, http.StatusOK, h.config.Scheduler.State())
 		default:
@@ -94,6 +78,10 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 	if err := h.authorizer.AuthorizeConfigMapUpdate(r.Context(), principal,
 		h.config.SchedulerNamespace, h.config.SchedulerConfigMap); err != nil {
 		sendError(w, err)
+		return
+	}
+	if r.Header.Get("If-Match") == "" {
+		sendError(w, &serving.Error{Code: "SettingsPreconditionRequired", Message: "GET settings and supply its ETag in If-Match"})
 		return
 	}
 	// Routing declarations are read-only here; explicit operations own mutations.
@@ -138,6 +126,10 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
+	if len(r.Header.Values("If-Match")) != 1 || r.Header.Get("If-Match") != strconv.Quote(cm.ResourceVersion) {
+		sendError(w, &serving.Error{Code: "SettingsConflict", Message: "settings changed; GET settings before submitting again"})
+		return
+	}
 	username, uid := principal.Actor()
 	now := time.Now().UTC()
 	change := serving.SchedulerSettingsChange{
@@ -152,7 +144,10 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	err = persistSchedulerSettings(r.Context(), h.authorizer.Client, cm, config, h.config.SchedulerConfigKey, settings)
+	version, err := persistSchedulerSettings(r.Context(), h.authorizer.Client, cm, config, h.config.SchedulerConfigKey, settings)
+	if apierrors.IsConflict(err) {
+		err = &serving.Error{Code: "SettingsConflict", Message: "settings changed during update; GET settings before submitting again"}
+	}
 	if err == nil {
 		// Only the scheduler service's full refresh can accept a configuration. Applying
 		// settings alone could enable a catalog whose selection was removed by
@@ -172,6 +167,7 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
+	w.Header().Set("ETag", strconv.Quote(version))
 	sendJSON(w, http.StatusOK, change)
 }
 
@@ -198,22 +194,25 @@ func schedulerConfigMap(
 func persistSchedulerSettings(
 	ctx context.Context, kube kubernetes.Interface, cm *core.ConfigMap, config map[string]json.RawMessage, key string,
 	settings serving.SchedulerSettings,
-) error {
+) (string, error) {
 	if err := settings.Validate(); err != nil {
-		return err
+		return "", err
 	}
 	raw, err := json.Marshal(settings)
 	if err != nil {
-		return err
+		return "", err
 	}
 	config["settings"] = raw
 	encoded, err := json.Marshal(config)
 	if err != nil {
-		return err
+		return "", err
 	}
 	cm.Data[key] = string(encoded)
-	_, err = kube.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, meta.UpdateOptions{})
-	return err
+	updated, err := kube.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, meta.UpdateOptions{})
+	if err != nil {
+		return "", err
+	}
+	return updated.ResourceVersion, nil
 }
 
 func schedulerObservationSelectionQuery(query url.Values) (serving.SchedulerObservationSelection, error) {
@@ -354,4 +353,29 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 		GapUntil   *time.Time                     `json:"gapUntil,omitempty"`
 		Coverage   serving.ObservationCoverage    `json:"coverage"`
 	}{from, to, records, next, gapUntil, coverage})
+}
+
+func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) {
+	// Keep the public settings body and ConfigMap version from one serialized
+	// read relative to public settings/routing mutations.
+	h.config.SchedulerLock.Lock()
+	defer h.config.SchedulerLock.Unlock()
+	cm, config, err := schedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
+		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey)
+	if err != nil {
+		sendError(w, err)
+		return
+	}
+	meters := []servingkube.MeterDeclaration{}
+	if h.config.SchedulerMeters != nil {
+		meters = append(meters, h.config.SchedulerMeters()...)
+	}
+	w.Header().Set("ETag", strconv.Quote(cm.ResourceVersion))
+	sendJSON(w, http.StatusOK, struct {
+		serving.SchedulerSettings
+		StaticRouting    json.RawMessage                `json:"staticRouting,omitempty"`
+		PowerObservation json.RawMessage                `json:"powerObservation,omitempty"` // Stored operating-power policy; read-only.
+		Meters           []servingkube.MeterDeclaration `json:"meters"`
+		RequestTimeout   time.Duration                  `json:"requestTimeout"` // Runtime --request-timeout, in nanoseconds; read-only.
+	}{h.config.Scheduler.Settings(), config["staticRouting"], config["powerObservation"], meters, h.config.RequestTimeout})
 }

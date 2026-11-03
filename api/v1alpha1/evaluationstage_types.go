@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	"fmt"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -44,7 +45,7 @@ type FaultInjectionSelection struct {
 	OrderBy []FaultInjectionOrderKey `json:"orderBy"`
 }
 
-// +kubebuilder:validation:Enum=node;pod;instance
+// +kubebuilder:validation:Enum=node;pod;podUID
 type FaultInjectionOrderKey string
 
 const (
@@ -90,7 +91,7 @@ func validateFaultInjection(plans []FaultInjectionPlan) error {
 			}
 			keys := map[FaultInjectionOrderKey]bool{}
 			for _, key := range selection.OrderBy {
-				if (key != "node" && key != "pod" && key != "instance") || keys[key] {
+				if (key != "node" && key != "pod" && key != "podUID") || keys[key] {
 					return fmt.Errorf("invalid or duplicate selection order key")
 				}
 				keys[key] = true
@@ -107,11 +108,6 @@ func validateFaultInjection(plans []FaultInjectionPlan) error {
 	return nil
 }
 
-// EvaluationStageStartState has no symbolic reference: the parent resolves it.
-type EvaluationStageStartState struct {
-	EvidenceRef EvaluationEvidenceReference `json:"evidenceRef"`
-}
-
 // EvaluationStageSpec is the complete immutable builder output. Its controller
 // EvaluationRun ownerReference is the sole parent identity, not a second field.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="EvaluationStage spec is immutable"
@@ -122,21 +118,22 @@ type EvaluationStageSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	Row              string                    `json:"row"`
-	Mode             EvaluationMode            `json:"mode"`
 	LoadScenarioRef  EvaluationObjectReference `json:"loadScenarioRef"`
 	Target           TargetIdentity            `json:"target"`
 	Harness          EvaluationImage           `json:"harness"`
 	LoadGenerator    Generator                 `json:"loadGenerator"`
 	PowerMeasurement PowerMeasurement          `json:"powerMeasurement"`
-	Control          ControlSettings           `json:"control"`
-	Judgment         Judgment                  `json:"judgment"`
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
+	SettingsPatch *apiextensionsv1.JSON `json:"settingsPatch,omitempty"`
+	Judgment      Judgment              `json:"judgment"`
 	// +kubebuilder:validation:MinLength=1
 	EvidenceStore      string                      `json:"evidenceStore"`
 	FrozenConfigMapRef EvaluationObjectReference   `json:"frozenConfigMapRef"`
 	InputConfigMapRef  EvaluationObjectReference   `json:"inputConfigMapRef"`
 	InputSnapshotRef   EvaluationEvidenceReference `json:"inputSnapshotRef"`
 	Workspace          EvaluationObjectReference   `json:"workspace"`
-	StartState         EvaluationStageStartState   `json:"startState"`
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=32
@@ -229,7 +226,6 @@ type EvaluationStageStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=evalstage
 // +kubebuilder:printcolumn:name="Stage",type=string,JSONPath=`.spec.stageID`
-// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
 // +kubebuilder:printcolumn:name="Execution",type=string,JSONPath=`.status.conditions[?(@.type=="ExecutionComplete")].status`
 // +kubebuilder:printcolumn:name="Measurement",type=string,JSONPath=`.status.measurementVerdict`
 // +kubebuilder:printcolumn:name="Cleanup",type=string,JSONPath=`.status.conditions[?(@.type=="StageCleanupComplete")].status`

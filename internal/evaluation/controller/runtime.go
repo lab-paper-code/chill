@@ -55,8 +55,6 @@ type Runtime struct {
 	Scheme    *runtime.Scheme
 	Store     func(context.Context, string, string, map[string]string) (ObjectStore, error)
 	Now       func() time.Time
-	// HTTP is the authenticated Chill API reader; mutations use Kubernetes only.
-	HTTP func(context.Context, string, map[string]string, string, any) error
 }
 
 func (r *Runtime) now() metav1.Time {

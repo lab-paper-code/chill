@@ -47,20 +47,20 @@
 | 조작 | 요청 | 동작 |
 |---|---|---|
 | 부하 정의 목록·단건 | `GET /api/v1/evaluations/load-scenarios`, `GET .../load-scenarios/{name}` | `{items:[{name, uid, spec, inUse, createdAt}]}` / 단건 같은 형태 — `inUse`=이 정의를 참조하는 아직 끝나지 않은(게시 전) 실험 이름 목록 |
-| 부하 정의 사전 점검 | `POST /api/v1/evaluations/load-scenarios/preflight` body `{name, spec}` | `{checks, liveWorkloads}`. 검사: spec 검증(rates/alpha 배타, alpha면 rateBasis·κ 참조 필수 등), 각 Workload name+UID+generation이 지금 클러스터와 같음, 참조한 증거 객체(seed·trace·payload 번들·rateBasis·κ)가 저장소에 존재. `liveWorkloads`는 현재 name→{uid, generation}(다르면 화면이 차이를 보여 주고 사용자가 반영 여부 선택) |
-| 부하 정의 만들기 | `POST /api/v1/evaluations/load-scenarios` body `{name, spec}` | 서버가 점검을 다시 하고 생성. 응답 `{name, uid}`. 화면은 기존 정의를 복사해 parts(구간 길이·요청률 또는 alpha)·도착 분포·Workload를 고치는 폼과 JSON 편집을 함께 준다 |
+| 부하 정의 사전 점검 | `POST /api/v1/evaluations/load-scenarios/preflight` body `{name,spec}` | `{checks,liveWorkloads}`. 검사: absolute `parts[].rates`, workload별 uint64 10진 문자열 `seeds`(0..18446744073709551615), 정확히 `{name,uid}`인 `datasetRefs`, 두 map의 workload key coverage, Workload name+UID+generation, Dataset name+UID, 선택한 trace 증거의 크기·존재 |
+| 부하 정의 만들기 | `POST /api/v1/evaluations/load-scenarios` body `{name,spec}` | 서버가 점검을 다시 하고 생성. 응답 `{name,uid}`. 구간 길이·절대 요청률·도착 분포·Workload·inline seeds·Dataset refs를 편집한다. 옛 내부 입력은 이주하지 않으며 영향을 받는 불변 객체는 소유 자원 정리 후 교체한다 |
 | 부하 정의 수정 | `PUT /api/v1/evaluations/load-scenarios/{name}?uid=` body `{spec}` | 점검 후 같은 이름으로 교체, 응답 `{name, uid}`(새 UID). `inUse`가 비어 있을 때만. 이미 게시된 실험은 자기 snapshot을 갖고 있어 영향 없다 |
 | 부하 정의 지우기 | `DELETE /api/v1/evaluations/load-scenarios/{name}?uid=` | `inUse`가 비어 있을 때만. 이미 게시된 실험은 정의 snapshot을 갖고 있어 영향이 없다 |
-| 증거 객체 고르기 | `GET /api/v1/evaluations/inputs?kind=&set=&offset=&limit=` | `{items:[{store, key, size, kind, set, name}], page:{offset, limit, total, nextOffset?}}` — `experiments/_inputs/<set>/` 아래 입력 목록을 key 오름차순으로 반환. `kind` ∈ `payload`·`seed`·`rateBasis`·`kappa`·`other`, `set`은 경로의 첫 set 이름과 정확히 일치하는 필터(미지정 시 전체). 하위호환을 위해 limit·offset 모두 미지정이면 필터된 전체 목록을 반환하고 nextOffset은 생략한다. 둘 중 하나를 명시하면 필터 적용 후 페이지: offset 기본 0(0–1000000), limit 기본 25(1–50), total은 항상 필터된 전체 개수, 다음 페이지가 없으면 nextOffset 생략. page.limit은 미지정 시에도 기본값 25를 나타내지만 페이지 절단은 명시 요청에만 적용한다. 알 수 없는·중복·잘못된 쿼리는 400. `set`은 key에서, 사람용 `name`은 `<set> / <파일명>`으로 유도. 기존 store/key/size/kind 의미는 그대로: 정확한 파일명 `bundle.json`→`payload`, `seeds.json`→`seed`, `rate-basis.json`→`rateBasis`, `kappa.json`→`kappa`, 나머지→`other`(frozen 포함). 새 과학 입력은 화면에서 지어내지 않고 오프라인 도구(`hack/evaluation/evaluation_inputs.py`)로 만든다 |
-| 빈 템플릿 | `GET /api/v1/evaluations/template` | `{spec, sources, sourcePublication?}` — 서버가 채울 수 있는 값만 채운 spec 뼈대. `target`=지금 실행 중 시스템 구성요소와 digest, `powerMeasurement`=현재 스케줄러 설정의 측정기(`config`), `evidenceStore`=운영 설정(`config`), `harness`·`loadGenerator`·`judgment`·`control`=가장 최근 게시 definition(`latestPublication`, 없으면 `none`). `sources` 값은 `live`·`config`·`latestPublication`·`none`만 허용하며 게시 ID를 넣지 않는다. 게시를 썼을 때만 `sourcePublication:{uid,name}`을 별도로 반환하고 대시보드에 표시한다. `none` 필드는 사용자가 채워야 하고 사전 점검이 막는다 |
-| 실험 spec 편집 | (대시보드 내부) | 게시 `definition.spec`·기존 EvaluationRun spec·빈 템플릿을 복사해 질문·단계(mode·부하 정의·시작 상태·장애 주입 계획)·비교(left 후보/right 기준)·판정 기준·제어 설정을 폼/JSON으로 고친다. 검증 정본은 서버 사전 점검 |
+| 증거 객체 고르기 | `GET /api/v1/evaluations/inputs?kind=&set=&offset=&limit=` | `{items:[{store,key,size,kind,set,name}],page:{offset,limit,total,nextOffset?}}`. 현재 LoadScenario들의 선언된 `traceRefs`만 중복 제거하여 key 오름차순 반환한다. `kind=trace`, `set`은 LoadScenario 이름, `name`은 `<scenario> / <workload>`다. 과거 업로드 bundle은 열거하지 않는다. 페이지·정확 일치 필터 규칙은 유지한다 |
+| 빈 템플릿 | `GET /api/v1/evaluations/template` | `{spec,sources,sourcePublication?}`. target component는 `name/resource`만 선언한다. CHILL image/source 입력은 없고 실제 imageID는 preflight 관측값이다. harness/loadGenerator의 pinned image/sourceSHA는 평가 도구 identity로 유지하며 generator에는 `nodeName`을 선언한다 |
+| 실험 spec 편집 | (대시보드 내부) | 질문·단계(ID·row·부하 정의·요청된 장애 주입 계획)·비교·판정·`settingsPatch`를 편집한다. mode/control/start-state 입력은 없다. 기간은 LoadScenario parts에만 선언한다. Run의 선택적 `settingsPatch`를 상속하되 stage patch가 있으면 전체 대체한다. 공개 SchedulerSettings JSON 부분 객체(예: `{"controls":{"power":false}}`)로 merge하며 별도 평가자 settings 스키마는 없다 |
 | 실험 목록·단건 | `GET /api/v1/evaluations`, `GET /api/v1/evaluations/{name}` | `{items:[{name, uid, spec, phase, conditions, currentStage, startedAt, finishedAt, publicationID}]}` — `phase` ∈ `Pending`(풀 대기·시작 전)·`Running`·`Finishing`·`Done`·`Blocked`(정리 실패로 풀 점유). 게시되면 `publicationID`(= uid) |
-| 사전 점검 | `POST /api/v1/evaluations/preflight` body `{name, spec}` | `{checks:[{id, passed, reason}], liveTarget}`. 검사: spec 검증, LoadScenario name+UID 존재, 대상 이미지 digest가 실제 실행 중 Pod과 같음, 다른 EvaluationRun이 풀 점유 중 아님, **기존 evaluation 측정(Job/producer) 실행 중 아님**, **프로파일링 측정(측정 요청 회차·ProfilingRun) 실행 중 아님**(에너지 측정 상호 오염 방지). `liveTarget` = `[{component, resource:{apiVersion,kind,namespace,name}, specImage, liveImageIDs:[…], match}]` — `liveImageIDs`는 ready Pod들의 실제 imageID. `match=false`면 화면이 차이를 보여 주고 사용자가 반영 여부를 고른다(서버가 몰래 바꾸지 않음) |
-| 실행 | `POST /api/v1/evaluations` body `{name, spec}` | 서버가 사전 점검을 다시 수행하고 통과 시 EvaluationRun 생성. 응답 `{name, uid}`. 이후 진행은 §2.1 |
+| 사전 점검 | `POST /api/v1/evaluations/preflight` body `{name,spec}` | `{checks:[{id,passed,reason}],liveTarget:[{component,resource:{apiVersion,kind,namespace,name},liveImageIDs:[…],ready}]}`. 대상 gate는 외부 PodReady이며 image/source/profile 일치나 restart 횟수는 gate가 아니다. imageID는 관측 이력이다. `settingsPatch`는 JSON object·64KiB 이하이며 현재 공개 settings snapshot에 merge한 결과를 SchedulerSettings strict decode와 Validate로 검사한다. 알 수 없는 키는 null이어도 거부한다. spec/LoadScenario UID/점유·generator·profiling 오염 안전 점검은 유지한다 |
+| 실행 | `POST /api/v1/evaluations` body `{name,spec}` | 점검 후 생성, 응답 `{name,uid}`. 관측 `liveTarget` 배열을 Run annotation `edge.dacs.io/evaluation-live-target`에 JSON으로 기록한다. 사용자 CHILL image 입력이나 digest 반영은 요구하지 않는다 |
 | 실험 수정 | `PUT /api/v1/evaluations/{name}?uid=` body `{spec}` | **시작 전(`Pending`)일 때만** 사전 점검 후 같은 이름으로 교체(새 UID). 시작한 실험은 거부 — 중지 후 다시 실행한다 |
 | 다시 실행 | `POST /api/v1/evaluations` (실행과 같음) | 대시보드가 게시 `definition.spec`을 복사해 새 `name`으로 제출(과거 게시가 그대로 실행 정의다) |
-| 중지·삭제 | `DELETE /api/v1/evaluations/{name}?uid=` | UID 조건부 삭제(background). 진행 중이면 controller의 끝 정리가 원래 설정을 복구하고 풀을 반환한 뒤 사라진다(그때까지의 결과로 게시될 수 있음). 끝난 실험은 CR만 지워지고 게시·증거는 남는다 |
-| release 확인 | `POST /api/v1/evaluations/{name}/release` body `{uid, reason}` | 정리 실패로 풀이 묶인 실험에 운영자 확인 annotation을 단다. controller는 실제 반환이 관측될 때만 풀을 놓는다(버튼이 상태를 지우지 않음). 기존 실패 판정은 그대로 |
+| 중지·삭제 | `DELETE /api/v1/evaluations/{name}?uid=` | UID 조건부 삭제. evaluator-owned Job/writer 정리와 patch가 변경한 공개 settings 키 원복 후 반환한다. CHILL serving instances/routes의 소멸은 기다리거나 명령하지 않는다. 과거 게시·증거는 보존한다 |
+| release 확인 | `POST /api/v1/evaluations/{name}/release` body `{uid,reason}` | 운영자가 명시적 settings 원복을 확인한 뒤 annotation을 단다. controller는 evaluation-owned writer 종료를 확인한 뒤 점유를 해제하며 기존 cleanup 실패 판정을 지우지 않는다 |
 
 - 오류·결과 불명은 기존 측정 요청 화면과 같은 처리: 결과 불명이면 `GET /api/v1/evaluations/{name}`(또는 `/load-scenarios/{name}`)으로 생성 여부·uid를 확인한다.
 - **요청자 기록**: 모든 쓰기(생성·수정·삭제·중지·release)는 서버의 기존 측정 요청 감사 기록 방식으로 요청자(토큰 주체)·시각·대상 name/uid·조작을 남긴다. 생성되는 객체에는 annotation `edge.dacs.io/requested-by`(주체), 중지는 삭제 직전 `edge.dacs.io/stop-requested-by`, release annotation JSON에는 `by` 필드를 넣는다. 감사 기록을 남기지 못하면 조작을 하지 않는다.
@@ -73,13 +73,13 @@
 {
   "schema": "evaluation-definition.v1alpha1",
   "run": {"name": "ab-weights-1", "uid": "6f0c…"},
-  "spec": { "question": "…", "target": {"components": [ … ]}, "control": { … }, "judgment": { … },
-            "stages": [ {"id": "base", "row": "E5-3m", "mode": "autonomous",
-                         "loadScenarioRef": {"name": "e53m", "uid": "…"}, "control": { … },
-                         "startState": { … }, "failureInjection": [ … ]} ],
+  "spec": { "question": "…", "target": {"components": [ … ]}, "settingsPatch": {"controls":{"power":false}}, "judgment": { … },
+            "stages": [ {"id": "base", "row": "E5-3m",
+                         "loadScenarioRef": {"name": "e53m", "uid": "…"},
+                         "failureInjection": [ … ]} ],
             "comparisons": [ {"left": {"stageID": "base"},
                               "right": {"historical": {"publicationID": "control-222-223-first-20261030", "stageID": "full-E5-5m-26"}},
-                              "reason": "κ 비례 배분 vs 꽉 채우기"} ] },
+                              "reason": "명시한 공개 settings 비교"} ] },
   "loadScenarios": [ {"name": "e53m", "uid": "…", "spec": {"workloads": [ … ], "parts": [ … ], … }} ],
   "workloads": [ {"name": "image-classification-tight-slo", "uid": "…", "generation": 3,
                   "slo": {"percentile": 95, "targetLatencyNanos": 1000000000},
@@ -88,6 +88,12 @@
 ```
 
 필드 전체 목록은 Go 타입이 정본이다: `api/v1alpha1/{evaluationrun,loadscenario}_types.go`.
+
+Settings 적용은 운영자와 같은 GET/PUT `/api/v1/scheduler/settings`·인증·SAR만 쓴다. GET의 quoted `ETag`를 PUT의 `If-Match`로 보낸다. 누락은 428 SettingsPreconditionRequired, stale 또는 ConfigMap Update conflict는 409 SettingsConflict, 성공은 새 ETag다. ConfigMap 전체 버전이므로 routing/다른 블록 변경도 충돌한다. GET read-only projection `staticRouting/powerObservation/meters/requestTimeout`은 PUT에서 뺀다. controller는 opaque patch를 동결·전달하고 형태·크기만 검사한다. harness는 현재 값 읽기 → patch merge → 조건부 PUT → readback 비교 후 측정하며 patch가 건드린 키만 원복한다. 적용 충돌은 재시도 없이 실패로 기록한다. 원복 409만 최신 GET 후 경로를 다시 선택해 정확히 한 번 재시도하며 외부에서 바뀐 경로는 보존·보고한다. 기존 procedure `evidenceRef`가 `before/applied/readback/appliedAt/revertedAt/request/response/revertRequest/revertResponse/revertReadback`, 변경 경로와 요청 시각, ETag/If-Match 증거를 가리킨다.
+
+평가 action SA의 release namespace 권한은 Jobs create/get/list/delete, Pod·log get, GO marker용 pods/exec create, LoadScenario get, Deployment get이다. cluster 범위는 Node get, 외부 fleet 확인용 Pod list, Workload/Dataset/Preprocessor get뿐이다. 공개 URL은 Workload GET, settings GET/PUT, power GET, raw inventory/request/resource export GET만 허용한다. action SA에 broad evidence-collector/scheduler-editor URL role을 연결하지 않는다. 공개 PUT의 운영자와 같은 SAR를 위해 지정 scheduler ConfigMap update 권한만 별도 RoleBinding으로 유지한다. controller에는 Chill HTTP transport·URL grant가 없고 외부 주입 선택용 Node list와 기존 Profiler Node get/patch를 사용한다.
+
+
 
 ### 3.1 `outcome` 형태 (게시 요약의 선택 필드, 서버 비해석 object)
 
@@ -110,11 +116,11 @@
 
 | 화면 개념 | 읽는 곳 | 비고 |
 |---|---|---|
-| 단계 정책(자율/고정/제어요소 끔) | `spec.stages[].mode` (`autonomous`·`fixed`·`controls-disabled`) | 제어요소 끔 단계의 꺼진 스위치는 `spec.stages[].control.controls`(없으면 `spec.control`) |
+| 단계 공개 설정 비교 | `spec.stages[].settingsPatch`(없으면 `spec.settingsPatch`) | mode/preset API는 없다. 선언한 patch만 적용·복원한다 |
 | 단계 ↔ KPI 연결 | `summary.stages[].id` == `spec.stages[].id` | **유일한 조인 키**. 순서·이름 패턴으로 맞추지 않는다 |
 | 비교 짝 | `spec.comparisons[]` | **`left` = 후보, `right` = 기준, Δ = left − right.** 각 쪽은 같은 실험 `stageID` 또는 `historical{publicationID,stageID}` — `publicationID`는 기존 게시 id(캠페인 이름 포함)이며 `GET /api/v1/experiments/{publicationID}`로 찾는다. 못 찾으면 "대상 게시 없음". `reason` 표시 |
 | 같은 부하 여부 | `stages[].loadScenarioRef.uid` 동일 + `spec.loadGenerator` 동일 | **의도된 보수적 기준**: 내용이 같아도 LoadScenario를 다시 만들면 다른 부하다. 요청률·내용 비교로 판단하지 않는다 |
-| 부하 단계·요청률 | `loadScenarios[].spec.parts[]`(rates 또는 alpha) | 표시용. offered÷기간 역산 불필요 |
+| 부하 단계·요청률 | `loadScenarios[].spec.parts[].rates` | absolute req/s 표시. offered÷기간 역산 불필요 |
 | SLO | `workloads[].slo` | 실험 정의에 SLO 복사본 없음. KPI 요청 행과는 **`workloadUID`로만** 잇는다. UID가 없으면 SLO "미기록"(이름 매칭 금지) |
 | 판정 3축 | `outcome.execution`·`outcome.measurement`·`outcome.cleanup` (단계별은 `outcome.stages[]`) | 작업 완료 ≠ 평가 통과, 정리 실패도 게시될 수 있음 — 세 축을 섞지 않는다. `summary.status`는 measurement와 같은 값 |
 | 장애 주입 결과 | `outcome.stages[].injections[]` | 계획은 `spec.stages[].failureInjection[]`, 결과는 여기. `id`로 잇는다 |
@@ -122,7 +128,7 @@
 ## 5. 지울 것 (`chill-dashboard/lib/experiments.ts`)
 
 추측 함수: `stagePolicy`, `stagePairing`, `stageComparison`(요청률 1% fallback 포함), `campaignPairs`·`campaignGroups`·`policyStageGroups`의 추론 부분, `stageLoadLabel`의 상대 요청률 순위.
-`frozenP95SLO`·`alphaText`는 추측이 아니라 KPI 필드 읽기이므로, 출처를 `definition.workloads[].slo`·`loadScenarios`로 바꾸되 **과거 게시의 null/미기록 의미는 유지**한다.
+SLO는 `definition.workloads[].slo`에서, 절대 요청률은 `loadScenarios[].spec.parts[].rates`에서 읽는다. 과거 게시의 null/미기록 의미는 유지하고 재해석하지 않는다.
 
 ## 6. 과거 게시
 

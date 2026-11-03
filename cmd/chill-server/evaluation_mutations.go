@@ -80,8 +80,17 @@ func (s *evaluationService) create(
 			return httpapi.EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Field: check.ID, Message: check.Reason}
 		}
 	}
-	run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.namespace,
-		Annotations: map[string]string{"edge.dacs.io/requested-by": actor}}, Spec: request.Spec}
+	liveTarget, err := json.Marshal(result.LiveTarget)
+	if err != nil {
+		return httpapi.EvaluationIdentity{}, err
+	}
+	run := &api.EvaluationRun{
+		ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.namespace, Annotations: map[string]string{
+			"edge.dacs.io/requested-by":           actor,
+			"edge.dacs.io/evaluation-live-target": string(liveTarget),
+		}},
+		Spec: request.Spec,
+	}
 	if err := s.client.Create(ctx, run); err != nil {
 		return httpapi.EvaluationIdentity{}, err
 	}

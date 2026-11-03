@@ -19,16 +19,16 @@ metadata:
 rules:
   - apiGroups: [batch]
     resources: [jobs]
-    verbs: [create, get, list, watch, delete]
+    verbs: [create, get, list, delete]
   - apiGroups: [""]
     resources: [pods, pods/log]
-    verbs: [get, list, watch]
+    verbs: [get]
   - apiGroups: [""]
     resources: [pods/exec]
     verbs: [create]
   - apiGroups: [edge.dacs.io]
-    resources: [loadscenarios, workloads, evaluationstages]
-    verbs: [get, list, watch]
+    resources: [loadscenarios]
+    verbs: [get]
   - apiGroups: [apps]
     resources: [deployments]
     verbs: [get]
@@ -54,19 +54,18 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [nodes]
-    verbs: [get, patch]
-  - apiGroups: [edge.dacs.io]
-    resources: [modelspecs, preprocessors, datasets, chillsystems, deviceclasses]
     verbs: [get]
-  {{- if not .Values.servingEntrypoint.enabled }}
-  # Same collector/editor routes when the API is provisioned outside this release.
-  - nonResourceURLs: ["/chill/api/v1/observations/raw", "/chill/api/v1/observations/raw/*", "/chill/api/v1/scheduler", "/chill/api/v1/scheduler/settings", "/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/profiles", "/chill/api/v1/scheduler/capacity", "/chill/api/v1/observations/*", "/chill/api/v1/pools", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [edge.dacs.io]
+    resources: [workloads, preprocessors, datasets]
+    verbs: [get]
+  # Same public operator routes whether ChillServer is local or externally provisioned.
+  - nonResourceURLs: ["/chill/api/v1/workloads", "/chill/api/v1/workloads/*", "/chill/api/v1/scheduler/settings", "/chill/api/v1/observations/power", "/chill/api/v1/observations/raw", "/chill/api/v1/observations/raw/*"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/scheduler/settings"]
     verbs: [put]
-  - nonResourceURLs: ["/chill/api/v1/scheduler/operations"]
-    verbs: [post]
-  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -81,27 +80,12 @@ subjects:
     name: {{ .Values.evaluation.config.actionServiceAccount }}
     namespace: {{ .Release.Namespace }}
 {{- if .Values.servingEntrypoint.enabled }}
-{{- range $role := list "evidence-collector" "scheduler-editor" }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ include "chill.fullname" $ }}-evaluation-action-{{ $role }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ include "chill.fullname" $ }}-{{ $role }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ $.Values.evaluation.config.actionServiceAccount }}
-    namespace: {{ $.Release.Namespace }}
-{{- end }}
 {{- if .Values.servingEntrypoint.scheduler.configMap }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "chill.fullname" . }}-evaluation-scheduler-editor
+  name: {{ include "chill.fullname" . }}-evaluation-settings-writer
   namespace: {{ default .Release.Namespace .Values.servingEntrypoint.namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -190,8 +174,10 @@ kind: ClusterRole
 metadata:
   name: {{ include "chill.profilerName" . }}-evaluation
 rules:
-  - nonResourceURLs: ["/chill/api/v1/scheduler/state", "/chill/api/v1/scheduler/settings", "/chill/api/v1/observations/load"]
-    verbs: [get]
+  # Fault selection uses live Kubernetes Nodes, never scheduler snapshots.
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

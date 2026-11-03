@@ -8,9 +8,11 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -45,26 +47,24 @@ func evaluationFixture(t *testing.T) (*evaluationService, httpapi.EvaluationRequ
 		},
 	}).Build()
 	image := api.EvaluationImage{Image: "repo/server@sha256:live", SourceSHA: "source"}
-	ref := api.EvaluationEvidenceReference{Store: "evidence", Key: "start", Size: 1}
 	spec := api.EvaluationRunSpec{
 		Question: "compare", EvidenceStore: "evidence", Harness: image,
-		Target: api.TargetIdentity{Components: []api.EvaluationTargetComponent{{Name: "server", EvaluationImage: image,
+		Target: api.TargetIdentity{Components: []api.EvaluationTargetComponent{{Name: "server",
 			Resource: api.EvaluationResourceReference{APIVersion: "v1", Kind: "Pod", Namespace: "ns", Name: "server"}}}},
-		LoadGenerator: api.Generator{EvaluationImage: image, Shards: map[string]int32{"workload": 1},
+		LoadGenerator: api.Generator{EvaluationImage: image, NodeName: "genesis1", Shards: map[string]int32{"workload": 1},
 			Barrier: api.GeneratorBarrier{MinimumReadySamples: 1}},
 		PowerMeasurement: api.PowerMeasurement{Meters: []api.EvaluationMeter{{ID: "meter", SourceIdentity: "source"}},
 			Nodes: []api.EvaluationObjectReference{{Name: "node", UID: "node-uid"}}, Series: "power",
 			Sampling: api.PowerSampling{IntervalNanos: 1}},
 		Judgment: api.Judgment{EnergyCoverage: api.EnergyCoverage{MaxSingleGapSeconds: 1}},
-		Stages: []api.StageTemplate{{ID: "stage", Row: "evaluation", Mode: api.EvaluationModeFixed,
-			LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"},
-			StartState:      api.EvaluationStartState{EvidenceRef: &ref}}},
+		Stages: []api.StageTemplate{{ID: "stage", Row: "evaluation",
+			LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"}}},
 	}
 	service := &evaluationService{reader: native, client: native, namespace: "ns"}
 	return service, httpapi.EvaluationRequest{Name: "run", Spec: spec}
 }
 func TestEvaluationPreflightBoundaries(t *testing.T) {
-	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "digest"} {
+	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready"} {
 		t.Run(fault, func(t *testing.T) {
 			service, request := evaluationFixture(t)
 			var object client.Object
@@ -80,8 +80,16 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 				}}
 			case "profiling":
 				object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}
-			case "digest":
-				request.Spec.Target.Components[0].Image = "repo/server@sha256:other"
+			case "unready":
+				pod := &corev1.Pod{}
+				key := client.ObjectKey{Namespace: "ns", Name: "server"}
+				if err := service.client.Get(context.Background(), key, pod); err != nil {
+					t.Fatal(err)
+				}
+				pod.Status.Conditions[0].Status = corev1.ConditionFalse
+				if err := service.client.Status().Update(context.Background(), pod); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if object != nil {
 				if err := service.client.Create(context.Background(), object); err != nil {
@@ -101,8 +109,8 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 			if failed != (fault != "none") {
 				t.Fatalf("checks=%+v", result.Checks)
 			}
-			if fault == "digest" && (result.LiveTarget[0].Match || len(result.LiveTarget[0].LiveImageIDs) != 1) {
-				t.Fatal("live target diff lost")
+			if fault == "unready" && (result.LiveTarget[0].Ready || len(result.LiveTarget[0].LiveImageIDs) != 1) {
+				t.Fatal("live target readiness lost")
 			}
 		})
 	}
@@ -228,5 +236,83 @@ func TestEvaluationViewFlattensStatus(t *testing.T) {
 		if _, exists := fields["status"]; exists {
 			t.Fatal("nested status leaked into projection")
 		}
+	}
+}
+
+func TestEvaluationPreflightValidatesCanonicalSettingsPatch(t *testing.T) {
+	for _, test := range []struct {
+		patch string
+		valid bool
+	}{
+		{`{"controls":{"power":false}}`, true},
+		{`{"maxReplicas":3}`, true},
+		{`{"unknown":true}`, false},
+		{`{"unknown":null}`, false},
+		{`{"controls":{"unknown":false}}`, false},
+		{`{"maxReplicas":0}`, false},
+	} {
+		t.Run(test.patch, func(t *testing.T) {
+			service, request := evaluationFixture(t)
+			service.settings = func() serving.SchedulerSettings {
+				return serving.SchedulerSettings{
+					ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+					MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1,
+					CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
+					CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+					CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
+				}
+			}
+			request.Spec.SettingsPatch = &apiextensionsv1.JSON{Raw: []byte(test.patch)}
+			result, err := service.preflight(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, check := range result.Checks {
+				if check.ID == "settingsPatch/run" {
+					found = true
+					if check.Passed != test.valid {
+						t.Fatalf("check=%+v", check)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("settings patch check missing")
+			}
+			_, err = service.create(context.Background(), request, "operator")
+			if (err == nil) != test.valid {
+				t.Fatalf("create=%v", err)
+			}
+		})
+	}
+}
+
+func TestEvaluationRecordsObservedTargetWithoutImageGate(t *testing.T) {
+	service, request := evaluationFixture(t)
+	pod := &corev1.Pod{}
+	key := client.ObjectKey{Namespace: "ns", Name: "server"}
+	if err := service.client.Get(context.Background(), key, pod); err != nil {
+		t.Fatal(err)
+	}
+	pod.Status.ContainerStatuses[0].ImageID = "another/runtime@sha256:observed"
+	pod.Status.ContainerStatuses[0].RestartCount = 9
+	if err := service.client.Status().Update(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	id, err := service.create(context.Background(), request, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var run api.EvaluationRun
+	key.Name = id.Name
+	if err := service.reader.Get(context.Background(), key, &run); err != nil {
+		t.Fatal(err)
+	}
+	var recorded []httpapi.EvaluationLiveTarget
+	if err := json.Unmarshal([]byte(run.Annotations["edge.dacs.io/evaluation-live-target"]), &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorded) != 1 || !recorded[0].Ready || recorded[0].LiveImageIDs[0] != "another/runtime@sha256:observed" {
+		t.Fatalf("record=%+v", recorded)
 	}
 }

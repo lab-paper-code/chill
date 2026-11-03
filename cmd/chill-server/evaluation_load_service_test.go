@@ -24,12 +24,6 @@ func (e loadEvidence) Stat(
 	}
 	return evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: 1}, nil
 }
-func (e loadEvidence) List(context.Context, string) ([]evidencestore.ObjectIdentity, error) {
-	return []evidencestore.ObjectIdentity{
-		{Store: "s", Key: "experiments/_inputs/set/bundle.json", Size: 1},
-		{Store: "s", Key: "experiments/_inputs/not-a-set", Size: 1},
-	}, nil
-}
 func loadRequest() httpapi.LoadScenarioRequest {
 	return httpapi.LoadScenarioRequest{Name: "load", Spec: api.LoadScenarioSpec{
 		Workloads: []api.EvaluationWorkloadReference{{Name: "work", UID: "work-uid", Generation: 1}},
@@ -37,8 +31,9 @@ func loadRequest() httpapi.LoadScenarioRequest {
 			ID: "part", DurationSeconds: 1, Rates: map[string]api.EvaluationNonNegative{"work": 1},
 		}},
 		ArrivalDistribution: map[string]string{"work": "poisson"},
-		SeedRef:             api.EvaluationEvidenceReference{Store: "s", Key: "seed", Size: 1},
-		PayloadManifestRef:  api.EvaluationEvidenceReference{Store: "s", Key: "payload", Size: 1},
+		Seeds:               map[string]api.EvaluationSeed{"work": "101"},
+		DatasetRefs:         map[string]api.EvaluationObjectReference{"work": {Name: "dataset", UID: "dataset-uid"}},
+		TraceRefs:           map[string]api.EvaluationEvidenceReference{"work": {Store: "s", Key: "trace", Size: 1}},
 	}}
 }
 func loadService(t *testing.T, objects ...client.Object) *evaluationLoadService {
@@ -47,9 +42,12 @@ func loadService(t *testing.T, objects ...client.Object) *evaluationLoadService 
 	if err := api.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	objects = append(objects, &api.Dataset{ObjectMeta: metav1.ObjectMeta{
+		Name: "dataset", Namespace: "ns", UID: "dataset-uid",
+	}})
 	return &evaluationLoadService{
 		client:    fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
-		namespace: "ns", evidence: loadEvidence{}, lister: loadEvidence{},
+		namespace: "ns", evidence: loadEvidence{},
 	}
 }
 func TestLoadPreflightLiveGenerationAndMissingEvidence(t *testing.T) {
@@ -65,7 +63,7 @@ func TestLoadPreflightLiveGenerationAndMissingEvidence(t *testing.T) {
 	}
 	s.evidence = loadEvidence{missing: true}
 	result, err = s.preflight(context.Background(), loadRequest())
-	if err != nil || result.Checks[3].Passed {
+	if err != nil || result.Checks[4].Passed {
 		t.Fatalf("missing evidence accepted: %+v %v", result, err)
 	}
 }
@@ -88,22 +86,15 @@ func TestLoadInUseRejectsDeleteAndReplace(t *testing.T) {
 		t.Fatal("replaced in-use scenario")
 	}
 }
-func TestEvaluationInputKinds(t *testing.T) {
-	for filename, want := range map[string]string{
-		"bundle.json": "payload", "seeds.json": "seed", "rate-basis.json": "rateBasis",
-		"kappa.json": "kappa", "not-seeds.json": "other", "trace.json": "other",
-	} {
-		if got := evaluationInputKind("experiments/_inputs/set/" + filename); got != want {
-			t.Fatalf("%s: %s", filename, got)
-		}
-	}
-	s := loadService(t)
+func TestEvaluationInputsOnlyDeclaredTraces(t *testing.T) {
+	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns"}, Spec: loadRequest().Spec}
+	s := loadService(t, load)
 	result, err := s.inputs(context.Background())
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("inputs=%+v error=%v", result, err)
 	}
-	if got := result.Items[0]; got.Set != "set" || got.Name != "set / bundle.json" ||
-		got.Store != "s" || got.Key != "experiments/_inputs/set/bundle.json" || got.Size != 1 || got.Kind != "payload" {
+	if got := result.Items[0]; got.Set != "load" || got.Name != "load / work" ||
+		got.Store != "s" || got.Key != "trace" || got.Size != 1 || got.Kind != "trace" {
 		t.Fatalf("input metadata=%+v", got)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -16,6 +17,7 @@ type evaluationService struct {
 	namespace   string
 	store       string
 	experiments *experimentService
+	settings    func() serving.SchedulerSettings
 }
 
 func (s *evaluationService) listActive(ctx context.Context) (httpapi.ActiveEvaluationList, error) {
@@ -57,7 +59,7 @@ func (s *evaluationService) listActive(ctx context.Context) (httpapi.ActiveEvalu
 				return result, fmt.Errorf("active evaluation load scenario %s identity changed", load.Name)
 			}
 			projected := &httpapi.ActiveEvaluationStage{
-				ID: stage.Spec.StageID, Mode: string(stage.Spec.Mode),
+				ID:        stage.Spec.StageID,
 				StartedAt: stage.Status.StartedAt, GoAt: stage.Status.GoAt,
 				Injections: []httpapi.ActiveEvaluationInjection{},
 			}
@@ -89,4 +91,11 @@ func (s *evaluationService) listActive(ctx context.Context) (httpapi.ActiveEvalu
 		result.Items = append(result.Items, item)
 	}
 	return result, nil
+}
+
+func evaluationSettings(scheduler *schedulerService) func() serving.SchedulerSettings {
+	if scheduler == nil {
+		return nil
+	}
+	return scheduler.controller.Settings
 }

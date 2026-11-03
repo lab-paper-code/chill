@@ -732,11 +732,15 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusUnauthorized
 	case "Forbidden":
 		status = http.StatusForbidden
+	case "SettingsPreconditionRequired":
+		status = http.StatusPreconditionRequired
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
 	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
 		status = http.StatusBadRequest
 	case "ObservationNotReady", "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
+		status = http.StatusConflict
+	case "SettingsConflict":
 		status = http.StatusConflict
 	case "QueueFull":
 		status = http.StatusTooManyRequests
