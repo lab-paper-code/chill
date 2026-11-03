@@ -43,10 +43,12 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		at, parseErr := time.Parse(time.RFC3339Nano, query.Get("at"))
-		if parseErr != nil || at.IsZero() || len(query) != 1 || len(query["at"]) != 1 {
+		if parseErr != nil || at.IsZero() || len(query["at"]) != 1 || len(query) > 2 || len(query) == 2 && (len(query["cursor"]) != 1 || query.Get("cursor") == "") {
 			err = &serving.Error{Code: "InvalidQuery", Message: "one RFC3339Nano event timestamp is required"}
 		} else {
-			records, err = h.observationLog.EventObservations(r.Context(), at, h.config.MaxQueryEvents)
+			var available serving.ObservationCoverage
+			records, next, available, err = h.observationLog.EventObservations(r.Context(), at, h.config.MaxQueryEvents, query.Get("cursor"))
+			coverage = &available
 		}
 	}
 	if err != nil {
@@ -54,6 +56,9 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	events := make([]observationEvent, 0, len(records))
+	if records == nil {
+		events = nil
+	}
 	for _, record := range records {
 		event := observationEvent{Type: "event", At: record.At}
 		if action := record.Action; action != nil {
@@ -79,7 +84,7 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		NextCursor string                       `json:"nextCursor,omitempty"`
 		Coverage   *serving.ObservationCoverage `json:"coverage,omitempty"`
 	}{Events: events, NextCursor: next, Coverage: coverage}
-	if coverage != nil {
+	if rangedFrom || rangedTo {
 		response.From, response.To = &from, &to
 	}
 	sendJSON(w, http.StatusOK, response)

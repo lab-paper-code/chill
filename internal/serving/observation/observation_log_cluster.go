@@ -1,6 +1,7 @@
 package observation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -93,24 +94,58 @@ type RecordedEvent struct {
 	Cluster *ClusterObservation         `json:"cluster,omitempty"`
 }
 
-func (l *ObservationLog) EventObservations(ctx context.Context, at time.Time, limit int) ([]RecordedEvent, error) {
-	events := []RecordedEvent{}
+// EventObservations reads a bounded append-time page, preserving all simultaneous
+// facts in that page. A continuation is returned even when a match was found:
+// later hours may contain additional facts with the same event timestamp.
+func (l *ObservationLog) EventObservations(ctx context.Context, at time.Time, limit int, cursor string) ([]RecordedEvent, string, serving.ObservationCoverage, error) {
+	coverage := serving.ObservationCoverage{Sources: []serving.ObservationSource{}, Gaps: []serving.ObservationGap{}}
+	from := at.UTC().Truncate(time.Hour)
+	now := l.now().UTC()
 	if at.IsZero() || limit <= 0 {
-		return nil, &serving.Error{Code: "InvalidQuery", Message: "an event timestamp and positive event bound are required"}
+		return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "an event timestamp and positive event bound are required"}
 	}
-	// Segments follow append time, so delayed events can be in any later hour.
-	bounds := [2]time.Time{at.UTC().Truncate(time.Hour), {}}
+	if cursor != "" {
+		next, err := time.Parse(time.RFC3339Nano, cursor)
+		if err != nil || next.Before(from) || next.After(now) || !next.Equal(next.Truncate(time.Hour)) {
+			return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "an append-hour event cursor is required"}
+		}
+		from = next.UTC()
+	}
+	coverage.From, coverage.To = &from, &from
+	if from.After(now) {
+		return nil, "", coverage, ctx.Err()
+	}
+	hours := min(l.config.EventLookupHours, int(now.Sub(from)/time.Hour)+1)
+	to := from.Add(time.Duration(hours) * time.Hour)
+	// prepare's upper bound is inclusive; do not open the next hour.
+	bounds := [2]time.Time{from, to.Add(-time.Nanosecond)}
 	read, err := l.prepare(ctx, map[string][2]time.Time{observationSchedulerStream: bounds, observationClusterStream: bounds})
 	if err != nil {
-		return nil, err
+		return nil, "", coverage, err
 	}
+	events := []RecordedEvent(nil)
 	defer read.close()
+	next := ""
+	if !to.After(read.now) {
+		next = to.Format(time.RFC3339Nano)
+	}
+	to = minTime(to, read.now)
 	for _, stream := range []string{observationSchedulerStream, observationClusterStream} {
 		err := l.scanStream(read, stream, func(raw []byte) error {
 			var header struct {
 				At time.Time `json:"at"`
 			}
-			if err := json.Unmarshal(raw, &header); err != nil {
+			// schedulerLine writes at first. Decode only that small field before
+			// touching multi-megabyte snapshots or action evidence bodies.
+			if stream == observationSchedulerStream && bytes.HasPrefix(raw, []byte(`{"at":`)) {
+				end := bytes.IndexByte(raw, ',')
+				if end < 0 {
+					end = len(raw) - 1
+				}
+				if err := header.At.UnmarshalJSON(raw[len(`{"at":`):end]); err != nil {
+					return err
+				}
+			} else if err := json.Unmarshal(raw, &header); err != nil {
 				return err
 			}
 			if !header.At.Equal(at) {
@@ -140,8 +175,12 @@ func (l *ObservationLog) EventObservations(ctx context.Context, at time.Time, li
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, "", coverage, err
 		}
 	}
-	return events, ctx.Err()
+	coverage = read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}, observationClusterStream: {from, to}})
+	// Unlike source extents, these bounds describe the attempted append scan,
+	// including missing archive hours.
+	coverage.From, coverage.To = &from, &to
+	return events, next, coverage, ctx.Err()
 }

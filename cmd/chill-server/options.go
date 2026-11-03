@@ -23,6 +23,7 @@ type options struct {
 	kubeAPIQPS                                                                       float64
 	kubeAPIBurst                                                                     int
 	queueLimit, maxQueryEvents                                                       int
+	eventLookupHours                                                                 int
 	maxRequestBytes, maxEvidenceBytes                                                int64
 	requestTimeout, drainTimeout, sourceInterval, profileInterval                    time.Duration
 	operationTimeout                                                                 time.Duration
@@ -83,6 +84,8 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.observationDirectory, "observation-directory", "", "Private persistent observation log directory.")
 	f.DurationVar(&o.observationRetention, "observation-retention", 2*time.Hour,
 		"Positive local observation retention measured from each hour's start.")
+	f.IntVar(&o.eventLookupHours, "observation-event-lookup-hours", 1,
+		"Append-time hours per exact event lookup; continue with nextCursor to recover late appends.")
 	f.StringVar(&o.diagnosticDirectory, "diagnostic-directory", "",
 		"Fresh absolute private directory for one finite control-only capture; empty disables.")
 	f.DurationVar(&o.diagnosticStartDelay, "diagnostic-start-delay", 0,

@@ -35,6 +35,8 @@ type ObservationLogConfig struct {
 	Definitions []string
 	Outcomes    []string
 	Retention   time.Duration
+	// EventLookupHours bounds append-time hours read by each exact event query.
+	EventLookupHours int
 	// OccupancyTail bounds receipt lookback and late native supplement delivery.
 	OccupancyTail time.Duration
 	Diagnostics   *serving.Diagnostics
@@ -110,6 +112,9 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	}
 	if config.OccupancyTail < 0 {
 		return nil, errors.New("occupancy supplement tail must not be negative")
+	}
+	if config.EventLookupHours <= 0 {
+		config.EventLookupHours = 1
 	}
 	l := &ObservationLog{
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),

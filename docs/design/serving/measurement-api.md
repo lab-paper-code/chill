@@ -157,6 +157,14 @@ identitySource `{store,key}`가 모두 있어야 단계 적용 SLO를 연결한�
 `GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100`
 는 `[from,to)`의 보존 사건을 `{events,from,to,coverage,nextCursor?}`로 반환한다.
 기존 정확 시점 `?at=<RFC3339Nano>`는 유지하며 범위 인자와 혼용하지 않는다.
+정확 시점 조회도 `coverage={from,to,sources,gaps}`와 `nextCursor?`를 반환한다.
+이 coverage는 event-time이 아닌 이번 호출이 읽은 append-time 구간이다.
+빈 정확 시점 페이지는 `events:null`이며 오류가 아니다. `nextCursor`가 있으면
+동일 `at`와 `cursor=<nextCursor>`로 계속 읽는다. 찾은 페이지에도 continuation을
+유지하므로 같은 시점의 다른 사실·3시간 지연 append를 복구할 수 있다.
+정확 시점 cursor는 다음 append-hour RFC3339Nano이며 아래 범위 cursor와 혼용할 수 없다.
+기본 1시간의 호출 예산은 `servingEntrypoint.observationStorage.eventLookupHours`
+(`--observation-event-lookup-hours`)로 정한다. [비용 근거와 상세 계약](observability-split.md#exact-event-recovery).
 범위는 양수·최대 24시간, `limit`은 기본 100·최대 500이며 서버 `MaxQueryEvents`가
 더 작으면 그 값이 상한이다. 잘못된 인자·범위·cursor는 `400 InvalidQuery`다.
 `coverage={from,to,sources,gaps}`의 출처·공백과 원래 timestamp를 보존한다.
