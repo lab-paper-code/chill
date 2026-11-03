@@ -1,10 +1,27 @@
 "use client"
 
 import Link from "next/link"
-import { ApiError, useChillQueries } from "@/lib/client"
+import { useQuery } from "@tanstack/react-query"
+import { ApiError, decodeResponse, relay, useChillQueries, useSession, warmingRetry, warmingDelay } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { campaignScoreboard, comparisonValidity, decodeExperiment, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, object, publishedText, recordedComparisons, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts, type Experiment, type ExperimentStage, type Published } from "@/lib/experiments"
+import { campaignScoreboard, comparisonValidity, decodeExperiment, decodeExperimentPage, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, object, publishedText, recordedComparisons, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
 import { formatMeasurementDuration, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
+
+export function usePublishedExperimentFacts(id:string,enabled=true) {
+  const {token}=useSession()
+  return useQuery<RecordedFacts|null,ApiError>({queryKey:["chill","experiment-facts",id],enabled:!!token&&!!id&&enabled,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
+    let offset=0
+    for(;;) {
+      const response=await relay(`v1/experiments?${new URLSearchParams({limit:"5",offset:String(offset)})}`,token,signal)
+      const page=decodeResponse(response.body,decodeExperimentPage) as ExperimentPage
+      const publication=page.items.find(item=>item.id===id)
+      if(publication)return publication.facts??null
+      if(page.page?.nextOffset===undefined)return null
+      if(page.page.nextOffset<=offset)throw new ApiError(0,"실험 목록 페이지가 전진하지 않아요",null)
+      offset=page.page.nextOffset
+    }
+  }})
+}
 
 // Only explicit historical comparison references may request another publication.
 export function useHistoricalExperiments(publications:Experiment[],catalog:Experiment[]=publications,enabled=true) {
@@ -72,11 +89,10 @@ export function ExperimentFacts({run}:{run:Experiment}) {
     ...(facts?.stages?.length?facts.stages.flatMap(stage=>[
       ["단계 ID",stage.id],
       ["단계 행",stage.row??"미기록"],
-      ["단계 정책",definitionPolicy(stage,run)],
-      ["변경 설정 키",Array.isArray(stage.settingsPatchKeys)&&stage.settingsPatchKeys.every(key=>typeof key==="string")?stage.settingsPatchKeys.join(", ")||"변경 없음":"미기록"],
+      ["변경 설정",definitionPolicy(stage,run)],
       ["부하 시나리오 이름",text(stage.loadScenarioRef?.name)],
       ["부하 시나리오 UID",text(stage.loadScenarioRef?.uid)],
-    ] as [string,string][]):[["단계 정책","미기록"] as [string,string]]),
+    ] as [string,string][]):run.definition?.spec.stages.map(stage=>[`변경 설정 · ${stage.id}`,definitionPolicy(stage,run)] as [string,string])??[["변경 설정","미기록"] as [string,string]]),
     ...(facts?.sloSources?.length?facts.sloSources.flatMap(source=>[
       ["SLO 출처 이름",source.name],
       ["SLO 출처 UID",source.uid],
@@ -103,6 +119,7 @@ export function ExperimentMetadata({run,stage}:{run:Experiment;stage:ExperimentS
     ["GC 집계 방식",rules.gcMeaning==="runtime-metrics-delta"?"런타임 누적값 차이":rules.gcMeaning==null?"미기록":"원문 확인","—"],
   ]
   return <div className="min-w-0 space-y-2 text-xs">
+    <table aria-label="단계 변경 설정" className="w-full table-fixed text-left"><tbody><tr className="border-t"><th scope="row" className="w-1/3 p-1 font-normal">변경 설정</th><td className="break-words p-1">{definitionPolicy(stage,run)}</td></tr></tbody></table>
     <table aria-label="측정 규칙" className="w-full text-left tabular-nums"><thead><tr>{["항목","값","단위"].map(label=><th key={label} scope="col" className="p-1 font-normal">{label}</th>)}</tr></thead><tbody>{ruleRows.map(([label,value,unit])=><tr key={label} className="border-t"><th scope="row" className="p-1 font-normal">{label}</th><td className="break-all p-1">{value}</td><td className="p-1">{unit}</td></tr>)}</tbody></table>
     <table aria-label="계획 부하" className="w-full table-fixed text-left tabular-nums [&_td]:[overflow-wrap:anywhere]"><thead><tr>{["구간","서비스","길이 (s)","요청률 (req/s)"].map(label=><th key={label} className="p-1 font-normal">{label}</th>)}</tr></thead><tbody>{parts.length?parts.flatMap(part=>Object.entries(part.rates).map(([name,value])=><tr key={`${part.id}/${name}`} className="border-t"><th className="p-1 font-normal">{part.id}</th><td className="break-all p-1">{name}</td><td className="p-1">{number(part.durationSeconds)}</td><td className="p-1">{number(value)}</td></tr>)):<tr><td colSpan={4} title={loadReference?"부하 시나리오 참조만 목록에 제공됩니다. 상세에서 계획 구간을 확인하세요.":undefined}>{loadMissing}</td></tr>}</tbody></table>
     <table aria-label="서비스 식별자·정의" className="w-full text-left tabular-nums"><thead><tr>{["서비스","식별자","정의"].map(label=><th key={label} scope="col" className="p-1 font-normal">{label}</th>)}</tr></thead><tbody>{experimentRows(stage).map(row=><tr key={row.source} className="border-t"><th scope="row" className="break-all p-1 font-normal">{row.name}</th><td className="break-all p-1">{publishedText(row.uid)||"미기록"}</td><td className="break-all p-1">{publishedText(row.definition)||"미기록"}</td></tr>)}</tbody></table>

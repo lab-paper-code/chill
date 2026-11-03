@@ -93,3 +93,42 @@ test("R19 review: definition sources retain p90 and p99 without applying them as
   assert.doesNotMatch(source,/미기록|SLO p95/)
   assert.equal(experiments.frozenP95SLO(experiments.experimentRows(publication.stages[0])[0],publication),null)
 })
+
+test("control323: selected stage metadata exposes recorded setting changes, empty and absent facts",()=>{
+  for(const [keys,expected] of [[["maxReplicas","controls.routing","minimumDemand.camera"],"복제 수 상한, 요청 분배, 최소 수요 · camera"],[[],"변경 없음"],[null,"미기록"],[undefined,"미기록"]] as const) {
+    const publication={...run,facts:{stages:[{id:"candidate",settingsPatchKeys:keys===undefined?undefined:keys===null?null:[...keys]}]}}
+    const html=renderToStaticMarkup(createElement(components.ExperimentMetadata,{run:publication,stage:publication.stages[0]}))
+    const changes=html.match(/<table aria-label="단계 변경 설정"[\s\S]*?<\/table>/)?.[0]??""
+    assert.ok(changes.includes(">변경 설정</th>")&&changes.includes(`>${expected}</td>`),html)
+  }
+})
+
+test("control323: published facts follow real pages by ID and preserve absent facts and page failures",async()=>{
+  for(const outcome of ["keys","null","missing","denied","stalled"]) {
+    const paths:string[]=[],signal=new AbortController().signal
+    let queryFn:({signal}:{signal:AbortSignal})=>Promise<Experiment["facts"]|null>=async()=>null
+    const error=new Error("denied")
+    const dependencies={...modules,
+      "@tanstack/react-query":{useQuery:(options:{queryFn:typeof queryFn})=>{queryFn=options.queryFn;return {}}},
+      "@/lib/client":{useSession:()=>({token:"fixture"}),decodeResponse:(body:string,decoder:(body:string)=>unknown)=>decoder(body),relay:async(path:string,_token:string,actual:AbortSignal)=>{
+        paths.push(path);assert.equal(actual,signal)
+        const offset=Number(new URL(path,"https://local.invalid").searchParams.get("offset"))
+        if(offset&&outcome==="denied")throw error
+        const items=offset?[{...run,id:outcome==="missing"?"other":run.id,facts:{stages:[{id:"candidate",settingsPatchKeys:outcome==="null"?null:[]}]}}]:Array.from({length:5},(_,index)=>({...run,id:`other-${index}`}))
+        return {body:JSON.stringify({items,page:{offset,limit:5,total:6,...(!offset?{nextOffset:5}:outcome==="stalled"?{nextOffset:5}:{})}})}
+      }},
+    }
+    const exports={} as {usePublishedExperimentFacts:(id:string)=>unknown}
+    new Function("require","exports",compiled)((name:string)=>dependencies[name as keyof typeof dependencies]??require(name),exports)
+    exports.usePublishedExperimentFacts(run.id)
+    if(outcome==="denied")await assert.rejects(queryFn({signal}),error)
+    else if(outcome==="stalled")await assert.rejects(queryFn({signal}),/페이지/)
+    else {
+      const facts=await queryFn({signal})
+      if(outcome==="missing")assert.equal(facts,null)
+      else assert.deepEqual(facts?.stages?.[0].settingsPatchKeys,outcome==="null"?null:[])
+    }
+    assert.equal(paths.length,2)
+    for(const path of paths)assert.equal(new URL(path,"https://local.invalid").searchParams.get("limit"),"5")
+  }
+})

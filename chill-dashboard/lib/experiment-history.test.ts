@@ -29,6 +29,7 @@ function harness(publication:Experiment=run) {
   let params=new URLSearchParams("a=candidate"),queries:Array<{error:Error|null;data?:Experiment;isPending:boolean;refetch?:()=>void}>=[]
   const paths:string[]=[],historicalPaths:string[][]=[],buttons:Array<{text:string;click:()=>void}>=[],charts:Array<{dataKey:string;onClick?:(entry:{payload:{key:string}})=>void}>=[],events:Array<{from:string;to:string;returnTo?:string;label?:string}>=[]
   const selects:Array<{value:string;onChange:(event:{target:{value:string}})=>void}>=[],sheets:Array<{open:boolean;onOpenChange:(open:boolean)=>void}>=[]
+  let facts:{data:Experiment["facts"]|null|undefined}={data:null}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const Button=({children,onClick,asChild,...props}:{children?:ReactNode;onClick?:()=>void;asChild?:boolean})=>{if(onClick)buttons.push({text:renderToStaticMarkup(createElement("span",null,children)),click:onClick});return asChild?children:createElement("button",props,children)}
   const runtime=require("react/jsx-runtime")
@@ -39,6 +40,7 @@ function harness(publication:Experiment=run) {
   }
   const modules:Record<string,unknown>={
     "react/jsx-runtime":{...runtime,jsx:track("jsx"),jsxs:track("jsxs")},
+    "@tanstack/react-query":{useQuery:()=>facts},
     "@/lib/client":{ApiError,useChillQueries:(paths:string[])=>{historicalPaths.push(paths);return queries.slice(0,paths.length)},useSession:()=>({config:{namespace:"test",maxPageSize:25}}),useChillQuery:(path:string)=>{paths.push(path);return {data:path.startsWith("v1/experiments?")?{items:[publication],page:{offset:5,limit:5,total:11,nextOffset:10}}:publication,error:null,isFetching:false,refetch:()=>{}}}},
     "@/lib/experiments":helpers,"@/lib/measurements":measurements,"@/lib/scheduler":{parseSchedulerJSON},
     "next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"next/navigation":{useSearchParams:()=>params},
@@ -53,7 +55,7 @@ function harness(publication:Experiment=run) {
   const conclusion=load<typeof ConclusionModule>("../features/experiments-conclusion.tsx",modules)
   modules["@/features/experiments-conclusion"]=conclusion
   const pages=load<typeof ExperimentsModule>("../features/experiments.tsx",modules)
-  return {conclusion,pages,paths,historicalPaths,buttons,charts,events,selects,sheets,setSearch:(search:string)=>{params=new URLSearchParams(search)},setQueries:(value:typeof queries)=>{queries=value},render:(published=false)=>{paths.length=0;historicalPaths.length=0;buttons.length=0;charts.length=0;events.length=0;selects.length=0;sheets.length=0;return renderToStaticMarkup(createElement(published?pages.PublishedExperimentsPage:pages.ExperimentsPage))}}
+  return {conclusion,pages,paths,historicalPaths,buttons,charts,events,selects,sheets,setFacts:(value:typeof facts)=>{facts=value},setSearch:(search:string)=>{params=new URLSearchParams(search)},setQueries:(value:typeof queries)=>{queries=value},render:(published=false)=>{paths.length=0;historicalPaths.length=0;buttons.length=0;charts.length=0;events.length=0;selects.length=0;sheets.length=0;return renderToStaticMarkup(createElement(published?pages.PublishedExperimentsPage:pages.ExperimentsPage))}}
 }
 
 test("historical errors retain candidate measurements and retry only failed explicit references",()=>{
@@ -215,4 +217,15 @@ test("IA review: opening then closing a nondefault interval preserves its values
       assert.equal(location.searchParams.get("service"),"camera")
     })
   }
+})
+
+test("control323: old detail without a supported definition waits for matching list facts before rendering changes",()=>{
+  const source={...fixture,id:"candidate",definition:undefined,facts:undefined}
+  const app=harness(source)
+  app.setFacts({data:undefined})
+  assert.doesNotMatch(app.render(),/aria-label="단계 변경 설정"/)
+  app.setFacts({data:{stages:[{id:source.stages[0].id,settingsPatchKeys:["maxReplicas"]}]}})
+  const html=app.render()
+  assert.match(html,/aria-label="단계 변경 설정"/)
+  assert.match(html,/>변경 설정<\/th><td[^>]*>복제 수 상한<\/td>/)
 })

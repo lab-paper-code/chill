@@ -166,6 +166,13 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
 | `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 `comparisons`, `facts`(이름·질문·단계 row/loadScenarioRef/settingsPatchKeys·SLO 출처·부하 출처), 단건은 `definition` 제공 | §8 정의 기반 reader. 목록 항목별 단건 N+1 조회는 금지한다. 변경 키는 W4 운영 설정 항목명으로 표시하며 []와 null을 구분하고 없는 값은 추론하지 않는다. 목록에 없는 명시적 과거 비교 대상만 필요한 불변 게시 단건을 조회한다. |
 
+결과 상세의 선택 단계와 구간 Sheet는 같은 단계 metadata의 `변경 설정` 행을 표시한다.
+목록 facts가 있으면 `settingsPatchKeys`의 W4 한국어 항목명·`[]`의 `변경 없음`·null/누락의
+`미기록`을 구분한다. 단건에 facts가 없으면 목록을 5개씩 실제 nextOffset으로 따라가 선택
+게시 ID의 facts만 합친 뒤 렌더한다. 중간 실패·조회 중을 `미기록`으로 바꾸지 않으며 다른
+게시 단건을 N+1 조회하지 않는다. 과거 definition이 현재 reader에서 거부되어도 목록 facts는
+사용한다. 구형 mode/startState 계약을 다시 수용하거나 현재 운영 설정으로 보충하지 않는다.
+
 #### 표시용 요약 읽기 계약
 
 `GET /workloads?view=summary`는 중복 `supportedInputs`를 path·artifact·profiles `{id}`로 줄인다. 개수는 `profiles.length`를 사용하고 중복 count 필드는 보내지 않는다. 전체 조건·출처는 무쿼리/단건에서 보존한다.

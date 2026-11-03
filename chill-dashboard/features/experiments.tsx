@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { ExperimentCoverage, ExperimentFacts, ExperimentInjections, ExperimentJudgment, ExperimentLimits, ExperimentMetadata, ExperimentOutcome, ExperimentResultRow, HistoricalExperimentError, useHistoricalExperiments } from "@/features/experiments-conclusion"
+import { ExperimentCoverage, ExperimentFacts, ExperimentInjections, ExperimentJudgment, ExperimentLimits, ExperimentMetadata, ExperimentOutcome, ExperimentResultRow, HistoricalExperimentError, useHistoricalExperiments, usePublishedExperimentFacts } from "@/features/experiments-conclusion"
 import { SchedulerIntervalEvents } from "@/features/scheduler-evidence"
 import { EvaluationCleanup, EvaluationLaunch } from "@/features/evaluation-request"
 
@@ -67,7 +67,7 @@ function IntervalDrawer({run,runs,row,service,onClose,restoreFocus,returnTo="",s
   return <Sheet open={!!row} onOpenChange={open=>{if(!open)onClose()}}><SheetContent className="w-full overflow-y-auto sm:max-w-2xl" aria-describedby={undefined} onCloseAutoFocus={event=>{event.preventDefault();restoreFocus()}}>
     <SheetHeader><SheetTitle>{row&&row.stage.id}</SheetTitle></SheetHeader>
     {row&&<div className="space-y-5 px-4 pb-6">
-      <dl className="space-y-2 text-sm">{stages.map(({stage,owner,label})=><div key={`${owner.id}/${stage.id}`}><dt className="font-medium">{label} · {stageLabel(stage,owner)}</dt><dd className="text-xs text-muted-foreground">{formatMeasurementTime(stage.from)} – {formatMeasurementTime(stage.to)}</dd></div>)}</dl>
+      <dl className="space-y-2 text-sm">{stages.map(({stage,owner,label})=><div key={`${owner.id}/${stage.id}`}><dt className="font-medium">{label} · {stage.id}</dt><dd className="text-xs text-muted-foreground">{formatMeasurementTime(stage.from)} – {formatMeasurementTime(stage.to)}</dd></div>)}</dl>
       {onServiceChange&&<label className="flex items-center gap-2 text-sm">서비스 <select className="min-h-11 min-w-0 max-w-full rounded border bg-background px-2" value={service} onChange={event=>onServiceChange(event.target.value)}><option value="">전체</option>{names.map(name=><option key={name} value={name}>{name}</option>)}</select></label>}
       <SelectedValues row={row} service={service} samples/>
       {stages.filter(({stage,owner})=>owner.outcome?.stages?.some(item=>item.id===stage.id)||owner.definition?.spec.stages.find(item=>item.id===stage.id)?.failureInjection?.length).map(({stage,owner})=><section key={`${owner.id}/${stage.id}`} className="space-y-2" aria-label={`${stage.id} 판정·주입`}><ExperimentOutcome run={owner} stage={stage}/><ExperimentInjections run={owner} stage={stage}/></section>)}
@@ -170,9 +170,11 @@ function PublicationRunLink({run}:{run:Experiment}) {
 export function ExperimentsPage() {
   const params=useSearchParams(),id=params.get("a")??"",offset=params.get("offset")??"0"
   const query=useChillQuery<Experiment>(experimentPath(id),{enabled:!!id,decoder:decodeExperiment})
-  const run=query.data?.id===id?query.data:undefined
+  const source=query.data?.id===id?query.data:undefined
+  const facts=usePublishedExperimentFacts(id,!!source&&!source.facts)
+  const run=React.useMemo(()=>!source||!source.facts&&facts.data===undefined?undefined:facts.data&&!source.facts?{...source,facts:facts.data}:source,[source,facts.data])
   const historical=useHistoricalExperiments(run?[run]:[],run?[run]:[],!!run)
-  return <Screen width="data" back={[`/experiments?${new URLSearchParams({view:"published",offset,...(params.get("service")?{service:params.get("service")!}:{})})}`,"게시 결과"]} title={run?.definition?.run.name??run?.facts?.name??id} actionPlacement="header" action={<nav aria-label="실험 상세" className="flex flex-wrap gap-2">{run&&<PublicationRunLink run={run}/>}<span aria-current="page" className="inline-flex min-h-11 items-center px-2 text-sm">결과</span>{run?.definition&&<EvaluationLaunch publicationID={run.id} label="다시 실행"/>}</nav>}><QueryGate query={query}>{run&&<ExperimentDetail key={run.id} run={run} runs={historical.runs} pending={historical.pending} error={historical.error} refetch={historical.refetch}/>}</QueryGate></Screen>
+  return <Screen width="data" back={[`/experiments?${new URLSearchParams({view:"published",offset,...(params.get("service")?{service:params.get("service")!}:{})})}`,"게시 결과"]} title={run?.definition?.run.name??run?.facts?.name??id} actionPlacement="header" action={<nav aria-label="실험 상세" className="flex flex-wrap gap-2">{run&&<PublicationRunLink run={run}/>}<span aria-current="page" className="inline-flex min-h-11 items-center px-2 text-sm">결과</span>{run?.definition&&<EvaluationLaunch publicationID={run.id} label="다시 실행"/>}</nav>}><QueryGate query={query}><QueryGate query={source&&!source.facts?facts:query}>{run&&<ExperimentDetail key={run.id} run={run} runs={historical.runs} pending={historical.pending} error={historical.error} refetch={historical.refetch}/>}</QueryGate></QueryGate></Screen>
 }
 
 export function PublishedExperimentsPage() {

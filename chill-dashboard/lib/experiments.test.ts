@@ -32,7 +32,7 @@ test("R18: list facts render without per-item detail requests and absent facts s
   exports.useHistoricalExperiments([{...run,comparisons:[{left:{historical:{publicationID:"explicit-history",stageID:"old"}},right:{stageID:stage.id},reason:"기록 비교"}]}])
   assert.deepEqual(paths[2],["v1/experiments/explicit-history"])
   const html=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run}))
-  for(const value of ["기록된 실험","기록된 질문","복제 수 상한","전력모드","최소 수요 · camera","future.setting","변경 없음","기록 부하","load-uid","시나리오 이름","부하 시나리오 이름","부하 시나리오 UID","SLO 출처 이름","SLO 출처 UID","maxReplicas","controls.power","minimumDemand.camera",measurementHelpers.formatMeasurementDuration(50000000),measurementHelpers.formatMeasurementDuration(9007199254740993n)])assert.ok(html.includes(value),value)
+  for(const value of ["기록된 실험","기록된 질문","복제 수 상한","전력모드","최소 수요 · camera","future.setting","변경 없음","기록 부하","load-uid","시나리오 이름","부하 시나리오 이름","부하 시나리오 UID","SLO 출처 이름","SLO 출처 UID",measurementHelpers.formatMeasurementDuration(50000000),measurementHelpers.formatMeasurementDuration(9007199254740993n)])assert.ok(html.includes(value),value)
   for(const value of ["제어 정책","제어 출처 ID",">전력</th>",">배치</th>","제어요소 끔"])assert.ok(!html.includes(value),value)
   const listHTML=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
   for(const value of ["기록된 실험","복제 수 상한, 전력모드, 최소 수요 · camera, future.setting","변경 없음","미기록"])assert.ok(listHTML.includes(value),value)
