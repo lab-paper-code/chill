@@ -12,6 +12,7 @@ import (
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -101,6 +102,47 @@ func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {
 				t.Fatalf("wrong probe outcome: %+v", b)
 			}
 		})
+	}
+}
+
+func TestObserverRetriesTimedOutSourceOnNextRefresh(t *testing.T) {
+	api := newObserverAPI(t, 1)
+	issues := make(chan observation.ClusterObservation, 16)
+	api.observer.config.OnCluster = func(row observation.ClusterObservation) error {
+		if row.Kind == "issue" {
+			issues <- row
+		}
+		return nil
+	}
+	api.refresh(t)
+	before := api.observer.runtime.Instances()[0]
+	api.mu.Lock()
+	api.hang = make(chan struct{})
+	api.mu.Unlock()
+	api.refresh(t)
+	failed := api.observer.runtime.Instances()[0]
+	if failed.Ready || !failed.AttemptedAt.After(before.AttemptedAt) {
+		t.Fatalf("timeout did not exclude physical executor: %+v", failed)
+	}
+	api.mu.Lock()
+	close(api.hang)
+	api.hang = nil
+	api.mu.Unlock()
+	api.refresh(t)
+	recovered := api.observer.runtime.Instances()[0]
+	if !recovered.Ready || recovered.ID != before.ID || !recovered.ObservedAt.After(before.ObservedAt) {
+		t.Fatalf("unchanged Pod did not recover on the next refresh: %+v", recovered)
+	}
+	var raised, resolved bool
+	for len(issues) > 0 {
+		row := <-issues
+		if row.Source == "chill-system/instance-a" {
+			raised = raised || row.Event == "raised"
+			resolved = resolved || row.PreviousReason != "" && row.Reason == row.PreviousReason
+		}
+	}
+	if !raised || !resolved {
+		t.Fatalf("probe recovery did not record issue lifecycle: raised=%t resolved=%t", raised, resolved)
 	}
 }
 

@@ -110,8 +110,8 @@ func schedulerValidateObservationTimes(snapshot *SchedulerSnapshot, maxAge time.
 		}
 	}
 	for _, i := range snapshot.Instances {
-		if i.Terminated {
-			continue // A terminal physical fact never needs another live native probe.
+		if i.Terminated || !i.Ready {
+			continue // Non-serving physical occupancy contributes no live capacity.
 		}
 		if schedulerFixedReason(*snapshot, i.WorkloadUID) != "" || schedulerFixedReason(*snapshot, i.OwnerWorkloadUID) != "" {
 			continue
