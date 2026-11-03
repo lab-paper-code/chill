@@ -141,7 +141,7 @@ Evaluation list/detail GETs additionally project the Run's recorded `currentProc
 and `procedures[]` (`step,startedAt,finishedAt,reason,measurementVerdict`), plus
 `stages[]` (`id,name,uid,conditions,measurementVerdict,currentProcedure,procedures,startedAt,finishedAt,goAt`).
 Optional `stages[].provisionalD1` passes through the latest typed Stage status snapshot unchanged; it is closed-minute progress, not a pre-drain D1 verdict.
-Its offered denominator includes only frozen requests whose producer start + scheduled offset + workload client `socketSeconds` timeout is at or before `closedThrough`; missing results in that closed set remain `unfinishedOrUnsent`.
+Its offered denominator includes frozen requests whose producer start + scheduled offset is at or before `closedThrough`; `unfinishedOrUnsent` is an `asOf` observation including in-flight or missing-result requests, not settled losses. Final D1 uses HTTP-receipt-origin elapsed time, so later results/finals may increase deadline successes.
 The evaluation service reads child EvaluationStages through its existing reader,
 in recorded `childRefs` order, matching name and UID; unreferenced, deleted, or
 replaced children are not projected. Procedure order is preserved as recorded.

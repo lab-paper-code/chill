@@ -995,8 +995,12 @@ spec:
                   projection, not a verdict.
                 properties:
                   asOf:
+                    description: AsOf is the snapshot time; unfinished counts may
+                      change in later snapshots.
                     type: string
                   closedThrough:
+                    description: ClosedThrough bounds raw closed minutes and scheduled
+                      arrivals, not request completion.
                     type: string
                   generatorQuality:
                     additionalProperties:
@@ -1201,6 +1205,8 @@ spec:
                           format: int64
                           type: integer
                         offered:
+                          description: Offered counts frozen arrivals scheduled at
+                            or before ClosedThrough.
                           format: int64
                           type: integer
                         outcomes:
@@ -1281,6 +1287,9 @@ spec:
                             type: object
                           type: array
                         unfinishedOrUnsent:
+                          description: |-
+                            UnfinishedOrUnsent counts requests without a suitable completed HTTP final as of the snapshot,
+                            including requests still in flight or without a client result. It is not a settled loss count.
                           format: int64
                           type: integer
                       required:

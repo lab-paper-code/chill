@@ -15,6 +15,7 @@ import time
 from types import SimpleNamespace, MethodType
 
 import input_snapshot
+import evidence_io
 import judgment
 import publication
 
@@ -112,8 +113,7 @@ class Harness:
         controller.monitor = MethodType(monitor, controller)
         controller.run()
         phase = input_snapshot.load(self.root / 'measured/phase.json')
-        parser = input_snapshot.module('evaluation_start_times', HERE / 'raw.py')._time
-        starts = [parser(value['at']) for value in phase['starts'].values()]
+        starts = [evidence_io.timestamp_ns(value['at']) for value in phase['starts'].values()]
         skew = max(starts) - min(starts) if starts else 0
         input_snapshot.save(self.root / 'measured/generator-barrier.json',
              {'startSkewNanos': skew, 'maximumStartSkewNanos': self.spec['loadGenerator']['barrier']['maxStartSkewNanos'],

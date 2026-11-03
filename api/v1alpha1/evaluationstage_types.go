@@ -180,7 +180,9 @@ type EvaluationProducerReference struct {
 
 // EvaluationProvisionalD1 is the latest closed-minute request projection, not a verdict.
 type EvaluationProvisionalD1 struct {
-	AsOf             string                                   `json:"asOf"`
+	// AsOf is the snapshot time; unfinished counts may change in later snapshots.
+	AsOf string `json:"asOf"`
+	// ClosedThrough bounds raw closed minutes and scheduled arrivals, not request completion.
 	ClosedThrough    string                                   `json:"closedThrough"`
 	Provisional      bool                                     `json:"provisional"`
 	Workloads        map[string]EvaluationProvisionalRequests `json:"workloads"`
@@ -188,14 +190,17 @@ type EvaluationProvisionalD1 struct {
 }
 
 type EvaluationProvisionalRequests struct {
-	Offered                int64                           `json:"offered"`
-	DeadlineSuccess        int64                           `json:"deadlineSuccess"`
-	RequiredSuccessfulRank int64                           `json:"requiredSuccessfulRank"`
-	Outcomes               map[string]int64                `json:"outcomes"`
-	UnfinishedOrUnsent     int64                           `json:"unfinishedOrUnsent"`
-	SLO                    EvaluationRequestSLO            `json:"slo"`
-	Reachable              bool                            `json:"reachable"`
-	Substages              []EvaluationProvisionalSubstage `json:"substages"`
+	// Offered counts frozen arrivals scheduled at or before ClosedThrough.
+	Offered                int64            `json:"offered"`
+	DeadlineSuccess        int64            `json:"deadlineSuccess"`
+	RequiredSuccessfulRank int64            `json:"requiredSuccessfulRank"`
+	Outcomes               map[string]int64 `json:"outcomes"`
+	// UnfinishedOrUnsent counts requests without a suitable completed HTTP final as of the snapshot,
+	// including requests still in flight or without a client result. It is not a settled loss count.
+	UnfinishedOrUnsent int64                           `json:"unfinishedOrUnsent"`
+	SLO                EvaluationRequestSLO            `json:"slo"`
+	Reachable          bool                            `json:"reachable"`
+	Substages          []EvaluationProvisionalSubstage `json:"substages"`
 }
 
 type EvaluationRequestSLO struct {

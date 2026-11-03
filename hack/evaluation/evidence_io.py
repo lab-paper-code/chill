@@ -4,6 +4,21 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
+
+_STAMP = re.compile(r'^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$')
+_EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+
+
+def timestamp_ns(value):
+    """Parse RFC3339Nano without rounding boundary decisions to float seconds."""
+    match = _STAMP.fullmatch(value) if isinstance(value, str) else None
+    if not match:
+        raise ValueError('missing/invalid RFC3339Nano timestamp')
+    base, fraction, zone = match.groups()
+    instant = dt.datetime.fromisoformat(base + ('+00:00' if zone == 'Z' else zone))
+    delta = instant.astimezone(dt.timezone.utc) - _EPOCH
+    return (delta.days * 86400 + delta.seconds) * 1000000000 + int((fraction or '').ljust(9, '0'))
 
 
 def module(name, path):

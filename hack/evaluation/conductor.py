@@ -221,7 +221,7 @@ class ProvisionalD1:
         target = self.folder / 'provisional-inputs' / str(time.time_ns())
         try:
             cutoff = self.archive.collect_requests_snapshot(target, phase, self.io, self.config['timeboxes']['apiSeconds'])
-            if self.closed_through and parse_ns(cutoff) <= parse_ns(self.closed_through):
+            if self.closed_through and evidence_io.timestamp_ns(cutoff) <= evidence_io.timestamp_ns(self.closed_through):
                 raise ValueError('Stale closed-minute request snapshot')
             clients = {}
             for workload in self.config['workloads']:
@@ -395,7 +395,6 @@ class CPO:
 
     def run(self):
         stage = next(row for row in self.b['schedule'] if row['id'] == self.a.stage)
-        parse_ns = evidence_io.module('evaluation_run_time', HERE / 'raw.py')._time
         folder = Path(self.c['evaluation']['stageFolder'])
         if folder.exists():
             raise RuntimeError('FrozenInputInvalid: no implicit stage overwrite/retry')
@@ -501,7 +500,7 @@ class CPO:
                     for name, pod in pods.items():
                         current = self.io.k(['get', 'pod', pod['metadata']['name'], '-o', 'json'])
                         self.assert_pod(current, pod)
-                        if time.time_ns() >= parse_ns(ready[name]['at']) + round(ready[name]['barrierSeconds'] * 1e9):
+                        if time.time_ns() >= evidence_io.timestamp_ns(ready[name]['at']) + round(ready[name]['barrierSeconds'] * 1e9):
                             raise RuntimeError('BarrierTimeout: Ready expired')
                     phase['goUTC'] = evidence_io.now()
                     for pod in pods.values():
@@ -513,8 +512,8 @@ class CPO:
                     self.record_go(folder, jobs, pods, phase['goUTC'])
                     deadline = time.monotonic() + stage['seconds'] + self.tb['drainSeconds'] + self.tb['collectSeconds']
                 if jobs and len(phase['starts']) == len(jobs):
-                    phase['startUTC'] = min(phase['starts'].values(), key=lambda row: parse_ns(row['at']))['at']
-                    end_ns = max(parse_ns(row['at']) for row in phase['starts'].values()) + round(stage['seconds'] * 1e9)
+                    phase['startUTC'] = min(phase['starts'].values(), key=lambda row: evidence_io.timestamp_ns(row['at']))['at']
+                    end_ns = max(evidence_io.timestamp_ns(row['at']) for row in phase['starts'].values()) + round(stage['seconds'] * 1e9)
                     seconds, nanos = divmod(end_ns, 1000000000)
                     phase['endUTC'] = dt.datetime.fromtimestamp(seconds, dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + f'.{nanos:09d}+00:00'
                     counters = self.sample_resources(telemetry, deadline, phase)
@@ -551,7 +550,7 @@ class CPO:
             if not phase['drain']['complete']:
                 cutoff = evidence_io.now()
                 phase['plannedEndUTC'] = phase['endUTC']
-                if phase['endUTC'] and parse_ns(phase['endUTC']) > parse_ns(cutoff):
+                if phase['endUTC'] and evidence_io.timestamp_ns(phase['endUTC']) > evidence_io.timestamp_ns(cutoff):
                     phase['endUTC'] = cutoff
                 # Stop only exact recorded evaluator Job UIDs; cleanup failure
                 # stays a safety hold, but does not destroy collected facts.

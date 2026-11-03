@@ -179,15 +179,17 @@ controller와 Job의 단계 증거는 `experiments/<UID>/stages/<stageID>/...`�
 실행 중 D1은 `EvaluationStage.status.provisionalD1`의 선택적 최신 스냅샷이다.
 conductor는 기존 `timeboxes.flushSeconds` 간격으로 새 닫힌 분을 확인하고,
 `provisional-inputs/`에 requests만 별도 수집한다. raw.py의 dedup/final index와
-최종 judgment의 순수 request reducer를 공유한다. 잠정 분모는 workload의 실제
-producer 시작 시각 + 동결 scheduledOffset + 기존 client timeout(`socketSeconds`)이
-`closedThrough` 이하인 요청만 포함한다. timeout 전 요청은 result가 있어도 제외하고,
-이미 닫힌 요청에 result가 없으면 `unfinishedOrUnsent`로 센다.
-`asOf`는 계산 시각, `closedThrough`는 서버의 닫힌 분 cutoff다.
+최종 judgment의 순수 request reducer를 공유한다. 잠정 분모는 실제 producer 시작
+시각 + 동결 scheduledOffset이 `closedThrough` 이하인 요청만 포함한다.
+최종 D1의 deadline은 scheduled offset이 아니라 HTTP receipt부터 final까지의
+`elapsedNanos`를 사용하므로 예정 시각이나 socket timeout으로 완료 상한을 만들지 않는다.
+`unfinishedOrUnsent`는 `asOf` 시점 기준이며, result/final이 아직 없는 진행 중 요청도
+포함한다. 뒤늦은 result와 raw final로 같은 요청의 deadlineSuccess가 증가할 수 있다.
+`asOf`는 계산 시각, `closedThrough`는 서버의 닫힌 분 cutoff이며 요청 완료 보장이 아니다.
 분 경계가 바뀌거나 부분 수집이면 이전 성공 스냅샷을 유지하고 오류를 기록한다.
 workloads/substages는 최종 KPI와 같은 이름을 쓰되 drain 전 `D1` 판정은 싣지 않는다.
 `reachable`은 나머지 미확정 요청이 모두 성공할 때 요구 순위에 도달 가능한지다.
-generatorQuality는 닫힌 요청의 result 행만으로 최종과 같은 issuance_fidelity 함수에서 계산한다.
+generatorQuality는 선택된 예정 도착의 현재 result 행으로 최종과 같은 issuance_fidelity 함수에서 계산한다.
 Stage UID JSON-patch test 후 이 필드만 status patch한다(action SA의 추가 권한은
 `evaluationstages/status: patch`). lifecycle·measurement는 controller 소유 그대로다.
 로컬 latest JSON은 원자 교체하고 최종 raw evidence와 불변 publication은 덮어쓰지 않는다.

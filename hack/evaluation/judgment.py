@@ -14,7 +14,6 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
     """Pure request judgment shared by provisional and drained publication."""
     stage = phase['stage']
     analysis = evidence_io.module('evaluation_analysis', HERE / 'request_analysis.py')
-    raw = evidence_io.module('evaluation_request_time', HERE / 'raw.py') if closed_through is not None else None
     results = {}
     for workload in config['workloads']:
         name = workload['name']
@@ -23,8 +22,7 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
         if closed_through is not None:
             count = 0
             if trace['offsetsNS']:
-                horizon = (raw._time(closed_through) - raw._time(phase['starts'][name]['at'])
-                           - round(workload['socketSeconds'] * 1e9))
+                horizon = evidence_io.timestamp_ns(closed_through) - evidence_io.timestamp_ns(phase['starts'][name]['at'])
                 count = bisect_right(trace['offsetsNS'], horizon)
             trace = {**trace, 'offsetsNS': trace['offsetsNS'][:count], 'offered': count}
             rows = [row for row in rows if type(row.get('requestIndex')) is int and 0 <= row['requestIndex'] < count]
