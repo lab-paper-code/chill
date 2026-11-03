@@ -35,6 +35,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func withSchedulerEstimateFixture(settings serving.SchedulerSettings) serving.SchedulerSettings {
+	settings.DefaultOperationCost = map[string]serving.OperationCostValue{
+		operationPrepare: {Seconds: 852, Joules: 36371},
+		operationRemove:  {Seconds: 13, Joules: 1014},
+		operationPower:   {Seconds: 166, Joules: 2229},
+	}
+	settings.DefaultIdlePower = &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8}
+	return settings
+}
+
 // schedulerCaptureClockController serves one Node and one instance; onLiveNodes
 // runs when capture lists the Nodes, after its observer refresh.
 func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) *SchedulerController {
@@ -107,7 +117,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog,
 		runs: map[string]*actionRun{}, config: SchedulerControllerConfig{
-			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100},
+			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100}),
 		}}
 }
 
@@ -234,10 +244,10 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	}
 	controller, err := NewSchedulerController(manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
-			Settings: serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
+			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
 				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
-					Routing: true, Batching: true, Power: true}},
+					Routing: true, Batching: true, Power: true}}),
 			Baselines: []serving.NodeBaseline{{ID: "empty-pool-idle", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)},
 				PowerMode: "fixed", Watts: 10, Meter: "node-wall", Scope: "node-exclusive-wall", MeasuredAt: time.Now(),
 				Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "empty-pool-idle", Size: 1}}},

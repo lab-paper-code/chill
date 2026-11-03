@@ -144,9 +144,9 @@ func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 }
 
 func TestCapacityBridgePreservesSupplyReserveAndPhysicalLimitsAC45(t *testing.T) {
-	for _, constraint := range []string{"steady bridge supply", "physical slots", "bridge replica budget", "reserve", "routing disabled", "missing bridge cost"} {
+	for _, constraint := range []string{"steady bridge supply", "physical slots", "bridge replica budget", "reserve", "routing disabled"} {
 		t.Run(constraint, func(t *testing.T) {
-			s, snap, rows, _, bridge := capacityBridgeFixture(t)
+			s, snap, rows, _, _ := capacityBridgeFixture(t)
 			switch constraint {
 			case "steady bridge supply":
 				s.MinimumDemand["w2"] = 101
@@ -158,8 +158,6 @@ func TestCapacityBridgePreservesSupplyReserveAndPhysicalLimitsAC45(t *testing.T)
 				s.TransitionReserveFraction = .1
 			case "routing disabled":
 				s.Controls.Routing = false
-			case "missing bridge cost":
-				snap.Costs = slices.DeleteFunc(snap.Costs, func(cost OperationCost) bool { return cost.Node == bridge.Node })
 			}
 			got := capacityDecideForTest(t, s, snap, rows)
 			if got.Target == nil {
@@ -171,5 +169,22 @@ func TestCapacityBridgePreservesSupplyReserveAndPhysicalLimitsAC45(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func TestCapacityBridgeMissingCostUsesLabeledEstimate(t *testing.T) {
+	s, snap, rows, _, bridge := capacityBridgeFixture(t)
+	snap.Costs = slices.DeleteFunc(snap.Costs, func(cost OperationCost) bool { return cost.Node == bridge.Node })
+	got := capacityDecideForTest(t, s, snap, rows)
+	if got.Target == nil || !slices.ContainsFunc(got.Target.Actions, func(a Action) bool { return a.RouteTarget != nil }) {
+		t.Fatal("missing measurement blocked the safe intermediate route")
+	}
+	index := slices.IndexFunc(got.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionPrepare && a.Node == bridge.Node })
+	if index < 0 {
+		t.Fatal("bridge preparation missing")
+	}
+	prepare := got.Target.Actions[index]
+	if prepare.CostProvenance == nil || prepare.CostProvenance.Source == operationSourceExact {
+		t.Fatalf("transferred/default bridge estimate lacks provenance: %+v", prepare)
 	}
 }

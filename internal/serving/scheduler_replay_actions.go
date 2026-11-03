@@ -208,8 +208,14 @@ func (s *schedulerReplayState) startOperation(a *schedulerReplayAction) bool {
 	if cost == nil {
 		return false
 	}
-	if !s.sampleOperation(a, cost) || !s.adjustOperationBackground(a, cost) {
+	if !s.sampleOperation(a, cost) {
 		return false
+	}
+	if !s.adjustOperationBackground(a, cost) {
+		cost = s.defaultOperation(a, "incompatible operation background estimate")
+		if !s.sampleOperation(a, cost) {
+			return false
+		}
 	}
 	duration := float64(a.trial.Duration) - float64(a.action.Elapsed)
 	a.started = true
@@ -221,36 +227,33 @@ func (s *schedulerReplayState) startOperation(a *schedulerReplayAction) bool {
 }
 
 func (s *schedulerReplayState) operationCost(a *schedulerReplayAction) *OperationCost {
+	if cost := actionDefaultCost(a.action); cost != nil {
+		s.out.assumptions = appendUnique(s.out.assumptions, "configured default whole-wall operation cost; not a measurement")
+		return cost
+	}
 	cost := schedulerCost(s.snap.Costs, a.action.CostID)
-	if cost == nil || cost.Meter == "" || cost.Scope != schedulerNodeWallScope || len(cost.Trials) == 0 {
-		s.out.reasons = append(s.out.reasons, "MissingOperationCost:"+a.action.ID)
-		return nil
-	}
-	if cost.Reference.Validate() != nil {
-		s.out.reasons = append(s.out.reasons, "MissingOperationRawSource:"+a.action.ID)
-		return nil
-	}
-	if cost.Node != a.action.Node || cost.Kind != a.action.Kind || schedulerCostState(cost.From) != schedulerCostState(a.action.From) ||
-		schedulerCostState(cost.To) != schedulerCostState(a.action.To) {
-		s.out.reasons = append(s.out.reasons, "OperationConditionMismatch:"+a.action.ID)
-		return nil
-	}
-	if a.action.Kind == schedulerActionPower {
-		state := []string{}
-		for _, i := range s.instances {
-			if i.loaded && i.config.Node == a.action.Node {
-				state = append(state, schedulerState(i.config))
+	_, _, _, valid := capacityOperationCost(cost)
+	if valid {
+		identities := schedulerMeasurementIdentities(s.snap, nil)
+		nearest := a.action.CostProvenance != nil && (a.action.CostProvenance.Source == operationSourceNode || a.action.CostProvenance.Source == operationSourceDeviceClass)
+		valid = cost.Reference.Validate() == nil && cost.Kind == a.action.Kind &&
+			(nearest || cost.Node.UID == a.action.Node.UID && measurementOperationMatches(*cost, a.action, identities))
+		if valid && !nearest && a.action.Kind == schedulerActionPower {
+			state := []string{}
+			for _, i := range s.instances {
+				if i.loaded && i.config.Node.UID == a.action.Node.UID {
+					state = append(state, schedulerState(i.config))
+				}
 			}
+			valid = measurementEqualState(state, cost.BeforeState, identities) && measurementEqualState(state, cost.TargetState, identities)
+		} else if valid && !nearest {
+			valid = cost.PowerMode != "" && cost.PowerMode == schedulerNodeMode(s.nodes, a.action.Node)
 		}
-		if !schedulerEqualState(state, cost.BeforeState) || !schedulerEqualState(state, cost.TargetState) {
-			s.out.reasons = append(s.out.reasons, "PowerLoadedWitnessMismatch:"+a.action.ID)
-			return nil
-		}
-	} else if cost.PowerMode == "" || cost.PowerMode != schedulerNodeMode(s.nodes, a.action.Node) {
-		s.out.reasons = append(s.out.reasons, "OperationHostModeMismatch:"+a.action.ID)
-		return nil
 	}
-	return cost
+	if valid {
+		return cost
+	}
+	return s.defaultOperation(a, "missing or unmatched operation measurement")
 }
 
 func (s *schedulerReplayState) sampleOperation(a *schedulerReplayAction, cost *OperationCost) bool {
@@ -265,26 +268,26 @@ func (s *schedulerReplayState) sampleOperation(a *schedulerReplayAction, cost *O
 		trialOptions = append(trialOptions, t)
 	}
 	if len(trialOptions) == 0 {
-		s.out.reasons = append(s.out.reasons, "OperationElapsedOutsideProfileRange:"+a.action.ID)
-		return false
+		return s.sampleOperation(a, s.defaultOperation(a, "operation exceeded measured duration"))
 	}
 	a.trial = trialOptions[s.rng.IntN(len(trialOptions))]
 	duration := float64(a.trial.Duration)
 	a.wallRate = a.trial.Joules / duration
 	if cost.EnergyScope == "target-baseline-delta" {
 		if cost.SubtractedWatts == nil || !schedulerFinite(*cost.SubtractedWatts) {
-			s.out.reasons = append(s.out.reasons, "UnknownEtaSubtraction:"+a.action.ID)
-			return false
+			return s.sampleOperation(a, s.defaultOperation(a, "unknown measured energy subtraction"))
 		}
 		a.wallRate += *cost.SubtractedWatts / 1e9
 	} else if cost.EnergyScope != "whole-wall" {
-		s.out.reasons = append(s.out.reasons, "UnknownOperationEnergyScope:"+a.action.ID)
-		return false
+		return s.sampleOperation(a, s.defaultOperation(a, "unknown measured energy scope"))
 	}
 	return true
 }
 
 func (s *schedulerReplayState) adjustOperationBackground(a *schedulerReplayAction, cost *OperationCost) bool {
+	if a.action.CostProvenance != nil && a.action.CostProvenance.Source != operationSourceExact {
+		return true
+	}
 	state := []string{}
 	active := []SchedulerInstance{}
 	var node SchedulerNode
@@ -306,21 +309,21 @@ func (s *schedulerReplayState) adjustOperationBackground(a *schedulerReplayActio
 		if a.action.Kind == schedulerActionRemove {
 			focal = a.action.From
 		}
-		for j, s := range measured {
-			if schedulerCostState(s) == schedulerCostState(focal) {
-				removedFocal = s
+		identities := schedulerMeasurementIdentities(s.snap, nil)
+		for j, measuredState := range measured {
+			if MeasurementStateIdentity(measuredState, identities) == MeasurementStateIdentity(focal, identities) {
+				removedFocal = measuredState
 				measured = append(measured[:j], measured[j+1:]...)
 				break
 			}
 		}
 	}
-	if !schedulerEqualState(state, measured) {
+	if !measurementEqualState(state, measured, schedulerMeasurementIdentities(s.snap, nil)) {
 		if !s.adjustOperationBaseline(a, cost, node, active, removedFocal) {
 			return false
 		}
 	}
 	if a.wallRate < 0 {
-		s.out.reasons = append(s.out.reasons, "InvalidOperationWallEnergy:"+a.action.ID)
 		return false
 	}
 	return true
@@ -328,33 +331,29 @@ func (s *schedulerReplayState) adjustOperationBackground(a *schedulerReplayActio
 
 func (s *schedulerReplayState) adjustOperationBaseline(a *schedulerReplayAction, cost *OperationCost, node SchedulerNode, active []SchedulerInstance, removedFocal string) bool {
 	if cost.BeforeBaselineWatts == nil || !schedulerFinite(*cost.BeforeBaselineWatts) || *cost.BeforeBaselineWatts < 0 {
-		s.out.reasons = append(s.out.reasons, "MissingOperationBackgroundBaseline:"+a.action.ID)
 		return false
 	}
 	before := *cost.BeforeBaselineWatts
 	if removedFocal != "" {
 		focal, ok := s.byID[a.action.Instance]
-		if !ok || schedulerState(focal.config) != removedFocal {
-			s.out.reasons = append(s.out.reasons, "MissingMeasuredOperationFocalState:"+a.action.ID)
+		if !ok || MeasurementStateIdentity(schedulerState(focal.config), schedulerMeasurementIdentities(s.snap, nil)) != MeasurementStateIdentity(removedFocal, schedulerMeasurementIdentities(s.snap, nil)) {
 			return false
 		}
-		loaded, meter, ss, as, reason := schedulerBaseline(s.snap.Baselines, node, []SchedulerInstance{focal.config}, s.snap.Options)
-		unloaded, um, us, ua, ur := schedulerBaseline(s.snap.Baselines, node, nil, s.snap.Options)
-		if reason != "" || ur != "" || meter != cost.Meter || um != meter {
-			s.out.reasons = append(s.out.reasons, "OperationFocalBaselineScopeMismatch:"+a.action.ID)
+		loaded, meter, ss, as := schedulerBaseline(s.settings, s.snap.Baselines, node, []SchedulerInstance{focal.config}, s.snap.Options)
+		unloaded, um, us, ua := schedulerBaseline(s.settings, s.snap.Baselines, node, nil, s.snap.Options)
+		if meter != cost.Meter || um != meter {
 			return false
 		}
 		before -= loaded - unloaded
-		s.out.sources = appendUnique(s.out.sources, append(ss, us...)...)
+		s.out.sources = appendUnique(s.out.sources, append(ss.References, us.References...)...)
 		s.out.assumptions = appendUnique(s.out.assumptions, append(as, ua...)...)
 	}
-	watts, meter, sources, assumptions, reason := schedulerBaseline(s.snap.Baselines, node, active, s.snap.Options)
-	if before < 0 || reason != "" || meter != cost.Meter {
-		s.out.reasons = append(s.out.reasons, "OperationBackgroundScopeMismatch:"+a.action.ID+":"+reason)
+	watts, meter, sources, assumptions := schedulerBaseline(s.settings, s.snap.Baselines, node, active, s.snap.Options)
+	if before < 0 || meter != cost.Meter {
 		return false
 	}
 	a.wallRate += (watts - before) / 1e9
-	s.out.sources = appendUnique(s.out.sources, sources...)
+	s.out.sources = appendUnique(s.out.sources, sources.References...)
 	s.out.assumptions = appendUnique(s.out.assumptions, assumptions...)
 	s.out.assumptions = appendUnique(s.out.assumptions, "operation whole-wall adjusted by coexist background idle difference only; focal prepare/removal energy retained in measured trial, background interaction unmeasured")
 	return true

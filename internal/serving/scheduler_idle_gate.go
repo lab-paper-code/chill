@@ -46,8 +46,8 @@ func (p *capacityPlanner) reductionDemand(w capacityWorkload, choice []int) (cap
 	return w, slow
 }
 
-// idleTransition checks the actual tentative DAG as idle cleanup must not bypass
-// either horizon or reserve constraints after the search.
+// idleTransition retains window-capacity and actual-supply reserve checks for
+// idle cleanup; an estimated duration is not an execution safety veto.
 func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string]bool) (string, []SchedulerTransitionReserve) {
 	target := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: map[string]map[string]int32{}}
 	for w, ws := range p.ws {
@@ -65,47 +65,10 @@ func (p *capacityPlanner) idleTransition(best capacityResult, removed map[string
 	if !p.idleWindowAllowed(best, removed) {
 		return schedulerWindowCapacityInsufficient, nil
 	}
-	actions := schedulerPlan(p.snapshot, target)
-	ends := map[string]float64{}
-	byID := map[string]Action{}
-	for _, a := range actions {
-		byID[a.ID] = a
-	}
-	var end func(string) float64
-	reason := ""
-	end = func(id string) float64 {
-		if value, ok := ends[id]; ok {
-			return value
-		}
-		a := byID[id]
-		value := 0.0
-		for _, dep := range a.DependsOn {
-			value = max(value, end(dep))
-		}
-		if a.Status != schedulerActionComplete && a.Status != schedulerActionCancel {
-			switch a.Kind {
-			case schedulerActionPrepare, schedulerActionRemove, schedulerActionPower:
-				_, longest, _, ok := capacityOperationCost(schedulerCost(p.snapshot.Costs, a.CostID))
-				if !ok {
-					reason = schedulerPlanMissingOperationCost
-				}
-				value += longest
-			}
-		}
-		ends[id] = value
-		return value
-	}
-	for _, a := range actions {
-		if end(a.ID) > p.period {
-			return schedulerTransitionHorizon, nil
-		}
-	}
-	if reason != "" {
-		return reason, nil
-	}
 	if p.settings.TransitionReserveFraction == 0 {
 		return "", nil
 	}
+	reason := ""
 	records := []SchedulerTransitionReserve{}
 	for _, ws := range p.ws {
 		affected := false

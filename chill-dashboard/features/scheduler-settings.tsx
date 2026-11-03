@@ -6,7 +6,7 @@ import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
 import type { OperationResult, PoolsView, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
-import { settingFields as fields, settingControls as controls, settingTargets, editableSettingKeys, type SettingField as Field } from "@/lib/scheduler-settings"
+import { settingFields as fields, settingControls as controls, settingTargets, writableSettingKeys, type SettingField as Field } from "@/lib/scheduler-settings"
 import { safeSource } from "@/lib/source-export"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
 import { Screen, Rows, Row, RowDialog, Facts, Empty } from "@/components/screen"
@@ -65,9 +65,9 @@ export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
   return <Facts items={[["CHILL 자동 운영 서비스",autonomous(settings)],["계획 제외 장비",excludedNodes(settings)],...Object.entries(settings.minimumDemand??{}).map(([uid,rate])=>[`최소 수요 · ${uid}`,`${rate} req/s`] as [string,string]),...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
 }
 
-// The settings page is the only caller. Only editable fields cross the PUT boundary.
+// The settings page is the only caller. Editable and preserved server settings cross PUT.
 export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Promise<RelayResponse>,client:QueryClient,settings:SchedulerSettings,version?:string|null) {
-  const body=Object.fromEntries(editableSettingKeys.filter(key=>Object.hasOwn(settings,key)).map(key=>[key,settings[key]]))
+  const body=Object.fromEntries(writableSettingKeys.filter(key=>Object.hasOwn(settings,key)).map(key=>[key,settings[key]]))
   const response=await mutate({path:"v1/scheduler/settings",method:"PUT",body:stringifySchedulerJSON(body),...(version?{version}:{})})
   const applied=parseSchedulerJSON(response.body) as SchedulerSettingsChange
   await client.invalidateQueries({predicate:query=>typeof query.queryKey[1]==="string"&&(query.queryKey[1].startsWith("v1/scheduler")||query.queryKey[1].startsWith("v1/observations/scheduler"))})
