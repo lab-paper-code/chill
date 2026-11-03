@@ -26,7 +26,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 SETTINGS = '/api/v1/scheduler/settings'
 # GET projects these read-only fields beside the writable SchedulerSettings.
-SETTINGS_PROJECTIONS = {'staticRouting', 'powerObservation', 'meters', 'requestTimeout'}
+SETTINGS_PROJECTIONS = {'staticRouting', 'staticRoutingValidatedAt', 'powerObservation', 'meters', 'requestTimeout'}
 
 
 def module(name, path):

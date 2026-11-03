@@ -29,11 +29,16 @@ START = '2026-11-03T00:00:00Z'
 END = '2026-11-03T00:00:10Z'
 
 
+# Server truth: settings GET projections that PUT rejects (httpapi/scheduler.go).
+SERVER_READ_ONLY = {'staticRouting', 'staticRoutingValidatedAt', 'powerObservation', 'meters', 'requestTimeout'}
+
+
 class SettingsAPI:
     def __init__(self):
         self.value = {'controls': {'power': True, 'routing': True, 'replicas': True}, 'controlIntervalNanos': 30,
                       'minimumDemand': {'other': 7, 'remove': 9}, 'autonomousWorkloads': ['one'],
-                      'meters': ['read-only'], 'requestTimeout': 999, 'staticRouting': {}, 'powerObservation': {}}
+                      'meters': ['read-only'], 'requestTimeout': 999, 'staticRouting': {}, 'powerObservation': {},
+                      'staticRoutingValidatedAt': '2026-11-03T00:00:00Z'}
         self.calls, self.reject_codes = [], []
         self.fail_put = self.drift = self.transport_error = self.omit_get_etag = False
         self.revision = 1
@@ -58,9 +63,10 @@ class SettingsAPI:
             error = {'code': 'SettingsPreconditionRequired' if code == 428 else 'SettingsConflict' if code == 409 else 'Forbidden'}
             metadata.update(statusCode=code, etag='"' + str(self.revision) + '"', body=error)
             raise urllib.error.HTTPError('https://settings.invalid' + path, code, error['code'], {}, None)
-        assert not set(body) & conductor.SETTINGS_PROJECTIONS
+        # Mirrors the live server: GET adds these projections, PUT rejects them.
+        assert not set(body) & SERVER_READ_ONLY, set(body) & SERVER_READ_ONLY
         before = copy.deepcopy(self.value)
-        projection = {key: value for key, value in self.value.items() if key in conductor.SETTINGS_PROJECTIONS}
+        projection = {key: value for key, value in self.value.items() if key in SERVER_READ_ONLY}
         self.value = self.normalize({**copy.deepcopy(body), **projection})
         self.revision += 1
         result = {'before': before, 'after': copy.deepcopy(self.value), 'appliedAt': START}
