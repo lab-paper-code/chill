@@ -26,7 +26,7 @@ function elements(node: unknown): Element[] {
 }
 const idle = { desired: { metadata: { name: "idle", uid: "service-uid" }, spec: { modelRef: { name: "model" }, preprocessorRef: { name: "input" }, slo: { percentile: 95, targetLatency: "1s" } } }, admission: true, readiness: "Ready", pending: 0, assigned: 0, reason: "", supportedInputs: [], observedAt: "2026-11-01T00:00:00Z" } as unknown as WorkloadView
 function harness(query="", responses: Record<string, unknown>={}) {
-  const paths: string[] = [], replacements: string[] = []
+  const paths: string[] = [], replacements: string[] = [], writes: unknown[] = []
   const modules: Record<string, unknown> = {
     react: { useState: (value: unknown) => [typeof value === "function" ? value() : value, () => {}], useMemo: (value: () => unknown) => value() },
     "next/link": { default: "a" },
@@ -35,7 +35,7 @@ function harness(query="", responses: Record<string, unknown>={}) {
     "@/lib/domain": domain, "@/lib/labels": labels, "@/lib/scheduler": scheduler,
     "@/lib/live-display":liveDisplay,
     "@/lib/use-live":{useLive:()=>responses.live??{state:{snapshot:null}}},
-    "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return responses[path] ?? { data: path === "v1/workloads?view=summary" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false }) },
+    "@/lib/client": { useSession: () => ({config:{inferTimeoutMs:129000,maxRequestBytes:8388608,pageSize:25}}), useChillQuery: (path: string) => { paths.push(path); return responses[path] ?? { data: path === "v1/workloads?view=summary" ? [idle] : path.endsWith("/idle") ? idle : undefined, error: null } }, useChillMutation: () => ({ isPending: false, mutateAsync: async (request:unknown) => { writes.push(request) } }) },
     "@/components/status-cell": { StatusCell: "status-cell" },
     "@/components/data-table": { DataTable: "data-table" },
     "@/components/screen": { Screen: "main", Rows: "rows", RowDialog: "row-dialog", Facts: "facts" },
@@ -48,7 +48,7 @@ function harness(query="", responses: Record<string, unknown>={}) {
   modules["@/features/service-hub"] = hub
   const management=load("../features/management.tsx", modules)
   modules["@/features/management"]=management
-  return { hub, management, inference:load("../features/inference.tsx",modules), paths, replacements }
+  return { hub, management, inference:load("../features/inference.tsx",modules), paths, replacements, writes }
 }
 
 test("idle admission remains permission, not actual traffic, in service list and detail", () => {
@@ -170,8 +170,8 @@ test("disabled unplaced preparation uses the same status in the service list and
   const table=elements(h.management.ServicesPage({})).find(element=>element.type==="data-table")!
   const column=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(row=>row.key==="ready")!
   const listCell=column.value(view)
-  assert.equal(h.hub.ServiceReadiness(listCell.props).props.label,"미배치 · 자동제어 꺼짐")
-  assert.equal(h.hub.ServiceReadiness({view}).props.label,"미배치 · 자동제어 꺼짐")
+  assert.equal(h.hub.ServiceReadiness(listCell.props).props.label,"미배치 · CHILL 자동 운영 꺼짐")
+  assert.equal(h.hub.ServiceReadiness({view}).props.label,"미배치 · CHILL 자동 운영 꺼짐")
 })
 
 test("management readiness never substitutes stale live control or placement for REST facts",()=>{
@@ -184,7 +184,7 @@ test("management readiness never substitutes stale live control or placement for
     {"v1/scheduler/settings":{data:{autonomousWorkloads:[]}},"v1/pools":{data:{workloads:[{workload:{uid:"service-uid"},instances:null}],issues:[]}}},
   ]) {
     const h=harness("",{...rest,live})
-    assert.notEqual(h.hub.ServiceReadiness({view}).props.label,"미배치 · 자동제어 꺼짐")
+    assert.notEqual(h.hub.ServiceReadiness({view}).props.label,"미배치 · CHILL 자동 운영 꺼짐")
   }
 })
 
@@ -204,16 +204,58 @@ test("autonomy distinguishes failed query, pending query, absent decision and di
     [{error:{message:"offline"}},{autonomousWorkloads:["service-uid"]},"운영 판단 조회 실패"],
     [{isPending:true},{autonomousWorkloads:["service-uid"]},"운영 판단 조회 중"],
     [{data:{state:{decision:{}}}},{autonomousWorkloads:["service-uid"]},"이 서비스의 판단 기록 없음"],
-    [{data:{state:{decision:{}}}},{autonomousWorkloads:[]},"자동제어 꺼짐"],
+    [{data:{state:{decision:{}}}},{autonomousWorkloads:[]},"CHILL 자동 운영 꺼짐"],
   ] as const){
     const h=harness("",{"v1/scheduler":response,"v1/scheduler/settings":{data:settings}})
     const facts=elements(h.management.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
-    const rows=(facts.props.items as [string,Element][]).find(([key])=>key==="자동제어")![1]
+    const rows=(facts.props.items as [string,Element][]).find(([key])=>key==="CHILL 자동 운영")![1]
     const autonomy=elements(rows).find(node=>typeof node.type==="function")!
     const tree=(autonomy.type as Component)(autonomy.props)
     const state=elements(tree).find(node=>node.type==="facts")!
     assert.equal((state.props.items as [string,string][])[0][1],label)
   }
+})
+
+test("service autonomy navigates to central settings without a switch or write",()=>{
+  const uid="service /?&한글",view={...idle,desired:{...idle.desired,metadata:{...idle.desired.metadata,uid}}}
+  const h=harness("",{"v1/workloads?view=summary":{data:[view]},"v1/workloads/idle":{data:view},"v1/scheduler/settings":{data:{autonomousWorkloads:[uid]}}})
+  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const columns=table.props.columns as {key:string;label:string;value:(view:WorkloadView)=>Element}[]
+  const column=columns.find(row=>row.key==="autonomy")!
+  assert.equal(column.label,"CHILL 자동 운영")
+  const detail=elements(h.management.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
+  const rows=(detail.props.items as [string,Element][]).find(([key])=>key==="CHILL 자동 운영")![1]
+  const autonomy=elements(rows).find(node=>typeof node.type==="function")!
+  const tree=(autonomy.type as Component)(autonomy.props)
+  assert.equal(tree.props.title,"CHILL 자동 운영")
+  for(const link of [column.value(view),elements(tree).find(node=>node.type==="a")!]){
+    const url=new URL(link.props.href as string,"https://dashboard.invalid")
+    assert.equal(url.pathname,"/settings")
+    assert.equal(url.searchParams.get("section"),"targets")
+    assert.equal(url.searchParams.get("edit"),"autonomousWorkloads")
+    assert.equal(url.searchParams.get("workload"),uid)
+  }
+  assert.equal(elements(tree).some(node=>node.props.role==="switch"||node.type==="input"||typeof node.props.onChange==="function"),false)
+  assert.deepEqual(h.writes,[])
+})
+
+test("operation column appears only for ongoing changes and absent operations are muted",()=>{
+  for(const operation of [undefined,{kind:"Update",phase:"Completed"},{kind:"Update",phase:"Failed"}]){
+    const view={...idle,operation} as WorkloadView
+    const h=harness("",{"v1/workloads?view=summary":{data:[view]}})
+    const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+    assert.equal((table.props.columns as {key:string}[]).some(column=>column.key==="operation"),false)
+  }
+  const changing={...idle,operation:{kind:"Update",phase:"Pending"}} as WorkloadView
+  const h=harness("",{"v1/workloads?view=summary":{data:[idle,changing]}})
+  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const operation=(table.props.columns as {key:string;label:string;value:(view:WorkloadView)=>Element|string}[]).find(column=>column.key==="operation")!
+  assert.equal(operation.label,"변경 작업 진행")
+  assert.equal((operation.value(idle) as Element).props.className,"text-muted-foreground")
+  assert.equal(typeof operation.value(changing),"string")
+  const detail=elements(h.management.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
+  const absent=(detail.props.items as [string,Element][]).find(([key])=>key==="변경 작업 진행")![1]
+  assert.equal(absent.props.className,"text-muted-foreground")
 })
 
 test("JPEG input leads with a user label and retains its original contract key",()=>{

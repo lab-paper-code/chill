@@ -17,7 +17,7 @@ test("R18 zero evaluation is not SLO success and identical keep targets appear o
   assert.equal(display.candidateEvaluation({...candidate,slo:[{uid:"w",definition:"d",samples:3,percentile:95,expectedNanos:1,targetNanos:2,normalizedExceedance:0,predictedOutcomes:null}]}),"평가 대상 1개")
 })
 test("R18 undeployed disabled Preparing has one factual state without hiding real preparation",()=>{
-  assert.equal(display.workloadReadiness(workload,[]),"미배치 · 자동제어 꺼짐")
+  assert.equal(display.workloadReadiness(workload,[]),"미배치 · CHILL 자동 운영 꺼짐")
   assert.equal(display.workloadReadiness({...workload,autonomous:true},[]),"배치 준비 중")
   assert.equal(display.workloadReadiness(workload,[{id:"i",node:{uid:"n",name:"장치"},ownerWorkloadUID:"w",profileID:"p",ready:false,stopped:false,routable:{},running:{},waiting:{},observedAt:at}]),"배치 준비 중")
 })
