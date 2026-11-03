@@ -176,6 +176,7 @@ test("selected occupancy keeps valid zero distinct from absence and places origi
     const cells=elements(values).filter(element=>element.type==="td")
     assert.equal(text(cells[0]),recorded?"0.00":"미제공")
     assert.equal(text(cells[1]),recorded?"0":"미제공")
+    assert.doesNotMatch(text(values),/공급 방식/)
     assert.ok(children.indexOf(core)<children.findIndex(element=>element.type==="source-json"))
     assert.ok(children.filter(element=>element.type==="source-json").every(element=>element.props.inline===true))
     assert.equal(elements(tree).filter(element=>element.type==="sheet").length,1)

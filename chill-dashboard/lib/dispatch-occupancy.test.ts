@@ -224,6 +224,17 @@ test("frozen saturation sizing supplies read-only rows with exact integers and u
   }
 })
 
+test("dry-run shows only the returned native closed-loop fact, never a configurable supply mode",()=>{
+  const h=harness(),feature=load("../features/dispatch-occupancy-request.tsx",h.modules)
+  for(const supplyMode of ["closed-loop",undefined,"poisson"]) {
+    const tree=feature.OccupancyProtocol({task:{...task,spec:{...task.spec,supplyMode}}})
+    const values=new Map(nodes(tree).filter(node=>node.type==="tr").map(node=>nodes(node.props.children).filter(child=>child.type==="th"||child.type==="td").map(text) as [string,string]))
+    assert.equal(values.has("공급 방식"),false)
+    assert.equal(values.get("공급 방식 (서버 고정)"),supplyMode==="closed-loop"?"closed-loop":"미제공")
+    assert.equal(nodes(tree).some(node=>["input","select"].includes(String(node.type))),false)
+  }
+})
+
 test("dry-run protocol retains uint64 values and rejects unreadable previews before submission",()=>{
   const h=harness();click(h.render(),"검사")
   h.calls[0][0].options?.onSuccess?.({body:'{"request":"NOT_SUBMITTED","task":{"metadata":{"name":"precision"},"spec":{"seed":9007199254740993}}}'})

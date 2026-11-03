@@ -227,7 +227,7 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 | 표시 | 소스 필드 | 단위·누락 규칙 |
 |---|---|---|
 | 워크로드·측정 프로파일 참조 | `conditions.workload`, `conditions.batchEnergyOptimization` | 각각 기존 workload 상세, 같은 ns BEO 상세 연결. UID 없는 참조는 현재 이름 기준임을 명시 |
-| 배치·공급 방식·동시 송신자 | `conditions.batch`, `.supplyMode`, `.workers` | 건/batch, closed-loop=고정 동시 요청, poisson=포아송 공급, 미제공=“기록되지 않았어요”; workers=명 |
+| 배치·동시 송신자 | `conditions.batch`, `.workers` | 건/batch, workers=명. 공급 방식은 운영 정책 설정 축이 아니며 결과 조건 표에는 반복 표시하지 않는다 |
 | 예열·측정 구간 | `conditions.warmupSeconds`, `.durationSeconds` | s, 예열은 측정 시작에서 제외 |
 | 결과 전력모드 | `status.powerMode` | 없으면 “결과 없음” |
 | 요청당 분배 점유시간 d | `d.perRequestNanos` | signed 정밀 정수를 표시할 때만 ms/request로 변환한다. `d:null`과 측정된 0을 구별하고 `status`로 복원하거나 음수를 clamp하지 않는다. 정확 ns는 원본/내보내기에 보존 |
@@ -243,6 +243,8 @@ DOM 목록·단건은 `phase:null/Measuring` 동안 보이는 탭에서만 제�
 
 서버 통합 검증(2026-11-03): 실패-먼저 회귀 후 Node 24.14.0 typecheck/eslint/운영 summary 포함 테스트 500개/기본 build가 통과했다. ea6899ef 위 rebase는 충돌 없었고 Go focused Query/Server/HTTP/Kube 테스트, make lint·arch-check·test를 재실행해 통과했다. 로컬 TLS의 실제 handler·builder·service 경로에서 dry-run 200 NOT_SUBMITTED→생성 202 Accepted·동결 spec 동일성과 삭제 fence/Measuring 거절 테스트가 통과했다(인메모리 Kubernetes fixture이며 실제 Job E2E 아님). 로컬 production+운영 GET의 1440×900 렌더에서는 대표 Node를 생략한 조건 링크가 BEO 대상 genesis3로 해석됐고 API 200·콘솔 오류/가로 넘침 없음(Next prefetch abort만 관측)을 확인했다. 운영 Query는 phase/d 미배포라 결과 대기·미제공이며 새 진행값 검증이 아니다. 운영 mutation은 없었고 로컬 클러스터에는 DOM CRD·BEO가 없어 실제 Job 진행 E2E는 남는다. 서버·Query·대시보드는 함께 cutover한다.
 
+서버 리뷰 수정 `392388ff` 반영 후 `dispatchOccupancy.supplyMode` 정책 설정은 없으며 native spec의 closed-loop 고정만 유지한다. 요청 프로토콜 표는 실제 `spec.supplyMode:"closed-loop"` 응답이 있을 때만 고정 사실을 표시하고 누락 시 추정하지 않는다. 접수/삭제 API의 `Accepted`·`DeletionRequested`와 live action `phase:"completed"`는 서로 다른 축이다. 후자는 작업 접수/삭제 처리 완료이며 DOM 측정의 `phase:"Complete"`를 뜻하지 않는다.
+
 | 구역 | 정확한 필드 | 표시 단위·의미 |
 |---|---|---|
 | 결과 | `key`, `status`, `reason`, `mu`, `kappa`, `minimumServiceNanos`, `builtAt`, `elapsedNanos`, `previous` | μ·κ=req/s(μ는 처리량 상한, κ는 계산 용량); minimumServiceNanos=ns; elapsedNanos=ns와 보조 ms; builtAt=UTC/KST, zero 시각은 “계산 시각 없음”. optional 누락은 “값 없음” |
@@ -256,7 +258,7 @@ DOM 목록·단건은 `phase:null/Measuring` 동안 보이는 탭에서만 제�
 | 해석 | 보존 규칙 |
 |---|---|
 | 동작 비용 | power/prepare/idle/remove의 계획·기록 단계 수일 뿐 채택률 아님. name으로 연결하되 미매칭도 보존, evidence는 key 일치만 연결. Accepted만 채택, Complete로 재판정 금지. projection에 시간/J/모드 쌍/반복 사유 없음. |
-| d | ns 정밀 정수 보존, 주표기 ms/request 소수 둘째 자리·원본 ns 병기. 누락≠0, X는 문자열 req/s 원값. d·κ 브라우저 재계산 금지. 공급 방식 미지정과 결과 없음 구분. |
+| d | ns 정밀 정수 보존, 주표기 ms/request 소수 둘째 자리·원본 ns 병기. 누락≠0, X는 문자열 req/s 원값. d·κ 브라우저 재계산 금지. 공급 방식 원자료는 원본 응답에 보존 |
 | κ | 현재 자동제어 계산 대상이며 역사/실제 유입/SLO 실측 아님. key 고정, 삭제된 key 최신 fallback 금지. grid/bisection 응답 순서 보존; requests=창당 수, passed=합격 창 수, percentileMS=-1은 미충족/지연값 없음. 조기 종료·빈 탐색 정상. |
 | settings 대조 | 행 input과 별도 settings 최상위 completionMarginMS/capacityWindowNanos/capacityWindows/capacityPassingWindows/capacityMinimumRequests/capacityGridSteps/capacityBisectionWidth/capacityTailSamples를 정밀 비교. 행 값/현재 값/같음·다름 및 두 조회 시각; draft는 적용값 아님. settings 실패가 행을 지우지 않음. |
 | 상태·출처 | status.reason 원문 보존(없는 message 추정 금지). CapacityPending의 누락 κ는 0 아님, Built κ=0은 실제0, previous는 재계산 중 이전 결과. Measuring/Pending/previous만 보이는 동안 갱신, terminal/미확인은 수동. export는 projection·identity·필터·조회 시각이며 전체 CR/raw Evidence 아님. |

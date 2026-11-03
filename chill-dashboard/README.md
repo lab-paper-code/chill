@@ -52,7 +52,11 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 셀별 d 요청은 부분 커버리지에서도 항상 제공하며 호환성 대표 Node를 넘기지 않는다. 요청 화면은 BEO의 실제 `targetNode`로 Node를 제한한다. 선택적 요청 이름도 검사 identity에 포함되므로 같은 조건의 재측정은 새 이름으로 검사해 과거 실패를 보존한다. profile 의존 조회가 실패해도 종류 선택은 가능하지만 진행 중·결과 미확인 요청에서는 전환을 막는다.
 
-DOM `phase`·`d`는 필수 nullable projection이며 구 `status`를 복원하는 fallback은 없다. 삭제된 단건의 404, 권한 오류 401/403, 종료 상태에서는 해당 polling을 중단한다. 서버 DOM API 변경(`ea6899ef`) 위로 rebase되어 실제 POST·DELETE 계약과 통합된 상태이며, 운영 서버·Query 미배포 상태 및 운영 생성·삭제 E2E 미수행과는 구별한다.
+DOM `phase`·`d`는 필수 nullable projection이며 구 `status`를 복원하는 fallback은 없다. 삭제된 단건의 404, 권한 오류 401/403, 종료 상태에서는 해당 polling을 중단한다. 서버 DOM API 변경(`392388ff`) 위로 rebase되어 실제 POST·DELETE 계약과 통합된 상태이며, 운영 서버·Query 미배포 상태 및 운영 생성·삭제 E2E 미수행과는 구별한다.
+
+`dispatchOccupancy` 정책 설정에는 `supplyMode`가 없다. 새 dry-run은 native `spec.supplyMode`가 실제 `closed-loop`일 때만 “공급 방식 (서버 고정)” 사실로 표시하며 응답에 없으면 `미제공`이다. 결과 조건 표의 일반 공급 방식 표시와 helper는 제거했고 원본 응답은 그대로 보존한다. 접수/삭제의 API 결과 `Accepted`·`DeletionRequested`는 유지되며 live action의 `phase:"completed"`는 해당 mutation 완료로 표시한다. DOM 측정 자체의 `Complete`와 혼동하지 않는다.
+
+`392388ff` 재통합 게이트: focused `go test ./internal/queryapi/... ./cmd/chill-query/...`, `make lint`, Node 24.14.0 tsc/eslint/운영 summary 포함 테스트 **502/502**, 기본 Next build 통과. closed-loop 미응답·다른 값에서 고정 사실을 만들어 내지 않는 회귀와 DOM 접수/삭제 action `completed`→완료 표시 회귀를 포함한다.
 
 2026-11-03 서버 통합 검증: Node 24.14.0 offline frozen 의존성(479개 재사용·다운로드 0)을 유지하며 typecheck·eslint·운영 summary 포함 테스트 500개·기본 build가 통과했다. ea6899ef 위 rebase 후 Go focused Query/Server/HTTP/Kube 테스트, make lint·arch-check·test도 통과했다. 로컬 TLS 서버 테스트는 실제 handler·builder·service의 dry-run 200 NOT_SUBMITTED→생성 202 Accepted와 동결 spec 동일성을 검사했다(인메모리 Kubernetes fixture이며 실제 Job E2E 아님). 로컬 production + 운영 GET의 요청·결과·커버리지 렌더는 1440×900으로 확인했다. 운영 Query에는 최상위 phase/d가 아직 없어 대기·미제공으로 보이므로 Query와 대시보드는 동시 cutover한다. 운영 POST·DELETE는 실행하지 않았다. 로컬 클러스터는 DOM CRD·BEO가 없어 실제 Job 진행 E2E를 수행하지 않았으며 배포 후 수용 범위는 [측정 API §13.8](../docs/design/serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03)에 남긴다.
 
