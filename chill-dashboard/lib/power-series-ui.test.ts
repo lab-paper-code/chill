@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { transpileModule, ModuleKind, JsxEmit } from "typescript"
+import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import { createElement, type ReactElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import * as powerSeries from "./power-series.ts"
@@ -12,7 +12,7 @@ import type { LiveMetrics } from "./live.ts"
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){
   const exports:Record<string,(props:Record<string,unknown>)=>ReactElement>={}
-  const code=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const code=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")||name.startsWith("./")?{}:require(name)),exports)
   return exports
 }
