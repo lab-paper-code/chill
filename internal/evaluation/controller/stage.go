@@ -206,7 +206,7 @@ func (r *StageReconciler) completeStage(ctx context.Context, parent *api.Evaluat
 
 func (r *StageReconciler) recordStageResult(stage *api.EvaluationStage, step string, p *api.EvaluationProcedure, result *stepResult) {
 	if result.Execution.Status != complete {
-		condition(&stage.Status.Conditions, stage.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, result.Execution.Reason, "")
+		condition(&stage.Status.Conditions, stage.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, result.Execution.Reason, result.Execution.Message)
 	}
 	if result.Measurement != nil {
 		verdict := result.Measurement.Verdict
@@ -247,7 +247,7 @@ func (r *StageReconciler) recordStageResult(stage *api.EvaluationStage, step str
 		if s == metav1.ConditionFalse && why == "" {
 			why = api.EvaluationReasonResidualState
 		}
-		condition(&stage.Status.Conditions, stage.Generation, api.EvaluationConditionStageCleanupComplete, s, why, "")
+		condition(&stage.Status.Conditions, stage.Generation, api.EvaluationConditionStageCleanupComplete, s, why, result.Execution.Message)
 		if s != metav1.ConditionTrue {
 			stage.Status.ResidualStateRef = p.EvidenceRef
 		}

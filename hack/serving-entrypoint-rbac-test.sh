@@ -14,6 +14,14 @@ check() {
 	python3 - "${rendered}" <<'PY'
 import sys, yaml
 documents = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+identities = [(d["kind"], d["metadata"].get("namespace", ""), d["metadata"]["name"]) for d in documents]
+assert len(identities) == len(set(identities)), "duplicate rendered (kind, namespace, name)"
+if any(d["kind"] == "ServiceAccount" and d["metadata"]["name"] == "chill-evaluation-action" for d in documents):
+    for name, subject in (("chill-evaluation-action-evidence-collector", "chill-evaluation-action"),
+                          ("chill-evaluation-evidence-collector", "chill-evaluation-evidence-collector")):
+        binding = next(d for d in documents if d["kind"] == "ClusterRoleBinding" and d["metadata"]["name"] == name)
+        assert binding["roleRef"]["name"] == "chill-evidence-collector"
+        assert binding["subjects"] == [{"kind": "ServiceAccount", "name": subject, "namespace": "chill-system"}]
 roles = [d for d in documents if d.get("kind") == "Role"
          and d["metadata"]["name"].startswith("chill-serving-entrypoint")]
 
@@ -56,4 +64,6 @@ serving=(--set servingEntrypoint.enabled=true --set query.enabled=true --set ser
 check "${serving[@]}"
 check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set 'servingEntrypoint.profileNamespaces={chill-system,measurements}'
+check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+	--set evaluation.enabled=true --set servingEntrypoint.evidenceCollector.enabled=true
 echo "serving entrypoint RBAC: pass"

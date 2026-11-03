@@ -101,7 +101,7 @@ func (r *RunReconciler) reconcileRun(ctx context.Context, run *api.EvaluationRun
 		}
 		if done && result != nil {
 			if result.Execution.Status != complete {
-				condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, result.Execution.Reason, "")
+				condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, result.Execution.Reason, result.Execution.Message)
 			} else if snapshot, ok := result.Outputs["inputSnapshot"]; ok {
 				run.Status.InputSnapshotRef = &snapshot
 			} else {
@@ -208,7 +208,7 @@ func (r *RunReconciler) finishRun(ctx context.Context, run, before *api.Evaluati
 			if s == metav1.ConditionFalse && why == "" {
 				why = api.EvaluationReasonResidualState
 			}
-			condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionCleanupComplete, s, why, "")
+			condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionCleanupComplete, s, why, result.Execution.Message)
 		}
 		if finish.FinishedAt != nil {
 			now := r.now()
