@@ -20,6 +20,10 @@ rules:
   - apiGroups: [batch]
     resources: [jobs]
     verbs: [create, get, list, delete]
+  # Read controller ancestors by UID for structural Pod ownership checks.
+  - apiGroups: [batch]
+    resources: [cronjobs]
+    verbs: [get]
   - apiGroups: [""]
     resources: [pods, pods/log]
     verbs: [get]
@@ -30,7 +34,7 @@ rules:
     resources: [loadscenarios]
     verbs: [get]
   - apiGroups: [apps]
-    resources: [deployments]
+    resources: [deployments, replicasets, statefulsets]
     verbs: [get]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

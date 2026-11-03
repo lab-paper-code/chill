@@ -421,6 +421,29 @@ select the existing record fields. Actual record order/IDs/bytes/hash are Ready
 evidence, not host inputs. Every generator Pod uses the frozen
 `loadGenerator.nodeName` verbatim. Memory and shard/barrier declarations remain.
 
+Prepare, factor and stage monitoring check only Running/Pending Pods on the
+Run's participating nodes: `powerMeasurement.nodes` plus `loadGenerator.nodeName`.
+Each cross-namespace Pod query has an explicit `spec.nodeName` field selector;
+unrelated nodes and Succeeded/Failed Pods cannot block the Run.
+
+Only Pods without structural CHILL/current-Run ownership block execution.
+Current-Run labels and ownerReference UID chains identify evaluator resources.
+CHILL release identity comes from the declared target resources' actual
+`app.kubernetes.io/instance` values, frozen in the existing target snapshot at
+prepare, with namespace scope from the Run/target declarations. Read-only
+ReplicaSet/Deployment/StatefulSet/Job/CronJob owner lookup verifies UIDs.
+CHILL serving Pods use the controller's unique `edge.dacs.io/v1alpha1` Workload
+ownerReference rule, with the referenced Workload's actual UID checked.
+DaemonSet-owned Pods and Pods carrying `kubernetes.io/config.mirror` are exempt:
+node networking, proxies and device plugins are persistent infrastructure.
+No Pod-name pattern, fleet-label signature, namespace allowlist or historical
+date classifies tenants. No new CR field is needed; release identities are
+frozen observations, not deployment-name defaults.
+
+Other preparation/stage scope checks follow explicit identities too: target
+Pods require the declared resource's nonempty Kubernetes selector (including
+matchExpressions), and an unrelated load-generator Job is not a readiness gate.
+
 `hack/measure/` remains separate measurement tooling. Keep operational
 credentials and evidence outside the checkout; never copy token contents into
 publications.

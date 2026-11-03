@@ -51,6 +51,9 @@ if config:
         ("chill-system", "", "pods/exec", "create", ()),
         ("chill-system", "edge.dacs.io", "loadscenarios", "get", ()),
         ("chill-system", "apps", "deployments", "get", ()),
+        ("chill-system", "apps", "replicasets", "get", ()),
+        ("chill-system", "apps", "statefulsets", "get", ()),
+        ("chill-system", "batch", "cronjobs", "get", ()),
         ("*", "", "nodes", "get", ()),
         ("*", "", "pods", "list", ()),
     } | {

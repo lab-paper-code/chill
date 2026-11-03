@@ -433,7 +433,8 @@ class EvaluationTests(unittest.TestCase):
                 return process[0]
             def k(args, stdin=None, **kwargs):
                 if args[:2] == ['get', 'jobs']:
-                    return {'items': []}
+                    return {'items': [{'metadata': {'name': 'resident-tenant-generator', 'uid': 'tenant-job',
+                                                   'labels': {'edge.dacs.io/workload-role': 'load-generator'}}}]}
                 if args[0] == 'create':
                     job = json.loads(stdin)
                     job['metadata']['uid'] = 'job'
@@ -600,16 +601,120 @@ class EvaluationTests(unittest.TestCase):
             self.assertFalse(errors)
             self.assertFalse(sources)
 
+    def test_participating_node_gate_uses_structural_ownership_not_names(self):
+        spec = {'powerMeasurement': {'nodes': [{'name': 'meter-node', 'uid': 'meter-uid'}]},
+                'loadGenerator': {'nodeName': 'generator-node'}}
+        nodes = {'meter-node': 'meter-uid', 'generator-node': 'generator-uid'}
+        def ref(kind, name, uid, version='apps/v1'):
+            return {'apiVersion': version, 'kind': kind, 'name': name, 'uid': uid}
+        def pod(name, *, node='meter-node', phase='Running', namespace='evaluation-ns', labels=None, owners=None, annotations=None):
+            return {'apiVersion': 'v1', 'kind': 'Pod',
+                    'metadata': {'name': name, 'uid': name + '-uid', 'namespace': namespace, 'labels': labels or {},
+                                 'ownerReferences': owners or [], 'annotations': annotations or {}},
+                    'spec': {'nodeName': node}, 'status': {'phase': phase}}
+        targets = [{'uid': 'target-uid', 'resource': {'apiVersion': 'apps/v1', 'kind': 'Deployment',
+                                                    'name': 'server', 'namespace': 'evaluation-ns'},
+                    'releaseInstance': 'frozen-release'}]
+        objects = {
+            ('ReplicaSet', 'chill-rs'): {'metadata': {'uid': 'chill-rs-uid', 'ownerReferences': [ref('Deployment', 'server', 'target-uid')]}},
+            ('ReplicaSet', 'foreign-rs'): {'metadata': {'uid': 'foreign-rs-uid', 'ownerReferences': [ref('Deployment', 'tenant', 'foreign-deployment-uid')]}},
+            ('Deployment', 'tenant'): {'metadata': {'uid': 'foreign-deployment-uid'}},
+            ('Job', 'eval-label-job'): {'metadata': {'uid': 'eval-label-job-uid', 'labels': {'edge.dacs.io/evaluation-run-uid': 'run-uid'}}},
+            ('Job', 'eval-job'): {'metadata': {'uid': 'eval-job-uid', 'ownerReferences': [ref('EvaluationStage', 'stage', 'stage-uid', 'edge.dacs.io/v1alpha1')]}},
+            ('Job', 'release-job'): {'metadata': {'uid': 'release-job-uid', 'ownerReferences': [ref('CronJob', 'release-cron', 'cron-uid', 'batch/v1')]}},
+            ('CronJob', 'release-cron'): {'metadata': {'uid': 'cron-uid', 'labels': {'app.kubernetes.io/instance': 'frozen-release'}}},
+            ('StatefulSet', 'release-stateful'): {'metadata': {'uid': 'stateful-uid', 'labels': {'app.kubernetes.io/instance': 'frozen-release'}}},
+            ('Workload', 'service'): {'metadata': {'uid': 'workload-uid'}},
+        }
+        cases = [
+            (pod('vib-outside', node='other-node'), False),
+            (pod('vib-completed', phase='Succeeded'), False),
+            (pod('bff-failed', node='generator-node', phase='Failed'), False),
+            (pod('nvidia-cuda-validator-f4l98', node='generator-node', phase='Succeeded', namespace='gpu-operator'), False),
+            (pod('device-plugin', node='generator-node', owners=[ref('DaemonSet', 'plugins', 'ds-uid')], namespace='gpu-operator'), False),
+            (pod('static-pod', phase='Pending', namespace='node-infra', annotations={'kubernetes.io/config.mirror': 'mirror-hash'}), False),
+            (pod('vib-release-owned', labels={'app.kubernetes.io/instance': 'frozen-release'}), False),
+            (pod('bff-release-owner-chain', owners=[ref('ReplicaSet', 'chill-rs', 'chill-rs-uid')]), False),
+            (pod('evaluation-label-owned', labels={'edge.dacs.io/evaluation-run-uid': 'run-uid'}), False),
+            (pod('evaluation-job-owned', owners=[ref('Job', 'eval-job', 'eval-job-uid', 'batch/v1')]), False),
+            (pod('evaluation-job-label-owned', owners=[ref('Job', 'eval-label-job', 'eval-label-job-uid', 'batch/v1')]), False),
+            (pod('release-cron-owned', owners=[ref('Job', 'release-job', 'release-job-uid', 'batch/v1')]), False),
+            (pod('release-stateful-owned', owners=[ref('StatefulSet', 'release-stateful', 'stateful-uid')]), False),
+            (pod('workload-owned', phase='Pending', namespace='model-serving', owners=[ref('Workload', 'service', 'workload-uid', 'edge.dacs.io/v1alpha1')]), False),
+            (pod('evaluation-ref-owned', owners=[ref('EvaluationRun', 'run', 'run-uid', 'edge.dacs.io/v1alpha1')]), False),
+            (pod('vib-external-deployment', owners=[ref('ReplicaSet', 'foreign-rs', 'foreign-rs-uid')]), True),
+            (pod('arbitrary-external', phase='Pending', node='generator-node', namespace='tenant'), True),
+            (pod('other-release', labels={'app.kubernetes.io/instance': 'different-release'}), True),
+            (pod('same-release-name-elsewhere', namespace='other-release-ns', labels={'app.kubernetes.io/instance': 'frozen-release'}), True),
+            (pod('other-evaluation', labels={'edge.dacs.io/evaluation-run-uid': 'other-run'}), True),
+            (pod('stale-workload-owner', owners=[ref('Workload', 'service', 'stale-uid', 'edge.dacs.io/v1alpha1')]), True),
+            (pod('ambiguous-workload-owner', owners=[ref('Workload', 'service', 'workload-uid', 'edge.dacs.io/v1alpha1'),
+                                                    ref('Workload', 'second', 'second-uid', 'edge.dacs.io/v1alpha1')]), True),
+            (pod('invalid-evaluation-ref', owners=[ref('EvaluationRun', 'run', 'run-uid', 'unrelated/v1')]), True),
+            (pod('unknown-phase', phase='Unknown'), False),
+        ]
+        for candidate, blocked in cases:
+            with self.subTest(name=candidate['metadata']['name']):
+                harness = object.__new__(evaluation.Harness)
+                harness.execution = {'namespace': 'evaluation-ns', 'runUID': 'run-uid', 'stageUID': 'stage-uid', 'stageID': 'stage'}
+                harness.snapshot = {'generatorNode': {'name': 'generator-node', 'uid': 'generator-uid'}, 'targets': {'stage': targets}}
+                queries = []
+                def k(namespace, verb, kind, *args):
+                    if kind == 'node':
+                        return {'metadata': {'name': args[0], 'uid': nodes[args[0]]},
+                                'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
+                    if kind != 'pods':
+                        return copy.deepcopy(objects[(kind, args[0])])
+                    self.assertIn('--all-namespaces', args)
+                    self.assertIn('--field-selector', args)
+                    selector = args[args.index('--field-selector') + 1]
+                    self.assertIn(selector, {'spec.nodeName=' + node for node in nodes})
+                    queries.append(selector)
+                    return {'items': [candidate]}
+                with patch.object(evaluation, 'kubectl', side_effect=k):
+                    if blocked:
+                        with self.assertRaisesRegex(RuntimeError, 'external Pod on participating Node'):
+                            harness.check_fleet(spec)
+                    else:
+                        harness.check_fleet(spec)
+                        self.assertEqual(set(queries), {'spec.nodeName=' + node for node in nodes})
+
+    def test_target_without_selector_never_scans_namespace_pods(self):
+        harness = object.__new__(evaluation.Harness)
+        harness.execution = {}
+        target = {'components': [{'name': 'serving', 'resource': {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'namespace': 'tenant', 'name': 'server'}}]}
+        deployment = {'kind': 'Deployment', 'metadata': {'uid': 'deployment'}, 'spec': {}}
+        with patch.object(evaluation, 'kubectl', return_value=deployment) as k:
+            with self.assertRaisesRegex(RuntimeError, 'no Pod selector'):
+                harness.check_target(target)
+            k.assert_called_once_with('tenant', 'get', 'Deployment', 'server')
+
+    def test_target_uses_declared_match_expression_selector(self):
+        harness = object.__new__(evaluation.Harness)
+        harness.execution = {}
+        target = {'components': [{'name': 'serving', 'resource': {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'namespace': 'tenant', 'name': 'server'}}]}
+        deployment = {'kind': 'Deployment', 'metadata': {'uid': 'deployment'}, 'spec': {'selector': {'matchExpressions': [
+            {'key': 'app', 'operator': 'In', 'values': ['server']}, {'key': 'retired', 'operator': 'DoesNotExist'}]}}}
+        pod = {'metadata': {'uid': 'pod'}, 'status': {'containerStatuses': [{'name': 'server', 'ready': True}],
+                                                  'conditions': [{'type': 'Ready', 'status': 'True'}]}}
+        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]) as k:
+            harness.check_target(target)
+            self.assertEqual(k.call_args_list[-1].args, ('tenant', 'get', 'pods', '-l', 'app in (server),!retired'))
+
     def test_target_runtime_changes_are_observations_not_exact_gates(self):
         harness = object.__new__(evaluation.Harness)
         harness.execution = {}
-        target = {'components': [{'name': 'serving', 'resource': {'kind': 'Deployment', 'namespace': 'chill-system', 'name': 'server'}}]}
-        deployment = {'kind': 'Deployment', 'metadata': {'uid': 'deployment'}, 'spec': {'selector': {'matchLabels': {'app': 'server'}}}}
+        target = {'components': [{'name': 'serving', 'resource': {'apiVersion': 'apps/v1', 'kind': 'Deployment', 'namespace': 'target-namespace', 'name': 'server'}}]}
+        deployment = {'kind': 'Deployment', 'metadata': {'uid': 'deployment', 'labels': {'app.kubernetes.io/instance': 'observed-release'}},
+                      'spec': {'selector': {'matchLabels': {'app': 'server'}}}}
         pod = {'metadata': {'uid': 'pod'}, 'status': {'containerStatuses': [{'name': 'server', 'ready': True, 'restartCount': 7, 'imageID': 'unrelated-current-runtime'}],
                                                            'conditions': [{'type': 'Ready', 'status': 'True'}]}}
         with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]):
             observed = harness.check_target(target)
         self.assertEqual(observed[0]['pods'][0]['containers'][0]['imageID'], 'unrelated-current-runtime')
+        self.assertEqual(observed[0]['releaseInstance'], 'observed-release')
+        self.assertEqual(observed[0]['resource'], target['components'][0]['resource'])
+        self.assertIs(harness.target_identities, observed)
         pod['status']['conditions'][0]['status'] = 'False'
         with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]), self.assertRaisesRegex(RuntimeError, 'TargetUnavailable'):
             harness.check_target(target)

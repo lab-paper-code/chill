@@ -269,8 +269,22 @@ class Harness:
                              if item['name'] == component['name']), None)
             if expected and obj['metadata']['uid'] != expected['uid']:
                 raise ValueError('IdentityMismatch: external target resource recreated')
-            selector = obj['spec'].get('selector', {}).get('matchLabels', {})
-            pods = {'items': [obj]} if obj['kind'] == 'Pod' else kubectl(resource['namespace'], 'get', 'pods', '-l', ','.join(k + '=' + v for k, v in selector.items()))
+            if obj['kind'] == 'Pod':
+                pods = {'items': [obj]}
+            else:
+                selector = obj['spec'].get('selector', {})
+                terms = [key + '=' + value for key, value in selector.get('matchLabels', {}).items()]
+                for expression in selector.get('matchExpressions', []):
+                    key, operator = expression['key'], expression['operator']
+                    if operator in ('In', 'NotIn'):
+                        terms.append(key + (' in (' if operator == 'In' else ' notin (') + ','.join(expression['values']) + ')')
+                    elif operator in ('Exists', 'DoesNotExist'):
+                        terms.append(('!' if operator == 'DoesNotExist' else '') + key)
+                    else:
+                        raise ValueError('FrozenInputInvalid: unsupported target selector operator')
+                if not terms:
+                    raise RuntimeError('TargetUnavailable: declared target has no Pod selector')
+                pods = kubectl(resource['namespace'], 'get', 'pods', '-l', ','.join(terms))
             current = [pod for pod in pods['items'] if not pod['metadata'].get('deletionTimestamp')]
             if not current:
                 raise RuntimeError('TargetUnavailable: no target Pods')
@@ -278,9 +292,67 @@ class Harness:
                 statuses = pod.get('status', {}).get('containerStatuses', [])
                 if not statuses or any(not status.get('ready') for status in statuses) or not any(c['type'] == 'Ready' and c['status'] == 'True' for c in pod.get('status', {}).get('conditions', [])):
                     raise RuntimeError('TargetUnavailable: target Pod not Ready')
-            identities.append({'name': component['name'], 'uid': obj['metadata']['uid'],
+            identities.append({'name': component['name'], 'uid': obj['metadata']['uid'], 'resource': resource,
+                               'releaseInstance': obj['metadata'].get('labels', {}).get('app.kubernetes.io/instance'),
                                'pods': [{'uid': pod['metadata']['uid'], 'containers': pod.get('status', {}).get('containerStatuses', [])} for pod in current]})
+        self.target_identities = identities
         return identities
+
+    def owns_environment_pod(self, pod, targets, owner_objects):
+        """Use frozen release/Run identities and real owner UIDs, never Pod names."""
+        namespace = pod['metadata']['namespace']
+        run_namespace = self.execution['namespace']
+        roots = {(target['resource']['namespace'], target['uid']) for target in targets}
+        roots.update((run_namespace, uid) for uid in
+                     [self.execution['runUID'], self.execution.get('stageUID'),
+                      *(child['uid'] for child in self.execution.get('childRefs', []))] if uid)
+        root_refs = {(target['resource']['namespace'], target['resource']['apiVersion'], target['resource']['kind'], target['uid'])
+                     for target in targets}
+        root_refs.add((run_namespace, 'edge.dacs.io/v1alpha1', 'EvaluationRun', self.execution['runUID']))
+        root_refs.update((run_namespace, 'edge.dacs.io/v1alpha1', 'EvaluationStage', uid) for uid in
+                         [self.execution.get('stageUID'), *(child['uid'] for child in self.execution.get('childRefs', []))] if uid)
+        release_labels = {(ns, target['releaseInstance']) for target in targets if target['releaseInstance']
+                          for ns in (run_namespace, target['resource']['namespace'])}
+        # Mirror Pods and DaemonSet-owned Pods are node infrastructure, not
+        # competing experiments; they are expected on every participating node.
+        if 'kubernetes.io/config.mirror' in pod['metadata'].get('annotations', {}):
+            return True
+        controller_versions = {'ReplicaSet': 'apps/v1', 'Deployment': 'apps/v1', 'StatefulSet': 'apps/v1',
+                               'Job': 'batch/v1', 'CronJob': 'batch/v1'}
+        owner_namespaces = {run_namespace, *(target['resource']['namespace'] for target in targets)}
+        pending, seen = [pod], set()
+        while pending:
+            obj = pending.pop()
+            meta = obj['metadata']
+            if namespace == run_namespace and meta.get('labels', {}).get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID']:
+                return True
+            if (namespace, meta['uid']) in roots or (namespace, meta.get('labels', {}).get('app.kubernetes.io/instance')) in release_labels:
+                return True
+            refs = meta.get('ownerReferences', [])
+            if any(ref['kind'] == 'DaemonSet' and ref['apiVersion'] == 'apps/v1' for ref in refs):
+                return True
+            # Match the controller's structural Workload-owner predicate
+            # (a08fda9d); resolve the referenced CR to verify its actual UID.
+            workloads = [ref for ref in refs if ref['kind'] == 'Workload' and ref['apiVersion'] == 'edge.dacs.io/v1alpha1']
+            for ref in refs:
+                if (namespace, ref['apiVersion'], ref['kind'], ref['uid']) in root_refs:
+                    return True
+                workload = len(workloads) == 1 and ref == workloads[0]
+                if not workload and (namespace not in owner_namespaces or controller_versions.get(ref['kind']) != ref['apiVersion']):
+                    continue
+                key = (namespace, ref['apiVersion'], ref['kind'], ref['name'], ref['uid'])
+                if key in seen:
+                    continue
+                seen.add(key)
+                if key not in owner_objects:
+                    owner_objects[key] = kubectl(namespace, 'get', ref['kind'], ref['name'])
+                owner = owner_objects[key]
+                if owner['metadata']['uid'] != ref['uid']:
+                    continue
+                if workload:
+                    return True
+                pending.append(owner)
+        return False
 
     def check_fleet(self, spec):
         nodes = list(spec['powerMeasurement']['nodes'])
@@ -296,24 +368,17 @@ class Harness:
                 raise ValueError('IdentityMismatch: participating Node UID')
             if not any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', [])):
                 raise RuntimeError('TargetUnavailable: participating Node NotReady')
-        owners = {self.execution['runUID'], self.execution.get('stageUID')}
-        owners.update(child['uid'] for child in self.execution.get('childRefs', []))
-        jobs = kubectl(self.execution['namespace'], 'get', 'jobs', '-l', 'edge.dacs.io/evaluation-run-uid=' + self.execution['runUID'])['items']
-        job_uids = {job['metadata']['uid'] for job in jobs if job['metadata'].get('labels', {}).get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID']
-                    and any(owner.get('uid') in owners for owner in job['metadata'].get('ownerReferences', []))}
-        pods = kubectl(self.execution['namespace'], 'get', 'pods', '--all-namespaces')['items']
-        for pod in pods:
-            meta = pod['metadata']
-            labels = meta.get('labels', {})
-            own = labels.get('edge.dacs.io/evaluation-run-uid') == self.execution['runUID'] and any(
-                owner.get('uid') in job_uids | owners
-                for owner in meta.get('ownerReferences', []))
-            if own:
-                continue
-            fleet = meta['name'].startswith(('vib-', 'bff-')) or any(key in ('baseline-fleet', 'vib-fleet-run') or key.startswith(('vib-', 'bff-')) for key in labels)
-            external = meta.get('namespace') not in ('kube-system', 'chill-system') and meta.get('creationTimestamp', '') >= '2026-11-02T00:00:00Z'
-            if fleet or external:
-                raise RuntimeError('TargetUnavailable: external fleet Pod ' + meta['name'])
+        targets = (self.snapshot['targets'][self.execution['stageID']] if hasattr(self, 'snapshot')
+                   else self.target_identities)
+        owner_objects = {}
+        for name in sorted({pin['name'] for pin in nodes}):
+            pods = kubectl(self.execution['namespace'], 'get', 'pods', '--all-namespaces',
+                           '--field-selector', 'spec.nodeName=' + name)['items']
+            for pod in pods:
+                if pod.get('spec', {}).get('nodeName') != name or pod.get('status', {}).get('phase') not in ('Running', 'Pending'):
+                    continue
+                if not self.owns_environment_pod(pod, targets, owner_objects):
+                    raise RuntimeError('TargetUnavailable: external Pod on participating Node ' + name + ': ' + pod['metadata']['name'])
     def open_snapshot(self):
         path=self.inputs/'snapshot.json'
         reference=self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef')
