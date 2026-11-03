@@ -438,10 +438,12 @@ class DeploymentCLI(unittest.TestCase):
 
     def test_numeric_regression_is_reported_without_rejecting_execution(self):
         self.state(changeMetrics=True)
+        self.recipe['expectedProfileCount'] = 2
         self.cli('--execute', '--evidence', str(self.out))
         report = json.loads((self.out / 'after/acceptance.json').read_text())
         self.assertFalse(report['passed'])
         self.assertEqual(report['numericChanges'][0]['field'], 'energyPerInputJoules')
+        self.assertFalse(report['checks']['expectedProfileCount'])
         status = json.loads((self.out / 'state.json').read_text())
         self.assertTrue(status['ready'])
         self.assertFalse(status['diagnostics']['passed'])

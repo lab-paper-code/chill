@@ -82,7 +82,7 @@ CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/evaluation/demo.py preflight --confi
 
 **시작 전 토큰 만료 검사:** E5 `CPO.start/run`과 demo prepare/start/run은 같은 `hack/evaluation/auth.py`를 사용한다. 예상 실행 시간은 남은 단계 초 합 + 각 단계별 timeboxes 합 + `tokenSafetyMarginSeconds`(생략 시 60초)이며 campaign 시작은 정적 기준선/제어요소 단계도 포함한다. ServiceAccount JWT의 `exp`를 읽어 남은 시간이 예산보다 짧으면 API 변경/부하 시작 전에 거부한다. 이는 수명 검사이며 서명/권한 검증을 대체하지 않는다. JWT 형식이 아니거나 exp가 없으면 기존 CA·Bearer·redirect 금지로 scheduler state를 GET하여 **HTTP 200 + `X-Token-Expires-At`의 timezone 포함 시각**을 대안 증거로 요구한다. 서버가 만료 시각을 제공하지 않으면 추측하거나 무기한 토큰으로 처리하지 않고 거부한다. 토큰 신규 발급·TokenReview POST는 하지 않는다.
 
-binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.json`에 검사 시각/만료 시각/남은 초/필요 초/출처만 기록한다(토큰 원문 미기록). 배포는 명시 이미지 빌드 예산, 선택한 Helm `upgradeSeconds`+30초, readiness 예산, 사용자 phase 예산과 여유를 포함하여 사전 확인하고 변경 직전 다시 확인한다. 배포의 실제 고정 예산/증거 계약은 `hack/deploy/main.py`와 `acceptance.py`가 소유한다.
+binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.json`에 검사 시각/만료 시각/남은 초/필요 초/출처만 기록한다(토큰 원문 미기록). 배포는 명시 이미지 빌드 예산, 선택한 Helm `upgradeSeconds`+30초, readiness 예산, 사용자 phase 예산과 여유를 포함하여 사전 확인하고 변경 직전 다시 확인한다. `hack/deploy/main.py`가 실행 예산을, `api_checks.py`가 전송·인증·운영 API 검사를, `acceptance.py`가 측정 전후 비교와 기대 profile 수 진단을 소유한다.
 
 로컬 회귀 확인(클러스터 접근/쓰기 없음): `python3 hack/evaluation/smoke_preflight.py`, 기존 전체 lifecycle 확인은 `python3 hack/evaluation/demo.py --self-check`, 배포 확인은 `python3 -B hack/deploy/test_deploy.py`와 `python3 -B hack/deploy/test_acceptance.py`다.
 

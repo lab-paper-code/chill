@@ -2,16 +2,9 @@
 
 Only HTTP receipt/final outcomes and evaluator-owned arrival traces are inputs.
 """
-import argparse
-import bisect
-from collections import Counter, defaultdict
-from datetime import datetime, timezone
-import json
+from datetime import datetime
 import math
-import os
-from pathlib import Path
 import re
-
 
 
 def number(value):
