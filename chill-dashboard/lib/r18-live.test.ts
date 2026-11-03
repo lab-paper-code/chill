@@ -29,6 +29,18 @@ test("R18 fixed power warnings are omitted but exclusions and inventory reasons 
   assert.equal(alerts[0].reason,"제외 노드 / 배치 인벤토리 없음")
   assert.equal(display.liveReason("PlacementInventoryMissing"),"배치 인벤토리 없음")
 })
+test("device alerts prefer detailed power observation and transition reasons without fixed-mode false alarms",()=>{
+  const node={uid:"n",name:"장치",powerMode:"MAXN",ready:true,measurement:false,observedAt:at}
+  const nodes=[
+    {...node,uid:"observation",powerMode:"",reasons:["PowerModeUnavailable","PowerModeObservationUnavailable"]},
+    {...node,uid:"transition",reasons:["PowerModeUnavailable","PowerTransitionUnavailable"]},
+    {...node,uid:"fixed",powerMode:"fixed",reasons:["PowerModeUnavailable","PowerTransitionUnavailable"]},
+    {...node,uid:"excluded",powerMode:"fixed",reasons:["ExcludedNode","PowerModeUnavailable","PowerTransitionUnavailable"]},
+  ]
+  assert.deepEqual(display.deviceAlerts({...snapshot,nodes},[]).map(row=>[row.uid,row.reason]),[
+    ["observation","전력모드 관측 불가"],["transition","전력 전환 근거 없음"],["excluded","제외 노드"],
+  ])
+})
 test("R18 five-minute decision totals count only retained distinct server judgments",()=>{
   const events:LiveEvent[]=Array.from({length:31},(_,i)=>({type:"event",kind:"decision",seq:i+1,at:new Date(now-300000+i*10000).toISOString(),decision:{at:new Date(now-300000+i*10000).toISOString(),state:"Keep",reason:"",explanation:""}}))
   const summary=display.decisionActivity([...events,events[30]],now)

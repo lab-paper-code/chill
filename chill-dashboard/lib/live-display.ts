@@ -243,10 +243,15 @@ export function groupIncidentEvents(events:LiveEvent[]) {
   }
   return rows
 }
+export function deviceReasons(reasons:string[],powerMode:string):string[] {
+  const detailed=reasons.includes("PowerModeObservationUnavailable")||reasons.includes("PowerTransitionUnavailable")
+  return reasons.filter(reason=>reason==="PowerModeUnavailable"?!detailed&&powerMode.toLowerCase()!=="fixed":
+    reason==="PowerModeObservationUnavailable"||reason==="PowerTransitionUnavailable"?powerMode.toLowerCase()!=="fixed":true)
+}
 export function deviceAlerts(snapshot:LiveSnapshot|null,events:LiveEvent[]) {
   const alerts=new Map<string,{uid:string;name:string;reason:string}>()
   for(const node of snapshot?.nodes??[]) {
-    const reasons=node.reasons?.filter(reason=>reason!=="PowerModeUnavailable"||node.powerMode.toLowerCase()!=="fixed")??[]
+    const reasons=deviceReasons(node.reasons??[],node.powerMode)
     if(!node.ready||reasons.length)alerts.set(node.uid,{uid:node.uid,name:node.name,reason:reasons.length?reasons.map(liveReason).join(" / "):"준비 미확인"})
   }
   const latest=new Map<string,LiveEvent>()
@@ -257,6 +262,8 @@ export function deviceAlerts(snapshot:LiveSnapshot|null,events:LiveEvent[]) {
 export function liveReason(reason:string|null|undefined):string {
   if(!reason)return "미제공"
   if(reason==="PowerModeUnavailable")return "전력모드 확인 불가"
+  if(reason==="PowerModeObservationUnavailable")return "전력모드 관측 불가"
+  if(reason==="PowerTransitionUnavailable")return "전력 전환 근거 없음"
   if(reason==="PlacementInventoryMissing")return "배치 인벤토리 없음"
   if(reason==="Feasible")return "실행 가능"
   if(reason.includes("await fresh exact")||reason.includes("creation-outcome-unknown")||reason.includes("identity-awaiting-container")||reason.includes("dependency/Ready/handoff"))return reservationReason(reason)
