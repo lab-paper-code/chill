@@ -8,7 +8,7 @@ import { useChillQuery } from "@/lib/client"
 import type { ObservationResult, SchedulerCandidate, SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummaryPage, SchedulerView } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { gapNotice } from "@/lib/date-time"
-import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerRecordRef, schedulerPageParams, powerNumber, powerPolicyFacts, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { readSchedulerRecord, schedulerRecordMatches, schedulerRecordParams, schedulerRecordPath, schedulerRecordRef, schedulerPageParams, historyReturnTo, powerNumber, powerPolicyFacts, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Screen, Row, RowDialog, Facts, Empty } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -20,23 +20,31 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { RecordsNavigation, RecordsRange } from "@/components/records-navigation"
 import { candidatePlans } from "@/lib/live-display"
 
-export function SchedulerIntervalEvents({from,to}:{from:string;to:string}) {
-  const params=new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"asc",limit:"10"})
+export function SchedulerIntervalEvents({from,to,returnTo,label}:{from:string;to:string;returnTo?:string;label?:string}) {
+  const params=new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"desc",limit:"10"})
   const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${params}`,{decoder:parseSchedulerJSON})
-  const historyParams=new URLSearchParams({from,to,filter:"decision-action",order:"asc"})
-  return <section className="space-y-3" aria-label="구간 판단·전환">
+  const destination=historyReturnTo(returnTo),historyParams=new URLSearchParams({from,to,filter:"decision-action",order:"desc"})
+  if(destination)historyParams.set("returnTo",destination)
+  if(query.data?.nextCursor)historyParams.set("cursor",query.data.nextCursor)
+  return <section className="space-y-3" aria-label={`${label?`${label} · `:""}같은 기간 사건 · 클러스터 전체`}>
+    <h3 className="text-sm font-semibold">{label&&`${label} · `}같은 기간 사건 · 클러스터 전체</h3>
+    <p className="text-sm tabular-nums">{when(from)} ~ {when(to)}</p>
     <QueryGate query={query}>{query.data&&<>
       {query.data.gapUntil&&<p role="status">{gapNotice(query.data.gapUntil)}</p>}
+      <p role="status" className="text-sm">{query.data.nextCursor||query.data.gapUntil?"일부 기록 · ":""}최근 10개</p>
       {query.data.events?.length?<div className="overflow-x-auto"><table className="w-full text-sm">
         <caption className="sr-only">구간 판단·전환 기록</caption>
         <thead><tr>{["시각 (KST)","종류","대상"].map(heading=><th key={heading} scope="col" className="p-3 text-left">{heading}</th>)}</tr></thead>
         <tbody>{query.data.events.slice(0,10).map((event,index)=>{
           const ref=schedulerRecordRef(event,from,to,String(index))
-          const href=`/records?${schedulerRecordParams(ref)}`
-          return <tr key={ref.offset} className="border-t"><td className="whitespace-nowrap p-3"><Link className="underline underline-offset-4" href={href}>{when(event.at)}</Link></td><td className="p-3">{event.action?actionKinds[event.action.kind]??"변경 동작":`판단 · ${judgmentLabels[event.decision?.status??""]??"미확인"}`}</td><td className="break-all p-3">{event.action?actionNodeName(event.action.node):event.node?actionNodeName(event.node):"실행 그룹"}</td></tr>
+          const recordParams=schedulerRecordParams(ref)
+          recordParams.set("filter","decision-action");recordParams.set("order","desc")
+          if(destination)recordParams.set("returnTo",destination)
+          const href=`/records?${recordParams}`
+          return <tr key={ref.offset} className="border-t"><td className="whitespace-nowrap p-3"><Link className="inline-flex min-h-11 items-center underline underline-offset-4" href={href}>{when(event.at)}</Link></td><td className="p-3">{event.action?actionKinds[event.action.kind]??"변경 동작":`판단 · ${judgmentLabels[event.decision?.status??""]??"미확인"}`}</td><td className="break-all p-3">{event.action?actionNodeName(event.action.node):event.node?actionNodeName(event.node):"실행 그룹"}</td></tr>
         })}</tbody>
-      </table></div>:<p role="status">판단·전환 기록 없음</p>}
-      <Link className="inline-block underline underline-offset-4" href={`/records?${historyParams}`}>{query.data.nextCursor?"구간 기록 더 보기":"구간 기록 열기"}</Link>
+      </table></div>:<p role="status">불러온 범위 기록 없음</p>}
+      <Link className="inline-flex min-h-11 items-center underline underline-offset-4" href={`/records?${historyParams}`}>{query.data.nextCursor?"구간 기록 더 보기":"구간 기록 열기"}</Link>
     </>}</QueryGate>
   </section>
 }

@@ -8,6 +8,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as live from "./live.ts"
 import * as display from "./live-display.ts"
 import { decisionRange } from "./experiments.ts"
+import * as history from "./scheduler-history.ts"
 
 const at="2026-11-03T03:12:21.898101405Z",now=Date.parse(at)
 const precheck:live.LiveEvent={type:"event",seq:1,at,kind:"action",action:{id:"dry-run",kind:"measurement-post",node:{uid:"",name:""},workloadUID:"",status:"NOT_SUBMITTED",startedAt:at,completedAt:at,expectedSeconds:null,expectedSource:null,phase:"failed",result:{status:"NOT_SUBMITTED"}}}
@@ -26,6 +27,7 @@ function harness(events:live.LiveEvent[]=[]) {
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
     "@/lib/live":live,"@/lib/live-display":display,"@/lib/experiments":{decisionRange},
     "@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},
+    "@/lib/scheduler-history":history,
     "./scheduler":{actionKinds:{},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name||"전체 노드",judgmentLabels:{Keep:"유지"},SchedulerEvidence:()=>null},
     "@/components/status-cell":{StatusCell:({label}:{label:string})=>React.createElement("span",{},label)},"@/lib/status":{STATUS_AXES:{}},
     "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:React.ReactNode})=>open?wrap({children}):null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},

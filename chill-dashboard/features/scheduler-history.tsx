@@ -8,7 +8,7 @@ import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import type { WorkloadSummary } from "@/lib/domain"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, historyReturnTo, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
 import { displayTime, liveReason, candidatePlans } from "@/lib/live-display"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
@@ -134,7 +134,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   }
   const compare=schedulerComparisonParams(new URLSearchParams(params.toString()))
   const same=(ref:SchedulerRecordRef|null,row:SchedulerHistoryRow<SchedulerObservationSummary>)=>!!ref&&ref.offset===row.ref.offset&&ref.at===row.ref.at&&ref.from===row.ref.from&&ref.to===row.ref.to
-  const loaded=!!history.query.data
+  const loaded=!!history.query.data,returnTo=historyReturnTo(params.get("returnTo"))
   return <Screen width="data" title="기록"
     action={!settingsOnly&&(a||b)?<>{a&&b?<Button asChild><Link href={`/records?${compare}`} scroll={false}>판단 비교</Link></Button>:<Button disabled>판단 비교</Button>}</>:undefined}>
     <RecordsNavigation/>
@@ -186,6 +186,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
           </>:<p role="alert">기록을 확인하지 못했어요. 보관 범위나 기록이 바뀌었어요. 같은 시각의 다른 기록으로 대신하지 않아요.</p>)}</QueryGate>
         }
         <Button variant="outline" onClick={close}>목록으로 돌아가기</Button>
+        {returnTo&&<Button variant="outline" asChild><Link href={returnTo}>실험 구간으로 돌아가기</Link></Button>}
       </SheetContent>
     </Sheet>
   </Screen>

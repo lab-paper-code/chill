@@ -11,6 +11,7 @@ import * as dates from "./date-time.ts"
 import * as identity from "./workload-identity.ts"
 import * as labels from "./labels.ts"
 import * as occupancy from "./dispatch-occupancy.ts"
+import { formatMeasurementTime } from "./measurements.ts"
 
 type Element = { type: unknown; props: Record<string, unknown> }
 const require=createRequire(import.meta.url)
@@ -28,6 +29,7 @@ function harness(query="",responses:Record<string,unknown>={}){
     "@/lib/client":{useSession:()=>({token:"token",config:{pageSize:25,maxPageSize:100,maxWindowHours:24}}),useChillQuery:(path:string)=>{calls.push(path);return responses[path]??(path==="v1/workloads?view=summary"?{data:[{desired:{metadata:{name:"서비스 이름",uid:"service-uid"}}}]}:{data:path.startsWith("v1/observations/scheduler?")?{events:[]}:undefined})}},
     "@/lib/scheduler":scheduler,"@/lib/scheduler-history":history,"@/lib/capacity":capacity,"@/lib/live-display":liveDisplay,"@/lib/date-time":dates,"@/lib/workload-identity":identity,"@/lib/labels":labels,
     "@/lib/dispatch-occupancy":occupancy,
+    "./scheduler-history":{when:formatMeasurementTime},
     "@/components/read-region":{QueryGate:"gate",SourceJSON:"source",SourceExport:"export",StatusBadge:"badge"},
     "@/components/screen":{Screen:"main",Rows:"rows",Row:"row",RowDialog:"dialog",Facts:"facts",Empty:"empty"},
     "@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
@@ -120,4 +122,62 @@ test("missing dispatch occupancy links directly to the matching d request condit
   const url=new URL(String(link.props.href),"https://dashboard.invalid")
   assert.equal(url.pathname,"/measurements/requests/new")
   for(const [key,value] of Object.entries({kind:"dispatch-occupancy",namespace:"ns",profileID:"ns/beo/beo-uid",node:"node",nodeUID:"node-uid",powerMode:"15W",workloadUID:"service-uid",batch:"4"}))assert.equal(url.searchParams.get(key),value)
+})
+
+test("interval preview requests latest cluster events and keeps exact identity and return selection",()=>{
+  const from="2026-11-01T00:00:00.123456789Z",to="2026-11-01T01:00:00.987654321Z"
+  const returnTo="/experiments/results?a=P&al=P&as=C&b=Q&bs=B&service=S&offset=5"
+  const path=`v1/observations/scheduler?${new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"desc",limit:"10"})}`
+  const event={at:"2026-11-01T00:30:00.123456789Z",offset:9007199254740993n,action:{id:"action",kind:"route",phase:"starting",node:{name:"node",uid:"node-uid"},startedAt:"2026-11-01T00:29:59.123456789Z"}}
+  const h=harness("",{[path]:{data:{events:[event],nextCursor:"older",gapUntil:from}}})
+  h.modules["./scheduler"]={actionKinds:{route:"분배"},actionNodeName:(node:{name:string})=>node.name}
+  const tree=h.load("../features/scheduler-evidence.tsx").SchedulerIntervalEvents({from,to,returnTo,label:"기준"})
+  assert.equal(h.calls[0],path)
+  assert.equal(new URL(h.calls[0],"https://dashboard.invalid").searchParams.has("returnTo"),false)
+  const links=nodes(tree).filter(node=>node.type==="a")
+  const selected=new URL(String(links.find(node=>String(node.props.href).includes("offset="))!.props.href),"https://dashboard.invalid").searchParams
+  assert.deepEqual(history.readSchedulerRecord(selected),history.schedulerRecordRef(event,from,to,"0"))
+  assert.equal(selected.get("returnTo"),returnTo)
+  const more=new URL(String(links.find(node=>String(node.props.href).includes("cursor="))!.props.href),"https://dashboard.invalid")
+  assert.equal(more.searchParams.get("cursor"),"older")
+  assert.equal(more.searchParams.get("order"),"desc")
+  assert.equal(more.searchParams.get("returnTo"),returnTo)
+  const text=nodes(tree).flatMap(node=>node.props.children).filter(value=>typeof value==="string").join(" ")
+  assert.match(text,/기준/)
+  assert.match(text,/클러스터 전체/)
+  assert.match(text,/일부 기록/)
+  assert.doesNotMatch(text,/전체.*건/)
+})
+
+test("records restore experiment selection from an internal return path only",()=>{
+  const destination="/experiments/results?a=P&al=P&as=C&service=S&offset=5"
+  for(const returnTo of [destination,"https://evil.invalid/experiments/results","//evil.invalid/experiments"]){
+    const h=harness(new URLSearchParams({returnTo}).toString())
+    const tree=h.load("../features/records.tsx").RecordsPage({})
+    assert.deepEqual(nodes(tree).filter(node=>node.type==="a").map(node=>node.props.href),returnTo===destination?[destination]:[])
+  }
+})
+
+test("candidate and baseline previews use their own absolute ranges without service filters",()=>{
+  const h=harness(),preview=h.load("../features/scheduler-evidence.tsx").SchedulerIntervalEvents
+  const intervals=[{from:"2026-11-01T00:00:00Z",to:"2026-11-01T01:00:00Z",label:"후보"},{from:"2026-10-01T00:00:00Z",to:"2026-10-01T01:00:00Z",label:"기준"}]
+  for(const interval of intervals)preview({...interval,returnTo:"/experiments/results?a=P&service=S"})
+  assert.deepEqual(h.calls.map(path=>{
+    const params=new URL(path,"https://dashboard.invalid").searchParams
+    assert.equal(params.has("uid"),false)
+    assert.equal(params.has("service"),false)
+    assert.equal(params.has("returnTo"),false)
+    return {from:params.get("from"),to:params.get("to")}
+  }),intervals.map(({from,to})=>({from,to})))
+})
+
+test("selected record keeps an accessible experiment return link inside its Sheet",()=>{
+  const returnTo="/experiments/results?a=P&al=P&as=C&service=S"
+  const ref=history.schedulerRecordRef({at:"2026-11-01T00:30:00Z",decision:{at:"2026-11-01T00:30:00Z",status:"Keep"}},"2026-11-01T00:00:00Z","2026-11-01T01:00:00Z","42")
+  const params=history.schedulerRecordParams(ref);params.set("returnTo",returnTo)
+  const h=harness(params.toString())
+  const tree=h.load("../features/scheduler-history.tsx").SchedulerHistoryPage({})
+  assert.ok(nodes(tree).some(node=>node.type==="a"&&node.props.href===returnTo))
+  assert.ok(h.calls.includes(history.schedulerRecordPath(ref)))
+  for(const path of h.calls)assert.equal(new URL(path,"https://dashboard.invalid").searchParams.has("returnTo"),false)
 })

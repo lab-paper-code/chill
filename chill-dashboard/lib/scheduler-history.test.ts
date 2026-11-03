@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, powerNumber, powerPolicyFacts, schedulerHistoryKindMatches, groupHistoryKeeps } from "./scheduler-history.ts"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, powerNumber, powerPolicyFacts, schedulerHistoryKindMatches, groupHistoryKeeps, historyReturnTo } from "./scheduler-history.ts"
 import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -124,4 +124,15 @@ test("detail consumers with omitted view retain compact decision and settings ev
     const path=relayPlan("GET",["v1","observations","scheduler"],`?${params}`,config).path
     assert.equal(new URL(path,"https://chill.example").searchParams.get("view"),"compact",consumer)
   }
+})
+
+test("experiment return paths retain selection and reject external or non-experiment destinations",()=>{
+  const destination="/experiments/results?a=published&al=source&as=candidate&b=baseline&bs=fixed&service=service-uid&offset=5"
+  assert.equal(historyReturnTo(destination),destination)
+  for(const value of [null,"","https://evil.invalid/experiments/results","//evil.invalid/experiments","/\\evil.invalid/experiments","/records","/experiments/../records","/experiments%2fresults","\n/experiments"]){
+    assert.equal(historyReturnTo(value),null,value??"null")
+  }
+  const params=new URLSearchParams({from,to,returnTo:destination,offset:"21",kind:"action",at:event.at,id:"same-action"})
+  assert.equal(schedulerPageParams(params,"100").get("returnTo"),destination)
+  assert.equal(schedulerComparisonParams(params).get("returnTo"),destination)
 })

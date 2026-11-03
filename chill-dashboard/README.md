@@ -138,12 +138,14 @@ retain integer literals while removing credentials.
 | 운영 | `/` 현재 서비스 영향·유입·배치·진행 변경, `/operations/devices` 장치·전력·배치 |
 | 서비스 | `/workloads`, `/workloads/[name]?uid=…` 정의·접수·CHILL 자동 운영·변경 작업 진행; 자동 운영 수정은 운영 설정 바로가기 |
 | 측정 | `/measurements` 조건·집계/행렬/결과 Sheet, `/measurements/requests` 부모 요청→자식 회차(`?view=runs` 전체 검색), `/measurements/requests/new` 대상→조건→점검·제출, `/measurements/results?kind=throughput\|operation-cost\|dispatch-occupancy` 종류별 결과 |
-| 실험 | `/experiments` 실행, `/experiments/results` 비교 결과, `/experiments/load-scenarios` 부하 설정 |
+| 실험 | `/experiments` 실행 목록, `/experiments?view=published&offset=0` 게시 목록, `/experiments/runs/[name]?uid=…` 실행 상세, `/experiments/results?a=…` 게시 상세, `/experiments/load-scenarios` 부하 설정 |
 | 기록 | `/records` 판단·변경/서비스 요청/전력, 종류별 실제 범위·페이지·누락 보존 |
 | 보조 설정 | `/settings` 운영 설정/모델/입력 처리/데이터셋 |
 
 기록 종류는 `kind=requests|power`와 기본 판단·변경으로 전환한다. 서비스 변경은 `scope=management`, 운영 설정 변경은 `scope=scheduler&filter=settings`, 기존 판단 비교는 `compare=1`이다. 종류 전환은 대상·정확한 기간·limit를 유지하고 API별 cursor·선택은 초기화한다. 같은 종류의 다음 페이지는 제출된 기간·원본 cursor를 유지한다.
 전력 조회는 서비스 UID를 API 필터로 보내지 않고 이동 맥락으로만 유지한다. `/changes?scope=scheduler`는 페이지 redirect에서 설정 변경으로 분기한다. 반복 definition/outcome, 인증 변경 전 requests/power 종류, 불완전한 과거 참조의 식별자 오류를 보존한다. 분배 동작(route/unroute/release)의 선택 근거는 선언/실제 비율과 선택된 operation의 이유·행위자·설정 검증 시각을 표시하며 journal 재조회로 대체하지 않는다.
+실험 구간의 판단·전환은 후보/기준 각각의 실제 `from/to`로 최근 10개(`order=desc`)를 조회한다. 범위는 선택 서비스가 아닌 `같은 기간 사건 · 클러스터 전체`다. `nextCursor`가 있으면 `일부 기록`과 다음 cursor로 이어지는 `더 보기`를 제공하고, 보존 공백은 서버 `gapUntil`로 표시한다. 현재 페이지를 구간 전체나 사건 총수로 표시하지 않는다.
+사건 행은 원본 offset과 kind/at/id/node/startedAt로 정확한 기록을 연다. `/records`의 `returnTo`는 API에 보내지 않는 UI 상태이며 앱 내부 `/experiments` 경로만 허용한다. `실험 구간으로 돌아가기`는 게시 ID, `al/as/b/bs`, 서비스와 목록 offset이 포함된 원래 URL로 돌아가 같은 Sheet를 복원한다. 구간 사건과 성능의 시간 대응은 인과 판정이 아니다.
 
 설정의 정본은 `/settings?tab=configuration|models|preprocessors|datasets`다(기본 운영 설정).
 운영 설정은 `section` 범위·`edit` 수정 Sheet 선택을 URL에 보존한다. 분배는 서비스·인스턴스·가중치 표와 접힌 JSON에서 편집하며 기존 차단/기본 복귀/순차 적용 의미를 유지한다. 카탈로그 목록은 필드·파일·실행 방식 수와 연결 서비스 수를 우선하고 긴 주소·해시는 원문에 접는다.
@@ -168,6 +170,7 @@ PUT 본문 계약은 변경하지 않는다. `internal/serving/scheduler.go:17-5
 
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
 작성·수정은 전용 페이지이며 필수값·출처·변경 요약·점검을 보이고 입력 변경은 점검을 무효화한다. 목록은 breadcrumb 없이, 상세는 상위 맥락 하나다.
+실험 작성은 한 단계를 선택해 편집하고 과거 비교 대상을 게시 페이지와 선택 단건 조회로 찾는다. `새 부하`는 기존 `LoadEditor`를 의존 Sheet에서 열며 작성 중인 실험을 유지하고 저장 응답의 새 UID를 해당 단계에 선택한다. 원문 편집은 유지한다. `실험 시작`은 기존 사전 점검 후 생성 POST로 실행을 접수하고 실제 응답의 `/experiments/runs/[name]?uid=…`로 이동한다. 서버 초안 저장이나 별도 시작 API를 추가하지 않는다.
 실험·부하 작성의 증거 입력은 `GET /api/v1/evaluations/inputs`에 `kind`·`set` 서버 필터와 명시적 `limit=25`·`offset`을 보내고 `page.nextOffset`으로 이동한다. 입력 묶음은 현재 페이지 후보 선택 또는 직접 입력하며 필터 변경은 첫 페이지로 돌아간다. 옵션은 서버 `name`(없으면 `key`)과 묶음 그룹을 표시하고, 페이지 밖의 선택도 `store/key` 기준으로 보존한다. relay는 `kind`·`set`·`offset`·`limit` 단일값과 기존 숫자·길이 제한만 검사하며 값의 정본은 서버다. 무쿼리 전체 반환 계약은 유지한다. 측정 결과 저장 영역은 HTML `v` 플래그 호환 DNS-1123 label 패턴과 최대 길이로 검증한다.
 연관 이동은 KPI를 복제하지 않고 대상·기간·필터·선택·namespace·UID를 보존한다. 외부 return URL은 허용하지 않는다.
 
@@ -259,8 +262,8 @@ live terminal buckets are explicitly distinct. Shared POOL energy is not summed
 across rows; published gap bounds render as `value ± bound J`, with energyCoverage.
 Different measurementRules retain numbers and display “측정 규칙 다름”.
 R18: 목록은 선택적 `facts`의 이름·정책·SLO·부하 출처를 직접 표시하고 없으면 미기록이다. 목록 항목별 상세 hydration은 하지 않으며 명시적 과거 비교 대상이 목록에 없을 때만 그 publication을 조회한다. 비교 상대가 없으면 차이 대신 측정 원값을 먼저 표시하며, 계획 부하는 구간×서비스 표(소수 둘째 자리)와 하위 구간별 막대로 표시한다. 단계 전체 p95·발행률을 하위 구간의 실측값으로 복제하지 않는다. `SLOFailed`는 `SLO 미충족`이고 수집 실패와 구분한다. 과거 게시에 실제 없는 정의는 추정하지 않는다.
-현재 reader는 [DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 게시 단건의 `definition.spec.comparisons`와 목록의 `comparisons`로 비교 관계를 읽고 단계 ID·서비스 UID·publicationID로 연결한다. suffix·요청률 유사성 fallback은 사용하지 않는다. 정의 없는 과거 게시는 비교 미기록, 실제 대상 부재는 대상 게시 없음, 권한/서버/timeout은 대상 조회 실패로 구분한다. 정책·SLO는 기록된 정의·실행 결과에서만 읽는다. 비교 상태·제한·일치/참고/대응 없음 건수는 차이보다 먼저 표시하며 참고 비교는 동일 조건 성과 집계와 분리한다. 상세는 조건 → 원값 → 사건 → 원본이다.
-실행은 `/experiments`, 부하 설정은 `/experiments/load-scenarios`다. 작성·수정은 각각 `/experiments/new`, `/experiments/[name]/edit`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit` 전용 페이지다. 원본은 `copy` 또는 `publication`, 수정 UID는 `uid` query로 복원한다. 목록 시각은 KST이며 결과 표는 비교 상태·구간 수·실행/측정/정리·차이·제한을 한 행에 제공한다. 구간 Sheet의 사건은 조건·원값 뒤에 배치한다.
+현재 reader는 [DB-FR-66](../docs/spec/dashboard/SRS.md)에 따라 게시 단건의 `definition.spec.comparisons`와 목록의 `comparisons`로 비교 관계를 읽고 단계 ID·서비스 UID·publicationID로 연결한다. suffix·요청률 유사성 fallback은 사용하지 않는다. 정의 없는 과거 게시는 비교 미기록, 실제 대상 부재는 대상 게시 없음, 권한/서버/timeout은 대상 조회 실패로 구분한다. 정책·적용 SLO는 기록된 identity가 일치하는 정의·실행 결과에서만 읽는다. 게시 상세는 비교 맥락 → 공유 선택 요청률·서비스 p95·풀 전체 에너지 차트 → 선택 단계 원값/차이 표 순서다. 비교가 없으면 단독값만 표시하며 빈 Δ 열은 없다. 하위 계획 구간에 단계 전체 실측을 복제하거나 서비스별 에너지를 만들지 않는다.
+실행은 `/experiments/runs/[name]?uid=…`, 부하 설정은 `/experiments/load-scenarios`다. 작성·수정은 각각 `/experiments/new`, `/experiments/runs/[name]/edit?uid=…`, `/experiments/load-scenarios/new`, `/experiments/load-scenarios/[name]/edit` 전용 페이지다. 원본은 `copy` 또는 `publication`, 수정 UID는 `uid` query로 복원한다. 구 `/experiments/[name]/edit?uid=…`는 새 실행 편집 URL로 리다이렉트한다. `/experiments/runs/[name]`은 항상 실행 상세이므로 이름이 정확히 `runs`인 실행의 편집은 새 `/experiments/runs/runs/edit?uid=…` 경로를 사용한다. 실행/게시 목록은 상세를 중첩하지 않고 행에서 이동한다. 구간 Sheet는 단계·후보/기준·실제 기간과 원값 → 같은 기간 사건 → 접힌 비교 조건·규칙·정의 출처·원문 순서다. `a/al/as/b/bs/service`가 차트·구간 버튼·표·Sheet의 공통 선택이며 새로고침과 기록 복귀에도 유지된다. 사건 주체는 기본 후보이고 기준 선택은 `eventSide=baseline`에 보존한다. 최초 구간 열기는 history push, Sheet 내부 서비스·사건 주체 변경과 닫기는 replace이며 닫기는 `al/as/b/bs`만 제거해 게시·서비스·offset·복귀 문맥을 유지한다. 예전 `/experiments?name=…&uid=…`와 `/evaluations` 선택 URL은 같은 실행의 canonical 상세로 이동하고, 게시 없는 `/experiments/results`는 게시 목록으로 이동한다.
 Evidence lookup uses the exact nanosecond `decision.at` interval through the
 processed scheduler observations API, then selects the recorded judgment identity;
 it never falls back to the latest state. No-record and timeout states are distinct.

@@ -2,6 +2,14 @@ import type { SchedulerObservation, SchedulerObservationSummary } from "./read-t
 
 export type SchedulerRecordRef = {from:string;to:string;offset:string;kind:string;at:string;id:string;node?:string;startedAt?:string}
 
+/** UI-only return state: never accept an external or non-experiment destination. */
+export function historyReturnTo(value:string|null|undefined):string|null {
+  if(!value||!value.startsWith("/")||value.startsWith("//")||/[\\\u0000-\u0020\u007f]/.test(value))return null
+  const url=new URL(value,"https://dashboard.invalid")
+  if(url.origin!=="https://dashboard.invalid"||!/^\/experiments(?:\/|$)/.test(url.pathname))return null
+  return `${url.pathname}${url.search}${url.hash}`
+}
+
 export function schedulerHistoryKindMatches(filter:string,kind:string):boolean {
   return filter==="all"||filter===kind||filter==="decision-action"&&(kind==="decision"||kind==="action")
 }
