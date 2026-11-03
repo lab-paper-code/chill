@@ -11,7 +11,7 @@ import type { SchedulerCandidate, SchedulerDecision, SchedulerObservationPage } 
 import { decisionRange, evidenceError } from "@/lib/scheduler-history"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, decisionReason, gapEpisodes, liveReason, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics, sloTargetMissed, incidentHistoryHref, incidentDiagnosis, reservationReason, deviceAlerts, workloadReadiness, candidatePlans, candidateEvaluation, decisionActivity, clusterResult, isMeasurementPrecheck, isActionFailure, actionEventResult, retentionNotice, type ServiceRow } from "@/lib/live-display"
+import { actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, gapEpisodes, liveReason, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics, sloTargetMissed, incidentHistoryHref, incidentDiagnosis, reservationReason, deviceAlerts, workloadReadiness, candidatePlans, candidateEvaluation, decisionActivity, clusterResult, isMeasurementPrecheck, isActionFailure, actionEventResult, retentionNotice, type ServiceRow } from "@/lib/live-display"
 import { actionKinds, actionNodeName, actionStatuses, judgmentLabels, SchedulerEvidence } from "./scheduler"
 import { StatusCell } from "@/components/status-cell"
 import { STATUS_AXES, type StatusTone } from "@/lib/status"
@@ -20,6 +20,7 @@ import { EvaluationStatusCell } from "./evaluation-active"
 import { evaluationInjectionMatch, type ActiveEvaluations } from "@/lib/evaluation-active"
 import { LivePowerTrend } from "./power-series"
 import "./live-board.css"
+import { SchedulerDecisionSummary, SchedulerWorkloadStates } from "./scheduler-workload-states"
 
 type Zone="UTC"|"KST"
 type Select=(key:"open"|"at",value:string|null,opener?:HTMLElement)=>void
@@ -139,11 +140,13 @@ function Evidence({at,state,zone,cursor,visited=[]}:{at:string;state:LiveState;z
   const decision:SchedulerDecision|undefined=event?.decision
   const liveDecision=state.events.find(row=>row.kind==="decision"&&row.decision.at===at)?.decision??(state.snapshot?.decision?.at===at?state.snapshot.decision:null)
   const exhausted=!!query.data&&!event&&(!next||visited.includes(next))
-  const automation=decision?.workloads?.map(row=>row.state!=="Disabled")??(state.snapshot?.decision?.at===at?state.snapshot.workloads.map(row=>row.autonomous):[])
-  const reason=decisionReason(decision?.reasons?.[0]??liveDecision?.reason,automation)
-  return <><section className="live-evidence-summary"><h3>판단 근거</h3><Facts items={[["선택 시각 KST",displayTime(at,zone)],["판정",judgmentLabels[decision?.status??liveDecision?.state??""]??"구성 변경"],["판단 사유",reason],["범위","선택 당시"]]}/></section>
+  const names=new Map(state.snapshot?.workloads.map(row=>[row.uid,row.name])??[])
+  for(const workload of event?.snapshot?.workloads??[])if(workload)names.set(workload.uid,workload.name)
+  const status=decision?.status??liveDecision?.state
+  return <><section className="live-evidence-summary"><h3>판단 근거 · 선택 당시</h3><SchedulerDecisionSummary at={displayTime(at,zone)} status={status?`${judgmentLabels[status]??"판단 미확인"} (${status})`:"미기록"} reasons={decision?.reasons??(liveDecision?.reason?[liveDecision.reason]:null)}/></section>
     <Link href={historyHref(undefined,at)}>해당 시점 기록</Link>
     {!range?<p role="alert">판단 시각 오류</p>:query.error?<p role="alert">{evidenceError(query.error)}</p>:!event?<p role="status">{exhausted?"기록 없음":"근거 조회 중"}</p>:decision&&<>
+      <SchedulerWorkloadStates workloads={decision.workloads} names={names}/>
       <div className="live-table-wrap"><table><caption>입력 관측 KST</caption><thead><tr><th>시작</th><th>종료</th><th>수신 건</th><th>접수 건</th><th>계산 입력 건</th><th>검토 개</th></tr></thead><tbody><tr><td>{displayTime(decision.search.windowStart,zone)}</td><td>{displayTime(decision.search.windowEnd,zone)}</td><td>{number(decision.search.received)}</td><td>{number(decision.search.accepted)}</td><td>{number(decision.search.computeInputs)}</td><td>{number(decision.search.examined)}</td></tr></tbody></table></div>
       {!!decision.capacity?.workloads?.length&&<div className="live-table-wrap"><table><caption>당시 서비스 수요</caption><thead><tr><th>서비스</th><th>수요 req/s</th><th>미종결 건</th><th>처리 잔량 건</th><th>예상 대기 s</th><th>최소 수요 req/s</th></tr></thead><tbody>{decision.capacity.workloads.map(row=><tr key={row.uid}><th>{serviceName(state.snapshot,row.uid)}</th><td>{number(row.rate,"",2)}</td><td>{row.queued}</td><td>{number(row.backlog,"",2)}</td><td>{number(row.waitSeconds,"",2)}</td><td>{number(row.minimumDemand,"",2)}</td></tr>)}</tbody></table></div>}
       <details><summary>구성 후보·자원</summary>{candidatePlans(decision.keep,decision.target).map(candidate=><CandidateEvidence key={candidate.id} candidate={candidate} zone={zone} snapshot={state.snapshot}/>)}{decision.target?.id===decision.keep.id&&<span>변경 없음</span>}</details><Source value={event} label="판단 원본 JSON"/>

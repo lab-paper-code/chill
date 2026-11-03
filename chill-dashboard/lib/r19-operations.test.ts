@@ -39,6 +39,7 @@ function harness(events:live.LiveEvent[]=[]) {
     new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
     return exports
   }
+  modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx")
   const board=compile("../features/live-board.tsx")
   modules["./live-board"]=board
   modules["./scheduler-history"]={SchedulerHistoryPage:()=>React.createElement("div",{},"기간 기록")}

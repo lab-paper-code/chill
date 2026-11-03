@@ -4,8 +4,8 @@ import Link from "next/link"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, decodeResponse, relay, useChillQueries, useSession, warmingRetry, warmingDelay } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { decodeExperiment, decodeExperimentPage, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, object, publishedText, recordedComparisons, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
-import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts } from "@/lib/experiment-comparison"
+import { decodeExperiment, decodeExperimentPage, experimentOutcome, experimentPath, finite, historicalPublicationIDs, injectionRows, object, publishedText, recordedComparisons, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
+import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, experimentServiceResults, ratio, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts, stageSeconds } from "@/lib/experiment-comparison"
 import { formatMeasurementDuration, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
 export function usePublishedExperimentFacts(id:string,enabled=true) {
@@ -44,6 +44,85 @@ const outcomeLabel=(axis:{value:string;reason:string})=>axis.reason==="SLOFailed
 export function ExperimentOutcome({run,stage}:{run:Experiment;stage?:ExperimentStage}) {
   const outcome=experimentOutcome(run,stage)
   return <dl aria-label={stage?"단계 판정 3축":"실험 판정 3축"} className="flex flex-wrap gap-x-4 gap-y-1 text-sm">{([["execution","실행"],["measurement","측정"],["cleanup","정리"]] as const).map(([axis,label])=><div key={axis} className="flex items-start gap-2"><dt className="text-muted-foreground">{label}</dt><dd className={["Failed","FAIL","INVALID"].includes(outcome[axis].value)?"font-medium text-destructive":""}>{outcomeLabel(outcome[axis])}{outcome[axis].reason&&outcome[axis].reason!=="미기록"&&outcome[axis].reason!=="SLOFailed"&&<div className="text-xs font-normal text-muted-foreground">{outcomeReasons[outcome[axis].reason]??"원문 확인"}</div>}</dd></div>)}</dl>
+}
+
+const resultNumber=(value:unknown,unit="")=>typeof value==="bigint"?value.toLocaleString("ko-KR"):finite(value)===null?"미기록":formatMeasurementNumber(value,unit)
+const resultPercent=(value:number|null)=>value===null?"미기록":`${resultNumber(value*100,"%")}%`
+const resultTime=(value:unknown)=>typeof value==="string"||typeof value==="number"?formatMeasurementTime(value):"미기록"
+const resultWords:Record<string,string>={FAIL:"FAIL",PASS:"PASS",OBSERVED_THRESHOLD_MET:"충족",NOT_EVALUATED:"미평가",PARTIAL:"부분 발행",OBSERVED:"관측됨",WITHIN_REPORTED_THRESHOLD:"허용 지연 이내",EXCEEDS_REPORTED_THRESHOLD:"허용 지연 초과"}
+const resultWord=(value:unknown)=>typeof value==="string"?resultWords[value]??value:"미기록"
+
+export function ExperimentVerdict({run}:{run:Experiment}) {
+  const failed=[...new Set(run.stages.flatMap(stage=>Object.entries(object(object(object(stage.kpis.components).slo).workloads)).filter(([,value])=>value==="FAIL").map(([name])=>name)))]
+  const verdict=run.outcome?.measurement?.verdict??run.status??"미기록"
+  return <h2 aria-label="게시 판정" className={`text-lg font-semibold ${verdict==="FAIL"?"text-destructive":""}`}>{resultWord(verdict)}{failed.length?` · SLO 미달: ${failed.join(", ")}`:""}</h2>
+}
+
+function ResultFraction({value}:{value:number|null}) {
+  return <div className="space-y-1"><span>{resultPercent(value)}</span><div aria-hidden="true" className="h-2 overflow-hidden rounded-sm bg-muted">{value!==null&&<div className="h-full bg-primary" style={{width:`${value*100}%`}}/>}</div></div>
+}
+
+function ExperimentEnergy({stage}:{stage:ExperimentStage}) {
+  const components=object(stage.kpis.components),drain=object(components.drain),power=object(stage.kpis.power),energy=object(components.energy)
+  const nodes=Array.isArray(power.nodes)?power.nodes.map(object):[],reasons=Array.isArray(power.reasons)?power.reasons.filter((reason):reason is string=>typeof reason==="string"):[]
+  const affected=nodes.filter(node=>reasons.some(reason=>reason.startsWith(`Declared Node ${object(node.node).name}:`)&&reason.includes("partial/unavailable source or coverage below reporting policy"))).length
+  const coverage=object(power.energyCoverage),gap=finite(coverage.maximumGapSeconds),joules=finite(power.wholePoolJoules??stage.kpis.wholePoolJoules)
+  const seconds=stageSeconds(stage),meanWatts=joules!==null&&seconds!==null?joules/seconds:null
+  const drainReasons=Array.isArray(drain.reasons)?drain.reasons.filter((reason):reason is string=>typeof reason==="string"):[]
+  const drainPower=object(stage.kpis.powerDrainInclusive)
+  return <section aria-label="에너지·배출" className="space-y-1 border-y py-3 text-sm">
+    <p><strong>에너지 {publishedText(power.energyStatus??energy.offered)||"미기록"}</strong>{joules!==null&&` · ${resultNumber(joules)} J`}{affected>0?` · ${affected}/${nodes.length} 노드 계측 출처 또는 공백 기준 미충족`:reasons.length?` · ${reasons[0]}${reasons.length>1?` 외 ${reasons.length-1}개`:""}`:""}{gap!==null&&` · 최대 공백 ${gap.toLocaleString("ko-KR",{minimumFractionDigits:1,maximumFractionDigits:1})} s`}</p>
+    <p>풀 평균 전력 {resultNumber(meanWatts,"W")} W</p>
+    <p className={drain.complete===false?"text-destructive":"text-muted-foreground"}>요청 배출 {drain.complete===true?"완료":drain.complete===false?"미완료":"미기록"}{drainReasons.length?` · ${drainReasons.map(reason=>reason==="ProducerEOFWithoutCompleteDrain"?"생성기 종료 후 요청 배출 미완료":reason).join(", ")}`:""}</p>
+    <details className="text-xs"><summary className="min-h-11 cursor-pointer">에너지 계측 근거·배출 포함 범위</summary>
+      <div className="space-y-2 pb-2">
+        <p>부하 구간 {resultTime(power.from)} – {resultTime(power.to)}{nodes.length?` · 선언 ${nodes.length}노드`:""}</p>
+        {reasons.length>0&&<ul className="list-inside list-disc">{reasons.map(reason=><li className="break-words" key={reason}>{reason}</li>)}</ul>}
+        <p>배출 포함 에너지 {publishedText(drainPower.energyStatus??energy.drainInclusive)||"미기록"} · {resultNumber(drainPower.wholePoolJoules)} J</p>
+        {Object.keys(drainPower).length>0&&<p>배출 포함 구간 {resultTime(drainPower.from)} – {resultTime(drainPower.to)}</p>}
+        <p>공백 정책: 비율 {resultPercent(finite(object(coverage.policy).maxGapFraction))} · 단일 공백 {resultNumber(object(coverage.policy).maxSingleGapSeconds)} s</p>
+      </div>
+    </details>
+  </section>
+}
+
+export function ExperimentStageResults({run,stage,service="",onSelect}:{run:Experiment;stage:ExperimentStage;service?:string;onSelect?:(service:string)=>void}) {
+  const results=experimentServiceResults(stage,run).filter(({row})=>!service||row.name===service)
+  const parts=[...new Set(results.flatMap(({row})=>row.substages?.flatMap(part=>typeof part.id==="string"?[part.id]:[])??[]))]
+  const outcomes=[["completed","완료","bg-ok"],["timeout","시간 초과","bg-heat"],["error","오류","bg-destructive"],["unfinished-or-no-final","미완료","bg-muted-foreground"]] as const
+  const sloText=(slo:typeof results[number]["declaredSLO"])=>slo?`p${slo.percentile} · ${resultNumber(Number(slo.targetLatencyNanos)/1e6,"ms")} ms`:"미기록"
+  return <div className="min-w-0 space-y-4">
+    <div className="overflow-x-auto">
+      <table aria-label="서비스별 결과" className="w-full text-left text-sm tabular-nums">
+        <thead><tr>{["서비스","D1 판정","선언 SLO","성공 / 요청","완료 지연 p95 / p50 (ms)","발행 요청 결과","부하 발행률"].map(label=><th scope="col" key={label} className="whitespace-nowrap p-2 font-medium">{label}</th>)}</tr></thead>
+        <tbody>{results.map(({row,verdict,declaredSLO,appliedSLO,success,offered,fraction,p95,p50,outcomes:counts,fidelity})=>{
+          const total=finite(fidelity.issued)??finite(row.original.clientRows)
+          return <tr key={row.source} className="border-t align-top">
+            <th scope="row" className="max-w-52 break-words p-2 font-medium">{onSelect?<button className="min-h-11 max-w-52 whitespace-normal break-words text-left underline focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>onSelect(row.name)}>{row.name} 결과 자세히</button>:row.name}</th>
+            <td className={`whitespace-nowrap p-2 font-medium ${verdict==="FAIL"?"text-destructive":""}`}>{resultWord(verdict)}</td>
+            <td className="whitespace-nowrap p-2">{sloText(declaredSLO)}<span className="block text-xs text-muted-foreground">{appliedSLO?`적용 확인: ${sloText(appliedSLO)}`:"적용 미확인"}</span></td>
+            <td className="min-w-32 whitespace-nowrap p-2"><span>{resultNumber(success)} / {resultNumber(offered)}</span><div className="text-xs text-muted-foreground">{resultPercent(fraction)}</div></td>
+            <td className="whitespace-nowrap p-2">{resultNumber(p95,"ms")} / {resultNumber(p50,"ms")}<span className="block text-xs text-muted-foreground">p95 표본 {resultNumber(row.metrics.find(metric=>metric.key.endsWith(".p95"))?.denominator)}</span></td>
+            <td className="min-w-64 p-2">
+              <div aria-hidden="true" className="mb-1 flex h-3 overflow-hidden rounded-sm bg-muted">{outcomes.map(([key,,color])=>{const count=finite(counts[key]);return count!==null&&total!==null&&total>0?<span key={key} className={color} style={{width:`${count/total*100}%`}}/>:null})}</div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">{outcomes.map(([key,label,color])=><span key={key} className="whitespace-nowrap"><i aria-hidden="true" className={`mr-1 inline-block size-2 ${color}`}/>{label} {resultNumber(counts[key])}</span>)}</div>
+              <div className="mt-1 text-xs text-muted-foreground">미발행 {resultNumber(fidelity.unissued)}</div>
+            </td>
+            <td className="whitespace-nowrap p-2">{resultPercent(finite(fidelity.issuanceFraction))}<span className="block text-xs text-muted-foreground">{resultWord(fidelity.status)}</span></td>
+          </tr>
+        })}{!results.length&&<tr><td colSpan={7} className="p-3 text-muted-foreground">서비스 결과 미기록</td></tr>}</tbody>
+      </table>
+    </div>
+    <section aria-label="구간별 성공" className="space-y-2">
+      <h3 className="text-sm font-semibold">구간별 성공률</h3>
+      {parts.length?<div className="overflow-x-auto"><table aria-label="구간별 성공률" className="w-full text-left text-sm tabular-nums">
+        <thead><tr><th scope="col" className="p-2 font-medium">서비스</th>{parts.map(id=><th scope="col" className="min-w-36 p-2 font-medium" key={id}>{id}</th>)}</tr></thead>
+        <tbody>{results.map(({row})=><tr key={row.source} className="border-t"><th scope="row" className="max-w-52 break-words p-2 font-normal">{row.name}</th>{parts.map(id=>{const part=row.substages?.find(part=>part.id===id);return <td key={id} className="p-2"><ResultFraction value={ratio(undefined,part?.deadlineSuccess,part?.offered)}/><span className="text-xs text-muted-foreground">{resultNumber(part?.deadlineSuccess)} / {resultNumber(part?.offered)}</span></td>})}</tr>)}</tbody>
+      </table></div>:<p className="text-sm text-muted-foreground">구간별 실측 미기록</p>}
+    </section>
+    <ExperimentEnergy stage={stage}/>
+    {results.some(({fidelity})=>Object.keys(object(fidelity.generatorQuality)).length>0)&&<details className="text-xs"><summary className="min-h-11 cursor-pointer">생성기 발행 품질</summary><table aria-label="발행 지연 품질" className="w-full text-left tabular-nums"><thead><tr>{["서비스","허용 지연 (ms)","초과 / 발행","게시 품질"].map(label=><th scope="col" className="p-2" key={label}>{label}</th>)}</tr></thead><tbody>{results.map(({row,fidelity})=>{const quality=object(fidelity.generatorQuality),tolerance=finite(object(quality.policy).latenessToleranceNS);return <tr key={row.source} className="border-t"><th scope="row" className="break-words p-2 font-normal">{row.name}</th><td className="p-2">{resultNumber(tolerance===null?null:tolerance/1e6)}</td><td className="p-2">{resultNumber(quality.exceeding)} / {resultNumber(quality.denominator)}</td><td className="p-2">{resultWord(quality.thresholdLabel)}</td></tr>})}</tbody></table></details>}
+  </div>
 }
 
 export function ExperimentInjections({run,stage}:{run:Experiment;stage:ExperimentStage}) {

@@ -43,6 +43,7 @@ function harness(query="",responses:Record<string,unknown>={}){
     new Function("require","exports",compiled)((name:string)=>modules[name]??(name.startsWith("@/")||name.startsWith("./")?{}:require(name)),exports)
     return exports
   }
+  modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx")
   return {load,calls,urls,modules}
 }
 
@@ -51,6 +52,37 @@ test("judgment history defaults to decision/action on the server, not mixed powe
   screen.SchedulerHistoryPage({})
   const request=new URL(h.calls.find(path=>path.startsWith("v1/observations/scheduler?"))!,"https://dashboard.invalid")
   assert.equal(request.searchParams.get("filter"),"decision-action")
+})
+
+test("scope baseline and transition evidence select exact records while normal history keeps every judgment",()=>{
+  const from="2026-11-01T00:00:00Z",to="2026-11-01T01:00:00Z"
+  const baseline={at:"2026-11-01T00:10:00Z",offset:25,decision:{at:"2026-11-01T00:10:00Z",status:"Keep",workloads:[{uid:"service-uid",state:"Controlled"}]}}
+  const repeated={...baseline,at:"2026-11-01T00:20:00Z",offset:26,decision:{...baseline.decision,at:"2026-11-01T00:20:00Z"}}
+  const changed={at:"2026-11-01T00:30:00Z",offset:27,decision:{at:"2026-11-01T00:30:00Z",status:"Keep",workloads:[{uid:"service-uid",state:"Fixed",reason:"ReservedScope"}]}}
+  for(const scope of [false,true]){
+    const h=harness(new URLSearchParams({from,to,cursor:"25",filter:"decision",...(scope?{timeline:"scope"}:{})}).toString())
+    const api=h.modules["@/lib/client"] as {useChillQuery:(path:string)=>unknown},query=api.useChillQuery
+    api.useChillQuery=path=>path.startsWith("v1/observations/scheduler?")?{data:{events:[changed,repeated,baseline]}}:query(path)
+    h.modules["@/features/scheduler"]={judgmentLabels:{Keep:"현재 구성 유지"}}
+    const tree=h.load("../features/scheduler-history.tsx").SchedulerHistoryPage({})
+    const buttons=nodes(tree).filter(node=>node.type==="button"&&node.props.children===(scope?"판단 근거":"근거"))
+    const expected=scope?[baseline,changed]:[changed,repeated,baseline]
+    assert.equal(buttons.length,expected.length)
+    const original=Object.getOwnPropertyDescriptor(globalThis,"document")
+    Object.defineProperty(globalThis,"document",{configurable:true,value:{activeElement:null}})
+    try {
+      buttons.forEach((button,index)=>{
+        ;(button.props.onClick as ()=>void)()
+        const selected=new URL(h.urls[index],"https://dashboard.invalid").searchParams
+        assert.deepEqual(history.readSchedulerRecord(selected),history.schedulerRecordRef(expected[index],from,to,"0"))
+        assert.equal(selected.get("cursor"),"25")
+        assert.equal(selected.get("timeline"),scope?"scope":null)
+      })
+    } finally {
+      if(original)Object.defineProperty(globalThis,"document",original)
+      else Reflect.deleteProperty(globalThis,"document")
+    }
+  }
 })
 
 test("history target uses workload names, preserves direct UID and does not repeat range values in edit rows",()=>{

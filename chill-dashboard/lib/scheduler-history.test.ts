@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, powerNumber, powerPolicyFacts, schedulerHistoryKindMatches, groupHistoryKeeps, historyReturnTo } from "./scheduler-history.ts"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, powerNumber, powerPolicyFacts, schedulerHistoryKindMatches, historyReturnTo } from "./scheduler-history.ts"
 import type { SchedulerObservation, SchedulerObservationSummary } from "./read-types.ts"
 import { relayPlan } from "./relay.ts"
 import { serverConfig } from "./server-config.ts"
@@ -45,15 +45,6 @@ test("power display rounds only presented values and translates duration policie
     ["표본 간격 (초)","0.5"],["수집 기간 (초)","5.001"],["요청 제한 시간 (초)","1"],
     ["경계 허용 거리 (초)","1"],["최소 관측 비율 (%)","90"],["최대 표본 간격 기준 (초)","0.759"],
   ])
-})
-
-test("consecutive Keep judgments collapse without crossing a transition or losing the first record reference",()=>{
-  const keep:SchedulerObservationSummary={at:event.at,decision:{at:event.at,status:"Keep"}}
-  const rows=[keep,keep,event,keep].map((event,index)=>({event,ref:schedulerRecordRef(event,from,to,String(index))}))
-  const grouped=groupHistoryKeeps(rows)
-  assert.deepEqual(grouped.map(row=>row.keepCount),[2,0,1])
-  assert.equal(grouped[0].ref.offset,"0")
-  assert.equal(grouped[1].event,event)
 })
 
 test("filtered latest-first rows retain original append offset for evidence lookup",()=>{

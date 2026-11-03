@@ -8,6 +8,8 @@ import { transpileModule,ModuleKind,JsxEmit,ScriptTarget } from "typescript"
 import * as refs from "./scheduler-history.ts"
 import * as scheduler from "./scheduler.ts"
 import * as kinds from "./records.ts"
+import * as identity from "./workload-identity.ts"
+import * as live from "./live.ts"
 
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){const exports:Record<string,unknown>={};const compiled=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText;new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports);return exports}
@@ -22,9 +24,12 @@ test("records renders real journal rows and exact server page scope without a hu
   const originalQuery=api.useChillQuery
   api.useChillQuery=(path,options)=>path==="v1/workloads?view=summary"?{data:[]}:originalQuery(path,options)
   modules["@/components/records-navigation"]=load("../components/records-navigation.tsx",modules)
+  modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
+  modules["@/lib/workload-identity"]=identity
+  modules["@/lib/live"]=live
   const exports=load("../features/scheduler-history.tsx",modules)
   const html=renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))
-  assert.match(html,/<h1>기록<\/h1>/);assert.match(html,/판단·변경/);assert.match(html,/서비스 요청/);assert.match(html,/전력/);assert.match(html,/유지 ×1/);assert.match(html,/근거/);assert.doesNotMatch(html,/선택 기록 근거/);assert.doesNotMatch(html,/Invalid Date/)
+  assert.match(html,/<h1>기록<\/h1>/);assert.match(html,/판단·변경/);assert.match(html,/서비스 요청/);assert.match(html,/전력/);assert.match(html,/현재 구성 유지/);assert.doesNotMatch(html,/유지 ×1/);assert.match(html,/근거/);assert.doesNotMatch(html,/선택 기록 근거/);assert.doesNotMatch(html,/Invalid Date/)
   assert.equal(calls.length,1)
   const query=new URL(calls[0],"https://dashboard.invalid").searchParams
   for(const key of ["from","to","cursor","limit","uid","filter"])assert.equal(query.get(key),params.get(key))

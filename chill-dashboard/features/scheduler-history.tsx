@@ -8,9 +8,9 @@ import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import type { WorkloadSummary } from "@/lib/domain"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, historyReturnTo, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, schedulerScopeChanges, historyReturnTo, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
-import { displayTime, liveReason, candidatePlans } from "@/lib/live-display"
+import { displayTime, candidatePlans } from "@/lib/live-display"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
 import { SettingChanges } from "@/features/scheduler-settings"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
@@ -21,6 +21,9 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { RecordsNavigation, RecordsRange } from "@/components/records-navigation"
 import { HistoryActionDetails, CurrentTransitionEvidence } from "./scheduler-transitions"
+import { SchedulerDecisionSummary, SchedulerWorkloadStates } from "./scheduler-workload-states"
+import { resolveWorkloadIdentities } from "@/lib/workload-identity"
+import { compareAt } from "@/lib/live"
 
 export type SchedulerHistoryRow<T extends SchedulerObservationSummary=SchedulerObservation>={event:T;ref:SchedulerRecordRef}
 export type SchedulerHistoryQuery<T extends SchedulerObservationSummary=SchedulerObservation>={
@@ -45,7 +48,7 @@ export function useSchedulerHistory(defaultFilter="decision-action"):SchedulerHi
   const request=new URLSearchParams({...submitted,limit:params.get("limit")??String(config.pageSize)});if(params.has("cursor"))request.set("cursor",params.get("cursor")!)
   for(const key of ["order","filter","uid"])if(params.has(key)&&(key!=="uid"||params.get("kind")!=="power"))request.set(key,params.get(key)!)
   request.set("filter",params.get("filter")??defaultFilter)
-  request.set("view","summary")
+  request.set("view",params.get("timeline")==="scope"?"compact":"summary")
   const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${request}`,{decoder:parseSchedulerJSON})
   const rows=(query.data?.events??[]).map((event,index)=>({event,ref:schedulerRecordRef(event,submitted.from,submitted.to,(BigInt(cursor)+BigInt(index)).toString())}))
   function apply(){
@@ -79,14 +82,17 @@ export function HistoryPaging({history}:{history:SchedulerHistoryQuery<Scheduler
   return <div className="grid gap-2">{history.query.data?.gapUntil&&<p role="status">{gapNotice(history.query.data.gapUntil)}</p>}<div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
 }
 
-function RecordDetails({row}:{row:SchedulerHistoryRow}){
+function RecordDetails({row,names}:{row:SchedulerHistoryRow;names:ReadonlyMap<string,string>}){
   const event=row.event,decision=event.decision,snapshot=event.snapshot
   const view=decision&&snapshot?{settings:decision.settings,state:{decision,snapshot,actions:snapshot.actions,results:null}}:null
+  const serviceNames=new Map(names)
+  for(const workload of snapshot?.workloads??[])if(workload)serviceNames.set(workload.uid,workload.name)
   return <div className="space-y-4 [&_dd]:break-all">
     <Facts items={[["종류",kinds[row.ref.kind]??"기타 기록"],["사건 시각 KST",when(event.at)],["보관 순서",row.ref.offset]]}/>
     {decision&&<>
-      <h3 className="font-semibold" title={decision.status}>판단: {judgmentLabels[decision.status]??"판단 미확인"}</h3>
-      <Facts items={[["판단 시각 KST",when(decision.at)],["CHILL 자동 운영 서비스",`${decision.settings.autonomousWorkloads?.length??0}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"기록 없음"],["사유",decision.reasons?.length?decision.reasons.map(reason=><span key={reason} title={reason}>{liveReason(reason)} </span>):"미제공"]]}/>
+      <SchedulerDecisionSummary at={when(decision.at)} status={`${judgmentLabels[decision.status]??"판단 미확인"} (${decision.status})`} reasons={decision.reasons}/>
+      <SchedulerWorkloadStates workloads={decision.workloads} names={serviceNames}/>
+      <details><summary>판단 입력·설정</summary><Facts items={[["자동 운영 설정 대상",decision.settings.autonomousWorkloads==null?"미기록":`${decision.settings.autonomousWorkloads.length}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"미기록"]]}/></details>
       {view?<>{candidatePlans(decision.keep,decision.target).map(candidate=><details key={candidate.id}><summary>{candidate.keep?"유지안 근거":"선택 목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
     </>}
     {snapshot&&<details><summary>기록의 실제 구성</summary><SnapshotDetails snapshot={snapshot}/></details>}
@@ -112,7 +118,12 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   const workloads=useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const uid=params.get("uid")??"",serviceName=workloads.data?.find(row=>row.desired.metadata.uid===uid)?.desired.metadata.name
   const filter=settingsOnly?"settings":params.get("filter")??"decision-action",filterNode=params.get("filterNode")??""
-  const rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)&&schedulerHistoryNodeMatches(filterNode,row.event)))
+  const rows=history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)&&schedulerHistoryNodeMatches(filterNode,row.event))
+  const scopeView=!settingsOnly&&params.get("timeline")==="scope"
+  const pageDecisions=history.rows as SchedulerHistoryRow[]
+  const scopeRows=scopeView?schedulerScopeChanges(pageDecisions.filter(row=>schedulerHistoryNodeMatches(filterNode,row.event))):[]
+  const pageTimes=scopeView?history.rows.map(row=>row.event.at).sort(compareAt):[]
+  const names=resolveWorkloadIdentities(workloads.data??[],[],null,[])
   const targetEvent=filterNode?history.rows.find(row=>schedulerHistoryNodeMatches(filterNode,row.event))?.event:undefined
   const nodeName=(targetEvent?.action?.node??targetEvent?.node)?.name||"선택 장치"
   const opener=React.useRef<HTMLElement|null>(null),[filterOpen,setFilterOpen]=React.useState(false)
@@ -161,14 +172,20 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
         <fieldset className="grid gap-2">{Object.entries(historyFilters).map(([key,label])=><label key={key} className="flex min-h-11 items-center gap-2"><input type="radio" name="kind" checked={filter===key} onChange={()=>{const next=schedulerPageParams(new URLSearchParams(params.toString()));next.set("filter",key);router.replace(`${pathname}?${next}`);setFilterOpen(false)}}/>{label}</label>)}</fieldset>
       </RowDialog>}
       {history.query.data&&<RowDialog label="자료 내보내기" title="자료 내보내기" description="지금 불러온 기록을 파일로 받아요. 기간 전체 집계는 아니에요.">
-        <SourceExport value={{projection:"summary",conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter,filterNode,nodeFilterScope:filterNode?"loaded-page":null,eventAt:params.get("eventAt")},source:history.query.data}} filename="chill-scheduler-current-page-summary.json"/>
+        <SourceExport value={{projection:scopeView?"compact":"summary",conditions:{...history.submitted,cursor:history.cursor,limit:params.get("limit")??history.limit,filter,filterNode,nodeFilterScope:filterNode?"loaded-page":null,eventAt:params.get("eventAt")},source:history.query.data}} filename="chill-scheduler-current-page.json"/>
       </RowDialog>}
     </HistoryControls>
+    {!settingsOnly&&<label className="flex min-h-11 items-center gap-2">보기<select className="min-h-11 rounded-md border bg-background px-2" value={scopeView?"scope":"records"} onChange={event=>{const next=schedulerPageParams(new URLSearchParams(params.toString()),history.cursor);if(event.target.value==="scope")next.set("timeline","scope");else next.delete("timeline");router.replace(`${pathname}?${next}`)}}><option value="records">기록 목록</option><option value="scope">서비스 상태 변화 · 현재 페이지</option></select></label>}
     <QueryGate query={history.query}>{loaded&&<>
+      {scopeView?<section aria-label="서비스 상태 변화" className="space-y-4">
+        <p className="text-sm text-muted-foreground">현재 페이지 · {history.rows.length}건 · {when(pageTimes.at(0))} ~ {when(pageTimes.at(-1))} · 첫 행은 페이지 기준 상태 · 이전 페이지와의 변화는 미확인</p>
+        {scopeRows.length?scopeRows.map((row,index)=><section key={row.ref.offset} className="space-y-3 rounded-lg border p-3"><h2 className="font-semibold">{index===0?"페이지 기준 상태":"서비스 상태 변화"} · {when(row.event.decision?.at)}</h2><SchedulerDecisionSummary at={when(row.event.decision?.at)} status={`${judgmentLabels[row.event.decision!.status]??"미확인"} (${row.event.decision!.status})`} reasons={row.event.decision?.reasons}/><SchedulerWorkloadStates workloads={row.event.decision?.workloads} names={resolveWorkloadIdentities(workloads.data??[],[],row.event.snapshot?.workloads??[],[])}/><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>판단 근거</Button></section>):<Empty title="현재 페이지에 판단 기록 없음"/>}
+      </section>:<>
       {rows.length?<div className="rounded-lg border"><table className="block w-full text-sm sm:table"><thead className="hidden sm:table-header-group"><tr>{["시각 KST","대상","동작·판단","결과","선택"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody className="block sm:table-row-group">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
-        return <tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 tabular-nums sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(ev.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">대상 </span>{ev.action?actionNodeName(ev.action.node):ev.node?.name??params.get("uid")??"클러스터"}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">동작·판단 </span>{row.keepCount?`유지 ×${row.keepCount}`:ev.decision?judgmentLabels[ev.decision.status]??"미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">결과 </span>{ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"완료":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):mark||"해당 없음"}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>근거</Button></td></tr>
+        return <tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 tabular-nums sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(ev.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">대상 </span>{ev.action?actionNodeName(ev.action.node):ev.node?.name??params.get("uid")??"클러스터"}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">동작·판단 </span>{ev.decision?judgmentLabels[ev.decision.status]??"미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">결과 </span>{ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"완료":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):mark||"해당 없음"}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>근거</Button></td></tr>
       })}</tbody></table></div>:<Empty title="기록 없음"/>}
+      </>}
       <HistoryPaging history={history}/>
     </>}</QueryGate>
     <Sheet open={requested} onOpenChange={open=>{if(!open)close()}}>
@@ -178,7 +195,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
         <SheetHeader><SheetTitle>선택 기록 근거</SheetTitle></SheetHeader>
         {!selected?(params.get("view")==="current"&&params.has("id")&&!params.has("offset")&&!params.has("at")?<CurrentTransitionEvidence/>:<p role="alert">기록 식별자 미확인</p>):
           <QueryGate query={record}>{record.isSuccess&&(matches&&event?<>
-            <RecordDetails row={{event,ref:selected}}/>
+            <RecordDetails row={{event,ref:selected}} names={names}/>
             {event.decision&&!settingsOnly&&<div className="flex flex-wrap gap-2">
               <Button variant="outline" disabled={same(a,{event,ref:selected})} onClick={()=>select({event,ref:selected},"a")}>{same(a,{event,ref:selected})?"A로 골랐어요":"A로 고르기"}</Button>
               <Button variant="outline" disabled={same(b,{event,ref:selected})} onClick={()=>select({event,ref:selected},"b")}>{same(b,{event,ref:selected})?"B로 골랐어요":"B로 고르기"}</Button>

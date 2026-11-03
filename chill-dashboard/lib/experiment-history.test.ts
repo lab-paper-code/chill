@@ -70,7 +70,7 @@ test("historical errors retain candidate measurements and retry only failed expl
     assert.match(html,/대상 게시 조회 실패/)
     assert.doesNotMatch(html,/대상 게시 없음/)
     assert.match(html,/공유 구간 차트/)
-    assert.match(html,/선택 단계 원값/)
+    assert.match(html,/서비스별 결과/)
     app.buttons.find(button=>button.text.includes("다시 불러오기"))!.click()
     assert.deepEqual(retried,[0])
     assert.ok(!app.paths.some(path=>path.startsWith("v1/experiments?")))
@@ -108,8 +108,8 @@ test("solo results show measured values without empty deltas, invented p95 or nu
   assert.doesNotMatch(html,/>차이<|기준 원값|후보 p95|기준 p95|전체 서비스 p95/)
   assert.ok(app.charts.some(chart=>chart.dataKey==="leftEnergy"))
   assert.ok(!app.charts.some(chart=>chart.dataKey.includes("P95")||chart.dataKey.includes("SLO")))
-  assert.ok(html.indexOf('aria-label="공유 구간 차트"')<html.indexOf('aria-label="선택 단계 원값"'))
-  assert.ok(html.indexOf('aria-label="선택 단계 원값"')<html.indexOf('aria-label="측정 규칙"'))
+  assert.ok(html.indexOf('aria-label="서비스별 결과"')<html.indexOf('aria-label="공유 구간 차트"'))
+  assert.ok(html.indexOf('aria-label="공유 구간 차트"')<html.indexOf('aria-label="측정 규칙"'))
   app.setSearch("a=candidate&service=camera")
   app.render()
   assert.ok(app.charts.some(chart=>chart.dataKey==="leftP95"))
@@ -159,7 +159,7 @@ test("all measured chart lanes select the publication and stage identity rather 
     assert.equal(calls.length,3)
     app.buttons.find(button=>button.text.includes("구간 자세히"))!.click()
     assert.equal(location.searchParams.get("as"),comparisonHelpers.experimentHeatmap(publication)[0].stage.id)
-    app.buttons.find(button=>button.text.includes("camera 성공 응답 p95"))!.click()
+    app.buttons.find(button=>button.text.includes("camera 결과 자세히"))!.click()
     assert.equal(location.searchParams.get("as"),comparisonHelpers.experimentHeatmap(publication)[0].stage.id)
     assert.equal(location.searchParams.get("service"),"camera")
     const interval=app.buttons.find(button=>button.text.includes("measured")&&!button.text.includes("no-p95"))
@@ -230,4 +230,19 @@ test("control323: old detail without a supported definition waits for matching l
   const html=app.render()
   assert.match(html,/aria-label="단계 변경 설정"/)
   assert.match(html,/>변경 설정<\/th><td[^>]*>복제 수 상한<\/td>/)
+})
+
+test("operator results put the verdict and service matrix before part success, energy and legacy charts",()=>{
+  const publication:Experiment={...fixture,id:"candidate",comparisons:[],status:"FAIL",outcome:{measurement:{verdict:"FAIL",reason:"SLOFailed"}},stages:[{...fixture.stages[0],kpis:{
+    components:{slo:{status:"FAIL",workloads:{camera:"FAIL",sensor:"OBSERVED_THRESHOLD_MET"}},loadFidelity:{camera:{status:"PARTIAL",issued:80,issuanceFraction:.8,unissued:20}}},
+    requests:{camera:{offered:100,deadlineSuccess:15,D1:"FAIL",completedLatencyNS:{p50:1000000,p95:2000000},outcomes:{completed:80},substages:[{id:"part-a",offered:100,deadlineSuccess:15}]},sensor:{offered:10,deadlineSuccess:10,D1:"OBSERVED_THRESHOLD_MET"}},
+    power:{energyStatus:"UNAVAILABLE"},wholePoolJoules:null,
+  }}]}
+  const html=harness(publication).render()
+  const ordered=['aria-label="게시 판정"','aria-label="서비스별 결과"','aria-label="구간별 성공률"','aria-label="에너지·배출"','aria-label="공유 구간 차트"']
+  for(let index=0;index<ordered.length;index++){assert.ok(html.includes(ordered[index]),ordered[index]);if(index)assert.ok(html.indexOf(ordered[index-1])<html.indexOf(ordered[index]))}
+  assert.match(html,/FAIL.*SLO 미달: camera/)
+  assert.match(html,/15 \/ 100/)
+  assert.doesNotMatch(html,/aria-label="선택 단계 원값"/)
+  assert.match(html,/<details><summary[^>]*>실행·정리·비교 조건·정의 출처/)
 })
