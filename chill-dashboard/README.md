@@ -136,7 +136,7 @@ retain integer literals while removing credentials.
 | 업무 | 정본 경로·책임 |
 |---|---|
 | 운영 | `/` 현재 서비스 영향·유입·배치·진행 변경, `/operations/devices` 장치·전력·배치 |
-| 서비스 | `/workloads`, `/workloads/[name]?uid=…` 정의·접수·자동제어·관리; 현재 관측은 운영 링크 |
+| 서비스 | `/workloads`, `/workloads/[name]?uid=…` 정의·접수·CHILL 자동 운영·변경 작업 진행; 자동 운영 수정은 운영 설정 바로가기 |
 | 측정 | `/measurements` 조건·집계/행렬/결과 Sheet, `/measurements/requests` 부모 요청→자식 회차(`?view=runs` 전체 검색), `/measurements/requests/new` 대상→조건→점검·제출, `/measurements/results?kind=throughput\|operation-cost\|dispatch-occupancy` 종류별 결과 |
 | 실험 | `/experiments` 실행, `/experiments/results` 비교 결과, `/experiments/load-scenarios` 부하 설정 |
 | 기록 | `/records` 판단·변경/서비스 요청/전력, 종류별 실제 범위·페이지·누락 보존 |
@@ -147,6 +147,20 @@ retain integer literals while removing credentials.
 
 설정의 정본은 `/settings?tab=configuration|models|preprocessors|datasets`다(기본 운영 설정).
 운영 설정은 `section` 범위·`edit` 수정 Sheet 선택을 URL에 보존한다. 분배는 서비스·인스턴스·가중치 표와 접힌 JSON에서 편집하며 기존 차단/기본 복귀/순차 적용 의미를 유지한다. 카탈로그 목록은 필드·파일·실행 방식 수와 연결 서비스 수를 우선하고 긴 주소·해시는 원문에 접는다.
+기본 `section=targets`에는 CHILL 자동 운영 서비스(`autonomousWorkloads`), 최소 수요(`minimumDemand`), 계획 제외 장비(`excludedNodes`)가 접히지 않은 표로 모인다. 서비스 목록·상세의 자동 운영 값은 이 화면의 `edit=autonomousWorkloads&workload=<UID>`로 이동하며 직접 PUT하지 않는다. 변경 작업이 없는 목록은 진행 열을 숨기고, 진행 서비스와 함께 보일 때 없는 값은 흐리게 표시한다.
+
+| 운영 설정 범위 | 편집 항목 |
+|---|---|
+| 서비스·장비 | CHILL 자동 운영 서비스, 서비스별 최소 수요(req/s), 계획 제외 장비 이름 |
+| 판단 주기와 범위 | 부하 관측 구간, 운영 판단 주기, 에너지 비교 기간, 교체 후 최소 체류 기간, 초기 용량 대기 시간, 하강 안정화 기간, 전환 예비 비율, 하강 용량 여유, 관측 사용 시간 |
+| 자원 한도 | 서비스 실행 메모리(bytes), 복제 수·인스턴스 수 상한 |
+| 자동 조정 항목 | 배치 위치, 자원 할당, 복제 수, 요청 분배, 배칭, 전력모드, 실행 그룹 소속 |
+| 용량 설정 | 완료 여유(ms), 계산 창 길이·창 수·충족 창 수·최소 요청 수·격자 수·이분 탐색 폭·꼬리 표본 수 |
+| 고급 | 구성 탐색 동시 계산 수 |
+
+항목 정의는 `lib/scheduler-settings.ts` 한 곳에 둔다. 실험 화면은 아직 이 정의에 연결하지 않는다(W1 계약 대기). 최소 수요는 서비스 UID별 0 이상 유한한 req/s이며 상한은 없다. 미설정과 0은 별개이고, 현재 서비스 목록에 없는 UID도 운영자가 해제하기 전에는 유지한다. 초기 용량 대기는 0~1시간이며 ns 정밀도를 보존한다.
+저장은 작성값 누적 → 현재 설정 재조회 → 변경 전/후 표 → 운영자 확인 → 직전 재조회 → 전체 설정 PUT 순서다. 새 최소 수요 등 동시 변경은 제출을 차단하고 작성값을 유지한다. HTTP 409·권한 거부·결과 미확인도 자동 재제출하지 않는다. GET에 함께 온 `staticRouting`·`powerObservation`·`meters`·`requestTimeout`은 설정 PUT에서 제외한다. 요청 분배 변경은 별도 scheduler operations 계약을 유지한다.
+서버 계약 근거(origin/main `dba32979`): `internal/serving/scheduler.go:17-51,409-512`(필드·검증·기본값), `internal/serving/httpapi/scheduler.go:60-78,99-175,196-215`(GET 부가 읽기 전용 값·전체 PUT·감사·적용·ConfigMap 갱신). 이 GET/PUT은 `resourceVersion`·`If-Match`를 제공/검증하지 않는다. ConfigMap Update 자체는 읽은 버전으로 충돌하지만 HTTP 클라이언트의 읽기-쓰기 사이 원자적 충돌 방지는 아니다. 완전한 방지가 필요하면 해당 핸들러에 GET 버전 제공 + PUT 조건부 버전 검증을 추가해야 한다(서버 변경은 이번 범위 밖).
 구 최상위 목록은 설정 탭으로 이동하며 등록·상세·수정 전용 경로와 변경 충돌/결과 미확인 안전 계약은 유지한다.
 
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
@@ -186,8 +200,8 @@ the browser used an isolated ChillServer-contract fixture and performed no live 
 구 POOL 상세 링크는 `workload` 범위와 `open` 선택을 분리하며 장치 선택은 `node`로 장치 화면에 매핑한다.
 `Feasible`은 `실행 가능`이며 SLO 충족 판정이 아니다. 후보의 서비스 평가 항목이 없으면
 `평가 대상 없음`을 표시하고 동일 후보 ID의 유지안·목표는 한 번만 표시한다.
-`Preparing`·자동제어 꺼짐·현재 인스턴스 없음이 함께 관측되면 홈·서비스 관측·목록은
-`미배치 · 자동제어 꺼짐`을 공유한다. 고정(`fixed`) 장치의 `PowerModeUnavailable`은
+`Preparing`·CHILL 자동 운영 꺼짐·현재 인스턴스 없음이 함께 관측되면 홈·서비스 관측·목록은
+`미배치 · CHILL 자동 운영 꺼짐`을 공유한다. 고정(`fixed`) 장치의 `PowerModeUnavailable`은
 장치 확인에서 제외하며, 제외 노드와 `PlacementInventoryMissing`은 사유를 유지한다.
 진행·사건은 최근 5분 실제 수신 판단 수·유지 수·마지막 시각과 관측된 파드 준비 전이를 표시한다.
 운영 재진입 시 `observations/events?from&to&limit=100`으로 최근 15분을 최대 5페이지·500건까지 읽고 실제 사건 identity로 실시간 사건과 합친다. archive에 WebSocket 순번을 생성하지 않는다. 미조회 페이지는 일부 표시, coverage·snapshot.history의 보존 공백은 `보존 공백` 상태어로 유지하며 손실 건수를 추정하지 않는다.

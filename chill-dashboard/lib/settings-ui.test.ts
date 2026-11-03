@@ -2,11 +2,13 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
+import { setImmediate as settle } from "node:timers/promises"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as domain from "./domain.ts"
 import * as scheduler from "./scheduler.ts"
 import * as sourceExport from "./source-export.ts"
 import * as labels from "./labels.ts"
+import * as settingDefinitions from "./scheduler-settings.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -24,7 +26,7 @@ function hooks() {
 function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
   const compiled=transpileModule(readFileSync(new URL(path,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
-  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name.startsWith("@/")?{}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/lib/scheduler-settings"?settingDefinitions:name.startsWith("@/")?{}:require(name),exports)
   return exports
 }
 const base={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({push:()=>{},replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/lib/domain":domain,"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,"@/components/screen":{Screen:"main",Facts:"facts",Rows:"rows",Row:"row",RowDialog:"row-dialog"},"@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/sheet":{Sheet:"sheet",SheetContent:"aside",SheetHeader:"header",SheetTitle:"h2",SheetTrigger:"trigger"},"@/components/read-region":{QueryGate:"query",StatusBadge:"status"},"@/components/settings-navigation":{SettingsNavigation:"tabs"},"@/features/service-hub":{ServiceAdmission:"admission"}}
@@ -83,20 +85,27 @@ test("catalog update retains If-Match and original definition and never auto-ret
 test("operating setting writes retain exact integers and omit runtime-only fields",async()=>{
   const {putSchedulerSettings}=load("../features/scheduler-settings.tsx",{...base,"@/lib/client":{}})
   const sent:{path:string;method:string;body:string}[]=[]
-  const settings={observationWindowNanos:9007199254740993n,controls:{placement:true},staticRouting:{service:{instance:1}},staticRoutingValidatedAt:"past",meters:{secret:"runtime"},requestTimeout:10}
+  const settings={observationWindowNanos:9007199254740993n,controls:{placement:true},staticRouting:{service:{instance:1}},staticRoutingValidatedAt:"past",powerObservation:{series:"read-only"},meters:{secret:"runtime"},requestTimeout:10}
   const writer=putSchedulerSettings as unknown as (mutate:(input:{path:string;method:string;body:string})=>Promise<{body:string}>,client:{invalidateQueries:()=>Promise<void>},settings:unknown)=>Promise<unknown>
   await writer(async input=>{sent.push(input);return {body:'{"appliedAt":"2026-11-01T00:00:00Z"}'}},{invalidateQueries:async()=>{}},settings)
   assert.equal(sent.length,1)
   assert.equal(sent[0].path,"v1/scheduler/settings")
   const body=scheduler.parseSchedulerJSON(sent[0].body) as Record<string,unknown>
   assert.equal(body.observationWindowNanos,9007199254740993n)
-  for(const key of ["staticRouting","staticRoutingValidatedAt","meters","requestTimeout"])assert.ok(!Object.hasOwn(body,key))
+  for(const key of ["staticRouting","staticRoutingValidatedAt","powerObservation","meters","requestTimeout"])assert.ok(!Object.hasOwn(body,key))
   assert.ok(Object.hasOwn(settings,"staticRouting"),"the source draft is not mutated")
+})
+
+test("operating settings expose service automation, minimum demand and excluded devices together",()=>{
+  const runner=hooks(),settings={controls:{},autonomousWorkloads:["known","retired"],minimumDemand:{known:.3,retired:20},excludedNodes:["meter"]}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{useSearchParams:()=>new URLSearchParams({section:"targets"}),useRouter:()=>({push(){},replace(){}})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/workloads?view=summary"?[{desired:{metadata:{name:"카메라",uid:"known"}}}]:path==="v1/scheduler/state"?{results:[]}:undefined})}})
+  const tree=elements(runner.render(SchedulerSettingsPage))
+  for(const key of ["autonomousWorkloads","minimumDemand","excludedNodes"])assert.ok(tree.some(node=>node.props.editKey===key),`${key} has an editable field`)
 })
 
 test("operating range table edits accumulate a precise draft before review",()=>{
   const runner=hooks(),settings={controls:{placement:true},observationWindowNanos:1000000000n,controlIntervalNanos:1000000000n,comparisonPeriodNanos:1000000000n,replacementDwellNanos:0n,scaleDownStabilizationNanos:0n,transitionReserveFraction:0,scaleDownHeadroomFraction:0,maxObservationAgeNanos:1000000000n}
-  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}})
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"cycle"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}})
   let tree=elements(runner.render(SchedulerSettingsPage))
   assert.equal(tree.find(element=>element.type==="tabs")?.props.active,"configuration")
   const table=tree.find(element=>element.type==="table")!
@@ -134,12 +143,12 @@ test("operating sections and numeric, boolean and node Sheets follow URL history
   params=new URLSearchParams(history[0])
   tree=elements(runner.render(SchedulerSettingsPage))
   assert.equal(tree.find(node=>node.type==="select")!.props.value,"limit")
-  for(const [section,key] of [["limit","maxReplicas"],["controls","controls.placement"],["cycle","excludedNodes"]]){
+  for(const [section,key] of [["limit","maxReplicas"],["controls","controls.placement"],["targets","excludedNodes"]]){
     params.set("section",section)
     tree=elements(runner.render(SchedulerSettingsPage))
     const table=tree.find(node=>node.type==="table")!
     const columns=table.props.columns as {key:string;value:(row:unknown)=>Tree}[]
-    const row=(table.props.data as {key:string}[]).find(row=>row.key===key.replace("controls.",""))
+    const row=key==="excludedNodes"?undefined:(table.props.data as {key:string}[]).find(row=>row.key===key.replace("controls.",""))
     const editor=key==="excludedNodes"?tree.find(node=>node.props.editKey===key)!:columns.find(column=>column.key==="edit")!.value(row)
     const component=editor.type as (props:Record<string,unknown>)=>unknown
     let sheet=elements(runner.render(component,editor.props)).find(node=>node.type==="sheet")!
@@ -150,7 +159,7 @@ test("operating sections and numeric, boolean and node Sheets follow URL history
     const refreshed=hooks(),refreshedPage=load("../features/scheduler-settings.tsx",{...modules,react:refreshed.react}).SchedulerSettingsPage
     const refreshedTree=elements(refreshed.render(refreshedPage)),refreshedTable=refreshedTree.find(node=>node.type==="table")!
     const refreshedColumns=refreshedTable.props.columns as {key:string;value:(row:unknown)=>Tree}[]
-    const refreshedRow=(refreshedTable.props.data as {key:string}[]).find(row=>row.key===key.replace("controls.",""))
+    const refreshedRow=key==="excludedNodes"?undefined:(refreshedTable.props.data as {key:string}[]).find(row=>row.key===key.replace("controls.",""))
     const refreshedEditor=key==="excludedNodes"?refreshedTree.find(node=>node.props.editKey===key)!:refreshedColumns.find(column=>column.key==="edit")!.value(refreshedRow)
     assert.equal(elements(refreshed.render(refreshedEditor.type as (props:Record<string,unknown>)=>unknown,refreshedEditor.props)).find(node=>node.type==="sheet")!.props.open,true)
     params=new URLSearchParams(history[history.length-2])
@@ -289,4 +298,126 @@ test("model connected services separate names, observed devices and admission wi
   assert.notEqual(table.props.urlState,true)
   const primary=elements(runner.render(CatalogSettingsPage,{kind:"models"})).find(node=>node.type==="table")!
   assert.equal(primary.props.urlState,true)
+})
+
+test("service settings forms retain unknown UIDs, validate rates and submit one reviewed full settings body",async()=>{
+  const runner=hooks(),sent:{path:string;method:string;body:string}[]=[],settings={...Object.fromEntries(settingDefinitions.settingFields.map(field=>[field.key,field.key.endsWith("Nanos")?1000000000n:1])),servingMemoryBytes:18446744073709551615n,capacityBisectionWidth:.005,controls:{placement:true,resources:true,replicas:true,routing:true,batching:true,power:true,membership:true},autonomousWorkloads:["retired"],minimumDemand:{known:.3,retired:20},excludedNodes:["meter"]}
+  let params=new URLSearchParams({section:"targets",edit:"autonomousWorkloads",workload:"known"})
+  class ApiError extends Error {}
+  const {SchedulerSettingsPage,SettingChanges}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams},replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams}})},"@/lib/client":{ApiError,useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:{path:string;method:string;body:string})=>{sent.push(input);return {body:'{"appliedAt":"2026-11-03T00:00:00Z"}'}}}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:"known",name:"카메라"}}},{desired:{metadata:{uid:"new",name:"추가 서비스"}}}]:path==="v1/scheduler/state"?{results:[],snapshot:{nodes:[]}}:undefined,refetch:async()=>({data:settings})})}})
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  let editor=tree.find(node=>node.props.editKey==="autonomousWorkloads")!
+  let form=elements(runner.render(editor.type as (props:Record<string,unknown>)=>unknown,editor.props))
+  assert.equal(form.find(node=>node.type==="sheet")!.props.open,true)
+  const known=form.find(node=>node.type==="input"&&node.props["aria-label"]==="카메라 CHILL 자동 운영")!
+  ;(known.props.onChange as (event:unknown)=>void)({target:{checked:true}})
+  form=elements(runner.render(editor.type as (props:Record<string,unknown>)=>unknown,editor.props))
+  ;(form.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  assert.equal(sent.length,0,"editing never sends PUT")
+  tree=elements(runner.render(SchedulerSettingsPage));editor=tree.find(node=>node.props.editKey==="minimumDemand")!
+  const Component=editor.type as (props:Record<string,unknown>)=>unknown
+  const rate=(name:string,value:string)=>{
+    const input=elements(runner.render(Component,editor.props)).find(node=>node.type==="input"&&node.props["aria-label"]===`${name} 최소 수요 req/s`)!
+    ;(input.props.onChange as (event:unknown)=>void)({target:{value}})
+  }
+  const submit=()=>{
+    const form=elements(runner.render(Component,editor.props)).find(node=>node.type==="form")!
+    ;(form.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  }
+  for(const value of ["","-1","Infinity","NaN"]){rate("카메라",value);submit();assert.ok(elements(runner.render(Component,editor.props)).some(node=>node.props.role==="alert"));assert.equal(sent.length,0)}
+  rate("카메라",".75")
+  const choice=elements(runner.render(Component,editor.props)).find(node=>node.type==="select")!
+  ;(choice.props.onChange as (event:unknown)=>void)({target:{value:"new"}})
+  rate("추가 서비스","0");submit()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  const diff=tree.find(node=>node.type===SettingChanges)!
+  const rows=elements(SettingChanges(diff.props)).filter(node=>node.type==="tr").map(row=>elements(row).filter(node=>node.type==="th"||node.type==="td").map(node=>node.props.children))
+  assert.ok(rows.some(row=>row[0]==="CHILL 자동 운영 · 카메라"&&row[1]==="꺼짐"&&row[2]==="켜짐"))
+  assert.ok(rows.some(row=>row[0]==="최소 수요 · 카메라"&&row[1]==="0.3 req/s"&&row[2]==="0.75 req/s"))
+  assert.ok(rows.some(row=>row[0]==="최소 수요 · 추가 서비스"&&row[1]==="미설정"&&row[2]==="0 req/s"))
+  assert.equal(sent.length,0,"review alone never sends PUT")
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)()
+  await settle()
+  assert.equal(sent.length,1)
+  assert.equal(sent[0].path,"v1/scheduler/settings")
+  const body=scheduler.parseSchedulerJSON(sent[0].body) as Record<string,unknown>
+  assert.deepEqual(body.minimumDemand,{known:.75,retired:20,new:0})
+  assert.deepEqual(body.autonomousWorkloads,["retired","known"])
+  assert.deepEqual(body.excludedNodes,["meter"])
+  assert.equal(body.servingMemoryBytes,18446744073709551615n)
+  assert.deepEqual(Object.keys(body).sort(),[...settingDefinitions.editableSettingKeys].sort())
+})
+
+test("settings detect added minimum demand before review and changes after confirmation without writing",async()=>{
+  for(const timing of ["review","save"]){
+    const runner=hooks(),initial={controls:{},autonomousWorkloads:[],excludedNodes:[]},sent:unknown[]=[]
+    let current:typeof initial&{minimumDemand?:Record<string,number>}=initial
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>{sent.push(input)}}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?initial:undefined,refetch:async()=>({data:current})})}})
+    let tree=elements(runner.render(SchedulerSettingsPage))
+    const editor=tree.find(node=>node.props.editKey==="excludedNodes")!
+    ;(editor.props.save as (value:string[])=>void)(["meter"])
+    if(timing==="review")current={...initial,minimumDemand:{other:40}}
+    tree=elements(runner.render(SchedulerSettingsPage))
+    ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+    await settle()
+    tree=elements(runner.render(SchedulerSettingsPage))
+    if(timing==="save"){
+      current={...initial,minimumDemand:{other:40}}
+      ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)()
+      await settle()
+      tree=elements(runner.render(SchedulerSettingsPage))
+    }
+    assert.equal(sent.length,0)
+    assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+    assert.ok(!tree.some(node=>node.type==="button"&&node.props.children==="설정 적용하기"))
+  }
+})
+
+test("bootstrap wait editor preserves nanoseconds and enforces the server zero-to-hour boundary",()=>{
+  const runner=hooks(),settings={controls:{},bootstrapCapacityWaitNanos:600000000000n}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"cycle"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined})}})
+  const table=elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
+  const field=(table.props.data as {key:string}[]).find(field=>field.key==="bootstrapCapacityWaitNanos")!
+  assert.ok(field)
+  const editor=(table.props.columns as {key:string;value:(row:unknown)=>Tree}[]).find(column=>column.key==="edit")!.value(field)
+  const save=editor.props.save as (value:string)=>void
+  for(const text of ["-1","3600000.000001","Infinity"])assert.throws(()=>save(text))
+  for(const [text,expected] of [["0","0ms"],["0.000001","0.000001ms"],["3600000","60분"]]){
+    save(text)
+    const updated=elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
+    assert.equal((updated.props.columns as {key:string;value:(row:unknown)=>string}[]).find(column=>column.key==="value")!.value(field),expected)
+  }
+})
+
+test("minimum demand removal is distinct from an explicit zero",()=>{
+  const runner=hooks(),saved:unknown[]=[],settings={controls:{},minimumDemand:{known:0,retired:20}}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined})}})
+  const editor=elements(runner.render(SchedulerSettingsPage)).find(node=>node.props.editKey==="minimumDemand")!,Component=editor.type as (props:Record<string,unknown>)=>unknown,props={...editor.props,save:(value:unknown)=>saved.push(value)}
+  let tree=elements(runner.render(Component,props))
+  const remove=tree.filter(node=>node.type==="button"&&node.props.children==="미설정으로")[1]
+  ;(remove.props.onClick as ()=>void)()
+  tree=elements(runner.render(Component,props))
+  ;(tree.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  assert.deepEqual(saved,[{known:0}])
+})
+
+test("settings conflict and uncertain outcomes retain draft and never automatically resubmit",()=>{
+  for(const error of [{status:409,unknownOutcome:false},{status:504,unknownOutcome:true}]){
+    const runner=hooks(),settings={controls:{},excludedNodes:[]},sent:unknown[]=[],mutation:{error?:typeof error;mutateAsync:(input:unknown)=>Promise<void>;reset:()=>void}={mutateAsync:async input=>{sent.push(input)},reset:()=>{delete mutation.error}}
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>mutation,useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined})}})
+    let tree=elements(runner.render(SchedulerSettingsPage))
+    ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
+    mutation.error=error
+    tree=elements(runner.render(SchedulerSettingsPage))
+    assert.equal(tree.find(node=>node.type==="main")!.props.title,error.status===409?"설정 변경 충돌":"적용 결과 미확인")
+    assert.equal(sent.length,0)
+    if(error.status===409){
+      ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+      tree=elements(runner.render(SchedulerSettingsPage))
+      assert.equal((tree.find(node=>node.type==="main")!.props.action as Tree).props.children,"변경 1건 검토")
+    } else assert.ok(JSON.stringify(tree).includes("자동 재제출"))
+  }
 })
