@@ -23,6 +23,9 @@ import (
 const (
 	requestTimeoutCode  = "RequestTimeout"
 	requestCanceledCode = "RequestCanceled"
+	// MaximumInferenceRequestTimeout is the actual infer handler/header cap,
+	// independent of the management request timeout.
+	MaximumInferenceRequestTimeout = 129 * time.Second
 )
 
 type HandlerConfig struct {
@@ -168,7 +171,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if longOperation(r) {
 		timeout = h.config.OperationTimeout
 	} else if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/infer") {
-		timeout = 129 * time.Second
+		timeout = MaximumInferenceRequestTimeout
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
@@ -603,15 +606,15 @@ func inferenceTimeout(requested string, lifetime, fallback time.Duration) (time.
 	}
 	if requested != "" {
 		duration, err := time.ParseDuration(requested)
-		if err != nil || duration <= 0 || duration > 129*time.Second {
-			return 0, &serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most 129s", Field: "X-Chill-Request-Timeout"}
+		if err != nil || duration <= 0 || duration > MaximumInferenceRequestTimeout {
+			return 0, &serving.Error{Code: "InvalidRequestTimeout", Message: "explicit timeout must be positive and at most " + MaximumInferenceRequestTimeout.String(), Field: "X-Chill-Request-Timeout"}
 		}
 		timeout = duration
 		if lifetime > 0 {
 			timeout = min(timeout, lifetime)
 		}
 	}
-	return min(timeout, 129*time.Second), nil
+	return min(timeout, MaximumInferenceRequestTimeout), nil
 }
 
 // Only requests received during an active capture acquire this adapter.

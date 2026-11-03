@@ -127,14 +127,14 @@ type CatalogRead struct {
 // OccupancySelection names the exact retained record already selected by CostEvidence.
 // It is not a second occupancy selector or a declaration that a pending DOM succeeded.
 type OccupancySelection struct {
-	Node serving.NodeReference `json:"node"`
-	PowerMode string `json:"powerMode"`
-	Model string `json:"model"`
-	RuntimeImage string `json:"runtimeImage"`
-	ExecutionPath string `json:"executionPath"`
-	ProfileID string `json:"profileID"`
-	Batch int `json:"batch"`
-	Evidence evidencestore.ObjectIdentity `json:"evidence"`
+	Node          serving.NodeReference        `json:"node"`
+	PowerMode     string                       `json:"powerMode"`
+	Model         string                       `json:"model"`
+	RuntimeImage  string                       `json:"runtimeImage"`
+	ExecutionPath string                       `json:"executionPath"`
+	ProfileID     string                       `json:"profileID"`
+	Batch         int                          `json:"batch"`
+	Evidence      evidencestore.ObjectIdentity `json:"evidence"`
 }
 
 // OccupancySelections joins the existing scheduler selection to its cached source.
@@ -159,7 +159,7 @@ func (e *CostEvidence) OccupancySelections(selected []serving.DispatchOccupancy,
 			candidate = OccupancySelection{
 				Node: record.Node, PowerMode: record.PowerMode, Model: record.Model, RuntimeImage: record.RuntimeImage,
 				ExecutionPath: profiles[index].Condition.Artifact.ExecutionPath,
-				ProfileID: record.ProfileID, Batch: record.Batch, Evidence: identity,
+				ProfileID:     record.ProfileID, Batch: record.Batch, Evidence: identity,
 			}
 		}
 		if matches != 1 {
@@ -181,7 +181,7 @@ type CatalogSnapshot struct {
 	SourceCheckedAt     time.Time                         `json:"sourceCheckedAt"`
 	SourceError         string                            `json:"sourceError"`
 	Revision            string                            `json:"revision"`
-	Occupancy []OccupancySelection `json:"occupancy"`
+	Occupancy           []OccupancySelection              `json:"occupancy"`
 }
 
 func ProjectCatalogSnapshot(

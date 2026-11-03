@@ -100,7 +100,7 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		},
 		Preparations: map[string]servingkube.PrepareSpec{"accepted-only": {Name: "accepted-preparation"}},
 		Occupancy: []servingkube.OccupancySelection{{
-			Node: serving.NodeReference{Name: "node", UID: "node-uid"},
+			Node:      serving.NodeReference{Name: "node", UID: "node-uid"},
 			PowerMode: "fixed", Model: "model", ProfileID: "accepted-only", Batch: 2,
 			Evidence: evidencestore.ObjectIdentity{Store: "evidence", Key: servingkube.DispatchOccupancyPrefix + "node-uid/dom-uid.json", Size: 100},
 		}},

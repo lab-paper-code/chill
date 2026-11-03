@@ -180,12 +180,12 @@ func (h *Handler) finishMeasurementAudit(
 			audit.Phase = request
 		}
 		audit.Actual, _ = json.Marshal(struct {
-			Request string `json:"request"`
-			UID string `json:"uid,omitempty"`
+			Request         string `json:"request"`
+			UID             string `json:"uid,omitempty"`
 			ResourceVersion string `json:"resourceVersion,omitempty"`
-			EvidenceDeleted bool `json:"evidenceDeleted"`
-			CleanedObjects int `json:"cleanedObjects"`
-			Spec any `json:"spec"`
+			EvidenceDeleted bool   `json:"evidenceDeleted"`
+			CleanedObjects  int    `json:"cleanedObjects"`
+			Spec            any    `json:"spec"`
 		}{request, uid, version, deleted, cleaned, spec})
 	}
 	if err := h.recordMutationAudit(audit); err != nil && mutationErr == nil {
@@ -206,14 +206,14 @@ func (h *Handler) beginMeasurementAudit(
 	}
 	username, actorUID := servingkube.PrincipalFromContext(r.Context()).Actor()
 	expected, err := json.Marshal(struct {
-		ActorUsername   string                           `json:"actorUsername"`
-		ActorUID        string                           `json:"actorUID"`
-		Namespace       string                           `json:"namespace"`
-		Name            string                           `json:"name"`
-		UID             string                           `json:"uid,omitempty"`
-		ResourceVersion string                           `json:"resourceVersion,omitempty"`
-		DryRun          bool                             `json:"dryRun"`
-		RequestedSpec   any `json:"requestedSpec,omitempty"`
+		ActorUsername   string `json:"actorUsername"`
+		ActorUID        string `json:"actorUID"`
+		Namespace       string `json:"namespace"`
+		Name            string `json:"name"`
+		UID             string `json:"uid,omitempty"`
+		ResourceVersion string `json:"resourceVersion,omitempty"`
+		DryRun          bool   `json:"dryRun"`
+		RequestedSpec   any    `json:"requestedSpec,omitempty"`
 	}{username, actorUID, r.PathValue("namespace"), name, uid, version, dryRun, spec})
 	if err != nil {
 		return nil, err

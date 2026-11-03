@@ -40,10 +40,10 @@ type schedulerConfiguration struct {
 	Settings serving.SchedulerSettings              `json:"settings"`
 	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
 	// Meters are derived from the Profiler metric sources, never configured.
-	Meters           []servingkube.MeterDeclaration `json:"-"`
-	PowerObservation *powerObservationConfig        `json:"powerObservation,omitempty"`
-	DispatchOccupancy *dispatchOccupancyPolicy `json:"dispatchOccupancy,omitempty"`
-	StaticRouting    map[string]map[string]int      `json:"staticRouting,omitempty"`
+	Meters            []servingkube.MeterDeclaration `json:"-"`
+	PowerObservation  *powerObservationConfig        `json:"powerObservation,omitempty"`
+	DispatchOccupancy *dispatchOccupancyPolicy       `json:"dispatchOccupancy,omitempty"`
+	StaticRouting     map[string]map[string]int      `json:"staticRouting,omitempty"`
 	// StaticRoutingValidatedAt names the settings change that wrote StaticRouting.
 	StaticRoutingValidatedAt *time.Time `json:"staticRoutingValidatedAt,omitempty"`
 }
@@ -286,7 +286,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	published := httpapi.ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
 		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
-		Occupancy: occupancy,
+		Occupancy:    occupancy,
 	}
 	for id, spec := range preparations {
 		spec.Instance.Profile = nil // the profile body is in Profiles

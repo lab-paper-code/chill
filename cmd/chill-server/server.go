@@ -160,7 +160,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	scheduler, err := newSchedulerService(
 		ctx, store, kube, execution, observer, objects, observationLog, opts,
-		handlerConfig.RequestTimeout, publisher,
+		httpapi.MaximumInferenceRequestTimeout, publisher,
 	)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
