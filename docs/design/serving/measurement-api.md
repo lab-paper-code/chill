@@ -143,6 +143,9 @@ and `procedures[]` (`step,startedAt,finishedAt,reason,measurementVerdict`), plus
 The evaluation service reads child EvaluationStages through its existing reader,
 in recorded `childRefs` order, matching name and UID; unreferenced, deleted, or
 replaced children are not projected. Procedure order is preserved as recorded.
+Collection reads list child Stages once for the namespace and index them by name,
+checking the referenced UID, rather than issuing a GET for every Run's child.
+Single-Run reads fetch only its referenced children.
 Absent procedure histories, conditions, and timestamps remain null; absent
 `currentProcedure`, `reason`, and `measurementVerdict` are omitted. The CRDs do
 not record procedure `status` or stage `phase`, so those fields are not exposed.

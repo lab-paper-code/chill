@@ -38,7 +38,9 @@ func evaluationPhase(run *api.EvaluationRun) string {
 	}
 	return "Finishing"
 }
-func (s *Service) evaluationView(ctx context.Context, run *api.EvaluationRun) (EvaluationView, error) {
+func (s *Service) evaluationView(
+	ctx context.Context, run *api.EvaluationRun, stages map[client.ObjectKey]*api.EvaluationStage,
+) (EvaluationView, error) {
 	value := EvaluationView{
 		Name: run.Name, UID: string(run.UID), Spec: run.Spec, Phase: evaluationPhase(run),
 		Conditions: run.Status.Conditions, CurrentStage: run.Status.CurrentStage,
@@ -53,14 +55,19 @@ func (s *Service) evaluationView(ctx context.Context, run *api.EvaluationRun) (E
 		value.PublicationID = string(run.UID)
 	}
 	for _, ref := range run.Status.ChildRefs {
-		var stage api.EvaluationStage
-		err := s.reader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: ref.Name}, &stage)
-		// A deleted or replaced child is not evidence about the referenced stage.
-		if apierrors.IsNotFound(err) || err == nil && stage.UID != ref.UID {
-			continue
+		key := client.ObjectKey{Namespace: run.Namespace, Name: ref.Name}
+		stage := stages[key]
+		if stages == nil {
+			stage = &api.EvaluationStage{}
+			if err := s.reader.Get(ctx, key, stage); apierrors.IsNotFound(err) {
+				continue
+			} else if err != nil {
+				return EvaluationView{}, err
+			}
 		}
-		if err != nil {
-			return EvaluationView{}, err
+		// A deleted or replaced child is not evidence about the referenced stage.
+		if stage == nil || stage.UID != ref.UID {
+			continue
 		}
 		value.Stages = append(value.Stages, EvaluationStage{
 			ID: stage.Spec.StageID, Name: stage.Name, UID: string(stage.UID),
@@ -89,9 +96,18 @@ func (s *Service) List(ctx context.Context) ([]EvaluationView, error) {
 	if err := s.reader.List(ctx, &runs, client.InNamespace(s.namespace)); err != nil {
 		return nil, err
 	}
+	var children api.EvaluationStageList
+	if err := s.reader.List(ctx, &children, client.InNamespace(s.namespace)); err != nil {
+		return nil, err
+	}
+	stages := make(map[client.ObjectKey]*api.EvaluationStage, len(children.Items))
+	for i := range children.Items {
+		stage := &children.Items[i]
+		stages[client.ObjectKeyFromObject(stage)] = stage
+	}
 	result := make([]EvaluationView, 0, len(runs.Items))
 	for i := range runs.Items {
-		value, err := s.evaluationView(ctx, &runs.Items[i])
+		value, err := s.evaluationView(ctx, &runs.Items[i], stages)
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +120,7 @@ func (s *Service) Get(ctx context.Context, name string) (EvaluationView, error) 
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &run); err != nil {
 		return EvaluationView{}, err
 	}
-	return s.evaluationView(ctx, &run)
+	return s.evaluationView(ctx, &run, nil)
 }
 func (s *Service) Create(
 	ctx context.Context, request EvaluationRequest, actor string,
