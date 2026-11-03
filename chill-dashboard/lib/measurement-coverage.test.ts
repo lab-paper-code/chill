@@ -495,3 +495,33 @@ test("coverage regression: cell accessible name includes occupancy summary",()=>
   const name=button.match(/aria-label="([^"]*)"/)?.[1]
   assert.ok(name?.includes(occupancyHelpers.occupancySummary(selected.occupancy)))
 })
+
+test("control323: BEO paging retains later copy sources, rejects stalled/error pages and shares cancellation",async()=>{
+  const require=createRequire(import.meta.url)
+  const code=transpileModule(readFileSync(new URL("../features/measurement-coverage.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  for(const outcome of ["complete","stalled","denied","aborted"]) {
+    const paths:string[]=[],signal=new AbortController().signal
+    let queryFn:({signal}:{signal:AbortSignal})=>Promise<{items:MeasurementPlan[]}> = async()=>{throw new Error("query not captured")}
+    const error=new Error(outcome),state={error:null as Error|null,data:{items:[plan]}}
+    const modules:Record<string,unknown>={
+      "@tanstack/react-query":{useQuery:(options:{enabled:boolean;queryFn:typeof queryFn})=>{assert.equal(options.enabled,true);queryFn=options.queryFn;return state}},
+      "@/lib/client":{useSession:()=>({token:"fixture"}),ApiError:class extends Error {constructor(_status:number,body:string){super(body)}},decodeResponse:(body:string,decoder:(text:string)=>unknown)=>decoder(body),relay:async(path:string,_token:string,requestSignal:AbortSignal)=>{
+        assert.equal(requestSignal,signal)
+        paths.push(path)
+        const offset=new URL(path,"https://local.invalid").searchParams.get("offset")
+        if(offset!=="0"&&["denied","aborted"].includes(outcome))throw error
+        return {body:JSON.stringify({items:[offset==="0"?plan:{...plan,metadata:{...plan.metadata,name:"later-copy-source"}}],page:{nextOffset:offset==="0"?25:outcome==="stalled"?25:undefined}})}
+      }},
+      "@/lib/measurement-summary":measurementSummary,
+    }
+    const exports={} as {useMeasurementPlans:(namespace:string)=>{data:unknown}}
+    new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")||name.endsWith(".css")?{}:require(name)),exports)
+    exports.useMeasurementPlans("ns")
+    if(outcome==="complete")assert.deepEqual((await queryFn({signal})).items.map(item=>item.metadata.name),["195","later-copy-source"])
+    else await assert.rejects(queryFn({signal}),outcome==="stalled"?/페이지가 전진하지/:error)
+    assert.equal(paths.length,2)
+    for(const path of paths)assert.equal(new URL(path,"https://local.invalid").searchParams.get("limit"),"25")
+    state.error=error
+    assert.equal(exports.useMeasurementPlans("ns").data,undefined,"cached whole-list data must not hide a failed refresh")
+  }
+})

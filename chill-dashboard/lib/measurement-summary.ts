@@ -2,7 +2,7 @@ import { parseSchedulerJSON } from "./scheduler.ts"
 
 // Captured operational summaries peak at 230,362 logical nodes / depth 11.
 // Bound downstream recursive copies as well as this response-local DAG.
-const maxExpandedNodes=2_000_000,maxExpandedDepth=64
+const maxExpandedNodes=2_000_000,maxExpandedDepth=64,maxJoinedStringUnits=8*1024*1024
 type Restored={value:unknown;nodes:number;depth:number}
 
 // The dictionary is a response-local DAG: entries only refer to earlier entries.
@@ -13,6 +13,7 @@ export function restoreMeasurementSummary(value:unknown):unknown {
   if(projection?.version!=="measurement-summary.v1"||!Array.isArray(projection.values)||!Array.isArray(projection.shapes))throw new Error("측정 요약 형식 미지원")
   const shapes=projection.shapes
   const restored:Restored[]=[]
+  let joinedStringUnits=0
   function restore(item:unknown,nesting=1):Restored {
     if(nesting>maxExpandedDepth)throw new Error("측정 요약 확장 한도 초과")
     if(typeof item==="string"&&/^~\d+$/.test(item)) {
@@ -31,6 +32,17 @@ export function restoreMeasurementSummary(value:unknown):unknown {
     }
     let value:unknown
     if(Array.isArray(item))value=item.map(child)
+    else if("$s" in item&&Object.keys(item).length===1) {
+      if(!Array.isArray(item.$s))throw new Error("측정 문자열 참조 미확인")
+      value=item.$s.map((ref,partIndex)=>{
+        if(typeof ref!=="string"||!/^~\d+$/.test(ref))throw new Error("측정 문자열 참조 미확인")
+        const index=Number(ref.slice(1)),part=projection!.values![index]
+        if(!Number.isSafeInteger(index)||index>=restored.length||typeof part!=="string")throw new Error("측정 문자열 참조 미확인")
+        joinedStringUnits+=part.length+(partIndex?1:0)
+        if(joinedStringUnits>maxJoinedStringUnits)throw new Error("측정 요약 확장 한도 초과")
+        return part
+      }).join("/")
+    }
     else if("$o" in item&&Object.keys(item).length===1) {
       const fields=item.$o
       if(!Array.isArray(fields)||typeof fields[0]!=="number"||!Number.isInteger(fields[0]))throw new Error("측정 필드 참조 미확인")

@@ -4,13 +4,12 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { decodeResponse, useChillMutation, useChillQuery, useSession, type ApiError } from "@/lib/client"
-import type { MeasurementPlanList, MeasurementProjectionList, OccupancyMutation, OccupancyRequest, OccupancyTask } from "@/lib/read-types"
+import type { MeasurementProjectionList, OccupancyMutation, OccupancyRequest, OccupancyTask } from "@/lib/read-types"
 import type { WorkloadSummary } from "@/lib/domain"
 import { occupancyBody, occupancyChecked, occupancyRequestHref, occupancyResponseState, occupancyResultHref } from "@/lib/dispatch-occupancy"
-import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { executionPathLabel } from "@/lib/measurements"
-import { useCoverageInventory, useMeasurementCoverage } from "@/features/measurement-coverage"
+import { useCoverageInventory, useMeasurementCoverage, useMeasurementPlans } from "@/features/measurement-coverage"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen, Facts } from "@/components/screen"
@@ -49,7 +48,7 @@ function MutationError({error}:{error:ApiError|null}) {
 
 export function DispatchOccupancyRequestPage() {
   const params=useSearchParams(),router=useRouter(),{config}=useSession(),namespace=params.get("namespace")??config.namespace
-  const plans=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{decoder:parseMeasurementJSON})
+  const plans=useMeasurementPlans(namespace)
   const workloads=useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary"),inventory=useCoverageInventory()
   const coverage=useMeasurementCoverage(namespace)
   const dry=useChillMutation(),send=useChillMutation()

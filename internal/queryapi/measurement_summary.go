@@ -19,6 +19,15 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 	indices := map[string]int{}
 	shapes := [][]string{}
 	shapeIndices := map[string]int{}
+	intern := func(value json.RawMessage) (json.RawMessage, error) {
+		index, exists := indices[string(value)]
+		if !exists {
+			index = len(values)
+			indices[string(value)] = index
+			values = append(values, value)
+		}
+		return json.Marshal("~" + strconv.Itoa(index))
+	}
 	var project func(json.RawMessage, string) (json.RawMessage, error)
 	project = func(value json.RawMessage, field string) (json.RawMessage, error) {
 		if len(value) == 0 {
@@ -31,6 +40,9 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 				return nil, err
 			}
 			reserved = measurementSummaryReference(text)
+			if len(value) >= 24 && strings.Contains(text, "/") {
+				return measurementSummaryPath(text, intern)
+			}
 		}
 		switch value[0] {
 		case '{':
@@ -55,7 +67,8 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 				return nil, shapeErr
 			}
 			_, reservedObject := object["$o"]
-			if field != "$root" && (len(shapeJSON) > 32 || reservedObject) {
+			_, reservedString := object["$s"]
+			if field != "$root" && (len(shapeJSON) > 32 || reservedObject || reservedString) {
 				index, exists := shapeIndices[string(shapeJSON)]
 				if !exists {
 					index = len(shapes)
@@ -91,13 +104,7 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 			return nil, err
 		}
 		if field != "$root" && (len(value) >= 24 || reserved) {
-			index, exists := indices[string(value)]
-			if !exists {
-				index = len(values)
-				indices[string(value)] = index
-				values = append(values, value)
-			}
-			return json.Marshal("~" + strconv.Itoa(index))
+			return intern(value)
 		}
 		return value, nil
 	}
@@ -109,10 +116,17 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 	if err != nil {
 		return nil, err
 	}
+	return measurementSummaryEnvelope(encoded, values, shapes)
+}
+
+func measurementSummaryEnvelope(
+	encoded json.RawMessage, values []json.RawMessage, shapes [][]string,
+) (json.RawMessage, error) {
+	var root map[string]json.RawMessage
 	if err := json.Unmarshal(encoded, &root); err != nil {
 		return nil, err
 	}
-	root["readProjection"], err = json.Marshal(struct {
+	projection, err := json.Marshal(struct {
 		Version string            `json:"version"`
 		Values  []json.RawMessage `json:"values"`
 		Shapes  [][]string        `json:"shapes"`
@@ -120,7 +134,32 @@ func MeasurementSummaryJSON(payload any, omitPreparations bool) (json.RawMessage
 	if err != nil {
 		return nil, err
 	}
+	root["readProjection"] = projection
 	return json.Marshal(root)
+}
+
+func measurementSummaryPath(
+	text string, intern func(json.RawMessage) (json.RawMessage, error),
+) (json.RawMessage, error) {
+	parts := strings.Split(text, "/")
+	refs := make([]json.RawMessage, len(parts))
+	for i, part := range parts {
+		raw, err := json.Marshal(part)
+		if err != nil {
+			return nil, err
+		}
+		refs[i], err = intern(raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	joined, err := json.Marshal(struct {
+		Parts []json.RawMessage `json:"$s"`
+	}{refs})
+	if err != nil {
+		return nil, err
+	}
+	return intern(joined)
 }
 
 func measurementSummaryReference(text string) bool {

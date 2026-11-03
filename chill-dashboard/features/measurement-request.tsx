@@ -11,11 +11,11 @@ import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { DatasetResource, PreprocessorResource, ExecutionPath, ModelList, ModelResource, WorkloadSummary } from "@/lib/domain"
-import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanList, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant, ProfilesView } from "@/lib/read-types"
+import type { InventoryClass, InventoryNode, MeasurementMutation, MeasurementPlan, MeasurementPlanSpec, MeasurementPreflight, MeasurementVariant, ProfilesView } from "@/lib/read-types"
 import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestCheckCurrent, requestCopySource, requestCopyQuery, requestHref, type RequestRejectionGuidance } from "@/lib/measurement-request"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
-import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage } from "@/features/measurement-coverage"
+import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage, useMeasurementPlans } from "@/features/measurement-coverage"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { executionPathLabel, measurementRequestName } from "@/lib/measurements"
 import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"
@@ -184,7 +184,7 @@ function AdvancedFields({ value, set, showErrors, rejection }: { value: Advanced
 export function MeasurementRequestPage() {
   const { config, token } = useSession(), params = useSearchParams(),router=useRouter()
   const from = params.get("from"),namespace=params.get("namespace")??config.namespace
-  const plans = useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{decoder:parseMeasurementJSON})
+  const plans = useMeasurementPlans(namespace)
   const models = useChillQuery<ModelList>("v1/models")
   const workloads = useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const preprocessors = useChillQuery<{items:PreprocessorResource[]}>("v1/preprocessors")

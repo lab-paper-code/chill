@@ -5,13 +5,12 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
-import type { CampaignResult, MeasurementAssessment, MeasurementFailure, MeasurementMutation, MeasurementPlanList, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
+import type { CampaignResult, MeasurementAssessment, MeasurementFailure, MeasurementMutation, MeasurementPlanSpec, ResultRow } from "@/lib/read-types"
 import { executionPathLabel, formatMeasurementNumber as number, measurementCheckText, measurementReasonSummary, resultRowsCSV, safeMeasurementReturn } from "@/lib/measurements"
 import { assessmentReasons } from "@/lib/measurement-assessment"
 import { requestExecutionStatus, requestFailureFacts, requestHref, requestRunHref, requestUsedResults } from "@/lib/measurement-request"
-import { useMeasurementCoverage } from "@/features/measurement-coverage"
+import { useMeasurementCoverage, useMeasurementPlans } from "@/features/measurement-coverage"
 import { parseSchedulerJSON } from "@/lib/scheduler"
-import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts, Rows } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -95,7 +94,7 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
   const [deleted,setDeleted]=React.useState<MeasurementMutation|null>(null)
   const denied=[401,403].includes(query.error?.status??0)
   const errorData=denied?undefined:query.error?.data as Partial<CampaignResult>|undefined
-  const metadata=useChillQuery<MeasurementPlanList>(`${plansPath(namespace)}?view=summary`,{enabled:!!query.error&&!denied&&!errorData?.campaign,decoder:parseMeasurementJSON})
+  const metadata=useMeasurementPlans(namespace,!!query.error&&!denied&&!errorData?.campaign)
   const stored=metadata.data?.items?.find(plan=>plan.metadata.name===name&&(!expectedUID||plan.metadata.uid===expectedUID))
   const data=denied?undefined:query.data??(errorData?.campaign?errorData as CampaignResult:stored?{campaign:{...stored.metadata,...stored.status,spec:stored.spec},assessment:stored.assessment,resultRows:[],result:null}:undefined)
   const campaign=data?.campaign,spec=campaign?.spec as MeasurementPlanSpec|undefined
@@ -145,7 +144,7 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
 function DeleteMeasurement({namespace, name, uid, version, trials, blocked, onDeleted}:{namespace:string;name:string;uid:string;version:string;trials:number;blocked?:string;onDeleted:(result:MeasurementMutation)=>void}) {
   const mutation = useChillMutation(), client = useQueryClient()
   const [open, setOpen] = React.useState(false), [understood, setUnderstood] = React.useState(false), [unknown, setUnknown] = React.useState(false)
-  const list = useChillQuery<MeasurementPlanList>(`${plansPath(namespace)}?view=summary`, {enabled:unknown,decoder:parseMeasurementJSON})
+  const list = useMeasurementPlans(namespace,unknown)
   const remaining = unknown && list.data ? (list.data.items ?? []).find(plan => plan.metadata.name === name) : undefined
   async function remove() {
     setUnknown(false)

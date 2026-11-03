@@ -36,6 +36,13 @@ func restoreSummary(t *testing.T, raw []byte) map[string]any {
 		}
 		switch item := value.(type) {
 		case map[string]any:
+			if parts, encoded := item["$s"].([]any); encoded && len(item) == 1 {
+				text := make([]string, len(parts))
+				for i, part := range parts {
+					text[i] = restore(part).(string)
+				}
+				return strings.Join(text, "/")
+			}
 			if fields, encoded := item["$o"].([]any); encoded && len(item) == 1 {
 				index, err := strconv.Atoi(string(fields[0].(json.Number)))
 				shapes := projection["shapes"].([]any)
@@ -143,8 +150,43 @@ func TestMeasurementSummaryOperationalPayloads(t *testing.T) {
 			}
 			summary := assertSummaryRoundTrip(t, raw, name == "profiles")
 			t.Logf("%s: %d -> %d bytes", name, len(raw), len(summary))
-			if len(summary) >= 2_000_000 {
-				t.Fatalf("summary exceeds 2MB: %d", len(summary))
+			if name != "beo" {
+				if len(summary) >= 1_000_000 {
+					t.Fatalf("initial summary exceeds 1MB: %d", len(summary))
+				}
+				return
+			}
+			var root map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &root); err != nil {
+				t.Fatal(err)
+			}
+			var items []json.RawMessage
+			if err := json.Unmarshal(root["items"], &items); err != nil {
+				t.Fatal(err)
+			}
+			for offset := 0; offset < len(items); offset += 25 {
+				end := min(offset+25, len(items))
+				root["items"], err = json.Marshal(items[offset:end])
+				if err != nil {
+					t.Fatal(err)
+				}
+				info := map[string]int{"offset": offset, "limit": 25, "total": len(items)}
+				if end < len(items) {
+					info["nextOffset"] = end
+				}
+				root["page"], err = json.Marshal(info)
+				if err != nil {
+					t.Fatal(err)
+				}
+				page, err := json.Marshal(root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				summary = assertSummaryRoundTrip(t, page, false)
+				t.Logf("beo page offset=%d count=%d bytes=%d", offset, end-offset, len(summary))
+				if len(summary) >= 1_000_000 {
+					t.Fatalf("initial BEO page exceeds 1MB: %d", len(summary))
+				}
 			}
 		})
 	}
@@ -204,4 +246,20 @@ func TestOccupancySummaryRetainsSignedTuplesWithinDecoderBudget(t *testing.T) {
 		t.Fatalf("occupancy exceeds response/decoder budget: bytes=%d nodes=%d depth=%d", len(summary), nodes, depth)
 	}
 	t.Logf("390 cells, 150 recorded DOM tuples: raw=%d summary=%d expanded nodes=%d depth=%d", len(raw), len(summary), nodes, depth)
+}
+
+func TestMeasurementSummarySharesPathComponents(t *testing.T) {
+	paths := make([]string, 600)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("model-%d/device-class-with-long-name/execution-path-name/power-mode-%d/request-%d", i%5, i%9, i)
+	}
+	raw, err := json.Marshal(map[string]any{"sources": paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := assertSummaryRoundTrip(t, raw, false)
+	if len(summary)*4 >= len(raw)*3 {
+		t.Fatalf("path components not shared: %d -> %d", len(raw), len(summary))
+	}
+	assertSummaryRoundTrip(t, []byte(`{"literal":{"$s":["~0","literal"]},"slashes":"//literal/~123/"}`), false)
 }

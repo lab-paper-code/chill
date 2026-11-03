@@ -21,6 +21,22 @@ async function readPage<T>(path:string,token:string,signal:AbortSignal):Promise<
   const response=await relay(path,token,signal)
   return decodeResponse(response.body,parseMeasurementJSON) as T
 }
+export function useMeasurementPlans(namespace:string,enabled=true) {
+  const {token}=useSession()
+  const path=`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
+  const query=useQuery<MeasurementPlanList,ApiError>({queryKey:["chill",path,"pages"],enabled:!!token&&enabled,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
+    const items:NonNullable<MeasurementPlanList["items"]>=[]
+    let offset=0
+    for(;;) {
+      const page=await readPage<MeasurementPlanList>(`${path}?${new URLSearchParams({view:"summary",limit:"25",offset:String(offset)})}`,token,signal)
+      items.push(...page.items??[])
+      if(page.page?.nextOffset===undefined)return {...page,items}
+      if(page.page.nextOffset<=offset)throw new ApiError(0,"측정 요청 페이지가 전진하지 않아요",null)
+      offset=page.page.nextOffset
+    }
+  }})
+  return {...query,data:query.error?undefined:query.data}
+}
 export function useCoverageInventory() {
   const {token,config}=useSession()
   const query=useQuery<InventoryView,ApiError>({queryKey:["chill","coverage-inventory"],queryFn:async({signal})=>{
@@ -207,6 +223,7 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
   const variant=coverageVariant(cell,params.get("variant")??undefined)
   const progress=variant?.batchProgress??coverageProgress(cell),rows=variant?.resultRows??[],returnTo=`/measurements?${params}`
   const filters=coverageProfileQuery(cell)
+  const requests=useMeasurementPlans(namespace,cell.failureSummary.some(failure=>!failure.runName))
   const profiles=useQuery<ProfilesView,ApiError>({queryKey:["chill","coverage-profile-times",filters.toString()],enabled:!!token&&rows.length>0,retry:warmingRetry,retryDelay:warmingDelay,queryFn:async({signal})=>{
     const all:NonNullable<ProfilesView["profiles"]>=[]
     let offset=0
@@ -221,7 +238,6 @@ function CoverageDetail({cell,namespace,close,visible}:{cell:MeasurementCoverage
   }})
   const running=coverageMeasurementStatus(cell)==="running"
   const runs=useChillQuery<RunsView>(`v1/namespaces/${encodeURIComponent(namespace)}/profiling-runs?${new URLSearchParams({model:cell.model.name,deviceClass:cell.deviceClass.name,path:cell.executionPath,powerMode:cell.powerMode,limit:"200",...(running?{}:{status:"problem"})})}`,{enabled:running||cell.failureSummary.length>0})
-  const requests=useChillQuery<MeasurementPlanList>(`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations?view=summary`,{enabled:cell.failureSummary.some(failure=>!failure.runName),decoder:parseMeasurementJSON})
   const currentRuns=(runs.data?.runs??[]).filter(run=>variant?.runIds.includes(`${run.namespace}/${run.name}/${run.uid}`))
   const completeRuns=currentRuns.filter(run=>run.status.conditions?.some(condition=>condition.type==="ExecutionComplete"&&condition.status==="True"&&condition.observedGeneration===run.generation)).length
   const stage=currentRuns.flatMap(run=>run.status.conditions?.filter(condition=>condition.observedGeneration===run.generation)??[]).find(condition=>condition.type==="ExecutionComplete"&&condition.status==="Unknown")?.reason

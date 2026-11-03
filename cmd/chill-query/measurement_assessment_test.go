@@ -27,7 +27,7 @@ func TestMeasurementListAssessmentPreservesNativeWireShape(t *testing.T) {
 		},
 	}
 	assessment := json.RawMessage(`{"status":"failed","displayStatus":"problem","label":"problem"}`)
-	raw, err := json.Marshal(projectMeasurementList(list, []json.RawMessage{assessment}))
+	raw, err := json.Marshal(projectMeasurementList(list, []json.RawMessage{assessment}, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

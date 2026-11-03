@@ -176,12 +176,15 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 #### 표시용 요약 읽기 계약
 
 `GET /workloads?view=summary`는 중복 `supportedInputs`를 path·artifact·profiles `{id}`로 줄인다. 개수는 `profiles.length`를 사용하고 중복 count 필드는 보내지 않는다. 전체 조건·출처는 무쿼리/단건에서 보존한다.
-`GET /namespaces/{namespace}/measurement-coverage?view=summary`, `GET .../batch-energy-optimizations?view=summary`, `GET /scheduler/profiles?view=summary&limit=50&offset=…`는 Query API의 표시용 projection이다. 필터·정렬 후 동일한 페이지를 투영한다. 대시보드 커버리지·측정 목록·요청 작성/복사·처리 성능 목록은 이 명시적 query로 전환하고 선택 프로파일과 요청 결과는 기존 단건 계약을 사용한다.
+`GET /namespaces/{namespace}/measurement-coverage?view=summary`, `GET .../batch-energy-optimizations?view=summary&limit=25&offset=…`, `GET /scheduler/profiles?view=summary&limit=50&offset=…`는 Query API의 표시용 projection이다. 대시보드 BEO 공통 reader는 페이지를 끝까지 읽어 현재 셀의 BEO/Node 해석·복사 원본·동결 프로토콜·입력 출처를 보존한다. 목록·상세 오류 복구·삭제 재확인도 이 reader를 쓰며 앞부분을 잘라 전체 목록으로 표시하지 않는다. 선택 프로파일과 요청 결과는 기존 단건 계약을 사용한다.
 
 응답의 `readProjection:{version:"measurement-summary.v1",values,shapes}`에서 `~N`은 `values[N]`, `{"$o":[S,...values]}`는 `shapes[S]` 필드 순서의 객체다. dictionary는 앞선 항목만 참조하며 dictionary 최상위 문자열은 원문이다. 조건·출처·필드명·부모/배치 assessment를 한 번 보내고 참조한다. 정밀 정수·체크 결과·판정·미확인 사유·null·0·페이지는 복원 후 동일하다. 커버리지의 미사용 `entities/groups` 역색인, 요청의 `metadata.managedFields/annotations`, 프로파일의 미사용 `preparations`만 요약에서 제외한다. 커버리지 집계와 셀별 요청·Run·프로파일 관계는 유지한다. 무쿼리 응답, 저장·CRD, 판정/체크 생성은 변경하지 않는다.
+경로 문자열은 `{"$s":["~N",...]}`로 앞선 원문 문자열 요소를 `/` 연결해 복원한다. 빈 요소·Unicode·`~N` 원문과 원본 `$s` 객체도 그대로 보존한다. 요소 참조는 객체·배열·연결 문자열을 가리킬 수 없고, 연결로 할당하는 문자열 총량은 응답당 8Mi UTF-16 단위 이하다.
 디코더는 dictionary 항목별 논리적 노드 수·깊이를 메모하고 각 항목과 최종 응답의 상한을 2,000,000노드·깊이 64로 제한한다. 반복 참조는 매번 합산하며 인라인 과도한 중첩도 재귀 진입 전에 거부한다. 저장된 운영 GET 8개를 Go projection에 적용한 최대 확장 크기는 커버리지 230,362노드/깊이 11, 측정 요청 180,000/9, 프로파일 149,331/11이다.
 
-2026-11-02 운영 원문을 로컬 projection에 적용한 크기(B): workloads 17,227,584→422,048(29개), 커버리지 9,218,406→1,893,956, 측정 요청 11,941,797→1,677,154, 프로파일 `limit=50&offset=100&sort=model&order=asc` 8,550,682→921,387. 각 표시 응답은 2,000,000 B 미만이다. `internal/queryapi` 회귀는 운영 GET fixture 디렉터리 `CHILL_MEASUREMENT_FIXTURE_DIR`를 제공하면 이 상한과 모든 유지 필드의 round-trip을 함께 검사한다.
+2026-11-02 당시 로컬 projection 크기(B)는 workloads 17,227,584→422,048(29개), 커버리지 9,218,406→1,893,956, 측정 요청 11,941,797→1,677,154, 프로파일 `limit=50&offset=100&sort=model&order=asc` 8,550,682→921,387로 당시 2,000,000 B 상한을 만족했다.
+
+control-323 운영 GET(2026-11-03)은 BEO 1,785,760 B, coverage 1,210,905 B였다. 같은 원자료의 새 로컬 인코더는 BEO 첫 25개 110,343 B, 전체 598셀 coverage 887,602 B다. 전체 BEO를 단순 재압축하면 1,344,715 B여서 페이지도 필요하다. `CHILL_MEASUREMENT_FIXTURE_DIR` 회귀는 coverage/profiles 및 모든 BEO 25개 페이지에 1,000,000 B 상한과 유지 필드 round-trip을 검사한다. occupancy 증분 분해·실측과 배포 전 추정의 구분은 [measurement API](../serving/measurement-api.md#control-323-최초-조회-크기-보정)에 기록한다.
 
 DOM 읽기 전용 프로토콜 표는 동결된 `task.spec.conditions.inputsJSON` 문자열을 기존 정밀 정수 파서 `parseSchedulerJSON`으로 읽은 `computed.saturationSizing`을 사용한다. 선택/필요 송신자, 송신자·바이트·수명 상한, 제한 요인, 가득 찬 대기 배치, 재충전·잔여 유휴 시간, 예상/최대 유휴 비율을 서버 원값으로 표시한다. 큰 정수는 정확히 유지하고 누락·null·해석 불가 값은 `미제공`이며 현재 정책으로 추정하지 않는다. 출처 메타데이터는 기존 원본 disclosure에만 남고 프로토콜 입력이나 mutation 본문은 추가하지 않는다.
 

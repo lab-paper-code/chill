@@ -102,7 +102,7 @@ test("paged request defaults and coverage timestamps render second-page summary 
       "@/components/read-region":region,"@/components/screen":{Screen:container},
       "@/components/measurement-navigation":{MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
       "@/components/ui/button":{Button:container},"@/components/ui/input":{Input:()=>null},
-      "@/features/measurement-coverage":{useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({}),useModelCompatibility:()=>({})},
+      "@/features/measurement-coverage":{useMeasurementPlans:()=>({data:{items:[]}}),useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({}),useModelCompatibility:()=>({})},
       "@/features/dispatch-occupancy-request":{MeasurementKindSelector:()=>null},
     }
     let element:React.ReactElement

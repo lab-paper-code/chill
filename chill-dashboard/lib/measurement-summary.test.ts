@@ -79,3 +79,13 @@ test("invalid and forward references fail rather than inventing evidence",()=>{
 test("full precision reads remain unchanged without a summary envelope",()=>{
   assert.deepEqual(parseMeasurementJSON('{"completedItems":18446744073709551615}'),{completedItems:18446744073709551615n})
 })
+
+test("path component references restore exact strings and cannot reference joined strings or objects",()=>{
+  const readProjection={version:"measurement-summary.v1",shapes:[],values:["","근거","~123",{$s:["~0","~1","~2","~0"]}]}
+  const result=restoreMeasurementSummary({readProjection,path:"~3"}) as {path:string}
+  assert.equal(result.path,"/근거/~123/")
+  for(const parts of [["~4"],["~3"],[0],["literal"]]) {
+    assert.throws(()=>restoreMeasurementSummary({readProjection:{...readProjection,values:[...readProjection.values,{$s:parts}]},path:"~4"}),/문자열 참조 미확인/)
+  }
+  assert.throws(()=>restoreMeasurementSummary({readProjection:{version:"measurement-summary.v1",shapes:[],values:["x".repeat(1024),{$s:Array(8193).fill("~0")}]},path:"~1"}),/확장 한도/)
+})

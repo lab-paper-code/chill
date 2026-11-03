@@ -681,6 +681,44 @@ exitCode를 셀·요청 entity·요청 목록 assessment·Query API 요청 상�
 회차 목록도 q/condition 외 model/deviceClass/node/path/powerMode/status/parentUID/group을
 전체 snapshot에 적용한 뒤 페이지를 나눈다. group은 batch를 제외한 기존 조건 JSON의 의미 비교다.
 
+#### control-323 최초 조회 크기 보정
+
+Query BEO 목록은 `view=summary` 또는 명시적 `limit`/`offset`에서 이름순으로 페이지를
+나눈 뒤 해당 요청의 전체 native spec/status와 assessment를 투영한다. `limit`은 1~50
+(기본 25), `offset`은 0~1,000,000이며 반복·알 수 없는 query는 거부한다.
+`page:{offset,limit,total,nextOffset?}`의 마지막/범위 밖 페이지에는 다음 offset이 없다.
+무쿼리 native 전체 읽기는 그대로다. 대시보드 공통 BEO reader는 25개씩 실제 nextOffset을
+끝까지 따라가며, 정지한 페이지·중간 실패·취소를 전체 목록 성공으로 바꾸지 않는다.
+d 요청은 현재 coverage 셀의 measurement ID→BEO/Node와 전체 셀 선택에, 프로파일 요청은
+복사 원본·동결 프로토콜·동일 조건 기본값·입력 출처에 전체 목록이 필요하므로 앞부분을
+자르지 않는다. 요청 목록·상세의 실패 복구·삭제 결과 재확인도 같은 reader를 사용한다.
+
+`measurement-summary.v1` dictionary는 경로 문자열의 `/` 구분 요소도 공유한다.
+`{"$s":["~N",...]}`은 앞선 **원문 문자열** dictionary 항목을 `/`로 연결한 문자열이다.
+빈 요소·Unicode·문자열 `~123`도 원문대로 복원하며 객체/배열/이미 연결된 문자열을 요소로
+참조할 수 없다. 원본 `$s` 객체는 `$o` shape로 이스케이프한다. 기존 values/shapes 형식과
+정밀 정수·null·0·모든 유지 필드의 의미는 같다. 디코더는 기존 노드/깊이 상한 외에 연결로
+할당하는 문자열을 응답당 8Mi UTF-16 단위로 제한한다. 셀·해상도·값 생략은 추가하지 않는다.
+
+운영 HTTPS **GET만** 수집한 2026-11-03 원자료를 로컬 인코더에 넣은 비교다.
+배포 후 실측이나 wire 전송량이 아니라 디코딩된 body 바이트의 배포 전 추정치다.
+
+| 최초 진입 응답 | 운영 GET (B) | 로컬 새 인코더 (B) |
+|---|---:|---:|
+| BEO summary 전체 279개 → 첫 25개 페이지 | 1,785,760 | 110,343 |
+| coverage summary 전체 598셀 유지 | 1,210,905 | 887,602 |
+| profiles summary 50개, offset=100 | 974,265 | 751,151 |
+
+BEO 전체를 새 dictionary로만 바꾸면 1,344,715 B여서 페이지도 필요하다. 12페이지 모두
+1,000,000 B 미만인지 운영 fixture 회귀가 확인한다. coverage는 dictionary 원문 문자열
+8,753개가 688,377 B, 객체가 409,469 B, 배열이 108,656 B를 차지했다. 복원된 variants가
+셀 본문의 4,293,506/5,035,075 B로 대부분이며, 경로 요소 공유만으로 전체 셀을 보존한다.
+같은 원자료에서 occupancy를 제거한 구 인코더는 1,202,160 B, 포함하면 1,210,903 B
+(운영 body와 2 B 차이)여서 occupancy의 압축 후 증분은 8,743 B다. 직전 관측
+1,165,766 B 대비 증가 45,139 B 전부를 occupancy 추가로 단정할 수 없다.
+DOM의 포화 판정·idle 필드와 측정 프로토콜은 이 보정에서 변경하지 않는다.
+
+
 분배 점유는 한 보존 파일의 누락·해석 실패가 목록 전체 503이 되지 않는다.
 해당 행·단건을 `OccupancyEvidenceMissing`/`OccupancyEvidenceUnavailable`/`OccupancyEvidenceInvalid`
 문제로 명시하고 채택 여부는 false로 유지하며 원본 native 수치·위치를 보존한다.

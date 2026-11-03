@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -21,6 +22,8 @@ import (
 const (
 	measurementSummaryView = "summary"
 	measurementViewQuery   = "view"
+	measurementLimitQuery  = "limit"
+	measurementOffsetQuery = "offset"
 )
 
 func (o *measurementService) register(mux *http.ServeMux) {
@@ -84,13 +87,9 @@ func (o *measurementService) register(mux *http.ServeMux) {
 		"GET /api/v1/namespaces/{namespace}/batch-energy-optimizations",
 		func(w http.ResponseWriter, r *http.Request) {
 			values, err := url.ParseQuery(r.URL.RawQuery)
+			var page *httpapi.ProfilePage
 			if err == nil {
-				for key, items := range values {
-					if key != measurementViewQuery || len(items) != 1 || items[0] != measurementSummaryView {
-						err = &serving.Error{Code: "InvalidQuery", Message: "invalid measurement list view"}
-						break
-					}
-				}
+				page, err = measurementListPage(values)
 			}
 			if err != nil {
 				httpapi.SendQueryError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid measurement list query"})
@@ -101,12 +100,21 @@ func (o *measurementService) register(mux *http.ServeMux) {
 				httpapi.SendQueryError(w, err)
 				return
 			}
+			if page != nil {
+				page.Total = len(list.Items)
+				start := min(page.Offset, page.Total)
+				end := start + min(page.Limit, page.Total-start)
+				if end < page.Total {
+					page.NextOffset = &end
+				}
+				list.Items = list.Items[start:end]
+			}
 			assessments, err := o.assessList(r.Context(), list)
 			if err != nil {
 				httpapi.SendQueryError(w, err)
 				return
 			}
-			payload := projectMeasurementList(list, assessments)
+			payload := projectMeasurementList(list, assessments, page)
 			if values.Get(measurementViewQuery) == measurementSummaryView {
 				summary, err := queryapi.MeasurementSummaryJSON(payload, false)
 				if err != nil {
@@ -278,7 +286,9 @@ func (p measurementResultReader) Read(
 
 // Keep the native Kubernetes list and each complete CR intact; assessment is
 // only an additional read-projection field.
-func projectMeasurementList(list api.BatchEnergyOptimizationList, assessments []json.RawMessage) any {
+func projectMeasurementList(
+	list api.BatchEnergyOptimizationList, assessments []json.RawMessage, page *httpapi.ProfilePage,
+) any {
 	type item struct {
 		api.BatchEnergyOptimization
 		Assessment json.RawMessage `json:"assessment"`
@@ -290,6 +300,40 @@ func projectMeasurementList(list api.BatchEnergyOptimizationList, assessments []
 	return struct {
 		meta.TypeMeta `json:",inline"`
 		meta.ListMeta `json:"metadata,omitempty"`
-		Items         []item `json:"items"`
-	}{list.TypeMeta, list.ListMeta, items}
+		Items         []item               `json:"items"`
+		Page          *httpapi.ProfilePage `json:"page,omitempty"`
+	}{list.TypeMeta, list.ListMeta, items, page}
+}
+
+func measurementListPage(values url.Values) (*httpapi.ProfilePage, error) {
+	page := &httpapi.ProfilePage{Limit: 25}
+	for key, items := range values {
+		if len(items) != 1 {
+			return nil, errors.New("repeated measurement list query")
+		}
+		switch key {
+		case measurementViewQuery:
+			if items[0] != measurementSummaryView {
+				return nil, errors.New("invalid measurement list view")
+			}
+		case measurementLimitQuery, measurementOffsetQuery:
+			n, err := strconv.Atoi(items[0])
+			if err != nil || strconv.Itoa(n) != items[0] ||
+				key == measurementLimitQuery && (n < 1 || n > 50) ||
+				key == measurementOffsetQuery && (n < 0 || n > 1000000) {
+				return nil, errors.New("limit must be 1–50 and offset 0–1000000")
+			}
+			if key == measurementLimitQuery {
+				page.Limit = n
+			} else {
+				page.Offset = n
+			}
+		default:
+			return nil, errors.New("unknown measurement list query")
+		}
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	return page, nil
 }

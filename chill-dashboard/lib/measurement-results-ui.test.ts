@@ -349,7 +349,7 @@ test("R18 request status retains its own catalog identity instead of same-target
   const h=harness("uid=old",()=>({campaign:{uid:"old",name:"request",phase:"Complete",spec},assessment:own,resultRows:[]}))
   Object.assign(h.modules,{
     "@/lib/measurement-request":requests,
-    "@/features/measurement-coverage":{useMeasurementCoverage:()=>({data:{cells:[]}})},
+    "@/features/measurement-coverage":{useMeasurementPlans:()=>({}),useMeasurementCoverage:()=>({data:{cells:[]}})},
     "@/components/measurement-navigation":{MeasurementStatus:"measurement-status"},
   })
   const tree=load("../features/measurement-plans.tsx",h.modules).MeasurementPlanDetails({namespace:"ns",name:"request"})
