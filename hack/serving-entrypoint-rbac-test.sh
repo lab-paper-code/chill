@@ -72,13 +72,9 @@ if config:
         assert not controller_urls, "controller retained internal HTTP route permissions"
         for verb in ("get", "list", "patch"):
             assert ("*", "", "nodes", verb, ()) in controller_resources, "fault controller lost Node " + verb
-collector = next((d for d in documents if d["kind"] == "ServiceAccount"
-                  and d["metadata"]["name"] == "chill-evaluation-evidence-collector"), None)
-if collector:
-    binding = next(d for d in documents if d["kind"] == "ClusterRoleBinding"
-                   and d["metadata"]["name"] == "chill-evaluation-evidence-collector")
-    assert binding["roleRef"]["name"] == "chill-evidence-collector"
-    assert binding["subjects"] == [{"kind": "ServiceAccount", "name": collector["metadata"]["name"], "namespace": "chill-system"}]
+assert not any(d["kind"] in ("ServiceAccount", "ClusterRoleBinding")
+               and d["metadata"]["name"] == "chill-evaluation-evidence-collector" for d in documents), \
+    "unused standalone evaluation collector identity remains"
 roles = [d for d in documents if d.get("kind") == "Role"
          and d["metadata"]["name"].startswith("chill-serving-entrypoint")]
 if not roles:
@@ -128,5 +124,5 @@ check "${serving[@]}" --set evaluation.enabled=true
 check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set 'servingEntrypoint.profileNamespaces={chill-system,measurements}'
 check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
-	--set evaluation.enabled=true --set servingEntrypoint.evidenceCollector.enabled=true
+	--set evaluation.enabled=true
 echo "serving entrypoint RBAC: pass"

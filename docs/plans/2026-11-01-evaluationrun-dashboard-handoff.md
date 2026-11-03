@@ -92,6 +92,7 @@
 Settings 적용은 운영자와 같은 GET/PUT `/api/v1/scheduler/settings`·인증·SAR만 쓴다. GET의 quoted `ETag`를 PUT의 `If-Match`로 보낸다. 누락은 428 SettingsPreconditionRequired, stale 또는 ConfigMap Update conflict는 409 SettingsConflict, 성공은 새 ETag다. ConfigMap 전체 버전이므로 routing/다른 블록 변경도 충돌한다. GET read-only projection `staticRouting/powerObservation/meters/requestTimeout`은 PUT에서 뺀다. controller는 opaque patch를 동결·전달하고 형태·크기만 검사한다. harness는 현재 값 읽기 → patch merge → 조건부 PUT → readback 비교 후 측정하며 patch가 건드린 키만 원복한다. 적용 충돌은 재시도 없이 실패로 기록한다. 원복 409만 최신 GET 후 경로를 다시 선택해 정확히 한 번 재시도하며 외부에서 바뀐 경로는 보존·보고한다. 기존 procedure `evidenceRef`가 `before/applied/readback/appliedAt/revertedAt/request/response/revertRequest/revertResponse/revertReadback`, 변경 경로와 요청 시각, ETag/If-Match 증거를 가리킨다.
 
 평가 action SA의 release namespace 권한은 Jobs create/get/list/delete, Pod·log get, GO marker용 pods/exec create, LoadScenario get, Deployment get이다. cluster 범위는 Node get, 외부 fleet 확인용 Pod list, Workload/Dataset/Preprocessor get뿐이다. 공개 URL은 Workload GET, settings GET/PUT, power GET, raw inventory/request/resource export GET만 허용한다. action SA에 broad evidence-collector/scheduler-editor URL role을 연결하지 않는다. 공개 PUT의 운영자와 같은 SAR를 위해 지정 scheduler ConfigMap update 권한만 별도 RoleBinding으로 유지한다. controller에는 Chill HTTP transport·URL grant가 없고 외부 주입 선택용 Node list와 기존 Profiler Node get/patch를 사용한다.
+기존 독립 `chill-evaluation-evidence-collector` SA·binding과 `servingEntrypoint.evidenceCollector` 옵션은 유일한 코드 소비자(round)의 삭제와 함께 제거한다. 새 하네스는 action Job의 projected token만 사용한다. 일반 운영자용 unbound evidence-collector role 자체는 바꾸지 않는다.
 
 
 
