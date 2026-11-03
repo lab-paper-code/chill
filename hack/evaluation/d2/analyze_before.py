@@ -90,50 +90,44 @@ def request_timing(row, final, received_ns, start_ns):
             'entranceDelayMeaning': 'Gateway receivedAt minus client sentAtUnixNS; cross-host clock offset/uncertainty retained, including negative values; not one-way network latency'}
 
 
+def issued_calls(client):
+    return [row for row in client if row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd'
+            and (row.get('issued') is True or type(row.get('sentMonotonicNS')) is int or row.get('requestID'))]
+
+
 def issuance_fidelity(client, offsets, start_ns, duration_ns, stats, quality=None):
-    """Describe send-call timing, not stdout flush timing or wire arrival."""
-    threshold = 50_000_000
-    issued = [row for row in client if row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd']
-    missing = sum(type(row.get('sentMonotonicNS')) is not int for row in issued)
-    result = {'thresholdNS': threshold, 'offered': len(offsets), 'issued': len(issued), 'missingSendTimestamps': missing,
-              'supplied': False, 'issuanceFraction': None,
-              'generatorQuality': {'status': 'UNKNOWN', 'policy': quality, 'reason': 'Lateness policy is not configured' if quality is None else 'Issuance timing/population incomplete'},
-              'meaning': 'Offered is the full frozen trace, including unsent arrivals; supplied requires every planned arrival issued, not merely an unchanged actual-count denominator. Late sends, including sends after the window, remain visible. Per-producer monotonic infer-call timestamps, sorted across workers; gaps run through the later of window end and last send. Planned Poisson/zero-load gaps are not automatically stalls. No wall-clock or gateway causality claim.'}
-    if len(client) != len(offsets):
-        return dict(result, status='UNKNOWN', reason='Frozen planned population has missing or extra client rows')
-    if any(type(row.get('requestIndex')) is not int or not 0 <= row['requestIndex'] < len(offsets) or row.get('scheduledOffsetNs') != offsets[row['requestIndex']] for row in client):
-        return dict(result, status='UNKNOWN', reason='Request index or scheduled offset differs from frozen planned trace')
-    if len({row['requestIndex'] for row in client}) != len(offsets):
-        return dict(result, status='UNKNOWN', reason='Duplicate request indexes leave planned arrivals unaccounted')
-    if not offsets:
-        return dict(result, status='NOT_OFFERED', reason='Frozen trace contains no arrivals')
-    if type(start_ns) is not int or missing:
-        return dict(result, status='UNKNOWN', reason='Actual monotonic start/send timestamp missing')
-    sent = sorted(row['sentMonotonicNS'] - start_ns for row in issued)
-    if any(at < 0 for at in sent):
-        return dict(result, status='UNKNOWN', reason='Send timestamp precedes actual producer start')
-    if any(scheduled_monotonic_ns(row, start_ns) != start_ns + row['scheduledOffsetNs'] for row in client):
-        return dict(result, status='UNKNOWN', reason='Scheduled monotonic timestamp conflicts with frozen arrival')
+    """Timing thresholds label observations; only zero evidenced sends invalidate load."""
+    issued = issued_calls(client)
+    # v2 physical boundary: at least one actual infer-call/send or returned request
+    # is needed to claim an offered-load experiment. No arbitrary lateness cliff.
+    no_load = bool(offsets) and not issued
+    timed = [row for row in issued if type(start_ns) is int and type(row.get('sentMonotonicNS')) is int
+             and row['sentMonotonicNS'] >= start_ns and type(row.get('scheduledOffsetNs')) is int]
+    sent = sorted(row['sentMonotonicNS'] - start_ns for row in timed)
+    late = [row['sentMonotonicNS'] - start_ns - row['scheduledOffsetNs'] for row in timed]
+    indexes = [row.get('requestIndex') for row in client if type(row.get('requestIndex')) is int]
+    invalid_schedule = sum(type(row.get('requestIndex')) is not int or not 0 <= row['requestIndex'] < len(offsets) or
+                           row.get('scheduledOffsetNs') != offsets[row['requestIndex']] for row in client)
+    duplicates = len(indexes) - len(set(indexes))
+    supplied = len(issued) == len(offsets) and len(client) == len(offsets) and not invalid_schedule and not duplicates
+    threshold = quality['latenessToleranceNS'] if quality else 50_000_000
+    exceeding = sum(value > threshold for value in late)
+    fraction = exceeding / len(late) if late else None
     horizon = max(duration_ns, sent[-1] if sent else 0)
-    edges = [0] + sent + [horizon]
-    planned = [0] + offsets + [duration_ns]
-    gaps = [right-left for left, right in zip(edges, edges[1:])]
-    long_gaps = [{'fromOffsetNS': left, 'toOffsetNS': right, 'gapNS': right-left,
-                  'plannedArrivalsInside': bisect.bisect_left(offsets, right)-bisect.bisect_right(offsets, left)}
-                 for left, right in zip(edges, edges[1:]) if right-left > threshold]
-    late = [row['sentMonotonicNS']-scheduled_monotonic_ns(row, start_ns) for row in issued]
-    result.update(status='OBSERVED', supplied=len(issued) == len(offsets), issuanceFraction=len(issued)/len(offsets),
-                  unissued=len(offsets)-len(issued), sendsAfterWindow=sum(at >= duration_ns for at in sent),
-                  gapHorizonNS=horizon, actualGapNS=stats(gaps),
-                  plannedGapNS=stats([right-left for left, right in zip(planned, planned[1:])]),
-                  gapsOver50MS=len(long_gaps), gapsOver50MSFraction=len(long_gaps)/len(gaps),
-                  gapIntervalsOver50MS=long_gaps, sendLatenessNS=stats(late),
-                  sendsLateOver50MS=sum(value > threshold for value in late))
-    if quality is not None:
-        exceeding = sum(value > quality['latenessToleranceNS'] for value in late)
-        fraction = exceeding / len(issued) if issued else None
-        valid = result['supplied'] and fraction is not None and fraction <= quality['maxExceedingFraction']
-        result['generatorQuality'] = {'status': 'VALID' if valid else 'INVALID_GENERATOR', 'policy': quality,
-                                      'exceeding': exceeding, 'denominator': len(issued), 'exceedingFraction': fraction,
-                                      'reason': None if valid else 'Frozen trace not fully issued or lateness exceeding fraction exceeds configured maximum'}
-    return result
+    edges, planned = [0] + sent + [horizon], [0] + offsets + [duration_ns]
+    gaps = [right - left for left, right in zip(edges, edges[1:])]
+    return {'failurePolicy': 'v2', 'status': 'NOT_OFFERED' if not offsets else 'PARTIAL' if not supplied else 'OBSERVED',
+            'thresholdNS': threshold, 'offered': len(offsets), 'issued': len(issued),
+            'unissued': max(0, len(offsets) - len(issued)), 'missingClientRows': max(0, len(offsets) - len(client)),
+            'extraClientRows': max(0, len(client) - len(offsets)), 'duplicateIndexes': duplicates,
+            'invalidScheduleRows': invalid_schedule, 'missingSendTimestamps': len(issued) - len(timed),
+            'supplied': supplied, 'issuanceFraction': len(issued) / len(offsets) if offsets else None,
+            'durationNS': duration_ns, 'achievedRequestsPerSecond': len(issued) / (duration_ns / 1e9) if duration_ns else None,
+            'sendsAfterWindow': sum(at >= duration_ns for at in sent), 'sendLatenessNS': stats(late),
+            'actualGapNS': stats(gaps), 'plannedGapNS': stats([b-a for a,b in zip(planned, planned[1:])]),
+            'generatorQuality': {'status': 'INVALID_NO_LOAD' if no_load else 'NOT_OFFERED' if not offsets else 'OBSERVED',
+                                 'policy': quality, 'exceeding': exceeding, 'denominator': len(late),
+                                 'exceedingFraction': fraction,
+                                 'thresholdLabel': 'UNKNOWN' if fraction is None or quality is None else
+                                 'EXCEEDS_REPORTED_THRESHOLD' if fraction > quality['maxExceedingFraction'] else 'WITHIN_REPORTED_THRESHOLD',
+                                 'reason': 'No evidenced infer-call/send or returned request' if no_load else None}}

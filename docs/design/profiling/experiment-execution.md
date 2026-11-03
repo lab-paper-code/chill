@@ -211,11 +211,11 @@ stage의 settingsPatch 부재는 공통 patch 상속이며, 명시된 stage patc
 현재 Workload·설정을 읽어서 과거 결손을 보충하지 않는다. 소비자는 선택 필드로 읽어야 하며,
 기존 상세 hydrate 경로는 계속 유효하다.
 
-새 게시물의 `stages[].kpis.requests[name].workloadUID,definitionID,identitySource`는
-동결 `input-snapshot.json`의 적용 Workload(`name,uid,generation,slo`; 위 `sloSources`와
-같은 신원)와 실제 offered 요청의 raw `workloadUID/definitionID`가 일치할 때만 채운다.
-`actualGatewayIdentities`는 관측된 raw Workload/definition 신원 수다. 실제 client requestID 중복·잘못된 Workload UID는 데이터 무결성 오류로 보존한다. 공개 workloadUID/definitionID는 complete raw index의 단일 실제 신원이 고정 Workload UID와 일치할 때만 채우며, 혼합·누락은 null과 사유를 유지한다.
-`identitySource`는 그때의 동결 snapshot store 참조다. 현재 Workload/name 재조회로 보충하지 않는다. 새 저장 계약은 `e5-summary.v3`, `e5-judgment.v2`, binding v3다.
+새 게시물은 동결 Workload UID와 실제 관측 definition 목록을 따로 보존한다.
+Workload name/UID 불일치는 실행을 중단하지만 generation과 sourceSHA는 관측 사실이다.
+raw provenance 오류는 지표를 전역 무효화하지 않고, 모호한 requestID만 격리해 수와 사유를 남긴다.
+`definitionID`는 사용할 수 있는 HTTP final의 단일 관측 신원이 있을 때만 채운다.
+정책 v2 저장 계약은 `e5-summary.v4`, `e5-judgment.v3`, binding v4다.
 bridge/reader의 외곽 unknown-field 거절은 유지하고, 원래 JSON 객체로 보존하는 KPI·definition
 내부에는 새 strict 스키마를 만들지 않는다. 이미 게시된 과거 null은 수정·재게시하지 않는다.
 
@@ -271,9 +271,9 @@ prepare에서 LoadScenario·카탈로그를 **한 번만** name+UID(Workload는 
 
 host-built/uploaded input 파일·transitive bundle은 생성·다운로드하지 않는다. endpoint·CA/token projections·시간 상한·workers/lifetime는 동결 ConfigMap의 operational 값이다. Job은 evaluator가 직접 조립하고 `loadGenerator.nodeName`을 모든 generator Pod에 그대로 전달한다.
 
-저장 계약은 binding `e5-binding.v3`, inputs `evaluation-inputs.v2alpha1`, snapshot `evaluation-snapshot.v2alpha1`, judgment `e5-judgment.v2`다. 단일 reader이며 과거 불변 증거를 새 의미로 재해석하지 않는다.
+저장 계약은 binding `e5-binding.v4`, inputs `evaluation-inputs.v2alpha1`, snapshot `evaluation-snapshot.v2alpha1`, judgment `e5-judgment.v3`, summary `e5-summary.v4`다. 단일 reader이며 과거 불변 증거를 새 의미로 재해석하지 않는다.
 
-power sourceIdentity는 source 객체의 JSON 문자열을 파싱해 비교한다. 같은 from/to에서 선언 node+meter가 일치하는 nodes[].meterJoules만 합산하고 meterComplete·gapSeconds·gapFraction·maximumSampleGapSeconds로 coverage를 판정한다. 선언 scope의 inactive node도 포함한다. 운영 API의 top-level Complete/activePoolJoules는 evaluator validity에 사용하지 않는다.
+`failurePolicy: v2`는 SLO·부하 충실도·offered/tail 에너지·주입 실현·drain·정리·발행을 독립 결과로 보존한다. lateness/gap 정책은 보고용 라벨이며, 부분 적분은 observedJoules와 coverage로 남기고 완전한 wholePoolJoules로 주장하지 않는다. power sourceIdentity·node/meter·from/to 범위 검증은 유지한다. CPU/throttle 카운터, NotReady, 경쟁 부하와 provenance label은 거절 조건이 아니다. 부하 0은 부하/SLO 주장, 전력 전무는 에너지 주장을 중단한다.
 
 실행 증거의 store는 spec에서 고정하고 키는 생성 시 부여된 불변 UID로 `experiments/<UID>/...`가 된다. 별도 configurable prefix 필드는 없다.
 따라서 생성 시 실행 증거 위치가 결정되며 실제 key/size·저장 완료는 status에만 기록한다. 정의 스냅샷·명령/응답·시각·client/raw·판정·표·최종 실행 기록을 연결한다.

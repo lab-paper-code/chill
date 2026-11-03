@@ -124,20 +124,23 @@ def meter_energy(window, measurement, policy, start, end):
         gaps = [source.get(key) for key in ('gapSeconds', 'gapFraction', 'maximumSampleGapSeconds')]
         joules = source.get('meterJoules')
         valid_numbers = all(type(x) in (int, float) and math.isfinite(x) and x >= 0 for x in gaps)
-        complete = (source.get('meterComplete') is True and type(joules) in (int, float) and math.isfinite(joules) and joules >= 0
-                    and valid_numbers and gaps[1] <= 1 and source.get('sourceIdentity') == expected)
-        if expected.get('metric') != measurement['series']:
-            complete = False
-        if valid_numbers and (gaps[1] > policy['maxGapFraction'] or gaps[2] > policy['maxSingleGapSeconds']):
-            complete = False
+        attributable = (type(joules) in (int, float) and math.isfinite(joules) and joules >= 0
+                        and source.get('sourceIdentity') == expected and expected.get('metric') == measurement['series']
+                        and type(source.get('samples')) is int and source['samples'] > 0)
+        policy_met = valid_numbers and gaps[1] <= policy['maxGapFraction'] and gaps[2] <= policy['maxSingleGapSeconds']
+        complete = attributable and source.get('meterComplete') is True and valid_numbers and gaps[1] <= 1 and policy_met
         if not complete:
-            reasons.append('Declared Node ' + name + ': meter source/boundary/sample continuity or gap policy incomplete')
+            reasons.append('Declared Node ' + name + ': partial/unavailable source or coverage below reporting policy')
         selected.append({'node': {'name': name, 'uid': uid}, 'meter': source['meter'], 'sourceIdentity': source.get('sourceIdentity'),
-                         'joules': joules if complete else None, 'meterComplete': source.get('meterComplete'),
+                         'joules': joules if attributable else None, 'reportedMeterJoules': joules,
+                         'meterComplete': source.get('meterComplete'), 'policyMet': policy_met,
                          **{key: source.get(key) for key in ('gapSeconds', 'gapFraction', 'maximumSampleGapSeconds', 'samples', 'readFailures', 'firstObservedAt', 'lastObservedAt')}})
     complete = len(selected) == len(wanted) and not reasons
-    return {'from': start, 'to': end, 'scope': 'declared-node-meters', 'nodes': selected, 'complete': complete,
-            'energyStatus': 'MEASURED' if complete else 'UNKNOWN', 'wholePoolJoules': sum(node['joules'] for node in selected) if complete else None,
+    observed = [node['joules'] for node in selected if node['joules'] is not None]
+    return {'from': start, 'to': end, 'failurePolicy': 'v2', 'scope': 'declared-node-meters', 'nodes': selected, 'complete': complete,
+            'energyStatus': 'MEASURED' if complete else 'PARTIAL' if observed else 'UNAVAILABLE',
+            'observedJoules': sum(observed) if observed else None,
+            'wholePoolJoules': sum(observed) if complete else None,
             'energyCoverage': {'policy': policy, 'nodeGapSecondsSum': sum(node.get('gapSeconds') or 0 for node in selected),
                                'maximumGapSeconds': max((node.get('maximumSampleGapSeconds') or 0 for node in selected), default=0),
                                'maximumNodeGapFraction': max((node.get('gapFraction') or 0 for node in selected), default=0)}, 'reasons': reasons}
@@ -190,22 +193,27 @@ def collect(folder, phase, collection, io, timeout_seconds):
                 source = _download(folder, io, RAW_PATH + '/' + value + '/' + stream, target, deadline)
                 index['sources'].append({**source, 'hour': value, 'stream': stream})
         index['complete'] = True
-        measurement = collection['powerMeasurement']
-        policy = energy_policy(collection)
-        for name, stop in (('power', phase['endUTC']), ('power-drain-inclusive', phase['drainedUTC'])):
-            query = urllib.parse.urlencode({'from': phase['startUTC'], 'to': stop})
-            window = io.api('GET', '/api/v1/observations/power?' + query, timeout=_remaining(deadline))
-            _save(folder / (name + '-source.json'), window)
-            result = meter_energy(window, measurement, policy, phase['startUTC'], stop)
-            _save(folder / (name + '.json'), result)
-            if not result['complete']:
-                manifest['errors'].extend(result['reasons'])
     except Exception as error:
         manifest['errors'].append(str(error))
         if not index['complete']:
             index['errors'].append(str(error))
+    # Raw provenance and each energy window are independent collection results.
+    measurement, policy = collection['powerMeasurement'], energy_policy(collection)
+    manifest['energy'] = {}
+    for name, stop in (('power', phase['endUTC']), ('power-drain-inclusive', phase['drainedUTC'])):
+        try:
+            query = urllib.parse.urlencode({'from': phase['startUTC'], 'to': stop})
+            window = io.api('GET', '/api/v1/observations/power?' + query, timeout=min(timeout_seconds, maximum))
+            _save(folder / (name + '-source.json'), window)
+            result = meter_energy(window, measurement, policy, phase['startUTC'], stop)
+        except Exception as error:
+            result = {'from': phase['startUTC'], 'to': stop, 'failurePolicy': 'v2', 'energyStatus': 'UNAVAILABLE',
+                      'complete': False, 'observedJoules': None, 'wholePoolJoules': None, 'nodes': [], 'reasons': [str(error)]}
+        _save(folder / (name + '.json'), result)
+        manifest['energy'][name] = result['energyStatus']
     _save(folder / 'raw-source-index.json', index)
     manifest.update(raw=index['sources'], sourceIndex=_ref(folder / 'raw-source-index.json'))
+    manifest['failurePolicy'] = 'v2'
     if index['complete'] and not manifest['errors']:
         manifest['status'] = 'CAPTURED_NOT_EVALUATED'
     _save(folder / 'archive-collection.json', manifest)

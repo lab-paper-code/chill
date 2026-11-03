@@ -20,6 +20,11 @@ Change a stored contract at most once per work unit, and not while a measurement
 
 2026-10-28 schedule: add serving-profile `energyBelowResolution` once before E5; keep the frozen native-bundle schema unchanged (zero energy only) and retain the marker in serving records/API/replay inputs, without changing active U2 raw/result contracts.
 
+2026-11-03 pre-7-7 policy boundary: failurePolicy v2 cuts over once to
+`e5-binding.v4`, `e5-judgment.v3`, and `e5-summary.v4`. These store independent
+metric availability/quality and partial observed energy. Readers reject the old
+versions; existing evidence is retained unchanged, not migrated or reinterpreted.
+
 A reader that meets a form it cannot decode reaches one operator-visible terminal outcome rather than returning an ordinary error that reconciles without bound. The `ProfilingRun` evidence path is the implemented shape: its [reconciler](../../internal/profiling/profiler/controller/run_reconciler.go) publishes `EvidenceVerified=False` with reason `EvidenceInvalid`, and its [lifecycle](../../internal/profiling/profiler/lifecycle.go) then selects the terminal `ActionComplete`.
 
 ## Consequences

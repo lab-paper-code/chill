@@ -24,7 +24,7 @@ def self_check():
     with tempfile.TemporaryDirectory(prefix='evaluation-demo-') as directory:
         source = Path(__file__).with_name('demo-config.example.json')
         value = preview(source, Path(directory) / 'binding.json')
-        assert value['schema'] == 'e5-binding.v3'
+        assert value['schema'] == 'e5-binding.v4'
         assert value['schedule'][0]['seconds'] == 900
         assert value['schedule'][0]['parts'][0]['rates']['plc-anomaly'] == 11.620962232575499
         assert value['schedule'][0]['traces']['plc-anomaly']['seed'] == 202

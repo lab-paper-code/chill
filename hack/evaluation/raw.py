@@ -299,7 +299,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
             _error(uid_errors[uid], 'unexpected archived HTTP request kind ' + repr(kind), ref)
     results = {}
     for uid in set(groups) | set(unkeyed) | set(uid_errors) | set(wanted or ()):
-        finals, conflicts, unfinished, native_only = {}, [], [], []
+        finals, conflicts, unfinished, native_only, invalid_finals = {}, [], [], [], []
         received_at_ns = {}
         kinds, outcomes, http_errors, execution_complete = Counter(), Counter(), Counter(), Counter()
         native_outcomes, native_ids = Counter(), defaultdict(list)
@@ -347,6 +347,13 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
                         execution_complete[str(row['executionComplete']).lower()] += 1
                     else:
                         _error(uid_errors[uid], 'HTTP final executionComplete is not boolean', ref)
+                if (not isinstance(row.get('outcome'), str) or not row['outcome'] or
+                    type(row.get('elapsedNanos')) is not int or row['elapsedNanos'] < 0 or
+                    row.get('error') is not None and not isinstance(row['error'], str) or
+                    'executionComplete' in row and type(row['executionComplete']) is not bool):
+                    invalid_finals.append(rid)
+                    finals.pop(rid, None)
+                    final_refs.pop(rid, None)
             else:
                 unfinished.append({'requestID': rid, 'kinds': dict(request['kinds']),
                                    'refs': refs, 'nativeOutcomes': dict(request['nativeOutcomes']),
@@ -361,6 +368,7 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
                    'completed': outcomes['completed'],
                    'withoutUnambiguousHTTPFinal': known_requests - len(finals),
                    'finalConflicts': conflicts, 'unkeyedRows': unkeyed[uid],
+                   'invalidFinalRequestIDs': invalid_finals,
                    'unfinished': unfinished, 'unresolvedNativeOnly': native_only,
                    'nativeSupplementRows': native_rows, 'nativeOutcomes': dict(native_outcomes),
                    'nativeOutcomeRequestIDs': {k: sorted(v) for k, v in native_ids.items()},

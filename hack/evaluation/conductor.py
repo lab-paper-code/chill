@@ -164,15 +164,15 @@ def bind(path):
                             'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest()}
         schedule.append({'id': stage['id'], 'parts': parts, 'seconds': sum(p['seconds'] for p in parts),
                          'rates': {name: max(p['rates'][name] for p in parts) for name in names}, 'traces': traces})
-    return {'schema': 'e5-binding.v3', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'config': config,
+    return {'schema': 'e5-binding.v4', 'failurePolicy': 'v2', 'status': 'BOUND_NOT_MEASURED', 'createdUTC': now(), 'config': config,
             'schedule': schedule, 'sources': {name: ref(HERE / name) for name in ('conductor.py', 'producer.py', 'raw.py', 'archive.py')},
             'limitations': ['Single frozen seed set; no independent-repetition claim', 'Meter wall energy is not scheduler ownership energy']}
 
 
 def load_binding(path):
     value = load(path)
-    if value.get('schema') != 'e5-binding.v3':
-        raise ValueError('FrozenInputInvalid: binding v3 required')
+    if value.get('schema') != 'e5-binding.v4':
+        raise ValueError('FrozenInputInvalid: binding v4 required')
     return value
 
 
@@ -425,13 +425,6 @@ class ProducerResources:
         save(self.evidence, {'at': now(), 'rows': self.rows})
         return self.rows
 
-    def ready(self, minimum, deadline):
-        rows = self.poll(deadline)
-        coverage = Counter((row['podUID'], row['containerID']) for row in rows
-                           if all(type(row.get(key)) in (int, float) and math.isfinite(row[key]) and row[key] >= 0
-                                  for key in ('cpuUsageNanos', 'nrThrottled', 'throttledNanos')))
-        return all(coverage[(pod['metadata']['uid'], status['containerID'])] >= minimum
-                   for pod in self.pods for status in pod['status']['containerStatuses'] if status['name'] == 'load')
 
 
 class CPO:
@@ -503,8 +496,8 @@ class CPO:
         # Preserve operational account/CA/token projections, never host-supplied executable templates.
         pod = copy.deepcopy(workload.get('podSpec', {}))
         allowed = {'serviceAccountName', 'automountServiceAccountToken', 'volumes', 'imagePullSecrets', 'securityContext', 'tolerations'}
-        if set(pod) - allowed:
-            raise ValueError('FrozenInputInvalid: unsupported operational Pod fields')
+        ignored_pod_keys = sorted(set(pod) - allowed)
+        pod = {key: value for key, value in pod.items() if key in allowed}
         mounts = copy.deepcopy(workload.get('volumeMounts', []))
         data = {'name': 'evaluation-data', 'mountPath': '/evaluation'}
         pod.setdefault('volumes', []).extend([{'name': 'evaluation-data', 'emptyDir': {}}, *trace_volumes])
@@ -514,7 +507,8 @@ class CPO:
                                     'volumeMounts': [data], 'resources': copy.deepcopy(generator['resources'])}],
                    containers=[{'name': 'load', 'image': generator['image'], 'command': ['python3', '-u', '-c', (HERE / 'producer.py').read_text()],
                                 'args': args, 'volumeMounts': [data, *mounts, *trace_mounts], 'resources': copy.deepcopy(generator['resources'])}])
-        result = {'apiVersion': 'batch/v1', 'kind': 'Job', 'metadata': {'name': label, 'namespace': self.c['namespace'], 'labels': labels, 'ownerReferences': [owner]},
+        result = {'apiVersion': 'batch/v1', 'kind': 'Job', 'metadata': {'name': label, 'namespace': self.c['namespace'], 'labels': labels, 'ownerReferences': [owner],
+                  'annotations': {'edge.dacs.io/ignored-pod-keys': json.dumps(ignored_pod_keys)}},
                   'spec': {'backoffLimit': 0, 'parallelism': 1, 'completions': 1,
                            'activeDeadlineSeconds': math.ceil(sum(self.tb.values()) + stage['seconds']),
                            'template': {'metadata': {'labels': labels}, 'spec': pod}}}
@@ -544,6 +538,34 @@ class CPO:
         if len(statuses) != 1 or statuses[0].get('containerID') != before[0]['containerID'] or statuses[0].get('restartCount') or not statuses[0].get('state', {}).get('running'):
             raise RuntimeError('IdentityMismatch: producer process changed or stopped')
 
+    def observe_generators(self, folder):
+        active = self.io.k(['get', 'jobs', '-l', 'edge.dacs.io/workload-role=load-generator', '-o', 'json'])['items']
+        foreign = [job for job in active if not self.owned(job) and not any(
+            c['type'] in ('Complete','Failed') and c['status']=='True' for c in job.get('status',{}).get('conditions',[]))]
+        uids = {job['metadata']['uid'] for job in foreign}
+        candidates = self.io.k(['get','pods','-l','edge.dacs.io/workload-role=load-generator','-o','json'])['items'] if uids else []
+        running = [{'name': pod['metadata']['name'], 'uid': pod['metadata']['uid'], 'node': pod.get('spec',{}).get('nodeName')}
+                   for pod in candidates if pod.get('spec',{}).get('nodeName') == self.c['loadGenerator']['nodeName']
+                   and pod.get('status',{}).get('phase') == 'Running'
+                   and any(status.get('state',{}).get('running') is not None for status in pod.get('status',{}).get('containerStatuses',[]))
+                   and any(ref.get('kind')=='Job' and ref.get('uid') in uids for ref in pod['metadata'].get('ownerReferences',[]))]
+        fact = {'at': now(), 'jobs': [{'name': job['metadata']['name'], 'uid': job['metadata']['uid']} for job in foreign],
+                'otherProducerRunningOnGeneratorNode': running}
+        path = Path(folder) / 'generator-interference.json'
+        history = load(path) if path.exists() else []
+        history.append(fact)
+        save(path, history)
+        return fact
+
+    def sample_resources(self, telemetry, deadline, phase):
+        try:
+            return telemetry.poll(deadline) if telemetry else []
+        except Exception as error:
+            if isinstance(error, urllib.error.HTTPError) and error.code in (401, 403):
+                raise
+            phase.setdefault('diagnosticErrors', []).append({'at': now(), 'error': str(error)})
+            return []
+
     def monitor(self, offset, folder):
         self.disk_boundary()
         return offset
@@ -557,21 +579,17 @@ class CPO:
         receipt = load(self.out / 'settings-patch.json')
         if not receipt.get('accepted'):
             raise RuntimeError('ControlConflict: settings patch not read back')
-        for frozen in self.b['sources'].values():
-            if ref(frozen['path']) != frozen:
-                raise RuntimeError('IdentityMismatch: evaluator source changed')
-        # DOM and E5 share the generator node. Another live generator Job is a
-        # structural source of generator contention, even if its Pod predates Run.
-        active = self.io.k(['get', 'jobs', '-l', 'edge.dacs.io/workload-role=load-generator', '-o', 'json'])['items']
-        if any(not self.owned(job) and not any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
-                                              for c in job.get('status', {}).get('conditions', [])) for job in active):
-            raise RuntimeError('TargetUnavailable: another nonterminal load-generator Job')
+        # Provenance labels and shared-generator activity qualify the result;
+        # neither is permission to discard an otherwise observable experiment.
         auth = module('evaluation_auth', HERE / 'auth.py')
         budget = auth.lifetime_budget([stage], self.tb, self.c.get('tokenSafetyMarginSeconds', 60))
         save(self.out / 'token-preflight.json', auth.check(self.c['tokenFile'], budget, endpoint=self.c['endpoint'], ca_file=self.c['caFile']))
         folder.mkdir(parents=True)
-        phase = {'stage': stage, 'status': 'RUNNING', 'starts': {}, 'startUTC': None, 'endUTC': None}
-        jobs, pods, streams, buffers, ready, drained, released_counters = {}, {}, [], {}, {}, set(), set()
+        phase = {'failurePolicy': 'v2', 'stage': stage, 'status': 'RUNNING', 'starts': {}, 'startUTC': None, 'endUTC': None,
+                 'sourceObservations': {'declared': self.b['sources'], 'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')},
+                 'drain': {'complete': False, 'reasons': []}}
+        self.observe_generators(folder)
+        jobs, pods, streams, buffers, ready, drained = {}, {}, [], {}, {}, set()
         selector = selectors.DefaultSelector()
         deadline = time.monotonic() + self.tb['setupSeconds'] + self.tb['barrierSeconds']
         try:
@@ -629,11 +647,17 @@ class CPO:
                         text = line.decode('utf-8')
                         output.write(text + '\n')
                         output.flush()
-                        row = json.loads(text)
+                        try:
+                            row = json.loads(text)
+                            if not isinstance(row, dict):
+                                raise ValueError('client JSON row is not an object')
+                        except ValueError as error:
+                            phase.setdefault('clientLogErrors', []).append({'producer': name, 'error': str(error)})
+                            continue
                         event = row.get('evaluationEvent')
                         if event == 'ready':
                             trace = stage['traces'][name]
-                            if name in ready or row['offered'] != trace['offered'] or row['arrivalSHA256'] != trace['arrivalSHA256'] or row['sourceSHA'] != self.c['loadGenerator']['sourceSHA'] or row['datasetRef'] != self.ws[name]['datasetRef'] or not row['payload']:
+                            if name in ready or row['offered'] != trace['offered'] or row['arrivalSHA256'] != trace['arrivalSHA256'] or not row['payload']:
                                 raise RuntimeError('IdentityMismatch: producer Ready input identity')
                             ready[name] = row
                             save(folder / ('payload-' + name + '.json'), row)
@@ -645,9 +669,11 @@ class CPO:
                             drained.add(name)
                     if not chunk:
                         if buffers[name]:
-                            raise RuntimeError('DataLoss: incomplete producer JSONL')
+                            phase.setdefault('truncatedLogBytes', {})[name] = base64.b64encode(buffers[name]).decode()
+                            phase['drain']['reasons'].append('TruncatedLogEOF:' + name)
+                            buffers[name] = b''
                         selector.unregister(key.fileobj)
-                if not released and len(ready) == len(jobs) and telemetry.ready(self.c['evaluation']['barrier']['minimumReadySamples'], deadline):
+                if not released and len(ready) == len(jobs):
                     for name, pod in pods.items():
                         current = self.io.k(['get', 'pod', pod['metadata']['name'], '-o', 'json'])
                         self.assert_pod(current, pod)
@@ -657,6 +683,9 @@ class CPO:
                     for pod in pods.values():
                         self.io.k(['exec', pod['metadata']['name'], '-c', 'load', '--', 'python3', '-c', "from pathlib import Path; Path('/tmp/evaluation-start').touch()"])
                     released = True
+                    phase['startUTC'] = phase['goUTC']
+                    phase['endUTC'] = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=stage['seconds'])).isoformat()
+                    phase['intervalSource'] = 'GO until producer start observations are available'
                     self.record_go(folder, jobs, pods, phase['goUTC'])
                     deadline = time.monotonic() + stage['seconds'] + self.tb['drainSeconds'] + self.tb['collectSeconds']
                 if jobs and len(phase['starts']) == len(jobs):
@@ -664,42 +693,52 @@ class CPO:
                     end_ns = max(parse_ns(row['at']) for row in phase['starts'].values()) + round(stage['seconds'] * 1e9)
                     seconds, nanos = divmod(end_ns, 1000000000)
                     phase['endUTC'] = dt.datetime.fromtimestamp(seconds, dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S') + f'.{nanos:09d}+00:00'
-                    for name in drained - released_counters:
-                        pod = pods[name]
-                        cid = next(s['containerID'] for s in pod['status']['containerStatuses'] if s['name'] == 'load')
-                        counters = [r for r in telemetry.poll(deadline) if r['podUID'] == pod['metadata']['uid'] and r['containerID'] == cid
-                                    and parse_ns(r['at']) >= parse_ns(phase['endUTC'])
-                                    and all(type(r.get(k)) in (int, float) and math.isfinite(r[k]) and r[k] >= 0 for k in ('cpuUsageNanos', 'nrThrottled', 'throttledNanos'))]
-                        if not counters:
-                            continue
-                        self.assert_pod(self.io.k(['get', 'pod', pod['metadata']['name'], '-o', 'json']), pod)
-                        save(folder / (name + '-client-end-counter.json'), counters[-1])
-                        self.io.k(['exec', pod['metadata']['name'], '-c', 'load', '--', 'python3', '-c', "from pathlib import Path; Path('/tmp/evaluation-start').unlink()"])
-                        released_counters.add(name)
+                    counters = self.sample_resources(telemetry, deadline, phase)
+                    for name in drained:
+                        matching = [row for row in counters if row.get('podUID') == pods[name]['metadata']['uid']]
+                        if matching:
+                            save(folder / (name + '-client-end-counter.json'), matching[-1])
                 save(folder / 'phase.json', phase)
                 if released and not jobs and time.monotonic() >= deadline:
                     break
                 if jobs and not selector.get_map() and all(p.poll() is not None for p, _, _ in streams):
-                    if released_counters != set(jobs) or any(p.returncode for p, _, _ in streams):
-                        raise RuntimeError('DataLoss: producer EOF without drain/counters')
+                    if not released:
+                        raise RuntimeError('NoLoad: producer EOF before GO')
+                    if drained != set(jobs) or any(p.returncode for p, _, _ in streams):
+                        phase['drain']['reasons'].append('ProducerEOFWithoutCompleteDrain')
                     break
                 if time.monotonic() >= deadline:
-                    raise RuntimeError('BarrierTimeout: generator/drain watchdog')
+                    if not released:
+                        raise RuntimeError('NoLoad: generator setup/release watchdog')
+                    phase['drain']['reasons'].append('DrainWatchdog')
+                    break
             for name, job in jobs.items():
-                while True:
-                    current = self.io.k(['get', 'job', job['metadata']['name'], '-o', 'json'])
-                    if current['metadata']['uid'] != job['metadata']['uid']:
-                        raise RuntimeError('IdentityMismatch: generator Job UID')
-                    conditions = current.get('status', {}).get('conditions', [])
-                    if any(c['type'] == 'Failed' and c['status'] == 'True' for c in conditions):
-                        raise RuntimeError('ToolFailed: generator Job failed')
-                    if any(c['type'] == 'Complete' and c['status'] == 'True' for c in conditions):
-                        save(folder / ('terminal-' + name + '.json'), current)
-                        break
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError('BarrierTimeout: generator termination')
-                    time.sleep(.2)
-            phase.update(drainedUTC=now(), status='DRAINED_NOT_EVALUATED', drainScope='All evaluator producer requests returned; no serving topology condition')
+                if phase['drain']['reasons']:
+                    break
+                current = self.io.k(['get', 'job', job['metadata']['name'], '-o', 'json'])
+                if current['metadata']['uid'] != job['metadata']['uid']:
+                    raise RuntimeError('IdentityMismatch: generator Job UID')
+                save(folder / ('terminal-' + name + '.json'), current)
+                if any(c['type']=='Failed' and c['status']=='True' for c in current.get('status',{}).get('conditions',[])):
+                    phase['drain']['reasons'].append('ProducerJobFailed:' + name)
+            phase['drain']['complete'] = not phase['drain']['reasons'] and drained == set(jobs)
+            if not phase['drain']['complete']:
+                cutoff = now()
+                phase['plannedEndUTC'] = phase['endUTC']
+                if phase['endUTC'] and parse_ns(phase['endUTC']) > parse_ns(cutoff):
+                    phase['endUTC'] = cutoff
+                # Stop only exact recorded evaluator Job UIDs; cleanup failure
+                # stays a safety hold, but does not destroy collected facts.
+                try:
+                    self._cleanup_jobs()
+                except Exception as error:
+                    phase.setdefault('cleanupErrors', []).append(str(error))
+                for process, _, _ in streams:
+                    if process.poll() is None:
+                        process.terminate()
+                    process.wait(timeout=self.tb['apiSeconds'])
+            phase.update(drainedUTC=now(), status='DRAINED_NOT_EVALUATED' if phase['drain']['complete'] else 'PARTIAL_DRAIN_NOT_EVALUATED',
+                         drainScope='Drain completion is independent of diagnostic CPU/throttle counters')
             save(folder / 'phase.json', phase)
             time.sleep(self.tb['flushSeconds'])
             archive = module('evaluation_archive', HERE / 'archive.py')
@@ -838,26 +877,29 @@ def judge(binding, folder):
                     row = json.loads(line)
                     if 'scheduledOffsetNs' in row:
                         rows.append(row)
-                except ValueError:
+                except (ValueError, TypeError):
                     unknown.append(name + ': malformed client JSONL line ' + str(index))
         clients[name] = rows
     indexes = raw.iter_request_indexes(folder, [w['uid'] for w in config['workloads']], phase['startUTC'], phase['endUTC'],
-                                      actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if r.get('requestID')] for w in config['workloads']})
+                                      actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']] for w in config['workloads']})
     for workload in config['workloads']:
         name = workload['name']
         trace = stage['traces'][name]
         rows = clients[name]
         indexed = indexes[workload['uid']]
-        unknown.extend(str(error) for error in indexed['errors'])
-        returned_ids = [row['requestID'] for row in rows if row.get('requestID')]
-        if len(returned_ids) != len(set(returned_ids)):
-            unknown.append(name + ': duplicate actual HTTP request IDs')
+        returned_ids = [row['requestID'] for row in rows if isinstance(row.get('requestID'), str) and row['requestID']]
+        counts = Counter(returned_ids)
+        quarantined = {rid for rid, count in counts.items() if count > 1}
+        quarantined.update(item['requestID'] for item in indexed['summary'].get('finalConflicts', []))
+        quarantined.update(indexed['summary'].get('invalidFinalRequestIDs', []))
         if any(row.get('workloadUID') not in (None, workload['uid']) for row in rows):
-            unknown.append(name + ': returned Workload UID differs from frozen identity')
+            raise ValueError('IdentityMismatch: returned Workload UID differs from frozen identity')
+        usable = [row for row in rows if row.get('requestID') not in quarantined]
+        supported = any(row.get('requestID') in indexed['finals'] for row in usable)
         start = phase['starts'].get(name, {}).get('monotonicNS')
         quality = analysis.issuance_fidelity(rows, trace['offsetsNS'], start, round(stage['seconds'] * 1e9), analysis.stats, config['generatorQuality'])
         completed, actual, scheduled, outcomes = [], [], [], Counter()
-        for row in rows:
+        for row in usable:
             final = indexed['finals'].get(row.get('requestID'))
             outcomes[final.get('outcome') if final else 'unfinished-or-no-final'] += 1
             timing = analysis.request_timing(row, final, None, start)
@@ -869,18 +911,19 @@ def judge(binding, folder):
         hits = sum(value <= workload['slo']['targetLatencyNanos'] for value in completed)
         required = math.ceil(offered * workload['slo']['percentile'] / 100)
         qstatus = quality['generatorQuality']['status']
-        if offered and qstatus == 'UNKNOWN':
-            unknown.append(name + ': generator quality incomplete')
         identities = indexed['identities']
-        identity_known = (not indexed['errors'] and len(identities) == 1 and identities[0]['workloadUID'] == workload['uid']
-                          and bool(identities[0]['definitionID']) and indexed['summary']['uniqueRequests'] == len(returned_ids)
-                          and bool(returned_ids) and len(returned_ids) == len(set(returned_ids)))
+        identity_known = (supported and len(identities) == 1 and identities[0]['workloadUID'] == workload['uid']
+                          and bool(identities[0]['definitionID']))
         substages, base = [], 0
         for part in stage['parts']:
             stop = base + round(part['seconds'] * 1e9)
             planned = sum(base <= offset < stop for offset in trace['offsetsNS'])
             latencies = []
-            for row in rows:
+            part_rows = [row for row in rows if base <= row['scheduledOffsetNs'] < stop]
+            part_issued = analysis.issued_calls(part_rows)
+            part_supported = any(row.get('requestID') in indexed['finals'] for row in usable
+                                 if base <= row['scheduledOffsetNs'] < stop)
+            for row in usable:
                 if base <= row['scheduledOffsetNs'] < stop:
                     latency = analysis.request_timing(row, indexed['finals'].get(row.get('requestID')), None, start)['sloLatencyNS']
                     if latency is not None:
@@ -889,35 +932,47 @@ def judge(binding, folder):
             rank = math.ceil(planned * workload['slo']['percentile'] / 100)
             substages.append({'id': part['id'], 'durationSeconds': part['seconds'], 'rate': part['rates'][name], 'offered': planned,
                               'completedLatencyNS': analysis.stats(latencies), 'deadlineSuccess': successes, 'requiredSuccessfulRank': rank,
-                              'D1': 'NOT_OFFERED' if not planned else 'INVALID_GENERATOR' if qstatus == 'INVALID_GENERATOR' else
-                              'UNKNOWN' if qstatus == 'UNKNOWN' else 'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET'})
+                              'D1': 'NOT_OFFERED' if not planned else 'INVALID_NO_LOAD' if not part_issued else
+                                    'NOT_EVALUATED' if not part_supported else 'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET'})
             base = stop
         results[name] = {'offered': offered, 'clientRows': len(rows), 'outcomes': dict(outcomes), 'completedLatencyNS': analysis.stats(completed),
                          'gatewayCompletedLatencyNS': analysis.stats(completed), 'actualLatencyNS': analysis.stats(actual), 'scheduledLatencyNS': analysis.stats(scheduled),
                          'latencyScope': 'CHILL HTTP receipt to final elapsedNanos; client RTT and scheduled latency are references only',
                          'deadlineSuccess': hits, 'deadlineSuccessFraction': hits / offered if offered else None, 'requiredSuccessfulRank': required,
                          'unfinishedOrUnsent': max(0, offered - len(completed)), 'issuanceFidelity': quality,
-                         'D1': 'NOT_OFFERED' if not offered else 'INVALID_GENERATOR' if qstatus == 'INVALID_GENERATOR' else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',
+                         'D1': 'NOT_OFFERED' if not offered else 'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
+                               'NOT_EVALUATED' if not supported else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',
                          'slo': workload['slo'], 'workload': {key: workload[key] for key in ('name', 'uid', 'generation')},
-                         'workloadUID': workload['uid'] if identity_known else None,
+                         'workloadUID': workload['uid'],
                          'definitionID': identities[0]['definitionID'] if identity_known else None,
-                         'actualGatewayIdentities': len(identities), 'substages': substages,
+                         'actualGatewayIdentities': len(identities), 'observedDefinitions': identities, 'substages': substages,
+                         'rawEvidenceErrors': indexed['errors'], 'quarantinedRequestIDs': sorted(quarantined),
+                         'quarantinedClientRows': len(rows)-len(usable),
+                         'rawEvidenceErrorCount': len(indexed['errors']), 'quarantinedRequestCount': len(quarantined),
+                         'unkeyedRawRowCount': len(indexed['summary'].get('unkeyedRows', [])),
                          'identityMissingReason': None if identity_known else 'Actual returned request IDs lack one complete frozen-UID definition identity'}
     power = load(folder / 'power.json')
-    if not power.get('complete'):
-        unknown.extend(power.get('reasons') or ['Declared-meter power incomplete'])
     tail_power = load(folder / 'power-drain-inclusive.json')
-    if not tail_power.get('complete'):
-        unknown.extend(tail_power.get('reasons') or ['Declared-meter drain-inclusive power incomplete'])
     failures = None
     if config['evaluation'].get('failureInjection'):
         failures = load(folder / 'failure-events.json')
-        if any(record['record'].get('outcome') != 'Complete' for record in failures['records']):
-            unknown.append('Requested fault did not complete with external UID evidence')
-    invalid = any(r['issuanceFidelity']['generatorQuality']['status'] == 'INVALID_GENERATOR' for r in results.values())
-    result = {'schema': 'e5-judgment.v2', 'at': now(), 'status': 'INVALID_GENERATOR' if invalid else 'NOT_READY' if unknown else 'FAIL' if any(r['D1'] == 'FAIL' for r in results.values()) else 'MEASURED_DESCRIPTIVE',
-              'notReadyReasons': unknown, 'requests': results, 'power': power, 'powerDrainInclusive': tail_power,
-              'failureScenarioEvidence': failures, 'limitations': bound['limitations'], 'judgmentCriteria': ['SLO', 'energy', 'generatorQuality', 'powerCompleteness']}
+    statuses = [row['D1'] for row in results.values()]
+    measured = any(status in ('FAIL', 'OBSERVED_THRESHOLD_MET') for status in statuses)
+    slo_status = ('FAIL' if 'FAIL' in statuses else 'PASS' if measured else
+                  'INVALID_NO_LOAD' if 'INVALID_NO_LOAD' in statuses else 'NOT_EVALUATED')
+    result = {'schema': 'e5-judgment.v3', 'failurePolicy': 'v2', 'at': now(),
+              'status': 'FAIL' if slo_status=='FAIL' else 'MEASURED_DESCRIPTIVE' if measured else 'PARTIAL',
+              'notReadyReasons': [], 'clientParseErrors': unknown, 'requests': results, 'power': power, 'powerDrainInclusive': tail_power,
+              'components': {'slo': {'status': slo_status, 'workloads': {name: row['D1'] for name,row in results.items()}},
+                             'loadFidelity': {name: row['issuanceFidelity'] for name,row in results.items()},
+                             'energy': {'offered': power.get('energyStatus'), 'drainInclusive': tail_power.get('energyStatus')},
+                             'drain': phase.get('drain', {}),
+                             'injection': {'status': 'NOT_REQUESTED' if failures is None else 'REALIZED' if
+                                 len(failures.get('records', [])) == len(config['evaluation']['failureInjection']) and
+                                 all(item.get('record', {}).get('outcome') == 'Complete' for item in failures.get('records', []))
+                                 else 'NOT_REALIZED', 'evidence': failures}},
+              'ignoredKeys': config.get('ignoredKeys', []), 'failureScenarioEvidence': failures,
+              'limitations': bound['limitations'], 'judgmentCriteria': ['independent SLO, load fidelity, energy, injection and drain facts']}
     resources = folder / 'producer-resources.json'
     result['cgroups'] = load(resources) if resources.exists() else {'rows': [], 'meaning': 'No generator offered in this window'}
     save(folder / 'judgment.json', result)
@@ -926,20 +981,22 @@ def judge(binding, folder):
 
 def summarize(binding, root, *, evaluation=None):
     stages = evaluation['stages'] if evaluation else []
-    statuses = [stage['kpis']['status'] for stage in stages]
     results = evaluation.get('results', {}) if evaluation else {}
     measurements = [value.get('measurement', {}).get('verdict', 'NOT_EVALUATED') for value in results.values()]
-    status = ('INVALID_GENERATOR' if 'INVALID_GENERATOR' in statuses else 'INVALID' if 'INVALID' in measurements else
-              'NOT_EVALUATED' if not statuses or 'NOT_EVALUATED' in measurements else
-              'NOT_READY' if any(s in ('NOT_READY', 'NOT_EVALUATED') for s in statuses) else
-              'FAIL' if 'FAIL' in statuses or 'FAIL' in measurements else 'MEASURED_DESCRIPTIVE')
-    result = {'schema': 'e5-summary.v3', 'stages': stages, 'status': status, 'results': results}
+    slo_statuses = measurements + [stage['kpis'].get('components', {}).get('slo', {}).get('status') for stage in stages]
+    status = 'FAIL' if 'FAIL' in slo_statuses else 'MEASURED_DESCRIPTIVE' if 'PASS' in slo_statuses else 'NOT_EVALUATED'
+    result = {'schema': 'e5-summary.v4', 'failurePolicy': 'v2', 'stages': stages, 'status': status, 'results': results,
+              'completeness': 'PARTIAL' if 'NOT_EVALUATED' in measurements or len(stages) < len(results) or any(
+                  stage['kpis'].get('power', {}).get('complete') is False or stage['kpis']['status']=='PARTIAL' for stage in stages) else 'OBSERVED',
+              'components': {'measurement': {key: value.get('measurement') for key,value in results.items()},
+                             'execution': {key: value.get('execution') for key,value in results.items()},
+                             'energy': {stage['id']: stage['kpis'].get('power') for stage in stages}}}
     save(root / 'e5-summary.json', result)
     return result
 
 
 def publication_measurements(binding, power):
-    return {'measurementContract': {'binding': 'e5-binding.v3', 'judgment': 'e5-judgment.v2', 'energyScope': 'declared-node-meters', 'energyCoverage': binding['config']['collection']['energyCoverage']}}
+    return {'measurementContract': {'binding': 'e5-binding.v4', 'judgment': 'e5-judgment.v3', 'failurePolicy': 'v2', 'energyScope': 'declared-node-meters', 'energyCoverage': binding['config']['collection']['energyCoverage']}}
 
 
 def publication_stage_metadata(binding, phase, definitions, identity_source, phase_source, folder, root, rows):
@@ -970,7 +1027,7 @@ def main():
     elif args.command == 'bind':
         save(args.out, bind(args.config))
     elif args.command == 'judge':
-        return 2 if judge(args.binding, args.out)['status'] == 'INVALID_GENERATOR' else 0
+        return 2 if judge(args.binding, args.out)['components']['slo']['status'] in ('INVALID_NO_LOAD','NOT_EVALUATED') else 0
     else:
         print(module('evaluation_tables', HERE / 'tables.py').render(args.out, REPO))
     return 0

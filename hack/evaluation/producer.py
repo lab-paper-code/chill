@@ -117,11 +117,6 @@ def main():
         binding['payload'] = identity(records)
         offsets, base = arrival_trace(binding, kw['arrivals'], kw['seed'])
         replay_shards(records, offsets, base, binding, kw)
-        # Preserve the same process/cgroup until CPO saves the real post-end
-        # counter and removes the existing start marker. Original Job/watchdog
-        # limits still bound this hold; the expired setup barrier is not reused.
-        while Path('/tmp/evaluation-start').exists():
-            time.sleep(.05)
 
     cli.replay = frozen
     return cli.main(sys.argv[2:])
