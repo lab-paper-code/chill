@@ -692,7 +692,7 @@ func TestMeasuredPowerChangeOnEmptyMeasurementNode(t *testing.T) {
 	// The fake agent settles every requested mode at once.
 	manager.store.client = &nodeAPI{Client: fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(testExecutionFacts(), &class).Build(), kube: kube, agent: settleAgent(&class)}
 	manager.observer.kube = kube
-	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: true})
 	if err != nil {
 		t.Fatal(err)

@@ -198,7 +198,7 @@ func newResetHarness(t *testing.T) *resetHarness {
 	kube := kubefake.NewSimpleClientset(node, otherNode, owned.DeepCopy(), other.DeepCopy(), observerServiceFixture(owned), observerServiceFixture(other))
 	api := &resetAPI{Client: &nodeAPI{Client: manager.store.client, kube: kube}, kube: kube}
 	manager.store.client, manager.observer.kube = api, kube
-	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: owned.Namespace, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -217,7 +217,7 @@ func newResetHarness(t *testing.T) *resetHarness {
 	}, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	controller, err := NewSchedulerController(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
+	controller, err := NewSchedulerController(manager.reservations, manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{Settings: settings, ConfigurationName: "scheduler", ConfigurationKey: "scheduler.json", StaticRouting: true})
 	if err != nil {
 		t.Fatal(err)

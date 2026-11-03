@@ -269,7 +269,7 @@ func TestOperationCostStopsOnActualOperationFailure(t *testing.T) {
 	o.controller.measureStep = func(ctx context.Context, config SchedulerControllerConfig, request MeasurementRequest) (OperationMeasurement, evidencestore.Receipt, error) {
 		record, receipt, err := measure(ctx, config, request)
 		if request.Operation.Kind == operationPrepare {
-			record.Verdict = operationFailed
+			record.Verdict = string(edge.MeasurementPhaseFailed)
 			err = fmt.Errorf("physical preparation failed")
 		}
 		return record, receipt, err

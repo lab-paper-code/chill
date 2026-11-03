@@ -236,12 +236,12 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	}
 	kube := kubefake.NewSimpleClientset(node)
 	manager.observer.kube = kube
-	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller, err := NewSchedulerController(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
+	controller, err := NewSchedulerController(manager.reservations, manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
 			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
 				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,

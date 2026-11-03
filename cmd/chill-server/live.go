@@ -12,6 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -86,7 +87,7 @@ func (p *livePublisher) startRuntime(ctx context.Context, runtime *serving.Runti
 	}()
 }
 
-func (p *livePublisher) workload(view servingkube.WorkloadView, removed bool) {
+func (p *livePublisher) workload(view management.WorkloadView, removed bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	w := view.Desired

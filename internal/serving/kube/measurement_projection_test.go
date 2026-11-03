@@ -88,7 +88,7 @@ func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
 				record.WallJoules, record.EnergyUncertaintyJoules = &zero, &zero
 				record.PhaseSensitivityJoules, record.MissingGapJoules = &zero, &zero
 			case nativeOperationFailed:
-				record.Verdict, record.Reason, record.Result.Status = operationFailed, "physical action failed", nativeOperationFailed
+				record.Verdict, record.Reason, record.Result.Status = string(edge.MeasurementPhaseFailed), "physical action failed", nativeOperationFailed
 				// An unfinished/failed power window must not be given Accepted's
 				// completeness checks, nor expose a leftover energy value.
 				record.Power.Samples = nil
@@ -168,7 +168,7 @@ func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
 			case "schema":
 				record.SchemaVersion = "unsupported-projection-schema"
 			case "verdict":
-				cr.Status.Steps[0].Verdict = operationFailed
+				cr.Status.Steps[0].Verdict = string(edge.MeasurementPhaseFailed)
 			case "cost":
 				record.WallJoules = nil
 			case "idle":

@@ -1,4 +1,4 @@
-package kube
+package management
 
 import (
 	"encoding/json"

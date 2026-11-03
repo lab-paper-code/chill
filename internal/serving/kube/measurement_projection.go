@@ -108,7 +108,7 @@ func projectOperationStep(cr edge.OperationCostMeasurement, index int, store str
 		if err != nil {
 			return OperationStepProjection{}, err
 		}
-	case operationFailed, measurementInsufficient:
+	case string(edge.MeasurementPhaseFailed), measurementInsufficient:
 		// Failed/insufficient records need not have accepted power, isolation or
 		// complete state effects. Their actual interval remains useful history.
 	default:

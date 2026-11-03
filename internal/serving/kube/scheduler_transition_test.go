@@ -953,7 +953,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	manager.observer.kube = kube
 	manager.observer.SetProfiles(profiles)
-	operations, err := NewOperations(manager.reservations.(*ClusterState), manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
+	operations, err := NewOperations(manager.reservations, manager.store, kube, manager.runtime, manager.observer, manager.observer.native,
 		OperationConfig{Namespace: pod.Namespace, PollInterval: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

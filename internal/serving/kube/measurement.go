@@ -169,7 +169,7 @@ func (record *OperationMeasurement) judge(operationErr, observeErr error) error 
 	if record.Result.StartedAt.IsZero() {
 		record.Verdict = measurementInsufficient
 	} else if operationErr != nil {
-		record.Verdict = operationFailed
+		record.Verdict = string(edge.MeasurementPhaseFailed)
 		record.Reason = operationErr.Error()
 	} else {
 		var effectErr error

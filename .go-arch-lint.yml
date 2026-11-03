@@ -354,6 +354,7 @@ deps:
       - evaluation-service
       - serving-measurement
       - serving-application
+      - serving-management
 
   serving-live:
     anyVendorDeps: true
@@ -391,6 +392,8 @@ deps:
       - api
       - model-catalog
       - serving-core
+      - evidence-core
+      - profile-derivation
 
   serving-kube:
     mayDependOn:
@@ -406,7 +409,6 @@ deps:
       - profiler-projection
       - profiling-run
       - serving-core
-      - serving-management
       - serving-firstfloor
       - firstfloor
       - evidence-kube

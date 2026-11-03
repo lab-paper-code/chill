@@ -15,6 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -195,7 +196,7 @@ func TestDashboardGatewayCannotReplaceChillServerAuthorization(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	authorizer := &servingkube.Authorizer{}
-	native, err := httpapi.NewHandler(&servingkube.Manager{}, &serving.Runtime{}, authorizer,
+	native, err := httpapi.NewHandler(&management.Manager{}, &serving.Runtime{}, authorizer,
 		&serving.ObservationLog{}, &servingkube.Observer{}, httpapi.HandlerConfig{
 			RequestTimeout: time.Second, OperationTimeout: time.Second, MaxRequestBytes: 1024, MaxQueryEvents: 10,
 		})

@@ -19,6 +19,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	authentication "k8s.io/api/authentication/v1"
 	authorization "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -148,7 +149,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 		mutationBody = `{"name":"task","node":"node","batchEnergyOptimization":"beo","workload":"workload","batch":1}`
 	}
 	handler, err := httpapi.NewHandler(
-		&servingkube.Manager{}, &serving.Runtime{}, &servingkube.Authorizer{Client: client},
+		&management.Manager{}, &serving.Runtime{}, &servingkube.Authorizer{Client: client},
 		log, &servingkube.Observer{}, config,
 	)
 	if err != nil {

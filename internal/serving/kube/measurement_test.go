@@ -277,7 +277,7 @@ func TestTimingMeasurementRejectsMissingRealSupportButKeepsPhysicalFailure(t *te
 	}
 	record = timingMeasurementFixture()
 	physical := errors.New("physical removal failed")
-	if err := record.judge(physical, nil); !errors.Is(err, physical) || record.Verdict != operationFailed {
+	if err := record.judge(physical, nil); !errors.Is(err, physical) || record.Verdict != string(edge.MeasurementPhaseFailed) {
 		t.Fatalf("actual operation failure changed lifecycle: %+v, %v", record, err)
 	}
 }
@@ -379,7 +379,7 @@ func TestMeasureCollectsActualExpandedSupportAndRetainsRealBracketFailure(t *tes
 		}
 		assertRetainedOperationMeasurement(t, writer.directory, receipt, request, record, err)
 		if mode == "operation timeout" {
-			if !errors.Is(err, context.DeadlineExceeded) || record.Result.Status != nativeOperationFailed || record.Verdict != operationFailed {
+			if !errors.Is(err, context.DeadlineExceeded) || record.Result.Status != nativeOperationFailed || record.Verdict != string(edge.MeasurementPhaseFailed) {
 				t.Fatalf("finite physical operation budget not enforced: %+v, %v", record, err)
 			}
 			continue

@@ -20,6 +20,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/live"
+	"github.com/lab-paper-code/chill/internal/serving/management"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -78,7 +79,7 @@ type HandlerConfig struct {
 	ListEvaluationInputs  func(context.Context) (EvaluationInputList, error)
 }
 type Handler struct {
-	manager        *servingkube.Manager
+	manager        *management.Manager
 	runtime        *serving.Runtime
 	authorizer     *servingkube.Authorizer
 	observationLog *serving.ObservationLog
@@ -87,7 +88,7 @@ type Handler struct {
 	mux            *http.ServeMux
 }
 
-func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authorizer *servingkube.Authorizer, observationLog *serving.ObservationLog, observer *servingkube.Observer, config HandlerConfig) (*Handler, error) {
+func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorizer *servingkube.Authorizer, observationLog *serving.ObservationLog, observer *servingkube.Observer, config HandlerConfig) (*Handler, error) {
 	if manager == nil || runtime == nil || authorizer == nil || observationLog == nil || observer == nil || config.MaxRequestBytes <= 0 || config.RequestTimeout <= 0 || config.OperationTimeout <= 0 || config.MaxQueryEvents <= 0 {
 		return nil, errors.New("concrete management/runtime/auth/observation dependencies and positive HTTP bounds are required")
 	}
@@ -369,7 +370,7 @@ func (h *Handler) workloadList(ctx context.Context, view string) (any, error) {
 		return nil, err
 	}
 	if view == schedulerSummaryView {
-		return servingkube.SummarizeWorkloads(views), nil
+		return management.SummarizeWorkloads(views), nil
 	}
 	return views, nil
 }
