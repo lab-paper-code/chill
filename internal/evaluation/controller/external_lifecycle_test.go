@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"testing"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -48,5 +50,38 @@ func TestInjectionUsesReadyExternalPodUID(t *testing.T) {
 	}
 	if err := r.selectInjection(context.Background(), parent, stage, stage.Spec.FailureInjection[0], &injectionEvidence{}); err == nil {
 		t.Fatal("unready Pod was selected")
+	}
+}
+
+func TestFaultCandidatesKeepPodSecretsPrivateAndRejectAmbiguousOwners(t *testing.T) {
+	r, _, parent, stage := fixtureStageExecution(t)
+	evidence := &injectionEvidence{}
+	if err := r.selectInjection(context.Background(), parent, stage, stage.Spec.FailureInjection[0], evidence); err != nil {
+		t.Fatal(err)
+	}
+	target := evidence.Candidates[0]
+	if !target.PodReady || !target.NodeReady {
+		t.Fatal("external readiness evidence lost")
+	}
+	evidence.Pods[0].Spec.Containers = []corev1.Container{{
+		Name: "external", Env: []corev1.EnvVar{{Name: "TOKEN", Value: "never-log-me"}},
+	}}
+	evidence.Nodes[0].Annotations = map[string]string{"credentials": "never-log-me"}
+	raw, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range [][]byte{[]byte("never-log-me"), []byte(`"pods"`), []byte(`"nodes"`)} {
+		if bytes.Contains(raw, forbidden) {
+			t.Fatalf("unsafe external object evidence: %s", raw)
+		}
+	}
+	evidence.Pods[0].OwnerReferences = append(evidence.Pods[0].OwnerReferences, metav1.OwnerReference{
+		APIVersion: api.GroupVersion.String(), Kind: "Workload", UID: "foreign-workload",
+	})
+	evidence.Candidates = nil
+	evidence.selectCandidates(map[string]bool{"workload-uid": true}, "")
+	if len(evidence.Candidates) != 0 {
+		t.Fatal("ambiguous Workload ownership accepted")
 	}
 }

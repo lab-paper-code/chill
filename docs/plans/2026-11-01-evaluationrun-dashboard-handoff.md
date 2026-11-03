@@ -93,6 +93,7 @@ Settings 적용은 운영자와 같은 GET/PUT `/api/v1/scheduler/settings`·인
 
 평가 action SA의 release namespace 권한은 Jobs create/get/list/delete, Pod·log get, GO marker용 pods/exec create, LoadScenario get, Deployment get이다. cluster 범위는 Node get, 외부 fleet 확인용 Pod list, Workload/Dataset/Preprocessor get뿐이다. 공개 URL은 Workload GET, settings GET/PUT, power GET, raw inventory/request/resource export GET만 허용한다. action SA에 broad evidence-collector/scheduler-editor URL role을 연결하지 않는다. 공개 PUT의 운영자와 같은 SAR를 위해 지정 scheduler ConfigMap update 권한만 별도 RoleBinding으로 유지한다. controller에는 Chill HTTP transport·URL grant가 없고 외부 주입 선택용 Node list와 기존 Profiler Node get/patch를 사용한다.
 기존 독립 `chill-evaluation-evidence-collector` SA·binding과 `servingEntrypoint.evidenceCollector` 옵션은 유일한 코드 소비자(round)의 삭제와 함께 제거한다. 새 하네스는 action Job의 projected token만 사용한다. 일반 운영자용 unbound evidence-collector role 자체는 바꾸지 않는다.
+장애 주입은 실제 Workload ownerReference의 API version·kind·UID로 Pod를 고른다(controller bit는 요구하지 않으며 중복 Workload owner는 거부). 증거는 Pod/Node 이름·UID·Ready와 선택 결과만 담고, credentials가 있을 수 있는 원본 Pod spec·Node 본문은 직렬화하지 않는다.
 
 
 

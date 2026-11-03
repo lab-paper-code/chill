@@ -26,6 +26,8 @@ type servingTarget struct {
 	PodName     string                        `json:"podName"`
 	PodUID      types.UID                     `json:"podUID"`
 	Node        api.EvaluationObjectReference `json:"node"`
+	PodReady    bool                          `json:"podReady"`
+	NodeReady   bool                          `json:"nodeReady"`
 }
 
 func seconds(v map[string]string, key string) time.Duration {
@@ -34,15 +36,16 @@ func seconds(v map[string]string, key string) time.Duration {
 }
 
 type injectionEvidence struct {
-	RunUID     types.UID                `json:"runUID"`
-	StageUID   types.UID                `json:"stageUID"`
-	StageID    string                   `json:"stageID"`
-	Record     api.FaultInjectionRecord `json:"record"`
-	Pods       []corev1.Pod             `json:"pods,omitempty"`
-	Nodes      []corev1.Node            `json:"nodes,omitempty"`
-	Candidates []servingTarget          `json:"candidates,omitempty"`
-	Rejected   map[string]string        `json:"rejected,omitempty"`
-	Requests   []map[string]any         `json:"requests,omitempty"`
+	RunUID   types.UID                `json:"runUID"`
+	StageUID types.UID                `json:"stageUID"`
+	StageID  string                   `json:"stageID"`
+	Record   api.FaultInjectionRecord `json:"record"`
+	// Raw Kubernetes objects are selection inputs only, not credential-safe evidence.
+	Pods       []corev1.Pod      `json:"-"`
+	Nodes      []corev1.Node     `json:"-"`
+	Candidates []servingTarget   `json:"candidates,omitempty"`
+	Rejected   map[string]string `json:"rejected,omitempty"`
+	Requests   []map[string]any  `json:"requests,omitempty"`
 }
 
 func (r *Runtime) injections(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage) error {
@@ -471,16 +474,29 @@ func (r *Runtime) recoverRequestedInjections(ctx context.Context, parent *api.Ev
 
 func (e *injectionEvidence) selectCandidates(allowed map[string]bool, excluded types.UID) {
 	readyNodes := map[string]types.UID{}
-	for _, node := range e.Nodes {
+	for i := range e.Nodes {
+		node := &e.Nodes[i]
 		for _, condition := range node.Status.Conditions {
 			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue && !node.Spec.Unschedulable {
 				readyNodes[node.Name] = node.UID
 			}
 		}
 	}
-	for _, pod := range e.Pods {
-		owner := metav1.GetControllerOf(&pod)
-		if owner == nil || owner.Kind != "Workload" || owner.APIVersion != api.GroupVersion.String() || !allowed[string(owner.UID)] {
+	groupVersion := api.GroupVersion.String()
+	for i := range e.Pods {
+		pod := &e.Pods[i]
+		var owner *metav1.OwnerReference
+		for j := range pod.OwnerReferences {
+			ref := &pod.OwnerReferences[j]
+			if ref.Kind == "Workload" && ref.APIVersion == groupVersion {
+				if owner != nil {
+					owner = nil
+					break
+				}
+				owner = ref
+			}
+		}
+		if owner == nil || !allowed[string(owner.UID)] {
 			continue
 		}
 		ready := false
@@ -494,6 +510,6 @@ func (e *injectionEvidence) selectCandidates(allowed map[string]bool, excluded t
 			e.Rejected[pod.Name] = "Pod or Node unavailable or excluded"
 			continue
 		}
-		e.Candidates = append(e.Candidates, servingTarget{WorkloadUID: string(owner.UID), PodName: pod.Name, PodUID: pod.UID, Node: api.EvaluationObjectReference{Name: pod.Spec.NodeName, UID: nodeUID}})
+		e.Candidates = append(e.Candidates, servingTarget{WorkloadUID: string(owner.UID), PodName: pod.Name, PodUID: pod.UID, Node: api.EvaluationObjectReference{Name: pod.Spec.NodeName, UID: nodeUID}, PodReady: ready, NodeReady: true})
 	}
 }

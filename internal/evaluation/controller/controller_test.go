@@ -414,7 +414,7 @@ func TestInjectionCordonBeforeUIDDeleteAndNoReplay(t *testing.T) {
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid"}}
 			node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "serving", Namespace: parent.Namespace, UID: "pod-uid"}, Spec: corev1.PodSpec{NodeName: node.Name}}
-			pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(&api.Workload{ObjectMeta: metav1.ObjectMeta{Name: "workload", UID: "workload-uid"}}, api.GroupVersion.WithKind("Workload"))}
+			pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "Workload", Name: "workload", UID: "workload-uid"}}
 			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 			r, store := fixtureRuntime(t, parent, node, pod)
 			stage := fixtureStage(t, &r, parent)
