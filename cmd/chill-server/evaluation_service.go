@@ -17,7 +17,7 @@ type evaluationService struct {
 	namespace   string
 	store       string
 	experiments *experimentService
-	settings    func() serving.SchedulerSettings
+	settings    func() (serving.SchedulerSettings, error)
 }
 
 func (s *evaluationService) listActive(ctx context.Context) (httpapi.ActiveEvaluationList, error) {
@@ -93,9 +93,17 @@ func (s *evaluationService) listActive(ctx context.Context) (httpapi.ActiveEvalu
 	return result, nil
 }
 
-func evaluationSettings(scheduler *schedulerService) func() serving.SchedulerSettings {
-	if scheduler == nil {
-		return nil
+func evaluationSettings(scheduler *schedulerService) func() (serving.SchedulerSettings, error) {
+	return func() (serving.SchedulerSettings, error) {
+		if scheduler != nil {
+			scheduler.lock.Lock()
+			defer scheduler.lock.Unlock()
+			if scheduler.controller != nil {
+				return scheduler.controller.Settings(), nil
+			}
+		}
+		return serving.SchedulerSettings{}, &serving.Error{
+			Code: "CoverageWarming", Message: "public scheduler settings are not initialized",
+		}
 	}
-	return scheduler.controller.Settings
 }

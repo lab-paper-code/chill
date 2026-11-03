@@ -193,17 +193,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.GetExperiment = experiments.get
 	evaluations := &evaluationService{
 		reader: store.Client(), client: store.Client(), namespace: opts.servingNamespace,
-		store: opts.storeName, experiments: experiments, settings: evaluationSettings(scheduler),
+		store: opts.storeName, experiments: experiments,
 	}
-	handlerConfig.ListActiveEvaluations = evaluations.listActive
-	handlerConfig.ListEvaluations = evaluations.list
-	handlerConfig.GetEvaluation = evaluations.get
-	handlerConfig.PreflightEvaluation = evaluations.preflight
-	handlerConfig.CreateEvaluation = evaluations.create
-	handlerConfig.ReplaceEvaluation = evaluations.replace
-	handlerConfig.DeleteEvaluation = evaluations.delete
-	handlerConfig.ReleaseEvaluation = evaluations.release
-	handlerConfig.GetEvaluationTemplate = evaluations.template
+	configureEvaluationHandlers(&handlerConfig, evaluations, scheduler)
 	evaluationLoads := &evaluationLoadService{
 		client: store.Client(), namespace: opts.servingNamespace, evidence: objects,
 	}
@@ -235,6 +227,21 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return composeChillServer(handler, authorizer, opts, measurements)
 	}
 	return serve(ctx, opts, warming, execution, observer, manager, observationLog, scheduler, diagnostics, initialize)
+}
+
+func configureEvaluationHandlers(
+	config *httpapi.HandlerConfig, evaluations *evaluationService, scheduler *schedulerService,
+) {
+	evaluations.settings = evaluationSettings(scheduler)
+	config.ListActiveEvaluations = evaluations.listActive
+	config.ListEvaluations = evaluations.list
+	config.GetEvaluation = evaluations.get
+	config.PreflightEvaluation = evaluations.preflight
+	config.CreateEvaluation = evaluations.create
+	config.ReplaceEvaluation = evaluations.replace
+	config.DeleteEvaluation = evaluations.delete
+	config.ReleaseEvaluation = evaluations.release
+	config.GetEvaluationTemplate = evaluations.template
 }
 
 // Health and the dashboard remain reachable while state-dependent APIs warm.

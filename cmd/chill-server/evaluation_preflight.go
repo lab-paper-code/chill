@@ -36,7 +36,11 @@ func (s *evaluationService) preflight(
 	if err != nil {
 		return result, nil
 	}
-	result.Checks = append(result.Checks, s.settingsPatchChecks(&request.Spec)...)
+	patchChecks, err := s.settingsPatchChecks(&request.Spec)
+	if err != nil {
+		return result, err
+	}
+	result.Checks = append(result.Checks, patchChecks...)
 	for _, stage := range request.Spec.Stages {
 		var load api.LoadScenario
 		err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: stage.LoadScenarioRef.Name}, &load)
@@ -172,11 +176,15 @@ func (s *evaluationService) liveTarget(
 	return result, nil
 }
 
-func (s *evaluationService) settingsPatchChecks(spec *api.EvaluationRunSpec) []httpapi.EvaluationCheck {
+func (s *evaluationService) settingsPatchChecks(spec *api.EvaluationRunSpec) ([]httpapi.EvaluationCheck, error) {
 	var checks []httpapi.EvaluationCheck
 	var current serving.SchedulerSettings
 	if s.settings != nil {
-		current = s.settings()
+		var err error
+		current, err = s.settings()
+		if err != nil {
+			return nil, err
+		}
 	}
 	validatePatch := func(id string, raw []byte) {
 		check := httpapi.EvaluationCheck{ID: "settingsPatch/" + id}
@@ -197,5 +205,5 @@ func (s *evaluationService) settingsPatchChecks(spec *api.EvaluationRunSpec) []h
 			validatePatch(stage.ID, stage.SettingsPatch.Raw)
 		}
 	}
-	return checks
+	return checks, nil
 }

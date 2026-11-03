@@ -17,6 +17,9 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/httpapi"
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 // A slow hourly upload runs beside the serve loop: each tick returns at once,
@@ -149,6 +152,7 @@ func TestServeDuringColdStart(t *testing.T) {
 				for _, route := range []string{
 					"GET /api/v1/workloads", "POST /api/v1/workloads/a/infer",
 					"PUT /api/v1/scheduler/settings", "POST /api/v1/scheduler/operations",
+					"POST /api/v1/evaluations/preflight",
 					"DELETE /api/v1/evaluations/a", "POST /api/v1/namespaces/ns/batch-energy-optimizations",
 					"GET /api/v1/namespaces/ns/measurement-coverage", "POST /api/v1/internal/observations/resources",
 				} {
@@ -210,4 +214,73 @@ func coldStartTLS(t *testing.T) (*http.Client, string, string) {
 		t.Fatal(err)
 	}
 	return server.Client(), certFile, keyFile
+}
+
+func TestEvaluationAssemblyResolvesLateSchedulerController(t *testing.T) {
+	const warmingCode = "CoverageWarming"
+	ctx := context.Background()
+	owners := schedulerTestService(t, schedulerTestConfiguration())
+	opts := owners.opts
+	opts.sourceInterval = time.Second
+	scheduler, err := newSchedulerService(ctx, owners.store, owners.kube, owners.execution,
+		owners.observer, owners.objects, owners.observationLog, opts, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(scheduler.Close)
+	evaluations, request := evaluationFixture(t)
+	var config httpapi.HandlerConfig
+	// Use the server's assembly before scheduler initialization, not a
+	// separately injected ready handler or a captured controller method.
+	configureEvaluationHandlers(&config, evaluations, scheduler)
+	if scheduler.controller != nil {
+		t.Fatal("controller was initialized before server assembly")
+	}
+	for _, patch := range []*apiextensionsv1.JSON{
+		nil, {Raw: []byte(`{"controls":{"power":false}}`)},
+	} {
+		request.Spec.SettingsPatch = patch
+		_, err := config.PreflightEvaluation(ctx, request)
+		var warming *serving.Error
+		if !errors.As(err, &warming) || warming.Code != warmingCode {
+			t.Fatalf("uninitialized preflight error=%v, want CoverageWarming", err)
+		}
+		response := httptest.NewRecorder()
+		httpapi.SendQueryError(response, err)
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("uninitialized preflight HTTP status=%d", response.Code)
+		}
+	}
+	controller, err := servingkube.NewSchedulerController(
+		scheduler.store, scheduler.kube, scheduler.execution, scheduler.observer,
+		scheduler.operations, scheduler.observationLog,
+		servingkube.SchedulerControllerConfig{Settings: schedulerTestConfiguration().Settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler.lock.Lock()
+	scheduler.controller = controller
+	scheduler.lock.Unlock()
+	result, err := config.PreflightEvaluation(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundPatch := false
+	for _, check := range result.Checks {
+		if !check.Passed {
+			t.Fatalf("assembled initialized preflight failed: %+v", check)
+		}
+		if check.ID == "settingsPatch/run" {
+			foundPatch = true
+		}
+	}
+	if !foundPatch {
+		t.Fatal("assembled handler did not validate patch with the late controller")
+	}
+	configureEvaluationHandlers(&config, evaluations, nil)
+	_, err = config.PreflightEvaluation(ctx, request)
+	var warming *serving.Error
+	if !errors.As(err, &warming) || warming.Code != warmingCode {
+		t.Fatalf("absent scheduler error=%v, want CoverageWarming", err)
+	}
 }
