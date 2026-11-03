@@ -9,6 +9,11 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/live"
 )
 
+const (
+	mutationAccepted          = "Accepted"
+	mutationDeletionRequested = "DeletionRequested"
+)
+
 // ProjectAction projects the committed observation identically for live and history.
 func ProjectAction(action serving.SchedulerActionObservation) (*live.ActionEvent, error) {
 	var operation servingkube.Operation
@@ -36,7 +41,9 @@ func ProjectAction(action serving.SchedulerActionObservation) (*live.ActionEvent
 		completed := action.CompletedAt.UTC().Format(time.RFC3339Nano)
 		projected.CompletedAt = &completed
 		projected.Phase = "completed"
-		if action.Phase != "complete" && (action.Phase != "NOT_SUBMITTED" || action.Error != "") {
+		success := action.Phase == "complete" || action.Error == "" &&
+			(action.Phase == "NOT_SUBMITTED" || action.Phase == mutationAccepted || action.Phase == mutationDeletionRequested)
+		if !success {
 			projected.Phase = "failed"
 		}
 		projected.Result = &live.ActionResult{Status: action.Phase, Error: action.Error}
