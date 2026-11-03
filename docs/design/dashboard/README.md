@@ -28,7 +28,7 @@
 | HTTP 제한 | method/path allowlist; Authorization·If-Match·Content-Type·추론 timeout·필요 CHILL identity header만 전달. 요청/완전한 응답 각각 8 MiB, 응답 header 16 KiB. 상태·요청 ID·Workload UID 보존, no-store. |
 | 초기 웹 설정 | page 50/최대 200, 기본 구간 1시간/최대 24시간, 갱신 5초, 조회 timeout 10초/변경 60초. 추론은 사용자 timeout과 서버 상한 및 중계 여유 사용. WS 연결 수명에 HTTP 한도를 재사용하지 않음. |
 | 변경 | 작성→전후 정의·제공된 영향 확인→제출→원본 조회. Model/Workload If-Match=metadata.resourceVersion. 409 최신 baseline 명시 채택 시 draft 유지, 같은 UID만 제출. 201/202/실제 완료 구분; 삭제는 원래 UID 제거 확인. 응답 미수신은 결과 미확인, 원본 조회 후 명시 재제출. |
-| 설정 | 전체 SchedulerSettings 마지막 적용값과 서버 ETag가 현재 baseline이다. GET의 ETag를 PUT의 If-Match로 전달하고 412에는 초안을 유지한 채 새 baseline을 명시 채택한다. duration·seed/int64·메모리/uint64는 원문 정밀도를 보존한다. 단계별 settingsPatch도 `lib/scheduler-settings.ts`의 같은 항목 목록·타입을 재사용하며 별도 내부 제어 스키마를 만들지 않는다. |
+| 설정 | 전체 SchedulerSettings 마지막 적용값과 서버 ETag가 현재 baseline이다. GET의 ETag를 PUT의 If-Match로 전달하고 409에는 초안을 유지한 채 새 baseline을 명시 채택한다. duration·seed/int64·메모리/uint64는 원문 정밀도를 보존한다. 단계별 settingsPatch도 `lib/scheduler-settings.ts`의 같은 항목 목록·타입을 재사용하며 별도 내부 제어 스키마를 만들지 않는다. |
 | 설정 권한 | unbound scheduler-editor ClusterRole과 serving namespace Role을 관리자가 binding. Role은 지정 ConfigMap 하나 update만 허용. |
 | 조회 | 일반 오류는 자동 retry하지 않으며 focus/reconnect refetch=false. 공통 조회·변경 경계에서만 HTTP 503이고 `code`가 정확히 `CoverageWarming`인 응답을 최대 180회 재시도한다(Retry-After 1–5초, 기본 2초). 일반 503과 응답 미수신·전송 결과 미확인 변경은 재시도하지 않는다. AbortSignal로 이동/logout 취소. 보이는 운영자 영역만 제한 polling; 라이브는 push. 401/403 payload 숨김. 독립 Query로 미지원·빈 값·실패·오래됨·동작 실패 분리. |
 | 원본·안전 | RFC3339Nano·정밀 정수·null/0 구별. 외부 문자열/JSON은 텍스트, export 복사본에서 credential 제거. API code/field/reason 보존; 문장은 `lib/labels.ts`, 미등록 원본도 보존. |
@@ -155,7 +155,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /namespaces/{namespace}/batch-energy-optimizations/{name}/result` | 캠페인의 봉인된 결과. 파일 조회·검증 오류는 원 HTTP/code를 유지하면서 별도 `campaign/assessment`, `result:null`, `evidenceError` 제공 | 요청 실행 상태·실패 원인은 결과 파일 오류와 독립 표시한다. 오류를 성공 측정값으로 바꾸지 않는다. |
 | `POST /namespaces/{namespace}/batch-energy-optimizations/preflight` | 입력을 해석하고 `resolves`, `reason`, `plan`을 반환하는 읽기 전용 요청 | 측정 요청의 검토 단계와 `/measurements/check`에 사용한다. 캠페인 접수는 별도 POST로 수행한다. |
 | `GET, POST /namespaces/{namespace}/batch-energy-optimizations`, `DELETE .../{name}` | 측정 목록, `dryRun=All` 검증과 접수, `uid`와 `If-Match`의 영구 삭제 | 측정 목록, 요청과 삭제에 재사용한다. |
-| `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정과 ETag, 실제 snapshot·판단·전체 설정 적용·행위자 관측 기록. PUT은 If-Match 필수, 누락 428·불일치 412 | 고정 BFF 경로와 운영 설정 편집기에 연결한다. ETag를 보존하고 초안 변경·충돌 재채택 후 다시 명시 제출한다. |
+| `GET /scheduler`, `GET /scheduler/settings`, `GET /scheduler/state`, `PUT /scheduler/settings` | 현재 설정과 ETag, 실제 snapshot·판단·전체 설정 적용·행위자 관측 기록. PUT은 If-Match 필수, 누락 428·불일치 409 | 고정 BFF 경로와 운영 설정 편집기에 연결한다. ETag를 보존하고 초안 변경·충돌 재채택 후 다시 명시 제출한다. |
 | `GET, POST /scheduler/profiles`, `DELETE /scheduler/profiles/{namespace}/{name}` | 채택 프로파일과 조건, 채택 결과와 `configVersion` | 측정 결과 처리 성능의 현재 사용·채택·해제에 재사용한다. |
 | `GET /namespaces/{namespace}/operation-cost-measurements[/{name}]`, 같은 형태의 `dispatch-occupancy-measurements` | `{items:MeasurementProjection[]}` 또는 단건 안전한 읽기 projection. DOM은 최상위 진행·결과 필드를 포함한다. 원본 spec 전체가 아니다. | 두 결과 화면에 연결한다. 아래 DOM 쓰기 계약과 읽기 projection을 구별한다. |
 | `POST /namespaces/{namespace}/dispatch-occupancy-measurements[?dryRun=All]`, `DELETE .../{name}?uid=…` | 대상·선택적 이름만 제출, dry-run의 완성 `task.spec`, UID·`If-Match` 영구 삭제, Measuring 409 | 요청·검사·진행·삭제 UI는 서버 DOM API 변경(`ea6899ef`) 위로 rebase되어 통합됐다. 운영 서버·Query 미배포 및 운영 생성·삭제 E2E 미수행과 구별하며 실행 중단/취소는 아니다. 상세는 [측정 API §13.8](../serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03). |
@@ -164,7 +164,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 | `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil` | 기록의 전력 조회와 장치 전력 범위에 연결한다. 브라우저에서 적분하지 않는다. |
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
-| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, `facts`(이름·질문·제어 정책·단계 mode/row/loadScenarioRef·SLO 출처·부하 출처), 단건은 `definition` 제공 | §8 정의 기반 reader. 결과 화면을 포함해 목록 항목별 단건 N+1 조회는 금지한다. 목록의 이름·정책·SLO·부하는 기록된 `facts`만 사용하며 없으면 미기록이다. 목록에 없는 명시적 과거 비교 대상만 필요한 불변 게시 단건을 조회한다. |
+| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 `comparisons`, `facts`(이름·질문·단계 row/loadScenarioRef/settingsPatchKeys·SLO 출처·부하 출처), 단건은 `definition` 제공 | §8 정의 기반 reader. 목록 항목별 단건 N+1 조회는 금지한다. 변경 키는 W4 운영 설정 항목명으로 표시하며 []와 null을 구분하고 없는 값은 추론하지 않는다. 목록에 없는 명시적 과거 비교 대상만 필요한 불변 게시 단건을 조회한다. |
 
 #### 표시용 요약 읽기 계약
 
@@ -349,15 +349,15 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 작성·부하의 구조화 폼에는 내부 κ/d/rateBasis/alpha, 시작 상태 복원·스냅샷·이미지/profile 대조·CHILL 제어·장애 주입 입력을 두지 않는다. W1 서버와 같은 cutover이며 옛 LoadScenario/EvaluationRun 객체는 삭제하고 이주·호환 입력을 제공하지 않는다. 부하는 절대 req/s, 워크로드별 uint64 십진 **문자열** `seeds`, Dataset `{name,uid}`의 `datasetRefs`, 선택적 `traceRefs`를 쓴다. 과거 배치·전력·인스턴스 변화와 사건은 결과 Sheet의 `관찰`로 읽고 편집하지 않는다.
 실험 전역·단계 `settingsPatch`는 공개 운영 설정 항목을 선택해서 작성하는 불투명 JSON 객체다. 운영 설정 화면과 같은 항목 정의를 사용하며 최종 값 검증은 서버가 한다. 부하 발생기의 `nodeName`을 명시하고 image/source는 서버 템플릿·보존 정의에서 읽으며 대상 이미지 대조 입력으로 쓰지 않는다.
 요청 시각 입력 조회는 `kind=trace`만 사용하고 `set`은 해당 부하 시나리오 이름이다. seed·payload를 evidence 종류로 조회하지 않는다.
-사전점검의 `liveTarget[]`는 `{component,resource,liveImageIDs,ready}` 관측 표다. digest 채택·`specImage`·`match`는 없고 변경된 live image ID는 사용자 입력을 바꾸지 않는다. 접수 서버가 `edge.dacs.io/evaluation-live-target` annotation에 관측을 기록한다. 현재 EvaluationView에는 annotations가 없으므로 실행 상세에서 기록된 annotation을 조회했다고 주장하지 않는다.
+사전점검의 `liveTarget[]`는 `{component,resource,liveImageIDs,ready}` 관측 표다. digest 채택·`specImage`·`match`는 없고 변경된 live image ID는 사용자 입력을 바꾸지 않는다. 접수 서버가 `edge.dacs.io/evaluation-live-target` annotation에 관측을 기록한다. 실행 상세의 `평가 대상 CHILL` 표는 EvaluationView.liveTarget의 기록만 표시하고, 없거나 손상된 annotation의 null은 `미기록`이다.
 게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.
 suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록 정의, SLO는 기록 정의·실행 결과에서만 읽고 현재 Workload로 소급하지 않는다.
 과거 대상은 publicationID·stageID, 서비스는 workloadUID로 연결한다. 정의 없는 과거 게시의 비교는 미기록이다.
-결과 화면을 포함해 목록 항목별 단건 전수 조회는 하지 않는다. 이름·질문·제어 정책(sourceIDs 포함)·정확한 단계 mode·SLO·부하 출처는 선택적 목록 `facts`를 그대로 사용하며, 없으면 미기록이다. 요약에서 가짜 EvaluationDefinition을 재구성하거나 현재 등록값·이름으로 과거 사실을 추론하지 않는다. 명시적 과거 비교 대상이 목록에 없을 때만 필요한 게시 단건을 캐시 조회한다. 과거 게시 원문은 변경하지 않는다.
+결과 화면을 포함해 목록 항목별 단건 전수 조회는 하지 않는다. 이름·질문·단계 row·SLO·부하 출처와 `settingsPatchKeys`는 목록 `facts`만 사용한다. 서버가 Run patch 상속을 적용한 변경 키 경로는 운영 설정 항목 정의로 한국어화하고 모르는 키는 원문 그대로 표시한다. `[]`는 `변경 없음`, null·누락은 `미기록`이다. Control/Mode 정책을 추론하거나 요약에서 가짜 EvaluationDefinition을 재구성하지 않는다. 명시적 과거 비교 대상이 목록에 없을 때만 필요한 게시 단건을 캐시 조회한다.
 측정 규칙은 실제 게시의 실행기 소스 버전·전력 결손 비율 상한(%)·단일 전력 공백 상한(s)·근거 출처·GC 집계 방식을 한국어 항목/값/단위 표로 표시하고 미등록 규칙과 원문은 게시 JSON에 보존한다. 구간 Sheet의 정책은 단계 요약에 한 번, SLO는 서비스 성능 표에 한 번 표시하며 공유 서비스 정의 표는 식별자·정의만 담는다.
-목록 facts의 제어 값은 명시적 true/false만 켬/끔이며 누락은 미기록이다. 단계 mode는 기존
-정책 라벨로, 부하·SLO 출처는 이름/UID별 한국어 행으로 표시한다. control/참조 객체의 JSON은
-게시 원본에만 두며 SLO nanoseconds는 number와 정밀 bigint 모두 공통 시간 formatter로 표시한다.
+목록 facts는 단계별 변경 키를 담고 설정 값은 담지 않는다. 단건의 동결 settingsPatch와
+부하·SLO 출처는 이름/UID별 한국어 행으로 표시한다. 과거 원문은 변경하지 않으며
+SLO nanoseconds는 number와 정밀 bigint 모두 공통 시간 formatter로 표시한다.
 
 | 비교 조건 | 표시 |
 |---|---|

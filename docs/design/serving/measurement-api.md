@@ -112,11 +112,16 @@ mode·startState·control이나 CHILL 이미지 대조 입력은 없고, `loadGe
 
 preflight의 `liveTarget[]`는 `{component,resource,liveImageIDs,ready}`다. `specImage`·`match`와
 digest 채택은 없고 실제 target readiness로 검사한다. POST 접수는 현재 관측을
-`edge.dacs.io/evaluation-live-target` annotation에 남긴다. 이 annotation은 현재
-EvaluationView DTO에 투영되지 않으므로 대시보드는 preflight 관측만 표시한다.
+`edge.dacs.io/evaluation-live-target` annotation에 남긴다. EvaluationView.liveTarget은
+그 기록을 투영하며 annotation 누락·손상은 null이다. 실행 상세는 `평가 대상 CHILL` 표에서
+기록된 자원·이미지 ID·준비 상태만 표시하고 null이면 `미기록`으로 남긴다.
 복사 요청의 대상 이미지 변경은 입력 채택이나 JSON 수정을 요구하지 않는다.
 활성 단계 응답에도 mode는 없다. 불변 게시의 기존 원문·명시적 비교·정밀 정수는 그대로
 보존하며 현재 CHILL 상태로 과거 결과를 보충하지 않는다.
+목록 facts는 Control/Mode 대신 단계별 `settingsPatchKeys`를 제공한다. Run patch 상속은
+서버가 적용하며 `[]`는 변경 없음, null은 기록 없음이다. 대시보드는 운영 설정 정의의
+한국어 항목명으로 키 경로를 표시하고 미등록 경로는 원문으로 보존한다. 목록의 변경값을
+추측하거나 모든 게시의 단건을 추가 조회하지 않는다.
 
 #### 실험 게시물 페이지·적용 SLO 출처
 

@@ -229,7 +229,7 @@ row per UID, no server change). Each request's model comes only from its exact
 `/configuration` edits every ChillServer-supported setting from the current baseline.
 Duration fields use exact ns conversion from ms, memory and seed retain integer
 strings, and advanced search fields remain available. GET retains the server ETag;
-PUT requires that baseline in If-Match. A 412 preserves the draft and requires
+PUT requires that baseline in If-Match. A 409 preserves the draft and requires
 explicit adoption of the new baseline. Runtime application is separate from physical transitions. Permission
 failure retains input; response loss requires current settings and bounded
 history lookup before explicit resubmission.
