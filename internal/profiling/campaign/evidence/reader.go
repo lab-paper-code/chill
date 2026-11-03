@@ -143,15 +143,15 @@ func (r *Reader) ReadTrials(ctx context.Context, campaign *edgev1alpha1.BatchEne
 		references := resultSpec.CompletedTrials[start:min(start+trialConcurrency, len(resultSpec.CompletedTrials))]
 		trials := r.readCompletedTrials(ctx, campaign, references)
 		for index, reference := range references {
+			trial := &trials[index]
+			if trial.err != nil {
+				return Trials{}, trial.err
+			}
 			runKey := types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
 			if _, duplicate := seenRuns[runKey]; duplicate {
 				return Trials{}, fmt.Errorf("completed Run %s appears more than once", runKey)
 			}
 			seenRuns[runKey] = struct{}{}
-			trial := &trials[index]
-			if trial.err != nil {
-				return Trials{}, trial.err
-			}
 			identity := storedObjectIdentity(reference.Evidence)
 			execution := trial.execution
 			if reference.Measurement.WorkloadMode == batchenergyoptimization.WorkloadModeIdle {
