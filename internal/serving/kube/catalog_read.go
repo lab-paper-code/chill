@@ -33,11 +33,12 @@ type ProfileSummary struct {
 }
 
 type ProfileBatchSummary struct {
-	Batch                 int     `json:"batch"`
-	EnergyPerInputJoules  float64 `json:"energyPerInputJoules"`
-	EnergyBelowResolution bool    `json:"energyBelowResolution,omitempty"`
-	MemoryBytes           uint64  `json:"memoryBytes"`
-	MeanWallWatts         float64 `json:"meanWallWatts,omitempty"`
+	Batch                 int                    `json:"batch"`
+	EnergyPerInputJoules  float64                `json:"energyPerInputJoules"`
+	EnergyBelowResolution bool                   `json:"energyBelowResolution,omitempty"`
+	MemoryBytes           uint64                 `json:"memoryBytes"`
+	MemoryBasis           derivation.MemoryBasis `json:"memoryBasis"`
+	MeanWallWatts         float64                `json:"meanWallWatts,omitempty"`
 }
 
 func SummarizeProfile(p serving.Profile) ProfileSummary {
@@ -53,6 +54,7 @@ func SummarizeProfile(p serving.Profile) ProfileSummary {
 				b.EnergyPerInputJoules,
 				b.EnergyBelowResolution,
 				b.MemoryBytes,
+				b.MemoryBasis,
 				b.MeanWallWatts,
 			},
 		)
@@ -73,6 +75,7 @@ func (p ProfileSummary) Profile() serving.Profile {
 				EnergyPerInputJoules:  b.EnergyPerInputJoules,
 				EnergyBelowResolution: b.EnergyBelowResolution,
 				MemoryBytes:           b.MemoryBytes,
+				MemoryBasis:           b.MemoryBasis,
 				MeanWallWatts:         b.MeanWallWatts,
 			},
 		)

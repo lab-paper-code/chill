@@ -225,6 +225,9 @@ func reusedProfile(source, target serving.Profile, check serving.ProfileReuseChe
 		batch := &profile.Batches[index]
 		batch.DurationNanos = slices.Clone(batch.DurationNanos)
 		confirmation := target.Batches[slices.IndexFunc(target.Batches, func(candidate serving.BatchProfile) bool { return candidate.Batch == batch.Batch })]
+		if confirmation.MemoryBytes > batch.MemoryBytes {
+			batch.MemoryBasis = confirmation.MemoryBasis
+		}
 		batch.MemoryBytes = max(batch.MemoryBytes, confirmation.MemoryBytes)
 		batch.MeanWallWatts = confirmation.MeanWallWatts
 	}

@@ -62,6 +62,14 @@ CPU 사용량과 throttling을 실행 사실로 기록한다.
 부가 사용량과 시스템 예약분도 고려해 노드의 가용 예산 안에 배치한다.
 관측 최대값을 모든 입력·실행 상태의 절대 상한으로 간주하지 않는다.
 
+프로파일의 각 배치 `memoryBytes`는 해당 배치의 활성 trial과 같은 프로파일의
+모델 로드 유휴 trial에서 보존한 메모리 관측 최대값이다. Lifetime counter가 없는
+trial은 검증된 측정 창 `memory.current` 표본 최대값을 사용하며, 이를 load peak로
+해석하지 않는다. 다른 배치·프로파일의 값은 섞지 않는다. Catalog read의 배치별
+`memoryBasis`는 선택된 관측 종류(`active`, `idle`, `window`)와 원본 evidence
+store/key를 제공한다. Raw·result·native bundle 및 observation profile body의
+저장 계약과 프로파일 acceptance 기준은 바꾸지 않는다.
+
 ### 공존 오차와 서비스 검증
 
 먼저 선택한 할당 조건에서 단독 모델의 특성을 측정하고, 실제 공존 구성에서

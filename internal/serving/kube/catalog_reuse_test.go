@@ -71,6 +71,7 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 		}
 		target.Batches[index].MeanWallWatts *= 1.04
 		target.Batches[index].MemoryBytes *= 2
+		target.Batches[index].MemoryBasis.Evidence.Key = "confirmation-raw"
 	}
 	target.IdleBaselineWatts *= 1.04
 	target.RuntimeMetadata.CPUAffinity = []int{7}
@@ -88,6 +89,7 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 		!reflect.DeepEqual(profile.Batches[0].DurationNanos, source.Batches[0].DurationNanos) ||
 		profile.Batches[0].EnergyPerInputJoules != source.Batches[0].EnergyPerInputJoules ||
 		profile.Batches[0].MemoryBytes != target.Batches[0].MemoryBytes || profile.Reuse == nil ||
+		profile.Batches[0].MemoryBasis != target.Batches[0].MemoryBasis ||
 		profile.Reuse.ConfirmationTrialsPerBatch != 3 || len(profile.Evidence) <= len(target.Evidence) {
 		t.Fatalf("source facts leaked into target physical contract: %+v", profile)
 	}
