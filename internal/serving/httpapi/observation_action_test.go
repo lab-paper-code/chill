@@ -20,8 +20,12 @@ func TestProjectActionNeutralNotSubmittedPreservesOtherTerminalStates(t *testing
 		{"complete", "ExistingError", "completed", true},
 		{"partial", "", "failed", true},
 		{"failed", "ActualError", "failed", true},
-		{"Accepted", "", "failed", true},
-		{"DeletionRequested", "", "failed", true},
+		{mutationAccepted, "", "completed", true},
+		{mutationAccepted, "CreateError", "failed", true},
+		{mutationAccepted, "", "started", false},
+		{mutationDeletionRequested, "", "completed", true},
+		{mutationDeletionRequested, "DeleteError", "failed", true},
+		{mutationDeletionRequested, "", "started", false},
 	} {
 		t.Run(tc.status+"/"+tc.failure+"/"+tc.phase, func(t *testing.T) {
 			observation := serving.SchedulerActionObservation{

@@ -277,7 +277,7 @@ func TestQueryReadResourceGrantsPrecedeBackendAndCache(t *testing.T) {
 		resources []string
 		name      string
 	}{
-		{"/measurement-coverage", []string{"batchenergyoptimizations", "profilingruns"}, ""},
+		{"/measurement-coverage", []string{"batchenergyoptimizations", "profilingruns", "dispatchoccupancymeasurements"}, ""},
 		{"/batch-energy-optimizations", []string{"batchenergyoptimizations"}, ""},
 		{"/operation-cost-measurements", []string{"operationcostmeasurements"}, ""},
 		{"/operation-cost-measurements/item", []string{"operationcostmeasurements"}, "item"},

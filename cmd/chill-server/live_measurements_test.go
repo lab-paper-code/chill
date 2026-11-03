@@ -54,9 +54,12 @@ func readMeasurementLiveFrame(t *testing.T, ctx context.Context, conn *websocket
 
 func assertMeasurementLiveHistory(t *testing.T, handler http.Handler, event measurementLiveFrame) {
 	t.Helper()
-	if event.Action.Status == liveMeasurementNotSubmitted &&
-		(event.Action.Phase != "completed" || event.Action.Result.Status != liveMeasurementNotSubmitted) {
-		t.Fatalf("preflight was projected as a failure: %+v", event.Action)
+	switch event.Action.Status {
+	case liveMeasurementAccepted, measurementRequestDeletionRequested, liveMeasurementNotSubmitted:
+		if event.Action.Phase != "completed" || event.Action.Result == nil ||
+			event.Action.Result.Status != event.Action.Status {
+			t.Fatalf("successful mutation was projected as a failure: %+v", event.Action)
+		}
 	}
 	path := "/api/v1/observations/events?from=" + event.At.Format(time.RFC3339Nano) +
 		"&to=" + event.At.Add(time.Nanosecond).Format(time.RFC3339Nano) + "&limit=100"
@@ -75,6 +78,15 @@ func assertMeasurementLiveHistory(t *testing.T, handler http.Handler, event meas
 }
 
 func TestMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T) {
+	testMeasurementMutationEventsMatchHistoryAndReplay(t, false)
+}
+
+func TestOccupancyMutationEventsMatchHistoryAndReplay(t *testing.T) {
+	testMeasurementMutationEventsMatchHistoryAndReplay(t, true)
+}
+
+func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy bool) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	publisher := newLivePublisher(ctx)
@@ -125,6 +137,12 @@ func TestMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T) {
 			return httpapi.MeasurementMutationResult{Request: "DeletionRequested", Task: &api.BatchEnergyOptimization{}}, nil
 		},
 	}
+	mutationPath, mutationBody := liveMeasurementPath, liveMeasurementBody
+	if occupancy {
+		configureOccupancyLiveMutations(&config)
+		mutationPath = "/api/v1/namespaces/default/dispatch-occupancy-measurements"
+		mutationBody = `{"name":"task","node":"node","batchEnergyOptimization":"beo","workload":"workload","batch":1}`
+	}
 	handler, err := httpapi.NewHandler(
 		&servingkube.Manager{}, &serving.Runtime{}, &servingkube.Authorizer{Client: client},
 		log, &servingkube.Observer{}, config,
@@ -158,14 +176,16 @@ func TestMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T) {
 		{http.MethodDelete, "/task?uid=native", "DeletionRequested"},
 		{http.MethodPost, "?dryRun=All", liveMeasurementNotSubmitted},
 	} {
-		request := httptest.NewRequest(tc.method, liveMeasurementPath+tc.suffix, strings.NewReader(liveMeasurementBody))
+		request := httptest.NewRequest(tc.method, mutationPath+tc.suffix, strings.NewReader(mutationBody))
 		request.Header.Set("Authorization", "Bearer test")
 		if tc.method == http.MethodDelete {
 			request.Header.Set("If-Match", `"7"`)
 		}
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusAccepted && response.Code != http.StatusOK {
+		switch response.Code {
+		case http.StatusAccepted, http.StatusOK:
+		default:
 			t.Fatalf("mutation: %d %s", response.Code, response.Body)
 		}
 		for _, status := range []string{"validated", tc.status} {
@@ -198,10 +218,38 @@ func TestMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T) {
 	if err := log.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, liveMeasurementPath, strings.NewReader(liveMeasurementBody))
+	request := httptest.NewRequest(http.MethodPost, mutationPath, strings.NewReader(mutationBody))
 	request.Header.Set("Authorization", "Bearer test")
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 	if callbackCount != 6 {
 		t.Fatal("failed append published a live event")
+	}
+}
+
+func configureOccupancyLiveMutations(config *httpapi.HandlerConfig) {
+	config.BuildOccupancy = func(
+		_ context.Context, namespace string, intent httpapi.OccupancyIntent,
+	) (*api.DispatchOccupancyMeasurement, error) {
+		task := &api.DispatchOccupancyMeasurement{}
+		task.Name, task.Namespace = intent.Name, namespace
+		task.Spec.Node, task.Spec.Batch = intent.Node, intent.Batch
+		return task, nil
+	}
+	config.SubmitOccupancy = func(
+		_ context.Context, task api.DispatchOccupancyMeasurement, dry bool,
+	) (httpapi.OccupancyMutationResult, error) {
+		task.UID, task.ResourceVersion = "native", "7"
+		state := measurementRequestAccepted
+		if dry {
+			state = measurementRequestNotSubmitted
+		}
+		return httpapi.OccupancyMutationResult{Request: state, Task: &task}, nil
+	}
+	config.DeleteOccupancy = func(
+		context.Context, string, string, string, string,
+	) (httpapi.OccupancyMutationResult, error) {
+		return httpapi.OccupancyMutationResult{
+			Request: measurementRequestDeletionRequested, Task: &api.DispatchOccupancyMeasurement{},
+		}, nil
 	}
 }

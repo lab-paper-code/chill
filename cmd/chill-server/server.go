@@ -160,7 +160,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	scheduler, err := newSchedulerService(
 		ctx, store, kube, execution, observer, objects, observationLog, opts,
-		handlerConfig.RequestTimeout, publisher,
+		httpapi.MaximumInferenceRequestTimeout, publisher,
 	)
 	if err != nil {
 		return fmt.Errorf("initialize scheduler service: %w", err)
@@ -181,6 +181,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.ReadCatalog = scheduler.readCatalog
 	handlerConfig.SubmitMeasurement = measurements.submit
 	handlerConfig.DeleteMeasurement = measurements.delete
+	handlerConfig.BuildOccupancy = measurements.buildOccupancy
+	handlerConfig.SubmitOccupancy = measurements.submitOccupancy
+	handlerConfig.DeleteOccupancy = measurements.deleteOccupancy
 	handlerConfig.OnMutationAction = publisher.action
 
 	experiments := &experimentService{

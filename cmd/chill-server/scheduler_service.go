@@ -40,9 +40,10 @@ type schedulerConfiguration struct {
 	Settings serving.SchedulerSettings              `json:"settings"`
 	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
 	// Meters are derived from the Profiler metric sources, never configured.
-	Meters           []servingkube.MeterDeclaration `json:"-"`
-	PowerObservation *powerObservationConfig        `json:"powerObservation,omitempty"`
-	StaticRouting    map[string]map[string]int      `json:"staticRouting,omitempty"`
+	Meters            []servingkube.MeterDeclaration `json:"-"`
+	PowerObservation  *powerObservationConfig        `json:"powerObservation,omitempty"`
+	DispatchOccupancy *dispatchOccupancyPolicy       `json:"dispatchOccupancy,omitempty"`
+	StaticRouting     map[string]map[string]int      `json:"staticRouting,omitempty"`
 	// StaticRoutingValidatedAt names the settings change that wrote StaticRouting.
 	StaticRoutingValidatedAt *time.Time `json:"staticRoutingValidatedAt,omitempty"`
 }
@@ -135,6 +136,11 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 	if err := config.validatePower(); err != nil {
 		return config, err
 	}
+	if config.DispatchOccupancy != nil {
+		if err := config.DispatchOccupancy.validate(); err != nil {
+			return config, err
+		}
+	}
 	return config, nil
 }
 
@@ -216,6 +222,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	occupancy, err := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
+	if err != nil {
+		return err
+	}
 	sources := costs.Sources
 	sources = append(sources, "profiler-facts:"+factsVersion)
 	for _, meter := range config.Meters {
@@ -276,6 +286,7 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 	published := httpapi.ProfilesView{
 		ConfigVersion: cm.ResourceVersion, CatalogView: view,
 		Preparations: make(map[string]servingkube.PrepareSpec, len(preparations)),
+		Occupancy:    occupancy,
 	}
 	for id, spec := range preparations {
 		spec.Instance.Profile = nil // the profile body is in Profiles

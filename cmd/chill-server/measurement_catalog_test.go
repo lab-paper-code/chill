@@ -99,6 +99,15 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 			},
 		},
 		Preparations: map[string]servingkube.PrepareSpec{"accepted-only": {Name: "accepted-preparation"}},
+		Occupancy: []servingkube.OccupancySelection{{
+			Node:      serving.NodeReference{Name: "node", UID: "node-uid"},
+			PowerMode: "fixed", Model: "model", ProfileID: "accepted-only", Batch: 2,
+			Evidence: evidencestore.ObjectIdentity{
+				Store: "evidence",
+				Key:   servingkube.DispatchOccupancyPrefix + "node-uid/dom-uid.json",
+				Size:  100,
+			},
+		}},
 	}
 	service.profiles.Store(adopted)
 	ctx := context.Background()
@@ -154,6 +163,9 @@ func assertAcceptedCatalogRead(
 	accepted := queryRead.Accepted
 	if accepted == nil {
 		t.Fatalf("accepted snapshot disappeared: %s", wire)
+	}
+	if !reflect.DeepEqual(accepted.Occupancy, adopted.Occupancy) || len(queryRead.Occupancy) != 0 {
+		t.Fatalf("selected occupancy mixed with reporting or lost accepted provenance: %s", wire)
 	}
 	if accepted.ConfigVersion != adopted.ConfigVersion || len(accepted.Profiles) != 1 ||
 		accepted.Profiles[0].ID != adopted.Profiles[0].ID ||

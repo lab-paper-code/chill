@@ -246,6 +246,7 @@ func (o *schedulerService) readCatalog(ctx context.Context) (servingkube.Catalog
 	}
 	if current := o.profiles.Load(); current != nil {
 		accepted := servingkube.ProjectCatalogSnapshot(current.CatalogView, current.ConfigVersion, current.Preparations)
+		accepted.Occupancy = current.Occupancy
 		read.Accepted = &accepted
 	}
 	return read, nil
