@@ -14,6 +14,33 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as experimentHelpers from "./experiments.ts"
 import type { EvaluationDefinition } from "./evaluation-definition.ts"
 import * as measurementHelpers from "./measurements.ts"
+
+test("R18: list facts render without per-item detail requests and absent facts stay unrecorded",()=>{
+  const facts={name:"기록된 실험",question:"기록된 질문",control:{sourceIDs:["control-source"],controls:{power:false}},stages:[{id:stage.id,row:"기록 행",mode:"fixed",loadScenarioRef:{uid:"load-uid"}}],sloSources:[{name:"camera",uid:"camera",generation:9007199254740993n,slo:{percentile:95,targetLatencyNanos:50000000}}],loadSources:[{name:"기록 부하",uid:"load-uid"}]}
+  const run=decodeExperiments(publishedText({items:[{...recorded.publication,facts}]})).items[0]
+  assert.deepEqual(run.facts,facts)
+  assert.equal(run.definition,undefined)
+  const source=readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8")
+  const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  const require=createRequire(import.meta.url),exports={} as {useHistoricalExperiments:(runs:Experiment[])=>unknown;ExperimentFacts:ComponentType<{run:Experiment}>;ExperimentResultRow:ComponentType<{run:Experiment;runs:Experiment[];pending:boolean;error:boolean}>},paths:string[][]=[]
+  new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{useChillQueries:(ids:string[])=>{paths.push(ids);return []}}:require(name),exports)
+  exports.useHistoricalExperiments([run])
+  assert.deepEqual(paths,[[]])
+  exports.useHistoricalExperiments([{...run,facts:undefined}])
+  assert.deepEqual(paths,[[],[]])
+  exports.useHistoricalExperiments([{...run,comparisons:[{left:{historical:{publicationID:"explicit-history",stageID:"old"}},right:{stageID:stage.id},reason:"기록 비교"}]}])
+  assert.deepEqual(paths[2],["v1/experiments/explicit-history"])
+  const html=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run}))
+  for(const value of ["기록된 실험","기록된 질문","fixed","control-source","기록 부하","load-uid","50"])assert.ok(html.includes(value),value)
+  const listHTML=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
+  for(const value of ["기록된 실험","fixed","control-source","기록 부하"])assert.ok(listHTML.includes(value),value)
+  assert.equal(definitionPolicy(run.stages[0],run),"고정 구성")
+  const sloRow=experimentRows({...run.stages[0],kpis:{requests:{camera:{workloadUID:"camera"}}}})[0]
+  assert.equal(frozenP95SLO(sloRow,run),50)
+  const absent=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run:{...run,facts:undefined}}))
+  assert.match(absent,/미기록/)
+  assert.doesNotMatch(absent,/기록된 실험|기록 부하|fixed/)
+})
 test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   for(const [value,baseline] of [[-.004,0],[1.004,1]]) {
     assert.equal(experimentDifference(value,baseline).text,baseline===1?"1.00":"0.01 미만")

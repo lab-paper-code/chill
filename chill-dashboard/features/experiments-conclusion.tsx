@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button"
 import { campaignScoreboard, decodeExperiment, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, frozenP95SLO, object, observedStageRate, publishedText, resultMetric, stageLoadParts, stageSeconds, type Experiment, type ExperimentStage } from "@/lib/experiments"
 import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
-// Lists omit frozen definitions; hydrate from the same immutable publication used by detail.
+// Only explicit historical comparison references may request another publication.
 export function useHistoricalExperiments(publications:Experiment[],catalog:Experiment[]=publications,enabled=true) {
-  const ids=[...new Set([...publications.filter(run=>!run.definition).map(run=>run.id),...publications.flatMap(historicalPublicationIDs).filter(id=>!catalog.some(run=>run.id===id)&&!publications.some(run=>run.id===id))])]
+  const ids=[...new Set(publications.flatMap(historicalPublicationIDs).filter(id=>!catalog.some(run=>run.id===id)&&!publications.some(run=>run.id===id)))]
   const queries=useChillQueries<Experiment>(ids.map(experimentPath),{enabled,decoder:decodeExperiment})
   const fetched=queries.flatMap((query,index)=>query.data?.id===ids[index]?[query.data]:[])
   const failed=queries.filter(query=>query.error&&!(query.error instanceof ApiError&&query.error.status===404))
@@ -68,6 +68,19 @@ export function ExperimentComparisonLegend() {
   return <span className="text-xs text-muted-foreground" title="일치: 게시 정의의 부하 시나리오 UID·부하 생성기와 서비스 식별자·정의, 측정 규칙, 표시 구간 길이가 같음. 참고: 조건이 다르거나 미기록. 제한 원인은 중복될 수 있어요.">Δ 왼쪽−오른쪽 / p95 왼쪽÷오른쪽</span>
 }
 
+export function ExperimentFacts({run}:{run:Experiment}) {
+  const facts=run.facts
+  const rows:[string,string][]=[
+    ["이름",facts?.name??"미기록"],
+    ["질문",facts?.question??"미기록"],
+    ["제어 정책",facts?.control?publishedText(facts.control):"미기록"],
+    ...(facts?.stages?.length?facts.stages.map(stage=>["단계 정책",`${stage.id} / ${stage.row??"미기록"} / ${stage.mode??"미기록"} / ${stage.control?publishedText(stage.control):"미기록"} / ${stage.loadScenarioRef?publishedText(stage.loadScenarioRef):"미기록"}`] as [string,string]):[["단계 정책","미기록"] as [string,string]]),
+    ...(facts?.sloSources?.length?facts.sloSources.map(source=>["SLO 출처",`${source.name} / ${source.uid} / 정의 ${publishedText(source.generation)||"미기록"} / p${publishedText(source.slo?.percentile)||"미기록"} / ${typeof source.slo?.targetLatencyNanos==="number"?formatMeasurementNumber(source.slo.targetLatencyNanos/1e6,"ms")+" ms":"미기록"}`] as [string,string]):[["SLO 출처","미기록"] as [string,string]]),
+    ...(facts?.loadSources?.length?facts.loadSources.map(source=>["부하 출처",`${source.name} / ${source.uid}`] as [string,string]):[["부하 출처","미기록"] as [string,string]]),
+  ]
+  return <table aria-label="기록된 실험 사실" className="w-full text-left text-xs"><thead><tr><th className="p-1 font-normal">항목</th><th className="p-1 font-normal">값</th></tr></thead><tbody>{rows.map(([label,value],index)=><tr key={index} className="border-t"><th scope="row" className="p-1 font-normal">{label}</th><td className="break-all p-1">{value}</td></tr>)}</tbody></table>
+}
+
 export function ExperimentMetadata({run,stage}:{run:Experiment;stage:ExperimentStage}) {
   const parts=stageLoadParts(stage,run),rules=object(stage.kpis.measurementRules)
   const number=(value:number)=>value.toLocaleString("ko-KR",{maximumFractionDigits:2})
@@ -105,10 +118,10 @@ export function ExperimentResultRow({run,runs,pending,error}:{run:Experiment;run
   const metrics=score.reference?score.referenceSummary:score.summary
   const outcome=experimentOutcome(run)
   if(!definitionComparisons(run,runs).length&&run.definition)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.definition.run.name}</Link><div className="mt-2">{state}</div><ExperimentOutcome run={run}/></th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
-  if(!run.definition&&run.comparisons===undefined)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.id}</Link><div className="mt-2 text-xs font-normal text-muted-foreground">비교・정책・같은 부하 미기록</div>{run.outcome&&<div className="mt-3 font-normal"><ExperimentOutcome run={run}/></div>}</th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
+  if(!run.definition&&run.comparisons===undefined)return <tr className="border-t"><th scope="row" className="max-w-64 break-all p-3 text-left align-top font-medium"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.facts?.name??"미기록"}</Link><div className="mt-2 text-xs font-normal text-muted-foreground">{run.facts?"비교 미기록":"비교・정책・같은 부하 미기록"}</div><ExperimentFacts run={run}/>{run.outcome&&<div className="mt-3 font-normal"><ExperimentOutcome run={run}/></div>}</th><td colSpan={11} className="min-w-0 p-3"><ExperimentAbsoluteValues run={run}/></td></tr>
   return <tr className="border-t">
     <th scope="row" className="p-3 text-left font-medium">{state}</th>
-    <td data-label="실험" className="max-w-64 break-all p-3"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.definition?.run.name??run.id}</Link></td>
+    <td data-label="실험" className="max-w-64 break-all p-3"><Link prefetch={false} className="underline" href={`/experiments/results?${new URLSearchParams({a:run.id})}`}>{run.facts?.name??run.definition?.run.name??"미기록"}</Link><ExperimentFacts run={run}/></td>
     {[c.matched,c.limited,c.unpaired].map((count,index)=><td key={index} data-label={["일치 (개)","참고 (개)","대응 없음 (개)"][index]} className="p-3 text-right tabular-nums">{pending||error?"미확인":state==="미기록"?"미기록":count}</td>)}
     {(["execution","measurement","cleanup"] as const).map((axis,index)=><td key={axis} data-label={["실행","측정","정리"][index]} className="p-3">{outcomeLabel(outcome[axis])}{outcome[axis].reason&&outcome[axis].reason!=="SLOFailed"&&<div className="text-xs text-muted-foreground">{outcome[axis].reason}</div>}</td>)}
     {[{value:metrics.energyPercent,base:0,higher:false},{value:metrics.successDelta,base:0,higher:true},{value:metrics.p95Ratio,base:1,higher:false}].map((metric,index)=><td key={index} data-label={["에너지 Δ (%)","최악 성공률 Δ (%p)","최악 p95 (배)"][index]} className="p-3 text-right tabular-nums">{error||pending?"미확인":metric.value===null?"미기록":experimentDifference(metric.value,metric.base,metric.higher).text}</td>)}

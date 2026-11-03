@@ -8,7 +8,8 @@ export type ExperimentStage = {id:string;from:string;to:string;kpis:Published}
 export type OutcomeAxis = {status?:string;verdict?:string;reason?:string;residuals?:{kind:string;name:string;reason:string}[]}
 export type InjectionOutcome = {id:string;action?:string;outcome?:"Executed"|"Cancelled"|"Invalid";reason?:string;scheduledOffsetSeconds?:number;actualOffsetSeconds?:number}
 export type ExperimentOutcome = {execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;stages?:{id:string;execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;injections?:InjectionOutcome[]}[]}
-export type Experiment = {schemaVersion:string;id:string;from:string;to:string;status:string;stages:ExperimentStage[];sources:{store:string;key:string}[];definition?:EvaluationDefinition;comparisons?:EvaluationComparison[];outcome?:ExperimentOutcome}
+export type ExperimentFacts = {name?:string;question?:string;control?:Published;stages?:{id:string;row?:string;mode?:string;control?:Published;loadScenarioRef?:Published}[];sloSources?:{name:string;uid:string;generation?:unknown;slo?:Published}[];loadSources?:{name:string;uid:string}[]}
+export type Experiment = {schemaVersion:string;id:string;from:string;to:string;status:string;stages:ExperimentStage[];sources:{store:string;key:string}[];facts?:ExperimentFacts;definition?:EvaluationDefinition;comparisons?:EvaluationComparison[];outcome?:ExperimentOutcome}
 export function decodeExperiment(text:string):Experiment {
   return readExperiment(parseSchedulerJSON(text))
 }
@@ -222,12 +223,14 @@ export function definitionStage(run:Experiment,stage:ExperimentStage) {
   return run.definition?.spec.stages.find(s=>s.id===stage.id)
 }
 export function definitionPolicy(stage:ExperimentStage,run:Experiment):string {
-  const spec=definitionStage(run,stage)
+  const matches=run.facts?.stages?.filter(item=>item.id===stage.id)
+  const spec=run.facts?(matches?.length===1?matches[0]:undefined):definitionStage(run,stage)
   if(!spec)return "미기록"
   if(spec.mode==="autonomous")return "자동 운영"
   if(spec.mode==="fixed")return "고정 구성"
+  if(spec.mode!=="controls-disabled")return "미기록"
   const labels={placement:"배치",resources:"자원",replicas:"복제본",routing:"라우팅",batching:"배칭",power:"전력",membership:"구성원"}
-  const controls=(spec.control??run.definition!.spec.control).controls
+  const controls=object((spec.control??run.facts?.control??run.definition?.spec.control)?.controls)
   const disabled=Object.entries(labels).filter(([key])=>!controls[key as keyof typeof controls]).map(([,label])=>label)
   return `제어요소 끔${disabled.length?` · ${disabled.join(", ")}`:""}`
 }
@@ -276,8 +279,9 @@ export function commitExperimentSelection(location:Pick<Location,"search">,histo
 export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
   const uid=row.original.workloadUID
   if(typeof uid!=="string"||!uid)return null
-  const workload=run?.definition?.workloads.find(w=>w.uid===uid)
-  return workload?.slo.percentile===95?Number(workload.slo.targetLatencyNanos)/1e6:null
+  const matches=run?.facts?.sloSources?.filter(source=>source.uid===uid)
+  const slo=run?.facts?(matches?.length===1?matches[0].slo:undefined):run?.definition?.workloads.find(w=>w.uid===uid)?.slo
+  return slo?.percentile===95&&(typeof slo.targetLatencyNanos==="number"||typeof slo.targetLatencyNanos==="bigint")?Number(slo.targetLatencyNanos)/1e6:null
 }
 
 export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined) {

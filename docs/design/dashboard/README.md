@@ -147,7 +147,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 | `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil` | 기록의 전력 조회와 장치 전력 범위에 연결한다. 브라우저에서 적분하지 않는다. |
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
-| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, 단건은 `definition` 제공 | §8 정의 기반 reader. 일반 목록의 항목별 단건 N+1 조회는 금지한다. 단, 결과 화면은 목록에서 생략된 동결 정의를 동일 publicationID의 불변 단건으로 캐시 보충해 이름·정책·계획 부하·SLO를 해석한다. 목록에 없는 명시 비교 대상도 필요한 불변 게시 단건만 조회한다. |
+| `GET /experiments`, `GET /experiments/{id}` | 완료된 불변 게시·단계 KPI·출처와 선택적 `outcome`. 목록은 `definition` 대신 선택적 `comparisons`, `facts`(이름·질문·제어 정책·단계 mode/row/loadScenarioRef·SLO 출처·부하 출처), 단건은 `definition` 제공 | §8 정의 기반 reader. 결과 화면을 포함해 목록 항목별 단건 N+1 조회는 금지한다. 목록의 이름·정책·SLO·부하는 기록된 `facts`만 사용하며 없으면 미기록이다. 목록에 없는 명시적 과거 비교 대상만 필요한 불변 게시 단건을 조회한다. |
 
 #### 표시용 요약 읽기 계약
 
@@ -313,7 +313,7 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.
 suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록 정의, SLO는 기록 정의·실행 결과에서만 읽고 현재 Workload로 소급하지 않는다.
 과거 대상은 publicationID·stageID, 서비스는 workloadUID로 연결한다. 정의 없는 과거 게시의 비교는 미기록이다.
-일반 목록의 항목별 단건 전수 조회는 하지 않는다. 예외로 결과 화면은 목록에서 생략된 동결 정의를 동일 publicationID의 불변 단건으로 캐시 보충하며, 명시 비교 대상이 목록에 없을 때도 필요한 게시 단건을 캐시 조회한다. 현재 등록값으로 대체하거나 과거 게시를 수정하지 않는다.
+결과 화면을 포함해 목록 항목별 단건 전수 조회는 하지 않는다. 이름·질문·제어 정책(sourceIDs 포함)·정확한 단계 mode·SLO·부하 출처는 선택적 목록 `facts`를 그대로 사용하며, 없으면 미기록이다. 요약에서 가짜 EvaluationDefinition을 재구성하거나 현재 등록값·이름으로 과거 사실을 추론하지 않는다. 명시적 과거 비교 대상이 목록에 없을 때만 필요한 게시 단건을 캐시 조회한다. 과거 게시 원문은 변경하지 않는다.
 측정 규칙은 실제 게시의 실행기 소스 버전·전력 결손 비율 상한(%)·단일 전력 공백 상한(s)·근거 출처·GC 집계 방식을 한국어 항목/값/단위 표로 표시하고 미등록 규칙과 원문은 게시 JSON에 보존한다. 구간 Sheet의 정책은 단계 요약에 한 번, SLO는 서비스 성능 표에 한 번 표시하며 공유 서비스 정의 표는 식별자·정의만 담는다.
 
 | 비교 조건 | 표시 |
