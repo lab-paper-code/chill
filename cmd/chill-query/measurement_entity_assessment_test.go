@@ -290,7 +290,7 @@ func assertOccupancyRejectedEvidence(
 		t.Fatal(err)
 	}
 	if mismatched.record != nil || mismatched.MeasurementWindow != nil ||
-		mismatched.evidenceReason != "OccupancyEvidenceMismatch" || mismatched.Evidence == nil ||
+		mismatched.Evidence == nil ||
 		mismatched.D == nil || *mismatched.D.PerRequestNanos != d {
 		t.Fatal("foreign evidence became verified or hid recorded status/reference")
 	}

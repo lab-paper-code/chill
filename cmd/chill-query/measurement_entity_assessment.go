@@ -247,7 +247,6 @@ func (o *measurementService) projectDispatchOccupancy(
 			if errors.Is(err, evidencestore.ErrNotFound) {
 				code, message = "OccupancyEvidenceMissing", "분배 점유 근거 파일이 없습니다. 원래 결과 위치와 보존 상태를 확인하세요."
 			}
-			projection.evidenceReason = code
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
 				Code: code, Message: message, SourceIDs: []string{ref.Key},
 			})
@@ -256,7 +255,6 @@ func (o *measurementService) projectDispatchOccupancy(
 		}
 		var record servingkube.DispatchOccupancyRecord
 		if err := json.Unmarshal(raw, &record); err != nil {
-			projection.evidenceReason = "OccupancyEvidenceInvalid"
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
 				Code: "OccupancyEvidenceInvalid", Message: "분배 점유 근거 파일을 해석하지 못했습니다. 보존된 원본을 확인하세요.", SourceIDs: []string{ref.Key},
 			})
@@ -281,7 +279,6 @@ func (o *measurementService) projectDispatchOccupancy(
 			}
 		}
 		if !matches {
-			projection.evidenceReason = "OccupancyEvidenceMismatch"
 			input.Problems = append(input.Problems, queryapi.MeasurementReason{
 				Code: "OccupancyEvidenceMismatch", Message: "Stored occupancy does not match this request and status",
 				SourceIDs: []string{ref.Key},

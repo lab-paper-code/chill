@@ -13,8 +13,7 @@ import (
 type dispatchOccupancyProjection struct {
 	httpapi.MeasurementProjection
 	queryapi.DispatchOccupancyProgress
-	record         *servingkube.DispatchOccupancyRecord
-	evidenceReason string
+	record *servingkube.DispatchOccupancyRecord
 }
 type dispatchOccupancyProjectionList struct {
 	Items []dispatchOccupancyProjection `json:"items"`
