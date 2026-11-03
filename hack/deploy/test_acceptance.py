@@ -16,6 +16,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+import api_checks
+
 
 _spec = importlib.util.spec_from_file_location('deploy_acceptance', Path(__file__).with_name('acceptance.py'))
 acceptance = importlib.util.module_from_spec(_spec)
@@ -87,6 +89,18 @@ class AcceptanceChecks(unittest.TestCase):
         self.assertFalse(acceptance.compare(snapshot(), after)['passed'])
         self.assertTrue(acceptance.compare(snapshot(), after, expected_coverage_usable=1)['passed'])
 
+    def test_expected_profile_count_is_a_comparison_diagnostic(self):
+        for expected, passes in ((None, True), (2, True), (1, False)):
+            with self.subTest(expected=expected):
+                report = acceptance.compare(snapshot(), snapshot(), expected_profile_count=expected)
+                self.assertEqual(report['checks']['expectedProfileCount'], passes)
+                self.assertEqual(report['passed'], passes)
+        partial = snapshot()
+        partial['coverage']['summary']['countsByDisplayStatus']['usable'] = None
+        report = acceptance.compare(snapshot(), partial, expected_profile_count=2)
+        self.assertTrue(report['checks']['expectedProfileCount'])
+        self.assertFalse(report['passed'])
+
     def test_explicit_environment_precedence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -96,7 +110,7 @@ class AcceptanceChecks(unittest.TestCase):
             config.write_text(json.dumps({'d2': {'apiBase': 'https://fixture.invalid',
                                                   'caFile': 'ca', 'tokenFile': 'token'}}))
             with patch.dict(os.environ, {'CHILL_EXPERIMENT_CONFIG': str(root / 'missing')}):
-                self.assertEqual(acceptance.load_config(config)['caFile'], str(root / 'ca'))
+                self.assertEqual(api_checks.load_config(config)['caFile'], str(root / 'ca'))
 
     def test_bounded_private_route_evidence(self):
         class Response(io.BytesIO):
@@ -112,17 +126,17 @@ class AcceptanceChecks(unittest.TestCase):
             token = root / 'token'
             token.write_text('original-bearer')
             config = {'apiBase': 'https://fixture.invalid', 'caFile': 'unused', 'tokenFile': token}
-            with patch.object(acceptance.ssl, 'create_default_context'), patch.object(
-                    acceptance.urllib.request, 'build_opener') as opener:
+            with patch.object(api_checks.ssl, 'create_default_context'), patch.object(
+                    api_checks.urllib.request, 'build_opener') as opener:
                 for limit, passes in ((3, True), (2, False), (1, False)):
                     opener.return_value.open.return_value = Response(b'{}')
                     out = root / str(limit)
                     checks = [{'path': '/api/v1/workloads?view=summary', 'maxBytes': limit}]
                     if passes:
-                        acceptance.check_routes(config, checks, out)
+                        api_checks.check_routes(config, checks, out)
                     else:
                         with self.assertRaises(ValueError):
-                            acceptance.check_routes(config, checks, out)
+                            api_checks.check_routes(config, checks, out)
                     receipt = json.loads((out / 'api-checks.json').read_text())[0]
                     self.assertEqual(receipt['passed'], passes)
                     self.assertEqual(receipt['status'], '200')
@@ -130,7 +144,7 @@ class AcceptanceChecks(unittest.TestCase):
                     request = opener.return_value.open.call_args[0][0]
                     self.assertEqual(request.get_header('Authorization'), 'Bearer original-bearer')
                 with self.assertRaises(ValueError):
-                    acceptance.request_json(config, '//other.invalid/api/v1/workloads', root / 'bad.json')
+                    api_checks.request_json(config, '//other.invalid/api/v1/workloads', root / 'bad.json')
 
     def test_query_statuses_and_process_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -140,13 +154,11 @@ class AcceptanceChecks(unittest.TestCase):
             config = {'tokenFile': token}
             for statuses, passes in (((401, 200), True), ((200,), False), ((401, 401), False)):
                 with self.subTest(statuses=statuses), patch.object(
-                        acceptance.subprocess, 'Popen') as popen, patch.object(
-                        acceptance, '_forward_port', return_value=12345), patch.object(
-                        acceptance, '_fetch', side_effect=[(s, {}, b'{}') for s in statuses]) as fetch, patch.object(
-                        acceptance.os, 'killpg') as killpg:
+                        api_checks.subprocess, 'Popen') as popen, patch.object(api_checks, '_forward_port', return_value=12345), patch.object(api_checks, '_fetch', side_effect=[(s, {}, b'{}') for s in statuses]) as fetch, patch.object(
+                        api_checks.os, 'killpg') as killpg:
                     out = root / '-'.join(map(str, statuses))
                     if passes:
-                        result = acceptance.check_query(config, ['kubectl', '--context', 'fixture'],
+                        result = api_checks.check_query(config, ['kubectl', '--context', 'fixture'],
                                                         'chill-system', out)
                         self.assertTrue(result['passed'])
                         unauthenticated = fetch.call_args_list[0][0][0]
@@ -155,8 +167,8 @@ class AcceptanceChecks(unittest.TestCase):
                         self.assertEqual(authenticated.get_header('Authorization'), 'Bearer original-bearer')
                     else:
                         with self.assertRaises(ValueError):
-                            acceptance.check_query(config, ['kubectl'], 'chill-system', out)
-                    killpg.assert_called_once_with(popen.return_value.pid, acceptance.signal.SIGTERM)
+                            api_checks.check_query(config, ['kubectl'], 'chill-system', out)
+                    killpg.assert_called_once_with(popen.return_value.pid, api_checks.signal.SIGTERM)
                     popen.return_value.wait.assert_called_once_with(timeout=2)
                     self.assertTrue(popen.call_args.kwargs['start_new_session'])
                     self.assertNotIn('original-bearer', str(popen.call_args))
@@ -173,26 +185,25 @@ class AcceptanceChecks(unittest.TestCase):
                      (200, 'text/html', b'', False),
                      (302, 'text/html', b'<html></html>', False)]
             for number, (status, content_type, body, passes) in enumerate(cases):
-                with patch.object(acceptance.ssl, 'create_default_context'), patch.object(
-                        acceptance, '_fetch', return_value=(status, {'Content-Type': content_type}, body)):
+                with patch.object(api_checks.ssl, 'create_default_context'), patch.object(api_checks, '_fetch', return_value=(status, {'Content-Type': content_type}, body)):
                     out = root / str(number)
                     if passes:
-                        self.assertTrue(acceptance.check_dashboard(config, out)['passed'])
+                        self.assertTrue(api_checks.check_dashboard(config, out)['passed'])
                     else:
                         with self.assertRaises(ValueError):
-                            acceptance.check_dashboard(config, out)
+                            api_checks.check_dashboard(config, out)
                     self.assertEqual(json.loads((out / 'dashboard-check.json').read_text())['passed'], passes)
 
     def test_capture_waits_for_coverage_before_fetching_profiles(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
-            with patch.object(acceptance, 'request_json', side_effect=ValueError('CoverageWarming')) as request:
+            with patch.object(api_checks, 'request_json', side_effect=ValueError('CoverageWarming')) as request:
                 with self.assertRaisesRegex(ValueError, 'CoverageWarming'):
                     acceptance.capture({}, 'chill-system', out, timeout=7)
                 request.assert_called_once_with(
                     {}, '/api/v1/namespaces/chill-system/measurement-coverage', out / 'coverage.json', 7)
             expected = snapshot()
-            with patch.object(acceptance, 'request_json', side_effect=[
+            with patch.object(api_checks, 'request_json', side_effect=[
                     expected['coverage'], expected['profiles']]) as request:
                 self.assertEqual(acceptance.capture({}, 'chill-system', out, timeout=7), expected)
                 self.assertEqual([call.args[1] for call in request.call_args_list], [
@@ -205,7 +216,7 @@ class AcceptanceChecks(unittest.TestCase):
         for complete, error in ((False, None), (True, {'code': 'Unavailable', 'retryable': True})):
             with self.subTest(complete=complete, error=error), tempfile.TemporaryDirectory() as directory:
                 partial['coverage']['sources'][0].update({'complete': complete, 'error': error})
-                with patch.object(acceptance, 'request_json', side_effect=[
+                with patch.object(api_checks, 'request_json', side_effect=[
                         partial['coverage'], partial['profiles']]):
                     self.assertEqual(acceptance.capture({}, 'chill-system', directory), partial)
                 status = json.loads((Path(directory) / 'snapshot-status.json').read_text())
@@ -257,7 +268,7 @@ class AcceptanceChecks(unittest.TestCase):
         self.assertFalse(acceptance.compare_records(before, migrated)['passed'])
 
     def test_elapsed_deadline_restores_existing_alarm(self):
-        signal = acceptance.signal
+        signal = api_checks.signal
         handler = signal.getsignal(signal.SIGALRM)
         timer = signal.getitimer(signal.ITIMER_REAL)
         def previous(signum, frame):
@@ -265,7 +276,7 @@ class AcceptanceChecks(unittest.TestCase):
         try:
             signal.signal(signal.SIGALRM, previous)
             signal.setitimer(signal.ITIMER_REAL, 5, 2)
-            with acceptance._elapsed_deadline(0.5):
+            with api_checks._elapsed_deadline(0.5):
                 pass
             self.assertIs(signal.getsignal(signal.SIGALRM), previous)
             remaining, interval = signal.getitimer(signal.ITIMER_REAL)
@@ -279,7 +290,7 @@ class AcceptanceChecks(unittest.TestCase):
         errors = []
         def unsupported_thread():
             try:
-                with acceptance._elapsed_deadline(1):
+                with api_checks._elapsed_deadline(1):
                     pass
             except ValueError as error:
                 errors.append(str(error))
@@ -385,7 +396,7 @@ class AcceptanceChecks(unittest.TestCase):
                 with patch.object(acceptance.time, 'sleep') as sleep:
                     with self.assertRaises(ValueError) as error:
                         acceptance.wait_capture(config, 'review', root / 'tls-protocol', time.monotonic() + 30)
-                    self.assertNotIsInstance(error.exception, acceptance.ReadinessPending)
+                    self.assertNotIsInstance(error.exception, api_checks.ReadinessPending)
                     sleep.assert_not_called()
 
                 # A profile connection loss after healthy coverage also waits, without
@@ -411,7 +422,7 @@ class AcceptanceChecks(unittest.TestCase):
                         with self.assertRaises(ValueError) as error:
                             acceptance.wait_capture(config, 'review', root / ('failure-%d' % index),
                                                     time.monotonic() + 30)
-                        self.assertNotIsInstance(error.exception, acceptance.ReadinessPending)
+                        self.assertNotIsInstance(error.exception, api_checks.ReadinessPending)
                         sleep.assert_not_called()
 
                 # A real hostname/certificate verification failure is never readiness.
@@ -419,7 +430,7 @@ class AcceptanceChecks(unittest.TestCase):
                 with patch.object(acceptance.time, 'sleep') as sleep:
                     with self.assertRaises(ValueError) as error:
                         acceptance.wait_capture(untrusted, 'review', root / 'tls', time.monotonic() + 30)
-                    self.assertNotIsInstance(error.exception, acceptance.ReadinessPending)
+                    self.assertNotIsInstance(error.exception, api_checks.ReadinessPending)
                     sleep.assert_not_called()
                 self.assertFalse(json.loads(
                     (root / 'tls/attempt-000/coverage.transport-error.json').read_text())['readinessPending'])
@@ -458,12 +469,12 @@ class AcceptanceChecks(unittest.TestCase):
         worker.start()
         try:
             with tempfile.TemporaryDirectory() as directory:
-                opener = acceptance.urllib.request.build_opener(
-                    acceptance.auth.NoRedirect(), acceptance.urllib.request.ProxyHandler({}))
-                request = acceptance.urllib.request.Request('http://127.0.0.1:%s/' % server.server_port)
+                opener = api_checks.urllib.request.build_opener(
+                    api_checks.auth.NoRedirect(), api_checks.urllib.request.ProxyHandler({}))
+                request = api_checks.urllib.request.Request('http://127.0.0.1:%s/' % server.server_port)
                 started = time.monotonic()
                 with self.assertRaises(ValueError):
-                    acceptance._fetch(request, opener, Path(directory) / 'drip.json', timeout=0.15)
+                    api_checks._fetch(request, opener, Path(directory) / 'drip.json', timeout=0.15)
                 self.assertLess(time.monotonic() - started, 1.5)
         finally:
             stop.set()
