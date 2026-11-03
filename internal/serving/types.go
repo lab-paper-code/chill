@@ -133,7 +133,10 @@ type BatchProfile struct {
 	EnergyPerInputJoules  float64   `json:"energyPerInputJoules"`
 	EnergyBelowResolution bool      `json:"energyBelowResolution,omitempty"`
 	MemoryBytes           uint64    `json:"memoryBytes"`
-	MeanWallWatts         float64   `json:"meanWallWatts,omitempty"`
+	// MemoryBasis is transient derivation lineage; retained observation profile
+	// bodies keep their existing stored contract. Catalog reads expose it.
+	MemoryBasis   profilederivation.MemoryBasis `json:"-"`
+	MeanWallWatts float64                       `json:"meanWallWatts,omitempty"`
 }
 
 // Profile retains the frozen measurement condition and its raw evidence. It is

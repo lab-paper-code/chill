@@ -342,6 +342,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	// The existing projector binds every trial to the frozen plan. It does not
 	// apply a new environment quality or scientific admission policy.
 	idleTrials := make([]profilederivation.IdleTrial, len(idle))
+	var idleMemory profilederivation.MemoryObservation
 	for index, verified := range idle {
 		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, active[0], verified); err != nil {
 			return serving.Profile{}, nil, err
@@ -350,6 +351,13 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		if err != nil {
 			return serving.Profile{}, nil, err
 		}
+		execution, raw, err := verified.Records()
+		if err != nil {
+			return serving.Profile{}, nil, err
+		}
+		idleMemory = profilederivation.MaxMemory(idleMemory, profilederivation.ObservedMemory(
+			raw.Runtime.MemoryBytes, raw.Runtime.MemorySource, "idle",
+			profilederivation.RawEvidenceIdentity{Store: execution.RawMeasurement.Store, Key: execution.RawMeasurement.Key, Size: execution.RawMeasurement.Size}))
 	}
 	confidence, err := campaign.Spec.PointPolicy.Confidence()
 	if err != nil {
@@ -374,7 +382,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, verified, idle[0]); err != nil {
 			return serving.Profile{}, nil, err
 		}
-		_, raw, err := verified.Records()
+		execution, raw, err := verified.Records()
 		if err != nil {
 			return serving.Profile{}, nil, err
 		}
@@ -404,6 +412,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		if err := batch.add(trial, energy, raw.Runtime.MemoryBytes); err != nil {
 			return serving.Profile{}, nil, err
 		}
+		batch.memory = profilederivation.MaxMemory(batch.memory, profilederivation.ObservedMemory(
+			raw.Runtime.MemoryBytes, raw.Runtime.MemorySource, "active",
+			profilederivation.RawEvidenceIdentity{Store: execution.RawMeasurement.Store, Key: execution.RawMeasurement.Key, Size: execution.RawMeasurement.Size}))
 		quality := profilerprojection.MeasurementQuality(raw.RunConfig, raw.Metrics, trial.WindowStart, trial.WindowEnd, condition.ActiveProtocol)
 		quality.TrialID = trial.TrialID
 		batch.quality = append(batch.quality, quality)
@@ -465,6 +476,8 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			issues = append(issues, CatalogIssue{Source: source, Code: "MeasurementEvidenceMissing", Reason: fmt.Sprintf("batch %d has %d completed raw trials; campaign requires %d", batchSize, batch.trials, campaign.Spec.TrialsPerBatch)})
 			continue
 		}
+		memory := profilederivation.MaxMemory(batch.memory, idleMemory)
+		batch.profile.MemoryBytes, batch.profile.MemoryBasis = memory.Bytes, memory.Basis
 		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
 		point, err := profilederivation.Aggregate(batch.energyTrials, energyPolicy)
 		if err != nil {
@@ -573,6 +586,7 @@ type catalogBatch struct {
 	energySum       float64
 	energyTrials    []profilederivation.EnergyTrial
 	missingMemory   bool
+	memory          profilederivation.MemoryObservation
 	wallPowerSum    float64
 	clientLatencies []float64
 	completedItems  int
@@ -609,9 +623,6 @@ func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivati
 		return errors.New("measured energy or wall power aggregate is not finite")
 	}
 	b.missingMemory = b.missingMemory || memoryBytes == 0
-	if memoryBytes > b.profile.MemoryBytes {
-		b.profile.MemoryBytes = memoryBytes
-	}
 	return nil
 }
 
