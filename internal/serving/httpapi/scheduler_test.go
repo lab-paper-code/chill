@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -23,8 +24,10 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
@@ -228,6 +231,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			raw = bytes.Replace(raw, []byte(tc.omit), nil, 1)
 			request := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/settings", bytes.NewReader(raw))
 			request.Header.Set("Authorization", "Bearer reviewed-token")
+			request.Header.Set("If-Match", `"1"`)
 			response := httptest.NewRecorder()
 			handler.scheduler(response, request)
 			if response.Code != tc.want {
@@ -457,6 +461,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		body := strings.TrimSuffix(string(settingsRaw), "}") + extra + "}"
 		request := httptest.NewRequest(http.MethodPut, "/api/v1/scheduler/settings", strings.NewReader(body))
 		request.Header.Set("Authorization", "Bearer reviewed-token")
+		request.Header.Set("If-Match", `"1"`)
 		response := httptest.NewRecorder()
 		handler.scheduler(response, request)
 		return response
@@ -575,4 +580,156 @@ func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
 		!reflect.DeepEqual(pools.Workloads[0].Nodes, []serving.NodeReference{serves}) {
 		t.Fatalf("pools=%s", raw)
 	}
+}
+
+func TestSchedulerSettingsETagPreconditions(t *testing.T) {
+	settings := schedulerSettingsForTest()
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kube := fake.NewSimpleClientset(&core.ConfigMap{
+		ObjectMeta: meta.ObjectMeta{Name: "scheduler", Namespace: "serving", ResourceVersion: "1"},
+		Data:       map[string]string{"scheduler.json": `{"settings":` + string(raw) + `}`},
+	})
+	kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
+			Authenticated: true, User: authenticationv1.UserInfo{Username: actorUsername, UID: "actor-uid"},
+		}}, nil
+	})
+	kube.PrependReactor("create", "subjectaccessreviews", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
+	})
+	conflict := false
+	updates := 0
+	kube.PrependReactor("update", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
+		updates++
+		resource := core.SchemeGroupVersion.WithResource("configmaps")
+		current, err := kube.Tracker().Get(resource, "serving", "scheduler")
+		if err != nil {
+			return true, nil, err
+		}
+		updated := action.(ktesting.UpdateAction).GetObject().(*core.ConfigMap).DeepCopy()
+		if conflict || updated.ResourceVersion != current.(*core.ConfigMap).ResourceVersion {
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Resource: "configmaps"}, "scheduler", errors.New("concurrent writer"))
+		}
+		version, err := strconv.ParseUint(updated.ResourceVersion, 10, 64)
+		if err != nil {
+			return true, nil, err
+		}
+		updated.ResourceVersion = strconv.FormatUint(version+1, 10)
+		if err := kube.Tracker().Update(resource, updated, "serving"); err != nil {
+			return true, nil, err
+		}
+		return true, updated, nil
+	})
+	observationLog, err := serving.NewObservationLog(serving.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := observationLog.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	controller, execution := settingsControllerForTest(t, kube, observationLog, settings)
+	handler := &Handler{
+		authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog,
+		config: HandlerConfig{
+			Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler",
+			SchedulerConfigKey: "scheduler.json", SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20,
+			RefreshScheduler: func(ctx context.Context) error {
+				return refreshSettingsForTest(ctx, kube, controller, observationLog, false, false)
+			},
+		},
+	}
+	request := func(method, tag string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/api/v1/scheduler/settings", bytes.NewReader(raw))
+		req.Header.Set("Authorization", "Bearer reviewed-token")
+		if tag != "" {
+			req.Header.Set("If-Match", tag)
+		}
+		response := httptest.NewRecorder()
+		handler.scheduler(response, req)
+		return response
+	}
+	get := request(http.MethodGet, "")
+	if get.Code != http.StatusOK || get.Header().Get("ETag") != `"1"` {
+		t.Fatalf("GET status=%d etag=%q body=%s", get.Code, get.Header().Get("ETag"), get.Body)
+	}
+	for _, test := range []struct {
+		tag    string
+		status int
+		code   string
+	}{
+		{"", http.StatusPreconditionRequired, "SettingsPreconditionRequired"},
+		{`"stale"`, http.StatusConflict, "SettingsConflict"},
+		{`W/"1"`, http.StatusConflict, "SettingsConflict"},
+	} {
+		response := request(http.MethodPut, test.tag)
+		var failure serving.Error
+		if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != test.status || failure.Code != test.code || updates != 0 {
+			t.Fatalf("tag=%q status=%d body=%s updates=%d", test.tag, response.Code, response.Body, updates)
+		}
+	}
+	put := request(http.MethodPut, get.Header().Get("ETag"))
+	if put.Code != http.StatusOK || put.Header().Get("ETag") != `"2"` || updates != 1 {
+		t.Fatalf("PUT status=%d etag=%q body=%s updates=%d", put.Code, put.Header().Get("ETag"), put.Body, updates)
+	}
+	stale := request(http.MethodPut, get.Header().Get("ETag"))
+	if stale.Code != http.StatusConflict || updates != 1 {
+		t.Fatalf("replayed version status=%d body=%s", stale.Code, stale.Body)
+	}
+	latestETag := assertSettingsReadAfterExternalUpdate(t, kube, controller, request)
+	conflict = true
+	raced := request(http.MethodPut, latestETag)
+	var failure serving.Error
+	if err := json.Unmarshal(raced.Body.Bytes(), &failure); err != nil {
+		t.Fatal(err)
+	}
+	if raced.Code != http.StatusConflict || failure.Code != "SettingsConflict" {
+		t.Fatalf("kube conflict status=%d body=%s", raced.Code, raced.Body)
+	}
+}
+
+func assertSettingsReadAfterExternalUpdate(
+	t *testing.T, kube kubernetes.Interface, controller *servingkube.SchedulerController,
+	request func(string, string) *httptest.ResponseRecorder,
+) string {
+	t.Helper()
+	current := controller.Settings()
+	external, err := kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired := current
+	desired.MaxInstances = 9
+	desiredRaw, err := json.Marshal(desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	external.Data["scheduler.json"] = `{"settings":` + string(desiredRaw) + `}`
+	external, err = kube.CoreV1().ConfigMaps("serving").Update(context.Background(), external, meta.UpdateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if controller.Settings().MaxInstances != current.MaxInstances {
+		t.Fatal("external ConfigMap update unexpectedly refreshed runtime")
+	}
+	latest := request(http.MethodGet, "")
+	var shown serving.SchedulerSettings
+	if err := json.Unmarshal(latest.Body.Bytes(), &shown); err != nil {
+		t.Fatal(err)
+	}
+	if latest.Code != http.StatusOK || shown.MaxInstances != desired.MaxInstances ||
+		latest.Header().Get("ETag") != strconv.Quote(external.ResourceVersion) {
+		t.Fatalf("GET paired stale settings with current version: status=%d etag=%q body=%s",
+			latest.Code, latest.Header().Get("ETag"), latest.Body)
+	}
+	return latest.Header().Get("ETag")
 }

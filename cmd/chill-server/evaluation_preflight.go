@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
-	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -36,6 +36,7 @@ func (s *evaluationService) preflight(
 	if err != nil {
 		return result, nil
 	}
+	result.Checks = append(result.Checks, s.settingsPatchChecks(&request.Spec)...)
 	for _, stage := range request.Spec.Stages {
 		var load api.LoadScenario
 		err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: stage.LoadScenarioRef.Name}, &load)
@@ -54,7 +55,7 @@ func (s *evaluationService) preflight(
 			return result, err
 		}
 		result.LiveTarget = append(result.LiveTarget, target)
-		add("target/"+component.Name, target.Match, "ready live image digest must match spec")
+		add("target/"+component.Name, target.Ready, "external target Pods must be Ready")
 	}
 	var runs api.EvaluationRunList
 	if err := s.reader.List(ctx, &runs); err != nil {
@@ -112,48 +113,18 @@ func (s *evaluationService) preflight(
 	return result, nil
 }
 
-func imageRepository(image string) string {
-	image = strings.Split(image, "@")[0]
-	if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
-		return image[:colon]
-	}
-	return image
-}
-func imageDigest(image string) string {
-	if index := strings.LastIndex(image, "://"); index >= 0 {
-		image = image[index+3:]
-	}
-	if index := strings.LastIndex(image, "@"); index >= 0 {
-		image = image[index+1:]
-	}
-	return image
-}
 func (s *evaluationService) liveTarget(
 	ctx context.Context, component api.EvaluationTargetComponent,
 ) (httpapi.EvaluationLiveTarget, error) {
 	result := httpapi.EvaluationLiveTarget{
-		Component: component.Name, Resource: component.Resource, SpecImage: component.Image,
-		LiveImageIDs: []string{}, Match: true,
+		Component: component.Name, Resource: component.Resource,
+		LiveImageIDs: []string{}, Ready: true,
 	}
 	object := &unstructured.Unstructured{}
 	object.SetGroupVersionKind(schema.FromAPIVersionAndKind(component.Resource.APIVersion, component.Resource.Kind))
 	key := client.ObjectKey{Namespace: component.Resource.Namespace, Name: component.Resource.Name}
 	if err := s.reader.Get(ctx, key, object); err != nil {
 		return result, err
-	}
-	podPath := []string{"spec", "template", "spec", "containers"}
-	if component.Resource.Kind == "Pod" {
-		podPath = []string{"spec", "containers"}
-	}
-	containers, _, _ := unstructured.NestedSlice(object.Object, podPath...)
-	names := map[string]bool{}
-	for _, value := range containers {
-		container := value.(map[string]interface{})
-		image, _ := container["image"].(string)
-		name, _ := container["name"].(string)
-		if imageRepository(image) == imageRepository(component.Image) {
-			names[name] = true
-		}
 	}
 	var pods corev1.PodList
 	if component.Resource.Kind == "Pod" {
@@ -165,7 +136,7 @@ func (s *evaluationService) liveTarget(
 	} else {
 		selector, _, _ := unstructured.NestedStringMap(object.Object, "spec", "selector", "matchLabels")
 		if len(selector) == 0 {
-			result.Match = false
+			result.Ready = false
 			return result, nil
 		}
 		options := []client.ListOption{client.InNamespace(component.Resource.Namespace), client.MatchingLabels(selector)}
@@ -185,26 +156,46 @@ func (s *evaluationService) liveTarget(
 				ready = true
 			}
 		}
-		matched := false
 		for _, status := range pod.Status.ContainerStatuses {
-			if !status.Ready || status.RestartCount != 0 || status.ImageID == "" {
+			if !status.Ready {
 				ready = false
 			}
-			if !names[status.Name] {
-				continue
-			}
-			matched = true
 			result.LiveImageIDs = append(result.LiveImageIDs, status.ImageID)
-			if imageDigest(status.ImageID) != imageDigest(component.Image) {
-				result.Match = false
-			}
 		}
-		if !ready || !matched {
-			result.Match = false
+		if !ready {
+			result.Ready = false
 		}
 	}
 	if count == 0 {
-		result.Match = false
+		result.Ready = false
 	}
 	return result, nil
+}
+
+func (s *evaluationService) settingsPatchChecks(spec *api.EvaluationRunSpec) []httpapi.EvaluationCheck {
+	var checks []httpapi.EvaluationCheck
+	var current serving.SchedulerSettings
+	if s.settings != nil {
+		current = s.settings()
+	}
+	validatePatch := func(id string, raw []byte) {
+		check := httpapi.EvaluationCheck{ID: "settingsPatch/" + id}
+		if s.settings == nil {
+			check.Reason = "public scheduler settings unavailable"
+		} else if _, err := serving.ValidateSchedulerSettingsPatch(current, raw); err != nil {
+			check.Reason = err.Error()
+		} else {
+			check.Passed = true
+		}
+		checks = append(checks, check)
+	}
+	if patch := spec.SettingsPatch; patch != nil {
+		validatePatch("run", patch.Raw)
+	}
+	for _, stage := range spec.Stages {
+		if stage.SettingsPatch != nil {
+			validatePatch(stage.ID, stage.SettingsPatch.Raw)
+		}
+	}
+	return checks
 }

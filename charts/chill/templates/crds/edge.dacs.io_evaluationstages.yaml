@@ -22,9 +22,6 @@ spec:
     - jsonPath: .spec.stageID
       name: Stage
       type: string
-    - jsonPath: .spec.mode
-      name: Mode
-      type: string
     - jsonPath: .status.conditions[?(@.type=="ExecutionComplete")].status
       name: Execution
       type: string
@@ -63,54 +60,6 @@ spec:
               EvaluationStageSpec is the complete immutable builder output. Its controller
               EvaluationRun ownerReference is the sole parent identity, not a second field.
             properties:
-              control:
-                properties:
-                  controls:
-                    description: EvaluationControls mirrors the scheduler's named
-                      scientific switches.
-                    properties:
-                      batching:
-                        type: boolean
-                      membership:
-                        type: boolean
-                      placement:
-                        type: boolean
-                      power:
-                        type: boolean
-                      replicas:
-                        type: boolean
-                      resources:
-                        type: boolean
-                      routing:
-                        type: boolean
-                    required:
-                    - batching
-                    - membership
-                    - placement
-                    - power
-                    - replicas
-                    - resources
-                    - routing
-                    type: object
-                  minimumDemand:
-                    additionalProperties:
-                      description: EvaluationNonNegative is a finite, nonnegative
-                        scientific input.
-                      minimum: 0
-                      type: number
-                    description: MinimumDemand keys are Workload UIDs, not mutable
-                      names.
-                    maxProperties: 128
-                    type: object
-                  scaleDownHeadroomFraction:
-                    maximum: 1
-                    minimum: 0
-                    type: number
-                required:
-                - controls
-                - minimumDemand
-                - scaleDownHeadroomFraction
-                type: object
               evidenceStore:
                 minLength: 1
                 type: string
@@ -150,7 +99,7 @@ spec:
                             enum:
                             - node
                             - pod
-                            - instance
+                            - podUID
                             type: string
                           maxItems: 3
                           minItems: 1
@@ -335,6 +284,10 @@ spec:
                     minLength: 1
                     pattern: '@sha256:'
                     type: string
+                  nodeName:
+                    maxLength: 253
+                    minLength: 1
+                    type: string
                   resources:
                     description: ResourceRequirements describes the compute resource
                       requirements.
@@ -414,6 +367,7 @@ spec:
                 required:
                 - barrier
                 - image
+                - nodeName
                 - resources
                 - shards
                 - sourceSHA
@@ -444,12 +398,6 @@ spec:
                 - name
                 - uid
                 type: object
-              mode:
-                enum:
-                - autonomous
-                - fixed
-                - controls-disabled
-                type: string
               powerMeasurement:
                 properties:
                   meters:
@@ -522,48 +470,18 @@ spec:
                 maxLength: 128
                 minLength: 1
                 type: string
+              settingsPatch:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
               stageID:
                 maxLength: 63
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
-              startState:
-                description: 'EvaluationStageStartState has no symbolic reference:
-                  the parent resolves it.'
-                properties:
-                  evidenceRef:
-                    description: EvaluationEvidenceReference identifies immutable
-                      evidence, never an endpoint.
-                    properties:
-                      key:
-                        maxLength: 1024
-                        minLength: 1
-                        type: string
-                      size:
-                        format: int64
-                        minimum: 1
-                        type: integer
-                      store:
-                        maxLength: 253
-                        minLength: 1
-                        type: string
-                    required:
-                    - key
-                    - size
-                    - store
-                    type: object
-                required:
-                - evidenceRef
-                type: object
               target:
                 properties:
                   components:
                     items:
                       properties:
-                        image:
-                          maxLength: 1024
-                          minLength: 1
-                          pattern: '@sha256:'
-                          type: string
                         name:
                           maxLength: 63
                           minLength: 1
@@ -590,15 +508,9 @@ spec:
                           - name
                           - namespace
                           type: object
-                        sourceSHA:
-                          maxLength: 128
-                          minLength: 1
-                          type: string
                       required:
-                      - image
                       - name
                       - resource
-                      - sourceSHA
                       type: object
                     maxItems: 128
                     minItems: 1
@@ -631,7 +543,6 @@ spec:
                 - uid
                 type: object
             required:
-            - control
             - evidenceStore
             - frozenConfigMapRef
             - harness
@@ -640,11 +551,9 @@ spec:
             - judgment
             - loadGenerator
             - loadScenarioRef
-            - mode
             - powerMeasurement
             - row
             - stageID
-            - startState
             - target
             - workspace
             type: object

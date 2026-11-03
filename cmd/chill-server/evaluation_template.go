@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
@@ -21,7 +20,7 @@ func (s *evaluationService) template(ctx context.Context) (httpapi.EvaluationTem
 	result := httpapi.EvaluationTemplate{Sources: map[string]string{
 		"target": templateSourceNone, "powerMeasurement": templateSourceNone, "evidenceStore": "config",
 		"harness": templateSourceNone, "loadGenerator": templateSourceNone,
-		"judgment": templateSourceNone, "control": templateSourceNone,
+		"judgment": templateSourceNone, "settingsPatch": templateSourceNone,
 	}}
 	result.Spec.EvidenceStore = s.store
 	publications, err := s.experiments.listSummaries(ctx)
@@ -41,7 +40,7 @@ func (s *evaluationService) template(ctx context.Context) (httpapi.EvaluationTem
 		}
 		result.Spec = definition.Spec
 		result.Spec.EvidenceStore = s.store
-		for _, key := range []string{"harness", "loadGenerator", "judgment", "control"} {
+		for _, key := range []string{"harness", "loadGenerator", "judgment", "settingsPatch"} {
 			result.Sources[key] = templateSourcePublication
 		}
 		result.SourcePublication = &httpapi.EvaluationIdentity{UID: publication.ID, Name: definition.Run.Name}
@@ -54,10 +53,6 @@ func (s *evaluationService) template(ctx context.Context) (httpapi.EvaluationTem
 			return result, err
 		}
 		for _, deployment := range deployments.Items {
-			source := deployment.Labels["org.opencontainers.image.revision"]
-			if source == "" {
-				source = deployment.Annotations["org.opencontainers.image.revision"]
-			}
 			for _, container := range deployment.Spec.Template.Spec.Containers {
 				if container.Name != "serving-entrypoint" {
 					continue
@@ -67,23 +62,14 @@ func (s *evaluationService) template(ctx context.Context) (httpapi.EvaluationTem
 					Resource: api.EvaluationResourceReference{
 						APIVersion: "apps/v1", Kind: "Deployment", Namespace: deployment.Namespace, Name: deployment.Name,
 					},
-					EvaluationImage: api.EvaluationImage{Image: container.Image, SourceSHA: source},
 				})
 			}
 		}
 	}
-	for i := range result.Spec.Target.Components {
-		component := &result.Spec.Target.Components[i]
-		live, err := s.liveTarget(ctx, *component)
-		if err != nil {
+	for _, component := range result.Spec.Target.Components {
+		if _, err := s.liveTarget(ctx, component); err != nil {
 			return result, err
 		}
-		if len(live.LiveImageIDs) == 0 {
-			continue
-		}
-		digest := imageDigest(live.LiveImageIDs[0])
-		repository := strings.Split(component.Image, "@")[0]
-		component.Image = repository + "@" + digest
 		result.Sources["target"] = templateSourceLive
 	}
 	return result, nil

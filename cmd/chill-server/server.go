@@ -193,7 +193,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.GetExperiment = experiments.get
 	evaluations := &evaluationService{
 		reader: store.Client(), client: store.Client(), namespace: opts.servingNamespace,
-		store: opts.storeName, experiments: experiments,
+		store: opts.storeName, experiments: experiments, settings: evaluationSettings(scheduler),
 	}
 	handlerConfig.ListActiveEvaluations = evaluations.listActive
 	handlerConfig.ListEvaluations = evaluations.list
@@ -205,7 +205,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.ReleaseEvaluation = evaluations.release
 	handlerConfig.GetEvaluationTemplate = evaluations.template
 	evaluationLoads := &evaluationLoadService{
-		client: store.Client(), namespace: opts.servingNamespace, evidence: objects, lister: objects,
+		client: store.Client(), namespace: opts.servingNamespace, evidence: objects,
 	}
 	handlerConfig.ListLoadScenarios = evaluationLoads.list
 	handlerConfig.GetLoadScenario = evaluationLoads.get

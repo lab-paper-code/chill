@@ -27,7 +27,7 @@ func validateConfig(v map[string]string) error {
 			return fmt.Errorf("config %s is required", key)
 		}
 	}
-	for _, key := range []string{"jobActiveDeadlineSeconds", "injectionWindowSeconds", "injectionSnapshotTTLSeconds"} {
+	for _, key := range []string{"jobActiveDeadlineSeconds", "injectionWindowSeconds"} {
 		n, err := strconv.ParseInt(v[key], 10, 64)
 		if err != nil || n <= 0 || n > 86400*30 {
 			return fmt.Errorf("config %s must be positive bounded seconds", key)

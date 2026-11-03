@@ -12,6 +12,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -51,8 +52,18 @@ var fixtureTime = time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 
 func fixtureRun(name string) *api.EvaluationRun {
 	image := api.EvaluationImage{Image: "harness@sha256:identity", SourceSHA: "source"}
-	start := api.EvaluationEvidenceReference{Store: "evidence", Key: "start", Size: 1}
-	return &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "system", UID: types.UID(name + "-uid"), Generation: 1, CreationTimestamp: metav1.NewTime(fixtureTime), Finalizers: []string{api.EvaluationRunFinalizer}}, Spec: api.EvaluationRunSpec{Question: "question", EvidenceStore: "evidence", Harness: image, Target: api.TargetIdentity{Components: []api.EvaluationTargetComponent{{Name: "server", Resource: api.EvaluationResourceReference{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "system", Name: "server"}, EvaluationImage: image}}}, LoadGenerator: api.Generator{EvaluationImage: image, Shards: map[string]int32{"w": 1}, Barrier: api.GeneratorBarrier{MinimumReadySamples: 1}}, PowerMeasurement: api.PowerMeasurement{Meters: []api.EvaluationMeter{{ID: "m", SourceIdentity: "source"}}, Nodes: []api.EvaluationObjectReference{{Name: "node", UID: "node-uid"}}, Series: "power", Sampling: api.PowerSampling{IntervalNanos: 1}}, Judgment: api.Judgment{EnergyCoverage: api.EnergyCoverage{MaxSingleGapSeconds: 1}}, Stages: []api.StageTemplate{{ID: "first", Row: "E5-3m", Mode: api.EvaluationModeAutonomous, LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"}, StartState: api.EvaluationStartState{EvidenceRef: &start}}}}, Status: api.EvaluationRunStatus{ObservedGeneration: 1}}
+	return &api.EvaluationRun{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "system", UID: types.UID(name + "-uid"), Generation: 1, CreationTimestamp: metav1.NewTime(fixtureTime), Finalizers: []string{api.EvaluationRunFinalizer}},
+		Spec: api.EvaluationRunSpec{
+			Question: "question", EvidenceStore: "evidence", Harness: image,
+			Target:           api.TargetIdentity{Components: []api.EvaluationTargetComponent{{Name: "server", Resource: api.EvaluationResourceReference{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "system", Name: "server"}}}},
+			LoadGenerator:    api.Generator{EvaluationImage: image, NodeName: "genesis1", Shards: map[string]int32{"w": 1}, Barrier: api.GeneratorBarrier{MinimumReadySamples: 1}},
+			PowerMeasurement: api.PowerMeasurement{Meters: []api.EvaluationMeter{{ID: "m", SourceIdentity: "source"}}, Nodes: []api.EvaluationObjectReference{{Name: "node", UID: "node-uid"}}, Series: "power", Sampling: api.PowerSampling{IntervalNanos: 1}},
+			Judgment:         api.Judgment{EnergyCoverage: api.EnergyCoverage{MaxSingleGapSeconds: 1}},
+			Stages:           []api.StageTemplate{{ID: "first", Row: "E5-3m", LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"}}},
+		},
+		Status: api.EvaluationRunStatus{ObservedGeneration: 1},
+	}
 }
 func fixtureConfig() *corev1.ConfigMap {
 	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: "system", UID: "config-uid"}, Data: map[string]string{"actionServiceAccount": "action", "publishServiceAccount": "publish", "caSecret": "ca", "evidenceCredentialsSecret": "credentials", "evidenceEndpoint": "http://store", "evidenceBucket": "bucket", "evidenceRegion": "region", "storageClass": "rwx", "workspaceSize": "400Gi", "chillAPIURL": "https://chill", "jobActiveDeadlineSeconds": "3600", "injectionWindowSeconds": "5", "injectionSnapshotTTLSeconds": "15"}}
@@ -85,7 +96,7 @@ func startRun(run *api.EvaluationRun) {
 }
 func fixtureStage(t *testing.T, r *Runtime, parent *api.EvaluationRun) *api.EvaluationStage {
 	t.Helper()
-	child, e := (&RunReconciler{Runtime: *r}).ensureChild(context.Background(), parent, 0, nil)
+	child, e := (&RunReconciler{Runtime: *r}).ensureChild(context.Background(), parent, 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -157,10 +168,10 @@ func TestChildCreationResponseLossAdoption(t *testing.T) {
 		return c.Create(ctx, o, options...)
 	}})
 	reconciler := RunReconciler{Runtime: r}
-	if _, e := reconciler.ensureChild(context.Background(), parent, 0, nil); e == nil {
+	if _, e := reconciler.ensureChild(context.Background(), parent, 0); e == nil {
 		t.Fatal("expected response loss")
 	}
-	child, e := reconciler.ensureChild(context.Background(), parent, 0, nil)
+	child, e := reconciler.ensureChild(context.Background(), parent, 0)
 	if e != nil || child.UID != "child-uid" {
 		t.Fatalf("adoption=%v %v", child, e)
 	}
@@ -270,22 +281,18 @@ func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionTrue, complete, "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonReturnTimeout, "")
-	r, _ := fixtureRuntime(t, parent)
-	allocationPresent := true
-	r.HTTP = func(_ context.Context, _ string, _ map[string]string, _ string, value any) error {
-		if allocationPresent {
-			return json.Unmarshal([]byte(`{"at":"2026-11-01T12:00:00Z","instances":[{"id":"owned","ownerWorkloadUID":"workload-uid"}],"routing":{"workload-uid":{"owned":1}},"poolReturn":{}}`), value)
-		}
-		return json.Unmarshal([]byte(`{"at":"2026-11-01T12:00:00Z","poolReturn":{}}`), value)
-	}
+	writer := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "writer", Namespace: parent.Namespace, Labels: map[string]string{api.EvaluationLabelRunUID: string(parent.UID)}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	r, _ := fixtureRuntime(t, parent, writer)
 	if !occupied(parent) {
 		t.Fatal("cleanup failure released pool")
 	}
-	annotation := `{"reason":"operator confirmed writers stopped and pool returned","at":"2026-11-01T12:00:00Z","by":"operator"}`
+	annotation := `{"reason":"operator confirmed controls reverted and writers stopped","at":"2026-11-01T12:00:00Z","by":"operator"}`
 	if result, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); err != nil || result.RequeueAfter == 0 || !occupied(parent) || len(parent.Status.ReleaseRecords) != 0 {
-		t.Fatalf("release must wait for owned allocation/route return: result=%v err=%v", result, err)
+		t.Fatalf("release must wait for evaluation writer termination: result=%v err=%v", result, err)
 	}
-	allocationPresent = false
+	if err := r.Client.Delete(context.Background(), writer); err != nil {
+		t.Fatal(err)
+	}
 	if _, e := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); e != nil {
 		t.Fatal(e)
 	}
@@ -303,10 +310,6 @@ func TestReleaseIgnoredWhileExecutionContinues(t *testing.T) {
 	parent.Status.Workspace = nil
 	parent.Annotations = map[string]string{api.EvaluationReleaseAnnotation: `{"reason":"early"}`}
 	r, store := fixtureRuntime(t, parent)
-	r.HTTP = func(context.Context, string, map[string]string, string, any) error {
-		t.Fatal("running release must not inspect or release the pool")
-		return nil
-	}
 	if _, err := (&RunReconciler{Runtime: r}).Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
 		t.Fatal(err)
 	}
@@ -409,10 +412,13 @@ func TestInjectionCordonBeforeUIDDeleteAndNoReplay(t *testing.T) {
 			parent := fixtureRun("injection")
 			startRun(parent)
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node", UID: "node-uid"}}
+			node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
 			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "serving", Namespace: parent.Namespace, UID: "pod-uid"}, Spec: corev1.PodSpec{NodeName: node.Name}}
+			pod.OwnerReferences = []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "Workload", Name: "workload", UID: "workload-uid"}}
+			pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
 			r, store := fixtureRuntime(t, parent, node, pod)
 			stage := fixtureStage(t, &r, parent)
-			stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: api.FaultInjectionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "instance"}}}}
+			stage.Spec.FailureInjection = []api.FaultInjectionPlan{{ID: "fault", Action: api.FaultInjectionCordonDelete, Selection: &api.FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []api.FaultInjectionOrderKey{"node", "pod", "podUID"}}}}
 			if err := r.Client.Update(ctx, stage); err != nil {
 				t.Fatal(err)
 			}
@@ -423,18 +429,6 @@ func TestInjectionCordonBeforeUIDDeleteAndNoReplay(t *testing.T) {
 				t.Fatal(err)
 			}
 			store.put(evidenceKey(parent.UID, scope(stage.Spec.StageID)+"/go.json"), map[string]any{"runUID": parent.UID, "stageUID": stage.UID, "stageID": stage.Spec.StageID, "goUTC": fixtureTime})
-			r.HTTP = func(_ context.Context, _ string, _ map[string]string, path string, value any) error {
-				var body string
-				switch {
-				case strings.Contains(path, "/state"):
-					body = `{"at":"2026-11-01T12:00:00Z","nodes":[{"node":{"name":"node","uid":"node-uid"},"ready":true}],"instances":[{"id":"instance","workloadUID":"workload-uid","ownerWorkloadUID":"workload-uid","ready":true,"podName":"serving","podUID":"pod-uid","node":{"name":"node","uid":"node-uid"}}],"routing":{"workload-uid":{"instance":1}}}`
-				case strings.Contains(path, "/settings"):
-					body = `{"observationWindowNanos":1000000000}`
-				default:
-					body = `{"from":"2026-11-01T11:59:59Z","to":"2026-11-01T12:00:00Z","workloads":[{"uid":"workload-uid","instanceAssignments":{"instance":1}}]}`
-				}
-				return json.Unmarshal([]byte(body), value)
-			}
 			var effects []string
 			r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{
 				Patch: func(ctx context.Context, c client.WithWatch, o client.Object, patch client.Patch, options ...client.PatchOption) error {
@@ -477,5 +471,32 @@ func TestInjectionCordonBeforeUIDDeleteAndNoReplay(t *testing.T) {
 				t.Fatalf("records=%+v", stage.Status.InjectionRecords)
 			}
 		})
+	}
+}
+
+func TestChildFreezesOpaqueSettingsPatchAndGeneratorNode(t *testing.T) {
+	parent := fixtureRun("patch")
+	startRun(parent)
+	parent.Spec.SettingsPatch = &apiextensionsv1.JSON{Raw: []byte(`{"controls":{"power":false}}`)}
+	r, _ := fixtureRuntime(t, parent)
+	child, err := (&RunReconciler{Runtime: r}).ensureChild(context.Background(), parent, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Spec.LoadGenerator.NodeName != "genesis1" || string(child.Spec.SettingsPatch.Raw) != string(parent.Spec.SettingsPatch.Raw) {
+		t.Fatalf("child=%+v", child.Spec)
+	}
+	parent.Spec.SettingsPatch.Raw[0] = '['
+	if child.Spec.SettingsPatch.Raw[0] != '{' {
+		t.Fatal("child patch aliases parent bytes")
+	}
+	override := fixtureRun("override")
+	startRun(override)
+	override.Spec.SettingsPatch = &apiextensionsv1.JSON{Raw: []byte(`{"controls":{"power":false}}`)}
+	override.Spec.Stages[0].SettingsPatch = &apiextensionsv1.JSON{Raw: []byte(`{"maxReplicas":3}`)}
+	r, _ = fixtureRuntime(t, override)
+	child, err = (&RunReconciler{Runtime: r}).ensureChild(context.Background(), override, 0)
+	if err != nil || string(child.Spec.SettingsPatch.Raw) != `{"maxReplicas":3}` {
+		t.Fatalf("stage override=%+v %v", child, err)
 	}
 }

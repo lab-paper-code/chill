@@ -21,7 +21,6 @@ type ActiveEvaluation struct {
 }
 type ActiveEvaluationStage struct {
 	ID             string                      `json:"id"`
-	Mode           string                      `json:"mode"`
 	StartedAt      *metav1.Time                `json:"startedAt,omitempty"`
 	GoAt           *metav1.Time                `json:"goAt,omitempty"`
 	PlannedSeconds float64                     `json:"plannedSeconds"`

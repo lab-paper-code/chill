@@ -19,10 +19,6 @@ spec:
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.payloadManifestRef.key
-      name: Payload
-      priority: 1
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -58,26 +54,30 @@ spec:
                 maxProperties: 128
                 minProperties: 1
                 type: object
-              kappaRef:
-                description: EvaluationEvidenceReference identifies immutable evidence,
-                  never an endpoint.
-                properties:
-                  key:
-                    maxLength: 1024
-                    minLength: 1
-                    type: string
-                  size:
-                    format: int64
-                    minimum: 1
-                    type: integer
-                  store:
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - size
-                - store
+              datasetRefs:
+                additionalProperties:
+                  description: |-
+                    EvaluationObjectReference pins an immutable object in the release namespace
+                    (or a cluster-scoped Node). Only Workload references carry a generation.
+                  properties:
+                    name:
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    uid:
+                      description: |-
+                        UID is a type that holds unique ID values, including UUIDs.  Because we
+                        don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                        intent and helps make sure that UIDs and names do not get conflated.
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  - uid
+                  type: object
+                maxProperties: 32
+                minProperties: 1
                 type: object
               parts:
                 description: Parts is ordered; atomic list equality makes reordering
@@ -86,15 +86,6 @@ spec:
                   description: LoadScenarioPart fixes one interval; map keys are Workload
                     names.
                   properties:
-                    alpha:
-                      additionalProperties:
-                        description: EvaluationNonNegative is a finite, nonnegative
-                          scientific input.
-                        minimum: 0
-                        type: number
-                      maxProperties: 128
-                      minProperties: 1
-                      type: object
                     durationSeconds:
                       exclusiveMinimum: true
                       minimum: 0
@@ -115,76 +106,24 @@ spec:
                   required:
                   - durationSeconds
                   - id
+                  - rates
                   type: object
-                  x-kubernetes-validations:
-                  - message: exactly one of rates or alpha is required
-                    rule: has(self.rates) != has(self.alpha)
                 maxItems: 128
                 minItems: 1
                 type: array
                 x-kubernetes-list-type: atomic
-              payloadManifestRef:
-                description: EvaluationEvidenceReference identifies immutable evidence,
-                  never an endpoint.
-                properties:
-                  key:
-                    maxLength: 1024
-                    minLength: 1
-                    type: string
-                  size:
-                    format: int64
-                    minimum: 1
-                    type: integer
-                  store:
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - size
-                - store
-                type: object
-              rateBasisRef:
-                description: EvaluationEvidenceReference identifies immutable evidence,
-                  never an endpoint.
-                properties:
-                  key:
-                    maxLength: 1024
-                    minLength: 1
-                    type: string
-                  size:
-                    format: int64
-                    minimum: 1
-                    type: integer
-                  store:
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - size
-                - store
-                type: object
-              seedRef:
-                description: EvaluationEvidenceReference identifies immutable evidence,
-                  never an endpoint.
-                properties:
-                  key:
-                    maxLength: 1024
-                    minLength: 1
-                    type: string
-                  size:
-                    format: int64
-                    minimum: 1
-                    type: integer
-                  store:
-                    maxLength: 253
-                    minLength: 1
-                    type: string
-                required:
-                - key
-                - size
-                - store
+              seeds:
+                additionalProperties:
+                  description: EvaluationSeed preserves all uint64 bits through JSON
+                    clients.
+                  maxLength: 20
+                  pattern: ^[0-9]+$
+                  type: string
+                  x-kubernetes-validations:
+                  - message: seed must fit uint64
+                    rule: self.size() < 20 || self <= '18446744073709551615'
+                maxProperties: 32
+                minProperties: 1
                 type: object
               traceRefs:
                 additionalProperties:
@@ -242,21 +181,23 @@ spec:
                 x-kubernetes-list-type: map
             required:
             - arrivalDistribution
+            - datasetRefs
             - parts
-            - payloadManifestRef
-            - seedRef
+            - seeds
             - workloads
             type: object
             x-kubernetes-validations:
             - message: LoadScenario spec is immutable
               rule: self == oldSelf
-            - message: alpha requires rateBasisRef and kappaRef
-              rule: '!self.parts.exists(p, has(p.alpha)) || (has(self.rateBasisRef)
-                && has(self.kappaRef))'
             - message: load keys must name declared workloads
-              rule: self.parts.all(p, (!has(p.rates) || p.rates.all(k, self.workloads.exists(w,
-                w.name == k))) && (!has(p.alpha) || p.alpha.all(k, self.workloads.exists(w,
-                w.name == k))))
+              rule: self.parts.all(p, p.rates.all(k, self.workloads.exists(w, w.name
+                == k)))
+            - message: seeds must cover exactly the declared workloads
+              rule: self.seeds.all(k, self.workloads.exists(w, w.name == k)) && self.workloads.all(w,
+                w.name in self.seeds)
+            - message: datasetRefs must cover exactly the declared workloads
+              rule: self.datasetRefs.all(k, self.workloads.exists(w, w.name == k))
+                && self.workloads.all(w, w.name in self.datasetRefs)
             - message: arrivalDistribution must cover exactly the declared workloads
               rule: self.arrivalDistribution.all(k, self.workloads.exists(w, w.name
                 == k)) && self.workloads.all(w, w.name in self.arrivalDistribution)

@@ -2,10 +2,8 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"sort"
 	"strconv"
 	"time"
@@ -23,81 +21,31 @@ var errInjectionUpdated = errors.New("injection status persisted")
 var errInjectionSelection = errors.New("injection selection is invalid")
 var errInjectionExpired = errors.New("injection window expired before mutation")
 
-type servingInstance struct {
-	ID               string                        `json:"id"`
-	WorkloadUID      string                        `json:"workloadUID"`
-	OwnerWorkloadUID string                        `json:"ownerWorkloadUID"`
-	Ready            bool                          `json:"ready"`
-	Stopped          bool                          `json:"stopped"`
-	PodName          string                        `json:"podName"`
-	PodUID           types.UID                     `json:"podUID"`
-	Node             api.EvaluationObjectReference `json:"node"`
-}
-
-const schedulerStatePath = "/api/v1/scheduler/state?view=summary"
-
-type schedulerState struct {
-	At    time.Time `json:"at"`
-	Nodes []struct {
-		Node  api.EvaluationObjectReference `json:"node"`
-		Ready bool                          `json:"ready"`
-	} `json:"nodes"`
-	Instances  []servingInstance             `json:"instances"`
-	Routing    map[string]map[string]float64 `json:"routing"`
-	PoolReturn *struct {
-		ReservationCount    int       `json:"reservationCount"`
-		OutstandingCount    int       `json:"outstandingCount"`
-		ActiveActionCount   int       `json:"activeActionCount"`
-		LatestResultEndedAt time.Time `json:"latestResultEndedAt"`
-	} `json:"poolReturn"`
+type servingTarget struct {
+	WorkloadUID string                        `json:"workloadUID"`
+	PodName     string                        `json:"podName"`
+	PodUID      types.UID                     `json:"podUID"`
+	Node        api.EvaluationObjectReference `json:"node"`
+	PodReady    bool                          `json:"podReady"`
+	NodeReady   bool                          `json:"nodeReady"`
 }
 
 func seconds(v map[string]string, key string) time.Duration {
 	n, _ := strconv.ParseFloat(v[key], 64)
 	return time.Duration(n * float64(time.Second))
 }
-func (s schedulerState) fresh(now time.Time, v map[string]string) bool {
-	return !s.At.IsZero() && !s.At.After(now) && now.Sub(s.At) <= seconds(v, "injectionSnapshotTTLSeconds")
-}
-func (s schedulerState) returned(now time.Time, v map[string]string) bool {
-	if !s.fresh(now, v) || s.PoolReturn == nil || s.PoolReturn.ReservationCount != 0 || s.PoolReturn.OutstandingCount != 0 || s.PoolReturn.ActiveActionCount != 0 || !s.At.After(s.PoolReturn.LatestResultEndedAt) {
-		return false
-	}
-	for _, instance := range s.Instances {
-		if instance.OwnerWorkloadUID != "" {
-			return false
-		}
-	}
-	for _, routes := range s.Routing {
-		for _, weight := range routes {
-			if weight > 0 {
-				return false
-			}
-		}
-	}
-	return true
-}
 
-type loadWindow struct {
-	From      time.Time `json:"from"`
-	To        time.Time `json:"to"`
-	Workloads []struct {
-		UID                 string             `json:"uid"`
-		InstanceAssignments map[string]float64 `json:"instanceAssignments"`
-	} `json:"workloads"`
-}
 type injectionEvidence struct {
-	RunUID     types.UID                `json:"runUID"`
-	StageUID   types.UID                `json:"stageUID"`
-	StageID    string                   `json:"stageID"`
-	Record     api.FaultInjectionRecord `json:"record"`
-	State      *schedulerState          `json:"-"`
-	Load       *loadWindow              `json:"-"`
-	StateRaw   json.RawMessage          `json:"state,omitempty"`
-	LoadRaw    json.RawMessage          `json:"load,omitempty"`
-	Candidates []servingInstance        `json:"candidates,omitempty"`
-	Rejected   map[string]string        `json:"rejected,omitempty"`
-	Requests   []map[string]any         `json:"requests,omitempty"`
+	RunUID   types.UID                `json:"runUID"`
+	StageUID types.UID                `json:"stageUID"`
+	StageID  string                   `json:"stageID"`
+	Record   api.FaultInjectionRecord `json:"record"`
+	// Raw Kubernetes objects are selection inputs only, not credential-safe evidence.
+	Pods       []corev1.Pod      `json:"-"`
+	Nodes      []corev1.Node     `json:"-"`
+	Candidates []servingTarget   `json:"candidates,omitempty"`
+	Rejected   map[string]string `json:"rejected,omitempty"`
+	Requests   []map[string]any  `json:"requests,omitempty"`
 }
 
 func (r *Runtime) injections(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage) error {
@@ -273,37 +221,15 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 		}
 		return fmt.Errorf("%w: prior cordon node unavailable", errInjectionSelection)
 	}
-	v := parent.Status.FrozenConfig.Values
-	state := &schedulerState{}
-	raw, err := r.observeJSON(ctx, parent, schedulerStatePath, state)
-	e.State, e.StateRaw = state, raw
-	if err != nil {
+	var pods corev1.PodList
+	if err := r.APIReader.List(ctx, &pods, client.InNamespace(parent.Namespace)); err != nil {
 		return err
 	}
-	if !state.fresh(r.now().Time, v) {
-		return fmt.Errorf("%w: scheduler snapshot expired", errInjectionSelection)
-	}
-	var settings struct {
-		ObservationWindowNanos int64 `json:"observationWindowNanos"`
-	}
-	if err := r.HTTP(ctx, parent.Namespace, v, "/api/v1/scheduler/settings", &settings); err != nil {
+	var nodes corev1.NodeList
+	if err := r.APIReader.List(ctx, &nodes); err != nil {
 		return err
 	}
-	if settings.ObservationWindowNanos <= 0 {
-		return fmt.Errorf("%w: observation window missing", errInjectionSelection)
-	}
-	from := state.At.Add(-time.Duration(settings.ObservationWindowNanos))
-	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {state.At.Format(time.RFC3339Nano)}}
-	load := &loadWindow{}
-	raw, err = r.observeJSON(ctx, parent, "/api/v1/observations/load?"+query.Encode(), load)
-	e.Load, e.LoadRaw = load, raw
-	if err != nil {
-		return err
-	}
-	e.State, e.Load, e.Rejected = state, load, map[string]string{}
-	if !load.From.Equal(from) || !load.To.Equal(state.At) {
-		return fmt.Errorf("%w: load window differs from scheduler snapshot", errInjectionSelection)
-	}
+	e.Pods, e.Nodes, e.Rejected = pods.Items, nodes.Items, map[string]string{}
 	allowed := map[string]bool{}
 	for _, uid := range plan.Selection.WorkloadUIDs {
 		allowed[string(uid)] = true
@@ -319,23 +245,7 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 			return fmt.Errorf("%w: different-node predecessor missing", errInjectionSelection)
 		}
 	}
-	nodes := map[string]types.UID{}
-	for _, node := range state.Nodes {
-		if node.Ready {
-			nodes[node.Node.Name] = node.Node.UID
-		}
-	}
-	assignments := map[string]map[string]float64{}
-	for _, w := range load.Workloads {
-		assignments[w.UID] = w.InstanceAssignments
-	}
-	for _, instance := range state.Instances {
-		if !eligible(instance, allowed, nodes, state.Routing, assignments, excluded) {
-			e.Rejected[instance.ID] = "not allowed/owned/ready/positive-route/assigned/live-node or excluded"
-			continue
-		}
-		e.Candidates = append(e.Candidates, instance)
-	}
+	e.selectCandidates(allowed, excluded)
 	sort.Slice(e.Candidates, func(i, j int) bool {
 		a, b := e.Candidates[i], e.Candidates[j]
 		for _, key := range plan.Selection.OrderBy {
@@ -345,17 +255,17 @@ func (r *Runtime) selectInjection(ctx context.Context, parent *api.EvaluationRun
 				x, y = a.Node.Name, b.Node.Name
 			case "pod":
 				x, y = a.PodName, b.PodName
-			case "instance":
-				x, y = a.ID, b.ID
+			case "podUID":
+				x, y = string(a.PodUID), string(b.PodUID)
 			}
 			if x != y {
 				return x < y
 			}
 		}
-		return a.ID < b.ID
+		return a.PodUID < b.PodUID
 	})
 	if len(e.Candidates) == 0 {
-		return fmt.Errorf("%w: no positive-route/assigned serving target", errInjectionSelection)
+		return fmt.Errorf("%w: no Ready Workload-owned Pod on a Ready Node", errInjectionSelection)
 	}
 	target := e.Candidates[0]
 	e.Record.PodRef = &api.EvaluationObjectReference{Name: target.PodName, UID: target.PodUID}
@@ -443,16 +353,10 @@ func (r *Runtime) injectionReady(ctx context.Context, parent *api.EvaluationRun,
 		return err
 	}
 	v := parent.Status.FrozenConfig.Values
-	if r.now().Sub(e.Record.ScheduledAt.Time) > seconds(v, "injectionWindowSeconds") || e.State != nil && !e.State.fresh(r.now().Time, v) {
+	if r.now().Sub(e.Record.ScheduledAt.Time) > seconds(v, "injectionWindowSeconds") {
 		return errInjectionExpired
 	}
 	return nil
-}
-
-func eligible(i servingInstance, allowed map[string]bool, nodes map[string]types.UID, routing, assignments map[string]map[string]float64, excluded types.UID) bool {
-	return allowed[i.WorkloadUID] && i.OwnerWorkloadUID == i.WorkloadUID && i.Ready && !i.Stopped &&
-		routing[i.WorkloadUID][i.ID] > 0 && assignments[i.WorkloadUID][i.ID] > 0 &&
-		i.PodName != "" && i.PodUID != "" && i.Node.UID != "" && nodes[i.Node.Name] == i.Node.UID && i.Node.UID != excluded
 }
 
 func (r *Runtime) finishInjections(ctx context.Context, parent *api.EvaluationRun, stage *api.EvaluationStage, result *stepResult) error {
@@ -568,10 +472,44 @@ func (r *Runtime) recoverRequestedInjections(ctx context.Context, parent *api.Ev
 	return nil
 }
 
-func (r *Runtime) observeJSON(ctx context.Context, parent *api.EvaluationRun, path string, value any) (json.RawMessage, error) {
-	var raw json.RawMessage
-	if err := r.HTTP(ctx, parent.Namespace, parent.Status.FrozenConfig.Values, path, &raw); err != nil {
-		return nil, err
+func (e *injectionEvidence) selectCandidates(allowed map[string]bool, excluded types.UID) {
+	readyNodes := map[string]types.UID{}
+	for i := range e.Nodes {
+		node := &e.Nodes[i]
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue && !node.Spec.Unschedulable {
+				readyNodes[node.Name] = node.UID
+			}
+		}
 	}
-	return raw, json.Unmarshal(raw, value)
+	groupVersion := api.GroupVersion.String()
+	for i := range e.Pods {
+		pod := &e.Pods[i]
+		var owner *metav1.OwnerReference
+		for j := range pod.OwnerReferences {
+			ref := &pod.OwnerReferences[j]
+			if ref.Kind == "Workload" && ref.APIVersion == groupVersion {
+				if owner != nil {
+					owner = nil
+					break
+				}
+				owner = ref
+			}
+		}
+		if owner == nil || !allowed[string(owner.UID)] {
+			continue
+		}
+		ready := false
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+				ready = true
+			}
+		}
+		nodeUID := readyNodes[pod.Spec.NodeName]
+		if !ready || pod.DeletionTimestamp != nil || pod.UID == "" || nodeUID == "" || nodeUID == excluded {
+			e.Rejected[pod.Name] = "Pod or Node unavailable or excluded"
+			continue
+		}
+		e.Candidates = append(e.Candidates, servingTarget{WorkloadUID: string(owner.UID), PodName: pod.Name, PodUID: pod.UID, Node: api.EvaluationObjectReference{Name: pod.Spec.NodeName, UID: nodeUID}, PodReady: ready, NodeReady: true})
+	}
 }

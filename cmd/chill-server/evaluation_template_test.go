@@ -9,9 +9,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 )
 
-func TestEvaluationTemplateSourcesAndLiveDigest(t *testing.T) {
+func TestEvaluationTemplateSourcesAndExternalTarget(t *testing.T) {
 	service, request := evaluationFixture(t)
-	request.Spec.Target.Components[0].Image = "repo/server@sha256:stale"
 	summary := experimentFixture("latest", time.Now().UTC())
 	definition, err := json.Marshal(struct {
 		Spec any               `json:"spec"`
@@ -29,7 +28,7 @@ func TestEvaluationTemplateSourcesAndLiveDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Spec.Target.Components[0].Image != "repo/server@sha256:live" ||
+	if result.Spec.Target.Components[0].Resource != request.Spec.Target.Components[0].Resource ||
 		result.Spec.EvidenceStore != "configured-store" {
 		t.Fatalf("spec=%+v", result.Spec)
 	}
@@ -63,7 +62,7 @@ func TestEvaluationTemplateWithoutPublication(t *testing.T) {
 	if result.SourcePublication != nil {
 		t.Fatalf("sourcePublication=%+v", result.SourcePublication)
 	}
-	for _, field := range []string{"harness", "loadGenerator", "judgment", "control"} {
+	for _, field := range []string{"harness", "loadGenerator", "judgment", "settingsPatch"} {
 		if result.Sources[field] != templateSourceNone {
 			t.Fatalf("sources[%q]=%q", field, result.Sources[field])
 		}

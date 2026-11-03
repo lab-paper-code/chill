@@ -122,54 +122,6 @@ spec:
                   type: object
                 maxItems: 128
                 type: array
-              control:
-                properties:
-                  controls:
-                    description: EvaluationControls mirrors the scheduler's named
-                      scientific switches.
-                    properties:
-                      batching:
-                        type: boolean
-                      membership:
-                        type: boolean
-                      placement:
-                        type: boolean
-                      power:
-                        type: boolean
-                      replicas:
-                        type: boolean
-                      resources:
-                        type: boolean
-                      routing:
-                        type: boolean
-                    required:
-                    - batching
-                    - membership
-                    - placement
-                    - power
-                    - replicas
-                    - resources
-                    - routing
-                    type: object
-                  minimumDemand:
-                    additionalProperties:
-                      description: EvaluationNonNegative is a finite, nonnegative
-                        scientific input.
-                      minimum: 0
-                      type: number
-                    description: MinimumDemand keys are Workload UIDs, not mutable
-                      names.
-                    maxProperties: 128
-                    type: object
-                  scaleDownHeadroomFraction:
-                    maximum: 1
-                    minimum: 0
-                    type: number
-                required:
-                - controls
-                - minimumDemand
-                - scaleDownHeadroomFraction
-                type: object
               evidenceStore:
                 minLength: 1
                 type: string
@@ -244,6 +196,10 @@ spec:
                     maxLength: 1024
                     minLength: 1
                     pattern: '@sha256:'
+                    type: string
+                  nodeName:
+                    maxLength: 253
+                    minLength: 1
                     type: string
                   resources:
                     description: ResourceRequirements describes the compute resource
@@ -324,6 +280,7 @@ spec:
                 required:
                 - barrier
                 - image
+                - nodeName
                 - resources
                 - shards
                 - sourceSHA
@@ -404,61 +361,16 @@ spec:
               question:
                 minLength: 1
                 type: string
+              settingsPatch:
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
               stages:
                 description: Stages is ordered; do not use map-list equality for immutable
                   execution order.
                 items:
-                  description: StageTemplate assembles one child. Control replaces,
-                    never partially merges.
+                  description: StageTemplate assembles one child. A stage settingsPatch
+                    replaces the Run patch.
                   properties:
-                    control:
-                      properties:
-                        controls:
-                          description: EvaluationControls mirrors the scheduler's
-                            named scientific switches.
-                          properties:
-                            batching:
-                              type: boolean
-                            membership:
-                              type: boolean
-                            placement:
-                              type: boolean
-                            power:
-                              type: boolean
-                            replicas:
-                              type: boolean
-                            resources:
-                              type: boolean
-                            routing:
-                              type: boolean
-                          required:
-                          - batching
-                          - membership
-                          - placement
-                          - power
-                          - replicas
-                          - resources
-                          - routing
-                          type: object
-                        minimumDemand:
-                          additionalProperties:
-                            description: EvaluationNonNegative is a finite, nonnegative
-                              scientific input.
-                            minimum: 0
-                            type: number
-                          description: MinimumDemand keys are Workload UIDs, not mutable
-                            names.
-                          maxProperties: 128
-                          type: object
-                        scaleDownHeadroomFraction:
-                          maximum: 1
-                          minimum: 0
-                          type: number
-                      required:
-                      - controls
-                      - minimumDemand
-                      - scaleDownHeadroomFraction
-                      type: object
                     failureInjection:
                       items:
                         description: FaultInjectionPlan belongs to exactly one stage;
@@ -495,7 +407,7 @@ spec:
                                   enum:
                                   - node
                                   - pod
-                                  - instance
+                                  - podUID
                                   type: string
                                 maxItems: 3
                                 minItems: 1
@@ -573,65 +485,17 @@ spec:
                       - name
                       - uid
                       type: object
-                    mode:
-                      enum:
-                      - autonomous
-                      - fixed
-                      - controls-disabled
-                      type: string
                     row:
                       maxLength: 128
                       minLength: 1
                       type: string
-                    startState:
-                      description: EvaluationStartState is external evidence or an
-                        earlier stage's named output.
-                      properties:
-                        evidenceRef:
-                          description: EvaluationEvidenceReference identifies immutable
-                            evidence, never an endpoint.
-                          properties:
-                            key:
-                              maxLength: 1024
-                              minLength: 1
-                              type: string
-                            size:
-                              format: int64
-                              minimum: 1
-                              type: integer
-                            store:
-                              maxLength: 253
-                              minLength: 1
-                              type: string
-                          required:
-                          - key
-                          - size
-                          - store
-                          type: object
-                        stageResultRef:
-                          properties:
-                            output:
-                              maxLength: 128
-                              minLength: 1
-                              type: string
-                            stageID:
-                              maxLength: 63
-                              minLength: 1
-                              type: string
-                          required:
-                          - output
-                          - stageID
-                          type: object
+                    settingsPatch:
                       type: object
-                      x-kubernetes-validations:
-                      - message: exactly one startState reference is required
-                        rule: has(self.evidenceRef) != has(self.stageResultRef)
+                      x-kubernetes-preserve-unknown-fields: true
                   required:
                   - id
                   - loadScenarioRef
-                  - mode
                   - row
-                  - startState
                   type: object
                 maxItems: 128
                 minItems: 1
@@ -642,11 +506,6 @@ spec:
                   components:
                     items:
                       properties:
-                        image:
-                          maxLength: 1024
-                          minLength: 1
-                          pattern: '@sha256:'
-                          type: string
                         name:
                           maxLength: 63
                           minLength: 1
@@ -673,15 +532,9 @@ spec:
                           - name
                           - namespace
                           type: object
-                        sourceSHA:
-                          maxLength: 128
-                          minLength: 1
-                          type: string
                       required:
-                      - image
                       - name
                       - resource
-                      - sourceSHA
                       type: object
                     maxItems: 128
                     minItems: 1
@@ -693,7 +546,6 @@ spec:
                 - components
                 type: object
             required:
-            - control
             - evidenceStore
             - harness
             - judgment

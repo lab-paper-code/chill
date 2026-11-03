@@ -35,7 +35,6 @@ func TestActiveEvaluationProjection(t *testing.T) {
 	}}
 	stage := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: "stage", Namespace: "ns", UID: "stage-uid"}}
 	stage.Spec.StageID = stageID
-	stage.Spec.Mode = api.EvaluationModeFixed
 	stage.Spec.LoadScenarioRef = api.EvaluationObjectReference{Name: "load", UID: "load-uid"}
 	stage.Spec.FailureInjection = []api.FaultInjectionPlan{
 		{ID: "kill", Action: "delete-serving-pod", OffsetSeconds: 12},
@@ -64,7 +63,7 @@ func TestActiveEvaluationProjection(t *testing.T) {
 		t.Fatalf("run=%+v", item)
 	}
 	projected := item.Stage
-	if projected == nil || projected.ID != stageID || projected.Mode != "fixed" ||
+	if projected == nil || projected.ID != stageID ||
 		projected.PlannedSeconds != 300 || !projected.GoAt.Equal(&now) {
 		t.Fatalf("stage=%+v", projected)
 	}

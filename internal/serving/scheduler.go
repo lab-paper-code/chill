@@ -1,11 +1,14 @@
 package serving
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
+	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
@@ -49,6 +52,37 @@ type SchedulerSettings struct {
 	// the search itself ends within half of ControlInterval.
 	PlanSearchWorkers int               `json:"planSearchWorkers"`
 	Controls          SchedulerControls `json:"controls"`
+}
+
+// ValidateSchedulerSettingsPatch applies a public settings merge patch without
+// creating a second evaluator settings schema.
+func ValidateSchedulerSettingsPatch(current SchedulerSettings, patch json.RawMessage) (SchedulerSettings, error) {
+	raw := bytes.TrimSpace(patch)
+	if len(raw) == 0 || len(raw) > 64*1024 || raw[0] != '{' || !json.Valid(raw) {
+		return SchedulerSettings{}, fmt.Errorf("settingsPatch must be a JSON object of at most 65536 bytes")
+	}
+	// Validate the patch too: an unknown key with null would disappear at merge.
+	var partial SchedulerSettingsInput
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&partial); err != nil {
+		return SchedulerSettings{}, err
+	}
+	before, err := json.Marshal(current)
+	if err != nil {
+		return SchedulerSettings{}, err
+	}
+	merged, err := jsonpatch.MergePatch(before, raw)
+	if err != nil {
+		return SchedulerSettings{}, err
+	}
+	var settings SchedulerSettingsInput
+	decoder = json.NewDecoder(bytes.NewReader(merged))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&settings); err != nil {
+		return SchedulerSettings{}, err
+	}
+	return settings.Settings()
 }
 
 // DispatchOccupancy is the measured time per request that an instance of

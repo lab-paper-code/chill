@@ -30,9 +30,9 @@ func TestLoadScenarioWriteAuthorization(t *testing.T) {
 
 func TestEvaluationInputsPaging(t *testing.T) {
 	items := []EvaluationInput{
-		{Key: "a/bundle.json", Set: "a", Kind: "payload"},
-		{Key: "a/seeds.json", Set: "a", Kind: "seed"},
-		{Key: "b/seeds.json", Set: "b", Kind: "seed"},
+		{Key: "a/first", Set: "a", Kind: "trace"},
+		{Key: "a/second", Set: "a", Kind: "trace"},
+		{Key: "b/third", Set: "b", Kind: "trace"},
 	}
 	config := HandlerConfig{ListEvaluationInputs: func(context.Context) (EvaluationInputList, error) {
 		return EvaluationInputList{Items: items}, nil
@@ -44,11 +44,11 @@ func TestEvaluationInputsPaging(t *testing.T) {
 		next                        bool
 	}{
 		{"", 3, 3, 0, 25, false},
-		{"?kind=seed&limit=1", 2, 1, 0, 1, true},
-		{"?kind=seed&limit=1&offset=1", 2, 1, 1, 1, false},
-		{"?kind=seed&offset=2", 2, 0, 2, 25, false},
+		{"?kind=trace&limit=1", 3, 1, 0, 1, true},
+		{"?kind=trace&limit=1&offset=2", 3, 1, 2, 1, false},
+		{"?kind=trace&offset=3", 3, 0, 3, 25, false},
 		{"?offset=9", 3, 0, 9, 25, false},
-		{"?set=a&kind=seed", 1, 1, 0, 25, false},
+		{"?set=a&kind=trace", 2, 2, 0, 25, false},
 		{"?set=missing", 0, 0, 0, 25, false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
@@ -73,7 +73,7 @@ func TestEvaluationInputsPaging(t *testing.T) {
 		})
 	}
 	for _, query := range []string{
-		"kind=unknown", "kind=", "kind=seed&kind=payload", "set=", "set=..", "set=a/b",
+		"kind=unknown", "kind=", "kind=trace&kind=trace", "set=", "set=..", "set=a/b",
 		"limit=0", "limit=51", "offset=-1", "offset=1000001", "offset=x", "unknown=x",
 	} {
 		t.Run(query, func(t *testing.T) {
@@ -91,9 +91,9 @@ func TestEvaluationInputsPaging(t *testing.T) {
 func TestEvaluationInputsWithoutPagingReturnsWholeList(t *testing.T) {
 	items := make([]EvaluationInput, 30)
 	for i := range items {
-		items[i] = EvaluationInput{Kind: "seed", Set: "demo"}
+		items[i] = EvaluationInput{Kind: "trace", Set: "demo"}
 	}
-	for _, query := range []url.Values{{}, {"kind": {"seed"}, "set": {"demo"}}} {
+	for _, query := range []url.Values{{}, {"kind": {"trace"}, "set": {"demo"}}} {
 		got, err := pageEvaluationInputs(EvaluationInputList{Items: items}, query)
 		if err != nil {
 			t.Fatal(err)
