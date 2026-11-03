@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { ApiError, useChillQueries } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { campaignScoreboard, comparisonValidity, decodeExperiment, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentControlLabels, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, object, publishedText, recordedComparisons, stageLoadParts, type Experiment, type ExperimentStage } from "@/lib/experiments"
+import { campaignScoreboard, comparisonValidity, decodeExperiment, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, object, publishedText, recordedComparisons, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts, type Experiment, type ExperimentStage, type Published } from "@/lib/experiments"
 import { formatMeasurementDuration, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
 // Only explicit historical comparison references may request another publication.
@@ -59,25 +59,21 @@ export function ExperimentCoverage({run,runs=[run]}:{run:Experiment;runs?:Experi
 export function ExperimentFacts({run}:{run:Experiment}) {
   const facts=run.facts
   const text=(value:unknown)=>typeof value==="string"||typeof value==="number"||typeof value==="bigint"?String(value):"미기록"
-  const controlRows=(control:unknown):[string,string][]=>{
-    if(!control)return [["제어 정책","미기록"]]
-    const policy=object(control),controls=object(policy.controls)
-    return [
-      ...Object.entries(experimentControlLabels).map(([key,label])=>[label,controls[key]===true?"켬":controls[key]===false?"끔":"미기록"] as [string,string]),
-      ["축소 여유 비율",text(policy.scaleDownHeadroomFraction)],
-      ...(Object.keys(object(policy.minimumDemand)).length?Object.entries(object(policy.minimumDemand)).map(([uid,value])=>[`최소 수요 (req/s) · ${uid}`,text(value)] as [string,string]):[["최소 수요 (req/s)","미기록"] as [string,string]]),
-      ...(Array.isArray(policy.sourceIDs)&&policy.sourceIDs.length?policy.sourceIDs.map(id=>["제어 출처 ID",text(id)] as [string,string]):[["제어 출처 ID","미기록"] as [string,string]]),
-    ]
+  const patchRows=(label:string,patch:Published|undefined):[string,string][]=>{
+    if(patch===undefined)return []
+    const entries=settingsPatchEntries(patch)
+    return entries.length?entries.map(([path,value])=>[`${label} · ${settingsPatchKeyLabel(path)} (${path})`,value===null?"null":publishedText(value)]):[[label,"변경 없음"]]
   }
   const rows:[string,string][]=[
-    ["이름",facts?.name??"미기록"],
-    ["질문",facts?.question??"미기록"],
-    ...controlRows(facts?.control),
+    ["이름",facts?.name??run.definition?.run.name??"미기록"],
+    ["질문",facts?.question??run.definition?.spec.question??"미기록"],
+    ...patchRows("Run 운영 설정 패치",run.definition?.spec.settingsPatch),
+    ...(run.definition?.spec.stages.flatMap(stage=>patchRows(`단계 운영 설정 패치 · ${stage.id}`,stage.settingsPatch))??[]),
     ...(facts?.stages?.length?facts.stages.flatMap(stage=>[
       ["단계 ID",stage.id],
       ["단계 행",stage.row??"미기록"],
       ["단계 정책",definitionPolicy(stage,run)],
-      ...(stage.control?controlRows(stage.control):[]),
+      ["변경 설정 키",Array.isArray(stage.settingsPatchKeys)&&stage.settingsPatchKeys.every(key=>typeof key==="string")?stage.settingsPatchKeys.join(", ")||"변경 없음":"미기록"],
       ["부하 시나리오 이름",text(stage.loadScenarioRef?.name)],
       ["부하 시나리오 UID",text(stage.loadScenarioRef?.uid)],
     ] as [string,string][]):[["단계 정책","미기록"] as [string,string]]),

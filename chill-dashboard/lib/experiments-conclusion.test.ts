@@ -58,11 +58,12 @@ test("R17b: preparation-failure publications retain execution, measurement and c
 })
 
 test("IA: list uses recorded policies but leaves UID and source evidence in detail",()=>{
-  const legacy={...run,id:"control-222-223",comparisons:undefined,facts:{question:"Frozen question",stages:[{id:"candidate",mode:"autonomous",loadScenarioRef:{uid:"load-source"}}]}}
+  const legacy={...run,id:"control-222-223",comparisons:undefined,facts:{question:"Frozen question",stages:[{id:"candidate",settingsPatchKeys:["maxReplicas","future.setting"],loadScenarioRef:{uid:"load-source"}}]}}
   const html=renderToStaticMarkup(createElement(components.ExperimentResultRow,{run:legacy,runs:[legacy],pending:false,error:false}))
   assert.match(html,/>control-222-223<\/a>/)
   assert.doesNotMatch(html,/<details|Frozen question|load-source|aria-label="측정 규칙"|aria-label="계획 부하"/)
-  assert.match(html,/자동 운영/)
+  assert.match(html,/복제 수 상한/)
+  assert.match(html,/future\.setting/)
 })
 
 test("R19: frozen workload definitions remain visible without inventing KPI identity",()=>{
@@ -75,7 +76,7 @@ test("R19: frozen workload definitions remain visible without inventing KPI iden
 })
 
 test("R19: projected list load references are not mislabeled as missing publication data",()=>{
-  const publication={...run,facts:{stages:[{id:"candidate",loadScenarioRef:{uid:"known-load"}}]}}
+  const publication={...run,facts:{stages:[{id:"candidate",settingsPatchKeys:null,loadScenarioRef:{uid:"known-load"}}]}}
   const html=renderToStaticMarkup(createElement(components.ExperimentMetadata,{run:publication,stage:publication.stages[0]}))
   assert.match(html,/목록 미제공/)
   assert.doesNotMatch(html,/<td colSpan="5">미기록<\/td>/)

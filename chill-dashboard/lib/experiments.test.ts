@@ -16,7 +16,7 @@ import * as measurementHelpers from "./measurements.ts"
 import * as icons from "lucide-react"
 
 test("R18: list facts render without per-item detail requests and absent facts stay unrecorded",()=>{
-  const facts={name:"기록된 실험",question:"기록된 질문",control:{sourceIDs:["control-source"],controls:{power:false}},stages:[{id:stage.id,row:"기록 행",mode:"fixed",loadScenarioRef:{name:"시나리오 이름",uid:"load-uid"}},{id:"automatic",mode:"autonomous"},{id:"partial",mode:"controls-disabled",control:{controls:{power:false,routing:true}}}],sloSources:[{name:"camera",uid:"camera",generation:9007199254740993n,slo:{percentile:95,targetLatencyNanos:50000000}},{name:"큰 지연",uid:"large-latency",slo:{percentile:95,targetLatencyNanos:9007199254740993n}}],loadSources:[{name:"기록 부하",uid:"load-uid"}]}
+  const facts={name:"기록된 실험",question:"기록된 질문",stages:[{id:stage.id,row:"기록 행",settingsPatchKeys:["maxReplicas","controls.power","minimumDemand.camera","future.setting"],loadScenarioRef:{name:"시나리오 이름",uid:"load-uid"}},{id:"unchanged",settingsPatchKeys:[]},{id:"unrecorded",settingsPatchKeys:null}],sloSources:[{name:"camera",uid:"camera",generation:9007199254740993n,slo:{percentile:95,targetLatencyNanos:50000000}},{name:"큰 지연",uid:"large-latency",slo:{percentile:95,targetLatencyNanos:9007199254740993n}}],loadSources:[{name:"기록 부하",uid:"load-uid"}]}
   const run=decodeExperiments(publishedText({items:[{...recorded.publication,facts}]})).items[0]
   assert.deepEqual(run.facts,facts)
   assert.equal(run.definition,undefined)
@@ -32,14 +32,19 @@ test("R18: list facts render without per-item detail requests and absent facts s
   exports.useHistoricalExperiments([{...run,comparisons:[{left:{historical:{publicationID:"explicit-history",stageID:"old"}},right:{stageID:stage.id},reason:"기록 비교"}]}])
   assert.deepEqual(paths[2],["v1/experiments/explicit-history"])
   const html=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run}))
-  for(const value of ["기록된 실험","기록된 질문","고정 구성","자동 운영","control-source","기록 부하","load-uid","시나리오 이름","부하 시나리오 이름","부하 시나리오 UID","SLO 출처 이름","SLO 출처 UID",measurementHelpers.formatMeasurementDuration(50000000),measurementHelpers.formatMeasurementDuration(9007199254740993n)])assert.ok(html.includes(value),value)
-  for(const value of ["fixed","autonomous","&quot;controls&quot;","&quot;uid&quot;"])assert.ok(!html.replace(/<[^>]+>/g,"").includes(value),value)
-  assert.match(html,/제어요소 끔 · 전력 · 미기록: 배치, 자원, 복제본, 배칭, 구성원/)
-  assert.match(html,/>라우팅<\/th><td[^>]*>켬<\/td>/)
-  assert.match(html,/>배치<\/th><td[^>]*>미기록<\/td>/)
+  for(const value of ["기록된 실험","기록된 질문","복제 수 상한","전력모드","최소 수요 · camera","future.setting","변경 없음","기록 부하","load-uid","시나리오 이름","부하 시나리오 이름","부하 시나리오 UID","SLO 출처 이름","SLO 출처 UID","maxReplicas","controls.power","minimumDemand.camera",measurementHelpers.formatMeasurementDuration(50000000),measurementHelpers.formatMeasurementDuration(9007199254740993n)])assert.ok(html.includes(value),value)
+  for(const value of ["제어 정책","제어 출처 ID",">전력</th>",">배치</th>","제어요소 끔"])assert.ok(!html.includes(value),value)
   const listHTML=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
-  for(const value of ["기록된 실험","고정 구성"])assert.ok(listHTML.includes(value),value)
-  assert.equal(definitionPolicy(run.stages[0],run),"고정 구성")
+  for(const value of ["기록된 실험","복제 수 상한, 전력모드, 최소 수요 · camera, future.setting","변경 없음","미기록"])assert.ok(listHTML.includes(value),value)
+  assert.equal(definitionPolicy(run.stages[0],run),"복제 수 상한, 전력모드, 최소 수요 · camera, future.setting")
+  const detailed=withDefinition(definedRun([run.stages[0]]),definition=>{definition.spec.settingsPatch={maxReplicas:2};definition.spec.stages[0].settingsPatch={controls:{power:false}}})
+  detailed.facts=run.facts
+  const detailHTML=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run:detailed}))
+  assert.match(detailHTML,/Run 운영 설정 패치/)
+  assert.match(detailHTML,/단계 운영 설정 패치/)
+  assert.ok(detailHTML.includes("maxReplicas"))
+  assert.ok(detailHTML.includes("controls.power"))
+  assert.ok(detailHTML.includes("false"))
   const sloRow=experimentRows({...run.stages[0],kpis:{requests:{camera:{workloadUID:"camera"}}}})[0]
   assert.equal(frozenP95SLO(sloRow,run),null)
   const absent=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run:{...run,facts:undefined}}))
@@ -48,13 +53,14 @@ test("R18: list facts render without per-item detail requests and absent facts s
   assert.ok(absentValues.length>0)
   assert.ok(absentValues.every(value=>value==="미기록"))
 })
-test("R18: partial controls distinguish explicit off from unrecorded",()=>{
-  const run:Experiment={...recorded.publication,facts:{control:{controls:{power:false,routing:true}},stages:[{id:stage.id,mode:"controls-disabled"}]}}
-  assert.equal(definitionPolicy(stage,run),"제어요소 끔 · 전력 · 미기록: 배치, 자원, 복제본, 배칭, 구성원")
-  const absent:Experiment={...run,facts:{stages:[{id:stage.id,mode:"controls-disabled"}]}}
-  assert.equal(definitionPolicy(stage,absent),"미기록")
-  const enabled:Experiment={...run,facts:{control:{controls:{power:true}},stages:[{id:stage.id,mode:"controls-disabled"}]}}
-  assert.equal(definitionPolicy(stage,enabled),"제어요소 · 미기록: 배치, 자원, 복제본, 라우팅, 배칭, 구성원")
+test("R18: settingsPatchKeys distinguish Korean labels, unknown paths, empty, null and missing projections",()=>{
+  const policy=(settingsPatchKeys:unknown,include=true)=>definitionPolicy(stage,decodeExperiments(publishedText({items:[{...recorded.publication,facts:{stages:[{id:stage.id,...(include?{settingsPatchKeys}:{})}]}}]})).items[0])
+  assert.equal(policy(["maxReplicas","controls.routing","autonomousWorkloads","minimumDemand.camera","excludedNodes","future.setting"]),"복제 수 상한, 요청 분배, CHILL 자동 운영 서비스, 최소 수요 · camera, 계획 제외 장비, future.setting")
+  assert.equal(policy([]),"변경 없음")
+  assert.equal(policy(null),"미기록")
+  assert.equal(policy(undefined,false),"미기록")
+  for(const invalid of [["maxReplicas",1],{},false,"maxReplicas"])assert.equal(policy(invalid),"미기록")
+  assert.equal(policy(["future.controls.power"]),"future.controls.power")
 })
 test("IA: closing a shared interval keeps its identity independently from the Sheet",()=>{
   const params=experimentSelection("?a=run&al=historical&as=full-steady-mixed&b=run&bs=static-baseline-steady-mixed",{sheet:"closed"})
@@ -272,15 +278,24 @@ test("definition boundary rejects malformed required downstream fields before an
   }
 })
 
-test("settings patches label recorded changes without inferring policy from stage names",()=>{
+test("settings patches expose recorded key paths with facts present and inherit only absent stage patches",()=>{
   const run=withDefinition(definedRun([{...stage,id:"full-e5-1"},{...stage,id:"static-e5-1"},{...stage,id:"switches"}]),d=>{
     d.spec.stages[2].settingsPatch={controls:{power:false}}
   })
-  assert.equal(definitionPolicy(run.stages[0],run),"CHILL 자율 운영")
-  assert.equal(definitionPolicy(run.stages[1],run),"CHILL 자율 운영")
-  assert.equal(definitionPolicy(run.stages[2],run),"운영 설정 변경")
+  assert.equal(definitionPolicy(run.stages[0],run),"변경 없음")
+  assert.equal(definitionPolicy(run.stages[1],run),"변경 없음")
+  assert.equal(definitionPolicy(run.stages[2],run),"전력모드")
   const global=withDefinition(run,d=>{d.spec.settingsPatch={controls:{routing:false}}})
-  assert.equal(definitionPolicy(global.stages[0],global),"운영 설정 변경")
+  assert.equal(definitionPolicy(global.stages[0],global),"요청 분배")
+  assert.equal(definitionPolicy(global.stages[2],global),"전력모드")
+  const empty=withDefinition(global,d=>{d.spec.stages[0].settingsPatch={}})
+  assert.equal(definitionPolicy(empty.stages[0],empty),"변경 없음")
+  const detailed=decodeExperiment(publishedText({...global,facts:{name:"목록 사실",stages:[{id:global.stages[0].id,settingsPatchKeys:["controls.routing"]},{id:global.stages[2].id,settingsPatchKeys:["controls.power"]}]}}))
+  assert.equal(definitionPolicy(detailed.stages[0],detailed),"요청 분배")
+  assert.equal(definitionPolicy(detailed.stages[2],detailed),"전력모드")
+  const projected=decodeExperiment(publishedText({...global,facts:{stages:[{id:global.stages[0].id,settingsPatchKeys:[]},{id:global.stages[2].id,settingsPatchKeys:null}]}}))
+  assert.equal(definitionPolicy(projected.stages[0],projected),"변경 없음")
+  assert.equal(definitionPolicy(projected.stages[2],projected),"미기록")
 })
 
 test("row rename and declaration reordering preserve id-only stage and comparison joins",()=>{
@@ -291,7 +306,7 @@ test("row rename and declaration reordering preserve id-only stage and compariso
     d.spec.stages.reverse()
   })
   assert.equal(definitionStage(renamed,renamed.stages[0])?.row,"접미사 없는 새 표시 이름")
-  assert.equal(stageLabel(renamed.stages[0],renamed),"candidate / 접미사 없는 새 표시 이름 / CHILL 자율 운영")
+  assert.equal(stageLabel(renamed.stages[0],renamed),"candidate / 접미사 없는 새 표시 이름 / 변경 없음")
   assert.deepEqual(definitionComparisons(renamed).map(pair=>[pair.chill.id,pair.control.id]),[["candidate","baseline"]])
   assert.equal(definitionStage(renamed,{...renamed.stages[0],id:"접미사 없는 새 표시 이름"}),undefined)
   assert.equal(definitionPolicy({...renamed.stages[0],id:"unlisted"},renamed),"미기록")
@@ -360,9 +375,9 @@ test("historical comparisons join publication ID and stage ID and carry both def
   assert.equal(heatmap.energyPercent,-10)
   const chart=experimentChartData(run,"camera",runs)[0]
   assert.deepEqual([chart.leftP95,chart.rightP95,chart.leftSLO,chart.rightSLO],[20,10,50,80])
-  assert.match(chart.leftLabel,/운영 설정 변경/)
+  assert.match(chart.leftLabel,/전력모드/)
   assert.equal(typeof chart.rightLabel,"string")
-  assert.match(chart.rightLabel!,/CHILL 자율 운영/)
+  assert.match(chart.rightLabel!,/변경 없음/)
   for(const unavailable of [[run],[run,decoy],[run,{...historical,stages:[]}],[run,historical,historical]]) {
     assert.deepEqual(definitionComparisons(run,unavailable),[])
     assert.deepEqual(definitionComparisons(run,unavailable),[])
@@ -1029,7 +1044,7 @@ test("R18: solo measured values, SLO verdict and frozen metadata render real obj
   new Function("require","exports",compiled)((name:string)=>name==="@/lib/experiments"?experimentHelpers:name==="@/lib/measurements"?measurementHelpers:name==="@/lib/client"?{useChillQueries:()=>[{data:run,isPending:false}]}:name==="@/components/ui/button"?{Button:(props:Record<string,unknown>)=>createElement("button",props)}:name==="next/link"?{__esModule:true,default:(props:Record<string,unknown>)=>createElement("a",props)}:require(name),exports)
   const listed={...run,definition:undefined,comparisons:[]}
   const markup=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
-  assert.match(markup,/CHILL 자율 운영/)
+  assert.match(markup,/변경 없음/)
   assert.doesNotMatch(markup,/단계별 원값|54,777|<table/)
   assert.match(markup,/SLO 미충족/)
   assert.doesNotMatch(markup,/측정 실패|53\.075340806062236|에너지 Δ/)
@@ -1083,7 +1098,7 @@ test("R18 review: interval Sheet renders each stage policy and service SLO only 
   const run=definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/2/preprocessor/3",identitySource:evidenceRef,offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}}])
   const Drawer=features.IntervalDrawer as ComponentType<{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow;service:string;onClose:()=>void;restoreFocus:()=>void}>
   const markup=renderToStaticMarkup(createElement(Drawer,{run,runs:[run],row:experimentHeatmap(run)[0],service:"",onClose:()=>{},restoreFocus:()=>{}}))
-  assert.equal((markup.match(/CHILL 자율 운영/g)??[]).length,1)
+  assert.equal((markup.match(/변경 없음/g)??[]).length,1)
   assert.match(markup,new RegExp(measurementHelpers.formatMeasurementNumber(50,"ms")))
   assert.match(markup,/적용 SLO p95/)
   assert.match(markup,/서비스 식별자·정의/)

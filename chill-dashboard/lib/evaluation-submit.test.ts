@@ -363,7 +363,7 @@ test("blackbox preflight displays observed ready targets without changing copied
   const {EvaluationSubmit}=loadUI("../features/evaluation-request.tsx",{
     react:runner.react,"@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>({refetch:async()=>({})})},
   })
-  const render=()=>{mutationIndex=0;return elements(runner.render(EvaluationSubmit,{name:"run",spec}))}
+  const render=()=>{mutationIndex=0;const tree=elements(runner.render(EvaluationSubmit,{name:"run",spec}));return tree.flatMap(item=>item.props.title==="현재 외부 대상"?elements((item.type as (props:Record<string,unknown>)=>unknown)(item.props)):[item])}
   let tree=render()
   ;(tree.find(item=>item.props.children==="사전 점검")!.props.onClick as ()=>void)()
   tree=render()
@@ -378,4 +378,27 @@ test("blackbox preflight displays observed ready targets without changing copied
   assert.ok(submitted&&typeof submitted==="object"&&"body" in submitted&&typeof submitted.body==="string")
   assert.deepEqual(spec,original)
   assert.deepEqual(JSON.parse(submitted.body),{name:"run",spec})
+})
+
+test("execution detail displays only recorded CHILL targets and marks missing observations",()=>{
+  const runner=hookRunner(),targets=[{component:"scheduler",resource:{apiVersion:"apps/v1",kind:"Deployment",namespace:"research",name:"chill-scheduler"},liveImageIDs:["runtime@sha256:recorded"],ready:false}]
+  let run={name:"run",uid:"uid",phase:"Running",spec:{},liveTarget:targets as typeof targets|null}
+  const {EvaluationRunPage}=loadUI("../features/evaluation-request.tsx",{
+    react:runner.react,"next/navigation":{useSearchParams:()=>new URLSearchParams("uid=uid"),useRouter:()=>({replace:()=>{}})},
+    "@/lib/client":{useChillQuery:()=>({data:run}),useChillMutation:()=>({})},
+  })
+  const render=()=>{
+    const tree=elements(runner.render(EvaluationRunPage,{name:"run"}))
+    const targetView=tree.find(item=>item.props.title==="평가 대상 CHILL")!
+    assert.ok(targetView,"recorded target surface must exist")
+    return elements((targetView.type as (props:Record<string,unknown>)=>unknown)(targetView.props))
+  }
+  let tree=render(),text=tree.flatMap(item=>item.props.children).filter(value=>typeof value==="string").join(" ")
+  assert.match(text,/runtime@sha256:recorded/)
+  assert.match(text,/준비 대기/)
+  assert.ok(tree.some(item=>item.type==="table"))
+  run={...run,liveTarget:null}
+  tree=render();text=tree.flatMap(item=>item.props.children).filter(value=>typeof value==="string").join(" ")
+  assert.match(text,/미기록/)
+  assert.equal(tree.some(item=>item.type==="table"),false)
 })

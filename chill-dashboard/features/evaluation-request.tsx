@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
-import { evaluationActions, evaluationCanSubmit, evaluationOperation, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec, type EvaluationSpec } from "@/lib/evaluation-request"
+import { evaluationActions, evaluationCanSubmit, evaluationOperation, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec, type EvaluationSpec, type EvaluationLiveTarget } from "@/lib/evaluation-request"
 import { decodeExperiment, experimentPath, type Experiment, type OutcomeAxis } from "@/lib/experiments"
 import { evaluationReplacement } from "@/lib/evaluation-author"
 import { formatMeasurementTime } from "@/lib/measurements"
@@ -18,7 +18,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen } from "@/components/screen"
 
-type Run = {name:string;uid:string;spec:EvaluationSpec;phase:string;conditions?:{type:string;status:string;reason?:string}[];currentStage?:unknown;startedAt?:string;finishedAt?:string;publicationID?:string}
+type Run = {name:string;uid:string;spec:EvaluationSpec;liveTarget?:EvaluationLiveTarget[]|null;phase:string;conditions?:{type:string;status:string;reason?:string}[];currentStage?:unknown;startedAt?:string;finishedAt?:string;publicationID?:string}
 type Created = {name:string;uid:string}
 const encode=(value:unknown)=>stringifySchedulerJSON(value)
 const phases:Record<string,string>={Pending:"시작 전",Running:"실행 중",Finishing:"정리 중",Done:"종료",Blocked:"정리 실패"}
@@ -39,6 +39,10 @@ export function EvaluationPermission({denied=false}:{denied?:boolean}) {
   return <dl aria-label="실험 작업 권한" className="flex flex-wrap gap-x-4 gap-y-1 text-xs"><div className="flex gap-2"><dt>필요 권한</dt><dd>평가 운영자</dd></div><div className="flex gap-2"><dt>현재 권한</dt><dd className={denied?"text-destructive":"text-muted-foreground"}>{denied?"권한 없음":"미확인"}</dd></div></dl>
 }
 
+
+function EvaluationTargets({targets,title}:{targets?:EvaluationLiveTarget[]|null;title:string}) {
+  return <section aria-label={title} className="space-y-2"><h3 className="text-sm font-medium">{title}</h3>{targets==null?<span className="text-sm">미기록</span>:<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>구성요소</th><th>자원</th><th>관측 이미지 ID</th><th>준비</th></tr></thead><tbody>{targets.map((target,index)=><tr key={`${target.component}/${index}`} className="border-t"><th className="py-2 font-normal">{target.component}</th><td title={`${target.resource.apiVersion} · ${target.resource.namespace}`}>{target.resource.kind}/{target.resource.name}</td><td className="break-all">{target.liveImageIDs.length?target.liveImageIDs.join(", "):"미제공"}</td><td>{target.ready?"준비됨":"준비 대기"}</td></tr>)}{!targets.length&&<tr><td colSpan={4}>대상 없음</td></tr>}</tbody></table></div>}</section>
+}
 export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}:{name:string;spec:EvaluationSpec;disabled?:boolean;existing?:Created;onSubmitted?:(value:Created)=>void}) {
   const pre=useChillMutation(),send=useChillMutation(),cache=useQueryClient()
   const [checkedBody,setCheckedBody]=React.useState(""),[unknown,setUnknown]=React.useState(false),[created,setCreated]=React.useState<Created|null>(null)
@@ -86,7 +90,7 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}
   }
   return <div className="space-y-3">
     {answer&&<table className="w-full text-left text-sm"><thead><tr><th>검사</th><th>상태</th><th>사유</th></tr></thead><tbody>{answer.checks.map((check,index)=><tr key={`${check.id}/${index}`} className="border-t"><th className="py-2 font-normal">{check.id}</th><td>{check.passed?"통과":"실패"}</td><td>{check.reason??"미기록"}</td></tr>)}</tbody></table>}
-    {!!answer?.liveTarget?.length&&<div className="overflow-x-auto"><table aria-label="현재 외부 대상" className="w-full text-left text-sm"><thead><tr><th>구성요소</th><th>자원</th><th>현재 이미지 ID</th><th>준비</th></tr></thead><tbody>{answer.liveTarget.map((target,index)=><tr key={`${target.component}/${index}`} className="border-t"><th className="py-2 font-normal">{target.component}</th><td title={`${target.resource.apiVersion} · ${target.resource.namespace}`}>{target.resource.kind}/{target.resource.name}</td><td className="break-all">{target.liveImageIDs.length?target.liveImageIDs.join(", "):"미제공"}</td><td>{target.ready?"준비됨":"준비 대기"}</td></tr>)}</tbody></table></div>}
+    {!!answer?.liveTarget?.length&&<EvaluationTargets title="현재 외부 대상" targets={answer.liveTarget}/>}
     {pre.data&&checkedBody===body&&!answer&&<strong role="alert">점검 응답 형식 오류</strong>}
     <Failure error={pre.error}/><Failure error={send.error}/>
     {replacement&&<strong role="status">{replacement==="deleted"?"삭제됨·재생성 필요":replacement==="unchanged"?"미변경":replacement==="blocked"?"중지 후 다시 실행":"결과 미확인"}</strong>}
@@ -166,11 +170,12 @@ export function EvaluationRunPage({name}:{name:string}) {
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">{[["실행 상태",phases[run.phase]??"미확인"],["현재 단계",typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"],["시작 (KST)",run.startedAt?formatMeasurementTime(run.startedAt):"미기록"],["종료 (KST)",run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"]].map(([label,value])=><div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
       </section>
       <section aria-label="단계 진행·주입" className="space-y-3">
-        <div className="max-h-56 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>순서</th><th>단계</th><th>운영 설정</th><th>현재 단계</th></tr></thead><tbody>{stages.map((value,index)=>{const stage=value&&typeof value==="object"?value as Record<string,unknown>:{},id=typeof stage.id==="string"?stage.id:"미기록";return <tr key={index} className="border-t"><td className="py-2">{index+1}</td><th className="break-all font-normal">{id}</th><td>{stage.settingsPatch?"단계 변경":run.spec.settingsPatch?"실험 변경":"기본"}</td><td>{id===run.currentStage?"현재":"—"}</td></tr>})}{!stages.length&&<tr><td colSpan={4}>단계 미기록</td></tr>}</tbody></table></div>
+        <div className="max-h-56 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>순서</th><th>단계</th><th>운영 설정</th><th>현재 단계</th></tr></thead><tbody>{stages.map((value,index)=>{const stage=value&&typeof value==="object"?value as Record<string,unknown>:{},id=typeof stage.id==="string"?stage.id:"미기록",patch=stage.settingsPatch===undefined?run.spec.settingsPatch:stage.settingsPatch;return <tr key={index} className="border-t"><td className="py-2">{index+1}</td><th className="break-all font-normal">{id}</th><td>{patch&&typeof patch==="object"&&Object.keys(patch).length?"변경":"변경 없음"}</td><td>{id===run.currentStage?"현재":"—"}</td></tr>})}{!stages.length&&<tr><td colSpan={4}>단계 미기록</td></tr>}</tbody></table></div>
         <EvaluationActive key={run.uid} name={name} uid={uid||run.uid} now={now} controls={false}/>
       </section>
       <section aria-label="실행 조건·풀 상태" className="space-y-3">
         <table className="w-full text-left text-sm"><thead><tr><th>조건</th><th>상태</th><th>사유</th></tr></thead><tbody>{run.conditions?.map((condition,index)=><tr key={`${condition.type}/${index}`} className="border-t"><th className="py-2 font-normal">{conditionLabels[condition.type]??"기타 조건"}</th><td>{condition.type==="PoolAcquired"?(condition.status==="True"?"점유 중":condition.status==="False"?"반환 관측":"미확인"):condition.status==="True"?"충족":condition.status==="False"?"미충족":"미확인"}</td><td>{condition.reason?conditionReasons[condition.reason]??"원문 확인":"미기록"}</td></tr>)}</tbody></table>
+        <EvaluationTargets title="평가 대상 CHILL" targets={run.liveTarget}/>
         {evaluationActions(run.phase).release&&<BlockedCleanup key={run.uid} run={run}/>}
         <details><summary className="min-h-11 cursor-pointer py-3 text-sm">정의·상태 원문</summary><SourceJSON inline title="상태 원문" value={run.conditions}/><SourceJSON inline title="현재 단계 원문" value={run.currentStage}/><SourceJSON inline title="실험 정의 원문" value={run.spec}/></details>
       </section>

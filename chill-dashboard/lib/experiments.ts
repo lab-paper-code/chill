@@ -2,13 +2,14 @@ import type { SchedulerObservation, SchedulerObservationPage } from "./read-type
 import { parseSchedulerJSON, stringifySchedulerJSON } from "./scheduler.ts"
 import { evaluationDefinition, evaluationComparisons, type EvaluationComparison, type EvaluationDefinition, type ComparisonReference } from "./evaluation-definition.ts"
 import { formatMeasurementNumber } from "./measurements.ts"
+import { settingControls, settingFields, settingTargets } from "./scheduler-settings.ts"
 
 export type Published = Record<string, unknown>
 export type ExperimentStage = {id:string;from:string;to:string;kpis:Published}
 export type OutcomeAxis = {status?:string;verdict?:string;reason?:string;residuals?:{kind:string;name:string;reason:string}[]}
 export type InjectionOutcome = {id:string;action?:string;outcome?:"Executed"|"Cancelled"|"Invalid";reason?:string;scheduledOffsetSeconds?:number;actualOffsetSeconds?:number}
 export type ExperimentOutcome = {execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;stages?:{id:string;execution?:OutcomeAxis;measurement?:OutcomeAxis;cleanup?:OutcomeAxis;injections?:InjectionOutcome[]}[]}
-export type ExperimentFacts = {name?:string;question?:string;control?:Published;stages?:{id:string;row?:string;mode?:string;control?:Published;loadScenarioRef?:Published}[];sloSources?:{name:string;uid:string;generation?:unknown;slo?:Published}[];loadSources?:{name:string;uid:string}[]}
+export type ExperimentFacts = {name?:string;question?:string;stages?:{id:string;row?:string;settingsPatchKeys?:string[]|null;loadScenarioRef?:Published}[];sloSources?:{name:string;uid:string;generation?:unknown;slo?:Published}[];loadSources?:{name:string;uid:string}[]}
 export type Experiment = {schemaVersion:string;id:string;from:string;to:string;status:string;stages:ExperimentStage[];sources:{store:string;key:string}[];facts?:ExperimentFacts;definition?:EvaluationDefinition;comparisons?:EvaluationComparison[];outcome?:ExperimentOutcome}
 export function decodeExperiment(text:string):Experiment {
   return readExperiment(parseSchedulerJSON(text))
@@ -225,26 +226,31 @@ export function definitionStage(run:Experiment,stage:Pick<ExperimentStage,"id">)
   if(run.stages.filter(s=>s.id===stage.id).length!==1)return undefined
   return run.definition?.spec.stages.find(s=>s.id===stage.id)
 }
-export const experimentControlLabels={placement:"배치",resources:"자원",replicas:"복제본",routing:"라우팅",batching:"배칭",power:"전력",membership:"구성원"}
+export function settingsPatchKeyLabel(path:string):string {
+  const field=settingFields.find(field=>field.key===path)??settingTargets.find(field=>field.key===path)
+  if(field)return field.label
+  const control=settingControls.find(control=>`controls.${control.key}`===path)
+  if(control)return control.label
+  const demand=settingTargets.find(field=>field.key==="minimumDemand")!
+  return path.startsWith("minimumDemand.")?`${demand.label} · ${path.slice("minimumDemand.".length)}`:path
+}
+export function settingsPatchEntries(patch:Published,prefix=""):[string,unknown][] {
+  return Object.entries(patch).sort(([a],[b])=>a.localeCompare(b)).flatMap(([key,value])=>{
+    const path=prefix?`${prefix}.${key}`:key
+    return Object.keys(object(value)).length?settingsPatchEntries(object(value),path):[[path,value] as [string,unknown]]
+  })
+}
 export function definitionPolicy(stage:Pick<ExperimentStage,"id">,run:Experiment):string {
-  if(!run.facts){
+  let keys:string[]|null|undefined
+  if(run.facts){
+    const matches=run.facts.stages?.filter(item=>item.id===stage.id)
+    keys=matches?.length===1?matches[0].settingsPatchKeys:undefined
+  }else{
     const spec=definitionStage(run,stage)
-    if(!spec)return "미기록"
-    return spec.settingsPatch!==undefined||run.definition?.spec.settingsPatch!==undefined?"운영 설정 변경":"CHILL 자율 운영"
+    if(spec)keys=settingsPatchEntries(spec.settingsPatch??run.definition?.spec.settingsPatch??{}).map(([key])=>key)
   }
-  const matches=run.facts.stages?.filter(item=>item.id===stage.id)
-  const spec=matches?.length===1?matches[0]:undefined
-  if(!spec)return "미기록"
-  if(spec.mode==="autonomous")return "자동 운영"
-  if(spec.mode==="fixed")return "고정 구성"
-  if(spec.mode!=="controls-disabled")return "미기록"
-  const control=spec.control??run.facts.control
-  if(!control)return "미기록"
-  const controls=object(control.controls)
-  const disabled=Object.entries(experimentControlLabels).filter(([key])=>controls[key]===false).map(([,label])=>label)
-  const missing=Object.entries(experimentControlLabels).filter(([key])=>typeof controls[key]!=="boolean").map(([,label])=>label)
-  const label=disabled.length?`제어요소 끔 · ${disabled.join(", ")}`:"제어요소"
-  return `${label}${missing.length?` · 미기록: ${missing.join(", ")}`:disabled.length?"":" · 모두 켬"}`
+  if(!Array.isArray(keys)||!keys.every(key=>typeof key==="string"))return "미기록"
+  return keys.length?keys.map(settingsPatchKeyLabel).join(", "):"변경 없음"
 }
 export function stageLabel(stage:ExperimentStage,run:Experiment):string {
   const spec=definitionStage(run,stage)
