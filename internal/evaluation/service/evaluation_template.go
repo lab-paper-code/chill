@@ -1,11 +1,10 @@
-package main
+package service
 
 import (
 	"context"
 	"encoding/json"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	appsv1 "k8s.io/api/apps/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -16,34 +15,30 @@ const (
 	templateSourceNone        = "none"
 )
 
-func (s *evaluationService) template(ctx context.Context) (httpapi.EvaluationTemplate, error) {
-	result := httpapi.EvaluationTemplate{Sources: map[string]string{
+func (s *Service) Template(ctx context.Context, store string, publications []PublicationDefinition) (EvaluationTemplate, error) {
+	result := EvaluationTemplate{Sources: map[string]string{
 		"target": templateSourceNone, "powerMeasurement": templateSourceNone, "evidenceStore": "config",
 		"harness": templateSourceNone, "loadGenerator": templateSourceNone,
 		"judgment": templateSourceNone, "settingsPatch": templateSourceNone,
 	}}
-	result.Spec.EvidenceStore = s.store
-	publications, err := s.experiments.listSummaries(ctx)
-	if err != nil {
-		return result, err
-	}
-	for _, publication := range publications.Items {
+	result.Spec.EvidenceStore = store
+	for _, publication := range publications {
 		if len(publication.Definition) == 0 {
 			continue
 		}
 		var definition struct {
-			Run  httpapi.EvaluationIdentity `json:"run"`
-			Spec api.EvaluationRunSpec      `json:"spec"`
+			Run  EvaluationIdentity    `json:"run"`
+			Spec api.EvaluationRunSpec `json:"spec"`
 		}
 		if err := json.Unmarshal(publication.Definition, &definition); err != nil {
 			return result, err
 		}
 		result.Spec = definition.Spec
-		result.Spec.EvidenceStore = s.store
+		result.Spec.EvidenceStore = store
 		for _, key := range []string{"harness", "loadGenerator", "judgment", "settingsPatch"} {
 			result.Sources[key] = templateSourcePublication
 		}
-		result.SourcePublication = &httpapi.EvaluationIdentity{UID: publication.ID, Name: definition.Run.Name}
+		result.SourcePublication = &EvaluationIdentity{UID: publication.ID, Name: definition.Run.Name}
 		break
 	}
 	if len(result.Spec.Target.Components) == 0 {

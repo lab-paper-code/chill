@@ -13,6 +13,7 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	evaluation "github.com/lab-paper-code/chill/internal/evaluation/service"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -193,21 +194,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	handlerConfig.ListExperiments = experiments.list
 	handlerConfig.GetExperiment = experiments.get
-	evaluations := &evaluationService{
-		reader: store.Client(), client: store.Client(), namespace: opts.servingNamespace,
-		store: opts.storeName, experiments: experiments,
-	}
-	configureEvaluationHandlers(&handlerConfig, evaluations, scheduler)
-	evaluationLoads := &evaluationLoadService{
-		client: store.Client(), namespace: opts.servingNamespace, evidence: objects,
-	}
-	handlerConfig.ListLoadScenarios = evaluationLoads.list
-	handlerConfig.GetLoadScenario = evaluationLoads.get
-	handlerConfig.PreflightLoadScenario = evaluationLoads.preflight
-	handlerConfig.CreateLoadScenario = evaluationLoads.create
-	handlerConfig.ReplaceLoadScenario = evaluationLoads.replace
-	handlerConfig.DeleteLoadScenario = evaluationLoads.delete
-	handlerConfig.ListEvaluationInputs = evaluationLoads.inputs
+	evaluations := evaluation.New(store.Client(), store.Client(), opts.servingNamespace, evaluationSettings(scheduler))
+	httpapi.ConfigureEvaluations(&handlerConfig, evaluations)
+	configureEvaluationTemplate(&handlerConfig, evaluations, opts.storeName, experiments)
+	evaluationLoads := evaluation.NewLoadService(store.Client(), opts.servingNamespace, objects)
+	httpapi.ConfigureLoadScenarios(&handlerConfig, evaluationLoads)
 	handler, err := httpapi.NewHandler(manager, execution, authorizer, observationLog, observer, handlerConfig)
 	if err != nil {
 		return err
@@ -229,21 +220,6 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return composeChillServer(handler, authorizer, opts, measurements)
 	}
 	return serve(ctx, opts, warming, execution, observer, manager, observationLog, scheduler, diagnostics, initialize)
-}
-
-func configureEvaluationHandlers(
-	config *httpapi.HandlerConfig, evaluations *evaluationService, scheduler *schedulerService,
-) {
-	evaluations.settings = evaluationSettings(scheduler)
-	config.ListActiveEvaluations = evaluations.listActive
-	config.ListEvaluations = evaluations.list
-	config.GetEvaluation = evaluations.get
-	config.PreflightEvaluation = evaluations.preflight
-	config.CreateEvaluation = evaluations.create
-	config.ReplaceEvaluation = evaluations.replace
-	config.DeleteEvaluation = evaluations.delete
-	config.ReleaseEvaluation = evaluations.release
-	config.GetEvaluationTemplate = evaluations.template
 }
 
 // Health and the dashboard remain reachable while state-dependent APIs warm.

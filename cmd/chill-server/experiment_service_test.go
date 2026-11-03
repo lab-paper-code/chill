@@ -420,7 +420,7 @@ func assertPublicationFields(
 }
 
 func TestPublicationSummaryConcurrentS3ReadsAreRequestScoped(t *testing.T) {
-	evaluations, request := evaluationFixture(t)
+	evaluations, request := evaluationFixture(t, nil)
 	from := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 	older := experimentFixture("older", from)
 	definition, err := json.Marshal(struct {
@@ -447,10 +447,11 @@ func TestPublicationSummaryConcurrentS3ReadsAreRequestScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evaluations.experiments = &experimentService{
+	experiments := &experimentService{
 		reader: storage, lister: storage, store: "evidence", maxBytes: 1 << 20,
 	}
-	evaluations.store = "evidence"
+	var config httpapi.HandlerConfig
+	configureEvaluationTemplate(&config, evaluations, "evidence", experiments)
 
 	const pairs = 8
 	start := make(chan struct{})
@@ -461,10 +462,10 @@ func TestPublicationSummaryConcurrentS3ReadsAreRequestScoped(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			result, err := evaluations.template(context.Background())
+			result, err := config.GetEvaluationTemplate(context.Background())
 			if err != nil {
 				failures <- err
-			} else if result.Sources["harness"] != templateSourcePublication ||
+			} else if result.Sources["harness"] != "latestPublication" ||
 				result.SourcePublication == nil || result.SourcePublication.UID != older.ID ||
 				result.Spec.Question != request.Spec.Question {
 				failures <- fmt.Errorf("template lost its publication definition: %+v", result)
@@ -473,7 +474,7 @@ func TestPublicationSummaryConcurrentS3ReadsAreRequestScoped(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			<-start
-			result, err := evaluations.experiments.list(context.Background())
+			result, err := experiments.list(context.Background())
 			if err != nil {
 				failures <- err
 			} else if len(result.Items) != 2 || result.Items[0].ID != newest.ID ||
@@ -508,8 +509,8 @@ func TestPublicationSummaryConcurrentS3ReadsAreRequestScoped(t *testing.T) {
 	mu.Lock()
 	freshKey := objects.add(t, fresh)
 	mu.Unlock()
-	result, err := evaluations.template(context.Background())
-	if err != nil || result.Sources["harness"] != templateSourcePublication ||
+	result, err := config.GetEvaluationTemplate(context.Background())
+	if err != nil || result.Sources["harness"] != "latestPublication" ||
 		result.SourcePublication == nil || result.SourcePublication.UID != fresh.ID ||
 		result.Spec.Question != request.Spec.Question {
 		t.Fatalf("new publication hidden by request reuse: result=%+v err=%v", result, err)

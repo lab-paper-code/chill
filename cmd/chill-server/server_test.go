@@ -228,11 +228,11 @@ func TestEvaluationAssemblyResolvesLateSchedulerController(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(scheduler.Close)
-	evaluations, request := evaluationFixture(t)
+	evaluations, request := evaluationFixture(t, evaluationSettings(scheduler))
 	var config httpapi.HandlerConfig
 	// Use the server's assembly before scheduler initialization, not a
 	// separately injected ready handler or a captured controller method.
-	configureEvaluationHandlers(&config, evaluations, scheduler)
+	httpapi.ConfigureEvaluations(&config, evaluations)
 	if scheduler.controller != nil {
 		t.Fatal("controller was initialized before server assembly")
 	}
@@ -277,7 +277,8 @@ func TestEvaluationAssemblyResolvesLateSchedulerController(t *testing.T) {
 	if !foundPatch {
 		t.Fatal("assembled handler did not validate patch with the late controller")
 	}
-	configureEvaluationHandlers(&config, evaluations, nil)
+	evaluations, request = evaluationFixture(t, evaluationSettings(nil))
+	httpapi.ConfigureEvaluations(&config, evaluations)
 	_, err = config.PreflightEvaluation(ctx, request)
 	var warming *serving.Error
 	if !errors.As(err, &warming) || warming.Code != warmingCode {

@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"context"
@@ -18,9 +18,9 @@ func TestActiveEvaluationProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := fake.NewClientBuilder().WithScheme(scheme).Build()
-	service := evaluationService{reader: native}
-	empty, err := service.listActive(context.Background())
-	if err != nil || empty.Items == nil || len(empty.Items) != 0 {
+	service := Service{reader: native}
+	empty, err := service.ListActive(context.Background())
+	if err != nil || len(empty) != 0 {
 		t.Fatalf("empty=%+v err=%v", empty, err)
 	}
 	now := metav1.NewTime(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC))
@@ -53,11 +53,11 @@ func TestActiveEvaluationProjection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result, err := service.listActive(context.Background())
-	if err != nil || len(result.Items) != 1 {
+	result, err := service.ListActive(context.Background())
+	if err != nil || len(result) != 1 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	item := result.Items[0]
+	item := result[0]
 	if item.Name != "run" || item.UID != "run-uid" || item.StageIndex != 2 || item.StagesTotal != 2 ||
 		!item.StartedAt.Equal(&now) {
 		t.Fatalf("run=%+v", item)

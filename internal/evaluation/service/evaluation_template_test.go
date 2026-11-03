@@ -1,17 +1,16 @@
-package main
+package service
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 )
 
 func TestEvaluationTemplateSourcesAndExternalTarget(t *testing.T) {
 	service, request := evaluationFixture(t)
-	summary := experimentFixture("latest", time.Now().UTC())
+	summary := PublicationDefinition{ID: "latest"}
 	definition, err := json.Marshal(struct {
 		Spec any               `json:"spec"`
 		Run  map[string]string `json:"run"`
@@ -20,11 +19,7 @@ func TestEvaluationTemplateSourcesAndExternalTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary.Definition = definition
-	objects := &experimentMemoryStore{}
-	objects.add(t, summary)
-	service.experiments = &experimentService{reader: objects, lister: objects, store: "evidence", maxBytes: 1 << 20}
-	service.store = "configured-store"
-	result, err := service.template(context.Background())
+	result, err := service.Template(context.Background(), "configured-store", []PublicationDefinition{summary})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,9 +48,7 @@ func TestEvaluationTemplateWithoutPublication(t *testing.T) {
 	if err := appsv1.AddToScheme(service.client.Scheme()); err != nil {
 		t.Fatal(err)
 	}
-	objects := &experimentMemoryStore{}
-	service.experiments = &experimentService{reader: objects, lister: objects, store: "evidence", maxBytes: 1 << 20}
-	result, err := service.template(context.Background())
+	result, err := service.Template(context.Background(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
