@@ -45,6 +45,10 @@ func evaluationView(run *api.EvaluationRun) httpapi.EvaluationView {
 		Conditions: run.Status.Conditions, CurrentStage: run.Status.CurrentStage,
 		StartedAt: run.Status.StartedAt, FinishedAt: run.Status.FinishedAt,
 	}
+	var liveTarget []httpapi.EvaluationLiveTarget
+	if json.Unmarshal([]byte(run.Annotations["edge.dacs.io/evaluation-live-target"]), &liveTarget) == nil {
+		value.LiveTarget = liveTarget
+	}
 	if meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
 		value.PublicationID = string(run.UID)
 	}

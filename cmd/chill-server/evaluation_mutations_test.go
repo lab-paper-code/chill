@@ -228,7 +228,7 @@ func TestEvaluationViewFlattensStatus(t *testing.T) {
 		if err := json.Unmarshal(body, &fields); err != nil {
 			t.Fatal(err)
 		}
-		for _, key := range []string{"conditions", "currentStage", "startedAt", "finishedAt"} {
+		for _, key := range []string{"conditions", "currentStage", "startedAt", "finishedAt", "liveTarget"} {
 			if len(fields[key]) == 0 {
 				t.Fatalf("missing top-level %s: %s", key, body)
 			}
@@ -314,5 +314,37 @@ func TestEvaluationRecordsObservedTargetWithoutImageGate(t *testing.T) {
 	}
 	if len(recorded) != 1 || !recorded[0].Ready || recorded[0].LiveImageIDs[0] != "another/runtime@sha256:observed" {
 		t.Fatalf("record=%+v", recorded)
+	}
+}
+
+func TestEvaluationViewProjectsOnlyRecordedLiveTarget(t *testing.T) {
+	recorded := `[{"component":"server","resource":` +
+		`{"apiVersion":"apps/v1","kind":"Deployment","namespace":"ns","name":"server"},` +
+		`"liveImageIDs":["recorded-image"],"ready":false}]`
+	for _, test := range []struct{ name, annotation, want string }{
+		{"absent", "", "null"},
+		{"invalid JSON", "[", "null"},
+		{"wrong shape", `{"component":"server"}`, "null"},
+		{"partial decode", `[{"component":"server"},{"ready":42}]`, "null"},
+		{"recorded null", "null", "null"},
+		{"recorded empty", "[]", "[]"},
+		{"recorded identity", recorded, recorded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{
+				Annotations: map[string]string{"edge.dacs.io/evaluation-live-target": test.annotation},
+			}}
+			raw, err := json.Marshal(evaluationView(run))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if string(fields["liveTarget"]) != test.want {
+				t.Fatalf("liveTarget=%s want=%s", fields["liveTarget"], test.want)
+			}
+		})
 	}
 }

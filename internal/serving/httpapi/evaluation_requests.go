@@ -38,15 +38,16 @@ type EvaluationReleaseRequest struct {
 	Reason string `json:"reason"`
 }
 type EvaluationView struct {
-	Name          string                `json:"name"`
-	UID           string                `json:"uid"`
-	Spec          api.EvaluationRunSpec `json:"spec"`
-	Conditions    []metav1.Condition    `json:"conditions"`
-	CurrentStage  string                `json:"currentStage,omitempty"`
-	StartedAt     *metav1.Time          `json:"startedAt,omitempty"`
-	FinishedAt    *metav1.Time          `json:"finishedAt,omitempty"`
-	Phase         string                `json:"phase"`
-	PublicationID string                `json:"publicationID,omitempty"`
+	Name          string                 `json:"name"`
+	UID           string                 `json:"uid"`
+	Spec          api.EvaluationRunSpec  `json:"spec"`
+	Conditions    []metav1.Condition     `json:"conditions"`
+	CurrentStage  string                 `json:"currentStage,omitempty"`
+	StartedAt     *metav1.Time           `json:"startedAt,omitempty"`
+	FinishedAt    *metav1.Time           `json:"finishedAt,omitempty"`
+	Phase         string                 `json:"phase"`
+	PublicationID string                 `json:"publicationID,omitempty"`
+	LiveTarget    []EvaluationLiveTarget `json:"liveTarget"`
 }
 type EvaluationList struct {
 	Items []EvaluationView `json:"items"`

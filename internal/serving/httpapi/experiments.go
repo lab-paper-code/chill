@@ -38,18 +38,16 @@ type ExperimentSummary struct {
 type ExperimentFacts struct {
 	Name        string                 `json:"name,omitempty"`
 	Question    string                 `json:"question,omitempty"`
-	Control     json.RawMessage        `json:"control,omitempty"`
 	Stages      []ExperimentPolicyFact `json:"stages,omitempty"`
 	SLOSources  []ExperimentSLOSource  `json:"sloSources,omitempty"`
 	LoadSources []ExperimentLoadSource `json:"loadSources,omitempty"`
 }
 
 type ExperimentPolicyFact struct {
-	ID              string          `json:"id"`
-	Row             string          `json:"row,omitempty"`
-	Mode            string          `json:"mode,omitempty"`
-	Control         json.RawMessage `json:"control,omitempty"`
-	LoadScenarioRef json.RawMessage `json:"loadScenarioRef,omitempty"`
+	ID                string          `json:"id"`
+	Row               string          `json:"row,omitempty"`
+	SettingsPatchKeys []string        `json:"settingsPatchKeys"`
+	LoadScenarioRef   json.RawMessage `json:"loadScenarioRef,omitempty"`
 }
 
 type ExperimentSLOSource struct {

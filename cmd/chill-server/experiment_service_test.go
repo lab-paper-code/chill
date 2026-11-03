@@ -155,9 +155,10 @@ func TestExperimentListRetainsFrozenFactsWithoutDefinition(t *testing.T) {
 	recorded := experimentFixture("recorded", from)
 	recorded.Definition = json.RawMessage(`{
 		"run":{"name":"recorded-name","uid":"recorded"},
-		"spec":{"question":"recorded question","control":{"controls":{"power":false},"future":true},
+		"spec":{"question":"recorded question","settingsPatch":{"minimumDemand":{"x":1}},
+			"control":{"controls":{"power":false},"future":true},
 			"stages":[{"id":"full-E5-2","row":"E5-2","mode":"controls-disabled",
-				"control":{"controls":{"power":true}},
+				"settingsPatch":{"controls":{"power":true}},"control":{"controls":{"power":true}},
 				"loadScenarioRef":{"name":"frozen-load","uid":"load-old"},"failureInjection":[{"id":"omit"}]}]},
 		"workloads":[{"name":"service","uid":"workload-old","generation":9007199254740993,
 			"slo":{"percentile":95,"targetLatencyNanos":9007199254740993},"model":{"large":"omit"}}],
@@ -175,9 +176,8 @@ func TestExperimentListRetainsFrozenFactsWithoutDefinition(t *testing.T) {
 	facts := item.Facts
 	if len(item.Definition) != 0 || facts == nil ||
 		facts.Name != "recorded-name" || facts.Question != "recorded question" ||
-		string(facts.Control) != `{"controls":{"power":false},"future":true}` ||
-		len(facts.Stages) != 1 || facts.Stages[0].Mode != "controls-disabled" ||
-		string(facts.Stages[0].Control) != `{"controls":{"power":true}}` ||
+		len(facts.Stages) != 1 ||
+		!reflect.DeepEqual(facts.Stages[0].SettingsPatchKeys, []string{"controls.power"}) ||
 		string(facts.Stages[0].LoadScenarioRef) != `{"name":"frozen-load","uid":"load-old"}` ||
 		len(facts.SLOSources) != 1 || facts.SLOSources[0].UID != "workload-old" ||
 		string(facts.SLOSources[0].Generation) != "9007199254740993" ||
@@ -190,6 +190,7 @@ func TestExperimentListRetainsFrozenFactsWithoutDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(body), `"definition"`) || strings.Contains(string(body), `"omit"`) ||
+		strings.Contains(string(body), `"mode"`) || strings.Contains(string(body), `"control"`) ||
 		strings.Count(string(body), `"facts"`) != 1 || list.Items[1].Facts != nil {
 		t.Fatalf("list leaked full definition or invented historical metadata: %s", body)
 	}
@@ -568,5 +569,75 @@ func publicationS3Handler(
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, body)
+	}
+}
+
+func TestExperimentSettingsPatchKeysUseRecordedInheritance(t *testing.T) {
+	for _, test := range []struct {
+		name, runPatch, stagePatch string
+		want                       []string
+	}{
+		{"no patch", "", "", []string{}},
+		{
+			name:     "inherited",
+			runPatch: `"settingsPatch":{"minimumDemand":{"x":1},"controls":{"power":false}},`,
+			want:     []string{"controls.power", "minimumDemand.x"},
+		},
+		{
+			name:       "override",
+			runPatch:   `"settingsPatch":{"controls":{"power":false}},`,
+			stagePatch: `"settingsPatch":{"controls":{"routing":false}},`,
+			want:       []string{"controls.routing"},
+		},
+		{
+			name:       "empty override",
+			runPatch:   `"settingsPatch":{"controls":{"power":false}},`,
+			stagePatch: `"settingsPatch":{},`,
+			want:       []string{},
+		},
+		{
+			name:       "null inherits",
+			runPatch:   `"settingsPatch":{"controls":{"power":false}},`,
+			stagePatch: `"settingsPatch":null,`,
+			want:       []string{"controls.power"},
+		},
+		{"unknown patch shape", `"settingsPatch":false,`, "", nil},
+		{
+			name:       "leaves",
+			stagePatch: `"settingsPatch":{"minimumDemand":{"x":null},"controls":{}},`,
+			want:       []string{"controls", "minimumDemand.x"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorded := experimentFixture("recorded", time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC))
+			recorded.Definition = json.RawMessage(fmt.Sprintf(
+				`{"spec":{%s"stages":[{"id":"stage",%s"row":"recorded"}]}}`, test.runPatch, test.stagePatch))
+			store := &experimentMemoryStore{}
+			store.add(t, recorded)
+			service := &experimentService{reader: store, lister: store, store: "evidence", maxBytes: 1 << 20}
+			list, err := service.list(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			fact := list.Items[0].Facts.Stages[0]
+			if !reflect.DeepEqual(fact.SettingsPatchKeys, test.want) {
+				t.Fatalf("keys=%v want=%v", fact.SettingsPatchKeys, test.want)
+			}
+			raw, err := json.Marshal(fact)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			want, err := json.Marshal(test.want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(fields["settingsPatchKeys"]) != string(want) {
+				t.Fatalf("nullable key projection lost: %s", raw)
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,21 +32,33 @@ func (s *experimentService) list(ctx context.Context) (httpapi.ExperimentList, e
 				Name string `json:"name"`
 			} `json:"run"`
 			Spec struct {
-				Question    string                         `json:"question"`
-				Control     json.RawMessage                `json:"control"`
-				Stages      []httpapi.ExperimentPolicyFact `json:"stages"`
-				Comparisons json.RawMessage                `json:"comparisons"`
+				Question      string          `json:"question"`
+				SettingsPatch json.RawMessage `json:"settingsPatch"`
+				Stages        []struct {
+					httpapi.ExperimentPolicyFact
+					SettingsPatch json.RawMessage `json:"settingsPatch"`
+				} `json:"stages"`
+				Comparisons json.RawMessage `json:"comparisons"`
 			} `json:"spec"`
 			Workloads     []httpapi.ExperimentSLOSource  `json:"workloads"`
 			LoadScenarios []httpapi.ExperimentLoadSource `json:"loadScenarios"`
 		}
 		// Project the immutable publication, never today's settings or objects.
 		if json.Unmarshal(summary.Definition, &definition) == nil {
-			if definition.Run.Name != "" || definition.Spec.Question != "" || len(definition.Spec.Control) != 0 ||
+			if definition.Run.Name != "" || definition.Spec.Question != "" || len(definition.Spec.SettingsPatch) != 0 ||
 				len(definition.Spec.Stages) != 0 || len(definition.Workloads) != 0 || len(definition.LoadScenarios) != 0 {
+				stages := make([]httpapi.ExperimentPolicyFact, len(definition.Spec.Stages))
+				for i, stage := range definition.Spec.Stages {
+					patch := definition.Spec.SettingsPatch
+					if raw := bytes.TrimSpace(stage.SettingsPatch); len(raw) != 0 && !bytes.Equal(raw, []byte("null")) {
+						patch = raw
+					}
+					stages[i] = stage.ExperimentPolicyFact
+					stages[i].SettingsPatchKeys = experimentSettingsPatchKeys(patch)
+				}
 				summary.Facts = &httpapi.ExperimentFacts{
-					Name: definition.Run.Name, Question: definition.Spec.Question, Control: definition.Spec.Control,
-					Stages: definition.Spec.Stages, SLOSources: definition.Workloads, LoadSources: definition.LoadScenarios,
+					Name: definition.Run.Name, Question: definition.Spec.Question,
+					Stages: stages, SLOSources: definition.Workloads, LoadSources: definition.LoadScenarios,
 				}
 			}
 		}
@@ -53,6 +66,36 @@ func (s *experimentService) list(ctx context.Context) (httpapi.ExperimentList, e
 		summary.Definition = nil
 	}
 	return result, err
+}
+
+// experimentSettingsPatchKeys lists recorded leaf paths, not live settings or
+// inferred effects. An invalid patch is unknown; no declared patch is empty.
+func experimentSettingsPatchKeys(raw json.RawMessage) []string {
+	keys := []string{}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return keys
+	}
+	var patch map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&patch) != nil || patch == nil {
+		return nil
+	}
+	var visit func(map[string]any, string)
+	visit = func(object map[string]any, prefix string) {
+		for key, value := range object {
+			path := prefix + key
+			if child, ok := value.(map[string]any); ok && len(child) != 0 {
+				visit(child, path+".")
+			} else {
+				keys = append(keys, path)
+			}
+		}
+	}
+	visit(patch, "")
+	sort.Strings(keys)
+	return keys
 }
 
 // listSummaries keeps definitions for request-local consumers such as templates.
