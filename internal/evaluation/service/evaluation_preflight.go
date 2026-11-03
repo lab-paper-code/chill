@@ -1,11 +1,10 @@
-package main
+package service
 
 import (
 	"context"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,14 +16,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (s *evaluationService) preflight(
-	ctx context.Context, request httpapi.EvaluationRequest,
-) (httpapi.EvaluationPreflight, error) {
-	result := httpapi.EvaluationPreflight{
-		Checks: []httpapi.EvaluationCheck{}, LiveTarget: []httpapi.EvaluationLiveTarget{},
+func (s *Service) Preflight(
+	ctx context.Context, request EvaluationRequest,
+) (EvaluationPreflight, error) {
+	result := EvaluationPreflight{
+		Checks: []EvaluationCheck{}, LiveTarget: []EvaluationLiveTarget{},
 	}
 	add := func(id string, passed bool, reason string) {
-		result.Checks = append(result.Checks, httpapi.EvaluationCheck{ID: id, Passed: passed, Reason: reason})
+		result.Checks = append(result.Checks, EvaluationCheck{ID: id, Passed: passed, Reason: reason})
 	}
 	err := request.Spec.Validate()
 	reason := ""
@@ -117,10 +116,10 @@ func (s *evaluationService) preflight(
 	return result, nil
 }
 
-func (s *evaluationService) liveTarget(
+func (s *Service) liveTarget(
 	ctx context.Context, component api.EvaluationTargetComponent,
-) (httpapi.EvaluationLiveTarget, error) {
-	result := httpapi.EvaluationLiveTarget{
+) (EvaluationLiveTarget, error) {
+	result := EvaluationLiveTarget{
 		Component: component.Name, Resource: component.Resource,
 		LiveImageIDs: []string{}, Ready: true,
 	}
@@ -176,8 +175,8 @@ func (s *evaluationService) liveTarget(
 	return result, nil
 }
 
-func (s *evaluationService) settingsPatchChecks(spec *api.EvaluationRunSpec) ([]httpapi.EvaluationCheck, error) {
-	var checks []httpapi.EvaluationCheck
+func (s *Service) settingsPatchChecks(spec *api.EvaluationRunSpec) ([]EvaluationCheck, error) {
+	var checks []EvaluationCheck
 	var current serving.SchedulerSettings
 	if s.settings != nil {
 		var err error
@@ -187,7 +186,7 @@ func (s *evaluationService) settingsPatchChecks(spec *api.EvaluationRunSpec) ([]
 		}
 	}
 	validatePatch := func(id string, raw []byte) {
-		check := httpapi.EvaluationCheck{ID: "settingsPatch/" + id}
+		check := EvaluationCheck{ID: "settingsPatch/" + id}
 		if s.settings == nil {
 			check.Reason = "public scheduler settings unavailable"
 		} else if _, err := serving.ValidateSchedulerSettingsPatch(current, raw); err != nil {

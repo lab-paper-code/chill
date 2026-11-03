@@ -102,6 +102,15 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 | `serving/live` / `serving-live` | No CHILL imports; bounded DTO/hub/metrics and WebSocket transport |
 | `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata types shared with the measured executor |
 | `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, admitted profiling contracts, power-window integration, transition-cost leaf, node actuation policy contract, serving core and native adapter |
+| `evaluation/service` / `evaluation-service` | `api/v1alpha1`, `evidencestore`, `serving`; evaluation and LoadScenario application operations, advisory preflight, phase/active projections and template assembly |
+
+Evaluation application services do not depend on `evaluation/controller` or HTTP
+DTOs. The controller remains the authoritative pool-acquisition and asynchronous
+execution owner; `serving/httpapi` converts application results to HTTP DTOs.
+The ChillServer composition root injects the live scheduler settings callback
+(including its existing lock) and publication definitions. Application preflight
+continues to validate settings patches with `serving.ValidateSchedulerSettingsPatch`;
+UID guards, release semantics and frozen execution definitions are unchanged.
 
 ```sh
 go list -f '{{.ImportPath}} {{join .Imports " "}}' \

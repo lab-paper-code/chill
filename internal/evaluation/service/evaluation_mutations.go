@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,13 +38,13 @@ func evaluationPhase(run *api.EvaluationRun) string {
 	}
 	return "Finishing"
 }
-func evaluationView(run *api.EvaluationRun) httpapi.EvaluationView {
-	value := httpapi.EvaluationView{
+func evaluationView(run *api.EvaluationRun) EvaluationView {
+	value := EvaluationView{
 		Name: run.Name, UID: string(run.UID), Spec: run.Spec, Phase: evaluationPhase(run),
 		Conditions: run.Status.Conditions, CurrentStage: run.Status.CurrentStage,
 		StartedAt: run.Status.StartedAt, FinishedAt: run.Status.FinishedAt,
 	}
-	var liveTarget []httpapi.EvaluationLiveTarget
+	var liveTarget []EvaluationLiveTarget
 	if json.Unmarshal([]byte(run.Annotations["edge.dacs.io/evaluation-live-target"]), &liveTarget) == nil {
 		value.LiveTarget = liveTarget
 	}
@@ -54,8 +53,8 @@ func evaluationView(run *api.EvaluationRun) httpapi.EvaluationView {
 	}
 	return value
 }
-func (s *evaluationService) list(ctx context.Context) (httpapi.EvaluationList, error) {
-	result := httpapi.EvaluationList{Items: []httpapi.EvaluationView{}}
+func (s *Service) List(ctx context.Context) (EvaluationList, error) {
+	result := EvaluationList{Items: []EvaluationView{}}
 	var runs api.EvaluationRunList
 	if err := s.reader.List(ctx, &runs, client.InNamespace(s.namespace)); err != nil {
 		return result, err
@@ -65,28 +64,28 @@ func (s *evaluationService) list(ctx context.Context) (httpapi.EvaluationList, e
 	}
 	return result, nil
 }
-func (s *evaluationService) get(ctx context.Context, name string) (httpapi.EvaluationView, error) {
+func (s *Service) Get(ctx context.Context, name string) (EvaluationView, error) {
 	var run api.EvaluationRun
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &run); err != nil {
-		return httpapi.EvaluationView{}, err
+		return EvaluationView{}, err
 	}
 	return evaluationView(&run), nil
 }
-func (s *evaluationService) create(
-	ctx context.Context, request httpapi.EvaluationRequest, actor string,
-) (httpapi.EvaluationIdentity, error) {
-	result, err := s.preflight(ctx, request)
+func (s *Service) Create(
+	ctx context.Context, request EvaluationRequest, actor string,
+) (EvaluationIdentity, error) {
+	result, err := s.Preflight(ctx, request)
 	if err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	for _, check := range result.Checks {
 		if !check.Passed {
-			return httpapi.EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Field: check.ID, Message: check.Reason}
+			return EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Field: check.ID, Message: check.Reason}
 		}
 	}
 	liveTarget, err := json.Marshal(result.LiveTarget)
 	if err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	run := &api.EvaluationRun{
 		ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: s.namespace, Annotations: map[string]string{
@@ -96,17 +95,17 @@ func (s *evaluationService) create(
 		Spec: request.Spec,
 	}
 	if err := s.client.Create(ctx, run); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
-	return httpapi.EvaluationIdentity{Name: run.Name, UID: string(run.UID)}, nil
+	return EvaluationIdentity{Name: run.Name, UID: string(run.UID)}, nil
 }
-func (s *evaluationService) delete(ctx context.Context, name, uid, actor string) (httpapi.EvaluationIdentity, error) {
+func (s *Service) Delete(ctx context.Context, name, uid, actor string) (EvaluationIdentity, error) {
 	var run api.EvaluationRun
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &run); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	if string(run.UID) != uid {
-		return httpapi.EvaluationIdentity{}, &serving.Error{
+		return EvaluationIdentity{}, &serving.Error{
 			Code: "ResourceVersionConflict", Message: "EvaluationRun UID changed",
 		}
 	}
@@ -117,27 +116,27 @@ func (s *evaluationService) delete(ctx context.Context, name, uid, actor string)
 	run.Annotations["edge.dacs.io/stop-requested-by"] = actor
 	patch := client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})
 	if err := s.client.Patch(ctx, &run, patch); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	policy := metav1.DeletePropagationBackground
 	options := &client.DeleteOptions{
 		Preconditions: &metav1.Preconditions{UID: &run.UID}, PropagationPolicy: &policy,
 	}
 	if err := s.client.Delete(ctx, &run, options); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
-	return httpapi.EvaluationIdentity{Name: name, UID: uid}, nil
+	return EvaluationIdentity{Name: name, UID: uid}, nil
 }
-func (s *evaluationService) replace(
-	ctx context.Context, name, uid string, request httpapi.EvaluationRequest, actor string,
-) (httpapi.EvaluationIdentity, error) {
+func (s *Service) Replace(
+	ctx context.Context, name, uid string, request EvaluationRequest, actor string,
+) (EvaluationIdentity, error) {
 	var run api.EvaluationRun
 	key := client.ObjectKey{Namespace: s.namespace, Name: name}
 	if err := s.reader.Get(ctx, key, &run); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	if string(run.UID) != uid || evaluationPhase(&run) != evaluationPending {
-		return httpapi.EvaluationIdentity{}, &serving.Error{
+		return EvaluationIdentity{}, &serving.Error{
 			Code: "ResourceVersionConflict", Message: "only unchanged Pending evaluations may be replaced",
 		}
 	}
@@ -145,15 +144,15 @@ func (s *evaluationService) replace(
 		request.Name = name
 	}
 	if request.Name != name {
-		return httpapi.EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: "request name must match path"}
+		return EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: "request name must match path"}
 	}
-	checks, err := s.preflight(ctx, request)
+	checks, err := s.Preflight(ctx, request)
 	if err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	for _, check := range checks.Checks {
 		if !check.Passed {
-			return httpapi.EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: check.Reason}
+			return EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: check.Reason}
 		}
 	}
 	policy := metav1.DeletePropagationBackground
@@ -162,7 +161,7 @@ func (s *evaluationService) replace(
 		PropagationPolicy: &policy,
 	}
 	if err := s.client.Delete(ctx, &run, options); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	err = wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(ctx context.Context) (bool, error) {
 		var current api.EvaluationRun
@@ -173,33 +172,33 @@ func (s *evaluationService) replace(
 		return false, err
 	})
 	if err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
-	result, err := s.create(ctx, request, actor)
+	result, err := s.Create(ctx, request, actor)
 	if err != nil {
 		return result, fmt.Errorf("previous object deleted; recreation failed: %w", err)
 	}
 	return result, nil
 }
-func (s *evaluationService) release(
-	ctx context.Context, name string, request httpapi.EvaluationReleaseRequest, actor string,
-) (httpapi.EvaluationIdentity, error) {
+func (s *Service) Release(
+	ctx context.Context, name string, request EvaluationReleaseRequest, actor string,
+) (EvaluationIdentity, error) {
 	var run api.EvaluationRun
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &run); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	if run.UID != types.UID(request.UID) {
-		return httpapi.EvaluationIdentity{}, &serving.Error{
+		return EvaluationIdentity{}, &serving.Error{
 			Code: "ResourceVersionConflict", Message: "EvaluationRun UID changed",
 		}
 	}
 	if evaluationPhase(&run) != "Blocked" {
-		return httpapi.EvaluationIdentity{}, &serving.Error{
+		return EvaluationIdentity{}, &serving.Error{
 			Code: "ResourceVersionConflict", Message: "release requires a finished, blocked evaluation",
 		}
 	}
 	if request.Reason == "" {
-		return httpapi.EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: "release reason required"}
+		return EvaluationIdentity{}, &serving.Error{Code: "InvalidInput", Message: "release reason required"}
 	}
 	annotation, err := json.Marshal(struct {
 		Reason string    `json:"reason"`
@@ -207,7 +206,7 @@ func (s *evaluationService) release(
 		By     string    `json:"by"`
 	}{request.Reason, time.Now().UTC(), actor})
 	if err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	before := run.DeepCopy()
 	if run.Annotations == nil {
@@ -216,9 +215,9 @@ func (s *evaluationService) release(
 	run.Annotations[api.EvaluationReleaseAnnotation] = string(annotation)
 	patch := client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})
 	if err := s.client.Patch(ctx, &run, patch); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
-	return httpapi.EvaluationIdentity{Name: name, UID: request.UID}, nil
+	return EvaluationIdentity{Name: name, UID: request.UID}, nil
 }
 
 func evaluationExecutionFinished(run *api.EvaluationRun) bool {

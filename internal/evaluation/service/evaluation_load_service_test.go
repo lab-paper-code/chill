@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,8 +23,8 @@ func (e loadEvidence) Stat(
 	}
 	return evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: 1}, nil
 }
-func loadRequest() httpapi.LoadScenarioRequest {
-	return httpapi.LoadScenarioRequest{Name: "load", Spec: api.LoadScenarioSpec{
+func loadRequest() LoadScenarioRequest {
+	return LoadScenarioRequest{Name: "load", Spec: api.LoadScenarioSpec{
 		Workloads: []api.EvaluationWorkloadReference{{Name: "work", UID: "work-uid", Generation: 1}},
 		Parts: []api.LoadScenarioPart{{
 			ID: "part", DurationSeconds: 1, Rates: map[string]api.EvaluationNonNegative{"work": 1},
@@ -36,7 +35,7 @@ func loadRequest() httpapi.LoadScenarioRequest {
 		TraceRefs:           map[string]api.EvaluationEvidenceReference{"work": {Store: "s", Key: "trace", Size: 1}},
 	}}
 }
-func loadService(t *testing.T, objects ...client.Object) *evaluationLoadService {
+func loadService(t *testing.T, objects ...client.Object) *LoadService {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := api.AddToScheme(scheme); err != nil {
@@ -45,7 +44,7 @@ func loadService(t *testing.T, objects ...client.Object) *evaluationLoadService 
 	objects = append(objects, &api.Dataset{ObjectMeta: metav1.ObjectMeta{
 		Name: "dataset", Namespace: "ns", UID: "dataset-uid",
 	}})
-	return &evaluationLoadService{
+	return &LoadService{
 		client:    fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build(),
 		namespace: "ns", evidence: loadEvidence{},
 	}
@@ -54,7 +53,7 @@ func TestLoadPreflightLiveGenerationAndMissingEvidence(t *testing.T) {
 	s := loadService(t, &api.Workload{ObjectMeta: metav1.ObjectMeta{
 		Name: "work", Namespace: "ns", UID: "work-uid", Generation: 2,
 	}})
-	result, err := s.preflight(context.Background(), loadRequest())
+	result, err := s.Preflight(context.Background(), loadRequest())
 	if err != nil || result.LiveWorkloads["work"].Generation != 2 {
 		t.Fatalf("live=%+v error=%v", result, err)
 	}
@@ -62,7 +61,7 @@ func TestLoadPreflightLiveGenerationAndMissingEvidence(t *testing.T) {
 		t.Fatal("generation mismatch accepted")
 	}
 	s.evidence = loadEvidence{missing: true}
-	result, err = s.preflight(context.Background(), loadRequest())
+	result, err = s.Preflight(context.Background(), loadRequest())
 	if err != nil || result.Checks[4].Passed {
 		t.Fatalf("missing evidence accepted: %+v %v", result, err)
 	}
@@ -79,17 +78,17 @@ func TestLoadInUseRejectsDeleteAndReplace(t *testing.T) {
 				LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "old"},
 			}}},
 		})
-	if _, err := s.delete(context.Background(), "load", "old"); err == nil {
+	if _, err := s.Delete(context.Background(), "load", "old"); err == nil {
 		t.Fatal("deleted in-use scenario")
 	}
-	if _, err := s.replace(context.Background(), "load", "old", loadRequest(), "actor"); err == nil {
+	if _, err := s.Replace(context.Background(), "load", "old", loadRequest(), "actor"); err == nil {
 		t.Fatal("replaced in-use scenario")
 	}
 }
 func TestEvaluationInputsOnlyDeclaredTraces(t *testing.T) {
 	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns"}, Spec: loadRequest().Spec}
 	s := loadService(t, load)
-	result, err := s.inputs(context.Background())
+	result, err := s.Inputs(context.Background())
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("inputs=%+v error=%v", result, err)
 	}
@@ -115,7 +114,7 @@ func TestLoadReplacementGetsNewUID(t *testing.T) {
 	s.client = loadUIDClient{s.client}
 	request := loadRequest()
 	request.Name = "different"
-	if _, err := s.replace(context.Background(), "load", "old", request, "actor"); err == nil {
+	if _, err := s.Replace(context.Background(), "load", "old", request, "actor"); err == nil {
 		t.Fatal("mismatched body name accepted")
 	}
 	var original api.LoadScenario
@@ -124,7 +123,7 @@ func TestLoadReplacementGetsNewUID(t *testing.T) {
 		t.Fatalf("mismatch mutated original: uid=%s error=%v", original.UID, err)
 	}
 	request.Name = ""
-	identity, err := s.replace(context.Background(), "load", "old", request, "actor")
+	identity, err := s.Replace(context.Background(), "load", "old", request, "actor")
 	if err != nil || identity.UID != "new" {
 		t.Fatalf("replacement=%+v error=%v", identity, err)
 	}

@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,14 +19,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type evaluationLoadService struct {
+type LoadService struct {
 	client    client.Client
 	namespace string
 	evidence  evidencestore.Statter
 }
 
 func loadError(code, message string) error { return &serving.Error{Code: code, Message: message} }
-func (s *evaluationLoadService) inUse(ctx context.Context, name string) ([]string, error) {
+func (s *LoadService) inUse(ctx context.Context, name string) ([]string, error) {
 	var runs api.EvaluationRunList
 	if err := s.client.List(ctx, &runs, client.InNamespace(s.namespace)); err != nil {
 		return nil, err
@@ -47,14 +46,14 @@ func (s *evaluationLoadService) inUse(ctx context.Context, name string) ([]strin
 	sort.Strings(names)
 	return names, nil
 }
-func (s *evaluationLoadService) view(ctx context.Context, obj *api.LoadScenario) (httpapi.LoadScenarioView, error) {
+func (s *LoadService) view(ctx context.Context, obj *api.LoadScenario) (LoadScenarioView, error) {
 	names, err := s.inUse(ctx, obj.Name)
-	return httpapi.LoadScenarioView{
+	return LoadScenarioView{
 		Name: obj.Name, UID: string(obj.UID), Spec: obj.Spec, InUse: names, CreatedAt: obj.CreationTimestamp,
 	}, err
 }
-func (s *evaluationLoadService) list(ctx context.Context) (httpapi.LoadScenarioList, error) {
-	result := httpapi.LoadScenarioList{Items: []httpapi.LoadScenarioView{}}
+func (s *LoadService) List(ctx context.Context) (LoadScenarioList, error) {
+	result := LoadScenarioList{Items: []LoadScenarioView{}}
 	var objects api.LoadScenarioList
 	if err := s.client.List(ctx, &objects, client.InNamespace(s.namespace)); err != nil {
 		return result, err
@@ -69,21 +68,21 @@ func (s *evaluationLoadService) list(ctx context.Context) (httpapi.LoadScenarioL
 	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Name < result.Items[j].Name })
 	return result, nil
 }
-func (s *evaluationLoadService) get(ctx context.Context, name string) (httpapi.LoadScenarioView, error) {
+func (s *LoadService) Get(ctx context.Context, name string) (LoadScenarioView, error) {
 	var obj api.LoadScenario
 	if err := s.client.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &obj); err != nil {
-		return httpapi.LoadScenarioView{}, err
+		return LoadScenarioView{}, err
 	}
 	return s.view(ctx, &obj)
 }
-func (s *evaluationLoadService) preflight(
-	ctx context.Context, request httpapi.LoadScenarioRequest,
-) (httpapi.LoadScenarioPreflight, error) {
-	result := httpapi.LoadScenarioPreflight{
-		Checks: []httpapi.EvaluationCheck{}, LiveWorkloads: map[string]httpapi.LiveWorkload{},
+func (s *LoadService) Preflight(
+	ctx context.Context, request LoadScenarioRequest,
+) (LoadScenarioPreflight, error) {
+	result := LoadScenarioPreflight{
+		Checks: []EvaluationCheck{}, LiveWorkloads: map[string]LiveWorkload{},
 	}
 	add := func(id string, err error) {
-		check := httpapi.EvaluationCheck{ID: id, Passed: err == nil}
+		check := EvaluationCheck{ID: id, Passed: err == nil}
 		if err != nil {
 			check.Reason = err.Error()
 		}
@@ -99,7 +98,7 @@ func (s *evaluationLoadService) preflight(
 		var obj api.Workload
 		err := s.client.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: ref.Name}, &obj)
 		if err == nil {
-			result.LiveWorkloads[ref.Name] = httpapi.LiveWorkload{UID: string(obj.UID), Generation: obj.Generation}
+			result.LiveWorkloads[ref.Name] = LiveWorkload{UID: string(obj.UID), Generation: obj.Generation}
 			if obj.UID != ref.UID || obj.Generation != ref.Generation {
 				err = fmt.Errorf("workload identity or generation differs")
 			}
@@ -123,8 +122,8 @@ func (s *evaluationLoadService) preflight(
 	}
 	return result, nil
 }
-func (s *evaluationLoadService) checked(ctx context.Context, request httpapi.LoadScenarioRequest) error {
-	result, err := s.preflight(ctx, request)
+func (s *LoadService) checked(ctx context.Context, request LoadScenarioRequest) error {
+	result, err := s.Preflight(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -135,9 +134,9 @@ func (s *evaluationLoadService) checked(ctx context.Context, request httpapi.Loa
 	}
 	return nil
 }
-func (s *evaluationLoadService) createObject(
-	ctx context.Context, request httpapi.LoadScenarioRequest, actor string,
-) (httpapi.EvaluationIdentity, error) {
+func (s *LoadService) createObject(
+	ctx context.Context, request LoadScenarioRequest, actor string,
+) (EvaluationIdentity, error) {
 	obj := api.LoadScenario{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: s.namespace, Name: request.Name,
@@ -146,17 +145,17 @@ func (s *evaluationLoadService) createObject(
 		Spec: request.Spec,
 	}
 	err := s.client.Create(ctx, &obj)
-	return httpapi.EvaluationIdentity{Name: obj.Name, UID: string(obj.UID)}, err
+	return EvaluationIdentity{Name: obj.Name, UID: string(obj.UID)}, err
 }
-func (s *evaluationLoadService) create(
-	ctx context.Context, request httpapi.LoadScenarioRequest, actor string,
-) (httpapi.EvaluationIdentity, error) {
+func (s *LoadService) Create(
+	ctx context.Context, request LoadScenarioRequest, actor string,
+) (EvaluationIdentity, error) {
 	if err := s.checked(ctx, request); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
 	return s.createObject(ctx, request, actor)
 }
-func (s *evaluationLoadService) removable(ctx context.Context, name, uid string) (*api.LoadScenario, error) {
+func (s *LoadService) removable(ctx context.Context, name, uid string) (*api.LoadScenario, error) {
 	if uid == "" {
 		return nil, loadError("InvalidInput", "uid is required")
 	}
@@ -176,8 +175,8 @@ func (s *evaluationLoadService) removable(ctx context.Context, name, uid string)
 	}
 	return &obj, nil
 }
-func (s *evaluationLoadService) delete(ctx context.Context, name, uid string) (httpapi.EvaluationIdentity, error) {
-	identity := httpapi.EvaluationIdentity{Name: name, UID: uid}
+func (s *LoadService) Delete(ctx context.Context, name, uid string) (EvaluationIdentity, error) {
+	identity := EvaluationIdentity{Name: name, UID: uid}
 	obj, err := s.removable(ctx, name, uid)
 	if err != nil {
 		return identity, err
@@ -185,18 +184,18 @@ func (s *evaluationLoadService) delete(ctx context.Context, name, uid string) (h
 	pinned := types.UID(uid)
 	return identity, s.client.Delete(ctx, obj, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &pinned}})
 }
-func (s *evaluationLoadService) replace(
-	ctx context.Context, name, uid string, request httpapi.LoadScenarioRequest, actor string,
-) (httpapi.EvaluationIdentity, error) {
+func (s *LoadService) Replace(
+	ctx context.Context, name, uid string, request LoadScenarioRequest, actor string,
+) (EvaluationIdentity, error) {
 	if request.Name != "" && request.Name != name {
-		return httpapi.EvaluationIdentity{}, loadError("InvalidInput", "body name must match path name")
+		return EvaluationIdentity{}, loadError("InvalidInput", "body name must match path name")
 	}
 	request.Name = name
 	if err := s.checked(ctx, request); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+		return EvaluationIdentity{}, err
 	}
-	if _, err := s.delete(ctx, name, uid); err != nil {
-		return httpapi.EvaluationIdentity{}, err
+	if _, err := s.Delete(ctx, name, uid); err != nil {
+		return EvaluationIdentity{}, err
 	}
 	err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 30*time.Second, true,
 		func(ctx context.Context) (bool, error) {
@@ -208,7 +207,7 @@ func (s *evaluationLoadService) replace(
 			return false, err
 		})
 	if err != nil {
-		return httpapi.EvaluationIdentity{}, fmt.Errorf("이전 객체 삭제됨; replacement wait: %w", err)
+		return EvaluationIdentity{}, fmt.Errorf("이전 객체 삭제됨; replacement wait: %w", err)
 	}
 	identity, err := s.createObject(ctx, request, actor)
 	if err != nil {
@@ -216,8 +215,8 @@ func (s *evaluationLoadService) replace(
 	}
 	return identity, nil
 }
-func (s *evaluationLoadService) inputs(ctx context.Context) (httpapi.EvaluationInputList, error) {
-	result := httpapi.EvaluationInputList{Items: []httpapi.EvaluationInput{}}
+func (s *LoadService) Inputs(ctx context.Context) (EvaluationInputList, error) {
+	result := EvaluationInputList{Items: []EvaluationInput{}}
 	var scenarios api.LoadScenarioList
 	if err := s.client.List(ctx, &scenarios, client.InNamespace(s.namespace)); err != nil {
 		return result, err
@@ -229,7 +228,7 @@ func (s *evaluationLoadService) inputs(ctx context.Context) (httpapi.EvaluationI
 				continue
 			}
 			seen[ref] = true
-			result.Items = append(result.Items, httpapi.EvaluationInput{
+			result.Items = append(result.Items, EvaluationInput{
 				Store: ref.Store, Key: ref.Key, Size: ref.Size, Kind: "trace",
 				Set: scenario.Name, Name: scenario.Name + " / " + workload,
 			})
@@ -237,4 +236,8 @@ func (s *evaluationLoadService) inputs(ctx context.Context) (httpapi.EvaluationI
 	}
 	sort.Slice(result.Items, func(i, j int) bool { return result.Items[i].Key < result.Items[j].Key })
 	return result, nil
+}
+
+func NewLoadService(native client.Client, namespace string, evidence evidencestore.Statter) *LoadService {
+	return &LoadService{client: native, namespace: namespace, evidence: evidence}
 }

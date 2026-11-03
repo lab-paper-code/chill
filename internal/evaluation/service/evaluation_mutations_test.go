@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -21,7 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-func evaluationFixture(t *testing.T) (*evaluationService, httpapi.EvaluationRequest) {
+func evaluationFixture(t *testing.T) (*Service, EvaluationRequest) {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{api.AddToScheme, corev1.AddToScheme, batchv1.AddToScheme} {
@@ -60,8 +59,8 @@ func evaluationFixture(t *testing.T) (*evaluationService, httpapi.EvaluationRequ
 		Stages: []api.StageTemplate{{ID: "stage", Row: "evaluation",
 			LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"}}},
 	}
-	service := &evaluationService{reader: native, client: native, namespace: "ns"}
-	return service, httpapi.EvaluationRequest{Name: "run", Spec: spec}
+	service := &Service{reader: native, client: native, namespace: "ns"}
+	return service, EvaluationRequest{Name: "run", Spec: spec}
 }
 func TestEvaluationPreflightBoundaries(t *testing.T) {
 	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready"} {
@@ -96,7 +95,7 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result, err := service.preflight(context.Background(), request)
+			result, err := service.Preflight(context.Background(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,20 +117,20 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 func TestEvaluationLifecycleMutationGuards(t *testing.T) {
 	service, request := evaluationFixture(t)
 	ctx := context.Background()
-	created, err := service.create(ctx, request, "operator")
+	created, err := service.Create(ctx, request, "operator")
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := service.get(ctx, created.Name)
+	view, err := service.Get(ctx, created.Name)
 	if err != nil || view.Phase != evaluationPending {
 		t.Fatalf("view=%+v err=%v", view, err)
 	}
-	if _, err := service.delete(ctx, created.Name, "wrong", "operator"); err == nil {
+	if _, err := service.Delete(ctx, created.Name, "wrong", "operator"); err == nil {
 		t.Fatal("UID mismatch accepted")
 	}
 	replaceRequest := request
 	replaceRequest.Name = ""
-	replacement, err := service.replace(ctx, created.Name, created.UID, replaceRequest, "operator")
+	replacement, err := service.Replace(ctx, created.Name, created.UID, replaceRequest, "operator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +147,11 @@ func TestEvaluationLifecycleMutationGuards(t *testing.T) {
 	if err := service.client.Update(ctx, &run); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.replace(ctx, request.Name, replacement.UID, request, "operator"); err == nil {
+	if _, err := service.Replace(ctx, request.Name, replacement.UID, request, "operator"); err == nil {
 		t.Fatal("Running replacement accepted")
 	}
-	release := httpapi.EvaluationReleaseRequest{UID: replacement.UID, Reason: "checked"}
-	if _, err := service.release(ctx, request.Name, release, "operator"); err == nil {
+	release := EvaluationReleaseRequest{UID: replacement.UID, Reason: "checked"}
+	if _, err := service.Release(ctx, request.Name, release, "operator"); err == nil {
 		t.Fatal("running release accepted")
 	}
 	run.Status.Conditions = append(run.Status.Conditions,
@@ -162,10 +161,10 @@ func TestEvaluationLifecycleMutationGuards(t *testing.T) {
 	if err := service.client.Update(ctx, &run); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.release(ctx, request.Name, release, "operator"); err != nil {
+	if _, err := service.Release(ctx, request.Name, release, "operator"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.delete(ctx, request.Name, replacement.UID, "operator"); err != nil {
+	if _, err := service.Delete(ctx, request.Name, replacement.UID, "operator"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -200,45 +199,6 @@ func TestEvaluationPhaseTable(t *testing.T) {
 	}
 }
 
-func TestEvaluationViewFlattensStatus(t *testing.T) {
-	service, request := evaluationFixture(t)
-	now := metav1.NewTime(time.Now().UTC())
-	run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: "ns"}}
-	run.Status = api.EvaluationRunStatus{
-		CurrentStage: "stage", StartedAt: &now, FinishedAt: &now,
-		Conditions: []metav1.Condition{{Type: api.EvaluationConditionPublished, Status: metav1.ConditionTrue}},
-	}
-	if err := service.client.Create(context.Background(), run); err != nil {
-		t.Fatal(err)
-	}
-	detail, err := service.get(context.Background(), run.Name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	list, err := service.list(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, view := range []httpapi.EvaluationView{detail, list.Items[0]} {
-		body, err := json.Marshal(view)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(body, &fields); err != nil {
-			t.Fatal(err)
-		}
-		for _, key := range []string{"conditions", "currentStage", "startedAt", "finishedAt", "liveTarget"} {
-			if len(fields[key]) == 0 {
-				t.Fatalf("missing top-level %s: %s", key, body)
-			}
-		}
-		if _, exists := fields["status"]; exists {
-			t.Fatal("nested status leaked into projection")
-		}
-	}
-}
-
 func TestEvaluationPreflightValidatesCanonicalSettingsPatch(t *testing.T) {
 	for _, test := range []struct {
 		patch string
@@ -263,7 +223,7 @@ func TestEvaluationPreflightValidatesCanonicalSettingsPatch(t *testing.T) {
 				}, nil
 			}
 			request.Spec.SettingsPatch = &apiextensionsv1.JSON{Raw: []byte(test.patch)}
-			result, err := service.preflight(context.Background(), request)
+			result, err := service.Preflight(context.Background(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -279,7 +239,7 @@ func TestEvaluationPreflightValidatesCanonicalSettingsPatch(t *testing.T) {
 			if !found {
 				t.Fatal("settings patch check missing")
 			}
-			_, err = service.create(context.Background(), request, "operator")
+			_, err = service.Create(context.Background(), request, "operator")
 			if (err == nil) != test.valid {
 				t.Fatalf("create=%v", err)
 			}
@@ -299,7 +259,7 @@ func TestEvaluationRecordsObservedTargetWithoutImageGate(t *testing.T) {
 	if err := service.client.Status().Update(context.Background(), pod); err != nil {
 		t.Fatal(err)
 	}
-	id, err := service.create(context.Background(), request, "operator")
+	id, err := service.Create(context.Background(), request, "operator")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,43 +268,11 @@ func TestEvaluationRecordsObservedTargetWithoutImageGate(t *testing.T) {
 	if err := service.reader.Get(context.Background(), key, &run); err != nil {
 		t.Fatal(err)
 	}
-	var recorded []httpapi.EvaluationLiveTarget
+	var recorded []EvaluationLiveTarget
 	if err := json.Unmarshal([]byte(run.Annotations["edge.dacs.io/evaluation-live-target"]), &recorded); err != nil {
 		t.Fatal(err)
 	}
 	if len(recorded) != 1 || !recorded[0].Ready || recorded[0].LiveImageIDs[0] != "another/runtime@sha256:observed" {
 		t.Fatalf("record=%+v", recorded)
-	}
-}
-
-func TestEvaluationViewProjectsOnlyRecordedLiveTarget(t *testing.T) {
-	recorded := `[{"component":"server","resource":` +
-		`{"apiVersion":"apps/v1","kind":"Deployment","namespace":"ns","name":"server"},` +
-		`"liveImageIDs":["recorded-image"],"ready":false}]`
-	for _, test := range []struct{ name, annotation, want string }{
-		{"absent", "", "null"},
-		{"invalid JSON", "[", "null"},
-		{"wrong shape", `{"component":"server"}`, "null"},
-		{"partial decode", `[{"component":"server"},{"ready":42}]`, "null"},
-		{"recorded null", "null", "null"},
-		{"recorded empty", "[]", "[]"},
-		{"recorded identity", recorded, recorded},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{
-				Annotations: map[string]string{"edge.dacs.io/evaluation-live-target": test.annotation},
-			}}
-			raw, err := json.Marshal(evaluationView(run))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &fields); err != nil {
-				t.Fatal(err)
-			}
-			if string(fields["liveTarget"]) != test.want {
-				t.Fatalf("liveTarget=%s want=%s", fields["liveTarget"], test.want)
-			}
-		})
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"context"
@@ -18,8 +18,8 @@ func TestActiveEvaluationProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := fake.NewClientBuilder().WithScheme(scheme).Build()
-	service := evaluationService{reader: native}
-	empty, err := service.listActive(context.Background())
+	service := Service{reader: native}
+	empty, err := service.ListActive(context.Background())
 	if err != nil || empty.Items == nil || len(empty.Items) != 0 {
 		t.Fatalf("empty=%+v err=%v", empty, err)
 	}
@@ -53,7 +53,7 @@ func TestActiveEvaluationProjection(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result, err := service.listActive(context.Background())
+	result, err := service.ListActive(context.Background())
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
