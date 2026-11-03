@@ -11,8 +11,10 @@ rendered="$(mktemp)"
 trap 'rm -f "${rendered}"' EXIT
 
 check() {
+	local expected_caller="$1"
+	shift
 	"${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}"
-	python3 - "${rendered}" <<'PY'
+	python3 - "${rendered}" "${expected_caller}" <<'PY'
 import sys, yaml
 documents = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 identities = [(d["kind"], d["metadata"].get("namespace", ""), d["metadata"]["name"]) for d in documents]
@@ -38,6 +40,25 @@ def effective(account):
                     resources.update((scope, group, resource, verb, tuple(rule.get("resourceNames", [])))
                                      for resource in rule.get("resources", []))
     return resources, urls
+
+dashboard_bindings = [d for d in documents if d["kind"] == "ClusterRoleBinding"
+                      and d["metadata"]["name"] == "chill-dashboard-evaluation-operator"]
+caller = sys.argv[2]
+if caller:
+    assert len(dashboard_bindings) == 1, "dashboard evaluation opt-in binding is missing"
+    binding = dashboard_bindings[0]
+    assert binding["roleRef"] == {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole",
+                                  "name": "chill-evaluation-operator"}
+    assert binding["subjects"] == [{"kind": "ServiceAccount", "name": caller, "namespace": "chill-system"}], \
+        "dashboard caller must stay in the release namespace"
+    expected_urls = {(verb, path) for verb in ("post", "put", "delete")
+                     for path in ("/chill/api/v1/evaluations", "/chill/api/v1/evaluations/*")}
+    assert effective(caller) == (set(), expected_urls), \
+        "dashboard opt-in must grant evaluation mutations only, not scheduler editing or native resources"
+    assert not any(d["kind"] == "ServiceAccount" and d["metadata"]["name"] == caller for d in documents), \
+        "dashboard opt-in must not create the external caller SA"
+else:
+    assert not dashboard_bindings, "empty dashboard caller unexpectedly acquired an evaluation binding"
 
 config = next((d for d in documents if d["kind"] == "ConfigMap" and d["metadata"]["name"] == "chill-evaluation-config"), None)
 if config:
@@ -161,13 +182,28 @@ PY
 serving=(--set servingEntrypoint.enabled=true --set query.enabled=true --set servingEntrypoint.tls.secretName=chill-tls
 	--set evidenceStore.connection.bucket=chill --set evidenceStore.connection.region=local
 	--set servingEntrypoint.scheduler.configMap=chill-scheduler)
-check
-check -f "${repo_root}/charts/chill/values-profiler.yaml"
-check -f "${repo_root}/charts/chill/values-profiler.yaml" --set evaluation.enabled=true
-check "${serving[@]}"
-check "${serving[@]}" --set evaluation.enabled=true
-check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+check ""
+check "" -f "${repo_root}/charts/chill/values-profiler.yaml"
+check "" -f "${repo_root}/charts/chill/values-profiler.yaml" --set evaluation.enabled=true
+check "" "${serving[@]}"
+check "" "${serving[@]}" --set evaluation.enabled=true
+check "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set 'servingEntrypoint.profileNamespaces={chill-system,measurements}'
-check -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+check "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true
+check chill-dashboard-user "${serving[@]}" --set dashboard.callerServiceAccount=chill-dashboard-user
+check chill-dashboard-user -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+	--set evaluation.enabled=true --set dashboard.enabled=true --set servingEntrypoint.namespace=serving \
+	--set dashboard.callerServiceAccount=chill-dashboard-user
+
+reject_caller() {
+	if "${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}" 2>&1; then
+		echo "invalid dashboard caller configuration unexpectedly rendered" >&2
+		exit 1
+	fi
+	[[ "$(<"${rendered}")" == *"dashboard.callerServiceAccount"* ]]
+}
+reject_caller --set dashboard.callerServiceAccount=chill-dashboard-user
+reject_caller "${serving[@]}" --set dashboard.callerServiceAccount=true
+reject_caller "${serving[@]}" --set dashboard.callerServiceAccount=other-namespace/chill-dashboard-user
 echo "serving entrypoint RBAC: pass"

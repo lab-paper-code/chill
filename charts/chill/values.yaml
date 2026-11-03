@@ -575,6 +575,9 @@ loadGenerator:
 # Independent web process; the caller's bearer is never a pod credential.
 dashboard:
   enabled: false
+  # Existing caller SA in the release namespace; opt-in evaluation mutation rights.
+  # Requires servingEntrypoint.enabled; does not create an SA or bind scheduler editing.
+  callerServiceAccount: ""
   replicaCount: 1
   image:
     repository: daclab/chill-dashboard

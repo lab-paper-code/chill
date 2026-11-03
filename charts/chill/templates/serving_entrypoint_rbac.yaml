@@ -286,7 +286,8 @@ rules:
     verbs: [delete]
   {{- end }}
 ---
-# Deliberately unbound: evaluation mutations are separate from scheduler editing.
+# Dashboard operators may manage native evaluations through the public black-box API.
+# Caller binding is explicit opt-in; scheduler editing remains a separate role.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -296,6 +297,23 @@ metadata:
 rules:
   - nonResourceURLs: ["/chill/api/v1/evaluations", "/chill/api/v1/evaluations/*"]
     verbs: [post, put, delete]
+{{- if .Values.dashboard.callerServiceAccount }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.fullname" . }}-dashboard-evaluation-operator
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.fullname" . }}-evaluation-operator
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.dashboard.callerServiceAccount | quote }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
 ---
 # Native caller rights are deliberately unbound and separate from the owner SA.

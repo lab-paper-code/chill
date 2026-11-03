@@ -56,6 +56,17 @@
 {{- fail "servingEntrypoint.observationStorage.size must not be empty when servingEntrypoint.enabled=true" -}}
 {{- end -}}
 {{- end -}}
+{{- if not (kindIs "string" .Values.dashboard.callerServiceAccount) -}}
+{{- fail "dashboard.callerServiceAccount must be a string" -}}
+{{- end -}}
+{{- if .Values.dashboard.callerServiceAccount -}}
+{{- if not .Values.servingEntrypoint.enabled -}}
+{{- fail "dashboard.callerServiceAccount requires servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if or (gt (len .Values.dashboard.callerServiceAccount) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" .Values.dashboard.callerServiceAccount)) -}}
+{{- fail "dashboard.callerServiceAccount must be a ServiceAccount name in the release namespace" -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.dashboard.enabled -}}
 {{- if or (lt (int .Values.dashboard.replicaCount) 1) (empty .Values.dashboard.image.repository) -}}
 {{- fail "dashboard requires a positive replicaCount and image.repository" -}}
