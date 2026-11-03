@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -13,11 +14,11 @@ import (
 
 type countedCatalogObjects struct {
 	objects catalogEvidenceObjects
-	reads   int
+	reads   atomic.Int64
 }
 
 func (c *countedCatalogObjects) OpenLocation(ctx context.Context, location evidencestore.ObjectLocation) (io.ReadCloser, error) {
-	c.reads++
+	c.reads.Add(1)
 	return c.objects.OpenLocation(ctx, location)
 }
 
@@ -41,8 +42,8 @@ func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
 	if err != nil || len(first.Profiles) != 1 {
 		t.Fatalf("catalog=%+v error=%v", first, err)
 	}
-	if counted.reads != 14 {
-		t.Fatalf("facts added raw I/O: got %d reads, want result+plan+6 execution+6 raw", counted.reads)
+	if counted.reads.Load() != 14 {
+		t.Fatalf("facts added raw I/O: got %d reads, want result+plan+6 execution+6 raw", counted.reads.Load())
 	}
 	id := first.Profiles[0].ID
 	facts := first.MeasurementFacts[id]
@@ -54,8 +55,8 @@ func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
 	*row.P95Milliseconds = 999
 	facts.Condition.PlannedBatchSizes[0] = 999
 	second, err := catalog.Refresh(ctx, []string{source.Namespace})
-	if err != nil || counted.reads != 14 || !second.SourceCheckedAt.After(first.SourceCheckedAt) || second.Revision != first.Revision {
-		t.Fatalf("unchanged refresh did not check source without raw I/O: %+v %v reads=%d", second, err, counted.reads)
+	if err != nil || counted.reads.Load() != 14 || !second.SourceCheckedAt.After(first.SourceCheckedAt) || second.Revision != first.Revision {
+		t.Fatalf("unchanged refresh did not check source without raw I/O: %+v %v reads=%d", second, err, counted.reads.Load())
 	}
 	if *second.MeasurementFacts[id].Batches[0].P95Milliseconds != 2 || second.MeasurementFacts[id].Condition.PlannedBatchSizes[0] == 999 {
 		t.Fatal("caller mutated cached measurement facts")

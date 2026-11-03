@@ -44,6 +44,18 @@ raw repetition은 client `latencyMs`, runner service/backend call duration, actu
 공개 profile 목록은 CPU·이미지를 제외한 frozen condition별 최신 성공 기록을 유지한다. 실행 선택은 별도로 셀(model, class, path, powerMode)마다 최신 측정 하나이며 failed/partial도 후보다. 최신 실패를 과거 성공으로 대체하지 않는다. `derivation.CurrentMeasurements(candidates, replaced)`를 Serving과 Query가 같이 호출하고, 운영자의 `chill.dacs.io/replaces-batch-energy-optimization`은 recency 전에 적용한다. 새 override나 다중 버전 선택 구조는 없다.
 strict stored schema 변경은 caller/fixture/generated schema를 작업 단위로 함께 갱신한다. 구 testbed 정리는 ADR0019 절차, 진행 campaign stored 변경은 해당 campaign 정리 후다.
 Catalog는 refresh마다 현재 Campaign native UID/resourceVersion/terminal 적격성을 읽고 Campaign당 검증 entry1개만 유지한다. 같은 immutable source는 raw 재다운로드/재도출하지 않고 caller mutable slice/map/pointer는 분리 반환한다. UID/RV 변경·pending·삭제는 entry를 버리고 필요하면 전체 evidence 재검증, 오류에 이전 success fallback 없음. control tick/profile ticker/GET의 중복 raw reload만 제거하며 native refresh/시각/freshness는 바꾸지 않는다.
+Cold reload의 CompletedTrials는 입력 순서의 최대 8개 window 안에서 Kubernetes Run GET과
+execution/raw evidence 검증을 병렬 처리한다. campaign 자체와 결과/plan 읽기는 직렬이다.
+loader의 strict decode·선언 Size 일치·Run/execution binding 검사는 그대로이며,
+window 완료 뒤 원래 순서로 중복 검사·profile/facts/lineage 도출을 하므로 첫 오류 진단도 결정적이다.
+한 trial이라도 실패하면 그 profile을 publish/cache하지 않고 기존 InvalidEvidence 진단을 남긴다.
+8은 campaign 수와 무관한 store 동시 GET 상한이다(execution→raw는 trial 안에서 직렬).
+전체 campaign 병렬화 대신 작은 window로 shared gateway 연결과 임시 decode 메모리를 제한한다.
+기본 maxEvidenceBytes=64MiB에서 window의 execution/raw payload 크기 합은 보수적으로
+최대 2×8×64MiB이며 buffer 할당·decoded records·기존 catalog 메모리는 별도다.
+profile 전체의 verified record는 유지하지만 추가 worker 결과는 window 하나만 보유한다.
+상한을 높이려면 store 부하와 heap을 실측한다. 이는 live 성능 보장이 아니며 R18의 329초
+전체가 8배 빨라진다는 뜻도 아니다(결과/plan, 작은 window, CPU 및 이후 초기화는 남는다).
 profiling/serving은 [같은 공유 실행 계약](../../spec/00_measurement.md#측정의-단위)을 쓴다. CPU request/limit·quota·명시 affinity/pinning과 quota-threads 결합은 없다. ORT 기본·자동 thread 설정의 실제 readback(0 포함), affinity/cpuset/cgroup quota·사용량·throttling은 관측으로 보존한다. Node/backend/GPU UUID/initialized batch/raw와 메모리 안전 검사는 유지한다. 과거 CPU 통제 profile/κ는 공유 실행 근거로 재사용하지 않고 단일 저장 계약 cutover 뒤 새 조건으로 측정한다.
 
 이미지 버전은 profile 유효 조건이 아니다(사용자 결정, ADR 0019 예외). PrepareInstance의 worker와 profile materializer는 현재 Profiler execution-facts ConfigMap의 class/Node/runtime family/backend 선언에서 읽은 이미지 하나로 실행한다(`--execution-facts-key`). observer는 과거 profile 이미지가 아니라 현재 desired 이미지와 실제 worker·materializer의 일치를 확인한다. Node/GPU/artifact·메모리 안전 검사는 유지한다. profile/raw의 RuntimeImage와 저장 형식은 그대로이며 latest-condition 묶음, reuse, 비용/occupancy 및 κ 키는 이미지 이력을 비교하지 않는다. 위험: 다른 이미지에서 잰 측정값이 현재 이미지의 근거로 쓰인다.
