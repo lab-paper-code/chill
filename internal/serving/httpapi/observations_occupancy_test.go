@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -48,19 +50,31 @@ func TestOccupancyObservationsBoundary(t *testing.T) {
 	}
 	h.config.OccupancyObservations = func(_ context.Context, from, to time.Time) ([]serving.OccupancyEstimate, error) {
 		if to.Sub(from) > 120*time.Second {
-			return nil, &serving.Error{Code: "InvalidQuery", Message: "window exceeds configured maximum"}
+			return nil, &application.OccupancyWindowError{MaximumWindowSeconds: 120}
 		}
 		return nil, nil
 	}
+	expectedError := serving.Error{
+		Code: "InvalidQuery", Message: "occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds",
+	}
 	for _, end := range []string{"2026-11-03T09:02:00.000000001Z", "2026-11-03T10:00:00Z"} {
 		overLimit := occupancyObservationsPath + "?from=2026-11-03T09:00:00Z&to=" + end
-		if response := rawHTTPRequest(h, overLimit); response.Code != http.StatusBadRequest {
-			t.Fatal("oversized public window must return 400", response.Code)
+		response := rawHTTPRequest(h, overLimit)
+		var result struct {
+			serving.Error
+			MaximumWindowSeconds int32 `json:"maximumWindowSeconds"`
+		}
+		if response.Code != http.StatusBadRequest || json.Unmarshal(response.Body.Bytes(), &result) != nil ||
+			result.Error != expectedError || result.MaximumWindowSeconds != 120 {
+			t.Fatalf("oversized public window must disclose configured cap: %d %s", response.Code, response.Body)
 		}
 	}
 	atLimit := occupancyObservationsPath + "?from=2026-11-03T09:00:00Z&to=2026-11-03T09:02:00Z"
-	if response := rawHTTPRequest(h, atLimit); response.Code != http.StatusOK {
-		t.Fatal("exact configured window rejected", response.Code)
+	response = rawHTTPRequest(h, atLimit)
+	var normal map[string]json.RawMessage
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &normal) != nil || len(normal) != 2 ||
+		normal["rows"] == nil || normal["window"] == nil {
+		t.Fatalf("exact configured window response changed: %d %s", response.Code, response.Body)
 	}
 }
 

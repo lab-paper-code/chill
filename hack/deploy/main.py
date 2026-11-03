@@ -17,6 +17,7 @@ import tempfile
 
 import yaml
 import acceptance
+import api_checks
 import images
 import image_reuse
 import configuration
@@ -341,13 +342,13 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         if recipe.get('runtimeDeclarations'):
             import runtime
             state['probeNodesPreflight'] = runtime.check_nodes(src, out, kube, run.run, 'preflight')
-        config = acceptance.load_config(recipe['apiEnvironment'])
+        config = api_checks.load_config(recipe['apiEnvironment'])
         upgrade_process_seconds = recipe['upgradeSeconds'] + 30
         budget = 120 + recipe['readinessSeconds'] + upgrade_process_seconds + len(recipe['images']) * recipe['buildSeconds'] + sum(x['seconds'] for steps in recipe['commands'].values() for x in steps)
         budget += (recipe.get('runtimeInspectionSeconds', 3600) if recipe.get('runtimeDeclarations') else 0) + 60 * (len(recipe['apiChecks']) + 2)
         budget += 360 if recipe.get('checkConfiguration') else 0
         if not inspect:
-            acceptance.preflight(config, budget, out)
+            api_checks.preflight(config, budget, out)
             commands('preflight')
         stage('backup')
         run.run(helm + ['history', recipe['release'], '-o', 'json'], 'helm-history.json', read_output=False)
@@ -385,9 +386,9 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         if frozen:
             baseline = acceptance.load_baseline(frozen)
             current = acceptance.capture(config, recipe['namespace'], out / 'before')
-            report = acceptance.compare(baseline, current, recipe['allowedLostProfileIDs'], out / 'pre-deploy-acceptance', recipe.get('expectedCoverageUsable'))
-            report['checks']['expectedProfileCount'] = 'expectedProfileCount' not in recipe or report.get('after') == recipe['expectedProfileCount']
-            report['passed'] = report['passed'] and report['checks']['expectedProfileCount']
+            report = acceptance.compare(
+                baseline, current, recipe['allowedLostProfileIDs'], out / 'pre-deploy-acceptance',
+                recipe.get('expectedCoverageUsable'), recipe.get('expectedProfileCount'))
             dump(out / 'pre-deploy-acceptance/acceptance.json', report)
             state['preDeployDiagnostics'] = report
             frozen_out = out / 'frozen-baseline'
@@ -464,7 +465,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         state['crdRetention'] = crd_retention(live, after, kube, run.run, out)
         run.run(kube + ['apply', '--dry-run=server', '-f', out / 'render-final.yaml'], 'server-dry-run.log', read_output=False)
         revision()
-        acceptance.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
+        api_checks.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
         for phase in ('quiesce', 'migrate'):
             stage(phase)
             commands(phase)
@@ -498,20 +499,20 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         state['evaluationRbac'] = evaluation_rbac.check(
             after.decode(), recipe['namespace'], kube, run.run, out / 'evaluation-rbac.json')
         snapshot = acceptance.wait_capture(config, recipe['namespace'], accept_out, deadline)
-        report = acceptance.compare(baseline, snapshot, recipe['allowedLostProfileIDs'], accept_out, recipe.get('expectedCoverageUsable'))
-        report['checks']['expectedProfileCount'] = 'expectedProfileCount' not in recipe or report.get('after') == recipe['expectedProfileCount']
-        report['passed'] = report['passed'] and report['checks']['expectedProfileCount']
+        report = acceptance.compare(
+            baseline, snapshot, recipe['allowedLostProfileIDs'], accept_out,
+            recipe.get('expectedCoverageUsable'), recipe.get('expectedProfileCount'))
         dump(accept_out / 'acceptance.json', report)
         state['diagnostics'] = report
         if not recipe['commands'].get('migrate'):
             state['retainedRecords'] = acceptance.compare_records(current_before, snapshot, out / 'retained-records')
         else:
             state['retainedRecords'] = {'checked': False, 'reason': 'explicit migration accept commands own the approved stored-contract transition'}
-        acceptance.check_routes(config, recipe['apiChecks'], out / 'api-checks')
+        api_checks.check_routes(config, recipe['apiChecks'], out / 'api-checks')
         if recipe.get('queryService'):
-            acceptance.check_query(config, kube, recipe['namespace'], out / 'query-auth', query_service=recipe['queryService'])
+            api_checks.check_query(config, kube, recipe['namespace'], out / 'query-auth', query_service=recipe['queryService'])
         if recipe.get('dashboardCheck'):
-            acceptance.check_dashboard(config, out / 'dashboard')
+            api_checks.check_dashboard(config, out / 'dashboard')
         commands('accept')
         run.run(helm + ['get', 'values', recipe['release'], '-o', 'json'], 'post-values.json', read_output=False)
         stage('complete')

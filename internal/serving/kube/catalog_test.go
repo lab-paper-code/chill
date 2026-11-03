@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
-	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/serving"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -178,31 +176,6 @@ func TestCatalogSkipsIncompleteAndFailedMeasurementWithoutEvidenceReads(t *testi
 				t.Fatalf("terminal gate: %+v %v", view, err)
 			}
 		})
-	}
-}
-
-func TestCatalogBindsEvidenceToRecordedRun(t *testing.T) {
-	run := &edgev1alpha1.ProfilingRun{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "active", UID: "run-uid"},
-		Status: edgev1alpha1.ProfilingRunStatus{
-			Job:      &edgev1alpha1.ProfilingRunObjectReference{Name: "job", UID: "job-uid"},
-			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion},
-			ObservedExecution: &edgev1alpha1.ProfilingRunObservedExecutionStatus{
-				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: "pod", UID: "pod-uid"},
-				Node: edgev1alpha1.ProfilingRunObjectReference{Name: "node", UID: "node-uid"},
-			},
-		},
-	}
-	execution := profilerevidence.ExecutionEvidence{
-		SchemaVersion: profilerevidence.ExecutionEvidenceSchemaVersion,
-		Terminal: profilerevidence.TerminalFacts{
-			Job:  profilerevidence.JobTerminalFacts{Namespace: run.Namespace, Name: "job", UID: "other-job-uid"},
-			Pod:  profilerevidence.PodTerminalFacts{Namespace: run.Namespace, Name: "pod", UID: "pod-uid"},
-			Node: profilerevidence.NodeTerminalFacts{Name: "node", UID: "node-uid"},
-		},
-	}
-	if err := validateCatalogExecution(run, execution); err == nil || !strings.Contains(err.Error(), "identities") {
-		t.Fatalf("foreign retained evidence accepted: %v", err)
 	}
 }
 

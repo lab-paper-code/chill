@@ -21,11 +21,14 @@ firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`
 | `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 용량표/κ 합, 노드 계획, 분배·판단 기록; 실제 native 상태·반환·적용 기록 |
 | `internal/serving/firstfloor` | HTTP/metadata/progress typed 경계, native/client span; request/UID/definition/physical instance 상관 |
 | `internal/serving/kube` | 실제 자원 snapshot·catalog·Pod/policy/power 원자 동작·DAG; API 뒤 실제 readiness/drain/삭제/Node 상태 |
+| `internal/serving/application` | scheduler configuration acceptance, power observation admission, catalog/cost refresh, runtime preparations and profile-reuse retention; settings-change transaction under the existing shared mutation lock |
 | 기존 Profiling owner | 같은 firstfloor fixed-batch·idle·raw evidence·curve; 원래 Run/Job/Node/container/image/actuation와 trial binding |
 | 기존 NodeActuator | 유일한 host power writer; 독립 read-back·settling·Ready/Failed |
 | 기존 metric/evidence owner | Node wall-power·sample/failure·적분·immutable raw; 조건·구간·coverage가 확인된 watts/joules |
 
 `firstfloor`는 Serving/Profiler를 역참조하지 않는 leaf다. Serving core가 leaf를 사용하고 Kubernetes/API는 kube adapter에 둔다. Profiler는 자체 evidence 계약에 같은 실행 경로를 연결하며 `.go-arch-lint.yml`도 이 방향을 따른다.
+
+`cmd/chill-server` constructs the application dependencies; HTTP owns authentication, decoding, If-Match/ETag header interpretation and response/error mapping. The application records settings intent before the ConfigMap write and accepts only after a complete refresh; completion-record failures after effects do not roll back acceptance. Missing If-Match remains 428 and stale/conflicting versions remain 409. Catalog reporting and accepted snapshots remain separate. The dispatch-occupancy policy and its validation remain owned by `internal/serving/measurement`; the application imports that policy rather than defining a second copy. Accepted occupancy query-window errors are owned by the application and mapped by HTTP. The application freezes the response body and ConfigMap version under its mutation lock, then releases the lock before HTTP writes so a slow client does not serialize scheduler mutations.
 
 ## 3. 실행기·요청 계약
 
@@ -250,5 +253,5 @@ SCH-54 빈 출발/최소 instance1/증설/부분 Ready/예약 밖 진행은 창 
 
 ## 10. 같은 기종 profile 재사용 — PR-01..04
 
-검증된 직접 profile 선택(`kube/catalog.go`)→`catalog_reuse.go` 판정/대상 materialize→기존 `cmd/chill-server/profiles.go` preparations→observer/option 경로다. 새 CRD/UID alias registry 없이 [측정 API](measurement-api.md)의 Node UID 소비자/CampaignOps 계약을 따른다.
+검증된 직접 profile 선택(`kube/catalog.go`)→`catalog_reuse.go` 판정/대상 materialize→기존 `internal/serving/application/profiles.go` preparations→observer/option 경로다. 새 CRD/UID alias registry 없이 [측정 API](measurement-api.md)의 Node UID 소비자/CampaignOps 계약을 따른다.
 기존 capacity/observer/operations/runner/cost_power/firstfloor UID guard를 유지하고 대상 Condition/RuntimeMetadata/RuntimeDelivery를 쓴다. catalog `reuseChecks`, profile `reuse`, 기존 BEO immutable result/raw가 근거다. 수락/거절을 기존 store에 content-addressed immutable 기록 후 `record` 참조를 발행하고 refresh signature에 판정 본문도 넣는다. memory는 양쪽 최대, idle baseline/physical UUID/meter는 대상 것이며 raw sample은 합치지 않는다.

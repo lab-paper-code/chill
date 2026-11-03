@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	"github.com/coder/websocket"
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -55,7 +57,7 @@ func readMeasurementLiveFrame(t *testing.T, ctx context.Context, conn *websocket
 func assertMeasurementLiveHistory(t *testing.T, handler http.Handler, event measurementLiveFrame) {
 	t.Helper()
 	switch event.Action.Status {
-	case liveMeasurementAccepted, measurementRequestDeletionRequested, liveMeasurementNotSubmitted:
+	case liveMeasurementAccepted, "DeletionRequested", liveMeasurementNotSubmitted:
 		if event.Action.Phase != "completed" || event.Action.Result == nil ||
 			event.Action.Result.Status != event.Action.Status {
 			t.Fatalf("successful mutation was projected as a failure: %+v", event.Action)
@@ -125,16 +127,18 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 		},
 		SubmitMeasurement: func(
 			_ context.Context, task api.BatchEnergyOptimization, dry bool,
-		) (httpapi.MeasurementMutationResult, error) {
+		) (measurement.MeasurementMutationResult, error) {
 			task.UID, task.ResourceVersion = "native", "7"
 			status := liveMeasurementAccepted
 			if dry {
 				status = liveMeasurementNotSubmitted
 			}
-			return httpapi.MeasurementMutationResult{Request: status, Task: &task}, nil
+			return measurement.MeasurementMutationResult{Request: status, Task: &task}, nil
 		},
-		DeleteMeasurement: func(context.Context, string, string, string, string) (httpapi.MeasurementMutationResult, error) {
-			return httpapi.MeasurementMutationResult{Request: "DeletionRequested", Task: &api.BatchEnergyOptimization{}}, nil
+		DeleteMeasurement: func(
+			context.Context, string, string, string, string,
+		) (measurement.MeasurementMutationResult, error) {
+			return measurement.MeasurementMutationResult{Request: "DeletionRequested", Task: &api.BatchEnergyOptimization{}}, nil
 		},
 	}
 	mutationPath, mutationBody := liveMeasurementPath, liveMeasurementBody
@@ -228,7 +232,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 
 func configureOccupancyLiveMutations(config *httpapi.HandlerConfig) {
 	config.BuildOccupancy = func(
-		_ context.Context, namespace string, intent httpapi.OccupancyIntent,
+		_ context.Context, namespace string, intent measurement.OccupancyIntent,
 	) (*api.DispatchOccupancyMeasurement, error) {
 		task := &api.DispatchOccupancyMeasurement{}
 		task.Name, task.Namespace = intent.Name, namespace
@@ -237,19 +241,19 @@ func configureOccupancyLiveMutations(config *httpapi.HandlerConfig) {
 	}
 	config.SubmitOccupancy = func(
 		_ context.Context, task api.DispatchOccupancyMeasurement, dry bool,
-	) (httpapi.OccupancyMutationResult, error) {
+	) (measurement.OccupancyMutationResult, error) {
 		task.UID, task.ResourceVersion = "native", "7"
-		state := measurementRequestAccepted
+		state := "Accepted"
 		if dry {
-			state = measurementRequestNotSubmitted
+			state = "NOT_SUBMITTED"
 		}
-		return httpapi.OccupancyMutationResult{Request: state, Task: &task}, nil
+		return measurement.OccupancyMutationResult{Request: state, Task: &task}, nil
 	}
 	config.DeleteOccupancy = func(
 		context.Context, string, string, string, string,
-	) (httpapi.OccupancyMutationResult, error) {
-		return httpapi.OccupancyMutationResult{
-			Request: measurementRequestDeletionRequested, Task: &api.DispatchOccupancyMeasurement{},
+	) (measurement.OccupancyMutationResult, error) {
+		return measurement.OccupancyMutationResult{
+			Request: "DeletionRequested", Task: &api.DispatchOccupancyMeasurement{},
 		}, nil
 	}
 }

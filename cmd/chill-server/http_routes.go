@@ -10,6 +10,8 @@ import (
 	"path"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	authorizationv1 "k8s.io/api/authorization/v1"
 )
@@ -46,15 +48,15 @@ func queryError(w http.ResponseWriter, status int, code string) {
 // composeChillServer is the only cross-domain assembly. The QueryAPI's existing
 // retained-evidence and production preflight composition stays authoritative.
 func composeChillServer(
-	serving http.Handler, authorizer *servingkube.Authorizer, opts options, measurements ...*measurementService,
+	serving http.Handler, authorizer *servingkube.Authorizer, opts options, measurements ...*measurement.Service,
 ) (http.Handler, error) {
 	origin, err := privateOrigin(opts.queryURL)
 	if err != nil {
 		return nil, err
 	}
-	var measurement *measurementService
+	var measurementsService *measurement.Service
 	if len(measurements) != 0 {
-		measurement = measurements[0]
+		measurementsService = measurements[0]
 	}
 	query := queryReadHandler(origin)
 	authenticated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +73,7 @@ func composeChillServer(
 			queryAuthorizationError(w, err)
 			return
 		}
-		if err := authorizeQueryResources(ctx, r, measurement, authorizer, principal); err != nil {
+		if err := authorizeQueryResources(ctx, r, measurementsService, authorizer, principal); err != nil {
 			queryAuthorizationError(w, err)
 			return
 		}
@@ -135,7 +137,7 @@ func composeChillServer(
 			queryError(w, http.StatusBadRequest, "InvalidPath")
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), queryBearerContextKey{}, r.Header.Get("Authorization")))
+		r = r.WithContext(context.WithValue(r.Context(), measurement.QueryBearerContextKey{}, r.Header.Get("Authorization")))
 		mux.ServeHTTP(w, r)
 	}), nil
 }
@@ -148,13 +150,13 @@ func isMeasurementPreflight(request *http.Request) bool {
 func authorizeQueryResources(
 	ctx context.Context,
 	request *http.Request,
-	measurement *measurementService,
+	measurementsService *measurement.Service,
 	authorizer *servingkube.Authorizer,
 	principal servingkube.Principal,
 ) error {
 	namespace := request.PathValue("namespace")
-	if namespace != "" && measurement != nil {
-		if err := measurement.namespace(namespace); err != nil {
+	if namespace != "" && measurementsService != nil {
+		if err := measurementsService.Namespace(namespace); err != nil {
 			return err
 		}
 	}

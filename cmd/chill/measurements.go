@@ -11,9 +11,10 @@ import (
 	"net/url"
 	"text/tabwriter"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
 // The producer accepts 64 MiB sealed results; allow another 4 MiB for
@@ -23,10 +24,10 @@ const maximumMeasurementResultBytes int64 = (64 + 4) << 20
 const measurementDeletionRequested = "DeletionRequested"
 
 type measurementOperations interface {
-	Submit(context.Context) (httpapi.MeasurementMutationResult, error)
+	Submit(context.Context) (measurement.MeasurementMutationResult, error)
 	List(context.Context) (edgev1alpha1.BatchEnergyOptimizationList, error)
 	Show(context.Context) (queryapi.BatchEnergyOptimizationResult, error)
-	Delete(context.Context) (httpapi.MeasurementMutationResult, error)
+	Delete(context.Context) (measurement.MeasurementMutationResult, error)
 }
 
 type measurementClient struct {
@@ -65,8 +66,8 @@ func (q *measurementClient) path() string {
 	return "/api/v1/namespaces/" + url.PathEscape(q.opts.namespace) + "/batch-energy-optimizations"
 }
 
-func (q *measurementClient) Submit(ctx context.Context) (httpapi.MeasurementMutationResult, error) {
-	var result httpapi.MeasurementMutationResult
+func (q *measurementClient) Submit(ctx context.Context) (measurement.MeasurementMutationResult, error) {
+	var result measurement.MeasurementMutationResult
 	path, expected := q.path(), "Accepted"
 	if q.opts.dryRun == dryRunServer {
 		path += "?dryRun=All"
@@ -108,8 +109,8 @@ func (q *measurementClient) Show(ctx context.Context) (queryapi.BatchEnergyOptim
 	return result, nil
 }
 
-func (q *measurementClient) Delete(ctx context.Context) (httpapi.MeasurementMutationResult, error) {
-	var result httpapi.MeasurementMutationResult
+func (q *measurementClient) Delete(ctx context.Context) (measurement.MeasurementMutationResult, error) {
+	var result measurement.MeasurementMutationResult
 	path := q.path() + "/" + url.PathEscape(q.opts.name) + "?uid=" + url.QueryEscape(q.opts.uid)
 	if err := q.read(ctx, http.MethodDelete, path, nil, q.opts.ifMatch,
 		maximumMeasurementResultBytes, &result); err != nil {

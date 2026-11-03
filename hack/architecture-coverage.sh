@@ -12,6 +12,7 @@ components=(
   api
   batch-energy-optimization-core
   batch-energy-optimization-controller
+  campaign-evidence
   idle-baseline-core
   idle-baseline-controller
   entrypoints
@@ -25,6 +26,7 @@ components=(
   evidence-kube
   evidence-s3
   evaluation-controller
+  evaluation-service
   metric-core
   metric-edgemetrics
   workload-core
@@ -51,8 +53,10 @@ components=(
   profiler-worker
   serving-core
   serving-httpapi
+  serving-application
   serving-live
   serving-kube
+  serving-measurement
   firstfloor
   serving-firstfloor
 )
@@ -64,6 +68,7 @@ component_for() {
     api/v1alpha1) echo api ;;
     internal/profiling/campaign) echo batch-energy-optimization-core ;;
     internal/profiling/campaign/controller) echo batch-energy-optimization-controller ;;
+    internal/profiling/campaign/evidence) echo campaign-evidence ;;
     internal/profiling/idlebaseline) echo idle-baseline-core ;;
     internal/profiling/idlebaseline/controller) echo idle-baseline-controller ;;
     cmd|cmd/*) echo entrypoints ;;
@@ -79,6 +84,7 @@ component_for() {
     internal/evidencestore/kube) echo evidence-kube ;;
     internal/evidencestore/s3) echo evidence-s3 ;;
     internal/evaluation/controller) echo evaluation-controller ;;
+    internal/evaluation/service) echo evaluation-service ;;
     internal/metricobserver) echo metric-core ;;
     internal/metricobserver/edgemetrics) echo metric-edgemetrics ;;
     internal/workloadobserver) echo workload-core ;;
@@ -105,8 +111,10 @@ component_for() {
     internal/profiling/profiler/worker) echo profiler-worker ;;
     internal/serving) echo serving-core ;;
     internal/serving/httpapi) echo serving-httpapi ;;
+    internal/serving/application) echo serving-application ;;
     internal/serving/live) echo serving-live ;;
     internal/serving/kube) echo serving-kube ;;
+    internal/serving/measurement) echo serving-measurement ;;
     internal/firstfloor) echo firstfloor ;;
     internal/serving/firstfloor) echo serving-firstfloor ;;
     *) return 1 ;;

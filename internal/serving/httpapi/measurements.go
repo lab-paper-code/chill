@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -15,20 +17,6 @@ import (
 )
 
 const measurementAuditFailed = "failed"
-
-// MeasurementMutationResult describes native asynchronous admission, not completed work.
-type MeasurementMutationResult struct {
-	Request         string                        `json:"request"`
-	Task            *api.BatchEnergyOptimization  `json:"task"`
-	EvidenceDeleted bool                          `json:"evidenceDeleted,omitempty"`
-	DeletedEvidence []MeasurementEvidenceLocation `json:"deletedEvidence,omitempty"`
-}
-
-// MeasurementEvidenceLocation is the public deletion receipt's logical wire location.
-type MeasurementEvidenceLocation struct {
-	Store string `json:"store"`
-	Key   string `json:"key"`
-}
 
 func measurementUnavailable() error {
 	return &serving.Error{Code: "MeasurementUnavailable", Message: "measurement service is unavailable"}
@@ -94,14 +82,14 @@ func (h *Handler) measurements(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) submitMeasurement(
 	w http.ResponseWriter, r *http.Request,
-) (MeasurementMutationResult, *serving.SchedulerActionObservation, error) {
+) (measurement.MeasurementMutationResult, *serving.SchedulerActionObservation, error) {
 	var task api.BatchEnergyOptimization
 	if err := h.decode(w, r, &task); err != nil {
-		return MeasurementMutationResult{}, nil, err
+		return measurement.MeasurementMutationResult{}, nil, err
 	}
 	dryRun := r.URL.Query().Get("dryRun")
 	if r.URL.Query().Has("dryRun") && (len(r.URL.Query()["dryRun"]) != 1 || dryRun != meta.DryRunAll) {
-		return MeasurementMutationResult{}, nil, &serving.Error{
+		return measurement.MeasurementMutationResult{}, nil, &serving.Error{
 			Code: "InvalidQuery", Message: "dryRun must be All when supplied", Field: "dryRun",
 		}
 	}
@@ -109,17 +97,17 @@ func (h *Handler) submitMeasurement(
 	if task.APIVersion != api.GroupVersion.String() || task.Kind != "BatchEnergyOptimization" ||
 		len(validation.IsDNS1123Subdomain(task.Name)) != 0 || len(task.Name) > 200 ||
 		(task.Namespace != "" && task.Namespace != namespace) {
-		return MeasurementMutationResult{}, nil, &serving.Error{
+		return measurement.MeasurementMutationResult{}, nil, &serving.Error{
 			Code: "InvalidBody", Message: "native BatchEnergyOptimization identity must match the requested namespace",
 		}
 	}
 	if h.config.SubmitMeasurement == nil {
-		return MeasurementMutationResult{}, nil, measurementUnavailable()
+		return measurement.MeasurementMutationResult{}, nil, measurementUnavailable()
 	}
 	task.Namespace = namespace
 	audit, err := h.beginMeasurementAudit(r, task.Name, "", "", dryRun == meta.DryRunAll, &task.Spec)
 	if err != nil {
-		return MeasurementMutationResult{}, nil, err
+		return measurement.MeasurementMutationResult{}, nil, err
 	}
 	value, err := h.config.SubmitMeasurement(r.Context(), task, dryRun == meta.DryRunAll)
 	return value, audit, err
@@ -127,24 +115,24 @@ func (h *Handler) submitMeasurement(
 
 func (h *Handler) deleteMeasurement(
 	r *http.Request,
-) (MeasurementMutationResult, *serving.SchedulerActionObservation, error) {
+) (measurement.MeasurementMutationResult, *serving.SchedulerActionObservation, error) {
 	version, err := precondition(r)
 	if err != nil {
-		return MeasurementMutationResult{}, nil, err
+		return measurement.MeasurementMutationResult{}, nil, err
 	}
 	uid := r.URL.Query().Get("uid")
 	if len(r.URL.Query()["uid"]) != 1 || strings.TrimSpace(uid) == "" || strings.ContainsAny(uid, " \t\r\n") {
-		return MeasurementMutationResult{}, nil, &serving.Error{
+		return measurement.MeasurementMutationResult{}, nil, &serving.Error{
 			Code: "InvalidQuery", Message: "queried native UID is required", Field: "uid",
 		}
 	}
 	if h.config.DeleteMeasurement == nil {
-		return MeasurementMutationResult{}, nil, measurementUnavailable()
+		return measurement.MeasurementMutationResult{}, nil, measurementUnavailable()
 	}
 	name := r.PathValue("name")
 	audit, err := h.beginMeasurementAudit(r, name, uid, version, false, nil)
 	if err != nil {
-		return MeasurementMutationResult{}, nil, err
+		return measurement.MeasurementMutationResult{}, nil, err
 	}
 	value, err := h.config.DeleteMeasurement(r.Context(), r.PathValue("namespace"), name, uid, version)
 	return value, audit, err
@@ -164,12 +152,12 @@ func (h *Handler) finishMeasurementAudit(
 	var deleted bool
 	var cleaned int
 	switch result := value.(type) {
-	case MeasurementMutationResult:
+	case measurement.MeasurementMutationResult:
 		if result.Task != nil {
 			request, uid, version, spec = result.Request, string(result.Task.UID), result.Task.ResourceVersion, result.Task.Spec
 			deleted, cleaned = result.EvidenceDeleted, len(result.DeletedEvidence)
 		}
-	case OccupancyMutationResult:
+	case measurement.OccupancyMutationResult:
 		if result.Task != nil {
 			request, uid, version, spec = result.Request, string(result.Task.UID), result.Task.ResourceVersion, result.Task.Spec
 			deleted, cleaned = result.EvidenceDeleted, len(result.DeletedEvidence)

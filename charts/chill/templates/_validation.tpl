@@ -67,6 +67,33 @@
 {{- fail "dashboard.callerServiceAccount must be a ServiceAccount name in the release namespace" -}}
 {{- end -}}
 {{- end -}}
+{{- if not (kindIs "bool" .Values.dashboard.reader.enabled) -}}
+{{- fail "dashboard.reader.enabled must be a boolean" -}}
+{{- end -}}
+{{- if and .Values.dashboard.reader.enabled (not .Values.servingEntrypoint.enabled) -}}
+{{- fail "dashboard.reader.enabled requires servingEntrypoint.enabled=true" -}}
+{{- end -}}
+{{- if .Values.dashboard.reader.enabled -}}
+{{- $reader := printf "%s-dashboard-reader" (include "chill.fullname" .) -}}
+{{- /* Reserve the reader identity across all chart binding subjects, even disabled components. */ -}}
+{{- $accounts := list
+    (include "chill.operatorServiceAccountName" .)
+    (include "chill.profilerServiceAccountName" .)
+    (include "chill.profilerWorkloadObserverServiceAccountName" .)
+    (include "chill.profilerTransitionObserverServiceAccountName" .)
+    (include "chill.queryServiceAccountName" .)
+    (include "chill.servingEntrypointName" .)
+    (include "chill.nodeAgentName" .)
+    (include "chill.nodeAgentActuationName" .)
+    (include "chill.uninstallCleanupServiceAccountName" .)
+    (printf "%s-load-generator" (include "chill.fullname" .))
+    .Values.evaluation.config.actionServiceAccount
+    .Values.evaluation.config.publishServiceAccount
+    .Values.dashboard.callerServiceAccount -}}
+{{- if has $reader $accounts -}}
+{{- fail "dashboard.reader.enabled reserves its ServiceAccount identity; another chart account (including dashboard.callerServiceAccount) must not use it" -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.dashboard.enabled -}}
 {{- if or (lt (int .Values.dashboard.replicaCount) 1) (empty .Values.dashboard.image.repository) -}}
 {{- fail "dashboard requires a positive replicaCount and image.repository" -}}

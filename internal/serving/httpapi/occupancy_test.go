@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -97,13 +99,13 @@ func TestOccupancyHTTPIntentOnlyAndBounded(t *testing.T) {
 	for _, body := range bodies {
 		h, _ := occupancyHandler(t, "")
 		calls := 0
-		h.config.BuildOccupancy = func(context.Context, string, OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
+		h.config.BuildOccupancy = func(context.Context, string, measurement.OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
 			calls++
 			return nil, nil
 		}
-		h.config.SubmitOccupancy = func(context.Context, api.DispatchOccupancyMeasurement, bool) (OccupancyMutationResult, error) {
+		h.config.SubmitOccupancy = func(context.Context, api.DispatchOccupancyMeasurement, bool) (measurement.OccupancyMutationResult, error) {
 			calls++
-			return OccupancyMutationResult{}, nil
+			return measurement.OccupancyMutationResult{}, nil
 		}
 		w := httptest.NewRecorder()
 		h.measurements(w, occupancyRequest(http.MethodPost, "", body))
@@ -154,7 +156,7 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 					Conditions: api.DispatchOccupancyConditions{InputsJSON: `{"configuration":{"uid":"config"}}`},
 				},
 			}
-			h.config.BuildOccupancy = func(_ context.Context, ns string, intent OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
+			h.config.BuildOccupancy = func(_ context.Context, ns string, intent measurement.OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
 				if ns != measurementTestNamespace || intent.Node != "node" || intent.Batch != 2 {
 					t.Fatal("lost intent")
 				}
@@ -176,7 +178,7 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 					t.Fatal("effect before audit intent")
 				}
 			}
-			h.config.SubmitOccupancy = func(_ context.Context, in api.DispatchOccupancyMeasurement, isDry bool) (OccupancyMutationResult, error) {
+			h.config.SubmitOccupancy = func(_ context.Context, in api.DispatchOccupancyMeasurement, isDry bool) (measurement.OccupancyMutationResult, error) {
 				effect()
 				if isDry != dry || !reflect.DeepEqual(in.Spec, task.Spec) {
 					t.Fatal("frozen task changed")
@@ -185,14 +187,14 @@ func TestOccupancyHTTPAuditBeforeEffectLiveAfterCommit(t *testing.T) {
 				if dry {
 					state = "NOT_SUBMITTED"
 				}
-				return OccupancyMutationResult{Task: &in, Request: state}, nil
+				return measurement.OccupancyMutationResult{Task: &in, Request: state}, nil
 			}
-			h.config.DeleteOccupancy = func(_ context.Context, ns, name, uid, version string) (OccupancyMutationResult, error) {
+			h.config.DeleteOccupancy = func(_ context.Context, ns, name, uid, version string) (measurement.OccupancyMutationResult, error) {
 				effect()
 				if ns != measurementTestNamespace || name != "task" || uid != "dom-uid" || version != "7" {
 					t.Fatal("delete fence lost")
 				}
-				return OccupancyMutationResult{Task: &task, Request: "DeletionRequested", EvidenceDeleted: true}, nil
+				return measurement.OccupancyMutationResult{Task: &task, Request: "DeletionRequested", EvidenceDeleted: true}, nil
 			}
 			suffix := ""
 			if dry {
@@ -267,12 +269,12 @@ func TestOccupancyHTTPDenialAndServiceErrors(t *testing.T) {
 		status int
 	}{{"OccupancyPolicyUnavailable", 503}, {"OccupancyInfeasible", 400}} {
 		h, _ := occupancyHandler(t, "")
-		h.config.BuildOccupancy = func(context.Context, string, OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
+		h.config.BuildOccupancy = func(context.Context, string, measurement.OccupancyIntent) (*api.DispatchOccupancyMeasurement, error) {
 			return nil, &serving.Error{Code: tc.code, Message: "reason"}
 		}
-		h.config.SubmitOccupancy = func(context.Context, api.DispatchOccupancyMeasurement, bool) (OccupancyMutationResult, error) {
+		h.config.SubmitOccupancy = func(context.Context, api.DispatchOccupancyMeasurement, bool) (measurement.OccupancyMutationResult, error) {
 			t.Fatal("unavailable build submitted")
-			return OccupancyMutationResult{}, nil
+			return measurement.OccupancyMutationResult{}, nil
 		}
 		w := httptest.NewRecorder()
 		h.measurements(w, occupancyRequest(http.MethodPost, "", occupancyTestBody))

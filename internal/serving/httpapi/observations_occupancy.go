@@ -2,9 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/serving/application"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )
@@ -42,6 +45,17 @@ func (h *Handler) occupancyObservations(w http.ResponseWriter, r *http.Request) 
 	}
 	rows, err := h.config.OccupancyObservations(r.Context(), from, to)
 	if err != nil {
+		var limit *application.OccupancyWindowError
+		if errors.As(err, &limit) {
+			sendJSON(w, http.StatusBadRequest, struct {
+				serving.Error
+				MaximumWindowSeconds int32 `json:"maximumWindowSeconds"`
+			}{
+				Error:                serving.Error{Code: "InvalidQuery", Message: limit.Error()},
+				MaximumWindowSeconds: limit.MaximumWindowSeconds,
+			})
+			return
+		}
 		sendError(w, err)
 		return
 	}

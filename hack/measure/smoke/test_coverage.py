@@ -7,18 +7,19 @@ import json
 import os
 import tempfile
 import unittest
+from collections import defaultdict
 from pathlib import Path
 from unittest.mock import patch
 
 
-def load_generator():
+def load_coverage_plan():
     with tempfile.TemporaryDirectory() as temp:
         config = Path(temp) / 'environment.json'
         config.write_text(json.dumps({'paths': {'campaign': temp}, 'measure': {
             'capturedValues': temp, 'namespace': 'chill-system', 'authority': 'offline',
             'kubectl': 'offline-kubectl', 'kubeconfig': 'offline', 'kubeContext': 'offline'}}))
         with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(config)):
-            spec = importlib.util.spec_from_file_location('coverage_generator', Path(__file__).parents[1] / 'gen.py')
+            spec = importlib.util.spec_from_file_location('coverage_plan', Path(__file__).parents[1] / 'coverage_plan.py')
             gen = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(gen)
         return gen
@@ -235,9 +236,198 @@ def timing_generation_self_check(gen):
                for r in same_mode['excluded-batches'])
 
 
+def coverage_self_check(gen):
+    generation_self_check(gen)
+    policy = gen.load(gen.HERE / "coverage-plan.json")
+    model = "mobilenet-v2-050"
+    cell = {"id": "cell", "model": {"name": model}, "deviceClass": {"name": "device"},
+            "executionPath": "path", "powerMode": "mode", "support": {"verdict": "Compatible"},
+            "assessment": {"displayStatus": "unmeasured", "reasons": []}}
+    cell["currentMeasurement"] = None
+    partial = copy.deepcopy(cell)
+    partial["assessment"] = {"displayStatus": "insufficient", "reasons": [{"code": "TargetBatchMissing"}]}
+    unknown = copy.deepcopy(cell)
+    unknown["support"]["verdict"] = "Unknown"
+    unsupported = copy.deepcopy(cell)
+    unsupported["support"]["verdict"] = "Incompatible"
+    other = copy.deepcopy(partial)
+    other["assessment"]["reasons"] = [{"code": "Unrelated"}]
+    running = dict(cell, assessment={"displayStatus": "running", "reasons": []})
+    assert gen.coverage_targets({"completeness": "complete", "cells": [cell, partial, running, unknown, unsupported, other]},
+                            policy, {}) == ([cell, partial, running, other], [unknown], [], [])
+    missing = copy.deepcopy(unknown)
+    missing["support"]["reasons"] = [{"code": "RuntimeDeclarationMissing"}]
+    missing["assessment"]["displayStatus"] = "unknown"
+    device = {"name": "device", "architecture": "amd64"}
+    native_model = {"spec": {
+        "executionPaths": [{"name": "path", "artifact": "a",
+                            "runtime": {"family": "firstfloor", "backend": "ort-cuda"}}],
+        "artifacts": [{"name": "a", "source": {"architecture": "amd64"}}]}}
+    declarations = [{"deviceClass": "device", "node": "actual-node", "runtime": {"payload": json.dumps({
+        "architecture": "amd64", "runtime": {"family": "firstfloor", "backends": ["ort-cuda"]}})}}]
+    assert gen.coverage_declared_on_node(missing, "actual-node", device, native_model, declarations, {("device", "path")})
+    assert not gen.coverage_declared_on_node(missing, "other-node", device, native_model, declarations, {("device", "path")})
+    assert not gen.coverage_declared_on_node(missing, "actual-node", device, native_model, declarations, set())
+    assert not gen.coverage_declared_on_node(unknown, "actual-node", device, native_model, declarations, {("device", "path")})
+    assert not gen.coverage_declared_on_node(missing, "actual-node", dict(device, architecture="arm64"),
+                                        native_model, declarations, {("device", "path")})
+    assert gen.coverage_targets({"completeness": "complete", "cells": [missing]}, policy,
+                            {}, {missing["id"]: "actual-node"}) == ([missing], [], [], [])
+    older = copy.deepcopy(declarations[0])
+    newer = copy.deepcopy(older)
+    older["runtime"]["payload"] = json.dumps(dict(json.loads(older["runtime"]["payload"]), image="old-image"))
+    newer["runtime"]["payload"] = json.dumps(dict(json.loads(newer["runtime"]["payload"]), image="new-image"))
+    assert gen.coverage_required_condition(cell, "actual-node", native_model, [older, newer])["runtimeImage"] == "new-image"
+    result = {"result": {"curvePlan": {"schemaVersion": gen.SHARED_CURVE_SCHEMA},
+                         "completedTrials": [{"evidence": {"schemaVersion": gen.SHARED_EVIDENCE_SCHEMA}}]}}
+    assert gen.coverage_shared_result(result)
+    old_result = copy.deepcopy(result)
+    old_result["result"]["curvePlan"]["schemaVersion"] = "chill.dacs.io/curve-plan.v1alpha9"
+    assert not gen.coverage_shared_result(old_result)
+    old_result = copy.deepcopy(result)
+    old_result["result"]["completedTrials"][0]["evidence"]["schemaVersion"] = "chill.dacs.io/profiling-execution-evidence.v1alpha15"
+    assert not gen.coverage_shared_result(old_result)
+    assert gen.coverage_runtime_images(gen.HERE.parents[1] / policy["runtimeValues"])
+    plan = {"metadata": {"name": "old", "creationTimestamp": "2026-01-01"},
+            "status": {"phase": "Complete"},
+            "spec": {"state": {"targetNode": "node", "cpuRequest": "4", "candidate": {
+                "modelSpec": model, "deviceClass": "device", "executionPath": "path",
+                "powerMode": "mode", "preprocessor": "pre"}},
+                "activeProtocol": {"durationSeconds": 10, "dataset": "dataset"},
+                "idleProtocol": {"durationSeconds": 10}, "cpuQuota": "4", "cpuAffinity": [3],
+                "batchSizes": [1], "retryLimit": 1}}
+    newer = copy.deepcopy(plan)
+    newer["metadata"] = {"name": "new", "creationTimestamp": "2026-02-01"}
+    spec, source = gen.coverage_defaults(cell, "node", [plan, newer], [])
+    assert source == "request:new" and "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
+    assert "cpuAffinity" not in spec
+    spec, source = gen.coverage_defaults(cell, "different-node", [plan, newer], [])
+    assert source == "request:new" and "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
+    assert "batchSizes" not in spec and spec["activeProtocol"]["dataset"] == "dataset"
+    assert "cpuAffinity" in plan["spec"]  # inheritance never mutates retained requests
+    profile = {"id": "profile", "nodeName": "node", "measuredAt": "2026-03-01", "condition": {
+        "logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
+        "powerMode": "mode", "preprocessor": {"name": "pre"}, "cpu": {"request": "2", "limit": "2"}}}
+    for field in ("activeProtocol", "idleProtocol"):
+        profile["condition"][field] = {"durationSeconds": 10, "warmupIterations": 2,
+                                      "settlingDurationSeconds": 2, "dataset": {"name": "dataset"},
+                                      "metricIntervalMilliseconds": 1000, "metricTimeoutMilliseconds": 500,
+                                      "metricDurationSeconds": 12}
+    different = copy.deepcopy(plan)
+    different["spec"]["state"]["targetNode"] = "other"
+    spec, source = gen.coverage_defaults(cell, "node", [different], [profile])
+    assert source == "profile:profile" and spec["retryLimit"] == 1
+    assert "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
+    assert "settlingDurationSeconds" not in spec["activeProtocol"]
+    catalog = {"spec": {"executionPaths": [{"name": "path", "artifact": "artifact", "runtime": {
+        "settings": {"firstfloor": {"maxBatchSize": 4}}}}],
+        "artifacts": [{"name": "artifact", "derivation": {"declaredBatchSizes": [4, 1, 2]}}]}}
+    assert gen.coverage_batches(catalog, "path", policy) == ([1, 2, 4], True, "artifact")
+    catalog["spec"]["artifacts"][0].pop("derivation")
+    assert gen.coverage_batches(catalog, "path", policy) == ([1, 2, 4], False, "artifact")
+    catalog["spec"]["executionPaths"][0]["runtime"]["settings"]["firstfloor"]["maxBatchSize"] = 3
+    assert gen.coverage_batches(catalog, "path", policy) == ([1, 2], False, "artifact")
+    execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": gen.SHARED_CURVE_SCHEMA,
+                            "evidenceSchema": gen.SHARED_EVIDENCE_SCHEMA}
+    historical_conditions = dict(execution_conditions, runtimeImage="historical-runtime")
+    assert gen.coverage_condition_matches(historical_conditions, execution_conditions)
+    assert not gen.coverage_condition_matches(dict(historical_conditions, curveSchema="old-schema"), execution_conditions)
+    timings = [{"model": model, "deviceClass": device, "batch": batch, "secondsPerCall": seconds,
+                "executionPath": "path", "powerMode": cell["powerMode"], "source": device,
+                "executionConditions": execution_conditions}
+               for device, batch, seconds in
+               [("device", 1, .1), ("device", 4, .4), ("slow", 16, 10)]]
+    other_cells = [dict(timings[0], **{key: "other"}, secondsPerCall=600)
+                   for key in ("model", "deviceClass", "executionPath", "powerMode")]
+    assert gen.coverage_batch_plan(cell, [1], timings + other_cells, policy,
+                               execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .1
+    historical_timing = dict(timings[0], executionConditions=historical_conditions, secondsPerCall=.2)
+    assert gen.coverage_batch_plan(cell, [1], [historical_timing], policy,
+                               execution_conditions=execution_conditions)[1][0]["secondsPerCall"] == .2
+    included, estimates, reason = gen.coverage_batch_plan(cell, [1, 3, 16], timings, policy, execution_conditions=execution_conditions)
+    assert included == [1, 3, 16] and reason is None
+    assert estimates[-1]["secondsPerCall"] is None  # another class is not grounds for exclusion
+    assert estimates[1]["estimatedCallsInWindow"] is None
+    slow = dict(timings[0], secondsPerCall=60)
+    assert gen.coverage_batch_plan(cell, [1], [slow], policy, execution_conditions=execution_conditions)[0] == [1]
+    slow["secondsPerCall"] = 60.001
+    included, estimates, reason = gen.coverage_batch_plan(cell, [1], [slow], policy, execution_conditions=execution_conditions)
+    assert included == [] and reason == policy["excludedBatchReason"] and estimates[0]["estimatedCallsInWindow"] == 0
+    included, estimates, reason = gen.coverage_batch_plan(cell, [1, 2], [slow], policy, execution_conditions=execution_conditions)
+    assert included == [] and estimates[1]["secondsPerCall"] is None and estimates[1]["excludedFromBatch"] == 1
+    fast = timings[0]
+    mixed = [fast, dict(fast, batch=2, secondsPerCall=61), dict(fast, batch=4, secondsPerCall=.1)]
+    included, estimates, reason = gen.coverage_batch_plan(cell, [4, 1, 2], mixed, policy, execution_conditions=execution_conditions)
+    assert included == [1] and estimates[-1]["excludedFromBatch"] == 2 and estimates[-1]["estimatedCallsInWindow"] == 600
+    assert gen.coverage_batch_plan(cell, [1, 2, 4], mixed, policy, declared=True,
+                               execution_conditions=execution_conditions)[2] == policy["declaredBatchConflictReason"]
+    two_calls = dict(policy, minCallsInWindow=2)
+    assert gen.coverage_batch_plan(cell, [1], [dict(fast, secondsPerCall=40)], two_calls,
+                               execution_conditions=execution_conditions)[0] == []
+    active = {"durationSeconds": 60, "durationToleranceSeconds": 0,
+              "metricObservation": {"durationSeconds": 62}}
+    gen.coverage_active_protocol(active, [{"included": True, "secondsPerCall": 37.294},
+                                     {"included": False, "secondsPerCall": 900}], policy)
+    assert active["durationSeconds"] == 60 and active["durationToleranceSeconds"] == 0
+    assert active["metricObservation"]["durationSeconds"] == 137
+    active["metricObservation"]["durationSeconds"] = 62
+    gen.coverage_active_protocol(active, [{"included": True, "secondsPerCall": None}], policy)
+    assert active["metricObservation"]["durationSeconds"] == 662
+    facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
+                          "powerMode": "mode", "runtimeImage": execution_conditions["runtimeImage"]},
+             "request": {"name": "source", "uid": "source-uid"},
+             "batches": [{"batch": 1, "completedCalls": 100, "quality": [
+                 {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},
+                 {"workloadMode": "idle-model-loaded", "windowSeconds": 500}]}]}
+    timed_result = dict(result, measurementFacts=facts)
+    assert gen.coverage_timings([timed_result])[0]["secondsPerCall"] == .1
+    assert gen.coverage_timings([timed_result])[0]["executionConditions"] == execution_conditions
+    assert gen.coverage_timings([dict(old_result, measurementFacts=facts)]) == []
+    assert gen.coverage_timings([{"measurementFacts": None}]) == []
+    assert gen.coverage_batch_plan(cell, [1], [], policy)[0] == [1]
+    heavy_model = max(policy["models"], key=lambda name: policy["models"][name]["priority"])
+    classes = {
+        "arm": {"architecture": "arm64", "memory": "64Gi"},
+        "amd": {"architecture": "amd64", "memory": "8Gi"},
+        "gpu": {"architecture": "amd64", "memory": "64Gi"},
+        "nano": {"architecture": "arm64", "memory": "4096Mi", "accelerator": "nvidia-jetson-nano"},
+        "orin": {"architecture": "arm64", "memory": "8Gi", "accelerator": "nvidia-jetson-agx-orin"},
+        "rk": {"architecture": "arm64", "memory": "16Gi", "accelerator": "rk3588-npu"}}
+    pilot_lanes = defaultdict(list)
+    cases = [("arm", "ort-cpu", "CPU arm64"), ("amd", "ort-cpu", "CPU amd64"),
+             ("gpu", "ort-cuda", "CUDA amd64"), ("nano", "ort-cuda", "L4T r32"),
+             ("orin", "ort-cuda", "L4T r35"), ("rk", "rknnlite", "RKNN"),
+             ("nano", "ort-cpu", "CPU arm64"), ("orin", "ort-cpu", "CPU arm64")]
+    for index, (node, path, family) in enumerate(cases):
+        m = heavy_model if index >= 6 else model
+        row = {"node": node, "model": m, "cellId": str(index),
+               "priority": policy["models"][m]["priority"], "estimatedSeconds": 100 if index >= 6 else 1}
+        candidate = {"deviceClass": node, "executionPath": path}
+        assert gen.coverage_runtime_family(candidate, classes[node]) == family
+        pilot_lanes[node].append((row, {"spec": {"state": {"candidate": candidate}}}))
+    selected = gen.coverage_pilot(pilot_lanes, policy, classes)
+    assert {r["cellId"] for lane in selected.values() for r, _ in lane} == set(map(str, range(7)))
+    assert len(selected["nano"]) == 2  # CUDA family and heavy CPU model share an ordered lane
+    assert selected["nano"][0][1] is pilot_lanes["nano"][0][1]
+    assert gen.coverage_pilot({"arm": pilot_lanes["arm"]}, policy, classes) == {"arm": pilot_lanes["arm"]}
+    assert gen.coverage_pilot({}, policy, classes) == {}
+    assert gen.coverage_memory("4Gi") == gen.coverage_memory("4096Mi") == gen.coverage_memory("4294967296")
+    lane = [
+        ({"powerMode": "fixed", "model": model, "cellId": str(index)},
+         {"spec": {"state": {"candidate": {"executionPath": path}}}})
+        for index, path in enumerate(("firstfloor-ort-cuda-vlm-arm64", "firstfloor-ort-cpu-arm64",
+                                     "firstfloor-ort-cuda-arm64", "firstfloor-ort-cuda-vlm-arm64",
+                                     "firstfloor-ort-cpu-int8-arm64"))]
+    for index, m in ((5, "smolvlm2-500m-video-instruct"), (6, model)):
+        lane.append(({"powerMode": "fixed", "model": m, "cellId": str(index)},
+                     {"spec": {"state": {"candidate": {"executionPath": "firstfloor-ort-cuda-amd64"}}}}))
+    assert [r["cellId"] for r, _ in gen.coverage_lane_order(lane, policy)] == ["1", "2", "4", "6", "0", "3", "5"]
+    print("coverage generation/reuse, scoped memory exclusions, inheritance, batches and runtime-family pilot checked")
+
+
 class CoverageGenerationTest(unittest.TestCase):
     def test_generation_conditions(self):
-        generation_self_check(load_generator())
+        coverage_self_check(load_coverage_plan())
 
 
 if __name__ == '__main__':

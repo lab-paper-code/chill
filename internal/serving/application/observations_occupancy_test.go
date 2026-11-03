@@ -1,0 +1,34 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+)
+
+func TestOccupancyObservationConfiguredWindow(t *testing.T) {
+	service := &SchedulerService{}
+	service.configuration.Store(&SchedulerConfiguration{
+		DispatchOccupancy: &measurement.DispatchOccupancyPolicy{
+			AggregationWindowSeconds: 120,
+		},
+	})
+	from := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	for _, duration := range []time.Duration{120*time.Second + time.Nanosecond, time.Hour} {
+		_, err := service.OccupancyObservations(context.Background(), from, from.Add(duration))
+		var limit *OccupancyWindowError
+		if !errors.As(err, &limit) || limit.MaximumWindowSeconds != 120 {
+			t.Fatal("configured observation window was not enforced before scanning", err)
+		}
+	}
+	config := schedulerTestConfiguration()
+	policy := syntheticOccupancyPolicy()
+	config.DispatchOccupancy = &policy
+	service = schedulerTestService(t, config)
+	if _, err := service.OccupancyObservations(context.Background(), from, from.Add(120*time.Second)); err != nil {
+		t.Fatal("exact configured aggregation window was rejected", err)
+	}
+}

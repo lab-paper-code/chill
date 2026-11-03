@@ -29,6 +29,7 @@ components:
   api: { in: api/v1alpha1 }
   batch-energy-optimization-core: { in: internal/profiling/campaign }
   batch-energy-optimization-controller: { in: internal/profiling/campaign/controller }
+  campaign-evidence: { in: internal/profiling/campaign/evidence }
   idle-baseline-core: { in: internal/profiling/idlebaseline }
   idle-baseline-controller: { in: internal/profiling/idlebaseline/controller }
   entrypoints: { in: [cmd, cmd/**] }
@@ -47,6 +48,7 @@ components:
   evidence-kube: { in: internal/evidencestore/kube }
   evidence-s3: { in: internal/evidencestore/s3 }
   evaluation-controller: { in: internal/evaluation/controller }
+  evaluation-service: { in: internal/evaluation/service }
   metric-core: { in: internal/metricobserver }
   metric-edgemetrics: { in: internal/metricobserver/edgemetrics }
   workload-core: { in: internal/workloadobserver }
@@ -73,8 +75,10 @@ components:
   profiler-worker: { in: internal/profiling/profiler/worker }
   serving-core: { in: internal/serving }
   serving-httpapi: { in: internal/serving/httpapi }
+  serving-application: { in: internal/serving/application }
   serving-live: { in: internal/serving/live }
   serving-kube: { in: internal/serving/kube }
+  serving-measurement: { in: internal/serving/measurement }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
 
@@ -106,6 +110,15 @@ deps:
       # Node power-mode label and generation.
       - platform-core
       - model-catalog
+
+  campaign-evidence:
+    mayDependOn:
+      - api
+      - batch-energy-optimization-core
+      - evidence-core
+      - profile-derivation
+      - profiler-evidence
+      - profiling-run
 
   idle-baseline-core:
     mayDependOn:
@@ -190,6 +203,12 @@ deps:
       - evidence-core
       - evidence-kube
       - evidence-s3
+
+  evaluation-service:
+    mayDependOn:
+      - api
+      - evidence-core
+      - serving-core
 
   metric-core:
     anyVendorDeps: true
@@ -309,16 +328,47 @@ deps:
       - workload-core
       - model-compat
 
+  serving-application:
+    mayDependOn:
+      - serving-core
+      - serving-measurement
+      - serving-kube
+      - evidence-core
+      - evidence-kube
+      - evidence-s3
+      - firstfloor
+      - metric-core
+      - metric-edgemetrics
+      - node-actuator-core
+      - power-window
+      - profiler-app
+      - profiler-kube
+
   serving-httpapi:
     mayDependOn:
       - serving-core
       - api
       - serving-kube
       - serving-live
+      - evaluation-service
+      - serving-measurement
+      - serving-application
 
   serving-live:
     anyVendorDeps: true
 
+
+  serving-measurement:
+    mayDependOn:
+      - api
+      - evidence-core
+      - batch-energy-optimization-core
+      - profiler-app
+      - profiler-controller
+      - profiler-evidence
+      - query-api
+      - serving-core
+      - serving-kube
   serving-core:
     mayDependOn:
       - model-compat
@@ -343,6 +393,7 @@ deps:
       - model-compat
       - evidence-core
       - batch-energy-optimization-core
+      - campaign-evidence
       - profile-derivation
       - profiler-evidence
       - profiler-projection

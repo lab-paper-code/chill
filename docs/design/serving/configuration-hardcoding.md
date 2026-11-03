@@ -80,7 +80,7 @@ Node sample/batch cadence와 transitionObserver.activeDeadlineOverheadSeconds=18
 ### Native dispatch occupancy policy (W2)
 
 The scheduler ConfigMap JSON has one top-level `dispatchOccupancy` block,
-strictly decoded in `cmd/chill-server/scheduler_service.go`. Its maintained
+strictly decoded in `internal/serving/application/scheduler_service.go`. Its maintained
 example is [`config/samples/serving-scheduler.json`](../../../config/samples/serving-scheduler.json).
 The chart references an **external** ConfigMap: changing unrelated Helm values
 does not install this block. Operators must update that actual configuration.

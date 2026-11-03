@@ -5,9 +5,10 @@ import (
 	"net/url"
 	"strings"
 
+	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

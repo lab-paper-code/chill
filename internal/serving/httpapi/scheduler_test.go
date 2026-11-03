@@ -13,9 +13,13 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
+	"github.com/lab-paper-code/chill/internal/serving/application"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -68,17 +72,55 @@ func (a settingsArchive) PutImmutable(
 	}, nil
 }
 
-func settingsControllerForTest(
+func settingsServiceForTest(
 	t *testing.T, kube kubernetes.Interface, observationLog *serving.ObservationLog, settings serving.SchedulerSettings,
-) (*servingkube.SchedulerController, *serving.Runtime) {
+	refreshFailure, completionAppendFailure bool,
+) (*application.SchedulerService, *serving.Runtime, *atomic.Int32) {
 	t.Helper()
+	refreshes := &atomic.Int32{}
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected REST request while changing settings: %s", r.URL.Path)
-		http.NotFound(w, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api":
+			_ = json.NewEncoder(w).Encode(meta.APIVersions{Versions: []string{"v1"}})
+		case "/apis":
+			version := meta.GroupVersionForDiscovery{GroupVersion: api.GroupVersion.String(), Version: api.GroupVersion.Version}
+			_ = json.NewEncoder(w).Encode(meta.APIGroupList{Groups: []meta.APIGroup{{
+				Name: api.GroupVersion.Group, Versions: []meta.GroupVersionForDiscovery{version}, PreferredVersion: version,
+			}}})
+		case "/apis/" + api.GroupVersion.String():
+			_ = json.NewEncoder(w).Encode(meta.APIResourceList{GroupVersion: api.GroupVersion.String(),
+				APIResources: []meta.APIResource{
+					{Name: "batchenergyoptimizations", Kind: "BatchEnergyOptimization", Namespaced: true, Verbs: meta.Verbs{"get", "list"}},
+					{Name: "powermodetransitioncosts", Kind: "PowerModeTransitionCost", Namespaced: true, Verbs: meta.Verbs{"get", "list"}},
+				},
+			})
+		case "/apis/" + api.GroupVersion.String() + "/namespaces/serving/batchenergyoptimizations":
+			refreshes.Add(1)
+			if refreshFailure {
+				http.Error(w, "catalog source unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(api.BatchEnergyOptimizationList{
+				TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"},
+				Items:    []api.BatchEnergyOptimization{},
+			})
+		case "/apis/" + api.GroupVersion.String() + "/namespaces/serving/powermodetransitioncosts":
+			_ = json.NewEncoder(w).Encode(api.PowerModeTransitionCostList{
+				TypeMeta: meta.TypeMeta{APIVersion: api.GroupVersion.String(), Kind: "PowerModeTransitionCostList"},
+				Items:    []api.PowerModeTransitionCost{},
+			})
+		default:
+			t.Errorf("unexpected REST request while changing settings: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(apiServer.Close)
 	scheme := runtime.NewScheme()
 	if err := core.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	store, err := servingkube.NewStore(&rest.Config{Host: apiServer.URL}, scheme)
@@ -116,8 +158,37 @@ func settingsControllerForTest(
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(controller.Close)
-	return controller, execution
+	objectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if completionAppendFailure && r.URL.Query().Get("prefix") == servingkube.DispatchOccupancyPrefix {
+			if err := observationLog.Close(r.Context()); err != nil {
+				t.Error(err)
+			}
+		}
+		_, _ = io.WriteString(w, "<ListBucketResult></ListBucketResult>")
+	}))
+	t.Cleanup(objectServer.Close)
+	objects, err := stores3.New(stores3.Config{LogicalStore: "evidence", Bucket: "bucket", Endpoint: objectServer.URL,
+		Region: "region", AccessKeyID: "test", SecretAccessKey: "test", HTTPClient: objectServer.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := servingkube.NewCatalog(store, objects, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	costs, err := servingkube.NewCostEvidence(store, objects, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := application.NewSchedulerService(context.Background(), application.Dependencies{
+		Store: store, Kube: kube, SettingsKube: kube, Execution: execution, Observer: observer, Objects: objects,
+		ObservationLog: observationLog, Operations: operations, Catalog: catalog, Costs: costs,
+		Options: application.Options{ServingNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
+			MaxRequestBytes: 1 << 20, MaxEvidenceBytes: 1 << 20, StoreName: "evidence"},
+	})
+	service.Controller = controller
+	t.Cleanup(service.Close)
+	return service, execution, refreshes
 }
 
 func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
@@ -204,7 +275,8 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			controller, execution := settingsControllerForTest(t, kube, observationLog, before)
+			service, execution, refreshes := settingsServiceForTest(t, kube, observationLog, before, tc.refreshFailure, tc.completionAppendFailure)
+			controller := service.Controller
 			if err := execution.Publish(&serving.Definition{Name: "workload", UID: "workload-uid"}); err != nil {
 				t.Fatal(err)
 			}
@@ -215,14 +287,10 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			}
 			handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 				Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler",
-				SchedulerConfigKey: "scheduler.json", SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20,
+				SchedulerConfigKey: "scheduler.json", SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20,
 			}}
-			refreshes := 0
 			if !tc.missingRefresh {
-				handler.config.RefreshScheduler = func(ctx context.Context) error {
-					refreshes++
-					return refreshSettingsForTest(ctx, kube, controller, observationLog, tc.refreshFailure, tc.completionAppendFailure)
-				}
+				handler.config.ChangeSchedulerSettings = service.ChangeSchedulerSettings
 			}
 			raw, err := json.Marshal(after)
 			if err != nil {
@@ -244,7 +312,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			if response.Code != http.StatusOK {
 				if tc.completionAppendFailure {
 					assertSchedulerSettingsUnapplied(t, persisted, controller, after, after)
-					if updates != 1 || refreshes != 1 {
+					if updates != 1 || refreshes.Load() != 1 {
 						t.Fatal("completion failure changed apply sequence")
 					}
 					return
@@ -252,7 +320,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				wantDesired := before
 				if tc.refreshFailure {
 					wantDesired = after
-					assertSchedulerSettingsRefreshFailed(t, observationLog, controller, refreshes)
+					assertSchedulerSettingsRefreshFailed(t, observationLog, controller, int(refreshes.Load()))
 				}
 				assertSchedulerSettingsUnapplied(t, persisted, controller, before, wantDesired)
 				if (tc.observationLogFailure || !tc.resourceAllowed || tc.invalidSettings || tc.omit != "" || tc.missingRefresh) && updates != 0 {
@@ -260,38 +328,12 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				}
 				return
 			}
-			if !reflect.DeepEqual(controller.Settings(), stored) || updates != 1 || refreshes != 1 || persisted.Data["other"] != "untouched" {
+			if !reflect.DeepEqual(controller.Settings(), stored) || updates != 1 || refreshes.Load() != 1 || persisted.Data["other"] != "untouched" {
 				t.Fatal("settings not durably applied or unrelated CM data altered")
 			}
 			assertSchedulerSettingsAudit(t, persisted, response.Body.Bytes(), observationLog, before, stored)
 		})
 	}
-}
-
-func refreshSettingsForTest(
-	ctx context.Context, kube kubernetes.Interface, controller *servingkube.SchedulerController,
-	observationLog *serving.ObservationLog, refreshFailure, completionAppendFailure bool,
-) error {
-	if refreshFailure {
-		return errors.New("removed profile catalog refresh still fails")
-	}
-	cm, err := kube.CoreV1().ConfigMaps("serving").Get(ctx, "scheduler", meta.GetOptions{})
-	if err != nil {
-		return err
-	}
-	var configuration struct {
-		Settings serving.SchedulerSettings `json:"settings"`
-	}
-	if err := json.Unmarshal([]byte(cm.Data["scheduler.json"]), &configuration); err != nil {
-		return err
-	}
-	if err := controller.SetConfiguration(servingkube.SchedulerControllerConfig{Settings: configuration.Settings}); err != nil {
-		return err
-	}
-	if completionAppendFailure {
-		return observationLog.Close(ctx)
-	}
-	return nil
 }
 
 func assertSchedulerSettingsUnapplied(
@@ -425,7 +467,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"},
 		Data: map[string]string{"scheduler.json": `{"settings":` + string(settingsRaw) +
 			`,"staticRouting":{"old-uid":{"physical":1}},"staticRoutingValidatedAt":"2026-10-01T00:00:00Z"` +
-			`,"powerObservation":{"coverage":{"MaximumGap":2000000000,"MaximumBoundaryDistance":3000000000,"MinimumCoverage":0.99}}}`},
+			`,"powerObservation":{"sampling":{"Interval":1000000000,"Duration":1000000000,"RequestTimeout":100000000},"coverage":{"MaximumGap":2000000000,"MaximumBoundaryDistance":3000000000,"MinimumCoverage":0.99}}}`},
 	})
 	kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, &authenticationv1.TokenReview{Status: authenticationv1.TokenReviewStatus{
@@ -449,11 +491,12 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	controller, execution := settingsControllerForTest(t, kube, observationLog, settings)
+	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
+	controller := service.Controller
 	meters := []servingkube.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
-		SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20, RefreshScheduler: func(context.Context) error { return nil },
+		SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20, ChangeSchedulerSettings: service.ChangeSchedulerSettings,
 		SchedulerMeters: func() []servingkube.MeterDeclaration { return meters },
 		RequestTimeout:  73125 * time.Millisecond,
 	}}
@@ -552,7 +595,8 @@ func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	controller, execution := settingsControllerForTest(t, fake.NewSimpleClientset(), observationLog, schedulerSettingsForTest())
+	service, execution, _ := settingsServiceForTest(t, fake.NewSimpleClientset(), observationLog, schedulerSettingsForTest(), false, false)
+	controller := service.Controller
 	tainted := serving.NodeReference{Name: "tainted", UID: "tainted-uid"}
 	serves := serving.NodeReference{Name: "serves", UID: "serves-uid"}
 	execution.SetMeasurementNodes([]serving.NodeReference{tainted})
@@ -634,15 +678,14 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	controller, execution := settingsControllerForTest(t, kube, observationLog, settings)
+	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
+	controller := service.Controller
 	handler := &Handler{
 		authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog,
 		config: HandlerConfig{
 			Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler",
-			SchedulerConfigKey: "scheduler.json", SchedulerLock: &sync.Mutex{}, MaxRequestBytes: 1 << 20,
-			RefreshScheduler: func(ctx context.Context) error {
-				return refreshSettingsForTest(ctx, kube, controller, observationLog, false, false)
-			},
+			SchedulerConfigKey: "scheduler.json", SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20,
+			ChangeSchedulerSettings: service.ChangeSchedulerSettings,
 		},
 	}
 	request := func(method, tag string) *httptest.ResponseRecorder {
@@ -694,6 +737,43 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 	}
 	if raced.Code != http.StatusConflict || failure.Code != "SettingsConflict" {
 		t.Fatalf("kube conflict status=%d body=%s", raced.Code, raced.Body)
+	}
+	// Another accepted mutation may finish before the first response is written.
+	conflict = false
+	assertSettingsResponseFrozen(t, handler, service, request, latestETag, settings)
+}
+
+func assertSettingsResponseFrozen(t *testing.T, handler *Handler, service *application.SchedulerService,
+	request func(string, string) *httptest.ResponseRecorder, latestETag string, settings serving.SchedulerSettings,
+) {
+	t.Helper()
+	controller := service.Controller
+	var responseVersion, laterVersion string
+	handler.config.ChangeSchedulerSettings = func(ctx context.Context, input application.SettingsInput,
+		version string, valid bool, username, uid string,
+	) (serving.SchedulerSettingsChange, string, error) {
+		change, version, err := service.ChangeSchedulerSettings(ctx, input, version, valid, username, uid)
+		if err != nil {
+			return change, version, err
+		}
+		if !service.Lock.TryLock() {
+			t.Fatal("settings lock retained after application result")
+		}
+		service.Lock.Unlock()
+		responseVersion = version
+		input.MaxInstances = settings.MaxInstances + 7
+		_, laterVersion, err = service.ChangeSchedulerSettings(ctx, input, version, true, username, uid)
+		return change, version, err
+	}
+	frozen := request(http.MethodPut, latestETag)
+	var change serving.SchedulerSettingsChange
+	if err := json.Unmarshal(frozen.Body.Bytes(), &change); err != nil {
+		t.Fatal(err)
+	}
+	if frozen.Code != http.StatusOK || frozen.Header().Get("ETag") != strconv.Quote(responseVersion) ||
+		responseVersion == laterVersion || change.After.MaxInstances != settings.MaxInstances ||
+		controller.Settings().MaxInstances != settings.MaxInstances+7 {
+		t.Fatalf("response reread later settings/version: status=%d etag=%q body=%s", frozen.Code, frozen.Header().Get("ETag"), frozen.Body)
 	}
 }
 

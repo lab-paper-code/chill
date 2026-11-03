@@ -1,0 +1,78 @@
+{{- if .Values.dashboard.reader.enabled }}
+{{- $servingNamespace := default .Release.Namespace .Values.servingEntrypoint.namespace -}}
+{{- $profileNamespaces := default (list $servingNamespace) .Values.servingEntrypoint.profileNamespaces -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "chill.fullname" . }}-dashboard-reader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-dashboard-reader
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  {{- include "chill.dashboardReadRules" . | nindent 0 }}
+  # Query viewer native reads for systems, inventory and model compatibility.
+  - apiGroups: [edge.dacs.io]
+    resources: [chillsystems, deviceclasses, modelspecs]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "chill.fullname" . }}-dashboard-reader
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.fullname" . }}-dashboard-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.fullname" . }}-dashboard-reader
+    namespace: {{ .Release.Namespace }}
+---
+# Scoped serving-manager native reads back the measurement and evaluation GETs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "chill.fullname" . }}-dashboard-reader-namespaced
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [edge.dacs.io]
+    resources: [profilingruns, batchenergyoptimizations, operationcostmeasurements, dispatchoccupancymeasurements]
+    verbs: [get, list]
+  {{- if .Values.evaluation.enabled }}
+  - apiGroups: [edge.dacs.io]
+    resources: [evaluationruns, loadscenarios, evaluationstages]
+    verbs: [get, list, watch]
+  {{- end }}
+{{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "chill.fullname" $ }}-dashboard-reader
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "chill.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "chill.fullname" $ }}-dashboard-reader-namespaced
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "chill.fullname" $ }}-dashboard-reader
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

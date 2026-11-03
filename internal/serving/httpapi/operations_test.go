@@ -43,7 +43,8 @@ func TestManualOperationsRejectKindFieldsBeforeExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	controller, execution := settingsControllerForTest(t, kube, observationLog, schedulerSettingsForTest())
+	service, execution, _ := settingsServiceForTest(t, kube, observationLog, schedulerSettingsForTest(), false, false)
+	controller := service.Controller
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", MaxRequestBytes: 1 << 20,
 	}}

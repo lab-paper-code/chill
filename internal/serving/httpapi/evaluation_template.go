@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -19,7 +21,7 @@ func (h *Handler) evaluationTemplate(w http.ResponseWriter, r *http.Request) {
 		sendError(w, err)
 		return
 	}
-	_, config, err := schedulerConfigMap(
+	_, config, err := application.SchedulerConfigMap(
 		r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
 		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey,
 	)
