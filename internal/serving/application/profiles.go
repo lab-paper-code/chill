@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"bytes"
@@ -26,8 +26,8 @@ const preparationUnavailable = "PreparationUnavailable"
 
 // preparations builds one PrepareSpec per profile. A profile that cannot be
 // prepared becomes its own CatalogIssue; the other profiles remain usable.
-func (o *schedulerService) preparations(
-	ctx context.Context, config schedulerConfiguration, profiles []serving.Profile,
+func (o *SchedulerService) preparations(
+	ctx context.Context, config SchedulerConfiguration, profiles []serving.Profile,
 ) (map[string]servingkube.PrepareSpec, []servingkube.CatalogIssue) {
 	preparations := make(map[string]servingkube.PrepareSpec, len(profiles))
 	var issues []servingkube.CatalogIssue
@@ -46,8 +46,8 @@ func (o *schedulerService) preparations(
 	return preparations, issues
 }
 
-func (o *schedulerService) preparation(
-	ctx context.Context, config schedulerConfiguration, profile serving.Profile,
+func (o *SchedulerService) preparation(
+	ctx context.Context, config SchedulerConfiguration, profile serving.Profile,
 ) (servingkube.PrepareSpec, error) {
 	if profile.RuntimeMetadata == nil {
 		return servingkube.PrepareSpec{}, errors.New("verified physical allocation unavailable")
@@ -60,12 +60,12 @@ func (o *schedulerService) preparation(
 	if err != nil {
 		return spec, err
 	}
-	if int64(len(raw)) > o.opts.maxEvidenceBytes {
+	if int64(len(raw)) > o.opts.MaxEvidenceBytes {
 		return spec, errors.New("verified profile bundle exceeds immutable object bound")
 	}
 	spec.Instance.Profile = &profile
 	spec.Bundle = evidencestore.ObjectIdentity{
-		Store: o.opts.storeName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
+		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
 	}
 	if err = servingkube.ValidatePreparation(spec); err != nil {
 		return spec, err
@@ -76,7 +76,7 @@ func (o *schedulerService) preparation(
 
 // Retain both Accepted and Rejected comparisons before publishing the catalog.
 // Content-addressed records preserve earlier decisions when annotations change.
-func (o *schedulerService) retainProfileReuseChecks(ctx context.Context, view *servingkube.CatalogView) error {
+func (o *SchedulerService) retainProfileReuseChecks(ctx context.Context, view *servingkube.CatalogView) error {
 	for index, check := range view.ReuseChecks {
 		check.Record = nil
 		raw, err := json.Marshal(struct {
@@ -86,10 +86,10 @@ func (o *schedulerService) retainProfileReuseChecks(ctx context.Context, view *s
 		if err != nil {
 			return err
 		}
-		if int64(len(raw)) > o.opts.maxEvidenceBytes {
+		if int64(len(raw)) > o.opts.MaxEvidenceBytes {
 			return errors.New("profile reuse check exceeds immutable object bound")
 		}
-		reference := evidencestore.ObjectIdentity{Store: o.opts.storeName,
+		reference := evidencestore.ObjectIdentity{Store: o.opts.StoreName,
 			Key:  fmt.Sprintf("serving/profile-reuse/%s/%x.json", check.ConfirmationProfileID, sha256.Sum256(raw)),
 			Size: int64(len(raw))}
 		if _, err := o.objects.PutImmutable(ctx, reference, bytes.NewReader(raw)); err != nil {
@@ -134,7 +134,7 @@ func reproducibleRuntimeAccess(p serving.Profile) error {
 
 // measuredPreparation sizes the Pod memory as the measured peak plus
 // servingMemory, the headroom for the requests firstfloor queues.
-func (o *schedulerService) measuredPreparation(
+func (o *SchedulerService) measuredPreparation(
 	ctx context.Context, p serving.Profile, servingMemory uint64,
 ) (servingkube.PrepareSpec, error) {
 	var spec servingkube.PrepareSpec
@@ -172,8 +172,8 @@ func (o *schedulerService) measuredPreparation(
 	}
 	memory += servingMemory
 	binding := storekube.Binding{
-		Store: o.opts.storeName, Endpoint: o.opts.storeEndpoint, Bucket: o.opts.storeBucket,
-		Region: o.opts.storeRegion, CredentialsSecretName: o.opts.storeCredentialsSecret,
+		Store: o.opts.StoreName, Endpoint: o.opts.StoreEndpoint, Bucket: o.opts.StoreBucket,
+		Region: o.opts.StoreRegion, CredentialsSecretName: o.opts.StoreCredentialsSecret,
 	}
 	if err = binding.Validate(); err != nil {
 		return spec, err
@@ -207,10 +207,10 @@ func (o *schedulerService) measuredPreparation(
 				"--warmup-iterations", strconv.Itoa(runtime.WarmupIterations),
 			},
 			RunnerTimeoutMS: int(
-				o.opts.operationTimeout / time.Millisecond,
+				o.opts.OperationTimeout / time.Millisecond,
 			), MaxQueueRequests: int(settings.MaxQueueSize),
 			MaxQueueBytes:   int(queueBytes),
-			MaxRequestBytes: int(min(o.opts.maxRequestBytes, int64(native.MaxFrameBytes))),
+			MaxRequestBytes: int(min(o.opts.MaxRequestBytes, int64(native.MaxFrameBytes))),
 			Mode:            "serving", BatchSizes: slices.Clone(runtime.InitializedBatches),
 			MaxBatchSize: int(settings.MaxBatchSize), ProfilePath: "/profile/bundle.json",
 			Policy: native.Policy{
@@ -236,7 +236,7 @@ func (o *schedulerService) measuredPreparation(
 }
 
 // readCatalog projects only query inputs; the scheduler remains the source of truth.
-func (o *schedulerService) readCatalog(ctx context.Context) (servingkube.CatalogRead, error) {
+func (o *SchedulerService) ReadCatalog(ctx context.Context) (servingkube.CatalogRead, error) {
 	view, err := o.measurementCatalogView(ctx)
 	if err != nil {
 		return servingkube.CatalogRead{}, err
@@ -244,7 +244,7 @@ func (o *schedulerService) readCatalog(ctx context.Context) (servingkube.Catalog
 	read := servingkube.CatalogRead{
 		CatalogSnapshot: servingkube.ProjectCatalogSnapshot(view.CatalogView, view.ConfigVersion, nil),
 	}
-	current := o.profiles.Load()
+	current := o.Profiles.Load()
 	occupancy := o.occupancy.published.Load()
 	if occupancy != nil {
 		current = occupancy.input.catalog

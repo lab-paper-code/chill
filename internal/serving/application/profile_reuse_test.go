@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -19,11 +19,11 @@ import (
 )
 
 func TestMeasuredReusePreparationKeepsTargetIdentity(t *testing.T) {
-	service := &schedulerService{
+	service := &SchedulerService{
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "genesis3", UID: "target-uid"}}),
-		opts: options{
-			storeName: "store", storeEndpoint: "http://store", storeBucket: "bucket", storeRegion: "region",
-			storeCredentialsSecret: "actual-secret", operationTimeout: time.Hour, maxRequestBytes: 8 << 20,
+		opts: Options{
+			StoreName: "store", StoreEndpoint: "http://store", StoreBucket: "bucket", StoreRegion: "region",
+			StoreCredentialsSecret: "actual-secret", OperationTimeout: time.Hour, MaxRequestBytes: 8 << 20,
 		},
 	}
 	profile := measuredAdoptionProfile()
@@ -78,7 +78,7 @@ func TestProfileReuseRetainsAcceptedAndRejectedResults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &schedulerService{objects: objects, opts: options{storeName: "evidence", maxEvidenceBytes: 1 << 20}}
+	service := &SchedulerService{objects: objects, opts: Options{StoreName: "evidence", MaxEvidenceBytes: 1 << 20}}
 	accepted := serving.ProfileReuseCheck{
 		SourceProfileID: "ns/source/uid", ConfirmationProfileID: "ns/accepted/uid", Outcome: "Accepted",
 	}
@@ -114,7 +114,7 @@ func TestProfileReuseRetainsAcceptedAndRejectedResults(t *testing.T) {
 			t.Fatal("record references made repeated retention non-idempotent")
 		}
 	}
-	service.opts.maxEvidenceBytes = 1
+	service.opts.MaxEvidenceBytes = 1
 	if err := service.retainProfileReuseChecks(context.Background(), &view); err == nil {
 		t.Fatal("unbounded comparison record accepted")
 	}

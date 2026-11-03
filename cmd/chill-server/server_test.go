@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -219,21 +221,15 @@ func coldStartTLS(t *testing.T) (*http.Client, string, string) {
 func TestEvaluationAssemblyResolvesLateSchedulerController(t *testing.T) {
 	const warmingCode = "CoverageWarming"
 	ctx := context.Background()
-	owners := schedulerTestService(t, schedulerTestConfiguration())
-	opts := owners.opts
-	opts.sourceInterval = time.Second
-	scheduler, err := newSchedulerService(ctx, owners.store, owners.kube, owners.execution,
-		owners.observer, owners.objects, owners.observationLog, opts, time.Second, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	owners := schedulerTestDependencies(t, schedulerTestConfiguration())
+	scheduler := application.NewSchedulerService(ctx, owners)
 	t.Cleanup(scheduler.Close)
 	evaluations, request := evaluationFixture(t, evaluationSettings(scheduler))
 	var config httpapi.HandlerConfig
 	// Use the server's assembly before scheduler initialization, not a
 	// separately injected ready handler or a captured controller method.
 	httpapi.ConfigureEvaluations(&config, evaluations)
-	if scheduler.controller != nil {
+	if scheduler.Controller != nil {
 		t.Fatal("controller was initialized before server assembly")
 	}
 	for _, patch := range []*apiextensionsv1.JSON{
@@ -252,15 +248,15 @@ func TestEvaluationAssemblyResolvesLateSchedulerController(t *testing.T) {
 		}
 	}
 	controller, err := servingkube.NewSchedulerController(
-		scheduler.store, scheduler.kube, scheduler.execution, scheduler.observer,
-		scheduler.operations, scheduler.observationLog,
+		owners.Store, owners.Kube, owners.Execution, owners.Observer,
+		owners.Operations, owners.ObservationLog,
 		servingkube.SchedulerControllerConfig{Settings: schedulerTestConfiguration().Settings})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scheduler.lock.Lock()
-	scheduler.controller = controller
-	scheduler.lock.Unlock()
+	scheduler.Lock.Lock()
+	scheduler.Controller = controller
+	scheduler.Lock.Unlock()
 	result, err := config.PreflightEvaluation(ctx, request)
 	if err != nil {
 		t.Fatal(err)

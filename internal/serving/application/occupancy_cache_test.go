@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 )
 
@@ -27,8 +26,8 @@ func rollingOccupancyFixture() *rollingOccupancyInput {
 	other := profile
 	other.ID, other.NodeName, other.Condition.NodeUID = "other", "other-node", "other-uid"
 	return &rollingOccupancyInput{
-		configuration: &schedulerConfiguration{Settings: settings, DispatchOccupancy: &policy},
-		catalog: &httpapi.ProfilesView{ConfigVersion: "accepted",
+		configuration: &SchedulerConfiguration{Settings: settings, DispatchOccupancy: &policy},
+		catalog: &ProfilesView{ConfigVersion: "accepted",
 			CatalogView: servingkube.CatalogView{Profiles: []serving.Profile{profile, other}}},
 		profiles: map[string]*serving.Profile{profile.ID: &profile, other.ID: &other},
 		legacy: []serving.DispatchOccupancy{{Node: serving.NodeReference{Name: "node", UID: "node-uid"},
@@ -161,11 +160,11 @@ func TestRollingOccupancySingleWorkerCancellationAndDuty(t *testing.T) {
 }
 
 func TestRollingOccupancyCatalogUsesSameAcceptedSnapshot(t *testing.T) {
-	service := &schedulerService{catalog: &servingkube.Catalog{}}
-	service.catalogRead.Store(&httpapi.ProfilesView{})
+	service := &SchedulerService{catalog: &servingkube.Catalog{}}
+	service.catalogRead.Store(&ProfilesView{})
 	input := rollingOccupancyFixture()
 	service.occupancy.configure(input)
-	read, err := service.readCatalog(context.Background())
+	read, err := service.ReadCatalog(context.Background())
 	if err != nil || read.Accepted == nil || read.Accepted.ConfigVersion != input.catalog.ConfigVersion ||
 		!reflect.DeepEqual(read.Accepted.DispatchOccupancy, service.occupancy.selected()) ||
 		len(read.DispatchOccupancy) != 0 {

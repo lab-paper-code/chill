@@ -2,22 +2,17 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	core "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
 )
 
 func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
@@ -85,135 +80,25 @@ func (h *Handler) scheduler(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "SettingsPreconditionRequired", Message: "GET settings and supply its ETag in If-Match"})
 		return
 	}
-	// Routing declarations are read-only here; explicit operations own mutations.
-	var input struct {
-		serving.SchedulerSettingsInput
-		StaticRouting            json.RawMessage `json:"staticRouting"`
-		StaticRoutingValidatedAt json.RawMessage `json:"staticRoutingValidatedAt"`
-	}
+	var input application.SettingsInput
 	if err := h.decode(w, r, &input); err != nil {
 		sendError(w, err)
 		return
 	}
-	for _, field := range [...]struct {
-		name  string
-		value json.RawMessage
-	}{{"staticRouting", input.StaticRouting}, {"staticRoutingValidatedAt", input.StaticRoutingValidatedAt}} {
-		if field.value != nil {
-			sendError(w, &serving.Error{Code: "InvalidBody", Message: field.name + " is read-only; use scheduler operations", Field: field.name})
-			return
-		}
-	}
-	settings, err := input.SchedulerSettingsInput.Settings()
-	if err != nil {
-		sendError(w, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "settings"})
-		return
-	}
-	current := map[string]bool{}
-	for _, d := range h.runtime.SchedulerInputs(time.Now).Workloads {
-		current[d.UID] = true
-	}
-	// The stored list names only current Workloads.
-	settings.AutonomousWorkloads = slices.DeleteFunc(slices.Clone(settings.AutonomousWorkloads), func(uid string) bool { return !current[uid] })
-	if err := serving.SchedulerFixedBatchAutonomy(h.config.Scheduler.State().Snapshot, settings.AutonomousWorkloads); err != nil {
-		sendError(w, &serving.Error{Code: "InvalidBody", Message: err.Error(), Field: "autonomousWorkloads"})
-		return
-	}
-	h.config.SchedulerLock.Lock()
-	defer h.config.SchedulerLock.Unlock()
-	cm, config, err := schedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
-		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey)
-	if err != nil {
-		sendError(w, err)
-		return
-	}
-	if len(r.Header.Values("If-Match")) != 1 || r.Header.Get("If-Match") != strconv.Quote(cm.ResourceVersion) {
-		sendError(w, &serving.Error{Code: "SettingsConflict", Message: "settings changed; GET settings before submitting again"})
-		return
-	}
+	versionMatch, parseErr := strconv.Unquote(r.Header.Get("If-Match"))
+	validMatch := len(r.Header.Values("If-Match")) == 1 && parseErr == nil && r.Header.Get("If-Match") == strconv.Quote(versionMatch)
 	username, uid := principal.Actor()
-	now := time.Now().UTC()
-	change := serving.SchedulerSettingsChange{
-		ActorUsername: username, ActorUID: uid, Before: h.config.Scheduler.Settings(), After: settings,
-		ValidatedAt: now, Affected: []serving.NodeReference{},
-	}
-	for _, node := range h.config.Scheduler.State().Snapshot.Nodes {
-		change.Affected = append(change.Affected, node.Node)
-	}
-	// Persist intent before touching either ConfigMap or running policy.
-	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: now, Settings: &change}); err != nil {
-		sendError(w, err)
-		return
-	}
-	version, err := persistSchedulerSettings(r.Context(), h.authorizer.Client, cm, config, h.config.SchedulerConfigKey, settings)
-	if apierrors.IsConflict(err) {
-		err = &serving.Error{Code: "SettingsConflict", Message: "settings changed during update; GET settings before submitting again"}
-	}
-	if err == nil {
-		// Only the scheduler service's full refresh can accept a configuration. Applying
-		// settings alone could enable a catalog whose selection was removed by
-		// a previously persisted change that has not refreshed successfully.
-		err = h.config.RefreshScheduler(r.Context())
-	}
+	change, version, err := application.ChangeSchedulerSettings(r.Context(), application.SettingsDependencies{
+		Runtime: h.runtime, Scheduler: h.config.Scheduler, Lock: h.config.SchedulerLock,
+		Kube: h.authorizer.Client, Namespace: h.config.SchedulerNamespace, ConfigMap: h.config.SchedulerConfigMap,
+		Key: h.config.SchedulerConfigKey, ObservationLog: h.observationLog, Refresh: h.config.RefreshScheduler,
+	}, input, versionMatch, validMatch, username, uid)
 	if err != nil {
-		change.Error = err.Error()
-	} else {
-		applied := time.Now().UTC()
-		change.AppliedAt = &applied
-	}
-	// HTTP failure after refresh does not imply rollback: the selected policy
-	// may already be active even when its completion record cannot be appended.
-	recordErr := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: time.Now().UTC(), Settings: &change})
-	if err = errors.Join(err, recordErr); err != nil {
 		sendError(w, err)
 		return
 	}
 	w.Header().Set("ETag", strconv.Quote(version))
 	sendJSON(w, http.StatusOK, change)
-}
-
-// schedulerConfigMap reads the scheduler ConfigMap and its configuration object.
-func schedulerConfigMap(
-	ctx context.Context, kube kubernetes.Interface, namespace, name, key string,
-) (*core.ConfigMap, map[string]json.RawMessage, error) {
-	cm, err := kube.CoreV1().ConfigMaps(namespace).Get(ctx, name, meta.GetOptions{})
-	if err != nil {
-		return nil, nil, err
-	}
-	var config map[string]json.RawMessage
-	if err = json.Unmarshal([]byte(cm.Data[key]), &config); err != nil {
-		return nil, nil, err
-	}
-	if config == nil {
-		return nil, nil, errors.New("scheduler configuration must be an object")
-	}
-	return cm, config, nil
-}
-
-// persistSchedulerSettings writes settings into config and updates the
-// ConfigMap read with it, so a concurrent writer fails the update.
-func persistSchedulerSettings(
-	ctx context.Context, kube kubernetes.Interface, cm *core.ConfigMap, config map[string]json.RawMessage, key string,
-	settings serving.SchedulerSettings,
-) (string, error) {
-	if err := settings.Validate(); err != nil {
-		return "", err
-	}
-	raw, err := json.Marshal(settings)
-	if err != nil {
-		return "", err
-	}
-	config["settings"] = raw
-	encoded, err := json.Marshal(config)
-	if err != nil {
-		return "", err
-	}
-	cm.Data[key] = string(encoded)
-	updated, err := kube.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, meta.UpdateOptions{})
-	if err != nil {
-		return "", err
-	}
-	return updated.ResourceVersion, nil
 }
 
 func schedulerObservationSelectionQuery(query url.Values) (serving.SchedulerObservationSelection, error) {
@@ -361,7 +246,7 @@ func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) 
 	// read relative to public settings/routing mutations.
 	h.config.SchedulerLock.Lock()
 	defer h.config.SchedulerLock.Unlock()
-	cm, config, err := schedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
+	cm, config, err := application.SchedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
 		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey)
 	if err != nil {
 		sendError(w, err)

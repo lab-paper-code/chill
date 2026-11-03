@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -6,10 +6,17 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
-func (o *schedulerService) occupancyObservations(
+// OccupancyWindowError reports the accepted policy's query limit.
+type OccupancyWindowError struct {
+	MaximumWindowSeconds int32
+}
+
+func (*OccupancyWindowError) Error() string {
+	return "occupancy window exceeds dispatchOccupancy.aggregationWindowSeconds"
+}
+func (o *SchedulerService) OccupancyObservations(
 	ctx context.Context, from, to time.Time,
 ) ([]serving.OccupancyEstimate, error) {
 	if o == nil {
@@ -20,7 +27,7 @@ func (o *schedulerService) occupancyObservations(
 		return nil, &serving.Error{Code: "ObservationUnavailable", Message: "dispatchOccupancy configuration is unavailable"}
 	}
 	if to.Sub(from) > time.Duration(config.DispatchOccupancy.AggregationWindowSeconds)*time.Second {
-		return nil, &httpapi.OccupancyWindowError{
+		return nil, &OccupancyWindowError{
 			MaximumWindowSeconds: config.DispatchOccupancy.AggregationWindowSeconds,
 		}
 	}

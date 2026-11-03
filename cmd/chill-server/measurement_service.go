@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/measurement"
@@ -19,7 +21,7 @@ func measurementConfig(opts options) measurement.Config {
 	}
 }
 
-func newMeasurementService(native client.Client, kube kubernetes.Interface, scheduler *schedulerService,
+func newMeasurementService(native client.Client, kube kubernetes.Interface, scheduler *application.SchedulerService,
 	objects measurement.Objects, opts options,
 ) (*measurement.Service, error) {
 	origin, err := privateOrigin(opts.queryURL)
@@ -29,13 +31,13 @@ func newMeasurementService(native client.Client, kube kubernetes.Interface, sche
 	var inputs *measurement.SchedulerInputs
 	if scheduler != nil {
 		inputs = &measurement.SchedulerInputs{
-			Lock: &scheduler.lock, GatewayRequestTimeout: scheduler.gatewayRequestTimeout,
+			Lock: &scheduler.Lock, GatewayRequestTimeout: scheduler.GatewayRequestTimeout,
 			DecodePolicy: func(raw string, maxBytes int64) (*measurement.DispatchOccupancyPolicy, error) {
-				config, err := decodeSchedulerConfiguration(raw, maxBytes)
+				config, err := application.DecodeSchedulerConfiguration(raw, maxBytes)
 				return config.DispatchOccupancy, err
 			},
 			LoadProfiles: func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool) {
-				snapshot := scheduler.profiles.Load()
+				snapshot := scheduler.Profiles.Load()
 				if snapshot == nil {
 					return "", nil, nil, false
 				}

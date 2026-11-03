@@ -3,18 +3,20 @@ package main
 import (
 	"context"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	evaluation "github.com/lab-paper-code/chill/internal/evaluation/service"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 )
 
-func evaluationSettings(scheduler *schedulerService) func() (serving.SchedulerSettings, error) {
+func evaluationSettings(scheduler *application.SchedulerService) func() (serving.SchedulerSettings, error) {
 	return func() (serving.SchedulerSettings, error) {
 		if scheduler != nil {
-			scheduler.lock.Lock()
-			defer scheduler.lock.Unlock()
-			if scheduler.controller != nil {
-				return scheduler.controller.Settings(), nil
+			scheduler.Lock.Lock()
+			defer scheduler.Lock.Unlock()
+			if scheduler.Controller != nil {
+				return scheduler.Controller.Settings(), nil
 			}
 		}
 		return serving.SchedulerSettings{}, &serving.Error{

@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"encoding/json"
@@ -21,11 +21,11 @@ func syntheticOccupancyPolicy() measurement.DispatchOccupancyPolicy {
 }
 
 func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
-	raw, err := os.ReadFile("../../config/samples/serving-scheduler.json")
+	raw, err := os.ReadFile("../../../config/samples/serving-scheduler.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err != nil {
+	if _, err := DecodeSchedulerConfiguration(string(raw), 1<<20); err != nil {
 		t.Fatal(err)
 	}
 	var wire map[string]any
@@ -33,7 +33,7 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	block := wire["dispatchOccupancy"].(map[string]any)
-	configured, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+	configured, err := DecodeSchedulerConfiguration(string(raw), 1<<20)
 	if err != nil || configured.Settings.DefaultDispatchOccupancyNanos != 2000000 {
 		t.Fatal("authoritative settings defaults were not retained", err)
 	}
@@ -43,7 +43,7 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		original := block[field]
 		delete(block, field)
 		raw, _ = json.Marshal(wire)
-		if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+		if _, err := DecodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
 			t.Fatalf("omitted %s acquired a Go policy default", field)
 		}
 		block[field] = original
@@ -56,7 +56,7 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 	} {
 		block[field] = 1
 		raw, _ = json.Marshal(wire)
-		if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+		if _, err := DecodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
 			t.Fatal("accepted removed or server-owned config field", field)
 		}
 		delete(block, field)
@@ -64,19 +64,19 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 	settings := wire["settings"].(map[string]any)
 	delete(settings, "defaultDispatchOccupancyNanos")
 	raw, _ = json.Marshal(wire)
-	if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+	if _, err := DecodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
 		t.Fatal("aggregation policy supplied an implicit scheduler default")
 	}
 	settings["defaultDispatchOccupancyNanos"] = float64(2000000)
 	delete(wire, "dispatchOccupancy")
 	delete(wire["settings"].(map[string]any), "defaultDispatchOccupancyNanos")
 	raw, _ = json.Marshal(wire)
-	if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+	if _, err := DecodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
 		t.Fatal("missing policy and missing settings fallback acquired an implicit zero")
 	}
 	wire["settings"].(map[string]any)["defaultDispatchOccupancyNanos"] = float64(0)
 	raw, _ = json.Marshal(wire)
-	config, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+	config, err := DecodeSchedulerConfiguration(string(raw), 1<<20)
 	if err != nil || config.DispatchOccupancy != nil {
 		t.Fatal("missing policy acquired defaults", err)
 	}
@@ -167,7 +167,7 @@ func TestSchedulerSettingsPUTAndPATCHControlOccupancyDefaults(t *testing.T) {
 		{"PATCH/zero", "PATCH", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			raw, err := os.ReadFile("../../config/samples/serving-scheduler.json")
+			raw, err := os.ReadFile("../../../config/samples/serving-scheduler.json")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,7 +204,7 @@ func TestSchedulerSettingsPUTAndPATCHControlOccupancyDefaults(t *testing.T) {
 			if raw, err = json.Marshal(document); err != nil {
 				t.Fatal(err)
 			}
-			configuration, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+			configuration, err := DecodeSchedulerConfiguration(string(raw), 1<<20)
 			if err != nil {
 				t.Fatal(err)
 			}

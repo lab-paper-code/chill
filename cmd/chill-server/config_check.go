@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -108,7 +110,9 @@ func checkDeploymentConfig(manifest, configMaps string) error {
 			if !exists {
 				return fmt.Errorf("scheduler ConfigMap %s required in render or CHILL_SCHEDULER_CONFIGMAP_FILE", key)
 			}
-			if _, err := decodeSchedulerConfiguration(cm.Data[opts.schedulerConfigKey], opts.maxRequestBytes); err != nil {
+			if _, err := application.DecodeSchedulerConfiguration(
+				cm.Data[opts.schedulerConfigKey], opts.maxRequestBytes,
+			); err != nil {
 				return fmt.Errorf("scheduler ConfigMap %s key %s: %w", key, opts.schedulerConfigKey, err)
 			}
 		}

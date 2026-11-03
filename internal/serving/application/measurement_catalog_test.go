@@ -1,4 +1,4 @@
-package main
+package application
 
 import (
 	"context"
@@ -16,7 +16,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,23 +68,23 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 	}
-	raw, err := json.Marshal(schedulerConfiguration{Settings: settings})
+	raw, err := json.Marshal(SchedulerConfiguration{Settings: settings})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &schedulerService{
+	service := &SchedulerService{
 		catalog: catalog, costs: costs,
 		kube: fake.NewSimpleClientset(&core.ConfigMap{
 			ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "new"},
 			Data:       map[string]string{"config": string(raw)},
 		}),
-		opts: options{
-			servingNamespace: "serving", schedulerConfigMap: "scheduler",
-			schedulerConfigKey: "config", maxRequestBytes: 1 << 20,
+		opts: Options{
+			ServingNamespace: "serving", SchedulerConfigMap: "scheduler",
+			SchedulerConfigKey: "config", MaxRequestBytes: 1 << 20,
 		},
 	}
 	acceptedEnergy := 3.0
-	adopted := &httpapi.ProfilesView{
+	adopted := &ProfilesView{
 		ConfigVersion: "accepted-config",
 		CatalogView: servingkube.CatalogView{
 			Profiles: []serving.Profile{{ID: "accepted-only", Batches: []serving.BatchProfile{{Batch: 1}}}},
@@ -109,9 +108,9 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 			},
 		}},
 	}
-	service.profiles.Store(adopted)
+	service.Profiles.Store(adopted)
 	ctx := context.Background()
-	if err := service.refresh(ctx); err == nil || err.Error() != "cost source unavailable" {
+	if err := service.Refresh(ctx); err == nil || err.Error() != "cost source unavailable" {
 		t.Fatalf("cost failure was hidden: %v", err)
 	}
 	published := *service.catalogRead.Load()
@@ -120,11 +119,11 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 	service.catalogRead.Store(&published)
 	first, err := service.measurementCatalogView(ctx)
 	if err != nil || first.SourceCheckedAt.IsZero() || first.SourceError != "" || first.Revision == "prior" ||
-		len(first.Profiles) != 0 || first.MeasurementFacts == nil || service.profiles.Load() != adopted {
+		len(first.Profiles) != 0 || first.MeasurementFacts == nil || service.Profiles.Load() != adopted {
 		t.Fatalf("cost failure hid new verified catalog or changed adoption: %+v error=%v", first, err)
 	}
 	assertAcceptedCatalogRead(t, service, adopted, first)
-	if err := service.refresh(ctx); err == nil {
+	if err := service.Refresh(ctx); err == nil {
 		t.Fatal("cost source unexpectedly succeeded")
 	}
 	second, err := service.measurementCatalogView(ctx)
@@ -132,12 +131,12 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 		t.Fatalf("unchanged source success was not refreshed: %+v error=%v", second, err)
 	}
 	sourceFailed.Store(true)
-	if err := service.refresh(ctx); err == nil {
+	if err := service.Refresh(ctx); err == nil {
 		t.Fatal("catalog source failure was hidden")
 	}
 	stale, err := service.measurementCatalogView(ctx)
 	if err != nil || stale.SourceError == "" || stale.SourceCheckedAt != second.SourceCheckedAt ||
-		stale.Revision != second.Revision || service.profiles.Load() != adopted || objects.rawReads.Load() != 0 {
+		stale.Revision != second.Revision || service.Profiles.Load() != adopted || objects.rawReads.Load() != 0 {
 		t.Fatalf("failed refresh changed retained catalog check/facts/adoption: %+v error=%v reads=%d",
 			stale, err, objects.rawReads.Load())
 	}
@@ -145,10 +144,10 @@ func TestCostFailurePublishesVerifiedCatalogWithoutChangingAdoption(t *testing.T
 }
 
 func assertAcceptedCatalogRead(
-	t *testing.T, service *schedulerService, adopted *httpapi.ProfilesView, latest httpapi.ProfilesView,
+	t *testing.T, service *SchedulerService, adopted *ProfilesView, latest ProfilesView,
 ) {
 	t.Helper()
-	read, err := service.readCatalog(context.Background())
+	read, err := service.ReadCatalog(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

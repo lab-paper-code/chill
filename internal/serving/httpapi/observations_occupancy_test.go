@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/application"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -48,7 +50,7 @@ func TestOccupancyObservationsBoundary(t *testing.T) {
 	}
 	h.config.OccupancyObservations = func(_ context.Context, from, to time.Time) ([]serving.OccupancyEstimate, error) {
 		if to.Sub(from) > 120*time.Second {
-			return nil, &OccupancyWindowError{MaximumWindowSeconds: 120}
+			return nil, &application.OccupancyWindowError{MaximumWindowSeconds: 120}
 		}
 		return nil, nil
 	}
