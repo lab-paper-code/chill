@@ -77,7 +77,12 @@ returns `{window:{start,end},rows:[OccupancyEstimate...]}` without caching.
 Exactly one `from` and `to` are required, with `from < to`; unknown or duplicate
 parameters and windows exceeding the accepted scheduler configuration's
 `dispatchOccupancy.maximumObservationWindowSeconds` return `400 InvalidQuery`.
-The sample maximum is 3600 seconds. Authentication and nonresource SAR are the
+The sample maximum is 120 seconds, equal to the rolling aggregation window.
+Configuration rejects a public maximum greater than `aggregationWindowSeconds`;
+smaller caps remain valid subject to the configured burst duration. Any query
+above the configured cap returns `400 InvalidQuery` before scanning. Longer
+historical analysis must export raw observations and reduce them offline, not
+run a long-window estimator in the serving process. Authentication and nonresource SAR are the
 same as raw GET, with `/chill/api/v1/observations/occupancy` granted to dashboard
 and query service accounts.
 The bounded scan uses `--operation-timeout`, like historical raw/scheduler reads,
@@ -95,7 +100,14 @@ adjacent physical batches under unchanged fixed-batch/no-wait native metadata
 applied before the previous start qualify. Current runtime native metadata is
 used conservatively: absent historical policy evidence does not authorize a
 pair. This diagnostic response has no admission verdict and does not replace
-stored DOM evidence.
+stored DOM evidence. Separately, the scheduler's single asynchronous rolling
+worker pools actual pair samples across workloads per exact cell and admits
+the median only at configured minimumPairs. Selection is measured > legacy
+Accepted DOM > configured default; Tick only reads the atomic cache. The
+`/api/v1/catalog-read` accepted projection includes `dispatchOccupancy` (actual
+selected cells and `provenance{source,pairs,window,updatedAt,value}`) and
+`occupancyEstimates` (uncensored signed statistics/counts/window). Burst
+Observed/Insufficient and legacy Accepted schemas/readers remain separate.
 
 Node meter-only facts (period, bucket, and matching columns): `meterJoules` (number|null) and `meterComplete` use the existing trapezoidal integration and recorded meter coverage policy, independently of scheduler membership and stream completeness. `sourceIdentity` is the actual source recorded with the samples, never a replacement from current configuration; unavailable source identity is left empty and reported in reasons. Mixed/unavailable sources, truncated selected records, and buckets without actual observations yield `meterJoules=null` and `meterComplete=false`, with reasons. `gapSeconds` counts uncovered boundary time plus clipped intervals exceeding the recorded maximum gap; `gapFraction` is that duration divided by the requested window (0..1). Without samples or a recorded policy the entire window is uncovered. `maximumSampleGapSeconds` retains its existing meaning. Existing `joules`, `complete`, and whole/active pool totals are unchanged; no CR input is added.
 
@@ -113,7 +125,7 @@ control316-network.json의 10 Node·15분·5초 **181 bucket**을 이 열 계약
 
 ### 6.2 투명한 로컬·archive 읽기 (`SCH-42`)
 ObservationArchive=기존 evidencestore.Reader+Lister와 CapacityRecords의 readArchivedStream gzip scanner를 재사용한다. 같은 v1alpha5 prefix/네 stream, cmd/chill-server의 objects를 쓰며 새 저장 형식·TSDB·옛 reader는 없다.
-capture가 mu 아래 로컬 시간/fd/크기를 확보→잠금 밖 List로 필요한 UTC 시간 선택→오름차순 scan한다. **시간 디렉터리 단위 로컬 우선**, 없는 시간만 archive+그 catalog를 읽고 로컬 stream 부재를 archive로 보충하지 않는다. fd 확보 뒤 삭제도 중복/누락을 만들지 않는다. requestID final>open>assigned로 archive assigned/늦은 로컬 final을 병합하고 scheduler/management/power는 같은 시간을 두 소스로 더하지 않는다. page는 합친 시간순 append에 offset/limit, errObservationStop은 archive에서도 정상 종료다.
+Capture holds the writer mutex only while copying registered committed paths/offsets and open-row/catalog metadata. Directory listing, sorting, file opens, reads and decoding run outside that mutex. A separate retention-only `captureMu` protects selected paths until opens complete; appends never acquire it. Local reads stop at the frozen complete-line offsets, so later appends/partial tails are excluded and already-open files survive retention. **시간 디렉터리 단위 로컬 우선**, 없는 시간만 archive+그 catalog를 읽고 로컬 stream 부재를 archive로 보충하지 않는다. requestID final>open>assigned로 archive assigned/늦은 로컬 final을 병합하고 scheduler/management/power는 같은 시간을 두 소스로 더하지 않는다. page는 합친 시간순 append에 offset/limit, errObservationStop은 archive에서도 정상 종료다.
 기존 본문/필터/nextCursor에 `coverage:{from,to,sources:[{from,to,stream,source}],gaps:[{from,to,stream,reason}]}` 추가: RFC3339Nano, source=local|archive(archive는store/key), from/to는 확보 외곽·전무하면null, 내부 gap은gaps, gapUntil은 실제 선두 공백만이다.
 빈 stream은 archive 객체를 안 쓰므로 필요한 시간/stream 부재는 StreamUnavailable이며 0건 단정/새 manifest는 없다. catalog 누락·gzip/JSON 오류·List/Open 실패는 조회 오류다. power 경계/기준 snapshot 부재는 기존 complete=false/이유, 읽기 전용 오류는 쓰기 readyz를 내리지 않는다.
 Query/LoadWindow/SchedulerObservationPage/OperatingPower/ScanOccupancyRows는 첫 인자 context.Context를 받고 HTTP RequestTimeout/취소 또는 controller capture ctx를 List/Open/scan까지 전달한다. 네트워크는 mu 밖, 기존 limit 유지, 최근 창이 로컬에 모두 있으면 archive 호출은 없다. workload는 정의 병합 후 aggregate/page, load는 단계별 집계, scheduler full/compact는 catalog 복원+coverage, power는 더 오래된 archive 기준 snapshot/catalog까지 역탐색하고 기존 ReduceOperatingPower를 쓴다.

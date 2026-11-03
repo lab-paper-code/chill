@@ -46,8 +46,11 @@ type SchedulerControllerConfig struct {
 	Costs             []serving.OperationCost
 	Baselines         []serving.NodeBaseline
 	CostIssues        []CostIssue
-	// DispatchOccupancy are the measured dispatch occupancies.
+	// DispatchOccupancy holds legacy evidence for controllers without a cache.
 	DispatchOccupancy []serving.DispatchOccupancy
+	// DispatchOccupancySnapshot reads an immutable, already-resolved selection;
+	// it must not scan observations, list runtime state or perform I/O.
+	DispatchOccupancySnapshot func() []serving.DispatchOccupancy
 	// CatalogIssues are the profiles the catalog or the preparations omit.
 	CatalogIssues []CatalogIssue
 	LoadGenerator LoadGeneratorConfig
@@ -574,6 +577,9 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: window.Arrivals, Costs: config.Costs, Baselines: config.Baselines,
 		DispatchOccupancy: config.DispatchOccupancy}
+	if config.DispatchOccupancySnapshot != nil {
+		s.DispatchOccupancy = config.DispatchOccupancySnapshot()
+	}
 	// Historical reads must finish before refreshing authoritative live sources.
 	if err = c.observer.Refresh(ctx); err != nil {
 		return s, err

@@ -19,8 +19,11 @@ func TestValidateSchedulerSettingsPatch(t *testing.T) {
 		{"public numeric setting", `{"maxReplicas":3}`, false},
 		{"public map", `{"minimumDemand":{"work-uid":2}}`, false},
 		{"dispatch default", `{"defaultDispatchOccupancyNanos":2000000}`, false},
-		{"zero dispatch default", `{"defaultDispatchOccupancyNanos":0}`, false},
+		{"dispatch batch override including zero", `{"defaultDispatchOccupancyNanosByBatch":{"1":0,"4":500000}}`, false},
 		{"negative dispatch default", `{"defaultDispatchOccupancyNanos":-1}`, true},
+		{"negative dispatch override", `{"defaultDispatchOccupancyNanosByBatch":{"4":-1}}`, true},
+		{"zero dispatch batch", `{"defaultDispatchOccupancyNanosByBatch":{"0":0}}`, true},
+		{"negative dispatch batch", `{"defaultDispatchOccupancyNanosByBatch":{"-1":0}}`, true},
 		{"unknown", `{"mystery":true}`, true},
 		{"unknown null", `{"mystery":null}`, true},
 		{"unknown nested", `{"controls":{"mystery":true}}`, true},
@@ -88,16 +91,32 @@ func TestSettingsPatchMatchesPUTDecode(t *testing.T) {
 	}
 }
 
-func TestDispatchOccupancySettingsPreservesConfiguredValue(t *testing.T) {
+func TestDispatchOccupancySettingsDecodeIsAdditiveWithoutPolicyDefaults(t *testing.T) {
 	current, _ := schedulerFixture()
-	settings, err := ValidateSchedulerSettingsPatch(current, []byte(`{"defaultDispatchOccupancyNanos":2000000}`))
-	if err != nil || settings.DefaultDispatchOccupancyNanos != 2000000 {
-		t.Fatalf("configured d not preserved at settings boundary: %+v %v", settings, err)
+	raw, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Legacy inputs remain valid; the decode boundary adds no compiled policy.
-	margin := current.CompletionMarginMS
-	legacy, err := (SchedulerSettingsInput{SchedulerSettings: current, CompletionMarginMS: &margin}).Settings()
-	if err != nil || legacy.DefaultDispatchOccupancyNanos != 0 {
-		t.Fatalf("additive settings introduced a compiled default: %+v %v", legacy, err)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "defaultDispatchOccupancyNanos")
+	delete(fields, "defaultDispatchOccupancyNanosByBatch")
+	legacy, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input SchedulerSettingsInput
+	if err := json.Unmarshal(legacy, &input); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := input.Settings()
+	if err != nil || settings.DefaultDispatchOccupancyNanos != 0 || len(settings.DefaultDispatchOccupancyNanosByBatch) != 0 {
+		t.Fatalf("additive decode introduced compiled policy defaults: %+v %v", settings, err)
+	}
+	settings, err = ValidateSchedulerSettingsPatch(current, []byte(`{"defaultDispatchOccupancyNanos":2000000,"defaultDispatchOccupancyNanosByBatch":{"1":0,"4":500000}}`))
+	if err != nil || settings.DefaultDispatchOccupancyNanos != 2000000 || !reflect.DeepEqual(settings.DefaultDispatchOccupancyNanosByBatch, map[int]int64{1: 0, 4: 500000}) {
+		t.Fatalf("configured values not preserved: %+v %v", settings, err)
 	}
 }

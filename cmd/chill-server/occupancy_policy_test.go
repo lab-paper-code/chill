@@ -5,12 +5,16 @@ import (
 	"math"
 	"os"
 	"testing"
+
+	"github.com/lab-paper-code/chill/internal/serving"
 )
 
 func syntheticOccupancyPolicy() dispatchOccupancyPolicy {
 	return dispatchOccupancyPolicy{WarmupSeconds: 5, BurstSeconds: 15, Workers: 8, MinimumPairs: 100,
-		MaximumObservationWindowSeconds: 3600,
-		RequestLifetimeSeconds:          2, DeliveryMarginMillis: 10, PreparationSeconds: 1,
+		MaximumObservationWindowSeconds: 120,
+		AggregationWindowSeconds:        120, RefreshIntervalSeconds: 60, ScanTimeoutSeconds: 30,
+		MaximumRequests:        250000,
+		RequestLifetimeSeconds: 2, DeliveryMarginMillis: 10, PreparationSeconds: 1,
 		JobSetupSeconds: 1, CollectionSeconds: 1,
 		PlannedElapsedCapSeconds: 30, Seed: 7}
 }
@@ -28,8 +32,27 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	block := wire["dispatchOccupancy"].(map[string]any)
+	wire["settings"].(map[string]any)["defaultDispatchOccupancyNanosByBatch"] = map[string]any{"2": float64(3000000)}
+	raw, _ = json.Marshal(wire)
+	configured, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+	if err != nil || configured.Settings.DefaultDispatchOccupancyNanos != 2000000 ||
+		configured.Settings.DefaultDispatchOccupancyNanosByBatch[2] != 3000000 {
+		t.Fatal("authoritative settings defaults were not retained", err)
+	}
+	for _, field := range []string{
+		"aggregationWindowSeconds", "refreshIntervalSeconds", "scanTimeoutSeconds", "maximumRequests",
+	} {
+		original := block[field]
+		delete(block, field)
+		raw, _ = json.Marshal(wire)
+		if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+			t.Fatalf("omitted %s acquired a Go policy default", field)
+		}
+		block[field] = original
+	}
 	for _, field := range []string{
 		"supplyMode", "minimumBatches", "maximumIdleFraction", "windowFloorSeconds",
+		"defaultPerRequestNanos", "defaultPerRequestNanosByBatch",
 		"loadPreparationFloorSeconds", "timeMargin", "relativeXPlanningPrecision", "planningConfidence",
 		"maximumIdleBaseFraction", "idleDErrorSecondsPerRequest", "refillSeconds",
 	} {
@@ -40,13 +63,32 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		}
 		delete(block, field)
 	}
+	settings := wire["settings"].(map[string]any)
+	delete(settings, "defaultDispatchOccupancyNanos")
+	raw, _ = json.Marshal(wire)
+	if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+		t.Fatal("aggregation policy supplied an implicit scheduler default")
+	}
+	settings["defaultDispatchOccupancyNanos"] = float64(2000000)
 	delete(wire, "dispatchOccupancy")
+	delete(wire["settings"].(map[string]any), "defaultDispatchOccupancyNanos")
+	raw, _ = json.Marshal(wire)
+	if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+		t.Fatal("missing policy and missing settings fallback acquired an implicit zero")
+	}
+	wire["settings"].(map[string]any)["defaultDispatchOccupancyNanos"] = float64(0)
 	raw, _ = json.Marshal(wire)
 	config, err := decodeSchedulerConfiguration(string(raw), 1<<20)
 	if err != nil || config.DispatchOccupancy != nil {
 		t.Fatal("missing policy acquired defaults", err)
 	}
 	for _, change := range []func(*dispatchOccupancyPolicy){
+		func(p *dispatchOccupancyPolicy) { p.AggregationWindowSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.MaximumObservationWindowSeconds = p.AggregationWindowSeconds + 1 },
+		func(p *dispatchOccupancyPolicy) { p.RefreshIntervalSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.ScanTimeoutSeconds = 0 },
+		func(p *dispatchOccupancyPolicy) { p.ScanTimeoutSeconds = p.RefreshIntervalSeconds/2 + 1 },
+		func(p *dispatchOccupancyPolicy) { p.MaximumRequests = 0 },
 		func(p *dispatchOccupancyPolicy) { p.WarmupSeconds = -1 },
 		func(p *dispatchOccupancyPolicy) { p.BurstSeconds = 0 },
 		func(p *dispatchOccupancyPolicy) { p.Workers = 0 },
@@ -73,10 +115,17 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 	if err := syntheticOccupancyPolicy().validate(); err != nil {
 		t.Fatal(err)
 	}
+	shorterPublic := syntheticOccupancyPolicy()
+	shorterPublic.MaximumObservationWindowSeconds = 60
+	if err := shorterPublic.validate(); err != nil {
+		t.Fatal("public query cap below rolling window rejected", err)
+	}
 }
 
 func TestOccupancyPolicyZeroInputsAreExplicitNotGoFallbacks(t *testing.T) {
-	for _, field := range []string{"warmupSeconds", "jobSetupSeconds", "collectionSeconds", "seed"} {
+	for _, field := range []string{
+		"warmupSeconds", "jobSetupSeconds", "collectionSeconds", "seed",
+	} {
 		raw, err := json.Marshal(syntheticOccupancyPolicy())
 		if err != nil {
 			t.Fatal(err)
@@ -113,5 +162,66 @@ func TestOccupancyPolicyZeroInputsAreExplicitNotGoFallbacks(t *testing.T) {
 		if err = policy.validate(); err != nil {
 			t.Fatal("explicit zero rejected", field, err)
 		}
+	}
+}
+
+func TestSchedulerSettingsPUTAndPATCHControlOccupancyDefaults(t *testing.T) {
+	for _, method := range []string{"PUT", "PATCH"} {
+		t.Run(method, func(t *testing.T) {
+			raw, err := os.ReadFile("../../config/samples/serving-scheduler.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &document); err != nil {
+				t.Fatal(err)
+			}
+			var input serving.SchedulerSettingsInput
+			if err := json.Unmarshal(document["settings"], &input); err != nil {
+				t.Fatal(err)
+			}
+			current, err := input.Settings() // same settings boundary as public GET
+			if err != nil {
+				t.Fatal(err)
+			}
+			scalar, batch := int64(0), int64(3000000)
+			if method == "PATCH" {
+				scalar, batch = 5000000, 0
+				current, err = serving.ValidateSchedulerSettingsPatch(current,
+					[]byte(`{"defaultDispatchOccupancyNanos":5000000,"defaultDispatchOccupancyNanosByBatch":{"2":0}}`))
+			} else {
+				input.DefaultDispatchOccupancyNanos = scalar
+				input.DefaultDispatchOccupancyNanosByBatch = map[int]int64{2: batch}
+				current, err = input.Settings() // public PUT uses this exact decode boundary
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Public PUT replaces only settings in the otherwise unchanged ConfigMap.
+			if document["settings"], err = json.Marshal(current); err != nil {
+				t.Fatal(err)
+			}
+			if raw, err = json.Marshal(document); err != nil {
+				t.Fatal(err)
+			}
+			configuration, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			accepted := rollingOccupancyFixture()
+			accepted.configuration, accepted.legacy = &configuration, nil
+			var cache rollingOccupancyCache
+			cache.configure(accepted)
+			for _, selected := range cache.selected() {
+				expected := scalar
+				if selected.Batch == 2 {
+					expected = batch
+				}
+				if int64(selected.PerRequest) != expected || selected.Provenance.Value != expected ||
+					selected.Provenance.Source != "default" {
+					t.Fatalf("public settings overwritten by aggregation block: %+v want %d", selected, expected)
+				}
+			}
+		})
 	}
 }

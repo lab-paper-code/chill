@@ -67,6 +67,7 @@ type schedulerService struct {
 	configuration            atomic.Pointer[schedulerConfiguration]
 	profiles                 atomic.Pointer[httpapi.ProfilesView]
 	catalogRead              atomic.Pointer[httpapi.ProfilesView]
+	occupancy                rollingOccupancyCache
 	ctx                      context.Context
 	cancel                   context.CancelFunc
 	powerCancel              context.CancelFunc
@@ -114,7 +115,10 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 	// The wire settings field shadows the embedded one, so an omitted margin stays distinguishable from zero.
 	var wire struct {
 		schedulerConfiguration
-		Settings serving.SchedulerSettingsInput `json:"settings"`
+		Settings struct {
+			serving.SchedulerSettingsInput
+			DefaultDispatchOccupancyNanos *int64 `json:"defaultDispatchOccupancyNanos"`
+		} `json:"settings"`
 	}
 	if int64(len(raw)) > maxBytes {
 		return schedulerConfiguration{}, errors.New("scheduler configuration exceeds body bound")
@@ -129,6 +133,10 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 		return schedulerConfiguration{}, errors.New("one scheduler configuration object required")
 	}
 	config := wire.schedulerConfiguration
+	if wire.Settings.DefaultDispatchOccupancyNanos == nil {
+		return config, errors.New("settings.defaultDispatchOccupancyNanos required")
+	}
+	wire.Settings.SchedulerSettings.DefaultDispatchOccupancyNanos = *wire.Settings.DefaultDispatchOccupancyNanos
 	var err error
 	if config.Settings, err = wire.Settings.Settings(); err != nil {
 		return config, err
@@ -263,9 +271,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		ConfigurationName: o.opts.schedulerConfigMap, ConfigurationKey: o.opts.schedulerConfigKey,
 		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
 		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
-		LoadGenerator:         o.opts.loadGenerator,
-		GatewayRequestTimeout: o.gatewayRequestTimeout,
-		Meters:                config.Meters, PowerPolicies: policies,
+		DispatchOccupancySnapshot: o.occupancy.selected,
+		LoadGenerator:             o.opts.loadGenerator,
+		GatewayRequestTimeout:     o.gatewayRequestTimeout,
+		Meters:                    config.Meters, PowerPolicies: policies,
 		StaticRouting: len(config.StaticRouting) > 0, MeasurementNamespaces: namespaces,
 		Evidence: o.objects, EvidenceStore: o.opts.storeName, MeterSource: metricSource,
 		OnDecision: o.recordDecision, OnAction: o.recordAction,
@@ -293,6 +302,10 @@ func (o *schedulerService) refreshLocked(ctx context.Context) (err error) {
 		published.Preparations[id] = spec
 	}
 	o.profiles.Store(&published)
+	o.occupancy.configure(&rollingOccupancyInput{
+		configuration: &config, catalog: &published, profiles: o.observer.OccupancyProfiles(),
+		legacy: costs.DispatchOccupancy,
+	})
 	o.resourceVersion = cm.ResourceVersion
 	o.sources = signature
 	o.restartPower(config)
@@ -508,6 +521,11 @@ func (o *schedulerService) Start() {
 	if o == nil {
 		return
 	}
+	o.wg.Add(1)
+	go func() {
+		defer o.wg.Done()
+		o.occupancy.run(o.ctx, o.aggregateOccupancy)
+	}()
 	o.wg.Add(1)
 	go func() {
 		defer o.wg.Done()

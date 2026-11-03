@@ -84,10 +84,15 @@ strictly decoded in `cmd/chill-server/scheduler_service.go`. Its maintained
 example is [`config/samples/serving-scheduler.json`](../../../config/samples/serving-scheduler.json).
 The chart references an **external** ConfigMap: changing unrelated Helm values
 does not install this block. Operators must update that actual configuration.
-Omission does not disable unrelated scheduling, but DOM POST fails closed with
-`503 OccupancyPolicyUnavailable`; invalid blocks are rejected, and POST reads
-the current ConfigMap rather than falling back to a previously accepted policy.
-The accepted profile snapshot must have that same ConfigMap resourceVersion.
+Omission disables rolling aggregation and makes DOM POST fail closed with
+`503 OccupancyPolicyUnavailable`. With or without that block, the sole default
+authority is explicit `settings.defaultDispatchOccupancyNanos` (zero permitted),
+plus optional `settings.defaultDispatchOccupancyNanosByBatch`. Public settings
+GET/PUT and canonical PATCH validation use these same fields. The aggregation
+block cannot override them; duplicate `defaultPerRequestNanos` knobs are rejected.
+Invalid blocks are rejected, and POST reads the current ConfigMap rather than
+falling back to a previously accepted policy. The accepted profile snapshot
+must have that same ConfigMap resourceVersion.
 
 Native DOM creation uses a short **configured closed-loop burst**, not a
 saturation test. No Go scientific defaults or hidden duration/worker derivation
@@ -95,11 +100,15 @@ exist. The sample is illustrative, not a calibrated guarantee.
 
 | Field | Bounds / meaning |
 |---|---|
+| `aggregationWindowSeconds` | int32 ≥1; rolling scan window, sample120; also bounds the public query maximum |
+| `refreshIntervalSeconds` | int32 ≥1; sample60 |
+| `scanTimeoutSeconds` | int32 ≥1 and ≤refreshIntervalSeconds/2; sample30 |
+| `maximumRequests` | explicit positive selected-RequestID cap; sample250000, exceeded cap rejects the whole refresh |
 | `warmupSeconds` | explicit int32 ≥0, excluded from native measurement window |
 | `burstSeconds` | explicit int32 ≥1, frozen as native `durationSeconds` |
 | `workers` | explicit int32 in [batch,64], never silently clamped |
 | `minimumPairs` | explicit int32 ≥1, a reported population requirement, not a confidence claim |
-| `maximumObservationWindowSeconds` | int32 ≥1; read-only estimator query maximum, sample3600 |
+| `maximumObservationWindowSeconds` | int32 ≥burstSeconds and ≤aggregationWindowSeconds; public read-only query cap, sample120; longer analysis uses offline raw export |
 | `requestLifetimeSeconds` | int32 ≥1; covers ceil(SLO) and configured outstanding batches, within actual gateway/Workload cap |
 | `deliveryMarginMillis` | int32 >0; rounded up independently for elapsed supply extension |
 | `preparationSeconds` | int32 ≥1 |
@@ -114,6 +123,31 @@ cap permits8s and whose SLO and profile-tail budget fit. Margin25ms exercises
 ceil(25/1000)=1s in the extension; it is not a measured transport guarantee.
 P2s/J10s/C10s and cap120s are configured allowances, not padded elapsed time.
 No host campaign YAML/JSON or prior DOM value supplies these settings.
+
+Rolling aggregation runs in one dedicated worker, never a scheduler Tick or
+request-writer callback. It captures accepted canonical profiles and current
+native metadata briefly, releases the scheduler lock, and uses the bounded
+two-pass observation scanner over the configured rolling window and delivery
+tail. A failed, timed-out or over-cap scan publishes no partial measurements:
+selection returns to accepted legacy DOM, then the configured fallback.
+The first computation also uses DOM/default rather than blocking initialization.
+Each accepted profile/batch receives an exact resolved entry; only a B median
+with at least configured `minimumPairs` can supersede DOM. Signed rolling facts
+remain separate from the nonnegative operational value.
+
+The sample `settings.defaultDispatchOccupancyNanos=2000000` is a conservative heuristic relative
+to the one known cell's roughly0.2ms B median and0.27ms DOM, not a guarantee
+across cells or demand. Optional `settings.defaultDispatchOccupancyNanosByBatch` overrides remain
+per request, not per batch. A120s window at the observed roughly805 requests/s
+contains about97k requests; cap250000 leaves roughly2.6× headroom for that
+reference workload, not universal demand coverage or a byte-allocation bound.
+Timeout30s/refresh60s and one non-overlapping worker bound nominal scan duty to
+50% of one core's wall-time budget. After every attempt the worker also idles
+at least its entire scan+exact-reduction elapsed time, including a reduction
+that crosses the scanner deadline. This is not a process CPU ceiling: Go GC,
+runtime activity and other workers may use additional `GOMAXPROCS` capacity.
+Empirical CPU/heap and serving-path acceptance are separate measurements.
+
 
 For fixed batch B, K=configured workers, L=configured request lifetime,
 m=deliveryMarginMillis/1000, t_max=maximum accepted profile service seconds,
@@ -155,11 +189,11 @@ Zero pairs has null statistics, never a numeric fallback.
 
 Evidence is a new factual `v1alpha2` record under
 `serving/dispatch-occupancy-observations/`, verdict `Observed` (native phase
-Complete) or `Insufficient`. It is **not** `Accepted` scheduler d. Existing
+Complete) or `Insufficient`. It is **not** an accepted legacy DOM scalar. Existing
 `serving/dispatch-occupancy/` v1alpha1 accepted objects and `CostEvidence` remain
-unchanged and are not deleted. Legacy fields exist solely to decode that
-separate retained contract. Any future scheduler admission/deletion is a
-separate explicit cutover; there is no dual reader for the new contract.
+active and are not deleted. The scheduler's rolling B cache reads serving
+observations directly; it does not reinterpret the new burst schema or merge
+the two evidence populations.
 
 The configured load-generator Node reservation, W6 slots/locks, request writer
 and evaluation arrival protocol are unchanged.

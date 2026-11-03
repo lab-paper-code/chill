@@ -89,3 +89,31 @@ func TestCatalogOccupancyProjectsOnlyExistingSchedulerSelection(t *testing.T) {
 		t.Fatal("missing selected provenance fabricated")
 	}
 }
+
+func TestCatalogReadRetainsResolvedOccupancyAndSignedRollingFacts(t *testing.T) {
+	at := time.Now().UTC()
+	window := serving.OccupancyWindow{Start: at.Add(-120 * time.Second), End: at}
+	selected := []serving.DispatchOccupancy{
+		{ProfileID: "measured", ExecutionPath: "cpu", Batch: 1,
+			Provenance: &serving.DispatchOccupancyProvenance{Source: "measured", Pairs: 100, Window: &window, UpdatedAt: at}},
+		{ProfileID: "legacy", Batch: 2, Source: "retained-dom.json", PerRequest: 270625,
+			Provenance: &serving.DispatchOccupancyProvenance{Source: "dom", Value: 270625}},
+		{ProfileID: "default", Batch: 4, PerRequest: 2000000,
+			Provenance: &serving.DispatchOccupancyProvenance{Source: "default", Value: 2000000}},
+	}
+	facts := []serving.OccupancyEstimate{{Profile: serving.OccupancyProfile{ProfileID: "measured"},
+		Pairs: 100, Window: window, Statistics: &serving.OccupancyStatistics{Median: -25, Mean: -10}}}
+	raw, err := json.Marshal(CatalogRead{Accepted: &CatalogSnapshot{DispatchOccupancy: selected, OccupancyEstimates: facts}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read CatalogRead
+	if err := json.Unmarshal(raw, &read); err != nil {
+		t.Fatal(err)
+	}
+	if read.Accepted == nil || len(read.DispatchOccupancy) != 0 || len(read.OccupancyEstimates) != 0 ||
+		!reflect.DeepEqual(read.Accepted.DispatchOccupancy, selected) ||
+		!reflect.DeepEqual(read.Accepted.OccupancyEstimates, facts) {
+		t.Fatalf("resolved source or signed facts lost/mixed into reporting: %s", raw)
+	}
+}

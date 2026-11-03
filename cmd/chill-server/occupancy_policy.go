@@ -10,6 +10,10 @@ import (
 // dispatchOccupancyPolicy is selected explicitly from the scheduler ConfigMap.
 // MinimumPairs is a sampling floor, not a claim of achieved precision.
 type dispatchOccupancyPolicy struct {
+	AggregationWindowSeconds        int32   `json:"aggregationWindowSeconds"`
+	RefreshIntervalSeconds          int32   `json:"refreshIntervalSeconds"`
+	ScanTimeoutSeconds              int32   `json:"scanTimeoutSeconds"`
+	MaximumRequests                 int     `json:"maximumRequests"`
 	WarmupSeconds                   int32   `json:"warmupSeconds"`
 	BurstSeconds                    int32   `json:"burstSeconds"`
 	Workers                         int32   `json:"workers"`
@@ -51,6 +55,12 @@ func (p *dispatchOccupancyPolicy) UnmarshalJSON(raw []byte) error {
 }
 
 func (p dispatchOccupancyPolicy) validate() error {
+	if p.AggregationWindowSeconds < 1 ||
+		p.MaximumObservationWindowSeconds < 1 || p.MaximumObservationWindowSeconds > p.AggregationWindowSeconds ||
+		p.RefreshIntervalSeconds < 1 || p.ScanTimeoutSeconds < 1 ||
+		2*int64(p.ScanTimeoutSeconds) > int64(p.RefreshIntervalSeconds) || p.MaximumRequests < 1 {
+		return errors.New("invalid dispatchOccupancy aggregation window, refresh, scan duty or request bound")
+	}
 	if p.WarmupSeconds < 0 || p.BurstSeconds < 1 || p.Workers < 1 || p.Workers > 64 ||
 		p.MinimumPairs < 1 || p.MaximumObservationWindowSeconds < p.BurstSeconds ||
 		p.RequestLifetimeSeconds < 1 || p.DeliveryMarginMillis < 1 || p.PreparationSeconds < 1 ||

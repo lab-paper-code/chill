@@ -20,6 +20,7 @@ configmap = {
         "observationWindowNanos": 1000000000, "controlIntervalNanos": 1000000000,
         "comparisonPeriodNanos": 1000000000, "maxObservationAgeNanos": 1000000000,
         "maxReplicas": 1, "maxInstances": 1, "completionMarginMS": 0,
+        "defaultDispatchOccupancyNanos": 0,
         "capacityWindowNanos": 1000000000, "capacityWindows": 1,
         "capacityPassingWindows": 1, "capacityMinimumRequests": 1, "planSearchWorkers": 3,
     }})},

@@ -268,6 +268,9 @@ type ObservationLog struct {
 	// requestMu protects open rows; it never covers filesystem work.
 	// The disk writer may take requestMu while holding mu, never the reverse.
 	requestMu sync.Mutex
+	// captureMu excludes retention only until a reader has opened its paths.
+	// It is always acquired before mu; appends never acquire it.
+	captureMu sync.RWMutex
 	publishMu sync.Mutex
 	// archived holds the past hours whose streams this process stored, under publishMu.
 	archived map[time.Time]bool
@@ -279,7 +282,10 @@ type ObservationLog struct {
 	now   func() time.Time
 	files map[string]*os.File
 	// offsets retain the last complete append boundary of this exclusive writer.
-	offsets     map[*os.File]int64
+	offsets map[*os.File]int64
+	// segments retain local paths and complete sizes, including rotated files.
+	// Capture copies this metadata under mu and opens files outside it.
+	segments    map[string]observationSegment
 	definitions *os.File
 	retained    map[string]*Definition
 	open        map[string]*RequestRow
@@ -346,6 +352,9 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		return nil, err
 	}
 	if err := l.restore(hours); err != nil {
+		return nil, errors.Join(err, l.definitions.Close())
+	}
+	if err := l.indexSegments(hours); err != nil {
 		return nil, errors.Join(err, l.definitions.Close())
 	}
 	return l, nil
@@ -466,8 +475,10 @@ func (l *ObservationLog) hours() ([]time.Time, error) {
 }
 
 type observationSegment struct {
-	path string
-	at   time.Time
+	path   string
+	at     time.Time
+	stream string
+	size   int64
 }
 
 // hourFiles lists one stream's minute files of an hour in minute order.
@@ -491,6 +502,28 @@ func (l *ObservationLog) hourFiles(hour time.Time, stream string) ([]observation
 	}
 	sort.Slice(files, func(a, b int) bool { return files[a].at.Before(files[b].at) })
 	return files, nil
+}
+
+// indexSegments runs only at startup, after torn tails have been repaired.
+func (l *ObservationLog) indexSegments(hours []time.Time) error {
+	l.segments = map[string]observationSegment{}
+	for _, hour := range hours {
+		for _, stream := range observationStreams {
+			files, err := l.hourFiles(hour, stream)
+			if err != nil {
+				return err
+			}
+			for _, segment := range files {
+				info, err := os.Stat(segment.path)
+				if err != nil {
+					return err
+				}
+				segment.stream, segment.size = stream, info.Size()
+				l.segments[segment.path] = segment
+			}
+		}
+	}
+	return nil
 }
 
 func (l *ObservationLog) appendLocked(stream string, now time.Time, value any) error {
@@ -531,7 +564,11 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 		}
 		l.files[stream] = file
 	}
-	return l.appendWholeLocked(file, data)
+	err := l.appendWholeLocked(file, data)
+	if size, known := l.offsets[file]; known {
+		l.segments[name] = observationSegment{path: name, at: now.UTC().Truncate(time.Minute), stream: stream, size: size}
+	}
+	return err
 }
 
 // appendWholeLocked appends data or nothing: a short or failed write, such as
@@ -798,9 +835,11 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 	return result
 }
 
-// removeHour deletes one uploaded hour under the writer lock, so a capture
-// opens the whole hour or sees it gone with the floor already past it.
+// removeHour excludes capture opens before deleting under the writer lock.
+// A capture sees a whole hour or the updated floor, never missing snapshot paths.
 func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {
+	l.captureMu.Lock()
+	defer l.captureMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.requestMu.Lock()
@@ -816,6 +855,11 @@ func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {
 	l.mu.mark(DiagnosticRemove, DiagnosticEnd)
 	if err != nil {
 		return false, err
+	}
+	for path, segment := range l.segments {
+		if segment.at.Truncate(time.Hour).Equal(hour) {
+			delete(l.segments, path)
+		}
 	}
 	if end := hour.Add(time.Hour); end.After(l.floor) {
 		l.floor = end
@@ -1245,8 +1289,8 @@ func (l *ObservationLog) runtimeFacts() (map[string]*Definition, []RequestRow) {
 	return definitions, restored
 }
 
-// observationRead holds files opened under the writer lock; reads and
-// decoding run outside it. Deleting an hour does not affect an open file.
+// observationRead holds files opened outside the writer lock at frozen complete
+// append offsets. Deleting an hour does not affect an open file.
 type observationRead struct {
 	files           map[string][]observationOpenFile
 	open            map[string]*RequestRow
@@ -1276,9 +1320,31 @@ func (r *observationRead) close() {
 	}
 }
 
-// capture opens each stream's minute files whose minute lies in [from, to];
-// a zero to reads through the latest file.
+// capture snapshots stream paths and complete lengths under the writer lock;
+// directory listing and file opens run outside it. A zero to reads the latest
+// captured file. captureMu excludes retention until selected paths are open,
+// without waiting for archive uploads or delaying appends.
 func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRead, error) {
+	l.captureMu.RLock()
+	defer l.captureMu.RUnlock()
+	hours, err := l.hours()
+	if err != nil {
+		return nil, err
+	}
+	read, segments := l.captureSnapshot(ranges, hours)
+	for stream, files := range segments {
+		sort.Slice(files, func(a, b int) bool { return files[a].at.Before(files[b].at) })
+		for _, segment := range files {
+			if err := l.openReadFile(read, stream, segment); err != nil {
+				read.close()
+				return nil, err
+			}
+		}
+	}
+	return read, nil
+}
+
+func (l *ObservationLog) captureSnapshot(ranges map[string][2]time.Time, hours []time.Time) (*observationRead, map[string][]observationSegment) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.mu.recorder.Active() {
@@ -1298,58 +1364,38 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 	for id, d := range l.retained {
 		read.definitions[id] = d
 	}
-	hours, err := l.hours()
-	if err != nil {
-		read.close()
-		return nil, err
-	}
 	read.localHours[read.now.Truncate(time.Hour)] = true
 	for _, hour := range hours {
 		read.localHours[hour] = true
-		catalogWanted := false
-		for stream, bounds := range ranges {
-			if stream != observationCatalogStream && observationHourWanted(hour, bounds) {
-				catalogWanted = true
+	}
+	segments := map[string][]observationSegment{}
+	for _, segment := range l.segments {
+		hour := segment.at.Truncate(time.Hour)
+		read.localHours[hour] = true
+		bounds, wanted := ranges[segment.stream]
+		if segment.stream == observationCatalogStream {
+			for stream, requested := range ranges {
+				if stream != observationCatalogStream && observationHourWanted(hour, requested) {
+					bounds, wanted = [2]time.Time{hour, hour.Add(time.Hour)}, true
+					break
+				}
 			}
 		}
-		for _, stream := range observationStreams {
-			files, err := l.hourFiles(hour, stream)
-			if err != nil {
-				read.close()
-				return nil, err
-			}
-			bounds, wanted := ranges[stream]
-			if stream == observationCatalogStream && catalogWanted {
-				bounds, wanted = [2]time.Time{hour, hour.Add(time.Hour)}, true
-			}
-			for _, segment := range files {
-				if !wanted || segment.at.Before(bounds[0].Truncate(time.Minute)) || !bounds[1].IsZero() && segment.at.After(bounds[1]) {
-					continue
-				}
-				if err := l.openReadFile(read, stream, segment); err != nil {
-					read.close()
-					return nil, err
-				}
-			}
+		if wanted && !segment.at.Before(bounds[0].Truncate(time.Minute)) && (bounds[1].IsZero() || !segment.at.After(bounds[1])) {
+			segments[segment.stream] = append(segments[segment.stream], segment)
 		}
 	}
-	return read, nil
+	return read, segments
 }
 
 func (l *ObservationLog) openReadFile(r *observationRead, stream string, segment observationSegment) error {
-	l.mu.mark(DiagnosticFileOpen, DiagnosticBegin)
+	l.config.Diagnostics.Mark(DiagnosticFileOpen, DiagnosticBegin, "", 0)
 	file, err := os.Open(segment.path)
-	l.mu.mark(DiagnosticFileOpen, DiagnosticEnd)
+	l.config.Diagnostics.Mark(DiagnosticFileOpen, DiagnosticEnd, "", 0)
 	if err != nil {
 		return err
 	}
-	l.mu.mark(DiagnosticFileStat, DiagnosticBegin)
-	info, err := file.Stat()
-	l.mu.mark(DiagnosticFileStat, DiagnosticEnd)
-	if err != nil {
-		return errors.Join(err, l.closeFileLocked(file))
-	}
-	r.files[stream] = append(r.files[stream], observationOpenFile{file: file, at: segment.at, size: info.Size()})
+	r.files[stream] = append(r.files[stream], observationOpenFile{file: file, at: segment.at, size: segment.size})
 	return nil
 }
 

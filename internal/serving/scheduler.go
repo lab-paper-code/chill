@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,9 +49,10 @@ type SchedulerSettings struct {
 	CapacityGridSteps       int           `json:"capacityGridSteps"`
 	CapacityBisectionWidth  float64       `json:"capacityBisectionWidth"`
 	CapacityTailSamples     int           `json:"capacityTailSamples"`
-	// DefaultDispatchOccupancyNanos is configured ns/request when no legacy DOM
-	// measurement matches. Throughput and replay add batch size × d once.
-	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
+	// Dispatch occupancy defaults are configured ns/request, not batch totals.
+	// An exact MaxBatch entry overrides the scalar when no measured/DOM d exists.
+	DefaultDispatchOccupancyNanos        int64         `json:"defaultDispatchOccupancyNanos"`
+	DefaultDispatchOccupancyNanosByBatch map[int]int64 `json:"defaultDispatchOccupancyNanosByBatch,omitempty"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
 	// the search itself ends within half of ControlInterval.
 	PlanSearchWorkers int               `json:"planSearchWorkers"`
@@ -88,80 +90,135 @@ func ValidateSchedulerSettingsPatch(current SchedulerSettings, patch json.RawMes
 	return settings.Settings()
 }
 
-// DispatchOccupancy is the operational time per request an instance stays busy
-// beyond its profile service samples. Accepted legacy DOM has priority over the
-// configured default. Throughput/replay add batch size × PerRequest once.
-// Source retains the DOM record key; Provenance identifies the selected value.
+// DispatchOccupancy is the operational extra busy time per request beyond the
+// profile's runner-service samples. Throughput and replay add batch size × d
+// once per batch, including when d is a configured default. Signed estimator
+// statistics remain in their original evidence; only operational d is clamped.
+// Source retains the evidence record key; Provenance.Source classifies selection.
 type DispatchOccupancy struct {
-	Node         NodeReference                `json:"node"`
-	PowerMode    string                       `json:"powerMode"`
-	RuntimeImage string                       `json:"runtimeImage"`
-	Model        string                       `json:"model"`
-	PerRequest   time.Duration                `json:"perRequestNanos"`
-	Source       string                       `json:"source"`
-	Provenance   *DispatchOccupancyProvenance `json:"provenance,omitempty"`
+	Node          NodeReference                `json:"node"`
+	PowerMode     string                       `json:"powerMode"`
+	RuntimeImage  string                       `json:"runtimeImage"`
+	Model         string                       `json:"model"`
+	ProfileID     string                       `json:"profileID,omitempty"`
+	ExecutionPath string                       `json:"executionPath,omitempty"`
+	Batch         int                          `json:"batch,omitempty"`
+	PerRequest    time.Duration                `json:"perRequestNanos"`
+	Source        string                       `json:"source"`
+	Provenance    *DispatchOccupancyProvenance `json:"provenance,omitempty"`
 }
 
-// DispatchOccupancyProvenance distinguishes a DOM measurement from configured
-// fallback without claiming that the fallback is a measured bound.
+// DispatchOccupancyProvenance records the selected operational value and facts
+// behind it without making a refreshed observation a new numerical capacity row.
 type DispatchOccupancyProvenance struct {
-	Source string `json:"source"` // dom or default
-	Value  int64  `json:"value"`  // operational ns/request
+	Source    string           `json:"source"` // measured, dom or default
+	Pairs     int              `json:"pairs"`
+	Window    *OccupancyWindow `json:"window,omitempty"`
+	UpdatedAt time.Time        `json:"updatedAt"`
+	Value     int64            `json:"value"`
 }
 
 const (
-	occupancySourceDOM     = "dom"
-	occupancySourceDefault = "default"
+	occupancySourceMeasured = "measured"
+	occupancySourceDOM      = "dom"
+	occupancySourceDefault  = "default"
 )
 
-// dispatchOccupancy keeps legacy Node UID/mode/model matching unchanged and
-// supplies the configured default when no measurement matches.
-func dispatchOccupancy(settings SchedulerSettings, measured []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
+// ResolveDispatchOccupancy selects cache-qualified measured B, then legacy DOM,
+// then the configured default. The cache admits B using configured minimumPairs;
+// core never promotes raw Observed burst records into accepted evidence.
+// Measured B must match every cell identity. Raw legacy DOM retains its previous
+// node/mode/model match; already resolved DOM entries retain exact identities.
+//
+//nolint:gocyclo // Keep source priority and exact/wildcard cell matching together.
+func ResolveDispatchOccupancy(settings SchedulerSettings, occupancy []DispatchOccupancy, i SchedulerInstance) *DispatchOccupancy {
 	if i.Profile == nil {
 		return nil
 	}
-	for _, o := range measured {
-		if o.Node.UID == i.Node.UID && o.PowerMode == i.Profile.Condition.PowerMode &&
-			o.Model == i.Profile.Condition.LogicalModel {
-			o.PerRequest = max(o.PerRequest, 0)
-			if o.Provenance == nil {
-				o.Provenance = &DispatchOccupancyProvenance{Source: occupancySourceDOM, Value: int64(o.PerRequest)}
-			} else {
-				provenance := *o.Provenance
-				o.Provenance = &provenance
+	c := &i.Profile.Condition
+	var measured, dom, fallback *DispatchOccupancy
+	for n := range occupancy {
+		o := &occupancy[n]
+		if o.Node.UID != i.Node.UID || o.PowerMode != c.PowerMode || o.Model != c.LogicalModel {
+			continue
+		}
+		if o.Provenance != nil && o.Provenance.Source == occupancySourceMeasured {
+			if o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch {
+				measured = o
+				break
 			}
-			return &o
+		} else if (o.Provenance == nil || o.Provenance.Source == occupancySourceDOM) &&
+			(o.ProfileID == "" || o.ProfileID == i.Profile.ID) &&
+			(o.ExecutionPath == "" || o.ExecutionPath == c.Artifact.ExecutionPath) &&
+			(o.Batch == 0 || o.Batch == i.MaxBatch) && dom == nil {
+			dom = o
+		} else if o.Provenance != nil && o.Provenance.Source == occupancySourceDefault &&
+			o.ProfileID == i.Profile.ID && o.ExecutionPath == c.Artifact.ExecutionPath && o.Batch == i.MaxBatch && fallback == nil {
+			fallback = o
 		}
 	}
-	c := &i.Profile.Condition
-	return &DispatchOccupancy{
-		Node: i.Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel,
-		PerRequest: time.Duration(settings.DefaultDispatchOccupancyNanos),
-		Provenance: &DispatchOccupancyProvenance{Source: occupancySourceDefault, Value: settings.DefaultDispatchOccupancyNanos},
+	selected := measured
+	if selected == nil {
+		selected = dom
 	}
+	if selected == nil {
+		selected = fallback
+	}
+	var o DispatchOccupancy
+	provenance := DispatchOccupancyProvenance{Source: occupancySourceDefault}
+	if selected != nil {
+		o = *selected
+		provenance.Source = occupancySourceDOM
+		if selected.Provenance != nil {
+			provenance = *selected.Provenance
+		}
+	} else {
+		value := settings.DefaultDispatchOccupancyNanos
+		if batchValue, ok := settings.DefaultDispatchOccupancyNanosByBatch[i.MaxBatch]; ok {
+			value = batchValue
+		}
+		o.PerRequest = time.Duration(value)
+		o.RuntimeImage = c.RuntimeImage
+	}
+	o.Node, o.PowerMode, o.Model = i.Node, c.PowerMode, c.LogicalModel
+	o.ProfileID, o.ExecutionPath, o.Batch = i.Profile.ID, c.Artifact.ExecutionPath, i.MaxBatch
+	o.PerRequest = max(o.PerRequest, 0)
+	provenance.Value = int64(o.PerRequest)
+	o.Provenance = &provenance
+	return &o
 }
 
-// schedulerSelectedOccupancy records the actual DOM/default choice for every
-// node/mode/model represented by a decision, without changing incoming evidence.
+// schedulerSelectedOccupancy records each exact cell actually used by a decision,
+// including option-only pools, without mutating incoming evidence.
 func schedulerSelectedOccupancy(settings SchedulerSettings, snapshot SchedulerSnapshot) []DispatchOccupancy {
+	if len(snapshot.Instances) == 0 && len(snapshot.Options) == 0 {
+		return slices.Clone(snapshot.DispatchOccupancy)
+	}
 	var selected []DispatchOccupancy
-	seen := map[[3]string]bool{}
+	type cell struct {
+		node, mode, model, path, profile string
+		batch                            int
+	}
+	seen := map[cell]bool{}
 	add := func(i SchedulerInstance) {
 		if i.Profile == nil {
 			return
 		}
-		key := [3]string{i.Node.UID, i.Profile.Condition.PowerMode, i.Profile.Condition.LogicalModel}
+		c := &i.Profile.Condition
+		key := cell{i.Node.UID, c.PowerMode, c.LogicalModel, c.Artifact.ExecutionPath, i.Profile.ID, i.MaxBatch}
 		if seen[key] {
 			return
 		}
 		seen[key] = true
-		selected = append(selected, *dispatchOccupancy(settings, snapshot.DispatchOccupancy, i))
+		selected = append(selected, *ResolveDispatchOccupancy(settings, snapshot.DispatchOccupancy, i))
 	}
 	for _, i := range snapshot.Instances {
 		add(i)
 	}
 	for _, o := range snapshot.Options {
-		add(o.Instance)
+		for _, variant := range CapacityVariants(o) {
+			add(variant.Instance)
+		}
 	}
 	return selected
 }
@@ -383,8 +440,8 @@ type SchedulerSnapshot struct {
 	Baselines      []NodeBaseline              `json:"baselines"`
 	BaselineRefs   []string                    `json:"baselineRefs,omitempty"`
 	Costs          []OperationCost             `json:"costs"`
-	// DispatchOccupancy holds the latest accepted measurement per Node, power
-	// mode, runtime image and model.
+	// DispatchOccupancy holds the selected d and provenance per accepted
+	// node/model/mode/profile/execution path/batch, including configured defaults.
 	DispatchOccupancy []DispatchOccupancy    `json:"dispatchOccupancy"`
 	CostRefs          []string               `json:"costRefs,omitempty"`
 	Actions           []Action               `json:"actions"`
@@ -537,6 +594,11 @@ func (s SchedulerSettings) Validate() error {
 }
 
 func (s SchedulerSettings) validateCapacityNumerics() error {
+	for batch, value := range s.DefaultDispatchOccupancyNanosByBatch {
+		if batch < 1 || value < 0 {
+			return fmt.Errorf("defaultDispatchOccupancyNanosByBatch needs positive batch sizes and nonnegative values")
+		}
+	}
 	if s.CapacityGridSteps < 1 || s.CapacityTailSamples < 1 || !schedulerFinite(s.CapacityBisectionWidth) ||
 		s.CapacityBisectionWidth <= 0 || s.CapacityBisectionWidth > 1 {
 		return fmt.Errorf("capacityGridSteps and capacityTailSamples must be positive; capacityBisectionWidth must be finite in (0,1]")
