@@ -15,7 +15,7 @@ import * as settings from "./scheduler-settings.ts"
 
 const containers={Dialog:"dialog",DialogContent:"div",DialogHeader:"header",DialogTitle:"h2",DialogDescription:"p"}
 const primitives={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"div"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/dialog":containers,"@/components/ui/sheet":{Sheet:"aside",SheetContent:"div",SheetHeader:"header",SheetTitle:"h2"},"@/lib/evaluation-author":author,"@/lib/evaluation-request":request,"@/lib/scheduler":scheduler}
-Object.assign(primitives,{"@/lib/scheduler-settings":settings})
+Object.assign(primitives,{"@/lib/scheduler-settings":settings,"@/lib/experiments":experimentHelpers,"@/lib/experiment-comparison":comparisonHelpers})
 test("R19: publication copy selector pages without losing its selected publication",()=>{
   const runner=hookRunner(),calls:string[]=[]
   const modules={...primitives,react:{...runner.react,useEffect:()=>{}}, "@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
@@ -286,11 +286,11 @@ test("R17b: evaluation writes disclose the required role without claiming an unv
   assert.ok(!denied.some(element=>element.props.children==="허용"))
 })
 
-test("R17b: result detail keeps outcome independent and labels every mobile comparison value",()=>{
+test("R17b: result detail retains preparation outcome and separates candidate and baseline results",()=>{
   const runner=hookRunner(),params=new URLSearchParams("a=publication")
   const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:60,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:1000000}}}}})
   let run:Record<string,unknown>={id:"publication",stages:[],outcome:{execution:{status:"Failed"},measurement:{verdict:"NOT_EVALUATED"},cleanup:{status:"Complete"}}}
-  const modules={...primitives,react:{...runner.react,useEffect:()=>{},useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",usePublishedExperimentFacts:()=>({data:null}),useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
+  const modules={...primitives,react:{...runner.react,useEffect:()=>{},useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",ExperimentVerdict:"verdict",ExperimentStageResults:"result-matrix",usePublishedExperimentFacts:()=>({data:null}),useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
   const {ExperimentsPage}=load("../features/experiments.tsx",modules)
   const emptyPage=elements(runner.render(ExperimentsPage)),emptyDetail=emptyPage.find(element=>element.props.run===run&&typeof element.type==="function")!
   assert.ok(elements(runner.render(emptyDetail.type as (props:Record<string,unknown>)=>unknown,emptyDetail.props)).some(element=>element.type==="outcome"))
@@ -299,11 +299,11 @@ test("R17b: result detail keeps outcome independent and labels every mobile comp
   const detail=page.find(element=>element.props.run===run&&typeof element.type==="function")!
   const tree=elements(runner.render(detail.type as (props:Record<string,unknown>)=>unknown,detail.props))
   const sections=tree.filter(element=>element.type==="section").map(element=>element.props["aria-label"])
-  assert.deepEqual(sections.slice(0,3),["비교 맥락","차트와 구간 선택","선택 단계 수치"])
+  assert.deepEqual(sections.slice(0,3),["게시 결과 요약","선택 단계 수치","차트와 구간 선택"])
   const values=tree.find(element=>element.props.row&&element.props.onSelect&&typeof element.type==="function")!
   const cells=elements(runner.render(values.type as (props:Record<string,unknown>)=>unknown,values.props))
-  const labels=cells.filter(element=>element.type==="td").map(element=>element.props["data-label"])
-  for(const label of ["후보 원값","기준 원값","차이"])assert.ok(labels.includes(label),label)
+  const matrices=cells.filter(element=>element.type==="result-matrix")
+  assert.deepEqual(matrices.map(element=>experimentHelpers.object(element.props.stage).id),["candidate","baseline"])
 })
 
 test("R17b: template missing inputs stay visible while copied question text is folded as original",async()=>{

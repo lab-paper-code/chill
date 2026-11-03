@@ -13,6 +13,8 @@ import * as activeHelpers from "./evaluation-active.ts"
 import * as measurementHelpers from "./measurements.ts"
 import { STATUS_AXES } from "./status.ts"
 import * as routes from "./dashboard-routes.ts"
+import * as experiments from "./experiments.ts"
+import * as comparison from "./experiment-comparison.ts"
 import type { EvaluationSubmit } from "../features/evaluation-request.tsx"
 
 const require=createRequire(import.meta.url)
@@ -39,7 +41,7 @@ test("manual evaluation replacement re-read unlocks deleted and unchanged drafts
       "@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},
       "@/lib/client":{ApiError,useChillMutation:()=>mutationIndex++===0?pre:send,useChillQuery:()=>lookup},
       "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
-      "@/lib/experiments":{},"@/features/evaluation-author":{},"@/features/evaluation-active":{},"@/lib/measurements":measurementHelpers,"@/components/ui/button":{Button},
+      "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/features/evaluation-author":{},"@/features/evaluation-active":{},"@/lib/measurements":measurementHelpers,"@/components/ui/button":{Button},
       "@/components/read-region":{},"@/components/screen":{},"@/components/ui/input":{},"@/components/ui/dialog":{},
       "@/components/ui/tooltip":{},
       "next/link":{default:({children,href}:{children:React.ReactNode;href:string})=>React.createElement("a",{href},children)},"next/navigation":{},
@@ -118,7 +120,7 @@ test("return observation requires matching UID and explicit pool release, not re
     "@tanstack/react-query":{useQueryClient:()=>({})},
     "@/lib/client":{useChillQuery:()=>({data:observed}),useChillMutation:()=>({isSuccess:true})},
     "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
-    "@/lib/experiments":{},"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{},
+    "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{},
     "@/components/ui/button":{Button:container},"@/components/ui/input":{Input:container},
     "@/components/ui/dialog":{Dialog:container,DialogContent:container,DialogHeader:container,DialogTitle:container},
     "@/components/ui/tooltip":{},
@@ -165,7 +167,7 @@ function hookRunner() {
 function loadUI(path:string,modules:Record<string,unknown>={}) {
   const defaults:Record<string,unknown>={
     "@/lib/evaluation-request":requestHelpers,"@/lib/evaluation-author":authorHelpers,"@/lib/scheduler":scheduler,
-    "@/lib/experiments":{},"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{EvaluationActive:"active"},
+    "@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurementHelpers,"@/features/evaluation-active":{EvaluationActive:"active"},
     "@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},
     "@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"gate",SourceJSON:"source"},
     "@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},
@@ -196,13 +198,13 @@ test("execution child detail separates list, navigation and one control surface"
   let run={name:"run/one",uid:"old",phase:"Running",spec:{},currentStage:"stage-a",publicationID:""}
   const {EvaluationRunPage}=loadUI("../features/evaluation-request.tsx",{
     react:runner.react,"next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:(url:string)=>navigations.push(url)})},
-    "@/lib/client":{useChillQuery:(path:string)=>{calls.push(path);return {data:run,refetch:async()=>{}}}},
+    "@/lib/client":{useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};calls.push(path);return {data:run,refetch:async()=>{}}}},
   })
   let tree=elements(runner.render(EvaluationRunPage,{name:run.name}))
-  assert.deepEqual(calls,["v1/evaluations/run%2Fone"])
+  assert.deepEqual(calls,["v1/evaluations/run%2Fone","v1/evaluations/load-scenarios"])
   assert.ok(!tree.some(item=>item.props["aria-label"]==="실험 실행 목록"))
-  assert.ok(tree.some(item=>item.type==="a"&&item.props["aria-current"]==="page"&&item.props.children==="진행"))
-  assert.ok(tree.some(item=>item.props["aria-disabled"]===true&&item.props.children==="결과 · 미게시"))
+  assert.ok(tree.some(item=>item.type==="section"&&item.props["aria-label"]==="실험 요약"))
+  assert.ok(tree.some(item=>item.type==="span"&&item.props.children==="게시 후 결과 제공"))
   assert.equal(tree.find(item=>item.type==="active")?.props.uid,"old")
   run={...run,publicationID:"actual/publication"}
   tree=elements(runner.render(EvaluationRunPage,{name:run.name}))
@@ -266,8 +268,9 @@ test("active progress queries only active evaluations and never creates a mutati
   assert.deepEqual(calls,["v1/evaluations/active"])
   assert.equal(mutations,0)
   assert.ok(tree.some(item=>item.type==="table"))
-  assert.equal(tree.filter(item=>item.type==="details").length,1,"progress must match both selected name and UID")
-  assert.ok(tree.some(item=>item.type==="details"&&item.props.open===true))
+  const progress=tree.filter(item=>item.type==="details"&&item.props.className==="live-evaluation")
+  assert.equal(progress.length,1,"progress must match both selected name and UID")
+  assert.equal(progress[0].props.open,true)
   assert.ok(!tree.some(item=>item.type==="button"||item.type==="dialog"))
 })
 

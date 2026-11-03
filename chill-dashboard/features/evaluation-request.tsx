@@ -7,8 +7,9 @@ import { useQueryClient } from "@tanstack/react-query"
 import { ApiError, useChillMutation, useChillQuery } from "@/lib/client"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { evaluationActions, evaluationCanSubmit, evaluationOperation, evaluationPreflight, evaluationReleaseBody, evaluationSameSpec, type EvaluationSpec, type EvaluationLiveTarget } from "@/lib/evaluation-request"
-import { decodeExperiment, experimentPath, type Experiment, type OutcomeAxis } from "@/lib/experiments"
-import { evaluationReplacement } from "@/lib/evaluation-author"
+import { decodeExperiment, experimentPath, finite, type Experiment, type OutcomeAxis } from "@/lib/experiments"
+import { experimentRows } from "@/lib/experiment-comparison"
+import { evaluationReplacement, object, records, type LoadScenario } from "@/lib/evaluation-author"
 import { formatMeasurementTime } from "@/lib/measurements"
 import { EvaluationActive } from "@/features/evaluation-active"
 import { Button } from "@/components/ui/button"
@@ -18,12 +19,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { QueryGate, SourceJSON } from "@/components/read-region"
 import { Screen } from "@/components/screen"
 
-type Run = {name:string;uid:string;spec:EvaluationSpec;liveTarget?:EvaluationLiveTarget[]|null;phase:string;conditions?:{type:string;status:string;reason?:string}[];currentStage?:unknown;startedAt?:string;finishedAt?:string;publicationID?:string}
+type RunCondition = {type:string;status:string;reason?:string;message?:string;lastTransitionTime?:string}
+type Run = {name:string;uid:string;spec:EvaluationSpec;liveTarget?:EvaluationLiveTarget[]|null;phase:string;conditions?:RunCondition[];currentStage?:unknown;startedAt?:string;finishedAt?:string;publicationID?:string}
 type Created = {name:string;uid:string}
 const encode=(value:unknown)=>stringifySchedulerJSON(value)
 const phases:Record<string,string>={Pending:"시작 전",Running:"실행 중",Finishing:"정리 중",Done:"종료",Blocked:"정리 실패"}
-const conditionLabels:Record<string,string>={PoolAcquired:"풀 점유",ExecutionComplete:"실행 완료",MeasurementPassed:"측정 판정",CleanupComplete:"정리 완료",Published:"게시"}
-const conditionReasons:Record<string,string>={Returned:"반환 관측",IdentityMismatch:"실행 대상 식별자 불일치",NOT_EVALUATED:"미평가",NoControlEffects:"복구할 제어 변경 없음",PublicationFailed:"결과 게시 실패",SLOFailed:"SLO 미충족"}
+const conditionLabels:Record<string,string>={PoolAcquired:"풀 확보",ExecutionComplete:"실행",MeasurementPassed:"측정 판정",CleanupComplete:"정리",Published:"게시"}
+const conditionReasons:Record<string,string>={Returned:"반환 완료",IdentityMismatch:"실행 대상 식별자 불일치",NOT_EVALUATED:"미평가",NoControlEffects:"복구할 제어 변경 없음",PublicationFailed:"결과 게시 실패",SLOFailed:"SLO 미충족"}
 function runHref(run:Created,search?:URLSearchParams) {
   const next=new URLSearchParams(search)
   next.delete("name");next.delete("uid");next.set("uid",run.uid)
@@ -156,28 +158,64 @@ export function EvaluationRunPage({name}:{name:string}) {
   const detail=useChillQuery<Run>(`v1/evaluations/${encodeURIComponent(name)}`,{poll:true,decoder:parseSchedulerJSON})
   const run=detail.data?.name===name&&!detail.error?detail.data:undefined
   const replaced=!!uid&&!!run&&run.uid!==uid
+  const publication=useChillQuery<Experiment>(experimentPath(run?.publicationID??""),{enabled:!!run?.publicationID&&!replaced,poll:true,decoder:decodeExperiment})
+  const published=run?.publicationID&&publication.data?.id===run.publicationID&&!publication.error?publication.data:undefined
+  const frozen=published?.definition?.run.uid===run?.uid?published?.definition:undefined
+  const loads=useChillQuery<{items:LoadScenario[]}>("v1/evaluations/load-scenarios",{enabled:!!run&&!replaced&&!run.publicationID,decoder:parseSchedulerJSON})
+  const stages=records(run?.spec.stages)
+  const plans=stages.map(stage=>{
+    const ref=object(stage.loadScenarioRef),sources=run?.publicationID?frozen?.loadScenarios:loads.error?undefined:loads.data?.items
+    const scenario=sources?.find(item=>item.uid===ref.uid&&item.name===ref.name)
+    return {stage,scenario,parts:records(scenario?.spec.parts)}
+  })
+  const completePlan=plans.length>0&&plans.every(plan=>plan.scenario&&plan.parts.length)
+  const workloads=[...new Set(plans.flatMap(plan=>[...records(object(plan.scenario?.spec).workloads).flatMap(workload=>typeof workload.name==="string"?[workload.name]:[]),...plan.parts.flatMap(part=>Object.keys(object(part.rates)))]))]
+  const parts=plans.flatMap(plan=>plan.parts)
+  const plannedSeconds=completePlan&&parts.every(part=>finite(part.durationSeconds)!==null)?parts.reduce((sum,part)=>sum+Number(part.durationSeconds),0):null
+  const failedServices=[...new Set((published?.stages??[]).flatMap(stage=>experimentRows(stage).filter(row=>row.original.D1==="FAIL").map(row=>row.name)))]
+  const verdict=published?.outcome?.measurement?.verdict
+  const verdictLabels:Record<string,string>={FAIL:published?.outcome?.measurement?.reason==="SLOFailed"?"SLO 미충족":"측정 실패",PASS:"SLO 충족",OBSERVED_THRESHOLD_MET:"SLO 충족",NOT_EVALUATED:"미평가"}
+  const resultLabel=published?`게시 판정 ${published.status}${verdict?` · ${verdictLabels[verdict]??verdict}`:""}`:run?.publicationID?publication.error?"결과 조회 실패":"결과 조회 중":"결과 미게시"
+  const elapsed=run?.startedAt&&(run.finishedAt||now)?Math.max(0,Math.floor(((run.finishedAt?Date.parse(run.finishedAt):now)-Date.parse(run.startedAt))/1000)):null
   const currentHref=run?runHref(run,new URLSearchParams(params)):""
   React.useEffect(()=>{if(run&&!uid)router.replace(currentHref,{scroll:false})},[run,uid,currentHref,router])
   React.useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),1000);return ()=>window.clearInterval(timer)},[])
   const resultParams=new URLSearchParams(params)
   for(const key of ["name","uid","view"])resultParams.delete(key)
   if(run?.publicationID)resultParams.set("a",run.publicationID)
-  const stages=Array.isArray(run?.spec.stages)?run.spec.stages:[]
   return <Screen width="data" title={name} back={["/experiments","실험"]} actionPlacement="header" action={run&&!replaced?<RunActions key={run.uid} run={run} refresh={detail.refetch}/>:undefined}>
     {detail.error?.status===404?<strong role="status">실행 없음</strong>:<QueryGate query={detail}>{run&&(replaced?<div className="space-y-2"><strong role="status">실행 교체됨</strong><Link className="inline-flex min-h-11 items-center underline" href={currentHref}>현재 실행 선택</Link></div>:<>
-      <section aria-label="실행 상태" className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3"><nav aria-label="실험 상세" className="flex gap-2"><Button variant="secondary" asChild><Link href={currentHref} aria-current="page">진행</Link></Button>{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과</Link></Button>:<span aria-disabled={true} className="inline-flex min-h-11 items-center px-3 text-sm text-muted-foreground">결과 · 미게시</span>}</nav><TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">진행은 현재 실행, 결과는 게시 시점의 기록입니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">{[["실행 상태",phases[run.phase]??"미확인"],["현재 단계",typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"],["시작 (KST)",run.startedAt?formatMeasurementTime(run.startedAt):"미기록"],["종료 (KST)",run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"]].map(([label,value])=><div key={label}><dt className="text-muted-foreground">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
+      <section aria-label="실험 요약" className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className={`text-lg font-semibold ${verdict==="FAIL"?"text-destructive":""}`}>{phases[run.phase]??"미확인"} · {resultLabel}{failedServices.length>0&&` · 실패 서비스 ${failedServices.join(", ")}`}</h2>
+          <div className="flex items-center gap-2">{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과 보기</Link></Button>:<span className="text-sm text-muted-foreground">게시 후 결과 제공</span>}<TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">등록 질문은 작성자의 설명이며 부하 표가 실제 참조 계획입니다. 실행 단계와 부하 구간은 다릅니다. 조건은 각 항목의 최신 상태로 전체 이력이 아니며 시각은 마지막 변경입니다. 풀 반환 시각으로 확보 시각을 알 수 없습니다. 부하 진행률·남은 시간은 GO 시각 기준 계획값이고 판정·정리 시간은 포함하지 않습니다. 실행 중 offered 기준 D1는 제공되지 않습니다. 결과는 게시 당시 기록입니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
+        </div>
+        <p className="break-words text-sm"><span className="text-muted-foreground">등록 질문 </span>{typeof run.spec.question==="string"?run.spec.question:"미기록"}</p>
+        <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm tabular-nums"><strong>{completePlan?`워크로드 ${workloads.length}개`:"워크로드 미기록"}</strong><span>실행 단계 {stages.length}개</span><span>부하 구간 {completePlan?`${parts.length}개`:"미기록"}</span><span>부하 계획 {plannedSeconds===null?"미기록":`${plannedSeconds.toLocaleString("ko-KR")}초`}</span><span>{run.finishedAt?"전체 실행":"실행 경과"} {elapsed!==null&&Number.isFinite(elapsed)?`${elapsed.toLocaleString("ko-KR")}초`:"미기록"}</span></p>
+        {!run.finishedAt&&run.phase!=="Done"&&<EvaluationActive key={run.uid} name={name} uid={uid||run.uid} now={now}/>}
+        <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">{[["시작 (KST)",run.startedAt],["종료 (KST)",run.finishedAt]].map(([label,value])=><div key={label} className="flex gap-2"><dt>{label}</dt><dd>{value?formatMeasurementTime(value):"미기록"}</dd></div>)}</dl>
       </section>
-      <section aria-label="단계 진행·주입" className="space-y-3">
-        <div className="max-h-56 overflow-auto"><table className="w-full text-left text-sm"><thead><tr><th>순서</th><th>단계</th><th>운영 설정</th><th>현재 단계</th></tr></thead><tbody>{stages.map((value,index)=>{const stage=value&&typeof value==="object"?value as Record<string,unknown>:{},id=typeof stage.id==="string"?stage.id:"미기록",patch=stage.settingsPatch??run.spec.settingsPatch;return <tr key={index} className="border-t"><td className="py-2">{index+1}</td><th className="break-all font-normal">{id}</th><td>{patch&&typeof patch==="object"&&Object.keys(patch).length?"변경":"변경 없음"}</td><td>{id===run.currentStage?"현재":"—"}</td></tr>})}{!stages.length&&<tr><td colSpan={4}>단계 미기록</td></tr>}</tbody></table></div>
-        <EvaluationActive key={run.uid} name={name} uid={uid||run.uid} now={now}/>
-      </section>
-      <section aria-label="실행 조건·풀 상태" className="space-y-3">
-        <table className="w-full text-left text-sm"><thead><tr><th>조건</th><th>상태</th><th>사유</th></tr></thead><tbody>{run.conditions?.map((condition,index)=><tr key={`${condition.type}/${index}`} className="border-t"><th className="py-2 font-normal">{conditionLabels[condition.type]??"기타 조건"}</th><td>{condition.type==="PoolAcquired"?(condition.status==="True"?"점유 중":condition.status==="False"?"반환 관측":"미확인"):condition.status==="True"?"충족":condition.status==="False"?"미충족":"미확인"}</td><td>{condition.reason?conditionReasons[condition.reason]??"원문 확인":"미기록"}</td></tr>)}</tbody></table>
-        <EvaluationTargets title="평가 대상 CHILL" targets={run.liveTarget}/>
+      <section aria-label="진행 단계" className="space-y-2">
+        <h2 className="font-semibold">진행 단계 <span className="text-xs font-normal text-muted-foreground">조건별 최신 상태 · 마지막 변경 (KST)</span></h2>
+        <ol className="grid grid-cols-2 gap-px overflow-hidden rounded border bg-border md:grid-cols-5">{Object.entries(conditionLabels).map(([type,label])=>{
+          const condition=run.conditions?.find(item=>item.type===type)
+          let state=!condition?(run.phase==="Pending"?"대기":"미기록"):condition.status==="Unknown"?"미확인":condition.status==="True"?"완료":"미완료"
+          if(condition&&type==="PoolAcquired")state=condition.status==="True"?"점유 중":condition.reason==="Returned"?"반환 완료":condition.status==="False"?"미확보":"미확인"
+          if(condition&&type==="MeasurementPassed")state=condition.status==="True"?"SLO 충족":condition.reason==="NOT_EVALUATED"?"미평가":condition.reason==="SLOFailed"?"SLO 미충족":condition.status==="False"?"판정 미통과":"미확인"
+          if(condition&&type==="Published")state=condition.status==="True"?"게시 완료":condition.status==="False"?"미게시":"미확인"
+          const reason=condition?.reason?conditionReasons[condition.reason]:undefined
+          return <li key={type} className="space-y-1 bg-background p-3"><h3 className="text-sm text-muted-foreground">{label}</h3><p className={`font-medium ${type==="MeasurementPassed"&&condition?.status==="False"?"text-destructive":""}`}>{state}</p>{reason&&reason!==state&&<p className="text-xs">{reason}</p>}<p className="text-xs tabular-nums">{condition?.lastTransitionTime?<time dateTime={condition.lastTransitionTime}>{formatMeasurementTime(condition.lastTransitionTime)}</time>:"시각 미기록"}</p></li>
+        })}</ol>
         {evaluationActions(run.phase).release&&<BlockedCleanup key={run.uid} run={run}/>}
-        <details><summary className="min-h-11 cursor-pointer py-3 text-sm">정의·상태 원문</summary><SourceJSON inline title="상태 원문" value={run.conditions}/><SourceJSON inline title="현재 단계 원문" value={run.currentStage}/><SourceJSON inline title="실험 정의 원문" value={run.spec}/></details>
+      </section>
+      <section aria-label="부하 계획" className="space-y-2">
+        <h2 className="font-semibold">부하 계획 <span className="text-xs font-normal text-muted-foreground">{run.publicationID?"게시 당시 동결 정의":"참조된 부하 정의"}</span></h2>
+        {loads.error&&!run.publicationID&&<p role="status" className="text-sm">부하 계획 조회 실패</p>}
+        <div className="overflow-x-auto"><table className="w-full text-left text-sm tabular-nums"><thead><tr><th className="p-2">실행 단계</th><th className="p-2">부하 구간</th><th className="p-2 text-right">기간 (초)</th>{workloads.map(workload=><th key={workload} className="min-w-36 p-2 text-right">{workload}<span className="block text-xs font-normal text-muted-foreground">계획 요청/s</span></th>)}</tr></thead><tbody>{plans.map((plan,index)=>plan.parts.length?plan.parts.map((part,partIndex)=><tr key={`${index}/${partIndex}`} className="border-t"><th className="break-all p-2 font-normal">{String(plan.stage.id??"미기록")}</th><th className="break-all p-2 font-normal">{String(part.id??"미기록")}</th><td className="p-2 text-right">{finite(part.durationSeconds)??"미기록"}</td>{workloads.map(workload=><td key={workload} className="p-2 text-right">{finite(object(part.rates)[workload])?.toLocaleString("ko-KR",{maximumSignificantDigits:6})??"미기록"}</td>)}</tr>):<tr key={index} className="border-t"><th className="p-2 font-normal">{String(plan.stage.id??"미기록")}</th><td className="p-2" colSpan={workloads.length+2}>부하 계획 미기록</td></tr>)}{!plans.length&&<tr><td className="p-2" colSpan={workloads.length+3}>부하 계획 미기록</td></tr>}</tbody></table></div>
+      </section>
+      <section aria-label="실행 근거" className="space-y-2">
+        <details><summary className="min-h-11 cursor-pointer py-3 text-sm">평가 대상 CHILL · 이미지 digest</summary><EvaluationTargets title="평가 대상 CHILL" targets={run.liveTarget}/></details>
+        <details><summary className="min-h-11 cursor-pointer py-3 text-sm">조건·정의 원문</summary><SourceJSON inline title="조건 원문" value={run.conditions}/><SourceJSON inline title="마지막 실행 단계 원문" value={run.currentStage}/><SourceJSON inline title="실험 정의 원문" value={run.spec}/><SourceJSON inline title="참조 부하 정의" value={plans.map(plan=>plan.scenario)}/></details>
       </section>
     </>)}</QueryGate>}
   </Screen>
