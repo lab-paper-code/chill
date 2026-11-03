@@ -206,7 +206,7 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 	spec := api.DispatchOccupancyMeasurementSpec{
 		Node: intent.Node, BatchEnergyOptimization: intent.BatchEnergyOptimization,
 		Workload: intent.Workload, Batch: intent.Batch,
-		SupplyMode: policy.SupplyMode, Seed: policy.Seed, MinimumBatches: policy.MinimumBatches,
+		SupplyMode: "closed-loop", Seed: policy.Seed, MinimumBatches: policy.MinimumBatches,
 		MaximumIdleFraction: strconv.FormatFloat(policy.MaximumIdleFraction, 'f', -1, 64), Workers: int32(workers),
 		RequestLifetimeSeconds: policy.RequestLifetimeSeconds, DeliveryMarginMillis: policy.DeliveryMarginMillis,
 		PreparationSeconds: policy.PreparationSeconds,

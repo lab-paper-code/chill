@@ -89,9 +89,12 @@ Omission does not disable unrelated scheduling, but DOM POST fails closed with
 the current ConfigMap rather than falling back to a previously accepted policy.
 The accepted profile snapshot must have that same ConfigMap resourceVersion.
 
+Native DOM creation always uses closed-loop supply. `supplyMode` is not a policy
+setting; including it in configuration is an unknown-field error. Legacy native
+Poisson measurement validation is unchanged.
+
 | Field | Bounds / meaning |
 |---|---|
-| `supplyMode` | `closed-loop` for this API; legacy native Poisson measurements are not changed |
 | `minimumBatches` | int32 ≥2; minimumCycles = minimumBatches−1 |
 | `maximumIdleFraction` | finite [0, maximumIdleBaseFraction], never loosened to conceal a failed saturation measurement |
 | `requestLifetimeSeconds` | int32 ≥1; ≥ceil(Workload SLO seconds), ≤actual inference cap and Workload requestLifetime when set |

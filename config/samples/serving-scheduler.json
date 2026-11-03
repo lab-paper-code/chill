@@ -44,7 +44,6 @@
     }
   },
   "dispatchOccupancy": {
-    "supplyMode": "closed-loop",
     "minimumBatches": 20,
     "maximumIdleFraction": 0.01,
     "requestLifetimeSeconds": 8,

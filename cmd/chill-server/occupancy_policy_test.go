@@ -8,7 +8,7 @@ import (
 )
 
 func syntheticOccupancyPolicy() dispatchOccupancyPolicy {
-	return dispatchOccupancyPolicy{SupplyMode: "closed-loop", MinimumBatches: 4, MaximumIdleFraction: .01,
+	return dispatchOccupancyPolicy{MinimumBatches: 4, MaximumIdleFraction: .01,
 		RequestLifetimeSeconds: 2, DeliveryMarginMillis: 10, PreparationSeconds: 1, JobSetupSeconds: 1, CollectionSeconds: 1,
 		WindowFloorSeconds: 1, LoadPreparationFloorSeconds: 1, PlannedElapsedCapSeconds: 30, TimeMargin: 1.25,
 		RelativeXPlanningPrecision: .1, PlanningConfidence: .9, MaximumIdleBaseFraction: .01,
@@ -28,10 +28,13 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	block := wire["dispatchOccupancy"].(map[string]any)
-	block["workers"] = 6
-	raw, _ = json.Marshal(wire)
-	if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
-		t.Fatal("accepted server-derived config field")
+	for field, value := range map[string]any{"workers": 6, "supplyMode": "closed-loop"} {
+		block[field] = value
+		raw, _ = json.Marshal(wire)
+		if _, err := decodeSchedulerConfiguration(string(raw), 1<<20); err == nil {
+			t.Fatal("accepted server-owned config field", field)
+		}
+		delete(block, field)
 	}
 	delete(wire, "dispatchOccupancy")
 	raw, _ = json.Marshal(wire)

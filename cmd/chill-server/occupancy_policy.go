@@ -10,7 +10,6 @@ import (
 // dispatchOccupancyPolicy is selected explicitly from the scheduler ConfigMap.
 // These are planning inputs, not evidence that the generator achieved saturation.
 type dispatchOccupancyPolicy struct {
-	SupplyMode                  string  `json:"supplyMode"`
 	MinimumBatches              int32   `json:"minimumBatches"`
 	MaximumIdleFraction         float64 `json:"maximumIdleFraction"`
 	RequestLifetimeSeconds      int32   `json:"requestLifetimeSeconds"`
@@ -65,7 +64,7 @@ func (p dispatchOccupancyPolicy) validate() error {
 			return errors.New("dispatchOccupancy requires explicit finite positive planning coefficients")
 		}
 	}
-	if p.SupplyMode != "closed-loop" || p.MinimumBatches < 2 || p.RequestLifetimeSeconds < 1 ||
+	if p.MinimumBatches < 2 || p.RequestLifetimeSeconds < 1 ||
 		p.DeliveryMarginMillis < 1 || p.PreparationSeconds < 1 || p.JobSetupSeconds < 0 || p.CollectionSeconds < 0 ||
 		math.IsNaN(p.MaximumIdleFraction) || math.IsInf(p.MaximumIdleFraction, 0) || p.MaximumIdleFraction < 0 ||
 		p.MaximumIdleFraction > p.MaximumIdleBaseFraction || p.MaximumIdleBaseFraction > 1 ||
