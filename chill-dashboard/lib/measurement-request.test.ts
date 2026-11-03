@@ -132,19 +132,20 @@ test("changing a preprocessor clears only inherited datasets, preserving deliber
   assert.equal(requestInputs("model","onnx","image-pre","vqa",context,{dataset:false}).dataset,"vqa")
 })
 
-function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[]) {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  let mutationIndex=0
   const modules:Record<string,unknown>={
     "react":{...require("react"),useState:(initial:unknown)=>{const state=require("react").useState(initial);return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
-    "@/lib/client":{useChillMutation:()=>({isPending:false})},
+    "@/lib/client":{useChillMutation:()=>mutations[mutationIndex++]??({isPending:false}),isCoverageWarming:()=>false},
     "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null}},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
-    "@/features/read-pages":{},
+    "@/features/read-pages":{preflightConclusion:()=>"형식 검사 통과",PreflightAnswer:()=>null},
     "@/features/resources":{powerModeText:()=>"고정"},
     "@/components/ui/button":{Button:({children,disabled,"aria-current":current}:{children?:ReactNode;disabled?:boolean;"aria-current"?:"step"})=>createElement("button",{disabled,"aria-current":current},children)},
     "@/components/ui/input":{Input:()=>null},
@@ -200,7 +201,7 @@ test("copied request and selected variant keep their dataset instead of the newe
 })
 
 test("new and copied requests construct CPU-free manifests with the complete measured protocol",()=>{
-  const source={...plan,spec:{...plan.spec,batchSizes:[1,4]}}
+  const source={...plan,spec:{...plan.spec,batchSizes:[1,4],pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5},idleProtocol:{...plan.spec.idleProtocol,durationToleranceSeconds:0.25}}}
   const context={models:[],workloads:[],classes:[],profiles:[],plans:[source],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
   const prefill={active:true,values:condition,node:condition.node,errors:[],returnTo:"/measurements"}
   for(const props of [{context,prefill},{context,from:"source"}]) {
@@ -212,6 +213,16 @@ test("new and copied requests construct CPU-free manifests with the complete mea
     assert.equal(body.metadata.namespace,"ns")
     assert.deepEqual(body.spec,source.spec)
   }
+})
+
+test("preflight success and admission transport failure identify their own checks without HTTP zero",()=>{
+  const html=renderRequest({},"","",2,[],[],[{error:{status:0,data:null,body:"No response"}},{data:{status:200,data:{resolves:true}}},{}])
+  assert.match(html,/접수 검사/)
+  assert.match(html,/실행 계획 검사/)
+  assert.match(html,/응답 미수신/)
+  assert.match(html,/HTTP 200/)
+  assert.match(html,/형식 검사 통과/)
+  assert.doesNotMatch(html,/HTTP 0|연결 상태를 확인/)
 })
 
 test("required batches stay outside collapsed conditions and validation appears once",()=>{
@@ -406,6 +417,12 @@ test("failed requests retain a separate catalog-unavailable status after their f
   assert.doesNotMatch(html,/상세 사유: 원문|serving catalog is unavailable/)
   const complete=renderRequestList("requests",{...plan,assessment:{...retainedAssessment,reasons:[catalog]}})
   assert.match(complete,/카탈로그 상태: 카탈로그 조회 불가/)
+})
+
+test("request rows show each normalized failure cause once",()=>{
+  const failure={code:"MeasurementFailed",message:"native preparation Pod failed"}
+  const html=renderRequestList("requests",{...plan,status:{phase:"Failed"},assessment:{...retainedAssessment,failureSummary:[failure,{...failure,runId:"another-run"}]}})
+  assert.equal(html.split("모델 준비 실패").length-1,1)
 })
 
 const retainedAssessment:MeasurementAssessment={status:"complete",displayStatus:"usable",label:"측정 완료",reasons:[],execution:null,evidence:{available:true,accepted:true,reasons:[]},checklist:{criteriaMet:null,version:"result-checklist.v1",checks:[]},scope:{schedulerUsed:true,reused:false,facts:[]}}
