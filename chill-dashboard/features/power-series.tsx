@@ -12,12 +12,14 @@ import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
 export function usePowerSeries(state:LiveState) {
   const [range]=React.useState(()=>{const to=state.status==="fixture"&&state.metrics.length?Date.parse(state.metrics.at(-1)!.bucketAt)+1000:Date.now();return {from:new Date(to-900000).toISOString(),to:new Date(to).toISOString()}})
   const query=useChillQuery<OperatingPowerSeries>(powerSeriesPath(range.from,range.to)!,{decoder:parseSchedulerJSON,enabled:state.status!=="fixture"})
-  const [retained,setRetained]=React.useState(state.metrics)
-  React.useEffect(()=>{setRetained(previous=>{
-    const rows=[...new Map([...previous,...state.metrics].map(row=>[row.bucketAt,row])).values()].sort((a,b)=>Date.parse(a.bucketAt)-Date.parse(b.bucketAt))
+  const [history,setHistory]=React.useState(()=>({input:state.metrics,rows:state.metrics}))
+  let retained=history.rows
+  if(history.input!==state.metrics) {
+    const rows=[...new Map([...retained,...state.metrics].map(row=>[row.bucketAt,row])).values()].sort((a,b)=>Date.parse(a.bucketAt)-Date.parse(b.bucketAt))
     const latest=rows.length?Date.parse(rows.at(-1)!.bucketAt):0
-    return rows.filter(row=>Date.parse(row.bucketAt)>latest-900000).slice(-900)
-  })},[state.metrics])
+    retained=rows.filter(row=>Date.parse(row.bucketAt)>latest-900000).slice(-900)
+    setHistory({input:state.metrics,rows:retained})
+  }
   const end=Math.max(Date.parse(range.to),retained.length?Date.parse(retained.at(-1)!.bucketAt)+1000:0)
   return {query,points:mergePowerSeries(query.data,retained,end)}
 }
