@@ -71,6 +71,42 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
 파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
 
+#### Exact event recovery
+`GET /api/v1/observations/events?at=<RFC3339Nano>[&cursor=<nextCursor>]`
+keeps `events` and adds the range query's `ObservationCoverage`. An empty exact
+page preserves the existing array shape: `{"events":[],"nextCursor":"2026-11-03T20:00:00Z","coverage":{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","sources":[],"gaps":[{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"cluster","reason":"StreamUnavailable"},{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"scheduler","reason":"StreamUnavailable"}]}}`.
+Coverage bounds describe the append-time interval attempted, including absent
+archive hours; `to` is exclusive and clamped to the captured append head.
+`nextCursor` is the next append-hour RFC3339Nano timestamp, accepted only by
+`at` queries; range queries retain their opaque event-order cursors. Malformed,
+pre-`at` and future append cursors return `400 InvalidQuery`.
+Clients must follow continuations, including pages containing matches: both
+scheduler and cluster streams are scanned through the selected hours so
+simultaneous facts and events appended three hours late remain recoverable.
+No continuation means this captured append head was reached, not that no
+matching event can ever be appended later.
+
+`servingEntrypoint.observationStorage.eventLookupHours` →
+`--observation-event-lookup-hours` → `ObservationLogConfig.EventLookupHours`
+defaults to **1**; nonpositive/unset values use that default. This is a per-call
+append-hour budget, not a late-delivery cutoff. The one-hour default leaves
+headroom below the unchanged 10s dashboard relay and deployed 30s RequestTimeout:
+a throwaway replay of real 19/20h scheduler/cluster archives for a 2h-old lookup
+took **11.48s before / 1.89s after** on the same host. The 19h scheduler object
+was 87,008,362 bytes gzip / 319,926,140 bytes JSONL; gunzip+line scan was 1.97s,
+versus 4.24s with full JSON header decoding. Exact lookup decodes the leading
+stored scheduler timestamp before the large body, and only decodes matching
+facts. Cluster rows remain small and use normal JSON decoding. Both streams
+are necessary because `at` identifies a timestamp, not an event kind.
+Read-only live archive measurements: whole-prefix List 0.247s / 1,170 objects,
+hour-prefix List 0.008s / 6 objects, scheduler GET headers 0.006s /
+GET+87MB transfer 0.761s. Thus the reported 13s one-second query is not a fixed
+13s List cost; archive expansion and whole-row JSON scanning dominate the
+fixture (live CPU contention is not isolated by these measurements).
+The existing `serving/observations.v1alpha5/<UTC-hour>/<stream>.jsonl.gz`
+layout permits finite append ranges to List only requested nonlocal hours;
+unbounded queries still List the full prefix. No cache or index is added.
+
 #### Direct dispatch occupancy
 `GET /api/v1/observations/occupancy?from=<RFC3339Nano>&to=<RFC3339Nano>`
 returns `{window:{start,end},rows:[OccupancyEstimate...]}` without caching.
@@ -136,7 +172,7 @@ Query/LoadWindow/SchedulerObservationPage/OperatingPower/ScanOccupancyRows는 �
 
 #### 사건 범위 조회 (R18)
 
-`GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100&cursor=<nextCursor>`는 committed scheduler action/cluster 행만 `[from,to)`로 읽는다. 두 시각은 필수이며 최대 24시간, limit 기본 100·최대 500(기존 MaxQueryEvents가 더 작으면 그 값)이다. 범위 없는 기존 `?at=` 정확 시점 조회와 `{events:[...]}` 응답은 그대로다. 범위 응답은 `{from,to,events,nextCursor?,coverage}`이며 events의 종류·대상·원시 at·실패/예상시간을 유지한다. 미지원/중복/빈 파라미터, at 혼용, 잘못된 시각/범위/limit/cursor는 400이다.
+`GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100&cursor=<nextCursor>`는 committed scheduler action/cluster 행만 `[from,to)`로 읽는다. 두 시각은 필수이며 최대 24시간, limit 기본 100·최대 500(기존 MaxQueryEvents가 더 작으면 그 값)이다. 범위 없는 `?at=` 조회는 위 Exact event recovery의 append-hour 부분 결과 계약을 따른다. 범위 응답은 `{from,to,events,nextCursor?,coverage}`이며 events의 종류·대상·원시 at·실패/예상시간을 유지한다. 미지원/중복/빈 파라미터, at 혼용, 잘못된 시각/범위/limit/cursor는 400이다.
 
 순서는 실제 event at → stream → append hour/행 위치이며 동일 시각의 서로 다른 사건도 보존한다. 기존 nextCursor 관례를 재사용하되 값은 opaque base64url이다. cursor는 첫 조회의 stream별 committed prefix와 from/to를 담아 나중 append로 페이지가 이동하지 않는다. 같은 from/to로 이어 읽고 끝의 nextCursor 부재에서 멈춘다. 뒤늦게 기록된 사건은 새 범위 조회에서 읽는다. 새 저장 계약이나 서버 pagination 세션은 없고, 페이지 메모리는 limit+1 행으로 한정된다. 로컬/archive 선택·취소·coverage.sources/gaps는 기존 reader를 따른다. 보존 자료 자체가 사라지면 coverage 공백을 표시하며 사건이 없었다고 단정하지 않는다.
 

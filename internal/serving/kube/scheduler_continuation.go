@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 )
 
@@ -32,12 +33,16 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	c.state.Snapshot = snapshot
-	c.launchRunningParentsLocked(config, true)
+	c.publishSnapshotLocked(&snapshot)
+	c.continueTransitionsLocked(config.Settings, true, func(target serving.SchedulerCandidate) {
+		c.launchTargetLocked(target, config)
+	})
 	return nil
 }
 
-func (c *SchedulerController) launchRunningParentsLocked(config SchedulerControllerConfig, continuation bool) {
+func (c *reservationState) continueTransitionsLocked(
+	settings serving.SchedulerSettings, continuation bool, dispatch func(serving.SchedulerCandidate),
+) {
 	parents := []*actionRun{}
 	for _, run := range c.runs {
 		if run.action.Kind == transitionRunKind && run.action.Status == servingstate.NativeOperationRunning {
@@ -47,15 +52,15 @@ func (c *SchedulerController) launchRunningParentsLocked(config SchedulerControl
 	slices.SortFunc(parents, func(a, b *actionRun) int { return strings.Compare(a.owner, b.owner) })
 	for _, parent := range parents {
 		if continuation {
-			if parent.admittedControls != config.Settings.Controls {
+			if parent.admittedControls != settings.Controls {
 				continue
 			}
 			if slices.ContainsFunc(parent.result.Operation.WorkloadUIDs, func(uid string) bool {
-				return !slices.Contains(config.Settings.AutonomousWorkloads, uid)
+				return !slices.Contains(settings.AutonomousWorkloads, uid)
 			}) {
 				continue
 			}
 		}
-		c.launchTargetLocked(*parent.result.Operation.Target, config)
+		dispatch(*parent.result.Operation.Target)
 	}
 }

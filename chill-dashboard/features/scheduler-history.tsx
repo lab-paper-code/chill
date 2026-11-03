@@ -8,7 +8,7 @@ import { useChillQuery, useSession, type ApiError } from "@/lib/client"
 import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import type { WorkloadSummary } from "@/lib/domain"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
-import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, groupHistoryKeeps, schedulerScopeChanges, historyReturnTo, type SchedulerRecordRef } from "@/lib/scheduler-history"
+import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, schedulerScopeChanges, historyReturnTo, type SchedulerRecordRef } from "@/lib/scheduler-history"
 import { gapNotice, utcDateTime } from "@/lib/date-time"
 import { displayTime, candidatePlans } from "@/lib/live-display"
 import { SnapshotDetails, CandidateDetails, judgmentLabels, actionKinds, actionStatuses, actionNodeName } from "@/features/scheduler"
@@ -118,7 +118,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
   const workloads=useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const uid=params.get("uid")??"",serviceName=workloads.data?.find(row=>row.desired.metadata.uid===uid)?.desired.metadata.name
   const filter=settingsOnly?"settings":params.get("filter")??"decision-action",filterNode=params.get("filterNode")??""
-  const rows=groupHistoryKeeps(history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)&&schedulerHistoryNodeMatches(filterNode,row.event)))
+  const rows=history.rows.filter(row=>schedulerHistoryKindMatches(filter,row.ref.kind)&&schedulerHistoryNodeMatches(filterNode,row.event))
   const scopeView=!settingsOnly&&params.get("timeline")==="scope"
   const pageDecisions=history.rows as SchedulerHistoryRow[]
   const scopeRows=scopeView?schedulerScopeChanges(pageDecisions.filter(row=>schedulerHistoryNodeMatches(filterNode,row.event))):[]
@@ -183,7 +183,7 @@ export function SchedulerHistoryPage({settingsOnly=false}:{settingsOnly?:boolean
       </section>:<>
       {rows.length?<div className="rounded-lg border"><table className="block w-full text-sm sm:table"><thead className="hidden sm:table-header-group"><tr>{["시각 KST","대상","동작·판단","결과","선택"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody className="block sm:table-row-group">{rows.map(row=>{
         const ev=row.event,mark=[same(a,row)&&"A",same(b,row)&&"B"].filter(Boolean).join(" · ")
-        return <tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 tabular-nums sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(ev.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">대상 </span>{ev.action?actionNodeName(ev.action.node):ev.node?.name??params.get("uid")??"클러스터"}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">동작·판단 </span>{row.keepCount>1?`유지 ×${row.keepCount}`:ev.decision?judgmentLabels[ev.decision.status]??"미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">결과 </span>{ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"완료":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):mark||"해당 없음"}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>근거</Button></td></tr>
+        return <tr key={row.ref.offset} className="grid gap-1 border-t p-3 first:border-t-0 sm:table-row sm:p-0"><td className="min-w-0 tabular-nums sm:p-3"><span className="text-muted-foreground sm:hidden">시각 KST </span>{when(ev.at)}</td><td className="min-w-0 [overflow-wrap:anywhere] sm:p-3"><span className="text-muted-foreground sm:hidden">대상 </span>{ev.action?actionNodeName(ev.action.node):ev.node?.name??params.get("uid")??"클러스터"}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">동작·판단 </span>{ev.decision?judgmentLabels[ev.decision.status]??"미확인":ev.action?actionKinds[ev.action.kind]??kinds.action:kinds[row.ref.kind]??kinds.other}</td><td className="min-w-0 sm:p-3"><span className="text-muted-foreground sm:hidden">결과 </span>{ev.settings?ev.settings.error?"실패":ev.settings.appliedAt?"완료":"검증됨":ev.action?actionStatuses[ev.action.phase]??statusLabel(ev.action.phase):mark||"해당 없음"}</td><td className="sm:p-3"><Button variant="outline" onClick={()=>{opener.current=document.activeElement as HTMLElement|null;select(row)}}>근거</Button></td></tr>
       })}</tbody></table></div>:<Empty title="기록 없음"/>}
       </>}
       <HistoryPaging history={history}/>

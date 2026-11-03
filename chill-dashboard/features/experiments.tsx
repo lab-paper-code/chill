@@ -5,8 +5,8 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts"
 import { useChillQuery, useSession } from "@/lib/client"
-import { decodeExperiment, decodeExperimentPage, experimentPath, type Experiment, type ExperimentPage } from "@/lib/experiments"
-import { comparisonValidity, experimentChartData, experimentHeatmap, experimentIntervalSelection, experimentRows, type ExperimentHeatmapRow } from "@/lib/experiment-comparison"
+import { decodeExperiment, decodeExperimentPage, experimentPath, injectionRows, type Experiment, type ExperimentPage } from "@/lib/experiments"
+import { comparisonRows, comparisonValidity, experimentChartData, experimentHeatmap, experimentIntervalSelection, experimentRows, relativeEnergy, serviceDelta, type ExperimentHeatmapRow } from "@/lib/experiment-comparison"
 import { commitExperimentSelection } from "@/lib/dashboard-routes"
 import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 import { parseSchedulerJSON } from "@/lib/scheduler"
@@ -33,6 +33,12 @@ function SelectedValues({row,service="",onSelect}:{row:ExperimentHeatmapRow;serv
     {row.other&&<h3 className="text-sm font-semibold">후보</h3>}
     <ExperimentStageResults run={row.leftRun} stage={row.stage} service={service} onSelect={onSelect}/>
     {row.other&&<section className="space-y-2" aria-label="기준 결과"><h3 className="text-sm font-semibold">기준</h3><ExperimentStageResults run={row.rightRun} stage={row.other} service={service}/></section>}
+    {row.other&&<section aria-label="후보−기준 차이" className="space-y-2 text-sm">
+      <h3 className="font-semibold">후보−기준 차이</h3>
+      <p>에너지 상대 차이 {relativeEnergy(row.stage.kpis.wholePoolJoules,row.other.kpis.wholePoolJoules)}</p>
+      <table aria-label="서비스별 비교 차이" className="w-full text-left tabular-nums"><thead><tr><th scope="col" className="p-2 font-medium">서비스</th><th scope="col" className="p-2 font-medium">성공률 차이·p95 차이 및 배율</th></tr></thead><tbody>{comparisonRows(row.stage,row.other).filter(item=>!service||item.name===service).map(item=><tr key={item.name} className="border-t"><th scope="row" className="break-words p-2 font-normal">{item.name}</th><td className="p-2">{serviceDelta(item.a.length===1?item.a[0]:undefined,item.b.length===1?item.b[0]:undefined)}</td></tr>)}</tbody></table>
+      <p className="text-xs text-muted-foreground">{row.reason} · 값의 차이는 정책 효과를 보장하지 않습니다.</p>
+    </section>}
   </div>
 }
 
@@ -48,7 +54,7 @@ function IntervalDrawer({run,runs,row,service,onClose,restoreFocus,returnTo="",s
       <dl className="space-y-2 text-sm">{stages.map(({stage,owner,label})=><div key={`${owner.id}/${stage.id}`}><dt className="font-medium">{label} · {stage.id}</dt><dd className="text-xs text-muted-foreground">{formatMeasurementTime(stage.from)} – {formatMeasurementTime(stage.to)}</dd></div>)}</dl>
       {onServiceChange&&<label className="flex items-center gap-2 text-sm">서비스 <select className="min-h-11 min-w-0 max-w-full rounded border bg-background px-2" value={service} onChange={event=>onServiceChange(event.target.value)}><option value="">전체</option>{names.map(name=><option key={name} value={name}>{name}</option>)}</select></label>}
       <SelectedValues row={row} service={service}/>
-      {stages.filter(({stage,owner})=>owner.definition?.spec.stages.find(item=>item.id===stage.id)?.failureInjection?.length).map(({stage,owner})=><ExperimentInjections key={`${owner.id}/${stage.id}`} run={owner} stage={stage}/>)}
+      {stages.filter(({stage,owner})=>injectionRows(owner,stage).length>0).map(({stage,owner})=><ExperimentInjections key={`${owner.id}/${stage.id}`} run={owner} stage={stage}/>)}
       <section className="space-y-2" aria-label="같은 기간 관찰"><h3 className="text-sm font-semibold">관찰</h3>{row.other&&<label className="flex items-center gap-3 text-sm">관찰 구간 <select className="min-h-11 rounded border bg-background px-2" value={side} onChange={event=>onSideChange?.(event.target.value)}><option value="candidate">후보</option><option value="baseline">기준</option></select></label>}{eventStage&&<SchedulerIntervalEvents key={`${eventStage.owner.id}/${eventStage.stage.id}`} from={eventStage.stage.from} to={eventStage.stage.to} returnTo={returnTo} label={eventStage.label}/>}</section>
       <details>
         <summary className="min-h-11 cursor-pointer text-sm">비교 조건·측정 규칙·계획 부하·정의 출처</summary>

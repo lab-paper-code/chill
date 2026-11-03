@@ -12,6 +12,8 @@ import * as experimentHelpers from "./experiments.ts"
 import * as measurementHelpers from "./measurements.ts"
 import * as icons from "lucide-react"
 import * as settings from "./scheduler-settings.ts"
+import { createElement, type ComponentType } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
 
 const containers={Dialog:"dialog",DialogContent:"div",DialogHeader:"header",DialogTitle:"h2",DialogDescription:"p"}
 const primitives={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"div"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/dialog":containers,"@/components/ui/sheet":{Sheet:"aside",SheetContent:"div",SheetHeader:"header",SheetTitle:"h2"},"@/lib/evaluation-author":author,"@/lib/evaluation-request":request,"@/lib/scheduler":scheduler}
@@ -198,10 +200,10 @@ test("pool occupancy is observed independently from the cleanup failure phase",(
 test("active progress preserves selected UID isolation without exposing duplicate stop controls",()=>{
   const runner=hookRunner(),active={name:"run",uid:"new",stageIndex:1,stagesTotal:1}
   const modules={...primitives,react:runner.react,"@/lib/evaluation-active":activeHelpers,"@/lib/client":{useChillQuery:()=>({data:{items:[active]}})}}
-  const {EvaluationActive}=load("../features/evaluation-active.tsx",modules)
-  let tree=elements(runner.render(EvaluationActive,{name:"run",uid:"old",now:0}))
+  const {EvaluationActiveDetails}=load("../features/evaluation-active.tsx",modules)
+  let tree=elements(runner.render(EvaluationActiveDetails,{active:{data:{items:[active]}},name:"run",uid:"old",now:0}))
   assert.ok(!tree.some(element=>element.type==="details"),"same-name active replacement must not display under the old selection")
-  tree=elements(runner.render(EvaluationActive,{name:"run",uid:"new",now:0}))
+  tree=elements(runner.render(EvaluationActiveDetails,{active:{data:{items:[active]}},name:"run",uid:"new",now:0}))
   assert.ok(!tree.some(element=>element.type==="button"&&["실험 중지","중지 요청"].includes(String(element.props.children))))
 })
 
@@ -288,7 +290,7 @@ test("R17b: evaluation writes disclose the required role without claiming an unv
 
 test("R17b: result detail retains preparation outcome and separates candidate and baseline results",()=>{
   const runner=hookRunner(),params=new URLSearchParams("a=publication")
-  const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:60,requests:{camera:{offered:600,deadlineSuccessFraction:.9,completedLatencyNS:{p95:1000000}}}}})
+  const stage=(id:string)=>({id,from:"2026-11-01T00:00:00Z",to:"2026-11-01T00:01:00Z",kpis:{wholePoolJoules:id==="candidate"?60:100,requests:{camera:{offered:600,deadlineSuccessFraction:id==="candidate"?0.9:0.8,completedLatencyNS:{p95:id==="candidate"?1000000:2000000,samples:37}},sensor:{offered:100,deadlineSuccessFraction:0.5,completedLatencyNS:{p95:3000000,samples:8}}}}})
   let run:Record<string,unknown>={id:"publication",stages:[],outcome:{execution:{status:"Failed"},measurement:{verdict:"NOT_EVALUATED"},cleanup:{status:"Complete"}}}
   const modules={...primitives,react:{...runner.react,useEffect:()=>{},useMemo:(fn:()=>unknown)=>fn(),useRef:()=>({current:null})},"lucide-react":{TriangleAlert:"svg"},recharts:{},"next/navigation":{useSearchParams:()=>params},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:run})},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/features/experiments-conclusion":{ExperimentOutcome:"outcome",ExperimentVerdict:"verdict",ExperimentStageResults:"result-matrix",usePublishedExperimentFacts:()=>({data:null}),useHistoricalExperiments:()=>({runs:[run],pending:false,error:null})}}
   const {ExperimentsPage}=load("../features/experiments.tsx",modules)
@@ -302,8 +304,34 @@ test("R17b: result detail retains preparation outcome and separates candidate an
   assert.deepEqual(sections.slice(0,3),["게시 결과 요약","선택 단계 수치","차트와 구간 선택"])
   const values=tree.find(element=>element.props.row&&element.props.onSelect&&typeof element.type==="function")!
   const cells=elements(runner.render(values.type as (props:Record<string,unknown>)=>unknown,values.props))
-  const matrices=cells.filter(element=>element.type==="result-matrix")
-  assert.deepEqual(matrices.map(element=>experimentHelpers.object(element.props.stage).id),["candidate","baseline"])
+  const conclusion=load("../features/experiments-conclusion.tsx",{...modules,"@/lib/client":{},"next/link":{default:"a"}})
+  Object.assign(modules["@/features/experiments-conclusion"],conclusion)
+  const rendered=renderToStaticMarkup(createElement(values.type as ComponentType,values.props))
+  for(const value of ["서비스별 결과","90.00%","80.00%","에너지 상대 차이","-40.00 %","+10.00 %p","×0.50"])assert.ok(rendered.includes(value),value)
+  const matrices=cells.filter(element=>element.props.stage&&typeof element.props.onSelect==="function")
+  let selectedService=""
+  const matrix=elements(runner.render(conclusion.ExperimentStageResults,{...matrices[0].props,onSelect:(name:string)=>{selectedService=name}}))
+  const camera=matrix.find(element=>element.type==="button"&&[element.props.children].flat().join("")==="camera 결과 자세히")!
+  ;(camera.props.onClick as ()=>void)()
+  assert.equal(selectedService,"camera")
+  const disclosure=tree.find(element=>element.type==="details"&&elements(element.props.children).some(child=>child.type==="summary"&&child.props.children==="실행·정리·비교 조건·정의 출처"))!
+  assert.ok(disclosure)
+  assert.notEqual(disclosure.props.open,true)
+  const drawer=tree.find(element=>element.props.onServiceChange&&element.props.onClose&&typeof element.type==="function")!
+  const recorded={...run,outcome:{stages:[{id:"candidate",injections:[{id:"result-only",action:"delete-serving-pod",outcome:"Executed",reason:"recorded",actualOffsetSeconds:4}]}]}}
+  const drawerTree=elements(runner.render(drawer.type as (props:Record<string,unknown>)=>unknown,{...drawer.props,row:values.props.row,run:recorded}))
+  const drawerValues=drawerTree.find(element=>element.props.row&&typeof element.type==="function")!
+  const samples=renderToStaticMarkup(createElement(drawerValues.type as ComponentType<Record<string,unknown>>,{...drawerValues.props,service:"camera"}))
+  assert.match(samples,/p95 표본[^<]*37/)
+  assert.doesNotMatch(samples,/>sensor</)
+  assert.ok(drawerTree.some(element=>element.type==="select"&&element.props.value===""))
+  const resultRow=experimentHelpers.object(values.props.row)
+  const owner={...experimentHelpers.object(resultRow.leftRun),outcome:recorded.outcome}
+  const withInjection=elements(runner.render(drawer.type as (props:Record<string,unknown>)=>unknown,{...drawer.props,row:{...resultRow,leftRun:owner}}))
+  const injection=withInjection.find(element=>element.type===conclusion.ExperimentInjections&&element.props.run===owner&&element.props.stage===resultRow.stage)
+  assert.ok(injection,"recorded injection without a parsed definition must reach the rendered drawer")
+  const injectionHTML=renderToStaticMarkup(createElement(conclusion.ExperimentInjections as ComponentType<Record<string,unknown>>,{run:owner,stage:resultRow.stage}))
+  for(const value of ["result-only","실행","recorded","4"])assert.ok(injectionHTML.includes(value),value)
 })
 
 test("R17b: template missing inputs stay visible while copied question text is folded as original",async()=>{

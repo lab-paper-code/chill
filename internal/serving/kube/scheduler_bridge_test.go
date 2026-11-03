@@ -49,7 +49,7 @@ func TestBridgeStopRequiresCurrentNativeACKAC45(t *testing.T) {
 			case "wrong owner UID":
 				controller.runs[ack.ID].result.Operation.WorkloadUIDs = []string{"not-this-owner"}
 			}
-			if got := controller.dependenciesReady(stop, target); got != (proof == servingstate.NativeOperationComplete || proof == independentRouteChanged) {
+			if got := controller.dependenciesReady(stop, target, controller.runtime); got != (proof == servingstate.NativeOperationComplete || proof == independentRouteChanged) {
 				t.Fatalf("bridge ACK proof %s allowed stop=%t", proof, got)
 			}
 		})
@@ -69,7 +69,7 @@ func TestRequiredBridgeFailureFailsOwnerSCH26AC38(t *testing.T) {
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &stage}, Status: status}}
 			// The bridge's successful effect can be superseded by the final
 			// route; an execution failure must still terminate its owner.
-			c.reconcileOwnersLocked(serving.SchedulerSnapshot{}, time.Now(), false)
+			c.reconcileOwnersLocked(serving.SchedulerSnapshot{}, time.Now(), false, c.runtime)
 			want := servingstate.NativeOperationFailed
 			if status == servingstate.NativeOperationComplete {
 				want = servingstate.NativeOperationRunning
@@ -253,7 +253,7 @@ func TestRunningBridgeCannotConsumeUnrelatedCompletedACKS2(t *testing.T) {
 			running := bridge
 			running.Status = status
 			c.runs[bridge.ID] = &actionRun{action: running, owner: goal.ID}
-			if c.dependenciesReady(stop, goal) || c.dependenciesReady(final, goal) {
+			if c.dependenciesReady(stop, goal, c.runtime) || c.dependenciesReady(final, goal, c.runtime) {
 				t.Fatal("stop/final route accepted an incomplete bridge despite its existing frozen effect")
 			}
 			c.mu.Lock()
@@ -431,11 +431,11 @@ func TestSkippedBridgeDoesNotRetireOwnerBeforeStopS3(t *testing.T) {
 	goal.Actions = []serving.Action{bridge, stop}
 	installTestTransition(c, &goal)
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
-	c.reconcileOwnersLocked(c.state.Snapshot, time.Now(), false)
+	c.reconcileOwnersLocked(c.state.Snapshot, time.Now(), false, c.runtime)
 	if parent.action.Status != servingstate.NativeOperationRunning || !parent.reserved || c.runs[stop.ID] != nil {
 		t.Fatalf("unstarted stop lost its live owner: %+v", parent)
 	}
-	if !c.dependenciesReady(stop, goal) {
+	if !c.dependenciesReady(stop, goal, c.runtime) {
 		t.Fatal("source UID's existing ACK did not authorize the frozen stop")
 	}
 }

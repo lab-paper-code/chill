@@ -34,13 +34,15 @@ export function evaluationDefinition(value:unknown):EvaluationDefinition|undefin
   if(new Set(ids).size!==ids.length)return undefined
   const comparisons=evaluationComparisons(spec.comparisons)
   if(spec.comparisons!==undefined&&(!comparisons||!comparisons.every(c=>[c.left,c.right].every(ref=>ref.stageID===undefined||ids.includes(ref.stageID)))))return undefined
-  if(!Array.isArray(value.loadScenarios)||!value.loadScenarios.length||!value.loadScenarios.every(s=>reference(s)&&record(s.spec)&&Array.isArray(s.spec.parts)&&s.spec.parts.length&&s.spec.parts.every((part:unknown)=>{
+  if(!Array.isArray(value.loadScenarios)||!value.loadScenarios.every(s=>reference(s)&&record(s.spec)&&Array.isArray(s.spec.parts)&&s.spec.parts.length&&s.spec.parts.every((part:unknown)=>{
     if(!record(part)||!text(part.id)||!nonnegative(part.durationSeconds)||part.durationSeconds===0)return false
     return record(part.rates)&&Object.keys(part.rates).length>0&&Object.values(part.rates).every(nonnegative)
   })))return undefined
-  if(!Array.isArray(value.workloads)||!value.workloads.length||!value.workloads.every(w=>reference(w)&&positiveInteger(w.generation)&&record(w.slo)&&nonnegative(w.slo.percentile)&&w.slo.percentile>0&&w.slo.percentile<=100&&positiveInteger(w.slo.targetLatencyNanos)))return undefined
+  if(!Array.isArray(value.workloads)||!value.workloads.every(w=>reference(w)&&positiveInteger(w.generation)&&record(w.slo)&&nonnegative(w.slo.percentile)&&w.slo.percentile>0&&w.slo.percentile<=100&&positiveInteger(w.slo.targetLatencyNanos)))return undefined
   const scenarios=value.loadScenarios
+  // Before preparation, the publisher preserves the run spec with both snapshot collections empty.
+  if((scenarios.length===0)!==(value.workloads.length===0))return undefined
   if(new Set(scenarios.map(s=>s.uid)).size!==scenarios.length||new Set(value.workloads.map(w=>w.uid)).size!==value.workloads.length)return undefined
-  if(!spec.stages.every(stage=>scenarios.some(s=>s.uid===stage.loadScenarioRef.uid)))return undefined
+  if(scenarios.length&&!spec.stages.every(stage=>scenarios.some(s=>s.uid===stage.loadScenarioRef.uid)))return undefined
   return value as EvaluationDefinition
 }

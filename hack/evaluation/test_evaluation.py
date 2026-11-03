@@ -119,6 +119,59 @@ def power_window():
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_publication_links_frozen_applied_slo_source(self):
+        temporary_directory = tempfile.TemporaryDirectory
+        with temporary_directory() as directory:
+            root = Path(directory)
+            run = root / 'campaign/run'
+            run.mkdir(parents=True)
+            spec, scenario, execution, config, assembled = fixture(root)
+            reference = {'store': 'store', 'key': 'experiments/run/run/prepare/input-snapshot.json', 'size': 123}
+            execution = {'runUID': 'run', 'runName': 'run', 'prepareCompleted': True, 'childRefs': [], 'inputSnapshotRef': reference}
+            template = {'id': 'one', 'loadScenarioRef': {'name': 'load', 'uid': 'load-uid'}}
+            spec['stages'] = [template]
+            scenario['ref'] = {'name': 'load', 'uid': 'load-uid'}
+            path = root / 'config.json'
+            evidence_io.save(path, assembled)
+            bound = conductor.bind(path)
+            snapshot = {'runSpec': spec, 'bindings': {'one': bound}, 'scenarios': {'load-uid': scenario}, 'preparedAt': START}
+            scope = run / 'stages/one/measured'
+            evidence_io.save(scope / 'phase.json', {'startUTC': START, 'endUTC': END})
+            request = {'offered': 1, 'clientRows': 1, 'deadlineSuccess': 1, 'D1': 'OBSERVED_THRESHOLD_MET',
+                       'completedLatencyNS': {'samples': 1}, 'workloadUID': scenario['workloads'][0]['uid'],
+                       'definitionID': 'observed-definition', 'issuanceFidelity': {}}
+            evidence_io.save(scope / 'judgment.json', {'schema': 'e5-judgment.v3', 'status': 'MEASURED_DESCRIPTIVE',
+                'requests': {NAME: request}, 'components': {'slo': {'status': 'PASS'}},
+                'power': {'complete': True, 'wholePoolJoules': 1}})
+            complete = {'execution': {'status': 'Complete', 'reason': 'ProcedureComplete'},
+                        'cleanup': {'status': 'Complete', 'reason': 'ProcedureComplete'}, 'artifacts': []}
+            records = {'experiments/run/stages/one/' + step + '/result.json': {
+                **complete, 'measurement': {'verdict': 'PASS'}} for step in ('factor', 'stage', 'judge', 'cleanup-jobs')}
+            records.update({'experiments/run/run/' + step + '/result.json': complete for step in ('prepare', 'finish')})
+            def get(ref, destination):
+                if ref['key'] not in records:
+                    raise FileNotFoundError(ref['key'])
+                evidence_io.save(destination, records[ref['key']])
+            context = SimpleNamespace(run=run, spec=spec, execution=execution, config=config, snapshot=snapshot,
+                                      store=SimpleNamespace(name='store', get=get))
+            def publish(args, **kwargs):
+                manifest = evidence_io.load(args[args.index('--manifest') + 1])
+                summary = evidence_io.load(manifest['summary']['localPath'])
+                row = summary['stages'][0]['kpis']['requests'][NAME]
+                declared = summary['definition']['workloads'][0]
+                source = row['identitySource']
+                verified = (row['workloadUID'] == declared['uid'] and row['definitionID'] == 'observed-definition'
+                            and row['slo'] == declared['slo'] and row['slo']['percentile'] == 95
+                            and any(item['store'] == source['store'] and item['key'] == source['key'] for item in summary['sources']))
+                self.assertTrue(verified, 'Applied p95 SLO must be verifiable from the published source set')
+                return SimpleNamespace(returncode=0, stderr='')
+            env = {'CHILL_EVIDENCE_BUCKET': 'bucket', 'CHILL_EVIDENCE_ENDPOINT': 'https://store.invalid',
+                   'CHILL_EVIDENCE_REGION': 'region', 'AWS_ACCESS_KEY_ID': 'test', 'AWS_SECRET_ACCESS_KEY': 'test'}
+            with patch.dict(os.environ, env), patch.object(publication.tempfile, 'TemporaryDirectory',
+                 side_effect=lambda **kwargs: temporary_directory(prefix=kwargs['prefix'], dir=root)), \
+                 patch.object(publication.subprocess, 'run', side_effect=publish):
+                publication.publish(context)
+
     def test_all_no_load_stages_cannot_become_summary_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             stages = [{'id': 'one', 'kpis': {'status': 'PARTIAL', 'components': {'slo': {'status': 'INVALID_NO_LOAD'}}}},

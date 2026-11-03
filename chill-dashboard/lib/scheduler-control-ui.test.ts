@@ -42,14 +42,6 @@ test("recorded Keep retains PLC/Smol Controlled and only IC carries the instance
   assert.match(renderToStaticMarkup(createElement(components.SchedulerWorkloadStates,{workloads:null,names})),/미기록/)
 })
 
-test("current-page timeline keeps its baseline and only service state/reason-code transitions",()=>{
-  const repeated={...fixture,at:"2026-11-03T19:48:16Z",decision:{...fixture.decision,at:"2026-11-03T19:48:16Z"}}
-  const changed={...fixture,at:"2026-11-03T19:48:26Z",decision:{...fixture.decision,at:"2026-11-03T19:48:26Z",workloads:fixture.decision.workloads.map((row:{uid:string;state:string})=>({...row,state:"Controlled"}))}}
-  const rows=[changed,repeated,fixture].map((event,index)=>({event,ref:history.schedulerRecordRef(event,fixture.at,changed.at,String(2-index))}))
-  const changes=history.schedulerScopeChanges(rows)
-  assert.deepEqual(changes.map(row=>row.event.at),[fixture.at,changed.at])
-  assert.equal(history.groupHistoryKeeps(rows).length,2)
-})
 
 test("rendered timeline shows only loaded-page transitions and does not fetch remaining pages",()=>{
   const params=new URLSearchParams({from:"2026-11-03T19:44:00Z",to:"2026-11-03T20:16:00Z",cursor:"50",limit:"3",timeline:"scope"})
@@ -77,6 +69,13 @@ test("rendered timeline shows only loaded-page transitions and does not fetch re
   assert.equal((html.match(/<caption[^>]*>서비스별 자율 상태<\/caption>/g)??[]).length,2)
   assert.match(html,/현재 페이지/)
   assert.match(html,/이전 페이지와의 변화는 미확인/)
+  assert.match(html,/현재 구성 유지 \(Keep\)/)
+  assert.match(html,/Controlled/)
+  assert.match(html,/Fixed/)
+  assert.match(html,/인스턴스 미확인/)
+  assert.match(html,/<details><summary[^>]*>[\s\S]*?<\/summary>[\s\S]*?containerd:/)
+  assert.doesNotMatch(html,/<details[^>]*\bopen\b/)
+  assert.equal((html.match(/>판단 근거<\/button>/g)??[]).length,2)
   const requests=calls.filter(path=>path.startsWith("v1/observations/scheduler"))
   assert.equal(requests.length,1)
   const request=new URL(requests[0],"https://dashboard.invalid")

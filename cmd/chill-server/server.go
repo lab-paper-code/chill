@@ -84,10 +84,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
-		OccupancyTail:  httpapi.MaximumInferenceRequestTimeout + opts.drainTimeout,
-		Diagnostics:    recorder,
-		Retention:      opts.observationRetention,
-		OnRequestEvent: publisher.request,
+		OccupancyTail:    httpapi.MaximumInferenceRequestTimeout + opts.drainTimeout,
+		Diagnostics:      recorder,
+		Retention:        opts.observationRetention,
+		EventLookupHours: opts.eventLookupHours,
+		OnRequestEvent:   publisher.request,
 	})
 	if err != nil {
 		return err

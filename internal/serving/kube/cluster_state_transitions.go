@@ -102,11 +102,25 @@ func (c *reservationState) cancelCancelableRuns() {
 	c.mu.Unlock()
 }
 
-func (c *reservationState) startRun(run *actionRun, operation servingstate.Operation) bool {
+func (c *reservationState) startAdmittedRun(
+	operation *servingstate.Operation, initial *servingstate.OperationResult, cancel context.CancelFunc, started time.Time,
+) *actionRun {
+	kind := operation.Kind
+	switch kind {
+	case servingstate.OperationUnroute, servingstate.OperationRelease, servingstate.OperationReset:
+		kind = servingstate.OperationRoute
+	}
+	run := &actionRun{action: serving.Action{ID: operation.ID, Kind: kind, Node: operation.Node, From: externalActionSource, Status: servingstate.NativeOperationRunning}, result: initial, cancel: cancel, started: started}
+	if operation.Holder != "" {
+		run.owner = operation.Holder
+	}
 	c.mu.Lock()
-	accepted := c.reserveRun(operation.ID, run, operation)
+	accepted := c.reserveRun(operation.ID, run, *operation)
 	c.mu.Unlock()
-	return accepted
+	if !accepted {
+		return nil
+	}
+	return run
 }
 
 func (c *reservationState) completeAdmittedRun(run *actionRun, result *servingstate.OperationResult, err error, kind string) {
@@ -131,4 +145,64 @@ func (c *reservationState) retireRunsLocked(cutoff time.Time) {
 			delete(c.runs, id)
 		}
 	}
+}
+
+func (c *reservationState) scheduledActionTerminalLocked(action *serving.Action) bool {
+	run := c.runs[action.ID]
+	return run != nil && actionEquivalent(run.action, *action) &&
+		run.action.Status != servingstate.NativeOperationRunning && run.action.Status != servingstate.NativeOperationCancel
+}
+
+func (c *reservationState) startScheduledActionLocked(action *serving.Action, initial *servingstate.OperationResult,
+	started time.Time, owner string, newContext func() (context.Context, context.CancelFunc),
+) (context.Context, *actionRun) {
+	run := &actionRun{action: *action, result: initial, started: started, owner: owner, proofParent: c.runs[transitionRunKind+"/"+owner]}
+	if !c.reserveRun(action.ID, run, initial.Operation) {
+		return nil, nil
+	}
+	ctx, cancel := newContext()
+	run.cancel = cancel
+	return ctx, run
+}
+
+func (c *reservationState) recordPreparation(run *actionRun, evidence *servingstate.PreparationEvidence) {
+	c.mu.Lock()
+	c.recordPreparationLocked(run, evidence)
+	c.mu.Unlock()
+}
+
+func (c *reservationState) reservedNodes() map[string]bool {
+	c.mu.Lock()
+	busy := map[string]bool{}
+	for _, run := range c.runs {
+		if run.reserved {
+			for _, node := range run.scope.Nodes {
+				busy[node.UID] = true
+			}
+		}
+	}
+	c.mu.Unlock()
+	return busy
+}
+
+func (c *reservationState) stateViewLocked() SchedulerControllerState {
+	result := c.state
+	result.Actions = c.actionsLocked(time.Now())
+	result.Snapshot.Reservations = c.reservationsLocked()
+	result.Results = append([]servingstate.OperationResult(nil), c.state.Results...)
+	return result
+}
+
+func (c *reservationState) snapshotLocked() serving.SchedulerSnapshot {
+	return c.state.Snapshot
+}
+
+func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnapshot) {
+	c.state.Snapshot = *snapshot
+}
+
+func (c *reservationState) publishDecisionLocked(snapshot *serving.SchedulerSnapshot, decision *serving.SchedulerDecision) {
+	c.state.Snapshot = *snapshot
+	c.state.Decision = *decision
+	c.markOverloadPrepares(*decision)
 }

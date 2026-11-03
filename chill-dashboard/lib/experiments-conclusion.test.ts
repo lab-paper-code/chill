@@ -169,3 +169,39 @@ test("missing publication outcomes and zero offered remain unrecorded, never a p
   assert.doesNotMatch(html,/0\.00%|통과|완료 0|오류 0|미완료 0|미발행 0/)
   assert.match(html,/완료 미기록/)
 })
+
+test("review: declared and identity-linked applied SLO retain sub-ms precision",()=>{
+  const source={store:"archive",key:"snapshot"}
+  const measured={...stage("candidate"),kpis:{requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/1/preprocessor/1",identitySource:source}}}}
+  const publication={...run,stages:[measured],sources:[source],definition:{workloads:[{name:"camera",uid:"camera",generation:1,model:{uid:"model",generation:1},preprocessor:{uid:"preprocessor",generation:1},slo:{percentile:95,targetLatencyNanos:400000}}],spec:{stages:[]},loadScenarios:[]}} as unknown as Experiment
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:publication,stage:measured}))
+  assert.match(html,/p95 · 0\.40 ms/)
+  assert.match(html,/적용 확인: p95 · 0\.40 ms/)
+  assert.doesNotMatch(html,/p95 · 0 ms/)
+})
+
+test("pool mean power uses published joules and measured interval, not planned duration",()=>{
+  const measured={...stage("candidate"),kpis:{wholePoolJoules:6000,power:{energyStatus:"MEASURED",wholePoolJoules:6000}}}
+  const publication={...run,comparisons:[],stages:[measured],definition:{workloads:[],spec:{stages:[{id:"candidate",loadScenarioRef:{uid:"planned"}}]},loadScenarios:[{uid:"planned",spec:{parts:[{id:"planned",durationSeconds:300,rates:{camera:1}}]}}]}} as unknown as Experiment
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:publication,stage:measured}))
+  assert.match(html,/풀 평균 전력 100(?:\.0)? W/)
+  assert.doesNotMatch(html,/풀 평균 전력 20(?:\.0)? W/)
+})
+
+test("pool mean power preserves observed zero and missing energy operands",()=>{
+  for(const joules of [0,null,undefined])for(const nested of [false,true]) {
+    const energy=joules===undefined?{}:{wholePoolJoules:joules}
+    const measured={...stage("candidate"),kpis:{...(!nested?energy:{}),power:{energyStatus:"MEASURED",...(nested?energy:{})}}}
+    const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:{...run,stages:[measured]},stage:measured}))
+    assert.match(html,joules===0?/풀 평균 전력 0(?:\.0)? W/:/풀 평균 전력 미기록/)
+  }
+})
+
+test("pool mean power never substitutes a plan or zero for missing or invalid measured timestamps",()=>{
+  for(const interval of [{from:undefined},{to:undefined},{from:null},{to:null},{from:"invalid"},{to:"invalid"},{to:run.from},{from:run.to,to:run.from}]) {
+    const measured={...stage("candidate"),...interval,kpis:{wholePoolJoules:6000,power:{energyStatus:"MEASURED",wholePoolJoules:6000}}} as unknown as ExperimentStage
+    const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:{...run,stages:[measured]},stage:measured}))
+    assert.match(html,/풀 평균 전력 미기록/)
+    assert.doesNotMatch(html,/풀 평균 전력 (?:0|100)(?:\.0)? W/)
+  }
+})
