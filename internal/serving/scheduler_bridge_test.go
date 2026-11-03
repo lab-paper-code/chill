@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"math/rand/v2"
 	"slices"
 	"testing"
@@ -181,5 +182,49 @@ func TestCapacityBridgeMissingCostUsesLabeledEstimate(t *testing.T) {
 	prepare := got.Target.Actions[index]
 	if prepare.CostProvenance == nil || prepare.CostProvenance.Source == operationSourceExact {
 		t.Fatalf("transferred/default bridge estimate lacks provenance: %+v", prepare)
+	}
+}
+
+func TestBridgeExcludesIndependentlyRetiringIdleDestination(t *testing.T) {
+	settings, snapshot, rows, _, bridge := capacityBridgeFixture(t)
+	decision := capacityDecideForTest(t, settings, snapshot, rows)
+	if decision.Target == nil || len(decision.Capacity.BridgeStages) == 0 {
+		t.Fatal("fixture needs a staged bridge")
+	}
+	idleNode := poolsAddNode(&snapshot, "obsolete-idle", map[string]float64{"fixed": 10})
+	idle := poolsInstance(bridge, "obsolete-idle", idleNode, "fixed", "w2")
+	snapshot.Instances = append(snapshot.Instances, idle)
+	snapshot.Options = append(snapshot.Options, poolsOption(idle))
+	rows = capacityRowsForTest(settings, snapshot, capacityKappaByProfile(map[string]float64{
+		snapshot.Instances[0].Profile.ID: .372,
+	}))
+	keep := SchedulerCandidate{Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
+	planner := newCapacityPlanner(context.Background(), settings, snapshot, keep, rows, decision)
+	planner.plans = make([][]*capacityPlan, len(snapshot.Nodes))
+	for n, node := range snapshot.Nodes {
+		plan := &capacityPlan{mode: node.PowerMode}
+		for _, instance := range decision.Target.Instances {
+			if instance.Node == node.Node {
+				plan.instances = append(plan.instances, instance)
+			}
+		}
+		planner.plans[n] = []*capacityPlan{plan}
+	}
+	compiler := schedulerBridgeCompiler{p: planner, choice: make([]int, len(snapshot.Nodes)),
+		goal:   SchedulerCandidate{Nodes: slices.Clone(snapshot.Nodes), Routing: snapshot.Routing},
+		out:    &schedulerBridgeSchedule{instances: map[string]SchedulerInstance{}},
+		before: map[string]bool{}, ends: map[string]float64{}, blocked: map[string]string{}, retiring: map[string]bool{},
+		unavailable: map[string]bool{}, prepares: map[string]string{}, routing: map[string]map[string]int32{}}
+	if _, reason := compiler.initialize(); reason != "" {
+		t.Fatal(reason)
+	}
+	compiler.resolve()
+	if !compiler.handoff(planner.ws[planner.index["w2"]]) {
+		t.Fatal("safe bridge destination was lost")
+	}
+	for _, action := range compiler.out.actions {
+		if action.RouteTarget != nil && action.RouteTarget.Routing["w2"][idle.ID] > 0 {
+			t.Fatal("bridge routed to an obsolete idle executor whose independent stop can already run")
+		}
 	}
 }
