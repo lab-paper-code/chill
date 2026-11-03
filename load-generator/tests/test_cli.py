@@ -124,8 +124,9 @@ class ReplayTest(unittest.TestCase):
         producer = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(producer)
         offsets = [0] * 7
-        binding = {"shards": 3, "barrierSeconds": 2, "payload": [],
-                   "arrivalSHA256": "frozen"}
+        binding = {"shards": 3, "barrierSeconds": 2, "payload": producer.identity([("q1", {"image": b"a"})]),
+                   "arrivalSHA256": "frozen", "datasetRef": {"name": "records", "uid": "dataset"},
+                   "sourceSHA": "a" * 40}
         with tempfile.TemporaryFile(mode="w+") as output:
             with patch.object(producer.sys, "stdout", output), \
                  patch.object(producer.Path, "exists", return_value=True), \
@@ -145,6 +146,10 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertEqual({row["scheduledMonotonicNS"] for row in rows}, set(starts))
         self.assertEqual(sum(row.get("evaluationEvent") == "drained" for row in lines), 1)
+        ready = next(row for row in lines if row.get("evaluationEvent") == "ready")
+        self.assertEqual(ready["datasetRef"], binding["datasetRef"])
+        self.assertEqual(ready["sourceSHA"], binding["sourceSHA"])
+        self.assertEqual(ready["payload"], binding["payload"])
 
     def test_evaluation_lateness_does_not_reduce_lifetime_or_prevent_send(self):
         for delay in (250_000_000, 2_000_000_000):

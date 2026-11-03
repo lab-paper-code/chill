@@ -191,7 +191,7 @@ burst는 genesis2/3 SmolCUDA OOM제외 유지, 측정 MNV/PLC CUDA 또는 Smol C
 모든 유효 offered가 분모, 전환/1분창 SLO·완료/실패/만료/drain/censoring/incomplete/표본수를 유지한다. 첫준비→첫routeACK와 차단명령→uncordon후 실제Ready/관측/route복구는 전체분모+별도집단/제외집계도 분모·실패와 병기, 미복구는 단계끝, 사후유리창 선택없음.
 Tick p50/p99·CS CPU/RSS/GC/PVC·edgemesh CPU/memory/throttle/restart, 검색 neighborhood/evaluated/durationNanos/budgetCut/evaluationElapsedNanos를 기록한다. 예산은 controlIntervalNanos/2(10s→5s), tick cgroup cpuacct.usage/cpu.stat nr_throttled/throttled_time차, 검색안/밖의 gateway(종단−native) p99, 1분SLO/검색유무·workers/최종G/TransitionGainWithinUncertainty keep을 연결한다. workers3/G≈220은 선행값이지 최종G아님.
 thermal5s active/latched/unknown, 사전온도bin <60/60–70/70–80/≥80°C, 미관측bin 일반화 제한. placement/resource결합·routing안전/no-op·batching고정B/deadline차·power U2만으로 독립기여를 주장하지 않는다. 사후threshold/seed/집단 선택없음. demo-config capacityR는 최종승인뒤, failure runbook은 운영자 직렬/자동실행없음, preflight는 연구장애증명아님.
-예정 대체: 현재 `round.py`·로컬 binding·운영자 장애 주입은 [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md)로 대체할 예정이며, 위 단계·분모와 과거 평가 기록은 유지한다.
+현재 평가 실행은 [실험 실행 설계](../profiling/experiment-execution.md) / [실험 SRS](../../spec/experiments/SRS.md)의 EvaluationRun/Stage controller와 evaluator Job 경계다. 로컬 deployment/calibration/restoration runner는 제거했다. 위 과거 단계·분모와 평가 기록은 역사적 증거로 그대로 보존하며 새 black-box 결과로 재해석하지 않는다.
 
 #### 결과와 한계
 

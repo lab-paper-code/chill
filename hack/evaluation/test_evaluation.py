@@ -1,649 +1,595 @@
 #!/usr/bin/env python3
-"""Network-free adapter checks; optionally replay a copied historical raw stage.
-
-python3 -B hack/evaluation/test_evaluation.py
-python3 -B hack/evaluation/test_evaluation.py --offline-binding B --offline-stage S --environment E
-"""
+"""Offline black-box cutover regressions; no credentials, cluster or image builds."""
+import base64
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import urllib.error
 from unittest.mock import patch
+import zlib
+
+import archive
+import conductor
 import evaluation
-import evaluation_inputs
+import raw
 
-NAMES=['image-classification-tight-slo','plc-anomaly','smolvlm2-vqa']
+sys.path.insert(0, str(conductor.REPO / 'load-generator/src'))
+from chill_loadgen import cli
+
+NAME = 'plc-anomaly'
+SOURCE = {'metric': 'watts', 'endpoint': 'https://meter.invalid'}
+START = '2026-11-03T00:00:00Z'
+END = '2026-11-03T00:00:10Z'
 
 
-class AdapterTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.environment_dir=tempfile.TemporaryDirectory()
-        root=Path(cls.environment_dir.name)
-        config={'paths':{'repository':str(evaluation.REPO),'ops':str(root),'campaign':str(root),'d2State':str(root)},'evaluation':{'operationalRecipe':str(root/'recipe.json'),'nodes':{},'plan':str(root/'plan')},'d2':{'repoBin':str(evaluation.REPO/'bin'),'apiBase':'https://offline.invalid','caFile':str(root/'ca'),'tokenFile':str(root/'token'),'kubectl':['kubectl'],'jobTemplate':str(root/'job'),'workloadUID':'offline','workloadName':'offline','nodes':[]}}
-        path=root/'environment.json';evaluation.save(path,config)
-        with patch.dict(os.environ,CHILL_EXPERIMENT_CONFIG=str(path)):
-            cls.harness_module=evaluation.module('adapter_test_harness',evaluation.HERE/'conductor.py')
-            cls.native=evaluation.module('adapter_test_native',evaluation.HERE/'d2/native_mode_request.py')
-            cls.bind=evaluation.module('adapter_test_bind',evaluation.HERE/'d2/bind_before.py')
-            cls.conductor=evaluation.module('adapter_test_conductor',evaluation.HERE/'d2/conduct_before.py')
-    @classmethod
-    def tearDownClass(cls):
-        cls.environment_dir.cleanup()
-    def test_fixed_layout_retains_observed_mode_transition_exception(self):
-        ref={'name':'node','uid':'node-uid'}
-        instance=dict(id='instance',node=ref,allocation={'memoryBytes':10},
-                      maxBatch=1,capacity=1,weight=1,maxWaitNanos=0)
-        profile=dict(id='profile',condition=dict(nodeUID='node-uid',powerMode='fixed',
-            runtimeFamily='firstfloor',runtimeImage='runtime@sha256:test',backend='cpu',
-            firstfloor=dict(maxBatchSize=1,maxQueueSize=1,deadlinePolicy='edf'),logicalModel='model'),
-            batches=[dict(batch=1,durationNanos=[1],memoryBytes=1,energyPerInputJoules=0)],
-            evidence=['measured'],runtimeMetadata=dict(runtime='cpu',initializedBatches=[1],synthetic=False))
-        node=dict(node=ref,ready=True,powerMode='fixed',memoryBytes=10,
-                  reserved={'memoryBytes':0},reasons=['PowerModeUnavailable','PowerTransitionUnavailable'])
-        self.assertEqual(self.bind.eligibility(instance,profile,node,None,{'servingMemoryBytes':0},1),[])
-        node['powerMode']='unknown'
-        self.assertIn('NodeReason:PowerTransitionUnavailable',
-                      self.bind.eligibility(instance,profile,node,None,{'servingMemoryBytes':0},1))
-        node.update(powerMode='fixed',reasons=['PowerModeUnavailable','PowerModeObservationUnavailable'])
-        self.assertIn('NodeReason:PowerModeObservationUnavailable',
-                      self.bind.eligibility(instance,profile,node,None,{'servingMemoryBytes':0},1))
-    def test_producer_raw_closed_minutes_and_timebox(self):
-        import io
-        import email.message
-        pod={'metadata':{'uid':'producer','name':'owned'},'status':{'containerStatuses':[{'name':'load','containerID':'containerd://load'}]}}
-        other={'podUID':'other','containerID':'containerd://load','cpuUsageNanos':1,'throttledPeriods':1,'throttledNanos':1}
-        owned={**other,'podUID':'producer'}
-        wrong_container={**owned,'containerID':'containerd://sidecar'}
-        row={'kind':'node','node':{'name':'node','uid':'node-uid'},'samples':[
-            {'sampledAt':'2026-11-02T00:00:01Z','containers':[other,owned,wrong_container]},
-            {'sampledAt':'2026-11-02T00:00:02Z','containers':[other,owned]}]}
-        archive=SimpleNamespace(RAW_PATH='/api/v1/observations/raw',_hours=lambda *args:['20261102T00'])
-        def remaining(deadline):
-            if deadline<=self.harness_module.time.monotonic():raise TimeoutError('Finite collection deadline exhausted')
-            return deadline-self.harness_module.time.monotonic()
-        archive._remaining=remaining
-        calls=[]
-        def raw_get(client,path,deadline):
-            calls.append(path)
-            response=io.BytesIO((json.dumps(row)+'\n').encode())
-            response.status=200;response.headers=email.message.Message()
-            response.headers['Content-Type']='application/x-ndjson'
-            return response
-        archive._raw_get=raw_get
-        saved=[]
-        with patch.object(self.harness_module,'module',return_value=archive):
-            telemetry=self.harness_module.ProducerResources(object(),{'workload':pod},129,Path('producer-resources.json'))
-        save_patch=patch.object(self.harness_module,'save',side_effect=lambda path,value:saved.append((path,value)));save_patch.start();self.addCleanup(save_patch.stop)
-        deadline=self.harness_module.time.monotonic()+10
-        self.assertTrue(telemetry.ready(2,deadline))
-        self.assertEqual(len(telemetry.rows),2)
-        self.assertTrue(all(item['podUID']=='producer' and item['containerID']=='containerd://load' for item in telemetry.rows))
-        self.assertEqual(len(saved[-1][1]['rows']),2)
-        self.assertEqual(calls,['/api/v1/observations/raw/20261102T00/resources'])
-        self.assertFalse(telemetry.ready(3,deadline))
-        self.assertEqual(len(calls),1)
-        self.assertIsNotNone(self.conductor.client_end_counter_rows(telemetry.rows,'producer','containerd://load','2026-11-02T00:00:02Z'))
-        with self.assertRaises(TimeoutError):telemetry.ready(2,self.harness_module.time.monotonic()-1)
-        row['samples']=[{'sampledAt':'2026-11-02T00:00:01Z','containers':[other,wrong_container]}]
-        telemetry.minute=None
-        self.assertFalse(telemetry.ready(2,deadline))
-        import urllib.error
-        def not_ready(client,path,deadline):
-            raise urllib.error.HTTPError(path,409,'Conflict',None,io.BytesIO(b'{"code":"ObservationNotReady"}'))
-        archive._raw_get=not_ready
-        telemetry.minute=None
-        self.assertFalse(telemetry.ready(2,deadline))
-        def other_conflict(client,path,deadline):
-            raise urllib.error.HTTPError(path,409,'Conflict',None,io.BytesIO(b'{"code":"Other"}'))
-        archive._raw_get=other_conflict
-        telemetry.minute=None
-        with self.assertRaises(urllib.error.HTTPError):telemetry.ready(2,deadline)
-    @patch.object(evaluation,'save')
-    @patch.object(evaluation,'load',return_value={'spec':{'template':{'spec':{'containers':[{'name':'load','image':'load@sha256:test'}]}}}})
-    def test_envelope_and_operational_boundary(self,unused_load,unused_save):
-        base={'collection':{},'approval':{'sources':{'loadgen':'a'*40,'power':'bin/observation-power-source-d39c9576'}},'workloads':[{'name':name,'R':1,'jobTemplate':'/work/template.json'} for name in NAMES]}
-        spec={'row':'E5-5m','mode':'controls-disabled','harness':{'sourceSHA':'a'*40},'control':{'controls':{'membership':False}},'judgment':{'generatorQuality':{'latenessToleranceNanos':1,'maxExceedingFraction':0},'energyCoverage':{'maxGapFraction':.01,'maxSingleGapSeconds':30}},'loadGenerator':{'shards':dict.fromkeys(NAMES,2),'resources':{'requests':{'memory':'1Gi'},'limits':{'memory':'2Gi'}}}}
-        spec['loadGenerator'].update(image='load@sha256:test',sourceSHA='a'*40,barrier={'minimumReadySamples':2,'maxStartSkewNanos':1000000000})
-        scenario={'spec':{'arrivalDistribution':dict.fromkeys(NAMES,'fixed'),'parts':[{'id':'steady','durationSeconds':10,'rates':dict.fromkeys(NAMES,3)}]},'seeds':dict.fromkeys(NAMES,1),'workloads':[{'name':name,'uid':str(index),'generation':4,'slo':{'percentile':95,'targetLatencyNanos':100}} for index,name in enumerate(NAMES)]}
-        execution={'runUID':'run','stageUID':'stage','stageID':'different-id','namespace':'test'}
-        operational={'timeboxes':{'drainSeconds':20},'workloads':{name:{'podSpec':{'restartPolicy':'Never','containers':[{'name':'load'}]}} for name in NAMES},'collection':{'maximumDurationSeconds':100}}
-        config={'operational':json.dumps(operational),'chillAPIURL':'https://chill','jobActiveDeadlineSeconds':'120','minimumFreeBytes':'123'}
-        value=evaluation.stage_config(base,spec,scenario,execution,config,Path('/work/campaign/run/stages/different-id'))
-        self.assertEqual(value['stages'][0]['id'],'E5-5m')
-        self.assertEqual(value['evaluation']['execution']['stageID'],'different-id')
-        self.assertEqual(value['evaluation']['control'],spec['control'])
-        self.assertEqual(value['producerShards'],{'mobilenet':2,'plc':2,'smolvlm2':2})
-        self.assertEqual(value['collectorTokenFile'],evaluation.TOKEN)
-        self.assertEqual(value['workloads'][0]['generation'],4)
-        self.assertNotIn('evaluation',base)
-        for forbidden in ('inputs','approval','stages','evaluation'):
-            bad=copy.deepcopy(config);bad['operational']=json.dumps(dict(operational,**{forbidden:{}}))
-            with self.assertRaisesRegex(ValueError,'FrozenInputInvalid'): evaluation.stage_config(base,spec,scenario,execution,bad,Path('/work'))
-    def test_producer_jobs_share_cpu_with_memory_and_cgroup_observation(self):
-        harness = self.harness_module
-        name = NAMES[0]
-        workload = dict(name=name, jobTemplate='template', producerEndpoint='https://local',
-                        producerTokenFile='token', producerCAFile='ca', producerDatasetDir='data',
-                        fields=['input'], arrivals='fixed', seed=1, workers=2,
-                        slo={'targetLatencyNanos': 100}, gatewayCapSeconds=1, deliverySeconds=1, socketSeconds=2)
-        stage = {'id': 'row', 'seconds': 1, 'rates': {name: 1},
-                 'parts': [{'rates': {name: 1}, 'seconds': 1}],
-                 'traces': {name: {'seed': 1, 'arrivalSHA256': 'trace', 'offered': 1}}}
-        template = {'spec': {'template': {'spec': {'affinity': {'nodeAffinity': {}},
-                    'containers': [{'name': 'load', 'resources': {'requests': {'cpu': '1'}}}],
-                    'initContainers': [{'name': 'dataset', 'resources': {'limits': {'cpu': '2'}}}]}}}}
-        for evaluation_mode in (False, True):
-            controller = object.__new__(harness.CPO)
-            controller.ws = {name: workload}
-            controller.a = SimpleNamespace(mode='auto', row_tag='')
-            controller.tb = dict.fromkeys(('setupSeconds', 'barrierSeconds', 'drainSeconds', 'collectSeconds'), 1)
-            controller.c = {'namespace': 'test'}
-            if evaluation_mode:
-                controller.c.update(producerShards=dict.fromkeys(harness.PRODUCER_ALIASES, 1),
-                    evaluation={'resources': {'requests': {'memory': '1Gi'}, 'limits': {'memory': '2Gi'}},
-                                'execution': {'runUID': 'run', 'stageUID': 'stage', 'stageID': 'id', 'stageName': 'stage'}})
-            harness.freeze_producer_config(controller.c)
-            controller.b = {'schema': 'e5-binding.v2', 'payload': {name: []}}
-            with patch.object(harness, 'load', side_effect=lambda path: copy.deepcopy(template)), patch.object(harness, 'save'):
-                job = controller.job(name, stage, Path('output'))
+class SettingsAPI:
+    def __init__(self):
+        self.value = {'controls': {'power': True, 'routing': True, 'replicas': True}, 'controlIntervalNanos': 30,
+                      'minimumDemand': {'other': 7, 'remove': 9}, 'autonomousWorkloads': ['one'],
+                      'meters': ['read-only'], 'requestTimeout': 999, 'staticRouting': {}, 'powerObservation': {}}
+        self.calls, self.reject_codes = [], []
+        self.fail_put = self.drift = self.transport_error = self.omit_get_etag = False
+        self.revision = 1
+        self.on_conflict = lambda: None
+
+    def __call__(self, method, path, body=None, *, headers=None, response=None):
+        assert path == '/api/v1/scheduler/settings'
+        self.calls.append((method, path, copy.deepcopy(body), copy.deepcopy(headers)))
+        metadata = response if response is not None else {}
+        etag = '"' + str(self.revision) + '"'
+        if method == 'GET':
+            metadata.update(statusCode=200, etag=None if self.omit_get_etag else etag, body=copy.deepcopy(self.value))
+            return copy.deepcopy(self.value)
+        if self.transport_error:
+            raise OSError('Connection lost after PUT')
+        code = 428 if not headers or not headers.get('If-Match') else 409 if headers['If-Match'] != etag else 403 if self.fail_put else self.reject_codes.pop(0) if self.reject_codes else None
+        if code:
+            if code == 409:
+                self.revision += 1
+                self.on_conflict()
+            error = {'code': 'SettingsPreconditionRequired' if code == 428 else 'SettingsConflict' if code == 409 else 'Forbidden'}
+            metadata.update(statusCode=code, etag='"' + str(self.revision) + '"', body=error)
+            raise urllib.error.HTTPError('https://settings.invalid' + path, code, error['code'], {}, None)
+        assert not set(body) & conductor.SETTINGS_PROJECTIONS
+        before = copy.deepcopy(self.value)
+        projection = {key: value for key, value in self.value.items() if key in conductor.SETTINGS_PROJECTIONS}
+        self.value = {**copy.deepcopy(body), **projection}
+        if self.drift:
+            self.value['controlIntervalNanos'] += 1
+        self.revision += 1
+        result = {'before': before, 'after': copy.deepcopy(self.value), 'appliedAt': START}
+        metadata.update(statusCode=200, etag='"' + str(self.revision) + '"', body=result)
+        return result
+
+
+def fixture(root):
+    workload = {'name': NAME, 'uid': 'workload', 'generation': 1, 'slo': {'percentile': 95, 'targetLatencyNanos': 1000000000}}
+    scenario = {'spec': {'seeds': {NAME: '202'}, 'datasetRefs': {NAME: {'name': 'records', 'uid': 'dataset'}},
+                         'arrivalDistribution': {NAME: 'poisson'}, 'workloads': [{k: workload[k] for k in ('name', 'uid', 'generation')}],
+                         'parts': [{'id': 'explicit', 'durationSeconds': 10, 'rates': {NAME: 2.5}}]},
+                'workloads': [workload], 'datasets': {NAME: {'metadata': {'uid': 'dataset'}, 'spec': {
+                    'source': {'image': 'records@sha256:' + 'a' * 64, 'path': '/records'}, 'fields': [{'name': 'input'}]}}},
+                'fields': {NAME: ['input']}, 'traceOffsets': {}}
+    spec = {'row': 'e5-test', 'harness': {'sourceSHA': 'a' * 40}, 'loadGenerator': {
+        'nodeName': 'genesis1', 'image': 'generator@sha256:' + 'b' * 64, 'sourceSHA': 'b' * 40,
+        'shards': {NAME: 3}, 'resources': {'requests': {'memory': '1Gi'}, 'limits': {'memory': '1Gi'}},
+        'barrier': {'minimumReadySamples': 2, 'maxStartSkewNanos': 1000000000}},
+        'settingsPatch': {'controls': {'power': False}, 'controlIntervalNanos': 31},
+        'judgment': {'generatorQuality': {'latenessToleranceNanos': 50000000, 'maxExceedingFraction': .01},
+                     'energyCoverage': {'maxGapFraction': .01, 'maxSingleGapSeconds': 30}},
+        'powerMeasurement': {'nodes': [{'name': 'idle', 'uid': 'idle-uid'}, {'name': 'serving', 'uid': 'serving-uid'}],
+                             'meters': [{'id': 'idle-meter', 'sourceIdentity': json.dumps(SOURCE)}, {'id': 'serving-meter', 'sourceIdentity': json.dumps(SOURCE)}],
+                             'series': 'watts', 'sampling': {'intervalNanos': 750000000}}}
+    execution = {'runUID': 'run', 'stageUID': 'stage', 'stageID': 'one', 'stageName': 'stage', 'namespace': 'chill-system'}
+    operation = {'workloads': {NAME: {'producerEndpoint': 'https://serving.invalid', 'producerCAFile': '/ca/tls.crt',
+                  'producerTokenFile': '/token', 'deliverySeconds': 10, 'socketSeconds': 30, 'workers': 3,
+                  'podSpec': {'serviceAccountName': 'loadgen', 'volumes': [{'name': 'ca', 'secret': {'secretName': 'ca'}}]},
+                  'volumeMounts': [{'name': 'ca', 'mountPath': '/ca', 'readOnly': True}]}}}
+    config = {'operational': json.dumps(operation), 'chillAPIURL': 'https://serving.invalid', 'minimumFreeBytes': '1'}
+    assembled = evaluation.stage_config(spec, scenario, execution, config, root)
+    return spec, scenario, execution, config, assembled
+
+
+def power_window():
+    return {'from': START, 'to': END, 'complete': False, 'reasons': ['No scheduler history'],
+            'nodes': [{'node': {'name': name, 'uid': name + '-uid'}, 'meter': name + '-meter',
+                       'joules': None, 'reasons': ['Inactive node'], 'meterJoules': joules, 'meterComplete': True,
+                       'gapSeconds': 0, 'gapFraction': 0, 'maximumSampleGapSeconds': .75,
+                       'sourceIdentity': SOURCE, 'samples': 15} for name, joules in (('idle', 100), ('serving', 200))]}
+
+
+class EvaluationTests(unittest.TestCase):
+    def test_public_patch_apply_readback_revert(self):
+        api = SettingsAPI()
+        before = copy.deepcopy(api.value)
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / 'patch.json'
+            applied = conductor.factor_apply(api, {'controls': {'power': False}, 'controlIntervalNanos': 42, 'autonomousWorkloads': ['two'], 'minimumDemand': {'remove': None}}, receipt)
+            self.assertTrue(applied['accepted'])
+            self.assertIn('appliedAt', applied)
+            self.assertNotIn('remove', api.value['minimumDemand'])
+            self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT', 'GET'])
+            api.value['controls']['routing'] = False
+            api.value['minimumDemand']['other'] = 8
+            conductor.factor_revert(api, receipt)
+            self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT', 'GET', 'GET', 'PUT', 'GET'])
+            expected = copy.deepcopy(before)
+            expected['controls']['routing'] = False
+            expected['minimumDemand']['other'] = 8
+            self.assertEqual(api.value, expected)
+            final = conductor.load(receipt)
+            for key in ('request', 'response', 'readback', 'appliedAt', 'revertRequest', 'revertResponse', 'revertReadback', 'revertedAt'):
+                self.assertIn(key, final)
+            self.assertNotEqual(final['revertRequest'], before)
+
+    def test_failed_put_never_reverts_other_settings(self):
+        api = SettingsAPI()
+        api.fail_put = True
+        before = copy.deepcopy(api.value)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            with self.assertRaisesRegex(urllib.error.HTTPError, '403'):
+                conductor.factor_apply(api, {'controls': {'power': False}}, path)
+            conductor.factor_revert(api, path)
+            self.assertEqual(api.value, before)
+            self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT'])
+            self.assertNotIn('appliedAt', conductor.load(path))
+            self.assertIn('failedAt', conductor.load(path))
+
+    def test_patch_conflict_preserves_another_writer(self):
+        api = SettingsAPI()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            conductor.factor_apply(api, {'controlIntervalNanos': 42}, path)
+            api.value['controlIntervalNanos'] = 50
+            conductor.factor_revert(api, path)
+            self.assertEqual(api.value['controlIntervalNanos'], 50)
+            self.assertEqual(sum(call[0] == 'PUT' for call in api.calls), 1)
+            self.assertEqual(conductor.load(path)['revertSkipped'][0]['reason'], 'external-change-revert-skipped')
+            self.assertIn('revertedAt', conductor.load(path))
+
+    def test_missing_if_match_returns_428_and_changes_nothing(self):
+        api = SettingsAPI()
+        before, metadata = copy.deepcopy(api.value), {}
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            api('PUT', conductor.SETTINGS, {}, response=metadata)
+        self.assertEqual(caught.exception.code, 428)
+        self.assertEqual(metadata['statusCode'], 428)
+        self.assertEqual(api.value, before)
+        api.omit_get_etag = True
+        with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(RuntimeError, 'ETag'):
+            conductor.factor_apply(api, {'controls': {'power': False}}, Path(directory) / 'patch.json')
+        self.assertEqual(sum(call[0] == 'PUT' for call in api.calls), 1)
+
+    def test_apply_conflict_is_recorded_without_retry_or_revert(self):
+        api = SettingsAPI()
+        api.reject_codes = [409]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            with self.assertRaises(urllib.error.HTTPError):
+                conductor.factor_apply(api, {'controls': {'power': False}}, path)
+            conductor.factor_revert(api, path)
+            receipt = conductor.load(path)
+            self.assertEqual(receipt['put']['ifMatch'], '"1"')
+            self.assertEqual(receipt['put']['statusCode'], 409)
+            self.assertEqual(receipt['put']['response']['code'], 'SettingsConflict')
+            self.assertNotIn('appliedAt', receipt)
+            self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT'])
+
+    def test_revert_conflict_refreshes_once_and_preserves_external_fields(self):
+        api = SettingsAPI()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            conductor.factor_apply(api, {'controls': {'power': False}}, path)
+            api.reject_codes = [409]
+            api.on_conflict = lambda: api.value['controls'].update(routing=False)
+            conductor.factor_revert(api, path)
+            receipt = conductor.load(path)
+            self.assertEqual([a['statusCode'] for a in receipt['revertAttempts']], [409, 200])
+            self.assertEqual([a['ifMatch'] for a in receipt['revertAttempts']], ['"2"', '"3"'])
+            self.assertEqual(receipt['revertAttempts'][-1]['responseETag'], '"4"')
+            self.assertFalse(api.value['controls']['routing'])
+            self.assertTrue(api.value['controls']['power'])
+
+    def test_second_revert_conflict_blocks_return_without_more_puts(self):
+        api = SettingsAPI()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            conductor.factor_apply(api, {'controls': {'power': False}}, path)
+            api.reject_codes = [409, 409]
+            with self.assertRaisesRegex(RuntimeError, 'SettingsConflict'):
+                conductor.factor_revert(api, path)
+            count = len(api.calls)
+            with self.assertRaisesRegex(RuntimeError, 'SettingsConflict'):
+                conductor.factor_revert(api, path)
+            self.assertEqual(len(api.calls), count)
+            self.assertNotIn('revertedAt', conductor.load(path))
+
+    def test_uncertain_put_is_not_silently_returned_or_rolled_back(self):
+        api = SettingsAPI()
+        api.transport_error = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            with self.assertRaises(OSError):
+                conductor.factor_apply(api, {'controls': {'power': False}}, path)
+            with self.assertRaisesRegex(RuntimeError, 'RemoteEffectUnknown'):
+                conductor.factor_revert(api, path)
+            self.assertEqual([call[0] for call in api.calls], ['GET', 'PUT'])
+
+    def test_put_readback_mismatch_retains_applied_receipt(self):
+        api = SettingsAPI()
+        api.drift = True
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            with self.assertRaisesRegex(RuntimeError, 'readback'):
+                conductor.factor_apply(api, {'controlIntervalNanos': 42}, path)
+            self.assertIn('appliedAt', conductor.load(path))
+            self.assertFalse(conductor.load(path)['accepted'])
+
+    def test_patch_added_nested_object_reverts_absence(self):
+        api = SettingsAPI()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            conductor.factor_apply(api, {'minimumDemand': {'new': 7}}, path)
+            conductor.factor_revert(api, path)
+            self.assertNotIn('new', api.value['minimumDemand'])
+
+    def test_empty_patch_is_read_only(self):
+        api = SettingsAPI()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'patch.json'
+            self.assertTrue(conductor.factor_apply(api, {}, path)['accepted'])
+            conductor.factor_revert(api, path)
+            self.assertEqual([c[0] for c in api.calls], ['GET', 'GET'])
+
+    def test_inline_uint64_seeds(self):
+        self.assertEqual(conductor.parse_seeds({NAME: '18446744073709551615'}, [NAME]), {NAME: 18446744073709551615})
+        self.assertEqual(conductor.parse_seeds({NAME: '0'}, [NAME]), {NAME: 0})
+        self.assertEqual(conductor.parse_seeds({NAME: '0' * 100 + '1'}, [NAME]), {NAME: 1})
+        for value in (202, True, '-1', '+1', '1.0', ' 1', '1 ', '', '١', '18446744073709551616'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                conductor.parse_seeds({NAME: value}, [NAME])
+        for seeds in ({}, {'foreign': '1'}):
+            with self.assertRaises(ValueError):
+                conductor.parse_seeds(seeds, [NAME])
+
+    def test_absolute_rates_freeze_without_derived_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, _, _, config = fixture(root)
+            path = root / 'config.json'
+            conductor.save(path, config)
+            bound = conductor.bind(path)
+            self.assertEqual(bound['schema'], 'e5-binding.v3')
+            self.assertEqual(bound['schedule'][0]['parts'][0]['rates'], {NAME: 2.5})
+            self.assertEqual(bound['schedule'][0]['traces'][NAME]['seed'], 202)
+            self.assertEqual(bound['schedule'], conductor.bind(path)['schedule'])
+
+    def test_dataset_reference_drives_job_and_placement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec, scenario, execution, _, config = fixture(root)
+            path = root / 'config.json'
+            conductor.save(path, config)
+            controller = object.__new__(conductor.CPO)
+            controller.b = conductor.bind(path)
+            controller.c = config
+            controller.ws = {w['name']: w for w in config['workloads']}
+            controller.tb = config['timeboxes']
+            stage = controller.b['schedule'][0]
+            job = controller.job(NAME, stage, root)
             pod = job['spec']['template']['spec']
-            self.assertNotIn('affinity', pod)
-            for container in pod['containers'] + pod['initContainers']:
-                for field in ('requests', 'limits'):
-                    self.assertNotIn('cpu', container['resources'][field])
-                    self.assertIn('memory', container['resources'][field])
-            if evaluation_mode:
-                controller.c['evaluation']['resources']['requests']['cpu'] = '0'
-                with self.assertRaisesRegex(ValueError, 'CPU'):
-                    harness.freeze_producer_config(controller.c)
-        self.assertEqual(self.bind.allocations_fit(
-            {'reserved': {'memoryBytes': 1}, 'memoryBytes': 3, 'gpuUUIDs': ['gpu']},
-            {'memoryBytes': 2, 'gpuUUID': 'gpu'}), [])
-        self.assertIn('MemoryBudgetInfeasible', self.bind.allocations_fit(
-            {'reserved': {'memoryBytes': 2}, 'memoryBytes': 3},
-            {'memoryBytes': 2}))
-        admitted = {'metadata': {'uid': 'pod'}, 'spec': pod,
-                    'status': {'phase': 'Running', 'containerStatuses': [
-                        {'name': 'load', 'containerID': 'container', 'state': {'running': {}}}]}}
-        admitted['status']['containerStatuses'][0]['state']['running']['startedAt'] = 'observed'
-        self.conductor.assert_producer_running(admitted, admitted)
-        for field in ('requests', 'limits'):
-            injected = copy.deepcopy(admitted)
-            injected['spec']['initContainers'][0]['resources'][field]['cpu'] = '0'
-            with self.assertRaisesRegex(RuntimeError, 'CPU'):
-                self.conductor.assert_producer_running(injected, admitted)
-    def test_result_and_exit_mapping(self):
-        execution={'runUID':'run','stageUID':'stage','stageID':'id'}
-        for status,expected in [('MEASURED_DESCRIPTIVE',0),('FAIL',0),('INVALID_GENERATOR',2),('NOT_READY',2)]:
-            record=evaluation.result_record(execution,'judge','start',measurement=evaluation.verdict({'status':status}))
-            self.assertEqual(evaluation.exit_code(record),expected)
-            self.assertEqual(record['schemaVersion'],'evaluation-step.v1alpha1')
-            self.assertEqual(record['stageUID'],'stage')
-        self.assertEqual(evaluation.exit_code(evaluation.result_record(execution,'stage','start','Failed','RemoteEffectUnknown')),1)
-    def test_error_does_not_restore_control(self):
-        with tempfile.TemporaryDirectory(dir=self.environment_dir.name) as directory:
-            root=Path(directory);harness,controller=self.idle_harness(root)
-            controller.restore_control_on_error=False;controller.put=unittest.mock.Mock()
-            controller.collect=lambda *args:(_ for _ in ()).throw(RuntimeError('CollectionFailed'))
-            harness.go=lambda value:None;controller.go_callback=harness.go
-            with patch.object(harness,'controller',return_value=controller),patch.object(harness,'check_target',return_value=[]),self.assertRaisesRegex(RuntimeError,'CollectionFailed'):
-                harness.stage()
-            controller.put.assert_not_called()
-            self.assertEqual(evaluation.load(root/'measured/phase.json')['status'],'STOP')
-    def test_bundle_rejection(self):
-        with self.assertRaisesRegex(ValueError,'MissingInput'): evaluation_inputs.validate({})
-    def test_result_uploaded_last_on_failure(self):
+            self.assertEqual(pod['nodeName'], spec['loadGenerator']['nodeName'])
+            self.assertEqual(pod['initContainers'][0]['image'], scenario['datasets'][NAME]['spec']['source']['image'])
+            self.assertEqual(pod['initContainers'][0]['command'][-1], '/records/evaluation')
+            self.assertIn('/evaluation/', pod['initContainers'][0]['command'][2])
+            self.assertEqual(pod['containers'][0]['args'][pod['containers'][0]['args'].index('--dataset-dir') + 1], '/evaluation')
+            self.assertEqual(pod['containers'][0]['args'][pod['containers'][0]['args'].index('--fields') + 1], 'input')
+            self.assertEqual(job['metadata']['ownerReferences'][0]['uid'], execution['stageUID'])
+            self.assertEqual(pod['containers'][0]['image'], spec['loadGenerator']['image'])
+            self.assertEqual(pod['containers'][0]['resources'], spec['loadGenerator']['resources'])
+            policy = json.loads(zlib.decompress(base64.b64decode(pod['containers'][0]['args'][0])))
+            self.assertEqual(policy['datasetRef'], scenario['spec']['datasetRefs'][NAME])
+            self.assertEqual(policy['shards'], 3)
+
+    def test_materialized_dataset_actual_bytes_are_producer_evidence(self):
+        producer = evaluation.module('producer_test', evaluation.HERE / 'producer.py')
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);specdir=root/'spec';specdir.mkdir()
-            for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test'}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
-            keys=[]
-            store=SimpleNamespace(name='store',put=lambda key,path:keys.append(key) or {'store':'store','key':key,'size':path.stat().st_size})
-            harness=evaluation.Harness(root/'campaign/run',specdir,store)
-            with patch.object(harness,'prepare',side_effect=ValueError('MissingInput: absent')):
-                self.assertEqual(harness.execute('prepare'),1)
-            self.assertEqual(keys[-1],'experiments/run/run/prepare/result.json')
-            result=evaluation.load(root/'campaign/run/results/run/prepare.json')
-            self.assertEqual(result['execution'],{'status':'Failed','reason':'MissingInput'})
-    def test_rotating_token_budget_and_request_reads(self):
-        from contextlib import nullcontext
-        auth=SimpleNamespace(check=lambda path,budget,**kw:{'requiredSeconds':budget},lifetime_budget=lambda *args:333)
-        config={'evaluation':{'jobActiveDeadlineSeconds':7200},'timeboxes':{'apiSeconds':30},'tokenFile':'projected'}
-        with patch.object(self.harness_module,'module',return_value=auth):
-            record=self.harness_module.token_preflight(config,[{'seconds':10000}])
-            self.assertEqual(record['requiredSeconds'],90)
-            self.assertEqual(record['jobActiveDeadlineSeconds'],7200)
-            del config['evaluation']
-            self.assertEqual(self.harness_module.token_preflight(config,[])['requiredSeconds'],333)
+            data = Path(directory)
+            for record, content in (('02', b'second'), ('01', b'first')):
+                (data / record).mkdir()
+                (data / record / 'input').write_bytes(content)
+            records = cli.load_records(data, ['input'])
+            offsets = [1, 2]
+            policy = {'segments': [{'rate': 1, 'seconds': 1}], 'offsetsNS': offsets, 'offered': 2,
+                      'arrivalSHA256': hashlib.sha256(json.dumps(offsets, separators=(',', ':')).encode()).hexdigest(),
+                      'datasetRef': {'name': 'records', 'uid': 'dataset'}, 'shards': 1, 'barrierSeconds': 10}
+            encoded = base64.b64encode(zlib.compress(json.dumps(policy).encode())).decode()
+            observed = []
+            def replay(records, offsets, duration, binding, kw):
+                observed.append(copy.deepcopy(binding))
+            def cli_main(args):
+                cli.replay(records, arrivals='poisson', seed=202)
+                return 0
+            with patch.object(sys, 'argv', ['producer.py', encoded, 'replay']), patch.object(cli, 'main', side_effect=cli_main), patch.object(cli, 'replay'), patch.object(producer, 'replay_shards', side_effect=replay):
+                self.assertEqual(producer.main(), 0)
+            actual = observed[0]['payload']
+            self.assertEqual([r['recordID'] for r in actual], ['01', '02'])
+            self.assertEqual(actual[0]['fields']['input'], {'bytes': 5, 'sha256': hashlib.sha256(b'first').hexdigest()})
+
+    def test_prepare_freezes_dataset_carrier_without_host_inputs(self):
         with tempfile.TemporaryDirectory() as directory:
-            token=Path(directory)/'token';observed=[]
-            client=object.__new__(self.conductor.Conductor);client.collector_token_file=token
-            client.record=lambda value:None
-            client.http=SimpleNamespace(open=lambda request,**kw:observed.append(request.get_header('Authorization')) or nullcontext(SimpleNamespace(status=200,read=lambda:b'{}')))
-            for value in ('first','rotated'):
-                token.write_text(value);client.api('GET','/state')
-            self.assertEqual(observed,['Bearer first','Bearer rotated'])
-    def test_capacity_defaults_only_when_absent(self):
-        self.assertEqual(self.bind.capacity_settings({}),{'capacityGridSteps':20,'capacityBisectionWidth':.005,'capacityTailSamples':100})
-        original={'capacityGridSteps':4,'capacityBisectionWidth':None}
-        values=self.bind.capacity_settings(original)
-        self.assertEqual(values['capacityGridSteps'],4)
-        self.assertIsNone(values['capacityBisectionWidth'])
-        self.assertEqual(original,{'capacityGridSteps':4,'capacityBisectionWidth':None})
-    def test_native_guard_excludes_only_exact_factor_job(self):
-        active_jobs=self.native.active_jobs
-        current={'name':'factor','uid':'job','runUID':'run','stageUID':'stage','stageID':'id'}
-        job={'metadata':{'name':'factor','uid':'job','labels':{'edge.dacs.io/evaluation-run-uid':'run','edge.dacs.io/evaluation-stage':'id','edge.dacs.io/evaluation-step':'factor'},'ownerReferences':[{'kind':'EvaluationStage','uid':'stage','controller':True}]},'status':{'active':1}}
-        other={'metadata':{'name':'other','uid':'other'},'status':{'active':1}}
-        self.assertEqual(active_jobs([job,other],current),[other])
-        self.assertEqual(active_jobs([job]),[job])
-        self.assertEqual(active_jobs([job],current),[])
-        changed=copy.deepcopy(job);changed['metadata']['uid']='replacement'
-        with self.assertRaises(RuntimeError): active_jobs([changed],current)
-        changed=copy.deepcopy(job);changed['metadata']['labels']['edge.dacs.io/evaluation-step']='stage'
-        with self.assertRaises(RuntimeError): active_jobs([changed],current)
-    def test_zero_load_go_precedes_decision_confirmation(self):
-        import contextlib
-        import io
-        with tempfile.TemporaryDirectory(dir=self.environment_dir.name) as directory:
-            root=Path(directory);folder=root/'measured'
-            harness,controller=self.idle_harness(root)
-            with patch.object(harness,'controller',return_value=controller),patch.object(harness,'check_target',return_value=[]),contextlib.redirect_stdout(io.StringIO()) as output:
-                harness.stage()
-            self.assertIn('EVALUATION_GO store/experiments/run/stages/idle/go.json ',output.getvalue())
-            self.assertEqual(evaluation.load(folder/'go.json')['producerRefs'],[])
-            self.assertTrue((folder/'first-load-tick.json').exists())
-    def idle_harness(self,root):
-        folder=root/'measured';control={'scaleDownHeadroomFraction':.25,'minimumDemand':{}}
-        harness=object.__new__(evaluation.Harness);harness.root=root;harness.execution={'runUID':'run','stageUID':'stage','stageID':'idle'};harness.prefix='experiments/run/stages/idle';harness.step='stage'
-        harness.store=SimpleNamespace(put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
-        harness.spec={'target':{},'control':control,'mode':'autonomous','loadGenerator':{'barrier':{'maxStartSkewNanos':0}}}
-        harness.harness_module=self.harness_module
-        controller=object.__new__(self.harness_module.CPO)
-        controller.c={'evaluation':{'stageFolder':str(folder),'execution':harness.execution}}
-        controller.b={'schedule':[{'id':'E5-0','rates':{},'seconds':0}],'sources':{}}
-        controller.a=SimpleNamespace(command='stage',stage='E5-0',mode='full',row_tag='')
-        controller.out=root;controller.ws={};controller.uids=[];controller.go_callback=harness.go
-        controller.tb={'setupSeconds':0,'drainSeconds':0,'flushSeconds':0}
-        controller.io=SimpleNamespace(k=lambda *args:{'items':[]},a=SimpleNamespace())
-        controller.d=SimpleNamespace(epoch=lambda value:self.harness_module.dt.datetime.fromisoformat(value).timestamp())
-        controller.check_token_lifetime=lambda *args:None;controller.check_power_observation=lambda:None
-        controller.static_placement=lambda:False;controller.settings=lambda:{'autonomousWorkloads':[],**control}
-        controller.disk_boundary=lambda *args:None
-        controller.state=lambda:{'snapshot':{}}
-        controller.api=lambda *args:{'state':{'decision':{'at':self.harness_module.now(),'settings':control}}}
-        controller.boundary=lambda target,side:evaluation.save(target/(side+'-state.json'),{'snapshot':{}})
-        controller.collect=lambda *args:None
-        return harness,controller
-    def test_summary_aggregates_memory_without_input_reads(self):
-        def unexpected(*args): raise AssertionError('Summary reread its inputs')
-        values={'stages':[{'id':'id','kpis':{'status':'FAIL'}}],'results':{'id':{'measurement':{'verdict':'FAIL'}}},'physicalRestoration':{'status':'Complete'}}
-        with tempfile.TemporaryDirectory(dir=self.environment_dir.name) as directory:
-            root=Path(directory)
-            with patch.object(self.harness_module,'load',side_effect=unexpected),patch.object(self.harness_module,'load_binding',side_effect=unexpected):
-                summary=self.harness_module.summarize(None,root,evaluation=values)
-            self.assertEqual(summary['status'],'FAIL')
-            self.assertEqual(summary['rowJudgmentCounts'],{'FAIL':1})
-            self.assertEqual(summary['physicalRestoration'],{'status':'Complete'})
-            self.assertFalse((root/'evaluation-results.json').exists())
-            self.assertNotIn('status',values)
-    def test_evaluation_rejects_unused_legacy_allowances(self):
-        for operation in ({'failureSelectSnapshotTTLSeconds':15},{'timeboxes':{'nativeFutureAllowanceSeconds':15}}):
-            with self.assertRaisesRegex(ValueError,'FrozenInputInvalid'):
-                evaluation.stage_config({}, {}, {}, {}, {'operational':json.dumps(operation)},Path('/work'))
-        self.assertNotIn('failureSelectSnapshotTTLSeconds',evaluation_inputs.OPERATIONAL)
-    def test_publish_outcome_failed_stage_and_unperformed_injection(self):
+            root = Path(directory)
+            spec, scenario, execution, config, _ = fixture(root)
+            execution = {key: value for key, value in execution.items() if key not in ('stageUID', 'stageID', 'stageName')}
+            execution.update(runName='run', childRefs=[])
+            spec.update(target={'components': []}, evidenceStore='store', stages=[{'id': 'one', 'row': 'e5-test', 'loadScenarioRef': {'name': 'load', 'uid': 'load-uid'}}])
+            specdir = root / 'spec'
+            for name, value in (('spec', spec), ('execution', execution), ('config', config)):
+                conductor.save(specdir / (name + '.json'), value)
+            uploads = []
+            store = SimpleNamespace(put=lambda key, path: uploads.append(key) or {'store': 'store', 'key': key, 'size': Path(path).stat().st_size})
+            harness = evaluation.Harness(root / 'campaign/run', specdir, store)
+            harness.run.mkdir(parents=True)
+            objects = {
+                'loadscenario': {'metadata': {'name': 'load', 'uid': 'load-uid'}, 'spec': scenario['spec']},
+                'dataset': scenario['datasets'][NAME],
+                'workload': {'metadata': {'uid': 'workload'}, 'spec': {'preprocessorRef': {'name': 'preprocessor'}}},
+                'preprocessor': {'spec': {'input': {'fields': [{'name': 'input'}]}}},
+            }
+            def k(namespace, verb, kind, *args):
+                return copy.deepcopy(objects[kind])
+            def fleet(stage):
+                harness.generator_node = {'name': 'genesis1', 'uid': 'generator-node'}
+            with patch.object(evaluation, 'kubectl', side_effect=k), patch.object(evaluation, 'api', return_value={'appliedDefinition': scenario['workloads'][0]}), patch.object(harness, 'check_fleet', side_effect=fleet), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA=spec['harness']['sourceSHA']):
+                harness.prepare()
+            snapshot = conductor.load(harness.inputs / 'snapshot.json')
+            self.assertEqual(snapshot['schemaVersion'], 'evaluation-snapshot.v2alpha1')
+            self.assertEqual(snapshot['inputsVersion'], 'evaluation-inputs.v2alpha1')
+            frozen = snapshot['bindings']['one']['config']['workloads'][0]
+            self.assertEqual(frozen['datasetRef'], {'name': 'records', 'uid': 'dataset'})
+            self.assertEqual(frozen['dataset']['source']['path'], '/records')
+            self.assertEqual(frozen['fields'], ['input'])
+            self.assertEqual(len(uploads), 1)
+
+    def test_real_stage_loop_uses_only_owned_ready_go_and_request_drain(self):
         with tempfile.TemporaryDirectory() as directory:
-            run=Path(directory)/'campaign/run';run.mkdir(parents=True)
-            harness=object.__new__(evaluation.Harness);harness.run=run;harness.config={}
-            harness.execution={'runUID':'run','runName':'name','childRefs':[{'stageID':'failed','uid':'failed-child','cleanup':{'status':'Complete','reason':'ProcedureComplete'},'uncertain':False}]}
-            plans=[{'id':'done','action':'delete-serving-pod','offsetSeconds':10},{'id':'missed','action':'uncordon','offsetSeconds':20}]
-            harness.snapshot={'runSpec':{'stages':[{'id':'failed','failureInjection':plans},{'id':'never','failureInjection':plans[:1]}]},'initial':{'at':'start'},'bindings':{'failed':{}},'scenarios':{}}
-            complete={'execution':{'status':'Complete','reason':'ProcedureComplete'},'cleanup':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
-            evidence={'experiments/run/run/prepare/result.json':complete,'experiments/run/run/finish/result.json':dict(complete,cleanup={'status':'Failed','reason':'RestorationFailed'})}
-            for step in ('factor','stage','judge','cleanup-jobs'):
-                evidence['experiments/run/stages/failed/'+step+'/result.json']=copy.deepcopy(complete)
-            evidence['experiments/run/stages/failed/stage/result.json']['execution']={'status':'Failed','reason':'TargetUnavailable'}
-            judge=evidence['experiments/run/stages/failed/judge/result.json']
-            judge['measurement']={'verdict':'INVALID','reason':'InjectionInvalid'}
-            for record in ({'id':'done','outcome':'Complete','actualOffsetSeconds':10.5},{'id':'missed','outcome':'INVALID','reason':'InjectionInvalid'}):
-                evidence['experiments/run/stages/failed/injections/'+record['id']+'.json']={'runUID':'run','stageID':'failed','record':record}
-            failed_cleanup=self.cleanup_failure_result(run/'cleanup-fixture')
-            evidence['experiments/run/stages/failed/cleanup-jobs/result.json']=failed_cleanup
-            evidence['experiments/run/stages/failed/finalizer.json']={'details':{'jobRef':{'name':'completed-job'},'producerRefs':[{'name':'deleted-producer'}]}}
-            downloaded=[]
-            def get(ref,path):
-                if ref['key'] not in evidence: raise FileNotFoundError(ref['key'])
-                path.parent.mkdir(parents=True,exist_ok=True)
-                with path.open('x') as output: json.dump(evidence[ref['key']],output)
-                downloaded.append(path)
-            harness.store=SimpleNamespace(name='store',get=get)
-            harness.harness_module=self.harness_module
-            tables=SimpleNamespace(render=lambda *args,**kw:'table')
-            env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
-            temporary=evaluation.tempfile.TemporaryDirectory
-            def publish():
-                for path in downloaded: path.unlink()
-                downloaded.clear()
-                with patch.object(evaluation,'module',return_value=tables),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
-                    harness.publish()
-                return evaluation.load(run/'publication-summary.json')
-            with patch.object(self.harness_module,'OPS',run):
-                summary=publish()
-            outcome=summary['outcome']
-            self.assertEqual(summary['definition']['spec'],harness.snapshot['runSpec'])
-            self.assertEqual(summary['stages'],[])
-            self.assertEqual(outcome['execution'],{'status':'Failed','reason':'TargetUnavailable'})
-            self.assertEqual(outcome['measurement']['verdict'],'INVALID')
-            self.assertEqual(outcome['cleanup'],{'status':'Failed','reason':'RestorationFailed','residuals':[{'kind':'Job','name':'producer','reason':'DeleteFailed'}]})
-            failed,never=outcome['stages']
-            self.assertEqual(failed['id'],'failed')
-            self.assertEqual(failed['measurement'],judge['measurement'])
-            self.assertEqual(failed['injections'][0]['actualOffsetSeconds'],10.5)
-            self.assertEqual(failed['injections'][1],{'id':'missed','action':'uncordon','outcome':'Invalid','reason':'INVALID: InjectionInvalid','scheduledOffsetSeconds':20,'actualOffsetSeconds':None})
-            self.assertEqual(never['execution']['reason'],'NotStarted')
-            self.assertEqual(never['measurement'],{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
-            self.assertEqual(never['cleanup']['reason'],'NotStarted')
-            self.assertEqual(never['injections'][0]['outcome'],'Cancelled')
-            self.assertEqual(never['injections'][0]['reason'],'NotStarted')
-            self.assertIsNone(never['injections'][0]['actualOffsetSeconds'])
-            self.assertEqual(failed['injections'][0]['outcome'],'Executed')
-            self.assertEqual(failed['injections'][0]['reason'],'Complete')
-            evidence['experiments/run/run/finish/result.json']=copy.deepcopy(complete)
-            with patch.object(self.harness_module,'OPS',run):
-                self.assertEqual(publish()['outcome']['cleanup']['status'],'Failed')
-                evidence['experiments/run/stages/failed/cleanup-jobs/result.json']=copy.deepcopy(complete)
-                evidence['experiments/run/stages/never/cleanup-jobs/result.json']=copy.deepcopy(complete)
-                self.assertEqual(publish()['outcome']['cleanup']['status'],'Complete')
-                evidence['experiments/run/stages/failed/injections/done.json']['record'].update(outcome='Unknown',reason='RemoteEffectUnknown')
-                self.assertEqual(publish()['outcome']['cleanup']['reason'],'RemoteEffectUnknown')
-                del evidence['experiments/run/stages/failed/judge/result.json']
-                unjudged=publish()['outcome']
-                self.assertEqual(unjudged['measurement'],{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
-                self.assertEqual(unjudged['stages'][0]['injections'][0]['reason'],'Unknown: RemoteEffectUnknown')
-                self.assertEqual(unjudged['stages'][0]['injections'][1]['reason'],'INVALID: InjectionInvalid')
-    def test_target_identity_uses_every_running_image_digest(self):
-        digest='sha256:'+'a'*64
-        target={'components':[{'name':'server','image':'registry:5000/server:expected@'+digest,'sourceSHA':'source','resource':{'namespace':'test','kind':'Deployment','name':'server'}}]}
-        deployment={'kind':'Deployment','metadata':{'uid':'deployment'},'spec':{'selector':{'matchLabels':{'app':'server'}},'template':{'spec':{'containers':[{'name':'server','image':'registry:5000/server:live'}]}}}}
-        pod={'metadata':{'uid':'pod'},'status':{'conditions':[{'type':'Ready','status':'True'}],'containerStatuses':[{'name':'server','ready':True,'restartCount':0,'imageID':'docker-pullable://registry:5000/server@'+digest}]}}
-        harness=object.__new__(evaluation.Harness)
-        for images in ([digest,digest],[],['sha256:'+'b'*64],[digest,'sha256:'+'b'*64]):
-            pods=[]
-            for index,image in enumerate(images):
-                value=copy.deepcopy(pod);value['metadata']['uid']=str(index);value['status']['containerStatuses'][0]['imageID']='containerd://'+image;pods.append(value)
-            with patch.object(evaluation,'kubectl',side_effect=[deployment,{'items':pods}]) as request:
-                if images==[digest,digest]:
-                    self.assertEqual(len(harness.check_target(target)[0]['pods']),2)
-                else:
-                    with self.assertRaisesRegex(ValueError,'IdentityMismatch:.*observed='):
-                        harness.check_target(target)
-                self.assertEqual(request.call_args.args,('test','get','pods','-l','app=server'))
-    def test_finish_without_snapshot_records_no_control_effects(self):
+            root = Path(directory)
+            spec, scenario, execution, _, config = fixture(root)
+            config['stages'][0]['parts'][0]['seconds'] = .01
+            config['traceOffsets'] = {NAME: [1]}
+            config['timeboxes'] = dict.fromkeys(config['timeboxes'], 5)
+            config['timeboxes']['flushSeconds'] = .001
+            path = root / 'config.json'
+            conductor.save(path, config)
+            controller = object.__new__(conductor.CPO)
+            controller.b = conductor.bind(path)
+            controller.c, controller.out, controller.tb = config, root, config['timeboxes']
+            controller.ws = {w['name']: w for w in config['workloads']}
+            controller.a = SimpleNamespace(stage='e5-test')
+            controller.monitor = lambda *args: 0
+            controller.go_callback = lambda value: None
+            ready = {'evaluationEvent': 'ready', 'at': START, 'barrierSeconds': 10000000000,
+                     'offered': 1, 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
+                     'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
+                     'datasetRef': scenario['spec']['datasetRefs'][NAME], 'sourceSHA': spec['loadGenerator']['sourceSHA']}
+            script = ('import sys,json\nprint(' + repr(json.dumps(ready)) + ',flush=True)\nsys.stdin.readline()\n'
+                      'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n'
+                      'print(json.dumps({"evaluationEvent":"drained"}),flush=True)\nsys.stdin.readline()\n')
+            pod = {'metadata': {'name': 'producer', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]},
+                   'status': {'phase': 'Running', 'containerStatuses': [
+                       {'name': 'load', 'containerID': 'container', 'imageID': spec['loadGenerator']['image'], 'restartCount': 0, 'state': {'running': {'startedAt': START}}}]}}
+            process = [None]
+            jobs = []
+            original_popen = subprocess.Popen
+            def launch(*args, **kwargs):
+                process[0] = original_popen([sys.executable, '-u', '-c', script], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=kwargs['stderr'], bufsize=0)
+                return process[0]
+            def k(args, stdin=None, **kwargs):
+                if args[:2] == ['get', 'jobs']:
+                    return {'items': []}
+                if args[0] == 'create':
+                    job = json.loads(stdin)
+                    job['metadata']['uid'] = 'job'
+                    jobs.append(job)
+                    return job
+                if args[:2] == ['get', 'pods']:
+                    return {'items': [pod]}
+                if args[:2] == ['get', 'pod']:
+                    return pod
+                if args[:2] == ['get', 'job']:
+                    return {**jobs[0], 'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}}
+                if args[0] == 'exec':
+                    process[0].stdin.write(b'release\n')
+                    process[0].stdin.flush()
+                    return {}
+                raise AssertionError(args)
+            controller.io = SimpleNamespace(k=k, delete_job=lambda *args: None)
+            counters = [{'podUID': 'pod', 'containerID': 'container', 'at': '2099-01-01T00:00:00Z', 'cpuUsageNanos': 1, 'nrThrottled': 0, 'throttledNanos': 0}]
+            telemetry = SimpleNamespace(ready=lambda *args: True, poll=lambda *args: counters)
+            original_module = conductor.module
+            auth = original_module('test_auth', conductor.HERE / 'auth.py')
+            def modules(name, path):
+                if name == 'evaluation_auth':
+                    return SimpleNamespace(lifetime_budget=auth.lifetime_budget, check=lambda *args, **kwargs: {'accepted': True})
+                if name == 'evaluation_archive':
+                    return SimpleNamespace(collect=lambda *args: {'status': 'CAPTURED_NOT_EVALUATED'})
+                return original_module(name, path)
+            conductor.save(root / 'settings-patch.json', {'accepted': True})
+            with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(conductor, 'module', side_effect=modules):
+                controller.run()
+            process[0].stdin.close()
+            phase = conductor.load(root / 'measured/phase.json')
+            self.assertEqual(phase['status'], 'DRAINED_NOT_EVALUATED')
+            self.assertEqual(set(phase['starts']), {NAME})
+            self.assertTrue((root / 'measured' / (NAME + '-client-end-counter.json')).exists())
+
+    def test_cleanup_never_deletes_harness_or_unknown_job_uid(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);specdir=root/'spec';specdir.mkdir()
-            for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test','prepareCompleted':False}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
-            store=SimpleNamespace(name='store',put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
-            harness=evaluation.Harness(root/'campaign/run',specdir,store)
-            for initial in (None,{'settings':{'controls':{}},'state':{},'at':'start'}):
-                if initial: evaluation.save(harness.run/'initial.json',initial)
-                with patch.object(evaluation,'api',return_value={'controls':{}}) as request,patch.object(harness,'open_snapshot',side_effect=AssertionError('snapshot unavailable')):
-                    self.assertEqual(harness.execute('finish'),0)
-                record=evaluation.load(harness.run/'results/run/finish.json')
-                self.assertEqual(record['execution'],{'status':'Complete','reason':'NoControlEffects'})
-                self.assertEqual(record['cleanup'],record['execution'])
-                self.assertEqual(request.call_count,1 if initial else 0)
-    def test_unjudged_verdict_is_not_pass(self):
-        self.assertEqual(evaluation.verdict({'status':'NOT_EVALUATED','reason':'NotStarted'}),{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
-    def test_completed_prepare_missing_snapshot_is_not_no_effects(self):
+            controller = object.__new__(conductor.CPO)
+            controller.out = Path(directory)
+            controller.c = {'evaluation': {'execution': {'runUID': 'run', 'stageUID': 'stage', 'stageID': 'one'}}}
+            controller.tb, controller.residuals = {'drainSeconds': 1}, []
+            job = {'kind': 'Job', 'metadata': {'name': 'load-one', 'uid': 'unknown', 'labels': {'edge.dacs.io/evaluation-run-uid': 'run'},
+                                             'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]}}
+            calls = []
+            def k(args):
+                calls.append(args)
+                return {'items': [job]}
+            controller.io = SimpleNamespace(k=k, delete_job=lambda *args: self.fail('Unknown UID deleted'))
+            with self.assertRaisesRegex(RuntimeError, 'RemoteEffectUnknown'):
+                controller.cleanup_jobs()
+            self.assertIn('edge.dacs.io/workload-role=load-generator', calls[0][3])
+
+    def test_job_disappearance_does_not_hide_owned_pod_residuals(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);specdir=root/'spec';specdir.mkdir()
-            ref={'store':'store','key':'snapshot'}
-            for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test','prepareCompleted':True,'inputSnapshotRef':ref}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
-            store=SimpleNamespace(name='store',put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
-            harness=evaluation.Harness(root/'campaign/run',specdir,store)
-            snapshot={'schemaVersion':'evaluation-snapshot.v1alpha1','runUID':'run','environment':{},'bootstrapWorkload':{}}
-            evaluation.save(harness.inputs/'snapshot.json',{**snapshot,'runUID':'stale-cache'})
-            def readable(reference,path):
-                self.assertEqual(reference,ref)
-                self.assertNotEqual(path,harness.inputs/'snapshot.json')
-                path.parent.mkdir(parents=True,exist_ok=True)
-                with path.open('x') as output: json.dump(snapshot,output)
-            store.get=readable
-            controller=SimpleNamespace(finish=unittest.mock.Mock())
-            with patch.object(evaluation,'environment'),patch.object(evaluation,'module',return_value=self.harness_module),patch.object(harness,'controller',return_value=controller):
-                self.assertEqual(harness.execute('finish'),0)
-            controller.finish.assert_called_once()
-            self.assertEqual(evaluation.load(harness.inputs/'snapshot.json')['runUID'],'stale-cache')
-            def malformed(reference,path):
-                with path.open('x') as output: output.write('{broken')
-            for unreadable in (lambda reference,path:(_ for _ in ()).throw(FileNotFoundError(reference['key'])),malformed):
-                store.get=unreadable
-                self.assertEqual(harness.execute('finish'),1)
-                self.assertEqual(evaluation.load(harness.run/'results/run/finish.json')['execution'],{'status':'Failed','reason':'EvidenceUnreadable'})
-    def cleanup_failure_result(self,root):
-        specdir=root/'spec';specdir.mkdir(parents=True)
-        for name,value in [('spec',{}),('execution',{'runUID':'run','namespace':'test','stageID':'failed'}),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
-        store=SimpleNamespace(name='store',put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
-        harness=evaluation.Harness(root/'campaign/run',specdir,store)
-        folder=harness.root/'measured';folder.mkdir(parents=True)
-        evaluation.save(folder/'created-load.json',{'metadata':{'name':'producer','uid':'exact-uid'}})
-        controller=object.__new__(self.harness_module.CPO)
-        controller.c={'evaluation':{'stageFolder':str(folder)}};controller.out=harness.root
-        controller.io=SimpleNamespace(k=lambda *args:{'metadata':{'uid':'exact-uid'}},remove_job=lambda *args:(_ for _ in ()).throw(RuntimeError('DeleteFailed')))
-        with patch.object(harness,'controller',return_value=controller),patch.object(harness,'open_snapshot'):
-            self.assertEqual(harness.execute('cleanup-jobs'),1)
-        return evaluation.load(harness.run/'results/stages/failed/cleanup-jobs.json')
-    def test_cleanup_delete_failure_records_exact_job_residual(self):
+            root = Path(directory)
+            controller = object.__new__(conductor.CPO)
+            controller.out = root
+            controller.c = {'evaluation': {'execution': {'runUID': 'run', 'stageUID': 'stage', 'stageID': 'one'}}}
+            controller.tb, controller.residuals = {'drainSeconds': 0}, []
+            job = {'kind': 'Job', 'metadata': {'name': 'load-one', 'uid': 'job', 'labels': {'edge.dacs.io/evaluation-run-uid': 'run'},
+                                             'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]}}
+            conductor.save(root / 'measured/created-one.json', job)
+            pod = {'metadata': {'name': 'residual', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]}}
+            controller.io = SimpleNamespace(k=lambda args: {'items': [] if args[1] == 'jobs' else [pod]})
+            with self.assertRaisesRegex(RuntimeError, 'ResidualState'):
+                controller.cleanup_jobs()
+            self.assertEqual(controller.residuals, [{'kind': 'Pod', 'name': 'residual', 'reason': 'ResidualState'}])
+
+    def test_slo_failure_is_valid_without_internal_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:
-            result=self.cleanup_failure_result(Path(directory))
-            self.assertEqual(result['execution']['status'],'Failed')
-            self.assertEqual(result['residuals'],[{'kind':'Job','name':'producer','uid':'exact-uid','reason':'DeleteFailed'}])
-    def publish_single_stage(self,overrides,child_refs=None,measured=None):
+            root = Path(directory)
+            spec, _, _, _, config = fixture(root)
+            config['traceOffsets'] = {NAME: [1, 2]}
+            path = root / 'config.json'
+            conductor.save(path, config)
+            bound = conductor.bind(path)
+            conductor.save(root / 'binding.json', bound)
+            phase = {'stage': bound['schedule'][0], 'startUTC': START, 'endUTC': END, 'drainedUTC': END,
+                     'starts': {NAME: {'at': START, 'monotonicNS': 100}}, 'status': 'DRAINED_NOT_EVALUATED'}
+            conductor.save(root / 'phase.json', phase)
+            power = archive.meter_energy(power_window(), spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
+            for name in ('power.json', 'power-drain-inclusive.json'):
+                conductor.save(root / name, power)
+            rows = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': i + 1, 'scheduledMonotonicNS': i + 101,
+                     'sentMonotonicNS': i + 101, 'finishedMonotonicNS': 3000000000, 'issued': True} for i in range(2)]
+            (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
+            indexed = {config['workloads'][0]['uid']: {'errors': [], 'identities': [{'workloadUID': 'workload', 'definitionID': 'definition'}],
+                                                     'summary': {'uniqueRequests': 2}, 'finals': {
+                'r0': {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 2000000000},
+                'r1': {'outcome': 'timeout', 'executionComplete': False, 'elapsedNanos': 2000000000}}}}
+            original_module = conductor.module
+            def modules(name, path):
+                if name == 'evaluation_raw':
+                    return SimpleNamespace(iter_request_indexes=lambda *args, **kwargs: indexed)
+                return original_module(name, path)
+            with patch.object(conductor, 'module', side_effect=modules):
+                judgment = conductor.judge(root / 'binding.json', root)
+            self.assertEqual(judgment['schema'], 'e5-judgment.v2')
+            self.assertEqual(judgment['status'], 'FAIL')
+            self.assertEqual(judgment['requests'][NAME]['offered'], 2)
+            self.assertEqual(judgment['requests'][NAME]['deadlineSuccess'], 0)
+            self.assertEqual(judgment['requests'][NAME]['issuanceFidelity']['generatorQuality']['status'], 'VALID')
+            self.assertEqual(evaluation.verdict(judgment)['verdict'], 'FAIL')
+            self.assertEqual(judgment['requests'][NAME]['substages'][0]['offered'], 2)
+            self.assertEqual(judgment['requests'][NAME]['definitionID'], 'definition')
+            rows[1]['requestID'] = 'r0'
+            (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
+            with patch.object(conductor, 'module', side_effect=modules):
+                duplicated = conductor.judge(root / 'binding.json', root)
+            self.assertEqual(duplicated['status'], 'NOT_READY')
+            self.assertIsNone(duplicated['requests'][NAME]['definitionID'])
+
+    def test_missing_stage_is_not_published_as_valid_subset(self):
         with tempfile.TemporaryDirectory() as directory:
-            run=Path(directory)/'campaign/run';run.mkdir(parents=True)
-            complete={'execution':{'status':'Complete','reason':'ProcedureComplete'},'cleanup':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
-            records={scope+'/result.json':copy.deepcopy(complete) for scope in ('run/prepare','run/finish','stages/only/factor','stages/only/stage','stages/only/judge','stages/only/cleanup-jobs')}
-            records['stages/only/judge/result.json']['measurement']={'verdict':'PASS','reason':'MeasurementComplete'}
-            records.update(overrides)
-            def get(reference,path):
-                value=records.get(reference['key'][len('experiments/run/'):])
-                if value is None: raise FileNotFoundError(reference['key'])
-                path.parent.mkdir(parents=True,exist_ok=True)
-                with path.open('x') as output: json.dump(value,output)
-            harness=object.__new__(evaluation.Harness);harness.run=run;harness.config={};harness.harness_module=self.harness_module
-            harness.execution={'runUID':'run','runName':'name','childRefs':[{'stageID':'only','uid':'child','cleanup':{'status':'Complete','reason':'ProcedureComplete'},'uncertain':False}] if child_refs is None else child_refs}
-            harness.store=SimpleNamespace(name='store',get=get)
-            harness.snapshot={'runSpec':{'stages':[{'id':'only','failureInjection':[{'id':'fault','action':'delete-serving-pod','offsetSeconds':1}]}]},'initial':{'at':'start'},'bindings':{'only':{}},'scenarios':{}}
-            tables=SimpleNamespace(render=lambda *args,**kw:'')
-            if measured is not None:
-                workload={'name':'service','uid':'historical','generation':1,
-                          'model':{'uid':'model','generation':2},'preprocessor':{'uid':'preprocessor','generation':3},
-                          'slo':{'percentile':95,'targetLatencyNanos':1000000000}}
-                bound={'config':{'workloads':[workload]},'schedulerSettings':{},'limitations':[]}
-                harness.snapshot['bindings']['only']=bound
-                harness.snapshot['runSpec']['stages'][0]['loadScenarioRef']={'uid':'scenario'}
-                harness.snapshot['scenarios']={'scenario':{'workloads':[workload],'ref':{'name':'load','uid':'scenario'},'spec':{}}}
-                harness.execution['inputSnapshotRef']={'store':'store','key':'experiments/run/run/prepare/input-snapshot.json'}
-                folder=run/'stages/only/measured';folder.mkdir(parents=True)
-                evaluation.save(folder/'phase.json',{'startUTC':'2026-11-03T00:00:00Z','endUTC':'2026-11-03T00:00:01Z'})
-                (folder/'service-client.jsonl').write_text(json.dumps({'requestID':'request','scheduledOffsetNs':0})+'\n')
-                projection=evaluation.module('identity_test_tables',evaluation.HERE/'tables.py')
-                judgment={'status':'FAIL','requests':{'service':{'offered':1,'deadlineSuccess':0,
-                    'actualGatewayIdentities':1}},'power':{'energyCoverage':{'policy':{}}}}
-                tables.sections=lambda path:judgment
-                tables.publication_requests=projection.publication_requests
-            temporary=evaluation.tempfile.TemporaryDirectory
-            env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
-            with patch.object(evaluation,'module',return_value=tables),patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=run)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)),patch.object(self.harness_module,'OPS',run):
-                harness.publish()
-            summary=evaluation.load(run/'publication-summary.json')
-            return summary if measured is not None else summary['outcome']
-    def test_publish_observed_identity_not_gateway_count(self):
-        original_module=self.harness_module.module
-        for case in ('complete','mixed','missing','partial'):
-            indexed={'errors':[],'receivedAtNS':{'request':1},'identities':[
-                {'workloadUID':'historical','definitionID':'historical/1/model/2/preprocessor/3'}]}
-            if case=='mixed':
-                indexed['identities'].append({'workloadUID':'historical','definitionID':'historical/2/model/2/preprocessor/3'})
-            elif case=='missing':
-                indexed['identities']=[]
-            elif case=='partial':
-                indexed['receivedAtNS']={}
-            raw=SimpleNamespace(iter_request_indexes=lambda *args,**kw:{'historical':indexed})
-            with self.subTest(case=case),patch.object(self.harness_module,'module',
-                    side_effect=lambda name,path:raw if path.name=='raw.py' else original_module(name,path)):
-                summary=self.publish_single_stage({},measured=True)
-            metric=summary['stages'][0]['kpis']['requests']['service']
-            self.assertEqual(metric['actualGatewayIdentities'],1)
-            self.assertEqual(metric['offered'],1)
-            if case=='complete':
-                self.assertEqual(metric['workloadUID'],'historical')
-                self.assertEqual(metric['definitionID'],'historical/1/model/2/preprocessor/3')
-                self.assertEqual(metric['identitySource'],{'store':'store','key':'experiments/run/run/prepare/input-snapshot.json'})
-                self.assertIsNone(metric['missingReasons']['identity'])
-            else:
-                self.assertIsNone(metric['workloadUID'])
-                self.assertIsNone(metric['definitionID'])
-                self.assertIsNone(metric['identitySource'])
-                self.assertTrue(metric['missingReasons']['identity'])
-        workload=summary['definition']['workloads'][0]
-        with self.assertRaises(TypeError):
-            self.harness_module.publication_metadata({'config':{'workloads':[workload]}},{},
-                'service',{'workloads':[workload]},{'store':'store','key':'snapshot'},None,1)
-    def test_publish_unjudged_measurement_keeps_reason(self):
-        outcome=self.publish_single_stage({'stages/only/judge/result.json':None})
-        self.assertEqual(outcome['measurement'],{'verdict':'NOT_EVALUATED','reason':'NotStarted'})
-    def test_publish_cleanup_requires_child_completion_and_known_effects(self):
-        self.assertEqual(self.publish_single_stage({})['cleanup']['status'],'Complete')
-        self.assertEqual(self.publish_single_stage({'stages/only/cleanup-jobs/result.json':None})['cleanup']['status'],'Failed')
-        missing_cleanup={'execution':{'status':'Complete','reason':'ProcedureComplete'},'artifacts':[]}
-        self.assertEqual(self.publish_single_stage({'stages/only/cleanup-jobs/result.json':missing_cleanup})['cleanup']['status'],'Failed')
-        unknown={'runUID':'run','stageID':'only','record':{'id':'fault','outcome':'Unknown','reason':'RemoteEffectUnknown'}}
-        self.assertEqual(self.publish_single_stage({'stages/only/injections/fault.json':unknown})['cleanup']['reason'],'RemoteEffectUnknown')
-    def test_publish_reads_injection_evidence_without_judge(self):
-        record={'runUID':'run','stageID':'only','record':{'id':'fault','outcome':'Complete','actualOffsetSeconds':1.25}}
-        outcome=self.publish_single_stage({'stages/only/judge/result.json':None,'stages/only/injections/fault.json':record})
-        self.assertEqual(outcome['stages'][0]['injections'][0]['outcome'],'Executed')
-        self.assertEqual(outcome['stages'][0]['injections'][0]['actualOffsetSeconds'],1.25)
-    def test_publish_residuals_exclude_successful_audit_history(self):
-        success={'details':{'jobRef':{'name':'completed-job'},'producerRefs':[{'name':'deleted-producer','uid':'old'}],'procedures':[{'jobRef':{'name':'completed-judge'}}],'execution':{'status':'Complete'},'cleanup':{'status':'Complete'},'residuals':[{'kind':'Job','name':'stale','reason':'old'}]}}
-        outcome=self.publish_single_stage({'stages/only/finalizer.json':success})
-        self.assertEqual(outcome['cleanup']['residuals'],[])
-        unknown={'details':{'residualStateRef':{'store':'store','key':'experiments/run/unknown.json'}}}
-        evidence={'record':{'outcome':'Unknown','reason':'RemoteEffectUnknown','nodeRef':{'name':'uncertain-node'},'podRef':{'name':'uncertain-pod'}}}
-        residuals=self.publish_single_stage({'stages/only/finalizer.json':unknown,'unknown.json':evidence})['cleanup']['residuals']
-        self.assertEqual(residuals,[{'kind':'Node','name':'uncertain-node','reason':'RemoteEffectUnknown'},{'kind':'Pod','name':'uncertain-pod','reason':'RemoteEffectUnknown'}])
-    def test_publish_cleanup_ignores_uncreated_stages_but_not_lost_children(self):
-        self.assertEqual(self.publish_single_stage({'stages/only/cleanup-jobs/result.json':None},child_refs=[])['cleanup']['status'],'Complete')
-        for reason in ('ExecutionLost','RemoteEffectUnknown'):
-            child={'stageID':'only','uid':'child','uncertain':True,'execution':{'status':'Failed','reason':reason},'cleanup':{'status':'Complete','reason':'ProcedureComplete'}}
-            self.assertEqual(self.publish_single_stage({},child_refs=[child])['cleanup'],{'status':'Failed','reason':reason,'residuals':[]})
-        child={'stageID':'only','uid':'child','uncertain':True,'execution':{'status':'Complete','reason':'ProcedureComplete'},'cleanup':{'status':'Complete','reason':'ProcedureComplete'}}
-        self.assertEqual(self.publish_single_stage({},child_refs=[child])['cleanup']['reason'],'RemoteEffectUnknown')
-    def test_publish_failed_prepare_without_snapshot(self):
+            root = Path(directory)
+            stages = [{'id': 'measured', 'kpis': {'status': 'MEASURED_DESCRIPTIVE'}}]
+            results = {'measured': {'measurement': {'verdict': 'PASS'}}, 'missing': {'measurement': {'verdict': 'NOT_EVALUATED'}}}
+            summary = conductor.summarize(None, root, evaluation={'stages': stages, 'results': results})
+            self.assertEqual(summary['status'], 'NOT_EVALUATED')
+            results['missing']['measurement']['verdict'] = 'FAIL'
+            self.assertEqual(conductor.summarize(None, root, evaluation={'stages': stages, 'results': results})['status'], 'FAIL')
+
+    def test_meter_energy_includes_idle_declared_node_without_history(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);specdir=root/'spec';specdir.mkdir()
-            spec={'stages':[{'id':'never-created'}],'question':'record preparation failure'}
-            execution={'runUID':'failed-run','runName':'failed','namespace':'test','prepareCompleted':False,'childRefs':[]}
-            for name,value in [('spec',spec),('execution',execution),('config',{})]: evaluation.save(specdir/(name+'.json'),value)
-            started='2026-11-01T00:00:00+00:00';finished='2026-11-01T00:00:01+00:00'
-            prepare={'execution':{'status':'Failed','reason':'IdentityMismatch'},'startedAt':started,'finishedAt':finished,'artifacts':[]}
-            finish={'execution':{'status':'Complete','reason':'NoControlEffects'},'cleanup':{'status':'Complete','reason':'NoControlEffects'},'startedAt':finished,'finishedAt':finished,'artifacts':[]}
-            records={'experiments/failed-run/run/prepare/result.json':prepare,'experiments/failed-run/run/finish/result.json':finish}
-            def get(reference,path):
-                if reference['key'] not in records: raise FileNotFoundError(reference['key'])
-                path.parent.mkdir(parents=True,exist_ok=True)
-                with path.open('x') as output: json.dump(records[reference['key']],output)
-            store=SimpleNamespace(name='store',get=get,put=lambda key,path:{'store':'store','key':key,'size':path.stat().st_size})
-            harness=evaluation.Harness(root/'campaign/run',specdir,store)
-            env=dict.fromkeys(('CHILL_EVIDENCE_BUCKET','CHILL_EVIDENCE_ENDPOINT','CHILL_EVIDENCE_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY'),'test')
-            temporary=evaluation.tempfile.TemporaryDirectory
-            with patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=root)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
-                self.assertEqual(harness.execute('publish'),0)
-            summary=evaluation.load(harness.run/'publication-summary.json')
-            self.assertEqual(summary['definition'],{'schema':'evaluation-definition.v1alpha1','run':{'name':'failed','uid':'failed-run'},'spec':spec,'loadScenarios':[],'workloads':[]})
-            self.assertEqual(summary['stages'],[])
-            self.assertEqual(summary['outcome'],{'execution':prepare['execution'],'measurement':{'verdict':'NOT_EVALUATED','reason':'IdentityMismatch'},'cleanup':dict(finish['cleanup'],residuals=[]),'stages':[]})
-            self.assertEqual((summary['from'],summary['to']),(started,finished))
-            self.assertGreater(evaluation.dt.datetime.fromisoformat(summary['to']),evaluation.dt.datetime.fromisoformat(summary['from']))
-            prepare['startedAt']=finished
-            harness=evaluation.Harness(root/'second-campaign/run',specdir,store)
-            with patch.dict(os.environ,env),patch.object(evaluation.tempfile,'TemporaryDirectory',side_effect=lambda **kw:temporary(dir=root)),patch.object(evaluation.subprocess,'run',return_value=SimpleNamespace(returncode=0)):
-                self.assertEqual(harness.execute('publish'),0)
-            summary=evaluation.load(harness.run/'publication-summary.json')
-            self.assertGreater(evaluation.dt.datetime.fromisoformat(summary['to']),evaluation.dt.datetime.fromisoformat(summary['from']))
-            execution.update(prepareCompleted=True,inputSnapshotRef={'store':'store','key':'missing-snapshot'})
-            evaluation.save(specdir/'execution.json',execution)
-            harness=evaluation.Harness(root/'third-campaign/run',specdir,store)
-            with patch.object(evaluation.subprocess,'run') as publisher:
-                self.assertEqual(harness.execute('publish'),1)
-            publisher.assert_not_called()
+            spec, _, _, _, _ = fixture(Path(directory))
+            result = archive.meter_energy(power_window(), spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
+            self.assertTrue(result['complete'])
+            self.assertEqual(result['wholePoolJoules'], 300)
+            self.assertEqual(result['scope'], 'declared-node-meters')
+            self.assertEqual(len(result['nodes']), 2)
+
+    def test_meter_gap_fails_coverage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec, _, _, _, _ = fixture(Path(directory))
+            window = power_window()
+            window['nodes'][0].update(gapSeconds=2, gapFraction=.2, maximumSampleGapSeconds=2)
+            result = archive.meter_energy(window, spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
+            self.assertFalse(result['complete'])
+            self.assertIsNone(result['wholePoolJoules'])
+            self.assertEqual(result['energyCoverage']['maximumNodeGapFraction'], .2)
+            window['nodes'][0]['meterComplete'] = False
+            self.assertFalse(archive.meter_energy(window, spec['powerMeasurement'], {'maxGapFraction': 1, 'maxSingleGapSeconds': 30}, START, END)['complete'])
+
+    def test_meter_identity_and_scope_are_exact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            spec, _, _, _, _ = fixture(Path(directory))
+            measurement, policy = spec['powerMeasurement'], spec['judgment']['energyCoverage']
+            for field, value in (('meter', 'foreign'), ('sourceIdentity', {'metric': 'foreign'}), ('node', {'name': 'idle', 'uid': 'recreated'}), ('gapFraction', float('nan'))):
+                window = power_window()
+                window['nodes'][0][field] = value
+                self.assertFalse(archive.meter_energy(window, measurement, policy, START, END)['complete'])
+            window = power_window()
+            window['nodes'].append({'node': {'name': 'outside', 'uid': 'outside'}, 'meter': 'other', 'meterJoules': 999999})
+            self.assertEqual(archive.meter_energy(window, measurement, policy, START, END)['wholePoolJoules'], 300)
+
+    def test_request_stream_absence_needs_no_internal_stream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index = {'complete': True, 'sources': [], 'errors': [], 'requestedHours': ['20261103T00'], 'supportingHours': [],
+                     'absentStreams': [{'hour': '20261103T00', 'stream': 'requests', 'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'}]}
+            conductor.save(root / 'raw-source-index.json', index)
+            _, sources, errors = raw._manifest(root, {'requests'})
+            self.assertFalse(errors)
+            self.assertFalse(sources)
+
+    def test_target_runtime_changes_are_observations_not_exact_gates(self):
+        harness = object.__new__(evaluation.Harness)
+        harness.execution = {}
+        target = {'components': [{'name': 'serving', 'resource': {'kind': 'Deployment', 'namespace': 'chill-system', 'name': 'server'}}]}
+        deployment = {'kind': 'Deployment', 'metadata': {'uid': 'deployment'}, 'spec': {'selector': {'matchLabels': {'app': 'server'}}}}
+        pod = {'metadata': {'uid': 'pod'}, 'status': {'containerStatuses': [{'name': 'server', 'ready': True, 'restartCount': 7, 'imageID': 'unrelated-current-runtime'}],
+                                                           'conditions': [{'type': 'Ready', 'status': 'True'}]}}
+        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]):
+            observed = harness.check_target(target)
+        self.assertEqual(observed[0]['pods'][0]['containers'][0]['imageID'], 'unrelated-current-runtime')
+        pod['status']['conditions'][0]['status'] = 'False'
+        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]), self.assertRaisesRegex(RuntimeError, 'TargetUnavailable'):
+            harness.check_target(target)
+
+    def test_foreign_job_not_owned(self):
+        controller = object.__new__(conductor.CPO)
+        controller.c = {'evaluation': {'execution': {'runUID': 'run', 'stageUID': 'stage'}}}
+        job = {'metadata': {'labels': {'edge.dacs.io/evaluation-run-uid': 'run'}, 'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'foreign'}]}}
+        self.assertFalse(controller.owned(job))
+        job['metadata']['ownerReferences'][0]['uid'] = 'stage'
+        self.assertTrue(controller.owned(job))
+
+    def test_step_result_failure_is_not_measurement_failure(self):
+        execution = {'runUID': 'run', 'stageUID': 'stage', 'stageID': 'one'}
+        for verdict, code in (('PASS', 0), ('FAIL', 0), ('INVALID', 2), ('NOT_EVALUATED', 2)):
+            result = evaluation.result_record(execution, 'judge', START, measurement={'verdict': verdict, 'reason': 'Measured'})
+            self.assertEqual(evaluation.exit_code(result), code)
+        self.assertEqual(evaluation.exit_code(evaluation.result_record(execution, 'stage', START, status='Failed')), 1)
 
 
-def offline(binding,stage,environment):
-    original=evaluation.load(environment);campaign=Path(original['paths']['campaign'])
-    tables=evaluation.module('offline_tables',Path(__file__).parent/'tables.py')
-    expected=tables.sections(stage/'judgment.json')
-    with tempfile.TemporaryDirectory(prefix='evaluation-offline-',dir=campaign) as directory:
-        target=Path(directory)/stage.name;shutil.copytree(stage,target)
-        def rebase(value):
-            if isinstance(value,dict): return {key:rebase(child) for key,child in value.items()}
-            if isinstance(value,list): return [rebase(child) for child in value]
-            if isinstance(value,str) and value.startswith(str(stage)+'/'): return str(target)+value[len(str(stage)):]
-            return value
-        index=target/'raw-source-index.json';evaluation.save(index,rebase(evaluation.load(index)))
-        os.environ['CHILL_EXPERIMENT_CONFIG']=str(environment)
-        harness=evaluation.module('offline_harness',Path(__file__).parent/'conductor.py')
-        result=harness.judge(binding,target)
-        selfields=('offered','outcomes','D1','gatewayCompletedLatencyNS','completedLatencyNS','deadlineSuccessFraction','issuanceFidelity')
-        assert result['status']==expected['status'],(result['status'],expected['status'],result.get('notReadyReasons'))
-        for name,metrics in expected['requests'].items():
-            for key in selfields:
-                assert result['requests'][name].get(key)==metrics.get(key),(name,key)
-        for key in ('complete','wholePoolJoules','activePoolJoules','energyCoverage'):
-            assert result['power'].get(key)==expected['power'].get(key),key
-    print('PASS copied historical raw judge: status, offered/outcomes, D1, latency, generator quality and power coverage unchanged')
-
-
-def offline_bundle(directory):
-    bundle=evaluation_inputs.validate(evaluation.load(directory/'bundle.json'))
-    with tempfile.TemporaryDirectory(prefix='evaluation-envelope-') as temporary:
-        work=Path(temporary);inputs=work/'inputs';shutil.copytree(directory/'files',inputs/'files')
-        for path in (inputs/'files').rglob('*.json'): evaluation.save(path,evaluation.expand(evaluation.load(path),inputs))
-        base=evaluation.expand(bundle['config'],inputs);scientific=evaluation.expand(bundle['environment'],inputs)
-        operational=evaluation.load(directory/'config-values.json')['operational']
-        resource={'memory':'1Gi'}
-        scheduler=evaluation.load(base['inputs']['scheduler']);control={key:scheduler['settings'][key] for key in ('controls','minimumDemand','scaleDownHeadroomFraction')}
-        spec={'row':'E5-5m','mode':'autonomous','control':control,'harness':{'sourceSHA':'a'*40},'loadGenerator':{'image':evaluation.load(base['workloads'][0]['jobTemplate'])['spec']['template']['spec']['containers'][0]['image'],'sourceSHA':base['approval']['sources']['loadgen'],'resources':{'requests':resource,'limits':resource},'shards':{name:1 for name in NAMES},'barrier':{'minimumReadySamples':2,'maxStartSkewNanos':1000000000}},'judgment':{'generatorQuality':{'latenessToleranceNanos':50000000,'maxExceedingFraction':.01},'energyCoverage':{'maxGapFraction':.01,'maxSingleGapSeconds':30}}}
-        scenario={'spec':{'arrivalDistribution':dict.fromkeys(NAMES,'poisson'),'parts':[{'id':'one','durationSeconds':60,'rates':dict.fromkeys(NAMES,1)}]},'seeds':evaluation.load(directory/'seeds.json'),'workloads':base['workloads']}
-        execution={'runUID':'offline','namespace':'test'};config={'namespace':'test','operational':operational,'chillAPIURL':'https://offline.invalid','minimumFreeBytes':'1','jobActiveDeadlineSeconds':'7200'}
-        run=work/'campaign/run';root=run/'stages/offline';root.mkdir(parents=True)
-        evaluation.environment(run,config,scientific,base['workloads'])
-        harness=evaluation.module('offline_bundle_harness',Path(__file__).parent/'conductor.py')
-        assembled=evaluation.stage_config(base,spec,scenario,execution,config,root);path=root/'config.json';evaluation.save(path,assembled)
-        gateway=evaluation.load(assembled['inputs']['gateway'])
-        assembled['approval']['sources']['server']=gateway['sourceSHA']
-        assembled['approval']['controlImageDigest']=gateway['controlImageDigest']
-        evaluation.save(path,assembled)
-        with patch.object(harness,'token_preflight',return_value={'authentication':'not exercised; offline transformation only'}):
-            bound=harness.bind(path)
-        assert bound['status']=='BOUND_NOT_MEASURED' and bound['schedule'][0]['id']=='E5-5m'
-        assert bound['schedule'][0]['rates']==dict.fromkeys(NAMES,1)
-    print('PASS recorded bundle materialization and existing conductor.bind scientific gates; authentication deliberately not exercised')
-
-
-if __name__=='__main__':
-    if '--offline-bundle' in sys.argv:
-        offline_bundle(Path(sys.argv[sys.argv.index('--offline-bundle')+1]))
-    elif '--offline-binding' in sys.argv:
-        import argparse
-        parser=argparse.ArgumentParser()
-        for flag in ('offline-binding','offline-stage','environment'): parser.add_argument('--'+flag,type=Path,required=True)
-        args=parser.parse_args();offline(args.offline_binding,args.offline_stage,args.environment)
-    else: unittest.main()
+if __name__ == '__main__':
+    unittest.main()

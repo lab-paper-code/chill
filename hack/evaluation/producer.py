@@ -62,7 +62,8 @@ def replay_shards(records, offsets, duration_ns, binding, kw):
         ready_at = dt.datetime.now(dt.timezone.utc)
         emit({'evaluationEvent':'ready','at':ready_at.isoformat(),'barrierSeconds':binding['barrierSeconds'],
               'payload':binding['payload'],'offered':len(offsets),
-              'arrivalSHA256':binding['arrivalSHA256'],'shards':count})
+              'arrivalSHA256':binding['arrivalSHA256'],'shards':count,
+              'datasetRef':binding['datasetRef'],'sourceSHA':binding['sourceSHA']})
         while not Path('/tmp/evaluation-start').exists():
             if time.monotonic() >= deadline:
                 raise RuntimeError('Finite producer barrier expired; no inference sent')
@@ -96,9 +97,9 @@ def main():
     binding = json.loads(zlib.decompress(base64.b64decode(sys.argv[1],validate=True)))
 
     def frozen(records, **kw):
-        actual = identity(records)
-        if actual != binding['payload']:
-            raise ValueError('Frozen evaluation payload IDs/order/bytes differ; no inference sent')
+        # The immutable Dataset carrier is materialized in-cluster. Actual IDs,
+        # record order and field bytes are evidence, never a host-built manifest.
+        binding['payload'] = identity(records)
         offsets = []
         base = 0
         for segment in binding['segments']:
