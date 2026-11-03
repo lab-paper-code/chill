@@ -197,7 +197,8 @@ test("catalog lists prioritize fields, models and numeric counts while retaining
 
 test("routing table edits preserve route, block and release semantics and reject invalid weights",()=>{
   const pageRunner=hooks(),initial={service:{instance:2},release:{old:1}}
-  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:pageRunner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?{controls:{},staticRouting:initial}:path==="v1/scheduler/state"?{results:[]}:undefined})}})
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:pageRunner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:null},data:unknown)=>void})=>{const data=path==="v1/scheduler/settings"?{controls:{},staticRouting:initial}:path==="v1/scheduler/state"?{results:[]}:undefined;if(path==="v1/scheduler/settings")options?.onResponse?.({etag:null},data);return {data}}}})
+  pageRunner.render(SchedulerSettingsPage)
   const editor=elements(pageRunner.render(SchedulerSettingsPage)).find(node=>typeof node.props.apply==="function"&&"initial" in node.props)!
   const runner=pageRunner,applied:unknown[]=[]
   const props={...editor.props,snapshot:{workloads:[{uid:"service",name:"Service A"},{uid:"release",name:"Service B"},{uid:"new",name:"Service C"}],instances:[{id:"instance",workloadUID:"service",node:{name:"Device"}},{id:"new-instance",workloadUID:"new",node:{name:"Other device"}}]},apply:(...args:unknown[])=>applied.push(args)}
@@ -607,4 +608,50 @@ test("unknown-outcome recovery adopts the fetched settings and ETag together for
   assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="설정 적용하기"))
   assert.ok(!tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
   assert.equal(sent.length,1,"recovery never retries the unknown PUT")
+})
+
+test("successful PUT followed by failed GET retains all last-read projections and the routing declaration",async()=>{
+  const runner=hooks(),settings={controls:{},excludedNodes:[],staticRouting:{service:{instance:2}},powerObservation:{series:"power_watts"},meters:[{id:"meter"}],requestTimeout:1000000000},sent:{body:string}[]=[]
+  let loaded=false,failed=false
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{failed=true}})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:{body:string})=>{sent.push(input);return {body:'{"appliedAt":"2026-11-03T00:00:00Z","after":{"controls":{},"excludedNodes":["meter"]}}',etag:'"8"'}}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+    if(path==="v1/scheduler/settings"){if(!loaded){loaded=true;options?.onResponse?.({etag:'"7"'},settings)}return {data:settings,error:failed?{status:500}:undefined,refetch:async()=>{if(failed)return {data:settings,error:{status:500}};options?.onResponse?.({etag:'"7"'},settings);return {data:settings}}}}
+    return {refetch:async()=>({})}
+  }}})
+  runner.render(SchedulerSettingsPage)
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  const editor=tree.find(node=>typeof node.props.apply==="function")!
+  assert.deepEqual(editor.props.initial,settings.staticRouting)
+  assert.equal(editor.props.disabled,false)
+  assert.equal(tree.find(node=>node.props.editKey==="minimumDemand")!.props.version,'"8"')
+  const exported=tree.find(node=>node.props.filename==="chill-scheduler-settings.json")!.props.value as Record<string,unknown>
+  for(const key of ["staticRouting","powerObservation","meters","requestTimeout"] as const)assert.deepEqual(exported[key],settings[key])
+  assert.deepEqual(Object.keys(JSON.parse(sent[0].body)).sort(),["controls","excludedNodes"])
+  const Component=editor.type as (props:Record<string,unknown>)=>unknown
+  let form=elements(runner.render(Component,editor.props))
+  ;(form.find(node=>node.type==="row-dialog")!.props.onOpenChange as (open:boolean)=>void)(true)
+  form=elements(runner.render(Component,editor.props))
+  assert.equal(form.filter(node=>node.type==="button"&&node.props.children==="기본 분배로").length,1)
+})
+
+test("routing declaration not yet read is distinct from a successful GET with no override",()=>{
+  for(const known of [false,true]){
+    const runner=hooks(),settings={controls:{}}
+    let loaded=false
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+      if(path==="v1/scheduler/settings"){if(known&&!loaded){loaded=true;options?.onResponse?.({etag:'"7"'},settings)}return {data:settings}}
+      return {}
+    }}})
+    runner.render(SchedulerSettingsPage)
+    const tree=elements(runner.render(SchedulerSettingsPage))
+    assert.equal(tree.some(node=>typeof node.props.apply==="function"),known)
+    if(!known){assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="요청 분배 바꾸기"&&node.props.disabled===true));assert.ok(tree.some(node=>node.props.role==="status"&&node.props.children==="조회 필요"))}
+  }
 })

@@ -79,7 +79,7 @@ function FieldHelp({help}:{help:string}) {
 }
 
 type ServiceChoice={uid:string;name:string}
-type SettingsSnapshot={settings:SchedulerSettings;etag:string|null}
+type SettingsSnapshot={settings:SchedulerSettings;etag:string|null;declarationsKnown?:boolean}
 function ServiceSettingsEdit({editKey,label,help,initial,version=null,services,loadError,disabled,changed,save}:{editKey:"autonomousWorkloads"|"minimumDemand";label:string;help:string;initial:SchedulerSettings;version?:string|null;services:ServiceChoice[];loadError?:string;disabled:boolean;changed:boolean;save:(value:string[]|Record<string,number>,source:SchedulerSettings,version:string|null)=>void}) {
   const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
   const [draft,setDraft]=React.useState<{settings:SchedulerSettings;version:string|null;selected:string[];demand:Record<string,string>}|null>(null),[error,setError]=React.useState("")
@@ -205,9 +205,9 @@ export function SchedulerSettingsPage() {
   const section=params.get("section"),category:Field["group"]|"controls"|"targets"=section==="cycle"||section==="limit"||section==="controls"||section==="capacity"||section==="advanced"?section:"targets"
   const [read,setRead]=React.useState<SettingsSnapshot|null>(null),readRef=React.useRef<SettingsSnapshot|null>(null)
   const settings=useChillQuery<SchedulerSettings>("v1/scheduler/settings",{decoder:parseSchedulerJSON,poll:true,onResponse:(response,data)=>{
-    const next={settings:data,etag:response.etag??null};readRef.current=next;setRead(next)
+    const next={settings:data,etag:response.etag??null,declarationsKnown:true};readRef.current=next;setRead(next)
   }})
-  const snapshot=read??(settings.data?{settings:settings.data,etag:null}:null)
+  const snapshot:SettingsSnapshot|null=read??(settings.data?{settings:settings.data,etag:null}:null)
   const currentSettings=settings.data===undefined?undefined:snapshot?.settings
   const versioned=snapshot?.etag!=null
   const state=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON})
@@ -269,7 +269,7 @@ export function SchedulerSettingsPage() {
     try {
       const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected,version)
       if(readRef.current===previousRead){
-        const appliedSnapshot={settings:applied.change.after??selected,etag:applied.etag}
+        const appliedSnapshot={settings:{...(previousRead?.settings??selected),...(applied.change.after??selected)},etag:applied.etag,declarationsKnown:previousRead?.declarationsKnown??false}
         readRef.current=appliedSnapshot;setRead(appliedSnapshot)
       }
       setResult(applied.change)
@@ -399,7 +399,7 @@ export function SchedulerSettingsPage() {
         {state.error?<Row href="/records?filter=action" label="설정한 요청 분배" value={<span role="status" className="break-words">조회 실패 · HTTP {state.error.status} · {routingFailureCode} · {routingFailureReason}</span>}/>:routing
           ?<Row href={`/records?${new URLSearchParams({filter:"action",id:routing.operation.id,view:"current",stage:"result",node:routing.operation.node.uid,startedAt:routing.startedAt})}`} label="설정한 요청 분배"/>
           :<Row href="/records?filter=action" label="설정한 요청 분배" value={state.data?"기록 없음":state.error?"조회 실패":"조회 중"}/>}
-        <RoutingEdit initial={currentSettings?.staticRouting} snapshot={state.data?.snapshot} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>
+        {snapshot?.declarationsKnown?<RoutingEdit initial={currentSettings?.staticRouting} snapshot={state.data?.snapshot} disabled={blocked||count>0} apply={(before,after,reason)=>void applyRouting(before,after,reason)}/>:<li className="flex min-h-11 items-center justify-between gap-3"><Button variant="outline" disabled>요청 분배 바꾸기</Button><span role="status">조회 필요</span></li>}
         <Row href="/" label="운영 현황"/>
         {currentSettings&&<RowDialog label="원본 자료 보기" title="현재 운영 설정 원본"><pre className="source-json">{stringifySchedulerJSON(safeSource(currentSettings),2)}</pre><SourceExport value={currentSettings} filename="chill-scheduler-settings.json"/></RowDialog>}
       </Rows></details>
