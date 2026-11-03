@@ -51,6 +51,8 @@ reasons·coverage는 원래 bucket과 같다. 시각은 `max(from, truncateUTC(f
 `min(to, truncateUTC(from,bucket)+(i+1)*bucket)`까지 정수 나노초로 복원한다.
 columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `형식 불일치` 오류를 표시한다.
 없는 windows를 빈 배열로 바꿔 빈 차트 성공으로 처리하지 않는다.
+라이브 추세도 decodeResponse를 거친 `ApiError.body`의 보존된 파싱 원인으로 이를 표시한다.
+공통 ApiError.message의 응답 미수신 문구로 형식 오류를 판별하지 않으며 원인은 tooltip에 보존한다.
 
 - 시간 구간 요청은 `from < to`, 최대 1시간, bucket 폭 1초~1시간, 최대 900구간이다.
   경계는 UTC duration 배수에 맞추고 첫·끝 구간은 요청 범위로 자른다. 따라서

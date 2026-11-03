@@ -12,6 +12,7 @@ import * as displayHelpers from "./live-display.ts"
 import { initialLiveState } from "./live.ts"
 import * as resourcesData from "../features/resources-data.ts"
 import type { OperatingPowerSeries } from "./read-types.ts"
+import type * as ClientModule from "./client.tsx"
 
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){
@@ -135,9 +136,18 @@ test("device power presents one observation range and no explanatory paragraph",
   assert.doesNotMatch(html,/<p>최근 15분/)
 })
 
-test("live power visibly identifies a column format mismatch instead of silent empty history",()=>{
+test("live power visibly identifies an old bucket response after the real decoder error boundary",()=>{
+  const client=load("./client.tsx",{"lucide-react":{}}) as unknown as Pick<typeof ClientModule,"decodeResponse"|"ApiError">
+  const from="2026-11-03T03:00:00Z",to="2026-11-03T03:00:05Z"
+  const body=JSON.stringify({from,to,bucketNanos:5_000_000_000,buckets:[{from,to,scope:"whole-pool-wall",nodes:[],wholePoolJoules:null,wholePoolMeanWatts:null,activePoolJoules:null,activePoolMeanWatts:null,complete:false,readFailures:0,maximumSampleGapSeconds:0,reasons:["no observed samples in bucket"],coverage:{from:null,to:null,sources:[],gaps:[]}}]})
+  let error:InstanceType<typeof client.ApiError>|undefined
+  try{client.decodeResponse(body,powerSeries.parsePowerSeriesJSON)}catch(caught){assert.ok(caught instanceof client.ApiError);error=caught}
+  assert.ok(error)
+  assert.equal(error.status,0)
+  assert.doesNotMatch(error.message,/형식 불일치/)
+  assert.match(error.body,/형식 불일치/)
   const chart=load("../features/power-series.tsx",{
-    "@/lib/client":{useChillQuery:()=>({error:new Error("전력 형식 불일치"),refetch:()=>{}})},
+    "@/lib/client":{useChillQuery:()=>({error,refetch:()=>{}})},
     "@/lib/power-series":powerSeries,"@/lib/live-display":{displayTime},
   })
   const html=renderToStaticMarkup(createElement(chart.LivePowerTrend,{state:initialLiveState()}))
