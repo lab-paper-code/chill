@@ -1,5 +1,5 @@
 import type { BackendProgress } from "@/lib/read-types"
-import { formatResult } from "@/lib/experiments"
+import { formatResult } from "@/lib/experiment-comparison"
 
 // Plain Korean duration: 0초, 1밀리초 미만, 350밀리초, 9.4초, 1분 30초, 2시간 15분.
 export function duration(ms: number): string {

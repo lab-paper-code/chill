@@ -46,9 +46,11 @@ function harness(query="", responses: Record<string, unknown>={}) {
   }
   const hub = load("../features/service-hub.tsx", modules)
   modules["@/features/service-hub"] = hub
-  const management=load("../features/management.tsx", modules)
-  modules["@/features/management"]=management
-  return { hub, management, inference:load("../features/inference.tsx",modules), paths, replacements, writes }
+  modules["@/hooks/use-catalog-resource"]=load("../hooks/use-catalog-resource.ts",modules)
+  modules["@/features/catalog-editor"]=load("../features/catalog-editor.tsx",modules)
+  const services=load("../features/services.tsx", modules)
+  modules["@/features/services"]=services
+  return { hub, services, inference:load("../features/inference.tsx",modules), paths, replacements, writes }
 }
 
 test("idle admission remains permission, not actual traffic, in service list and detail", () => {
@@ -57,11 +59,11 @@ test("idle admission remains permission, not actual traffic, in service list and
   assert.equal(admission.props.axis, "접수 허용")
   assert.equal(admission.props.label, "허용")
   assert.equal(h.hub.ServiceAdmission({ view: { ...idle, admission: false } }).props.label, "차단")
-  const list=h.management.ServicesPage({})
+  const list=h.services.ServicesPage({})
   const table=elements(list).find(element=>element.type==="data-table")!
   const columns=table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]
   const listAdmission=columns.find(column=>column.key==="admission")!.value(idle)
-  const detail=elements(h.management.ServicePage({name:"idle"})).find(element=>element.type==="facts")!
+  const detail=elements(h.services.ServicePage({name:"idle"})).find(element=>element.type==="facts")!
   const detailAdmission=(detail.props.items as [string,Element][]).find(([label])=>label==="접수 허용")![1]
   for(const cell of [listAdmission,detailAdmission]){
     assert.equal(cell.type,h.hub.ServiceAdmission)
@@ -72,7 +74,7 @@ test("idle admission remains permission, not actual traffic, in service list and
 })
 
 test("integrated detail retains three regions and UID-specific current observation", () => {
-  const h = harness(), tree = h.management.ServicePage({ name: "idle" })
+  const h = harness(), tree = h.services.ServicePage({ name: "idle" })
   assert.equal(tree.props.title, "idle")
   assert.equal(tree.props.lede, undefined)
   assert.equal(elements(tree).filter(element => element.props.id === "application").length, 1)
@@ -84,16 +86,16 @@ test("integrated detail retains three regions and UID-specific current observati
 
 test("service detail links and back retain the URL-backed list investigation",()=>{
   const query="filter=allowed&search=idle&page=2&limit=10&sort=service&order=desc"
-  const h=harness(query),list=h.management.ServicesPage({})
+  const h=harness(query),list=h.services.ServicesPage({})
   const table=elements(list).find(element=>element.type==="data-table")!
   const column=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(column=>column.key==="service")!
   const link=column.value(idle),url=new URL(link.props.href as string,"https://dashboard.invalid")
   assert.equal(url.searchParams.get("returnTo"),`/workloads?${query}`)
-  const detail=harness(url.searchParams.toString()).management.ServicePage({name:"idle"})
+  const detail=harness(url.searchParams.toString()).services.ServicePage({name:"idle"})
   assert.deepEqual(detail.props.back,[`/workloads?${query}`,"서비스"])
   assert.equal(elements(detail).filter(element=>element.type==="data-table").length,0)
   for(const unsafe of ["//outside.invalid","https://outside.invalid","/workloads/../settings","/\\outside.invalid","/workloads%0a"]){
-    assert.deepEqual(harness(new URLSearchParams({returnTo:unsafe}).toString()).management.ServicePage({name:"idle"}).props.back,["/workloads","서비스"])
+    assert.deepEqual(harness(new URLSearchParams({returnTo:unsafe}).toString()).services.ServicePage({name:"idle"}).props.back,["/workloads","서비스"])
   }
 })
 
@@ -159,7 +161,7 @@ test("service readiness preserves distinct reasons without repeating the same pr
   }
   const tree=h.hub.ServiceReadiness({view:{...idle,readiness:"Preparing",reason:"MissingEvidence"}})
   assert.ok(elements(tree).some(node=>node.props.children===labels.statusLabel("MissingEvidence")))
-  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const table=elements(h.services.ServicesPage({})).find(node=>node.type==="data-table")!
   const ready=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(column=>column.key==="ready")!
   assert.equal(ready.value(idle).type,h.hub.ServiceReadiness)
 })
@@ -167,7 +169,7 @@ test("service readiness preserves distinct reasons without repeating the same pr
 test("disabled unplaced preparation uses the same status in the service list and detail",()=>{
   const h=harness("",{"v1/scheduler/settings":{data:{autonomousWorkloads:[]}},"v1/pools":{data:{workloads:[{workload:{uid:"service-uid"},instances:[]}],issues:[]}}})
   const view={...idle,readiness:"Preparing",reason:"Preparing"}
-  const table=elements(h.management.ServicesPage({})).find(element=>element.type==="data-table")!
+  const table=elements(h.services.ServicesPage({})).find(element=>element.type==="data-table")!
   const column=(table.props.columns as {key:string;value:(view:WorkloadView)=>Element}[]).find(row=>row.key==="ready")!
   const listCell=column.value(view)
   assert.equal(h.hub.ServiceReadiness(listCell.props).props.label,"미배치 · CHILL 자동 운영 꺼짐")
@@ -190,7 +192,7 @@ test("management readiness never substitutes stale live control or placement for
 
 test("service empty reset clears search, state and page while preserving sort and page size",()=>{
   const h=harness("filter=blocked&search=missing&page=4&limit=10&sort=service&order=desc")
-  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const table=elements(h.services.ServicesPage({})).find(node=>node.type==="data-table")!
   const button=table.props.emptyAction as Element
   ;(button.props.onClick as ()=>void)()
   const params=new URL(h.replacements[0],"https://dashboard.invalid").searchParams
@@ -207,7 +209,7 @@ test("autonomy distinguishes failed query, pending query, absent decision and di
     [{data:{state:{decision:{}}}},{autonomousWorkloads:[]},"CHILL 자동 운영 꺼짐"],
   ] as const){
     const h=harness("",{"v1/scheduler":response,"v1/scheduler/settings":{data:settings}})
-    const facts=elements(h.management.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
+    const facts=elements(h.services.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
     const rows=(facts.props.items as [string,Element][]).find(([key])=>key==="CHILL 자동 운영")![1]
     const autonomy=elements(rows).find(node=>typeof node.type==="function")!
     const tree=(autonomy.type as Component)(autonomy.props)
@@ -219,11 +221,11 @@ test("autonomy distinguishes failed query, pending query, absent decision and di
 test("service autonomy navigates to central settings without a switch or write",()=>{
   const uid="service /?&한글",view={...idle,desired:{...idle.desired,metadata:{...idle.desired.metadata,uid}}}
   const h=harness("",{"v1/workloads?view=summary":{data:[view]},"v1/workloads/idle":{data:view},"v1/scheduler/settings":{data:{autonomousWorkloads:[uid]}}})
-  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const table=elements(h.services.ServicesPage({})).find(node=>node.type==="data-table")!
   const columns=table.props.columns as {key:string;label:string;value:(view:WorkloadView)=>Element}[]
   const column=columns.find(row=>row.key==="autonomy")!
   assert.equal(column.label,"CHILL 자동 운영")
-  const detail=elements(h.management.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
+  const detail=elements(h.services.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
   const rows=(detail.props.items as [string,Element][]).find(([key])=>key==="CHILL 자동 운영")![1]
   const autonomy=elements(rows).find(node=>typeof node.type==="function")!
   const tree=(autonomy.type as Component)(autonomy.props)
@@ -243,17 +245,17 @@ test("operation column appears only for ongoing changes and absent operations ar
   for(const operation of [undefined,{kind:"Update",phase:"Completed"},{kind:"Update",phase:"Failed"}]){
     const view={...idle,operation} as WorkloadView
     const h=harness("",{"v1/workloads?view=summary":{data:[view]}})
-    const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+    const table=elements(h.services.ServicesPage({})).find(node=>node.type==="data-table")!
     assert.equal((table.props.columns as {key:string}[]).some(column=>column.key==="operation"),false)
   }
   const changing={...idle,operation:{kind:"Update",phase:"Pending"}} as WorkloadView
   const h=harness("",{"v1/workloads?view=summary":{data:[idle,changing]}})
-  const table=elements(h.management.ServicesPage({})).find(node=>node.type==="data-table")!
+  const table=elements(h.services.ServicesPage({})).find(node=>node.type==="data-table")!
   const operation=(table.props.columns as {key:string;label:string;value:(view:WorkloadView)=>Element|string}[]).find(column=>column.key==="operation")!
   assert.equal(operation.label,"변경 작업 진행")
   assert.equal((operation.value(idle) as Element).props.className,"text-muted-foreground")
   assert.equal(typeof operation.value(changing),"string")
-  const detail=elements(h.management.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
+  const detail=elements(h.services.ServicePage({name:"idle"})).find(node=>node.type==="facts")!
   const absent=(detail.props.items as [string,Element][]).find(([key])=>key==="변경 작업 진행")![1]
   assert.equal(absent.props.className,"text-muted-foreground")
 })

@@ -85,3 +85,18 @@ export function dashboardDestination(pathname:string,search:URLSearchParams):str
   for(const [key,value] of new URLSearchParams(defaults))next.set(key,value)
   return `${path}${next.size?`?${next}`:""}`
 }
+export function experimentSelection(search:string,values:Record<string,string>):URLSearchParams {
+  const next=new URLSearchParams(search)
+  for(const [key,value] of Object.entries(values)) {
+    if(value)next.set(key,value);else next.delete(key)
+    if((key==="a"||key==="b")&&!Object.hasOwn(values,`${key}s`))next.delete(`${key}s`)
+    if(key==="a"&&!Object.hasOwn(values,"al"))next.delete("al")
+  }
+  for(const field of ["at","decision","record","evidence","evidenceCursor"])next.delete(field)
+  return next
+}
+export function commitExperimentSelection(location:Pick<Location,"search">,history:Pick<History,"replaceState">&Partial<Pick<History,"pushState">>,values:Record<string,string>,mode:"replace"|"push"="replace") {
+  const url=`/experiments/results?${experimentSelection(location.search,values)}`
+  if(mode==="push"&&history.pushState)history.pushState(null,"",url)
+  else history.replaceState(null,"",url)
+}

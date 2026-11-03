@@ -1,3 +1,5 @@
+import * as comparisonHelpers from "./experiment-comparison.ts"
+import * as routeHelpers from "./dashboard-routes.ts"
 import assert from "node:assert/strict"
 import test from "node:test"
 import { readFileSync } from "node:fs"
@@ -42,7 +44,7 @@ function harness(publication:Experiment=run) {
     "react/jsx-runtime":{...runtime,jsx:track("jsx"),jsxs:track("jsxs")},
     "@tanstack/react-query":{useQuery:()=>facts},
     "@/lib/client":{ApiError,useChillQueries:(paths:string[])=>{historicalPaths.push(paths);return queries.slice(0,paths.length)},useSession:()=>({config:{namespace:"test",maxPageSize:25}}),useChillQuery:(path:string)=>{paths.push(path);return {data:path.startsWith("v1/experiments?")?{items:[publication],page:{offset:5,limit:5,total:11,nextOffset:10}}:publication,error:null,isFetching:false,refetch:()=>{}}}},
-    "@/lib/experiments":helpers,"@/lib/measurements":measurements,"@/lib/scheduler":{parseSchedulerJSON},
+    "@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":helpers,"@/lib/measurements":measurements,"@/lib/scheduler":{parseSchedulerJSON},
     "next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"next/navigation":{useSearchParams:()=>params},
     "recharts":{...Object.fromEntries(["CartesianGrid","ComposedChart","ResponsiveContainer","Tooltip","XAxis","YAxis"].map(name=>[name,container])),Bar:(props:typeof charts[number])=>{charts.push(props);return null},Line:(props:typeof charts[number])=>{charts.push(props);return null}},
     "@/components/screen":{Screen:({children,action,back}:{children?:ReactNode;action?:ReactNode;back?:[string,string]})=>createElement("main",null,back&&createElement("a",{href:back[0]},back[1]),action,children),Empty:container},"@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
@@ -118,7 +120,7 @@ test("deep-linked Sheet sends the selected candidate or baseline period and exac
   const baseline:Experiment={...fixture,id:"baseline",stages:[{...fixture.stages[0],id:"baseline-stage",from:"2026-10-01T00:00:00Z",to:"2026-10-01T00:01:00Z"}]}
   const app=harness()
   app.setQueries([{error:null,data:baseline,isPending:false}])
-  const selection=new URLSearchParams({...helpers.experimentIntervalSelection(run,helpers.experimentHeatmap(run,[run,baseline]).find(row=>row.other)!),service:"camera",offset:"5"})
+  const selection=new URLSearchParams({...comparisonHelpers.experimentIntervalSelection(run,comparisonHelpers.experimentHeatmap(run,[run,baseline]).find(row=>row.other)!),service:"camera",offset:"5"})
   app.setSearch(selection.toString());app.render()
   assert.equal(app.events[0].from,run.stages[0].from)
   assert.equal(app.events[0].to,run.stages[0].to)
@@ -144,7 +146,7 @@ test("all measured chart lanes select the publication and stage identity rather 
   Object.defineProperty(globalThis,"document",{configurable:true,value:{activeElement:null,body:null}})
   Object.defineProperty(globalThis,"HTMLElement",{configurable:true,value:class {}})
   try {
-    const row=helpers.experimentHeatmap(publication).at(-1)!
+    const row=comparisonHelpers.experimentHeatmap(publication).at(-1)!
     for(const key of ["observedRate","leftP95","leftEnergy"]) {
       const chart=app.charts.find(chart=>chart.dataKey===key)
       assert.ok(chart?.onClick,key)
@@ -156,9 +158,9 @@ test("all measured chart lanes select the publication and stage identity rather 
     }
     assert.equal(calls.length,3)
     app.buttons.find(button=>button.text.includes("구간 자세히"))!.click()
-    assert.equal(location.searchParams.get("as"),helpers.experimentHeatmap(publication)[0].stage.id)
+    assert.equal(location.searchParams.get("as"),comparisonHelpers.experimentHeatmap(publication)[0].stage.id)
     app.buttons.find(button=>button.text.includes("camera 성공 응답 p95"))!.click()
-    assert.equal(location.searchParams.get("as"),helpers.experimentHeatmap(publication)[0].stage.id)
+    assert.equal(location.searchParams.get("as"),comparisonHelpers.experimentHeatmap(publication)[0].stage.id)
     assert.equal(location.searchParams.get("service"),"camera")
     const interval=app.buttons.find(button=>button.text.includes("measured")&&!button.text.includes("no-p95"))
     assert.ok(interval)
@@ -185,7 +187,7 @@ function withSelectionBrowser(app:{setSearch:(search:string)=>void},search:strin
 test("IA review: closed comparison changes persist identity and reload without opening a Sheet",()=>{
   const stages=["first","base-first","later","base-later"].map((id,index)=>({...fixture.stages[0],id,kpis:{wholePoolJoules:100+index}}))
   const publication:Experiment={...fixture,id:"candidate",stages,comparisons:[{left:{stageID:"first"},right:{stageID:"base-first"},reason:"first pair"},{left:{stageID:"later"},right:{stageID:"base-later"},reason:"later pair"}]}
-  const app=harness(publication),row=helpers.experimentHeatmap(publication).find(row=>row.stage.id==="later")!
+  const app=harness(publication),row=comparisonHelpers.experimentHeatmap(publication).find(row=>row.stage.id==="later")!
   withSelectionBrowser(app,"a=candidate&offset=5&service=camera",location=>{
     app.render()
     app.selects[0].onChange({target:{value:row.key}})
@@ -205,7 +207,7 @@ test("IA review: opening then closing a nondefault interval preserves its values
     const app=harness(publication)
     withSelectionBrowser(app,`a=candidate&service=camera&offset=5${direct?"&al=candidate&as=later":""}`,location=>{
       app.render()
-      if(!direct)app.charts.find(chart=>chart.dataKey==="leftEnergy")!.onClick!({payload:{key:helpers.experimentHeatmap(publication).find(row=>row.stage.id==="later")!.key}})
+      if(!direct)app.charts.find(chart=>chart.dataKey==="leftEnergy")!.onClick!({payload:{key:comparisonHelpers.experimentHeatmap(publication).find(row=>row.stage.id==="later")!.key}})
       assert.match(app.render(),/later · 단계 집계/)
       assert.equal(app.sheets.at(-1)?.open,true)
       app.sheets.at(-1)!.onOpenChange(false)

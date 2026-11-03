@@ -136,3 +136,56 @@ test("experiment return paths retain selection and reject external or non-experi
   assert.equal(schedulerPageParams(params,"100").get("returnTo"),destination)
   assert.equal(schedulerComparisonParams(params).get("returnTo"),destination)
 })
+
+import { readFileSync } from "node:fs"
+import { decisionRange, decisionIdentity, evidenceError, stageHistoryLink, stageActivity, stageEvidencePath } from "./scheduler-history.ts"
+import { experimentPath, type Experiment } from "./experiments.ts"
+const recorded=JSON.parse(readFileSync(new URL("./fixtures/experiment-213.json",import.meta.url),"utf8")) as {publication:Experiment;decision:SchedulerObservation}
+const stage=recorded.publication.stages[0]
+
+test("S1-4: archive judgment lookup pins nanosecond decision.at plus identity, never latest; absence differs from deadline",()=>{
+  const at=recorded.decision.decision!.at,range=decisionRange(at)!
+  assert.deepEqual(range,{from:"2026-10-28T01:34:28.365665918Z",to:"2026-10-28T01:34:28.365665919Z"})
+  assert.deepEqual(decisionRange("2026-10-28T10:34:28.365665918+09:00"),range)
+  assert.equal(decisionRange("2026-10-28T01:34:28.999999999Z")!.to,"2026-10-28T01:34:29.000000000Z")
+  assert.equal(decisionRange("2026-02-30T01:00:00Z"),null)
+  assert.equal(decisionRange("latest"),null)
+  const identity=decisionIdentity(recorded.decision)
+  const newer={...recorded.decision,decision:{...recorded.decision.decision!,at:"2026-10-28T01:34:29Z"}}
+  const sameTime={...recorded.decision,decision:{...recorded.decision.decision!,status:"Keep"}}
+  assert.notEqual(identity,decisionIdentity(newer));assert.notEqual(identity,decisionIdentity(sameTime))
+  assert.equal(evidenceError({status:504,data:{code:"DashboardRelayTimeout"}}),"조회 시간 초과")
+  assert.equal(evidenceError({status:408,data:{code:"RequestTimeout"}}),"조회 시간 초과")
+  assert.equal(evidenceError({status:403,data:{code:"Forbidden"}}),"근거 조회 실패")
+  const config=serverConfig({CHILL_BASE_URL:"https://fixture.invalid",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"fixture"})
+  const plan=relayPlan("GET",["v1","observations","scheduler"],`?${new URLSearchParams({...range,limit:"20"})}`,config)
+  assert.match(plan.path,/365665918Z/);assert.match(plan.path,/365665919Z/)
+})
+
+test("R7: stage record links retain the exact range and activity counts never claim a partial page is complete",()=>{
+  const params=new URL(stageHistoryLink(stage),"https://dashboard.invalid").searchParams
+  assert.equal(new URL(stageHistoryLink(stage),"https://dashboard.invalid").pathname,"/records")
+  assert.equal(params.get("from"),stage.from)
+  assert.equal(params.get("to"),stage.to)
+  assert.equal(params.get("limit"),"100")
+  assert.equal(params.get("filter"),"decision-action")
+  assert.deepEqual(["decision","action","power","snapshot","settings"].filter(kind=>schedulerHistoryKindMatches(params.get("filter")!,kind)),["decision","action"])
+  const page={from:stage.from,to:stage.to,events:[recorded.decision,{at:stage.from,action:{id:"a",kind:"prepare",node:{name:"node",uid:"node-uid"},phase:"Started",startedAt:stage.from}}],nextCursor:"100"}
+  assert.deepEqual(stageActivity(page),{decisions:1,actions:1,partial:true,statuses:[recorded.decision.decision!.status],kinds:["prepare"]})
+  assert.equal(stageActivity({...page,nextCursor:undefined,gapUntil:stage.to}).partial,true)
+  assert.deepEqual(stageActivity({from:stage.from,to:stage.to,events:null}),{decisions:0,actions:0,partial:false,statuses:[],kinds:[]})
+})
+
+test("R9: selected published results use the experiment endpoint without stage filters; evidence uses only supported range filters",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://fixture.invalid",CHILL_NAMESPACE:"ops",CHILL_SYSTEM_NAME:"fixture"})
+  assert.equal(experimentPath("control-222-223-first-20261030"),"v1/experiments/control-222-223-first-20261030")
+  const result=relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"",config)
+  assert.equal(result.kind,"query")
+  const evidence=new URL(stageEvidencePath(stage),"https://fixture.invalid/")
+  assert.deepEqual([...evidence.searchParams.keys()],["from","to","limit"])
+  assert.equal(evidence.searchParams.get("from"),stage.from)
+  assert.equal(evidence.searchParams.get("to"),stage.to)
+  assert.equal(relayPlan("GET",evidence.pathname.slice(1).split("/"),evidence.search,config).kind,"query")
+  assert.throws(()=>relayPlan("GET",experimentPath(recorded.publication.id).split("/"),"?stage=ramp-up",config),/DashboardQueryInvalid/)
+})
+
