@@ -1,4 +1,5 @@
 """Offline request judgment, experiment summaries and publication measurements."""
+from bisect import bisect_right
 from collections import Counter
 import json
 import math
@@ -9,38 +10,24 @@ import evidence_io
 HERE = Path(__file__).resolve().parent
 
 
-def join_client_events(rows):
-    """Join sends to results by frozen index; retain conflicting evidence."""
-    sends, results = {}, []
-    for row in rows:
-        if row.get('evaluationEvent') != 'send':
-            results.append(dict(row))
-            continue
-        group = sends.setdefault(row.get('requestIndex'), [])
-        if row not in group:
-            group.append(row)
-    joined = []
-    for row in results:
-        group = sends.get(row.get('requestIndex'), [])
-        if len(group) == 1 and all(row.get(key) == group[0].get(key) for key in ('requestIndex', 'scheduledOffsetNs', 'sentMonotonicNS')):
-            merged = {**group[0], **row}
-            merged.pop('evaluationEvent', None)
-            joined.append(merged)
-            sends.pop(row.get('requestIndex'))
-        else:
-            joined.append(row)
-    return joined + [row for group in sends.values() for row in group]
-
-
-def reduce_requests(config, phase, clients, indexes):
+def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
     """Pure request judgment shared by provisional and drained publication."""
     stage = phase['stage']
     analysis = evidence_io.module('evaluation_analysis', HERE / 'request_analysis.py')
+    raw = evidence_io.module('evaluation_request_time', HERE / 'raw.py') if closed_through is not None else None
     results = {}
     for workload in config['workloads']:
         name = workload['name']
         trace = stage['traces'][name]
-        rows = join_client_events(clients[name])
+        rows = clients[name]
+        if closed_through is not None:
+            count = 0
+            if trace['offsetsNS']:
+                horizon = (raw._time(closed_through) - raw._time(phase['starts'][name]['at'])
+                           - round(workload['socketSeconds'] * 1e9))
+                count = bisect_right(trace['offsetsNS'], horizon)
+            trace = {**trace, 'offsetsNS': trace['offsetsNS'][:count], 'offered': count}
+            rows = [row for row in rows if type(row.get('requestIndex')) is int and 0 <= row['requestIndex'] < count]
         indexed = indexes[workload['uid']]
         returned_ids = [row['requestID'] for row in rows if isinstance(row.get('requestID'), str) and row['requestID']]
         counts = Counter(returned_ids)
@@ -112,7 +99,7 @@ def reduce_requests(config, phase, clients, indexes):
 
 def provisional_requests(config, phase, clients, indexes, as_of, closed_through):
     """Bounded projection of the same request reducer; never publish a verdict."""
-    results = reduce_requests(config, phase, clients, indexes)
+    results = reduce_requests(config, phase, clients, indexes, closed_through=closed_through)
     keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'slo', 'reachable')
     return {'asOf': as_of, 'closedThrough': closed_through, 'provisional': True,
             'workloads': {name: {**{key: row[key] for key in keys},

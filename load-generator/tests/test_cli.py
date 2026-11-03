@@ -73,7 +73,7 @@ class CLITest(unittest.TestCase):
                 self.assertEqual(connection.call_count, 4)
                 self.assertTrue(all(call.kwargs["context"] is context.return_value
                                     for call in connection.call_args_list))
-            self.assertEqual(sum(json.loads(line).get("evaluationEvent") != "send" for line in output.getvalue().splitlines()), 3)
+            self.assertEqual(len(output.getvalue().splitlines()), 3)
 
 
 class LoadRecordsTest(unittest.TestCase):
@@ -137,7 +137,7 @@ class ReplayTest(unittest.TestCase):
                 )
             output.seek(0)
             lines = [json.loads(line) for line in output]
-        rows = [row for row in lines if "requestIndex" in row and row.get("evaluationEvent") != "send"]
+        rows = [row for row in lines if "requestIndex" in row]
         self.assertEqual(len(rows), len(offsets))
         self.assertEqual({row["requestIndex"] for row in rows}, set(range(len(offsets))))
         self.assertEqual(sum(row["status"] == 200 for row in rows), len(offsets))
@@ -167,7 +167,7 @@ class ReplayTest(unittest.TestCase):
                         timeout_seconds=2, request_lifetime_seconds=1),
                     out=output, start_ns=0, clock_ns=lambda: delay,
                 )
-                row = json.loads(output.getvalue().splitlines()[-1])
+                row = json.loads(output.getvalue())
                 self.assertEqual(row["requestIndex"], 0)
                 self.assertEqual(connection.return_value.request.call_args.kwargs["headers"]["X-Chill-Request-Timeout"], "1.000000000s")
                 self.assertTrue(row["issued"])
@@ -199,12 +199,8 @@ class ReplayTest(unittest.TestCase):
         # All three calls must enter infer before any can finish, even workers=1.
         entered = threading.Barrier(3, timeout=2)
         now = [0]
-        test = self
         class ConcurrentClient(FakeClient):
             def infer(self, workload, inputs):
-                sends = [json.loads(line) for line in output.getvalue().splitlines() if json.loads(line).get("evaluationEvent") == "send"]
-                test.assertTrue(sends)
-                test.assertTrue(all(row["issued"] and "finishedMonotonicNS" not in row for row in sends))
                 entered.wait()
                 return super().infer(workload, inputs)
         output = io.StringIO()
@@ -215,7 +211,7 @@ class ReplayTest(unittest.TestCase):
             workers=1, new_client=ConcurrentClient, out=output, open_loop=True,
             clock_ns=lambda: now[0], sleep=sleep,
         )
-        rows = [row for line in output.getvalue().splitlines() for row in [json.loads(line)] if row.get("evaluationEvent") != "send"]
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(3, len(rows))
         self.assertEqual({0, 1, 2}, {row["requestIndex"] for row in rows})
         for row in rows:

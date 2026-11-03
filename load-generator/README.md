@@ -181,11 +181,6 @@ Each request prints one JSON line on stdout:
 {"workload": "vqa-service", "record": "262148000", "scheduledOffsetNs": 200000000, "delayed": false, "status": 200, "requestID": "…", "workloadUID": "…", "sentMonotonicNS": 1000000000, "finishedMonotonicNS": 1812400000, "latencyMs": 812.4}
 ```
 
-Evaluation open-loop replay also flushes `evaluationEvent: "send"` immediately
-before each infer call, with the same frozen `requestIndex`, schedule and send
-timestamps. Result rows retain the format above. Evaluation readers join the
-two events by frozen index; a send without a result is still issued, not final.
-
 `latencyMs` is client-observed time from send to response. `delayed` marks a
 request sent more than 10 ms after its scheduled time; it means the replay fell
 behind the schedule. A transport, TLS or timeout failure replaces `status`,

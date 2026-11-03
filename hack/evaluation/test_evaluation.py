@@ -1001,15 +1001,9 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(publication.verdict(judgment)['verdict'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['substages'][0]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['definitionID'], 'definition')
-            sends = [{key: value for key, value in row.items() if key not in ('requestID', 'finishedMonotonicNS')} for row in rows]
-            for send in sends:
-                send['evaluationEvent'] = 'send'
-            (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in sends + rows))
-            with patch.object(evidence_io, 'module', side_effect=modules):
-                drained = judgment_rules.judge(root / 'binding.json', root)
-            live = judgment_rules.provisional_requests(config, phase, {NAME: sends + rows}, indexed, END, END)
-            self.assertEqual(drained['requests'], judgment['requests'])
-            self.assertEqual(publication.verdict(drained), publication.verdict(judgment))
+            drained = judgment
+            cutoff = '2026-11-03T00:00:31Z'
+            live = judgment_rules.provisional_requests(config, phase, {NAME: rows}, indexed, cutoff, cutoff)
             for key, value in live['workloads'][NAME].items():
                 expected = drained['requests'][NAME][key]
                 if key == 'substages':
@@ -1025,40 +1019,47 @@ class EvaluationTests(unittest.TestCase):
             self.assertIsNone(duplicated['requests'][NAME]['definitionID'])
             self.assertEqual(duplicated['requests'][NAME]['substages'][0]['D1'], 'NOT_EVALUATED')
 
-    def test_provisional_frozen_parts_outstanding_late_zero_and_conflicts(self):
+    def test_provisional_timeout_closed_boundaries_missing_results_and_conflicts(self):
         with tempfile.TemporaryDirectory() as directory:
             _, _, _, _, config = fixture(Path(directory))
         config['workloads'] = [config['workloads'][0]]
         workload = config['workloads'][0]
         workload['slo'] = {'percentile': 100, 'targetLatencyNanos': 10}
+        workload['socketSeconds'] = 1
         stage = {'seconds': 2, 'parts': [{'id': 'first', 'seconds': 1, 'rates': {NAME: 1}},
                                        {'id': 'second', 'seconds': 1, 'rates': {NAME: 1}}],
                  'traces': {NAME: {'offsetsNS': [0, 1000000000], 'offered': 2}}}
-        phase = {'stage': stage, 'starts': {NAME: {'monotonicNS': 100}}}
-        rows = [{'evaluationEvent': 'send', 'requestIndex': i, 'scheduledOffsetNs': offset,
+        phase = {'stage': stage, 'starts': {NAME: {'at': START, 'monotonicNS': 100}}}
+        rows = [{'requestIndex': i, 'scheduledOffsetNs': offset, 'requestID': 'r' + str(i),
                  'sentMonotonicNS': 3000000100, 'issued': True} for i, offset in enumerate([0, 1000000000])]
-        indexed = {workload['uid']: {'errors': [], 'identities': [], 'summary': {}, 'finals': {}}}
-        def reduce(events):
-            return judgment_rules.provisional_requests(config, phase, {NAME: events}, indexed, END, END)
-        live = reduce(rows)
-        self.assertEqual(live['generatorQuality'][NAME]['issued'], 2)
+        indexed = {workload['uid']: {'errors': [], 'identities': [], 'summary': {},
+                    'finals': {'r0': {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1},
+                               'r1': {'outcome': 'error', 'elapsedNanos': 1}}}}
+        def reduce(events, cutoff=END):
+            return judgment_rules.provisional_requests(config, phase, {NAME: events}, indexed, cutoff, cutoff)
+        early = reduce(rows, '2026-11-03T00:00:00.999999999Z')
+        self.assertEqual(early['workloads'][NAME]['offered'], 0)
+        self.assertEqual(early['workloads'][NAME]['unfinishedOrUnsent'], 0)
+        self.assertEqual(early['generatorQuality'][NAME]['issued'], 0)
+        closed = reduce([], '2026-11-03T00:00:01Z')
+        self.assertEqual(closed['workloads'][NAME]['offered'], 1)
+        self.assertEqual(closed['workloads'][NAME]['unfinishedOrUnsent'], 1)
+        self.assertEqual(closed['generatorQuality'][NAME]['unissued'], 1)
+        self.assertTrue(closed['workloads'][NAME]['reachable'])
+        first = reduce(rows, '2026-11-03T00:00:01.999999999Z')
+        self.assertEqual(first['workloads'][NAME]['offered'], 1)
+        self.assertEqual(first['workloads'][NAME]['deadlineSuccess'], 1)
+        self.assertEqual(first['generatorQuality'][NAME]['issued'], 1)
+        self.assertEqual([part['offered'] for part in first['workloads'][NAME]['substages']], [1, 0])
+        live = reduce(rows, '2026-11-03T00:00:02Z')
+        self.assertEqual(live['workloads'][NAME]['offered'], 2)
         self.assertEqual(live['generatorQuality'][NAME]['sendsAfterWindow'], 2)
-        self.assertEqual([part['offered'] for part in live['workloads'][NAME]['substages']], [1, 1])
-        self.assertTrue(live['workloads'][NAME]['reachable'])
-        self.assertEqual(reduce(rows + [rows[0]])['generatorQuality'][NAME]['issued'], 2)
-        results = [{**row, 'requestID': 'r' + str(i)} for i, row in enumerate(rows)]
-        for row in results:
-            row.pop('evaluationEvent')
-        indexed[workload['uid']]['finals'] = {'r0': {'outcome': 'error', 'elapsedNanos': 1},
-                                             'r1': {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1}}
-        live = reduce(rows + results)
-        self.assertEqual(live['workloads'][NAME]['deadlineSuccess'], 1)
         self.assertFalse(live['workloads'][NAME]['reachable'])
-        results[0]['requestID'] = 'r1'
-        self.assertEqual(reduce(rows + results)['workloads'][NAME]['deadlineSuccess'], 0)
-        results[0]['requestID'] = 'r0'
-        indexed[workload['uid']]['summary'] = {'finalConflicts': [{'requestID': 'r1'}]}
-        self.assertEqual(reduce(rows + results)['workloads'][NAME]['deadlineSuccess'], 0)
+        indexed[workload['uid']]['summary'] = {'finalConflicts': [{'requestID': 'r0'}]}
+        self.assertEqual(reduce(rows)['workloads'][NAME]['deadlineSuccess'], 0)
+        indexed[workload['uid']]['summary'] = {}
+        rows[1]['requestID'] = 'r0'
+        self.assertEqual(reduce(rows)['workloads'][NAME]['deadlineSuccess'], 0)
         stage['traces'][NAME] = {'offsetsNS': [], 'offered': 0}
         zero = reduce([])
         self.assertEqual(zero['workloads'][NAME]['offered'], 0)

@@ -179,17 +179,20 @@ controller와 Job의 단계 증거는 `experiments/<UID>/stages/<stageID>/...`�
 실행 중 D1은 `EvaluationStage.status.provisionalD1`의 선택적 최신 스냅샷이다.
 conductor는 기존 `timeboxes.flushSeconds` 간격으로 새 닫힌 분을 확인하고,
 `provisional-inputs/`에 requests만 별도 수집한다. raw.py의 dedup/final index와
-최종 judgment의 순수 request reducer를 공유하며 분모는 미래 도착까지 포함한
-전체 동결 part다. `asOf`는 계산 시각, `closedThrough`는 서버의 닫힌 분 cutoff다.
+최종 judgment의 순수 request reducer를 공유한다. 잠정 분모는 workload의 실제
+producer 시작 시각 + 동결 scheduledOffset + 기존 client timeout(`socketSeconds`)이
+`closedThrough` 이하인 요청만 포함한다. timeout 전 요청은 result가 있어도 제외하고,
+이미 닫힌 요청에 result가 없으면 `unfinishedOrUnsent`로 센다.
+`asOf`는 계산 시각, `closedThrough`는 서버의 닫힌 분 cutoff다.
 분 경계가 바뀌거나 부분 수집이면 이전 성공 스냅샷을 유지하고 오류를 기록한다.
 workloads/substages는 최종 KPI와 같은 이름을 쓰되 drain 전 `D1` 판정은 싣지 않는다.
 `reachable`은 나머지 미확정 요청이 모두 성공할 때 요구 순위에 도달 가능한지다.
-generatorQuality는 최종 `components.loadFidelity`와 같은 키이며 응답 대기 send도 issued다.
+generatorQuality는 닫힌 요청의 result 행만으로 최종과 같은 issuance_fidelity 함수에서 계산한다.
 Stage UID JSON-patch test 후 이 필드만 status patch한다(action SA의 추가 권한은
 `evaluationstages/status: patch`). lifecycle·measurement는 controller 소유 그대로다.
 로컬 latest JSON은 원자 교체하고 최종 raw evidence와 불변 publication은 덮어쓰지 않는다.
-producer의 send는 기존 result 행을 바꾸지 않는 추가 이벤트이며 단일 reader가
-동결 requestIndex로 합친다. ADR 0019에 따라 구 reader/별도 decoder·이력 재게시는 없다.
+producer JSONL은 기존 result 전용 형식 그대로이며 send 이벤트나 infer 앞의 추가
+write/flush는 없다. 최종 판정은 기존 전체 동결 분모·입력 의미를 유지한다.
 
 ### 5.1 하네스 Job 계약
 
