@@ -25,7 +25,7 @@ export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:
 export const actionKinds:Record<string,string>={prepare:"실행 준비",route:"요청 분배 변경",unroute:"요청 분배 해제",release:"자원 예약 해제",reset:"서비스 초기화",stop:"요청 접수 중지",drain:"기존 요청 마무리",remove:"인스턴스 제거",power:"전력모드 변경",resize:"인스턴스 교체","measurement-handback":"측정 장치 반환","manual-static-routing":"설정한 요청 분배 적용"}
 // internal/serving/kube/static_routing.go: a configuration-sourced route has no single node (empty NodeRef).
 export const actionNodeName=(node:{name:string;uid:string})=>node.uid?node.name||"이름 미제공":"전체 노드"
-export const actionStatuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측"}
+export const actionStatuses:Record<string,string>={planned:"계획됨",starting:"시작 기록",running:"실행 중",complete:"완료",failed:"실패",cancel:"취소",partial:"일부 변경 관측",NOT_SUBMITTED:"사전 검사 · 미제출"}
 export const actionTones:Record<string,Tone>={complete:"ok",failed:"fail",partial:"warn",running:"info",starting:"info"}
 const observed=(at?:string)=>!!at&&!at.startsWith("0001-")
 const joules=(value:number)=>value>=1000?`${(value/1000).toLocaleString("ko-KR",{maximumFractionDigits:2})} kJ`:`${value.toLocaleString("ko-KR",{maximumFractionDigits:1})} J`

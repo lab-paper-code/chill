@@ -238,7 +238,7 @@ export function isActionFailure(action:LiveActionEvent):boolean {
   return action.phase==="failed"&&!isMeasurementPrecheck(action)
 }
 export function actionEventResult(action:LiveActionEvent):string {
-  return isMeasurementPrecheck(action)?"검사 완료 · 미제출":action.phase==="started"?"시작":action.phase==="completed"?"완료":"실패"
+  return isMeasurementPrecheck(action)?"사전 검사 · 미제출":action.phase==="started"?"시작":action.phase==="completed"?"완료":"실패"
 }
 export function groupIncidentEvents(events:LiveEvent[]) {
   const rows:{event:LiveEvent;count:number;from:string;members:LiveEvent[]}[]=[],failures=new Map<string,typeof rows[number]>()

@@ -44,6 +44,14 @@
 `bucketNanos`는 Go duration의 정수 나노초 값이다. `bucket`을 생략한 요청은 기존
 기간 요약 `OperatingPowerWindow` 하나를 반환하며 시간축 데이터가 아니다.
 
+`format=columns`를 bucket과 함께 명시하면 무손실
+`{from,to,bucketNanos,format:"columns",windows,nodes}`를 반환한다. windows의 각 열은
+bucket index, nodes의 각 열은 bucket index 안의 원래 node 순서다. 값·null/빈 배열·complete·
+reasons·coverage는 원래 bucket과 같다. 시각은 `max(from, truncateUTC(from,bucket)+i*bucket)`부터
+`min(to, truncateUTC(from,bucket)+(i+1)*bucket)`까지 정수 나노초로 복원한다.
+columns 요청에 구 서버의 buckets 응답이나 다른 형식이 오면 `형식 불일치` 오류를 표시한다.
+없는 windows를 빈 배열로 바꿔 빈 차트 성공으로 처리하지 않는다.
+
 - 시간 구간 요청은 `from < to`, 최대 1시간, bucket 폭 1초~1시간, 최대 900구간이다.
   경계는 UTC duration 배수에 맞추고 첫·끝 구간은 요청 범위로 자른다. 따라서
   정렬되지 않은 15분/1초 요청은 901구간이 되어 거절될 수 있다.
@@ -71,8 +79,28 @@
 기록 화면의 시간축은 bucket API로 조회하며 기간 요약/장치별 요약 표와 독립이다.
 화면의 폭 선택은 1·5·30·60·300·3600초 중 해당 기간에 허용되는 것만 선택할 수 있다.
 1시간 밖의 기간 기록/요약은 유지하되 시간축 요청은 보내지 않고 기간 축소를 안내한다.
+시간축 bucket 요청은 `format=columns`를 사용한다. 1시간·5초 해상도도 유지하며 UTC bucket
+경계에서 최대 15분 요청으로 나눈다. 첫·끝 clipped bucket을 중복하거나 나누지 않고 각 응답을
+합친다. 1시간 폭처럼 15분보다 큰 단일 bucket은 쪼개지 않는다. 일부 chunk의 오류·대기는 전체
+시간축의 오류·대기로 표시하며 성공한 chunk만 전체 자료인 것처럼 표시하지 않는다.
+운영의 최근 15분 seed와 별도 기간 요약의 의미는 바꾸지 않는다.
 relay는 power endpoint에만 숫자형 Go duration(`s`, `m`, `h`; 소수 허용)의 `bucket`을
 허용하고 같은 폭·UTC 정렬 개수·범위 제한을 적용한다. load endpoint에는 허용하지 않는다.
+
+#### 실험 게시물 페이지·적용 SLO 출처
+
+`GET /api/v1/experiments?offset=0&limit=5`는 기존 항목(facts 포함)을 유지한
+`{items,page:{offset,limit,total,nextOffset?}}`다. 서버는 offset 0~1,000,000,
+limit 1~50(기본 25)을 허용하고 둘 중 하나라도 명시하면 page를 제공한다.
+마지막/범위 밖 페이지에는 nextOffset이 없다. 대시보드 결과·복사 목록은 5개씩 조회하며
+실제 nextOffset을 따라가고 선택한 게시·명시적 과거 비교 단건만 조회한다.
+page가 없는 구 서버의 items는 전체 목록으로 취급하고 가짜 nextOffset을 만들지 않는다.
+
+serving-experiment.v1alpha1의 요청 KPI에 기록된 workloadUID·definitionID·
+identitySource `{store,key}`가 모두 있어야 단계 적용 SLO를 연결한다. identitySource는
+게시 sources에 있고 UID와 definitionID가 동결 정의의 모델/전처리기 세대까지 일치해야 한다.
+단계 적용 표의 p95 제한은 유지한다. 과거 null identity는 이름이나 현재 구성으로 보충하지 않는다.
+별도 정의 출처 표는 기록된 분위수·목표 지연을 p90/p99도 포함해 그대로 보여 준다.
 
 #### 운영 사건 범위 조회·재연결 보존 상태
 
@@ -99,6 +127,11 @@ relay는 power endpoint에만 숫자형 Go duration(`s`, `m`, `h`; 소수 허용
 snapshot에 과거 사건·전력 bucket을 재생했다는 뜻도 아니다. 클라이언트는 이 필드가 있는
 프레임을 수용·보존하고 gap을 **보존 공백** 상태어로만 표시한다. sequence 차이를
 손실 건수·미관측 초 수로 환산하거나 전력 공백을 생성하지 않는다.
+측정·실험 mutation의 audit는 durable commit 뒤 같은 projector로 WS action event에도
+발행한다. 생성·삭제는 validated 시작과 종결 사건을 각각 보낸다. phase는
+started/completed/failed를 유지하며, 오류 없는 NOT_SUBMITTED는 completed와
+`status/result.status:"NOT_SUBMITTED"`다. completed만으로 성공을 세지 않고
+`사전 검사 · 미제출` 중립 상태로 표시한다. 실제 error가 있으면 failed를 유지한다.
 
 
 

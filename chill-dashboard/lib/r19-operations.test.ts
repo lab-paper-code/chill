@@ -50,7 +50,7 @@ test("R19 dry-run is a neutral precheck, not a failure, configuration change or 
   const view=harness([precheck])
   let html=view.board()
   assert.match(html,/측정 사전 검사/)
-  assert.match(html,/검사 완료 · 미제출/)
+  assert.match(html,/사전 검사 · 미제출/)
   assert.match(html,/data-label="보관 중 실패 건">0</)
   assert.equal(display.deviceAlerts(null,[precheck]).length,0)
   view.select(new URLSearchParams({open:`event:${JSON.stringify(["action",at,"dry-run",""])}`}))
@@ -113,4 +113,35 @@ test("R19 issue-to-records retains exact selected issue and period, not unrelate
   assert.match(view.records(),/서비스 인스턴스가 아닌 파드/,"reload restores the exact issue from GET")
   view.archive([])
   assert.match(view.records(),/보관 범위 밖 사건/,"unavailable archive events are not fabricated")
+})
+
+test("R19 new contracts: committed measurement WS frames reach neutral, success and failure rows",()=>{
+  const view=harness()
+  const snapshot=live.parseLiveMessage({type:"snapshot",seq:0,at,...view.state.snapshot})
+  assert.ok(snapshot)
+  Object.assign(view.state,live.applyLiveMessage(view.state,snapshot,now))
+  const frames=[
+    {...precheck,seq:1,action:{...precheck.action,status:"validated",phase:"started",result:undefined}},
+    {...precheck,seq:2,action:{...precheck.action,phase:"completed"}},
+  ]
+  for(const frame of frames){
+    const parsed=live.parseLiveMessage(frame)
+    assert.ok(parsed)
+    Object.assign(view.state,live.applyLiveMessage(view.state,parsed,now))
+  }
+  assert.equal(view.state.events.length,2)
+  let html=view.board()
+  assert.match(html,/측정 사전 검사/)
+  assert.match(html,/사전 검사 · 미제출/)
+  assert.match(html,/data-label="보관 중 실패 건">0</)
+  assert.equal(display.deviceAlerts(null,view.state.events).length,0)
+  const error=live.parseLiveMessage({...realFailure,seq:3,action:{...realFailure.action,status:"NOT_SUBMITTED",result:{status:"NOT_SUBMITTED",error:"PreflightRejected"}}})
+  assert.ok(error)
+  Object.assign(view.state,live.applyLiveMessage(view.state,error,now))
+  html=view.board()
+  assert.match(html,/data-label="보관 중 실패 건">1</)
+  const success=live.parseLiveMessage({...precheck,seq:4,action:{...precheck.action,id:"submitted",status:"complete",phase:"completed",result:{status:"complete"}}})
+  assert.ok(success)
+  Object.assign(view.state,live.applyLiveMessage(view.state,success,now))
+  assert.match(view.board(),/data-label="결과">완료<\/td>/)
 })

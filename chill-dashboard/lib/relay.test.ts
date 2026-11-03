@@ -315,3 +315,15 @@ test("compatibility matrix is a selection-free read-only projection",()=>{
   assert.throws(()=>relayPlan("GET",path,"?node=node",config),/DashboardQueryInvalid/)
   assert.throws(()=>relayPlan("POST",path,"",config),/DashboardMethodNotAllowed/)
 })
+
+test("R19 new contracts: relay permits only bounded experiment pages and columnar bucket power",()=>{
+  const config=serverConfig({CHILL_BASE_URL:"https://chill.example",CHILL_NAMESPACE:"research",CHILL_SYSTEM_NAME:"chill"})
+  const experiments=["v1","experiments"],power=["v1","observations","power"]
+  assert.equal(relayPlan("GET",experiments,"?offset=25&limit=25",config).path,"/api/v1/experiments?offset=25&limit=25")
+  assert.equal(relayPlan("GET",experiments,"",config).path,"/api/v1/experiments")
+  for(const query of ["?limit=51","?limit=0","?offset=1000001","?offset=-1","?limit=25&limit=25","?q=name"])assert.throws(()=>relayPlan("GET",experiments,query,config),/DashboardQueryInvalid/)
+  assert.throws(()=>relayPlan("GET",["v1","experiments","selected"],"?offset=0&limit=1",config),/DashboardQueryInvalid/)
+  const range="?from=2026-11-03T03:00:00Z&to=2026-11-03T03:15:00Z"
+  assert.match(relayPlan("GET",power,range+"&bucket=5s&format=columns",config).path,/format=columns/)
+  for(const suffix of ["&format=columns","&bucket=5s&format=rows","&bucket=5s&format=columns&format=columns"])assert.throws(()=>relayPlan("GET",power,range+suffix,config),/DashboardQueryInvalid/)
+})
