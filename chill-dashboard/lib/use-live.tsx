@@ -3,7 +3,7 @@
 import * as React from "react"
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query"
 import { usePathname, useSearchParams } from "next/navigation"
-import { ApiError, relay, useSession } from "@/lib/client"
+import { ApiError, relay, useSession, warmingRetry, warmingDelay, isCoverageWarming } from "@/lib/client"
 import { applyLiveMessage, connectLive, initialLiveState, parseLiveMessage, type LiveConnection, type LiveState } from "@/lib/live"
 import { fixtureMessages } from "@/lib/live-fixture"
 import { seedRecentLiveEvents } from "@/lib/live-history"
@@ -64,10 +64,25 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
     const update=(change:(state:LiveState)=>LiveState)=>{
       if(!abort.signal.aborted)queryClient.setQueryData<LiveState>(liveKey,state=>abort.signal.aborted ? state : change(state ?? initialLiveState()))
     }
-    void seedRecentLiveEvents(async(path,signal)=>(await relay(path,token,signal)).data,update,abort.signal).catch(error=>{
+    void seedRecentLiveEvents(async(path,signal)=>{
+      for(let attempt=0;;attempt++) {
+        signal.throwIfAborted()
+        try {return (await relay(path,token,signal)).data}
+        catch(error) {
+          if(signal.aborted || !warmingRetry(attempt,error))throw error
+          update(state=>["unauthorized","forbidden"].includes(state.status)?state:{...state,eventArchiveError:"초기화 중"})
+          signal.throwIfAborted()
+          const {promise,resolve,reject}=Promise.withResolvers<void>()
+          const cancel=()=>{clearTimeout(timer);reject(signal.reason)}
+          const timer=setTimeout(()=>{signal.removeEventListener("abort",cancel);resolve()},warmingDelay(attempt,error))
+          signal.addEventListener("abort",cancel,{once:true})
+          await promise
+        }
+      }
+    },update,abort.signal).catch(error=>{
       if(abort.signal.aborted)return
       if(error instanceof ApiError && error.status===401){window.dispatchEvent(new Event("chill-unauthorized"));return}
-      update(state=>["unauthorized","forbidden"].includes(state.status) ? state : {...state,eventArchiveError:"최근 사건 기록 조회 실패"})
+      update(state=>["unauthorized","forbidden"].includes(state.status) ? state : {...state,eventArchiveError:isCoverageWarming(error)?"초기화 중":"최근 사건 기록 조회 실패"})
     })
     return ()=>{abort.abort();signals.delete(abort)}
   },[operating,scene,token,epoch,signals,queryClient,liveKey])
