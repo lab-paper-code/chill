@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -63,5 +64,99 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 	}
 	if _, err := h.observationLog.EventObservations(context.Background(), at, 1); err == nil {
 		t.Fatal("event bound silently dropped simultaneous facts")
+	}
+}
+
+func TestObservationEventRangePagesAreStableCommittedPrefixes(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
+	from := time.Now().UTC().Add(-time.Minute)
+	to := from.Add(time.Minute)
+	// Commit in a different order from event time, including identical times.
+	for _, row := range []serving.ClusterObservation{
+		{Kind: "issue", At: from.Add(time.Second), Event: "raised", Source: "second", Reason: "fact"},
+		{Kind: "issue", At: from, Event: "raised", Source: "first", Reason: "fact"},
+		{Kind: "issue", At: to, Event: "raised", Source: "excluded", Reason: "fact"},
+	} {
+		if err := h.observationLog.ClusterRecord(row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.observationLog.SchedulerRecord(serving.SchedulerObservation{At: from, Action: &serving.SchedulerActionObservation{ID: "power-operation", Kind: "power", StartedAt: from}}); err != nil {
+		t.Fatal(err)
+	}
+	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}, "limit": {"1"}}
+	var got []string
+	for pageNumber := range 3 {
+		response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode())
+		var page struct {
+			Events     []observationEvent `json:"events"`
+			NextCursor string             `json:"nextCursor"`
+			Coverage   *serving.ObservationCoverage
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 1 || page.Coverage == nil {
+			t.Fatalf("range page: %d %s %v", response.Code, response.Body, err)
+		}
+		event := page.Events[0]
+		if event.Cluster != nil {
+			got = append(got, event.Cluster.Source)
+		} else {
+			got = append(got, event.Action.ID)
+		}
+		if pageNumber == 0 {
+			// Later appends cannot move cursor positions or enter this read.
+			if err := h.observationLog.ClusterRecord(serving.ClusterObservation{Kind: "issue", At: from.Add(500 * time.Millisecond), Event: "raised", Source: "later-commit", Reason: "fact"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if (pageNumber < 2) != (page.NextCursor != "") {
+			t.Fatalf("page boundary %d: %s", pageNumber, response.Body)
+		}
+		query.Set("cursor", page.NextCursor)
+	}
+	if len(got) != 3 || got[0] != "first" || got[1] != "power-operation" || got[2] != "second" {
+		t.Fatalf("events duplicated, omitted or reordered: %v", got)
+	}
+	query.Del("cursor")
+	query.Set("limit", "2")
+	response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode())
+	var page struct{ NextCursor string }
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	query.Set("cursor", page.NextCursor)
+	query.Set("to", to.Add(time.Second).Format(time.RFC3339Nano))
+	if response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode()); response.Code != http.StatusBadRequest {
+		t.Fatalf("cursor reused with another interval: %d", response.Code)
+	}
+}
+
+func TestObservationEventRangeQueryBounds(t *testing.T) {
+	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
+	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
+	valid := url.Values{"from": {"2026-10-01T00:00:00Z"}, "to": {"2026-10-02T00:00:00Z"}}
+	for _, mutation := range []url.Values{
+		{"from": {"bad"}}, {"from": {""}}, {"from": {"2026-10-02T00:00:00Z"}},
+		{"to": {"2026-10-02T00:00:00.000000001Z"}}, {"to": {""}},
+		{"limit": {"0"}}, {"limit": {"501"}}, {"limit": {"bad"}}, {"limit": {""}},
+		{"cursor": {"garbage"}}, {"cursor": {""}}, {"unknown": {"1"}},
+		{"at": {"2026-10-01T00:00:00Z"}}, {"from": {"2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z"}},
+	} {
+		query := url.Values{"from": valid["from"], "to": valid["to"]}
+		for key, values := range mutation {
+			query[key] = values
+		}
+		if response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode()); response.Code != http.StatusBadRequest {
+			t.Fatalf("invalid range accepted %v: %d %s", query, response.Code, response.Body)
+		}
+	}
+	for _, limit := range []string{"", "1", strconv.Itoa(min(500, h.config.MaxQueryEvents))} {
+		query := url.Values{"from": valid["from"], "to": valid["to"]}
+		if limit != "" {
+			query.Set("limit", limit)
+		}
+		if response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode()); response.Code != http.StatusOK {
+			t.Fatalf("valid bounded range rejected %v: %d %s", query, response.Code, response.Body)
+		}
 	}
 }

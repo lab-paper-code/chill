@@ -83,6 +83,13 @@ capture가 mu 아래 로컬 시간/fd/크기를 확보→잠금 밖 List로 필�
 빈 stream은 archive 객체를 안 쓰므로 필요한 시간/stream 부재는 StreamUnavailable이며 0건 단정/새 manifest는 없다. catalog 누락·gzip/JSON 오류·List/Open 실패는 조회 오류다. power 경계/기준 snapshot 부재는 기존 complete=false/이유, 읽기 전용 오류는 쓰기 readyz를 내리지 않는다.
 Query/LoadWindow/SchedulerObservationPage/OperatingPower/ScanOccupancyRows는 첫 인자 context.Context를 받고 HTTP RequestTimeout/취소 또는 controller capture ctx를 List/Open/scan까지 전달한다. 네트워크는 mu 밖, 기존 limit 유지, 최근 창이 로컬에 모두 있으면 archive 호출은 없다. workload는 정의 병합 후 aggregate/page, load는 단계별 집계, scheduler full/compact는 catalog 복원+coverage, power는 더 오래된 archive 기준 snapshot/catalog까지 역탐색하고 기존 ReduceOperatingPower를 쓴다.
 검사 경계: 로컬/archive 동시 존재·삭제 전후 동일 수/단계/page/J와 출처, late-final 1회 집계, 페이지·삭제 UID·power 앞뒤 표본/오래된 snapshot·내부 누락·store 오류/취소/gzip 종료·조회 중 삭제다.
+
+#### 사건 범위 조회 (R18)
+
+`GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100&cursor=<nextCursor>`는 committed scheduler action/cluster 행만 `[from,to)`로 읽는다. 두 시각은 필수이며 최대 24시간, limit 기본 100·최대 500(기존 MaxQueryEvents가 더 작으면 그 값)이다. 범위 없는 기존 `?at=` 정확 시점 조회와 `{events:[...]}` 응답은 그대로다. 범위 응답은 `{from,to,events,nextCursor?,coverage}`이며 events의 종류·대상·원시 at·실패/예상시간을 유지한다. 미지원/중복/빈 파라미터, at 혼용, 잘못된 시각/범위/limit/cursor는 400이다.
+
+순서는 실제 event at → stream → append hour/행 위치이며 동일 시각의 서로 다른 사건도 보존한다. 기존 nextCursor 관례를 재사용하되 값은 opaque base64url이다. cursor는 첫 조회의 stream별 committed prefix와 from/to를 담아 나중 append로 페이지가 이동하지 않는다. 같은 from/to로 이어 읽고 끝의 nextCursor 부재에서 멈춘다. 뒤늦게 기록된 사건은 새 범위 조회에서 읽는다. 새 저장 계약이나 서버 pagination 세션은 없고, 페이지 메모리는 limit+1 행으로 한정된다. 로컬/archive 선택·취소·coverage.sources/gaps는 기존 reader를 따른다. 보존 자료 자체가 사라지면 coverage 공백을 표시하며 사건이 없었다고 단정하지 않는다.
+
 ### 6.3 측정 CR 두 종류의 읽기 projection (API B1, `SCH-44`, `DB-FR-45`)
 GET `/api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]`, `.../dispatch-occupancy-measurements[/{name}]`: 목록 `{items:[projection]}` 이름순/빈[], 상세 projection/없으면404. whitelist=`{kind,metadata:{namespace,name,uid,resourceVersion,creationTimestamp},node,conditions,status,references}`. cost status=`{phase,reason,steps:[{name,key,verdict}]}`, occupancy=`{phase,reason,powerMode,perRequestNanos,throughput,result}`; 실패/미완료/결과 없음은 그대로,0 대체 없음.
 conditions: occupancy `{workload,batchEnergyOptimization,batch,supplyMode,warmupSeconds,durationSeconds,workers}`, cost `{steps:[{name,kind,powerMode?,batchEnergyOptimization?,idleDurationSeconds?}]}`만 원 spec에서 복사한다. 참조는 CR namespace 안, 미지정은 미지정이며 inputsJSON/전체spec/raw는 비노출이다. references=`{cr:{apiVersion,kind,namespace,name,uid},evidence:[{store,key}]}`; 실제 status.steps[].key/result만 사용, 결과 없으면[], 추측 key/임의 URL/호스트 경로 없음. UID로 재생성을 구분하고 기존 객체 권한을 따른다.

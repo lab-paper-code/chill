@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -23,12 +24,32 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
-	at, parseErr := time.Parse(time.RFC3339Nano, query.Get("at"))
-	if err != nil || parseErr != nil || at.IsZero() || len(query) != 1 || len(query["at"]) != 1 {
-		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "one RFC3339Nano event timestamp is required"})
+	if err != nil {
+		sendError(w, &serving.Error{Code: "InvalidQuery", Message: "invalid event query"})
 		return
 	}
-	records, err := h.observationLog.EventObservations(r.Context(), at, h.config.MaxQueryEvents)
+	var records []serving.RecordedEvent
+	var next string
+	var coverage *serving.ObservationCoverage
+	var from, to time.Time
+	_, rangedFrom := query["from"]
+	_, rangedTo := query["to"]
+	if rangedFrom || rangedTo {
+		var limit int
+		from, to, limit, err = eventRangeQuery(query, h.config.MaxQueryEvents)
+		if err == nil {
+			var available serving.ObservationCoverage
+			records, next, available, err = h.observationLog.EventObservationPage(r.Context(), from, to, limit, query.Get("cursor"))
+			coverage = &available
+		}
+	} else {
+		at, parseErr := time.Parse(time.RFC3339Nano, query.Get("at"))
+		if parseErr != nil || at.IsZero() || len(query) != 1 || len(query["at"]) != 1 {
+			err = &serving.Error{Code: "InvalidQuery", Message: "one RFC3339Nano event timestamp is required"}
+		} else {
+			records, err = h.observationLog.EventObservations(r.Context(), at, h.config.MaxQueryEvents)
+		}
+	}
 	if err != nil {
 		sendError(w, err)
 		return
@@ -79,7 +100,36 @@ func (h *Handler) observationEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		events = append(events, event)
 	}
-	sendJSON(w, http.StatusOK, struct {
-		Events []observationEvent `json:"events"`
-	}{events})
+	response := struct {
+		Events     []observationEvent           `json:"events"`
+		From       *time.Time                   `json:"from,omitempty"`
+		To         *time.Time                   `json:"to,omitempty"`
+		NextCursor string                       `json:"nextCursor,omitempty"`
+		Coverage   *serving.ObservationCoverage `json:"coverage,omitempty"`
+	}{Events: events, NextCursor: next, Coverage: coverage}
+	if coverage != nil {
+		response.From, response.To = &from, &to
+	}
+	sendJSON(w, http.StatusOK, response)
+}
+
+func eventRangeQuery(query url.Values, maximum int) (time.Time, time.Time, int, error) {
+	invalid := &serving.Error{Code: "InvalidQuery", Message: "from/to within 24 hours, bounded limit and event cursor are required"}
+	for key, values := range query {
+		if key != "from" && key != "to" && key != "limit" && key != "cursor" || len(values) != 1 || values[0] == "" {
+			return time.Time{}, time.Time{}, 0, invalid
+		}
+	}
+	from, fromErr := time.Parse(time.RFC3339Nano, query.Get("from"))
+	to, toErr := time.Parse(time.RFC3339Nano, query.Get("to"))
+	maximum = min(maximum, 500)
+	limit := min(100, maximum)
+	var err error
+	if text := query.Get("limit"); text != "" {
+		limit, err = strconv.Atoi(text)
+	}
+	if fromErr != nil || toErr != nil || from.IsZero() || !from.Before(to) || to.Sub(from) > serving.EventObservationWindow || err != nil || limit <= 0 || limit > maximum {
+		return from, to, 0, invalid
+	}
+	return from, to, limit, nil
 }
