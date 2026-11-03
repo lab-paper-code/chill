@@ -130,6 +130,36 @@ type Snapshot struct {
 	Reservations []Reservation `json:"reservations"`
 }
 
+// SequenceRange is inclusive. Bounds describe retained frames, not continuous
+// event-time or power-sample coverage; metrics retain their own bucket gaps.
+type SequenceRange struct {
+	FromSeq uint64 `json:"fromSeq"`
+	ToSeq   uint64 `json:"toSeq"`
+}
+
+type HistoryGap struct {
+	SequenceRange
+	Scope  string `json:"scope"`
+	Reason string `json:"reason"`
+}
+
+// ResumeHistory reports retention only: snapshots do not contain old events or
+// metrics. A null retained range means no frame of that kind is in the ring.
+type ResumeHistory struct {
+	Reason    string `json:"reason"`
+	Replayed  bool   `json:"replayed"`
+	Requested struct {
+		AfterSeq   uint64 `json:"afterSeq"`
+		At         string `json:"at,omitempty"`
+		ThroughSeq uint64 `json:"throughSeq"`
+	} `json:"requested"`
+	Retained struct {
+		Events *SequenceRange `json:"events"`
+		Power  *SequenceRange `json:"power"`
+	} `json:"retained"`
+	Gaps []HistoryGap `json:"gaps"`
+}
+
 type Removed struct {
 	Instances []string `json:"instances,omitempty"`
 	Actions   []string `json:"actions,omitempty"`

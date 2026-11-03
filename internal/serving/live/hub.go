@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const messageSnapshot = "snapshot"
+const (
+	messageSnapshot = "snapshot"
+	messageMetrics  = "metrics"
+)
 
 var (
 	ErrClosed        = errors.New("live hub closed")
@@ -204,7 +207,7 @@ func (h *Hub) changedLocked(d Delta) bool {
 func (h *Hub) PublishMetrics(at time.Time, metrics MetricsFrame) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.publishLocked("metrics", at, metrics)
+	return h.publishLocked(messageMetrics, at, metrics)
 }
 
 func (h *Hub) Heartbeat(at time.Time) error {
@@ -312,7 +315,11 @@ func (s *Subscription) resumeLocked(from uint64, at string) error {
 			}
 		}
 	} else {
-		f, err := h.snapshotLocked()
+		history := h.resumeHistoryLocked(from, at)
+		f, err := encode(messageSnapshot, h.head, h.headAt, struct {
+			Snapshot
+			History ResumeHistory `json:"history"`
+		}{h.state, history})
 		if err != nil {
 			s.failLocked(err)
 			return err
@@ -321,6 +328,53 @@ func (s *Subscription) resumeLocked(from uint64, at string) error {
 		s.signalLocked()
 	}
 	return s.err
+}
+
+func (h *Hub) resumeHistoryLocked(from uint64, at string) ResumeHistory {
+	history := ResumeHistory{Reason: "checkpoint-unmatched", Gaps: []HistoryGap{}}
+	if from == 0 {
+		history.Reason = "fresh"
+	}
+	history.Requested.AfterSeq, history.Requested.At, history.Requested.ThroughSeq = from, at, h.head
+	for i := range h.count {
+		f := h.ring[(h.start+i)%RetainedMessages]
+		var retained **SequenceRange
+		switch f.kind {
+		case "event":
+			retained = &history.Retained.Events
+		case messageMetrics:
+			retained = &history.Retained.Power
+		default:
+			continue
+		}
+		if *retained == nil {
+			*retained = &SequenceRange{FromSeq: f.seq}
+		}
+		(*retained).ToSeq = f.seq
+	}
+	if from >= h.head {
+		return history
+	}
+	history.Gaps = appendHistoryGaps(history.Gaps, "events", from+1, h.head, history.Retained.Events)
+	history.Gaps = appendHistoryGaps(history.Gaps, "power", from+1, h.head, history.Retained.Power)
+	return history
+}
+
+func appendHistoryGaps(gaps []HistoryGap, scope string, from, to uint64, retained *SequenceRange) []HistoryGap {
+	gap := func(first, last uint64) {
+		gaps = append(gaps, HistoryGap{SequenceRange: SequenceRange{FromSeq: first, ToSeq: last}, Scope: scope, Reason: "NoRetainedFrames"})
+	}
+	if retained == nil || retained.ToSeq < from || retained.FromSeq > to {
+		gap(from, to)
+		return gaps
+	}
+	if from < retained.FromSeq {
+		gap(from, retained.FromSeq-1)
+	}
+	if to > retained.ToSeq {
+		gap(retained.ToSeq+1, to)
+	}
+	return gaps
 }
 
 func (s *Subscription) enqueueLocked(f frame) bool {
@@ -343,7 +397,7 @@ func (s *Subscription) enqueueLocked(f frame) bool {
 	// skipped checkpoint interval as a gap rather than inventing observations.
 	cut := 0
 	for i, pending := range s.pending {
-		if pending.kind == "metrics" {
+		if pending.kind == messageMetrics {
 			cut = i
 			break
 		}

@@ -90,6 +90,15 @@ Query/LoadWindow/SchedulerObservationPage/OperatingPower/ScanOccupancyRows는 �
 
 순서는 실제 event at → stream → append hour/행 위치이며 동일 시각의 서로 다른 사건도 보존한다. 기존 nextCursor 관례를 재사용하되 값은 opaque base64url이다. cursor는 첫 조회의 stream별 committed prefix와 from/to를 담아 나중 append로 페이지가 이동하지 않는다. 같은 from/to로 이어 읽고 끝의 nextCursor 부재에서 멈춘다. 뒤늦게 기록된 사건은 새 범위 조회에서 읽는다. 새 저장 계약이나 서버 pagination 세션은 없고, 페이지 메모리는 limit+1 행으로 한정된다. 로컬/archive 선택·취소·coverage.sources/gaps는 기존 reader를 따른다. 보존 자료 자체가 사라지면 coverage 공백을 표시하며 사건이 없었다고 단정하지 않는다.
 
+#### 라이브 resume 보존 범위 (R18)
+
+fresh(`from=0`) 또는 `(seq,at)` 불일치 resume의 snapshot에는 `history:{reason:"fresh"|"checkpoint-unmatched",replayed:false,requested:{afterSeq,at?,throughSeq},retained:{events:{fromSeq,toSeq}|null,power:{fromSeq,toSeq}|null},gaps:[{scope:"events"|"power",fromSeq,toSeq,reason:"NoRetainedFrames"}]}`를 추가한다. 기존 snapshot 필드는 그대로다. requested는 받은 checkpoint와 snapshot head이고 비교 대상은 현재 hub의 정수 sequence `(afterSeq,throughSeq]`다. 미래 checkpoint처럼 afterSeq≥head면 이 구간이 비어 gaps=[]이며 reason은 여전히 불일치다. 재시작의 이전 sequence를 현재 hub의 동일 sequence와 동일 사건이라고 해석하지 않는다.
+
+retained는 실제 ring의 event/metrics 프레임 각각 첫·마지막 sequence(양끝 포함)다. 한 종류도 없으면 null, 빈 hub는 둘 다 null·gaps=[]다. gaps는 요청 sequence 구간에서 해당 보존 외곽 범위를 뺀 앞·뒤 구간이며 없으면 []다. 이는 그 범위에서 보존 프레임을 제공할 수 없다는 사실이지, 그 초에 관측·사건이 발생했다는 주장이나 손실 건수가 아니다. sequence 사이 다른 종류 프레임의 정상 interleave는 공백으로 만들지 않는다. 전력 표본 null/실제 bucket 시각/내부 공백은 원 metrics의 bucketAt/nodes/gaps가 권위다. 이 메타데이터는 과거 payload 자체를 snapshot에 넣거나 보존 연속성·시간 길이를 보장하지 않는다(`replayed:false`). 사건 복원은 위 bounded REST 범위를 사용한다.
+
+일치한 resume의 bounded replay는 기존과 동일하며 별도 history 응답을 삽입하지 않는다. snapshot 선택/구독 등록은 같은 hub 잠금에서 처리하며 기존 600프레임/8MiB ring·602프레임/2MiB 큐·1MiB 프레임 상한, slow-consumer snapshot barrier, 저장 commit 성공 후 publish 순서를 유지한다.
+
+
 ### 6.3 측정 CR 두 종류의 읽기 projection (API B1, `SCH-44`, `DB-FR-45`)
 GET `/api/v1/namespaces/{namespace}/operation-cost-measurements[/{name}]`, `.../dispatch-occupancy-measurements[/{name}]`: 목록 `{items:[projection]}` 이름순/빈[], 상세 projection/없으면404. whitelist=`{kind,metadata:{namespace,name,uid,resourceVersion,creationTimestamp},node,conditions,status,references}`. cost status=`{phase,reason,steps:[{name,key,verdict}]}`, occupancy=`{phase,reason,powerMode,perRequestNanos,throughput,result}`; 실패/미완료/결과 없음은 그대로,0 대체 없음.
 conditions: occupancy `{workload,batchEnergyOptimization,batch,supplyMode,warmupSeconds,durationSeconds,workers}`, cost `{steps:[{name,kind,powerMode?,batchEnergyOptimization?,idleDurationSeconds?}]}`만 원 spec에서 복사한다. 참조는 CR namespace 안, 미지정은 미지정이며 inputsJSON/전체spec/raw는 비노출이다. references=`{cr:{apiVersion,kind,namespace,name,uid},evidence:[{store,key}]}`; 실제 status.steps[].key/result만 사용, 결과 없으면[], 추측 key/임의 URL/호스트 경로 없음. UID로 재생성을 구분하고 기존 객체 권한을 따른다.

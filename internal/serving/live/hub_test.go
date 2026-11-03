@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -350,4 +351,112 @@ func TestProjectionCollectionsCopyOwnershipAndReplaceReservations(t *testing.T) 
 	if frame = nextEnvelope(t, sub); frame.Reservations == nil || len(frame.Reservations) != 0 {
 		t.Fatalf("delta failed to clear reservations: %+v", frame)
 	}
+}
+
+func TestResumeSnapshotReportsRetainedHistoryAndGaps(t *testing.T) {
+	hub := New(testAt)
+	defer hub.Close()
+	if err := hub.Publish(testAt, Delta{}, &Event{Kind: "cluster", Cluster: &ClusterEvent{Kind: "issue", Reason: "fact"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.PublishMetrics(testAt.Add(time.Second), MetricsFrame{BucketAt: timestamp(testAt)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.Heartbeat(testAt.Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	fresh := readResumeHistory(t, hub, 0, "")
+	if fresh.Reason != "fresh" || fresh.Replayed || fresh.Requested.AfterSeq != 0 || fresh.Requested.ThroughSeq != 3 ||
+		fresh.Retained.Events == nil || *fresh.Retained.Events != (SequenceRange{FromSeq: 1, ToSeq: 1}) ||
+		fresh.Retained.Power == nil || *fresh.Retained.Power != (SequenceRange{FromSeq: 2, ToSeq: 2}) {
+		t.Fatalf("fresh retained ranges: %+v", fresh)
+	}
+	want := []HistoryGap{
+		{SequenceRange: SequenceRange{FromSeq: 2, ToSeq: 3}, Scope: "events", Reason: "NoRetainedFrames"},
+		{SequenceRange: SequenceRange{FromSeq: 1, ToSeq: 1}, Scope: "power", Reason: "NoRetainedFrames"},
+		{SequenceRange: SequenceRange{FromSeq: 3, ToSeq: 3}, Scope: "power", Reason: "NoRetainedFrames"},
+	}
+	if !reflect.DeepEqual(fresh.Gaps, want) {
+		t.Fatalf("fresh gap complement: %+v", fresh.Gaps)
+	}
+	unmatched := readResumeHistory(t, hub, 1, "not-the-checkpoint")
+	if unmatched.Reason != "checkpoint-unmatched" || unmatched.Requested.AfterSeq != 1 || unmatched.Requested.At != "not-the-checkpoint" ||
+		len(unmatched.Gaps) != 2 || unmatched.Gaps[0] != want[0] || unmatched.Gaps[1] != want[2] {
+		t.Fatalf("unmatched checkpoint interval: %+v", unmatched)
+	}
+	// Metadata never turns a matched resume into a snapshot or old history seed.
+	matched, err := hub.Subscribe(1, timestamp(testAt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer matched.Close()
+	if message := nextEnvelope(t, matched); message.Type != "metrics" || message.Seq != 2 {
+		t.Fatalf("matched replay changed: %+v", message)
+	}
+}
+
+func TestEvictedAndFutureResumeHistory(t *testing.T) {
+	hub := New(testAt)
+	defer hub.Close()
+	if err := hub.Publish(testAt, Delta{}, &Event{Kind: "cluster", Cluster: &ClusterEvent{Kind: "issue"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.PublishMetrics(testAt.Add(time.Second), MetricsFrame{BucketAt: timestamp(testAt)}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range RetainedMessages {
+		if err := hub.Heartbeat(testAt.Add(time.Duration(i+3) * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evicted := readResumeHistory(t, hub, 1, timestamp(testAt))
+	if evicted.Retained.Events != nil || evicted.Retained.Power != nil || len(evicted.Gaps) != 2 ||
+		evicted.Gaps[0].FromSeq != 2 || evicted.Gaps[0].ToSeq != hub.head || evicted.Gaps[1].SequenceRange != evicted.Gaps[0].SequenceRange {
+		t.Fatalf("evicted history falsely retained: %+v", evicted)
+	}
+	future := readResumeHistory(t, hub, hub.head+1, timestamp(testAt))
+	if future.Reason != "checkpoint-unmatched" || len(future.Gaps) != 0 {
+		t.Fatalf("future checkpoint invented reversed gap: %+v", future)
+	}
+}
+
+func TestEmptyResumeHistoryKeepsNullRangesAndEmptyGaps(t *testing.T) {
+	hub := New(testAt)
+	defer hub.Close()
+	sub, err := hub.Subscribe(0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	data, err := sub.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message struct {
+		History ResumeHistory `json:"history"`
+	}
+	if err := json.Unmarshal(data, &message); err != nil || message.History.Retained.Events != nil || message.History.Retained.Power != nil || message.History.Gaps == nil || len(message.History.Gaps) != 0 {
+		t.Fatalf("empty history: %s %v", data, err)
+	}
+}
+
+func readResumeHistory(t *testing.T, hub *Hub, from uint64, at string) ResumeHistory {
+	t.Helper()
+	sub, err := hub.Subscribe(from, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	data, err := sub.Next(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message struct {
+		testEnvelope
+		History *ResumeHistory `json:"history"`
+	}
+	if err := json.Unmarshal(data, &message); err != nil || message.Type != messageSnapshot || message.Seq != hub.head || message.History == nil {
+		t.Fatalf("resume metadata: %s %v", data, err)
+	}
+	return *message.History
 }
