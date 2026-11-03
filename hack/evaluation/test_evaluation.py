@@ -1065,6 +1065,34 @@ class EvaluationTests(unittest.TestCase):
         self.assertTrue(zero['workloads'][NAME]['reachable'])
         self.assertEqual(zero['generatorQuality'][NAME]['status'], 'NOT_OFFERED')
 
+    def test_generator_index_diagnostics_do_not_discard_http_finals(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, _, _, config = fixture(Path(directory))
+        config['workloads'] = [config['workloads'][0]]
+        workload = config['workloads'][0]
+        workload['slo'] = {'percentile': 100, 'targetLatencyNanos': 10}
+        stage = {'seconds': 2, 'parts': [{'id': 'all', 'seconds': 2, 'rates': {NAME: 1}}],
+                 'traces': {NAME: {'offsetsNS': [0, 1000000000], 'offered': 2}}}
+        phase = {'stage': stage, 'starts': {NAME: {'monotonicNS': 100}}}
+        indexed = {workload['uid']: {'errors': [], 'identities': [], 'summary': {},
+                    'finals': {'r' + str(i): {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1}
+                               for i in range(2)}}}
+        for anomaly in ('missing', 'duplicate', 'schedule'):
+            rows = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': offset,
+                     'sentMonotonicNS': 100 + offset, 'issued': True} for i, offset in enumerate([0, 1000000000])]
+            if anomaly == 'missing':
+                rows[0].pop('requestIndex')
+            elif anomaly == 'duplicate':
+                rows[1]['requestIndex'] = 0
+            else:
+                rows[1]['scheduledOffsetNs'] += 1
+            result = judgment_rules.reduce_requests(config, phase, {NAME: rows}, indexed)[NAME]
+            self.assertEqual((result['offered'], result['deadlineSuccess'], result['requiredSuccessfulRank']), (2, 2, 2))
+            self.assertEqual(result['completedLatencyNS']['samples'], 2)
+            self.assertEqual(result['D1'], 'OBSERVED_THRESHOLD_MET')
+            self.assertEqual(result['issuanceFidelity']['issued'], 2)
+            self.assertGreater(result['issuanceFidelity']['invalidScheduleRows'], 0)
+
     def test_provisional_partial_capture_preserves_last_success(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

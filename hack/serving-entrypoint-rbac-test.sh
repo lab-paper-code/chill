@@ -105,6 +105,7 @@ if config:
         ("chill-system", "", "pods/log", "get", ()),
         ("chill-system", "", "pods/exec", "create", ()),
         ("chill-system", "edge.dacs.io", "loadscenarios", "get", ()),
+        ("chill-system", "edge.dacs.io", "evaluationstages/status", "patch", ()),
         ("chill-system", "apps", "deployments", "get", ()),
         ("*", "", "nodes", "get", ()),
         ("*", "", "pods", "list", ()),

@@ -146,6 +146,26 @@ def meter_energy(window, measurement, policy, start, end):
                                'maximumNodeGapFraction': max((node.get('gapFraction') or 0 for node in selected), default=0)}, 'reasons': reasons}
 
 
+def _collect_streams(folder, io, hours, streams, index, deadline):
+    """One inventory/download path for final and provisional raw inputs."""
+    for value in hours:
+        with _raw_get(io, RAW_PATH + '?hour=' + value, deadline) as response:
+            inventory = json.load(response)
+        if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
+            raise ValueError('Invalid exact-hour raw API inventory')
+        kinds = {entry['kind']: entry for entry in inventory['kinds']}
+        for stream in streams:
+            entry = kinds[stream]
+            if type(entry.get('available')) is not bool:
+                raise ValueError('Invalid raw availability')
+            if not entry['available']:
+                index['absentStreams'].append({'visibility': PRIVATE, 'hour': value, 'stream': stream, 'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'})
+                continue
+            target = folder / 'obs' / value / (stream + '.jsonl.gz')
+            source = _download(folder, io, RAW_PATH + '/' + value + '/' + stream, target, deadline)
+            index['sources'].append({**source, 'hour': value, 'stream': stream})
+
+
 def collect(folder, phase, collection, io, timeout_seconds):
     folder = Path(folder).resolve()
     approved = Path(json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['paths']['campaign']).resolve()
@@ -176,22 +196,7 @@ def collect(folder, phase, collection, io, timeout_seconds):
         hour = lambda stamp: dt.datetime.fromtimestamp(stamp / 1e9, dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
         hours = _hours(hour(first), hour(drained))
         index['requestedHours'] = hours
-        for value in hours:
-            with _raw_get(io, RAW_PATH + '?hour=' + value, deadline) as response:
-                inventory = json.load(response)
-            if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
-                raise ValueError('Invalid exact-hour raw API inventory')
-            kinds = {entry['kind']: entry for entry in inventory['kinds']}
-            for stream in STREAMS:
-                entry = kinds[stream]
-                if type(entry.get('available')) is not bool:
-                    raise ValueError('Invalid raw availability')
-                if not entry['available']:
-                    index['absentStreams'].append({'visibility': PRIVATE, 'hour': value, 'stream': stream, 'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'})
-                    continue
-                target = folder / 'obs' / value / (stream + '.jsonl.gz')
-                source = _download(folder, io, RAW_PATH + '/' + value + '/' + stream, target, deadline)
-                index['sources'].append({**source, 'hour': value, 'stream': stream})
+        _collect_streams(folder, io, hours, STREAMS, index, deadline)
         index['complete'] = True
     except Exception as error:
         manifest['errors'].append(str(error))
@@ -235,20 +240,7 @@ def collect_requests_snapshot(folder, phase, io, timeout_seconds):
     index = {'visibility': PRIVATE, 'complete': True, 'sources': [], 'errors': [], 'absentStreams': [],
              'requestPopulation': {'startUTC': phase['startUTC'], 'endUTC': cutoff, 'drainedUTC': cutoff},
              'requestedHours': hours, 'supportingHours': []}
-    for value in hours:
-        inventory = io.api('GET', RAW_PATH + '?hour=' + value, timeout=_remaining(deadline))
-        if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
-            raise ValueError('Invalid exact-hour raw API inventory')
-        entry = next(item for item in inventory['kinds'] if item['kind'] == 'requests')
-        if entry.get('available') is False:
-            index['absentStreams'].append({'visibility': PRIVATE, 'hour': value, 'stream': 'requests',
-                                          'origin': 'api', 'reason': 'source-hour-has-no-stream-segments'})
-        elif entry.get('available') is True:
-            source = _download(folder, io, RAW_PATH + '/' + value + '/requests',
-                               folder / 'obs' / value / 'requests.jsonl.gz', deadline)
-            index['sources'].append({**source, 'hour': value, 'stream': 'requests'})
-        else:
-            raise ValueError('Invalid raw availability')
+    _collect_streams(folder, io, hours, ('requests',), index, deadline)
     # A minute rollover could mix cutoffs between inventory and download.
     final = io.api('GET', RAW_PATH + '?hour=' + hour(closed).strftime('%Y%m%dT%H'), timeout=_remaining(deadline))
     if _time_ns(final['at']) // 60_000_000_000 * 60_000_000_000 != closed:

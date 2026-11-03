@@ -49,11 +49,7 @@ def reduce_requests(config, phase, clients, indexes):
         quarantined.update(indexed['summary'].get('invalidFinalRequestIDs', []))
         if any(row.get('workloadUID') not in (None, workload['uid']) for row in rows):
             raise ValueError('IdentityMismatch: returned Workload UID differs from frozen identity')
-        index_counts = Counter(row.get('requestIndex') for row in rows)
-        usable = [row for row in rows if row.get('requestID') not in quarantined
-                  and type(row.get('requestIndex')) is int and 0 <= row['requestIndex'] < len(trace['offsetsNS'])
-                  and row.get('scheduledOffsetNs') == trace['offsetsNS'][row['requestIndex']]
-                  and index_counts[row['requestIndex']] == 1]
+        usable = [row for row in rows if row.get('requestID') not in quarantined]
         supported = any(row.get('requestID') in indexed['finals'] for row in usable)
         start = phase['starts'].get(name, {}).get('monotonicNS')
         quality = analysis.issuance_fidelity(rows, trace['offsetsNS'], start, round(stage['seconds'] * 1e9), analysis.stats, config['generatorQuality'])
@@ -144,7 +140,7 @@ def judge(binding, folder):
                         rows.append(row)
                 except (ValueError, TypeError):
                     unknown.append(name + ': malformed client JSONL line ' + str(index))
-        clients[name] = join_client_events(rows)
+        clients[name] = rows
     indexes = raw.iter_request_indexes(folder, [w['uid'] for w in config['workloads']], phase['startUTC'], phase['endUTC'],
                                       actual_response_ids={w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']] for w in config['workloads']})
     results = reduce_requests(config, phase, clients, indexes)

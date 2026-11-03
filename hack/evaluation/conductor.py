@@ -227,7 +227,7 @@ class ProvisionalD1:
             for workload in self.config['workloads']:
                 path = self.folder / (workload['name'] + '-client.jsonl')
                 rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-                clients[workload['name']] = self.judgment.join_client_events([row for row in rows if 'scheduledOffsetNs' in row])
+                clients[workload['name']] = [row for row in rows if 'scheduledOffsetNs' in row]
             ids = {w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']]
                    for w in self.config['workloads']}
             indexes = self.raw.iter_request_indexes(target, list(ids), phase['startUTC'], cutoff, actual_response_ids=ids)
