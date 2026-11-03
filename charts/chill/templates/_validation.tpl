@@ -67,19 +67,11 @@
 {{- fail "dashboard.callerServiceAccount must be a ServiceAccount name in the release namespace" -}}
 {{- end -}}
 {{- end -}}
-{{- if not (kindIs "string" .Values.dashboard.readerServiceAccount) -}}
-{{- fail "dashboard.readerServiceAccount must be a string" -}}
+{{- if not (kindIs "bool" .Values.dashboard.reader.enabled) -}}
+{{- fail "dashboard.reader.enabled must be a boolean" -}}
 {{- end -}}
-{{- if .Values.dashboard.readerServiceAccount -}}
-{{- if not .Values.servingEntrypoint.enabled -}}
-{{- fail "dashboard.readerServiceAccount requires servingEntrypoint.enabled=true" -}}
-{{- end -}}
-{{- if or (gt (len .Values.dashboard.readerServiceAccount) 253) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" .Values.dashboard.readerServiceAccount)) -}}
-{{- fail "dashboard.readerServiceAccount must be a ServiceAccount name in the release namespace" -}}
-{{- end -}}
-{{- if eq .Values.dashboard.readerServiceAccount .Values.dashboard.callerServiceAccount -}}
-{{- fail "dashboard.readerServiceAccount must differ from dashboard.callerServiceAccount" -}}
-{{- end -}}
+{{- if and .Values.dashboard.reader.enabled (not .Values.servingEntrypoint.enabled) -}}
+{{- fail "dashboard.reader.enabled requires servingEntrypoint.enabled=true" -}}
 {{- end -}}
 {{- if .Values.dashboard.enabled -}}
 {{- if or (lt (int .Values.dashboard.replicaCount) 1) (empty .Values.dashboard.image.repository) -}}

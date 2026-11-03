@@ -579,7 +579,8 @@ dashboard:
   # Requires servingEntrypoint.enabled; does not create an SA or bind scheduler editing.
   callerServiceAccount: ""
   # Chart-owned read-only identity for short-lived smoke tokens; no write grants.
-  readerServiceAccount: ""
+  reader:
+    enabled: false
   replicaCount: 1
   image:
     repository: daclab/chill-dashboard

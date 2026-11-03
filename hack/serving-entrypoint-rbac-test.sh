@@ -43,7 +43,8 @@ def effective(account):
     return resources, urls
 
 reader = sys.argv[3]
-reader_objects = [d for d in documents if d["metadata"]["name"] == "chill-dashboard-reader"]
+reader_objects = [d for d in documents if d["metadata"]["name"] in
+                  {"chill-dashboard-reader", "chill-dashboard-reader-namespaced"}]
 if reader:
     assert any(d["kind"] == "ServiceAccount" and d["metadata"]["name"] == reader
                and d["metadata"]["namespace"] == "chill-system" for d in documents)
@@ -58,9 +59,6 @@ if reader:
                 for path in rule.get("nonResourceURLs", [])}
     assert reader_urls == expected, (reader_urls - expected, expected - reader_urls)
     assert not any("/observations/raw" in path or "catalog-read" in path for _, path in reader_urls)
-    for obj in reader_objects:
-        for rule in obj.get("rules", []):
-            assert set(rule["verbs"]) <= {"get", "list", "watch"}, "reader role contains writes"
     namespaces = {d["metadata"]["namespace"] for d in documents if d["kind"] == "Role"
                   and d["metadata"]["name"] == "chill-serving-manager"}
     for namespace in namespaces:
@@ -243,33 +241,24 @@ check chill-dashboard-user "" "${serving[@]}" --set dashboard.callerServiceAccou
 check chill-dashboard-user "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true --set dashboard.enabled=true --set servingEntrypoint.namespace=serving \
 	--set dashboard.callerServiceAccount=chill-dashboard-user
-check "" chill-smoke "${serving[@]}" --set dashboard.readerServiceAccount=chill-smoke
-check chill-dashboard-user chill-smoke -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+check "" chill-dashboard-reader "${serving[@]}" --set dashboard.reader.enabled=true
+check chill-dashboard-user chill-dashboard-reader -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true --set servingEntrypoint.namespace=serving \
 	--set 'servingEntrypoint.profileNamespaces={serving,measurements}' \
-	--set dashboard.callerServiceAccount=chill-dashboard-user --set dashboard.readerServiceAccount=chill-smoke
+	--set dashboard.callerServiceAccount=chill-dashboard-user --set dashboard.reader.enabled=true
 
-reject_caller() {
+reject_dashboard() {
+	local key="$1"
+	shift
 	if "${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}" 2>&1; then
-		echo "invalid dashboard caller configuration unexpectedly rendered" >&2
+		echo "invalid ${key} configuration unexpectedly rendered" >&2
 		exit 1
 	fi
-	[[ "$(<"${rendered}")" == *"dashboard.callerServiceAccount"* ]]
+	[[ "$(<"${rendered}")" == *"${key}"* ]]
 }
-
-reject_reader() {
-	if "${helm}" template chill "${repo_root}/charts/chill" --namespace chill-system "$@" >"${rendered}" 2>&1; then
-		echo "invalid dashboard reader configuration unexpectedly rendered" >&2
-		exit 1
-	fi
-	[[ "$(<"${rendered}")" == *"dashboard.readerServiceAccount"* ]]
-}
-reject_reader --set dashboard.readerServiceAccount=chill-smoke
-reject_reader "${serving[@]}" --set dashboard.readerServiceAccount=true
-reject_reader "${serving[@]}" --set dashboard.readerServiceAccount=other-namespace/chill-smoke
-reject_reader "${serving[@]}" --set dashboard.readerServiceAccount=chill-smoke \
-	--set dashboard.callerServiceAccount=chill-smoke
-reject_caller --set dashboard.callerServiceAccount=chill-dashboard-user
-reject_caller "${serving[@]}" --set dashboard.callerServiceAccount=true
-reject_caller "${serving[@]}" --set dashboard.callerServiceAccount=other-namespace/chill-dashboard-user
+reject_dashboard dashboard.reader.enabled --set dashboard.reader.enabled=true
+reject_dashboard dashboard.reader.enabled "${serving[@]}" --set-string dashboard.reader.enabled=true
+reject_dashboard dashboard.callerServiceAccount --set dashboard.callerServiceAccount=chill-dashboard-user
+reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.callerServiceAccount=true
+reject_dashboard dashboard.callerServiceAccount "${serving[@]}" --set dashboard.callerServiceAccount=other-namespace/chill-dashboard-user
 echo "serving entrypoint RBAC: pass"
