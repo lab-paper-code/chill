@@ -3,8 +3,8 @@
 import Link from "next/link"
 import { ApiError, useChillQueries } from "@/lib/client"
 import { Button } from "@/components/ui/button"
-import { campaignScoreboard, decodeExperiment, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, frozenP95SLO, object, observedStageRate, publishedText, resultMetric, stageLoadParts, stageSeconds, type Experiment, type ExperimentStage } from "@/lib/experiments"
-import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
+import { campaignScoreboard, decodeExperiment, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentControlLabels, experimentDifference, experimentOutcome, experimentPath, historicalPublicationIDs, injectionRows, experimentRows, frozenP95SLO, object, observedStageRate, publishedText, resultMetric, stageLoadParts, stageSeconds, type Experiment, type ExperimentStage } from "@/lib/experiments"
+import { formatMeasurementDuration, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
 // Only explicit historical comparison references may request another publication.
 export function useHistoricalExperiments(publications:Experiment[],catalog:Experiment[]=publications,enabled=true) {
@@ -12,8 +12,7 @@ export function useHistoricalExperiments(publications:Experiment[],catalog:Exper
   const queries=useChillQueries<Experiment>(ids.map(experimentPath),{enabled,decoder:decodeExperiment})
   const fetched=queries.flatMap((query,index)=>query.data?.id===ids[index]?[query.data]:[])
   const failed=queries.filter(query=>query.error&&!(query.error instanceof ApiError&&query.error.status===404))
-  const known=[...publications,...catalog.filter(run=>!publications.some(item=>item.id===run.id))]
-  return {runs:[...known.map(run=>fetched.find(item=>item.id===run.id)??run),...fetched.filter(run=>!known.some(item=>item.id===run.id))],pending:ids.length>0&&(!enabled||queries.some(query=>query.isPending)),error:failed[0]?.error??null,refetch:()=>{for(const query of failed)void query.refetch()}}
+  return {runs:[...publications,...catalog.filter(run=>!publications.some(item=>item.id===run.id)),...fetched],pending:ids.length>0&&(!enabled||queries.some(query=>query.isPending)),error:failed[0]?.error??null,refetch:()=>{for(const query of failed)void query.refetch()}}
 }
 
 export function HistoricalExperimentError({refetch}:{refetch:()=>void}) {
@@ -70,13 +69,37 @@ export function ExperimentComparisonLegend() {
 
 export function ExperimentFacts({run}:{run:Experiment}) {
   const facts=run.facts
+  const text=(value:unknown)=>typeof value==="string"||typeof value==="number"||typeof value==="bigint"?String(value):"미기록"
+  const controlRows=(control:unknown):[string,string][]=>{
+    if(!control)return [["제어 정책","미기록"]]
+    const policy=object(control),controls=object(policy.controls)
+    return [
+      ...Object.entries(experimentControlLabels).map(([key,label])=>[label,controls[key]===true?"켬":controls[key]===false?"끔":"미기록"] as [string,string]),
+      ["축소 여유 비율",text(policy.scaleDownHeadroomFraction)],
+      ...(Object.keys(object(policy.minimumDemand)).length?Object.entries(object(policy.minimumDemand)).map(([uid,value])=>[`최소 수요 (req/s) · ${uid}`,text(value)] as [string,string]):[["최소 수요 (req/s)","미기록"] as [string,string]]),
+      ...(Array.isArray(policy.sourceIDs)&&policy.sourceIDs.length?policy.sourceIDs.map(id=>["제어 출처 ID",text(id)] as [string,string]):[["제어 출처 ID","미기록"] as [string,string]]),
+    ]
+  }
   const rows:[string,string][]=[
     ["이름",facts?.name??"미기록"],
     ["질문",facts?.question??"미기록"],
-    ["제어 정책",facts?.control?publishedText(facts.control):"미기록"],
-    ...(facts?.stages?.length?facts.stages.map(stage=>["단계 정책",`${stage.id} / ${stage.row??"미기록"} / ${stage.mode??"미기록"} / ${stage.control?publishedText(stage.control):"미기록"} / ${stage.loadScenarioRef?publishedText(stage.loadScenarioRef):"미기록"}`] as [string,string]):[["단계 정책","미기록"] as [string,string]]),
-    ...(facts?.sloSources?.length?facts.sloSources.map(source=>["SLO 출처",`${source.name} / ${source.uid} / 정의 ${publishedText(source.generation)||"미기록"} / p${publishedText(source.slo?.percentile)||"미기록"} / ${typeof source.slo?.targetLatencyNanos==="number"?formatMeasurementNumber(source.slo.targetLatencyNanos/1e6,"ms")+" ms":"미기록"}`] as [string,string]):[["SLO 출처","미기록"] as [string,string]]),
-    ...(facts?.loadSources?.length?facts.loadSources.map(source=>["부하 출처",`${source.name} / ${source.uid}`] as [string,string]):[["부하 출처","미기록"] as [string,string]]),
+    ...controlRows(facts?.control),
+    ...(facts?.stages?.length?facts.stages.flatMap(stage=>[
+      ["단계 ID",stage.id],
+      ["단계 행",stage.row??"미기록"],
+      ["단계 정책",definitionPolicy(stage,run)],
+      ...(stage.control?controlRows(stage.control):[]),
+      ["부하 시나리오 이름",text(stage.loadScenarioRef?.name)],
+      ["부하 시나리오 UID",text(stage.loadScenarioRef?.uid)],
+    ] as [string,string][]):[["단계 정책","미기록"] as [string,string]]),
+    ...(facts?.sloSources?.length?facts.sloSources.flatMap(source=>[
+      ["SLO 출처 이름",source.name],
+      ["SLO 출처 UID",source.uid],
+      ["SLO 출처 정의",text(source.generation)],
+      ["SLO 백분위",text(source.slo?.percentile)],
+      ["SLO 목표 지연",typeof source.slo?.targetLatencyNanos==="number"||typeof source.slo?.targetLatencyNanos==="bigint"?formatMeasurementDuration(source.slo.targetLatencyNanos):"미기록"],
+    ] as [string,string][]):[["SLO 출처","미기록"] as [string,string]]),
+    ...(facts?.loadSources?.length?facts.loadSources.flatMap(source=>[["부하 출처 이름",source.name],["부하 출처 UID",source.uid]] as [string,string][]):[["부하 출처","미기록"] as [string,string]]),
   ]
   return <table aria-label="기록된 실험 사실" className="w-full text-left text-xs"><thead><tr><th className="p-1 font-normal">항목</th><th className="p-1 font-normal">값</th></tr></thead><tbody>{rows.map(([label,value],index)=><tr key={index} className="border-t"><th scope="row" className="p-1 font-normal">{label}</th><td className="break-all p-1">{value}</td></tr>)}</tbody></table>
 }

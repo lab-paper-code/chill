@@ -17,7 +17,7 @@ import * as measurementHelpers from "./measurements.ts"
 import * as icons from "lucide-react"
 
 test("R18: list facts render without per-item detail requests and absent facts stay unrecorded",()=>{
-  const facts={name:"기록된 실험",question:"기록된 질문",control:{sourceIDs:["control-source"],controls:{power:false}},stages:[{id:stage.id,row:"기록 행",mode:"fixed",loadScenarioRef:{uid:"load-uid"}}],sloSources:[{name:"camera",uid:"camera",generation:9007199254740993n,slo:{percentile:95,targetLatencyNanos:50000000}}],loadSources:[{name:"기록 부하",uid:"load-uid"}]}
+  const facts={name:"기록된 실험",question:"기록된 질문",control:{sourceIDs:["control-source"],controls:{power:false}},stages:[{id:stage.id,row:"기록 행",mode:"fixed",loadScenarioRef:{name:"시나리오 이름",uid:"load-uid"}},{id:"automatic",mode:"autonomous"},{id:"partial",mode:"controls-disabled",control:{controls:{power:false,routing:true}}}],sloSources:[{name:"camera",uid:"camera",generation:9007199254740993n,slo:{percentile:95,targetLatencyNanos:50000000}},{name:"큰 지연",uid:"large-latency",slo:{percentile:95,targetLatencyNanos:9007199254740993n}}],loadSources:[{name:"기록 부하",uid:"load-uid"}]}
   const run=decodeExperiments(publishedText({items:[{...recorded.publication,facts}]})).items[0]
   assert.deepEqual(run.facts,facts)
   assert.equal(run.definition,undefined)
@@ -33,9 +33,13 @@ test("R18: list facts render without per-item detail requests and absent facts s
   exports.useHistoricalExperiments([{...run,comparisons:[{left:{historical:{publicationID:"explicit-history",stageID:"old"}},right:{stageID:stage.id},reason:"기록 비교"}]}])
   assert.deepEqual(paths[2],["v1/experiments/explicit-history"])
   const html=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run}))
-  for(const value of ["기록된 실험","기록된 질문","fixed","control-source","기록 부하","load-uid","50"])assert.ok(html.includes(value),value)
+  for(const value of ["기록된 실험","기록된 질문","고정 구성","자동 운영","control-source","기록 부하","load-uid","시나리오 이름","부하 시나리오 이름","부하 시나리오 UID","SLO 출처 이름","SLO 출처 UID",measurementHelpers.formatMeasurementDuration(50000000),measurementHelpers.formatMeasurementDuration(9007199254740993n)])assert.ok(html.includes(value),value)
+  for(const value of ["fixed","autonomous","&quot;controls&quot;","&quot;uid&quot;"])assert.ok(!html.includes(value),value)
+  assert.match(html,/제어요소 끔 · 전력 · 미기록: 배치, 자원, 복제본, 배칭, 구성원/)
+  assert.match(html,/>라우팅<\/th><td[^>]*>켬<\/td>/)
+  assert.match(html,/>배치<\/th><td[^>]*>미기록<\/td>/)
   const listHTML=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
-  for(const value of ["기록된 실험","fixed","control-source","기록 부하"])assert.ok(listHTML.includes(value),value)
+  for(const value of ["기록된 실험","고정 구성","control-source","기록 부하"])assert.ok(listHTML.includes(value),value)
   assert.equal(definitionPolicy(run.stages[0],run),"고정 구성")
   const sloRow=experimentRows({...run.stages[0],kpis:{requests:{camera:{workloadUID:"camera"}}}})[0]
   assert.equal(frozenP95SLO(sloRow,run),50)
@@ -44,6 +48,14 @@ test("R18: list facts render without per-item detail requests and absent facts s
   const absentValues=Array.from(absent.matchAll(/<td\b[^>]*>(.*?)<\/td>/gs),match=>match[1])
   assert.ok(absentValues.length>0)
   assert.ok(absentValues.every(value=>value==="미기록"))
+})
+test("R18: partial controls distinguish explicit off from unrecorded",()=>{
+  const run:Experiment={...recorded.publication,facts:{control:{controls:{power:false,routing:true}},stages:[{id:stage.id,mode:"controls-disabled"}]}}
+  assert.equal(definitionPolicy(stage,run),"제어요소 끔 · 전력 · 미기록: 배치, 자원, 복제본, 배칭, 구성원")
+  const absent:Experiment={...run,facts:{stages:[{id:stage.id,mode:"controls-disabled"}]}}
+  assert.equal(definitionPolicy(stage,absent),"미기록")
+  const enabled:Experiment={...run,facts:{control:{controls:{power:true}},stages:[{id:stage.id,mode:"controls-disabled"}]}}
+  assert.equal(definitionPolicy(stage,enabled),"제어요소 · 미기록: 배치, 자원, 복제본, 라우팅, 배칭, 구성원")
 })
 test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   for(const [value,baseline] of [[-.004,0],[1.004,1]]) {

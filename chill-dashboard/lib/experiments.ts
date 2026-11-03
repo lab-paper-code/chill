@@ -218,21 +218,25 @@ export function comparisonValidity(a:ExperimentStage,b:ExperimentStage,leftRun?:
     limited:rulesMissing||!!ruleKeys.length||!sameDisplayedDuration(a,b)||!rows.length||unknown>0||changed>0||sameLoad!==true,
   }
 }
-export function definitionStage(run:Experiment,stage:ExperimentStage) {
+export function definitionStage(run:Experiment,stage:Pick<ExperimentStage,"id">) {
   if(run.stages.filter(s=>s.id===stage.id).length!==1)return undefined
   return run.definition?.spec.stages.find(s=>s.id===stage.id)
 }
-export function definitionPolicy(stage:ExperimentStage,run:Experiment):string {
+export const experimentControlLabels={placement:"배치",resources:"자원",replicas:"복제본",routing:"라우팅",batching:"배칭",power:"전력",membership:"구성원"}
+export function definitionPolicy(stage:Pick<ExperimentStage,"id">,run:Experiment):string {
   const matches=run.facts?.stages?.filter(item=>item.id===stage.id)
   const spec=run.facts?(matches?.length===1?matches[0]:undefined):definitionStage(run,stage)
   if(!spec)return "미기록"
   if(spec.mode==="autonomous")return "자동 운영"
   if(spec.mode==="fixed")return "고정 구성"
   if(spec.mode!=="controls-disabled")return "미기록"
-  const labels={placement:"배치",resources:"자원",replicas:"복제본",routing:"라우팅",batching:"배칭",power:"전력",membership:"구성원"}
-  const controls=object((spec.control??run.facts?.control??run.definition?.spec.control)?.controls)
-  const disabled=Object.entries(labels).filter(([key])=>!controls[key as keyof typeof controls]).map(([,label])=>label)
-  return `제어요소 끔${disabled.length?` · ${disabled.join(", ")}`:""}`
+  const control=spec.control??run.facts?.control??run.definition?.spec.control
+  if(!control)return "미기록"
+  const controls=object(control.controls)
+  const disabled=Object.entries(experimentControlLabels).filter(([key])=>controls[key]===false).map(([,label])=>label)
+  const missing=Object.entries(experimentControlLabels).filter(([key])=>typeof controls[key]!=="boolean").map(([,label])=>label)
+  const label=disabled.length?`제어요소 끔 · ${disabled.join(", ")}`:"제어요소"
+  return `${label}${missing.length?` · 미기록: ${missing.join(", ")}`:disabled.length?"":" · 모두 켬"}`
 }
 export function stageLabel(stage:ExperimentStage,run:Experiment):string {
   const spec=definitionStage(run,stage)
