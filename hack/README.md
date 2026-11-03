@@ -402,6 +402,22 @@ Dataset name/UID references, public settingsPatch, measurement node/meter scope,
 evaluator image/source identity and generator nodeName. There is no scientific
 host input bundle, calibration or CHILL topology restore path.
 
+The pre-7-7 cutover uses **failurePolicy v2**, binding `e5-binding.v4`,
+judgment `e5-judgment.v3` and summary `e5-summary.v4`, with strict single-version
+readers. Historical evidence is not rewritten. SLO, achieved-load fidelity,
+offered/tail energy, injection realization, drain, cleanup and publication are
+independent outcomes; a defect in one does not erase observations in another.
+Lateness and gap thresholds remain configurable reporting labels. Only zero
+evidenced infer-call/send/returned requests invalidates an offered-load claim.
+No power samples means energy UNAVAILABLE, never a fabricated zero integral.
+Partial energy retains `observedJoules`; `wholePoolJoules` requires full coverage.
+Raw ambiguity quarantines the affected request IDs, not unrelated workloads.
+Unknown operational fields are listed in `ignoredKeys` and never applied.
+CPU/throttle telemetry is best-effort, not a GO/drain dependency. On a finite
+drain watchdog or early EOF, stop exact owned writers and collect partial facts.
+Wrong Workload/Node UID, unsafe mutation, credentials/path scope and evidence
+overwrite remain hard boundaries. Generation/source/provenance labels are facts.
+
 `evaluation.py` executes prepare/factor/stage/judge/cleanup-jobs/finish/publish
 from the controller's immutable spec/execution/config ConfigMap. Public settings
 comparisons use GET/PUT `/api/v1/scheduler/settings`: GET ETag, merge the declared
@@ -442,11 +458,11 @@ assigned node, phase and ownerReference summary. Participating nodes are exactly
 `powerMeasurement.nodes` plus `loadGenerator.nodeName`. Existing system, tenant
 and ownerless Pods are environmental evidence, not a preparation rejection.
 
-At the existing prepare/factor/stage monitoring boundaries, stop only for new
-active Pod UIDs absent from that baseline and not exempt below. Write every
-offending Pod to `environment-intrusions.json` before STOP. Each cross-namespace
-Pod query uses `spec.nodeName`; terminal Pods and nonparticipating nodes are
-ignored. Pod names, ages, release labels and namespace allowlists play no role.
+At the existing prepare/factor/stage monitoring boundaries, record new active
+Pod UIDs and health changes in environment/target/node observation histories.
+`environment-intrusions.json` records new competing Pods without stopping load.
+Each cross-namespace Pod query uses `spec.nodeName`; terminal Pods and other
+nodes are ignored. No Pod-name, age, release-label or namespace guesses are used.
 
 New evaluator Pods are exempt only when their direct Job owner UID matches a
 live Job controlled by this Run or its known Stage UIDs. No ancestor walk or
@@ -456,11 +472,11 @@ frozen Workload UIDs are normal target autoscaling: use the controller's unique
 and static/mirror Pods are also exempt as persistent node infrastructure.
 No ReplicaSet/StatefulSet/CronJob ancestor-read grants are needed.
 
-The separate nonterminal load-generator Job exclusion remains in force:
-DOM and E5 share the generator node, so an already-running foreign generator is
-structural generator contention even when its Pod was present at Run start.
-Target readiness still uses the explicitly declared resource's nonempty
-Kubernetes selector, including matchExpressions, never a namespace-wide guess.
+Nonterminal load-generator Jobs are also observations, not a refusal. The
+`generator-interference.json` history distinguishes a Job declaration from
+another actual Running producer on the same generator node. NotReady target
+Pods/nodes are recorded as behavior under test; target selection still uses the
+declared resource's nonempty Kubernetes selector and exact Workload/Node UID.
 
 `hack/measure/` remains separate measurement tooling. Keep operational
 credentials and evidence outside the checkout; never copy token contents into

@@ -7,8 +7,8 @@ def sections(path):
     if not Path(path).exists():
         return None
     value = json.loads(Path(path).read_text())
-    if value.get('schema') != 'e5-judgment.v2':
-        raise ValueError('FrozenInputInvalid: judgment v2 required')
+    if value.get('schema') != 'e5-judgment.v3':
+        raise ValueError('FrozenInputInvalid: judgment v3 required')
     return value
 
 
@@ -16,12 +16,14 @@ def publication_requests(judgment):
     fields = ('offered', 'clientRows', 'unfinishedOrUnsent', 'outcomes', 'completedLatencyNS',
               'gatewayCompletedLatencyNS', 'latencyScope', 'scheduledLatencyNS', 'actualLatencyNS',
               'deadlineSuccess', 'deadlineSuccessFraction', 'requiredSuccessfulRank', 'D1', 'slo', 'workload',
-              'workloadUID', 'definitionID', 'actualGatewayIdentities', 'substages', 'identityMissingReason')
+              'workloadUID', 'definitionID', 'actualGatewayIdentities', 'substages', 'identityMissingReason',
+              'quarantinedRequestIDs', 'quarantinedClientRows', 'quarantinedRequestCount',
+              'observedDefinitions', 'rawEvidenceErrorCount', 'unkeyedRawRowCount')
     result = {}
     for name, value in judgment['requests'].items():
         row = {key: value[key] for key in fields if key in value}
         quality = value['issuanceFidelity']
-        row['issuanceFidelity'] = {key: quality[key] for key in ('offered', 'issued', 'supplied', 'issuanceFraction', 'generatorQuality')}
+        row['issuanceFidelity'] = quality
         result[name] = row
     return result
 
@@ -29,6 +31,8 @@ def publication_requests(judgment):
 def render(root, repository=None, *, evaluation=None):
     if evaluation is None:
         evaluation = json.loads((Path(root) / 'e5-summary.json').read_text())
+        if evaluation.get('schema') != 'e5-summary.v4':
+            raise ValueError('FrozenInputInvalid: summary v4 required')
     lines = ['Evaluation: ' + evaluation['status'], 'stage | workload | offered | completed | deadline success | SLO | declared-meter J']
     for stage in evaluation.get('stages', []):
         kpis = stage['kpis']

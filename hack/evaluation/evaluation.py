@@ -118,13 +118,11 @@ def environment(run, scientific):
 
 def stage_config(spec, scenario, execution, config, root):
     operational = json.loads(config['operational'])
-    if set(operational) - {'timeboxes', 'tokenSafetyMarginSeconds', 'workloads', 'collection'}:
-        raise ValueError('FrozenInputInvalid: unknown operational fields')
+    ignored = sorted(set(operational) - {'timeboxes', 'tokenSafetyMarginSeconds', 'workloads', 'collection'})
     timeboxes = {'setupSeconds': 300, 'barrierSeconds': 300, 'drainSeconds': 120, 'flushSeconds': 5,
                  'collectSeconds': 300, 'apiSeconds': 30}
-    if set(operational.get('timeboxes', {})) - set(timeboxes):
-        raise ValueError('FrozenInputInvalid: unknown operational timeboxes')
-    timeboxes.update(operational.get('timeboxes', {}))
+    ignored.extend('timeboxes.' + key for key in set(operational.get('timeboxes', {})) - set(timeboxes))
+    timeboxes.update({key: value for key, value in operational.get('timeboxes', {}).items() if key in timeboxes})
     if 'drainTimeoutSeconds' in config:
         timeboxes['drainSeconds'] = float(config['drainTimeoutSeconds'])
     if any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0 for value in timeboxes.values()):
@@ -146,8 +144,8 @@ def stage_config(spec, scenario, execution, config, root):
                'workers', 'lifetimeSeconds', 'gatewayCapSeconds', 'podSpec', 'volumeMounts'}
     for pinned in scenario['workloads']:
         operation = operational['workloads'][pinned['name']]
-        if set(operation) - allowed:
-            raise ValueError('FrozenInputInvalid: unknown operational workload fields')
+        ignored.extend('workloads.' + pinned['name'] + '.' + key for key in set(operation) - allowed)
+        operation = {key: value for key, value in operation.items() if key in allowed}
         workload = {**copy.deepcopy(pinned), **copy.deepcopy(operation)}
         required = {'producerEndpoint', 'producerTokenFile', 'producerCAFile', 'deliverySeconds', 'socketSeconds', 'workers'}
         if required - operation.keys():
@@ -170,12 +168,13 @@ def stage_config(spec, scenario, execution, config, root):
         workloads.append(workload)
     quality = spec['judgment']['generatorQuality']
     collection = operational.get('collection', {})
-    if set(collection) - {'maximumDurationSeconds'}:
-        raise ValueError('FrozenInputInvalid: unknown collection fields')
+    ignored.extend('collection.' + key for key in set(collection) - {'maximumDurationSeconds'})
+    collection = {key: value for key, value in collection.items() if key == 'maximumDurationSeconds'}
     if 'maximumDurationSeconds' in collection and (type(collection['maximumDurationSeconds']) not in (int, float) or
                                                    not math.isfinite(collection['maximumDurationSeconds']) or collection['maximumDurationSeconds'] <= 0):
         raise ValueError('FrozenInputInvalid: positive collection duration bound required')
     return {'namespace': execution['namespace'], 'endpoint': config['chillAPIURL'], 'caFile': CA,
+            'ignoredKeys': sorted(ignored), 'failurePolicy': 'v2',
             'tokenFile': TOKEN, 'collectorTokenFile': TOKEN, 'timeboxes': timeboxes,
             'tokenSafetyMarginSeconds': operational.get('tokenSafetyMarginSeconds', 60), 'workloads': workloads,
             'loadGenerator': generator, 'seeds': scenario['spec']['seeds'], 'arrivals': scenario['spec']['arrivalDistribution'],
@@ -191,7 +190,7 @@ def stage_config(spec, scenario, execution, config, root):
 
 
 def result_record(execution,step,started,status='Complete',reason='ProcedureComplete',measurement=None,artifacts=None,outputs=None):
-    record={'schemaVersion':'evaluation-step.v1alpha1','runUID':execution['runUID'],'step':step,'execution':{'status':status,'reason':reason},'startedAt':started,'finishedAt':now(),'artifacts':artifacts or []}
+    record={'schemaVersion':'evaluation-step.v1alpha1','failurePolicy':'v2','runUID':execution['runUID'],'step':step,'execution':{'status':status,'reason':reason},'startedAt':started,'finishedAt':now(),'artifacts':artifacts or []}
     for key in ('stageUID','stageID'):
         if execution.get(key): record[key]=execution[key]
     if measurement: record['measurement']=measurement
@@ -201,9 +200,8 @@ def result_record(execution,step,started,status='Complete',reason='ProcedureComp
 
 
 def verdict(judgment):
-    status=judgment['status'];failure=judgment.get('failureScenarioEvidence') or {}
-    if status.startswith('INVALID') or failure.get('status')=='INVALID': return {'verdict':'INVALID','reason':'GeneratorInvalid' if status=='INVALID_GENERATOR' else 'InjectionInvalid'}
-    if status in ('NOT_EVALUATED','NOT_READY','INCOMPLETE','UNKNOWN') or failure.get('status')=='UNMEASURED': return {'verdict':'NOT_EVALUATED','reason':judgment.get('reason') or 'ObservationUnavailable'}
+    status=judgment.get('components',{}).get('slo',{}).get('status',judgment['status'])
+    if status in ('NOT_EVALUATED','NOT_READY','INCOMPLETE','UNKNOWN','INVALID_NO_LOAD'): return {'verdict':'NOT_EVALUATED','reason':'NoLoad' if status=='INVALID_NO_LOAD' else 'ObservationUnavailable'}
     return {'verdict':'FAIL' if status=='FAIL' else 'PASS','reason':'SLOFailed' if status=='FAIL' else 'MeasurementComplete'}
 
 
@@ -232,8 +230,8 @@ class Harness:
         scenarios = {}
         self.scenarios = scenarios
         self.harness_module = module('evaluation_harness', HERE / 'conductor.py')
-        if self.spec['harness']['sourceSHA'] != os.environ.get('CHILL_HARNESS_SOURCE_SHA'):
-            raise ValueError('IdentityMismatch: harness source differs from image revision')
+        save(self.root / 'source-observations.json', {'declaredSourceSHA': self.spec['harness']['sourceSHA'],
+                                                    'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')})
         for template in self.spec['stages']:
             pin = template['loadScenarioRef']
             identity = pin['uid']
@@ -254,8 +252,9 @@ class Harness:
                 view = api(self.config, '/api/v1/workloads/' + workload_pin['name'])
                 applied = view.get('appliedDefinition') or {}
                 actual = {key: applied.get(key) for key in ('name', 'uid', 'generation', 'slo', 'model', 'preprocessor', 'dataset')}
-                if any(actual.get(key) != workload_pin[key] for key in ('name', 'uid', 'generation')):
+                if any(actual.get(key) != workload_pin[key] for key in ('name', 'uid')):
                     raise ValueError('IdentityMismatch: applied Workload ' + workload_pin['name'])
+                actual['requestedGeneration'] = workload_pin['generation']
                 workloads.append(actual)
                 dataset_pin = scenario['datasetRefs'][workload_pin['name']]
                 if set(dataset_pin) != {'name', 'uid'}:
@@ -336,13 +335,10 @@ class Harness:
                     raise RuntimeError('TargetUnavailable: declared target has no Pod selector')
                 pods = kubectl(resource['namespace'], 'get', 'pods', '-l', ','.join(terms))
             current = [pod for pod in pods['items'] if not pod['metadata'].get('deletionTimestamp')]
-            if not current:
-                raise RuntimeError('TargetUnavailable: no target Pods')
-            for pod in current:
-                statuses = pod.get('status', {}).get('containerStatuses', [])
-                if not statuses or any(not status.get('ready') for status in statuses) or not any(c['type'] == 'Ready' and c['status'] == 'True' for c in pod.get('status', {}).get('conditions', [])):
-                    raise RuntimeError('TargetUnavailable: target Pod not Ready')
-            identities.append({'name': component['name'], 'uid': obj['metadata']['uid'], 'resource': resource,
+            available = bool(current) and all(pod.get('status', {}).get('containerStatuses') and
+                all(status.get('ready') for status in pod['status']['containerStatuses']) and
+                any(c['type']=='Ready' and c['status']=='True' for c in pod.get('status',{}).get('conditions',[])) for pod in current)
+            identities.append({'name': component['name'], 'uid': obj['metadata']['uid'], 'resource': resource, 'available': available,
                                'pods': [{'uid': pod['metadata']['uid'], 'containers': pod.get('status', {}).get('containerStatuses', [])} for pod in current]})
         return identities
 
@@ -358,8 +354,11 @@ class Harness:
             node = kubectl(self.execution['namespace'], 'get', 'node', pin['name'])
             if node['metadata']['uid'] != pin['uid']:
                 raise ValueError('IdentityMismatch: participating Node UID')
-            if not any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', [])):
-                raise RuntimeError('TargetUnavailable: participating Node NotReady')
+            ready = any(c['type'] == 'Ready' and c['status'] == 'True' for c in node.get('status', {}).get('conditions', []))
+            path = self.root / ('node-' + pin['name'] + '-observations.json')
+            history = load(path) if path.exists() else []
+            history.append({'at': now(), 'node': pin, 'ready': ready})
+            save(path, history)
         result = []
         for name in sorted({pin['name'] for pin in nodes}):
             items = kubectl(self.execution['namespace'], 'get', 'pods', '--all-namespaces',
@@ -383,11 +382,13 @@ class Harness:
         scenarios = self.snapshot['scenarios'] if hasattr(self, 'snapshot') else self.scenarios
         workload_uids = {workload['uid'] for workload in scenarios[spec['loadScenarioRef']['uid']]['spec']['workloads']}
         intruders = competing_pods(current, baseline['pods'], job_uids, workload_uids, self.execution['namespace'])
+        path = self.root / 'environment-observations.json'
+        history = load(path) if path.exists() else []
+        history.append({'at': now(), 'pods': current, 'newCompetingPods': intruders})
+        save(path, history)
         if intruders:
             save(self.root / 'environment-intrusions.json',
                  {'detectedAt': now(), 'baselineCapturedAt': baseline['capturedAt'], 'pods': intruders})
-            raise RuntimeError('TargetUnavailable: new competing Pods on participating nodes: ' +
-                               ', '.join(pod['namespace'] + '/' + pod['name'] + ' uid=' + pod['uid'] for pod in intruders))
     def open_snapshot(self):
         path=self.inputs/'snapshot.json'
         reference=self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef')
@@ -442,8 +443,12 @@ class Harness:
             instance.disk_boundary()
             if time.monotonic() - last[0] >= 30:
                 targets = self.check_target(self.spec['target'])
-                save(folder / 'target-observations.json', {'at': now(), 'targets': targets})
+                path = folder / 'target-observations.json'
+                history = load(path) if path.exists() else []
+                history.append({'at': now(), 'targets': targets})
+                save(path, history)
                 self.check_fleet(self.spec)
+                instance.observe_generators(folder)
                 last[0] = time.monotonic()
             return offset
         controller.monitor = MethodType(monitor, controller)
@@ -544,7 +549,9 @@ class Harness:
                     self.execution.get('inputSnapshotRef') or self.spec.get('inputSnapshotRef'),
                     phase_source,scope/'measured',self.run,requests)
                 power=judgment.get('power') or {}
-                kpis={'status':judgment['status'],'requests':requests,'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,'power':{key:power.get(key) for key in ('scope','complete','wholePoolJoules','energyCoverage')},'limitations':bound['limitations']}
+                kpis={'failurePolicy':'v2','status':judgment['status'],'components':judgment['components'],'requests':requests,
+                      'wholePoolJoules':power.get('wholePoolJoules') if power.get('complete') else None,
+                      'power':power,'powerDrainInclusive':judgment.get('powerDrainInclusive'),'limitations':bound['limitations']}
                 kpis.update(self.harness_module.publication_measurements(bound,power))
                 stages.append({'id':sid,'from':phase['startUTC'],'to':phase['endUTC'],'kpis':kpis})
         generated=now();start=min((stage['from'] for stage in stages),default=generated if prepare_failed else self.snapshot['preparedAt']);end=max((stage['to'] for stage in stages),default=generated)

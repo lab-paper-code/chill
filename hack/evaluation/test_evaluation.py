@@ -113,6 +113,184 @@ def power_window():
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_slo_fidelity_energy_injection_and_provenance_are_independent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec, _, _, _, config = fixture(root)
+            other = 'other-workload'
+            template = config['workloads'][0]
+            config['workloads'].append({**copy.deepcopy(template), 'name': other, 'uid': 'other-uid'})
+            names = [NAME, other]
+            config['seeds'] = dict.fromkeys(names, '202')
+            config['arrivals'] = dict.fromkeys(names, 'poisson')
+            config['loadGenerator']['shards'] = dict.fromkeys(names, 1)
+            config['stages'][0]['parts'][0]['rates'] = dict.fromkeys(names, 2.5)
+            config['traceOffsets'] = dict.fromkeys(names, [1, 2])
+            config['evaluation']['failureInjection'] = [{'id': 'unrealized'}]
+            path = root / 'config.json'
+            conductor.save(path, config)
+            bound = conductor.bind(path)
+            conductor.save(root / 'binding.json', bound)
+            conductor.save(root / 'phase.json', {'stage': bound['schedule'][0], 'startUTC': START, 'endUTC': END,
+                'drainedUTC': END, 'starts': dict.fromkeys(names, {'at': START, 'monotonicNS': 100}),
+                'drain': {'complete': False, 'reasons': ['DrainWatchdog']}})
+            conductor.save(root / 'failure-events.json', {'status': 'INVALID', 'records': [{'record': {'outcome': 'Cancelled'}}]})
+            window = power_window()
+            window['nodes'][0].update(meterComplete=False, gapFraction=.2)
+            partial = archive.meter_energy(window, spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
+            missing = {'complete': False, 'energyStatus': 'UNAVAILABLE', 'observedJoules': None, 'wholePoolJoules': None, 'reasons': ['no samples']}
+            conductor.save(root / 'power.json', partial)
+            conductor.save(root / 'power-drain-inclusive.json', missing)
+            clients, indexed = {}, {}
+            for workload in config['workloads']:
+                name, uid = workload['name'], workload['uid']
+                rows = [{'requestIndex': i, 'requestID': name + str(i), 'workloadUID': uid, 'scheduledOffsetNs': i+1,
+                         'issued': True, 'sentMonotonicNS': 1000000101+i} for i in range(2)]
+                clients[name] = rows
+                (root / (name + '-client.jsonl')).write_text(''.join(json.dumps(row)+'\n' for row in rows))
+                indexed[uid] = {'errors': [{'error': 'one unrelated raw hour/provenance error'}],
+                    'identities': [{'workloadUID': uid, 'definitionID': 'definition'}],
+                    'summary': {'uniqueRequests': 2, 'finalConflicts': [{'requestID': name+'0'}] if name==NAME else []},
+                    'finals': {name+str(i): {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 100000000}
+                               for i in range(2) if name!=NAME or i!=0}}
+            original_module = conductor.module
+            def modules(name, path):
+                return SimpleNamespace(iter_request_indexes=lambda *args, **kwargs: indexed) if name=='evaluation_raw' else original_module(name, path)
+            with patch.object(conductor, 'module', side_effect=modules):
+                result = conductor.judge(root / 'binding.json', root)
+                self.assertEqual(result['requests'][other]['deadlineSuccess'], 2)
+                self.assertEqual(result['requests'][other]['D1'], 'OBSERVED_THRESHOLD_MET')
+                self.assertEqual(result['requests'][NAME]['quarantinedRequestIDs'], [NAME+'0'])
+                self.assertEqual(result['requests'][NAME]['completedLatencyNS']['samples'], 1)
+                self.assertEqual(result['components']['energy'], {'offered': 'PARTIAL', 'drainInclusive': 'UNAVAILABLE'})
+                self.assertEqual(result['components']['injection']['status'], 'NOT_REALIZED')
+                self.assertEqual(result['components']['loadFidelity'][other]['generatorQuality']['status'], 'OBSERVED')
+                self.assertEqual(evaluation.verdict(result)['verdict'], 'FAIL')
+                conductor.save(root / 'power.json', missing)
+                no_power = conductor.judge(root / 'binding.json', root)
+                self.assertEqual(no_power['requests'][other]['deadlineSuccess'], 2)
+                self.assertEqual(no_power['components']['energy']['offered'], 'UNAVAILABLE')
+                self.assertIsNone(no_power['power']['wholePoolJoules'])
+                no_samples = power_window()
+                for node in no_samples['nodes']:
+                    node.update(meterJoules=None, samples=0, meterComplete=False)
+                unavailable = archive.meter_energy(no_samples, spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
+                self.assertEqual(unavailable['energyStatus'], 'UNAVAILABLE')
+                self.assertIsNone(unavailable['observedJoules'])
+                measured = archive.meter_energy(power_window(), spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
+                conductor.save(root / 'power.json', measured)
+                for name in names:
+                    for row in clients[name]:
+                        row.update(issued=False, error='UnsentAtWindowEnd')
+                    (root / (name + '-client.jsonl')).write_text(''.join(json.dumps(row)+'\n' for row in clients[name]))
+                no_load = conductor.judge(root / 'binding.json', root)
+                self.assertEqual(no_load['components']['slo']['status'], 'INVALID_NO_LOAD')
+                self.assertEqual(evaluation.verdict(no_load)['verdict'], 'NOT_EVALUATED')
+                self.assertEqual(no_load['power']['energyStatus'], 'MEASURED')
+                clients[NAME][0]['workloadUID'] = 'wrong-workload'
+                (root / (NAME + '-client.jsonl')).write_text(json.dumps(clients[NAME][0])+'\n')
+                with self.assertRaisesRegex(ValueError, 'Workload UID'):
+                    conductor.judge(root / 'binding.json', root)
+
+    def test_lateness_and_missing_sends_are_quality_facts_not_global_invalidity(self):
+        analysis = conductor.module('policy_analysis_test', conductor.HERE / 'd2/analyze_before.py')
+        quality = {'latenessToleranceNS': 50000000, 'maxExceedingFraction': .01}
+        rows = [{'requestIndex': 0, 'scheduledOffsetNs': 1, 'sentMonotonicNS': 1000000101, 'issued': True},
+                {'requestIndex': 1, 'scheduledOffsetNs': 2, 'issued': False, 'error': 'UnsentAtWindowEnd'}]
+        result = analysis.issuance_fidelity(rows, [1, 2], 100, 2000000000, analysis.stats, quality)
+        self.assertEqual(result['generatorQuality']['status'], 'OBSERVED')
+        self.assertEqual(result['generatorQuality']['thresholdLabel'], 'EXCEEDS_REPORTED_THRESHOLD')
+        self.assertEqual(result['unissued'], 1)
+        self.assertEqual(result['sendLatenessNS']['samples'], 1)
+        empty = analysis.issuance_fidelity([], [1, 2], 100, 2000000000, analysis.stats, quality)
+        self.assertEqual(empty['generatorQuality']['status'], 'INVALID_NO_LOAD')
+
+    def test_unknown_operational_keys_are_ignored_but_effective_fields_validate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec, scenario, execution, config, _ = fixture(root)
+            operation = json.loads(config['operational'])
+            operation.update(futureFeature=True, timeboxes={'unusedBudget': -1}, collection={'futureCoverage': 'ignored'})
+            operation['workloads'][NAME].update(uid='wrong-uid', futureClient=True)
+            operation['workloads'][NAME]['podSpec']['hostNetwork'] = True
+            config['operational'] = json.dumps(operation)
+            assembled = evaluation.stage_config(spec, scenario, execution, config, root)
+            self.assertIn('futureFeature', assembled['ignoredKeys'])
+            self.assertIn('timeboxes.unusedBudget', assembled['ignoredKeys'])
+            self.assertIn('workloads.' + NAME + '.uid', assembled['ignoredKeys'])
+            self.assertEqual(assembled['workloads'][0]['uid'], 'workload')
+            path = root / 'config.json'
+            conductor.save(path, assembled)
+            controller = object.__new__(conductor.CPO)
+            controller.b = conductor.bind(path)
+            controller.c, controller.tb = assembled, assembled['timeboxes']
+            controller.ws = {NAME: assembled['workloads'][0]}
+            job = controller.job(NAME, controller.b['schedule'][0], root)
+            self.assertNotIn('hostNetwork', job['spec']['template']['spec'])
+            self.assertIn('hostNetwork', job['metadata']['annotations']['edge.dacs.io/ignored-pod-keys'])
+            operation['workloads'][NAME]['workers'] = 0
+            config['operational'] = json.dumps(operation)
+            with self.assertRaisesRegex(ValueError, 'positive client'):
+                evaluation.stage_config(spec, scenario, execution, config, root)
+
+    def test_runtime_health_is_recorded_but_wrong_node_uid_remains_fatal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = object.__new__(evaluation.Harness)
+            harness.root = Path(directory)
+            harness.execution = {'namespace': 'evaluation-ns'}
+            target = {'components': [{'name': 'server', 'resource': {'kind': 'Pod', 'name': 'server', 'namespace': 'evaluation-ns'}}]}
+            pod = {'kind': 'Pod', 'metadata': {'uid': 'target'},
+                   'status': {'containerStatuses': [{'name': 'server', 'ready': False}], 'conditions': [{'type': 'Ready', 'status': 'False'}]}}
+            with patch.object(evaluation, 'kubectl', return_value=pod):
+                self.assertFalse(harness.check_target(target)[0]['available'])
+            spec = {'powerMeasurement': {'nodes': [{'name': 'node', 'uid': 'node-uid'}]}, 'loadGenerator': {'nodeName': 'node'}}
+            node = {'metadata': {'name': 'node', 'uid': 'node-uid'}, 'status': {'conditions': [{'type': 'Ready', 'status': 'False'}]}}
+            def k(namespace, verb, kind, *args):
+                return node if kind == 'node' else {'items': []}
+            with patch.object(evaluation, 'kubectl', side_effect=k):
+                self.assertEqual(harness.participant_pods(spec), [])
+                self.assertFalse(conductor.load(harness.root / 'node-node-observations.json')[-1]['ready'])
+                node['metadata']['uid'] = 'replacement'
+                with self.assertRaisesRegex(ValueError, 'Node UID'):
+                    harness.participant_pods(spec)
+
+    def test_energy_windows_collect_independently_of_raw_and_each_other(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / 'measured'
+            folder.mkdir()
+            spec, _, _, _, config = fixture(root)
+            env = root / 'environment.json'
+            conductor.save(env, {'paths': {'campaign': str(root)}})
+            tail_end = '2026-11-03T00:00:11Z'
+            phase = {'startUTC': START, 'endUTC': END, 'drainedUTC': tail_end}
+            calls = []
+            def api(method, path, **kwargs):
+                calls.append(path)
+                if len(calls) == 1:
+                    raise RuntimeError('offered power unavailable')
+                window = power_window()
+                window['to'] = tail_end
+                return window
+            with patch.dict(os.environ, CHILL_EXPERIMENT_CONFIG=str(env)), patch.object(archive.time, 'time_ns', return_value=archive._time_ns(tail_end)+180000000000), patch.object(archive, '_raw_get', side_effect=RuntimeError('raw index unavailable')):
+                archive.collect(folder, phase, config['collection'], SimpleNamespace(api=api), 5)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(conductor.load(folder / 'power.json')['energyStatus'], 'UNAVAILABLE')
+            self.assertEqual(conductor.load(folder / 'power-drain-inclusive.json')['energyStatus'], 'MEASURED')
+
+    def test_overwrite_is_still_a_safety_stop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, _, _, config = fixture(root)
+            path = root / 'config.json'
+            conductor.save(path, config)
+            controller = object.__new__(conductor.CPO)
+            controller.b, controller.c = conductor.bind(path), config
+            controller.a = SimpleNamespace(stage='e5-test')
+            Path(config['evaluation']['stageFolder']).mkdir()
+            with self.assertRaisesRegex(RuntimeError, 'overwrite'):
+                controller.run()
+
     def test_public_patch_apply_readback_revert(self):
         api = SettingsAPI()
         before = copy.deepcopy(api.value)
@@ -312,7 +490,7 @@ class EvaluationTests(unittest.TestCase):
             path = root / 'config.json'
             conductor.save(path, config)
             bound = conductor.bind(path)
-            self.assertEqual(bound['schema'], 'e5-binding.v3')
+            self.assertEqual(bound['schema'], 'e5-binding.v4')
             self.assertEqual(bound['schedule'][0]['parts'][0]['rates'], {NAME: 2.5})
             self.assertEqual(bound['schedule'][0]['traces'][NAME]['seed'], 202)
             self.assertEqual(bound['schedule'], conductor.bind(path)['schedule'])
@@ -490,7 +668,7 @@ class EvaluationTests(unittest.TestCase):
                     return {'metadata': {'name': args[0], 'uid': next((node['uid'] for node in spec['powerMeasurement']['nodes'] if node['name'] == args[0]), 'generator-node')},
                             'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]}}
                 return copy.deepcopy(objects[kind])
-            with patch.object(evaluation, 'kubectl', side_effect=k), patch.object(evaluation, 'api', return_value={'appliedDefinition': scenario['workloads'][0]}), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA=spec['harness']['sourceSHA'], HOSTNAME='harness-pod'):
+            with patch.object(evaluation, 'kubectl', side_effect=k), patch.object(evaluation, 'api', return_value={'appliedDefinition': {**scenario['workloads'][0], 'generation': 2}}), patch.dict(os.environ, CHILL_HARNESS_SOURCE_SHA='different-image-revision', HOSTNAME='harness-pod'):
                 harness.prepare()
             snapshot = conductor.load(harness.inputs / 'snapshot.json')
             self.assertEqual(snapshot['schemaVersion'], 'evaluation-snapshot.v2alpha1')
@@ -504,9 +682,11 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(frozen['datasetRef'], {'name': 'records', 'uid': 'dataset'})
             self.assertEqual(frozen['dataset']['source']['path'], '/records')
             self.assertEqual(frozen['fields'], ['input'])
+            self.assertEqual(frozen['generation'], 2)
+            self.assertEqual(frozen['requestedGeneration'], 1)
             self.assertEqual(len(uploads), 1)
 
-    def test_real_stage_loop_uses_only_owned_ready_go_and_request_drain(self):
+    def exercise_stage_policy(self, mode):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec, scenario, execution, _, config = fixture(root)
@@ -515,11 +695,16 @@ class EvaluationTests(unittest.TestCase):
             config['traceVolume'] = {'claimName': 'workspace', 'mountPath': str(root)}
             config['timeboxes'] = dict.fromkeys(config['timeboxes'], 5)
             config['timeboxes']['flushSeconds'] = .001
+            config['timeboxes']['drainSeconds'] = .01
+            if mode == 'watchdog':
+                config['timeboxes'].update(drainSeconds=.01, collectSeconds=.01)
             path = root / 'config.json'
             conductor.save(path, config)
             controller = object.__new__(conductor.CPO)
             controller.b = conductor.bind(path)
+            controller.b['sources']['producer.py']['sha256'] = '0' * 64
             controller.c, controller.out, controller.tb = config, root, config['timeboxes']
+            controller.residuals = []
             controller.ws = {w['name']: w for w in config['workloads']}
             controller.a = SimpleNamespace(stage='e5-test')
             controller.monitor = lambda *args: 0
@@ -527,10 +712,11 @@ class EvaluationTests(unittest.TestCase):
             ready = {'evaluationEvent': 'ready', 'at': START, 'barrierSeconds': 10000000000,
                      'offered': 1, 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
-                     'datasetRef': scenario['spec']['datasetRefs'][NAME], 'sourceSHA': spec['loadGenerator']['sourceSHA']}
+                     'datasetRef': {'name': 'different-provenance', 'uid': 'different'}, 'sourceSHA': 'different-revision'}
+            tail = ('import time;time.sleep(60)\n' if mode == 'watchdog' else
+                    'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained"}),flush=True)\n')
             script = ('import sys,json\nprint(' + repr(json.dumps(ready)) + ',flush=True)\nsys.stdin.readline()\n'
-                      'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n'
-                      'print(json.dumps({"evaluationEvent":"drained"}),flush=True)\nsys.stdin.readline()\n')
+                      'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n' + tail)
             pod = {'metadata': {'name': 'producer', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]},
                    'status': {'phase': 'Running', 'containerStatuses': [
                        {'name': 'load', 'containerID': 'container', 'imageID': spec['loadGenerator']['image'], 'restartCount': 0, 'state': {'running': {'startedAt': START}}}]}}
@@ -560,8 +746,9 @@ class EvaluationTests(unittest.TestCase):
                     return {}
                 raise AssertionError(args)
             controller.io = SimpleNamespace(k=k, delete_job=lambda *args: None)
-            counters = [{'podUID': 'pod', 'containerID': 'container', 'at': '2099-01-01T00:00:00Z', 'cpuUsageNanos': 1, 'nrThrottled': 0, 'throttledNanos': 0}]
-            telemetry = SimpleNamespace(ready=lambda *args: True, poll=lambda *args: counters)
+            def missing_samples(*args):
+                raise RuntimeError('diagnostic counters unavailable')
+            telemetry = SimpleNamespace(poll=missing_samples)
             original_module = conductor.module
             auth = original_module('test_auth', conductor.HERE / 'auth.py')
             def modules(name, path):
@@ -575,9 +762,20 @@ class EvaluationTests(unittest.TestCase):
                 controller.run()
             process[0].stdin.close()
             phase = conductor.load(root / 'measured/phase.json')
-            self.assertEqual(phase['status'], 'DRAINED_NOT_EVALUATED')
+            self.assertEqual(phase['status'], 'DRAINED_NOT_EVALUATED' if mode == 'normal' else 'PARTIAL_DRAIN_NOT_EVALUATED')
             self.assertEqual(set(phase['starts']), {NAME})
-            self.assertTrue((root / 'measured' / (NAME + '-client-end-counter.json')).exists())
+            self.assertTrue(phase['diagnosticErrors'])
+            self.assertTrue((root / 'measured/collected.json').exists())
+            self.assertFalse((root / 'measured' / (NAME + '-client-end-counter.json')).exists())
+
+    def test_missing_cpu_samples_and_provenance_labels_do_not_gate_go_or_drain(self):
+        self.exercise_stage_policy('normal')
+
+    def test_producer_eof_preserves_partial_collection(self):
+        self.exercise_stage_policy('eof')
+
+    def test_drain_watchdog_stops_owned_writers_and_collects(self):
+        self.exercise_stage_policy('watchdog')
 
     def test_cleanup_never_deletes_harness_or_unknown_job_uid(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -712,11 +910,11 @@ class EvaluationTests(unittest.TestCase):
                 return original_module(name, path)
             with patch.object(conductor, 'module', side_effect=modules):
                 judgment = conductor.judge(root / 'binding.json', root)
-            self.assertEqual(judgment['schema'], 'e5-judgment.v2')
+            self.assertEqual(judgment['schema'], 'e5-judgment.v3')
             self.assertEqual(judgment['status'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['deadlineSuccess'], 0)
-            self.assertEqual(judgment['requests'][NAME]['issuanceFidelity']['generatorQuality']['status'], 'VALID')
+            self.assertEqual(judgment['requests'][NAME]['issuanceFidelity']['generatorQuality']['status'], 'OBSERVED')
             self.assertEqual(evaluation.verdict(judgment)['verdict'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['substages'][0]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['definitionID'], 'definition')
@@ -724,7 +922,7 @@ class EvaluationTests(unittest.TestCase):
             (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
             with patch.object(conductor, 'module', side_effect=modules):
                 duplicated = conductor.judge(root / 'binding.json', root)
-            self.assertEqual(duplicated['status'], 'NOT_READY')
+            self.assertEqual(duplicated['status'], 'PARTIAL')
             self.assertIsNone(duplicated['requests'][NAME]['definitionID'])
 
     def test_missing_stage_is_not_published_as_valid_subset(self):
@@ -733,7 +931,8 @@ class EvaluationTests(unittest.TestCase):
             stages = [{'id': 'measured', 'kpis': {'status': 'MEASURED_DESCRIPTIVE'}}]
             results = {'measured': {'measurement': {'verdict': 'PASS'}}, 'missing': {'measurement': {'verdict': 'NOT_EVALUATED'}}}
             summary = conductor.summarize(None, root, evaluation={'stages': stages, 'results': results})
-            self.assertEqual(summary['status'], 'NOT_EVALUATED')
+            self.assertEqual(summary['status'], 'MEASURED_DESCRIPTIVE')
+            self.assertEqual(summary['completeness'], 'PARTIAL')
             results['missing']['measurement']['verdict'] = 'FAIL'
             self.assertEqual(conductor.summarize(None, root, evaluation={'stages': stages, 'results': results})['status'], 'FAIL')
 
@@ -754,6 +953,8 @@ class EvaluationTests(unittest.TestCase):
             result = archive.meter_energy(window, spec['powerMeasurement'], spec['judgment']['energyCoverage'], START, END)
             self.assertFalse(result['complete'])
             self.assertIsNone(result['wholePoolJoules'])
+            self.assertEqual(result['observedJoules'], 300)
+            self.assertEqual(result['energyStatus'], 'PARTIAL')
             self.assertEqual(result['energyCoverage']['maximumNodeGapFraction'], .2)
             window['nodes'][0]['meterComplete'] = False
             self.assertFalse(archive.meter_energy(window, spec['powerMeasurement'], {'maxGapFraction': 1, 'maxSingleGapSeconds': 30}, START, END)['complete'])
@@ -810,7 +1011,7 @@ class EvaluationTests(unittest.TestCase):
                 intruders = evaluation.competing_pods(current, baseline, {'own-job'}, {'target-workload'}, 'evaluation-ns')
                 self.assertEqual(bool(intruders), blocked)
 
-    def test_new_competing_pods_are_recorded_before_stop(self):
+    def test_new_competing_pods_are_recorded_without_stop(self):
         with tempfile.TemporaryDirectory() as directory:
             harness = object.__new__(evaluation.Harness)
             harness.root = Path(directory)
@@ -820,8 +1021,7 @@ class EvaluationTests(unittest.TestCase):
             current = [{'namespace': 'tenant', 'name': 'intruder', 'uid': 'intruder-uid', 'node': 'node',
                         'phase': 'Running', 'ownerReferences': [], 'mirror': False}]
             with patch.object(harness, 'participant_pods', return_value=current), patch.object(evaluation, 'kubectl', return_value={'items': []}):
-                with self.assertRaisesRegex(RuntimeError, 'new competing Pods.*tenant/intruder'):
-                    harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
+                harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
             evidence = conductor.load(harness.root / 'environment-intrusions.json')
             self.assertEqual(evidence['pods'], current)
             self.assertEqual(evidence['baselineCapturedAt'], START)
@@ -841,33 +1041,23 @@ class EvaluationTests(unittest.TestCase):
             with patch.object(harness, 'participant_pods', return_value=current), patch.object(evaluation, 'kubectl', return_value={'items': [job]}):
                 harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
                 job['metadata']['uid'] = 'different-job'
-                with self.assertRaisesRegex(RuntimeError, 'new competing Pods'):
-                    harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
+                harness.check_fleet({'loadScenarioRef': {'uid': 'scenario'}})
+                self.assertTrue((harness.root / 'environment-intrusions.json').exists())
 
-    def test_another_nonterminal_generator_job_blocks_stage(self):
-        for terminal in (None, 'Complete', 'Failed'):
-            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                _, _, _, _, config = fixture(root)
-                path = root / 'config.json'
-                conductor.save(path, config)
-                controller = object.__new__(conductor.CPO)
-                controller.b = conductor.bind(path)
-                controller.c, controller.out = config, root
-                controller.a = SimpleNamespace(stage='e5-test')
-                conductor.save(root / 'settings-patch.json', {'accepted': True})
-                foreign = {'metadata': {'name': 'dom-generator', 'uid': 'foreign-job'}}
-                if terminal:
-                    foreign['status'] = {'conditions': [{'type': terminal, 'status': 'True'}]}
-                controller.io = SimpleNamespace(k=lambda *args, **kwargs: {'items': [foreign]})
-                original_module = conductor.module
-                def modules(name, path):
-                    if name == 'evaluation_auth':
-                        raise RuntimeError('passed-generator-check')
-                    return original_module(name, path)
-                with patch.object(conductor, 'module', side_effect=modules):
-                    with self.assertRaisesRegex(RuntimeError, 'passed-generator-check' if terminal else 'another nonterminal load-generator Job'):
-                        controller.run()
+    def test_other_running_producer_is_observed_not_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, _, _, config = fixture(root)
+            controller = object.__new__(conductor.CPO)
+            controller.c = config
+            foreign = {'metadata': {'name': 'dom-generator', 'uid': 'foreign-job'}}
+            pod = {'metadata': {'name': 'dom-pod', 'uid': 'foreign-pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'foreign-job'}]},
+                   'spec': {'nodeName': config['loadGenerator']['nodeName']},
+                   'status': {'phase': 'Running', 'containerStatuses': [{'state': {'running': {'startedAt': START}}}]}}
+            controller.io = SimpleNamespace(k=lambda args: {'items': [foreign] if args[1]=='jobs' else [pod]})
+            fact = controller.observe_generators(root)
+            self.assertEqual(fact['otherProducerRunningOnGeneratorNode'][0]['uid'], 'foreign-pod')
+            self.assertTrue((root / 'generator-interference.json').exists())
 
     def test_target_without_selector_never_scans_namespace_pods(self):
         harness = object.__new__(evaluation.Harness)
@@ -904,8 +1094,8 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(observed[0]['pods'][0]['containers'][0]['imageID'], 'unrelated-current-runtime')
         self.assertEqual(observed[0]['resource'], target['components'][0]['resource'])
         pod['status']['conditions'][0]['status'] = 'False'
-        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]), self.assertRaisesRegex(RuntimeError, 'TargetUnavailable'):
-            harness.check_target(target)
+        with patch.object(evaluation, 'kubectl', side_effect=[deployment, {'items': [pod]}]):
+            self.assertFalse(harness.check_target(target)[0]['available'])
 
     def test_foreign_job_not_owned(self):
         controller = object.__new__(conductor.CPO)
