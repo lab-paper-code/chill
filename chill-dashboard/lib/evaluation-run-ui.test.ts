@@ -143,7 +143,7 @@ test("absent or null procedure histories retain old-server conditions without in
   assert.match(text(renderRun({...baseRun,procedures:[],stages:[]})),/절차 기록 없음/)
 })
 
-test("missing procedure times remain missing and only an unfinished owner's current procedure runs to now",()=>{
+test("missing procedure times remain missing and only the unpublished current procedure runs to now",()=>{
   const procedures=[
     {step:"prepare",startedAt:"2026-11-03T00:00:00Z",finishedAt:null},
     {step:"stage",startedAt:"2026-11-03T00:02:00Z",finishedAt:null},
@@ -158,7 +158,7 @@ test("missing procedure times remain missing and only an unfinished owner's curr
   assert.match(history.find(row=>row.startsWith("측정 판정"))??"",/시작 미기록.*미기록/)
   assert.doesNotMatch(history.find(row=>row.startsWith("측정 판정"))??"",/초|1970/)
   assert.doesNotMatch(text(renderRun(run)),/1970/)
-  for(const finished of [{...run,finishedAt:baseRun.finishedAt},{...run,phase:"Done"}]) {
+  for(const finished of [{...run,publicationID:"publication"}]) {
     const row=rows(renderRun(finished)).find(row=>row.startsWith("부하 실행"))??""
     assert.match(row,/종료 미기록.*미기록/)
     assert.doesNotMatch(row,/현재 절차|진행 중|30초/)
@@ -166,6 +166,25 @@ test("missing procedure times remain missing and only an unfinished owner's curr
   const child={id:"child",uid:"child-uid",name:"child",finishedAt:baseRun.finishedAt,currentProcedure:"stage",procedures}
   const childRows=rows(renderRun({...run,procedures:[],stages:[child]}))
   assert.doesNotMatch(childRows.find(row=>row.startsWith("부하 실행"))??"",/현재 절차|진행 중|30초/)
+})
+
+test("publish remains current after run cleanup ends until a publication is recorded",()=>{
+  const run={...baseRun,currentProcedure:"publish",procedures:[
+    {step:"prepare",startedAt:"2026-11-03T00:00:00Z",finishedAt:null},
+    {step:"publish",startedAt:"2026-11-03T00:02:00Z",finishedAt:null},
+  ]}
+  const rows=(html:string)=>html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)??[]
+  const history=rows(renderRun(run))
+  const publish=history.find(row=>text(row).startsWith("게시"))??""
+  assert.match(publish,/aria-current="step"/)
+  assert.match(publish,/bg-primary\/10/)
+  assert.match(text(publish),/현재 절차.*진행 중.*30초/)
+  const prepare=history.find(row=>text(row).startsWith("준비"))??""
+  assert.match(text(prepare),/종료 미기록.*미기록/)
+  assert.doesNotMatch(prepare,/aria-current|진행 중|150초/)
+  const published=rows(renderRun({...run,publicationID:"publication"})).find(row=>text(row).startsWith("게시"))??""
+  assert.match(text(published),/종료 미기록.*미기록/)
+  assert.doesNotMatch(published,/aria-current|현재 절차|진행 중|30초/)
 })
 
 test("procedure histories retain latest run and child conditions with unknown reasons and transition times",()=>{
