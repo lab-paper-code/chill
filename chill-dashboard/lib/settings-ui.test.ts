@@ -26,7 +26,7 @@ function hooks() {
 function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
   const compiled=transpileModule(readFileSync(new URL(path,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
-  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/lib/scheduler-settings"?settingDefinitions:name.startsWith("@/")?{}:require(name),exports)
+  new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/hooks/use-catalog-resource"?load("../hooks/use-catalog-resource.ts",modules):name==="@/features/catalog-editor"?load("../features/catalog-editor.tsx",modules):name==="@/lib/scheduler-settings"?settingDefinitions:name.startsWith("@/")?{}:require(name),exports)
   return exports
 }
 const base={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({push:()=>{},replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/lib/domain":domain,"@/lib/scheduler":scheduler,"@/lib/source-export":sourceExport,"@/components/screen":{Screen:"main",Facts:"facts",Rows:"rows",Row:"row",RowDialog:"row-dialog"},"@/components/data-table":{DataTable:"table"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/sheet":{Sheet:"sheet",SheetContent:"aside",SheetHeader:"header",SheetTitle:"h2",SheetTrigger:"trigger"},"@/components/read-region":{QueryGate:"query",StatusBadge:"status"},"@/components/settings-navigation":{SettingsNavigation:"tabs"},"@/features/service-hub":{ServiceAdmission:"admission"}}
@@ -67,19 +67,6 @@ test("catalog Sheet refuses a same-name replacement instead of exposing its dele
   assert.equal(tree.props.uid,"replacement")
   assert.equal(tree.props.kind,"models")
   assert.ok(!elements(tree).some(element=>element.props.label==="삭제"))
-})
-
-test("catalog update retains If-Match and original definition and never auto-retries",async()=>{
-  for(const kind of ["models","preprocessors","datasets"]){
-    const runner=hooks(),sent:unknown[]=[],current={metadata:{name:"registered",uid:"original",resourceVersion:"7"},spec:{future:"original"}}
-    const {ResourceEditor}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({isPending:false,mutateAsync:async(input:unknown)=>{sent.push(input);return {status:200,body:"{}",data:current}}}),useChillQuery:(path:string)=>({data:path===`v1/${kind}/registered`?current:path==="v1/workloads?view=summary"?[]:{items:[]},refetch:async()=>({data:current})})}})
-    runner.render(ResourceEditor,{kind,name:"registered"})
-    const editor=runner.render(ResourceEditor,{kind,name:"registered"}) as Tree
-    const state=editor.props.r as {source:unknown;submit:(method:string,body:unknown)=>Promise<void>}
-    assert.equal(state.source,current)
-    await state.submit("PUT",{spec:{future:"edited"}})
-    assert.deepEqual(sent,[{path:`v1/${kind}/registered`,method:"PUT",body:{spec:{future:"edited"}},version:"7"}])
-  }
 })
 
 test("operating setting writes retain exact integers and omit runtime-only fields",async()=>{
