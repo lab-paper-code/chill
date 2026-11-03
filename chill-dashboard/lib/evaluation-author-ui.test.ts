@@ -69,8 +69,8 @@ test("R19: publication copy selector pages without losing its selected publicati
 test("R19: experiment results request pages and navigate without catalog hydration",()=>{
   const runner=hookRunner(),calls:string[]=[]
   const run={schemaVersion:"serving-experiment.v1alpha1",id:"first",from:"2026-11-03T00:00:00Z",to:"2026-11-03T00:01:00Z",status:"FAIL",stages:[],sources:[]}
-  const modules={...primitives,"lucide-react":icons,react:runner.react,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
-    calls.push(path)
+  const modules={...primitives,"lucide-react":icons,react:runner.react,"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{
+    if(options?.enabled!==false)calls.push(path)
     const offset=new URLSearchParams(path.split("?")[1]).get("offset")
     return {data:path.startsWith("v1/experiments?")?{items:[{...run,id:offset==="5"?"second":"first"}],page:{offset:Number(offset),limit:5,total:6,...(offset==="0"?{nextOffset:5}:{})}}:undefined}
   }},"@/features/experiments-conclusion":{useHistoricalExperiments:(selected:unknown[])=>({runs:selected,pending:false}),ExperimentResultRow:"result"}}

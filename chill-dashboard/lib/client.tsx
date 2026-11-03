@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider, useIsFetching, useIsMutating, useMutation, useQueries, useQuery } from "@tanstack/react-query"
+import type { UseQueryOptions } from "@tanstack/react-query"
 import { useRouter } from "next/navigation"
 import type { PublicConfig } from "@/lib/server-config"
 import { Button } from "@/components/ui/button"
@@ -189,7 +190,7 @@ export function useChillQuery<T>(path:string,options:{enabled?:boolean;poll?:boo
 }
 export function useChillQueries<T>(paths:readonly string[],options:{enabled?:boolean;decoder?:(body:string)=>unknown}={}) {
   const {token}=useSession()
-  return useQueries({queries:[...new Set(paths)].map(path=>({
+  return useQueries<Array<UseQueryOptions<T,ApiError>>>({queries:[...new Set(paths)].map(path=>({
     queryKey:["chill",path],enabled:!!token&&options.enabled!==false,
     queryFn:async ({signal}:{signal:AbortSignal}):Promise<T>=>{
       const response=await relay(path,token,signal)
