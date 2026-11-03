@@ -3,11 +3,14 @@ import test from "node:test"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
-import { createElement, type ReactElement } from "react"
+import { createElement, type ReactElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import * as powerSeries from "./power-series.ts"
 import { displayTime } from "./live-display.ts"
 import type { LiveMetrics } from "./live.ts"
+import * as displayHelpers from "./live-display.ts"
+import { initialLiveState } from "./live.ts"
+import * as resourcesData from "../features/resources-data.ts"
 
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){
@@ -63,4 +66,23 @@ test("records power interval renders bucket timeline independently from period s
     return element.type===timeline||contains(element.props.children)
   }
   assert.equal(contains(tree),true)
+})
+
+test("device power presents one observation range and no explanatory paragraph",()=>{
+  const query={error:null,isPending:false,refetch:()=>{}},state={...initialLiveState(),status:"fixture" as const}
+  const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":displayHelpers})
+  const screen=load("../features/resources.tsx",{
+    "next/link":{default:function Link({children}:{children?:ReactNode}){return createElement("a",{},children)}},
+    "next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},
+    "@/lib/client":{useChillQuery:()=>query},"@/lib/use-live":{useLive:()=>({state})},
+    "./measurement-coverage":{useCoverageInventory:()=>query},"@/lib/live-display":displayHelpers,
+    "@/lib/status":{STATUS_AXES:{}},"@/components/status-cell":{StatusCell:()=>null},
+    "@/components/ui/sheet":{Sheet:()=>null},"./resources-data":resourcesData,
+    "./power-series":{...chart,usePowerSeries:()=>({query,points:[{from:1000,to:6000,wholeWatts:0,nodes:{}}]})},
+  })
+  const html=renderToStaticMarkup(createElement(screen.DevicesPage,{}))
+  const facts=html.match(/<table class="devices-table devices-power-facts"[\s\S]*?<\/table>/)![0]
+  assert.equal((facts.match(/<th>/g)??[]).length,4)
+  assert.equal((html.match(/aria-label="전력 관측 범위"/g)??[]).length,1)
+  assert.doesNotMatch(html,/<p>최근 15분/)
 })

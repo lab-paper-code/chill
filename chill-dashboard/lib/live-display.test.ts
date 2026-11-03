@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { LiveAction, LiveInstance, LiveMetric, LiveMetrics, LiveSnapshot, LiveWorkload } from "./live.ts"
 import { changeListStatus, actionProgress, actionOrigin, scopeSnapshot, scopeEvents, recentEvents, liveFresh, belongsToPool, displayNumber, duration, elapsed, instanceSymbol, isStale, ratio, receivedLabel, routingShare, terminalCount, workloadLabel, workloadQueue, servicePriority, trendSegments, boardVerdict } from "./live-display.ts"
-import { sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, powerWindow, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
+import { sloLatency, minuteMetrics, incidentFlow, incidentSummary, serviceRows, decisionReason, gapEpisodes, liveReason, displayTime } from "./live-display.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { createElement, type ComponentType, type ReactNode } from "react"
@@ -297,20 +297,6 @@ test("event history loss cannot recover from metrics or disappear as a short gap
   assert.equal(gapEpisodes([gap],now,metrics)[0].recovered,false)
   assert.equal(incidentFlow([],[gap],now,false,metrics).length,1)
 })
-test("power windows use retained completed buckets, not component clocks or mount time",()=>{
-  const end=Date.parse("2026-10-30T12:01:00Z")
-  const rows:LiveMetrics[]=Array.from({length:60},(_,i)=>({type:"metrics",seq:i+1,at:new Date(end-59000+i*1000).toISOString(),bucketAt:new Date(end-60000+i*1000).toISOString(),workloads:{},nodes:{n:{watts:i===10?null:20,observedAt:at}},pool:{wholeWatts:i===10?null:20,activeWatts:null}}))
-  const desktop=powerWindow(rows),remounted=powerWindow([...rows])
-  assert.deepEqual(remounted,desktop)
-  assert.equal(desktop.expected,60)
-  assert.equal(desktop.nodes.n,59)
-  assert.equal(desktop.observed,59)
-  assert.equal(desktop.segments.length,2)
-  const sparse=powerWindow([rows[0],rows[59]])
-  assert.equal(sparse.expected,60)
-  assert.equal(sparse.observed,2)
-  assert.deepEqual(powerWindow([]),{end:0,expected:0,observed:0,nodes:{},segments:[]})
-})
 test("operations board keeps independent axes, idle summary, service placement and selected-time evidence",()=>{
   const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
   const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
@@ -353,6 +339,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
   const idle=render()
+  assert.match(idle,/<table aria-label="최근 판단 통계"><thead><tr><th>최근 5분 수신 판단/)
   assert.match(idle,/유휴 서비스 집계/)
   assert.match(idle,/접수 허용 개/)
   assert.match(idle,/자동제어 개/)

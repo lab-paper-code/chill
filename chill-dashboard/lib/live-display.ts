@@ -117,13 +117,6 @@ export function serviceRows(snapshot:LiveSnapshot,metrics:Record<string,LiveMetr
     return {workload,metric,queued,changes,priority,idle,status}
   }).sort((a,b)=>a.priority-b.priority||(b.metric?.received??0)-(a.metric?.received??0)||a.workload.name.localeCompare(b.workload.name))
 }
-/** Latest completed reducer bucket anchors both trend and completeness across consumers. */
-export function powerWindow(metrics:LiveMetrics[]) {
-  const end=metrics.length?Date.parse(metrics.at(-1)!.bucketAt)+1000:0,start=Math.max(end-300000,metrics.length?Date.parse(metrics[0].bucketAt):end)
-  const recent=metrics.filter(row=>Date.parse(row.bucketAt)>=start&&Date.parse(row.bucketAt)<end),nodes:Record<string,number>={}
-  for(const row of recent)for(const [uid,node] of Object.entries(row.nodes))if(node.watts!=null)nodes[uid]=(nodes[uid]??0)+1
-  return {end,expected:Math.max(0,Math.floor((end-start)/1000)),observed:recent.filter(row=>row.pool.wholeWatts!=null).length,nodes,segments:trendSegments(recent.map(row=>({at:Date.parse(row.bucketAt),value:row.pool.wholeWatts})),end)}
-}
 export function minuteMetrics(metrics:LiveMetrics[],uid:string,end:number):LiveMetric[] {
   const windowEnd=Math.floor(end/1000)*1000
   return metrics.filter(row=>Date.parse(row.bucketAt)>=windowEnd-60000&&Date.parse(row.bucketAt)<windowEnd).flatMap(row=>row.workloads[uid]?[row.workloads[uid]]:[])
