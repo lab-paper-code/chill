@@ -696,6 +696,32 @@ test("P2 author: patch durations use exact operating milliseconds and do not add
   }
 })
 
+test("P2 author: invalid raw nanoseconds clear the previous setting value without throwing",()=>{
+  for(const invalid of [1.5,Number.POSITIVE_INFINITY,Number.NaN]) {
+    const runner=hookRunner(),validity:boolean[]=[],props={spec:{settingsPatch:{maxReplicas:4,controlIntervalNanos:invalid}} as author.Spec,path:["settingsPatch"],onChange:(value:author.Spec)=>{props.spec=value},onValidityChange:(value:boolean)=>validity.push(value)}
+    const {SettingsPatchEditor}=load("../features/evaluation-author.tsx",{...primitives,react:runner.react})
+    let tree=elements(runner.render(SettingsPatchEditor,props))
+    ;(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)("maxReplicas")
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    assert.equal(tree.find(item=>item.type==="textarea")?.props.value,"4")
+    assert.doesNotThrow(()=>(tree.find(item=>item.props.label==="설정 항목")!.props.onChange as (key:string)=>void)("controlIntervalNanos"))
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    assert.equal(tree.find(item=>item.type==="textarea")?.props.value,"")
+    assert.equal(tree.find(item=>item.type==="textarea")?.props["aria-invalid"],true)
+    assert.ok(tree.some(item=>item.props.role==="alert"&&typeof item.props.children==="string"))
+    assert.equal(validity.at(-1),false)
+    ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
+    assert.equal(author.specValue(props.spec,["settingsPatch","controlIntervalNanos"]),invalid)
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    ;(tree.find(item=>item.type==="textarea")!.props.onChange as (event:unknown)=>void)({target:{value:"1000"}})
+    tree=elements(runner.render(SettingsPatchEditor,props))
+    ;(tree.find(item=>item.props.children==="항목 반영")!.props.onClick as ()=>void)()
+    assert.equal(author.specValue(props.spec,["settingsPatch","controlIntervalNanos"]),1000000000n)
+    assert.equal(author.specValue(props.spec,["settingsPatch","maxReplicas"]),4)
+    assert.equal(validity.at(-1),true)
+  }
+})
+
 test("P2 author: copied legacy run preflight excludes deleted fields and visibly lists exclusions while edit preserves them",()=>{
   const legacy={question:"legacy",control:{old:true},target:{components:[{name:"server",image:"old",sourceSHA:"sha",resource:{name:"server"},future:true}]},harness:{image:"retained",sourceSHA:"retained"},stages:[{id:"a",mode:"fixed",startState:{old:true},control:{old:true},settingsPatch:{controls:{power:false}},future:true}],future:9007199254740993n}
   for(const [fromPublication,existing] of [[false,undefined],[false,{name:"old",uid:"old-uid"}],[true,undefined]] as const) {

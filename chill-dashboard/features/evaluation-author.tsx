@@ -91,7 +91,19 @@ export function SettingsPatchEditor({spec,path,onChange,onValidityChange}:{spec:
   }
   return <fieldset className="grid min-w-0 gap-3 rounded-md border p-3"><legend className="text-sm">운영 설정 패치</legend>
     <span role="status" className="text-sm">{stage?(raw==null?"전체 실험 설정 상속":"단계 패치로 전체 대체"):raw==null?"전체 실험 패치 미설정":"전체 실험 패치 설정"}</span>
-    <AuthorSelect label="설정 항목" value={key} disabled={pending||rawInvalid} onChange={value=>{setKey(value);const current=patch[value];setText(Object.hasOwn(patch,value)?value.endsWith("Nanos")&&(typeof current==="number"||typeof current==="bigint")?nanosToMilliseconds(current):specJSON(current):"")}}><option value="">항목 선택</option>{editableSettingKeys.map(value=><option key={value} value={value}>{labels.get(value)??(value==="controls"?"제어 항목":value)}</option>)}</AuthorSelect>
+    <AuthorSelect label="설정 항목" value={key} disabled={pending||rawInvalid} onChange={value=>{
+      setKey(value);setText("");setError("")
+      const current=patch[value]
+      if(Object.hasOwn(patch,value)) {
+        if(value.endsWith("Nanos")) {
+          if(typeof current!=="bigint"&&(typeof current!=="number"||!Number.isFinite(current)||!Number.isInteger(current))) {
+            setError("시간 값은 유한한 정수 ns로 입력해 주세요.");onValidityChange(false);return
+          }
+          setText(nanosToMilliseconds(current))
+        } else setText(specJSON(current))
+      }
+      onValidityChange(true)
+    }}><option value="">항목 선택</option>{editableSettingKeys.map(value=><option key={value} value={value}>{labels.get(value)??(value==="controls"?"제어 항목":value)}</option>)}</AuthorSelect>
     {key&&<><label className="grid gap-1 text-sm">{`항목 값 (${unit??"JSON"})`}<textarea disabled={rawInvalid} className="min-h-24 w-full rounded-md border bg-background p-3 font-mono text-xs" value={text} aria-invalid={!!error} onChange={event=>{setText(event.target.value);setPending(true);setError("");onValidityChange(false)}}/></label>
       <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>{try {
         const value=nanos?millisecondsToNanos(text,["scaleDownStabilizationNanos","replacementDwellNanos","bootstrapCapacityWaitNanos"].includes(key)?0n:1n):parseSchedulerJSON(text)
