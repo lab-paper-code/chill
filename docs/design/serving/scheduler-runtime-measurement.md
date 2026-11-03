@@ -238,6 +238,10 @@ baseline, so its performance is not reported as equivalent to the48k case.
 Pair-value-vector memory remains unmeasured without matching native policies.
 Size the pod for measured workload and headroom, or lower the configured cap;
 the sample250k limit is not a promise to fit a512MiB pod.
+The chart's serving Pod actually defaults to4Gi (the neighboring512Mi belongs
+to Dashboard). The retained250k cap estimates399.24MiB incremental state,9.75%
+of that4Gi limit; for a512Mi serving override use75000 instead. See the
+[cap sizing derivation and required-field contract](configuration-hardcoding.md#selected-request-cap-and-the-serving-pod-memory-budget).
 
 A separate timeout experiment recorded six approximately1s scans with starts
 2.0007–2.0024s apart. Timeout cancellation is cooperative; the single worker's

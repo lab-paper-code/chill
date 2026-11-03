@@ -103,7 +103,7 @@ exist. The sample is illustrative, not a calibrated guarantee.
 | `aggregationWindowSeconds` | int32 ≥1; rolling scan window, sample120; also bounds the public query maximum |
 | `refreshIntervalSeconds` | int32 ≥1; sample60 |
 | `scanTimeoutSeconds` | int32 ≥1 and ≤refreshIntervalSeconds/2; sample30 |
-| `maximumRequests` | explicit positive selected-RequestID cap; sample250000, exceeded cap rejects the whole refresh |
+| `maximumRequests` | required positive selected-RequestID cap when the block exists; no runtime default; sample250000, exceeded cap rejects the whole refresh |
 | `warmupSeconds` | explicit int32 ≥0, excluded from native measurement window |
 | `burstSeconds` | explicit int32 ≥1, frozen as native `durationSeconds` |
 | `workers` | explicit int32 in [batch,64], never silently clamped |
@@ -197,6 +197,43 @@ the two evidence populations.
 
 The configured load-generator Node reservation, W6 slots/locks, request writer
 and evaluation arrival protocol are unchanged.
+
+### Selected-request cap and the serving Pod memory budget
+
+The chart's actual `servingEntrypoint.resources.limits.memory` is **4Gi**, with
+`servingEntrypoint.goMemLimit: 3GiB`; `serving_entrypoint.yaml` renders that
+resource block directly. The nearby **512Mi** limit belongs to `dashboard`,
+not ChillServer. Recalculate these settings together when overriding the serving
+Pod's memory limit.
+
+The successful near-cap local experiment measured 248,000 complete requests,
+153,716KiB phase-start RSS and 559,264KiB whole-process high-water RSS. Using
+the smaller known request count gives a conservative sizing coefficient for
+this fixture: `(559264 - 153716) * 1024 / 248000 = 1674.52 bytes/request`.
+This combines process measurements, not an isolated allocator measurement or
+a guaranteed linear memory bound; eligible pair-vector memory was not measured.
+
+Allowing at most roughly25% of the **4Gi** limit for the selected-request state
+gives `floor((4Gi / 4) / 1674.52) = 641223` requests. Do not raise the sample
+to that estimated ceiling: its explicit **250000** cap is retained, implying
+approximately399.24MiB incremental state, **9.75%** of the4Gi limit. With the
+sample120s window this covers nominally **2083 selected IDs/s** in aggregate,
+not2083/s per cell; late supplements, in-flight cohorts and unmatched requests
+also use the cap, so leave rate headroom.
+
+For a deployment overriding the serving limit to **512Mi**, the same25%
+calculation gives80152 requests; use the more conservative explicit
+`dispatchOccupancy.maximumRequests: 75000` (approximately119.77MiB incremental
+state, nominally625 selected IDs/s over120s), and adjust `goMemLimit` with the
+Pod limit (384MiB retains the chart's75% ratio). Do not use the250000 sample
+unchanged for a512Mi serving Pod. Both recommendations need workload-specific
+RSS/CPU measurement; count and cooperative-time limits are not byte/CPU ceilings.
+
+`maximumRequests` is **required if `dispatchOccupancy` is present**: omission,
+null, zero and negative values are rejected, without a Go fallback to250000.
+Omitting the entire block disables rolling B aggregation; configured legacy
+DOM/default selection remains available. Exceeding an explicit cap publishes
+no partial measured facts and returns selection to DOM/default.
 
 ## 6. 하네스: bind에서 한 번 선택
 
