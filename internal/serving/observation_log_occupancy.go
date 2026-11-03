@@ -17,7 +17,13 @@ const (
 // a second visits their raw rows, including earlier assignments and late native
 // supplements. Selection markers are read-side state, not persisted raw rows.
 func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string, from, to time.Time, visit func(RequestRow)) (*time.Time, error) {
-	if !from.Before(to) {
+	return l.ScanOccupancyRowsBounded(ctx, uid, node, from, to, 0, visit)
+}
+
+// ScanOccupancyRowsBounded additionally caps selected request state before any
+// callback receives rows; an exceeded cap never publishes partial estimates.
+func (l *ObservationLog) ScanOccupancyRowsBounded(ctx context.Context, uid, node string, from, to time.Time, maximumRequests int, visit func(RequestRow)) (*time.Time, error) {
+	if !from.Before(to) || maximumRequests < 0 {
 		return nil, failure("InvalidQuery", "invalid occupancy observation interval")
 	}
 	tail := l.config.OccupancyTail
@@ -30,23 +36,28 @@ func (l *ObservationLog) ScanOccupancyRows(ctx context.Context, uid, node string
 		return (uid == "" || r.WorkloadUID == uid) && (node == "" || r.Node == nil || r.Node.UID == node)
 	}
 	selected := map[string]bool{}
-	selectRow := func(r *RequestRow) {
+	selectRow := func(r *RequestRow) error {
 		if keep(r) && occupancyRowInWindow(r, from, to) {
+			if !selected[r.RequestID] && maximumRequests > 0 && len(selected) >= maximumRequests {
+				return failure("OccupancySelectionLimit", "occupancy request selection exceeds configured maximumRequests")
+			}
 			selected[r.RequestID] = true
 		}
+		return nil
 	}
 	if err := l.scanStream(read, observationRequestStream, func(raw []byte) error {
 		var row RequestRow
 		if err := json.Unmarshal(raw, &row); err != nil {
 			return err
 		}
-		selectRow(&row)
-		return nil
+		return selectRow(&row)
 	}); err != nil {
 		return nil, err
 	}
 	for _, row := range read.open {
-		selectRow(row)
+		if err := selectRow(row); err != nil {
+			return nil, err
+		}
 	}
 	for id := range selected {
 		visit(RequestRow{Kind: requestRowOccupancySelected, RequestID: id})

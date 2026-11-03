@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 type RuntimeConfig struct {
@@ -1105,6 +1107,20 @@ func (r *Runtime) Instances() []InstanceState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.instancesLocked()
+}
+
+// OccupancyPolicies snapshots only immutable native policy metadata, without
+// constructing routing/outstanding request views under the runtime lock.
+func (r *Runtime) OccupancyPolicies() map[string]firstfloor.Metadata {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	policies := make(map[string]firstfloor.Metadata, len(r.instances))
+	for id, instance := range r.instances {
+		if instance.State.Native != nil {
+			policies[id] = instance.State.Native.Metadata
+		}
+	}
+	return policies
 }
 
 func (r *Runtime) instancesLocked() []InstanceState {

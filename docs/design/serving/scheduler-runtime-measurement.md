@@ -150,14 +150,26 @@ whole later history nor unrelated RequestIDs are retained. Minute segments and
 compressed archive hours remain the physical read granularity. Missing evidence
 beyond the bounded tail is incomplete, never a guessed execution.
 The bounded read-only API and historical-policy limitation are documented in
-[observation API](observability-split.md). There is no result cache.
+[observation API](observability-split.md). The diagnostic endpoint remains a
+fresh read; scheduler admission uses one separate asynchronous rolling cache.
+The public query and rolling scan share `aggregationWindowSeconds` (sample120s);
+requests above that cap fail with400 before scanning. Long historical analysis
+uses raw-export data and an offline reducer, not a long serving-process GET.
+That cache pools actual pair samples across workload UIDs within each exact
+Node UID/model/mode/execution-path/batch/profile cell, never medians-of-medians.
+Configured minimumPairs qualifies measured median before legacy Accepted DOM,
+then configured scalar default. Only operational d is clamped and
+rounded; signed estimate facts remain unchanged. Tick reads the published cache
+without scanning. One worker enforces scan timeout, selected-ID bound and
+scan+reduction duty cooldown; failures publish DOM/default, not partial facts.
 
-The short-burst DOM writes observational evidence under its separate new
-prefix/schema with `Observed` (status `Complete`) or `Insufficient`. The
-legacy accepted DOM prefix, record type and `CostEvidence` reader remain active
-and unchanged for the scheduler's existing d. No burst estimate enters that
-reader or automatically replaces an accepted scalar. Future scheduler adoption
-and deletion of legacy evidence require a separate explicit cutover.
+The short-burst DOM retains its separate `Observed`/`Insufficient` schema/prefix.
+The legacy Accepted prefix/type and `CostEvidence` reader remain intact; raw
+burst verdicts do not become Accepted DOM. Rolling-cache qualification is the
+approved scheduler cutover, not deletion or reinterpretation of stored evidence.
+κ inputs, decision records and catalog-read accepted projection expose the exact
+selected tuple and `provenance{source,pairs,window,updatedAt,value}`; catalog-read
+also exposes signed pooled `occupancyEstimates`. See [measurement API](measurement-api.md#4-계획기의-d-수집).
 
 Initial, pre-review single-pass validation on the permitted 2026-11-03
 09:00–10:00 export (793,637,858 bytes, 837,023 raw rows, 348,224 joined requests)
@@ -171,5 +183,74 @@ or throwaway comparison test is committed. Those timings describe the earlier
 implementation, not the current bounded two-pass selection/read or a serving-path
 latency promise. Current regressions prove that 10,000 unrelated rows plus later
 invalid segments retain only the one selected RequestID, with all requested
-denominators preserved; no cache is introduced.
+denominators preserved. Those pre-cache measurements are not verification of
+the subsequently added scheduler cache or its operational CPU/memory envelope.
+
+### Bounded rolling scan: local binary resource and mutex experiment
+
+The final local binary (`e503b4cfd123a98b2be5ca95629b7902e32b0a48dab2aafb15d837e693722297`)
+was exercised with 48,000 timestamp-translated replay requests, four synthetic
+append workers at 50 HTTPS requests/s, and built-in Diagnostics plus
+`GODEBUG=gctrace=1`. The inactive comparison used a 3,600s refresh after its
+initial scan; the active case used a 120s window, 20s refresh, 10s timeout and
+250,000 selected-ID cap. These accelerated refresh settings are an experiment,
+not the sample's 60s refresh/30s timeout defaults.
+
+| Observed metric | Inactive, 40.01s | Rolling, 40.03s |
+|---|---:|---:|
+| Complete RequestClosed writer-wait samples | 1,999 | 2,002 |
+| Wait p50 / p99 / max, ns | 115 / 14,379 / 151,956 | 76.5 / 6,137 / 192,497 |
+| Diagnostic drops / overwrites | 32 / 0 | 28 / 0 |
+| Process CPU, s | 10.87 | 13.62 |
+| Phase sampled RSS maximum, KiB | 244,328 | 214,292 |
+| Whole-process high-water RSS, KiB | 341,684 | 337,032 |
+
+The two real rolling captures were 20.00018s apart. Capture mutex hold
+p50/p99/max was 6,444/7,737/7,737ns; the capture span was
+6,301.5/7,606/7,606ns. No retained file-open/stat event occurred under either
+capture owner; file opens followed release. The old implementation performed
+directory enumeration, opens and stats under the writer mutex. The new path
+copies indexed paths, complete offsets and open-row metadata under that mutex,
+then opens, reads, decodes and reduces outside it, bounded by the frozen offsets.
+
+The rolling p99 and drop count improved in this finite sample, while maximum
+wait increased. That maximum overlapped recorded RequestClosed/ResourcesRecord
+writers, not capture; its remaining delay is unassigned. Nearby GC traces did
+not establish GC causation. This is not a universal no-regression guarantee.
+
+A separate 252,000-request, 558,274,559-byte fixture exceeded the production
+250,000-ID cap twice without partial publication: 15.78 CPU seconds in 39.97s,
+179,900KiB phase RSS maximum and 309,708KiB process high-water RSS. Rejection
+occurs before estimator callbacks, so those numbers do not bound a successful
+near-cap reduction.
+
+A separate successful near-cap reduction published 248,000 complete requests
+and batches from a 549,400,647-byte fixture, with 248,000–250,000 selected IDs
+(extra unmatched append IDs are not exposed in the catalog). At window120s,
+refresh40s, timeout20s and cap250,000 it used 31.99 CPU seconds in 59.994s;
+phase RSS rose from 153,716 to a maximum 535,200KiB and whole-process high-water
+RSS reached 559,264KiB. Its initial refresh exceeded20s during concurrent startup;
+a later refresh succeeded, so20s was not uniformly sufficient. Wait p50/p99/max
+was 56/9,766/293,124ns, with87 drops over60s and0 overwrites. The maximum overlapped
+another RequestClosed writer, not capture; capture hold was22,426ns.
+This heavier fixture's diagnostic drop rate increased relative to the primary
+baseline, so its performance is not reported as equivalent to the48k case.
+Pair-value-vector memory remains unmeasured without matching native policies.
+Size the pod for measured workload and headroom, or lower the configured cap;
+the sample250k limit is not a promise to fit a512MiB pod.
+The chart's serving Pod actually defaults to4Gi (the neighboring512Mi belongs
+to Dashboard). The retained250k cap estimates399.24MiB incremental state,9.75%
+of that4Gi limit; for a512Mi serving override use75000 instead. See the
+[cap sizing derivation and required-field contract](configuration-hardcoding.md#selected-request-cap-and-the-serving-pod-memory-budget).
+
+A separate timeout experiment recorded six approximately1s scans with starts
+2.0007–2.0024s apart. Timeout cancellation is cooperative; the single worker's
+cooldown includes complete scan/reduction time. Request-count limits are not
+hard byte/RSS ceilings, and the observations above are not universal maxima.
+
+The fake policy inventory did not match native policy identities, so the
+48,000 complete request/batch facts contained zero eligible pairs. This smoke
+validates scanning, grouping/sorting, fallback and mutex/resource behavior;
+measured-median selection is covered separately by exact-profile unit tests.
+Only private observations and loopback services were used.
 

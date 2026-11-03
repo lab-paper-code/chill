@@ -182,6 +182,11 @@ type CatalogSnapshot struct {
 	SourceError         string                            `json:"sourceError"`
 	Revision            string                            `json:"revision"`
 	Occupancy           []OccupancySelection              `json:"occupancy"`
+	// DispatchOccupancy is the same resolved immutable source list captured by
+	// the scheduler: exact measured B, legacy DOM, or configured default.
+	DispatchOccupancy []serving.DispatchOccupancy `json:"dispatchOccupancy"`
+	// OccupancyEstimates retain signed rolling facts, including unqualified cells.
+	OccupancyEstimates []serving.OccupancyEstimate `json:"occupancyEstimates"`
 }
 
 func ProjectCatalogSnapshot(

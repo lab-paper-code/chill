@@ -84,10 +84,15 @@ strictly decoded in `cmd/chill-server/scheduler_service.go`. Its maintained
 example is [`config/samples/serving-scheduler.json`](../../../config/samples/serving-scheduler.json).
 The chart references an **external** ConfigMap: changing unrelated Helm values
 does not install this block. Operators must update that actual configuration.
-Omission does not disable unrelated scheduling, but DOM POST fails closed with
-`503 OccupancyPolicyUnavailable`; invalid blocks are rejected, and POST reads
-the current ConfigMap rather than falling back to a previously accepted policy.
-The accepted profile snapshot must have that same ConfigMap resourceVersion.
+Omission disables rolling aggregation and makes DOM POST fail closed with
+`503 OccupancyPolicyUnavailable`. With or without that block, the sole default
+authority is explicit scalar `settings.defaultDispatchOccupancyNanos` (zero
+permitted). Public settings GET/PUT and canonical PATCH validation use this
+same field. The aggregation block cannot override it; duplicate
+`defaultPerRequestNanos` knobs are rejected.
+Invalid blocks are rejected, and POST reads the current ConfigMap rather than
+falling back to a previously accepted policy. The accepted profile snapshot
+must have that same ConfigMap resourceVersion.
 
 Native DOM creation uses a short **configured closed-loop burst**, not a
 saturation test. No Go scientific defaults or hidden duration/worker derivation
@@ -95,11 +100,14 @@ exist. The sample is illustrative, not a calibrated guarantee.
 
 | Field | Bounds / meaning |
 |---|---|
+| `aggregationWindowSeconds` | int32 ≥burstSeconds; shared rolling scan and public query window cap, sample120 |
+| `refreshIntervalSeconds` | int32 ≥1; sample60 |
+| `scanTimeoutSeconds` | int32 ≥1 and ≤refreshIntervalSeconds/2; sample30 |
+| `maximumRequests` | required positive selected-RequestID cap when the block exists; no runtime default; sample250000, exceeded cap rejects the whole refresh |
 | `warmupSeconds` | explicit int32 ≥0, excluded from native measurement window |
 | `burstSeconds` | explicit int32 ≥1, frozen as native `durationSeconds` |
 | `workers` | explicit int32 in [batch,64], never silently clamped |
 | `minimumPairs` | explicit int32 ≥1, a reported population requirement, not a confidence claim |
-| `maximumObservationWindowSeconds` | int32 ≥1; read-only estimator query maximum, sample3600 |
 | `requestLifetimeSeconds` | int32 ≥1; covers ceil(SLO) and configured outstanding batches, within actual gateway/Workload cap |
 | `deliveryMarginMillis` | int32 >0; rounded up independently for elapsed supply extension |
 | `preparationSeconds` | int32 ≥1 |
@@ -114,6 +122,31 @@ cap permits8s and whose SLO and profile-tail budget fit. Margin25ms exercises
 ceil(25/1000)=1s in the extension; it is not a measured transport guarantee.
 P2s/J10s/C10s and cap120s are configured allowances, not padded elapsed time.
 No host campaign YAML/JSON or prior DOM value supplies these settings.
+
+Rolling aggregation runs in one dedicated worker, never a scheduler Tick or
+request-writer callback. It captures accepted canonical profiles and current
+native metadata briefly, releases the scheduler lock, and uses the bounded
+two-pass observation scanner over the configured rolling window and delivery
+tail. A failed, timed-out or over-cap scan publishes no partial measurements:
+selection returns to accepted legacy DOM, then the configured fallback.
+The first computation also uses DOM/default rather than blocking initialization.
+Each accepted profile/batch receives an exact resolved entry; only a B median
+with at least configured `minimumPairs` can supersede DOM. Signed rolling facts
+remain separate from the nonnegative operational value.
+
+The sample `settings.defaultDispatchOccupancyNanos=2000000` is a conservative heuristic relative
+to the one known cell's roughly0.2ms B median and0.27ms DOM, not a guarantee
+across cells or demand. The scalar applies per request to every batch; only
+measured B supplies batch-specific values. A120s window at the observed
+roughly805 requests/s contains about97k requests; cap250000 leaves roughly2.6×
+headroom for that reference workload, not universal demand coverage or a byte-allocation bound.
+Timeout30s/refresh60s and one non-overlapping worker bound nominal scan duty to
+50% of one core's wall-time budget. After every attempt the worker also idles
+at least its entire scan+exact-reduction elapsed time, including a reduction
+that crosses the scanner deadline. This is not a process CPU ceiling: Go GC,
+runtime activity and other workers may use additional `GOMAXPROCS` capacity.
+Empirical CPU/heap and serving-path acceptance are separate measurements.
+
 
 For fixed batch B, K=configured workers, L=configured request lifetime,
 m=deliveryMarginMillis/1000, t_max=maximum accepted profile service seconds,
@@ -155,14 +188,51 @@ Zero pairs has null statistics, never a numeric fallback.
 
 Evidence is a new factual `v1alpha2` record under
 `serving/dispatch-occupancy-observations/`, verdict `Observed` (native phase
-Complete) or `Insufficient`. It is **not** `Accepted` scheduler d. Existing
+Complete) or `Insufficient`. It is **not** an accepted legacy DOM scalar. Existing
 `serving/dispatch-occupancy/` v1alpha1 accepted objects and `CostEvidence` remain
-unchanged and are not deleted. Legacy fields exist solely to decode that
-separate retained contract. Any future scheduler admission/deletion is a
-separate explicit cutover; there is no dual reader for the new contract.
+active and are not deleted. The scheduler's rolling B cache reads serving
+observations directly; it does not reinterpret the new burst schema or merge
+the two evidence populations.
 
 The configured load-generator Node reservation, W6 slots/locks, request writer
 and evaluation arrival protocol are unchanged.
+
+### Selected-request cap and the serving Pod memory budget
+
+The chart's actual `servingEntrypoint.resources.limits.memory` is **4Gi**, with
+`servingEntrypoint.goMemLimit: 3GiB`; `serving_entrypoint.yaml` renders that
+resource block directly. The nearby **512Mi** limit belongs to `dashboard`,
+not ChillServer. Recalculate these settings together when overriding the serving
+Pod's memory limit.
+
+The successful near-cap local experiment measured 248,000 complete requests,
+153,716KiB phase-start RSS and 559,264KiB whole-process high-water RSS. Using
+the smaller known request count gives a conservative sizing coefficient for
+this fixture: `(559264 - 153716) * 1024 / 248000 = 1674.52 bytes/request`.
+This combines process measurements, not an isolated allocator measurement or
+a guaranteed linear memory bound; eligible pair-vector memory was not measured.
+
+Allowing at most roughly25% of the **4Gi** limit for the selected-request state
+gives `floor((4Gi / 4) / 1674.52) = 641223` requests. Do not raise the sample
+to that estimated ceiling: its explicit **250000** cap is retained, implying
+approximately399.24MiB incremental state, **9.75%** of the4Gi limit. With the
+sample120s window this covers nominally **2083 selected IDs/s** in aggregate,
+not2083/s per cell; late supplements, in-flight cohorts and unmatched requests
+also use the cap, so leave rate headroom.
+
+For a deployment overriding the serving limit to **512Mi**, the same25%
+calculation gives80152 requests; use the more conservative explicit
+`dispatchOccupancy.maximumRequests: 75000` (approximately119.77MiB incremental
+state, nominally625 selected IDs/s over120s), and adjust `goMemLimit` with the
+Pod limit (384MiB retains the chart's75% ratio). Do not use the250000 sample
+unchanged for a512Mi serving Pod. Both recommendations need workload-specific
+RSS/CPU measurement; count and cooperative-time limits are not byte/CPU ceilings.
+
+`maximumRequests` is **required if `dispatchOccupancy` is present**: omission,
+null, zero and negative values are rejected, without a Go fallback to250000.
+Omitting the entire block disables rolling B aggregation; configured legacy
+DOM/default selection remains available. Exceeding an explicit cap publishes
+no partial measured facts and returns selection to DOM/default.
 
 ## 6. 하네스: bind에서 한 번 선택
 

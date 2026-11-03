@@ -59,40 +59,42 @@ func rawHour(hour string) (time.Time, error) {
 	return at, nil
 }
 
-// captureRaw freezes the local-hour choice, closed-minute descriptors and lengths
-// together under the writer lock. Archive I/O and all copying run outside it.
+// captureRaw freezes committed closed-minute metadata under the writer lock;
+// directory checks, sorting and opens run outside it, protected from retention.
 func (l *ObservationLog) captureRaw(ctx context.Context, hour time.Time, streams []string) (*observationRead, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	read := &observationRead{ctx: ctx, now: l.now().UTC(), files: map[string][]observationOpenFile{}, localHours: map[time.Time]bool{}}
+	l.captureMu.RLock()
+	defer l.captureMu.RUnlock()
 	info, err := os.Stat(filepath.Join(l.root, observationHour(hour)))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	l.mu.Lock()
+	read := &observationRead{
+		ctx: ctx, now: l.now().UTC(), files: map[string][]observationOpenFile{}, localHours: map[time.Time]bool{},
+	}
 	if hour.Equal(read.now.Truncate(time.Hour)) || err == nil && info.IsDir() {
 		read.localHours[hour] = true
-		for _, stream := range streams {
-			segments, err := l.hourFiles(hour, stream)
-			if err != nil {
-				read.close()
-				return nil, err
-			}
-			for _, segment := range segments {
-				if !segment.at.Before(read.now.Truncate(time.Minute)) {
-					continue
-				}
-				if err := ctx.Err(); err != nil {
-					read.close()
-					return nil, err
-				}
-				if err := l.openReadFile(read, stream, segment); err != nil {
-					read.close()
-					return nil, err
-				}
-			}
+	}
+	var segments []observationSegment
+	for _, segment := range l.segments {
+		if segment.at.Truncate(time.Hour).Equal(hour) && segment.at.Before(read.now.Truncate(time.Minute)) &&
+			slices.Contains(streams, segment.stream) {
+			segments = append(segments, segment)
+		}
+	}
+	l.mu.Unlock()
+	slices.SortFunc(segments, func(a, b observationSegment) int { return a.at.Compare(b.at) })
+	for _, segment := range segments {
+		if err := ctx.Err(); err != nil {
+			read.close()
+			return nil, err
+		}
+		if err := l.openReadFile(read, segment.stream, segment); err != nil {
+			read.close()
+			return nil, err
 		}
 	}
 	if err := ctx.Err(); err != nil {

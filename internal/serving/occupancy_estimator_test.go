@@ -206,3 +206,26 @@ func TestOccupancyEstimatorRejectsOutsidePopulation(t *testing.T) {
 		t.Fatalf("in-window incomplete population=%+v", got)
 	}
 }
+
+func TestOccupancyEstimatorPoolsSamplesAcrossWorkloads(t *testing.T) {
+	p, policies, at := directFixture(1)
+	policies["other-instance"] = policies["instance"]
+	e := NewOccupancyEstimator(map[string]*Profile{p.ID: p}, policies, at, at.Add(time.Second))
+	for i, start := range []time.Duration{0, 50, 200} {
+		e.Add(directRow(at, uint64(i+1), 1, 0, start, start+20))
+	}
+	for i, start := range []time.Duration{0, 1100} {
+		row := directRow(at, uint64(i+1), 1, 0, start, start+20)
+		row.RequestID = "other-" + row.RequestID
+		row.WorkloadUID, row.Instance = "other-workload", "other-instance"
+		e.Add(row)
+	}
+	if len(e.Results()) != 2 {
+		t.Fatal("manual report lost workload strata")
+	}
+	pooled := e.ResultsByCell()
+	if len(pooled) != 1 || pooled[0].WorkloadUID != "" || pooled[0].Pairs != 3 ||
+		pooled[0].Statistics.Median != 50 || pooled[0].Requests != 5 {
+		t.Fatalf("pooled raw residuals=%+v", pooled)
+	}
+}

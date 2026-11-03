@@ -46,18 +46,28 @@ func TestOccupancyObservationsBoundary(t *testing.T) {
 	if response := rawHTTPRequest(denied, path); response.Code != http.StatusForbidden {
 		t.Fatal("denied SAR accepted", response.Code)
 	}
-	h.config.OccupancyObservations = func(context.Context, time.Time, time.Time) ([]serving.OccupancyEstimate, error) {
-		return nil, &serving.Error{Code: "InvalidQuery", Message: "window exceeds configured maximum"}
+	h.config.OccupancyObservations = func(_ context.Context, from, to time.Time) ([]serving.OccupancyEstimate, error) {
+		if to.Sub(from) > 120*time.Second {
+			return nil, &serving.Error{Code: "InvalidQuery", Message: "window exceeds configured maximum"}
+		}
+		return nil, nil
 	}
-	if response := rawHTTPRequest(h, path); response.Code != http.StatusBadRequest {
-		t.Fatal("window bound error lost", response.Code)
+	for _, end := range []string{"2026-11-03T09:02:00.000000001Z", "2026-11-03T10:00:00Z"} {
+		overLimit := occupancyObservationsPath + "?from=2026-11-03T09:00:00Z&to=" + end
+		if response := rawHTTPRequest(h, overLimit); response.Code != http.StatusBadRequest {
+			t.Fatal("oversized public window must return 400", response.Code)
+		}
+	}
+	atLimit := occupancyObservationsPath + "?from=2026-11-03T09:00:00Z&to=2026-11-03T09:02:00Z"
+	if response := rawHTTPRequest(h, atLimit); response.Code != http.StatusOK {
+		t.Fatal("exact configured window rejected", response.Code)
 	}
 }
 
 func TestOccupancyObservationUsesHistoricalReadDeadline(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, occupancyObservationsPath, nil)
 	if !longOperation(request) {
-		t.Fatal("hour-wide occupancy scan must use the historical operation deadline")
+		t.Fatal("bounded occupancy scan must use the historical operation deadline")
 	}
 	request.Method = http.MethodPost
 	if longOperation(request) {

@@ -88,16 +88,31 @@ func TestSettingsPatchMatchesPUTDecode(t *testing.T) {
 	}
 }
 
-func TestDispatchOccupancySettingsPreservesConfiguredValue(t *testing.T) {
+func TestDispatchOccupancySettingsDecodeIsAdditiveWithoutPolicyDefaults(t *testing.T) {
 	current, _ := schedulerFixture()
-	settings, err := ValidateSchedulerSettingsPatch(current, []byte(`{"defaultDispatchOccupancyNanos":2000000}`))
-	if err != nil || settings.DefaultDispatchOccupancyNanos != 2000000 {
-		t.Fatalf("configured d not preserved at settings boundary: %+v %v", settings, err)
+	raw, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Legacy inputs remain valid; the decode boundary adds no compiled policy.
-	margin := current.CompletionMarginMS
-	legacy, err := (SchedulerSettingsInput{SchedulerSettings: current, CompletionMarginMS: &margin}).Settings()
-	if err != nil || legacy.DefaultDispatchOccupancyNanos != 0 {
-		t.Fatalf("additive settings introduced a compiled default: %+v %v", legacy, err)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "defaultDispatchOccupancyNanos")
+	legacy, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input SchedulerSettingsInput
+	if err := json.Unmarshal(legacy, &input); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := input.Settings()
+	if err != nil || settings.DefaultDispatchOccupancyNanos != 0 {
+		t.Fatalf("additive decode introduced compiled policy defaults: %+v %v", settings, err)
+	}
+	settings, err = ValidateSchedulerSettingsPatch(current, []byte(`{"defaultDispatchOccupancyNanos":2000000}`))
+	if err != nil || settings.DefaultDispatchOccupancyNanos != 2000000 {
+		t.Fatalf("configured values not preserved: %+v %v", settings, err)
 	}
 }
