@@ -3,110 +3,185 @@
 import * as React from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
-import { TriangleAlert } from "lucide-react"
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from "recharts"
 import { useChillQuery, useSession } from "@/lib/client"
-import { campaignGroups, commitExperimentSelection, decodeExperiment, decodeExperimentPage, definitionComparisonReason, definitionPolicy, definitionStage, experimentChartData, experimentHeatmap, experimentPath, experimentRows, frozenP95SLO, resultMetric, stageHistoryLink, stageLabel, stageSeconds, type Experiment, type ExperimentPage, type ExperimentStage, type ExperimentHeatmapRow } from "@/lib/experiments"
-import { comparisonValidity, experimentDifference, experimentIntervalSelection } from "@/lib/experiments"
+import { campaignGroups, commitExperimentSelection, comparisonValidity, decodeExperiment, decodeExperimentPage, definitionPolicy, experimentChartData, experimentHeatmap, experimentIntervalSelection, experimentPath, experimentRows, finite, frozenP95SLO, observedStageRate, recordedComparisons, resultMetric, stageLabel, stageSeconds, type Experiment, type ExperimentPage, type ExperimentHeatmapRow } from "@/lib/experiments"
 import { formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
+import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Empty, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-
-import { ExperimentAbsoluteValues, ExperimentConclusion, ExperimentComparisonLegend, ExperimentCoverage, ExperimentInjections, ExperimentJudgment, ExperimentLimits, ExperimentMetadata, ExperimentOutcome, ExperimentResultRow, HistoricalExperimentError, useHistoricalExperiments } from "@/features/experiments-conclusion"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { ExperimentCoverage, ExperimentFacts, ExperimentInjections, ExperimentJudgment, ExperimentLimits, ExperimentMetadata, ExperimentOutcome, ExperimentResultRow, HistoricalExperimentError, useHistoricalExperiments } from "@/features/experiments-conclusion"
 import { SchedulerIntervalEvents } from "@/features/scheduler-evidence"
 import { EvaluationCleanup, EvaluationLaunch } from "@/features/evaluation-request"
-const number=(value:unknown,unit="")=>typeof value==="bigint"?String(value):typeof value==="number"&&Number.isFinite(value)?formatMeasurementNumber(value,unit):"미기록"
-const tone=(value:number|null,baseline=0,higherIsBetter=false)=>experimentDifference(value,baseline,higherIsBetter).tone
-const intervalTable="w-full text-sm tabular-nums max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2 max-md:[&>tbody>tr>th]:col-span-2 max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:flex-col max-md:[&>tbody>tr>td]:text-left max-md:[&>tbody>tr>td]:before:text-xs max-md:[&>tbody>tr>td]:before:text-muted-foreground max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]"
 
+const number=(value:unknown,unit="")=>typeof value==="bigint"?String(value):typeof value==="number"&&Number.isFinite(value)?unit==="req/s"&&value>0&&value<.01?"0.01 미만":formatMeasurementNumber(value,unit==="req/s"?"%":unit):"미제공"
+const intervalTable="w-full text-sm tabular-nums max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2 max-md:[&>tbody>tr>th]:col-span-2 max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:min-w-0 max-md:[&>tbody>tr>td]:flex-col max-md:[&>tbody>tr>td]:text-left max-md:[&>tbody>tr>td]:before:text-xs max-md:[&>tbody>tr>td]:before:text-muted-foreground max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]"
 
-function IntervalDrawer({run,runs,row,service,onClose,restoreFocus}:{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow|undefined;service:string;onClose:()=>void;restoreFocus:()=>void}) {
-  const stages=row?[{stage:row.stage,owner:row.leftRun},...(row.other&&row.rightRun?[{stage:row.other,owner:row.rightRun}]:[])]:[]
-  const names=[...new Set(stages.flatMap(({stage})=>experimentRows(stage).map(item=>item.name)))].filter(name=>!service||name===service)
-  const reason=row?.reason??definitionComparisonReason(run,runs)
-  const label=(stage:ExperimentStage,owner:Experiment)=>`${stage.id} / ${definitionStage(owner,stage)?.row??"미기록"}`
+function ExperimentHelp() {
+  const [open,setOpen]=React.useState(false)
+  return <Tooltip open={open} onOpenChange={setOpen}><TooltipTrigger asChild><Button variant="ghost" aria-expanded={open} onClick={event=>{event.preventDefault();setOpen(value=>!value)}}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-80 whitespace-normal leading-relaxed">일치는 기록된 부하·서비스 정의·측정 규칙·길이가 같은 비교입니다. 다른 조건은 참고이며 정책 효과를 뜻하지 않습니다. 차이는 후보−기준, 에너지는 기준 대비 %, 성공률은 %p, p95는 후보÷기준입니다. 계획 하위 구간은 계획 오프셋이며 실측값은 전체 단계 집계입니다. 사건은 같은 기간의 클러스터 전체 기록이며 인과를 뜻하지 않습니다. 적용 SLO는 요청 identity와 동결 정의가 연결된 값만 표시합니다.</TooltipContent></Tooltip>
+}
+
+function SelectedValues({row,service,onSelect,samples=false}:{row:ExperimentHeatmapRow;service:string;onSelect?:(service:string)=>void;samples?:boolean}) {
+  const names=[...new Set([row.stage,...(row.other?[row.other]:[])].flatMap(stage=>experimentRows(stage).map(item=>item.name)))].filter(name=>!service||service===name)
+  const energy=finite(row.stage.kpis.wholePoolJoules),baseEnergy=row.other?finite(row.other.kpis.wholePoolJoules):null
+  const seconds=stageSeconds(row.stage),baseSeconds=row.other?stageSeconds(row.other):null
+  const values:Array<{label:string;left:unknown;right:unknown;unit:string;delta?:string;service?:string}>=[
+    {label:"풀 전체 에너지",left:energy,right:baseEnergy,unit:"J",delta:baseEnergy===0?"계산 불가":row.energyPercent===null?"미제공":`${number(row.energyPercent,"%")}%`},
+    {label:"풀 평균 전력",left:energy!==null&&seconds?energy/seconds:null,right:baseEnergy!==null&&baseSeconds?baseEnergy/baseSeconds:null,unit:"W"},
+    {label:"단계 길이",left:seconds,right:baseSeconds,unit:"s"},
+  ]
+  for(const name of names) {
+    const own=experimentRows(row.stage).filter(item=>item.name===name),other=row.other?experimentRows(row.other).filter(item=>item.name===name):[]
+    const a=own.length===1?own[0]:undefined,b=other.length===1?other[0]:undefined
+    const success=a?resultMetric(a,"success"):null,baseSuccess=b?resultMetric(b,"success"):null,p95=a?resultMetric(a,"p95"):null,baseP95=b?resultMetric(b,"p95"):null
+    const av=finite(success?.value),bv=finite(baseSuccess?.value),ap=finite(p95?.value),bp=finite(baseP95?.value)
+    values.push(
+      {label:`${name} 발행 요청률`,service:name,left:observedStageRate(row.stage,name),right:row.other?observedStageRate(row.other,name):null,unit:"req/s"},
+      {label:`${name} 성공률`,service:name,left:av===null?null:av*100,right:bv===null?null:bv*100,unit:"%",delta:success?.key===baseSuccess?.key&&av!==null&&bv!==null?`${number((av-bv)*100,"%p")}%p`:"미제공"},
+      {label:`${name} 성공 응답 p95`,service:name,left:ap,right:bp,unit:"ms",delta:bp===0?"계산 불가":ap!==null&&bp!==null?`${number(ap/bp,"%")}배`:"미제공"},
+      {label:`${name} 적용 SLO p95`,service:name,left:a?frozenP95SLO(a,row.leftRun):null,right:b?frozenP95SLO(b,row.rightRun):null,unit:"ms"},
+    )
+    if(samples)values.push({label:`${name} 요청 표본`,service:name,left:success?.denominator,right:baseSuccess?.denominator,unit:""},{label:`${name} p95 표본`,service:name,left:p95?.denominator,right:baseP95?.denominator,unit:""})
+  }
+  return <table aria-label="선택 단계 원값" className={intervalTable}>
+    <thead><tr>{["지표",row.other?"후보 원값":"실측값",...(row.other?["기준 원값","차이"]:[])].map(label=><th key={label} className="p-2 text-right first:text-left">{label}</th>)}</tr></thead>
+    <tbody>{values.map(item=><tr key={item.label} className="border-t">
+      <th className="break-words p-2 text-left font-normal">{onSelect?<button className="min-h-11 text-left underline focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>onSelect(item.service??service)}>{item.label}{item.unit&&` (${item.unit})`}</button>:<>{item.label}{item.unit&&` (${item.unit})`}</>}</th>
+      <td data-label={row.other?"후보 원값":"실측값"} className="p-2 text-right">{item.label.includes("적용 SLO")&&item.left===null?"적용 SLO 미확인":number(item.left,item.unit)}</td>
+      {row.other&&<><td data-label="기준 원값" className="p-2 text-right">{item.label.includes("적용 SLO")&&item.right===null?"적용 SLO 미확인":number(item.right,item.unit)}</td><td data-label="차이" className="p-2 text-right">{item.delta??"—"}</td></>}
+    </tr>)}</tbody>
+  </table>
+}
+
+function IntervalDrawer({run,runs,row,service,onClose,restoreFocus,returnTo="",side="candidate",onSideChange,onServiceChange}:{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow|undefined;service:string;onClose:()=>void;restoreFocus:()=>void;returnTo?:string;side?:string;onSideChange?:(side:string)=>void;onServiceChange?:(service:string)=>void}) {
+  const stages=row?[{stage:row.stage,owner:row.leftRun,label:row.other?"후보":"선택 단계"},...(row.other?[{stage:row.other,owner:row.rightRun,label:"기준"}]:[])]:[]
+  const eventStage=side==="baseline"&&stages[1]?stages[1]:stages[0]
+  const names=[...new Set(stages.flatMap(({stage})=>experimentRows(stage).map(item=>item.name)))]
+  const sourceLinks=stages.filter(({owner})=>owner.id!==run.id)
+  const sourceOffset=new URLSearchParams(returnTo.split("?")[1]??"").get("offset")
   return <Sheet open={!!row} onOpenChange={open=>{if(!open)onClose()}}><SheetContent className="w-full overflow-y-auto sm:max-w-2xl" aria-describedby={undefined} onCloseAutoFocus={event=>{event.preventDefault();restoreFocus()}}>
-    <SheetHeader><SheetTitle title={reason}>{row&&label(row.stage,row.leftRun)}</SheetTitle></SheetHeader>
+    <SheetHeader><SheetTitle>{row&&row.stage.id}</SheetTitle></SheetHeader>
     {row&&<div className="space-y-5 px-4 pb-6">
-      {stages.filter(({owner})=>owner.id!==run.id).map(({owner})=><Link key={owner.id} prefetch={false} className="block text-sm underline" href={`/experiments/results?${new URLSearchParams({a:owner.id})}`}>{owner.definition?.run.name??owner.id}</Link>)}
-      <ExperimentLimits run={run} runs={runs}/>
-      <div className="min-w-0"><table className={intervalTable}><thead><tr>{["단계 / 행","시작 (KST)","종료 (KST)"].map(label=><th key={label} className="p-2 text-left">{label}</th>)}</tr></thead><tbody>{stages.map(({stage,owner})=><tr key={`${owner.id}/${stage.id}`} className="border-t"><th className="break-all p-2 text-left font-normal">{label(stage,owner)}</th><td data-label="시작 (KST)" className="p-2">{formatMeasurementTime(stage.from)}</td><td data-label="종료 (KST)" className="p-2">{formatMeasurementTime(stage.to)}</td></tr>)}</tbody></table></div>
-      {row.other&&<table aria-label="비교 조건" className={intervalTable}><thead><tr>{["부하","서비스 식별자·정의","측정 규칙"].map(label=><th key={label} className="p-2 text-left">{label}</th>)}</tr></thead><tbody><tr>{Object.entries(comparisonValidity(row.stage,row.other,row.leftRun,row.rightRun).conditions).map(([key,value])=><td key={key} className="border-t p-2">{value}</td>)}</tr></tbody></table>}
-      {stages.map(({stage,owner})=><ExperimentMetadata key={`${owner.id}/${stage.id}`} run={owner} stage={stage}/>)}
-      <table className={intervalTable}><thead><tr>{["정책","길이 (s)","에너지 (J)","평균 전력 (W)"].map(label=><th key={label} className="p-2 text-right first:text-left">{label}</th>)}</tr></thead><tbody>{stages.map(({stage,owner})=>{const seconds=stageSeconds(stage),energy=stage.kpis.wholePoolJoules;return <tr key={`${owner.id}/${stage.id}`} className="border-t"><th className="p-2 text-left font-normal">{definitionPolicy(stage,owner)}</th><td className="p-2 text-right">{number(seconds,"s")}</td><td className="p-2 text-right">{number(energy,"J")}</td><td className="p-2 text-right">{number(typeof energy==="number"&&seconds?energy/seconds:null,"W")}</td></tr>})}</tbody></table>
-      <div className="min-w-0"><table className={intervalTable}><thead><tr>{["서비스","단계 / 행","성공률 (%)","p95 (ms)","SLO (ms)","요청 N","p95 N"].map(label=><th key={label} className="p-2 text-right first:text-left">{label}</th>)}</tr></thead><tbody>{names.flatMap(name=>stages.map(({stage,owner})=>{
-        const candidates=experimentRows(stage).filter(item=>item.name===name),item=candidates.length===1?candidates[0]:undefined
-        const success=item?resultMetric(item,"success"):null,p95=item?resultMetric(item,"p95"):null,slo=item?frozenP95SLO(item,owner):null
-        return <tr key={`${name}/${owner.id}/${stage.id}`} className="border-t"><th className="max-w-52 break-words p-2 text-left font-normal">{name}</th><td data-label="단계 / 행" className="break-all p-2">{label(stage,owner)}</td><td data-label="성공률 (%)" className="p-2 text-right">{number(typeof success?.value==="number"?success.value*100:null,"%")}</td><td data-label="p95 (ms)" className="p-2 text-right">{number(p95?.value,"ms")}</td><td data-label="SLO (ms)" className={`p-2 text-right ${slo===null?"text-muted-foreground":""}`}>{slo===null?"미확인":number(slo,"ms")}</td><td data-label="요청 N" className="p-2 text-right">{number(success?.denominator)}</td><td data-label="p95 N" className="p-2 text-right">{number(p95?.denominator)}</td></tr>
-      }))}</tbody></table></div>
-      {stages.filter(({stage,owner})=>owner.outcome?.stages?.some(item=>item.id===stage.id)||owner.definition?.spec.stages.find(item=>item.id===stage.id)?.failureInjection?.length).map(({stage,owner})=><section key={`${owner.id}/${stage.id}`} className="space-y-2" aria-label={`${stage.id} 판정·주입`}><h3 className="text-sm font-semibold">{label(stage,owner)}</h3><ExperimentOutcome run={owner} stage={stage}/><ExperimentInjections run={owner} stage={stage}/></section>)}
-      <section className="space-y-2" aria-label="구간 판단·전환 사건"><h3 className="text-sm font-semibold">{label(row.stage,row.leftRun)} · 판단·전환</h3><SchedulerIntervalEvents from={row.stage.from} to={row.stage.to}/></section>
-      <div className="flex flex-wrap gap-2">{stages.map(({stage,owner})=><Button key={`${owner.id}/${stage.id}`} variant="outline" asChild><Link prefetch={false} href={stageHistoryLink(stage)}>{label(stage,owner)} · 판단·전환 기록 열기</Link></Button>)}</div>
-      <SourceJSON inline title="원문" value={{experiment:run.id,stages,sources:run.sources}}/>
-      <SourceExport filename="experiment-interval.json" value={{experiment:run.id,stages,sources:run.sources}}/>
+      <dl className="space-y-2 text-sm">{stages.map(({stage,owner,label})=><div key={`${owner.id}/${stage.id}`}><dt className="font-medium">{label} · {stageLabel(stage,owner)}</dt><dd className="text-xs text-muted-foreground">{formatMeasurementTime(stage.from)} – {formatMeasurementTime(stage.to)}</dd></div>)}</dl>
+      {onServiceChange&&<label className="flex items-center gap-2 text-sm">서비스 <select className="min-h-11 min-w-0 max-w-full rounded border bg-background px-2" value={service} onChange={event=>onServiceChange(event.target.value)}><option value="">전체</option>{names.map(name=><option key={name} value={name}>{name}</option>)}</select></label>}
+      <SelectedValues row={row} service={service} samples/>
+      {stages.filter(({stage,owner})=>owner.outcome?.stages?.some(item=>item.id===stage.id)||owner.definition?.spec.stages.find(item=>item.id===stage.id)?.failureInjection?.length).map(({stage,owner})=><section key={`${owner.id}/${stage.id}`} className="space-y-2" aria-label={`${stage.id} 판정·주입`}><ExperimentOutcome run={owner} stage={stage}/><ExperimentInjections run={owner} stage={stage}/></section>)}
+      <section className="space-y-2" aria-label="같은 기간 사건">{row.other&&<label className="flex items-center gap-3 text-sm">사건 구간 <select className="min-h-11 rounded border bg-background px-2" value={side} onChange={event=>onSideChange?.(event.target.value)}><option value="candidate">후보</option><option value="baseline">기준</option></select></label>}{eventStage&&<SchedulerIntervalEvents key={`${eventStage.owner.id}/${eventStage.stage.id}`} from={eventStage.stage.from} to={eventStage.stage.to} returnTo={returnTo} label={eventStage.label}/>}</section>
+      <details>
+        <summary className="min-h-11 cursor-pointer text-sm">비교 조건·측정 규칙·계획 부하·정의 출처</summary>
+        <div className="space-y-4">
+          <dl className="text-sm"><dt>비교 사유</dt><dd>{row.reason}</dd></dl>
+          {sourceLinks.map(({owner,stage})=><Link key={`${owner.id}/${stage.id}`} prefetch={false} className="inline-flex min-h-11 break-all text-sm underline" href={`/experiments/results?${new URLSearchParams({a:owner.id,...(service?{service}:{}),...(sourceOffset?{offset:sourceOffset}:{})})}`}>{owner.definition?.run.name??owner.id}</Link>)}
+          <ExperimentLimits run={run} runs={runs}/>
+          {row.other&&<table aria-label="비교 조건" className={intervalTable}><thead><tr>{["부하","서비스 식별자·정의","측정 규칙"].map(label=><th key={label} className="p-2 text-left">{label}</th>)}</tr></thead><tbody><tr>{Object.entries(comparisonValidity(row.stage,row.other,row.leftRun,row.rightRun).conditions).map(([key,value])=><td key={key} className="border-t p-2">{value}</td>)}</tr></tbody></table>}
+          {stages.map(({stage,owner})=><ExperimentMetadata key={`${owner.id}/${stage.id}`} run={owner} stage={stage}/>)}
+        </div>
+      </details>
+      <details><summary className="min-h-11 cursor-pointer text-sm">원문·내보내기</summary><SourceJSON inline title="원문" value={{experiment:run.id,stages,sources:run.sources}}/><SourceExport filename="experiment-interval.json" value={{experiment:run.id,stages,sources:run.sources}}/></details>
     </div>}
   </SheetContent></Sheet>
 }
 
-function ExperimentDetail({run,runs}:{run:Experiment;runs:Experiment[]}) {
+function ExperimentCharts({run,runs,service,rows,selected,onSelect}:{run:Experiment;runs:Experiment[];service:string;rows:ExperimentHeatmapRow[];selected:ExperimentHeatmapRow|undefined;onSelect:(row:ExperimentHeatmapRow)=>void}) {
+  const data=experimentChartData(run,service,runs),paired=rows.some(row=>row.other)
+  const lanes=[
+    {label:"요청률",unit:"req/s",keys:["observedRate","rightObservedRate","rate","rightRate"]},
+    {label:"성공 응답 p95",unit:"ms",keys:["leftP95","rightP95","leftSLO","rightSLO"]},
+    {label:"풀 전체 에너지",unit:"J",keys:["leftEnergy","rightEnergy"]},
+  ] as const
+  const labels={observedRate:paired?"후보 발행":"발행",rightObservedRate:"기준 발행",rate:paired?"후보 계획 평균":"계획 평균",rightRate:"기준 계획 평균",leftP95:paired?"후보 p95":"p95",rightP95:"기준 p95",leftSLO:paired?"후보 적용 SLO":"적용 SLO",rightSLO:"기준 적용 SLO",leftEnergy:paired?"후보 풀 전체":"풀 전체",rightEnergy:"기준 풀 전체"}
+  const maxPlanRate=Math.max(1,...data.flatMap(item=>[...item.plans,...item.rightPlans].map(part=>part.rate??0)))
+  const columns={gridTemplateColumns:`repeat(${Math.max(1,rows.length)},minmax(0,1fr))`}
+  return <section aria-label="공유 구간 차트" className="min-w-0 overflow-x-auto rounded-lg border p-2">
+    <div className="space-y-1" style={{minWidth:rows.length>4?rows.length*160:undefined}}>
+      {lanes.map((lane,laneIndex)=>{
+        const keys=lane.keys.filter(key=>data.some(item=>item[key]!==null))
+        const measured=laneIndex===0?data.some(item=>item.observedRate!==null||item.rightObservedRate!==null):laneIndex===1?data.some(item=>item.leftP95!==null||item.rightP95!==null):data.some(item=>item.leftEnergy!==null||item.rightEnergy!==null)
+        return <div key={lane.label} className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-3 px-2 text-xs"><h2 className="font-semibold">{lane.label} ({lane.unit})</h2>{keys.map(key=><span key={key} className={key.startsWith("right")?"text-muted-foreground":"text-primary"}>{labels[key]}{key.includes("SLO")?" ┄":key==="rate"||key==="rightRate"?" ▱":key.startsWith("right")?" □":" ■"}</span>)}{!measured&&keys.length>0&&<span className="text-muted-foreground">실측 미제공</span>}</div>
+          {laneIndex===1&&!service?<div className="flex h-[82px] items-center justify-center text-sm text-muted-foreground">서비스 선택</div>:!keys.length||laneIndex===1&&!measured?<div className="flex h-[82px] items-center justify-center text-sm text-muted-foreground">실측 미제공</div>:
+            <div className="h-[82px] min-w-0"><ResponsiveContainer width="100%" height="100%"><ComposedChart accessibilityLayer syncId={`experiment-${run.id}`} data={data} margin={{left:0,right:8,top:4,bottom:0}}>
+              <CartesianGrid vertical={false}/><XAxis dataKey="key" hide/><YAxis width={64} tick={{fontSize:10}}/><ChartTooltip labelFormatter={(_label,payload)=>payload[0]?.payload?.interval??""}/>
+              {keys.map(key=>key.includes("SLO")?
+                <Line key={key} dataKey={key} name={labels[key]} type="stepAfter" stroke="var(--heat)" strokeDasharray={key.startsWith("right")?"2 4":"6 3"} connectNulls={false} dot={{r:3}} isAnimationActive={false}/>:
+                <Bar key={key} dataKey={key} name={labels[key]} fill={key.startsWith("right")||key==="rate"?"var(--muted-foreground)":"var(--primary)"} fillOpacity={key==="rate"||key==="rightRate"?0.15:0.8} stroke={key.startsWith("right")||key==="rate"?"var(--muted-foreground)":"var(--primary)"} strokeDasharray={key==="rate"||key==="rightRate"?"4 2":undefined} maxBarSize={44} onClick={entry=>{const row=rows.find(row=>row.key===entry.payload?.key);if(row)onSelect(row)}} isAnimationActive={false}/>
+              )}
+            </ComposedChart></ResponsiveContainer></div>
+          }
+          {laneIndex===0&&data.some(item=>item.plans.length>1||item.rightPlans.length>1)&&<div className="grid gap-1 pl-16 pr-2" style={columns} aria-label="계획 하위 구간">
+            <span className="col-span-full text-xs text-muted-foreground">계획 오프셋 · 구간 실측 미제공</span>
+            {data.map((item,index)=><div key={item.key} className="min-w-0">{[item.plans,item.rightPlans].map((parts,side)=>parts.length>1&&<div key={side} className="flex gap-1">{parts.map(part=><button key={part.id} className="relative min-h-11 min-w-0 flex-1 break-words rounded border border-dashed px-1 text-left text-xs focus-visible:outline-2 focus-visible:outline-primary" style={{flexGrow:part.to-part.from}} onClick={()=>onSelect(rows[index])}>
+              <span aria-hidden="true" className="absolute inset-y-0 left-0 bg-muted-foreground/15" style={{width:`${100*(part.rate??0)/maxPlanRate}%`}}/>
+              <span className="relative">{paired?(side?"기준 계획 ":"후보 계획 "):"계획 "}{part.id} +{part.from}–{part.to}s<br/>{part.rate===null?part.alpha?`α ${Object.entries(part.alpha).map(([name,value])=>`${name} ${number(value,"%")}`).join(", ")}`:"요청률 미제공":`${number(part.rate,"req/s")} req/s`}</span>
+            </button>)}</div>)}</div>)}
+          </div>}
+        </div>
+      })}
+      <div className="grid gap-1 pl-16 pr-2" style={columns} aria-label="구간 선택">{rows.map(row=><button key={row.key} type="button" aria-pressed={row.key===selected?.key} className="min-h-11 min-w-0 break-words rounded border px-1 text-left text-xs focus-visible:outline-2 focus-visible:outline-primary aria-pressed:border-primary aria-pressed:bg-primary/5" onClick={()=>onSelect(row)}>
+        {stageLabel(row.stage,row.leftRun)}<span className="block text-muted-foreground">{formatMeasurementTime(row.stage.from)} – {formatMeasurementTime(row.stage.to)}</span>{row.other&&<span className="block text-muted-foreground">기준 {stageLabel(row.other,row.rightRun)} · {formatMeasurementTime(row.other.from)} – {formatMeasurementTime(row.other.to)}</span>}
+      </button>)}</div>
+    </div>
+  </section>
+}
+
+function ExperimentDetail({run,runs,pending=false,error,refetch}:{run:Experiment;runs:Experiment[];pending?:boolean;error?:unknown;refetch:()=>void}) {
   const rows=React.useMemo(()=>experimentHeatmap(run,runs),[run,runs])
   const names=React.useMemo(()=>[...new Set(rows.flatMap(row=>[row.stage,...(row.other?[row.other]:[])].flatMap(stage=>experimentRows(stage).map(item=>item.name))))],[rows])
-  const params=useSearchParams(),service=params.get("service")??""
-  const trigger=React.useRef<HTMLElement|null>(null)
-  const chart=React.useMemo(()=>experimentChartData(run,service,runs),[run,service,runs])
-  const absolute=rows.every(row=>!row.other)
-  const row=rows.find(row=>Object.entries(experimentIntervalSelection(run,row)).every(([key,value])=>(params.get(key)??"")===value))
-  function open(row:ExperimentHeatmapRow,name="") {
-    trigger.current=document.activeElement instanceof HTMLElement?document.activeElement:null
-    commitExperimentSelection(window.location,window.history,{...experimentIntervalSelection(run,row),...(name?{service:name}:{})})
+  const params=useSearchParams(),requestedService=params.get("service")??"",service=requestedService||(names.length===1?names[0]:"")
+  const trigger=React.useRef<HTMLElement|null>(null),selectionArea=React.useRef<HTMLElement|null>(null)
+  const [selectedKey,setSelectedKey]=React.useState(""),[cleanupOpen,setCleanupOpen]=React.useState(false)
+  const selectedRow=rows.find(row=>Object.entries(experimentIntervalSelection(run,row)).every(([key,value])=>(params.get(key)??(key==="al"?run.id:""))===value))
+  const selected=selectedRow??rows.find(row=>row.key===selectedKey)??rows.find(row=>row.other)??rows[0]
+  React.useEffect(()=>{if(!requestedService&&names.length===1)commitExperimentSelection(window.location,window.history,{service:names[0]})},[names,requestedService])
+  function open(row:ExperimentHeatmapRow,name=service) {
+    trigger.current=document.activeElement instanceof HTMLElement&&document.activeElement!==document.body?document.activeElement:null
+    commitExperimentSelection(window.location,window.history,{...experimentIntervalSelection(run,row),service:name,eventSide:""},selectedRow?"replace":"push")
   }
+  const returnTo=`/experiments/results?${params}`
   return <>
-    {absolute&&<ExperimentAbsoluteValues run={run} service={service} onSelect={(stage,name)=>{const row=rows.find(row=>row.stage===stage);if(row)open(row,name)}}/>}
-    {!absolute&&
-    <section aria-label="구간별 정책 차이" className="min-w-0 rounded-lg border">
-      <table className="w-full text-sm tabular-nums max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:grid-cols-2 max-md:[&>tbody>tr>th]:col-span-2 max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:min-w-0 max-md:[&>tbody>tr>td]:flex-col max-md:[&>tbody>tr>td]:break-words max-md:[&>tbody>tr>td]:text-left max-md:[&>tbody>tr>td]:before:text-xs max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]">
-        <thead className="bg-muted/50"><tr><th scope="col" rowSpan={2} className="p-3 text-left">비교 상태</th><th scope="col" rowSpan={2} className="p-3 text-left">단계 / 행 / 모드</th><th scope="col" rowSpan={2} className="p-3 text-right">부하</th><th scope="col" rowSpan={2} className="p-3 text-right">에너지 Δ<br/>%</th>{names.filter(name=>!service||name===service).map(name=><th key={name} scope="colgroup" colSpan={2} className="max-w-56 break-words border-l p-2 text-center font-medium">{name}</th>)}</tr><tr>{names.filter(name=>!service||name===service).flatMap(name=>[<th key={`${name}/success`} scope="col" className="border-l px-2 py-2 text-right text-xs">성공률 Δ %p</th>,<th key={`${name}/p95`} scope="col" className="px-2 py-2 text-right text-xs">p95 배율</th>])}</tr></thead>
-        <tbody>{rows.map(row=><tr key={row.key} className={`border-t ${row.other?"":"bg-muted text-muted-foreground"}`}>
-          <td data-label="비교 상태" className="p-2 font-medium">{!row.other?(!run.definition?"미기록":row.reason.includes("대상 게시 없음")?"대상 없음":"비교 없음"):comparisonValidity(row.stage,row.other,row.leftRun,row.rightRun).limited?"참고":"일치"}<div className="max-w-60 whitespace-normal text-xs font-normal text-muted-foreground">{row.reason}</div></td>
-          <th scope="row" className="break-words p-1 text-left font-medium"><button type="button" className="flex min-h-11 w-full items-center gap-2 rounded px-2 text-left focus-visible:outline-2 focus-visible:outline-primary" onClick={()=>open(row)} title={row.reason}>{stageLabel(row.stage,row.leftRun)}{row.other&&comparisonValidity(row.stage,row.other,row.leftRun,row.rightRun).limited&&<TriangleAlert aria-label="비교 제한" className="size-4 shrink-0 text-heat"/>}</button></th>
-          <td data-label="부하" className="p-2"><ExperimentMetadata run={row.leftRun} stage={row.stage}/></td>
-          <td data-label="에너지 Δ (%)" className="p-1"><button className={`min-h-11 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary max-md:text-left ${tone(row.energyPercent)}`} onClick={()=>open(row)}>{experimentDifference(row.energyPercent).text}</button></td>
-          {names.filter(name=>!service||name===service).flatMap(name=>{const item=row.services.find(item=>item.name===name);return [<td key={`${name}/success`} data-label={`${name} 성공률 Δ (%p)`} className="border-l p-1"><button className={`min-h-11 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary max-md:text-left ${tone(item?.successDelta??null,0,true)}`} onClick={()=>open(row,name)} aria-label={`${name} 성공률 상세`}>{experimentDifference(item?.successDelta??null,0,true).text}</button></td>,<td key={`${name}/p95`} data-label={`${name} p95 배율`} className="p-1"><button className={`min-h-11 w-full rounded px-2 text-right font-semibold focus-visible:outline-2 focus-visible:outline-primary max-md:text-left ${tone(item?.p95Ratio??null,1)}`} onClick={()=>open(row,name)} aria-label={`${name} p95 상세`}>{experimentDifference(item?.p95Ratio??null,1).text}</button></td>]})}
-        </tr>)}</tbody>
-      </table>
+    <section aria-label="비교 맥락" className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1"><ExperimentOutcome run={run}/>{error?<HistoricalExperimentError refetch={refetch}/>:pending?<strong>조회 중</strong>:<ExperimentJudgment run={run} runs={runs}/>}<ExperimentHelp/>{run.outcome?.cleanup?.status==="Failed"&&<><Button variant="outline" onClick={()=>setCleanupOpen(true)}>정리 실패 · 풀 상태 확인</Button><Dialog open={cleanupOpen} onOpenChange={setCleanupOpen}><DialogContent className="max-h-[85vh] overflow-y-auto" aria-describedby={undefined}><DialogHeader><DialogTitle>풀 상태 확인</DialogTitle></DialogHeader><EvaluationCleanup run={run}/></DialogContent></Dialog></>}</div>
+      {recordedComparisons(run)?.length===0&&run.definition?.spec.stages.some(stage=>stage.mode==="autonomous")&&!run.definition.spec.stages.some(stage=>stage.mode==="fixed")&&<span className="text-xs text-muted-foreground">고정 단계 없음</span>}
+      <div className="flex flex-wrap items-center gap-3">{rows.some(row=>row.other)&&<label className="text-sm">비교쌍 <select className="min-h-11 max-w-full rounded border bg-background px-2" value={selected?.key??""} onChange={event=>{const row=rows.find(row=>row.key===event.target.value);if(row){setSelectedKey(row.key);if(selectedRow)commitExperimentSelection(window.location,window.history,experimentIntervalSelection(run,row))}}}>{rows.map(row=><option key={row.key} value={row.key}>{row.other?`${row.stage.id} / ${row.other.id}`:row.stage.id}</option>)}</select></label>}<label className="text-sm">서비스 <select className="min-h-11 max-w-full rounded border bg-background px-2" value={service} onChange={event=>commitExperimentSelection(window.location,window.history,{service:event.target.value})}><option value="">전체</option>{names.map(name=><option key={name} value={name}>{name}</option>)}</select></label>{selected&&<span className="break-words text-xs text-muted-foreground">{selected.other?"후보":recordedComparisons(run)?.length?"선택 단계":"단독"}: {definitionPolicy(selected.stage,selected.leftRun)} · {selected.stage.id}{selected.other&&<> / 기준: {definitionPolicy(selected.other,selected.rightRun)} · {selected.other.id} · {comparisonValidity(selected.stage,selected.other,selected.leftRun,selected.rightRun).limited?"참고":"일치"}</>}</span>}</div>
     </section>
-    }
-    <section aria-label="구간별 요청률과 지연" className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">구간별 요청률·p95</h2><label className="flex min-w-0 flex-wrap items-center gap-2 text-sm">서비스<select className="min-h-10 w-full max-w-80 rounded border bg-background px-2" value={service} onChange={event=>commitExperimentSelection(window.location,window.history,{service:event.target.value})}><option value="">전체</option>{names.map(name=><option key={name} value={name}>{name}</option>)}</select></label></div>
-      <div className="h-[250px] min-w-0" role="img" aria-label="구간별 발행 요청률과 기록된 계획 요청률·서비스 p95·SLO">
-        <ResponsiveContainer width="100%" height="100%"><ComposedChart accessibilityLayer data={chart} margin={{left:0,right:8,top:10,bottom:0}}>
-          <CartesianGrid vertical={false}/><XAxis dataKey="interval" tick={{fontSize:11}}/><YAxis yAxisId="rate" width={60} unit=" 요청/s" tick={{fontSize:10}}/>{service&&<YAxis yAxisId="latency" orientation="right" width={70} unit=" ms" tick={{fontSize:10}}/>}<Tooltip/><Legend wrapperStyle={{fontSize:11}}/>
-          {chart.some(row=>row.observedRate!==null)&&<Bar yAxisId="rate" dataKey="observedRate" name="발행 요청률" fill="var(--primary)" opacity={service ? .25 : .8} maxBarSize={60} isAnimationActive={false}/>}
-          {chart.some(row=>row.rate!==null)&&<Bar yAxisId="rate" dataKey="rate" name="계획 평균 요청률" fill="var(--muted-foreground)" opacity={.35} maxBarSize={60} isAnimationActive={false}/>}
-          {service&&(["leftP95","rightP95","leftSLO","rightSLO"] as const).filter(key=>chart.some(row=>row[key]!==null)).map(key=><Line key={key} yAxisId="latency" dataKey={key} name={{leftP95:"선택 구간 p95",rightP95:"비교 구간 p95",leftSLO:"선택 구간 SLO",rightSLO:"비교 구간 SLO"}[key]} stroke={key.includes("SLO")?"var(--heat)":key==="leftP95"?"var(--color-teal-600, #0d9488)":"var(--color-slate-500, #64748b)"} strokeWidth={2} strokeDasharray={key.includes("SLO")?"4 4":undefined} connectNulls={false} isAnimationActive={false}/>)}
-        </ComposedChart></ResponsiveContainer>
-      </div>
-    </section>
-    <IntervalDrawer run={run} runs={runs} row={row} service={service} onClose={()=>commitExperimentSelection(window.location,window.history,{al:"",as:"",b:"",bs:""})} restoreFocus={()=>trigger.current?.focus()}/>
+    <section ref={selectionArea} tabIndex={-1} aria-label="차트와 구간 선택" className="min-w-0 focus-visible:outline-2 focus-visible:outline-primary"><ExperimentCharts run={run} runs={runs} service={service} rows={rows} selected={selected} onSelect={open}/></section>
+    <section aria-label="선택 단계 수치" className="min-w-0 space-y-2">{selected?<><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">{selected.stage.id} · 단계 집계</h2><Button variant="outline" onClick={()=>open(selected)}>구간 자세히</Button></div><SelectedValues row={selected} service={service} onSelect={name=>open(selected,name)}/></>:<Empty title="실측 단계 없음"/>}<details><summary className="min-h-11 cursor-pointer text-sm">비교 조건·정의 출처</summary><div className="grid gap-3 sm:grid-cols-2"><ExperimentLimits run={run} runs={runs}/><ExperimentCoverage run={run} runs={runs}/></div><ExperimentFacts run={run}/>{selected&&<ExperimentMetadata run={selected.leftRun} stage={selected.stage}/>}</details><details><summary className="min-h-11 cursor-pointer text-sm">게시 원문·내보내기</summary><SourceJSON inline title="게시 원문" value={run}/><SourceExport filename={`${run.id}.json`} value={run}/></details></section>
+    <IntervalDrawer run={run} runs={runs} row={selectedRow} service={service} side={params.get("eventSide")??"candidate"} onSideChange={side=>commitExperimentSelection(window.location,window.history,{eventSide:side})} onServiceChange={name=>commitExperimentSelection(window.location,window.history,{service:name})} returnTo={returnTo} onClose={()=>commitExperimentSelection(window.location,window.history,{al:"",as:"",b:"",bs:""})} restoreFocus={()=>{if(trigger.current?.isConnected)trigger.current.focus();else selectionArea.current?.focus()}}/>
   </>
 }
 
+function PublicationRunLink({run}:{run:Experiment}) {
+  const identity=run.definition?.run
+  const params=useSearchParams()
+  const query=useChillQuery<{name:string;uid:string}>(`v1/evaluations/${encodeURIComponent(identity?.name??"_")}`,{enabled:!!identity,decoder:parseSchedulerJSON})
+  if(!identity)return null
+  if(query.error)return <span className="text-xs">{query.error.status===404?"실행 없음":<Button variant="outline" onClick={()=>void query.refetch()}>실행 조회 실패 · 다시 조회</Button>}</span>
+  if(!query.data)return <span className="text-xs text-muted-foreground">실행 조회 중</span>
+  if(query.data.uid!==identity.uid)return <span className="text-xs text-muted-foreground">실행 교체됨</span>
+  return <Button variant="outline" asChild><Link href={`/experiments/runs/${encodeURIComponent(identity.name)}?${new URLSearchParams({uid:identity.uid,...(params.get("offset")?{offset:params.get("offset")!}:{}),...(params.get("service")?{service:params.get("service")!}:{})})}`}>진행</Link></Button>
+}
+
 export function ExperimentsPage() {
-  const params=useSearchParams(),id=params.get("a")??""
-  const {config}=useSession(),[offsets,setOffsets]=React.useState([0])
-  const list=useChillQuery<ExperimentPage>(`v1/experiments?${new URLSearchParams({offset:String(offsets.at(-1)??0),limit:String(Math.min(5,config.maxPageSize))})}`,{decoder:decodeExperimentPage})
+  const params=useSearchParams(),id=params.get("a")??"",offset=params.get("offset")??"0"
   const query=useChillQuery<Experiment>(experimentPath(id),{enabled:!!id,decoder:decodeExperiment})
   const run=query.data?.id===id?query.data:undefined
-  const publications=list.data?.items??[]
-  const legacyOnly=publications.every(run=>!run.definition&&run.comparisons===undefined)
-  const selected=id?(run?[run]:[]):publications
-  const historical=useHistoricalExperiments(selected,publications,!!list.data||!!list.error)
-  const runs=historical.runs
-  if(id)return <Screen width="data" back={["/experiments/results","실험 결과"]} title={run?.definition?.run.name??id} actionPlacement="header" action={<div className="flex flex-wrap gap-2">{run?.definition&&<EvaluationLaunch publicationID={run.id} label="다시 실행"/>}<Button variant="outline" asChild><Link href="/experiments">실행</Link></Button></div>}><QueryGate query={query}>{run&&<><section aria-label="비교 판독" className="space-y-2">{run.outcome&&<ExperimentOutcome run={run}/>}<EvaluationCleanup key={run.id} run={run}/>{!run.definition&&run.comparisons===undefined?<ExperimentConclusion run={run} runs={runs}/>:<>{historical.error?<HistoricalExperimentError refetch={historical.refetch}/>:historical.pending?<strong>조회 중</strong>:<><div className="flex flex-wrap items-center justify-between gap-3"><ExperimentJudgment run={run} runs={runs}/><ExperimentComparisonLegend/></div><ExperimentConclusion run={run} runs={runs}/><details><summary className="min-h-11 cursor-pointer text-sm">비교 조건·제한</summary><div className="grid gap-3 sm:grid-cols-2"><ExperimentLimits run={run} runs={runs}/><ExperimentCoverage run={run} runs={runs}/></div></details></>}</>}<SourceJSON inline title="게시 원문" value={run}/></section>{!historical.error&&!historical.pending&&<ExperimentDetail key={run.id} run={run} runs={runs}/>}</>}</QueryGate></Screen>
-  return <Screen width="data" title="실험 결과" actionPlacement="header" action={<div className="flex flex-wrap items-center gap-2">{!legacyOnly&&<ExperimentComparisonLegend/>}<Button variant="outline" asChild><Link href="/experiments">실행</Link></Button><Button variant="outline" asChild><Link href="/experiments/load-scenarios">부하 설정</Link></Button><EvaluationLaunch/></div>}>
-    {list.data?.page&&<nav aria-label="실험 결과 페이지" className="flex gap-2"><Button variant="outline" disabled={offsets.length===1||list.isFetching} onClick={()=>setOffsets(offsets.slice(0,-1))}>이전</Button><Button variant="outline" disabled={list.data.page.nextOffset===undefined||list.isFetching} onClick={()=>{const next=list.data?.page?.nextOffset;if(next!==undefined)setOffsets([...offsets,next])}}>다음</Button></nav>}
-    {list.data&&<table aria-label="실험 결과 수" className="w-full text-sm tabular-nums"><tbody><tr><th className="text-left font-normal">전체 게시 (개)</th><td className="text-right">{list.data.page?.total??publications.length}</td></tr><tr><th className="text-left font-normal">현재 게시 (개)</th><td className="text-right">{publications.length}</td></tr></tbody></table>}
-    <QueryGate query={list}>{list.data&&<section aria-label="실험 결과 표">{historical.error&&<HistoricalExperimentError refetch={historical.refetch}/>}<div className="min-w-0 overflow-x-auto"><table className="w-full text-sm max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr]:min-w-0 max-md:[&>tbody>tr>td]:block max-md:[&>tbody>tr>td]:min-w-0 max-md:[&>tbody>tr>td]:max-w-none max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]"><thead><tr>{legacyOnly?<><th className="p-3 text-left">실험</th><th colSpan={11} className="p-3 text-left">단계별 원값</th></>:["비교 상태","실험","일치 (개)","참고 (개)","대응 없음 (개)","실행","측정","정리","에너지 Δ (%)","최악 성공률 Δ (%p)","최악 p95 (배)","제한 사유"].map((label,index)=><th key={label} className={`p-3 ${[2,3,4,8,9,10].includes(index)?"text-right":"text-left"}`}>{label}</th>)}</tr></thead><tbody>{campaignGroups(publications).map(({run})=><ExperimentResultRow key={run.id} run={run} runs={runs} pending={historical.pending} error={!!historical.error}/>)}</tbody></table></div>{!publications.length&&<Empty title="기록 없음"/>}</section>}</QueryGate></Screen>
+  const historical=useHistoricalExperiments(run?[run]:[],run?[run]:[],!!run)
+  return <Screen width="data" back={[`/experiments?${new URLSearchParams({view:"published",offset,...(params.get("service")?{service:params.get("service")!}:{})})}`,"게시 결과"]} title={run?.definition?.run.name??run?.facts?.name??id} actionPlacement="header" action={<nav aria-label="실험 상세" className="flex flex-wrap gap-2">{run&&<PublicationRunLink run={run}/>}<span aria-current="page" className="inline-flex min-h-11 items-center px-2 text-sm">결과</span>{run?.definition&&<EvaluationLaunch publicationID={run.id} label="다시 실행"/>}</nav>}><QueryGate query={query}>{run&&<ExperimentDetail key={run.id} run={run} runs={historical.runs} pending={historical.pending} error={historical.error} refetch={historical.refetch}/>}</QueryGate></Screen>
+}
+
+export function PublishedExperimentsPage() {
+  const params=useSearchParams(),{config}=useSession()
+  const requested=Number(params.get("offset")??0),offset=Number.isSafeInteger(requested)&&requested>=0?requested:0,limit=Math.min(5,config.maxPageSize)
+  const list=useChillQuery<ExperimentPage>(`v1/experiments?${new URLSearchParams({offset:String(offset),limit:String(limit)})}`,{decoder:decodeExperimentPage})
+  const publications=list.data?.items??[],page=list.data?.page
+  const pageURL=(next:number)=>{const search=new URLSearchParams(params.toString());search.set("view","published");search.set("offset",String(next));return `/experiments?${search}`}
+  return <Screen width="data" title="실험" actionPlacement="header" action={<div className="flex flex-wrap gap-2"><Button variant="outline" asChild><Link href="/experiments/load-scenarios">부하 설정</Link></Button><EvaluationLaunch/></div>}>
+    <nav aria-label="실험 목록 보기" className="flex flex-wrap items-center gap-3"><Button variant="outline" asChild><Link href="/experiments">실행</Link></Button><span aria-current="page" className="text-sm font-medium">게시 결과</span>{list.data&&<span className="text-xs tabular-nums">현재 {publications.length?`${offset+1}–${offset+publications.length}`:"0"} / 전체 {page?.total??"미제공"}개</span>}<div className="ml-auto flex gap-2">{offset>0?<Button variant="outline" asChild><Link href={pageURL(Math.max(0,offset-(page?.limit??limit)))}>이전</Link></Button>:<Button variant="outline" disabled>이전</Button>}{page?.nextOffset!==undefined?<Button variant="outline" asChild><Link href={pageURL(page.nextOffset)}>다음</Link></Button>:<Button variant="outline" disabled>다음</Button>}</div></nav>
+    <QueryGate query={list}>{list.data&&<section aria-label="게시 목록" className="min-w-0"><table className={intervalTable}><thead><tr>{["실험","기간 (KST)","정책","실행","측정","정리","비교 상태"].map(label=><th key={label} className="p-3 text-left">{label}</th>)}</tr></thead><tbody>{campaignGroups(publications).map(({run})=><ExperimentResultRow key={run.id} run={run} offset={offset} service={params.get("service")??""}/>)}</tbody></table>{!publications.length&&<Empty title="게시 기록 없음"/>}</section>}</QueryGate>
+  </Screen>
 }

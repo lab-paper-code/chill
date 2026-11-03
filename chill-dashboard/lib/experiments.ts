@@ -284,8 +284,10 @@ export function experimentSelection(search:string,values:Record<string,string>):
   for(const field of ["at","decision","record","evidence","evidenceCursor"])next.delete(field)
   return next
 }
-export function commitExperimentSelection(location:Pick<Location,"search">,history:Pick<History,"replaceState">,values:Record<string,string>) {
-  history.replaceState(null,"",`/experiments/results?${experimentSelection(location.search,values)}`)
+export function commitExperimentSelection(location:Pick<Location,"search">,history:Pick<History,"replaceState">&Partial<Pick<History,"pushState">>,values:Record<string,string>,mode:"replace"|"push"="replace") {
+  const url=`/experiments/results?${experimentSelection(location.search,values)}`
+  if(mode==="push"&&history.pushState)history.pushState(null,"",url)
+  else history.replaceState(null,"",url)
 }
 export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
   const {workloadUID:uid,definitionID,identitySource}=row.original
@@ -342,16 +344,9 @@ export function campaignScoreboard(run:Experiment,runs:Experiment[]=[run]) {
   const validities=comparisons.map(pair=>({pair,validity:comparisonValidity(pair.chill,pair.control,pair.leftRun,pair.rightRun)}))
   const matched=validities.filter(row=>!row.validity.limited).map(row=>row.pair),limited=validities.filter(row=>row.validity.limited).map(row=>row.pair)
   const summary=summarize(matched),referenceSummary=summarize(limited)
-  const reference=!matched.length&&limited.length>0,judged=reference?referenceSummary:summary,pairs=reference?limited:matched
-  let conclusion="차이 없음"
-  if(!pairs.length)conclusion=!recordedComparisons(run)?"미기록":recordedComparisons(run)!.length?"대상 게시 없음":"비교 없음"
-  else if(judged.successDelta!==null&&judged.successDelta<=-.01||judged.p95Ratio!==null&&judged.p95Ratio>=1.01)conclusion="SLO 악화"
-  else if(judged.energyPercent!==null&&judged.energyPercent<=-.01)conclusion="에너지 감소"
-  else if(judged.energyPercent!==null&&judged.energyPercent>=.01)conclusion="에너지 증가"
-  else if(pairs.some(pair=>pair.services.some(service=>service.successDelta!==null&&service.successDelta>=.01||service.p95Ratio!==null&&service.p95Ratio<=.99)))conclusion="SLO 개선"
-  else if(judged.energyPercent===null||judged.successDelta===null||judged.p95Ratio===null||pairs.some(pair=>pair.energyDelta===null||pair.services.some(service=>service.successDelta===null||service.p95Ratio===null)))conclusion="결과 부족"
+  const reference=!matched.length&&limited.length>0
   return {
-    summary,referenceSummary,conclusion,reference,
+    summary,referenceSummary,reference,
     energyCounts:{decreased:energies.filter(pair=>pair.energyDelta!<0).length,increased:energies.filter(pair=>pair.energyDelta!>0).length,equal:energies.filter(pair=>pair.energyDelta===0).length,missing:comparisons.length-energies.length,
       delta:energies.length?energies.reduce((sum,pair)=>sum+pair.energyDelta!,0):null},
     quality:[
@@ -397,16 +392,25 @@ export function experimentDifference(value:number|null,baseline=0,higherIsBetter
 }
 
 export function experimentChartData(run:Experiment,service:string,runs:Experiment[]=[run]) {
-  return experimentHeatmap(run,runs).flatMap((row,index)=>{
-    const own=experimentRows(row.stage).filter(item=>item.name===service),other=row.other?experimentRows(row.other).filter(item=>item.name===service):[]
-    const parts=stageLoadParts(row.stage,row.leftRun)
-    const base={id:row.id,interval:index+1 as number|string,rate:stageRate(row.stage,row.leftRun,service),observedRate:observedStageRate(row.stage,service),leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):"비교 없음",
-      leftP95:own.length===1?resultMetric(own[0],"p95").value:null,
-      rightP95:other.length===1?resultMetric(other[0],"p95").value:null,
+  return experimentHeatmap(run,runs).map(row=>{
+    const own=service?experimentRows(row.stage).filter(item=>item.name===service):[],other=service&&row.other?experimentRows(row.other).filter(item=>item.name===service):[]
+    const parts=stageLoadParts(row.stage,row.leftRun),rightParts=row.other?stageLoadParts(row.other,row.rightRun):[]
+    const plans=(parts:EvaluationDefinition["loadScenarios"][number]["spec"]["parts"])=>{
+      let offset=0
+      return parts.map(part=>{
+        const from=offset;offset+=part.durationSeconds
+        return {id:part.id,from,to:offset,rate:part.rates?(service?part.rates[service]??null:Object.values(part.rates).reduce((sum,value)=>sum+value,0)):null,alpha:part.alpha}
+      })
+    }
+    return {id:row.id,key:row.key,interval:stageLabel(row.stage,row.leftRun),rate:stageRate(row.stage,row.leftRun,service),rightRate:row.other?stageRate(row.other,row.rightRun,service):null,
+      observedRate:observedStageRate(row.stage,service),rightObservedRate:row.other?observedStageRate(row.other,service):null,
+      leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):null,
+      from:row.stage.from,to:row.stage.to,rightFrom:row.other?.from,rightTo:row.other?.to,plans:plans(parts),rightPlans:plans(rightParts),
+      leftEnergy:finite(row.stage.kpis.wholePoolJoules),rightEnergy:row.other?finite(row.other.kpis.wholePoolJoules):null,
+      leftP95:own.length===1?finite(resultMetric(own[0],"p95").value):null,
+      rightP95:other.length===1?finite(resultMetric(other[0],"p95").value):null,
       leftSLO:own.length===1?frozenP95SLO(own[0],row.leftRun):null,
       rightSLO:other.length===1?frozenP95SLO(other[0],row.rightRun):null}
-    if(parts.length<2)return [base]
-    return parts.map(part=>({...base,interval:`${row.id} / ${part.id}`,rate:part.rates?(service?part.rates[service]??null:Object.values(part.rates).reduce((sum,value)=>sum+value,0)):null,observedRate:null,leftP95:null,rightP95:null}))
   })
 }
 
