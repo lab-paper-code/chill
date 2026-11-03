@@ -112,6 +112,7 @@ func (l *ObservationLog) OperatingPowerSeries(ctx context.Context, from, to time
 			node.ObservedSamples = &observed
 			if observed == 0 {
 				node.Joules, node.MeanWatts = nil, nil
+				node.MeterJoules, node.MeterComplete = nil, false
 				node.Reasons = append(node.Reasons, "no observed samples in bucket")
 				window.WholePoolJoules, window.WholePoolMeanWatts = nil, nil
 				window.ActivePoolJoules, window.ActivePoolMeanWatts = nil, nil

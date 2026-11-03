@@ -118,8 +118,17 @@ func TestPowerSeriesEmptyBucketsAreNotInterpolatedMeasurements(t *testing.T) {
 	}
 	for _, window := range series.Buckets[1:] {
 		node := window.Nodes[0]
+		if node.MeterComplete || node.MeterJoules != nil {
+			t.Fatalf("empty bucket fabricated meter energy: %+v", node)
+		}
 		if window.Complete || window.WholePoolJoules != nil || window.WholePoolMeanWatts != nil || window.ActivePoolJoules != nil || node.Joules != nil || node.MeanWatts != nil || node.ObservedSamples == nil || *node.ObservedSamples != 0 || node.FirstObservedAt != nil || node.LastObservedAt != nil {
 			t.Fatalf("empty bucket fabricated a measurement: %+v %+v", window, node)
+		}
+	}
+	columns := series.Columns()
+	for i := 1; i < len(series.Buckets); i++ {
+		if columns.Nodes.MeterComplete[i][0] || columns.Nodes.MeterJoules[i][0] != nil {
+			t.Fatalf("empty bucket columns fabricated meter energy: bucket %d", i)
 		}
 	}
 }
