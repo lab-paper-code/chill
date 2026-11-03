@@ -40,7 +40,9 @@ test("R18: list facts render without per-item detail requests and absent facts s
   assert.equal(frozenP95SLO(sloRow,run),50)
   const absent=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run:{...run,facts:undefined}}))
   assert.match(absent,/미기록/)
-  assert.doesNotMatch(absent,/기록된 실험|기록 부하|fixed/)
+  const absentValues=Array.from(absent.matchAll(/<td\b[^>]*>(.*?)<\/td>/gs),match=>match[1])
+  assert.ok(absentValues.length>0)
+  assert.ok(absentValues.every(value=>value==="미기록"))
 })
 test("R11: sub-display deltas are neutral in both overview and intervals",()=>{
   for(const [value,baseline] of [[-.004,0],[1.004,1]]) {
