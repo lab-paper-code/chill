@@ -65,6 +65,8 @@ export type SchedulerSettings = {
   controls:{placement:boolean;resources:boolean;replicas:boolean;routing:boolean;batching:boolean;power:boolean;membership:boolean}
   // Only GET settings carries it: the stored declaration, read from the ConfigMap.
   staticRouting?:Routing
+  // Stored operating-power policy, read-only; only GET settings carries it.
+  powerObservation?:unknown
   // Accepted power declarations, read-only; never sent back in settings PUT.
   meters?:{id:string;node:NodeRef;scope:string;source:PowerSource}[]
   // Runtime --request-timeout in nanoseconds, read-only; only GET settings carries it.

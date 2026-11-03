@@ -655,3 +655,36 @@ test("routing declaration not yet read is distinct from a successful GET with no
     if(!known){assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="요청 분배 바꾸기"&&node.props.disabled===true));assert.ok(tree.some(node=>node.props.role==="status"&&node.props.children==="조회 필요"))}
   }
 })
+
+test("omitted editable fields stay unset after PUT success and failed GET without causing the next review to conflict",async()=>{
+  const runner=hooks(),projections={staticRouting:{service:{instance:2}},powerObservation:{series:"power_watts"},meters:[{id:"meter"}],requestTimeout:1000000000},initial={controls:{},excludedNodes:[],minimumDemand:{known:40},...projections}
+  let current:Record<string,unknown>=initial,tag='"7"',loaded=false,failed=false
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{failed=true}})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async()=>{tag='"8"';return {body:'{"appliedAt":"2026-11-03T00:00:00Z","after":{"controls":{},"excludedNodes":[]}}',etag:tag}}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
+    if(path==="v1/scheduler/settings"){if(!loaded){loaded=true;options?.onResponse?.({etag:tag},current)}return {data:current,error:failed?{status:500}:undefined,refetch:async()=>{if(failed)return {data:current,error:{status:500}};options?.onResponse?.({etag:tag},current);return {data:current}}}}
+    return {refetch:async()=>({})}
+  }}})
+  runner.render(SchedulerSettingsPage)
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  const editor=tree.find(node=>node.props.editKey==="minimumDemand")!,Component=editor.type as (props:Record<string,unknown>)=>unknown
+  let form=elements(runner.render(Component,editor.props))
+  ;(form.find(node=>node.type==="button"&&node.props.children==="미설정으로")!.props.onClick as ()=>void)()
+  form=elements(runner.render(Component,editor.props))
+  ;(form.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  const stored=tree.find(node=>node.props.editKey==="minimumDemand")!.props.initial as Record<string,unknown>
+  assert.equal(Object.hasOwn(stored,"minimumDemand"),false)
+  for(const [key,value] of Object.entries(projections))assert.deepEqual(stored[key],value)
+  ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["other"])
+  failed=false;current={controls:{},excludedNodes:[],...projections}
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)();await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="설정 적용하기"))
+  assert.ok(!tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+})

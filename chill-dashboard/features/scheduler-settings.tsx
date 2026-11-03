@@ -269,7 +269,8 @@ export function SchedulerSettingsPage() {
     try {
       const applied=await putSchedulerSettings(mutation.mutateAsync,client,selected,version)
       if(readRef.current===previousRead){
-        const appliedSnapshot={settings:{...(previousRead?.settings??selected),...(applied.change.after??selected)},etag:applied.etag,declarationsKnown:previousRead?.declarationsKnown??false}
+        const {staticRouting,powerObservation,meters,requestTimeout}=previousRead?.settings??selected
+        const appliedSnapshot={settings:{...applied.change.after,staticRouting,powerObservation,meters,requestTimeout},etag:applied.etag,declarationsKnown:previousRead?.declarationsKnown??false}
         readRef.current=appliedSnapshot;setRead(appliedSnapshot)
       }
       setResult(applied.change)
