@@ -24,6 +24,17 @@ import (
 // buffers; tune only with store load/memory measurements, not campaign size.
 const trialConcurrency = 8
 
+var (
+	// ErrRunEvidenceAbsent identifies a Run without a retained evidence reference.
+	ErrRunEvidenceAbsent = errors.New("completed evidence reference contradicts recorded Run")
+	// ErrRunEvidenceMismatch identifies a reference that differs from the result.
+	ErrRunEvidenceMismatch = errors.New("completed evidence reference contradicts recorded Run")
+	// ErrUnsupportedWorkloadMode identifies a mode outside active and loaded idle.
+	ErrUnsupportedWorkloadMode = errors.New("active Run protocol contradicts campaign")
+	// ErrActiveProtocolMismatch identifies an active Run whose protocol differs.
+	ErrActiveProtocolMismatch = errors.New("active Run protocol contradicts campaign")
+)
+
 // Reader reconstructs retained campaign inputs without selecting measurements,
 // admitting serving profiles, or applying a reporting/derivation policy.
 // Load callbacks retain the caller's Evidence Store binding and read limits.
@@ -71,16 +82,24 @@ func (r *Reader) Read(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOpt
 	return r.ReadPlan(ctx, campaign, result)
 }
 
-// ReadPlan binds an already decoded result to campaign status/state and reads its
-// frozen plan. It avoids fetching the terminal result twice in reporting paths.
+// ReadPlan checks the decoded result's schema/outcome against campaign status,
+// then loads and binds its frozen plan without fetching the result again.
 func (r *Reader) ReadPlan(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization, result batchenergyoptimization.ResultRecord) (Campaign, error) {
+	if reference := campaign.Status.Result; reference != nil &&
+		(reference.SchemaVersion != result.SchemaVersion() || string(result.Spec().Outcome) != campaign.Status.Outcome) {
+		return Campaign{}, errors.New("terminal result schema or outcome contradicts campaign status")
+	}
+	return r.LoadPlan(ctx, campaign, result)
+}
+
+// LoadPlan binds the decoded result and frozen plan to campaign measurement
+// state, without checking the result's schema/outcome against campaign status.
+// Reporting uses this entry independently of serving's status acceptance policy.
+func (r *Reader) LoadPlan(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization, result batchenergyoptimization.ResultRecord) (Campaign, error) {
 	if campaign.Status.Result == nil {
 		return Campaign{}, errors.New("completed campaign has no terminal result reference")
 	}
 	resultSpec := result.Spec()
-	if campaign.Status.Result.SchemaVersion != result.SchemaVersion() || string(resultSpec.Outcome) != campaign.Status.Outcome {
-		return Campaign{}, errors.New("terminal result schema or outcome contradicts campaign status")
-	}
 	state := campaign.Spec.State
 	if resultSpec.MeasurementState != (batchenergyoptimization.ResultMeasurementState{
 		TargetNode: state.TargetNode, ModelSpec: state.Candidate.ModelSpec,
@@ -238,19 +257,19 @@ func validateRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alph
 	if mode != reference.Measurement.WorkloadMode {
 		return errors.New("Run workload mode contradicts completed trial reference")
 	}
-	if err := validateRunProtocol(campaign, run); err != nil {
-		return err
-	}
 	for _, conditionType := range []string{edgev1alpha1.ProfilingRunConditionExecutionComplete, edgev1alpha1.ProfilingRunConditionEvidenceVerified} {
 		condition := meta.FindStatusCondition(run.Status.Conditions, conditionType)
 		if condition == nil || condition.Status != metav1.ConditionTrue || condition.ObservedGeneration != run.Generation {
 			return errors.New("Run has no current completed execution and verified evidence")
 		}
 	}
-	if run.Status.Evidence == nil || apiObjectIdentity(run.Status.Evidence) != storedObjectIdentity(reference.Evidence) || run.Status.Evidence.SchemaVersion != reference.Evidence.SchemaVersion {
-		return errors.New("completed evidence reference contradicts recorded Run")
+	if run.Status.Evidence == nil {
+		return ErrRunEvidenceAbsent
 	}
-	return nil
+	if apiObjectIdentity(run.Status.Evidence) != storedObjectIdentity(reference.Evidence) || run.Status.Evidence.SchemaVersion != reference.Evidence.SchemaVersion {
+		return ErrRunEvidenceMismatch
+	}
+	return validateRunProtocol(campaign, run)
 }
 
 func validateRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alpha1.ProfilingRun) error {
@@ -266,12 +285,15 @@ func validateRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, run *ed
 		}
 	} else {
 		protocol := campaign.Spec.ActiveProtocol
-		if measurement.WorkloadMode != "saturated-serial-fixed-batch" || measurement.SettlingDurationSeconds != nil ||
+		if measurement.WorkloadMode != "saturated-serial-fixed-batch" {
+			return ErrUnsupportedWorkloadMode
+		}
+		if measurement.SettlingDurationSeconds != nil ||
 			measurement.WarmupIterations != protocol.WarmupIterations || measurement.DurationSeconds != protocol.DurationSeconds ||
 			ptr.Deref(measurement.DurationToleranceSeconds, .5) != ptr.Deref(protocol.DurationToleranceSeconds, .5) ||
 			measurement.Dataset != protocol.Dataset ||
 			run.Spec.MetricObservation != protocol.MetricObservation {
-			return errors.New("active Run protocol contradicts campaign")
+			return ErrActiveProtocolMismatch
 		}
 	}
 	return nil
