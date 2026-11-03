@@ -161,6 +161,7 @@ Serving 경로 정본: [HTTP handler](../../../internal/serving/httpapi/handler.
 | `POST /namespaces/{namespace}/dispatch-occupancy-measurements[?dryRun=All]`, `DELETE .../{name}?uid=…` | 대상·선택적 이름만 제출, dry-run의 완성 `task.spec`, UID·`If-Match` 영구 삭제, Measuring 409 | 요청·검사·진행·삭제 UI는 서버 DOM API 변경(`ea6899ef`) 위로 rebase되어 통합됐다. 운영 서버·Query 미배포 및 운영 생성·삭제 E2E 미수행과 구별하며 실행 중단/취소는 아니다. 상세는 [측정 API §13.8](../serving/measurement-api.md#138-네이티브-d-요청진행셀-커버리지-2026-11-03). |
 | `GET /scheduler/capacity` | `{rows:CapacityRow[]}`. 자동제어 워크로드가 필요로 하는 행과 입력, κ 및 탐색 판정 | relay GET 허용됨, query 없음. 용량 근거 화면과 현재 settings 대조에 연결한다. |
 | `GET /observations/load` | 명시적 구간의 수신, 접수, 배정과 완료 사건 수 및 사건률 | from/to를 필수로 전달한다. 완료는 수신 cohort와 별개의 사건 집계다. |
+| `GET /observations/occupancy` | `{window:{start,end},rows:[...]}`. signed ns/request 통계·pairs·완전성 counts·profile 근거 | from/to 필수, 현재 aggregationWindowSeconds 상한 준수. 커버리지 셀 상세의 기간 조회와 runtimeImage 표시, 판정 없음 |
 | `GET /observations/scheduler` | 판단, snapshot, 설정 변경, action과 전력 관측의 보관 중인 append-order 페이지 | from/to, bounded limit와 cursor를 사용한다. 응답은 페이지 항목과 nextCursor로 구성된다. relay는 이 경로와 `GET /scheduler`, `/scheduler/state`, `/scheduler/profiles`를 ChillServer `view=compact`로 읽고, 화면 파싱 전에 공유된 `profile`과 `completionMeasurement` `$ref`를 응답 dictionary로 복원해 full 응답과 같은 값을 쓴다. 응답 상한은 그대로다. |
 | `GET /observations/power` | 명시적 구간의 전체 및 활성 POOL joules와 평균 W, 노드별 값, `complete`, `reasons`, 로컬 보존보다 앞선 구간의 `gapUntil` | 기록의 전력 조회와 장치 전력 범위에 연결한다. 브라우저에서 적분하지 않는다. |
 | `GET /systems`, `GET /inventory` | ChillSystem의 condition과 이유, DeviceClass와 typed 전력모드 actuator, Node | System, Inventory와 Run 목록은 아래 query handler에서 제공한다. |
@@ -188,9 +189,11 @@ control-323 운영 GET(2026-11-03)은 BEO 1,785,760 B, coverage 1,210,905 B였�
 
 구 대시보드/열린 탭은 신 Query에서도 플래그 없는 v1·무페이지 전체 읽기를 받는다. 신 대시보드는 구 Query의 400 협상 거절에서만 v1로 재시도하고 BEO는 기존 전체 읽기를 사용한다. 중간 페이지 다운그레이드에도 중복 합치지 않는다. 권장 배포 순서는 Query→Dashboard이며, 역순도 자료 손상은 없지만 구 Query 기간에는 기존 1MB 초과 응답이 유지된다. 양쪽 갱신 후 1MB 목표를 적용한다. 혼합 배포 회귀·occupancy 분해·페이지별 시간은 [measurement API](../serving/measurement-api.md#control-323-최초-조회-크기-보정)에 기록한다.
 
-DOM 읽기 전용 프로토콜 표는 동결된 `task.spec.conditions.inputsJSON` 문자열을 기존 정밀 정수 파서 `parseSchedulerJSON`으로 읽은 `computed.saturationSizing`을 사용한다. 선택/필요 송신자, 송신자·바이트·수명 상한, 제한 요인, 가득 찬 대기 배치, 재충전·잔여 유휴 시간, 예상/최대 유휴 비율을 서버 원값으로 표시한다. 큰 정수는 정확히 유지하고 누락·null·해석 불가 값은 `미제공`이며 현재 정책으로 추정하지 않는다. 출처 메타데이터는 기존 원본 disclosure에만 남고 프로토콜 입력이나 mutation 본문은 추가하지 않는다.
+DOM은 고정 동시 송신자로 실행하는 짧은 closed-loop burst다. 프로토콜 표는 실제 동결 spec의 배치·송신자·예열·측정 기간·minimumPairs를 표시하며 누락값은 미제공이다. v1alpha2에 없는 saturationSizing·NotSaturated·유휴/포화 항목은 진행 화면에서 제거한다. legacy 원본은 disclosure에 보존하되 새 정책으로 재산정하지 않는다.
 
-DOM `occupancy[].adopted`는 실제 scheduler 선택 카탈로그에 연결된 tri-state다. Node UID·profileID·배치와 evidence store/key, 현재 셀의 모델·전력모드·실행 경로 identity가 일치하면 `true`=채택, 조회 가능한 선택 목록에 없으면(빈 목록 포함) `false`=미채택, 필드 누락 또는 카탈로그 오류이면 `null`=채택 미확인이다. runtimeImage는 유효성 키가 아니며 catalog checkedAt/error는 기존 freshness에 반영한다. 코드 rebase 통합은 운영 배포·운영 mutation 검증을 뜻하지 않는다.
+DOM `occupancy[].adopted`는 실제 scheduler 선택 `accepted.dispatchOccupancy[].provenance`에 연결된 tri-state다. Node UID·모델·전력모드·실행 경로·배치·profileID의 일치와 실제 선택 출처를 사용하며 `accepted.occupancy`의 legacy scalar 목록만으로 채택을 추론하지 않는다. 새 선택 목록이 없거나 카탈로그 오류이면 `null`=채택 미확인이다. runtimeImage는 유효성 키가 아니며 catalog checkedAt/error는 기존 freshness에 반영한다. 코드 통합은 운영 배포·운영 mutation 검증을 뜻하지 않는다.
+
+셀 상세는 **스케줄러 d**(출처 측정/DOM/기본값·선택값·pairs·window·갱신 시각)와 **관측 d(B)**(signed median·IQR·p10/p90·negativeFraction·pairs)를 독립 표로 표시한다. 관측 통계는 `accepted.occupancyEstimates`에서 읽으며 채택값으로 대체하거나 판정을 추가하지 않는다. 별도 기간 선택은 현재 설정의 `aggregationWindowSeconds` 이내에서 `GET /observations/occupancy?from=&to=`를 조회한다. 응답 행은 Node UID·모델·전력모드·실행 경로·배치·profileID로 해당 셀에 연결하며 runtimeImage는 표시만 한다. null과 측정된 0, 빈 행과 조회 실패를 구별한다. relay는 이 경로의 GET과 from/to만 허용한다.
 
 ### 연결 예정 API (서버 책임)
 
@@ -243,13 +246,13 @@ System/Inventory/Run 목록은 limit 1..200, offset 0..1,000,000·bounded q; Run
 | 예열·측정 구간 | `conditions.warmupSeconds`, `.durationSeconds` | s, 예열은 측정 시작에서 제외 |
 | 결과 전력모드 | `status.powerMode` | 없으면 “결과 없음” |
 | 요청당 분배 점유시간 d | `d.perRequestNanos` | signed 정밀 정수를 표시할 때만 ms/request로 변환한다. `d:null`과 측정된 0을 구별하고 `status`로 복원하거나 음수를 clamp하지 않는다. 정확 ns는 원본/내보내기에 보존 |
-| 지속 완료 처리량 X·유휴 비율·판정 | `d.throughput`, `d.idleFraction`, `d.verdict` | req/s, %, 서버 판정. nullable 수치는 미제공이며 브라우저에서 d나 κ를 재계산하지 않는다 |
+| legacy 처리량 X·유휴 비율·판정 | legacy `d.throughput`, `d.idleFraction`, `d.verdict` | legacy evidence 원값만 보존. v1alpha2 burst의 scalar `d`와 유휴/포화 값은 null이며 관측 estimate의 signed 통계·pairs를 별도 표시한다 |
 | 측정창·경과 | `measurementWindow.{start,end}`, `createdAt`, `phase` | 검증된 evidence의 실제 측정창만 시작·종료로 쓴다. 대기/측정 중 경과는 생성 시각부터 표시할 수 있으나 예정 측정창·진행률은 만들지 않는다 |
 | 결과 위치 | `evidence.{store,key,size}`, `references.evidence[]` | 논리 위치 그대로 보존. d/측정창 검증 실패를 원본 native ref 손실로 바꾸지 않는다 |
 
 DOM 목록·단건은 `phase:null/Measuring` 동안 보이는 탭에서만 제한 polling한다. 종료 phase와 401/403에서 중단하며 삭제된 단건의 404도 중단한다. 삭제는 확인 후 UID query와 `If-Match:resourceVersion`을 보내고 Measuring은 비활성화한다. 409는 최신 상태 조회, 응답 미수신은 결과 미확인으로 재삭제를 차단한다.
 
-커버리지의 `cells[].occupancy[]`는 실제 Node UID × profileID × batch DOM tuple만 포함한다. 각 항목의 `state`, `request`, `phase`, `reason`, `d`, `evidence`, `adopted`를 그대로 표시하며 빈 배열에서 가짜 tuple을 만들지 않는다. 상태 우선순위는 present > measuring > failed > none, 동률은 생성 시각 최신이다. 이전 profile은 `none/ProfileSuperseded`, Complete의 근거 검증 실패는 `failed/EvidenceInvalid`, 채택 미확인은 `adopted:null`이다. 셀의 d 요약은 접근 가능한 이름에도 포함한다.
+커버리지의 `cells[].occupancy[]`는 실제 Node UID × profileID × batch tuple을 포함한다. 요청 진행의 `state`, `request`, `phase`, `reason`, `d`, `evidence`와 실제 선택의 `adopted`, 스케줄러 d provenance, 관측 d(B)를 구별한다. 빈 배열에서 가짜 tuple을 만들지 않는다. 상태 우선순위는 present > measuring > failed > none, 동률은 생성 시각 최신이다. 이전 profile은 `none/ProfileSuperseded`, Complete의 근거 검증 실패는 `failed/EvidenceInvalid`, 새 카탈로그 계약 부재는 `adopted:null`이다. 새 burst는 scalar 부재만으로 실패 처리하지 않는다. 셀의 d 요약은 접근 가능한 이름에도 포함한다.
 
 셀은 occupancy 유무와 무관하게 조건을 보존한 d 요청 링크를 제공한다. 호환성 대표 `support.node`를 측정 Node로 추측하지 않으며 요청 화면이 해석한 BEO의 `spec.state.targetNode`를 사용한다. 요청 이름은 선택적이고 검사 identity에 포함된다. 같은 조건 재측정은 새 이름으로 생성해 이전 실패 기록을 보존한다. 측정 종류 선택은 profile 의존 조회 오류와 독립적으로 접근 가능하되 변경 진행·결과 미확인 중에는 전환하지 않는다.
 
