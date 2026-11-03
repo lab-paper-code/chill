@@ -186,11 +186,12 @@ func (e *schedulerReadEvidence) observations(records []observation.SchedulerObse
 	return result
 }
 
-// History lists carry identity and row labels only; exact-record reads retain
-// the complete payload. This projection never changes the journal/catalog.
+// History lists carry identity, row labels and workload autonomy states; exact-record
+// reads retain the complete payload. This projection never changes the journal/catalog.
 type schedulerHistoryDecision struct {
-	At     time.Time `json:"at"`
-	Status string    `json:"status"`
+	At        time.Time                        `json:"at"`
+	Status    string                           `json:"status"`
+	Workloads []serving.SchedulerWorkloadState `json:"workloads"`
 }
 
 type schedulerHistorySnapshot struct {
@@ -233,7 +234,7 @@ func schedulerHistoryObservations(records []observation.SchedulerObservation) []
 	for i, record := range records {
 		row := schedulerHistoryObservation{At: record.At, Offset: record.Offset, Node: record.Node, PowerJoules: record.PowerJoules}
 		if d := record.Decision; d != nil {
-			row.Decision = &schedulerHistoryDecision{d.At, d.Status}
+			row.Decision = &schedulerHistoryDecision{d.At, d.Status, d.Workloads}
 		}
 		if s := record.Snapshot; s != nil {
 			row.Snapshot = &schedulerHistorySnapshot{s.At}

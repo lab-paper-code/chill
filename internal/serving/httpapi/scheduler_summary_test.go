@@ -11,6 +11,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func TestSchedulerSummaryWhitelist(t *testing.T) {
@@ -131,5 +132,41 @@ func TestSchedulerSummaryLargeState(t *testing.T) {
 	if len(full) <= 4<<20 || len(summary) >= 4096 {
 		t.Fatalf("full bytes=%d, summary bytes=%d", len(full), len(summary))
 	}
+	evidence := newSchedulerReadEvidence()
+	projected := evidence.state(&state)
+	compact, err := json.Marshal(struct {
+		Settings serving.SchedulerSettings `json:"settings"`
+		State    schedulerReadState        `json:"state"`
+		schedulerReadEvidence
+	}{serving.SchedulerSettings{}, projected, evidence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("compact bytes=%d, summary bytes=%d", len(compact), len(summary))
 	t.Logf("full bytes=%d, summary bytes=%d", len(full), len(summary))
+}
+
+func TestSchedulerSummaryWorkloadStates(t *testing.T) {
+	state := servingkube.SchedulerControllerState{Decision: serving.SchedulerDecision{
+		Workloads: []serving.SchedulerWorkloadState{
+			{UID: "fixed", State: "Fixed", Reason: "MeasurementEvidenceMissing"},
+			{UID: "controlled", State: "Controlled"},
+		},
+	}}
+	history := schedulerHistoryObservations([]observation.SchedulerObservation{{Decision: &state.Decision}})
+	for _, decision := range []any{summarizeScheduler(&state).Decision, history[0].Decision} {
+		body, err := json.Marshal(decision)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result struct {
+			Workloads json.RawMessage `json:"workloads"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := string(result.Workloads), `[{"uid":"fixed","state":"Fixed","reason":"MeasurementEvidenceMissing"},{"uid":"controlled","state":"Controlled"}]`; got != want {
+			t.Fatalf("workload autonomy states: got %s, want %s", got, want)
+		}
+	}
 }
