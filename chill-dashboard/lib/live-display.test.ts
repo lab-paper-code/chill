@@ -339,7 +339,7 @@ test("operations board keeps independent axes, idle summary, service placement a
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
   const idle=render()
-  assert.match(idle,/<table aria-label="최근 판단 통계"><thead><tr><th>최근 5분 수신 판단/)
+  assert.match(idle,/최근 5분 · 현재 접속 수신 판단/)
   assert.match(idle,/유휴 서비스 집계/)
   assert.match(idle,/접수 허용 개/)
   assert.match(idle,/자동제어 개/)

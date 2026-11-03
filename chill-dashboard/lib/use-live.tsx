@@ -89,9 +89,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
   },[operating,scene,token,epoch,signals,queryClient,liveKey,archiveAttempt])
 
   const value=React.useMemo(()=>({state,status:state.status,reconnect}),[state,reconnect])
-  const retentionGap=!!(state.resumeHistory?.gaps.length || state.eventArchive?.coverage.gaps?.length)
   return <LiveContext.Provider value={value}>
-    {operating && (retentionGap || state.eventArchive?.partial) && <div role="status" className="notice">{[retentionGap?"보존 공백":null,state.eventArchive?.partial?"최근 사건 일부만 표시":null].filter(Boolean).join(" · ")}</div>}
     {operating && state.eventArchiveError && <div role="status" className="notice">{state.eventArchiveError} <button type="button" onClick={()=>setArchiveAttempt(attempt=>attempt+1)}>다시 조회</button></div>}
     {children}
   </LiveContext.Provider>

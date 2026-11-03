@@ -1,4 +1,4 @@
-import { compareAt, eventKey, isLiveActionActive, type LiveAction, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
+import { compareAt, eventKey, isLiveActionActive, type LiveAction, type LiveActionEvent, type LiveEvent, type LiveInstance, type LiveMetric, type LiveMetrics, type LiveSnapshot, type LiveState, type LiveWorkload } from "./live.ts"
 import { STATUS_AXES, type StatusValue } from "./status.ts"
 import type { SchedulerCandidate } from "./read-types.ts"
 
@@ -155,6 +155,12 @@ export function decisionActivity(events:LiveEvent[],now:number) {
   const rows=[...decisions.values()].sort((a,b)=>compareAt(a.at,b.at))
   return {count:rows.length,kept:rows.filter(row=>row.state==="Keep").length,lastAt:rows.at(-1)?.at??null}
 }
+export function retentionNotice(state:LiveState,zone:"UTC"|"KST"):string {
+  const gaps=state.eventArchive?.coverage.gaps??[],hasGap=!!(gaps.length||state.resumeHistory?.gaps.length)
+  const ranges=[...new Set(gaps.map(gap=>`${displayTime(gap.from,zone)}–${displayTime(gap.to,zone)}`))]
+  if(ranges.length&&state.resumeHistory?.gaps.length)ranges.push("재연결 기간 미제공")
+  return [hasGap?`보존 공백 · ${ranges.join(" / ")||"기간 미제공"}`:null,state.eventArchive?.partial?"최근 사건 일부만 표시":null].filter(Boolean).join(" · ")
+}
 export function clusterResult(events:LiveEvent[]):string {
   const rows=events.filter(event=>event.kind==="cluster").sort((a,b)=>compareAt(a.at,b.at)),first=rows[0]?.cluster,last=rows.at(-1)?.cluster
   const ready=(value:string|undefined)=>value==="True"?"예":value==="False"?"아니오":"미확인"
@@ -205,9 +211,9 @@ export function gapEpisodes(gaps:LiveState["gaps"],now:number,metrics:LiveMetric
     return {...gap,seconds:Math.max(0,(Date.parse(gap.to)-Date.parse(gap.from))/1000),recovered,lost}
   })
 }
-export function incidentHistoryHref(uid?:string,at?:string,node?:string):string {
+export function incidentHistoryHref(uid?:string,at?:string,node?:string,identity?:string):string {
   const end=at?Date.parse(at):Date.now(),range={from:new Date(end-300000).toISOString(),to:new Date(end+(at?300000:0)).toISOString()}
-  return `/records?${new URLSearchParams({...range,order:"asc",filter:"decision-action",...(uid?{uid}:{}),...(node?{filterNode:node}:{}),...(at?{eventAt:at}:{})})}`
+  return `/records?${new URLSearchParams({...range,order:"asc",filter:"decision-action",...(uid?{uid}:{}),...(node?{filterNode:node}:{}),...(at?{eventAt:at}:{}),...(identity?{open:`event:${identity}`}:{})})}`
 }
 export function reservationReason(reason:string):string {
   const labels=[
@@ -225,11 +231,20 @@ export function incidentDiagnosis(reason:string|null|undefined) {
   if(reason?.includes("Pod is not labelled as a serving instance"))return {reason:"서비스 인스턴스가 아닌 파드",check:"파드 역할·측정 작업 확인"}
   return {reason:liveReason(reason),check:reason?"장치·변경 원본 확인":"조치 근거 미제공"}
 }
+export function isMeasurementPrecheck(action:LiveActionEvent):boolean {
+  return (action.result?.status??action.status)==="NOT_SUBMITTED"&&!action.result?.error
+}
+export function isActionFailure(action:LiveActionEvent):boolean {
+  return action.phase==="failed"&&!isMeasurementPrecheck(action)
+}
+export function actionEventResult(action:LiveActionEvent):string {
+  return isMeasurementPrecheck(action)?"검사 완료 · 미제출":action.phase==="started"?"시작":action.phase==="completed"?"완료":"실패"
+}
 export function groupIncidentEvents(events:LiveEvent[]) {
   const rows:{event:LiveEvent;count:number;from:string;members:LiveEvent[]}[]=[],failures=new Map<string,typeof rows[number]>()
   for(const event of events){
-    const key=event.kind==="action"&&event.action.phase==="failed"?JSON.stringify([event.action.node.uid,event.action.workloadUID,event.action.kind,event.action.phase,event.action.result?.status,event.action.result?.error]):
-      event.kind==="cluster"?JSON.stringify([event.cluster.kind,event.cluster.pod?.uid??event.cluster.source,event.cluster.event,event.cluster.pod?.phase,event.cluster.reason]):null
+    const key=event.kind==="action"&&isActionFailure(event.action)?JSON.stringify([event.action.node.uid,event.action.workloadUID,event.action.kind,event.action.phase,event.action.result?.status,event.action.result?.error]):
+      event.kind==="cluster"?JSON.stringify([event.cluster.kind,event.cluster.reason?.includes("Pod is not labelled as a serving instance")?"nonserving-pods":event.cluster.pod?.uid??event.cluster.source,event.cluster.event,event.cluster.pod?.phase,event.cluster.reason]):null
     const previous=key?failures.get(key):undefined
     if(previous){previous.event=event;previous.count++;previous.members.push(event)}
     else {const row={event,count:1,from:event.at,members:[event]};rows.push(row);if(key)failures.set(key,row)}
@@ -248,8 +263,8 @@ export function deviceAlerts(snapshot:LiveSnapshot|null,events:LiveEvent[]) {
     if(!node.ready||reasons.length)alerts.set(node.uid,{uid:node.uid,name:node.name,reason:reasons.length?reasons.map(liveReason).join(" / "):"준비 미확인"})
   }
   const latest=new Map<string,LiveEvent>()
-  for(const event of events)if(event.kind==="action")latest.set(JSON.stringify([event.action.node.uid,event.action.kind]),event)
-  for(const event of latest.values())if(event.kind==="action"&&event.action.phase==="failed")alerts.set(event.action.node.uid,{...event.action.node,reason:incidentDiagnosis(event.action.result?.error).reason})
+  for(const event of events)if(event.kind==="action"&&event.action.node.uid&&event.action.status!=="validated"&&!isMeasurementPrecheck(event.action))latest.set(JSON.stringify([event.action.node.uid,event.action.kind]),event)
+  for(const event of latest.values())if(event.kind==="action"&&isActionFailure(event.action))alerts.set(event.action.node.uid,{...event.action.node,reason:incidentDiagnosis(event.action.result?.error).reason})
   return [...alerts.values()]
 }
 export function liveReason(reason:string|null|undefined):string {

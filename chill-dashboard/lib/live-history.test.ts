@@ -77,7 +77,7 @@ test("archive rejects invalid pages instead of silently counting or dropping mal
   }
 })
 
-test("one factual retention status renders without estimating a lost-event count",()=>{
+test("provider leaves retention status to the live header instead of placing it behind the sidebar",()=>{
   const require=createRequire(import.meta.url),exports:Record<string,React.ComponentType<{children:React.ReactNode}>>={}
   let state=live.initialLiveState()
   const modules:Record<string,unknown>={
@@ -93,10 +93,8 @@ test("one factual retention status renders without estimating a lost-event count
   assert.doesNotMatch(render(),/보존 공백/)
   state={...state,resumeHistory:{reason:"fresh",replayed:false,requested:{afterSeq:0,throughSeq:999},retained:{events:null,power:null},gaps:[{fromSeq:1,toSeq:999,scope:"events",reason:"NoRetainedFrames"}]},eventArchive:{from,to,coverage,partial:true,nextCursor:"rest"}}
   const html=render()
-  assert.equal(html.match(/보존 공백/g)?.length,1)
-  assert.match(html,/role="status"/)
-  assert.match(html,/최근 사건 일부만 표시/)
-  assert.doesNotMatch(html,/999|손실|누락.*개/)
+  assert.match(html,/operating/)
+  assert.doesNotMatch(html,/보존 공백|최근 사건 일부만 표시|999|손실|누락.*개/)
 })
 
 test("each page preserves coverage sources and gaps while an exhausted cursor clears the partial indication",async()=>{
