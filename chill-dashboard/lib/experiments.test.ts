@@ -14,6 +14,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as experimentHelpers from "./experiments.ts"
 import type { EvaluationDefinition } from "./evaluation-definition.ts"
 import * as measurementHelpers from "./measurements.ts"
+import * as icons from "lucide-react"
 
 test("R18: list facts render without per-item detail requests and absent facts stay unrecorded",()=>{
   const facts={name:"기록된 실험",question:"기록된 질문",control:{sourceIDs:["control-source"],controls:{power:false}},stages:[{id:stage.id,row:"기록 행",mode:"fixed",loadScenarioRef:{uid:"load-uid"}}],sloSources:[{name:"camera",uid:"camera",generation:9007199254740993n,slo:{percentile:95,targetLatencyNanos:50000000}}],loadSources:[{name:"기록 부하",uid:"load-uid"}]}
@@ -1128,10 +1129,10 @@ test("R18 review: interval Sheet renders each stage policy and service SLO only 
     new Function("require","exports",compiled+extra)((name:string)=>name in dependencies?dependencies[name]:require(name),exports)
     return exports
   }
-  const element=(tag:string)=>(props:Record<string,unknown>)=>createElement(tag,{},props.children as never)
+  const element=(tag:string)=>function Element({children}:{children?:ReactNode}){return createElement(tag,{},children)}
   const shared={"@/lib/experiments":experimentHelpers,"@/lib/measurements":measurementHelpers,"@/lib/client":{},"@/components/ui/button":{Button:element("button")},"next/link":{__esModule:true,default:element("a")}}
   const conclusion=load("../features/experiments-conclusion.tsx",shared)
-  const features=load("../features/experiments.tsx",{...shared,"next/navigation":{},"lucide-react":{},"recharts":{},"@/components/read-region":{SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{},"@/components/ui/sheet":Object.fromEntries(["Sheet","SheetContent","SheetHeader","SheetTitle"].map(name=>[name,element("div")])),"@/features/experiments-conclusion":conclusion,"@/features/scheduler-evidence":{SchedulerIntervalEvents:()=>null},"@/features/evaluation-request":{}},"\nexports.IntervalDrawer=IntervalDrawer;")
+  const features=load("../features/experiments.tsx",{...shared,"next/navigation":{},"lucide-react":icons,"recharts":{},"@/components/read-region":{SourceJSON:()=>null,SourceExport:()=>null},"@/components/screen":{},"@/components/ui/sheet":Object.fromEntries(["Sheet","SheetContent","SheetHeader","SheetTitle"].map(name=>[name,element("div")])),"@/features/experiments-conclusion":conclusion,"@/features/scheduler-evidence":{SchedulerIntervalEvents:()=>null},"@/features/evaluation-request":{}},"\nexports.IntervalDrawer=IntervalDrawer;")
   const run=definedRun([{...stage,id:"candidate",kpis:{requests:{camera:{workloadUID:"camera",offered:100,deadlineSuccessFraction:1,completedLatencyNS:{p95:1000000}}}}}])
   const Drawer=features.IntervalDrawer as ComponentType<{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow;service:string;onClose:()=>void;restoreFocus:()=>void}>
   const markup=renderToStaticMarkup(createElement(Drawer,{run,runs:[run],row:experimentHeatmap(run)[0],service:"",onClose:()=>{},restoreFocus:()=>{}}))

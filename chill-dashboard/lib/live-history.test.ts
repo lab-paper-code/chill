@@ -89,7 +89,7 @@ test("one factual retention status renders without estimating a lost-event count
   const source=readFileSync(new URL("./use-live.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
-  const render=()=>renderToStaticMarkup(React.createElement(exports.LiveProvider,{children:React.createElement("span",{},"operating")}))
+  const render=()=>renderToStaticMarkup(React.createElement(exports.LiveProvider,null,React.createElement("span",{},"operating")))
   assert.doesNotMatch(render(),/보존 공백/)
   state={...state,resumeHistory:{reason:"fresh",replayed:false,requested:{afterSeq:0,throughSeq:999},retained:{events:null,power:null},gaps:[{fromSeq:1,toSeq:999,scope:"events",reason:"NoRetainedFrames"}]},eventArchive:{from,to,coverage,partial:true,nextCursor:"rest"}}
   const html=render()
@@ -155,7 +155,7 @@ test("provider seed reentry uses the current identity and cancels the previous i
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
   const mount=()=>{
     effects.length=0
-    renderToStaticMarkup(React.createElement(exports.LiveProvider,{children:"operating"}))
+    renderToStaticMarkup(React.createElement(exports.LiveProvider,null,"operating"))
     return effects.map(effect=>effect())
   }
   const cleanup=mount()
