@@ -201,7 +201,8 @@ test("pending run evidence is not presented as a connection failure",()=>{
   const refresh=elements(tree).find(element=>element.type==="button"&&text(element)==="근거 확인")!
   assert.ok(refresh,"pending evidence needs an explicit refresh path")
   ;(refresh.props.onClick as ()=>void)()
-  assert.ok(h.refreshes.some(path=>path.endsWith("/evidence-passport")))
+  assert.ok(h.refreshes.some(path=>path.includes("/profiling-runs?")))
+  assert.ok(!h.refreshes.some(path=>path.endsWith("/evidence-passport")))
 })
 
 test("failed occupancy values remain visible only as unverified raw data",()=>{

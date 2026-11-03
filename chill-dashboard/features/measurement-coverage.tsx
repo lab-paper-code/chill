@@ -149,18 +149,20 @@ export function MeasurementCoveragePage() {
 }
 function CoverageCounts({cells,inventory}:{cells:MeasurementCoverageCell[];inventory?:InventoryView}) {
   const counts=coverageScopeCounts(cells,inventory)
+  const allPolicyUnset=counts.policyUnsetCells>0&&counts.policyUnsetCells===counts.cells-counts.noEvidenceCells
   const metrics=[
     ["측정 있음 / 지원 조합",`${counts.measuredCells}/${counts.cells}`],
     ["배치 측정 / 목표",counts.targetBatches?`${counts.measuredBatches}/${counts.targetBatches}`:"목표 미제공"],
     ["현재 사용 / 지원 조합",`${counts.usedCells}/${counts.cells}`],
-    ["정책 미설정 / 측정 근거",`${counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells}`],
-    ["품질 미확인 / 측정 근거",`${counts.unknownQualityCells-counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells}`],
+    ...(!allPolicyUnset?[["정책 미설정 / 측정 근거",`${counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells}`],["품질 미확인 / 측정 근거",`${counts.unknownQualityCells-counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells}`]]:[]),
     ["측정 근거 없음 (조합)",String(counts.noEvidenceCells)],
     ["문제 / 지원 조합",`${counts.failedCells}/${counts.cells}`],
     ["지원 안 함 (집계 제외)",String(counts.unsupportedCells)],
     ...(counts.missingTargetCells?[["목표 미제공 (조합)",String(counts.missingTargetCells)]]:[]),
   ]
-  return <div className="coverage-summary"><table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr>{metrics.map(([label])=><th key={label}>{label}</th>)}</tr></thead><tbody><tr>{metrics.map(([label,value])=><td key={label} data-label={label}>{value}</td>)}</tr></tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">집계 축·품질 근거</summary><table className="w-full text-left text-sm"><tbody><tr><th scope="row">측정</th><td>표의 측정 있음·문제 상태와 동일한 조합 기준</td></tr><tr><th scope="row">현재 사용</th><td>스케줄러 참조 여부 · 품질 판정과 별개</td></tr><tr><th scope="row">실패 요청</th><td><Link className="underline" href="/measurements/requests?status=problem">요청별 실패 기록</Link></td></tr>{coverageQualityReasons(cells.filter(cell=>coveragePathVisible(cell,inventory))).map(reason=><tr key={reason.code}><th scope="row">{reason.label}</th><td>{reason.count} 조합</td></tr>)}</tbody></table></details></div>
+  // Keep the common policy state separate from measured coverage and current use.
+  const policyStatus=allPolicyUnset?<p role="status" title={`PolicyUnset · ${counts.policyUnsetCells}/${counts.cells-counts.noEvidenceCells} · 품질 판정 기준 미설정이며 측정 근거 부재나 현재 사용 차단을 뜻하지 않습니다.`}>전체 정책 미설정</p>:null
+  return <div className="coverage-summary">{policyStatus}<table className="w-full text-left text-sm tabular-nums" aria-label="선택 범위 집계"><thead><tr>{metrics.map(([label])=><th key={label}>{label}</th>)}</tr></thead><tbody><tr>{metrics.map(([label,value])=><td key={label} data-label={label}>{value}</td>)}</tr></tbody></table><details><summary className="min-h-11 cursor-pointer py-2 text-sm">집계 축·품질 근거</summary><table className="w-full text-left text-sm"><tbody><tr><th scope="row">측정</th><td>표의 측정 있음·문제 상태와 동일한 조합 기준</td></tr><tr><th scope="row">현재 사용</th><td>스케줄러 참조 여부 · 품질 판정과 별개</td></tr><tr><th scope="row">실패 요청</th><td><Link className="underline" href="/measurements/requests?status=problem">요청별 실패 기록</Link></td></tr>{coverageQualityReasons(cells.filter(cell=>coveragePathVisible(cell,inventory))).map(reason=><tr key={reason.code}><th scope="row">{reason.label}</th><td>{reason.count} 조합</td></tr>)}</tbody></table></details></div>
 }
 function UnsupportedReasons({cells}:{cells:MeasurementCoverageCell[]}) {
   const params=useSearchParams(),groups=new Map<string,{label:string;count:number}>()
