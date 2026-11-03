@@ -164,7 +164,7 @@ func authorizeQueryResources(
 	case isMeasurementPreflight(request):
 		resources = []string{"batchenergyoptimizations"}
 	case strings.HasSuffix(request.URL.Path, "/measurement-coverage"):
-		resources = []string{"batchenergyoptimizations", "profilingruns"}
+		resources = []string{"batchenergyoptimizations", "profilingruns", "dispatchoccupancymeasurements"}
 	case strings.HasSuffix(request.URL.Path, "/batch-energy-optimizations"):
 		resources = []string{"batchenergyoptimizations"}
 	case strings.Contains(request.URL.Path, "/operation-cost-measurements"):

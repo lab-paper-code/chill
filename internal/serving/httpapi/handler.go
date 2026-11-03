@@ -45,6 +45,9 @@ type HandlerConfig struct {
 
 	SubmitMeasurement     func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
 	DeleteMeasurement     func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
+	BuildOccupancy        func(context.Context, string, OccupancyIntent) (*api.DispatchOccupancyMeasurement, error)
+	SubmitOccupancy       func(context.Context, api.DispatchOccupancyMeasurement, bool) (OccupancyMutationResult, error)
+	DeleteOccupancy       func(context.Context, string, string, string, string) (OccupancyMutationResult, error)
 	OperatingPower        func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
 	OperatingPowerSeries  func(context.Context, time.Time, time.Time, time.Duration, int) (serving.OperatingPowerSeries, error)
 	ListExperiments       func(context.Context) (ExperimentList, error)
@@ -135,6 +138,8 @@ func NewHandler(manager *servingkube.Manager, runtime *serving.Runtime, authoriz
 
 	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/batch-energy-optimizations", h.measurements)
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/batch-energy-optimizations/{name}", h.measurements)
+	h.mux.HandleFunc("POST /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements", h.measurements)
+	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}", h.measurements)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
 	h.mux.HandleFunc("POST /api/v1/internal/observations/resources", h.resources)
@@ -734,7 +739,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusForbidden
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected":
+	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected", "OccupancyInfeasible":
 		status = http.StatusBadRequest
 	case "ObservationNotReady", "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict
