@@ -38,3 +38,6 @@ export const settingTargets = [
   {key:"excludedNodes",label:"계획 제외 장비",help:"운영 판단의 배치·제거·전력모드 변경 제외 대상이에요. 중복 없는 장비 이름으로 저장해요."},
 ] as const
 export const editableSettingKeys = [...settingFields.map(field=>field.key),"controls",...settingTargets.map(field=>field.key)] as const
+// Server settings without editing controls still cross PUT and conflict checks.
+export const preservedSettingKeys = ["defaultOperationCost","defaultIdlePower","defaultDispatchOccupancyNanos"] as const
+export const writableSettingKeys = [...editableSettingKeys,...preservedSettingKeys] as const

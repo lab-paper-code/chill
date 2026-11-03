@@ -72,13 +72,15 @@ test("catalog Sheet refuses a same-name replacement instead of exposing its dele
 test("operating setting writes retain exact integers and omit runtime-only fields",async()=>{
   const {putSchedulerSettings}=load("../features/scheduler-settings.tsx",{...base,"@/lib/client":{}})
   const sent:{path:string;method:string;body:string}[]=[]
+  const preserved={defaultOperationCost:{prepare:{seconds:1.25,joules:2.5},remove:{seconds:0,joules:0},power:{seconds:.5,joules:3}},defaultIdlePower:{nodeWatts:4.25,perInstanceWatts:.75},defaultDispatchOccupancyNanos:9223372036854775807n}
   const settings={observationWindowNanos:9007199254740993n,controls:{placement:true},staticRouting:{service:{instance:1}},staticRoutingValidatedAt:"past",powerObservation:{series:"read-only"},meters:{secret:"runtime"},requestTimeout:10}
   const writer=putSchedulerSettings as unknown as (mutate:(input:{path:string;method:string;body:string})=>Promise<{body:string}>,client:{invalidateQueries:()=>Promise<void>},settings:unknown)=>Promise<unknown>
-  await writer(async input=>{sent.push(input);return {body:'{"appliedAt":"2026-11-01T00:00:00Z"}'}},{invalidateQueries:async()=>{}},settings)
+  await writer(async input=>{sent.push(input);return {body:'{"appliedAt":"2026-11-01T00:00:00Z"}'}},{invalidateQueries:async()=>{}},{...settings,...preserved})
   assert.equal(sent.length,1)
   assert.equal(sent[0].path,"v1/scheduler/settings")
   const body=scheduler.parseSchedulerJSON(sent[0].body) as Record<string,unknown>
   assert.equal(body.observationWindowNanos,9007199254740993n)
+  for(const [key,value] of Object.entries(preserved))assert.deepEqual(body[key],value)
   for(const key of ["staticRouting","staticRoutingValidatedAt","powerObservation","meters","requestTimeout"])assert.ok(!Object.hasOwn(body,key))
   assert.ok(Object.hasOwn(settings,"staticRouting"),"the source draft is not mutated")
 })
@@ -598,7 +600,8 @@ test("unknown-outcome recovery adopts the fetched settings and ETag together for
 })
 
 test("successful PUT followed by failed GET retains all last-read projections and the routing declaration",async()=>{
-  const runner=hooks(),settings={controls:{},excludedNodes:[],staticRouting:{service:{instance:2}},powerObservation:{series:"power_watts"},meters:[{id:"meter"}],requestTimeout:1000000000},sent:{body:string}[]=[]
+  const preserved={defaultOperationCost:{prepare:{seconds:1.25,joules:2.5},remove:{seconds:0,joules:0},power:{seconds:.5,joules:3}},defaultIdlePower:{nodeWatts:4.25,perInstanceWatts:.75},defaultDispatchOccupancyNanos:123}
+  const runner=hooks(),settings={...preserved,controls:{},excludedNodes:[],staticRouting:{service:{instance:2}},powerObservation:{series:"power_watts"},meters:[{id:"meter"}],requestTimeout:1000000000},sent:{body:string}[]=[]
   let loaded=false,failed=false
   const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{failed=true}})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:{body:string})=>{sent.push(input);return {body:'{"appliedAt":"2026-11-03T00:00:00Z","after":{"controls":{},"excludedNodes":["meter"]}}',etag:'"8"'}}}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:string},data:unknown)=>void})=>{
     if(path==="v1/scheduler/settings"){if(!loaded){loaded=true;options?.onResponse?.({etag:'"7"'},settings)}return {data:settings,error:failed?{status:500}:undefined,refetch:async()=>{if(failed)return {data:settings,error:{status:500}};options?.onResponse?.({etag:'"7"'},settings);return {data:settings}}}}
@@ -620,7 +623,8 @@ test("successful PUT followed by failed GET retains all last-read projections an
   assert.equal(tree.find(node=>node.props.editKey==="minimumDemand")!.props.version,'"8"')
   const exported=tree.find(node=>node.props.filename==="chill-scheduler-settings.json")!.props.value as Record<string,unknown>
   for(const key of ["staticRouting","powerObservation","meters","requestTimeout"] as const)assert.deepEqual(exported[key],settings[key])
-  assert.deepEqual(Object.keys(JSON.parse(sent[0].body)).sort(),["controls","excludedNodes"])
+  for(const key of settingDefinitions.preservedSettingKeys)assert.equal(Object.hasOwn(exported,key),false,"omitted after fields are not restored from the old snapshot")
+  assert.deepEqual(Object.keys(JSON.parse(sent[0].body)).sort(),["controls","excludedNodes",...settingDefinitions.preservedSettingKeys].sort())
   const Component=editor.type as (props:Record<string,unknown>)=>unknown
   let form=elements(runner.render(Component,editor.props))
   ;(form.find(node=>node.type==="row-dialog")!.props.onOpenChange as (open:boolean)=>void)(true)
