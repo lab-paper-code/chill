@@ -16,7 +16,7 @@ export function experimentRows(stage:ExperimentStage):ExperimentRow[] {
       add("successFraction","HTTP 성공 / offered",row.successFraction,row.successNumerator,row.successDenominator)
       add("withinSLOFraction","SLO 안 / offered",row.withinSLOFraction,row.withinSLONumerator,row.withinSLODenominator)
     } else {
-      add("deadlineSuccessFraction","기한 안 성공 / offered",row.deadlineSuccessFraction,row.successNumerator,row.successDenominator)
+      add("deadlineSuccessFraction","기한 안 성공 / offered",row.deadlineSuccessFraction,row.deadlineSuccess??row.successNumerator,row.offered??row.successDenominator)
       add("actualGatewayIdentities","생성기 응답의 서버 identity",row.actualGatewayIdentities)
       add("rawPopulation.uniqueRequests","서버 수신 cohort (기록된 고유 요청)",object(row.rawPopulation).uniqueRequests)
       add("rawPopulation.complete","서버 수신 cohort 보존 완전성",object(row.rawPopulation).complete)
@@ -179,7 +179,7 @@ export function definitionComparisonReason(run:Experiment,runs:Experiment[]=[run
   if(!comparisons.length)return "비교 없음"
   return comparisons.map(c=>`${c.reason}${!resolveComparison(run,c.left,runs)||!resolveComparison(run,c.right,runs)?" · 대상 게시 없음":""}`).join(" / ")
 }
-export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
+export function frozenSLO(row:ExperimentRow,run?:Experiment) {
   const {workloadUID:uid,definitionID,identitySource}=row.original
   if(typeof uid!=="string"||!uid||typeof definitionID!=="string"||!definitionID)return null
   const source=object(identitySource)
@@ -190,7 +190,25 @@ export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
   const parts=[definition.uid,definition.generation,model.uid,model.generation,preprocessor.uid,preprocessor.generation]
   if(parts.some(value=>value===undefined||value===null)||definitionID!==parts.map(String).join("/"))return null
   const slo=workload?.slo
-  return slo?.percentile===95&&(typeof slo.targetLatencyNanos==="number"||typeof slo.targetLatencyNanos==="bigint")?Number(slo.targetLatencyNanos)/1e6:null
+  return slo??null
+}
+export function frozenP95SLO(row:ExperimentRow,run?:Experiment):number|null {
+  const slo=frozenSLO(row,run)
+  return slo?.percentile===95?Number(slo.targetLatencyNanos)/1e6:null
+}
+
+// Display the publisher's verdict and counts; never derive a new D1 in the dashboard.
+export function experimentServiceResults(stage:ExperimentStage,run:Experiment) {
+  const components=object(stage.kpis.components),verdicts=object(object(components.slo).workloads),fidelity=object(components.loadFidelity)
+  return experimentRows(stage).map(row=>{
+    const declared=run.definition?.workloads.filter(workload=>row.uid?workload.uid===row.uid:workload.name===row.name)
+    const latency=object(row.original.completedLatencyNS),success=resultMetric(row,"success")
+    return {row,verdict:verdicts[row.name]??row.original.D1,
+      declaredSLO:declared?.length===1?declared[0].slo:null,appliedSLO:frozenSLO(row,run),
+      success:success.numerator,offered:success.denominator,fraction:finite(success.value),
+      p95:finite(resultMetric(row,"p95").value),p50:finite(latency.p50)===null?null:Number(latency.p50)/1e6,
+      outcomes:object(row.original.outcomes),fidelity:object(fidelity[row.name]??row.original.issuanceFidelity)}
+  })
 }
 
 export function serviceDelta(a:ExperimentRow|undefined,b:ExperimentRow|undefined) {

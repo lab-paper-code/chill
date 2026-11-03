@@ -134,3 +134,38 @@ test("control323: published facts follow real pages by ID and preserve absent fa
     for(const path of paths)assert.equal(new URL(path,"https://local.invalid").searchParams.get("limit"),"5")
   }
 })
+
+test("published operator results expose service failures, declared SLO, outcomes, parts and energy without rejudging",()=>{
+  const stage={id:"measured",from:run.from,to:run.to,kpis:{
+    status:"FAIL",wholePoolJoules:null,
+    components:{slo:{status:"FAIL",workloads:{camera:"FAIL",sensor:"OBSERVED_THRESHOLD_MET"}},loadFidelity:{camera:{status:"PARTIAL",issuanceFraction:.8,issued:80,unissued:20,generatorQuality:{exceeding:2,denominator:80,thresholdLabel:"WITHIN_REPORTED_THRESHOLD",policy:{latenessToleranceNS:50000000}}},sensor:{status:"OBSERVED",issuanceFraction:1,unissued:0}},drain:{complete:false,reasons:["ProducerEOFWithoutCompleteDrain"]}},
+    requests:{camera:{workloadUID:"camera",definitionID:"camera/1/model/1/preprocessor/1",identitySource:{store:"evidence",key:"unlinked-snapshot"},offered:100,deadlineSuccess:15,deadlineSuccessFraction:.15,D1:"OBSERVED_THRESHOLD_MET",outcomes:{completed:40,timeout:10,error:29,"unfinished-or-no-final":1},completedLatencyNS:{p50:1200000000,p95:1950000000},substages:[{id:"low",offered:40,deadlineSuccess:12},{id:"high",offered:60,deadlineSuccess:3}]},sensor:{workloadUID:"sensor",offered:10,deadlineSuccess:10,D1:"OBSERVED_THRESHOLD_MET",outcomes:{completed:10},substages:[{id:"low",offered:4,deadlineSuccess:4},{id:"high",offered:6,deadlineSuccess:6}]}},
+    power:{energyStatus:"UNAVAILABLE",nodes:[{node:{name:"worker-a"}}],energyCoverage:{maximumGapSeconds:9.121},reasons:["Declared Node worker-a: partial/unavailable source or coverage below reporting policy"]},
+  }}
+  const publication={...run,comparisons:[],stages:[stage],outcome:{measurement:{verdict:"FAIL"}},definition:{workloads:[{name:"camera",uid:"camera",generation:1,model:{uid:"model",generation:1},preprocessor:{uid:"preprocessor",generation:1},slo:{percentile:95,targetLatencyNanos:1000000000}},{name:"sensor",uid:"sensor",slo:{percentile:99,targetLatencyNanos:36000000}}],spec:{stages:[]},loadScenarios:[]}} as unknown as Experiment
+  const verdict=renderToStaticMarkup(createElement(components.ExperimentVerdict,{run:publication}))
+  assert.match(verdict,/FAIL.*SLO 미달: camera/)
+  assert.doesNotMatch(verdict,/SLO 미달: camera, sensor/)
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:publication,stage}))
+  const matrix=html.match(/<table[^>]+aria-label="서비스별 결과"[\s\S]*?<\/table>/)?.[0]??""
+  assert.equal((matrix.match(/<tbody>[\s\S]*?<\/tbody>/)?.[0].match(/<tr\b/g)??[]).length,2)
+  for(const value of ["선언 SLO","p95","1,000","p99","36","적용 미확인","15 / 100","15.00%","1,950","1,200","완료 40","시간 초과 10","오류 29","미완료 1","미발행 20","80.00%","부분 발행"])assert.ok(matrix.includes(value),value)
+  const sensor=matrix.match(/<tr[^>]*>[\s\S]*?sensor[\s\S]*?<\/tr>/g)?.at(-1)??""
+  assert.ok(sensor.includes("시간 초과 미기록"))
+  assert.ok(sensor.includes("오류 미기록"))
+  assert.ok(sensor.includes("미완료 미기록"))
+  const parts=html.match(/<table[^>]+aria-label="구간별 성공률"[\s\S]*?<\/table>/)?.[0]??""
+  for(const value of ["low","high","12 / 40","3 / 60","30.00%","5.00%"])assert.ok(parts.includes(value),value)
+  for(const value of ["UNAVAILABLE","1/1","최대 공백 9.1 s","배출 미완료","생성기 종료 후 요청 배출 미완료"])assert.ok(html.includes(value),value)
+  assert.doesNotMatch(html,/0 J/)
+  assert.ok(html.indexOf('aria-label="서비스별 결과"')<html.indexOf('aria-label="구간별 성공률"'))
+  assert.ok(html.indexOf('aria-label="구간별 성공률"')<html.indexOf('aria-label="에너지·배출"'))
+})
+
+test("missing publication outcomes and zero offered remain unrecorded, never a passing zero",()=>{
+  const stage={id:"empty",from:run.from,to:run.to,kpis:{requests:{camera:{offered:0,deadlineSuccess:0}}}}
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:{...run,stages:[stage]},stage}))
+  assert.match(html,/0 \/ 0/)
+  assert.doesNotMatch(html,/0\.00%|통과|완료 0|오류 0|미완료 0|미발행 0/)
+  assert.match(html,/완료 미기록/)
+})

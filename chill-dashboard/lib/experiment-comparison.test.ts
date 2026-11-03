@@ -1021,8 +1021,8 @@ test("R18 review: interval Sheet renders each stage policy and service SLO only 
   const Drawer=features.IntervalDrawer as ComponentType<{run:Experiment;runs:Experiment[];row:ExperimentHeatmapRow;service:string;onClose:()=>void;restoreFocus:()=>void}>
   const markup=renderToStaticMarkup(createElement(Drawer,{run,runs:[run],row:experimentHeatmap(run)[0],service:"",onClose:()=>{},restoreFocus:()=>{}}))
   assert.equal((markup.match(/변경 없음/g)??[]).length,1)
-  assert.match(markup,new RegExp(measurementHelpers.formatMeasurementNumber(50,"ms")))
-  assert.match(markup,/적용 SLO p95/)
+  assert.match(markup,/p95 · 50 ms/)
+  assert.match(markup,/적용 확인: p95 · 50 ms/)
   assert.match(markup,/서비스 식별자·정의/)
 })
 
