@@ -18,11 +18,11 @@ type Service struct {
 }
 
 func (s *Service) ListActive(ctx context.Context) ([]ActiveEvaluation, error) {
-	var result []ActiveEvaluation
 	var runs api.EvaluationRunList
 	if err := s.reader.List(ctx, &runs); err != nil {
-		return result, err
+		return nil, err
 	}
+	result := make([]ActiveEvaluation, 0, len(runs.Items))
 	for _, run := range runs.Items {
 		if !meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionPoolAcquired) {
 			continue

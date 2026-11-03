@@ -53,11 +53,11 @@ func (s *LoadService) view(ctx context.Context, obj *api.LoadScenario) (LoadScen
 	}, err
 }
 func (s *LoadService) List(ctx context.Context) ([]LoadScenarioView, error) {
-	var result []LoadScenarioView
 	var objects api.LoadScenarioList
 	if err := s.client.List(ctx, &objects, client.InNamespace(s.namespace)); err != nil {
-		return result, err
+		return nil, err
 	}
+	result := make([]LoadScenarioView, 0, len(objects.Items))
 	for i := range objects.Items {
 		v, err := s.view(ctx, &objects.Items[i])
 		if err != nil {
