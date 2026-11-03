@@ -16,6 +16,7 @@ import (
 const rollingDOMTest = "dom"
 
 func rollingOccupancyFixture() *rollingOccupancyInput {
+	const occupancyModelTest = "model"
 	policy := syntheticOccupancyPolicy()
 	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: 2000000}
 	profile := serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: 1}, {Batch: 2}}}

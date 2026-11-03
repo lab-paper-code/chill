@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"encoding/json"
@@ -10,7 +10,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,8 +21,8 @@ const (
 )
 
 type occupancyFixture struct {
-	intent       httpapi.OccupancyIntent
-	policy       dispatchOccupancyPolicy
+	intent       OccupancyIntent
+	policy       DispatchOccupancyPolicy
 	cm           *core.ConfigMap
 	profile      *serving.Profile
 	node         *core.Node
@@ -35,7 +34,7 @@ type occupancyFixture struct {
 
 func syntheticOccupancyFixture() occupancyFixture {
 	f := occupancyFixture{
-		intent: httpapi.OccupancyIntent{Node: "node", BatchEnergyOptimization: "beo", Workload: "workload", Batch: 2},
+		intent: OccupancyIntent{Node: "node", BatchEnergyOptimization: "beo", Workload: "workload", Batch: 2},
 		policy: syntheticOccupancyPolicy(),
 		cm: &core.ConfigMap{
 			ObjectMeta: meta.ObjectMeta{
@@ -123,8 +122,8 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 		t.Fatalf("budget %d != E %d", budget, s.PlannedElapsedSeconds)
 	}
 	var inputs struct {
-		DispatchOccupancy dispatchOccupancyPolicy                                     `json:"dispatchOccupancy"`
-		Coefficients      dispatchOccupancyPolicy                                     `json:"coefficients"`
+		DispatchOccupancy DispatchOccupancyPolicy                                     `json:"dispatchOccupancy"`
+		Coefficients      DispatchOccupancyPolicy                                     `json:"coefficients"`
 		Configuration     struct{ Namespace, Name, UID, ResourceVersion, Key string } `json:"configuration"`
 	}
 	if err := json.Unmarshal([]byte(s.Conditions.InputsJSON), &inputs); err != nil {
@@ -274,4 +273,11 @@ func TestOccupancyBurstLifetimeIncludesPartialQueuedBatchAndMargin(t *testing.T)
 	f.profile.Batches[0].DurationNanos = []float64{399e6}
 	_, err = f.build()
 	requireOccupancyError(t, err, "OccupancyInfeasible")
+}
+
+func syntheticOccupancyPolicy() DispatchOccupancyPolicy {
+	return DispatchOccupancyPolicy{WarmupSeconds: 5, BurstSeconds: 15, Workers: 8, MinimumPairs: 100,
+		AggregationWindowSeconds: 120, RefreshIntervalSeconds: 60, ScanTimeoutSeconds: 30, MaximumRequests: 250000,
+		RequestLifetimeSeconds: 2, DeliveryMarginMillis: 10, PreparationSeconds: 1, JobSetupSeconds: 1, CollectionSeconds: 1,
+		PlannedElapsedCapSeconds: 30, Seed: 7}
 }

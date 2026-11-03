@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"context"
@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -97,13 +99,17 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 					return c.Create(ctx, object, opts...)
 				},
 			}).Build()
-			opts := options{servingNamespace: "allowed", queryURL: query.URL, requestTimeout: time.Second}
-			service, err := newMeasurementService(native, kubefake.NewSimpleClientset(), nil, nil, opts)
+			opts := Config{ServingNamespace: "allowed"}
+			origin, err := url.Parse(query.URL)
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := context.WithValue(context.Background(), queryBearerContextKey{}, "Bearer mutation-caller")
-			result, err := service.submit(ctx, task, mode == measurementDryRunTest)
+			service := New(native, kubefake.NewSimpleClientset(), nil, nil, opts, origin, &http.Client{Timeout: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.WithValue(context.Background(), QueryBearerContextKey{}, "Bearer mutation-caller")
+			result, err := service.Submit(ctx, task, mode == measurementDryRunTest)
 			accepted := mode == measurementAcceptedTest || mode == measurementDryRunTest
 			if (err == nil) != accepted || (creates == 1) != accepted || preflights != 1 {
 				t.Fatalf("result=%+v err=%v preflights=%d creates=%d", result, err, preflights, creates)
@@ -125,12 +131,12 @@ func TestMeasurementSubmitPreflightBeforeNativeCreate(t *testing.T) {
 }
 
 func TestMeasurementMutationNamespaceEscape(t *testing.T) {
-	service := &measurementService{opts: options{profileNamespaces: []string{"allowed"}}}
+	service := &Service{opts: Config{ProfileNamespaces: []string{"allowed"}}}
 	escaped := api.BatchEnergyOptimization{ObjectMeta: meta.ObjectMeta{Namespace: "outside", Name: "hidden"}}
-	if _, err := service.submit(context.Background(), escaped, false); !errors.Is(err, servingkube.ErrForbidden) {
+	if _, err := service.Submit(context.Background(), escaped, false); !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace submit escaped before preflight")
 	}
-	_, err := service.delete(context.Background(), "outside", "hidden", "uid", "1")
+	_, err := service.Delete(context.Background(), "outside", "hidden", "uid", "1")
 	if !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace delete escaped")
 	}
@@ -185,13 +191,13 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 				}
 			}
 			storage := deletionStore(t, nil)
-			opts := options{
-				servingNamespace: "serving", profileNamespaces: []string{"allowed"}, schedulerConfigMap: "scheduler",
-				schedulerConfigKey: "scheduler.json", maxRequestBytes: 1 << 20, maxEvidenceBytes: 1 << 20, storeName: "evidence",
+			opts := Config{
+				ServingNamespace: "serving", ProfileNamespaces: []string{"allowed"}, SchedulerConfigMap: "scheduler",
+				SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20, MaxEvidenceBytes: 1 << 20, StoreName: "evidence",
 			}
-			service := &measurementService{
+			service := &Service{
 				client: native, kube: kube, objects: storage.store, opts: opts,
-				scheduler: &schedulerService{kube: kube, opts: opts},
+				scheduler: &SchedulerInputs{Lock: &sync.Mutex{}},
 			}
 			uid, version := "native-uid", "7"
 			if mode == "stale version" {
@@ -200,7 +206,7 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 			if mode == "replaced UID" {
 				uid = "old-uid"
 			}
-			result, err := service.delete(ctx, "allowed", "task", uid, version)
+			result, err := service.Delete(ctx, "allowed", "task", uid, version)
 			accepted := mode == "deleted" || mode == measurementFinalizerTest
 			if (err == nil) != accepted || (deletes == 1) != accepted {
 				t.Fatalf("result=%+v err=%v deletes=%d", result, err, deletes)

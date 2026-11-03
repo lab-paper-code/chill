@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"context"
@@ -228,7 +228,7 @@ func TestMeasurementDeletesExactOwnedEvidenceRawFirstWithoutTouchingSharedArtifa
 	})
 	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task, run, job).Build()
 	service := deletionService(native, storage)
-	result, err := service.delete(ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+	result, err := service.Delete(ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 	if err != nil || !result.EvidenceDeleted || result.Request != "DeletionRequested" {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -337,7 +337,7 @@ func TestMeasurementSharedReferenceAndForeignOwnershipBlockBeforeAnyS3Delete(t *
 					Status: core.PodStatus{Phase: core.PodRunning},
 				})
 			}
-			_, err := service.delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+			_, err := service.Delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 			var domain *serving.Error
 			if !errors.As(err, &domain) || domain.Code != "MeasurementInUse" || storage.deleteCalls() != 0 {
 				t.Fatalf("unsafe cleanup err=%v S3 deletes=%d", err, storage.deleteCalls())
@@ -363,7 +363,7 @@ func TestMeasurementPartialCleanupRetainsNativeAndRetrySurvivesMissingObjects(t 
 	storage.failKey = "profiling-runs/run-uid/execution.json"
 	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task, run, job).Build()
 	service := deletionService(native, storage)
-	_, err := service.delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+	_, err := service.Delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 	var domain *serving.Error
 	if !errors.As(err, &domain) || domain.Code != "MeasurementEvidenceDeletionIncomplete" ||
 		storage.contains("profiling-runs/run-uid/raw.json") || !storage.contains("profiling-runs/run-uid/execution.json") {
@@ -376,7 +376,7 @@ func TestMeasurementPartialCleanupRetainsNativeAndRetrySurvivesMissingObjects(t 
 	storage.mu.Lock()
 	storage.failKey = ""
 	storage.mu.Unlock()
-	result, err := service.delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+	result, err := service.Delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 	if err != nil || !result.EvidenceDeleted || storage.contains("profiling-runs/run-uid/execution.json") {
 		t.Fatalf("retry through missing raw/result failed: %+v %v", result, err)
 	}
@@ -395,7 +395,7 @@ func TestMeasurementNativeConflictAfterEvidenceCleanupIsExplicitlyPartial(t *tes
 			},
 		}).Build()
 	service := deletionService(native, storage)
-	result, err := service.delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+	result, err := service.Delete(context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 	var domain *serving.Error
 	if !errors.As(err, &domain) || domain.Code != "MeasurementDeletionIncomplete" ||
 		!result.EvidenceDeleted || result.Request != "" ||
@@ -408,10 +408,10 @@ func TestMeasurementNativeConflictAfterEvidenceCleanupIsExplicitlyPartial(t *tes
 	}
 }
 
-func deletionService(native client.Client, storage *deletionStorage) *measurementService {
-	return &measurementService{
+func deletionService(native client.Client, storage *deletionStorage) *Service {
+	return &Service{
 		client: native, kube: kubefake.NewSimpleClientset(), objects: storage.store,
-		opts: options{servingNamespace: "allowed", storeName: "evidence", maxEvidenceBytes: 1 << 20},
+		opts: Config{ServingNamespace: "allowed", StoreName: "evidence", MaxEvidenceBytes: 1 << 20},
 	}
 }
 
@@ -430,7 +430,7 @@ func TestForeignMetadataAndDiagnosticsCannotVetoMeasurementDeletion(t *testing.T
 		"foreign/result.json": []byte(`{"detail":{"reason":"allowed/task/native-uid"}}`),
 	})
 	native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(task, foreign).Build()
-	result, err := deletionService(native, storage).delete(
+	result, err := deletionService(native, storage).Delete(
 		context.Background(), task.Namespace, task.Name, string(task.UID), task.ResourceVersion,
 	)
 	if err != nil || !result.EvidenceDeleted || storage.deleteCalls() != 3 {
@@ -510,7 +510,7 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 					Status: core.PodStatus{Phase: core.PodRunning},
 				})
 			}
-			result, err := service.delete(ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
+			result, err := service.Delete(ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
 			if tc.stale || tc.execution != "" {
 				if err == nil || storage.deleteCalls() != 0 {
 					t.Fatal("unsafe pre-Job cleanup mutated evidence")

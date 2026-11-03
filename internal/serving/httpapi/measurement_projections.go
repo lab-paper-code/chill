@@ -3,6 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,8 +33,8 @@ type MeasurementProjectionMetadata struct {
 	CreationTimestamp meta.Time `json:"creationTimestamp"`
 }
 type MeasurementProjectionReferences struct {
-	CR       MeasurementCRReference        `json:"cr"`
-	Evidence []MeasurementEvidenceLocation `json:"evidence"`
+	CR       MeasurementCRReference                    `json:"cr"`
+	Evidence []measurement.MeasurementEvidenceLocation `json:"evidence"`
 }
 type MeasurementCRReference struct {
 	APIVersion string `json:"apiVersion"`
@@ -81,18 +83,18 @@ type occupancyConditions struct {
 	Workers                 int32  `json:"workers"`
 }
 type occupancyStatus struct {
-	Phase           api.MeasurementPhase         `json:"phase,omitempty"`
-	Reason          string                       `json:"reason,omitempty"`
-	PowerMode       string                       `json:"powerMode,omitempty"`
-	PerRequestNanos *int64                       `json:"perRequestNanos,omitempty"`
-	Throughput      string                       `json:"throughput,omitempty"`
-	Result          *MeasurementEvidenceLocation `json:"result,omitempty"`
+	Phase           api.MeasurementPhase                     `json:"phase,omitempty"`
+	Reason          string                                   `json:"reason,omitempty"`
+	PowerMode       string                                   `json:"powerMode,omitempty"`
+	PerRequestNanos *int64                                   `json:"perRequestNanos,omitempty"`
+	Throughput      string                                   `json:"throughput,omitempty"`
+	Result          *measurement.MeasurementEvidenceLocation `json:"result,omitempty"`
 }
 
 func measurementProjection(kind, node string, m meta.ObjectMeta) MeasurementProjection {
 	return MeasurementProjection{Kind: kind, Node: node,
 		Metadata:   MeasurementProjectionMetadata{m.Namespace, m.Name, string(m.UID), m.ResourceVersion, m.CreationTimestamp},
-		References: MeasurementProjectionReferences{CR: MeasurementCRReference{api.GroupVersion.String(), kind, m.Namespace, m.Name, string(m.UID)}, Evidence: []MeasurementEvidenceLocation{}},
+		References: MeasurementProjectionReferences{CR: MeasurementCRReference{api.GroupVersion.String(), kind, m.Namespace, m.Name, string(m.UID)}, Evidence: []measurement.MeasurementEvidenceLocation{}},
 	}
 }
 
@@ -112,7 +114,7 @@ func ProjectOperationCostMeasurement(cr api.OperationCostMeasurement, store stri
 			FromPowerMode: step.FromPowerMode, ToPowerMode: step.ToPowerMode, Model: step.Model,
 		})
 		if s.Key != "" {
-			p.References.Evidence = append(p.References.Evidence, MeasurementEvidenceLocation{Store: store, Key: s.Key})
+			p.References.Evidence = append(p.References.Evidence, measurement.MeasurementEvidenceLocation{Store: store, Key: s.Key})
 		}
 	}
 	p.Conditions, p.Status = conditions, status
@@ -126,7 +128,7 @@ func ProjectDispatchOccupancyMeasurement(cr api.DispatchOccupancyMeasurement) Me
 	p.Conditions = occupancyConditions{s.Workload, s.BatchEnergyOptimization, s.Batch, s.SupplyMode, s.WarmupSeconds, s.DurationSeconds, s.Workers}
 	status := occupancyStatus{Phase: cr.Status.Phase, Reason: cr.Status.Reason, PowerMode: cr.Status.PowerMode, PerRequestNanos: cr.Status.PerRequestNanos, Throughput: cr.Status.Throughput}
 	if cr.Status.Result != nil {
-		status.Result = &MeasurementEvidenceLocation{Store: cr.Status.Result.Store, Key: cr.Status.Result.Key}
+		status.Result = &measurement.MeasurementEvidenceLocation{Store: cr.Status.Result.Store, Key: cr.Status.Result.Key}
 		if status.Result.Key != "" {
 			p.References.Evidence = append(p.References.Evidence, *status.Result)
 		}

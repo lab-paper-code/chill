@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -73,7 +75,8 @@ func TestPublicPreflightRequiresNamespaceListBeforePrivateRead(t *testing.T) {
 				queryURL: upstream.URL, servingNamespace: "allowed", requestTimeout: time.Second, maxRequestBytes: 1024,
 			}
 			handler, err := composeChillServer(
-				http.NotFoundHandler(), &servingkube.Authorizer{Client: native}, opts, &measurementService{opts: opts},
+				http.NotFoundHandler(), &servingkube.Authorizer{Client: native}, opts,
+				measurement.New(nil, nil, nil, nil, measurementConfig(opts), nil, nil),
 			)
 			if err != nil {
 				t.Fatal(err)

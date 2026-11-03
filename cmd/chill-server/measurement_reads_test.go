@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	batch "k8s.io/api/batch/v1"
+
+	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -102,4 +105,16 @@ func TestQueryBackendDownDoesNotReadNativeMeasurementMetadata(t *testing.T) {
 		t.Fatalf("backend-down was disguised as native evidence failure: %d %s", response.Code, response.Body.String())
 	}
 	t.Logf("backend-down: status=%d body=%s", response.Code, response.Body.String())
+}
+
+func measurementScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := api.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := batch.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return scheme
 }

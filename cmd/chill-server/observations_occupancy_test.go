@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
 )
 
 func TestOccupancyObservationConfiguredWindow(t *testing.T) {
 	service := &schedulerService{}
 	service.configuration.Store(&schedulerConfiguration{
-		DispatchOccupancy: &dispatchOccupancyPolicy{
+		DispatchOccupancy: &measurement.DispatchOccupancyPolicy{
 			AggregationWindowSeconds: 120,
 		},
 	})

@@ -1,14 +1,21 @@
-package main
+package measurement_test
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
@@ -16,13 +23,11 @@ import (
 	authentication "k8s.io/api/authentication/v1"
 	authorization "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
 )
 
 func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
-	service, _, creates := occupancyTestService(t)
-	kube := service.kube.(*kubefake.Clientset)
+	service, kube, creates := measurement.OccupancyHTTPFixture(t)
 	kube.PrependReactor("create", "tokenreviews", func(ktesting.Action) (bool, runtime.Object, error) {
 		return true, &authentication.TokenReview{Status: authentication.TokenReviewStatus{
 			Authenticated: true, User: authentication.UserInfo{Username: "operator"},
@@ -35,7 +40,7 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 	})
 	log, err := serving.NewObservationLog(serving.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
+		Writer: testArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -47,8 +52,8 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 	})
 	config := httpapi.HandlerConfig{
 		RequestTimeout: time.Second, OperationTimeout: time.Second, MaxRequestBytes: 1 << 20, MaxQueryEvents: 10,
-		BuildOccupancy:  service.buildOccupancy,
-		SubmitOccupancy: service.submitOccupancy, DeleteOccupancy: service.deleteOccupancy,
+		BuildOccupancy:  service.BuildOccupancy,
+		SubmitOccupancy: service.SubmitOccupancy, DeleteOccupancy: service.DeleteOccupancy,
 	}
 	handler, err := httpapi.NewHandler(&servingkube.Manager{}, &serving.Runtime{},
 		&servingkube.Authorizer{Client: kube}, log, &servingkube.Observer{}, config)
@@ -59,7 +64,7 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 	defer server.Close()
 	endpoint := server.URL + "/api/v1/namespaces/allowed/dispatch-occupancy-measurements"
 	body := `{"node":"node","batchEnergyOptimization":"beo","workload":"workload","batch":2}`
-	var dryResult httpapi.OccupancyMutationResult
+	var dryResult measurement.OccupancyMutationResult
 	for _, dry := range []bool{true, false} {
 		suffix := ""
 		status := http.StatusAccepted
@@ -76,7 +81,7 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var result httpapi.OccupancyMutationResult
+		var result measurement.OccupancyMutationResult
 		decodeErr := json.NewDecoder(response.Body).Decode(&result)
 		closeErr := response.Body.Close()
 		if response.StatusCode != status || decodeErr != nil || closeErr != nil {
@@ -94,12 +99,36 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 		}
 		if dry {
 			dryResult = result
-			if *creates != 0 || result.Request != measurementRequestNotSubmitted {
+			if *creates != 0 || result.Request != "NOT_SUBMITTED" {
 				t.Fatal("dry-run created a native measurement")
 			}
-		} else if *creates != 1 || result.Request != measurementRequestAccepted ||
+		} else if *creates != 1 || result.Request != "Accepted" ||
 			!reflect.DeepEqual(dryResult.Task.Spec, result.Task.Spec) {
 			t.Fatal("real POST changed the frozen dry-run object")
 		}
 	}
+}
+
+type testArchive struct{ directory string }
+
+func (a testArchive) PutImmutable(
+	_ context.Context, identity evidencestore.ObjectIdentity, input io.Reader,
+) (evidencestore.Receipt, error) {
+	output := filepath.Join(a.directory, identity.Key)
+	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	n, err := io.Copy(file, input)
+	err = errors.Join(err, file.Sync(), file.Close())
+	if err != nil || n != identity.Size {
+		return evidencestore.Receipt{}, errors.Join(err, errors.New("archive incomplete"))
+	}
+	return evidencestore.Receipt{
+		SchemaVersion: evidencestore.ReceiptSchemaVersion,
+		Object:        identity, Outcome: evidencestore.CreateOutcomeCreated,
+	}, nil
 }

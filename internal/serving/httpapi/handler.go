@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -47,11 +49,11 @@ type HandlerConfig struct {
 	ReadCatalog           func(context.Context) (servingkube.CatalogRead, error)
 	OccupancyObservations OccupancyObservationReader
 
-	SubmitMeasurement     func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error)
-	DeleteMeasurement     func(context.Context, string, string, string, string) (MeasurementMutationResult, error)
-	BuildOccupancy        func(context.Context, string, OccupancyIntent) (*api.DispatchOccupancyMeasurement, error)
-	SubmitOccupancy       func(context.Context, api.DispatchOccupancyMeasurement, bool) (OccupancyMutationResult, error)
-	DeleteOccupancy       func(context.Context, string, string, string, string) (OccupancyMutationResult, error)
+	SubmitMeasurement     func(context.Context, api.BatchEnergyOptimization, bool) (measurement.MeasurementMutationResult, error)
+	DeleteMeasurement     func(context.Context, string, string, string, string) (measurement.MeasurementMutationResult, error)
+	BuildOccupancy        func(context.Context, string, measurement.OccupancyIntent) (*api.DispatchOccupancyMeasurement, error)
+	SubmitOccupancy       func(context.Context, api.DispatchOccupancyMeasurement, bool) (measurement.OccupancyMutationResult, error)
+	DeleteOccupancy       func(context.Context, string, string, string, string) (measurement.OccupancyMutationResult, error)
 	OperatingPower        func(context.Context, time.Time, time.Time, int) (serving.OperatingPowerWindow, error)
 	OperatingPowerSeries  func(context.Context, time.Time, time.Time, time.Duration, int) (serving.OperatingPowerSeries, error)
 	ListExperiments       func(context.Context) (ExperimentList, error)

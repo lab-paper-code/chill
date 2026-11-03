@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,7 +34,7 @@ func TestMeasurementProjectionWhitelistAndOriginalReferences(t *testing.T) {
 		}
 		occupancy.Status.Result = &api.ProfilingRunEvidenceReference{Store: "original-store", Key: "original-key", Size: 123}
 		p = ProjectDispatchOccupancyMeasurement(occupancy)
-		if p.References.Evidence[0] != (MeasurementEvidenceLocation{Store: "original-store", Key: "original-key"}) {
+		if p.References.Evidence[0] != (measurement.MeasurementEvidenceLocation{Store: "original-store", Key: "original-key"}) {
 			t.Fatal("result reference changed")
 		}
 		raw, _ = json.Marshal(p)

@@ -77,6 +77,7 @@ components:
   serving-httpapi: { in: internal/serving/httpapi }
   serving-live: { in: internal/serving/live }
   serving-kube: { in: internal/serving/kube }
+  serving-measurement: { in: internal/serving/measurement }
   firstfloor: { in: internal/firstfloor }
   serving-firstfloor: { in: internal/serving/firstfloor }
 
@@ -333,10 +334,23 @@ deps:
       - serving-kube
       - serving-live
       - evaluation-service
+      - serving-measurement
 
   serving-live:
     anyVendorDeps: true
 
+
+  serving-measurement:
+    mayDependOn:
+      - api
+      - evidence-core
+      - batch-energy-optimization-core
+      - profiler-app
+      - profiler-controller
+      - profiler-evidence
+      - query-api
+      - serving-core
+      - serving-kube
   serving-core:
     mayDependOn:
       - model-compat

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -350,7 +352,7 @@ func TestQueryReadResourceGrantsPrecedeBackendAndCache(t *testing.T) {
 					http.NotFoundHandler(),
 					&servingkube.Authorizer{Client: kube},
 					opts,
-					&measurementService{opts: opts},
+					measurement.New(nil, nil, nil, nil, measurementConfig(opts), nil, nil),
 				)
 				if err != nil {
 					t.Fatal(err)

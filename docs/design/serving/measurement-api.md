@@ -2,6 +2,17 @@
 
 캠페인은 CHILL 측정 API를 사용한다. 노드별 승인·반환은 [측정 admission](measurement-admission.md), 실행·배포 근거는 [handoff](../../handoff.md)를 따른다. 이 문서는 측정량, 조건 생성, 판정과 계획기 소비를 정하며 원시 자료, signed 값과 원래 판정을 보존한다.
 
+`internal/serving/measurement` owns occupancy intent resolution, frozen-object
+construction, native measurement submission, and BEO/occupancy retirement.
+Producer-shutdown checks, source-owned evidence traversal, shared-reference
+guards, and evidence-before-native deletion ordering stay together in that owner.
+`cmd/chill-server` only constructs its clients, bounded configuration and QueryAPI
+transport, and supplies the scheduler's existing mutation mutex, accepted-profile
+snapshot loader, full configuration decoder and gateway timeout explicitly.
+The measurement owner does not reach into scheduler service internals or acquire
+a separate mutation authority. HTTP keeps authentication, decoding and response
+mapping; its intent/result types come from the measurement owner without aliases.
+
 ## 1. 측정 원칙
 
 - operation 비용은 준비, 유휴, 해제와 빈 노드 전력모드 변경을 순서 있는 요청 하나로 측정한다. 동작별 불변 기록은 요청과 실제 physical identity를 가리킨다.

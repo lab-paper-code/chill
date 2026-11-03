@@ -6,11 +6,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-func syntheticOccupancyPolicy() dispatchOccupancyPolicy {
-	return dispatchOccupancyPolicy{WarmupSeconds: 5, BurstSeconds: 15, Workers: 8, MinimumPairs: 100,
+func syntheticOccupancyPolicy() measurement.DispatchOccupancyPolicy {
+	return measurement.DispatchOccupancyPolicy{WarmupSeconds: 5, BurstSeconds: 15, Workers: 8, MinimumPairs: 100,
 		AggregationWindowSeconds: 120, RefreshIntervalSeconds: 60, ScanTimeoutSeconds: 30,
 		MaximumRequests:        250000,
 		RequestLifetimeSeconds: 2, DeliveryMarginMillis: 10, PreparationSeconds: 1,
@@ -78,35 +80,35 @@ func TestDispatchOccupancyPolicyStrictConfiguration(t *testing.T) {
 	if err != nil || config.DispatchOccupancy != nil {
 		t.Fatal("missing policy acquired defaults", err)
 	}
-	for _, change := range []func(*dispatchOccupancyPolicy){
-		func(p *dispatchOccupancyPolicy) { p.AggregationWindowSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.RefreshIntervalSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.ScanTimeoutSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.ScanTimeoutSeconds = p.RefreshIntervalSeconds/2 + 1 },
-		func(p *dispatchOccupancyPolicy) { p.MaximumRequests = 0 },
-		func(p *dispatchOccupancyPolicy) { p.WarmupSeconds = -1 },
-		func(p *dispatchOccupancyPolicy) { p.BurstSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.Workers = 0 },
-		func(p *dispatchOccupancyPolicy) { p.Workers = 65 },
-		func(p *dispatchOccupancyPolicy) { p.MinimumPairs = 0 },
-		func(p *dispatchOccupancyPolicy) { p.AggregationWindowSeconds = p.BurstSeconds - 1 },
-		func(p *dispatchOccupancyPolicy) { p.RequestLifetimeSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.DeliveryMarginMillis = 0 },
-		func(p *dispatchOccupancyPolicy) { p.PreparationSeconds = 0 },
-		func(p *dispatchOccupancyPolicy) { p.JobSetupSeconds = -1 },
-		func(p *dispatchOccupancyPolicy) { p.CollectionSeconds = -1 },
-		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = 5 },
-		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.NaN() },
-		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.Inf(1) },
-		func(p *dispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.MaxInt32 + 1 },
+	for _, change := range []func(*measurement.DispatchOccupancyPolicy){
+		func(p *measurement.DispatchOccupancyPolicy) { p.AggregationWindowSeconds = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.RefreshIntervalSeconds = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.ScanTimeoutSeconds = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.ScanTimeoutSeconds = p.RefreshIntervalSeconds/2 + 1 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.MaximumRequests = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.WarmupSeconds = -1 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.BurstSeconds = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.Workers = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.Workers = 65 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.MinimumPairs = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.AggregationWindowSeconds = p.BurstSeconds - 1 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.RequestLifetimeSeconds = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.DeliveryMarginMillis = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.PreparationSeconds = 0 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.JobSetupSeconds = -1 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.CollectionSeconds = -1 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = 5 },
+		func(p *measurement.DispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.NaN() },
+		func(p *measurement.DispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.Inf(1) },
+		func(p *measurement.DispatchOccupancyPolicy) { p.PlannedElapsedCapSeconds = math.MaxInt32 + 1 },
 	} {
 		p := syntheticOccupancyPolicy()
 		change(&p)
-		if p.validate() == nil {
+		if p.Validate() == nil {
 			t.Fatalf("accepted invalid policy %+v", p)
 		}
 	}
-	if err := syntheticOccupancyPolicy().validate(); err != nil {
+	if err := syntheticOccupancyPolicy().Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -133,7 +135,7 @@ func TestOccupancyPolicyZeroInputsAreExplicitNotGoFallbacks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var policy dispatchOccupancyPolicy
+			var policy measurement.DispatchOccupancyPolicy
 			if err = json.Unmarshal(raw, &policy); err == nil {
 				t.Fatalf("omitted/null %s silently became a Go default", field)
 			}
@@ -144,11 +146,11 @@ func TestOccupancyPolicyZeroInputsAreExplicitNotGoFallbacks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var policy dispatchOccupancyPolicy
+		var policy measurement.DispatchOccupancyPolicy
 		if err = json.Unmarshal(raw, &policy); err != nil {
 			t.Fatal(err)
 		}
-		if err = policy.validate(); err != nil {
+		if err = policy.Validate(); err != nil {
 			t.Fatal("explicit zero rejected", field, err)
 		}
 	}

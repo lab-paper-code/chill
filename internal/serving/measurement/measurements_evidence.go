@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"context"
@@ -50,10 +50,10 @@ func measurementInUse(reason string) error {
 
 // Only production writer locations grant deletion authority. Native objects
 // retain every UID needed to reconstruct this set after partial cleanup.
-func (o *measurementService) measurementEvidence(
+func (o *Service) measurementEvidence(
 	ctx context.Context, task *api.BatchEnergyOptimization,
 ) ([]evidencestore.ObjectLocation, error) {
-	if o.objects == nil || o.opts.storeName == "" || o.opts.maxEvidenceBytes < 1 {
+	if o.objects == nil || o.opts.StoreName == "" || o.opts.MaxEvidenceBytes < 1 {
 		return nil, &serving.Error{
 			Code:    "MeasurementEvidenceUnavailable",
 			Message: "bounded measurement Evidence Store access is required for deletion",
@@ -104,11 +104,11 @@ func (o *measurementService) measurementEvidence(
 		o.measurementLocation(base+"curve-plan.json"), resultLocation), nil
 }
 
-func (o *measurementService) measurementLocation(key string) evidencestore.ObjectLocation {
-	return evidencestore.ObjectLocation{Store: o.opts.storeName, Key: key}
+func (o *Service) measurementLocation(key string) evidencestore.ObjectLocation {
+	return evidencestore.ObjectLocation{Store: o.opts.StoreName, Key: key}
 }
 
-func (o *measurementService) ownedRunEvidence(
+func (o *Service) ownedRunEvidence(
 	ctx context.Context, task *api.BatchEnergyOptimization, run *api.ProfilingRun,
 ) (raw, executionLocation evidencestore.ObjectLocation, err error) {
 	owner := meta.GetControllerOf(run)
@@ -140,7 +140,7 @@ func (o *measurementService) ownedRunEvidence(
 	return raw, executionLocation, nil
 }
 
-func (o *measurementService) checkOwnedResult(
+func (o *Service) checkOwnedResult(
 	ctx context.Context, location evidencestore.ObjectLocation, base string, owned map[string]*api.ProfilingRun,
 ) error {
 	payload, err := o.readDeletionEvidence(ctx, location, true)
@@ -152,13 +152,13 @@ func (o *measurementService) checkOwnedResult(
 		return err
 	}
 	spec := record.Spec()
-	if spec.CurvePlan.Store != o.opts.storeName || spec.CurvePlan.Key != base+"curve-plan.json" {
+	if spec.CurvePlan.Store != o.opts.StoreName || spec.CurvePlan.Key != base+"curve-plan.json" {
 		return measurementInUse("measurement result links a foreign curve plan")
 	}
 	for _, trial := range spec.CompletedTrials {
 		run := owned[trial.Run.UID]
 		if run == nil || trial.Run.Namespace != run.Namespace || trial.Run.Name != run.Name ||
-			trial.Evidence.Store != o.opts.storeName ||
+			trial.Evidence.Store != o.opts.StoreName ||
 			trial.Evidence.Key != "profiling-runs/"+trial.Run.UID+"/execution.json" {
 			return measurementInUse("measurement result links a missing or foreign Run/evidence")
 		}
@@ -185,7 +185,7 @@ func terminalRunFailure(run *api.ProfilingRun) bool {
 	return false
 }
 
-func (o *measurementService) checkRunStopped(ctx context.Context, run *api.ProfilingRun) error {
+func (o *Service) checkRunStopped(ctx context.Context, run *api.ProfilingRun) error {
 	if run.Status.Evidence == nil && !terminalRunFailure(run) {
 		condition := apimeta.FindStatusCondition(run.Status.Conditions, api.ProfilingRunConditionEvidenceVerified)
 		if condition == nil || condition.Status != meta.ConditionFalse || condition.Reason != "EvidenceInvalid" {
@@ -227,7 +227,7 @@ func measurementJobTerminal(job *batch.Job) bool {
 	return false
 }
 
-func (o *measurementService) checkPreJobRunStopped(ctx context.Context, run *api.ProfilingRun) error {
+func (o *Service) checkPreJobRunStopped(ctx context.Context, run *api.ProfilingRun) error {
 	condition := apimeta.FindStatusCondition(run.Status.Conditions, api.ProfilingRunConditionExecutionComplete)
 	if run.Generation < 1 || condition == nil || condition.Status != meta.ConditionFalse ||
 		condition.ObservedGeneration != run.Generation {
@@ -255,7 +255,7 @@ func (o *measurementService) checkPreJobRunStopped(ctx context.Context, run *api
 	return o.checkRunPodsStopped(ctx, run, name, "")
 }
 
-func (o *measurementService) checkRunPodsStopped(
+func (o *Service) checkRunPodsStopped(
 	ctx context.Context, run *api.ProfilingRun, jobName, jobUID string,
 ) error {
 	pods, err := o.kube.CoreV1().Pods(run.Namespace).List(ctx, meta.ListOptions{})
@@ -274,7 +274,7 @@ func (o *measurementService) checkRunPodsStopped(
 	return nil
 }
 
-func (o *measurementService) readDeletionEvidence(
+func (o *Service) readDeletionEvidence(
 	ctx context.Context, location evidencestore.ObjectLocation, missingOK bool,
 ) ([]byte, error) {
 	body, err := o.objects.OpenLocation(ctx, location)
@@ -284,12 +284,12 @@ func (o *measurementService) readDeletionEvidence(
 	if err != nil {
 		return nil, err
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(body, o.opts.maxEvidenceBytes+1))
+	payload, readErr := io.ReadAll(io.LimitReader(body, o.opts.MaxEvidenceBytes+1))
 	closeErr := body.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
 		return nil, err
 	}
-	if int64(len(payload)) > o.opts.maxEvidenceBytes {
+	if int64(len(payload)) > o.opts.MaxEvidenceBytes {
 		return nil, errors.New("referenced evidence exceeds configured bound")
 	}
 	return payload, nil
@@ -359,7 +359,7 @@ func (g *measurementReferenceGuard) payload(payload []byte) error {
 	return nil
 }
 
-func (o *measurementService) sharedReference(
+func (o *Service) sharedReference(
 	ctx context.Context, reference *api.ProfilingRunEvidenceReference, guard *measurementReferenceGuard,
 ) error {
 	if reference == nil {
@@ -376,7 +376,7 @@ func (o *measurementService) sharedReference(
 	return guard.payload(payload)
 }
 
-func (o *measurementService) checkSharedEvidence(
+func (o *Service) checkSharedEvidence(
 	ctx context.Context, task *api.BatchEnergyOptimization, owned []evidencestore.ObjectLocation,
 ) error {
 	guard := &measurementReferenceGuard{

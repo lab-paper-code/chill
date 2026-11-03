@@ -1,240 +1,50 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
-	"net/url"
-	"slices"
-	"strings"
 
-	api "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-
-	core "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/validation"
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	measurementRequestAccepted          = "Accepted"
-	measurementRequestNotSubmitted      = "NOT_SUBMITTED"
-	measurementRequestDeletionRequested = "DeletionRequested"
-)
-
-// The measurement service removes only source-proven, unreferenced measurement
-// evidence before requesting native deletion. Native GC/finalizers stay native.
-type queryBearerContextKey struct{}
-
-type measurementService struct {
-	client    client.Client
-	scheduler *schedulerService
-	kube      kubernetes.Interface
-	objects   measurementObjects
-	opts      options
-	query     *url.URL
-	http      *http.Client
+func measurementConfig(opts options) measurement.Config {
+	return measurement.Config{
+		ServingNamespace: opts.servingNamespace, ProfileNamespaces: opts.profileNamespaces,
+		SchedulerConfigMap: opts.schedulerConfigMap, SchedulerConfigKey: opts.schedulerConfigKey,
+		MaxRequestBytes: opts.maxRequestBytes, MaxEvidenceBytes: opts.maxEvidenceBytes,
+		StoreName: opts.storeName, LoadGeneratorNamespace: opts.loadGenerator.Namespace,
+	}
 }
 
-type measurementObjects interface {
-	evidencestore.LocationReader
-	Delete(context.Context, evidencestore.ObjectLocation) error
-}
-
-func newMeasurementService(
-	native client.Client,
-	kube kubernetes.Interface,
-	scheduler *schedulerService,
-	objects measurementObjects,
-	opts options,
-) (*measurementService, error) {
+func newMeasurementService(native client.Client, kube kubernetes.Interface, scheduler *schedulerService,
+	objects measurement.Objects, opts options,
+) (*measurement.Service, error) {
 	origin, err := privateOrigin(opts.queryURL)
 	if err != nil {
 		return nil, err
 	}
-	return &measurementService{
-		client: native, kube: kube, scheduler: scheduler, objects: objects, opts: opts, query: origin,
-		http: &http.Client{
-			Timeout:       opts.requestTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
-	}, nil
-}
-
-func (o *measurementService) namespace(namespace string) error {
-	if len(validation.IsDNS1123Label(namespace)) != 0 {
-		return &serving.Error{Code: "InvalidInput", Message: "valid measurement namespace is required"}
-	}
-	allowed := namespace == o.opts.servingNamespace
-	if len(o.opts.profileNamespaces) != 0 {
-		allowed = slices.Contains(o.opts.profileNamespaces, namespace)
-	}
-	if !allowed {
-		return servingkube.ErrForbidden
-	}
-	return nil
-}
-
-func (o *measurementService) preflight(ctx context.Context, task *api.BatchEnergyOptimization) error {
-	unavailable := &serving.Error{
-		Code: "MeasurementPreflightUnavailable", Message: "production QueryAPI preflight is unavailable",
-	}
-	if o.query == nil {
-		return unavailable
-	}
-	body, err := json.Marshal(task)
-	if err != nil {
-		return err
-	}
-	target := *o.query
-	target.Path = "/api/v1/namespaces/" + task.Namespace + "/batch-energy-optimizations/preflight"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if authorization, ok := ctx.Value(queryBearerContextKey{}).(string); ok {
-		req.Header.Set("Authorization", authorization)
-	}
-	response, err := o.http.Do(req)
-	if err != nil {
-		return unavailable
-	}
-	const maximumPreflightBytes = 4 << 20
-	payload, readErr := io.ReadAll(io.LimitReader(response.Body, maximumPreflightBytes+1))
-	closeErr := response.Body.Close()
-	if errors.Join(readErr, closeErr) != nil ||
-		response.StatusCode != http.StatusOK || len(payload) > maximumPreflightBytes {
-		return unavailable
-	}
-	var result queryapi.BatchEnergyOptimizationPreflight
-	if json.Unmarshal(payload, &result) != nil ||
-		result.APIVersion != queryapi.BatchEnergyOptimizationPreflightAPIVersion ||
-		result.Kind != "BatchEnergyOptimizationPreflight" ||
-		result.Campaign.Namespace != task.Namespace || result.Campaign.Name != task.Name {
-		return unavailable
-	}
-	if !result.Resolves {
-		return &serving.Error{Code: "MeasurementPreflightRejected", Message: result.Reason}
-	}
-	return nil
-}
-
-func (o *measurementService) submit(
-	ctx context.Context, task api.BatchEnergyOptimization, dryRun bool,
-) (httpapi.MeasurementMutationResult, error) {
-	result := httpapi.MeasurementMutationResult{}
-	if err := o.namespace(task.Namespace); err != nil {
-		return result, err
-	}
-	if err := o.preflight(ctx, &task); err != nil {
-		return result, err
-	}
-	options := &client.CreateOptions{}
-	result.Request = measurementRequestAccepted
-	if dryRun {
-		options.DryRun = []string{meta.DryRunAll}
-		result.Request = measurementRequestNotSubmitted
-	}
-	if err := o.client.Create(ctx, &task, options); err != nil {
-		return httpapi.MeasurementMutationResult{}, err
-	}
-	result.Task = &task
-	return result, nil
-}
-
-func (o *measurementService) delete(
-	ctx context.Context, namespace, name, uid, version string,
-) (httpapi.MeasurementMutationResult, error) {
-	result := httpapi.MeasurementMutationResult{}
-	if err := o.namespace(namespace); err != nil {
-		return result, err
-	}
-	if uid == "" || version == "" {
-		return result, &serving.Error{
-			Code:    "ResourceVersionRequired",
-			Message: "native UID and resourceVersion are required",
+	var inputs *measurement.SchedulerInputs
+	if scheduler != nil {
+		inputs = &measurement.SchedulerInputs{
+			Lock: &scheduler.lock, GatewayRequestTimeout: scheduler.gatewayRequestTimeout,
+			DecodePolicy: func(raw string, maxBytes int64) (*measurement.DispatchOccupancyPolicy, error) {
+				config, err := decodeSchedulerConfiguration(raw, maxBytes)
+				return config.DispatchOccupancy, err
+			},
+			LoadProfiles: func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool) {
+				snapshot := scheduler.profiles.Load()
+				if snapshot == nil {
+					return "", nil, nil, false
+				}
+				return snapshot.ConfigVersion, snapshot.Profiles, snapshot.Preparations, true
+			},
 		}
 	}
-	if o.scheduler != nil {
-		o.scheduler.lock.Lock()
-		defer o.scheduler.lock.Unlock()
-	}
-	task := &api.BatchEnergyOptimization{}
-	if err := o.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, task); err != nil {
-		return result, err
-	}
-	result.Task = task
-	if string(task.UID) != uid || task.ResourceVersion != version {
-		resource := schema.GroupResource{Group: api.GroupVersion.Group, Resource: "batchenergyoptimizations"}
-		return result, apierrors.NewConflict(resource, name, errors.New("native UID or resourceVersion changed"))
-	}
-	if task.Status.Phase == string(api.MeasurementPhaseMeasuring) {
-		return result, &serving.Error{Code: "MeasurementInUse", Message: "an active measurement cannot be deleted"}
-	}
-	pods, err := o.kube.CoreV1().Pods(o.opts.servingNamespace).List(ctx, meta.ListOptions{})
-	if err != nil {
-		return result, err
-	}
-	prefix := namespace + "/" + name + "/"
-	for _, pod := range pods.Items {
-		if strings.HasPrefix(pod.Annotations[servingkube.ServingProfileAnnotation], prefix) &&
-			pod.Status.Phase != core.PodSucceeded && pod.Status.Phase != core.PodFailed {
-			return result, measurementInUse("a physical serving Pod still references the measurement")
-		}
-	}
-	locations, err := o.measurementEvidence(ctx, task)
-	if err != nil {
-		return result, err
-	}
-	if err := o.checkSharedEvidence(ctx, task, locations); err != nil {
-		return result, err
-	}
-	result.DeletedEvidence = make([]httpapi.MeasurementEvidenceLocation, 0, len(locations))
-	for _, location := range locations {
-		if err := o.objects.Delete(ctx, location); err != nil {
-			return result, &serving.Error{
-				Code: "MeasurementEvidenceDeletionIncomplete",
-				Message: "evidence cleanup stopped; some owned objects may already be deleted, " +
-					"the native measurement is retained, and retry with its UID/resourceVersion is required",
-			}
-		}
-		result.DeletedEvidence = append(result.DeletedEvidence, httpapi.MeasurementEvidenceLocation{
-			Store: location.Store, Key: location.Key,
-		})
-	}
-	result.EvidenceDeleted = true
-	policy := meta.DeletePropagationBackground
-	deletion := &client.DeleteOptions{
-		Preconditions:     &meta.Preconditions{UID: &task.UID, ResourceVersion: &task.ResourceVersion},
-		PropagationPolicy: &policy,
-	}
-	if err := o.client.Delete(ctx, task, deletion); err != nil {
-		if apierrors.IsConflict(err) {
-			return result, &serving.Error{
-				Code: "MeasurementDeletionIncomplete", Field: "If-Match",
-				Message: "owned evidence cleanup completed, but a native UID/resourceVersion conflict " +
-					"prevented measurement deletion; query its identity before retrying",
-			}
-		}
-		return result, &serving.Error{
-			Code: "MeasurementDeletionIncomplete",
-			Message: "owned evidence cleanup completed but native deletion was not confirmed; " +
-				"the native object may remain or have changed; query its identity before retrying",
-		}
-	}
-	result.Request = measurementRequestDeletionRequested
-	return result, nil
+	return measurement.New(native, kube, inputs, objects, measurementConfig(opts), origin, &http.Client{
+		Timeout:       opts.requestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}), nil
 }

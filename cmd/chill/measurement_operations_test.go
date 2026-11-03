@@ -12,8 +12,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
@@ -70,7 +71,7 @@ func TestMeasurementSubmitOwnerFailureAndDryRunState(t *testing.T) {
 					_, _ = io.WriteString(w, `{"error":{"code":"Blocked","message":"no mutation permitted"}}`)
 					return
 				}
-				_ = json.NewEncoder(w).Encode(httpapi.MeasurementMutationResult{
+				_ = json.NewEncoder(w).Encode(measurement.MeasurementMutationResult{
 					Request: test.request,
 					Task:    &edgev1alpha1.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "task"}},
 				})
@@ -93,7 +94,7 @@ func TestMeasurementSubmitOwnerFailureAndDryRunState(t *testing.T) {
 				}
 				return
 			}
-			var result httpapi.MeasurementMutationResult
+			var result measurement.MeasurementMutationResult
 			if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil || result.Request != test.request {
 				t.Fatalf("submission state %#v error %v", result, err)
 			}
@@ -125,13 +126,13 @@ func TestMeasurementDeletePreservesExplicitStalePreconditions(t *testing.T) {
 					http.Error(w, "stale native precondition", http.StatusConflict)
 					return
 				}
-				result := httpapi.MeasurementMutationResult{Request: "Rejected"}
+				result := measurement.MeasurementMutationResult{Request: "Rejected"}
 				if test.name == "cleanup-not-confirmed" {
 					result.Request = measurementDeletionRequested
 				}
 				if !test.semanticFailure {
 					mutations++
-					result = httpapi.MeasurementMutationResult{
+					result = measurement.MeasurementMutationResult{
 						Request: measurementDeletionRequested, EvidenceDeleted: true,
 						Task: &edgev1alpha1.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{
 							Namespace: "ns", Name: "task", UID: types.UID("uid"), ResourceVersion: "rv2",
@@ -252,9 +253,9 @@ func TestMeasurementDeletionHTTPFailureRetainsPartialState(t *testing.T) {
 
 func TestMeasurementDeletionReportsCleanupWithoutClaimingNativeCompletion(t *testing.T) {
 	deleting := metav1.Now()
-	expected := httpapi.MeasurementMutationResult{
+	expected := measurement.MeasurementMutationResult{
 		Request: measurementDeletionRequested, EvidenceDeleted: true,
-		DeletedEvidence: []httpapi.MeasurementEvidenceLocation{
+		DeletedEvidence: []measurement.MeasurementEvidenceLocation{
 			{Store: "store", Key: "run/raw"}, {Store: "store", Key: "campaign/result"},
 		},
 		Task: &edgev1alpha1.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{
@@ -277,7 +278,7 @@ func TestMeasurementDeletionReportsCleanupWithoutClaimingNativeCompletion(t *tes
 			t.Fatal(err)
 		}
 		if format == outputFormatJSON {
-			var result httpapi.MeasurementMutationResult
+			var result measurement.MeasurementMutationResult
 			if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil ||
 				result.Request != measurementDeletionRequested || !result.EvidenceDeleted ||
 				len(result.DeletedEvidence) != 2 || result.DeletedEvidence[0] != expected.DeletedEvidence[0] ||

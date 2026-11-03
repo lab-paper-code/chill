@@ -55,6 +55,7 @@ components=(
   serving-httpapi
   serving-live
   serving-kube
+  serving-measurement
   firstfloor
   serving-firstfloor
 )
@@ -111,6 +112,7 @@ component_for() {
     internal/serving/httpapi) echo serving-httpapi ;;
     internal/serving/live) echo serving-live ;;
     internal/serving/kube) echo serving-kube ;;
+    internal/serving/measurement) echo serving-measurement ;;
     internal/firstfloor) echo firstfloor ;;
     internal/serving/firstfloor) echo serving-firstfloor ;;
     *) return 1 ;;

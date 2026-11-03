@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"context"
@@ -8,12 +8,12 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	batch "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,19 +30,22 @@ const (
 	occupancyLegacyDeletedTest = "legacy deleted"
 )
 
-func occupancyTestService(t *testing.T) (*measurementService, occupancyFixture, *int) {
+func occupancyTestService(t *testing.T) (*Service, occupancyFixture, *int) {
 	t.Helper()
 	f := syntheticOccupancyFixture()
-	raw, err := os.ReadFile("../../config/samples/serving-scheduler.json")
+	raw, err := os.ReadFile("../../../config/samples/serving-scheduler.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := decodeSchedulerConfiguration(string(raw), 1<<20)
+	var document map[string]json.RawMessage
+	if err = json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	document["dispatchOccupancy"], err = json.Marshal(f.policy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	config.DispatchOccupancy = &f.policy
-	raw, err = json.Marshal(config)
+	raw, err = json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,24 +62,21 @@ func occupancyTestService(t *testing.T) (*measurementService, occupancyFixture, 
 			return c.Create(ctx, obj, opts...)
 		}}).
 		Build()
-	scheduler := &schedulerService{gatewayRequestTimeout: 2 * time.Second}
-	scheduler.profiles.Store(
-		&httpapi.ProfilesView{
-			ConfigVersion: f.cm.ResourceVersion,
-			CatalogView:   servingkube.CatalogView{Profiles: []serving.Profile{*f.profile}},
-			Preparations:  map[string]servingkube.PrepareSpec{f.profile.ID: f.preparation},
+	scheduler := &SchedulerInputs{Lock: &sync.Mutex{}, GatewayRequestTimeout: 2 * time.Second, DecodePolicy: decodeTestPolicy,
+		LoadProfiles: func() (string, []serving.Profile, map[string]servingkube.PrepareSpec, bool) {
+			return f.cm.ResourceVersion, []serving.Profile{*f.profile}, map[string]servingkube.PrepareSpec{f.profile.ID: f.preparation}, true
 		},
-	)
-	service := &measurementService{
+	}
+	service := &Service{
 		client:    native,
 		kube:      kubefake.NewSimpleClientset(f.cm, f.node),
 		scheduler: scheduler,
-		opts: options{
-			servingNamespace:   "serving",
-			profileNamespaces:  []string{"allowed"},
-			schedulerConfigMap: "scheduler",
-			schedulerConfigKey: "scheduler.json",
-			maxRequestBytes:    1 << 20,
+		opts: Config{
+			ServingNamespace:   "serving",
+			ProfileNamespaces:  []string{"allowed"},
+			SchedulerConfigMap: "scheduler",
+			SchedulerConfigKey: "scheduler.json",
+			MaxRequestBytes:    1 << 20,
 		},
 	}
 	return service, f, creates
@@ -84,16 +84,16 @@ func occupancyTestService(t *testing.T) (*measurementService, occupancyFixture, 
 
 func TestOccupancyServiceDryRunSameFrozenObjectWithoutCreate(t *testing.T) {
 	service, f, creates := occupancyTestService(t)
-	task, err := service.buildOccupancy(context.Background(), "allowed", f.intent)
+	task, err := service.BuildOccupancy(context.Background(), "allowed", f.intent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dry, err := service.submitOccupancy(context.Background(), *task, true)
+	dry, err := service.SubmitOccupancy(context.Background(), *task, true)
 	if err != nil || *creates != 0 || dry.Request != measurementRequestNotSubmitted ||
 		!reflect.DeepEqual(dry.Task, task) {
 		t.Fatal("dry run mutated or changed the frozen object", err)
 	}
-	real, err := service.submitOccupancy(context.Background(), *task, false)
+	real, err := service.SubmitOccupancy(context.Background(), *task, false)
 	if err != nil || *creates != 1 || real.Request != measurementRequestAccepted ||
 		!reflect.DeepEqual(real.Task.Spec, dry.Task.Spec) {
 		t.Fatal("create changed frozen protocol", err)
@@ -105,7 +105,7 @@ func TestOccupancyServiceDryRunSameFrozenObjectWithoutCreate(t *testing.T) {
 	if !reflect.DeepEqual(stored.Spec, task.Spec) {
 		t.Fatal("native spec differs")
 	}
-	_, err = service.buildOccupancy(context.Background(), "outside", f.intent)
+	_, err = service.BuildOccupancy(context.Background(), "outside", f.intent)
 	if !errors.Is(err, servingkube.ErrForbidden) {
 		t.Fatal("namespace escaped", err)
 	}
@@ -158,7 +158,7 @@ func TestOccupancyServicePolicyFailsClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := service.buildOccupancy(context.Background(), "allowed", f.intent)
+			_, err := service.BuildOccupancy(context.Background(), "allowed", f.intent)
 			requireOccupancyError(t, err, "OccupancyPolicyUnavailable")
 		})
 	}
@@ -244,18 +244,18 @@ func TestOccupancyDeleteFencesAndOnlyRemovesOwnedEvidence(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			service := &measurementService{
+			service := &Service{
 				client:  native,
 				kube:    kube,
 				objects: storage.store,
-				opts: options{
-					servingNamespace:  "serving",
-					profileNamespaces: []string{"allowed"},
-					storeName:         "evidence",
-					maxEvidenceBytes:  1 << 20,
+				opts: Config{
+					ServingNamespace:  "serving",
+					ProfileNamespaces: []string{"allowed"},
+					StoreName:         "evidence",
+					MaxEvidenceBytes:  1 << 20,
 				},
 			}
-			result, err := service.deleteOccupancy(context.Background(), "allowed", task.Name, uid, version)
+			result, err := service.DeleteOccupancy(context.Background(), "allowed", task.Name, uid, version)
 			success := mode == occupancyDeletedTest || mode == occupancyQueuedTest || mode == occupancyLegacyDeletedTest
 			if (err == nil) != success {
 				t.Fatalf("delete success=%v got %v", success, err)
@@ -312,4 +312,25 @@ func occupancyDeletionClient(
 		return c.Delete(ctx, obj, opts...)
 	}}).
 		Build()
+}
+
+func decodeTestPolicy(raw string, _ int64) (*DispatchOccupancyPolicy, error) {
+	var config struct {
+		DispatchOccupancy *DispatchOccupancyPolicy `json:"dispatchOccupancy"`
+	}
+	if err := json.Unmarshal([]byte(raw), &config); err != nil {
+		return nil, err
+	}
+	if config.DispatchOccupancy != nil {
+		if err := config.DispatchOccupancy.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	return config.DispatchOccupancy, nil
+}
+
+// OccupancyHTTPFixture shares the real service fixture with the external transport test.
+func OccupancyHTTPFixture(t *testing.T) (*Service, *kubefake.Clientset, *int) {
+	service, _, creates := occupancyTestService(t)
+	return service, service.kube.(*kubefake.Clientset), creates
 }

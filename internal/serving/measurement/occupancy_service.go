@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,32 +19,32 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func (o *measurementService) submitOccupancy(
+func (o *Service) SubmitOccupancy(
 	ctx context.Context,
 	task api.DispatchOccupancyMeasurement,
 	dryRun bool,
-) (httpapi.OccupancyMutationResult, error) {
-	if err := o.namespace(task.Namespace); err != nil {
-		return httpapi.OccupancyMutationResult{}, err
+) (OccupancyMutationResult, error) {
+	if err := o.Namespace(task.Namespace); err != nil {
+		return OccupancyMutationResult{}, err
 	}
-	result := httpapi.OccupancyMutationResult{Task: &task, Request: measurementRequestAccepted}
+	result := OccupancyMutationResult{Task: &task, Request: measurementRequestAccepted}
 	if dryRun {
 		// The final validated frozen object is returned without even a native create.
 		result.Request = measurementRequestNotSubmitted
 		return result, nil
 	}
 	if err := o.client.Create(ctx, &task); err != nil {
-		return httpapi.OccupancyMutationResult{}, err
+		return OccupancyMutationResult{}, err
 	}
 	return result, nil
 }
 
-func (o *measurementService) deleteOccupancy(
+func (o *Service) DeleteOccupancy(
 	ctx context.Context,
 	namespace, name, uid, version string,
-) (httpapi.OccupancyMutationResult, error) {
-	result := httpapi.OccupancyMutationResult{}
-	if err := o.namespace(namespace); err != nil {
+) (OccupancyMutationResult, error) {
+	result := OccupancyMutationResult{}
+	if err := o.Namespace(namespace); err != nil {
 		return result, err
 	}
 	if uid == "" || version == "" {
@@ -55,8 +54,8 @@ func (o *measurementService) deleteOccupancy(
 		}
 	}
 	if o.scheduler != nil {
-		o.scheduler.lock.Lock()
-		defer o.scheduler.lock.Unlock()
+		o.scheduler.Lock.Lock()
+		defer o.scheduler.Lock.Unlock()
 	}
 	task := &api.DispatchOccupancyMeasurement{}
 	if err := o.client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, task); err != nil {
@@ -87,7 +86,7 @@ func (o *measurementService) deleteOccupancy(
 				Message: "owned occupancy evidence cleanup failed; native measurement retained",
 			}
 		}
-		result.DeletedEvidence = []httpapi.MeasurementEvidenceLocation{{Store: location.Store, Key: location.Key}}
+		result.DeletedEvidence = []MeasurementEvidenceLocation{{Store: location.Store, Key: location.Key}}
 	}
 	result.EvidenceDeleted = true
 	policy := meta.DeletePropagationBackground
@@ -107,12 +106,12 @@ func (o *measurementService) deleteOccupancy(
 }
 
 // A load Job is named by the producer's hash of this DOM UID, not by Node alone.
-func (o *measurementService) occupancyLoadStopped(ctx context.Context, task *api.DispatchOccupancyMeasurement) error {
+func (o *Service) occupancyLoadStopped(ctx context.Context, task *api.DispatchOccupancyMeasurement) error {
 	sum := sha256.Sum256([]byte(task.UID))
 	name := "occupancy-" + hex.EncodeToString(sum[:10])
-	namespace := o.opts.loadGenerator.Namespace
+	namespace := o.opts.LoadGeneratorNamespace
 	if namespace == "" {
-		namespace = o.opts.servingNamespace
+		namespace = o.opts.ServingNamespace
 	}
 	job, err := o.kube.BatchV1().Jobs(namespace).Get(ctx, name, meta.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -139,11 +138,11 @@ func (o *measurementService) occupancyLoadStopped(ctx context.Context, task *api
 	return nil
 }
 
-func (o *measurementService) occupancyOwnedEvidence(
+func (o *Service) occupancyOwnedEvidence(
 	ctx context.Context,
 	task *api.DispatchOccupancyMeasurement,
 ) (*evidencestore.ObjectLocation, error) {
-	if o.objects == nil || o.opts.storeName == "" || o.opts.maxEvidenceBytes < 1 {
+	if o.objects == nil || o.opts.StoreName == "" || o.opts.MaxEvidenceBytes < 1 {
 		return nil, &serving.Error{
 			Code:    "MeasurementEvidenceUnavailable",
 			Message: "bounded occupancy Evidence Store access is required for deletion",

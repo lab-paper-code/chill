@@ -182,11 +182,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 
 	handlerConfig.ReadCatalog = scheduler.readCatalog
 	handlerConfig.OccupancyObservations = scheduler.occupancyObservations
-	handlerConfig.SubmitMeasurement = measurements.submit
-	handlerConfig.DeleteMeasurement = measurements.delete
-	handlerConfig.BuildOccupancy = measurements.buildOccupancy
-	handlerConfig.SubmitOccupancy = measurements.submitOccupancy
-	handlerConfig.DeleteOccupancy = measurements.deleteOccupancy
+	handlerConfig.SubmitMeasurement = measurements.Submit
+	handlerConfig.DeleteMeasurement = measurements.Delete
+	handlerConfig.BuildOccupancy = measurements.BuildOccupancy
+	handlerConfig.SubmitOccupancy = measurements.SubmitOccupancy
+	handlerConfig.DeleteOccupancy = measurements.DeleteOccupancy
 	handlerConfig.OnMutationAction = publisher.action
 
 	experiments := &experimentService{

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -57,13 +59,13 @@ func TestMeasurementCallerResourceDenialNeverInvokesService(t *testing.T) {
 				serviceCalls := 0
 				handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, config: HandlerConfig{
 					MaxRequestBytes: 1 << 20,
-					SubmitMeasurement: func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error) {
+					SubmitMeasurement: func(context.Context, api.BatchEnergyOptimization, bool) (measurement.MeasurementMutationResult, error) {
 						serviceCalls++
-						return MeasurementMutationResult{}, nil
+						return measurement.MeasurementMutationResult{}, nil
 					},
-					DeleteMeasurement: func(context.Context, string, string, string, string) (MeasurementMutationResult, error) {
+					DeleteMeasurement: func(context.Context, string, string, string, string) (measurement.MeasurementMutationResult, error) {
 						serviceCalls++
-						return MeasurementMutationResult{}, nil
+						return measurement.MeasurementMutationResult{}, nil
 					},
 				}}
 				request := httptest.NewRequest(method, "/api/v1/namespaces/allowed/batch-energy-optimizations", strings.NewReader(`{}`))
@@ -96,12 +98,12 @@ func TestMeasurementInvalidIdentityAndDryRunCannotInvokeService(t *testing.T) {
 			return true, &authorization.SubjectAccessReview{Status: authorization.SubjectAccessReviewStatus{Allowed: true}}, nil
 		})
 		calls := 0
-		h := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, config: HandlerConfig{MaxRequestBytes: 1 << 20, SubmitMeasurement: func(context.Context, api.BatchEnergyOptimization, bool) (MeasurementMutationResult, error) {
+		h := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, config: HandlerConfig{MaxRequestBytes: 1 << 20, SubmitMeasurement: func(context.Context, api.BatchEnergyOptimization, bool) (measurement.MeasurementMutationResult, error) {
 			calls++
-			return MeasurementMutationResult{}, nil
-		}, DeleteMeasurement: func(context.Context, string, string, string, string) (MeasurementMutationResult, error) {
+			return measurement.MeasurementMutationResult{}, nil
+		}, DeleteMeasurement: func(context.Context, string, string, string, string) (measurement.MeasurementMutationResult, error) {
 			calls++
-			return MeasurementMutationResult{}, nil
+			return measurement.MeasurementMutationResult{}, nil
 		}}}
 		r := httptest.NewRequest(tc.method, "/api/v1/namespaces/allowed/batch-energy-optimizations"+tc.query, strings.NewReader(tc.body))
 		r.Header.Set("Authorization", "Bearer caller-token")
@@ -169,26 +171,26 @@ func TestMeasurementObservationLogPreservesReviewedActorAndActualMutationPhase(t
 			}
 			h.config.SubmitMeasurement = func(
 				_ context.Context, task api.BatchEnergyOptimization, _ bool,
-			) (MeasurementMutationResult, error) {
+			) (measurement.MeasurementMutationResult, error) {
 				assertStarted()
 				if tc.failure != "" {
-					return MeasurementMutationResult{}, &serving.Error{Code: tc.failure, Message: "actual unresolved input"}
+					return measurement.MeasurementMutationResult{}, &serving.Error{Code: tc.failure, Message: "actual unresolved input"}
 				}
 				task.UID = "native-created"
 				task.ResourceVersion = "8"
-				return MeasurementMutationResult{Request: tc.phase, Task: &task}, nil
+				return measurement.MeasurementMutationResult{Request: tc.phase, Task: &task}, nil
 			}
 			h.config.DeleteMeasurement = func(
 				context.Context, string, string, string, string,
-			) (MeasurementMutationResult, error) {
+			) (measurement.MeasurementMutationResult, error) {
 				assertStarted()
 				task := &api.BatchEnergyOptimization{}
 				task.Namespace = measurementTestNamespace
 				task.Name = measurementTestName
 				task.UID = "native-existing"
 				task.ResourceVersion = "7"
-				result := MeasurementMutationResult{
-					Task: task, DeletedEvidence: []MeasurementEvidenceLocation{{Store: "evidence", Key: "private/raw"}},
+				result := measurement.MeasurementMutationResult{
+					Task: task, DeletedEvidence: []measurement.MeasurementEvidenceLocation{{Store: "evidence", Key: "private/raw"}},
 				}
 				return result, &serving.Error{Code: tc.failure, Message: "some owned evidence removed; native retained"}
 			}

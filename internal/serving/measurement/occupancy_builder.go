@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,37 +26,37 @@ func occupancyPolicyUnavailable(reason string) error {
 	return &serving.Error{Code: "OccupancyPolicyUnavailable", Message: reason}
 }
 
-// buildOccupancy reads one fresh configuration and the scheduler's accepted profile
+// BuildOccupancy reads one fresh configuration and the scheduler's accepted profile
 // under its mutation lock. A broken/missing policy never reuses an earlier policy.
-func (o *measurementService) buildOccupancy(
+func (o *Service) BuildOccupancy(
 	ctx context.Context,
 	namespace string,
-	intent httpapi.OccupancyIntent,
+	intent OccupancyIntent,
 ) (*api.DispatchOccupancyMeasurement, error) {
-	if err := o.namespace(namespace); err != nil {
+	if err := o.Namespace(namespace); err != nil {
 		return nil, err
 	}
 	if o.scheduler == nil {
 		return nil, occupancyPolicyUnavailable("scheduler configuration is unavailable")
 	}
 	s := o.scheduler
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.Lock.Lock()
+	defer s.Lock.Unlock()
 	cm, err := o.kube.CoreV1().
-		ConfigMaps(o.opts.servingNamespace).
-		Get(ctx, o.opts.schedulerConfigMap, meta.GetOptions{})
+		ConfigMaps(o.opts.ServingNamespace).
+		Get(ctx, o.opts.SchedulerConfigMap, meta.GetOptions{})
 	if err != nil {
 		return nil, occupancyPolicyUnavailable("scheduler ConfigMap is unavailable")
 	}
-	config, err := decodeSchedulerConfiguration(cm.Data[o.opts.schedulerConfigKey], o.opts.maxRequestBytes)
+	policy, err := s.DecodePolicy(cm.Data[o.opts.SchedulerConfigKey], o.opts.MaxRequestBytes)
 	if err != nil {
 		return nil, occupancyPolicyUnavailable(err.Error())
 	}
-	if config.DispatchOccupancy == nil {
+	if policy == nil {
 		return nil, occupancyPolicyUnavailable("dispatchOccupancy block is required")
 	}
-	published := s.profiles.Load()
-	if published == nil || published.ConfigVersion != cm.ResourceVersion {
+	configVersion, profiles, preparations, published := s.LoadProfiles()
+	if !published || configVersion != cm.ResourceVersion {
 		return nil, occupancyPolicyUnavailable("scheduler has not accepted this configuration revision")
 	}
 	beo := &api.BatchEnergyOptimization{}
@@ -70,14 +69,14 @@ func (o *measurementService) buildOccupancy(
 		return nil, occupancyInfeasible("BEO must be Complete on the selected Node")
 	}
 	id := namespace + "/" + beo.Name + "/" + string(beo.UID)
-	index := slices.IndexFunc(published.Profiles, func(p serving.Profile) bool {
+	index := slices.IndexFunc(profiles, func(p serving.Profile) bool {
 		return p.ID == id || p.Reuse != nil && p.Reuse.Outcome == "Accepted" && p.Reuse.ConfirmationProfileID == id
 	})
 	if index < 0 {
 		return nil, occupancyInfeasible("BEO has no current accepted profile")
 	}
-	profile := &published.Profiles[index]
-	preparation, ok := published.Preparations[profile.ID]
+	profile := &profiles[index]
+	preparation, ok := preparations[profile.ID]
 	if !ok {
 		return nil, occupancyInfeasible("selected profile has no accepted native preparation")
 	}
@@ -96,19 +95,19 @@ func (o *measurementService) buildOccupancy(
 	return deriveOccupancy(
 		namespace,
 		intent,
-		*config.DispatchOccupancy,
+		*policy,
 		cm,
-		o.opts.schedulerConfigKey,
+		o.opts.SchedulerConfigKey,
 		profile,
 		node,
 		workload,
 		preprocessor,
 		preparation,
-		s.gatewayRequestTimeout,
+		s.GatewayRequestTimeout,
 	)
 }
 
-func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy dispatchOccupancyPolicy,
+func deriveOccupancy(namespace string, intent OccupancyIntent, policy DispatchOccupancyPolicy,
 	cm *core.ConfigMap, key string, profile *serving.Profile, node *core.Node, workload *api.Workload,
 	preprocessor *api.Preprocessor, preparation servingkube.PrepareSpec, gatewayTimeout time.Duration,
 ) (*api.DispatchOccupancyMeasurement, error) {
@@ -255,7 +254,7 @@ func deriveOccupancy(namespace string, intent httpapi.OccupancyIntent, policy di
 }
 
 // occupancyTargetInputs validates current native identities and the request byte bound.
-func occupancyTargetInputs(intent httpapi.OccupancyIntent, policy dispatchOccupancyPolicy,
+func occupancyTargetInputs(intent OccupancyIntent, policy DispatchOccupancyPolicy,
 	profile *serving.Profile, node *core.Node, workload *api.Workload,
 	preprocessor *api.Preprocessor, gatewayTimeout time.Duration,
 ) (int64, error) {

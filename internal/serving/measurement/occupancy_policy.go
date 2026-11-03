@@ -1,4 +1,4 @@
-package main
+package measurement
 
 import (
 	"bytes"
@@ -7,9 +7,9 @@ import (
 	"math"
 )
 
-// dispatchOccupancyPolicy is selected explicitly from the scheduler ConfigMap.
+// DispatchOccupancyPolicy is selected explicitly from the scheduler ConfigMap.
 // MinimumPairs is a sampling floor, not a claim of achieved precision.
-type dispatchOccupancyPolicy struct {
+type DispatchOccupancyPolicy struct {
 	AggregationWindowSeconds int32   `json:"aggregationWindowSeconds"`
 	RefreshIntervalSeconds   int32   `json:"refreshIntervalSeconds"`
 	ScanTimeoutSeconds       int32   `json:"scanTimeoutSeconds"`
@@ -28,8 +28,8 @@ type dispatchOccupancyPolicy struct {
 }
 
 // Preserve omission separately from zero for inputs that permit zero.
-func (p *dispatchOccupancyPolicy) UnmarshalJSON(raw []byte) error {
-	type policy dispatchOccupancyPolicy
+func (p *DispatchOccupancyPolicy) UnmarshalJSON(raw []byte) error {
+	type policy DispatchOccupancyPolicy
 	var wire struct {
 		policy
 		WarmupSeconds     *int32  `json:"warmupSeconds"`
@@ -47,13 +47,13 @@ func (p *dispatchOccupancyPolicy) UnmarshalJSON(raw []byte) error {
 		return errors.New("dispatchOccupancy requires explicit warmup, job setup, collection and seed values; " +
 			"zero is allowed")
 	}
-	*p = dispatchOccupancyPolicy(wire.policy)
+	*p = DispatchOccupancyPolicy(wire.policy)
 	p.WarmupSeconds = *wire.WarmupSeconds
 	p.JobSetupSeconds, p.CollectionSeconds, p.Seed = *wire.JobSetupSeconds, *wire.CollectionSeconds, *wire.Seed
 	return nil
 }
 
-func (p dispatchOccupancyPolicy) validate() error {
+func (p DispatchOccupancyPolicy) Validate() error {
 	if p.AggregationWindowSeconds < 1 ||
 		p.RefreshIntervalSeconds < 1 || p.ScanTimeoutSeconds < 1 ||
 		2*int64(p.ScanTimeoutSeconds) > int64(p.RefreshIntervalSeconds) || p.MaximumRequests < 1 {

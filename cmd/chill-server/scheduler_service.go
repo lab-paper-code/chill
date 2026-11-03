@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/serving/measurement"
+
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/metricobserver/edgemetrics"
@@ -40,10 +42,10 @@ type schedulerConfiguration struct {
 	Settings serving.SchedulerSettings              `json:"settings"`
 	Reserved map[string]serving.SchedulerAllocation `json:"reserved"`
 	// Meters are derived from the Profiler metric sources, never configured.
-	Meters            []servingkube.MeterDeclaration `json:"-"`
-	PowerObservation  *powerObservationConfig        `json:"powerObservation,omitempty"`
-	DispatchOccupancy *dispatchOccupancyPolicy       `json:"dispatchOccupancy,omitempty"`
-	StaticRouting     map[string]map[string]int      `json:"staticRouting,omitempty"`
+	Meters            []servingkube.MeterDeclaration       `json:"-"`
+	PowerObservation  *powerObservationConfig              `json:"powerObservation,omitempty"`
+	DispatchOccupancy *measurement.DispatchOccupancyPolicy `json:"dispatchOccupancy,omitempty"`
+	StaticRouting     map[string]map[string]int            `json:"staticRouting,omitempty"`
 	// StaticRoutingValidatedAt names the settings change that wrote StaticRouting.
 	StaticRoutingValidatedAt *time.Time `json:"staticRoutingValidatedAt,omitempty"`
 }
@@ -145,7 +147,7 @@ func decodeSchedulerConfiguration(raw string, maxBytes int64) (schedulerConfigur
 		return config, err
 	}
 	if config.DispatchOccupancy != nil {
-		if err := config.DispatchOccupancy.validate(); err != nil {
+		if err := config.DispatchOccupancy.Validate(); err != nil {
 			return config, err
 		}
 	}
