@@ -800,11 +800,13 @@ class EvaluationTests(unittest.TestCase):
             config['traceOffsets'] = {NAME: [1]}
             if mode == 'slow-reducer':
                 config['traceOffsets'][NAME] = [1] * 134156
+            if mode == 'late-watchdog-rows':
+                config['traceOffsets'][NAME] = [1, 2, 3]
             config['traceVolume'] = {'claimName': 'workspace', 'mountPath': str(root)}
             config['timeboxes'] = dict.fromkeys(config['timeboxes'], 5)
             config['timeboxes']['flushSeconds'] = .001
             config['timeboxes']['drainSeconds'] = .01
-            if mode == 'watchdog':
+            if mode in ('watchdog', 'late-reader-error', 'late-watchdog-rows', 'late-watchdog-drained'):
                 config['timeboxes'].update(drainSeconds=.01, collectSeconds=.01)
             path = root / 'config.json'
             evidence_io.save(path, config)
@@ -823,7 +825,7 @@ class EvaluationTests(unittest.TestCase):
                      'offered': len(config['traceOffsets'][NAME]), 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
                      'datasetRef': {'name': 'different-provenance', 'uid': 'different'}, 'sourceSHA': 'different-revision'}
-            tail = ('import time;time.sleep(60)\n' if mode in ('watchdog', 'failed-job') else
+            tail = ('import time;time.sleep(60)\n' if mode in ('watchdog', 'failed-job', 'late-reader-error') else
                     'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained"}),flush=True)\n')
             if mode == 'hot-log':
                 tail = 'sys.stdout.write(\'{"diagnostic":1}\\n\'*50000);sys.stdout.flush()\n' + tail
@@ -832,6 +834,12 @@ class EvaluationTests(unittest.TestCase):
                         ' print(json.dumps({"requestIndex":index,"scheduledOffsetNs":1,"finishedMonotonicNS":2,"padding":"x"*540}),flush=True)\n'
                         'print(json.dumps({"evaluationEvent":"drained"}),flush=True)\n'
                         'from pathlib import Path\nPath(' + repr(str(root / 'producer-finished')) + ').touch()\n')
+            if mode in ('late-watchdog-rows', 'late-watchdog-drained'):
+                tail = ('sys.stdin.readline()\n'
+                        'print(json.dumps({"requestIndex":0,"scheduledOffsetNs":1,"finishedMonotonicNS":2}),flush=True)\n'
+                        + ('print(json.dumps({"evaluationEvent":"drained"}),flush=True)\n' if mode == 'late-watchdog-drained' else '')
+                        + 'from pathlib import Path\nPath(' + repr(str(root / 'tail-emitted')) + ').touch()\n'
+                        'import time;time.sleep(60)\n')
             script = ('import sys,json\nprint(' + repr(json.dumps(ready)) + ',flush=True)\nsys.stdin.readline()\n'
                       'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n' + tail)
             pod = {'metadata': {'name': 'producer', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]},
@@ -865,6 +873,15 @@ class EvaluationTests(unittest.TestCase):
                     return {}
                 raise AssertionError(args)
             controller.io = SimpleNamespace(k=k, delete_job=lambda *args: None)
+            if mode in ('late-watchdog-rows', 'late-watchdog-drained'):
+                def cleanup_after_last_read():
+                    process[0].stdin.write(b'tail\n')
+                    process[0].stdin.flush()
+                    deadline = time.monotonic() + 5
+                    while not (root / 'tail-emitted').exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue((root / 'tail-emitted').exists())
+                controller._cleanup_jobs = cleanup_after_last_read
             def missing_samples(*args):
                 raise RuntimeError('diagnostic counters unavailable')
             telemetry = SimpleNamespace(poll=missing_samples)
@@ -888,22 +905,32 @@ class EvaluationTests(unittest.TestCase):
                 captured = (root / 'measured' / (NAME + '-client.jsonl')).read_bytes()
                 self.assertGreater(len(captured), 80_000_000)
                 self.assertTrue(captured.endswith(b'{"evaluationEvent": "drained"}\n'))
+            original_capture = conductor.ProducerLog.capture
+            def fail_after_stream_ends(capture, source):
+                original_capture(capture, source)
+                capture.error = OSError('late reader failure')
             with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(evidence_io, 'module', side_effect=modules), patch.object(conductor.time, 'monotonic', side_effect=(lambda: 100) if mode == 'hot-log' else clock):
                 slow = patch.object(conductor.ProvisionalD1, 'poll', side_effect=slow_reducer) if mode == 'slow-reducer' else patch.object(conductor.ProvisionalD1, 'poll', return_value=None)
                 with slow:
-                    return self.finish_stage_policy(controller, mode, process, root, go, jobs, job_polls)
+                    late = patch.object(conductor.ProducerLog, 'capture', new=fail_after_stream_ends) if mode == 'late-reader-error' else patch.object(controller, 'monitor', controller.monitor)
+                    with late:
+                        return self.finish_stage_policy(controller, mode, process, root, go, jobs, job_polls)
 
     def finish_stage_policy(self, controller, mode, process, root, go, jobs, job_polls):
-        if mode == 'failed-job':
+        if mode in ('failed-job', 'late-reader-error'):
             try:
-                with self.assertRaisesRegex(RuntimeError, 'ProducerFailed: load-'):
+                message = 'ProducerFailed: load-' if mode == 'failed-job' else 'ProducerCaptureFailed:.*late reader failure'
+                with self.assertRaisesRegex(RuntimeError, message):
                     controller.run()
             finally:
                 if process[0]:
                     process[0].stdin.close()
             phase = evidence_io.load(root / 'measured/phase.json')
             self.assertEqual(phase['status'], 'STOP')
-            self.assertIn(jobs[0]['metadata']['name'], phase['error'])
+            if mode == 'failed-job':
+                self.assertIn(jobs[0]['metadata']['name'], phase['error'])
+            else:
+                self.assertIn('late reader failure', str(phase['captureErrors']))
             self.assertTrue(go, 'failure must be observed after GO')
             return
         controller.run()
@@ -918,6 +945,13 @@ class EvaluationTests(unittest.TestCase):
             self.assertLessEqual(len(job_polls), 2, 'hot log reads must not bypass the configured producer polling interval')
         if mode == 'slow-reducer':
             self.assertEqual(phase['producerCapture'][NAME], {'plannedRequests': 134156, 'receivedRequestRows': 134156, 'drained': True, 'collectionLoss': 0})
+        if mode in ('late-watchdog-rows', 'late-watchdog-drained'):
+            capture = phase['producerCapture'][NAME]
+            self.assertEqual(capture['receivedRequestRows'], 1)
+            self.assertEqual(capture['drained'], mode == 'late-watchdog-drained')
+            self.assertEqual(capture['collectionLoss'], 2 if mode == 'late-watchdog-rows' else 0)
+            disk = [json.loads(line) for line in (root / 'measured' / (NAME + '-client.jsonl')).read_bytes().splitlines()]
+            self.assertEqual(sum('scheduledOffsetNs' in row for row in disk), capture['receivedRequestRows'])
 
     def test_missing_cpu_samples_and_provenance_labels_do_not_gate_go_or_drain(self):
         self.exercise_stage_policy('normal')
@@ -936,6 +970,14 @@ class EvaluationTests(unittest.TestCase):
 
     def test_slow_reducer_keeps_80mb_producer_evidence_and_drained(self):
         self.exercise_stage_policy('slow-reducer')
+
+    def test_late_capture_failure_during_watchdog_shutdown_is_recorded(self):
+        self.exercise_stage_policy('late-reader-error')
+
+    def test_watchdog_phase_counts_include_disk_tail_after_last_poll(self):
+        for mode in ('late-watchdog-rows', 'late-watchdog-drained'):
+            with self.subTest(mode=mode):
+                self.exercise_stage_policy(mode)
 
     def test_cleanup_never_deletes_harness_or_unknown_job_uid(self):
         with tempfile.TemporaryDirectory() as directory:

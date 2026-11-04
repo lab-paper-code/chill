@@ -207,6 +207,9 @@ client 행이 적으면 그 차이를 `collectionLoss`로 분리한다. drained�
 최종·잠정 공용 request reducer와 게시 `kpis.requests[workload]`도 같은 이름을 사용한다.
 수집 손실은 `unfinishedOrUnsent`나 성공으로 세지 않으며 frozen 분모·D1 판정식은
 바꾸지 않는다. CHILL 관측으로 없어진 client 행을 보정하거나 재구성하지 않는다.
+phase 확정 전에는 수집 writer를 종료·join하고 남은 디스크 행을 같은 parser로 읽어
+행 수·drained·collectionLoss를 확정한다. join 이후 reader 오류도 capture 실패로 기록한다.
+남은 공백: follow 연결 끊김의 재연결·`--since-time`·dedup은 구현하지 않으며, 발생 시 누락 행은 collectionLoss로 드러낸다.
 
 ### 5.1 하네스 Job 계약
 

@@ -53,6 +53,21 @@ class RotatingFollow(io.RawIOBase):
 
 
 class ProducerCaptureTests(unittest.TestCase):
+    def test_late_error_is_not_eof_and_close_reports_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = ProducerLog(io.BytesIO(b''), Path(directory) / 'client.jsonl')
+            self.assertTrue(capture.done.wait(5))
+            self.assertEqual(list(capture.lines()), [])
+            capture.error = OSError('late reader failure')
+            try:
+                with self.subTest(boundary='eof'):
+                    self.assertFalse(capture.eof())
+                with self.subTest(boundary='close'):
+                    with self.assertRaisesRegex(RuntimeError, 'ProducerCaptureFailed:.*late reader failure'):
+                        capture.close()
+            finally:
+                capture.reader.close()
+
     def test_80mb_rotation_during_slow_reducer(self):
         planned = 134156
         data = b''.join((json.dumps({'requestIndex': index, 'scheduledOffsetNs': index,
