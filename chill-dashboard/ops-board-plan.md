@@ -59,5 +59,5 @@
 - `drainEnded.producerRowsMissing`는 서비스별 생성기 결과 행 부족 수(진행 중 요청 수 아님), `collectEnded.bytes`는 저장된 원시 자료 크기다. 0과 비영 수 모두 중립적인 사실로 표시한다.
 - `lastProgressAt`·`provisionalD1.asOf`·자식/부모 절차 시각 중 최신값의 경과만 표시한다. flush·수집 중 주기 신호가 없을 수 있으며 정체 임계값은 없다.
 - 구간 기록이 있으면 GO 기반 남은 시간·계획 진행률·계획상 part 강조를 생략한다. 빈 progress는 경계 미기록, 필드가 없는 구 서버만 기존 계획 fallback이다. 계획 정의 표와 큰 절차의 권위는 유지한다.
-- 부하 Job은 단계별 이름·진행 중/완료/실패·시작·완료·실패 사유를 표로 읽는다. 누락 필드는 미기록, loadJobs 미제공은 표 생략, 빈 배열은 부하 Job 없음이다.
+- 부하 Job은 단계별 이름·진행 중/완료/실패·시작·완료·사유(성공·실패 모두)를 표로 읽는다. 누락 필드는 미기록, loadJobs 미제공은 표 생략, 빈 배열은 부하 Job 없음이다.
 - `evaluation-run-ui.test.ts`의 실제 `EvaluationRunPage`→`EvaluationActiveDetails` 통합 렌더로 아홉 경계·빠진 경계·시계 역전·구 서버·Job 실패를 확인한다. 표 기반 회귀는 전수 곱 대신 서버가 저장하는 대표 전이와 가드 반례 13개만 검사한다(부모 prepare/빈 값·미제공/finish/publish, 자식 stage/judge/cleanup, 절차 결과·실패 저장 직후, 단계 종료, 조회 스냅샷의 이전 단계). step당 절차 레코드는 하나를 재사용하므로 중복 레코드·stage 절차에 judge 경계 같은 불가능 조합은 만들지 않는다(`controller/runtime.go:93-108`, `stage.go:123-196`, `jobs.go:292-295`, `run.go:149-164,184,225,398-401`). 생성기 지연 판정·D1·절차 실행/게시 계약은 바꾸지 않는다.

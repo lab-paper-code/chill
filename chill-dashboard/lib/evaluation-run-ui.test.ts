@@ -413,7 +413,7 @@ test("last progress uses the newest independent server signal and never classifi
 test("run detail reads load Jobs including failure reasons, distinguishes empty and omitted projections",()=>{
   const jobs=[
     {name:"generator-active",uid:"job-active",status:"Active",startedAt:"2026-11-03T00:00:00Z"},
-    {name:"generator-done",uid:"job-done",status:"Succeeded",startedAt:"2026-11-03T00:00:05Z",completedAt:"2026-11-03T00:01:30Z"},
+    {name:"generator-done",uid:"job-done",status:"Succeeded",startedAt:"2026-11-03T00:00:05Z",completedAt:"2026-11-03T00:01:30Z",reason:"CompletionsReached"},
     {name:"generator-failed",uid:"job-failed",status:"Failed",startedAt:"2026-11-03T00:00:10Z",reason:"BackoffLimitExceeded"},
   ]
   for(const run of [
@@ -421,9 +421,10 @@ test("run detail reads load Jobs including failure reasons, distinguishes empty 
     {...baseRun,stages:[{id:"trial",loadJobs:jobs}]},
   ]) {
     const html=renderRun(run),table=html.match(/<table\b[^>]*aria-label="부하 Job"[\s\S]*?<\/table>/)?.[0]??"",screen=text(table)
-    assert.match(screen,/이름.*상태.*시작.*완료.*실패 사유/)
+    assert.match(screen,/이름.*상태.*시작.*완료.*사유/)
+    assert.doesNotMatch(screen,/실패 사유/,"reason applies to both successful and failed Jobs")
     assert.match(screen,/generator-active.*진행 중.*9:00:00.*미기록/)
-    assert.match(screen,/generator-done.*완료.*9:00:05.*9:01:30/)
+    assert.match(screen,/generator-done.*완료.*9:00:05.*9:01:30.*CompletionsReached/)
     assert.match(screen,/generator-failed.*실패.*9:00:10.*미기록.*BackoffLimitExceeded/)
     assert.doesNotMatch(screen,/workload|shard|undefined/)
   }
