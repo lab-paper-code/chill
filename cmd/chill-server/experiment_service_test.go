@@ -642,3 +642,146 @@ func TestExperimentSettingsPatchKeysUseRecordedInheritance(t *testing.T) {
 		})
 	}
 }
+
+// Defect 18b: one summary published under another store identity must not hide the others.
+func TestUnreadableSummaryIsReportedNotFatal(t *testing.T) {
+	evaluations, request := evaluationFixture(t, nil)
+	from := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	readable := experimentFixture("readable", from)
+	definition, err := json.Marshal(struct {
+		Spec any `json:"spec"`
+	}{request.Spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readable.Definition = definition
+	store := &experimentMemoryStore{}
+	store.add(t, readable)
+	store.add(t, experimentFixture("stranded", from.Add(time.Hour)))
+	store.objects[1].Store = "chill-evidence-store"
+	experiments := &experimentService{reader: store, lister: store, store: "evidence", maxBytes: 1 << 20}
+
+	list, err := experiments.list(context.Background())
+	if err != nil {
+		t.Fatalf("one unreadable summary failed the whole list: %v", err)
+	}
+	if len(list.Items) != 1 || list.Items[0].ID != "readable" ||
+		len(list.Unreadable) != 1 || list.Unreadable[0].ID != "stranded" || list.Unreadable[0].Reason == "" {
+		t.Fatalf("readable summary hidden or unreadable one not reported: %+v", list)
+	}
+	var config httpapi.HandlerConfig
+	configureEvaluationTemplate(&config, evaluations, "evidence", experiments)
+	template, err := config.GetEvaluationTemplate(context.Background())
+	if err != nil || template.SourcePublication == nil || template.SourcePublication.UID != "readable" {
+		t.Fatalf("template must use the newest readable publication: %+v err=%v", template.SourcePublication, err)
+	}
+
+	none := &experimentMemoryStore{}
+	empty := &experimentService{reader: none, lister: none, store: "evidence", maxBytes: 1 << 20}
+	if raw, _ := json.Marshal(mustList(t, empty)); !strings.Contains(string(raw), `"unreadable":[]`) {
+		t.Fatalf("unreadable must always be an array: %s", raw)
+	}
+}
+
+// A store failure while reading or closing a summary is not a content defect: the list fails.
+func TestSummaryStoreFailuresStayFatal(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   func(string) io.Reader
+		close  error
+		broken bool
+	}{
+		{name: "read failure mid-decode", body: func(body string) io.Reader {
+			return io.MultiReader(strings.NewReader(body[:len(body)/2]), errorReader{evidencestore.ErrTransport})
+		}},
+		{name: "malformed content with close failure", close: evidencestore.ErrTransport, broken: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &experimentMemoryStore{closeErr: tc.close}
+			key := store.add(t, experimentFixture("run", time.Now().UTC()))
+			if tc.broken {
+				store.bodies[key] = "{not json"
+				store.objects[0].Size = int64(len(store.bodies[key]))
+			}
+			reader := experimentReader{store: store, wrap: tc.body}
+			service := &experimentService{reader: reader, lister: store, store: "evidence", maxBytes: 1 << 20}
+			if _, err := service.list(context.Background()); !errors.Is(err, evidencestore.ErrTransport) {
+				t.Fatalf("store failure must fail the list, got %v", err)
+			}
+		})
+	}
+}
+
+// The last read of an over-limit body fails (transport) or the request is cancelled:
+// the byte-limit verdict must not hide that store failure as an unreadable summary.
+func TestSummaryByteLimitKeepsStreamFailuresFatal(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "transport", true: "cancel"}[cancelled], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			store := &experimentMemoryStore{}
+			store.add(t, experimentFixture("run", time.Now().UTC()))
+			want, failure, onLast := evidencestore.ErrTransport, evidencestore.ErrTransport, context.CancelFunc(nil)
+			if cancelled {
+				want, failure, onLast = context.Canceled, nil, cancel
+			}
+			reader := experimentReader{store: store, wrap: func(body string) io.Reader {
+				return &lastReadFails{data: []byte(body + " "), err: failure, onLast: onLast}
+			}}
+			service := &experimentService{reader: reader, lister: store, store: "evidence", maxBytes: store.objects[0].Size}
+			if list, err := service.list(ctx); !errors.Is(err, want) {
+				t.Fatalf("store failure became an unreadable summary: err=%v unreadable=%+v", err, list.Unreadable)
+			}
+		})
+	}
+}
+
+// lastReadFails returns the final bytes together with err (and runs onLast), like a stream
+// that breaks on its last chunk.
+type lastReadFails struct {
+	data   []byte
+	err    error
+	onLast context.CancelFunc
+}
+
+func (r *lastReadFails) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	if len(r.data) != 0 {
+		return n, nil
+	}
+	if r.onLast != nil {
+		r.onLast()
+	}
+	return n, r.err
+}
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
+
+// experimentReader optionally replaces a stored body stream to inject read failures.
+type experimentReader struct {
+	store *experimentMemoryStore
+	wrap  func(string) io.Reader
+}
+
+func (r experimentReader) Open(ctx context.Context, object evidencestore.ObjectIdentity) (io.ReadCloser, error) {
+	body, err := r.store.Open(ctx, object)
+	if err != nil || r.wrap == nil {
+		return body, err
+	}
+	return experimentReadCloser{Reader: r.wrap(r.store.bodies[object.Key]), closeErr: r.store.closeErr}, nil
+}
+
+func mustList(t *testing.T, service *experimentService) httpapi.ExperimentList {
+	t.Helper()
+	list, err := service.list(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list
+}

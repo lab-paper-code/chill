@@ -98,10 +98,15 @@ func experimentSettingsPatchKeys(raw json.RawMessage) []string {
 	return keys
 }
 
+// errUnreadableSummary marks a stored summary whose own content or identity is unusable,
+// as opposed to a store, transport or cancellation failure while reading it.
+var errUnreadableSummary = errors.New("unreadable experiment summary")
+
 // listSummaries keeps definitions for request-local consumers such as templates.
 // Each call lists and reads the store afresh; there is no cross-request cache.
+// One unreadable summary is reported and skipped; store failures still fail the list.
 func (s *experimentService) listSummaries(ctx context.Context) (httpapi.ExperimentList, error) {
-	result := httpapi.ExperimentList{Items: []httpapi.ExperimentSummary{}}
+	result := httpapi.ExperimentList{Items: []httpapi.ExperimentSummary{}, Unreadable: []httpapi.ExperimentUnreadable{}}
 	objects, err := s.lister.List(ctx, httpapi.ExperimentPrefix)
 	if err != nil {
 		return result, err
@@ -112,6 +117,11 @@ func (s *experimentService) listSummaries(ctx context.Context) (httpapi.Experime
 			continue
 		}
 		summary, err := s.read(ctx, object, id)
+		var closeErr closeFailure
+		if errors.Is(err, errUnreadableSummary) && !errors.As(err, &closeErr) {
+			result.Unreadable = append(result.Unreadable, httpapi.ExperimentUnreadable{ID: id, Reason: err.Error()})
+			continue
+		}
 		if err != nil {
 			return result, err
 		}
@@ -171,31 +181,68 @@ func (s *experimentService) read(
 		return summary, err
 	}
 	if object.Store != s.store || object.Validate() != nil || s.maxBytes <= 0 || object.Size > s.maxBytes {
-		return summary, errors.New("invalid experiment summary object identity or size")
+		return summary, fmt.Errorf("%w: invalid experiment summary object identity or size", errUnreadableSummary)
 	}
 	body, err := s.reader.Open(ctx, object)
 	if err != nil {
 		return summary, err
 	}
-	defer func() { err = errors.Join(err, body.Close()) }()
-	limited := &io.LimitedReader{R: body, N: s.maxBytes + 1}
+	defer func() {
+		if closeErr := body.Close(); closeErr != nil {
+			err = errors.Join(err, closeFailure{closeErr})
+		}
+	}()
+	stream := &streamErrors{Reader: body}
+	limited := &io.LimitedReader{R: stream, N: s.maxBytes + 1}
 	decoder := json.NewDecoder(limited)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&summary); err != nil {
-		return summary, fmt.Errorf("decode experiment summary: %w", err)
+		return summary, contentDefect(stream, ctx, fmt.Errorf("decode experiment summary: %w", err))
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return summary, errors.New("experiment summary must contain one bounded JSON object")
+		return summary, contentDefect(stream, ctx,
+			fmt.Errorf("experiment summary must contain one bounded JSON object: %v", err))
 	}
 	if limited.N == 0 {
-		return summary, errors.New("experiment summary exceeds configured byte limit")
+		return summary, contentDefect(stream, ctx, errors.New("experiment summary exceeds configured byte limit"))
 	}
 	if err := ctx.Err(); err != nil {
 		return summary, err
 	}
 	if err := httpapi.ValidateExperimentSummary(summary, s.store, id); err != nil {
-		return summary, err
+		return summary, fmt.Errorf("%w: %w", errUnreadableSummary, err)
 	}
 	return summary, nil
+}
+
+// closeFailure keeps a store-side Close error fatal even when the content was also defective.
+type closeFailure struct{ error }
+
+func (c closeFailure) Unwrap() error { return c.error }
+
+// streamErrors records the body's own read failures (transport, timeout, cancellation).
+type streamErrors struct {
+	io.Reader
+	err error
+}
+
+func (s *streamErrors) Read(p []byte) (int, error) {
+	n, err := s.Reader.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.err = err
+	}
+	return n, err
+}
+
+// contentDefect marks a decode failure as unreadable content only when the stream itself
+// did not fail and the request is still live; otherwise the stream error stays fatal.
+func contentDefect(stream *streamErrors, ctx context.Context, err error) error {
+	if stream.err != nil {
+		return stream.err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return fmt.Errorf("%w: %w", errUnreadableSummary, err)
 }

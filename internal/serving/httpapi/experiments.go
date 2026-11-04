@@ -76,7 +76,15 @@ type ExperimentSource struct {
 
 type ExperimentList struct {
 	Items []ExperimentSummary `json:"items"`
-	Page  *ProfilePage        `json:"page,omitempty"`
+	// Unreadable names published summaries this server could not read; always an array.
+	Unreadable []ExperimentUnreadable `json:"unreadable"`
+	Page       *ProfilePage           `json:"page,omitempty"`
+}
+
+// ExperimentUnreadable reports one skipped summary; the object itself is not rewritten.
+type ExperimentUnreadable struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 // pageExperiments preserves whole-list callers unless paging is explicit.
