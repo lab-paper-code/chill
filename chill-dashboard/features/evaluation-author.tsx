@@ -16,6 +16,7 @@ import { parseSchedulerJSON } from "@/lib/scheduler"
 import { decodeExperimentPage, type ExperimentPage } from "@/lib/experiments"
 import { AuthorSelect, AuthorField, AuthorJSON, AuthorHelp, useUnsavedAuthor } from "@/components/evaluation-author-fields"
 import { SettingsPatchEditor } from "@/features/settings-patch-editor"
+import { UnreadableExperiments } from "@/components/unreadable-experiments"
 
 
 export function HistoricalComparison({spec,path,onChange}:{spec:Spec;path:(string|number)[];onChange:(spec:Spec)=>void}) {
@@ -27,6 +28,7 @@ export function HistoricalComparison({spec,path,onChange}:{spec:Spec;path:(strin
   return <div className="grid min-w-0 gap-2">
     <AuthorSelect label="과거 게시" value={publicationID} onChange={value=>onChange(patchSpec(spec,path,{...ref,publicationID:value,stageID:""}))}><option value="">미선택</option>{publicationID&&!page.data?.items.some(item=>item.id===publicationID)&&<option value={publicationID}>{publicationID} · 저장된 참조</option>}{page.data?.items.map(item=><option key={item.id} value={item.id}>{item.id}</option>)}</AuthorSelect>
     <nav aria-label="과거 게시 페이지" className="flex gap-2"><Button type="button" variant="outline" disabled={offsets.length===1||page.isFetching} onClick={()=>setOffsets(offsets.slice(0,-1))}>이전</Button><Button type="button" variant="outline" disabled={next===undefined||page.isFetching} onClick={()=>{if(next!==undefined)setOffsets([...offsets,next])}}>다음</Button></nav>
+    <UnreadableExperiments unreadable={page.data?.unreadable}/>
     <QueryGate query={page}>{null}</QueryGate>
     {publicationID&&<>{selected.error?.status===404?<span role="status">대상 게시 없음</span>:<QueryGate query={selected}>{null}</QueryGate>}<AuthorSelect label="과거 단계" value={stageID} onChange={value=>onChange(patchSpec(spec,[...path,"stageID"],value))}><option value="">미선택</option>{stageID&&!stages.some(stage=>stage.id===stageID)&&<option value={stageID}>{stageID} · 저장된 참조</option>}{stages.map(stage=><option key={stage.id} value={stage.id}>{stage.id}</option>)}</AuthorSelect></>}
   </div>
@@ -86,6 +88,7 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
       <AuthorSelect label="게시에서 복사" value={source} onChange={setSource}><option value="">게시 선택</option>{source&&!publications.data?.items.some(item=>item.id===source)&&<option value={source}>{source}</option>}{publications.data?.items.map(item=><option key={item.id} value={item.id}>{item.id}</option>)}</AuthorSelect>
       {publications.data?.page&&<nav aria-label="복사할 게시 페이지" className="flex gap-2"><Button type="button" variant="outline" disabled={publicationOffsets.length===1||publications.isFetching} onClick={()=>setPublicationOffsets(publicationOffsets.slice(0,-1))}>이전</Button><Button type="button" variant="outline" disabled={publications.data.page.nextOffset===undefined||publications.isFetching} onClick={()=>{const next=publications.data?.page?.nextOffset;if(next!==undefined)setPublicationOffsets([...publicationOffsets,next])}}>다음</Button></nav>}
       {publications.data&&<table aria-label="복사할 게시 수" className="w-full text-sm tabular-nums"><tbody><tr><th className="text-left font-normal">전체 게시 (개)</th><td className="text-right">{publications.data.page?.total??publications.data.items.length}</td></tr><tr><th className="text-left font-normal">현재 게시 (개)</th><td className="text-right">{publications.data.items.length}</td></tr></tbody></table>}
+      <UnreadableExperiments unreadable={publications.data?.unreadable}/>
       <QueryGate query={publications}>{null}</QueryGate>{source&&<QueryGate query={publication}>{null}</QueryGate>}{(template.isFetching||template.error)&&<QueryGate query={template}>{null}</QueryGate>}
       <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={!publication.data?.definition?.spec} onClick={()=>{const definition=publication.data?.definition;if(definition?.spec){const draft=copyAuthorDraft({spec:definition.spec},"evaluation");setSpec(draft.spec);setRemovedFields(draft.removedFields);setSources({});setSourcePublication(undefined);setName("");setOrigin(definition.run?.name??"");setReady(true);setValid(true);setVersion(v=>v+1)}}}>게시 복사</Button>
         <Button type="button" variant="outline" disabled={template.isFetching} onClick={()=>void loadTemplate()}>빈 템플릿</Button>{publication.data&&!publication.data.definition?.spec&&<span role="status" className="text-sm">정의 미기록</span>}</div>

@@ -14,6 +14,7 @@ import * as icons from "lucide-react"
 import * as settings from "./scheduler-settings.ts"
 import { createElement, type ComponentType } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import type { ReactNode, ReactElement } from "react"
 
 const containers={Dialog:"dialog",DialogContent:"div",DialogHeader:"header",DialogTitle:"h2",DialogDescription:"p"}
 const primitives={"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({invalidateQueries:async()=>{}})},"@/components/screen":{Screen:"main"},"@/components/read-region":{QueryGate:"div"},"@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},"@/components/ui/dialog":containers,"@/components/ui/sheet":{Sheet:"aside",SheetContent:"div",SheetHeader:"header",SheetTitle:"h2"},"@/lib/evaluation-author":author,"@/lib/evaluation-request":request,"@/lib/scheduler":scheduler}
@@ -81,6 +82,39 @@ test("R19: old-server full catalogs stay full and do not invent pagination",()=>
   const picker=tree.find(item=>item.props.label==="게시에서 복사")!
   assert.deepEqual(elements(picker).filter(item=>item.type==="option"&&item.props.value).map(item=>item.props.value),["first","second"])
   assert.ok(!tree.some(item=>item.type==="nav"))
+})
+test("publication copy and historical comparison render unreadable reports without accumulating pages",()=>{
+  const unreadable=[{id:"unreadable-store",reason:"저장소 불일치"},{id:"unreadable-format",reason:"요약 형식 결함"}]
+  const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
+  for(const historical of [false,true]) {
+    const runner=hookRunner()
+    let extra:Record<string,unknown>={unreadable}
+    const modules={...primitives,react:{...runner.react,useEffect:()=>{}},
+      "@/components/ui/tooltip":Object.fromEntries(["TooltipProvider","Tooltip","TooltipTrigger","TooltipContent"].map(name=>[name,container])),
+      "@/features/evaluation-request":{EvaluationPermission:()=>null},
+      "@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
+        const offset=Number(new URLSearchParams(path.split("?")[1]).get("offset")??0)
+        return {data:path.startsWith("v1/experiments?")?experimentHelpers.decodeExperimentPage(JSON.stringify({items:[],...extra,page:{offset,limit:5,total:6,...(offset===0?{nextOffset:5}:{})}})):undefined}
+      }}}
+    const components=load("../features/evaluation-author.tsx",modules),Component=historical?components.HistoricalComparison:components.EvaluationAuthor
+    const props=historical?{spec:{},path:["historical"],onChange:()=>{}}:{}
+    const render=()=>runner.render(Component,props)
+    for(const page of [0,1]) {
+      const tree=render(),html=renderToStaticMarkup(tree as ReactElement)
+      assert.match(html,/<summary[^>]*>[^<]*2[^<]*<\/summary>/)
+      for(const {id,reason} of unreadable) {
+        assert.equal(html.split(id).length-1,1)
+        assert.ok(html.includes(reason))
+      }
+      if(page===0)(elements(tree).find(item=>item.type==="button"&&item.props.children==="다음")!.props.onClick as ()=>void)()
+    }
+    for(const next of [{unreadable:[]},{unreadable:null},{}]) {
+      extra=next
+      const html=renderToStaticMarkup(render() as ReactElement)
+      for(const {id} of unreadable)assert.ok(!html.includes(id))
+      assert.doesNotMatch(html,/<summary[^>]*>[^<]*2[^<]*<\/summary>/)
+    }
+  }
 })
 test("load PUT denial preserves operator permission status and keeps the draft editable",async()=>{
   class ApiError extends Error {

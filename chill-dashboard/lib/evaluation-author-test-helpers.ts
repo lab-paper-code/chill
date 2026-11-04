@@ -31,7 +31,7 @@ export function load(path:string,modules:Record<string,unknown>):Record<string,(
   const source=readFileSync(new URL(path,import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
-  const extracted:Record<string,string>={"@/components/evaluation-author-fields":"../components/evaluation-author-fields.tsx","@/features/settings-patch-editor":"../features/settings-patch-editor.tsx"}
+  const extracted:Record<string,string>={"@/components/evaluation-author-fields":"../components/evaluation-author-fields.tsx","@/features/settings-patch-editor":"../features/settings-patch-editor.tsx","@/components/unreadable-experiments":"../components/unreadable-experiments.tsx"}
   new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:Object.hasOwn(extracted,name)?load(extracted[name],modules):name.startsWith("@/")?{}:require(name),exports)
   return exports
 }

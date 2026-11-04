@@ -32,6 +32,7 @@ function harness(publication:Experiment=run) {
   const paths:string[]=[],historicalPaths:string[][]=[],buttons:Array<{text:string;click:()=>void}>=[],charts:Array<{dataKey:string;onClick?:(entry:{payload:{key:string}})=>void}>=[],events:Array<{from:string;to:string;returnTo?:string;label?:string}>=[]
   const selects:Array<{value:string;onChange:(event:{target:{value:string}})=>void}>=[],sheets:Array<{open:boolean;onOpenChange:(open:boolean)=>void}>=[]
   let facts:{data:Experiment["facts"]|null|undefined}={data:null}
+  let catalog:Record<string,unknown>={items:[publication],page:{offset:5,limit:5,total:11,nextOffset:10}}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const Button=({children,onClick,asChild,...props}:{children?:ReactNode;onClick?:()=>void;asChild?:boolean})=>{if(onClick)buttons.push({text:renderToStaticMarkup(createElement("span",null,children)),click:onClick});return asChild?children:createElement("button",props,children)}
   const runtime=require("react/jsx-runtime")
@@ -43,7 +44,7 @@ function harness(publication:Experiment=run) {
   const modules:Record<string,unknown>={
     "react/jsx-runtime":{...runtime,jsx:track("jsx"),jsxs:track("jsxs")},
     "@tanstack/react-query":{useQuery:()=>facts},
-    "@/lib/client":{ApiError,useChillQueries:(paths:string[])=>{historicalPaths.push(paths);return queries.slice(0,paths.length)},useSession:()=>({config:{namespace:"test",maxPageSize:25}}),useChillQuery:(path:string)=>{paths.push(path);return {data:path.startsWith("v1/experiments?")?{items:[publication],page:{offset:5,limit:5,total:11,nextOffset:10}}:publication,error:null,isFetching:false,refetch:()=>{}}}},
+    "@/lib/client":{ApiError,useChillQueries:(paths:string[])=>{historicalPaths.push(paths);return queries.slice(0,paths.length)},useSession:()=>({config:{namespace:"test",maxPageSize:25}}),useChillQuery:(path:string)=>{paths.push(path);return {data:path.startsWith("v1/experiments?")?helpers.decodeExperimentPage(JSON.stringify(catalog)):publication,error:null,isFetching:false,refetch:()=>{}}}},
     "@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":helpers,"@/lib/measurements":measurements,"@/lib/scheduler":{parseSchedulerJSON},
     "next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},"next/navigation":{useSearchParams:()=>params},
     "recharts":{...Object.fromEntries(["CartesianGrid","ComposedChart","ResponsiveContainer","Tooltip","XAxis","YAxis"].map(name=>[name,container])),Bar:(props:typeof charts[number])=>{charts.push(props);return null},Line:(props:typeof charts[number])=>{charts.push(props);return null}},
@@ -55,9 +56,11 @@ function harness(publication:Experiment=run) {
     "@/features/scheduler-evidence":{SchedulerIntervalEvents:(props:typeof events[number])=>{events.push(props);return createElement("div",null,"기간 사건")}},
   }
   const conclusion=load<typeof ConclusionModule>("../features/experiments-conclusion.tsx",modules)
+  modules["@/components/unreadable-experiments"]=load("../components/unreadable-experiments.tsx",modules)
   modules["@/features/experiments-conclusion"]=conclusion
   const pages=load<typeof ExperimentsModule>("../features/experiments.tsx",modules)
-  return {conclusion,pages,paths,historicalPaths,buttons,charts,events,selects,sheets,setFacts:(value:typeof facts)=>{facts=value},setSearch:(search:string)=>{params=new URLSearchParams(search)},setQueries:(value:typeof queries)=>{queries=value},render:(published=false)=>{paths.length=0;historicalPaths.length=0;buttons.length=0;charts.length=0;events.length=0;selects.length=0;sheets.length=0;return renderToStaticMarkup(createElement(published?pages.PublishedExperimentsPage:pages.ExperimentsPage))}}
+  const setCatalog=(value:Record<string,unknown>)=>{catalog=value}
+  return {conclusion,pages,paths,historicalPaths,buttons,charts,events,selects,sheets,setCatalog,setFacts:(value:typeof facts)=>{facts=value},setSearch:(search:string)=>{params=new URLSearchParams(search)},setQueries:(value:typeof queries)=>{queries=value},render:(published=false)=>{paths.length=0;historicalPaths.length=0;buttons.length=0;charts.length=0;events.length=0;selects.length=0;sheets.length=0;return renderToStaticMarkup(createElement(published?pages.PublishedExperimentsPage:pages.ExperimentsPage))}}
 }
 
 test("historical errors retain candidate measurements and retry only failed explicit references",()=>{
@@ -97,6 +100,32 @@ test("published list restores URL offset and never hydrates rows or historical c
   app.setSearch("view=published&offset=10")
   app.render(true)
   assert.deepEqual(app.paths,["v1/experiments?offset=10&limit=5"])
+})
+
+test("unreadable publications stay visible and use only the latest whole-list report across pages",()=>{
+  const app=harness(),unreadable=[{id:"stranded-store",reason:"다른 저장소"},{id:"broken-summary",reason:"형식 결함"}]
+  const catalog={items:[run],unreadable,page:{offset:0,limit:5,total:6,nextOffset:5}}
+  app.setCatalog(catalog)
+  app.setSearch("view=published&offset=0")
+  for(const offset of [0,5]) {
+    if(offset)app.setCatalog({...catalog,page:{offset,limit:5,total:6}})
+    app.setSearch(`view=published&offset=${offset}`)
+    const html=app.render(true),summary=html.match(/<summary[^>]*>[^<]*2[^<]*<\/summary>/)
+    assert.ok(summary,"whole-list unreadable count remains two on each page")
+    for(const {id,reason} of unreadable) {
+      assert.equal(html.split(id).length-1,1)
+      assert.ok(html.includes(reason))
+    }
+    assert.match(html,/<details[^>]*>.*<summary[^>]*>.*<table/s)
+  }
+  app.setCatalog({...catalog,unreadable:[unreadable[1]]})
+  assert.ok(!app.render(true).includes(unreadable[0].id),"new response replaces the previous report")
+  for(const extra of [{unreadable:[]},{unreadable:null},{}]) {
+    app.setCatalog({items:[run],...extra})
+    const html=app.render(true)
+    assert.doesNotMatch(html,/<summary/)
+    for(const {id} of unreadable)assert.ok(!html.includes(id))
+  }
 })
 
 test("solo results show measured values without empty deltas, invented p95 or null-identity SLO lines",()=>{

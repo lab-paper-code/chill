@@ -15,11 +15,11 @@ function readExperiment(value:unknown):Experiment {
   const run=object(value)
   return {...run,definition:evaluationDefinition(run.definition),comparisons:evaluationComparisons(run.comparisons),outcome:readOutcome(run.outcome)} as Experiment
 }
-export function decodeExperiments(text:string):{items:Experiment[]} {
+export function decodeExperiments(text:string):Pick<ExperimentPage,"items"|"unreadable"> {
   const list=object(parseSchedulerJSON(text))
   return {...list,items:Array.isArray(list.items)?list.items.map(readExperiment):[]}
 }
-export type ExperimentPage = {items:Experiment[];page?:{offset:number;limit:number;total:number;nextOffset?:number}}
+export type ExperimentPage = {items:Experiment[];unreadable?:{id:string;reason:string}[]|null;page?:{offset:number;limit:number;total:number;nextOffset?:number}}
 export function decodeExperimentPage(text:string):ExperimentPage {
   const list=decodeExperiments(text),page=object(object(list).page)
   if(!Object.hasOwn(list,"page"))return list
