@@ -269,18 +269,13 @@ export function SchedulerSettingsPage() {
       if(window.confirm(message))approved=url.href
       else {event.preventDefault();event.stopPropagation()}
     }
-    const current={url:window.location.href,state:window.history.state}
-    const back=(event:PopStateEvent)=>{
-      if(!leaves(window.location.href)||approved===window.location.href)return
-      if(!window.confirm(message)){event.stopImmediatePropagation();window.history.pushState(current.state,"",current.url)}
-    }
     window.addEventListener("beforeunload",warn)
     if(navigation)navigation.addEventListener("navigate",navigate)
-    document.addEventListener("click",click,true);window.addEventListener("popstate",back,true)
+    document.addEventListener("click",click,true)
     return ()=>{
       window.removeEventListener("beforeunload",warn)
       if(navigation)navigation.removeEventListener("navigate",navigate)
-      document.removeEventListener("click",click,true);window.removeEventListener("popstate",back,true)
+      document.removeEventListener("click",click,true)
     }
   },[count,params])
   // Explicit routing operations open in the same detail view as the transitions list.

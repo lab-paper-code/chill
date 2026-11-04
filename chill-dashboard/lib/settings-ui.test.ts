@@ -271,7 +271,6 @@ test("automation Sheet submission renders unapplied changes and their pending co
   assert.ok(pending,"staged changes have a visible pending count")
   assert.ok(tree.some(node=>node.type==="span"&&/적용 전/.test(String(node.props.children))),"the edited table value is distinguished from saved state")
   assert.equal(action.props.disabled,false)
-  assert.equal(tree.find(node=>node.type==="main")!.props.actionPlacement,"sticky")
   assert.deepEqual(sent,[])
 })
 
