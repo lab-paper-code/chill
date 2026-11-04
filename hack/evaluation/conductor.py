@@ -652,7 +652,9 @@ class CPO:
                         if matching:
                             evidence_io.save(folder / (name + '-client-end-counter.json'), matching[-1])
                 evidence_io.save(folder / 'phase.json', phase)
-                if released and (not jobs or len(phase['starts']) == len(jobs)):
+                # Provisional D1 tracks closed load minutes; its reparse would stall drain-time
+                # boundary handling and progress publication, and judge computes the final D1.
+                if released and (not jobs or len(phase['starts']) == len(jobs) and len(window_ends) < len(jobs)):
                     provisional.poll(phase)
                 if released and not jobs and time.monotonic() >= deadline:
                     break
