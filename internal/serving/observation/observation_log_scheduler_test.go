@@ -98,6 +98,8 @@ func repeated[T any](items []T, n int) []T {
 // appendObservationLine writes a raw scheduler line at clock time.
 func appendObservationLine(t *testing.T, observationLog *ObservationLog, clock *observationClock, line string) {
 	t.Helper()
+	observationLog.writerMu.Lock()
+	defer observationLog.writerMu.Unlock()
 	observationLog.mu.Lock()
 	defer observationLog.mu.Unlock()
 	if err := observationLog.writeLocked(observationSchedulerStream, clock.now(), []byte(line+"\n")); err != nil {

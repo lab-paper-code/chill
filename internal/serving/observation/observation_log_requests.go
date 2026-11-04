@@ -38,7 +38,9 @@ func (l *ObservationLog) RequestEvent(event serving.RequestEvent) error {
 		assigned := next
 		assigned.Kind = serving.RequestRowAssigned
 		assigned.AcceptedNanos, assigned.ValidatedNanos, assigned.DispatchedNanos = nil, nil, nil
-		l.mu.LockRequest(event.RequestID)
+		l.writerMu.LockRequest(event.RequestID)
+		defer l.writerMu.Unlock()
+		l.mu.Lock()
 		defer l.mu.Unlock()
 		hour, err := l.appendRowLocked(&assigned)
 		if err != nil {
@@ -62,7 +64,9 @@ func (l *ObservationLog) RecordNativeSupplement(event serving.RequestEvent) erro
 	if event.RequestID == "" || event.At.IsZero() || event.NativeProgress == nil || event.NativeInstance == "" {
 		return errors.New("native request identity, time, instance and progress are required")
 	}
-	l.mu.LockRequest(event.RequestID)
+	l.writerMu.LockRequest(event.RequestID)
+	defer l.writerMu.Unlock()
+	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
 		return errors.New("observation log is closed")
@@ -82,7 +86,9 @@ func (l *ObservationLog) appendNativeSupplementLocked(event serving.RequestEvent
 
 // RequestClosed appends the final row of a request the Runtime has settled.
 func (l *ObservationLog) RequestClosed(id string) error {
-	l.mu.LockRequest(id)
+	l.writerMu.LockRequest(id)
+	defer l.writerMu.Unlock()
+	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.closeRowLocked(id)
 }

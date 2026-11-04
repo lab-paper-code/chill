@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	serving "github.com/lab-paper-code/chill/internal/serving"
@@ -184,9 +185,9 @@ func (l *ObservationLog) appendLocked(stream string, now time.Time, value any) e
 	if l.closed {
 		return errors.New("observation log is closed")
 	}
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
+	l.writerMu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
 	data, err := json.Marshal(value)
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
+	l.writerMu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
 	if err == nil {
 		err = l.writeLocked(stream, now, append(data, '\n'))
 	}
@@ -200,22 +201,19 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 	name := l.segment(stream, now)
 	file := l.files[stream]
 	if file == nil || file.Name() != name {
+		// writerMu keeps append/rotation order while mu remains available to
+		// request folding and committed-prefix capture.
+		delete(l.files, stream)
 		if file != nil {
-			delete(l.files, stream)
-			if err := l.closeFileLocked(file); err != nil {
-				return err
-			}
+			delete(l.offsets, file)
 		}
-		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
-			return err
-		}
-		var err error
-		l.mu.Mark(serving.DiagnosticFileOpen, serving.DiagnosticBegin)
-		file, err = os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		l.mu.Mark(serving.DiagnosticFileOpen, serving.DiagnosticEnd)
+		l.mu.Unlock()
+		next, err := l.rotateFile(file, name)
+		l.mu.Lock()
 		if err != nil {
 			return err
 		}
+		file = next
 		l.files[stream] = file
 	}
 	err := l.appendWholeLocked(file, data)
@@ -230,22 +228,22 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 func (l *ObservationLog) appendWholeLocked(file *os.File, data []byte) error {
 	size, known := l.offsets[file]
 	if !known {
-		l.mu.Mark(serving.DiagnosticFileStat, serving.DiagnosticBegin)
+		l.writerMu.Mark(serving.DiagnosticFileStat, serving.DiagnosticBegin)
 		info, err := file.Stat()
-		l.mu.Mark(serving.DiagnosticFileStat, serving.DiagnosticEnd)
+		l.writerMu.Mark(serving.DiagnosticFileStat, serving.DiagnosticEnd)
 		if err != nil {
 			return err
 		}
 		size = info.Size()
 		l.offsets[file] = size
 	}
-	l.mu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticBegin)
-	n, err := file.Write(data)
-	l.mu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticEnd)
+	l.writerMu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticBegin)
+	n, err := l.writeFile(file, data)
+	l.writerMu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticEnd)
 	if err != nil {
-		l.mu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticBegin)
+		l.writerMu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticBegin)
 		truncateErr := file.Truncate(size)
-		l.mu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticEnd)
+		l.writerMu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticEnd)
 		return errors.Join(err, truncateErr)
 	}
 	l.offsets[file] = size + int64(n)
@@ -267,9 +265,9 @@ func (l *ObservationLog) referenceLocked(kind, key string, at, now time.Time, bo
 	if ok && entry.hour == hour && source != nil && entry.source == source {
 		return nil
 	}
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
+	l.writerMu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
 	data, err := json.Marshal(body)
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
+	l.writerMu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
 	if err != nil {
 		return err
 	}
@@ -285,17 +283,53 @@ func (l *ObservationLog) referenceLocked(kind, key string, at, now time.Time, bo
 	return nil
 }
 
-func (l *ObservationLog) syncFileLocked(file *os.File) error {
-	l.mu.Mark(serving.DiagnosticFileSync, serving.DiagnosticBegin)
-	err := file.Sync()
-	l.mu.Mark(serving.DiagnosticFileSync, serving.DiagnosticEnd)
+// duplicateFilesLocked pins the exact pre-Flush handles across rotation/Close.
+// Dup does not read or write the filesystem. The caller syncs and closes each
+// duplicate after releasing both append locks.
+func (l *ObservationLog) duplicateFilesLocked() ([]*os.File, error) {
+	files := make([]*os.File, 0, len(l.files)+1)
+	var result error
+	duplicate := func(file *os.File) {
+		fd, err := syscall.Dup(int(file.Fd()))
+		if err != nil {
+			result = errors.Join(result, err)
+			return
+		}
+		syscall.CloseOnExec(fd)
+		files = append(files, os.NewFile(uintptr(fd), file.Name()))
+	}
+	for _, file := range l.files {
+		duplicate(file)
+	}
+	if !l.closed {
+		duplicate(l.definitions)
+	}
+	return files, result
+}
+
+func (l *ObservationLog) syncFileOutsideLock(file *os.File) error {
+	l.config.Diagnostics.Mark(serving.DiagnosticFileSync, serving.DiagnosticBegin, "", 0)
+	err := l.syncFile(file)
+	l.config.Diagnostics.Mark(serving.DiagnosticFileSync, serving.DiagnosticEnd, "", 0)
 	return err
 }
 
-func (l *ObservationLog) closeFileLocked(file *os.File) error {
-	l.mu.Mark(serving.DiagnosticFileClose, serving.DiagnosticBegin)
-	err := file.Close()
-	l.mu.Mark(serving.DiagnosticFileClose, serving.DiagnosticEnd)
-	delete(l.offsets, file)
-	return err
+// rotateFile runs under writerMu only. Readers retain committed segment sizes
+// until the first append publishes the replacement file.
+func (l *ObservationLog) rotateFile(previous *os.File, name string) (*os.File, error) {
+	if previous != nil {
+		l.config.Diagnostics.Mark(serving.DiagnosticFileClose, serving.DiagnosticBegin, "", 0)
+		err := previous.Close()
+		l.config.Diagnostics.Mark(serving.DiagnosticFileClose, serving.DiagnosticEnd, "", 0)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+		return nil, err
+	}
+	l.config.Diagnostics.Mark(serving.DiagnosticFileOpen, serving.DiagnosticBegin, "", 0)
+	file, err := os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	l.config.Diagnostics.Mark(serving.DiagnosticFileOpen, serving.DiagnosticEnd, "", 0)
+	return file, err
 }

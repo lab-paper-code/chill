@@ -83,6 +83,8 @@ func (l *ObservationLog) ClusterRecord(row ClusterObservation) error {
 	default:
 		return errors.New("invalid cluster observation kind")
 	}
+	l.writerMu.Lock()
+	defer l.writerMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.appendLocked(observationClusterStream, l.now(), row)

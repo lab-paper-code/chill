@@ -409,9 +409,9 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 func (l *ObservationLog) captureSnapshot(ranges map[string][2]time.Time, hours []time.Time) (*observationRead, map[string][]observationSegment) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.mu.Recorder.Active() {
-		l.mu.Mark(serving.DiagnosticCapture, serving.DiagnosticBegin)
-		defer l.mu.Mark(serving.DiagnosticCapture, serving.DiagnosticEnd)
+	if l.config.Diagnostics.Active() {
+		l.config.Diagnostics.Mark(serving.DiagnosticCapture, serving.DiagnosticBegin, "", 0)
+		defer l.config.Diagnostics.Mark(serving.DiagnosticCapture, serving.DiagnosticEnd, "", 0)
 	}
 	read := &observationRead{
 		files: map[string][]observationOpenFile{}, open: map[string]*serving.RequestRow{}, definitions: map[string]*serving.Definition{},

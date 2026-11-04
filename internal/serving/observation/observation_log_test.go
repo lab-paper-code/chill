@@ -948,6 +948,8 @@ func TestCatalogReferenceSkipsSamePublishedPointerWithinHour(t *testing.T) {
 	}
 	reference := func(body any) {
 		t.Helper()
+		observationLog.writerMu.Lock()
+		defer observationLog.writerMu.Unlock()
 		observationLog.mu.Lock()
 		defer observationLog.mu.Unlock()
 		if err := observationLog.referenceLocked("profile", "p", clock.now(), clock.now(), body); err != nil {

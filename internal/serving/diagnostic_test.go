@@ -62,7 +62,7 @@ func TestDiagnosticMutexCorrelatesEveryOwnerAndRequest(t *testing.T) {
 			owners[owner] |= 1 << DiagnosticPhase(raw[51])
 		}
 	}
-	if len(owners) != 2 || len(meta.Callers) < 2 || meta.Locks[1] != "Runtime.mu" || meta.Locks[2] != "ObservationLog.mu" {
+	if len(owners) != 2 || len(meta.Callers) < 2 || meta.Locks[1] != "Runtime.mu" || meta.Locks[2] != "ObservationLog.writerMu" {
 		t.Fatalf("holder inventory missing: %+v %v", meta, owners)
 	}
 	for _, phases := range owners {

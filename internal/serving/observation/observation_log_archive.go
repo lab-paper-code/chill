@@ -25,9 +25,13 @@ const observationArchivePrefix = "serving/observations." + observationVersion + 
 func (l *ObservationLog) archive(ctx context.Context) error {
 	l.publishMu.Lock()
 	defer l.publishMu.Unlock()
+	// Finish any append that chose the previous hour before rotation released
+	// mu. Future appends choose this frontier or a later append hour.
+	l.writerMu.Lock()
 	l.mu.Lock()
 	now := l.now() // Later appends choose this hour or a later one.
 	l.mu.Unlock()
+	l.writerMu.Unlock()
 	deleting := true
 	hours, err := l.hours()
 	if err != nil {
@@ -55,27 +59,31 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 	return result
 }
 
-// removeHour excludes capture opens before deleting under the writer lock.
-// A capture sees a whole hour or the updated floor, never missing snapshot paths.
+// removeHour excludes capture opens, but never holds an append lock over removal.
+// archive has already crossed the append frontier, so this hour cannot change.
 func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {
 	l.captureMu.Lock()
 	defer l.captureMu.Unlock()
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	// No new assignment can select this already-past append hour.
 	l.requestMu.Lock()
 	for _, row := range l.open {
 		if !row.AssignedHour.IsZero() && !row.AssignedHour.After(hour) {
 			l.requestMu.Unlock()
+			l.mu.Unlock()
 			return false, nil
 		}
 	}
 	l.requestMu.Unlock()
-	l.mu.Mark(serving.DiagnosticRemove, serving.DiagnosticBegin)
-	err := os.RemoveAll(filepath.Join(l.root, observationHour(hour)))
-	l.mu.Mark(serving.DiagnosticRemove, serving.DiagnosticEnd)
+	l.mu.Unlock()
+	l.config.Diagnostics.Mark(serving.DiagnosticRemove, serving.DiagnosticBegin, "", 0)
+	err := l.removeAll(filepath.Join(l.root, observationHour(hour)))
+	l.config.Diagnostics.Mark(serving.DiagnosticRemove, serving.DiagnosticEnd, "", 0)
 	if err != nil {
 		return false, err
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	for path, segment := range l.segments {
 		if segment.at.Truncate(time.Hour).Equal(hour) {
 			delete(l.segments, path)

@@ -72,7 +72,12 @@ type observationCatalogEntry struct {
 // ObservationLog appends minute files under hourly segment directories and
 // keeps only the open request rows and the definitions in memory.
 type ObservationLog struct {
-	mu serving.DiagnosticLock
+	mu sync.Mutex
+	// writerMu orders synchronous appends and rotation. Maintenance never holds
+	// it during sync, removal or archive I/O. Acquire it before mu.
+	writerMu serving.DiagnosticLock
+	// flushMu serializes Flush/Close durability barriers, not request writes.
+	flushMu sync.Mutex
 	// requestMu protects open rows; it never covers filesystem work.
 	// The disk writer may take requestMu while holding mu, never the reverse.
 	requestMu sync.Mutex
@@ -101,6 +106,9 @@ type ObservationLog struct {
 	catalog     map[string]observationCatalogEntry
 	closed      bool
 	lastError   error
+	syncFile    func(*os.File) error
+	writeFile   func(*os.File, []byte) (int, error)
+	removeAll   func(string) error
 }
 
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
@@ -121,8 +129,10 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{}, offsets: map[*os.File]int64{},
 		retained: map[string]*serving.Definition{}, open: map[string]*serving.RequestRow{}, catalog: map[string]observationCatalogEntry{},
 		archived: map[time.Time]bool{},
+		syncFile: (*os.File).Sync, removeAll: os.RemoveAll,
+		writeFile: (*os.File).Write,
 	}
-	l.mu.Recorder, l.mu.ID = config.Diagnostics, 2
+	l.writerMu.Recorder, l.writerMu.ID = config.Diagnostics, 2
 	if err := os.MkdirAll(l.root, 0700); err != nil {
 		return nil, err
 	}
@@ -181,6 +191,8 @@ func (l *ObservationLog) DefinitionRecord(definition *serving.Definition) error 
 	if err != nil {
 		return err
 	}
+	l.writerMu.Lock()
+	defer l.writerMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
@@ -188,9 +200,9 @@ func (l *ObservationLog) DefinitionRecord(definition *serving.Definition) error 
 	}
 	// A restart publishes every Workload again; the root file keeps each body once.
 	if retained := l.retained[definition.Identity()]; retained != nil {
-		l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
+		l.writerMu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
 		stored, err := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: retained})
-		l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
+		l.writerMu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
 		if err == nil && bytes.Equal(stored, data) {
 			return nil
 		}
@@ -207,6 +219,8 @@ func (l *ObservationLog) ManagementEvent(event serving.ManagementEvent) error {
 	if event.WorkloadUID == "" || event.At.IsZero() {
 		return errors.New("management UID and event time are required")
 	}
+	l.writerMu.Lock()
+	defer l.writerMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	// Management codes are classified at the single registry boundary.
@@ -214,6 +228,8 @@ func (l *ObservationLog) ManagementEvent(event serving.ManagementEvent) error {
 }
 
 func (l *ObservationLog) Flush(ctx context.Context) error {
+	l.flushMu.Lock()
+	l.writerMu.Lock()
 	l.mu.Lock()
 	var result error
 	l.requestMu.Lock()
@@ -227,37 +243,52 @@ func (l *ObservationLog) Flush(ctx context.Context) error {
 	for _, id := range closing {
 		result = errors.Join(result, l.closeRowLocked(id))
 	}
-	for _, file := range l.files {
-		result = errors.Join(result, l.syncFileLocked(file))
-	}
-	if !l.closed {
-		result = errors.Join(result, l.syncFileLocked(l.definitions))
-	}
-	if result != nil {
-		l.lastError = result
-	}
+	files, err := l.duplicateFilesLocked()
+	result = errors.Join(result, err)
 	l.mu.Unlock()
+	l.writerMu.Unlock()
+	for _, file := range files {
+		result = errors.Join(result, l.syncFileOutsideLock(file), file.Close())
+	}
+	l.recordError(result)
+	l.flushMu.Unlock()
 	return errors.Join(result, l.archive(ctx))
 }
 
 func (l *ObservationLog) Close(ctx context.Context) error {
+	l.flushMu.Lock()
+	l.writerMu.Lock()
 	l.mu.Lock()
-	var result error
+	var files []*os.File
 	if !l.closed {
-		for stream, file := range l.files {
-			result = errors.Join(result, l.syncFileLocked(file), l.closeFileLocked(file))
-			delete(l.files, stream)
-		}
-		result = errors.Join(result, l.syncFileLocked(l.definitions), l.closeFileLocked(l.definitions))
 		l.requestMu.Lock()
 		l.closed = true
 		l.requestMu.Unlock()
-	}
-	if result != nil {
-		l.lastError = result
+		for stream, file := range l.files {
+			files = append(files, file)
+			delete(l.files, stream)
+			delete(l.offsets, file)
+		}
+		files = append(files, l.definitions)
+		delete(l.offsets, l.definitions)
 	}
 	l.mu.Unlock()
+	l.writerMu.Unlock()
+	var result error
+	for _, file := range files {
+		result = errors.Join(result, l.syncFileOutsideLock(file), file.Close())
+	}
+	l.recordError(result)
+	l.flushMu.Unlock()
 	return errors.Join(result, l.archive(ctx))
+}
+
+func (l *ObservationLog) recordError(err error) {
+	if err != nil {
+		l.mu.Lock()
+		l.lastError = err
+		l.mu.Unlock()
+	}
 }
 
 // Started is when this process began observing arrivals; earlier ones may be

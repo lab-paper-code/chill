@@ -181,6 +181,8 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 			Sampling: event.PowerSampling, Coverage: event.PowerCoverage,
 		})
 	}
+	l.writerMu.Lock()
+	defer l.writerMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
