@@ -422,11 +422,16 @@ func validateEvaluationGenerator(generator Generator) error {
 // scenario's workloads. The controller enforces it when it freezes inputs; preflight
 // reports the same rule.
 func EvaluationWorkloadCoverage(scenario LoadScenarioSpec, shards map[string]int32, config map[string]string) error {
-	var operational struct {
-		Workloads map[string]json.RawMessage `json:"workloads"`
-	}
+	// Exact keys: struct decoding would also match "Workloads", which the harness never reads.
+	var operational map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(config["operational"]), &operational); err != nil {
 		return fmt.Errorf("%s: operational evaluation config: %v", EvaluationReasonFrozenInputInvalid, err)
+	}
+	var workloads map[string]json.RawMessage
+	if raw, ok := operational["workloads"]; ok {
+		if err := json.Unmarshal(raw, &workloads); err != nil {
+			return fmt.Errorf("%s: operational workloads: %v", EvaluationReasonFrozenInputInvalid, err)
+		}
 	}
 	names := make(map[string]bool, len(scenario.Workloads))
 	for _, workload := range scenario.Workloads {
@@ -435,7 +440,7 @@ func EvaluationWorkloadCoverage(scenario LoadScenarioSpec, shards map[string]int
 	if !namesExactly(names, shards) {
 		return fmt.Errorf("%s: declared generator shard coverage: shards must name exactly the LoadScenario workloads", EvaluationReasonFrozenInputInvalid)
 	}
-	if !namesExactly(names, operational.Workloads) {
+	if !namesExactly(names, workloads) {
 		return fmt.Errorf("%s: operational workload coverage: operational workloads must name exactly the LoadScenario workloads", EvaluationReasonFrozenInputInvalid)
 	}
 	return nil
