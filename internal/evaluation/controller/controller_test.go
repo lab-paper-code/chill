@@ -405,6 +405,58 @@ func TestRunStageStoredResultWorkflow(t *testing.T) {
 	t.Fatalf("workflow did not publish; created %d objects", ordinal)
 }
 
+func TestExecutionLostReleasesPoolOnlyAfterObservedCleanup(t *testing.T) {
+	for _, residual := range []bool{false, true} {
+		t.Run(map[bool]string{false: "clean", true: "residual"}[residual], func(t *testing.T) {
+			ctx := context.Background()
+			parent := fixtureRun("lost")
+			startRun(parent)
+			condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
+			r, store := fixtureRuntime(t, parent)
+			child := fixtureStage(t, &r, parent)
+			before := child.DeepCopy()
+			now := metav1.NewTime(fixtureTime)
+			child.Status.FinishedAt = &now
+			condition(&child.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, api.EvaluationReasonExecutionLost, "stage Pod disappeared")
+			condition(&child.Status.Conditions, 1, api.EvaluationConditionStageCleanupComplete, metav1.ConditionTrue, complete, "")
+			if err := r.patchStatus(ctx, child, before); err != nil {
+				t.Fatal(err)
+			}
+			parent.Status.ChildRefs = []api.EvaluationChildReference{{StageID: child.Spec.StageID, EvaluationObjectReference: *ref(child)}}
+			parent.Status.CurrentStage = child.Spec.StageID
+			if err := r.Client.Status().Update(ctx, parent); err != nil {
+				t.Fatal(err)
+			}
+			cleanup := map[string]string{"status": complete, "reason": complete}
+			result := map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "step": api.EvaluationStepFinish,
+				"execution": map[string]string{"status": complete, "reason": complete}, "cleanup": cleanup, "startedAt": fixtureTime, "finishedAt": fixtureTime}
+			if residual {
+				cleanup["status"], cleanup["reason"] = failed, api.EvaluationReasonResidualState
+				result["residuals"] = []map[string]string{{"kind": "Pod", "name": "remaining-producer", "reason": api.EvaluationReasonResidualState}}
+			}
+			store.put(evidenceKey(parent.UID, "run/finish/result.json"), result)
+			controller := RunReconciler{Runtime: r}
+			for range 3 {
+				if _, err := controller.reconcileChildren(ctx, parent, parent.DeepCopy()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if isTrue(parent.Status.Conditions, api.EvaluationConditionCleanupComplete) == residual ||
+				isTrue(parent.Status.Conditions, api.EvaluationConditionPoolAcquired) != residual || occupied(parent) != residual {
+				t.Fatalf("incorrect cleanup/pool state: %+v", parent.Status)
+			}
+			if isTrue(parent.Status.Conditions, api.EvaluationConditionExecutionComplete) {
+				t.Fatal("cleanup must not turn lost execution into success")
+			}
+			if residual {
+				if parent.Status.ResidualStateRef == nil || !bytes.Contains(store[parent.Status.ResidualStateRef.Key], []byte("remaining-producer")) {
+					t.Fatal("retained pool must expose observed residual evidence")
+				}
+			}
+		})
+	}
+}
+
 func TestInjectionCordonBeforeUIDDeleteAndNoReplay(t *testing.T) {
 	for _, loseResponse := range []bool{false, true} {
 		t.Run(map[bool]string{false: "complete", true: "response-lost"}[loseResponse], func(t *testing.T) {

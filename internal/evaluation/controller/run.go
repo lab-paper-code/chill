@@ -132,12 +132,8 @@ func (r *RunReconciler) reconcileChildren(ctx context.Context, run, before *api.
 		children[record.StageID] = child
 	}
 	active := false
-	stagesClean := !uncertainConditions(run.Status.Conditions)
 	for i, t := range run.Spec.Stages {
 		if child := children[t.ID]; child != nil {
-			if !isTrue(child.Status.Conditions, api.EvaluationConditionStageCleanupComplete) || uncertainStage(child) {
-				stagesClean = false
-			}
 			verdicts[i] = child.Status.MeasurementVerdict
 			if child.Status.FinishedAt == nil {
 				active = true
@@ -179,10 +175,10 @@ func (r *RunReconciler) reconcileChildren(ctx context.Context, run, before *api.
 		}
 		condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionExecutionComplete, s, why, "")
 	}
-	return r.finishRun(ctx, run, before, stagesClean)
+	return r.finishRun(ctx, run, before)
 }
 
-func (r *RunReconciler) finishRun(ctx context.Context, run, before *api.EvaluationRun, stagesClean bool) (ctrl.Result, error) {
+func (r *RunReconciler) finishRun(ctx context.Context, run, before *api.EvaluationRun) (ctrl.Result, error) {
 	finish := procedure(&run.Status.Procedures, api.EvaluationStepFinish)
 	if finish.FinishedAt == nil {
 		run.Status.CurrentProcedure = api.EvaluationStepFinish
@@ -199,12 +195,9 @@ func (r *RunReconciler) finishRun(ctx context.Context, run, before *api.Evaluati
 			why := result.Execution.Reason
 			if result.Cleanup != nil {
 				why = result.Cleanup.Reason
-				if result.Cleanup.Status == complete && result.Execution.Status == complete && stagesClean {
+				if result.Cleanup.Status == complete {
 					s = metav1.ConditionTrue
 				}
-			}
-			if !stagesClean {
-				why = api.EvaluationReasonResidualState
 			}
 			if s == metav1.ConditionFalse && why == "" {
 				why = api.EvaluationReasonResidualState
@@ -252,21 +245,14 @@ func (r *RunReconciler) publishRun(ctx context.Context, run, before *api.Evaluat
 }
 
 func uncertainStage(stage *api.EvaluationStage) bool {
-	if uncertainConditions(stage.Status.Conditions) {
-		return true
-	}
 	for _, record := range stage.Status.InjectionRecords {
-		if record.Outcome == injectionUnknown {
+		if record.Outcome == injectionUnknown || record.Outcome == injectionRequested {
 			return true
 		}
 	}
 	return false
 }
 
-func uncertainConditions(conditions []metav1.Condition) bool {
-	c := meta.FindStatusCondition(conditions, api.EvaluationConditionExecutionComplete)
-	return c != nil && (c.Reason == api.EvaluationReasonRemoteEffectUnknown || c.Reason == api.EvaluationReasonExecutionLost)
-}
 func occupied(run *api.EvaluationRun) bool {
 	return run.Status.StartedAt != nil && !isTrue(run.Status.Conditions, api.EvaluationConditionCleanupComplete) && len(run.Status.ReleaseRecords) == 0
 }

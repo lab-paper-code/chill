@@ -456,8 +456,18 @@ class CPO:
                 phase['endUTC'] = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=stage['seconds'])).isoformat()
                 deadline = time.monotonic() + stage['seconds']
                 self.record_go(folder, jobs, pods, phase['goUTC'])
+            last_producer_poll = None
             while True:
                 self.monitor(0, folder)
+                if last_producer_poll is None or time.monotonic() - last_producer_poll >= self.tb['flushSeconds']:
+                    for name, job in jobs.items():
+                        current = self.io.k(['get', 'job', job['metadata']['name'], '-o', 'json'])
+                        if current['metadata']['uid'] != job['metadata']['uid']:
+                            raise RuntimeError('IdentityMismatch: generator Job UID')
+                        if any(c['type'] == 'Failed' and c['status'] == 'True' for c in current.get('status', {}).get('conditions', [])):
+                            evidence_io.save(folder / ('terminal-' + name + '.json'), current)
+                            raise RuntimeError('ProducerFailed: ' + job['metadata']['name'] + ' (' + name + ')')
+                    last_producer_poll = time.monotonic()
                 for key, _ in selector.select(.2):
                     name, output = key.data
                     try:
@@ -679,8 +689,64 @@ class CPO:
             time.sleep(.2)
 
     def finish(self):
-        # Cleanup only evaluation-owned effects and the deliberately patched settings paths.
-        self.cleanup_jobs()
+        # Cleanup and the lost-writer check are independent safety obligations.
+        children = self.c['evaluation']['execution'].get('childRefs', [])
+        uncertain = any(child.get('uncertain') for child in children)
+        for child in children:
+            for record in child.get('injectionRecords') or []:
+                if record['outcome'] in ('Unknown', 'Requested'):
+                    for key, kind in (('nodeRef', 'Node'), ('podRef', 'Pod')):
+                        if record.get(key):
+                            self.residuals.append({'kind': kind, 'name': record[key]['name'], 'reason': 'RemoteEffectUnknown'})
+        try:
+            self.cleanup_jobs()
+        finally:
+            self.observe_stage_writers()
+        if uncertain:
+            raise RuntimeError('RemoteEffectUnknown: unresolved child or injection effects')
+        if self.residuals:
+            raise RuntimeError('ResidualState: earlier evaluation harness writers remain')
+
+    def observe_stage_writers(self):
+        execution = self.c['evaluation']['execution']
+        procedures = [p for child in execution.get('childRefs', []) for p in child.get('procedures') or []]
+        recorded_jobs = {p['jobRef']['uid']: p['jobRef'] for p in procedures if p.get('jobRef')}
+        recorded_pods = {p['podRef']['uid']: p['podRef'] for p in procedures if p.get('podRef')}
+        selector = 'edge.dacs.io/workload-role=system,edge.dacs.io/evaluation-run-uid=' + execution['runUID']
+        deadline = time.monotonic() + self.tb['drainSeconds']
+        while True:
+            jobs = [job for job in self.io.k(['get', 'jobs', '-l', selector, '-o', 'json'])['items'] if self.owned(job)]
+            job_uids = set(recorded_jobs) | {job['metadata']['uid'] for job in jobs}
+            pods = [pod for pod in self.io.k(['get', 'pods', '-l', selector, '-o', 'json'])['items']
+                    if pod['metadata']['uid'] in recorded_pods or any(
+                        owner.get('kind') == 'Job' and owner.get('uid') in job_uids
+                        for owner in pod['metadata'].get('ownerReferences', []))]
+            residuals = [{'kind': 'Pod', 'name': ref['name'], 'reason': 'RemoteEffectUnknown'}
+                         for uid, ref in recorded_pods.items() if not any(pod['metadata']['uid'] == uid for pod in pods)]
+            for uid in job_uids:
+                if not any(any(owner.get('uid') == uid for owner in pod['metadata'].get('ownerReferences', [])) for pod in pods):
+                    ref = recorded_jobs.get(uid) or next(job['metadata'] for job in jobs if job['metadata']['uid'] == uid)
+                    residuals.append({'kind': 'Job', 'name': ref['name'], 'reason': 'RemoteEffectUnknown'})
+            for pod in pods:
+                statuses = pod.get('status', {}).get('containerStatuses', [])
+                terminated = bool(statuses) and all('terminated' in status.get('state', {}) for status in statuses)
+                node = pod.get('spec', {}).get('nodeName')
+                ready = False
+                if node:
+                    try:
+                        observed = self.io.k(['get', 'node', node, '-o', 'json'])
+                        ready = any(c['type'] == 'Ready' and c['status'] == 'True' for c in observed.get('status', {}).get('conditions', []))
+                    except Exception as error:
+                        residuals.append({'kind': 'Node', 'name': node, 'reason': 'RemoteEffectUnknown', 'error': str(error)})
+                if not terminated or not ready:
+                    residuals.append({'kind': 'Pod', 'name': pod['metadata']['name'],
+                                      'reason': 'ResidualState' if ready else 'RemoteEffectUnknown'})
+            if not residuals:
+                return
+            if time.monotonic() >= deadline:
+                self.residuals.extend(residuals)
+                return
+            time.sleep(.2)
 
 
 def self_check():

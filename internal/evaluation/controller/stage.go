@@ -198,7 +198,7 @@ func (r *StageReconciler) completeStage(ctx context.Context, parent *api.Evaluat
 	if err != nil {
 		return err
 	}
-	if !isTrue(stage.Status.Conditions, api.EvaluationConditionStageCleanupComplete) || uncertainStage(stage) {
+	if !isTrue(stage.Status.Conditions, api.EvaluationConditionStageCleanupComplete) {
 		stage.Status.ResidualStateRef = evidence
 	}
 	return nil
@@ -240,7 +240,7 @@ func (r *StageReconciler) recordStageResult(stage *api.EvaluationStage, step str
 		why := api.EvaluationReasonResidualState
 		if result.Cleanup != nil {
 			why = result.Cleanup.Reason
-			if result.Cleanup.Status == complete && result.Execution.Status == complete {
+			if result.Cleanup.Status == complete {
 				s = metav1.ConditionTrue
 			}
 		}
