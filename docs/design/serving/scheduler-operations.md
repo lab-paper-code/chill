@@ -53,9 +53,8 @@ An unexpected reboot with a successful mode outcome completes the power step and
 leaves cleanup/rebuild to the existing DAG, rather than failing because old actor
 identities disappeared. Actuator/readiness, capture, refresh and non-reboot
 loaded-state integrity failures still fail. Facts are not persisted across a
-server restart or transferred to a replacement Node UID; unknown is not “no reboot”.
-The retained defect-9 receipt projection is replayed by
-`TestPowerRebootDefect9ReceiptReplay`; the original partial receipt stays unchanged.
+server restart or transferred to a replacement Node UID; refresh discards facts
+for absent Node UIDs. Unknown is not “no reboot”.
 
 
 ## Why concealment forces routing

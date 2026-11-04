@@ -239,3 +239,43 @@ func TestPowerRebootOutcomeRecordsDirectedFact(t *testing.T) {
 		})
 	}
 }
+
+func TestObserverRefreshRetiresAbsentNodeRebootFacts(t *testing.T) {
+	for _, replaced := range []bool{false, true} {
+		t.Run(strconv.FormatBool(replaced), func(t *testing.T) {
+			ctx := context.Background()
+			observer := newTestObserver(t)
+			_, node, _, _ := observerSourceFixture()
+			keep := node.DeepCopy()
+			keep.Name, keep.UID = "keep", "keep-uid"
+			for _, current := range []*core.Node{node, keep} {
+				if _, err := observer.kube.CoreV1().Nodes().Create(ctx, current, meta.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				observer.RecordPowerReboot(serving.NodeReference{Name: current.Name, UID: string(current.UID)}, serving.PowerReboot{From: "before", To: "after"})
+			}
+			if err := observer.Refresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if len(observer.powerRebootFacts()) != 2 {
+				t.Fatal("refresh discarded a current Node's facts")
+			}
+			if err := observer.kube.CoreV1().Nodes().Delete(ctx, node.Name, meta.DeleteOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if replaced {
+				node.UID += replacementSuffix
+				if _, err := observer.kube.CoreV1().Nodes().Create(ctx, node, meta.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := observer.Refresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			facts := observer.powerRebootFacts()
+			if len(facts) != 1 || len(facts[serving.NodeReference{Name: keep.Name, UID: string(keep.UID)}]) != 1 {
+				t.Fatalf("refresh retained an absent Node UID or lost current facts: %+v", facts)
+			}
+		})
+	}
+}

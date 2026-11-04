@@ -272,6 +272,11 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 			measurement = append(measurement, serving.NodeReference{Name: node.Name, UID: string(node.UID)})
 		}
 	}
+	for ref := range o.powerReboots {
+		if node := byName[ref.Name]; node == nil || string(node.UID) != ref.UID {
+			delete(o.powerReboots, ref)
+		}
+	}
 	sort.Slice(measurement, func(i, j int) bool { return measurement[i].Name < measurement[j].Name })
 	o.runtime.SetMeasurementNodes(measurement)
 	// Start a native status watch before using this snapshot for execution or cleanup.
