@@ -4,7 +4,7 @@ import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
-import type { OperationResult, PoolsView, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
+import type { OperationResult, PoolsView, Routing, SchedulerDefinition, SchedulerInstance, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { settingFields as fields, settingControls as controls, settingTargets, writableSettingKeys, type SettingField as Field } from "@/lib/scheduler-settings"
 import { safeSource } from "@/lib/source-export"
@@ -146,6 +146,16 @@ function EditRow({editKey,label,help,changed,initial,unit,range,save,disabled,no
   </div></SheetContent></Sheet>
 }
 
+// MatchesProfile (serving/runtime.go) plus physical readiness/ownership, not current routing.
+function routeCandidate(instance:SchedulerInstance,definition:SchedulerDefinition|undefined) {
+  if(!definition||!instance.ready||instance.stopped||instance.terminated||!instance.profile||(instance.ownerWorkloadUID&&instance.ownerWorkloadUID!==definition.uid))return false
+  const c=instance.profile.condition,pre=definition.preprocessor
+  const same=(a:readonly string[]|null|undefined,b:readonly string[]|null|undefined)=>(a?.length??0)===(b?.length??0)&&(a??[]).every((value,index)=>value===b?.[index])
+  if(!pre||c.logicalModel!==definition.model.name||c.preprocessor.name!==pre.name||!same(c.preprocessor.inputs,pre.input?.map(field=>field.name))||!same(c.preprocessor.outputs,pre.output?.map(field=>field.name))||(c.preprocessor.maxNewTokens??0)!==(pre.maxNewTokens??0)||!definition.dataset||!c.activeProtocol.dataset||definition.dataset.uid!==c.activeProtocol.dataset.uid)return false
+  return definition.model.paths?.some(path=>path.name===c.artifact.executionPath&&path.artifact===c.artifact.name&&same(path.files,c.artifact.files)&&path.image===c.artifact.image&&path.runtimeFamily===c.runtimeFamily&&path.backend===c.backend&&path.preprocessor.image===c.preprocessor.image&&path.preprocessor.architecture===c.preprocessor.architecture&&path.preprocessor.path===c.preprocessor.path&&
+    (!path.firstfloor&&!c.firstfloor||!!path.firstfloor&&!!c.firstfloor&&path.firstfloor.maxBatchSize===c.firstfloor.maxBatchSize&&path.firstfloor.maxQueueSize===c.firstfloor.maxQueueSize&&(path.firstfloor.deadlinePolicy??"")===(c.firstfloor.deadlinePolicy??"")))??false
+}
+
 // Diff the declaration shown when the dialog opened, so unrelated UID changes stay untouched.
 function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapshot?:SchedulerControllerState["snapshot"];disabled:boolean;apply:(before:Routing,after:Routing,reason:string)=>void}) {
   const [open,setOpen]=React.useState(false),[text,setText]=React.useState(""),[reason,setReason]=React.useState(""),[error,setError]=React.useState(""),[before,setBefore]=React.useState<Routing>({}),id=React.useId()
@@ -169,7 +179,10 @@ function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapsho
       if(!reason.trim())throw new Error("선택 이유를 적어 주세요.")
       apply(before,parsed as Routing,reason.trim());setOpen(false)
     } catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
-      {Object.entries(routing).map(([uid,weights],index)=><fieldset key={index} className="grid min-w-0 gap-3 rounded-md border p-3">
+      {Object.entries(routing).map(([uid,weights],index)=>{
+        const candidates=instances.filter(item=>routeCandidate(item,services.find(service=>service.uid===uid))&&!Object.entries(routing).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0)&&!Object.entries(snapshot?.routing??{}).some(([other,targets])=>other!==uid&&!Object.hasOwn(routing,other)&&(targets[item.id]??0)>0))
+        const rows:[string,number|undefined][]=[...Object.entries(weights),...candidates.filter(item=>!Object.hasOwn(weights,item.id)).map(item=>[item.id,undefined] as [string,undefined])]
+        return <fieldset key={index} className="grid min-w-0 gap-3 rounded-md border p-3">
         <legend className="px-1">서비스 {index+1}</legend>
         <label className="grid min-w-0 gap-2">서비스<select aria-label={`서비스 ${index+1}`} className="min-h-11 w-full min-w-0 rounded-md border bg-background px-2" value={uid} onChange={event=>{
           const next={...routing};delete next[uid];next[event.target.value]=weights;update(next)
@@ -177,19 +190,19 @@ function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapsho
           {!services.some(service=>service.uid===uid)&&<option value={uid}>{uid||"서비스 선택"}</option>}
           {services.map(service=><option key={service.uid} value={service.uid} disabled={service.uid!==uid&&Object.hasOwn(routing,service.uid)}>{service.name}</option>)}
         </select></label>
-        <DataTable searchable={false} data={Object.entries(weights)} columns={[
-          {key:"instance",label:"인스턴스",value:([instance,weight])=><select aria-label={`서비스 ${index+1} 인스턴스 ${Object.keys(weights).indexOf(instance)+1}`} className="min-h-11 w-full min-w-0 rounded-md border bg-background px-2" value={instance} onChange={event=>{const next={...weights};delete next[instance];next[event.target.value]=weight;update({...routing,[uid]:next})}}>
+        <DataTable searchable={false} data={rows} columns={[
+          {key:"instance",label:"인스턴스",value:([instance,weight])=>weight===undefined?<span>{instances.find(item=>item.id===instance)?.node.name} · 적용 대상 아님</span>:<select aria-label={`서비스 ${index+1} 인스턴스 ${Object.keys(weights).indexOf(instance)+1}`} className="min-h-11 w-full min-w-0 rounded-md border bg-background px-2" value={instance} onChange={event=>{const next={...weights};delete next[instance];next[event.target.value]=weight;update({...routing,[uid]:next})}}>
             {!instances.some(item=>item.id===instance)&&<option value={instance}>{instance||"인스턴스 선택"}</option>}
-            {instances.filter(item=>item.workloadUID===uid||item.id===instance).map((item,i)=><option key={item.id} value={item.id} disabled={item.id!==instance&&Object.hasOwn(weights,item.id)}>{item.node.name} · 인스턴스 {i+1}</option>)}
+            {instances.filter(item=>candidates.includes(item)||item.id===instance).map((item,i)=><option key={item.id} value={item.id} disabled={item.id!==instance&&Object.hasOwn(weights,item.id)}>{item.node.name} · 인스턴스 {i+1}</option>)}
           </select>},
-          {key:"weight",label:"가중치",numeric:true,value:([instance,weight])=><Input aria-label={`서비스 ${index+1} 가중치 ${Object.keys(weights).indexOf(instance)+1}`} className="min-w-0" type="number" required min={0} max={2147483647} step={1} value={weight??""} onChange={event=>update({...routing,[uid]:{...weights,[instance]:event.target.value===""?NaN:Number(event.target.value)}})}/>},
-          {key:"remove",label:"작업",value:([instance])=><Button type="button" variant="outline" onClick={()=>{const next={...weights};delete next[instance];update({...routing,[uid]:next})}}>대상 제외</Button>},
+          {key:"weight",label:"가중치",numeric:true,value:([instance,weight])=>weight===undefined?"미포함":<Input aria-label={`서비스 ${index+1} 가중치 ${Object.keys(weights).indexOf(instance)+1}`} className="min-w-0" type="number" required min={0} max={2147483647} step={1} value={weight??""} onChange={event=>update({...routing,[uid]:{...weights,[instance]:event.target.value===""?NaN:Number(event.target.value)}})}/>},
+          {key:"remove",label:"작업",value:([instance,weight])=><Button type="button" variant="outline" onClick={()=>{const next={...weights};if(weight===undefined)next[instance]=1;else delete next[instance];update({...routing,[uid]:next})}}>{weight===undefined?"대상 추가":"대상 제외"}</Button>},
         ]}/>
         {!Object.keys(weights).length&&<Facts items={[["요청 접수","차단"]]} />}
-        <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={()=>{const instance=instances.find(item=>item.workloadUID===uid&&!Object.hasOwn(weights,item.id));if(instance)update({...routing,[uid]:{...weights,[instance.id]:1}})}} disabled={!instances.some(item=>item.workloadUID===uid&&!Object.hasOwn(weights,item.id))}>인스턴스 추가</Button>
+        <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={()=>{const instance=candidates.find(item=>!Object.hasOwn(weights,item.id));if(instance)update({...routing,[uid]:{...weights,[instance.id]:1}})}} disabled={!candidates.some(item=>!Object.hasOwn(weights,item.id))}>인스턴스 추가</Button>
         <Button type="button" variant="outline" onClick={()=>update({...routing,[uid]:{}})}>새 요청 차단</Button>
         <Button type="button" variant="outline" onClick={()=>{const next={...routing};delete next[uid];update(next)}}>기본 분배로</Button></div>
-      </fieldset>)}
+      </fieldset>})}
       <Button type="button" variant="outline" disabled={!services.some(service=>!Object.hasOwn(routing,service.uid))} onClick={()=>{const service=services.find(service=>!Object.hasOwn(routing,service.uid));if(service)update({...routing,[service.uid]:{}})}}>서비스 추가</Button>
       <details><summary className="min-h-11 cursor-pointer py-2">분배 원문</summary><label className="grid gap-2" htmlFor={`${id}-routing`}>분배 JSON<textarea id={`${id}-routing`} className="min-h-40 w-full min-w-0 rounded-md border p-2 font-mono text-sm" required value={text} onChange={event=>{setText(event.target.value);setError("")}} aria-invalid={!!error}/></label></details>
       <div className="grid gap-2"><label htmlFor={`${id}-reason`}>선택 이유</label><Input id={`${id}-reason`} required value={reason} onChange={event=>setReason(event.target.value)}/></div>
