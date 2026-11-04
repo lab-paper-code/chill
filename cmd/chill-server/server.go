@@ -32,6 +32,8 @@ import (
 )
 
 func run(ctx context.Context, opts options) (retErr error) {
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	if opts.materializeProfile {
 		return materializeProfile(ctx, opts)
 	}
@@ -94,9 +96,9 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), opts.requestTimeout)
-		defer cancel()
-		if err := observationLog.Close(closeCtx); err != nil {
+		// Shutdown closes local files but leaves unfinished hours for next startup.
+		cancelRun()
+		if err := observationLog.Close(ctx); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("close serving observations: %w", err))
 		}
 	}()
@@ -316,6 +318,8 @@ func serve(ctx context.Context, opts options, chillServer *initializingHandler, 
 	observationLog *observation.ObservationLog, scheduler *application.SchedulerService, diagnostics *diagnosticSession,
 	initialize func(context.Context) (http.Handler, error),
 ) error {
+	ctx, cancelArchive := context.WithCancel(ctx)
+	defer cancelArchive()
 	certificate, err := tls.LoadX509KeyPair(opts.tlsCert, opts.tlsKey)
 	if err != nil {
 		return err
@@ -401,9 +405,10 @@ loop:
 			}
 			cancel()
 		case <-archiveTicker.C:
-			archiveInBackground(ctx, archiving, opts.requestTimeout, observationLog.Flush)
+			archiveInBackground(ctx, archiving, observationLog.Flush)
 		}
 	}
+	cancelArchive() // Every exit, including listener/initialization errors, stops Flush.
 	cancelInitialize()
 	if initializePending {
 		serveError = errors.Join(serveError, <-initialized)
@@ -423,7 +428,7 @@ loop:
 // archiveInBackground starts one Flush unless one still runs, so source
 // refresh and Advance keep their ticks while an hour uploads.
 func archiveInBackground(
-	ctx context.Context, running chan struct{}, timeout time.Duration, flush func(context.Context) error,
+	ctx context.Context, running chan struct{}, flush func(context.Context) error,
 ) {
 	select {
 	case running <- struct{}{}:
@@ -432,9 +437,7 @@ func archiveInBackground(
 	}
 	go func() {
 		defer func() { <-running }()
-		callCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		if err := flush(callCtx); err != nil {
+		if err := flush(ctx); err != nil {
 			ctrl.Log.Error(err, "archive serving observation hours")
 		}
 	}()

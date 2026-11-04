@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -22,11 +23,12 @@ var (
 )
 
 type Store struct {
-	client       client
-	region       string
-	logicalStore string
-	bucket       string
-	tempDir      string
+	client         client
+	region         string
+	logicalStore   string
+	bucket         string
+	tempDir        string
+	requestTimeout time.Duration
 }
 
 // Stat checks existence and size with HEAD, without downloading the object.

@@ -32,7 +32,9 @@ func (s *Store) StreamImmutable(ctx context.Context, location evidencestore.Obje
 	if produce == nil {
 		return result, fmt.Errorf("%w: producer is nil", evidencestore.ErrContentMismatch)
 	}
-	created, err := s.client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(location.Key)})
+	callCtx, cancel := s.multipartRequestContext(ctx)
+	created, err := s.client.CreateMultipartUpload(callCtx, &awss3.CreateMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(location.Key)})
+	cancel()
 	if err != nil {
 		return result, translate("start evidence multipart upload", err)
 	}
@@ -67,7 +69,9 @@ func (s *Store) StreamImmutable(ctx context.Context, location evidencestore.Obje
 			return result, err
 		}
 	}
-	_, err = s.client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(location.Key), UploadId: created.UploadId, IfNoneMatch: aws.String("*"), MultipartUpload: &types.CompletedMultipartUpload{Parts: writer.parts}})
+	callCtx, cancel = s.multipartRequestContext(ctx)
+	_, err = s.client.CompleteMultipartUpload(callCtx, &awss3.CompleteMultipartUploadInput{Bucket: aws.String(s.bucket), Key: aws.String(location.Key), UploadId: created.UploadId, IfNoneMatch: aws.String("*"), MultipartUpload: &types.CompletedMultipartUpload{Parts: writer.parts}})
+	cancel()
 	outcome := evidencestore.CreateOutcomeCreated
 	if err != nil {
 		var apiError smithy.APIError
@@ -80,6 +84,13 @@ func (s *Store) StreamImmutable(ctx context.Context, location evidencestore.Obje
 		committed = true
 	}
 	return receipt(evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: writer.size}, outcome), nil
+}
+
+func (s *Store) multipartRequestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.requestTimeout > 0 {
+		return context.WithTimeout(ctx, s.requestTimeout)
+	}
+	return context.WithCancel(ctx)
 }
 
 type multipartWriter struct {
@@ -123,7 +134,9 @@ func (w *multipartWriter) flush() error {
 		return fmt.Errorf("%w: multipart object exceeds 10000 parts", evidencestore.ErrContentMismatch)
 	}
 	number := int32(len(w.parts) + 1)
-	output, err := w.store.client.UploadPart(w.ctx, &awss3.UploadPartInput{Bucket: aws.String(w.store.bucket), Key: aws.String(w.key), UploadId: w.uploadID, PartNumber: aws.Int32(number), ContentLength: aws.Int64(int64(w.used)), Body: bytes.NewReader(w.buffer[:w.used])})
+	callCtx, cancel := w.store.multipartRequestContext(w.ctx)
+	output, err := w.store.client.UploadPart(callCtx, &awss3.UploadPartInput{Bucket: aws.String(w.store.bucket), Key: aws.String(w.key), UploadId: w.uploadID, PartNumber: aws.Int32(number), ContentLength: aws.Int64(int64(w.used)), Body: bytes.NewReader(w.buffer[:w.used])})
+	cancel()
 	if err != nil {
 		return translate("upload evidence part", err)
 	}
