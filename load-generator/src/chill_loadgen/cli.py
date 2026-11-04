@@ -24,9 +24,11 @@ Record = Tuple[str, Dict[str, bytes]]
 PreparedRecord = Tuple[str, bytes]
 
 
-def prepare_records(records: Sequence[Record]) -> List[PreparedRecord]:
-    """Encode each sample once, before the release clock or any fork/request thread."""
-    return [(record_id, encode_inputs(inputs)) for record_id, inputs in records]
+def prepare_records(records: List[Record]) -> List[PreparedRecord]:
+    """Consume raw records once, before the release clock or any fork/request thread."""
+    prepared = [(record_id, encode_inputs(inputs)) for record_id, inputs in records]
+    records.clear()  # The producer has already retained field sizes/hashes, not raw payloads.
+    return prepared
 
 
 def load_records(dataset_dir: Path, fields: Sequence[str]) -> List[Record]:
@@ -181,7 +183,7 @@ def replay_open_loop(
 
 
 def replay(
-    records: Sequence[Record],
+    records: List[Record],
     *,
     workload: str,
     rate: Optional[float],

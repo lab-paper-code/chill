@@ -227,8 +227,9 @@ preprocessor to that field's bytes (a JPEG file or UTF-8 text). The client sends
 each field as `BYTES` with base64 data. Routing and batching remain server-side.
 
 Call `encode_inputs` once when loading each record, then reuse its immutable body
-with `infer`. Replay prepares all bodies before its start clock; evaluation shards
-prepare them before fork so children share the bytes copy-on-write. No base64 or
+with `infer`. Replay consumes the raw record list during preparation before its
+start clock; evaluation retains field sizes/hashes, drops raw bytes, and prepares
+all bodies before fork so children share the bytes copy-on-write. No base64 or
 JSON serialization of sample payloads runs in request threads (which would retain
 large glibc malloc arenas under overload). Input fields are validated once during
 preparation; JSON field order, spacing and base64 wire bytes are unchanged.

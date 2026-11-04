@@ -90,6 +90,17 @@ class LoadRecordsTest(unittest.TestCase):
 
         self.assertEqual([("q1", {"image": b"q1-jpeg"}), ("q2", {"image": b"q2-jpeg"})], records)
 
+    def test_preparation_releases_raw_payload_ownership_before_fork(self):
+        class Inputs(dict):
+            pass
+        inputs = Inputs(image=b"sample")
+        reference = weakref.ref(inputs)
+        records = [("q1", inputs)]
+        del inputs
+        prepared = prepare_records(records)
+        self.assertIsNone(reference())
+        self.assertEqual([("q1", encode_inputs({"image": b"sample"}))], prepared)
+
 
 class FakeClient:
     def __init__(self) -> None:
