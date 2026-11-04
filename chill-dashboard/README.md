@@ -48,6 +48,8 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 v3 프로파일 측정 요청은 사용자가 고른 실제 Workload 이름을 `activeProtocol.workload`로 보낸다. 선택 시 현재 `desired.spec`의 모델·전처리기·데이터셋을 채우며, 기존 요청 기본값·프로파일·유일한 조합 일치는 Workload를 자동 선택하지 않는다. 미선택은 폼 오류로 막는다. 명시적으로 복사한 요청은 입력 세 가지가 그대로일 때만 이름을 유지하고, 하나라도 바뀌면 선택과 상속된 이름을 지운다(장비·경로·전력 모드만 바뀌면 유지). 반복은 정확히 3회다. Workload 존재·조합·SLO·표본 수는 서버가 검증하고 기존 사전검사 오류에 원문을 표시한다. 과거 요청의 Workload가 없으면 `미기록`으로 표시한다.
 
+복사 원본에 보관된 `activeProtocol.cadence`는 새 요청 manifest에서 제외한다. 대시보드는 cadence를 생성하거나 전송하지 않으며, 선택한 Workload의 실제 trace를 통한 해석·동결은 서버만 수행한다.
+
 커버리지·inventory·모델 호환성·BEO 전체 페이지·커버리지 상세 프로파일/회차 조회는 `hooks/use-measurement-data.ts`, 공통 URL 필터 UI는 `components/measurement-filters.tsx`가 소유한다. 각 화면은 소유 모듈을 직접 import한다. query key·페이지 전진/취소·권한 오류 처리·UID 비교·summary 정밀 디코딩과 필터 URL 갱신 규칙은 기존 계약을 유지한다.
 
 ### 표시용 읽기 projection

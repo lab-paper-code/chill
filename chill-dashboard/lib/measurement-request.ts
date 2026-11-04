@@ -282,9 +282,12 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
 export function manifest(d: Draft, context: Context, namespace: string) {
   const v = view(d, context)
   const p = v.protocol.values
+  // Retained server cadence is read-only provenance, never a new request input.
+  const { cadence, ...activeProtocol } = (v.protocol.spec?.activeProtocol ?? {}) as Partial<ActiveProtocol> & {cadence?:unknown}
+  void cadence
   const spec: MeasurementPlanSpec & {activeProtocol:ActiveProtocol} = {
     state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node },
-    activeProtocol: { ...v.protocol.spec?.activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
+    activeProtocol: { ...activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     trialsPerBatch: v.trials,
     // The CRD forbids batchSizes when the artifact declares its own set.
