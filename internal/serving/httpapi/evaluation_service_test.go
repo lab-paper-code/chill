@@ -35,7 +35,7 @@ func TestEvaluationViewFlattensStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
-	s := evaluation.New(native, native, "ns", nil)
+	s := evaluation.New(native, native, "ns", "evidence", nil)
 	var config HandlerConfig
 	ConfigureEvaluations(&config, s)
 	detail, err := config.GetEvaluation(context.Background(), run.Name)
@@ -92,7 +92,7 @@ func TestEvaluationViewProjectsOnlyRecordedLiveTarget(t *testing.T) {
 				t.Fatal(err)
 			}
 			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
-			s := evaluation.New(native, native, "ns", nil)
+			s := evaluation.New(native, native, "ns", "evidence", nil)
 			value, err := s.Get(context.Background(), "run")
 			if err != nil {
 				t.Fatal(err)
@@ -213,7 +213,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 			}
 			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(test.run, first, second, unreferenced, loadJob).Build()
 			var config HandlerConfig
-			ConfigureEvaluations(&config, evaluation.New(native, native, "ns", nil))
+			ConfigureEvaluations(&config, evaluation.New(native, native, "ns", "evidence", nil))
 			detail, err := config.GetEvaluation(context.Background(), test.run.Name)
 			if err != nil {
 				t.Fatal(err)
@@ -259,7 +259,7 @@ func TestEvaluationCollectionEnvelopesKeepEmptyArrays(t *testing.T) {
 	}
 	native := fake.NewClientBuilder().WithScheme(scheme).Build()
 	var config HandlerConfig
-	ConfigureEvaluations(&config, evaluation.New(native, native, "ns", nil))
+	ConfigureEvaluations(&config, evaluation.New(native, native, "ns", "evidence", nil))
 	ConfigureLoadScenarios(&config, evaluation.NewLoadService(native, "ns", nil))
 	ctx := context.Background()
 	for name, list := range map[string]func() (any, error){
@@ -333,7 +333,7 @@ func TestEvaluationReadSurvivesJobListFailure(t *testing.T) {
 			return c.List(ctx, list, options...)
 		}})
 	var config HandlerConfig
-	ConfigureEvaluations(&config, evaluation.New(native, native, "ns", nil))
+	ConfigureEvaluations(&config, evaluation.New(native, native, "ns", "evidence", nil))
 	detail, err := config.GetEvaluation(context.Background(), "run")
 	if err != nil {
 		t.Fatalf("Run read must not fail on Job LIST: %v", err)

@@ -203,7 +203,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	}
 	handlerConfig.ListExperiments = experiments.list
 	handlerConfig.GetExperiment = experiments.get
-	evaluations := evaluation.New(store.Client(), store.Client(), opts.servingNamespace, evaluationSettings(scheduler))
+	evaluations := evaluation.New(
+		store.Client(), store.Client(), opts.servingNamespace, evaluationStoreName, evaluationSettings(scheduler))
 	httpapi.ConfigureEvaluations(&handlerConfig, evaluations)
 	configureEvaluationTemplate(&handlerConfig, evaluations, evaluationStoreName, experiments)
 	evaluationLoads := evaluation.NewLoadService(store.Client(), opts.servingNamespace, evaluationObjects)

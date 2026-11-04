@@ -60,6 +60,6 @@ func evaluationFixture(
 		Stages: []api.StageTemplate{{ID: "stage", Row: "evaluation",
 			LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"}}},
 	}
-	service := evaluation.New(native, native, "ns", settings)
+	service := evaluation.New(native, native, "ns", "evidence", settings)
 	return service, httpapi.EvaluationRequest{Name: "run", Spec: spec}
 }

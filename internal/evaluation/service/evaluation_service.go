@@ -14,7 +14,9 @@ type Service struct {
 	reader    client.Reader
 	client    client.Client
 	namespace string
-	settings  func() (serving.SchedulerSettings, error)
+	// store is the logical evidence store this server reads evaluation results from.
+	store    string
+	settings func() (serving.SchedulerSettings, error)
 }
 
 func (s *Service) ListActive(ctx context.Context) ([]ActiveEvaluation, error) {
@@ -90,6 +92,6 @@ func (s *Service) ListActive(ctx context.Context) ([]ActiveEvaluation, error) {
 	return result, nil
 }
 
-func New(reader client.Reader, native client.Client, namespace string, settings func() (serving.SchedulerSettings, error)) *Service {
-	return &Service{reader: reader, client: native, namespace: namespace, settings: settings}
+func New(reader client.Reader, native client.Client, namespace, store string, settings func() (serving.SchedulerSettings, error)) *Service {
+	return &Service{reader: reader, client: native, namespace: namespace, store: store, settings: settings}
 }

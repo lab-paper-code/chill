@@ -153,7 +153,7 @@ func TestEvaluationListBatchesStageReads(t *testing.T) {
 					return c.Get(ctx, key, obj, opts...)
 				},
 			}).Build()
-			service := New(native, native, "ns", nil)
+			service := New(native, native, "ns", "evidence", nil)
 			result, err := service.List(context.Background())
 			if err != nil {
 				t.Fatal(err)

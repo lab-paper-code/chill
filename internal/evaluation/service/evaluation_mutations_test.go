@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,11 +61,11 @@ func evaluationFixture(t *testing.T) (*Service, EvaluationRequest) {
 		Stages: []api.StageTemplate{{ID: "stage", Row: "evaluation",
 			LoadScenarioRef: api.EvaluationObjectReference{Name: "load", UID: "load-uid"}}},
 	}
-	service := &Service{reader: native, client: native, namespace: "ns"}
+	service := &Service{reader: native, client: native, namespace: "ns", store: "evidence"}
 	return service, EvaluationRequest{Name: "run", Spec: spec}
 }
 func TestEvaluationPreflightBoundaries(t *testing.T) {
-	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready"} {
+	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready", "foreign-store"} {
 		t.Run(fault, func(t *testing.T) {
 			service, request := evaluationFixture(t)
 			var object client.Object
@@ -80,6 +81,9 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 				}}
 			case "profiling":
 				object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}
+			case "foreign-store":
+				// Defect 18: a Run naming another store would publish refs this server cannot read.
+				request.Spec.EvidenceStore = "chill-evidence-store"
 			case "unready":
 				pod := &corev1.Pod{}
 				key := client.ObjectKey{Namespace: "ns", Name: "server"}
@@ -108,6 +112,11 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 			}
 			if failed != (fault != "none") {
 				t.Fatalf("checks=%+v", result.Checks)
+			}
+			if fault == "foreign-store" {
+				if _, err := service.Create(context.Background(), request, "operator"); err == nil || !strings.Contains(err.Error(), "evidenceStore") {
+					t.Fatalf("Run naming a foreign evidence store must be refused, got %v", err)
+				}
 			}
 			if fault == "unready" && (result.LiveTarget[0].Ready || len(result.LiveTarget[0].LiveImageIDs) != 1) {
 				t.Fatal("live target readiness lost")

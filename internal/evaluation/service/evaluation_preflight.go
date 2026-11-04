@@ -32,6 +32,8 @@ func (s *Service) Preflight(
 	}
 	add("spec", err == nil, reason)
 	add("name", len(validation.IsDNS1123Subdomain(request.Name)) == 0, "name must be a DNS subdomain")
+	// Evidence refs carry this name and the result reader serves only this store.
+	add("evidenceStore", request.Spec.EvidenceStore == s.store, "evidenceStore must be "+s.store)
 	if err != nil {
 		return result, nil
 	}
