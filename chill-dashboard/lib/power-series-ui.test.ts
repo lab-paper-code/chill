@@ -34,6 +34,54 @@ test("rendered power chart retains interval timestamps, breaks nulls and labels 
   assert.match(html,/관측 공백/)
 })
 
+test("power chart pads a narrow measured range and keeps flat device power away from plot edges",()=>{
+  const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":{displayTime}})
+  const points=[95,100,105].map((wholeWatts,index)=>({from:index*5000,to:(index+1)*5000,wholeWatts,nodes:{device:42.5}}))
+  for(const nodeUID of [undefined,"device"]){
+    const html=renderToStaticMarkup(createElement(chart.PowerTrend,{points,nodeUID}))
+    const coordinates=[...html.matchAll(/<polyline[^>]* points="([^"]+)"/g)].flatMap(match=>match[1].split(" ").map(pair=>Number(pair.split(",")[1])))
+    assert.ok(coordinates.length>0)
+    assert.ok(coordinates.every(y=>y>8&&y<92))
+    if(!nodeUID)assert.ok(Math.max(...coordinates)-Math.min(...coordinates)>25)
+    else assert.ok(coordinates.every(y=>y>25&&y<75))
+  }
+})
+
+test("power chart renders numeric and time ticks outside the stretched SVG",()=>{
+  const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":{displayTime}})
+  const points=[{from:1000,to:6000,wholeWatts:42.5,nodes:{}}]
+  const html=renderToStaticMarkup(createElement(chart.PowerTrend,{points}))
+  const svg=html.match(/<svg[\s\S]*?<\/svg>/)?.[0]
+  assert.ok(svg)
+  assert.doesNotMatch(svg,/<text\b/)
+  const ticks=[...html.matchAll(/<span[^>]*data-power-tick="([^"]+)"[^>]*>([^<]+)<\/span>/g)]
+  assert.equal(ticks.length,3)
+  assert.ok(ticks.every(tick=>Number.isFinite(Number(tick[1]))&&tick[2].trim().length>0))
+  const times=[...html.matchAll(/<time[^>]*dateTime="([^"]+)"[^>]*>([^<]+)<\/time>/gi)]
+  assert.equal(times.length,3)
+  assert.equal(Date.parse(times[0][1]),1000)
+  assert.equal(Date.parse(times.at(-1)![1]),6000)
+  assert.ok(times.every(time=>time[2].trim().length>0))
+})
+
+test("power chart marks null and absent intervals as gaps without erasing measured zero",()=>{
+  const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":{displayTime}})
+  const points=[
+    {from:1000,to:6000,wholeWatts:0,nodes:{device:0}},
+    {from:6000,to:11000,wholeWatts:100,nodes:{device:null}},
+    {from:11000,to:16000,wholeWatts:100,nodes:{device:20}},
+    {from:21000,to:26000,wholeWatts:100,nodes:{device:0}},
+  ]
+  const html=renderToStaticMarkup(createElement(chart.PowerTrend,{points,nodeUID:"device"}))
+  assert.equal((html.match(/<polyline\b/g)??[]).length,3)
+  const gaps=[...html.matchAll(/<rect[^>]*data-gap-from="(\d+)"[^>]*data-gap-to="(\d+)"/g)].map(match=>[Number(match[1]),Number(match[2])])
+  assert.deepEqual(gaps,[[6000,11000],[16000,21000]])
+  const zero=html.match(/<polyline[^>]*data-from="1000"[^>]*points="([^"]+)"/)
+  assert.ok(zero)
+  assert.ok(zero[1].split(" ").every(pair=>Number(pair.split(",")[1])===92))
+  assert.match(html,/<details[^>]*><summary[^>]*>[^<]+<\/summary><table/)
+})
+
 test("live power distinguishes a pending history from a received empty response",()=>{
   const from="2026-11-03T03:00:00Z",to="2026-11-03T03:15:00Z"
   const query:{data?:OperatingPowerSeries;refetch:()=>void}={refetch:()=>{}}
@@ -186,18 +234,20 @@ test("power interval keeps meter zero, incomplete evidence and pool aggregates i
 test("device power preserves the chart and observation range inside disclosures",()=>{
   const query={error:null,isPending:false,refetch:()=>{}},state={...initialLiveState(),status:"fixture" as const}
   const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":displayHelpers})
+  const observations=load("../components/observation-age.tsx",{})
   const screen=load("../features/resources.tsx",{
     "next/link":{default:function Link({children}:{children?:ReactNode}){return createElement("a",{},children)}},
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},
     "@/lib/client":{useChillQuery:()=>query},"@/lib/use-live":{useLive:()=>({state})},
     "@/hooks/use-measurement-data":{useCoverageInventory:()=>query},"@/lib/live-display":displayHelpers,
     "@/lib/status":{STATUS_AXES:{}},"@/components/status-cell":{StatusCell:()=>null},
+    "@/components/observation-age":observations,
     "@/components/ui/sheet":{Sheet:()=>null},"./resources-data":resourcesData,
     "./power-series":{...chart,usePowerSeries:()=>({query,points:[{from:1000,to:6000,wholeWatts:0,nodes:{}}]})},
   })
   const html=renderToStaticMarkup(createElement(screen.DevicesPage,{}))
   assert.equal((html.match(/<svg[^>]*role="img"/g)??[]).length,1)
-  assert.match(html,/<\/svg><details[^>]*><summary>[^<]+<\/summary><table/)
+  assert.match(html,/<figure[^>]*>[\s\S]*<svg[^>]*role="img"[\s\S]*<\/svg>[\s\S]*<details[^>]*><summary[^>]*>[^<]+<\/summary><table/)
   assert.ok(html.includes(displayTime(new Date(1000).toISOString(),"KST")))
   assert.ok(html.includes(displayTime(new Date(6000).toISOString(),"KST")))
 })

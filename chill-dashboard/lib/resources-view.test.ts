@@ -30,6 +30,10 @@ function render(state:LiveState,selected=false,reads:Record<string,unknown>={}) 
   const servingCode=transpileModule(readFileSync(new URL("../components/serving-instance.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   new Function("require","exports",servingCode)((name:string)=>name==="@/lib/live-display"?display:name.endsWith(".css")?{}:require(name),serving)
   modules["@/components/serving-instance"]=serving
+  const observation:Record<string,unknown>={}
+  const observationCode=transpileModule(readFileSync(new URL("../components/observation-age.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
+  new Function("require","exports",observationCode)((name:string)=>name.endsWith(".css")?{}:require(name),observation)
+  modules["@/components/observation-age"]=observation
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
   return renderToStaticMarkup(createElement(exports.DevicesPage))
 }
@@ -74,4 +78,32 @@ test("REST-only placements retain services without fabricating live routing or r
   const counts=html.match(/aria-label="(?:처리|대기) 요청"[^>]*>(.*?)<\/span>/g)??[]
   assert.equal(counts.length,2)
   assert.ok(counts.every(value=>!/>[^<]*\b0\b/.test(value)),"absent request counts never become observed zero")
+})
+
+test("device header and aggregate power retain shared connection and age slots",()=>{
+  const live=state()
+  live.metrics=[{type:"metrics",at,seq:1,bucketAt:at,nodes:{},workloads:{},pool:{wholeWatts:20,activeWatts:20}}]
+  const html=render(live)
+  const heading=html.slice(html.indexOf('class="devices-heading-status"'),html.indexOf('<section'))
+  assert.ok(heading.includes('class="live-observation"'))
+  assert.ok(/class="observation-age-value">[\d,]+</.test(heading),"metric age remains numeric rather than a freshness verdict")
+  const power=html.slice(html.indexOf('devices-power-facts'),html.indexOf('devices-gap-table'))
+  assert.ok(power.includes('class="observation-age"'))
+  assert.ok(power.includes(`title="${at.replace("Z",".000Z")}"`))
+  live.lastPower=null
+  assert.ok(render(live).includes('class="observation-age-unit"></span>'))
+})
+
+test("shared physical instances enclose services under one accessible group label",()=>{
+  const shared=state()
+  shared.snapshot!.workloads.push({...shared.snapshot!.workloads[0],uid:"second-service",name:"다른 서비스"})
+  shared.snapshot!.instances[0].routable["second-service"]=true
+  shared.snapshot!.instances[0].running["second-service"]=1
+  const html=render(shared,true)
+  const groups=html.match(/class="devices-instance" role="group" aria-label="[^"]+"/g)??[]
+  assert.equal(groups.length,2,"one physical group in the fleet and one in the Sheet")
+  assert.equal((html.match(/class="devices-instance-label"/g)??[]).length,2)
+  assert.equal((html.match(/class="devices-service-instance"/g)??[]).length,4)
+  const detail=html.slice(html.indexOf('class="devices-detail"'),html.indexOf('<details class="devices-original"'))
+  assert.ok(!detail.includes('class="serving-instance-mode"'))
 })

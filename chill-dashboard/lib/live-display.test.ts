@@ -360,6 +360,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
     assert.ok(earlier.includes('data-connected="true"')&&later.includes('data-connected="true"'))
     assert.ok(later.includes('title="2026-10-30T12:00:00.000Z"'),"age remains anchored to metrics, not transport activity")
     assert.ok(renderObservation({...state,metrics:[]},now).includes('class="observation-age-value"'))
+    assert.ok(earlier.includes('class="observation-age-elapsed"'),"age value and unit form one uninterrupted reading group")
   })
   modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx",{"@/lib/live-display":displayHelpers})
   const board=compile("../features/live-board.tsx",modules)

@@ -25,13 +25,44 @@ export function usePowerSeries(state:LiveState) {
 
 export function PowerTrend({points,nodeUID}:{points:PowerPoint[];nodeUID?:string}) {
   const segments=powerSegments(points,nodeUID),start=points[0]?.from??0,end=points.at(-1)?.to??start
-  const max=Math.max(1,...points.map(point=>(nodeUID?point.nodes[nodeUID]:point.wholeWatts)??0))
-  const observed=points.reduce((sum,point)=>sum+((nodeUID?point.nodes[nodeUID]:point.wholeWatts)==null?0:point.to-point.from),0)/1000
-  return <figure className="devices-trend"><figcaption title="구간별 실측 평균입니다. 관측 공백은 연결하지 않으며 실측 0 W와 구분합니다.">{nodeUID?"선택 장치":"전체 계측"} 전력 추세 (W) · 눈금 0–{max.toLocaleString("ko-KR",{maximumFractionDigits:1})} W</figcaption>
-    {points.length?<><svg viewBox="0 0 120 32" preserveAspectRatio="none" className="h-40 w-full" role="img" aria-label="구간별 전력 추세 (W)">
-      <path d="M0 0V28H120" fill="none" stroke="currentColor" opacity=".3"/>
-      {segments.map((segment,index)=><polyline key={index} data-from={segment[0].from} data-to={segment.at(-1)!.to} points={segment.flatMap(point=>{const y=28-((nodeUID?point.nodes[nodeUID]:point.wholeWatts)??0)/max*26;return [`${(point.from-start)/(end-start)*120},${y}`,`${(point.to-start)/(end-start)*120},${y}`]}).join(" ")} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke"><title>{segment.map(point=>`${displayTime(new Date(point.from).toISOString(),"KST")} – ${displayTime(new Date(point.to).toISOString(),"KST")}: ${nodeUID?point.nodes[nodeUID]:point.wholeWatts} W`).join("; ")}</title></polyline>)}
-    </svg><details className="devices-trend-range"><summary>관측 구간</summary><table aria-label="전력 관측 범위"><thead><tr><th>시작 KST</th><th>종료 KST</th><th>평균 제공 (s)</th><th>전체 (s)</th><th>관측 공백 (s)</th></tr></thead><tbody><tr><td>{displayTime(new Date(start).toISOString(),"KST")}</td><td>{displayTime(new Date(end).toISOString(),"KST")}</td><td>{observed}</td><td>{(end-start)/1000}</td><td>{Math.max(0,(end-start)/1000-observed)}</td></tr></tbody></table></details></>:<p>전력 관측 없음</p>}
+  const watts=(point:PowerPoint)=>(nodeUID?point.nodes[nodeUID]:point.wholeWatts)
+  const values=segments.flatMap(segment=>segment.map(point=>watts(point)!))
+  const minimum=values.length?Math.min(...values):0,maximum=values.length?Math.max(...values):0
+  const padding=Math.max((maximum-minimum)*.15,Math.abs(maximum)*.02,.5)
+  const roughStep=(maximum-minimum+padding*2)/4,magnitude=10**Math.floor(Math.log10(roughStep))
+  const step=([1,2,5,10].find(value=>value>=roughStep/magnitude)??10)*magnitude
+  const lower=Math.max(0,Math.floor((minimum-padding)/step)*step),upper=Math.ceil((maximum+padding)/step)*step
+  const ticks=[upper,(lower+upper)/2,lower]
+  const digits=Math.max(0,Math.min(20,1-Math.floor(Math.log10(step))))
+  const x=(at:number)=>(at-start)/Math.max(1,end-start)*100,y=(value:number)=>92-(value-lower)/(upper-lower)*84
+  const gaps:{from:number;to:number}[]=[]
+  let cursor=start
+  for(const segment of segments){
+    if(segment[0].from>cursor)gaps.push({from:cursor,to:segment[0].from})
+    cursor=segment.at(-1)!.to
+  }
+  if(cursor<end)gaps.push({from:cursor,to:end})
+  const observed=points.reduce((sum,point)=>sum+(watts(point)==null?0:point.to-point.from),0)/1000
+  return <figure className="devices-trend" style={{margin:0,color:"var(--primary)",minWidth:0}}>
+    <figcaption title="구간별 실측 평균입니다. 관측 공백은 연결하지 않으며 실측 0 W와 구분합니다." style={{color:"var(--muted-foreground)",fontSize:12,marginBottom:8}}>{nodeUID?"선택 장치":"전체 계측"} 전력 추세 (W · KST){gaps.length>0&&<span style={{display:"block",marginTop:4}}>점선 영역은 관측 없음 · 실측 0 W는 선으로 표시</span>}</figcaption>
+    {points.length?<><div style={{display:"grid",gridTemplateColumns:"max-content minmax(0, 1fr)",columnGap:8,fontSize:12,fontVariantNumeric:"tabular-nums",color:"var(--muted-foreground)"}}>
+      <div style={{position:"relative",minWidth:"3ch"}}>
+        {ticks.map((tick,index)=><span key={index} data-power-tick={tick} style={{position:"absolute",top:`${8+index*42}%`,right:0,transform:"translateY(-50%)",whiteSpace:"nowrap"}}>{tick.toLocaleString("ko-KR",{maximumFractionDigits:digits})}</span>)}
+        <span aria-hidden="true" style={{visibility:"hidden",whiteSpace:"nowrap"}}>{upper.toLocaleString("ko-KR",{maximumFractionDigits:digits})}</span>
+      </div>
+      <div style={{position:"relative",minWidth:0}}>
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{display:"block",width:"100%",height:144,overflow:"visible",color:"var(--primary)"}} role="img" aria-label="구간별 전력 추세 (W)">
+          <path d="M0 8H100M0 50H100M0 92H100" fill="none" stroke="var(--muted-foreground)" strokeWidth="1" strokeDasharray="2 4" opacity=".3" vectorEffect="non-scaling-stroke"/>
+          {gaps.map(gap=><rect key={gap.from} data-gap-from={gap.from} data-gap-to={gap.to} x={x(gap.from)} y="8" width={x(gap.to)-x(gap.from)} height="84" fill="var(--muted-foreground)" fillOpacity=".1" stroke="var(--muted-foreground)" strokeDasharray="3 3" strokeWidth="1" vectorEffect="non-scaling-stroke"><title>{`${displayTime(new Date(gap.from).toISOString(),"KST")} – ${displayTime(new Date(gap.to).toISOString(),"KST")}: 관측 없음`}</title></rect>)}
+          {segments.map((segment,index)=><polyline key={index} data-from={segment[0].from} data-to={segment.at(-1)!.to} points={segment.flatMap(point=>[`${x(point.from)},${y(watts(point)!)}`,`${x(point.to)},${y(watts(point)!)}`]).join(" ")} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke"><title>{segment.map(point=>`${displayTime(new Date(point.from).toISOString(),"KST")} – ${displayTime(new Date(point.to).toISOString(),"KST")}: ${watts(point)} W`).join("; ")}</title></polyline>)}
+        </svg>
+        {!values.length&&<span style={{position:"absolute",inset:0,display:"grid",placeItems:"center",color:"var(--foreground)"}}>전력 관측 없음</span>}
+      </div>
+      <div aria-hidden="true"/>
+      <div style={{display:"flex",justifyContent:"space-between",gap:4,whiteSpace:"nowrap"}}>
+        {[start,(start+end)/2,end].map((at,index)=><time key={index} dateTime={new Date(at).toISOString()} title={displayTime(new Date(at).toISOString(),"KST")}>{displayTime(new Date(at).toISOString(),"KST").replace(" KST","")}</time>)}
+      </div>
+    </div><details className="devices-trend-range" style={{overflowX:"auto",color:"var(--muted-foreground)",fontSize:12}}><summary style={{cursor:"pointer",padding:"12px 0",minHeight:44}}>관측 시간 상세</summary><table aria-label="전력 관측 범위" style={{minWidth:440,fontSize:12}}><thead><tr><th>시작 KST</th><th>종료 KST</th><th>평균 제공 (s)</th><th>전체 (s)</th><th>관측 공백 (s)</th></tr></thead><tbody><tr><td>{displayTime(new Date(start).toISOString(),"KST")}</td><td>{displayTime(new Date(end).toISOString(),"KST")}</td><td>{observed}</td><td>{(end-start)/1000}</td><td>{Math.max(0,(end-start)/1000-observed)}</td></tr></tbody></table></details></>:<p>전력 관측 없음</p>}
   </figure>
 }
 

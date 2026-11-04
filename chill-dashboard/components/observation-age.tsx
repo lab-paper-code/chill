@@ -3,7 +3,7 @@ import "./observation-age.css"
 
 export function ObservationAge({at,now,label="관측"}:{at:string|number|null|undefined;now:number;label?:string}) {
   const time=typeof at==="number"?at:at?Date.parse(at):NaN,seconds=Number.isFinite(time)?Math.max(0,Math.floor((now-time)/1000)):null
-  return <span className="observation-age" title={Number.isFinite(time)?new Date(time).toISOString():undefined}><span>{label}</span><span className="observation-age-value">{seconds===null?"미수신":seconds.toLocaleString("ko-KR")}</span><span className="observation-age-unit">{seconds===null?"":"초 전"}</span></span>
+  return <span className="observation-age" title={Number.isFinite(time)?new Date(time).toISOString():undefined}><span>{label}</span><span className="observation-age-elapsed"><span className="observation-age-value">{seconds===null?"미수신":seconds.toLocaleString("ko-KR")}</span><span className="observation-age-unit">{seconds===null?"":"초 전"}</span></span></span>
 }
 
 export function LiveObservation({state,now,status=state.status,paused=false}:{state:LiveState;now:number;status?:string;paused?:boolean}) {

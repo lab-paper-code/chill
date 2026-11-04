@@ -11,9 +11,8 @@ import type { LiveState } from "@/lib/live"
 import type { PoolsView, PowerModeActuator, SchedulerControllerState, SchedulerAllocation } from "@/lib/read-types"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { deviceReasons, displayTime, isStale, liveFresh, liveReason, routingShare } from "@/lib/live-display"
-import { STATUS_AXES } from "@/lib/status"
-import { StatusCell } from "@/components/status-cell"
+import { deviceReasons, displayTime, liveReason, routingShare } from "@/lib/live-display"
+import { LiveObservation, ObservationAge } from "@/components/observation-age"
 import { SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { ServingInstance } from "@/components/serving-instance"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -39,8 +38,8 @@ function ReadState({label,query}:{label:string;query:{isPending:boolean;error:Er
 }
 function InstanceRows({row,state,resources}:{row:DeviceRow;state:LiveState;resources?:SchedulerControllerState}) {
   const instances=deviceInstances(row,state,resources?.snapshot)
-  return <div className="devices-instance-list">{instances.length?instances.map((item,index)=><div className="devices-instance" key={item.id}>
-    <div className="devices-instance-label">인스턴스 {index+1}</div>
+  return <div className="devices-instance-list">{instances.length?instances.map((item,index)=><div className="devices-instance" role="group" aria-label={`물리 인스턴스 ${index+1}`} key={item.id}>
+    <div className="devices-instance-label" aria-hidden="true">물리 인스턴스 {index+1}</div>
     {item.services.length?item.services.map(service=>{
       const share=item.live?undefined:routingShare(resources?.snapshot.routing?.[service.uid]??undefined,item.id)
       return <div className="devices-service-instance" key={service.uid} style={{"--service-color":`var(--chart-${Array.from(service.uid).reduce((sum,char)=>sum+char.charCodeAt(0),0)%5+1})`} as React.CSSProperties}>
@@ -60,17 +59,17 @@ export function DevicesPage() {
   const live=useLive(),inventory=useCoverageInventory(),pools=useChillQuery<PoolsView>("v1/pools",{poll:true}),resources=useChillQuery<SchedulerControllerState>("v1/scheduler/state",{decoder:parseSchedulerJSON,poll:true})
   const params=useSearchParams(),router=useRouter(),opener=React.useRef<HTMLButtonElement|null>(null),[now,setNow]=React.useState(()=>Date.now())
   React.useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[])
-  const state=live.state,metric=state.metrics.at(-1),clock=state.status==="fixture"&&metric?Date.parse(metric.bucketAt)+1000:now
+  const state=live.state,metric=state.metrics.at(-1),clock=now
   const rows=deviceRows(state,inventory.data,pools.data,resources.data?.snapshot),scale=devicePowerScale(rows,state.powerScale),power=usePowerSeries(state)
-  const selectedUID=params.get("node"),selected=rows.find(row=>row.uid===selectedUID),fresh=liveFresh(state,clock)
+  const selectedUID=params.get("node"),selected=rows.find(row=>row.uid===selectedUID)
   const inventoryNode=selected?.classes[0]?.nodes.find(node=>node.uid===selectedUID)
   const selectedReasons=selected?deviceReasons(selected.reasons,selected.powerMode):[]
   const start=power.points[0]?.from??null,end=power.points.length?new Date(power.points.at(-1)!.to).toISOString():null
-  const last=state.lastPower,lastStale=!!last&&(isStale(last.bucketAt,clock)||metric?.pool.wholeWatts==null||!fresh)
+  const last=state.lastPower
   const gaps=state.gaps.filter(row=>Date.parse(row.to)>=(start??0)&&Date.parse(row.from)<=(end?Date.parse(end):0)&&(row.scope==="all"||row.scope==="power"||row.scope.startsWith("node:")))
   function select(uid:string|null,button?:HTMLButtonElement){if(button)opener.current=button;const next=new URLSearchParams(params.toString());if(uid)next.set("node",uid);else next.delete("node");router.replace(`/operations/devices${next.size?`?${next}`:""}`,{scroll:false})}
   return <div className="devices-page">
-    <header className="devices-heading"><div><h1>장치</h1><p>장치에서 실행 중인 서비스와 전력을 확인하세요.</p></div><div className="devices-heading-status"><StatusCell axis={STATUS_AXES.observation} label={fresh?"최신":state.snapshot?"오래된 관측":"미확인"} tone={fresh?"ok":"warn"}/><Link href="/">서비스 현황<ChevronRight aria-hidden="true"/></Link></div></header>
+    <header className="devices-heading"><div><h1>장치</h1><p>장치에서 실행 중인 서비스와 전력을 확인하세요.</p></div><div className="devices-heading-status"><LiveObservation state={state} now={clock}/><Link href="/">서비스 현황<ChevronRight aria-hidden="true"/></Link></div></header>
     <section aria-labelledby="devices-table-title" className="devices-fleet"><div className="devices-section-heading"><h2 id="devices-table-title"><Server aria-hidden="true"/>장치별 배치</h2><span>{state.snapshot||inventory.data||pools.data?`${rows.length}대`:"관측 대기"}</span></div>
       <table className="devices-table devices-fleet-table"><colgroup><col className="devices-name-column"/><col className="devices-power-column"/><col/></colgroup><thead><tr><th>장치 / 준비 상태</th><th>현재 전력 <span className="devices-scale">0–{number(scale)} W</span></th><th>서비스 인스턴스</th></tr></thead><tbody>{rows.map(row=><tr key={row.uid} aria-selected={selectedUID===row.uid}>
         <th scope="row" data-label="장치"><button className="devices-select" type="button" onClick={event=>select(row.uid,event.currentTarget)}><Server aria-hidden="true"/><span>{row.name||"이름 미확인"}<small>{row.configured?"구성 장치":"구성 밖 관측"}</small></span><ChevronRight aria-hidden="true"/></button><Ready row={row}/></th>
@@ -81,7 +80,7 @@ export function DevicesPage() {
       <div className="devices-read-state"><ReadState label="장비 사양" query={inventory}/><ReadState label="배치·자원 역할" query={pools}/><ReadState label="자원 할당" query={resources}/></div>
     </section>
     <section className="devices-power-history"><details><summary><Zap aria-hidden="true"/>전체 전력 이력</summary><div className="devices-history-body">
-      <table className="devices-table devices-power-facts"><thead><tr><th>전체 계측 (W)</th><th>전력 관측</th><th>구성 장치 (개)</th><th>계측 장치 (개)</th></tr></thead><tbody><tr><td data-label="전체 계측 (W)" className="devices-numeric">{number(last?.watts)}<strong className="devices-observed-slot">{!last?"미수신":lastStale?"마지막값 · 오래된 관측":"최근 관측값"}</strong></td><td data-label="전력 관측">{time(last?.bucketAt)}</td><td data-label="구성 장치 (개)" className="devices-numeric">{state.snapshot?.nodes.length??"미확인"}</td><td data-label="계측 장치 (개)" className="devices-numeric">{metric?Object.keys(metric.nodes).length:"미확인"}</td></tr></tbody></table>
+      <table className="devices-table devices-power-facts"><thead><tr><th>전체 계측 (W)</th><th>전력 관측</th><th>구성 장치 (개)</th><th>계측 장치 (개)</th></tr></thead><tbody><tr><td data-label="전체 계측 (W)" className="devices-numeric">{number(last?.watts)}<span className="devices-observed-slot"><ObservationAge at={last?.bucketAt} now={clock} label="전력 관측"/></span></td><td data-label="전력 관측">{time(last?.bucketAt)}</td><td data-label="구성 장치 (개)" className="devices-numeric">{state.snapshot?.nodes.length??"미확인"}</td><td data-label="계측 장치 (개)" className="devices-numeric">{metric?Object.keys(metric.nodes).length:"미확인"}</td></tr></tbody></table>
       <PowerTrend points={power.points}/><ReadState label="전력 이력" query={power.query}/>
       {!!gaps.length&&<table className="devices-table devices-gap-table"><caption>누락 구간</caption><thead><tr><th>시작</th><th>종료</th><th>범위</th><th>사유</th></tr></thead><tbody>{gaps.map((gap,index)=><tr key={index}><td data-label="시작">{time(gap.from)}</td><td data-label="종료">{time(gap.to)}</td><td data-label="범위">{gap.scope}</td><td data-label="사유">{gap.reason}</td></tr>)}</tbody></table>}
       <Link href={`/records?${new URLSearchParams({kind:"power",...(start===null?{}:{from:new Date(start).toISOString()}),...(end?{to:end}:{})})}`}>전력 기록</Link>
