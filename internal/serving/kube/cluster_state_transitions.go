@@ -30,14 +30,15 @@ func (c *reservationState) startTransition(target *serving.SchedulerCandidate, c
 	}
 	operation := servingstate.Operation{ID: id, Kind: transitionRunKind, Target: target, WorkloadUIDs: changedWorkloads(*target, c.state.Snapshot)}
 	for _, action := range target.Actions {
-		if action.Node.UID != "" {
+		if action.Node.UID != "" && !slices.Contains(operation.Nodes, action.Node) {
 			operation.Nodes = append(operation.Nodes, action.Node)
 		}
 	}
 	started := time.Now()
 	before := servingstate.OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
+	before.Routing = c.state.Snapshot.Routing
 	for _, instance := range c.state.Snapshot.Instances {
-		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
+		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node, OwnerWorkloadUID: instance.OwnerWorkloadUID})
 	}
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, Before: before, Status: servingstate.NativeOperationRunning, StartedAt: started}, started: started}
 	parent.admittedControls = controls
@@ -79,6 +80,9 @@ func (c *reservationState) completeRun(run *actionRun, result *servingstate.Oper
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			run.action.Status, run.action.Reason = servingstate.NativeOperationFailed, serving.ActionDeadlineExceeded+": "+run.action.Reason
 		}
+	}
+	if run.action.Kind == servingstate.OperationRoute && run.action.Status == servingstate.NativeOperationComplete {
+		run.scope.Routing = nil
 	}
 	run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
 	c.recordPreparationFailureLocked(run, result, c.state.Snapshot)
@@ -238,10 +242,21 @@ func (c *reservationState) snapshotLocked() serving.SchedulerSnapshot {
 
 func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnapshot) {
 	c.state.Snapshot = *snapshot
+	for uid, writers := range c.routeWriters {
+		if !slices.ContainsFunc(snapshot.Workloads, func(workload *serving.Definition) bool { return workload != nil && workload.UID == uid }) {
+			delete(c.routeWriters, uid)
+			continue
+		}
+		for instance := range writers {
+			if !slices.ContainsFunc(snapshot.Instances, func(actual serving.SchedulerInstance) bool { return actual.ID == instance }) {
+				delete(writers, instance)
+			}
+		}
+	}
 }
 
 func (c *reservationState) publishDecisionLocked(snapshot *serving.SchedulerSnapshot, decision *serving.SchedulerDecision) {
-	c.state.Snapshot = *snapshot
+	c.publishSnapshotLocked(snapshot)
 	c.state.Decision = *decision
 	c.markOverloadPrepares(*decision)
 }

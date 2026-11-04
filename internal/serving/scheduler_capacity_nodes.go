@@ -38,6 +38,7 @@ type capacityPlan struct {
 	items                              [][]capacityItem    // per Workload, by e then ID
 	retained                           [][]capacityItem    // per Workload, current instances serving until the route
 	others                             int                 // instances serving no controlled Workload
+	pendingReplicas                    []int               // per-workload occupancy excluded from capacity items
 	preMean, preMax, postMean, postMax float64             // seconds
 	preJ, postJ                        float64
 	before, mid, after                 float64 // watts
@@ -139,8 +140,9 @@ type capacityChoice struct {
 
 // Uncreated targets consume the shared instance limit, not current capacity or
 // energy. Once their Pod/slot appears, physical occupancy already counts it.
-func schedulerUncreatedReservations(snapshot SchedulerSnapshot, node NodeReference) int {
+func schedulerUncreatedReservations(snapshot SchedulerSnapshot, node NodeReference) []SchedulerInstance {
 	seen := map[string]bool{}
+	var pending []SchedulerInstance
 	for _, reservation := range snapshot.Reservations {
 		if reservation.Target == nil || !slices.Contains(reservation.Nodes, node) {
 			continue
@@ -156,9 +158,10 @@ func schedulerUncreatedReservations(snapshot SchedulerSnapshot, node NodeReferen
 				continue
 			}
 			seen[wanted.ID] = true
+			pending = append(pending, wanted)
 		}
 	}
-	return len(seen)
+	return pending
 }
 
 //nolint:gocyclo // One ordered pass applies the node rules, the control gates and the plan walk.
@@ -178,13 +181,21 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
 	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": beforeSources}
+	for _, instance := range p.pending {
+		if instance.Node != node.Node {
+			continue
+		}
+		keep.others++
+		if w, ok := p.index[instance.WorkloadUID]; ok {
+			keep.pendingReplicas[w]++
+		}
+	}
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
 	case slices.Contains(common[n].Reasons, NodePlacementInventoryMissing):
 		reason = NodePlacementInventoryMissing
 	case schedulerReservedNode(p.snapshot, node.Node):
-		keep.others += schedulerUncreatedReservations(p.snapshot, node.Node)
 		reason = "ReservedNode"
 	case !node.Ready:
 		reason = "NodeUnavailable"
@@ -194,8 +205,6 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 		reason = NodeExcluded
 	case slices.Contains(node.Reasons, NodeInstanceUnavailable):
 		reason = NodeInstanceUnavailable
-	case slices.Contains(node.Reasons, NodePlacementInventoryMissing):
-		reason = NodePlacementInventoryMissing
 	case slices.Contains(node.Reasons, NodePlacementBudgetUnavailable):
 		reason = NodePlacementBudgetUnavailable
 	case slices.ContainsFunc(current, p.fixed):
@@ -496,10 +505,17 @@ func (p *capacityPlanner) currentKappa(i SchedulerInstance) (float64, string) {
 func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacityItem) {
 	k := len(p.ws)
 	plan.items, plan.retained = make([][]capacityItem, k), make([][]capacityItem, k)
+	plan.pendingReplicas = make([]int, k)
 	for _, i := range plan.instances {
 		w, ok := p.index[i.WorkloadUID]
+		if owner, controlled := p.index[i.OwnerWorkloadUID]; controlled && (!ok || owner != w) {
+			plan.pendingReplicas[owner]++
+		}
 		if !ok || i.Terminated || plan.keep && (!i.Ready || i.Stopped) {
 			plan.others++
+			if ok {
+				plan.pendingReplicas[w]++
+			}
 			continue
 		}
 		item := chosen[i.ID]

@@ -15,6 +15,7 @@ import (
 
 const (
 	OperationPrepare         = "prepare"
+	OperationTransition      = "transition"
 	OperationRemove          = "remove"
 	OperationPower           = "power"
 	OperationIdle            = "idle"
@@ -74,9 +75,12 @@ type Operation struct {
 	MaxActuationDuration time.Duration `json:"maxActuationDurationNanos,omitempty"`
 	// Holder is the measurement root a measurement power operation acts for;
 	// the Node's measurement taint must name it.
-	Holder              string                        `json:"holder,omitempty"`
-	Target              *serving.SchedulerCandidate   `json:"target,omitempty"`
-	SourceConfigRV      string                        `json:"sourceConfigRV,omitempty"`
+	Holder         string                      `json:"holder,omitempty"`
+	Target         *serving.SchedulerCandidate `json:"target,omitempty"`
+	SourceConfigRV string                      `json:"sourceConfigRV,omitempty"`
+	// PolicyInstances bounds autonomous route policy writes; nil means all
+	// positive destinations. Routing itself remains a whole-UID atomic write.
+	PolicyInstances     []string                      `json:"policyInstances"`
 	StaticRouting       map[string]map[string]int     `json:"staticRouting,omitempty"`
 	WorkloadUID         string                        `json:"workloadUID,omitempty"`
 	WorkloadUIDs        []string                      `json:"workloadUIDs"`

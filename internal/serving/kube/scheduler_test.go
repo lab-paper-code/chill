@@ -301,12 +301,16 @@ func TestSchedulerTickDeadlinePreservesPublishedStateAndAllowsControlsOff(t *tes
 }
 
 func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarget(t *testing.T) {
-	controller := schedulerEmptyPoolController(t)
+	controller, _ := tickReadySubsetController(t, nil)
 	if _, err := controller.Tick(context.Background(), time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
-	installTestTransition(controller, &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: controller.State().Snapshot.Nodes,
-		Routing: map[string]map[string]int32{}, Actions: []serving.Action{{ID: "unfinished-route", Kind: servingstate.OperationRoute, Status: "planned"}}})
+	snapshot := controller.State().Snapshot
+	ready := snapshot.Instances[0]
+	uid := snapshot.Workloads[0].UID
+	ready.WorkloadUID = uid
+	installTestTransition(controller, &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: snapshot.Nodes, Instances: []serving.SchedulerInstance{ready},
+		Routing: map[string]map[string]int32{uid: {ready.ID: 500}}, Actions: []serving.Action{{ID: "unfinished-route", Kind: servingstate.OperationRoute, Status: "planned"}}})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var publishedAt time.Time

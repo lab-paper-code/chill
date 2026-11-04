@@ -15,6 +15,9 @@ func (p *capacityPlanner) bounded(choice []int) bool {
 	for n, j := range choice {
 		plan := p.plans[n][j]
 		total += plan.others
+		for w, pending := range plan.pendingReplicas {
+			counts[w] += pending
+		}
 		for w := range p.ws {
 			counts[w] += len(plan.items[w])
 			total += len(plan.items[w])

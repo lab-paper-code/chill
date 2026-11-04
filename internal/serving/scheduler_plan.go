@@ -745,6 +745,8 @@ func schedulerReservedNode(snapshot SchedulerSnapshot, node NodeReference) bool 
 	})
 }
 
+// WorkloadUIDs is an exclusive whole-workload scope (reset/deletion/manual
+// policy writes), not the ownership identity of a node-local autonomous plan.
 func schedulerFixedReason(snapshot SchedulerSnapshot, uid string) string {
 	for _, reservation := range snapshot.Reservations {
 		if slices.Contains(reservation.WorkloadUIDs, uid) {

@@ -12,7 +12,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// Handoff ACK preserves the frozen owner until stop/drain/remove complete.
+// Retirement keeps its physical fence, not a whole-workload routing freeze.
 func TestCleanupRetainsOwnershipUntilRetirementCompletesAC38(t *testing.T) {
 	c, _, physical := acknowledgedHandoffFixture(t)
 	c.ctx = context.Background()
@@ -49,10 +49,11 @@ func TestCleanupRetainsOwnershipUntilRetirementCompletesAC38(t *testing.T) {
 	c.runs = map[string]*actionRun{}
 	installTestTransition(c, &goal)
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	parent.result.Before.Routing = goal.Routing
 	for _, instance := range c.state.Snapshot.Instances {
 		parent.result.Before.Instances = append(parent.result.Before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
 	}
-	final := &actionRun{owner: goal.ID, reserved: true, action: goal.Actions[0], result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, Target: &goal, WorkloadUIDs: []string{uid}}, Status: servingstate.NativeOperationComplete}}
+	final := &actionRun{owner: goal.ID, reserved: true, proofParent: parent, action: goal.Actions[0], result: &servingstate.OperationResult{Operation: servingstate.Operation{Kind: servingstate.OperationRoute, Target: &goal, WorkloadUIDs: []string{uid}}, Status: servingstate.NativeOperationComplete}}
 	final.action.Status = servingstate.NativeOperationRunning
 	c.runs[final.action.ID] = final
 	now := time.Now()
@@ -75,18 +76,24 @@ func TestCleanupRetainsOwnershipUntilRetirementCompletesAC38(t *testing.T) {
 		refresh.ID = fmt.Sprintf("refresh-%d", tick)
 		refresh.Routing = map[string]map[string]int32{uid: {"ready-0": 97, "ready-1": 252, "ready-2": 651}}
 		refresh.Actions = []serving.Action{{ID: refresh.ID, Kind: servingstate.OperationRoute}}
-		op := servingstate.Operation{Kind: servingstate.OperationRoute, Target: &refresh, WorkloadUIDs: []string{uid}}
-		run := &actionRun{owner: refresh.ID, action: refresh.Actions[0], result: &servingstate.OperationResult{Operation: op, Status: servingstate.NativeOperationRunning}}
+		op := servingstate.Operation{Kind: servingstate.OperationRoute, Target: &refresh, WorkloadUIDs: []string{uid}, PolicyInstances: []string{}}
+		run := &actionRun{owner: refresh.ID, started: time.Now(), action: refresh.Actions[0], result: &servingstate.OperationResult{Operation: op, Status: servingstate.NativeOperationRunning}}
 		run.action.Status = servingstate.NativeOperationRunning
 		parent.returnObserved = true
-		if c.reserveRun(refresh.ID, run, op) || run.owner != refresh.ID {
-			t.Fatal("Ready route refresh bypassed the retirement owner")
+		if !c.reserveRun(refresh.ID, run, op) {
+			t.Fatal("retirement froze an independent acknowledged Ready route")
 		}
+		if err := c.runtime.ApplySchedulerWorkloadsTarget(refresh, []string{uid}); err != nil {
+			t.Fatal(err)
+		}
+		c.state.Snapshot.Routing = refresh.Routing
+		run.action.Status, run.result.Status = servingstate.NativeOperationComplete, servingstate.NativeOperationComplete
+		c.releaseOwnerLocked(refresh.ID)
 		if !c.dependenciesReady(goal.Actions[1], goal, c.runtime) {
 			t.Fatal("safe old-source stop lost its completed handoff dependency")
 		}
 		if actions, partial := c.intermediateActions(goal); partial != nil || len(actions) != len(goal.Actions) {
-			t.Fatal("rejected refresh changed the original handoff")
+			t.Fatal("independent refresh changed the original retirement DAG")
 		}
 	}
 	assertCleanupCompletion(t, c, goal, old, now)

@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// A completed handoff does not release the retirement owner's planning scope.
-func TestCleanupReservationKeepsWorkloadFixed(t *testing.T) {
+// Explicit whole-workload fences such as reset/deletion remain exclusive.
+func TestExclusiveWorkloadReservationKeepsWorkloadFixed(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
 	s.MaxReplicas, s.MaxInstances = 8, 8
@@ -21,7 +21,7 @@ func TestCleanupReservationKeepsWorkloadFixed(t *testing.T) {
 	ids := []string{"nano", "rasp5", "genesis3", "old-source"}
 	kappas := []float64{10.19099904088407, 26.49779192329125, 68.45308563137857, 1000}
 	byProfile := map[string]float64{}
-	reservation := SchedulerReservation{Owner: "retirement", Nodes: nodes, WorkloadUIDs: []string{"w1"}, Instances: ids, PodUIDs: []string{"old-pod"}}
+	reservation := SchedulerReservation{Owner: "workload-reset", Nodes: nodes, WorkloadUIDs: []string{"w1"}, Instances: ids, PodUIDs: []string{"old-pod"}}
 	for k, node := range nodes {
 		i := poolsInstance(base, ids[k], node, "fixed", "w1")
 		i.ID, i.OwnerWorkloadUID = ids[k], "w1"
@@ -36,8 +36,8 @@ func TestCleanupReservationKeepsWorkloadFixed(t *testing.T) {
 	for _, rate := range []float64{95.3, 100.2, 97.5} {
 		capacityLoad(s, &snap, snap.Workloads[0], rate)
 		d := capacityDecideForTest(t, s, snap, rows)
-		if d.Workloads[0].State != schedulerWorkloadFixed || d.Workloads[0].Reason != "ReservedScope:retirement" {
-			t.Fatalf("%.1f/s escaped the retirement reservation: %+v", rate, d.Workloads)
+		if d.Workloads[0].State != schedulerWorkloadFixed || d.Workloads[0].Reason != "ReservedScope:workload-reset" {
+			t.Fatalf("%.1f/s escaped the whole-workload reservation: %+v", rate, d.Workloads)
 		}
 		if d.Target != nil && !maps.Equal(d.Target.Routing["w1"], snap.Routing["w1"]) {
 			t.Fatalf("%.1f/s changed the reserved route: %+v", rate, d.Target)

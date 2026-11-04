@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -182,6 +183,7 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	existing.action.Status, existing.action.To = servingstate.NativeOperationRunning, "frozen-route-effect"
 	existing.started = time.Now()
 	frozen := existing.result.Operation.Target
+	existing.result.Operation.Kind = servingstate.OperationRoute
 	frozen.Actions = []serving.Action{existing.action}
 	existing.scope, existing.reserved, existing.owner = controller.operationScope(existing.result.Operation), true, frozen.ID
 	target.Actions[0].To = "different-route-effect"
@@ -808,7 +810,7 @@ func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t
 
 // The fake native HTTP boundary acknowledges the policy mounted in its actual
 // ConfigMap. Tick, source capture, route execution and runtime application are real.
-func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (*SchedulerController, *atomic.Bool) {
+func tickReadySubsetController(t *testing.T, observe func(int, *native.State), extraNodes ...string) (*SchedulerController, *atomic.Bool) {
 	t.Helper()
 	ctx := context.Background()
 	manager, _ := newManagerHarness(t)
@@ -849,7 +851,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	kube := kubefake.NewSimpleClientset()
 	profiles := []serving.Profile{}
 	objects := []client.Object{&class, workload}
-	for index, name := range []string{"a", "b"} {
+	for index, name := range append([]string{"a", "b"}, extraNodes...) {
 		n, p, source := node.DeepCopy(), pod.DeepCopy(), profile
 		n.Name, n.UID = name, types.UID(name+"-node")
 		p.Name, p.UID, p.Spec.NodeName = name, types.UID(name+"-pod"), name
@@ -872,7 +874,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		}
 		profiles = append(profiles, source)
 		service := observerServiceFixture(p)
-		service.Spec.ClusterIP = []string{"10.96.0.10", "10.96.0.11"}[index]
+		service.Spec.ClusterIP = fmt.Sprintf("10.96.0.%d", index+10)
 		for _, object := range []struct {
 			resource string
 			object   client.Object
@@ -1135,7 +1137,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 	if err != nil || len(after.Instances) != 2 || after.Instances[0].ID != a.ID || len(after.Instances[0].Reasons) != 0 {
 		t.Fatalf("ACK did not clear pending on the same executor: %+v %v", after.Instances, err)
 	}
-	if actual, _ := controller.runtime.SchedulerRouting(); actual[uid][a.ID] != 500 {
+	if actual, _ := controller.runtime.SchedulerRouting(); actual[uid][a.ID] != 1000 {
 		t.Fatalf("actual acknowledged distribution not applied: %v", actual)
 	}
 }
