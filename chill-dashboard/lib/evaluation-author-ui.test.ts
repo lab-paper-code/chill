@@ -226,7 +226,7 @@ test("pool occupancy is observed independently from the cleanup failure phase",(
     const {EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
     const tree=elements(runner.render(EvaluationsPage))
     const cells=tree.filter(element=>element.type==="td")
-    assert.ok(cells.some(cell=>cell.props.children==="정리 실패"))
+    assert.ok(tree.some(element=>element.type==="div"&&Array.isArray(element.props.children)&&element.props.children[0]==="정리 실패"))
     assert.ok(cells.some(cell=>cell.props.children===label),`${status}: ${label}`)
   }
 })
