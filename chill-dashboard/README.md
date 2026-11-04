@@ -27,6 +27,8 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 운영 예약 상세의 장치 목록·장치 수는 `nodes[].uid`의 고유 장치를 표시하며, 원본 정보 펼침은 중복 참조를 포함한 서버 응답 그대로 보존한다. 회귀 원자료 `lib/fixtures/live-r3-reservation.json`은 회차 3의 예약 원문(참조 12개·고유 장치 4대)이다.
 
+서비스 관측의 “판단 근거 · 선택 당시”는 모달을 열 때의 결정 시각으로 한 번 조회하며, 실시간 결정 갱신으로 과거 근거를 다시 받지 않는다. 다른 서비스·판단을 명시적으로 선택하면 그 선택의 근거를 조회한다.
+
 결정 상세의 선택 계획 용량 근거는 저장된 `decision.capacity.workloads`의 `kappaNew`, `kappaRetained`, `rate`, `scaleDown.windowMax`를 req/s로 표시한다. `rate`는 관측 유입이 아닌 계획 수요이며, 서버가 최근·창 평균 중 큰 값에 대기분을 더하고 `MinimumDemand` 하한을 적용해 기록한 유효 수요다. 보호 수요는 같은 결정의 `settings.scaleDownHeadroomFraction`으로 `max(rate, windowMax) × (1 + fraction)`, 여유는 목표 κ와 보호 수요의 차이만 표시하며 입력 부재는 미기록이다. 판정·평가 입력을 새로 만들지 않는다. 인스턴스의 `capacity`는 `internal/serving/application/profiles.go` 및 `kube/observer.go`에서 `MaxQueueSize`로 공급되는 요청 수용 한도(개)이며 κ(req/s)나 최대 배치가 아니다.
 
 
