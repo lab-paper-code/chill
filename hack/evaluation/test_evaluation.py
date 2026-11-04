@@ -1129,7 +1129,8 @@ class EvaluationTests(unittest.TestCase):
                     self.assertEqual(evidence[0]['cleanup']['status'], 'Failed' if cleanup_failure else 'Complete')
 
     def test_finish_requires_observed_termination_on_ready_node_and_excludes_itself(self):
-        for mode in ('clean', 'running', 'not-ready', 'unknown-node', 'no-termination', 'missing-pod', 'missing-both', 'run-stage'):
+        for mode in ('clean', 'running', 'not-ready', 'unknown-node', 'no-termination', 'missing-pod', 'missing-both', 'run-stage',
+                     'complete-no-termination', 'complete-not-ready'):
             with self.subTest(mode=mode):
                 controller = object.__new__(conductor.CPO)
                 stage_id = 'run' if mode == 'run-stage' else 'one'
@@ -1141,18 +1142,18 @@ class EvaluationTests(unittest.TestCase):
                 labels = {'edge.dacs.io/evaluation-run-uid': 'run', 'edge.dacs.io/evaluation-stage': stage_id}
                 job = {'metadata': {'name': 'old-stage', 'uid': 'old', 'labels': labels,
                        'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]},
-                       'status': {'conditions': [] if mode == 'running' else [{'type': 'Failed', 'status': 'True'}]}}
+                       'status': {'conditions': [] if mode == 'running' else [{'type': 'Complete' if mode.startswith('complete-') else 'Failed', 'status': 'True'}]}}
                 pod = {'metadata': {'name': 'old-stage-pod', 'uid': 'old-pod', 'labels': labels,
                        'ownerReferences': [{'kind': 'Job', 'uid': 'old'}]}, 'spec': {'nodeName': 'node'},
                        'status': {'phase': 'Running' if mode == 'running' else 'Failed', 'containerStatuses': [
-                           {'name': 'evaluation', 'state': {} if mode in ('running', 'no-termination') else {'terminated': {'exitCode': 1}}}]}}
+                           {'name': 'evaluation', 'state': {} if mode in ('running', 'no-termination', 'complete-no-termination') else {'terminated': {'exitCode': 1}}}]}}
                 finish = {'metadata': {'name': 'self-finish', 'uid': 'self', 'labels': {**labels, 'edge.dacs.io/evaluation-stage': 'run'},
                           'ownerReferences': [{'kind': 'EvaluationRun', 'uid': 'run'}]}}
                 own_pod = {'metadata': {'name': 'self-pod', 'uid': 'self-pod', 'labels': finish['metadata']['labels'],
                            'ownerReferences': [{'kind': 'Job', 'uid': 'self'}]}, 'status': {'phase': 'Running'}}
                 def k(args):
                     if args[1] == 'node':
-                        ready = {'not-ready': 'False', 'unknown-node': 'Unknown'}.get(mode, 'True')
+                        ready = {'not-ready': 'False', 'unknown-node': 'Unknown', 'complete-not-ready': 'False'}.get(mode, 'True')
                         return {'status': {'conditions': [{'type': 'Ready', 'status': ready}]}}
                     if mode == 'missing-both':
                         return {'items': [finish] if args[1] == 'jobs' else [own_pod]}
@@ -1165,6 +1166,44 @@ class EvaluationTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'ResidualState'):
                         controller.finish()
                     self.assertTrue(any(r['kind'] == 'Pod' and r['name'] == 'old-stage-pod' for r in controller.residuals))
+
+    def test_finish_uses_successful_job_evidence_when_pod_is_gone(self):
+        complete = {'conditions': [{'type': 'Complete', 'status': 'True'}], 'active': 0, 'succeeded': 1}
+        cases = [('complete', complete, True),
+                 ('complete-absent-counters', {'conditions': complete['conditions']}, True),
+                 ('succeeded', {'succeeded': 1, 'active': 0, 'terminating': 0}, True),
+                 ('failed', {'conditions': [{'type': 'Failed', 'status': 'True'}]}, False),
+                 ('running', {'active': 1}, False),
+                 ('complete-active', {**complete, 'active': 1}, False),
+                 ('complete-terminating', {**complete, 'terminating': 1}, False)]
+        for name, status, clean in cases:
+            for recorded_pod in (False, True):
+                with self.subTest(case=name, recorded_pod=recorded_pod), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    procedure = {'jobRef': {'name': 'old-factor', 'uid': 'job'}}
+                    if recorded_pod:
+                        procedure['podRef'] = {'name': 'collected-pod', 'uid': 'pod'}
+                    execution = {'runUID': 'run', 'prepareCompleted': True, 'childRefs': [
+                        {'uid': 'stage', 'stageID': 'one', 'procedures': [procedure]}]}
+                    controller = object.__new__(conductor.CPO)
+                    controller.c = {'evaluation': {'execution': execution}}
+                    controller.tb, controller.residuals = {'drainSeconds': 0}, []
+                    controller.cleanup_jobs = lambda: None
+                    job = {'metadata': {'name': 'old-factor', 'uid': 'job',
+                           'labels': {'edge.dacs.io/evaluation-run-uid': 'run'},
+                           'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]}, 'status': status}
+                    controller.io = SimpleNamespace(k=lambda args: {'items': [job] if args[1] == 'jobs' else []})
+                    harness = object.__new__(evaluation.Harness)
+                    harness.run = harness.root = root
+                    harness.scope, harness.prefix = 'run', 'experiments/run/run'
+                    harness.spec, harness.execution = {}, execution
+                    harness.controller = lambda: controller
+                    harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
+                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'):
+                        self.assertEqual(harness.execute('finish'), 0 if clean else 1)
+                    result = evidence_io.load(root / 'results/run/finish.json')
+                    self.assertEqual(result['cleanup']['status'], 'Complete' if clean else 'Failed')
+                    self.assertEqual(bool(result.get('residuals')), not clean)
 
     def test_unknown_injection_retains_pool_and_names_affected_node(self):
         controller = object.__new__(conductor.CPO)
