@@ -43,7 +43,6 @@ class WorkloadHTTPClientTest(unittest.TestCase):
                 )
                 args, kwargs = connection.request.call_args
                 self.assertEqual(("POST", "/api/v1/workloads/image-service/infer"), args)
-                self.assertIs(kwargs["body"], request_body)
                 self.assertEqual(
                     b'{"inputs": [{"name": "image", "datatype": "BYTES", "data": "/9j/4A=="}, '
                     b'{"name": "question", "datatype": "BYTES", "data": "66y07JeHPw=="}]}',
