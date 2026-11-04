@@ -51,6 +51,11 @@ type EvaluationView struct {
 	Phase            string                 `json:"phase"`
 	PublicationID    string                 `json:"publicationID,omitempty"`
 	LiveTarget       []EvaluationLiveTarget `json:"liveTarget"`
+	StopRequested    *EvaluationStopRequest `json:"stopRequested,omitempty"`
+}
+type EvaluationStopRequest struct {
+	At metav1.Time `json:"at"`
+	By string      `json:"by"`
 }
 type EvaluationProcedure struct {
 	Step               string                 `json:"step"`

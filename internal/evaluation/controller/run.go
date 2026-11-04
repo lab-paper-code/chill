@@ -43,6 +43,10 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return pending, r.patchStatus(ctx, run, before)
 	}
 	if run.Status.StartedAt == nil && run.Status.FinishedAt != nil {
+		// Rejected before taking the pool: nothing ran, so nothing holds the object.
+		if controllerutil.ContainsFinalizer(run, api.EvaluationRunFinalizer) {
+			return r.removeFinalizer(ctx, run)
+		}
 		return ctrl.Result{}, nil
 	}
 	if !controllerutil.ContainsFinalizer(run, api.EvaluationRunFinalizer) {
@@ -70,7 +74,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			return r.release(ctx, run, annotation)
 		}
 	}
-	if !run.DeletionTimestamp.IsZero() && !occupied(run) {
+	// A stopped run still publishes what it measured: release the object only after the
+	// publish attempt recorded its outcome (success or failure).
+	if !run.DeletionTimestamp.IsZero() && !occupied(run) && publishRecorded(run) {
 		return r.removeFinalizer(ctx, run)
 	}
 	if isTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
@@ -265,6 +271,10 @@ func uncertainStage(stage *api.EvaluationStage) bool {
 func occupied(run *api.EvaluationRun) bool {
 	return run.Status.StartedAt != nil && !isTrue(run.Status.Conditions, api.EvaluationConditionCleanupComplete) && len(run.Status.ReleaseRecords) == 0
 }
+func publishRecorded(run *api.EvaluationRun) bool {
+	publish := findProcedure(run.Status.Procedures, api.EvaluationStepPublish)
+	return publish != nil && publish.FinishedAt != nil
+}
 func (r *RunReconciler) acquire(ctx context.Context, run *api.EvaluationRun) (ctrl.Result, error) {
 	list := &api.EvaluationRunList{}
 	if err := r.APIReader.List(ctx, list, client.InNamespace(run.Namespace)); err != nil {
@@ -303,11 +313,20 @@ func (r *RunReconciler) acquire(ctx context.Context, run *api.EvaluationRun) (ct
 		return pending, r.patchStatus(ctx, run, before)
 	}
 	cm := &corev1.ConfigMap{}
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: configName}, cm); err != nil {
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: api.EvaluationConfigName}, cm); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := validateConfig(cm.Data); err != nil {
 		return ctrl.Result{}, err
+	}
+	if err := r.admitStageInputs(ctx, run, cm.Data); err != nil {
+		if !permanent(err) {
+			return ctrl.Result{}, err
+		}
+		condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, reason(err), err.Error())
+		now := r.now()
+		run.Status.FinishedAt = &now
+		return ctrl.Result{}, r.patchStatus(ctx, run, before)
 	}
 	run.Status.FrozenConfig = &api.EvaluationFrozenConfig{EvaluationObjectReference: *ref(cm), ResourceVersion: cm.ResourceVersion, Values: cm.DeepCopy().Data}
 	now := r.now()
@@ -315,6 +334,26 @@ func (r *RunReconciler) acquire(ctx context.Context, run *api.EvaluationRun) (ct
 	run.Status.OccupyingRunUID = run.UID
 	condition(&run.Status.Conditions, run.Generation, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
 	return pending, r.patchStatus(ctx, run, before)
+}
+
+// The Run's stage inputs are bound to their LoadScenarios once, from the config about to
+// be frozen, before the pool is taken. Preflight reports the same rule but cannot vouch
+// for config or scenarios that change before acquisition.
+func (r *RunReconciler) admitStageInputs(ctx context.Context, run *api.EvaluationRun, config map[string]string) error {
+	for _, stage := range run.Spec.Stages {
+		load := &api.LoadScenario{}
+		err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: stage.LoadScenarioRef.Name}, load)
+		if apierrors.IsNotFound(err) || err == nil && load.UID != stage.LoadScenarioRef.UID {
+			return fmt.Errorf("%s: LoadScenario %s", api.EvaluationReasonIdentityMismatch, stage.LoadScenarioRef.Name)
+		}
+		if err != nil {
+			return err
+		}
+		if err := api.EvaluationWorkloadCoverage(load.Spec, run.Spec.LoadGenerator.Shards, config); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (r *RunReconciler) workspace(ctx context.Context, run *api.EvaluationRun) error {
 	name := uidName(run.UID) + "-work"

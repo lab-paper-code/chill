@@ -18,7 +18,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const evaluationPending = "Pending"
+const (
+	evaluationPending = "Pending"
+	// evaluationStopRequestedBy records the actor of a stop (DELETE) on the Run.
+	evaluationStopRequestedBy = "edge.dacs.io/stop-requested-by"
+)
 
 func evaluationPhase(run *api.EvaluationRun) string {
 	if meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionCleanupComplete) ||
@@ -56,6 +60,9 @@ func (s *Service) evaluationView(
 	}
 	if meta.IsStatusConditionTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
 		value.PublicationID = string(run.UID)
+	}
+	if run.DeletionTimestamp != nil {
+		value.StopRequested = &EvaluationStopRequest{At: *run.DeletionTimestamp, By: run.Annotations[evaluationStopRequestedBy]}
 	}
 	for _, ref := range run.Status.ChildRefs {
 		key := client.ObjectKey{Namespace: run.Namespace, Name: ref.Name}
@@ -226,7 +233,7 @@ func (s *Service) Delete(ctx context.Context, name, uid, actor string) (Evaluati
 	if run.Annotations == nil {
 		run.Annotations = map[string]string{}
 	}
-	run.Annotations["edge.dacs.io/stop-requested-by"] = actor
+	run.Annotations[evaluationStopRequestedBy] = actor
 	patch := client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})
 	if err := s.client.Patch(ctx, &run, patch); err != nil {
 		return EvaluationIdentity{}, err

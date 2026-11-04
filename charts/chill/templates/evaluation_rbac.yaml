@@ -29,8 +29,9 @@ rules:
   - apiGroups: [""]
     resources: [pods/exec]
     verbs: [create]
+  # The stage harness reads its parent Run to stop load when the Run is deleted.
   - apiGroups: [edge.dacs.io]
-    resources: [loadscenarios]
+    resources: [evaluationruns, loadscenarios]
     verbs: [get]
   - apiGroups: [apps]
     resources: [deployments]

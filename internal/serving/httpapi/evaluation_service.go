@@ -86,6 +86,9 @@ func evaluationViewDTO(value evaluation.EvaluationView) EvaluationView {
 		StartedAt:  value.StartedAt, FinishedAt: value.FinishedAt, Phase: value.Phase,
 		PublicationID: value.PublicationID, LiveTarget: evaluationTargetsDTO(value.LiveTarget),
 	}
+	if stop := value.StopRequested; stop != nil {
+		result.StopRequested = &EvaluationStopRequest{At: stop.At, By: stop.By}
+	}
 	if value.Stages != nil {
 		result.Stages = make([]EvaluationStage, len(value.Stages))
 		for i, stage := range value.Stages {
