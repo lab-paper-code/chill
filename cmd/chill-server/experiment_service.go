@@ -117,7 +117,8 @@ func (s *experimentService) listSummaries(ctx context.Context) (httpapi.Experime
 			continue
 		}
 		summary, err := s.read(ctx, object, id)
-		if errors.Is(err, errUnreadableSummary) {
+		var closeErr closeFailure
+		if errors.Is(err, errUnreadableSummary) && !errors.As(err, &closeErr) {
 			result.Unreadable = append(result.Unreadable, httpapi.ExperimentUnreadable{ID: id, Reason: err.Error()})
 			continue
 		}
@@ -186,16 +187,22 @@ func (s *experimentService) read(
 	if err != nil {
 		return summary, err
 	}
-	defer func() { err = errors.Join(err, body.Close()) }()
-	limited := &io.LimitedReader{R: body, N: s.maxBytes + 1}
+	defer func() {
+		if closeErr := body.Close(); closeErr != nil {
+			err = errors.Join(err, closeFailure{closeErr})
+		}
+	}()
+	stream := &streamErrors{Reader: body}
+	limited := &io.LimitedReader{R: stream, N: s.maxBytes + 1}
 	decoder := json.NewDecoder(limited)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&summary); err != nil {
-		return summary, fmt.Errorf("%w: decode experiment summary: %w", errUnreadableSummary, err)
+		return summary, contentDefect(stream, ctx, fmt.Errorf("decode experiment summary: %w", err))
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return summary, fmt.Errorf("%w: experiment summary must contain one bounded JSON object", errUnreadableSummary)
+		return summary, contentDefect(stream, ctx,
+			fmt.Errorf("experiment summary must contain one bounded JSON object: %v", err))
 	}
 	if limited.N == 0 {
 		return summary, fmt.Errorf("%w: experiment summary exceeds configured byte limit", errUnreadableSummary)
@@ -207,4 +214,35 @@ func (s *experimentService) read(
 		return summary, fmt.Errorf("%w: %w", errUnreadableSummary, err)
 	}
 	return summary, nil
+}
+
+// closeFailure keeps a store-side Close error fatal even when the content was also defective.
+type closeFailure struct{ error }
+
+func (c closeFailure) Unwrap() error { return c.error }
+
+// streamErrors records the body's own read failures (transport, timeout, cancellation).
+type streamErrors struct {
+	io.Reader
+	err error
+}
+
+func (s *streamErrors) Read(p []byte) (int, error) {
+	n, err := s.Reader.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.err = err
+	}
+	return n, err
+}
+
+// contentDefect marks a decode failure as unreadable content only when the stream itself
+// did not fail and the request is still live; otherwise the stream error stays fatal.
+func contentDefect(stream *streamErrors, ctx context.Context, err error) error {
+	if stream.err != nil {
+		return stream.err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return fmt.Errorf("%w: %w", errUnreadableSummary, err)
 }

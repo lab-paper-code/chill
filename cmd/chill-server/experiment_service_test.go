@@ -683,6 +683,53 @@ func TestUnreadableSummaryIsReportedNotFatal(t *testing.T) {
 	}
 }
 
+// A store failure while reading or closing a summary is not a content defect: the list fails.
+func TestSummaryStoreFailuresStayFatal(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		body   func(string) io.Reader
+		close  error
+		broken bool
+	}{
+		{name: "read failure mid-decode", body: func(body string) io.Reader {
+			return io.MultiReader(strings.NewReader(body[:len(body)/2]), errorReader{evidencestore.ErrTransport})
+		}},
+		{name: "malformed content with close failure", close: evidencestore.ErrTransport, broken: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &experimentMemoryStore{closeErr: tc.close}
+			key := store.add(t, experimentFixture("run", time.Now().UTC()))
+			if tc.broken {
+				store.bodies[key] = "{not json"
+				store.objects[0].Size = int64(len(store.bodies[key]))
+			}
+			reader := experimentReader{store: store, wrap: tc.body}
+			service := &experimentService{reader: reader, lister: store, store: "evidence", maxBytes: 1 << 20}
+			if _, err := service.list(context.Background()); !errors.Is(err, evidencestore.ErrTransport) {
+				t.Fatalf("store failure must fail the list, got %v", err)
+			}
+		})
+	}
+}
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
+
+// experimentReader optionally replaces a stored body stream to inject read failures.
+type experimentReader struct {
+	store *experimentMemoryStore
+	wrap  func(string) io.Reader
+}
+
+func (r experimentReader) Open(ctx context.Context, object evidencestore.ObjectIdentity) (io.ReadCloser, error) {
+	body, err := r.store.Open(ctx, object)
+	if err != nil || r.wrap == nil {
+		return body, err
+	}
+	return experimentReadCloser{Reader: r.wrap(r.store.bodies[object.Key]), closeErr: r.store.closeErr}, nil
+}
+
 func mustList(t *testing.T, service *experimentService) httpapi.ExperimentList {
 	t.Helper()
 	list, err := service.list(context.Background())
