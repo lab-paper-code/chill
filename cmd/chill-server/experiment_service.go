@@ -98,10 +98,15 @@ func experimentSettingsPatchKeys(raw json.RawMessage) []string {
 	return keys
 }
 
+// errUnreadableSummary marks a stored summary whose own content or identity is unusable,
+// as opposed to a store, transport or cancellation failure while reading it.
+var errUnreadableSummary = errors.New("unreadable experiment summary")
+
 // listSummaries keeps definitions for request-local consumers such as templates.
 // Each call lists and reads the store afresh; there is no cross-request cache.
+// One unreadable summary is reported and skipped; store failures still fail the list.
 func (s *experimentService) listSummaries(ctx context.Context) (httpapi.ExperimentList, error) {
-	result := httpapi.ExperimentList{Items: []httpapi.ExperimentSummary{}}
+	result := httpapi.ExperimentList{Items: []httpapi.ExperimentSummary{}, Unreadable: []httpapi.ExperimentUnreadable{}}
 	objects, err := s.lister.List(ctx, httpapi.ExperimentPrefix)
 	if err != nil {
 		return result, err
@@ -112,6 +117,10 @@ func (s *experimentService) listSummaries(ctx context.Context) (httpapi.Experime
 			continue
 		}
 		summary, err := s.read(ctx, object, id)
+		if errors.Is(err, errUnreadableSummary) {
+			result.Unreadable = append(result.Unreadable, httpapi.ExperimentUnreadable{ID: id, Reason: err.Error()})
+			continue
+		}
 		if err != nil {
 			return result, err
 		}
@@ -171,7 +180,7 @@ func (s *experimentService) read(
 		return summary, err
 	}
 	if object.Store != s.store || object.Validate() != nil || s.maxBytes <= 0 || object.Size > s.maxBytes {
-		return summary, errors.New("invalid experiment summary object identity or size")
+		return summary, fmt.Errorf("%w: invalid experiment summary object identity or size", errUnreadableSummary)
 	}
 	body, err := s.reader.Open(ctx, object)
 	if err != nil {
@@ -182,20 +191,20 @@ func (s *experimentService) read(
 	decoder := json.NewDecoder(limited)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&summary); err != nil {
-		return summary, fmt.Errorf("decode experiment summary: %w", err)
+		return summary, fmt.Errorf("%w: decode experiment summary: %w", errUnreadableSummary, err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return summary, errors.New("experiment summary must contain one bounded JSON object")
+		return summary, fmt.Errorf("%w: experiment summary must contain one bounded JSON object", errUnreadableSummary)
 	}
 	if limited.N == 0 {
-		return summary, errors.New("experiment summary exceeds configured byte limit")
+		return summary, fmt.Errorf("%w: experiment summary exceeds configured byte limit", errUnreadableSummary)
 	}
 	if err := ctx.Err(); err != nil {
 		return summary, err
 	}
 	if err := httpapi.ValidateExperimentSummary(summary, s.store, id); err != nil {
-		return summary, err
+		return summary, fmt.Errorf("%w: %w", errUnreadableSummary, err)
 	}
 	return summary, nil
 }

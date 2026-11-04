@@ -642,3 +642,52 @@ func TestExperimentSettingsPatchKeysUseRecordedInheritance(t *testing.T) {
 		})
 	}
 }
+
+// Defect 18b: one summary published under another store identity must not hide the others.
+func TestUnreadableSummaryIsReportedNotFatal(t *testing.T) {
+	evaluations, request := evaluationFixture(t, nil)
+	from := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	readable := experimentFixture("readable", from)
+	definition, err := json.Marshal(struct {
+		Spec any `json:"spec"`
+	}{request.Spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readable.Definition = definition
+	store := &experimentMemoryStore{}
+	store.add(t, readable)
+	store.add(t, experimentFixture("stranded", from.Add(time.Hour)))
+	store.objects[1].Store = "chill-evidence-store"
+	experiments := &experimentService{reader: store, lister: store, store: "evidence", maxBytes: 1 << 20}
+
+	list, err := experiments.list(context.Background())
+	if err != nil {
+		t.Fatalf("one unreadable summary failed the whole list: %v", err)
+	}
+	if len(list.Items) != 1 || list.Items[0].ID != "readable" ||
+		len(list.Unreadable) != 1 || list.Unreadable[0].ID != "stranded" || list.Unreadable[0].Reason == "" {
+		t.Fatalf("readable summary hidden or unreadable one not reported: %+v", list)
+	}
+	var config httpapi.HandlerConfig
+	configureEvaluationTemplate(&config, evaluations, "evidence", experiments)
+	template, err := config.GetEvaluationTemplate(context.Background())
+	if err != nil || template.SourcePublication == nil || template.SourcePublication.UID != "readable" {
+		t.Fatalf("template must use the newest readable publication: %+v err=%v", template.SourcePublication, err)
+	}
+
+	none := &experimentMemoryStore{}
+	empty := &experimentService{reader: none, lister: none, store: "evidence", maxBytes: 1 << 20}
+	if raw, _ := json.Marshal(mustList(t, empty)); !strings.Contains(string(raw), `"unreadable":[]`) {
+		t.Fatalf("unreadable must always be an array: %s", raw)
+	}
+}
+
+func mustList(t *testing.T, service *experimentService) httpapi.ExperimentList {
+	t.Helper()
+	list, err := service.list(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list
+}
