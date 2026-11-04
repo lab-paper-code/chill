@@ -245,21 +245,14 @@ func (r *RunReconciler) publishRun(ctx context.Context, run, before *api.Evaluat
 }
 
 func uncertainStage(stage *api.EvaluationStage) bool {
-	if uncertainConditions(stage.Status.Conditions) {
-		return true
-	}
 	for _, record := range stage.Status.InjectionRecords {
-		if record.Outcome == injectionUnknown {
+		if record.Outcome == injectionUnknown || record.Outcome == injectionRequested {
 			return true
 		}
 	}
 	return false
 }
 
-func uncertainConditions(conditions []metav1.Condition) bool {
-	c := meta.FindStatusCondition(conditions, api.EvaluationConditionExecutionComplete)
-	return c != nil && (c.Reason == api.EvaluationReasonRemoteEffectUnknown || c.Reason == api.EvaluationReasonExecutionLost)
-}
 func occupied(run *api.EvaluationRun) bool {
 	return run.Status.StartedAt != nil && !isTrue(run.Status.Conditions, api.EvaluationConditionCleanupComplete) && len(run.Status.ReleaseRecords) == 0
 }

@@ -417,10 +417,10 @@ func TestParentJobsReceiveOnlyCreatedChildOutcomes(t *testing.T) {
 				cleanupStatus, cleanupReason = failed, api.EvaluationReasonResidualState
 			}
 			if scenario == "remote-effect" {
-				executionStatus, executionReason, uncertain = failed, api.EvaluationReasonRemoteEffectUnknown, true
+				executionStatus, executionReason = failed, api.EvaluationReasonRemoteEffectUnknown
 			}
 			if scenario == "execution-lost" {
-				executionStatus, executionReason, uncertain = failed, api.EvaluationReasonExecutionLost, true
+				executionStatus, executionReason = failed, api.EvaluationReasonExecutionLost
 			}
 			before := child.DeepCopy()
 			execCondition, cleanupCondition := metav1.ConditionTrue, metav1.ConditionTrue
@@ -483,6 +483,31 @@ func TestParentJobsReceiveOnlyCreatedChildOutcomes(t *testing.T) {
 				assertCreatedChildContext(t, cm.Data["execution.json"], parent.Status.ChildRefs, executionStatus, executionReason, cleanupStatus, cleanupReason, uncertain)
 			}
 		})
+	}
+}
+
+func TestFinishContextRetainsLostWriterIdentityAndUnknownInjection(t *testing.T) {
+	parent := fixtureRun("writer-evidence")
+	startRun(parent)
+	r, _ := fixtureRuntime(t, parent)
+	child := fixtureStage(t, &r, parent)
+	before := child.DeepCopy()
+	child.Status.Procedures = []api.EvaluationProcedure{{Step: api.EvaluationStepStage,
+		JobRef: &api.EvaluationObjectReference{Name: "lost-job", UID: "job-uid"},
+		PodRef: &api.EvaluationObjectReference{Name: "lost-pod", UID: "pod-uid"}}}
+	child.Status.InjectionRecords = []api.FaultInjectionRecord{{ID: "cordon", Outcome: injectionUnknown,
+		NodeRef: &api.EvaluationObjectReference{Name: "cordoned-node", UID: "node-uid"}}}
+	if err := r.patchStatus(context.Background(), child, before); err != nil {
+		t.Fatal(err)
+	}
+	parent.Status.ChildRefs = []api.EvaluationChildReference{{StageID: child.Spec.StageID, EvaluationObjectReference: *ref(child)}}
+	children, err := r.jobChildRefs(context.Background(), parent)
+	if err != nil || len(children) != 1 {
+		t.Fatalf("children=%+v err=%v", children, err)
+	}
+	if !children[0].Uncertain || len(children[0].Procedures) != 1 || children[0].Procedures[0].PodRef.UID != "pod-uid" ||
+		len(children[0].InjectionRecords) != 1 || children[0].InjectionRecords[0].NodeRef.Name != "cordoned-node" {
+		t.Fatalf("finish lost safety evidence: %+v", children[0])
 	}
 }
 

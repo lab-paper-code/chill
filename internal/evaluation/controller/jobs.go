@@ -361,9 +361,11 @@ type childProcedureOutcome struct {
 
 type jobChildReference struct {
 	api.EvaluationChildReference
-	Execution childProcedureOutcome `json:"execution"`
-	Cleanup   childProcedureOutcome `json:"cleanup"`
-	Uncertain bool                  `json:"uncertain"`
+	Execution        childProcedureOutcome      `json:"execution"`
+	Cleanup          childProcedureOutcome      `json:"cleanup"`
+	Uncertain        bool                       `json:"uncertain"`
+	Procedures       []api.EvaluationProcedure  `json:"procedures"`
+	InjectionRecords []api.FaultInjectionRecord `json:"injectionRecords"`
 }
 
 // Only recorded created children contribute cleanup; planned stages are not
@@ -384,6 +386,8 @@ func (r *Runtime) jobChildRefs(ctx context.Context, run *api.EvaluationRun) ([]j
 			execution.Execution = childConditionOutcome(child, api.EvaluationConditionExecutionComplete)
 			execution.Cleanup = childConditionOutcome(child, api.EvaluationConditionStageCleanupComplete)
 			execution.Uncertain = uncertainStage(child)
+			execution.Procedures = child.Status.Procedures
+			execution.InjectionRecords = child.Status.InjectionRecords
 		}
 		children = append(children, execution)
 	}
