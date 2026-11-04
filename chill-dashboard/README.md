@@ -229,7 +229,7 @@ update. Deferred requests remain waiting, not running or completed. The actual
 local editor was exercised with all three values and existing limits preserved;
 the browser used an isolated ChillServer-contract fixture and performed no live writes.
 
-`/`는 상태 한 줄 → 서비스 상태(SLO·자율 상태) → 장치 확인 → 진행·사건 순서다.
+`/`는 연결·관측 나이 헤더 → 서비스 상태(SLO·자율 상태) → 진행·사건과 장치 확인 순서이며, 루트 전력 추세는 별도 펼침으로 유지한다.
 부하가 없어도 서비스별 행을 유지하고 `부하 없음`을 표시한다. 관측 지연과 목표는 같은 셀에서 비교하며,
 자율 상태는 `/scheduler/state?view=summary`의 서비스 UID별 Controlled/Fixed/Disabled와 그 행의 이유만 표시한다. `decision.workloads` 필드가 없는 구 서버 응답에서만 기존 `/scheduler` compact 조회를 사용한다. 명시적인 null·빈 배열은 필드 부재와 구분하며 전체 근거를 내려받지 않는다. 상세 drawer의 선택 당시 근거 조회는 유지한다.
 결정 전체 이유를 다른 서비스에 적용하지 않는다. 자율 상태의 관측 시각을 표시하고 화면 일시정지에도 함께 고정한다.

@@ -29,6 +29,7 @@ test("service decision evidence stays at opening selection until the user select
     "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},"@/lib/live":live,"@/lib/live-display":display,"@/lib/scheduler-history":history,"@/lib/scheduler":scheduler,"@/lib/source-export":{safeSource:(value:unknown)=>value},
     "./scheduler":{actionKinds:{},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name,judgmentLabels:{Ready:"준비됨"},SchedulerEvidence:()=>null},
     "@/components/status-cell":{StatusCell:({label}:{label:string})=>React.createElement("span",{},label)},"@/lib/status":{STATUS_AXES:{}},
+    "@/components/ui/tooltip":{Tooltip:wrap,TooltipTrigger:wrap,TooltipContent:()=>null},
     "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:React.ReactNode})=>open?children:null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},
     "./evaluation-active":{EvaluationStatusCell:()=>null},"@/lib/evaluation-active":{evaluationInjectionMatch:()=>false},"./power-series":{LivePowerTrend:()=>null},"./live-board.css":{},
   }
@@ -78,5 +79,9 @@ test("service decision evidence stays at opening selection until the user select
   render()
   const afterReservation=render()
   assert.deepEqual(beforeReservation.match(/<\/?[\w-]+/g),afterReservation.match(/<\/?[\w-]+/g),"reservation count changes keep the same header slots")
-  assert.ok(afterReservation.includes('title="이전 0 → 현재 1"'),"previous reservation count remains available without inserting a line")
+  assert.deepEqual(afterReservation.match(/aria-live="polite" title="([^"]+)"/)?.[1].match(/\d+/g),["0","1"],"previous and current reservation counts remain available without fixing tooltip prose")
+  click("화면 일시정지")
+  assert.match(render(),/aria-live="off" aria-atomic="true"/,"paused observations do not announce operational changes")
+  click("실시간으로 복귀")
+  assert.match(render(),/aria-live="polite" aria-atomic="true"/)
 })

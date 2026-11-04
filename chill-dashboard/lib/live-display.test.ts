@@ -341,6 +341,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
     "@/lib/scheduler-history":schedulerHistoryHelpers,
     "@/lib/live":{compareAt,eventKey},
     "@/components/status-cell":status,
+    "@/components/ui/tooltip":{Tooltip:({children}:{children:ReactNode})=>children,TooltipTrigger:({children}:{children:ReactNode})=>children,TooltipContent:({children}:{children:ReactNode})=>createElement("aside",{role:"tooltip"},children)},
     "@/lib/status":{STATUS_AXES:{serviceImpact:"서비스 영향",performance:"성능 판정",observation:"관측 상태"}},
     "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:ReactNode})=>open?createElement("div",{"data-sheet":true},children):null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},
     "./evaluation-active":{EvaluationStatusCell:()=>createElement(status.StatusCell,{axis:"실험 상태",label:experiment,tone:"info"})},
@@ -365,6 +366,53 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx",{"@/lib/live-display":displayHelpers})
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
+  await context.test("operational announcements retain atomic live semantics without narrating each clock tick",()=>{
+    const announcement=(html:string)=>html.match(/<[^>]*aria-live="polite"[^>]*aria-atomic="true"[^>]*>([\s\S]*?)<\/[^>]+>/)?.[1]
+    const before=render(),summary=announcement(before)
+    assert.ok(summary,"service impact, changes and failures remain automatically announced")
+    const originalNow=Date.now
+    try {
+      Date.now=()=>originalNow()+1000
+      assert.equal(announcement(render()),summary,"observation age is not part of the announcement")
+    } finally {Date.now=originalNow}
+    const action:LiveAction={id:"announce-change",kind:"prepare",node:{uid:"n",name:"장치"},workloadUID:"",status:"running",startedAt:new Date(Date.now()).toISOString(),expectedSeconds:null,expectedSource:null}
+    snapshot.actions.push(action)
+    const changed=announcement(render())
+    assert.notEqual(changed,summary,"a new operational change updates the announcement")
+    state.events.push({type:"event",kind:"action",seq:100,at,action:{...action,status:"failed",phase:"failed",result:{status:"failed",error:"fixture"}}})
+    assert.notEqual(announcement(render()),changed,"a retained failure updates the announcement")
+    snapshot.actions=[];state.events=[]
+  })
+  await context.test("service status distinguishes non-color shapes and exposes focusable tooltip triggers",()=>{
+    const originalWorkloads=snapshot.workloads,originalSamples=sample.workloads,originalInstances=snapshot.instances
+    const healthy={...pool,uid:"healthy",pending:0},failed={...pool,uid:"failed",pending:0}
+    snapshot.workloads=[healthy,failed]
+    snapshot.instances=[{...instance,ownerWorkloadUID:"healthy",routable:{healthy:true,failed:true},running:{},waiting:{}}]
+    sample.workloads={healthy:{...metric,failed:0,withinSLO:4},failed:metric}
+    const html=render()
+    const signals=[...html.matchAll(/<button[^>]*class="live-service-signal"[^>]*>([\s\S]*?)<\/button>/g)]
+    assert.equal(signals.length,2,"both service statuses are keyboard-focusable controls")
+    assert.notEqual(signals[0][1],signals[1][1],"healthy and failed states differ without color")
+    assert.ok(signals.every(([tag])=>!tag.includes('tabindex="-1"')&&tag.includes("aria-label=")))
+    assert.equal((html.match(/role="tooltip"/g)??[]).length,2,"the reasons are exposed by the shared tooltip")
+    snapshot.workloads=originalWorkloads;snapshot.instances=originalInstances;sample.workloads=originalSamples
+  })
+  await context.test("service lanes associate shared instances with their own routing and request counts",()=>{
+    const originalWorkloads=snapshot.workloads,originalSamples=sample.workloads,originalInstances=snapshot.instances,originalRouting=snapshot.routing
+    snapshot.workloads=[{...pool,uid:"a",name:"lane-A"},{...pool,uid:"b",name:"lane-B"}]
+    snapshot.instances=[{...instance,waiting:{a:2,b:7},running:{a:3,b:9}},{...instance,id:"second",ownerWorkloadUID:"a",waiting:{},running:{}}]
+    snapshot.routing={a:{shared:3,second:1},b:{shared:1,second:4}}
+    sample.workloads={a:metric,b:metric}
+    const lanes=render().match(/<article class="live-service-lane"[\s\S]*?<\/article>/g)??[]
+    assert.equal(lanes.length,2)
+    for(const [index,share,running,waiting] of [[0,"75.0",3,2],[1,"20.0",9,7]] as const) {
+      const firstCard=lanes[index].match(/class="serving-instance"[\s\S]*?<\/button>/)?.[0]??""
+      assert.ok(firstCard.includes(`${share}%`))
+      assert.match(firstCard,new RegExp(`aria-label="처리 요청"[^>]*>[^<]*<b>${running}</b>`))
+      assert.match(firstCard,new RegExp(`aria-label="대기 요청"[^>]*>[^<]*<b>${waiting}</b>`))
+    }
+    snapshot.workloads=originalWorkloads;snapshot.instances=originalInstances;snapshot.routing=originalRouting;sample.workloads=originalSamples
+  })
   await context.test("service deployments expose all six states and actual routing without opening details",()=>{
     const before=structuredClone(snapshot)
     snapshot.workloads=[pool]

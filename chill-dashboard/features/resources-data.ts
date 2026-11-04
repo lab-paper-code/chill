@@ -42,6 +42,10 @@ export function deviceInstances(row:DeviceRow,state:LiveState,resources?:Schedul
     const actual=resources?.instances?.find(item=>item.id===id&&item.node.uid===row.uid)
     const services=new Map<string,WorkloadRef>()
     for(const workload of pool?.workloads??[])services.set(workload.uid,workload)
+    if(pool) {
+      const membership={...pool,ownerWorkloadUID:pool.ownerWorkloadUID??"",profileID:pool.profile,routable:{}}
+      for(const workload of row.services)if(belongsToPool(membership,workload.uid))services.set(workload.uid,workload)
+    }
     if(actual?.workloadUID)services.set(actual.workloadUID,row.services.find(item=>item.uid===actual.workloadUID)??{uid:actual.workloadUID,name:""})
     if(live)for(const workload of state.snapshot?.workloads??[])if(belongsToPool(live,workload.uid))services.set(workload.uid,workload)
     if(live?.ownerWorkloadUID&&!services.has(live.ownerWorkloadUID))services.set(live.ownerWorkloadUID,row.services.find(item=>item.uid===live.ownerWorkloadUID)??{uid:live.ownerWorkloadUID,name:""})

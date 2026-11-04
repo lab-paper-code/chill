@@ -29,6 +29,7 @@ function harness(events:live.LiveEvent[]=[]) {
     "@/lib/scheduler-history":history,
     "./scheduler":{actionKinds:{},actionStatuses:{},actionNodeName:(node:{name:string})=>node.name||"전체 노드",judgmentLabels:{Keep:"유지"},SchedulerEvidence:()=>null},
     "@/components/status-cell":{StatusCell:({label}:{label:string})=>React.createElement("span",{},label)},"@/lib/status":{STATUS_AXES:{}},
+    "@/components/ui/tooltip":{Tooltip:wrap,TooltipTrigger:wrap,TooltipContent:()=>null},
     "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:React.ReactNode})=>open?wrap({children}):null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},
     "./evaluation-active":{EvaluationStatusCell:()=>null},"@/lib/evaluation-active":{evaluationInjectionMatch:()=>false},"./power-series":{LivePowerTrend:()=>null},"./live-board.css":{},
   }

@@ -17,6 +17,7 @@ function harness(){
   const modules:Record<string,unknown>={react:{...React,useState:(initial:unknown)=>{const n=index++;if(!(n in cells))cells[n]=typeof initial==="function"?initial():initial;return [cells[n],(next:unknown)=>{cells[n]=typeof next==="function"?next(cells[n]):next}]}},"next/link":{default:"a"},"next/navigation":{},"@/lib/client":{useChillQuery:(path:string)=>{calls.push(path);return {data:error?undefined:page,error}}},"@/lib/use-live":{useLive:()=>({state:initialLiveState()})},"@/lib/live-display":display,"@/lib/live":{},"@/lib/scheduler-history":{evidenceError:()=>"조회 시간 초과"},"@/lib/scheduler":{stringifySchedulerJSON:JSON.stringify},"@/lib/source-export":{safeSource:(value:unknown)=>value},"./scheduler":{},"@/components/status-cell":{},"@/lib/status":{},"@/components/ui/sheet":{},"./evaluation-active":{},"@/lib/evaluation-active":{},"./power-series":{},"./live-board.css":{},"./scheduler-workload-states":{}}
   modules["@/components/observation-age"]={}
   modules["@/components/serving-instance"]={}
+  modules["@/components/ui/tooltip"]={}
   const exports:Record<string,(props:Record<string,unknown>)=>unknown>={}
   const compiled=transpileModule(readFileSync(new URL("../features/live-board.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
