@@ -6,6 +6,7 @@ import (
 	errors "errors"
 	fmt "fmt"
 	reflect "reflect"
+	slices "slices"
 	time "time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
@@ -46,7 +47,8 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 	if result.Before.Native == nil {
 		result.Before.Native = map[string]native.State{}
 	}
-	for _, instance := range o.Runtime.Instances() {
+	physical := o.Runtime.Instances()
+	for _, instance := range physical {
 		if instance.Native != nil {
 			if _, observed := result.Before.Native[instance.ID]; !observed {
 				result.Before.Native[instance.ID] = *instance.Native
@@ -63,6 +65,9 @@ func (o *Operations) ApplyTarget(ctx context.Context, target serving.SchedulerCa
 		}
 		if instance.Profile == nil || instance.Profile.Condition.Firstfloor == nil {
 			return errors.New("route target missing measured profile")
+		}
+		if result.Operation.PolicyInstances != nil && !slices.Contains(result.Operation.PolicyInstances, instance.ID) {
+			continue
 		}
 		policy := native.Policy{DecisionID: target.ID, ProfileID: instance.Profile.ID,
 			DeadlinePolicy: native.EffectiveDeadlinePolicy(instance.Profile.Condition.Firstfloor.DeadlinePolicy),

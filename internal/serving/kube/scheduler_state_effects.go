@@ -53,9 +53,44 @@ func (c *reservationState) actionEffectPresent(snapshot serving.SchedulerSnapsho
 			}
 		}
 	case servingstate.OperationRoute:
-		return c.routingTargetPresent(controlledTarget(run.result.Operation), snapshot, physical, true, runtime)
+		target := controlledTarget(run.result.Operation)
+		if c.routingTargetPresent(target, snapshot, physical, true, runtime) {
+			return true
+		}
+		return c.composedRoutePresent(run, target, snapshot, physical, runtime)
 	}
 	return false
+}
+
+// The completed receipt proves this owner's handoff. Later admitted routes may
+// change shared shares; only its physical policy/withdrawal obligations survive.
+// Do not depend on another owner's receipt outliving the action-view GC window.
+func (c *reservationState) composedRoutePresent(run *actionRun, target *serving.SchedulerCandidate, snapshot serving.SchedulerSnapshot, physical []serving.InstanceState, runtime *serving.Runtime) bool {
+	if target == nil || run.result.Status != servingstate.NativeOperationComplete || run.proofParent == nil ||
+		run.proofParent.result.Before.Routing == nil || len(run.proofParent.scope.Nodes) == 0 {
+		return false
+	}
+	current, _ := runtime.SchedulerRouting()
+	for uid, route := range target.Routing {
+		for _, wanted := range target.Instances {
+			if wanted.WorkloadUID == uid && route[wanted.ID] > 0 && slices.Contains(run.proofParent.scope.Nodes, wanted.Node) &&
+				!schedulerTargetReady(wanted, snapshot, physical, true) {
+				return false
+			}
+		}
+		for _, id := range run.proofParent.scope.Instances {
+			if route[id] <= 0 && current[uid][id] > 0 {
+				return false
+			}
+		}
+		ready := slices.ContainsFunc(snapshot.Instances, func(actual serving.SchedulerInstance) bool {
+			return current[uid][actual.ID] > 0 && schedulerTargetReady(actual, snapshot, physical, true)
+		})
+		if !ready {
+			return false
+		}
+	}
+	return len(target.Routing) > 0
 }
 
 // A failed observation is neither an effect proof nor a counterexample. Keep

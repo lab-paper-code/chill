@@ -87,7 +87,18 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				if empty {
 					continue
 				}
-				operation.Target = controlledTarget(operation)
+				current, _ := c.runtime.SchedulerRouting()
+				physical := c.runtime.Instances()
+				rebased, policies := c.rebaseRouteLocked(*controlledTarget(operation), target.ID, current, physical)
+				operation.Target, operation.PolicyInstances = &rebased, policies
+				active := servingstate.PositiveWorkloadScope(rebased, scope)
+				if len(active) == 0 {
+					continue
+				}
+				if len(active) != len(scope) {
+					operation.WorkloadUIDs = active
+					operation.Target = controlledTarget(operation)
+				}
 			}
 			action.Status = servingstate.NativeOperationRunning
 			action.Cancelable = action.Kind == servingstate.OperationPrepare
@@ -309,7 +320,8 @@ func (c *reservationState) dependenciesComplete(action serving.Action, plan serv
 				proof := run.result.Operation
 				// Recheck this source's handoff, not unrelated routes.
 				proof.WorkloadUIDs = uids
-				if !c.routingTargetPresent(controlledTarget(proof), c.state.Snapshot, runtime.Instances(), true, runtime) {
+				selected, physical := controlledTarget(proof), runtime.Instances()
+				if !c.routingTargetPresent(selected, c.state.Snapshot, physical, true, runtime) && !c.composedRoutePresent(run, selected, c.state.Snapshot, physical, runtime) {
 					return false
 				}
 			}

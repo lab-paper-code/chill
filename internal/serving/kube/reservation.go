@@ -26,21 +26,49 @@ const workloadDeletionKind = "workload-deletion"
 type resourceScope struct {
 	Nodes     []serving.NodeReference
 	Workloads []string
+	Routing   []string
+	Owners    []string // Identity only: local owners conflict with a whole-workload operation, not each other.
 	Pods      []string
 	Instances []string
 }
 
 func (s resourceScope) overlaps(other resourceScope) bool {
 	return slices.ContainsFunc(s.Nodes, func(n serving.NodeReference) bool { return slices.Contains(other.Nodes, n) }) ||
-		slices.ContainsFunc(s.Workloads, func(uid string) bool { return slices.Contains(other.Workloads, uid) }) ||
+		slices.ContainsFunc(s.Workloads, func(uid string) bool {
+			return slices.Contains(other.Workloads, uid) || slices.Contains(other.Routing, uid) || slices.Contains(other.Owners, uid)
+		}) ||
+		slices.ContainsFunc(s.Routing, func(uid string) bool {
+			return slices.Contains(other.Routing, uid) || slices.Contains(other.Workloads, uid)
+		}) ||
+		slices.ContainsFunc(s.Owners, func(uid string) bool { return slices.Contains(other.Workloads, uid) }) ||
 		slices.ContainsFunc(s.Pods, func(uid string) bool { return slices.Contains(other.Pods, uid) }) ||
 		slices.ContainsFunc(s.Instances, func(id string) bool { return slices.Contains(other.Instances, id) })
 }
 
+func (scope *resourceScope) includeOwner(uid string) {
+	if uid != "" && !slices.Contains(scope.Owners, uid) {
+		scope.Owners = append(scope.Owners, uid)
+	}
+}
+
 func (c *reservationState) operationScope(operation servingstate.Operation) resourceScope {
-	scope := resourceScope{Workloads: slices.Clone(operation.WorkloadUIDs), Nodes: slices.Clone(operation.Nodes)}
-	if operation.WorkloadUID != "" {
-		scope.Workloads = append(scope.Workloads, operation.WorkloadUID)
+	scope := resourceScope{Nodes: slices.Clone(operation.Nodes), Owners: slices.Clone(operation.WorkloadUIDs)}
+	if operation.Kind == transitionRunKind && operation.Target != nil {
+		scope.Owners = servingstate.PositiveWorkloadScope(*operation.Target, operation.WorkloadUIDs)
+	}
+	scope.includeOwner(operation.WorkloadUID)
+	if operation.Prepare != nil && operation.Prepare.Owner != nil {
+		scope.includeOwner(operation.Prepare.Owner.UID)
+	}
+	local := operation.Kind == transitionRunKind || operation.Kind == servingstate.OperationPrepare ||
+		operation.Kind == servingstate.OperationStop || operation.Kind == servingstate.OperationDrain ||
+		operation.Kind == servingstate.OperationRemove || operation.Kind == servingstate.OperationPower ||
+		operation.Kind == servingstate.OperationResize
+	if !local {
+		scope.Workloads = slices.Clone(operation.WorkloadUIDs)
+		if operation.WorkloadUID != "" {
+			scope.Workloads = append(scope.Workloads, operation.WorkloadUID)
+		}
 	}
 	if operation.Node.UID != "" {
 		scope.Nodes = append(scope.Nodes, operation.Node)
@@ -51,23 +79,9 @@ func (c *reservationState) operationScope(operation servingstate.Operation) reso
 	if operation.Instance != "" {
 		scope.Instances = append(scope.Instances, operation.Instance)
 	}
-	if operation.Prepare != nil && operation.Prepare.Owner != nil {
-		scope.Workloads = append(scope.Workloads, operation.Prepare.Owner.UID)
-	}
-	if operation.Target != nil {
-		for uid := range operation.Target.Routing {
-			if servingstate.IsRoutingOperation(operation.Kind) && operation.ControlsWorkload(uid) {
-				scope.Workloads = append(scope.Workloads, uid)
-			}
-		}
-		for _, instance := range operation.Target.Instances {
-			if !servingstate.IsRoutingOperation(operation.Kind) && (instance.ID == operation.Instance || instance.Node == operation.Node) && instance.WorkloadUID != "" {
-				scope.Workloads = append(scope.Workloads, instance.WorkloadUID)
-			}
-		}
-	}
+	scope.addPlannedEffects(operation)
 	for _, instance := range c.state.Snapshot.Instances {
-		affected := slices.Contains(scope.Workloads, instance.WorkloadUID) || slices.Contains(scope.Workloads, instance.OwnerWorkloadUID) || slices.Contains(scope.Instances, instance.ID) || slices.Contains(scope.Pods, instance.PodUID)
+		affected := slices.Contains(scope.Nodes, instance.Node) || slices.Contains(scope.Workloads, instance.WorkloadUID) || slices.Contains(scope.Workloads, instance.OwnerWorkloadUID) || slices.Contains(scope.Instances, instance.ID) || slices.Contains(scope.Pods, instance.PodUID)
 		if !affected {
 			for _, uid := range scope.Workloads {
 				if c.state.Snapshot.Routing[uid][instance.ID] > 0 {
@@ -77,6 +91,8 @@ func (c *reservationState) operationScope(operation servingstate.Operation) reso
 			}
 		}
 		if affected {
+			scope.includeOwner(instance.WorkloadUID)
+			scope.includeOwner(instance.OwnerWorkloadUID)
 			scope.Nodes = append(scope.Nodes, instance.Node)
 			scope.Instances = append(scope.Instances, instance.ID)
 			if instance.PodUID != "" {
@@ -90,9 +106,52 @@ func (c *reservationState) operationScope(operation servingstate.Operation) reso
 				scope.Nodes = append(scope.Nodes, instance.Node)
 				scope.Instances = append(scope.Instances, instance.ID)
 			}
+			if slices.Contains(scope.Nodes, instance.Node) {
+				scope.includeOwner(instance.WorkloadUID)
+			}
 		}
 	}
 	return scope
+}
+
+func (scope *resourceScope) addPlannedEffects(operation servingstate.Operation) {
+	if operation.Kind == transitionRunKind && operation.Target != nil {
+		for _, action := range operation.Target.Actions {
+			if action.Node.UID != "" && !slices.Contains(scope.Nodes, action.Node) {
+				scope.Nodes = append(scope.Nodes, action.Node)
+			}
+		}
+		if len(scope.Nodes) == 0 && slices.ContainsFunc(operation.Target.Actions, func(action serving.Action) bool {
+			return action.Kind == servingstate.OperationRoute
+		}) {
+			scope.Routing = slices.Clone(operation.WorkloadUIDs)
+		}
+	}
+	if !servingstate.IsRoutingOperation(operation.Kind) {
+		return
+	}
+	scope.Routing = slices.Clone(scope.Workloads)
+	if operation.PolicyInstances != nil {
+		scope.Workloads = nil
+	}
+	if operation.Target == nil {
+		return
+	}
+	for uid := range operation.Target.Routing {
+		if !operation.ControlsWorkload(uid) {
+			continue
+		}
+		if !slices.Contains(scope.Routing, uid) {
+			scope.Routing = append(scope.Routing, uid)
+		}
+		scope.includeOwner(uid)
+	}
+	for _, wanted := range operation.Target.Instances {
+		if operation.ControlsWorkload(wanted.WorkloadUID) && (operation.PolicyInstances == nil || slices.Contains(operation.PolicyInstances, wanted.ID)) {
+			scope.Nodes = append(scope.Nodes, wanted.Node)
+			scope.Instances = append(scope.Instances, wanted.ID)
+		}
+	}
 }
 
 // Callers hold mu. No partial acquisition; reset may inherit only terminal owners
@@ -242,7 +301,7 @@ func (c *reservationState) releaseObservedScopes(nodes []core.Node, pods []core.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, run := range c.runs {
-		if !run.reserved || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(observedAt) || len(run.scope.Nodes) == 0 {
+		if !run.reserved || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(observedAt) {
 			continue
 		}
 		if !c.ownerReturnTerminal(run) {
@@ -263,7 +322,7 @@ func (c *reservationState) releaseObservedScopes(nodes []core.Node, pods []core.
 				}
 			}
 			for _, pod := range pods {
-				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, servingstate.WorkloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
+				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, servingstate.WorkloadOwner(pod.OwnerReferences)) || slices.Contains(run.scope.Owners, servingstate.WorkloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
 					returned = false
 				}
 			}

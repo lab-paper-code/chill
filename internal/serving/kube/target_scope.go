@@ -86,7 +86,8 @@ func (c *reservationState) routeOperationScopeLocked(parent, selected serving.Sc
 			return scope != nil && !slices.Contains(scope, uid)
 		})
 	}
-	return scope, scope != nil && len(scope) == 0
+	scope = servingstate.PositiveWorkloadScope(selected, scope)
+	return scope, len(scope) == 0
 }
 
 func (c *reservationState) omittedRouteCompleteLocked(action serving.Action, target serving.SchedulerCandidate) bool {
@@ -140,4 +141,104 @@ func (c *reservationState) orderRouteChild(action serving.Action, owner string) 
 		}
 	}
 	return action
+}
+
+// Rebase under the ledger lock immediately before admission. The owner keeps
+// its original delta, not an obsolete whole-workload route declaration.
+func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate, owner string, current map[string]map[string]int32, physical []serving.InstanceState) (serving.SchedulerCandidate, []string) {
+	parent := c.runs[transitionRunKind+"/"+owner]
+	if parent == nil || parent.result.Before.Routing == nil {
+		return selected, nil
+	}
+	result := selected
+	result.Instances = nil
+	result.Routing = make(map[string]map[string]int32, len(selected.Routing))
+	policies := []string{}
+	routeOnly := len(parent.scope.Nodes) == 0
+	for uid, wanted := range selected.Routing {
+		ready, newer, held, withdrawn := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+		instances := map[string]serving.SchedulerInstance{}
+		owned := map[string]bool{}
+		for _, original := range parent.result.Operation.Target.Instances {
+			if original.WorkloadUID != uid {
+				continue
+			}
+			id := original.ID
+			actual := schedulerPhysicalState(id, physical)
+			if actual != nil {
+				id = actual.ID
+			}
+			policyChanged := actual != nil && actual.Native != nil && !schedulerPolicyAcknowledged(original, actual.Native.Metadata)
+			if routeOnly || slices.Contains(parent.scope.Nodes, original.Node) || policyChanged {
+				owned[id] = true
+			}
+		}
+		for id := range parent.result.Before.Routing[uid] {
+			if routeOnly || slices.Contains(parent.scope.Instances, id) {
+				owned[id] = true
+			}
+		}
+		for _, actual := range c.state.Snapshot.Instances {
+			newer[actual.ID], held[actual.ID], withdrawn[actual.ID] = c.routeInstanceFenceLocked(parent, uid, current[uid], actual)
+			if schedulerTargetReady(actual, c.state.Snapshot, physical, false) {
+				ready[actual.ID] = true
+				actual.WorkloadUID = uid
+				instances[actual.ID] = actual
+			}
+		}
+		delta := map[string]int32{}
+		for id := range owned {
+			delta[id] = 0
+		}
+		for _, instance := range selected.Instances {
+			if instance.WorkloadUID != uid {
+				continue
+			}
+			id := instance.ID
+			actual := schedulerPhysicalState(id, physical)
+			if actual != nil {
+				id = actual.ID
+			}
+			if !owned[id] || newer[id] || withdrawn[id] {
+				continue
+			}
+			delta[id] = wanted[instance.ID]
+			if schedulerTargetReady(instance, c.state.Snapshot, physical, false) {
+				instance.ID = id
+				ready[id], instances[id] = true, instance
+				if delta[id] > 0 && (!held[id] || !schedulerPolicyAcknowledged(instance, actual.Native.Metadata)) {
+					policies = append(policies, id)
+				}
+			}
+		}
+		result.Routing[uid] = serving.SchedulerRebaseRouting(current[uid], delta, ready, newer)
+		ids := make([]string, 0, len(result.Routing[uid]))
+		for id := range result.Routing[uid] {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		for _, id := range ids {
+			result.Instances = append(result.Instances, instances[id])
+		}
+	}
+	return result, policies
+}
+
+func (c *reservationState) routeInstanceFenceLocked(parent *actionRun, uid string, current map[string]int32, actual serving.SchedulerInstance) (newer, held, withdrawn bool) {
+	for _, other := range c.runs {
+		if other.owner == parent.owner || !other.reserved || !slices.Contains(other.scope.Nodes, actual.Node) {
+			continue
+		}
+		held = true
+		commitment := c.returnProofParent(other)
+		if commitment == nil || commitment.result == nil || commitment.result.Operation.Target == nil {
+			continue
+		}
+		newer = newer || commitment.started.After(parent.started)
+		goal := commitment.result.Operation.Target
+		if current[actual.ID] <= 0 && goal.Routing[uid][actual.ID] <= 0 && goal.Routing[uid][actual.TargetID] <= 0 {
+			withdrawn = true
+		}
+	}
+	return newer, held, withdrawn
 }

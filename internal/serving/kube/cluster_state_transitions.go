@@ -30,12 +30,13 @@ func (c *reservationState) startTransition(target *serving.SchedulerCandidate, c
 	}
 	operation := servingstate.Operation{ID: id, Kind: transitionRunKind, Target: target, WorkloadUIDs: changedWorkloads(*target, c.state.Snapshot)}
 	for _, action := range target.Actions {
-		if action.Node.UID != "" {
+		if action.Node.UID != "" && !slices.Contains(operation.Nodes, action.Node) {
 			operation.Nodes = append(operation.Nodes, action.Node)
 		}
 	}
 	started := time.Now()
 	before := servingstate.OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
+	before.Routing = c.state.Snapshot.Routing
 	for _, instance := range c.state.Snapshot.Instances {
 		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
 	}
@@ -79,6 +80,9 @@ func (c *reservationState) completeRun(run *actionRun, result *servingstate.Oper
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			run.action.Status, run.action.Reason = servingstate.NativeOperationFailed, serving.ActionDeadlineExceeded+": "+run.action.Reason
 		}
+	}
+	if run.action.Kind == servingstate.OperationRoute && run.action.Status == servingstate.NativeOperationComplete {
+		run.scope.Routing = nil
 	}
 	run.action.Elapsed = result.EndedAt.Sub(result.StartedAt)
 	c.recordPreparationFailureLocked(run, result, c.state.Snapshot)

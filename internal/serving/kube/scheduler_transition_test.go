@@ -182,6 +182,7 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	existing.action.Status, existing.action.To = servingstate.NativeOperationRunning, "frozen-route-effect"
 	existing.started = time.Now()
 	frozen := existing.result.Operation.Target
+	existing.result.Operation.Kind = servingstate.OperationRoute
 	frozen.Actions = []serving.Action{existing.action}
 	existing.scope, existing.reserved, existing.owner = controller.operationScope(existing.result.Operation), true, frozen.ID
 	target.Actions[0].To = "different-route-effect"
@@ -1135,7 +1136,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 	if err != nil || len(after.Instances) != 2 || after.Instances[0].ID != a.ID || len(after.Instances[0].Reasons) != 0 {
 		t.Fatalf("ACK did not clear pending on the same executor: %+v %v", after.Instances, err)
 	}
-	if actual, _ := controller.runtime.SchedulerRouting(); actual[uid][a.ID] != 500 {
+	if actual, _ := controller.runtime.SchedulerRouting(); actual[uid][a.ID] != 1000 {
 		t.Fatalf("actual acknowledged distribution not applied: %v", actual)
 	}
 }

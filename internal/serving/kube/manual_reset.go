@@ -107,8 +107,9 @@ func (c *reservationState) resetReservationOwnersLocked(scope resourceScope, adm
 			continue
 		}
 		if run.action.Kind == measurementLeaseKind || run.result == nil || run.result.EndedAt.IsZero() || run.result.Operation.Holder != "" ||
-			len(run.scope.Workloads) == 0 ||
+			len(run.scope.Workloads)+len(run.scope.Owners) == 0 ||
 			slices.ContainsFunc(run.scope.Workloads, func(uid string) bool { return !slices.Contains(scope.Workloads, uid) }) ||
+			slices.ContainsFunc(run.scope.Owners, func(uid string) bool { return !slices.Contains(scope.Workloads, uid) }) ||
 			slices.ContainsFunc(run.scope.Nodes, func(node serving.NodeReference) bool { return !slices.Contains(admittedNodes, node) }) {
 			return nil, servingstate.Refused("OperationConflict", "reset cannot inherit reservation outside its cleanup scope: "+run.owner)
 		}
