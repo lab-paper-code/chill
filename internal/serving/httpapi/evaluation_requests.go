@@ -71,7 +71,7 @@ type EvaluationStage struct {
 	FinishedAt         *metav1.Time                 `json:"finishedAt"`
 	GoAt               *metav1.Time                 `json:"goAt"`
 	ProvisionalD1      *api.EvaluationProvisionalD1 `json:"provisionalD1,omitempty"`
-	// An empty recorded list stays [] (harness reports, no boundary yet); unrecorded is null.
+	// Always [] from this server (capability marker); absent only from older servers.
 	Progress       []api.EvaluationStageProgress `json:"progress"`
 	LastProgressAt string                        `json:"lastProgressAt,omitempty"`
 	LoadJobs       []EvaluationLoadJob           `json:"loadJobs"`

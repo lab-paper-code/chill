@@ -78,7 +78,7 @@ func (s *Service) evaluationView(
 			CurrentProcedure: stage.Status.CurrentProcedure, Procedures: evaluationProcedures(stage.Status.Procedures),
 			StartedAt: stage.Status.StartedAt, FinishedAt: stage.Status.FinishedAt, GoAt: stage.Status.GoAt,
 			ProvisionalD1: stage.Status.ProvisionalD1,
-			Progress:      stage.Status.Progress, LastProgressAt: stage.Status.LastProgressAt,
+			Progress:      append([]api.EvaluationStageProgress{}, stage.Status.Progress...), LastProgressAt: stage.Status.LastProgressAt,
 			LoadJobs: stageLoadJobs(loadJobs, evaluationLoadJobKey{run.UID, stage.UID, stage.Spec.StageID}),
 		})
 	}

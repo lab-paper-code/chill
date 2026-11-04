@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"errors"
+
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	evaluation "github.com/lab-paper-code/chill/internal/evaluation/service"
 	batchv1 "k8s.io/api/batch/v1"
@@ -189,7 +190,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 					{"step":"factor","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"RecordedReason","measurementVerdict":"PASS"},
 					{"step":"stage","startedAt":"2026-11-04T01:01:00Z","finishedAt":null}
 				 ],"startedAt":"2026-11-04T01:00:00Z","finishedAt":null,"goAt":"2026-11-04T01:00:00Z"},
-				{"id":"second","name":"a-stage","uid":"second-uid","conditions":null,"procedures":null,"startedAt":null,"finishedAt":null,"goAt":null,"progress":null,"loadJobs":[]}
+				{"id":"second","name":"a-stage","uid":"second-uid","conditions":null,"procedures":null,"startedAt":null,"finishedAt":null,"goAt":null,"progress":[],"loadJobs":[]}
 			]
 		}`},
 		{"absent", &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "ns"}},
@@ -347,6 +348,9 @@ func TestEvaluationReadSurvivesJobListFailure(t *testing.T) {
 		_ = json.Unmarshal(raw, &fields)
 		if string(fields["loadJobs"]) != "null" {
 			t.Fatalf("unobserved Jobs must be null, got %s", fields["loadJobs"])
+		}
+		if string(fields["progress"]) != "[]" {
+			t.Fatalf("current server must report progress=[] before any boundary, got %s", fields["progress"])
 		}
 	}
 }
