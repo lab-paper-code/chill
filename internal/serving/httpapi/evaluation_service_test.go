@@ -185,7 +185,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 					{"step":"factor","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"RecordedReason","measurementVerdict":"PASS"},
 					{"step":"stage","startedAt":"2026-11-04T01:01:00Z","finishedAt":null}
 				 ],"startedAt":"2026-11-04T01:00:00Z","finishedAt":null,"goAt":"2026-11-04T01:00:00Z"},
-				{"id":"second","name":"a-stage","uid":"second-uid","conditions":null,"procedures":null,"startedAt":null,"finishedAt":null,"goAt":null}
+				{"id":"second","name":"a-stage","uid":"second-uid","conditions":null,"procedures":null,"startedAt":null,"finishedAt":null,"goAt":null,"progress":null}
 			]
 		}`},
 		{"absent", &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "ns"}},
@@ -280,5 +280,27 @@ func TestEvaluationCollectionEnvelopesKeepEmptyArrays(t *testing.T) {
 				t.Fatalf("empty collection changed: %s", body)
 			}
 		})
+	}
+}
+
+// A harness that published before its first boundary must not look like an old harness.
+func TestEvaluationStageProgressDistinguishesEmptyFromUnrecorded(t *testing.T) {
+	for _, test := range []struct {
+		progress []api.EvaluationStageProgress
+		want     string
+	}{{[]api.EvaluationStageProgress{}, "[]"}, {nil, "null"}} {
+		raw, err := json.Marshal(evaluationViewDTO(evaluation.EvaluationView{Stages: []evaluation.EvaluationStage{{ID: "s", Progress: test.progress}}}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var view struct {
+			Stages []map[string]json.RawMessage `json:"stages"`
+		}
+		if err := json.Unmarshal(raw, &view); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(view.Stages[0]["progress"]); got != test.want {
+			t.Fatalf("progress=%s want=%s", got, test.want)
+		}
 	}
 }

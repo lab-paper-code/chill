@@ -112,6 +112,10 @@ rules:
   - apiGroups: [apps]
     resources: [replicasets]
     verbs: [list, delete]
+  # Evaluation stage reads project load-generator Jobs; independent of profileNamespaces.
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
