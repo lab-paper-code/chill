@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,8 +89,8 @@ func TestDecodeManualOperationStrictKindFields(t *testing.T) {
 type resetAPI struct {
 	client.Client
 	kube              *kubefake.Clientset
-	podWrites         int
-	deleteCalls       int
+	podWrites         atomic.Int64
+	deleteCalls       atomic.Int64
 	refuseDelete      bool
 	terminateOnDelete bool
 }
@@ -109,7 +110,7 @@ func (c *resetAPI) syncPod(ctx context.Context, pod *core.Pod) error {
 
 func (c *resetAPI) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	if _, ok := obj.(*core.Pod); ok {
-		c.podWrites++
+		c.podWrites.Add(1)
 	}
 	return c.Client.Create(ctx, obj, opts...)
 }
@@ -119,7 +120,7 @@ func (c *resetAPI) Patch(ctx context.Context, obj client.Object, patch client.Pa
 		return err
 	}
 	if pod, ok := obj.(*core.Pod); ok {
-		c.podWrites++
+		c.podWrites.Add(1)
 		return c.syncPod(ctx, pod)
 	}
 	return nil
@@ -128,7 +129,7 @@ func (c *resetAPI) Patch(ctx context.Context, obj client.Object, patch client.Pa
 func (c *resetAPI) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
 	pod, isPod := obj.(*core.Pod)
 	if isPod {
-		c.deleteCalls++
+		c.deleteCalls.Add(1)
 		if c.refuseDelete {
 			return errors.New("owned Pod deletion refused")
 		}
@@ -150,7 +151,7 @@ func (c *resetAPI) Delete(ctx context.Context, obj client.Object, opts ...client
 		}
 	}
 	if isPod {
-		c.podWrites++
+		c.podWrites.Add(1)
 		return c.syncPod(ctx, pod)
 	}
 	return nil
@@ -452,7 +453,7 @@ func TestResetInheritsOnlyTerminalContainedReservationsAC38(t *testing.T) {
 
 func (h *resetHarness) assertAlreadyClean(t *testing.T, ctx context.Context, cm *core.ConfigMap) {
 	t.Helper()
-	updates, podWrites := h.updates, h.api.podWrites
+	updates, podWrites := h.updates, h.api.podWrites.Load()
 	actionStart := len(h.kube.Actions())
 	second, err := h.controller.ExecuteManual(ctx, h.request())
 	if err != nil || second.Status != servingstate.NativeOperationComplete || second.Error != "" {
@@ -460,8 +461,8 @@ func (h *resetHarness) assertAlreadyClean(t *testing.T, ctx context.Context, cm 
 	}
 	assertResetSteps(t, second, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
 	after, _ := h.configuration(t)
-	if h.updates != updates || h.api.podWrites != podWrites || !reflect.DeepEqual(after.Data, cm.Data) {
-		t.Errorf("second reset mutated declaration or Pod: config writes %d->%d Pod writes %d->%d", updates, h.updates, podWrites, h.api.podWrites)
+	if h.updates != updates || h.api.podWrites.Load() != podWrites || !reflect.DeepEqual(after.Data, cm.Data) {
+		t.Errorf("second reset mutated declaration or Pod: config writes %d->%d Pod writes %d->%d", updates, h.updates, podWrites, h.api.podWrites.Load())
 	}
 	for _, action := range h.kube.Actions()[actionStart:] {
 		if action.GetVerb() == getVerb || action.GetVerb() == "list" {
@@ -502,8 +503,8 @@ func TestResetExecutionFailureStopsWithoutRetryOrRollback(t *testing.T) {
 					t.Errorf("failure phase lacks failure evidence: %+v", step)
 				}
 			}
-			if tc.failUpdate > 0 && h.updates != tc.failUpdate || tc.refuseDelete && h.api.deleteCalls != 1 {
-				t.Errorf("failed phase retried or later declaration ran: updates=%d deletes=%d", h.updates, h.api.deleteCalls)
+			if tc.failUpdate > 0 && h.updates != tc.failUpdate || tc.refuseDelete && h.api.deleteCalls.Load() != 1 {
+				t.Errorf("failed phase retried or later declaration ran: updates=%d deletes=%d", h.updates, h.api.deleteCalls.Load())
 			}
 			if tc.phase != "release" {
 				if _, err := h.kube.CoreV1().Pods(h.owned.Namespace).Get(ctx, h.owned.Name, meta.GetOptions{}); err != nil {
@@ -859,8 +860,8 @@ func TestResetRefusesInvalidScopeBeforeAnyMutation(t *testing.T) {
 			if errorCode(err) != "InvalidInput" || result.Operation.ID != "" {
 				t.Fatalf("malformed reset did not return request refusal: %+v err=%v", result, err)
 			}
-			if h.api.podWrites != 0 || h.updates != 0 {
-				t.Errorf("refused request mutated Pod/configuration: %d/%d", h.api.podWrites, h.updates)
+			if h.api.podWrites.Load() != 0 || h.updates != 0 {
+				t.Errorf("refused request mutated Pod/configuration: %d/%d", h.api.podWrites.Load(), h.updates)
 			}
 			for _, action := range h.kube.Actions()[start:] {
 				if action.GetVerb() != getVerb && action.GetVerb() != "list" {
@@ -886,8 +887,8 @@ func TestResetRefusesConcurrentResetBeforeMutation(t *testing.T) {
 	if err == nil || !slices.Contains([]string{testNodeBusy, testOperationConflict}, errorCode(err)) || result.Operation.ID != "" {
 		t.Fatalf("reset admitted while another reset owns its scope: %+v err=%v", result, err)
 	}
-	if h.api.podWrites != 0 || h.updates != 0 {
-		t.Errorf("busy refusal mutated scope: writes=%d updates=%d", h.api.podWrites, h.updates)
+	if h.api.podWrites.Load() != 0 || h.updates != 0 {
+		t.Errorf("busy refusal mutated scope: writes=%d updates=%d", h.api.podWrites.Load(), h.updates)
 	}
 }
 
@@ -905,8 +906,8 @@ func TestResetRefusesMeasurementOwnedNodeBeforeMutation(t *testing.T) {
 	if errorCode(err) != testNodeBusy || result.Operation.ID != "" {
 		t.Fatalf("reset did not refuse external measurement ownership: %+v err=%v", result, err)
 	}
-	if h.api.podWrites != 0 || h.updates != 0 {
-		t.Errorf("measurement refusal mutated scope: writes=%d updates=%d", h.api.podWrites, h.updates)
+	if h.api.podWrites.Load() != 0 || h.updates != 0 {
+		t.Errorf("measurement refusal mutated scope: writes=%d updates=%d", h.api.podWrites.Load(), h.updates)
 	}
 }
 
@@ -1048,11 +1049,11 @@ func TestResetCleansAllDuplicateSlotExecutorsAC36(t *testing.T) {
 	if actual[foreign.UID][id] != 1000 {
 		t.Fatalf("foreign distribution changed: %v", actual)
 	}
-	writes := api.podWrites
+	writes := api.podWrites.Load()
 	second, err := controller.ExecuteManual(ctx, request)
 	assertResetComplete(t, second, err)
-	if api.podWrites != writes {
-		t.Fatalf("second reset wrote Pods: %d→%d", writes, api.podWrites)
+	if api.podWrites.Load() != writes {
+		t.Fatalf("second reset wrote Pods: %d→%d", writes, api.podWrites.Load())
 	}
 }
 
@@ -1094,7 +1095,7 @@ func TestResetRemovesInitFailedPodByUIDAC37(t *testing.T) {
 			h.controller.observer.mu.Unlock()
 			result, err := h.controller.ExecuteManual(ctx, h.request())
 			if !terminal {
-				if err == nil || h.api.deleteCalls != 0 {
+				if err == nil || h.api.deleteCalls.Load() != 0 {
 					t.Fatalf("nonterminal Pod without executor was removed: %+v %v", result, err)
 				}
 				return
