@@ -34,9 +34,10 @@ export function EvaluationActiveDetails({active,now,name,uid,stageProgress,proce
       const lastProgressAt=evaluationLastProgressAt(stage,procedures)
       const stageProcedures=stage?.procedures
       const loadIndex=stageProcedures?.findIndex(procedure=>procedure.step==="stage")??-1
-      const postLoad=[...(stageProcedures??[]).filter((procedure,index)=>index>loadIndex&&loadIndex>=0||["judge","cleanup-jobs"].includes(procedure.step)),...(procedures??[]).filter(procedure=>["finish","publish"].includes(procedure.step))].filter(procedure=>procedure.startedAt&&Number.isFinite(Date.parse(procedure.startedAt))).sort((a,b)=>Date.parse(b.startedAt!)-Date.parse(a.startedAt!))[0]
+      const postLoad=[...(stageProcedures??[]).filter((procedure,index)=>index>loadIndex&&loadIndex>=0||["judge","cleanup-jobs"].includes(procedure.step)),...(procedures??[]).filter(procedure=>["finish","publish"].includes(procedure.step))].map(procedure=>({procedure,at:Math.max(...[procedure.startedAt,procedure.finishedAt].map(value=>value?Date.parse(value):NaN).filter(Number.isFinite))})).filter(record=>Number.isFinite(record.at)).sort((a,b)=>b.at-a.at)[0]?.procedure
       const procedureLabels:Record<string,string>={judge:"측정 판정","cleanup-jobs":"작업 정리",finish:"정리",publish:"게시"}
-      const postLoadLabel=postLoad?`종료 처리: ${procedureLabels[postLoad.step]??postLoad.step} ${postLoad.finishedAt?"종료 기록":"중"} (시작 ${new Date(postLoad.startedAt!).toLocaleTimeString("ko-KR",{timeZone:"Asia/Seoul",hour12:false})})`:stageProcedures==null?"종료 처리 단계 미기록":"종료 처리 신호 미수신"
+      const postLoadTimes=postLoad?[["시작",postLoad.startedAt],["종료",postLoad.finishedAt]].filter(([label,value])=>label==="시작"||value).map(([label,value])=>`${label} ${value?new Date(value).toLocaleTimeString("ko-KR",{timeZone:"Asia/Seoul",hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"}):"미기록"}`).join(" · "):""
+      const postLoadLabel=postLoad?`종료 처리: ${procedureLabels[postLoad.step]??postLoad.step} ${postLoad.finishedAt?"종료 기록":"중"} (${postLoadTimes})`:stageProcedures==null?"종료 처리 단계 미기록":"종료 처리 신호 미수신"
       const silentSeconds=now&&lastProgressAt!==null?Math.max(0,Math.floor((now-lastProgressAt)/1000)):null
       return <details key={run.uid} className="live-evaluation" open>
         <summary>{afterLoad?`계획 시간 경과 · ${postLoadLabel}`:"부하 계획 시간"}</summary>
