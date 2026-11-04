@@ -11,7 +11,6 @@ import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
-from queue import Empty, SimpleQueue
 from typing import Callable, Dict, List, Optional, TextIO, Tuple
 
 from chill_loadgen import __version__
@@ -85,7 +84,7 @@ def replay_open_loop(
 ) -> None:
     """Dispatch every planned arrival independently, without an in-flight cap."""
     lock = threading.Lock()
-    completed = SimpleQueue()
+    drained = threading.Condition(lock)
     active = 0
     failure: Optional[BaseException] = None
 
@@ -105,7 +104,7 @@ def replay_open_loop(
             out.flush()
 
     def send(request: ScheduledRequest) -> None:
-        nonlocal failure
+        nonlocal active, failure
         client = None
         try:
             index = int(request.request_id)
@@ -138,21 +137,21 @@ def replay_open_loop(
                 if client is not None:
                     client.close()
             finally:
-                completed.put(threading.current_thread())
+                with drained:
+                    active -= 1
+                    drained.notify_all()
 
     def submit(request: ScheduledRequest, delayed: bool) -> None:
         nonlocal active
-        # Join retired threads promptly, including their interpreter shutdown locks.
-        while active:
-            try:
-                completed.get_nowait().join()
-            except Empty:
-                break
-            active -= 1
-        thread = threading.Thread(target=send, args=(request,))
+        # Explicit drain owns worker lifetime; daemon avoids Python 3.8 shutdown-lock retention.
+        thread = threading.Thread(target=send, args=(request,), daemon=True)
+        with drained:
+            active += 1
         try:
             thread.start()
         except RuntimeError as error:
+            with drained:
+                active -= 1
             now = clock_ns()
             row = base_row(request)
             row.update(issued=False, error="GeneratorThreadStartError",
@@ -161,7 +160,6 @@ def replay_open_loop(
                        finishedMonotonicNS=now)
             emit(row)
             return
-        active += 1
 
     try:
         run_schedule(
@@ -170,8 +168,8 @@ def replay_open_loop(
             clock_ns=clock_ns, sleep=sleep,
         )
     finally:
-        for _ in range(active):
-            completed.get().join()
+        with drained:
+            drained.wait_for(lambda: active == 0)
     if failure is not None:
         raise RuntimeError("Open-loop request failed") from failure
 

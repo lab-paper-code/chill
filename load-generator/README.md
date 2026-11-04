@@ -44,10 +44,12 @@ Shard JSONL rows are merged under one process-shared output lock, retaining
 `requestIndex`, `shardIndex` and `shardCount`. Rebuild the load-generator image
 for the shared shard dispatcher; runtime images are unchanged.
 Results are written and flushed as JSONL on completion, without retaining rows
-or completed request threads. Drain joins retired threads throughout dispatch and
-waits for remaining completions after the final arrival; memory after schedule
-preparation depends on concurrent requests, not completed arrivals.
-The frozen offset trace, per-shard schedule and dataset remain resident.
+or completed request threads. A condition counter tracks active requests and
+drains them even when scheduling raises; the arrival path never joins a thread.
+Workers are daemon threads to avoid Python 3.8 interpreter shutdown-lock
+retention, but replay always waits for their output and connection cleanup.
+Memory after schedule preparation depends on concurrent requests, not completed
+arrivals. The frozen offset trace, per-shard schedule and dataset remain resident.
 A failed process shard prevents a complete `drained` event: its missing planned
 requests cannot be silently removed from the SLO denominator; already streamed
 rows from every shard remain evidence.

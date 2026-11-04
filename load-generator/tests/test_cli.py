@@ -126,6 +126,45 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(len(output.getvalue().splitlines()), 100)
         self.assertTrue(all(ref() is None for ref in completed))
 
+    def test_evaluation_schedule_failure_still_drains_without_joining(self):
+        entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+
+        class SlowClient(FakeClient):
+            def infer(self, *args):
+                entered.set()
+                if not release.wait(2):
+                    raise AssertionError("request was not released")
+                return super().infer(*args)
+
+        def schedule(requests, submit, **kwargs):
+            submit(requests[0], False)
+            raise ValueError("schedule failed")
+
+        def run():
+            try:
+                replay_open_loop(
+                    [("q1", {"image": b"a"})], workload="vqa", offsets=[0],
+                    new_client=SlowClient, out=io.StringIO(), start_ns=0,
+                )
+            except ValueError as error:
+                errors.append(str(error))
+            finally:
+                finished.set()
+
+        with patch("chill_loadgen.cli.run_schedule", side_effect=schedule), \
+             patch.object(threading.Thread, "join", side_effect=AssertionError("arrival/drain joined")):
+            caller = threading.Thread(target=run)
+            caller.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                self.assertFalse(finished.is_set())
+            finally:
+                release.set()
+            self.assertTrue(finished.wait(2))
+        caller.join()
+        self.assertEqual(errors, ["schedule failed"])
+
     def test_shards_partition_frozen_global_indexes_without_overlap(self):
         offsets = [2, 2, 7, 11, 15, 20, 22]
         parts = [shard_schedule(offsets, shard, 3) for shard in range(3)]
