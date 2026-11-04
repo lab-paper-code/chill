@@ -257,11 +257,21 @@ func (c *reservationState) recordRouteWriterLocked(owner string, operation servi
 		return
 	}
 	if c.routeWriters == nil {
-		c.routeWriters = map[string]servingstate.RouteWriter{}
+		c.routeWriters = map[string]servingstate.RouteWriters{}
 	}
 	for uid, instances := range touched {
-		if operation.ControlsWorkload(uid) && !c.routeWriters[uid].AdmittedAt.After(parent.started) {
-			c.routeWriters[uid] = servingstate.RouteWriter{AdmittedAt: parent.started, Instances: instances}
+		if !operation.ControlsWorkload(uid) {
+			continue
+		}
+		writers := c.routeWriters[uid]
+		if writers == nil {
+			writers = servingstate.RouteWriters{}
+			c.routeWriters[uid] = writers
+		}
+		for _, instance := range instances {
+			if !writers[instance].After(parent.started) {
+				writers[instance] = parent.started
+			}
 		}
 	}
 }

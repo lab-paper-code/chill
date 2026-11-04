@@ -242,9 +242,15 @@ func (c *reservationState) snapshotLocked() serving.SchedulerSnapshot {
 
 func (c *reservationState) publishSnapshotLocked(snapshot *serving.SchedulerSnapshot) {
 	c.state.Snapshot = *snapshot
-	for uid := range c.routeWriters {
+	for uid, writers := range c.routeWriters {
 		if !slices.ContainsFunc(snapshot.Workloads, func(workload *serving.Definition) bool { return workload != nil && workload.UID == uid }) {
 			delete(c.routeWriters, uid)
+			continue
+		}
+		for instance := range writers {
+			if !slices.ContainsFunc(snapshot.Instances, func(actual serving.SchedulerInstance) bool { return actual.ID == instance }) {
+				delete(writers, instance)
+			}
 		}
 	}
 }

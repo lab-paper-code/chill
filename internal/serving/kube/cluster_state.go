@@ -33,7 +33,7 @@ type reservationState struct {
 	mu                    sync.Mutex
 	tickMu                sync.Mutex
 	runs                  map[string]*actionRun
-	routeWriters          map[string]servingstate.RouteWriter
+	routeWriters          map[string]servingstate.RouteWriters
 	state                 SchedulerControllerState
 	replacements          []serving.SchedulerReplacement
 	replacementObservedAt time.Time

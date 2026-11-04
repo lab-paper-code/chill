@@ -1,17 +1,11 @@
 package state
 
-import (
-	"slices"
-	"time"
-)
+import "time"
 
-// RouteWriter records an admitted write, not a successful receipt. Its scope is
-// immutable and survives physical reservation return and receipt collection.
-type RouteWriter struct {
-	AdmittedAt time.Time
-	Instances  []string
-}
+// RouteWriters records each destination's latest admitted write, not its receipt.
+// Entries survive physical reservation return and receipt collection.
+type RouteWriters map[string]time.Time
 
-func (writer RouteWriter) Protects(admitted time.Time, instance string) bool {
-	return writer.AdmittedAt.After(admitted) && slices.Contains(writer.Instances, instance)
+func (writers RouteWriters) Protects(admitted time.Time, instance string) bool {
+	return writers[instance].After(admitted)
 }

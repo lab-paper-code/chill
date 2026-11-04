@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -809,7 +810,7 @@ func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t
 
 // The fake native HTTP boundary acknowledges the policy mounted in its actual
 // ConfigMap. Tick, source capture, route execution and runtime application are real.
-func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (*SchedulerController, *atomic.Bool) {
+func tickReadySubsetController(t *testing.T, observe func(int, *native.State), extraNodes ...string) (*SchedulerController, *atomic.Bool) {
 	t.Helper()
 	ctx := context.Background()
 	manager, _ := newManagerHarness(t)
@@ -850,7 +851,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 	kube := kubefake.NewSimpleClientset()
 	profiles := []serving.Profile{}
 	objects := []client.Object{&class, workload}
-	for index, name := range []string{"a", "b"} {
+	for index, name := range append([]string{"a", "b"}, extraNodes...) {
 		n, p, source := node.DeepCopy(), pod.DeepCopy(), profile
 		n.Name, n.UID = name, types.UID(name+"-node")
 		p.Name, p.UID, p.Spec.NodeName = name, types.UID(name+"-pod"), name
@@ -873,7 +874,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State)) (
 		}
 		profiles = append(profiles, source)
 		service := observerServiceFixture(p)
-		service.Spec.ClusterIP = []string{"10.96.0.10", "10.96.0.11"}[index]
+		service.Spec.ClusterIP = fmt.Sprintf("10.96.0.%d", index+10)
 		for _, object := range []struct {
 			resource string
 			object   client.Object

@@ -140,3 +140,78 @@ func TestRouteWriterSurvivesReturnAndLostReceipts(t *testing.T) {
 		})
 	}
 }
+
+func TestRouteWritersPreserveEveryNewerCommittedShare(t *testing.T) {
+	c, prepared := tickReadySubsetController(t, nil, "c")
+	prepared.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c.ctx = ctx
+	refresh := func() serving.SchedulerSnapshot {
+		snapshot, err := c.capture(ctx, time.Now(), c.config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.mu.Lock()
+		c.publishSnapshotLocked(&snapshot)
+		c.mu.Unlock()
+		return snapshot
+	}
+	snapshot := refresh()
+	uid := snapshot.Workloads[0].UID
+	byNode := map[string]serving.SchedulerInstance{}
+	for _, instance := range snapshot.Instances {
+		instance.WorkloadUID = uid
+		byNode[instance.Node.Name] = instance
+	}
+	a, b, third := byNode["a"], byNode["b"], byNode["c"]
+	if a.ID == "" || b.ID == "" || third.ID == "" {
+		t.Fatal("three-node fixture missing an actual executor")
+	}
+	a.MaxWait = time.Millisecond
+	old := serving.SchedulerCandidate{ID: "old-a", Instances: []serving.SchedulerInstance{a}, Routing: map[string]map[string]int32{uid: {a.ID: 1000}},
+		Actions: []serving.Action{{ID: "old-route", Kind: servingstate.OperationRoute, Node: a.Node}}}
+	c.startTransition(&old, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() {})
+	dispatch := func(goal serving.SchedulerCandidate) {
+		c.startTransition(&goal, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() { c.launchTargetLocked(goal, c.config) })
+		c.wg.Wait()
+		if run := c.runs[goal.Actions[0].ID]; run == nil || run.result == nil || run.result.Status != servingstate.NativeOperationComplete {
+			t.Fatalf("actual dispatch did not finish: %+v", run)
+		}
+	}
+	b.MaxWait = 2 * time.Millisecond
+	newerB := serving.SchedulerCandidate{ID: "new-b", Instances: []serving.SchedulerInstance{byNode["a"], b},
+		Routing: map[string]map[string]int32{uid: {a.ID: 700, b.ID: 300}},
+		Actions: []serving.Action{{ID: "b-route", Kind: servingstate.OperationRoute, Node: b.Node}}}
+	dispatch(newerB)
+	c.mu.Lock()
+	c.releaseOwnerLocked(newerB.ID)
+	c.mu.Unlock()
+	snapshot = refresh()
+	for _, instance := range snapshot.Instances {
+		instance.WorkloadUID = uid
+		byNode[instance.Node.Name] = instance
+	}
+	third = byNode["c"]
+	third.MaxWait = 3 * time.Millisecond
+	newerC := serving.SchedulerCandidate{ID: "new-c", Instances: []serving.SchedulerInstance{byNode["a"], byNode["b"], third},
+		Routing: map[string]map[string]int32{uid: {a.ID: 600, b.ID: 300, third.ID: 100}},
+		Actions: []serving.Action{{ID: "c-route", Kind: servingstate.OperationRoute, Node: third.Node}}}
+	dispatch(newerC)
+	before, _ := c.runtime.SchedulerRouting()
+	if before[uid][a.ID] != 630 || before[uid][b.ID] != 270 || before[uid][third.ID] != 100 {
+		t.Fatalf("unexpected committed composition after B and C: %v", before)
+	}
+	c.mu.Lock()
+	c.releaseOwnerLocked(newerC.ID)
+	c.mu.Unlock()
+	refresh()
+	c.mu.Lock()
+	c.launchTargetLocked(old, c.config)
+	c.mu.Unlock()
+	c.wg.Wait()
+	after, _ := c.runtime.SchedulerRouting()
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("original older A erased newer committed shares: before=%v after=%v", before, after)
+	}
+}

@@ -181,21 +181,21 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	keep.before = before
 	keep.beforeBound = schedulerBaselineUncertainty(p.snapshot.Baselines, beforeSources, len(current))
 	keep.record.IdleCosts = map[string]IdlePowerProvenance{"before": beforeSources}
+	for _, instance := range p.pending {
+		if instance.Node != node.Node {
+			continue
+		}
+		keep.others++
+		if w, ok := p.index[instance.WorkloadUID]; ok {
+			keep.pendingReplicas[w]++
+		}
+	}
 	plans := []*capacityPlan{keep}
 	reason := ""
 	switch {
 	case slices.Contains(common[n].Reasons, NodePlacementInventoryMissing):
 		reason = NodePlacementInventoryMissing
 	case schedulerReservedNode(p.snapshot, node.Node):
-		for _, instance := range p.pending {
-			if instance.Node != node.Node {
-				continue
-			}
-			keep.others++
-			if w, ok := p.index[instance.WorkloadUID]; ok {
-				keep.pendingReplicas[w]++
-			}
-		}
 		reason = "ReservedNode"
 	case !node.Ready:
 		reason = "NodeUnavailable"
@@ -205,8 +205,6 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 		reason = NodeExcluded
 	case slices.Contains(node.Reasons, NodeInstanceUnavailable):
 		reason = NodeInstanceUnavailable
-	case slices.Contains(node.Reasons, NodePlacementInventoryMissing):
-		reason = NodePlacementInventoryMissing
 	case slices.Contains(node.Reasons, NodePlacementBudgetUnavailable):
 		reason = NodePlacementBudgetUnavailable
 	case slices.ContainsFunc(current, p.fixed):
