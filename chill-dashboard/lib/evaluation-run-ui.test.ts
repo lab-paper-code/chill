@@ -359,7 +359,8 @@ const progressEvents=[
 ]
 function renderProgress(stage:Record<string,unknown>) {
   const currentProcedure=String(stage.currentProcedure??"stage")
-  return renderRun({...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",currentProcedure,procedures:[{step:currentProcedure,startedAt:baseRun.startedAt,finishedAt:null}],...stage}]},undefined,[scenario],[progressEntry])
+  const decoded=scheduler.parseSchedulerJSON(JSON.stringify({id:"trial",currentProcedure,procedures:[{step:currentProcedure,startedAt:baseRun.startedAt,finishedAt:null}],...stage}))
+  return renderRun({...baseRun,phase:"Running",finishedAt:undefined,stages:[decoded]},undefined,[scenario],[progressEntry])
 }
 const activeDetails=(html:string)=>html.match(/<details\b[^>]*class="live-evaluation"[^>]*>[\s\S]*?<\/details>/)?.[0]??""
 
@@ -399,6 +400,19 @@ test("recorded progress preserves missing boundaries and observation order witho
   assert.doesNotMatch(old,/기록된 구간 경계|부하 Job/)
 })
 
+test("progress distinguishes unsupported harnesses from reported empty boundaries in run details",()=>{
+  for(const stage of [{}, {progress:null}]) {
+    const html=renderProgress(stage)
+    assert.match(text(activeDetails(html)),/계획상 남은 시간/)
+    assert.match(text(html),/계획상 구간 peak/)
+    assert.match(html,/<progress/)
+  }
+  const empty=renderProgress({progress:[]})
+  assert.match(text(activeDetails(empty)),/구간 경계 미기록/)
+  assert.doesNotMatch(empty,/현재 구간:|계획상 구간|<progress/)
+  assert.match(text(activeDetails(renderProgress({progress:[progressEvents[1]]}))),/마지막 관측: 부하 종료/)
+})
+
 test("last progress uses the newest independent server signal and never classifies silence as stalled",()=>{
   const stage={id:"trial",lastProgressAt:"2026-11-03T00:02:20Z",provisionalD1:{asOf:"2026-11-03T00:02:10Z"},procedures:[{step:"stage",startedAt:baseRun.startedAt,finishedAt:null}]}
   assert.equal(active.evaluationLastProgressAt(stage,[]),Date.parse(stage.lastProgressAt))
@@ -430,6 +444,9 @@ test("run detail reads load Jobs including failure reasons, distinguishes empty 
   assert.match(text(renderProgress({loadJobs:[]})),/부하 Job 없음/)
   assert.doesNotMatch(renderProgress({}),/aria-label="부하 Job"/)
   assert.doesNotMatch(renderProgress({loadJobs:null}),/aria-label="부하 Job"/)
+  assert.match(text(renderProgress({loadJobs:null})),/Job 관측 불가/)
+  assert.doesNotMatch(text(renderProgress({loadJobs:null})),/부하 Job 없음/)
+  assert.doesNotMatch(text(renderProgress({})),/Job 관측 불가|부하 Job 없음/)
 })
 
 test("representative persisted transitions never turn a completed or unowned procedure into ongoing progress",()=>{

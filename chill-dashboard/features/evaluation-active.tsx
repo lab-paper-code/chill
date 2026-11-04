@@ -42,7 +42,7 @@ export function EvaluationActiveDetails({active,now,name,uid,stageProgress,paren
       const planned=run.stage?.plannedSeconds
       const afterLoad=elapsed!==null&&typeof planned==="number"&&Number.isFinite(planned)&&elapsed>=planned
       const stage=stageProgress?.id===run.stage?.id?stageProgress:undefined
-      const progress=stage?.progress
+      const progress=Array.isArray(stage?.progress)?stage.progress:null
       const lastBoundary=progress?.[progress.length-1]
       const progressLabel=lastBoundary
         ?evaluationProgressOngoing(stage,parentRun)?`현재 구간: ${progressLabels[lastBoundary.phase].ongoing}`:`마지막 관측: ${progressLabels[lastBoundary.phase].boundary} ${progressTime(lastBoundary.at)}${lastBoundary.phase.endsWith("Started")?" · 종료 미기록":""}`
