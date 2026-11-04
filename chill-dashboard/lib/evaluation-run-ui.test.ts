@@ -78,6 +78,20 @@ test("GO plus planned duration never claims load completion or postprocessing",(
   assert.doesNotMatch(html,/부하 종료|후처리 중|부하 진행/)
 })
 
+test("planned end replaces zero remaining with elapsed and reports only recorded progress",()=>{
+  const entry={name:"arbitrary-run",uid:"selected",stageIndex:1,stagesTotal:1,stage:{id:"trial",goAt:"2026-11-03T00:00:00Z",plannedSeconds:120,injections:[]}}
+  const {EvaluationActiveDetails}=load("../features/evaluation-active.tsx",{"@/lib/evaluation-active":active})
+  const render=(stageProgress?:unknown)=>text(renderToStaticMarkup(React.createElement(EvaluationActiveDetails as React.ComponentType<{active:unknown;now:number;stageProgress?:unknown}>,{active:{data:{items:[entry]}},now:Date.parse("2026-11-03T00:03:10Z"),stageProgress})))
+  assert.match(render(),/계획 시간 경과 · 종료 처리 단계 신호 미수신/)
+  assert.match(render(),/계획 종료 후 경과 \(초\)70/)
+  assert.doesNotMatch(render(),/계획상 남은 시간|정상|종료 처리 중/)
+  const progress={id:"trial",procedures:[{step:"Execute",startedAt:"2026-11-03T00:00:10Z",finishedAt:"2026-11-03T00:02:10Z"}],provisionalD1:{asOf:"2026-11-03T00:02:30Z"}}
+  assert.match(render(progress),/진행 신호 없음 40초/)
+  assert.match(render(progress),/종료 처리 단계 신호 미수신/)
+  assert.match(render({...progress,provisionalD1:{asOf:"2026-11-03T00:01:00Z"}}),/진행 신호 없음 60초/)
+  assert.doesNotMatch(render({...progress,id:"another"}),/진행 신호 없음 \d+초/)
+})
+
 test("operator reads service distributions and labeled run and stage setting changes without JSON",()=>{
   const run={...baseRun,spec:{...baseRun.spec,settingsPatch:{maxReplicas:7,controls:{routing:false}},stages:[{...baseRun.spec.stages[0],settingsPatch:{controlIntervalNanos:2000000000}}]}}
   const html=renderRun(run).replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/g,""),screen=text(html)
