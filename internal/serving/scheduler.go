@@ -274,10 +274,13 @@ type SchedulerInstance struct {
 	OwnerWorkloadUID string        `json:"ownerWorkloadUID,omitempty"`
 	Node             NodeReference `json:"node"`
 	// Profile is the catalog body in memory; stored records keep only ProfileID.
-	Profile       *Profile `json:"profile,omitempty"`
-	ProfileID     string   `json:"profileID,omitempty"`
-	RuntimeImage  string   `json:"runtimeImage,omitempty"`
-	RunnerCommand []string `json:"runnerCommand,omitempty"`
+	Profile             *Profile `json:"profile,omitempty"`
+	ProfileID           string   `json:"profileID,omitempty"`
+	RuntimeImage        string   `json:"runtimeImage,omitempty"`
+	RunnerCommand       []string `json:"runnerCommand,omitempty"`
+	ActualImageID       string   `json:"actualImageID,omitempty"`
+	DesiredRuntimeImage string   `json:"desiredRuntimeImage,omitempty"`
+	ReplacementReason   string   `json:"replacementReason,omitempty"`
 	// WorkloadUID is the one Workload the instance serves; empty when unrouted.
 	WorkloadUID string              `json:"workloadUID"`
 	Allocation  SchedulerAllocation `json:"allocation"`

@@ -93,6 +93,9 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			Stopped: state.Stopped, Terminated: state.Terminated, ObservedAt: state.ObservedAt, Routable: state.Routable, Weight: 1}
 		instance.PodUID = state.PodUID
 		instance.StartupFailure = state.StartupFailure
+		instance.ActualImageID = state.ActualImageID
+		instance.DesiredRuntimeImage = state.DesiredRuntimeImage
+		instance.ReplacementReason = state.ReplacementReason
 		if state.Reason != "" {
 			instance.Reasons = []string{state.Reason}
 		}

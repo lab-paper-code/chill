@@ -249,16 +249,19 @@ type Assignment struct {
 }
 
 type InstanceState struct {
-	ID               string              `json:"id"`
-	PodUID           string              `json:"podUID,omitempty"`
-	Allocation       SchedulerAllocation `json:"allocation"`
-	AttemptedAt      time.Time           `json:"attemptedAt"`
-	TargetID         string              `json:"targetID,omitempty"`
-	OwnerWorkloadUID string              `json:"ownerWorkloadUID,omitempty"`
-	Node             NodeReference       `json:"node"`
-	Profile          string              `json:"profile"`
-	Ready            bool                `json:"ready"`
-	Stopped          bool                `json:"stopped"`
+	ID                  string              `json:"id"`
+	PodUID              string              `json:"podUID,omitempty"`
+	Allocation          SchedulerAllocation `json:"allocation"`
+	AttemptedAt         time.Time           `json:"attemptedAt"`
+	TargetID            string              `json:"targetID,omitempty"`
+	OwnerWorkloadUID    string              `json:"ownerWorkloadUID,omitempty"`
+	Node                NodeReference       `json:"node"`
+	Profile             string              `json:"profile"`
+	ActualImageID       string              `json:"actualImageID,omitempty"`
+	DesiredRuntimeImage string              `json:"desiredRuntimeImage,omitempty"`
+	ReplacementReason   string              `json:"replacementReason,omitempty"`
+	Ready               bool                `json:"ready"`
+	Stopped             bool                `json:"stopped"`
 	// Terminated is exact container termination, not logical admission-stop.
 	// It remains true for this physical ID until actual Pod retirement.
 	Terminated     bool                           `json:"terminated,omitempty"`

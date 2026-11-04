@@ -34,18 +34,21 @@ type schedulerSummaryNode struct {
 	Reasons     []string              `json:"reasons"`
 }
 type schedulerSummaryInstance struct {
-	ID               string                `json:"id"`
-	TargetID         string                `json:"targetID,omitempty"`
-	Node             serving.NodeReference `json:"node"`
-	OwnerWorkloadUID string                `json:"ownerWorkloadUID,omitempty"`
-	WorkloadUID      string                `json:"workloadUID"`
-	ProfileID        string                `json:"profileID"`
-	Ready            bool                  `json:"ready"`
-	Routable         map[string]bool       `json:"routable"`
-	Reasons          []string              `json:"reasons"`
-	Stopped          bool                  `json:"stopped"`
-	PodName          string                `json:"podName"`
-	PodUID           string                `json:"podUID"`
+	ID                  string                `json:"id"`
+	TargetID            string                `json:"targetID,omitempty"`
+	Node                serving.NodeReference `json:"node"`
+	OwnerWorkloadUID    string                `json:"ownerWorkloadUID,omitempty"`
+	WorkloadUID         string                `json:"workloadUID"`
+	ProfileID           string                `json:"profileID"`
+	Ready               bool                  `json:"ready"`
+	Routable            map[string]bool       `json:"routable"`
+	Reasons             []string              `json:"reasons"`
+	Stopped             bool                  `json:"stopped"`
+	PodName             string                `json:"podName"`
+	PodUID              string                `json:"podUID"`
+	ActualImageID       string                `json:"actualImageID,omitempty"`
+	DesiredRuntimeImage string                `json:"desiredRuntimeImage,omitempty"`
+	ReplacementReason   string                `json:"replacementReason,omitempty"`
 }
 type schedulerSummaryDecision struct {
 	ID        string                           `json:"id"`
@@ -107,6 +110,8 @@ func summarizeScheduler(state *servingkube.SchedulerControllerState) schedulerSu
 			OwnerWorkloadUID: instance.OwnerWorkloadUID, WorkloadUID: instance.WorkloadUID,
 			ProfileID: profileID, Ready: instance.Ready, Routable: instance.Routable, Reasons: instance.Reasons,
 			Stopped: instance.Stopped, PodName: instance.PodName, PodUID: instance.PodUID,
+			ActualImageID: instance.ActualImageID, DesiredRuntimeImage: instance.DesiredRuntimeImage,
+			ReplacementReason: instance.ReplacementReason,
 		})
 	}
 	for _, action := range state.Actions {

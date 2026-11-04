@@ -13,6 +13,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -21,6 +22,50 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+func TestObserverKeepsServingAcrossRuntimeDeclarationChange(t *testing.T) {
+	c, prepared := tickReadySubsetController(t, nil)
+	prepared.Store(true)
+	c.config.Preparations = map[string]servingstate.PrepareSpec{}
+	for _, profile := range c.observer.Profiles() {
+		c.config.Preparations[profile.ID] = servingstate.PrepareSpec{Instance: serving.SchedulerInstance{
+			ID: profile.ID, Node: serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID},
+			Profile: &profile, MaxBatch: 1, Capacity: 4, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024},
+		}}
+	}
+	c.observer.config.RuntimeImage = func(context.Context, *serving.Profile) (string, error) {
+		return "registry/native@sha256:" + strings.Repeat("b", 64), nil
+	}
+	if _, err := c.Tick(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	c.capacity.Wait()
+	if _, err := c.Tick(context.Background(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, instance := range c.State().Snapshot.Instances {
+		if !instance.Ready {
+			t.Fatalf("declaration change removed a responding physical executor: %+v", instance)
+		}
+		if instance.ActualImageID == "" || instance.DesiredRuntimeImage == "" || instance.ReplacementReason != "RunningOlderRuntimeImage" {
+			t.Fatalf("serving mixed images lost replacement evidence: %+v", instance)
+		}
+	}
+	for _, workload := range c.State().Decision.Workloads {
+		if workload.State != serving.WorkloadControlled {
+			t.Fatalf("declaration change stopped workload control: %+v", workload)
+		}
+	}
+	c.observer.config.RuntimeImage = nil
+	if err := c.observer.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, instance := range c.runtime.Instances() {
+		if !instance.Ready || instance.ActualImageID == "" {
+			t.Fatalf("missing desired declaration invalidated an observed executor: %+v", instance)
+		}
+	}
+}
 
 // Native B is held by a channel, not a timing window. A must finish its real
 // probe/verification/publication before the assertions inspect the runtime.

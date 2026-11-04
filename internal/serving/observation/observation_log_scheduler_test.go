@@ -395,6 +395,9 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	at := observationTestHour.Add(10 * time.Minute)
 	clock.set(at)
 	instance := snapshot.Instances[0]
+	instance.ActualImageID = "containerd://actual-runtime"
+	instance.DesiredRuntimeImage = "registry/native@sha256:desired"
+	instance.ReplacementReason = "RunningOlderRuntimeImage"
 	profile := *instance.Profile
 	profile.Batches = make([]serving.BatchProfile, 6)
 	for b := range profile.Batches {
@@ -501,6 +504,11 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	}
 	if storedSnapshot.Arrivals != nil || storedSnapshot.Outstanding[0].Definition != nil || storedSnapshot.Outstanding[0].DefinitionID != definition.Identity() || storedSnapshot.Instances[0].WorkloadUID != "w1" {
 		t.Fatalf("snapshot inputs: %+v", storedSnapshot)
+	}
+	for _, actual := range []serving.SchedulerInstance{storedSnapshot.Instances[0], stored.Keep.Instances[0], stored.Target.Instances[0]} {
+		if actual.ActualImageID != instance.ActualImageID || actual.DesiredRuntimeImage != instance.DesiredRuntimeImage || actual.ReplacementReason != instance.ReplacementReason {
+			t.Fatalf("stored decision lost actual runtime identity: %+v", actual)
+		}
 	}
 	for name, pair := range map[string][2]any{
 		"workloads": {storedSnapshot.Workloads, snapshot.Workloads}, "costs": {storedSnapshot.Costs, snapshot.Costs},

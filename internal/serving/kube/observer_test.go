@@ -63,7 +63,7 @@ func observerServiceFixture(pod *corev1.Pod) *corev1.Service {
 
 func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	pod, node, profile, class := observerSourceFixture()
-	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
+	spec, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +72,13 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 	}
 	routed := pod.DeepCopy()
 	routed.Annotations[servingstate.ServingRoutingAnnotation] = `{"tight":2}`
-	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
+	if spec, err = sourceSpec(routed, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil || !maps.Equal(spec.Routing, map[string]int32{"tight": 2}) {
 		t.Fatalf("applied routing not restored: %+v %v", spec.Routing, err)
 	}
 	opaque := pod.DeepCopy()
 	opaque.Status.ContainerStatuses[0].ImageID = "opaque-runtime-image"
 	opaque.Status.InitContainerStatuses[0].ImageID = "opaque-artifact-image"
-	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); err != nil {
+	if _, err = sourceSpec(opaque, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080"); err != nil {
 		t.Fatal("actual ImageID was incorrectly used as a digest admission gate", err)
 	}
 	cases := []struct {
@@ -100,7 +100,6 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 			p.Annotations[servingstate.ServingRoutingAnnotation] = `{"tight":1,"relaxed":1}`
 		}},
 		{"image evidence missing", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Status.ContainerStatuses[0].ImageID = "" }},
-		{"configured image mismatch", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) { p.Spec.Containers[0].Image = "other-image" }},
 		{"artifact read only", func(p *corev1.Pod, _ *corev1.Node, _ *serving.Profile) {
 			p.Spec.Containers[0].VolumeMounts[0].ReadOnly = false
 		}},
@@ -128,14 +127,14 @@ func TestObserverSourceRequiresActualMatchingFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p, n, pr, c := observerSourceFixture()
 			tc.change(p, n, &pr)
-			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage); e == nil {
+			if _, e := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{c}, "http://10.96.0.10:8080"); e == nil {
 				t.Fatal("unconfirmed source became eligible")
 			}
 		})
 	}
 	restarted := pod.DeepCopy()
 	restarted.Status.ContainerStatuses[0].ContainerID = "containerd://replacement"
-	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080", profile.Condition.RuntimeImage)
+	replacement, err := sourceSpec(restarted, node, &profile, []edgev1alpha1.DeviceClass{class}, "http://10.96.0.10:8080")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -786,29 +785,29 @@ func TestObserverCleanupFollowsActualDeploymentOwnerChain(t *testing.T) {
 	}
 }
 
-func TestObserverUsesDesiredImageNotHistoricalProfile(t *testing.T) {
+func TestObserverImageHistoryDoesNotReplacePhysicalSafety(t *testing.T) {
 	pod, node, profile, class := observerSourceFixture()
-	desired := pod.Spec.Containers[0].Image
 	profile.Condition.RuntimeImage = "registry/native@sha256:" + strings.Repeat("b", 64)
-	if _, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, "", desired); err != nil {
-		t.Fatal("historical image blocked current declaration", err)
+	pod.Spec.InitContainers[2].Image = profile.Condition.RuntimeImage
+	if _, err := sourceSpec(pod, node, &profile, []edgev1alpha1.DeviceClass{class}, ""); err != nil {
+		t.Fatal("worker or materializer image history blocked a known executor", err)
 	}
-	for _, name := range []string{"worker", "materializer", "Node", "GPU allocation"} {
+	for _, name := range []string{"missing worker image", "missing materializer image", "Node", "GPU allocation"} {
 		t.Run(name, func(t *testing.T) {
 			p, n := pod.DeepCopy(), node.DeepCopy()
 			pr := cloneCatalogProfile(profile)
 			switch name {
-			case "worker":
-				p.Spec.Containers[0].Image = profile.Condition.RuntimeImage
-			case "materializer":
-				p.Spec.InitContainers[2].Image = profile.Condition.RuntimeImage
+			case "missing worker image":
+				p.Status.ContainerStatuses[0].ImageID = ""
+			case "missing materializer image":
+				p.Status.InitContainerStatuses[2].ImageID = ""
 			case "Node":
 				n.UID = testReplacementUID
 			case "GPU allocation":
 				pr.RuntimeMetadata.GPUUUID = "GPU-measured"
 			}
-			if _, err := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{class}, "", desired); err == nil {
-				t.Fatal("desired image or physical safety mismatch accepted")
+			if _, err := sourceSpec(p, n, &pr, []edgev1alpha1.DeviceClass{class}, ""); err == nil {
+				t.Fatal("missing container identity or physical safety mismatch accepted")
 			}
 		})
 	}
