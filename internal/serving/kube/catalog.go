@@ -19,7 +19,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/internal/metricobserver"
 	campaignevidence "github.com/lab-paper-code/chill/internal/profiling/campaign/evidence"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -119,6 +118,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 	seen := map[types.NamespacedName]struct{}{}
 	reuseRequests := map[string]string{}
 	var candidates []profilederivation.MeasurementSelection
+	var replacedProfiles []serving.Profile
 	names, replacements := map[string]string{}, map[string]string{}
 	for _, namespace := range namespaces {
 		campaigns := &edgev1alpha1.BatchEnergyOptimizationList{}
@@ -152,7 +152,20 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 			if reason := replacementDiagnostics[campaign.Name]; reason != "" {
 				view.Insufficiencies = append(view.Insufficiencies, CatalogIssue{Source: source, Code: "ReplacementSelection", Reason: reason})
 			}
-			if replaced[id] || campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
+			if replaced[id] {
+				if campaign.Status.Phase == catalogCompletePhase && campaign.Status.ObservedGeneration == campaign.Generation {
+					seen[source] = struct{}{}
+					profile, _, readErr := c.readProfile(ctx, campaign)
+					if ctx.Err() != nil {
+						return CatalogView{}, ctx.Err()
+					}
+					if readErr == nil && len(profile.Batches) > 0 {
+						replacedProfiles = append(replacedProfiles, profile)
+					}
+				}
+				continue
+			}
+			if campaign.Status.Phase != catalogCompletePhase || campaign.Status.ObservedGeneration != campaign.Generation {
 				continue
 			}
 			if reason, invalid := campaign.Annotations[profilingrun.InvalidAnnotation]; invalid {
@@ -186,6 +199,10 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 		if _, listed := seen[source]; !listed {
 			delete(c.current, source)
 		}
+	}
+	view.Profiles, err = serving.SelectConditionProfiles(append(view.Profiles, replacedProfiles...), profilederivation.ReplacedMeasurements(replacements, names))
+	if err != nil {
+		return CatalogView{}, err
 	}
 	view, err = applyProfileReuse(view, reuseRequests)
 	if err != nil {
@@ -249,38 +266,6 @@ func completeNativeProfile(profile serving.Profile) bool {
 		previous = batch.Batch
 	}
 	return true
-}
-
-// Plan names, campaign UIDs and SLOs are not execution conditions; source
-// completion decides the latest success.
-func latestConditionProfiles(profiles []serving.Profile) ([]serving.Profile, error) {
-	result := make([]serving.Profile, 0, len(profiles))
-	indices := make(map[string]int, len(profiles))
-	for _, profile := range profiles {
-		condition := profile.Condition
-		condition.Name = ""
-		condition.PlannedBatchSizes = nil
-		condition.RuntimeImage = ""
-		payload, err := json.Marshal(struct {
-			Condition    profilederivation.CurvePlanSpec `json:"condition"`
-			MetricSource metricobserver.SourceIdentity   `json:"metricSource"`
-		}{condition, profile.MetricSource})
-		if err != nil {
-			return nil, fmt.Errorf("encode frozen profile condition: %w", err)
-		}
-		key := string(payload)
-		if index, found := indices[key]; found {
-			old := result[index]
-			if profile.MeasuredAt.After(old.MeasuredAt) ||
-				(profile.MeasuredAt.Equal(old.MeasuredAt) && profile.ID < old.ID) {
-				result[index] = profile
-			}
-			continue
-		}
-		indices[key] = len(result)
-		result = append(result, profile)
-	}
-	return result, nil
 }
 
 // CurrentProfiles is the executable selection, separate from public history.

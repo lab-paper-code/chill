@@ -107,7 +107,7 @@ func TestCatalogLatestSuccessUsesFrozenConditionAndSourceCompletion(t *testing.T
 	otherRuntime := old
 	otherRuntime.ID = "other-runtime/uid"
 	otherRuntime.Condition.RuntimeImage = "new-runtime"
-	result, err := latestConditionProfiles([]serving.Profile{newer, old, otherNode, otherMeter, otherRuntime})
+	result, err := serving.SelectConditionProfiles([]serving.Profile{newer, old, otherNode, otherMeter, otherRuntime}, nil)
 	if err != nil || len(result) != 3 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[2].ID != otherMeter.ID || result[0].Condition.RuntimeImage != "current-runtime" {
 		t.Fatalf("latest source matching changed identity/scope: %+v %v", result, err)
 	}
@@ -229,7 +229,7 @@ func TestCatalogOfflinePopulationRemains242(t *testing.T) {
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	profiles, err := latestConditionProfiles(snapshot.Profiles)
+	profiles, err := serving.SelectConditionProfiles(snapshot.Profiles, nil)
 	if err != nil || len(snapshot.Profiles) != 259 || len(profiles) != 242 {
 		t.Fatalf("public population = %d -> %d: %v", len(snapshot.Profiles), len(profiles), err)
 	}

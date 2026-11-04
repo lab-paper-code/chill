@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -70,9 +71,6 @@ func TestCatalogReplacementPendingPreservesExistingPublicPopulation(t *testing.T
 	view, err = catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 0 || len(view.CurrentProfiles()) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != "ReplacementSelection" {
 		t.Fatalf("pending replacement revived an explicitly replaced profile: %+v error=%v", view, err)
-	}
-	if _, found := catalog.current[source]; found {
-		t.Fatal("explicitly replaced public profile retained")
 	}
 	actual := &edge.BatchEnergyOptimization{}
 	if err := catalog.store.client.Get(ctx, source, actual); err != nil {
@@ -167,5 +165,43 @@ func TestOperatorReplacementDiagnosticsDoNotRejectVerifiedProfile(t *testing.T) 
 				t.Fatal("ineffective or changed-spec operator selection was not diagnosed")
 			}
 		})
+	}
+}
+
+func TestCatalogReplacementDoesNotReviveOlderConditionProfiles(t *testing.T) {
+	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	ctx := context.Background()
+	view, err := catalog.Refresh(ctx, []string{source.Namespace})
+	if err != nil || len(view.Profiles) != 1 {
+		t.Fatalf("fixture: %+v %v", view, err)
+	}
+	q3 := &edge.BatchEnergyOptimization{}
+	if err := catalog.store.client.Get(ctx, source, q3); err != nil {
+		t.Fatal(err)
+	}
+	// Seed already-verified cache entries; cloned evidence cannot be rebound to
+	// another campaign. Refresh must still read each native object's identity.
+	for i, name := range []string{"q1", "q2", testReplacementUID} {
+		campaign := q3.DeepCopy()
+		campaign.Name, campaign.UID, campaign.ResourceVersion = name, types.UID(name), ""
+		if name == testReplacementUID {
+			campaign.Annotations = map[string]string{profilederivation.ReplacesMeasurementAnnotation: q3.Name}
+		}
+		if err := catalog.store.client.Create(ctx, campaign); err != nil {
+			t.Fatal(err)
+		}
+		profile := cloneCatalogProfile(view.Profiles[0])
+		profile.ID = campaign.Namespace + "/" + campaign.Name + "/" + string(campaign.UID)
+		profile.MeasuredAt = profile.MeasuredAt.Add(time.Duration(i-3) * time.Hour)
+		if name == testReplacementUID {
+			profile.MeasuredAt = view.Profiles[0].MeasuredAt.Add(time.Hour)
+			profile.Condition.ActiveProtocol.DurationSeconds++
+		}
+		key := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
+		catalog.current[key] = catalogProfile{uid: campaign.UID, version: campaign.ResourceVersion, profile: profile}
+	}
+	view, err = catalog.Refresh(ctx, []string{source.Namespace})
+	if err != nil || len(view.Profiles) != 1 || view.Profiles[0].ID != source.Namespace+"/replacement/replacement" {
+		t.Fatalf("older condition resurfaced: %+v error=%v", view.Profiles, err)
 	}
 }
