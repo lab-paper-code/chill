@@ -49,7 +49,7 @@ test("service decision evidence stays at opening selection until the user select
       const {children,...props}=element.props
       return React.createElement(element.type as React.ElementType,{...props,key:element.key},resolve(children,identity))
     }
-    const html=renderToStaticMarkup(resolve(React.createElement(LiveBoardPage),"root"))
+    const html=renderToStaticMarkup(resolve(React.createElement(LiveBoardPage as React.ComponentType),"root"))
     for(const key of mounted.keys())if(!seen.has(key))mounted.delete(key)
     return html
   }
