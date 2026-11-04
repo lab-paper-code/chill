@@ -73,7 +73,7 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return r.removeFinalizer(ctx, run)
 	}
 	if isTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.deleteWorkspace(ctx, run)
 	}
 	if run.Status.FinishedAt != nil {
 		return r.publishRun(ctx, run, run.DeepCopy())
@@ -509,4 +509,15 @@ func aggregateReason(run *api.EvaluationRun, children map[string]*api.Evaluation
 		}
 	}
 	return string(verdict)
+}
+
+// deleteWorkspace removes the scratch PVC once every step uploaded its evidence and the
+// run is published; unpublished runs keep it for the existing cleanup/release paths.
+func (r *RunReconciler) deleteWorkspace(ctx context.Context, run *api.EvaluationRun) error {
+	if run.Status.Workspace == nil {
+		return nil
+	}
+	uid := run.Status.Workspace.UID
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: run.Status.Workspace.Name}}
+	return client.IgnoreNotFound(r.Client.Delete(ctx, pvc, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}))
 }

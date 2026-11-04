@@ -13,6 +13,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -399,6 +400,7 @@ func TestRunStageStoredResultWorkflow(t *testing.T) {
 			if len(children.Items) != 1 || children.Items[0].Status.ResultRef == nil {
 				t.Fatal("missing child judgment evidence")
 			}
+			assertPublishedWorkspaceDeleted(ctx, t, r, &runController, saved)
 			return
 		}
 	}
@@ -550,5 +552,20 @@ func TestChildFreezesOpaqueSettingsPatchAndGeneratorNode(t *testing.T) {
 	child, err = (&RunReconciler{Runtime: r}).ensureChild(context.Background(), override, 0)
 	if err != nil || string(child.Spec.SettingsPatch.Raw) != `{"maxReplicas":3}` {
 		t.Fatalf("stage override=%+v %v", child, err)
+	}
+}
+
+// The workspace survives until publication and is removed by the next reconcile.
+func assertPublishedWorkspaceDeleted(ctx context.Context, t *testing.T, r Runtime, runController *RunReconciler, run *api.EvaluationRun) {
+	t.Helper()
+	workspace := client.ObjectKey{Namespace: run.Namespace, Name: run.Status.Workspace.Name}
+	if err := r.APIReader.Get(ctx, workspace, &corev1.PersistentVolumeClaim{}); err != nil {
+		t.Fatalf("run must hold its workspace until published: %v", err)
+	}
+	if _, err := runController.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.APIReader.Get(ctx, workspace, &corev1.PersistentVolumeClaim{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("published run workspace must be deleted, got %v", err)
 	}
 }
