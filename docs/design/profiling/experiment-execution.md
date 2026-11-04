@@ -191,7 +191,7 @@ workloads/substages는 최종 KPI와 같은 이름을 쓰되 drain 전 `D1` 판�
 `reachable`은 나머지 미확정 요청이 모두 성공할 때 요구 순위에 도달 가능한지다.
 generatorQuality는 선택된 예정 도착의 현재 result 행으로 최종과 같은 issuance_fidelity 함수에서 계산한다.
 Stage UID JSON-patch test 후 이 필드만 status patch한다(action SA의 추가 권한은
-`evaluationstages/status: patch`). lifecycle·measurement는 controller 소유 그대로다.
+`evaluationstages/status: get, patch`; kubectl의 status patch가 먼저 GET을 수행한다). lifecycle·measurement는 controller 소유 그대로다.
 로컬 latest JSON은 원자 교체하고 최종 raw evidence와 불변 publication은 덮어쓰지 않는다.
 producer JSONL은 기존 result 전용 형식 그대로이며 send 이벤트나 infer 앞의 추가
 write/flush는 없다. 최종 판정은 기존 전체 동결 분모·입력 의미를 유지한다.
