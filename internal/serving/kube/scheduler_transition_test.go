@@ -966,7 +966,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 		t.Fatal(err)
 	}
 	controller := &SchedulerController{ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &manager.reservations.reservation, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 			AutonomousWorkloads: []string{d.UID}})}}

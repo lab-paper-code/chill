@@ -45,7 +45,8 @@ func (c *reservationState) continueTransitionsLocked(
 ) {
 	parents := []*actionRun{}
 	for _, run := range c.runs {
-		if run.action.Kind == transitionRunKind && run.action.Status == servingstate.NativeOperationRunning {
+		if run.action.Kind == transitionRunKind && (run.action.Status == servingstate.NativeOperationRunning ||
+			run.action.Status == servingstate.NativeOperationFailed && run.reserved) {
 			parents = append(parents, run)
 		}
 	}
@@ -61,6 +62,19 @@ func (c *reservationState) continueTransitionsLocked(
 				continue
 			}
 		}
-		dispatch(*parent.result.Operation.Target)
+		target := *parent.result.Operation.Target
+		if parent.action.Status == servingstate.NativeOperationFailed {
+			var completed []serving.Action
+			for _, action := range target.Actions {
+				run := c.runs[action.ID]
+				if run != nil && run.owner == parent.owner && run.result != nil && run.result.Status == servingstate.NativeOperationComplete {
+					completed = append(completed, run.action)
+				}
+			}
+			target = servingstate.FailedStopCleanup(target, completed)
+		}
+		if len(target.Actions) > 0 {
+			dispatch(target)
+		}
 	}
 }
