@@ -33,7 +33,7 @@ type profileReuseRequest struct {
 func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogView, error) {
 	if len(requests) == 0 {
 		var err error
-		view.Profiles, err = latestConditionProfiles(view.Profiles)
+		view.Profiles, err = serving.SelectConditionProfiles(view.Profiles, nil)
 		return view, err
 	}
 	direct := make([]serving.Profile, 0, len(view.Profiles))
@@ -46,7 +46,7 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 		}
 	}
 	var err error
-	view.Profiles, err = latestConditionProfiles(direct)
+	view.Profiles, err = serving.SelectConditionProfiles(direct, nil)
 	if err != nil {
 		return CatalogView{}, err
 	}
@@ -103,7 +103,7 @@ func applyProfileReuse(view CatalogView, requests map[string]string) (CatalogVie
 	slices.SortFunc(view.ReuseChecks, func(a, b serving.ProfileReuseCheck) int {
 		return strings.Compare(a.ConfirmationProfileID, b.ConfirmationProfileID)
 	})
-	view.Profiles, err = latestConditionProfiles(view.Profiles)
+	view.Profiles, err = serving.SelectConditionProfiles(view.Profiles, nil)
 	return view, err
 }
 
