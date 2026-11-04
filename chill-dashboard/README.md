@@ -21,6 +21,10 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 표의 단위는 헤더, 숫자는 오른쪽 정렬·tabular-nums, 이름은 자기 열 안 줄바꿈이다. DetailSheet는 새 래퍼가 아니라 기존 `components/ui/sheet.tsx` 재사용 규약이다: 하나만 열기·중첩 금지·핵심 표 상단·원본 하단·비동기 영역은 핵심값 뒤. Esc·키보드 선택·focus 복원을 유지한다. 좁은 폭에서도 라벨/값 재배치로 모든 필드·작업에 접근할 수 있어야 한다.
 
+운영 현황의 첫 화면은 헤더 관측 상태 → 서비스별 배치 지도 → 운영 기록과 예외의 세 영역이다. 서비스별 SLO·유입·자율 상태와 실제 서빙 인스턴스를 함께 읽고, 분배 띠와 인스턴스 셀은 현재 `snapshot.routing`만 정규화한다(결정 후보의 목표 분배를 현재값으로 쓰지 않음). 인스턴스 상태·분배율·처리/대기 건수는 루트와 장치 화면에서 `components/serving-instance.tsx`를 공유한다. 인스턴스는 기존 장치 Sheet, 서비스명은 서비스 Sheet를 연다. 풀·장치 전체 목록은 장치 화면 링크, 최근 판단 활동과 풀 전력 추세는 보조 영역의 접힘으로 옮겼으며 원본과 판단·예약·사건 상세는 기존 단일 Sheet에 남긴다.
+
+`components/observation-age.tsx`는 연결 상태와 실제 지표 bucket의 관측 나이를 별개로 표시한다. 매초 신선도 임계값을 재판정해 최신/오래됨 라벨을 뒤집지 않고, 고정폭 나이와 고정 상태 슬롯으로 화면 높이를 유지한다. 하트비트/마지막 수신 시각은 지표 관측 시각을 대신하지 않는다. 다른 마지막 관측 설명에 필요한 표시용 힌트 경계는 `OBSERVATION_HINT_MAX_AGE_MS` 한 곳에만 정의하며 서버의 측정·성능 판정 설정으로 취급하지 않는다.
+
 로컬 상세 표는 App Router 없이 검색·정렬·페이지를 유지한다. `urlState`를 명시한 목록만 URL 상태를 읽고 갱신한다. 편집형 측정 필터는 실행 경로도 입력·후보 목록을 사용하며, 실행 경로 별칭에는 원 식별자를 함께 표시한다. 품질 기준·표본의 부재는 제공 계약의 필드별 미제공 표로 표시하고 기준값을 만들지 않는다.
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.

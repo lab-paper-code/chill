@@ -22,8 +22,10 @@ export function terminalCount(metric:LiveMetric|undefined):number|undefined {
 export function receivedLabel(metric:LiveMetric|undefined):string {
   return !metric?"":metric.received===0?"0 req/s · 무유입":`${metric.received} req/s`
 }
+/** Display-only age hint; live surfaces show elapsed observation age instead of a boundary verdict. */
+export const OBSERVATION_HINT_MAX_AGE_MS=5000
 export function isStale(at:string|null|undefined,now:number):boolean {
-  return !at || !Number.isFinite(Date.parse(at)) || now-Date.parse(at)>5000
+  return !at || !Number.isFinite(Date.parse(at)) || now-Date.parse(at)>OBSERVATION_HINT_MAX_AGE_MS
 }
 export function workloadReadiness(workload:LiveWorkload,instances:LiveInstance[]):string {
   return workload.readiness.reason==="Preparing"&&!workload.autonomous&&!instances.some(row=>belongsToPool(row,workload.uid)&&!row.stopped)?"미배치 · CHILL 자동 운영 꺼짐":workload.readiness.ready?"준비됨":liveReason(workload.readiness.reason)

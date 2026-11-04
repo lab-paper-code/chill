@@ -11,10 +11,10 @@ import type { PoolsView, SchedulerCandidate, SchedulerDecision, SchedulerDecisio
 import { decisionRange, evidenceError } from "@/lib/scheduler-history"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { actionProgress, actionOrigin, duration, liveFresh, scopeSnapshot, belongsToPool, boardVerdict, displayNumber, displayTime, elapsed, instanceSymbol, routingShare, serviceDevices, serviceRows, gapEpisodes, liveReason, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, minuteMetrics, sloTargetMissed, incidentHistoryHref, incidentDiagnosis, reservationReason, deviceAlerts, workloadReadiness, candidatePlans, candidateEvaluation, decisionActivity, clusterResult, isMeasurementPrecheck, isActionFailure, actionEventResult, retentionNotice, type DeviceAlert, type ServiceRow } from "@/lib/live-display"
+import { actionProgress, actionOrigin, duration, scopeSnapshot, belongsToPool, displayNumber, displayTime, elapsed, instanceSymbols, routingShare, serviceDevices, serviceRows, gapEpisodes, liveReason, terminalCount, trendSegments, workloadQueue, incidentSummary, sloLatency, sloTargetMissed, minuteMetrics, incidentHistoryHref, incidentDiagnosis, reservationReason, deviceAlerts, workloadReadiness, candidatePlans, candidateEvaluation, decisionActivity, clusterResult, isMeasurementPrecheck, isActionFailure, actionEventResult, retentionNotice, type DeviceAlert, type ServiceRow } from "@/lib/live-display"
 import { actionKinds, actionNodeName, actionStatuses, judgmentLabels, SchedulerEvidence } from "./scheduler"
-import { StatusCell } from "@/components/status-cell"
-import { STATUS_AXES, type StatusTone } from "@/lib/status"
+import { LiveObservation } from "@/components/observation-age"
+import { ServingInstance } from "@/components/serving-instance"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { EvaluationStatusCell } from "./evaluation-active"
 import { evaluationInjectionMatch, type ActiveEvaluations } from "@/lib/evaluation-active"
@@ -48,13 +48,11 @@ function MinuteSummary({state,workload,end}:{state:LiveState;workload:LiveWorklo
 }
 function StateStrip({state,status,reconnect,now,zone,paused,togglePause}:{state:LiveState;status:string;reconnect:()=>void;now:number;zone:Zone;paused:boolean;togglePause:()=>void}) {
   const params=useSearchParams(),router=useRouter(),path=usePathname(),{config}=useSession()
-  const connection:Record<string,string>={connecting:"연결 중",resuming:"재개 중",live:"실시간",reconnecting:"재연결 중",disconnected:"연결 끊김",unauthorized:"인증 필요",forbidden:"권한 없음","protocol-error":"메시지 계약 오류",idle:"연결 대기",fixture:"검사용","paused-hidden":"일시정지(탭 비활성)"}
-  const fresh=liveFresh(state,now),retention=retentionNotice(state,zone)
+  const retention=retentionNotice(state,zone)
   return <div className="live-strip" aria-label="관측 상태">
-    <div className="live-freshness"><strong>{paused?"화면 일시정지":status==="live"&&!fresh?"관측 지연":connection[status]??status}</strong><span>마지막 수신 <time dateTime={state.lastReceivedAt?new Date(state.lastReceivedAt).toISOString():undefined}>{state.lastReceivedAt?displayTime(new Date(state.lastReceivedAt).toISOString(),zone):"대기"}</time></span></div>
-    {retention&&<span role="status">{retention.includes("보존 공백")?"보존 공백":"일부 기록"}</span>}
+    <LiveObservation state={state} status={status} now={now} paused={paused}/>
     <div className="live-strip-actions"><button type="button" onClick={togglePause} aria-pressed={paused}>{paused?"실시간으로 복귀":"화면 일시정지"}</button>{!["live","fixture","paused-hidden"].includes(status)&&<button type="button" onClick={reconnect}>다시 연결</button>}
-      <details><summary>관측 도움말</summary><p>{retention??"보존 범위 미제공"} · 새로고침 시 실시간 복귀. 사건 수와 순번 공백은 다릅니다.</p></details>
+      <details><summary>관측 도움말</summary><p>{retention||"보존 범위 미제공"}<br/>마지막 수신 {state.lastReceivedAt?displayTime(new Date(state.lastReceivedAt).toISOString(),zone):"대기"}<br/>관측 기준 {displayTime(state.metrics.at(-1)?.bucketAt,zone)||"미수신"}<br/>새로고침 시 실시간 복귀. 연결과 지표 관측 시각은 별개입니다.</p></details>
       {config.liveFixture&&<label>검사용 장면 <select value={params.get("fixture")??"live"} onChange={event=>{const next=new URLSearchParams(params.toString());next.delete("open");next.delete("at");if(event.target.value==="live")next.delete("fixture");else next.set("fixture",event.target.value);router.replace(`${path}?${next}`,{scroll:false})}}><option value="live">실시간</option><option value="empty">빈 상태</option><option value="first">첫 구성</option><option value="expand">확장</option><option value="shrink">축소</option></select></label>}
     </div>
   </div>
@@ -65,23 +63,27 @@ function Sparkline({state,uid,end}:{state:LiveState;uid:string;end:number}) {
   const visible=points.filter(row=>row.at>=end-300000&&row.at<=end&&row.value!=null)
   return <div className="live-spark"><svg viewBox="0 0 120 32" role="img" aria-label={`최근 5분 유입 추세, ${visible.length}초 관측. 결손은 연결하지 않음`}><line x1="0" y1="29" x2="120" y2="29" stroke="currentColor" opacity=".2"/>{segments.map((points,index)=>points.includes(" ")?<polyline key={index} points={points} fill="none" stroke="currentColor" strokeWidth="1.8"/>:<circle key={index} cx={points.split(",")[0]} cy={points.split(",")[1]} r="1.5" fill="currentColor"/>)}</svg><span>{visible.length?`최대 ${number(Math.max(...visible.map(row=>row.value!)))} req/s`:"관측 대기"}</span></div>
 }
-function ServiceTable({state,rows,select,decision,error}:{state:LiveState;rows:ServiceRow[];select:Select;decision?:SchedulerDecisionScope;error?:boolean}) {
+function ServiceDeployments({state,rows,select,decision,error}:{state:LiveState;rows:ServiceRow[];select:Select;decision?:SchedulerDecisionScope;error?:boolean}) {
   const params=useSearchParams(),router=useRouter(),path=usePathname(),filter=params.get("services")??"전체"
   const snapshot=state.snapshot!
   const update=(value:string)=>{const next=new URLSearchParams(params.toString());next.set("services",value);router.replace(`${path}?${next}`,{scroll:false})}
   const matched=rows.filter(row=>filter==="확인 필요"?["warning","danger"].includes(row.status.tone):filter==="가동"?!row.idle:filter==="유휴"?row.idle:true)
   // Keep the server's stable service order while live metric priorities change.
   const byUID=new Map(matched.map(row=>[row.workload.uid,row])),ordered=snapshot.workloads.flatMap(workload=>{const row=byUID.get(workload.uid);return row?[row]:[]})
-  return <section className="live-services" aria-labelledby="live-services-title"><header className="live-section-heading"><h2 id="live-services-title">서비스 상태</h2><div className="live-filters">{decision&&<span>자율 상태 {displayTime(decision.at,"KST")}</span>}<label>상태 <select value={filter} onChange={event=>update(event.target.value)}>{["확인 필요","가동","유휴","전체"].map(value=><option key={value}>{value}</option>)}</select></label></div></header>
-    {!!ordered.length&&<table className="live-service-table"><caption className="sr-only">마지막 완료된 1초 기준 서비스 SLO와 결정의 서비스별 자율 상태</caption><thead><tr><th>서비스</th><th>유입</th><th>관측 지연 / 목표</th><th>자율 상태</th></tr></thead><tbody>{ordered.map(({workload,metric,status})=>{
-      const observed=sloLatency(workload,metric),sloState=!metric?"미확인":metric.received===0?"부하 없음":observed===undefined?"미제공":observed===null?"표본 부족":sloTargetMissed(workload,metric)?"목표 초과":"목표 이내"
-      return <tr key={workload.uid}>
-        <th scope="row" data-label="서비스"><button className="live-service-name" type="button" onClick={event=>select("open",`service:${workload.uid}`,event.currentTarget)}>{workload.name}</button>{["warning","danger"].includes(status.tone)&&<small>{status.label}</small>}</th>
-        <td data-label="유입" className="live-numeric">{metric?number(metric.received," req/s"):"미확인"}</td>
-        <td data-label="관측 지연 / 목표"><div className="live-slo"><strong>{metric?.received&&observed!=null?`${latency(workload,metric)} ms`:sloState}</strong><span> / {number(workload.slo.targetLatencyNanos/1e6," ms",1)}</span>{metric?.received&&observed!=null?<span data-tone={sloTargetMissed(workload,metric)?"fail":"ok"}>{sloState}</span>:null}</div></td>
-        <td data-label="자율 상태">{error?<span>자율 상태 조회 실패</span>:!decision?<span>자율 상태 조회 중</span>:<SchedulerWorkloadStatus compact workload={decision.workloads?.find(row=>row.uid===workload.uid)}/>}</td>
-      </tr>
-    })}</tbody></table>}{!ordered.length&&<p className="live-empty">{rows.length?"해당 서비스 없음":"등록 서비스 없음"}</p>}
+  return <section className="live-services" aria-labelledby="live-services-title"><header className="live-section-heading"><div><h2 id="live-services-title">서비스 배치</h2><span className="live-muted">{snapshot.workloads.length}개 서비스</span></div><div className="live-filters"><label>상태 <select value={filter} onChange={event=>update(event.target.value)}>{["확인 필요","가동","유휴","전체"].map(value=><option key={value}>{value}</option>)}</select></label><details className="live-legend"><summary>상태 범례</summary><div>{instanceSymbols.map(([symbol,label])=><span key={symbol}><b aria-hidden="true">{symbol}</b>{label}</span>)}</div></details></div></header>
+    <div className="live-service-lanes">{ordered.map(({workload,metric,status})=>{
+      const observed=sloLatency(workload,metric),missed=sloTargetMissed(workload,metric),sloState=!metric?"미확인":metric.received===0?"부하 없음":observed===undefined?"미제공":observed===null?"표본 부족":missed?"목표 초과":"목표 이내"
+      const instances=snapshot.instances.filter(row=>belongsToPool(row,workload.uid)),weights=snapshot.routing[workload.uid]
+      return <article className="live-service-lane" key={workload.uid}>
+        <div className="live-service-overview"><div className="live-service-identity"><span className="live-service-signal" data-tone={status.tone} role="img" aria-label={`${status.label}: ${status.reason}`} title={`${status.label}: ${status.reason}`}>●</span><button className="live-service-name" type="button" onClick={event=>select("open",`service:${workload.uid}`,event.currentTarget)}>{workload.name}</button></div>
+          <dl className="live-service-metrics"><div><dt>유입</dt><dd>{metric?number(metric.received):"미확인"}<small> req/s</small></dd></div><div><dt>p{workload.slo.percentile} 지연 / 목표 ms</dt><dd title={sloState} data-slo-missed={observed!=null&&missed}>{metric?.received&&observed!=null?number(observed,"",1):sloState}<span className="live-muted"> / {number(workload.slo.targetLatencyNanos/1e6,"",1)}</span><span className="sr-only">{sloState}</span></dd></div><div className="live-autonomy"><dt>자율 상태</dt><dd>{error?<span>조회 실패</span>:!decision?<span>조회 중</span>:<SchedulerWorkloadStatus compact workload={decision.workloads?.find(row=>row.uid===workload.uid)}/>}</dd></div></dl>
+        </div>
+        <div className="live-deployment"><div className="live-routing-heading"><span>실제 요청 분배</span><span>{instances.length}개 인스턴스</span></div><div className="live-routing-track" role="img" aria-label={`${workload.name} 실제 요청 분배`}>{instances.map((instance,index)=>{const share=routingShare(weights,instance.id);return <span key={instance.id} style={{width:`${share??0}%`}} className="live-routing-segment" title={`${instance.node.name} ${share==null?"분배 미확인":`${share.toFixed(1)}%`}`}><span>{index+1}</span></span>})}</div>
+          <div className="live-instance-grid">{instances.map((instance,index)=><ServingInstance key={instance.id} instance={instance} workloadUID={workload.uid} weights={weights} name={instance.node.name||nodeLabel(state,instance.node.uid)} powerMode={snapshot.nodes.find(node=>node.uid===instance.node.uid)?.powerMode??""} index={index} onClick={event=>select("open",`node:${instance.node.uid}`,event.currentTarget)}/>)}</div>
+          {!instances.length&&<p className="live-unplaced">배치된 인스턴스 없음</p>}
+        </div>
+      </article>
+    })}</div>{!ordered.length&&<p className="live-empty">{rows.length?"해당 서비스 없음":"등록 서비스 없음"}</p>}
   </section>
 }
 function ActionCard({action,snapshot,select,now,zone}:{action:LiveAction;snapshot:LiveSnapshot;select:Select;now:number;zone:Zone}) {
@@ -94,28 +96,23 @@ function Changes({snapshot,select,now,zone}:{snapshot:LiveSnapshot;select:Select
   const sorted=[...groups].sort(([,a],[,b])=>b.filter(row=>actionProgress(row,now)==="delayed").length-a.filter(row=>actionProgress(row,now)==="delayed").length)
   return <div className="live-change-list">{sorted.map(([uid,rows])=>{const delayed=rows.filter(row=>actionProgress(row,now)==="delayed").length,nodes=[...new Set(rows.map(row=>row.node.uid))];return <details key={uid} className="live-change-group"><summary>{uid?serviceName(snapshot,uid):"공유 구성"} / {rows.length}건 {!!delayed&&<span className="live-delay-badge">예상 대비 지연 {delayed}</span>}</summary>{nodes.map(node=><section key={node}><h3>{actionNodeName(rows.find(row=>row.node.uid===node)!.node)}</h3>{rows.filter(row=>row.node.uid===node).sort((a,b)=>Date.parse(a.startedAt)-Date.parse(b.startedAt)).map(action=><ActionCard key={JSON.stringify([action.id,action.node.uid,action.startedAt])} action={action} snapshot={snapshot} select={select} now={now} zone={zone}/>)}</section>)}</details>})}{!actions.length&&<p className="live-muted">진행 변경 없음</p>}</div>
 }
-function DeviceAlerts({state,fresh,alerts}:{state:LiveState;fresh:boolean;alerts:DeviceAlert[]}){
-  const known=!!state.snapshot&&fresh
-  return <section className="live-alerts" aria-labelledby="live-alerts-title"><header className="live-section-heading"><h2 id="live-alerts-title">장치 확인 <small>{known?`${alerts.length}대`:"관측 미확인"}</small></h2><Link href="/operations/devices">전체 장치</Link></header>
-    {!!alerts.length&&<table className="live-alert-table"><thead><tr><th>장치·서비스</th><th>상태</th><th>사유</th></tr></thead><tbody>{alerts.map(node=>{
-      const excluded=state.snapshot?.nodes.find(row=>row.uid===node.uid)?.reasons?.includes("ExcludedNode")
-      const unready=state.snapshot?.instances.filter(row=>row.node.uid===node.uid&&!row.stopped&&!row.ready)??[]
-      return <tr key={node.uid}><th scope="row" data-label="장치·서비스"><Link href={`/operations/devices?node=${encodeURIComponent(node.uid)}`}>{node.name||"이름 미제공"}</Link>{!!unready.length&&<small>{[...new Set(unready.map(row=>serviceName(state.snapshot,row.ownerWorkloadUID)))].join(", ")}</small>}</th><td data-label="상태">{excluded?"제외":unready.length?`인스턴스 미확인 ${unready.length}개`:"확인 필요"}</td><td data-label="사유">{excluded?node.reason.replace("제외 노드","자동 운영 제외 설정"):node.reason}</td></tr>
-    })}</tbody></table>}
-    {!alerts.length&&<p className="live-muted">{known?"확인할 장치 없음":"장치 상태 미확인"}</p>}
-  </section>
+function DeviceAlerts({state,alerts}:{state:LiveState;alerts:DeviceAlert[]}){
+  return <div className="live-alerts" aria-label="장치 확인"><span className="live-muted">장치 확인</span><div className="live-alert-links">{alerts.map(node=><Link key={node.uid} href={`/operations/devices?node=${encodeURIComponent(node.uid)}`} title={node.reason}>{node.name||"이름 미제공"}</Link>)}{!alerts.length&&<span className="live-muted">{state.snapshot?"확인할 장치 없음":"장치 상태 미확인"}</span>}</div></div>
 }
-function PoolDevices({state,select}:{state:LiveState;select:Select}){
-  const snapshot=state.snapshot
-  return <details className="live-pools"><summary>풀·장치</summary>{snapshot?<table className="live-pool-table"><thead><tr><th>장치</th><th>배치 서비스</th><th>전력모드</th><th>전력</th></tr></thead><tbody>{snapshot.nodes.map(node=><tr key={node.uid}><th scope="row" data-label="장치"><Link href={`/operations/devices?node=${encodeURIComponent(node.uid)}`}>{node.name}</Link><button type="button" aria-label={`${node.name} 관측`} onClick={event=>select("open",`node:${node.uid}`,event.currentTarget)}>관측</button></th><td data-label="배치 서비스">{snapshot.workloads.filter(workload=>snapshot.instances.some(row=>row.node.uid===node.uid&&!row.stopped&&belongsToPool(row,workload.uid))).map(workload=><button key={workload.uid} type="button" onClick={event=>select("open",`service:${workload.uid}`,event.currentTarget)}>{workload.name}</button>)}{!snapshot.instances.some(row=>row.node.uid===node.uid&&!row.stopped)&&"미배치"}</td><td data-label="전력모드">{node.powerMode||"미확인"}</td><td data-label="전력">{state.metrics.length?number(state.metrics.at(-1)?.nodes[node.uid]?.watts," W",1):"미확인"}</td></tr>)}</tbody></table>:<p>장치 관측 대기</p>}<Link href="/operations/devices">장치·배치 상세</Link><LivePowerTrend state={state}/></details>
+function PoolDevices({state}:{state:LiveState}){
+  return <details className="live-pools"><summary>풀 전력 추세</summary><LivePowerTrend state={state}/></details>
 }
 function SideRail({state,select,zone,now,failedEvents}:{state:LiveState;select:Select;zone:Zone;now:number;failedEvents:number}) {
   const active=useChillQuery<ActiveEvaluations>("v1/evaluations/active")
   const [allEvents,setAllEvents]=React.useState(false)
   const actions=state.snapshot?.actions.filter(action=>actionProgress(action,now)!=="terminal")??[]
-  const incidents=incidentSummary(state.events,state.gaps,now,state.metrics).rows,activity=decisionActivity(state.events,now)
+  const incidents=incidentSummary(state.events,state.gaps,now,state.metrics).rows.filter(row=>{
+    if(row.kind!=="event"||row.event.kind!=="action")return true
+    const event=row.event.action
+    return event.phase!=="started"||!actions.some(action=>action.id===event.id&&action.node.uid===event.node.uid&&action.startedAt===event.startedAt)
+  }),activity=decisionActivity(state.events,now)
   return <aside className="live-rail" aria-labelledby="live-rail-title" id="live-incidents"><header className="live-section-heading"><h2 id="live-rail-title">진행·사건</h2><div className="live-activity"><span>진행 변경 {state.snapshot?`${actions.length}건`:"미확인"}</span><span>보관 중 실패 {state.snapshot?`${failedEvents}건`:"미확인"}</span><button type="button" onClick={event=>select("open","reservations",event.currentTarget)}>예약 <ReservationCount count={state.snapshot?.reservations.length??null}/></button><Link href={historyHref()}>기록</Link></div></header>
-    <p className="live-activity" title="이번 접속에서 실제 수신한 최근 5분 판단. 서버 전체 이력의 건수가 아님">최근 5분 접속 수신 판단 {activity.count}건 · 유지 {activity.kept}건 · 마지막 {activity.lastAt?displayTime(activity.lastAt,zone):"미수신"}</p>
+    <details className="live-decision-activity"><summary>최근 판단 활동</summary><dl><div><dt>접속 수신 판단</dt><dd>{activity.count}건</dd></div><div><dt>구성 유지</dt><dd>{activity.kept}건</dd></div><div><dt>마지막 시각</dt><dd>{activity.lastAt?displayTime(activity.lastAt,zone):"미수신"}</dd></div></dl><p className="live-muted">이번 접속에서 수신한 최근 5분 기준</p></details>
     <table className="live-incident-table"><thead><tr><th>최근 KST</th><th>대상</th><th>동작</th><th>결과</th><th>사유</th></tr></thead><tbody>
       {actions.map(action=><tr key={`action:${JSON.stringify([action.id,action.node.uid,action.startedAt])}`}><td data-label="시각 KST">{displayTime(action.startedAt,zone).replace(` ${zone}`,"")}</td><th scope="row" data-label="대상"><button type="button" onClick={event=>select("open",`action:${JSON.stringify([action.id,action.node.uid,action.startedAt])}`,event.currentTarget)}>{actionNodeName(action.node)}</button></th><td data-label="동작">{actionKinds[action.kind]??action.kind}</td><td data-label="결과">{actionProgress(action,now)==="delayed"?"예상 대비 지연":"진행"}</td><td data-label="사유">미제공</td></tr>)}
       {(allEvents?incidents:incidents.slice(0,3)).map(row=>{
@@ -141,7 +138,7 @@ function ServiceTrend({state,uid,end,zone}:{state:LiveState;uid:string;end:numbe
 }
 function Instances({state,workload,select,zone}:{state:LiveState;workload:LiveWorkload;select:Select;zone:Zone}) {
   const snapshot=state.snapshot!,instances=snapshot.instances.filter(row=>belongsToPool(row,workload.uid))
-  return <section className="live-instance-list"><h3>인스턴스와 장치</h3>{instances.length?instances.map((instance,index)=><div key={instance.id}><button type="button" onClick={event=>select("open",`node:${instance.node.uid}`,event.currentTarget)}>{instance.node.name||nodeLabel(state,instance.node.uid)} / {snapshot.nodes.find(node=>node.uid===instance.node.uid)?.powerMode||"전력모드 미확인"}</button><Facts items={[["인스턴스",index+1],["상태",instanceSymbol(instance,workload.uid)[1]],["분배 %",number(routingShare(snapshot.routing[workload.uid],instance.id),"",1)],["처리 중 건",instance.running[workload.uid]??0],["배정 후 대기 건",instance.waiting[workload.uid]??0],["관측 KST",displayTime(instance.observedAt,zone)]]}/><Source value={instance}/></div>):<p className="live-muted">인스턴스 없음</p>}</section>
+  return <section className="live-instance-list"><h3>인스턴스와 장치</h3>{instances.length?instances.map((instance,index)=><div key={instance.id}><ServingInstance instance={instance} workloadUID={workload.uid} weights={snapshot.routing[workload.uid]} name={instance.node.name||nodeLabel(state,instance.node.uid)} powerMode={snapshot.nodes.find(node=>node.uid===instance.node.uid)?.powerMode??""} index={index} onClick={event=>select("open",`node:${instance.node.uid}`,event.currentTarget)}/><Facts items={[["관측 KST",displayTime(instance.observedAt,zone)]]}/><Source value={instance}/></div>):<p className="live-muted">인스턴스 없음</p>}</section>
 }
 function CandidateEvidence({candidate,zone,snapshot}:{candidate:SchedulerCandidate;zone:Zone;snapshot:LiveSnapshot|null}) {
   return <section><h3>{candidate.keep?"유지안":"변경안"}</h3><Facts items={[["판정",judgmentLabels[candidate.status]??"판정 미제공"],["성능 평가",candidateEvaluation(candidate)],["예상 에너지 kJ",number(candidate.expectedJoules==null?null:candidate.expectedJoules/1000,"",2)]]}/>
@@ -222,7 +219,7 @@ function Selection({open,state,select,zone,end,now}:{open:string;state:LiveState
 function ReservationCount({count}:{count:number|null}) {
   const [observed,setObserved]=React.useState({current:count,previous:null as number|null})
   if(observed.current!==count)setObserved({current:count,previous:observed.current})
-  return <><span className="sr-only">예약 상세 </span><span aria-live="polite">{count===null?"미확인":`${count}건`}</span>{observed.previous!==null&&observed.previous!==count&&<small className="live-count-change">이전 {observed.previous} → 현재 {count??"미확인"}</small>}</>
+  return <><span className="sr-only">예약 상세 </span><span aria-live="polite" title={observed.previous!==null&&observed.previous!==count?`이전 ${observed.previous} → 현재 ${count??"미확인"}`:undefined}>{count===null?"미확인":`${count}건`}</span></>
 }
 export function LiveBoardPage() {
   const live=useLive(),{epoch}=useSession(),params=useSearchParams(),router=useRouter(),path=usePathname()
@@ -240,20 +237,13 @@ export function LiveBoardPage() {
   React.useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer)},[])
   const select:Select=React.useCallback((key,value,target)=>{if(target)opener.current=target;const next=new URLSearchParams(params.toString());next.delete("open");next.delete("at");next.delete("evidence");if(value)next.set(key,value);router.push(`${path}?${next}`,{scroll:false})},[params,path,router])
   const chooseEvidence=(kind:string)=>{const next=new URLSearchParams(params.toString());next.delete("at");next.set("evidence",kind);if(open?.startsWith("service:"))next.set("workload",open.slice(8));router.push(`${path}?${next}`,{scroll:false})}
-  const changes=snapshot?.actions.filter(action=>actionProgress(action,clock)!=="terminal").length??0,delayed=snapshot?.actions.filter(action=>actionProgress(action,clock)==="delayed").length??0
-  const fresh=liveFresh(state,clock),ongoingGap=gapEpisodes(state.gaps,clock,state.metrics).some(gap=>!gap.lost&&!gap.recovered)
-  const rows=snapshot?serviceRows(snapshot,metrics?.workloads??{},clock):[],verdict=boardVerdict(rows,fresh,ongoingGap,changes-delayed,delayed)
-  const evaluable=rows.filter(row=>sloLatency(row.workload,row.metric)!=null),missed=evaluable.some(row=>sloTargetMissed(row.workload,row.metric))
-  const performance={axis:STATUS_AXES.performance,label:!fresh||!evaluable.length?"판정 불가":missed?"목표 초과":"목표 이내",tone:(!fresh||!evaluable.length?"idle":missed?"fail":"ok") as StatusTone,reason:!fresh?"관측 신선도 부족":!evaluable.length?"평가 표본 없음":undefined}
+  const rows=snapshot?serviceRows(snapshot,metrics?.workloads??{},clock):[]
   const alerts=deviceAlerts(snapshot,state.events,pools),failedEvents=state.events.filter(event=>event.kind==="action"&&isActionFailure(event.action)).length
-  const summary=`서비스 영향 ${verdict.label} / 성능 판정 ${performance.label} / 관측 상태 ${verdict.observation.label} / 진행 변경 ${snapshot?changes:"미확인"} / 보관 중 실패 사건 ${snapshot?failedEvents:"미확인"} / 예약 ${snapshot?.reservations.length??"미확인"} / 장치 확인 ${snapshot?alerts.length:"미확인"}`
   const sheetOpen=!!(open||at||evidence),title=at?"선택 판단 근거":open==="terms"?"용어 도움말":open?.startsWith("service:")?"서비스 관측":open?.startsWith("node:")?"장치 관측":evidence?"판단 근거":open==="reservations"?"예약 상세":open?.startsWith("action:")?"변경 상세":"사건 상세"
   return <div className="live-stage">
-    <header className="live-heading"><h1 ref={heading} tabIndex={-1}>운영 현황</h1><div className="live-scope"><span>전체 서비스</span><span>기준 <time dateTime={metrics?.bucketAt}>{metrics?displayTime(metrics.bucketAt,zone):"미수신"}</time></span></div><StateStrip state={state} status={live.status} reconnect={live.reconnect} now={clock} zone={zone} paused={paused} togglePause={()=>setFrozen(paused?null:{state:live.state,decision,decisionError,pools,now,epoch,fixture})}/></header>
-    <div className="live-verdict" aria-label="운영 판독"><div className="live-status-line"><StatusCell axis={verdict.axis} label={verdict.label} tone={verdict.tone==="danger"?"fail":verdict.tone==="warning"?"warn":verdict.tone==="healthy"?"ok":"idle"}/><StatusCell {...performance} reason={undefined}/><StatusCell {...verdict.observation} reason={undefined}/><EvaluationStatusCell/><nav className="live-detail-links">{snapshot?.decision&&<button type="button" onClick={event=>select("at",snapshot.decision!.at,event.currentTarget)}>판단 근거</button>}</nav></div></div>
-    <p className="sr-only" aria-live={paused?"off":"polite"} aria-atomic="true">{summary}</p>
-    <div className="live-board-grid">{snapshot?<ServiceTable state={state} rows={rows} select={select} decision={decision} error={decisionError}/>:<section className="live-services"><h2>서비스 상태</h2><p className="live-empty">서비스 구성 수신 대기</p></section>}<div className="live-operations"><DeviceAlerts state={state} fresh={fresh} alerts={alerts}/><SideRail state={state} select={select} zone={zone} now={clock} failedEvents={failedEvents}/></div></div>
-    <PoolDevices state={state} select={select}/>
+    <header className="live-heading"><div className="live-heading-title"><h1 ref={heading} tabIndex={-1}>운영 현황</h1><Link className="live-experiment" href="/experiments"><EvaluationStatusCell/></Link></div><StateStrip state={state} status={live.status} reconnect={live.reconnect} now={clock} zone={zone} paused={paused} togglePause={()=>setFrozen(paused?null:{state:live.state,decision,decisionError,pools,now,epoch,fixture})}/></header>
+    <div className="live-board-grid">{snapshot?<ServiceDeployments state={state} rows={rows} select={select} decision={decision} error={decisionError}/>:<section className="live-services"><h2>서비스 배치</h2><p className="live-empty">서비스 구성 수신 대기</p></section>}</div>
+    <section className="live-operations" aria-label="운영 기록과 예외"><header className="live-section-heading"><h2>운영 기록과 예외</h2><nav className="live-detail-links"><Link href="/operations/devices">풀·장치</Link>{snapshot?.decision&&<button type="button" onClick={event=>select("at",snapshot.decision!.at,event.currentTarget)}>판단 근거</button>}</nav></header><DeviceAlerts state={state} alerts={alerts}/><SideRail state={state} select={select} zone={zone} now={clock} failedEvents={failedEvents}/><PoolDevices state={state}/></section>
     <Sheet open={sheetOpen} onOpenChange={value=>{if(!value)select(at?"at":"open",null)}}><SheetContent className="live-stage live-sheet" aria-describedby={undefined} onCloseAutoFocus={event=>{event.preventDefault();if(opener.current?.isConnected)opener.current.focus();else heading.current?.focus()}}><SheetHeader><SheetTitle>{title}</SheetTitle></SheetHeader><div className="live-sheet-body">
       {at?<Evidence key={at} at={at} state={state} zone={zone}/>:<>{open&&<Selection open={open} state={open==="reservations"&&params.get("workload")&&snapshot?{...state,snapshot:scopeSnapshot(snapshot,params.get("workload")!)}:state} select={select} zone={zone} end={end} now={clock}/>} {(open?.startsWith("service:")||evidence)&&<nav className="live-detail-links" aria-label="판단 근거 종류">{([["candidates","구성 후보"],["estimates","성능 추정"],["load","유입 근거"],["capacity","처리 용량"]] as const).map(([kind,label])=><button type="button" key={kind} aria-pressed={evidence===kind} onClick={()=>chooseEvidence(kind)}>{label}</button>)}</nav>}{evidence?<SchedulerEvidence kind={evidence}/>:open?.startsWith("service:")&&snapshot?.decision&&<Evidence key={open} at={snapshot.decision.at} state={state} zone={zone}/>}</>}
       {!at&&selectedWorkload&&<Source value={selectedWorkload}/>}

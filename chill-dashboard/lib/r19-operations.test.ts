@@ -39,6 +39,10 @@ function harness(events:live.LiveEvent[]=[]) {
     new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),exports)
     return exports
   }
+  modules["./observation-age.css"]={}
+  modules["./serving-instance.css"]={}
+  modules["@/components/observation-age"]=compile("../components/observation-age.tsx")
+  modules["@/components/serving-instance"]=compile("../components/serving-instance.tsx")
   modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx")
   const board=compile("../features/live-board.tsx")
   modules["./live-board"]=board
@@ -87,7 +91,7 @@ test("R19 decision count names its session scope and retention stays inside the 
   view.state.resumeHistory={reason:"checkpoint-unmatched",replayed:false,requested:{afterSeq:0,throughSeq:999},retained:{events:null,power:null},gaps:[{fromSeq:1,toSeq:999,scope:"events",reason:"NoRetainedFrames"}]}
   view.state.eventArchive={from:at,to:at,partial:true,coverage:{from:null,to:null,sources:[],gaps:[{from:"2026-11-03T03:10:00Z",to:"2026-11-03T03:11:00Z",stream:"cluster",reason:"BeforeRetention"}]}}
   const html=view.board(),header=html.slice(html.indexOf('<header class="live-heading"'),html.indexOf('</header>'))
-  assert.match(html,/최근 5분 접속 수신 판단/)
+  assert.ok(html.includes("최근 5분")&&html.includes("접속 수신 판단"))
   assert.match(header,/보존 공백/)
   assert.match(header,/12:10:00 KST.*12:11:00 KST/)
   assert.match(header,/최근 사건 일부만 표시/)

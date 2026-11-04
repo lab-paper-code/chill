@@ -336,7 +336,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
     "next/link":{default:({children,...props}:Record<string,unknown>)=>createElement("a",props,children as string)},
     "next/navigation":{usePathname:()=>"/",useSearchParams:()=>query,useRouter:()=>({push:(url:string)=>{query=new URL(url,"http://local").searchParams},replace:(url:string)=>{query=new URL(url,"http://local").searchParams}})},
     "@/lib/client":{useSession:()=>({epoch:1,config:{liveFixture:false}}),useChillQuery:(path:string,options?:{enabled?:boolean})=>{if(options?.enabled===false)return {};if(path==="v1/scheduler/state?view=summary")return summaryRead==="pending"?{}:summaryRead==="error"?{error:new Error("summary unavailable")}:{data:summaryFixtureResponse??{decision:summaryHasScopes?(recordedDecision??{at,workloads:[]}):{at}}};if(path==="v1/scheduler"){fullSchedulerReads++;return {data:!compactPending&&recordedDecision?{state:{decision:recordedDecision}}:undefined}}return path.startsWith("v1/observations/events")?{data:{events:archived}}:path.startsWith("v1/observations/scheduler?")&&recordedDecision?{data:{events:[{at,decision:recordedDecision}]}}:{}}},
-    "@/lib/use-live":{useLive:()=>({state,status:"fixture",reconnect:()=>{}})},
+    "@/lib/use-live":{useLive:()=>({state,status:state.status,reconnect:()=>{}})},
     "@/lib/live-display":displayHelpers,
     "@/lib/scheduler-history":schedulerHistoryHelpers,
     "@/lib/live":{compareAt,eventKey},
@@ -350,19 +350,53 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
     "./live-board.css":{},
     "./power-series":{LivePowerTrend:()=>null},
   }
+  modules["@/components/serving-instance"]=compile("../components/serving-instance.tsx",{"@/lib/live-display":displayHelpers,"./serving-instance.css":{}})
+  const observation=compile("../components/observation-age.tsx",{"./observation-age.css":{}})
+  modules["@/components/observation-age"]=observation
+  await context.test("observation ages preserve their DOM across the former boundary and ignore heartbeats",()=>{
+    const renderObservation=(state:LiveState,now:number)=>renderToStaticMarkup(createElement(observation.LiveObservation,{state,now}))
+    const metricAt=Date.parse(sample.bucketAt),earlier=renderObservation(state,metricAt+4999),later=renderObservation({...state,lastReceivedAt:metricAt+5001,lastObservedAt:new Date(metricAt+5001).toISOString()},metricAt+5001)
+    assert.deepEqual(earlier.match(/<\/?[\w-]+/g),later.match(/<\/?[\w-]+/g))
+    assert.ok(earlier.includes('data-connected="true"')&&later.includes('data-connected="true"'))
+    assert.ok(later.includes('title="2026-10-30T12:00:00.000Z"'),"age remains anchored to metrics, not transport activity")
+    assert.ok(renderObservation({...state,metrics:[]},now).includes('class="observation-age-value"'))
+  })
   modules["./scheduler-workload-states"]=compile("../features/scheduler-workload-states.tsx",{"@/lib/live-display":displayHelpers})
   const board=compile("../features/live-board.tsx",modules)
   const render=()=>renderToStaticMarkup(createElement(board.LiveBoardPage,{}))
+  await context.test("service deployments expose all six states and actual routing without opening details",()=>{
+    const before=structuredClone(snapshot)
+    snapshot.workloads=[pool]
+    snapshot.instances=[
+      {...instance,id:"stopped",stopped:true},
+      {...instance,id:"draining",routable:{}},
+      {...instance,id:"running"},
+      {...instance,id:"waiting",running:{}},
+      {...instance,id:"ready",running:{},routable:{}},
+      {...instance,id:"preparing",ready:false,running:{},routable:{}},
+    ]
+    snapshot.routing={a:{running:3,waiting:1}}
+    sample.workloads={a:metric}
+    const html=render()
+    assert.equal((html.match(/data-instance-state=/g)??[]).length,6)
+    assert.ok(html.includes("75.0%")&&html.includes("25.0%"))
+    assert.equal((html.match(/class="live-service-signal"/g)??[]).length,1)
+    sample.workloads.a={...metric,failed:0,withinSLO:4}
+    const normal=render()
+    assert.deepEqual(html.match(/<\/?[\w-]+/g),normal.match(/<\/?[\w-]+/g),"metric verdicts only change values, never insert a row")
+    Object.assign(snapshot,before)
+    sample.workloads=Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero]))
+  })
   summaryRead="pending"
   await context.test("summary pending does not claim a missing scope",()=>{
     const html=render()
-    assert.match(html,/자율 상태 조회 중/)
+    assert.match(html,/class="live-autonomy"[\s\S]*?조회 중/)
     assert.doesNotMatch(html,/자율 상태 미기록/)
   })
   summaryRead="error"
-  await context.test("summary errors remain query failures",()=>assert.match(render(),/자율 상태 조회 실패/))
+  await context.test("summary errors remain query failures",()=>assert.match(render(),/class="live-autonomy"[\s\S]*?조회 실패/))
   summaryRead="ready";compactPending=true
-  await context.test("legacy compact pending does not claim a missing scope",()=>assert.match(render(),/자율 상태 조회 중/))
+  await context.test("legacy compact pending does not claim a missing scope",()=>assert.match(render(),/class="live-autonomy"[\s\S]*?조회 중/))
   compactPending=false;summaryHasScopes=true;recordedDecision={at,workloads:[]}
   await context.test("received decisions establish a missing scope",()=>assert.match(render(),/자율 상태 미기록/))
   summaryHasScopes=false;recordedDecision=undefined
@@ -373,7 +407,7 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
     assert.match(html,/보관 중 실패 미확인/)
     assert.match(html,/<span aria-live="polite">미확인<\/span>/)
     assert.doesNotMatch(html,/진행 변경 0건|보관 중 실패 0건|미확인<\/span>건|진행·사건 없음/)
-    assert.match(html,/기준 <time>미수신<\/time>/)
+    assert.match(html,/class="observation-age-value">미수신/)
   })
   query=new URLSearchParams({open:"reservations"})
   await context.test("reservation absence is unknown before a snapshot",()=>assert.doesNotMatch(render(),/예약 없음/))
@@ -387,9 +421,8 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   })
   state.snapshot=snapshot
   query=new URLSearchParams()
-  await context.test("received empty snapshots allow zero counts but not unreceived power",()=>{
+  await context.test("received empty snapshots allow zero operational counts",()=>{
     const html=render()
-    assert.match(html,/<td data-label="전력">미확인<\/td>/)
     assert.match(html,/진행 변경 0건/)
     assert.match(html,/보관 중 실패 0건/)
     assert.match(html,/<span aria-live="polite">0건<\/span>/)
@@ -400,10 +433,10 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   assert.match(idle,/부하 없음/)
   assert.match(idle,/자율 상태/)
   assert.equal((idle.match(/>서비스-\d+<\/button>/g)??[]).length,29)
-  assert.match(idle,/성능 판정<\/span><strong>판정 불가/)
+  assert.equal((idle.match(/class="live-service-signal"/g)??[]).length,29)
   assert.match(idle,/풀·장치/)
   assert.match(idle,/새로고침 시 실시간 복귀/)
-  assert.match(idle,/자율 상태 조회 중/)
+  assert.match(idle,/class="live-autonomy"[\s\S]*?조회 중/)
   assert.doesNotMatch(idle,/live-node-power|data-sheet/)
   const keep={id:"keep",keep:true,status:"Feasible",expectedJoules:0,slo:[],nodes:[],instances:[]}
   recordedDecision={at,status:"Keep",workloads:[],keep,target:structuredClone(keep),search:{windowStart:at,windowEnd:at,received:0,accepted:0,computeInputs:0,examined:0}}
@@ -420,11 +453,11 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   const previousWorkloads=snapshot.workloads
   snapshot.workloads=controlFixture.snapshot.workloads.map((row:{uid:string;name:string})=>({...pool,...row,autonomous:true}))
   query=new URLSearchParams()
-  const firstScreen=render(),serviceTable=firstScreen.slice(firstScreen.indexOf('class="live-service-table"'),firstScreen.indexOf('class="live-operations"'))
-  const serviceRows=serviceTable.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)??[]
+  const firstScreen=render()
+  const serviceRows=firstScreen.match(/<article\b[^>]*>[\s\S]*?<\/article>/g)??[]
   assert.ok(serviceRows.some(row=>row.includes("plc-anomaly")&&row.includes("Controlled")&&!row.includes("UnconfirmedInstance")))
   assert.ok(serviceRows.some(row=>row.includes("image-classification-tight-slo")&&row.includes("Fixed")&&row.includes("인스턴스 미확인")))
-  assert.ok(firstScreen.indexOf('class="live-service-table"')<firstScreen.indexOf('class="live-alerts"'))
+  assert.ok(firstScreen.indexOf('<article')<firstScreen.indexOf('class="live-alerts"'))
   assert.ok(fullSchedulerReads>0,"legacy summary without scopes uses the existing compact read")
   summaryHasScopes=true;fullSchedulerReads=0
   // scheduler_summary.go wire shape: decision is direct, never state.decision.
@@ -463,16 +496,12 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   const active=render()
   assert.match(active,/>서비스-0<\/button>/)
   assert.doesNotMatch(active,/>서비스-1<\/button>/)
-  assert.match(active,/operations\/devices\?node=n/)
-  assert.match(active,/p95 20\.0/)
+  assert.match(active,/class="serving-instance"/)
+  assert.ok(active.includes("20.0")&&active.includes("p95"))
   snapshot.workloads[0].slo.percentile=90
-  assert.match(render(),/p90 15\.0/)
+  assert.ok(render().includes("15.0")&&render().includes("p90"))
   state.gaps=[{from:at,to:new Date(Date.now()+1000).toISOString(),scope:"node:n",reason:"power sample unavailable"}]
   const gap=render()
-  assert.match(gap,/서비스 영향<\/span><strong>정상/)
-  assert.match(gap,/관측 상태<\/span><strong>관측 공백/)
-  assert.match(gap,/aria-live="polite"[^>]*>서비스 영향 정상/)
-  assert.match(gap,/관측 상태 관측 공백/)
   assert.match(gap,/전력 표본 누락/)
   snapshot.actions=[{id:"shared-power",kind:"power",node:{uid:"n",name:"장치"},workloadUID:"",status:"running",startedAt:new Date(Date.now()).toISOString(),expectedSeconds:null,expectedSource:null}]
   snapshot.reservations=[{owner:"a",nodes:[],workloadUIDs:["service-1"],podUIDs:[],instances:[],reason:"ReservedScope",explanation:""}]
@@ -524,8 +553,8 @@ test("operations board keeps service SLO and scoped autonomy visible before devi
   state.status="disconnected"
   query=new URLSearchParams()
   const disconnected=render()
-  assert.match(disconnected,/서비스 영향<\/span><strong>미확인/)
-  assert.match(disconnected,/성능 판정<\/span><strong>판정 불가/)
+  assert.match(disconnected,/data-connected="false"/)
+  assert.equal((disconnected.match(/class="observation-age-value"/g)??[]).length,1)
 })
 
 test("completed DOM admission and deletion actions display completion without rewriting response status",()=>{

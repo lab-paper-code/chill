@@ -32,6 +32,10 @@ test("service decision evidence stays at opening selection until the user select
     "@/components/ui/sheet":{Sheet:({open,children}:{open:boolean;children:React.ReactNode})=>open?children:null,SheetContent:wrap,SheetHeader:wrap,SheetTitle:wrap},
     "./evaluation-active":{EvaluationStatusCell:()=>null},"@/lib/evaluation-active":{evaluationInjectionMatch:()=>false},"./power-series":{LivePowerTrend:()=>null},"./live-board.css":{},
   }
+  modules["./observation-age.css"]={}
+  modules["./serving-instance.css"]={}
+  modules["@/components/observation-age"]=load("../components/observation-age.tsx",modules)
+  modules["@/components/serving-instance"]=load("../components/serving-instance.tsx",modules)
   modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
   const {LiveBoardPage}=load("../features/live-board.tsx",modules)
   function render(){
@@ -68,4 +72,11 @@ test("service decision evidence stays at opening selection until the user select
   assert.deepEqual([...new Set(calls)],[original],"live updates do not start another historical request")
   click("판단 근거");render()
   assert.equal(new URL(calls.at(-1)!,"https://local").searchParams.get("from"),history.decisionRange(later)!.from,"explicit decision selection loads the new decision")
+  params=new URLSearchParams()
+  const beforeReservation=render()
+  state={...state,snapshot:{...state.snapshot!,reservations:[{owner:"fixture",nodes:[],workloadUIDs:[],instances:[],podUIDs:[],reason:"",explanation:""}]}}
+  render()
+  const afterReservation=render()
+  assert.deepEqual(beforeReservation.match(/<\/?[\w-]+/g),afterReservation.match(/<\/?[\w-]+/g),"reservation count changes keep the same header slots")
+  assert.ok(afterReservation.includes('title="이전 0 → 현재 1"'),"previous reservation count remains available without inserting a line")
 })
