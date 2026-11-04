@@ -81,6 +81,8 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 DOM `phase`·`d`는 필수 nullable projection이며 구 `status`를 복원하는 fallback은 없다. 삭제된 단건의 404, 권한 오류 401/403, 종료 상태에서는 해당 polling을 중단한다. 서버 DOM API 변경(`392388ff`) 위로 rebase되어 실제 POST·DELETE 계약과 통합된 상태이며, 운영 서버·Query 미배포 상태 및 운영 생성·삭제 E2E 미수행과는 구별한다.
 
+실험·부하 작성 화면의 403 오류는 서버 `message`를 본문에 그대로 표시한다. message가 없으면 `권한 없음`과 HTTP 상태만 표시하며, 필요한 역할을 화면에서 별도로 추정하거나 고정 표시하지 않는다.
+
 `dispatchOccupancy` 정책 설정에는 `supplyMode`가 없다. 새 dry-run은 native `spec.supplyMode`가 실제 `closed-loop`일 때만 “공급 방식 (서버 고정)” 사실로 표시하며 응답에 없으면 `미제공`이다. 결과 조건 표의 일반 공급 방식 표시와 helper는 제거했고 원본 응답은 그대로 보존한다. 접수/삭제의 API 결과 `Accepted`·`DeletionRequested`는 유지되며 live action의 `phase:"completed"`는 해당 mutation 완료로 표시한다. DOM 측정 자체의 `Complete`와 혼동하지 않는다.
 
 `392388ff` 재통합 게이트: focused `go test ./internal/queryapi/... ./cmd/chill-query/...`, `make lint`, Node 24.14.0 tsc/eslint/운영 summary 포함 테스트 **502/502**, 기본 Next build 통과. closed-loop 미응답·다른 값에서 고정 사실을 만들어 내지 않는 회귀와 DOM 접수/삭제 action `completed`→완료 표시 회귀를 포함한다.

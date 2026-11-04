@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { LoadEditor } from "@/features/load-scenario-author"
-import { EvaluationPermission, EvaluationSubmit } from "@/features/evaluation-request"
+import { EvaluationSubmit } from "@/features/evaluation-request"
 import { object, records, specValue, patchSpec, specJSON, copyAuthorDraft, type Spec, type LoadScenario } from "@/lib/evaluation-author"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { decodeExperimentPage, type ExperimentPage } from "@/lib/experiments"
@@ -82,7 +82,6 @@ export function EvaluationAuthor({initialSpec,initialName,existing,onSubmitted}:
   }
   const labels:Record<string,string>={question:"질문",target:"대상 구성요소",harness:"실행기",loadGenerator:"부하 발생기",powerMeasurement:"전력 측정",settingsPatch:"운영 설정 패치",judgment:"판정 기준",evidenceStore:"증거 저장소",stages:"단계",comparisons:"비교"}
   return <div className="grid min-w-0 gap-5">
-    {!ready&&<EvaluationPermission/>}
     <div className="flex justify-end"><AuthorHelp/></div>
     {!initialSpec&&<details open={!ready} className="grid gap-3"><summary className="min-h-11 cursor-pointer text-sm">정의 출처 · {origin||sourcePublication?.name||(ready?"빈 템플릿":"미선택")}</summary><section className="grid gap-3" aria-label="정의 출처">
       <AuthorSelect label="게시에서 복사" value={source} onChange={setSource}><option value="">게시 선택</option>{source&&!publications.data?.items.some(item=>item.id===source)&&<option value={source}>{source}</option>}{publications.data?.items.map(item=><option key={item.id} value={item.id}>{item.id}</option>)}</AuthorSelect>

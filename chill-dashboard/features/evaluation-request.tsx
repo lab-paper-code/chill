@@ -75,13 +75,8 @@ function runHref(run:Created,search?:URLSearchParams) {
 function Failure({error}:{error:ApiError|null}) {
   if(!error)return null
   const value=error.data as {code?:string;message?:string}|null
-  return <strong role="alert" className="text-sm text-destructive" title={value?.message??error.body}>{error.status===403?"권한 없음(실험 운영자)":error.unknownOutcome?"결과 미확인":value?.code??error.message}</strong>
+  return <strong role="alert" className="text-sm text-destructive" title={value?.message??error.body}>{error.status===403?value?.message||`권한 없음 · HTTP ${error.status}`:error.unknownOutcome?"결과 미확인":value?.code??error.message}</strong>
 }
-
-export function EvaluationPermission({denied=false}:{denied?:boolean}) {
-  return <dl aria-label="실험 작업 권한" className="flex flex-wrap gap-x-4 gap-y-1 text-xs"><div className="flex gap-2"><dt>필요 권한</dt><dd>평가 운영자</dd></div><div className="flex gap-2"><dt>현재 권한</dt><dd className={denied?"text-destructive":"text-muted-foreground"}>{denied?"권한 없음":"미확인"}</dd></div></dl>
-}
-
 
 function EvaluationTargets({targets,title}:{targets?:EvaluationLiveTarget[]|null;title:string}) {
   return <section aria-label={title} className="space-y-2"><h3 className="text-sm font-medium">{title}</h3>{targets==null?<span className="text-sm">미기록</span>:<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>구성요소</th><th>자원</th><th>관측 이미지 ID</th><th>준비</th></tr></thead><tbody>{targets.map((target,index)=><tr key={`${target.component}/${index}`} className="border-t"><th className="py-2 font-normal">{target.component}</th><td title={`${target.resource.apiVersion} · ${target.resource.namespace}`}>{target.resource.kind}/{target.resource.name}</td><td className="break-all">{target.liveImageIDs.length?target.liveImageIDs.join(", "):"미제공"}</td><td>{target.ready?"준비됨":"준비 대기"}</td></tr>)}{!targets.length&&<tr><td colSpan={4}>대상 없음</td></tr>}</tbody></table></div>}</section>
@@ -138,7 +133,6 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}
     <Failure error={pre.error}/><Failure error={send.error}/>
     {replacement&&<strong role="status">{replacement==="deleted"?"삭제됨·재생성 필요":replacement==="unchanged"?"미변경":replacement==="blocked"?"중지 후 다시 실행":"결과 미확인"}</strong>}
     {(unknown||created)&&<div role="status" className="flex flex-wrap items-center gap-3 text-sm"><strong>{created?existing?"수정 접수":"실행 접수":confirmed?"실행 확인":"결과 미확인"}</strong>{(created||confirmed)&&<Link className="underline" href={runHref(created??{name:lookup.data!.name,uid:lookup.data!.uid})}>실험 상태</Link>}{unknown&&<Button variant="outline" onClick={()=>void refresh()} disabled={lookup.isFetching}>다시 조회</Button>}</div>}
-    <EvaluationPermission denied={pre.error?.status===403||send.error?.status===403}/>
     <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled||busy||unknown||!!created} onClick={verify}>{pre.isPending?"점검 중":"사전 점검"}</Button><Button disabled={disabled||busy||!!created||!evaluationCanSubmit(answer,checkedBody,body,unknown)} onClick={()=>void submit()}>{send.isPending?"제출 중":replacement==="deleted"?"재생성 제출":existing?"수정 제출":"실험 시작"}</Button></div>
   </div>
 }

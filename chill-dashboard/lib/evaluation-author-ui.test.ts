@@ -91,7 +91,7 @@ test("publication copy and historical comparison render unreadable reports witho
     let extra:Record<string,unknown>={unreadable}
     const modules={...primitives,react:{...runner.react,useEffect:()=>{}},
       "@/components/ui/tooltip":Object.fromEntries(["TooltipProvider","Tooltip","TooltipTrigger","TooltipContent"].map(name=>[name,container])),
-      "@/features/evaluation-request":{EvaluationPermission:()=>null},
+      "@/features/evaluation-request":{},
       "@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:(path:string)=>{
         const offset=Number(new URLSearchParams(path.split("?")[1]).get("offset")??0)
         return {data:path.startsWith("v1/experiments?")?experimentHelpers.decodeExperimentPage(JSON.stringify({items:[],...extra,page:{offset,limit:5,total:6,...(offset===0?{nextOffset:5}:{})}})):undefined}
@@ -116,7 +116,7 @@ test("publication copy and historical comparison render unreadable reports witho
     }
   }
 })
-test("load PUT denial preserves operator permission status and keeps the draft editable",async()=>{
+test("403 server permission messages render in both experiment and load forms without locking the draft",async()=>{
   class ApiError extends Error {
     status:number
     body:string
@@ -127,7 +127,7 @@ test("load PUT denial preserves operator permission status and keeps the draft e
   let gets=0
   const client={ApiError,useChillMutation:()=>({isPending:false,mutateAsync:async(input:{path:string;method:string})=>{
     if(input.path.endsWith("/preflight"))return {data:{checks:[{id:"server",passed:true}]}}
-    throw new ApiError(403,"Forbidden",null)
+    throw new ApiError(403,"Forbidden",{message:"needs role X"})
   }}),useChillQuery:(path:string)=>({data:path==="v1/evaluations/load-scenarios/load"?source:undefined,refetch:async()=>{gets++;return {data:source,error:null}}})}
   const parent=hookRunner(),child=hookRunner()
   const modules={...primitives,react:parent.react,"@/lib/client":client,"@/components/evaluation-author-fields":{AuthorSelect:"select",AuthorField:"input",AuthorJSON:"textarea",AuthorHelp:"help",EvidencePicker:"select",useUnsavedAuthor:()=>{}}}
@@ -145,9 +145,14 @@ test("load PUT denial preserves operator permission status and keeps the draft e
   ;(save.props.onClick as ()=>void)()
   await setImmediate()
   tree=child.render(Component,editor.props)
-  assert.equal(elements(tree).find(element=>element.type==="output")?.props.children,"권한 없음(실험 운영자)")
+  assert.match(String(elements(tree).find(element=>element.type==="output")?.props.children),/needs role X/)
   assert.equal(elements(tree).find(element=>element.type==="fieldset")?.props.disabled,false)
   assert.equal(gets,0,"a definitive denial is not an unknown replacement outcome")
+  const runner=hookRunner(),error=new ApiError(403,"Forbidden",{message:"needs role X"})
+  const {EvaluationSubmit}=load("../features/evaluation-request.tsx",{...primitives,react:runner.react,"@/lib/client":{...client,useChillMutation:()=>({error})}})
+  const experiment=elements(runner.render(EvaluationSubmit,{name:"run",spec:{}}))
+  const failure=experiment.find(element=>element.props.error===error)!
+  assert.match(renderToStaticMarkup(createElement(failure.type as ComponentType<{error:ApiError}>,{error})),/>needs role X</)
 })
 
 test("invalid definition JSON keeps the editor on the original until repaired",()=>{
@@ -312,15 +317,6 @@ test("R17b: author help uses constraint rows and evidence options use server nam
   assert.ok(picker.some(element=>element.type==="details"))
 })
 
-test("R17b: evaluation writes disclose the required role without claiming an unverified permission",()=>{
-  const {EvaluationPermission}=load("../features/evaluation-request.tsx",primitives)
-  const unknown=elements(EvaluationPermission({}))
-  assert.ok(unknown.some(element=>element.props.children==="평가 운영자"))
-  assert.ok(unknown.some(element=>element.props.children==="미확인"))
-  const denied=elements(EvaluationPermission({denied:true}))
-  assert.ok(denied.some(element=>element.props.children==="권한 없음"))
-  assert.ok(!denied.some(element=>element.props.children==="허용"))
-})
 
 test("R17b: result detail retains preparation outcome and separates candidate and baseline results",()=>{
   const runner=hookRunner(),params=new URLSearchParams("a=publication")
@@ -369,7 +365,7 @@ test("R17b: result detail retains preparation outcome and separates candidate an
 })
 
 test("R17b: template missing inputs stay visible while copied question text is folded as original",async()=>{
-  const runner=hookRunner(),modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:{items:[],page:{offset:0,limit:25,total:0}},refetch:async()=>({data:{spec:{question:""},sources:{target:"none",harness:"latestPublication"},sourcePublication:{uid:"published-uid",name:"published-name"}}})})},"@/features/evaluation-request":{EvaluationPermission:"permission",EvaluationSubmit:"submit"}}
+  const runner=hookRunner(),modules={...primitives,react:{...runner.react,useEffect:()=>{}},"@/lib/client":{useSession:()=>({config:{maxPageSize:25}}),useChillQuery:()=>({data:{items:[],page:{offset:0,limit:25,total:0}},refetch:async()=>({data:{spec:{question:""},sources:{target:"none",harness:"latestPublication"},sourcePublication:{uid:"published-uid",name:"published-name"}}})})},"@/features/evaluation-request":{EvaluationSubmit:"submit"}}
   const {EvaluationAuthor}=load("../features/evaluation-author.tsx",modules)
   let tree=elements(runner.render(EvaluationAuthor))
   await (tree.find(element=>element.type==="button"&&element.props.children==="빈 템플릿")!.props.onClick as ()=>Promise<void>)()
