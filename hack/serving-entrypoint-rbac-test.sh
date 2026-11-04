@@ -106,11 +106,14 @@ if config:
         ("chill-system", "", "pods", "get", ()),
         ("chill-system", "", "pods/log", "get", ()),
         ("chill-system", "", "pods/exec", "create", ()),
+        ("chill-system", "", "services", "get", ()),
+        ("chill-system", "", "services", "list", ()),
         ("chill-system", "edge.dacs.io", "loadscenarios", "get", ()),
         ("chill-system", "edge.dacs.io", "evaluationstages/status", "get", ()),
         ("chill-system", "edge.dacs.io", "evaluationstages/status", "patch", ()),
         ("chill-system", "apps", "deployments", "get", ()),
         ("*", "", "nodes", "get", ()),
+        ("*", "", "nodes", "list", ()),
         ("*", "", "pods", "list", ()),
     } | {
         ("*", "edge.dacs.io", resource, "get", ()) for resource in ("workloads", "datasets", "preprocessors")
@@ -121,7 +124,7 @@ if config:
         expected.add((settings_binding["metadata"]["namespace"], "", "configmaps", "update", ("chill-scheduler",)))
     assert resources == expected, ("evaluation action resource permissions differ", resources ^ expected)
     expected_urls = {("get", "/chill/api/v1/" + path) for path in (
-        "workloads", "workloads/*", "scheduler/settings", "observations/power", "observations/raw", "observations/raw/*"
+        "workloads", "workloads/*", "scheduler", "scheduler/settings", "observations/power", "observations/raw", "observations/raw/*"
     )} | {("put", "/chill/api/v1/scheduler/settings")}
     assert urls == expected_urls, ("evaluation action public URLs differ", urls ^ expected_urls)
     assert effective(config["data"]["publishServiceAccount"]) == (set(), set()), "publisher acquired API rights"

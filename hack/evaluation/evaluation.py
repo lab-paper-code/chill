@@ -18,6 +18,7 @@ import input_snapshot
 import evidence_io
 import judgment
 import publication
+import live
 
 HERE=Path(__file__).resolve().parent
 REPO=HERE.parent.parent
@@ -111,6 +112,7 @@ class Harness:
         input_snapshot.check_fleet(self, self.spec)
         self.controller().factor()
     def stage(self):
+        live.start_gate(self)
         controller = self.controller()
         input_snapshot.check_target(self, self.spec['target'])
         input_snapshot.check_fleet(self, self.spec)
@@ -181,7 +183,13 @@ class Harness:
             input_snapshot.save(self.root/'execution-spec.json',self.spec)
             input_snapshot.save(self.root/'execution.json',self.execution)
             if step!='prepare' and not (step in ('finish','publish') and self.execution.get('prepareCompleted') is False): input_snapshot.open_snapshot(self)
-            getattr(self,step.replace('-','_'))()
+            watcher = live.start_watcher(self, step) if step in ('stage', 'finish') else None
+            try:
+                getattr(self,step.replace('-','_'))()
+            finally:
+                if watcher is not None:
+                    watcher.terminate()
+                    watcher.wait()
             reason=self.reason
         except Exception as error:
             status='Failed';candidate=str(error).split(':',1)[0]

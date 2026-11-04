@@ -61,6 +61,24 @@ operator:
 # Provision the referenced Secrets separately; the chart never creates credentials.
 evaluation:
   enabled: false
+  # Independent evidence store; credentials Secret is provisioned separately.
+  store:
+    enabled: false
+    name: chill-evaluation-store
+    image: docker.io/versity/versitygw@sha256:ce219220afa631b77d60a6f9edcb1e94febb16a8c6450991986bff8508423138
+    bootstrapImage: 155.230.35.213:5000/chill/evidence-store-client@sha256:5df44fc881a8e3e155aaa316c5714f483ef029593a0ed2730c021374135bdd8d
+    imagePullPolicy: IfNotPresent
+    bucket: chill-evaluation-evidence
+    region: us-east-1
+    storageClassName: rook-cephfs
+    storageSize: 256Gi
+    credentialsSecret: chill-evaluation-store-credentials
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
+    bootstrapResources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {cpu: 200m, memory: 128Mi}
   config:
     actionServiceAccount: chill-evaluation-action
     publishServiceAccount: chill-evaluation-publish

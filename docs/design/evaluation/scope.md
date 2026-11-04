@@ -41,13 +41,15 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 - gateway·observer 관측으로 평가자 증거를 보충·보정하는 것.
   - 사례(2026-11-04): 한 단계에서 IC producer stdout 꼬리가 수집 중 끊겼다. 같은 요청 전체가 gateway raw에는 있었다. 결정은 gateway 행으로 client 행을 복원하지 않는 것이다. 손실은 `collectionLoss`로 드러내고, 분모와 판정식은 그대로 둔다. 원인은 conductor 수집 경로에서 고친다.
 
+진단 기록은 허용한다. CHILL이 공개한 상태(scheduler 결정, Fixed/Pending 사유, 인스턴스·노드 상태)를 Run 근거로 남길 수 있지만, 판정·보정에는 쓰지 않는다.
+
 ### 결정 (2026-11-04 사용자)
 
 | # | 결정 | 적용 |
 |---|---|---|
 | B1 | D1 지연을 client 측정으로 바꾼다. 기준은 MLPerf LoadGen 방식으로, 요청을 보내기로 예정된 시각부터 응답을 받은 시각까지다([MLPerf inference rules](https://github.com/mlcommons/inference_policies/blob/master/inference_rules.adoc)). 늦게 보낸 요청의 발행 지연도 지연에 들어간다. gateway HTTP final `elapsedNanos`는 진단 참고값으로만 남긴다. 현재 구현은 `request_analysis.py` `request_timing`이 gateway 값을 SLO 지연으로 쓴다. | 판정 규칙 변경이다. 회차 3 이후 Run부터 적용하고 judgment 계약 버전을 한 번 올린다(ADR 0019). 회차 1·2 결과는 이전 규칙으로 보존하며 다시 판정하지 않는다. 구현 보류 |
 | B2 | 평가자가 전력계 게이트웨이를 직접 읽는 독립 경로를 추가한다. CHILL observation API를 거치지 않는다. | 구현 보류 |
-| B3 | executor gate를 허용한다. 조건은 정확 일치 유형이 아니고, 실험과 무관한 실패로 시작 전체를 막지 않는 것이다. 현재 응답만 보고, CHILL 동작을 바꾸지 않으며, 제외한 인스턴스는 사유를 기록한다. 점검 대상은 CHILL이 공개한 Ready·routed 인스턴스로 고른다(§2 예외, 공개 `GET /api/v1/scheduler`). Node NotReady는 참여 노드(`loadGenerator.nodeName` ∪ 선언된 전력계 노드 ∪ Run의 대상 워크로드 인스턴스가 있는 노드)만 시작을 막고, 그 밖의 NotReady 노드는 기록만 한다. 점검 대상 executor가 실패하면 시작만 보류하고, 다시 새로 확인한 뒤 시작한다. | refactor-reviewer 감사(2026-11-04 exact-match audit §6) 결과 반영. gate는 저장소 밖 운영 도구(`submit.py`, `gate.json`의 `participatingNodes`·`notReady`·`notReadyNonParticipating`·`excludedExecutors`)이며 main이 적용했다 |
+| B3 | executor gate를 허용한다. 조건은 정확 일치 유형이 아니고, 실험과 무관한 실패로 시작 전체를 막지 않는 것이다. 현재 응답만 보고, CHILL 동작을 바꾸지 않으며, 제외한 인스턴스는 사유를 기록한다. 점검 대상은 CHILL이 공개한 Ready·routed 인스턴스로 고른다(§2 예외, 공개 `GET /api/v1/scheduler`). Node NotReady는 참여 노드(`loadGenerator.nodeName` ∪ 선언된 전력계 노드 ∪ Run의 대상 워크로드 인스턴스가 있는 노드)만 시작을 막고, 그 밖의 NotReady 노드는 기록만 한다. 점검 대상 executor가 실패하면 시작만 보류하고, 다시 새로 확인한 뒤 시작한다. | harness stage 단계 시작에서 실행하고 시도마다 `start-gate.json`을 stage 근거로 남긴다. 재확인 주기·상한은 timeboxes `watchSeconds`·`gateSeconds`, 상한을 넘기면 부하 없이 `TargetUnavailable`로 끝난다 |
 
 ## 3. 소유 계약
 
