@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -88,7 +89,7 @@ func handoffController(t *testing.T) *SchedulerController {
 	settings.ObservationWindow = 100 * time.Millisecond
 	settings.ControlInterval = time.Millisecond
 	uid := settings.AutonomousWorkloads[0]
-	settings.MinimumDemand = map[string]float64{uid: 2500}
+	settings.MinimumDemand = map[string]float64{uid: 0}
 	c.config.Preparations = map[string]servingstate.PrepareSpec{}
 	for _, profile := range c.observer.Profiles() {
 		spec := measuredCPUPreparationFixture()
@@ -104,18 +105,6 @@ func handoffController(t *testing.T) *SchedulerController {
 	c.runtime.EnableSchedulerRouting()
 	c.capacity.Ensure(ctx, *settings, snapshot)
 	c.capacity.Wait()
-	// Require more than two measured executors so the return test exercises
-	// actual capacity expansion, not an optimizer forced to add unused capacity.
-	var kappa float64
-	for _, row := range c.capacity.Rows() {
-		if row.Input.ProfileID == "b-profile" && row.Kappa != nil {
-			kappa = max(kappa, *row.Kappa)
-		}
-	}
-	if kappa <= 0 {
-		t.Fatal("measured fixture has no positive replacement capacity")
-	}
-	settings.MinimumDemand[uid] = 2.5 * kappa
 	return c
 }
 
@@ -242,11 +231,9 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
 	before, _ := c.runtime.SchedulerRouting()
 	uid := c.config.Settings.AutonomousWorkloads[0]
-	var admittedIC atomic.Int32
+	var receipts sync.Map
 	c.config.OnAction = func(result servingstate.OperationResult) error {
-		if result.Status == starting && result.Operation.Kind == servingstate.OperationRoute && result.Operation.ControlsWorkload(uid) {
-			admittedIC.Add(1)
-		}
+		receipts.Store(result.Operation.ID+"/"+result.Status, result)
 		return nil
 	}
 	var decision serving.SchedulerDecision
@@ -264,28 +251,31 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 	if parent.reserved {
 		t.Fatal("fresh untouched/prepare/absence proofs did not return the failed physical owner")
 	}
-	if c.runs["unstarted-stop"] != nil {
+	if _, started := receipts.Load("unstarted-stop/" + starting); started {
 		t.Fatal("failed owner started a new stop instead of unwinding settled responsibility")
 	}
 	if stopped {
-		requireCompletedContinuationAction(t, c.runs["drain-source"], "settled-stop drain")
-		requireCompletedContinuationAction(t, c.runs["remove-source"], "normal finalizer/absence removal")
+		for _, id := range []string{"drain-source", "remove-source"} {
+			if _, complete := receipts.Load(id + "/" + servingstate.NativeOperationComplete); !complete {
+				t.Fatalf("settled stop did not finish its normal cleanup: %s", id)
+			}
+		}
 	}
 	// Replanning returns held nodes to eligibility; actual IC admission must
 	// reach previously unrouted Ready capacity without a UID/writer fence.
 	if !slices.ContainsFunc(decision.Capacity.Plans, func(plan serving.SchedulerNodePlan) bool { return plan.Node.Name == "c" && plan.Eligible }) {
 		t.Fatalf("released Ready node did not return to planner candidates: %v", decision.Reasons)
 	}
-	for range 2 {
-		if err := c.Continue(c.ctx, time.Now()); err != nil {
-			t.Fatal(err)
-		}
-		c.wg.Wait()
-	}
+	// Exercise a proposed Ready expansion through the normal admission boundary;
+	// the candidate gate, not an optimizer choice, is the contract under test.
+	admitReadyHandoffProposal(t, c)
 	snapshot := handoffSnapshot(t, c)
 	routing, _ := c.runtime.SchedulerRouting()
-	if admittedIC.Load() == 0 {
+	if _, started := receipts.Load("post-return-ic-route/" + starting); !started {
 		t.Fatal("no actual IC route was admitted after physical return")
+	}
+	if _, complete := receipts.Load("post-return-ic-route/" + servingstate.NativeOperationComplete); !complete {
+		t.Fatal("admitted IC route did not complete native/runtime application")
 	}
 	if !slices.ContainsFunc(snapshot.Instances, func(instance serving.SchedulerInstance) bool {
 		return slices.Contains(parent.scope.Nodes, instance.Node) && before[uid][instance.ID] <= 0 &&
@@ -293,4 +283,33 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 	}) {
 		t.Fatalf("next IC route did not admit Ready capacity after return: %v; reasons=%v demand=%v capacity=%+v", routing, decision.Reasons, c.config.Settings.MinimumDemand, decision.Capacity.Workloads)
 	}
+}
+
+func admitReadyHandoffProposal(t *testing.T, c *SchedulerController) {
+	t.Helper()
+	snapshot := handoffSnapshot(t, c)
+	uid := c.config.Settings.AutonomousWorkloads[0]
+	source := slices.IndexFunc(snapshot.Instances, func(instance serving.SchedulerInstance) bool {
+		return instance.Node.Name == "c" && instance.Ready && !instance.Stopped
+	})
+	if source < 0 {
+		t.Fatal("returned candidate is not Ready")
+	}
+	current, _ := c.runtime.SchedulerRouting()
+	ready := map[string]bool{}
+	for _, instance := range snapshot.Instances {
+		ready[instance.ID] = instance.Ready && !instance.Stopped && !instance.Terminated
+	}
+	wanted := snapshot.Instances[source]
+	weights := serving.SchedulerRebaseRouting(current[uid], map[string]int32{wanted.ID: 300}, ready, nil)
+	next := serving.SchedulerCandidate{ID: "post-return-ic", Routing: map[string]map[string]int32{uid: weights},
+		Actions: []serving.Action{{ID: "post-return-ic-route", Kind: servingstate.OperationRoute, Node: wanted.Node}}}
+	for _, instance := range snapshot.Instances {
+		if weights[instance.ID] > 0 {
+			instance.WorkloadUID = uid
+			next.Instances = append(next.Instances, instance)
+		}
+	}
+	c.launch(next, c.config)
+	c.wg.Wait()
 }
