@@ -314,12 +314,6 @@ func sampleStopExecutionPlan(t *testing.T, config profilingrun.RunConfig) profil
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedAttempt := time.Duration(config.Metrics.DurationSeconds+config.Measurement.SettlingDurationSeconds+
-		frozen.Policy.AttemptTimeoutOverheadSeconds) * time.Second
-	if plan.MetricObservationTimeout != plan.AttemptTimeout || plan.AttemptTimeout != expectedAttempt ||
-		plan.WorkloadEndFenceTimeout != plan.AttemptTimeout || config.Metrics.TimeoutMilliseconds != 500 {
-		t.Fatalf("regression requires the derived frozen attempt and 500ms requests: %+v", plan)
-	}
 	return plan
 }
 

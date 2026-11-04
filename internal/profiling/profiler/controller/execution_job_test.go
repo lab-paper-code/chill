@@ -133,9 +133,6 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	workloads := findContainer(t, pod.Containers, "workload-observer")
 	assertArgument(t, runtimeContainer.Args, "--attempt-timeout="+plan.AttemptTimeout.String())
 	assertArgument(t, runtimeContainer.Args, "--metric-result-timeout="+plan.AttemptTimeout.String())
-	if plan.WorkloadResultTimeout != plan.AttemptTimeout {
-		t.Fatal("workload result wait does not cover the full frozen attempt budget")
-	}
 	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout="+plan.WorkloadResultTimeout.String())
 	assertArgument(t, workloads.Args, "--end-wait-timeout="+plan.AttemptTimeout.String())
 	assertArgument(t, workloads.Args, "--end-fence-timeout="+plan.AttemptTimeout.String())

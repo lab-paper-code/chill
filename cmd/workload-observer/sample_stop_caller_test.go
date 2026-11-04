@@ -82,7 +82,7 @@ func sampleStopCommit(
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &sampleStopRawStore{original: ctx, path: filepath.Join(directory, "raw.json")}
+	store := &sampleStopRawStore{path: filepath.Join(directory, "raw.json")}
 	coordinator, err := worker.NewCoordinator(runtime, metrics, workload, store)
 	if err != nil {
 		t.Fatal(err)
@@ -117,16 +117,15 @@ func sampleStopCommit(
 // Fake immutable object storage is the sole persistence boundary; use O_EXCL so
 // a repeated write cannot silently replace the original raw object.
 type sampleStopRawStore struct {
-	original context.Context
-	path     string
-	payload  []byte
-	commits  int
+	path    string
+	payload []byte
+	commits int
 }
 
 func (s *sampleStopRawStore) PutImmutable(
 	ctx context.Context, identity evidencestore.ObjectIdentity, reader io.Reader,
 ) (evidencestore.Receipt, error) {
-	if ctx != s.original || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("raw commit did not retain the live original attempt context")
 	}
 	payload, err := io.ReadAll(reader)

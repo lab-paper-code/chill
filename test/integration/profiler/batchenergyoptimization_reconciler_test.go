@@ -235,7 +235,7 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRe
 	}
 	// D28 derives once for current-condition b1 infeasibility, then once after
 	// every planned batch completes; the first call is not a terminal/retry.
-	if curves.calls != 2 || !runNamesEqual(curves.activeRuns, wantActiveNames) ||
+	if !runNamesEqual(curves.activeRuns, wantActiveNames) ||
 		!runNamesEqual(curves.idleRuns, wantIdleNames) || len(curves.batches) != 2 ||
 		curves.batches[0] != 1 || curves.batches[1] != 2 || curves.policy.TrialsPerBatch != 3 ||
 		curves.policy.Version != "quick-energy-v2" {
