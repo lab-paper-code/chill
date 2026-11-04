@@ -81,6 +81,18 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 | `r` | route 전 사슬의 최대 시간(동작마다 측정 trial 최대 시간) |
 | `B_w` | `q_w + max(0, λ_w − κ_ret,w) × r`. `q_w`는 지금 대기 수 |
 
+`q_w` counts requests not yet observed to have started service: gateway
+`phasePending`, native `phaseQueued`/`phaseDeferred`, and `phaseAssigned` without
+native observation, provided `SchedulerRequest.RemainingLifetime` is nil or
+positive. Assignment reserves a physical slot before native dispatch; it is not
+proof of service start. Observed running and returning work is not backlog.
+The exact deadline accessor is `SchedulerRequest.RemainingLifetime`, projected
+from `Call.receipt.Deadline` at the snapshot clock and tightened by native
+`RemainingLifetimeMS` when present. Expired ownership is not live SLO demand.
+`Outstanding`, occupied slots, current capacity, completion/drain/removal proofs,
+route ownership and handoff fences are unchanged. Arrival history is unchanged;
+only q and its q/window contribution to λ use this waiting-demand projection.
+
 - 최종 충족: `κ_new,w ≥ λ_w`. 초과량 `λ_w / κ_new,w − 1`. λ가 0이어도 켜진 Workload마다 인스턴스 하나 이상이다.
 - 대기 충족: `B_w`가 0이면 충족이다. 아니면 EDF가 밀린 요청을 먼저 처리하므로 가장 오래 기다리는 요청의 대기는 `W_w = B_w / κ_new,w`이고, `W_w ≤ L_w − m`이면 충족이다. 초과량 `W_w / (L_w − m) − 1`. keep(r = 0)도 지금 대기 `q_w`로 같은 판정을 받으므로, 측정 λ가 κ 안이어도 줄지 않는 대기는 확장을 부른다(m4 r3: λ 29.5, κ 34.3, 대기 160에서 keep의 W 4.66 s > 0.861 s). κ는 처리율 μ 이하라 이 대기는 실제보다 길다. 밀린 요청이 다 빠지는 시간 `B_w / (κ_new,w − λ_w)`도 기록한다.
 - 순서: 모든 w에서 두 충족을 만족하는 구성 중 에너지가 작은 것, keep, 논리 구성 key 사전 순. 그런 구성이 없으면 상태는 `Overload`이고, 모든 w에서 최종 충족(가중치의 κ 검사 포함)을 만족하는 구성이 그렇지 않은 구성보다 앞선다. 같은 쪽 안에서는 Workload마다 최종·전환·route 가중치 초과량 중 큰 값을 구하고 내림차순 정렬한 목록을 사전식 최소화한다(leximin: 최악 동률이면 두 번째 최악, 이어 다음). 모든 값이 같을 때만 에너지, keep, 논리 key 순이다. 용량 없음은 +∞ 그대로 비교하며 불가능 Workload를 따로 고정하거나 큰 유한 수로 치환하지 않는다. 기록의 `worstExceedance`는 목록 첫 값의 기존 요약이다. keep은 r = 0이다.
