@@ -78,7 +78,7 @@ class Harness:
         if 'stageID' not in self.execution: config['evaluation'].pop('stageFolder',None)
         path=self.root/'binding.json';input_snapshot.save(path,binding)
         args=SimpleNamespace(binding=path,out=self.root,stage=self.spec.get('row',binding['schedule'][0]['id']))
-        return self.harness_module.CPO(args,go_callback=self.go,provisional_callback=self.provisional)
+        return self.harness_module.CPO(args,go_callback=self.go,provisional_callback=self.provisional,progress_callback=self.progress)
     def go(self,value):
         value.update({key:self.execution[key] for key in ('runUID','stageUID','stageID')})
         path=self.root/'measured/go.json';input_snapshot.save(path,value)
@@ -86,10 +86,24 @@ class Harness:
     def provisional(self, value):
         if not self.execution.get('stageName'):
             return
-        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': self.execution['stageUID']},
-                 {'op': 'add', 'path': '/status/provisionalD1', 'value': value}]
+        self.status([{'op': 'add', 'path': '/status/provisionalD1', 'value': value}])
+    def status(self, operations):
+        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': self.execution['stageUID']}, *operations]
         input_snapshot.kubectl(self.execution['namespace'], 'patch', 'evaluationstage', self.execution['stageName'],
                                '--subresource=status', '--type=json', '-p', json.dumps(patch))
+    def progress(self, phase=None, at=None, initialize=False, **facts):
+        now = input_snapshot.now()
+        operations = [{'op': 'add', 'path': '/status/lastProgressAt', 'value': now}]
+        if initialize:
+            operations.append({'op': 'add', 'path': '/status/progress', 'value': []})
+        if phase:
+            record = {'phase': phase, 'at': at or now, **facts}
+            print('EVALUATION_PROGRESS ' + json.dumps(record), flush=True)
+            operations.append({'op': 'add', 'path': '/status/progress/-', 'value': record})
+        try:
+            self.status(operations)
+        except Exception as error:
+            print('EVALUATION_PROGRESS_ERROR ' + json.dumps({'at': now, 'error': str(error)}), flush=True)
     def factor(self):
         input_snapshot.check_fleet(self, self.spec)
         self.controller().factor()
@@ -119,11 +133,13 @@ class Harness:
              {'startSkewNanos': skew, 'maximumStartSkewNanos': self.spec['loadGenerator']['barrier']['maxStartSkewNanos'],
               'accepted': skew <= self.spec['loadGenerator']['barrier']['maxStartSkewNanos']})
     def judge(self):
+        self.progress('judgeStarted')
         controller_binding=self.root/'binding.json';folder=self.root/'measured'
         if self.spec.get('failureInjection'): self.injections(folder)
         self.measurement=publication.verdict(judgment.judge(controller_binding,folder))
         if not input_snapshot.load(folder/'generator-barrier.json')['accepted']:
             self.measurement={'verdict':'INVALID','reason':'GeneratorInvalid'}
+        self.progress('judgeEnded')
     def injections(self,folder):
         records=[]
         for plan in self.spec['failureInjection']:

@@ -816,16 +816,19 @@ class EvaluationTests(unittest.TestCase):
             go = []
             controller.go_callback = go.append
             controller.provisional_callback = None
+            signals = []
+            controller.progress_callback = lambda phase=None, at=None, **facts: signals.append({'phase': phase, 'at': at, **facts})
             ready = {'evaluationEvent': 'ready', 'at': START, 'barrierSeconds': 10000000000,
                      'offered': 1, 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
                      'datasetRef': {'name': 'different-provenance', 'uid': 'different'}, 'sourceSHA': 'different-revision'}
             tail = ('import time;time.sleep(60)\n' if mode in ('watchdog', 'failed-job') else
-                    'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained"}),flush=True)\n')
+                    'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained","at":' + repr(END) + '}),flush=True)\n')
             if mode == 'hot-log':
                 tail = 'sys.stdout.write(\'{"diagnostic":1}\\n\'*50000);sys.stdout.flush()\n' + tail
             script = ('import sys,json\nprint(' + repr(json.dumps(ready)) + ',flush=True)\nsys.stdin.readline()\n'
-                      'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n' + tail)
+                      'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n'
+                      'print(json.dumps({"evaluationEvent":"window-end","at":' + repr(END) + '}),flush=True)\n' + tail)
             pod = {'metadata': {'name': 'producer', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]},
                    'status': {'phase': 'Running', 'containerStatuses': [
                        {'name': 'load', 'containerID': 'container', 'imageID': spec['loadGenerator']['image'], 'restartCount': 0, 'state': {'running': {'startedAt': START}}}]}}
@@ -866,7 +869,7 @@ class EvaluationTests(unittest.TestCase):
                 if name == 'evaluation_auth':
                     return SimpleNamespace(lifetime_budget=auth.lifetime_budget, check=lambda *args, **kwargs: {'accepted': True})
                 if name == 'evaluation_archive':
-                    return SimpleNamespace(collect=lambda *args: {'status': 'CAPTURED_NOT_EVALUATED'})
+                    return SimpleNamespace(collect=lambda *args: {'status': 'CAPTURED_NOT_EVALUATED', 'raw': [{'bytes': 17}, {'bytes': 25}]})
                 return original_module(name, path)
             evidence_io.save(root / 'settings-patch.json', {'accepted': True})
             clock = conductor.time.monotonic
@@ -891,6 +894,15 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(phase['diagnosticErrors'])
             self.assertTrue((root / 'measured/collected.json').exists())
             self.assertFalse((root / 'measured' / (NAME + '-client-end-counter.json')).exists())
+            boundaries = [signal for signal in signals if signal['phase']]
+            self.assertEqual([signal['phase'] for signal in boundaries],
+                             ['loadStarted', 'loadEnded', 'drainStarted', 'drainEnded', 'flushStarted', 'collectStarted', 'collectEnded'])
+            self.assertEqual(boundaries[0]['at'], START)
+            self.assertEqual(boundaries[1]['at'], END)
+            self.assertEqual(boundaries[3]['producerRowsMissing'], {NAME: 0 if mode in ('normal', 'hot-log') else 1})
+            self.assertEqual(boundaries[-1]['bytes'], 42)
+            self.assertTrue(any(signal['phase'] is None for signal in signals), 'each producer poll must signal heartbeat')
+            self.assertEqual(sum(signal['phase'] is None and not signal.get('initialize') for signal in signals), len(job_polls) - (1 if mode in ('normal', 'hot-log') else 0))
             if mode == 'hot-log':
                 self.assertLessEqual(len(job_polls), 2, 'hot log reads must not bypass the configured producer polling interval')
 
@@ -1190,6 +1202,35 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(result['D1'], 'OBSERVED_THRESHOLD_MET')
             self.assertEqual(result['issuanceFidelity']['issued'], 2)
             self.assertGreater(result['issuanceFidelity']['invalidScheduleRows'], 0)
+
+    def test_progress_status_appends_boundaries_and_heartbeats_without_changing_d1(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness = object.__new__(evaluation.Harness)
+            harness.root = Path(directory)
+            harness.spec = {}
+            harness.execution = {'namespace': 'ns', 'stageName': 'stage', 'stageUID': 'stage-uid'}
+            evidence_io.save(harness.root / 'measured/generator-barrier.json', {'accepted': True})
+            status = {'progress': [], 'provisionalD1': {'asOf': START}}
+            def kubectl(namespace, *args):
+                self.assertEqual(namespace, 'ns')
+                self.assertEqual(args[:3], ('patch', 'evaluationstage', 'stage'))
+                operations = json.loads(args[-1])
+                self.assertEqual(operations[0], {'op': 'test', 'path': '/metadata/uid', 'value': 'stage-uid'})
+                for operation in operations[1:]:
+                    if operation['path'] == '/status/progress/-':
+                        status['progress'].append(operation['value'])
+                    else:
+                        status[operation['path'][len('/status/'):]] = operation['value']
+            with patch.object(input_snapshot, 'kubectl', side_effect=kubectl), patch.object(input_snapshot, 'now', side_effect=[START, END, END, END]), patch('builtins.print') as log:
+                harness.progress('loadStarted', START)
+                harness.progress()
+                self.assertEqual(status['lastProgressAt'], END)
+                self.assertEqual(status['provisionalD1']['asOf'], START)
+                self.assertEqual(len(status['progress']), 1)
+                with patch.object(evaluation.judgment, 'judge', return_value={}), patch.object(evaluation.publication, 'verdict', return_value={'verdict': 'PASS'}):
+                    harness.judge()
+                self.assertEqual([row['phase'] for row in status['progress']], ['loadStarted', 'judgeStarted', 'judgeEnded'])
+                self.assertEqual([json.loads(call.args[0].split(' ', 1)[1]) for call in log.call_args_list], status['progress'])
 
     def test_provisional_second_poll_updates_and_partial_capture_preserves_it(self):
         with tempfile.TemporaryDirectory() as directory:

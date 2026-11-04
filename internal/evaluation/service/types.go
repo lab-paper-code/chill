@@ -7,6 +7,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	loadJobActive    = "Active"
+	loadJobSucceeded = "Succeeded"
+	loadJobFailed    = "Failed"
+)
+
 type EvaluationRequest struct {
 	Name string
 	Spec api.EvaluationRunSpec
@@ -73,6 +79,17 @@ type EvaluationStage struct {
 	FinishedAt         *metav1.Time
 	GoAt               *metav1.Time
 	ProvisionalD1      *api.EvaluationProvisionalD1
+	Progress           []api.EvaluationStageProgress
+	LastProgressAt     string
+	LoadJobs           []EvaluationLoadJob
+}
+type EvaluationLoadJob struct {
+	Name        string
+	UID         string
+	Status      string
+	StartedAt   *metav1.Time
+	CompletedAt *metav1.Time
+	Reason      string
 }
 type ActiveEvaluation struct {
 	Name        string

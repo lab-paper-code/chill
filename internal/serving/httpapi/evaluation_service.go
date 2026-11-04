@@ -95,8 +95,21 @@ func evaluationViewDTO(value evaluation.EvaluationView) EvaluationView {
 				CurrentProcedure: stage.CurrentProcedure, Procedures: evaluationProceduresDTO(stage.Procedures),
 				StartedAt: stage.StartedAt, FinishedAt: stage.FinishedAt, GoAt: stage.GoAt,
 				ProvisionalD1: stage.ProvisionalD1,
+				Progress:      stage.Progress, LastProgressAt: stage.LastProgressAt,
+				LoadJobs: evaluationLoadJobsDTO(stage.LoadJobs),
 			}
 		}
+	}
+	return result
+}
+
+func evaluationLoadJobsDTO(values []evaluation.EvaluationLoadJob) []EvaluationLoadJob {
+	if values == nil {
+		return nil
+	}
+	result := make([]EvaluationLoadJob, len(values))
+	for i, value := range values {
+		result[i] = EvaluationLoadJob(value)
 	}
 	return result
 }

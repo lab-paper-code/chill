@@ -249,7 +249,7 @@ class ProvisionalD1:
 
 
 class CPO:
-    def __init__(self, args, *, go_callback=None, provisional_callback=None):
+    def __init__(self, args, *, go_callback=None, provisional_callback=None, progress_callback=None):
         self.a, self.out = args, Path(args.out)
         self.b = evidence_io.load_binding(args.binding)
         self.c = self.b['config']
@@ -259,7 +259,14 @@ class CPO:
         self.api = self.io.api
         self.go_callback = go_callback
         self.provisional_callback = provisional_callback
+        self.progress_callback = progress_callback
         self.residuals = []
+
+    def progress(self, phase=None, at=None, **facts):
+        if self.progress_callback:
+            self.progress_callback(phase, at, **facts)
+        elif phase:
+            print('EVALUATION_PROGRESS ' + json.dumps({'phase': phase, 'at': at or evidence_io.now(), **facts}), flush=True)
 
     def disk_boundary(self, *args):
         usage = os.statvfs(self.out)
@@ -407,11 +414,13 @@ class CPO:
         budget = auth.lifetime_budget([stage], self.tb, self.c.get('tokenSafetyMarginSeconds', 60))
         evidence_io.save(self.out / 'token-preflight.json', auth.check(self.c['tokenFile'], budget, endpoint=self.c['endpoint'], ca_file=self.c['caFile']))
         folder.mkdir(parents=True)
+        self.progress(initialize=True)
         phase = {'failurePolicy': 'v2', 'stage': stage, 'status': 'RUNNING', 'starts': {}, 'startUTC': None, 'endUTC': None,
                  'sourceObservations': {'declared': self.b['sources'], 'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')},
                  'drain': {'complete': False, 'reasons': []}}
         self.observe_generators(folder)
         jobs, pods, streams, buffers, ready, drained = {}, {}, [], {}, {}, set()
+        window_ends, final_rows = {}, dict.fromkeys(self.ws, 0)
         selector = selectors.DefaultSelector()
         deadline = time.monotonic() + self.tb['setupSeconds'] + self.tb['barrierSeconds']
         try:
@@ -468,6 +477,7 @@ class CPO:
                             evidence_io.save(folder / ('terminal-' + name + '.json'), current)
                             raise RuntimeError('ProducerFailed: ' + job['metadata']['name'] + ' (' + name + ')')
                     last_producer_poll = time.monotonic()
+                    self.progress()
                 for key, _ in selector.select(.2):
                     name, output = key.data
                     try:
@@ -488,6 +498,8 @@ class CPO:
                             phase.setdefault('clientLogErrors', []).append({'producer': name, 'error': str(error)})
                             continue
                         event = row.get('evaluationEvent')
+                        if type(row.get('requestIndex')) is int and 'finishedMonotonicNS' in row:
+                            final_rows[name] += 1
                         if event == 'ready':
                             trace = stage['traces'][name]
                             if name in ready or row['offered'] != trace['offered'] or row['arrivalSHA256'] != trace['arrivalSHA256'] or not row['payload']:
@@ -498,6 +510,14 @@ class CPO:
                             if not released or name in phase['starts']:
                                 raise RuntimeError('IdentityMismatch: producer start protocol')
                             phase['starts'][name] = row
+                            if len(phase['starts']) == 1:
+                                self.progress('loadStarted', row['at'])
+                        elif event == 'window-end':
+                            window_ends[name] = row['at']
+                            if len(window_ends) == len(jobs):
+                                at = max(window_ends.values(), key=evidence_io.timestamp_ns)
+                                self.progress('loadEnded', at)
+                                self.progress('drainStarted', at)
                         elif event == 'drained':
                             drained.add(name)
                     if not chunk:
@@ -575,9 +595,15 @@ class CPO:
             phase.update(drainedUTC=evidence_io.now(), status='DRAINED_NOT_EVALUATED' if phase['drain']['complete'] else 'PARTIAL_DRAIN_NOT_EVALUATED',
                          drainScope='Drain completion is independent of diagnostic CPU/throttle counters')
             evidence_io.save(folder / 'phase.json', phase)
+            producer_rows_missing = {name: 0 if name in drained else max(0, stage['traces'][name]['offered'] - final_rows[name]) for name in self.ws}
+            self.progress('drainEnded', phase['drainedUTC'], producerRowsMissing=producer_rows_missing)
+            self.progress('flushStarted')
             time.sleep(self.tb['flushSeconds'])
             archive = evidence_io.module('evaluation_archive', HERE / 'archive.py')
-            evidence_io.save(folder / 'collected.json', archive.collect(folder, phase, self.c['collection'], self.io, self.tb['collectSeconds']))
+            self.progress('collectStarted')
+            collected = archive.collect(folder, phase, self.c['collection'], self.io, self.tb['collectSeconds'])
+            evidence_io.save(folder / 'collected.json', collected)
+            self.progress('collectEnded', bytes=sum(source['bytes'] for source in collected['raw']))
         except Exception as error:
             phase.update(status='STOP', error=str(error), failureUTC=evidence_io.now())
             for name, job in jobs.items():

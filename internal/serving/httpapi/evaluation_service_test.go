@@ -9,6 +9,7 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	evaluation "github.com/lab-paper-code/chill/internal/evaluation/service"
+	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -23,6 +24,9 @@ func TestEvaluationViewFlattensStatus(t *testing.T) {
 	}
 	scheme := runtime.NewScheme()
 	if err := api.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
@@ -79,6 +83,9 @@ func TestEvaluationViewProjectsOnlyRecordedLiveTarget(t *testing.T) {
 			if err := api.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}
+			if err := batchv1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
 			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()
 			s := evaluation.New(native, native, "ns", nil)
 			value, err := s.Get(context.Background(), "run")
@@ -108,6 +115,11 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 		Spec:       api.EvaluationStageSpec{StageID: "first"},
 		Status: api.EvaluationStageStatus{
 			CurrentProcedure: "stage", StartedAt: &start, GoAt: &start,
+			Progress: []api.EvaluationStageProgress{
+				{Phase: "loadStarted", At: "2026-11-04T01:00:01.123456789Z"},
+				{Phase: "drainEnded", At: "2026-11-04T01:01:00Z", ProducerRowsMissing: map[string]int64{"workload": 1}, CollectionLoss: map[string]int64{"workload": 1}},
+			},
+			LastProgressAt: "2026-11-04T01:01:05.123456789Z",
 			ProvisionalD1: &api.EvaluationProvisionalD1{
 				AsOf: "2026-11-04T01:00:59.123456789Z", ClosedThrough: "2026-11-04T01:00:00Z", Provisional: true,
 				Workloads: map[string]api.EvaluationProvisionalRequests{
@@ -133,7 +145,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 		Spec:       api.EvaluationStageSpec{StageID: "second"},
 	}
 	run := &api.EvaluationRun{
-		ObjectMeta: metav1.ObjectMeta{Name: "run", Namespace: "ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: "run", Namespace: "ns", UID: "run-uid"},
 		Status: api.EvaluationRunStatus{
 			CurrentProcedure: "prepare",
 			Procedures: []api.EvaluationProcedure{
@@ -146,6 +158,11 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 		},
 	}
 	unreferenced := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "ns", UID: "other-uid"}}
+	loadJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: "load-first", Namespace: "ns", UID: "load-uid",
+		Labels:          map[string]string{"edge.dacs.io/workload-role": "load-generator", api.EvaluationLabelRunUID: "run-uid", api.EvaluationLabelStage: "first"},
+		OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(first, api.GroupVersion.WithKind("EvaluationStage"))},
+	}, Status: batchv1.JobStatus{StartTime: &start}}
 	for _, test := range []struct {
 		name string
 		run  *api.EvaluationRun
@@ -161,6 +178,9 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 				 "provisionalD1":{"asOf":"2026-11-04T01:00:59.123456789Z","closedThrough":"2026-11-04T01:00:00Z","provisional":true,
 					"workloads":{"workload":{"offered":2,"deadlineSuccess":1,"requiredSuccessfulRank":2,"outcomes":{"completed":1},
 						"unfinishedOrUnsent":1,"slo":{"percentile":95,"targetLatencyNanos":1},"reachable":true,"substages":[]}},"generatorQuality":{}},
+				 "progress":[{"phase":"loadStarted","at":"2026-11-04T01:00:01.123456789Z"},{"phase":"drainEnded","at":"2026-11-04T01:01:00Z","producerRowsMissing":{"workload":1},"collectionLoss":{"workload":1}}],
+				 "lastProgressAt":"2026-11-04T01:01:05.123456789Z",
+				 "loadJobs":[{"name":"load-first","uid":"load-uid","status":"Active","startedAt":"2026-11-04T01:00:00Z"}],
 				 "procedures":[
 					{"step":"factor","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"RecordedReason","measurementVerdict":"PASS"},
 					{"step":"stage","startedAt":"2026-11-04T01:01:00Z","finishedAt":null}
@@ -183,7 +203,10 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 			if err := api.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}
-			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(test.run, first, second, unreferenced).Build()
+			if err := batchv1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(test.run, first, second, unreferenced, loadJob).Build()
 			var config HandlerConfig
 			ConfigureEvaluations(&config, evaluation.New(native, native, "ns", nil))
 			detail, err := config.GetEvaluation(context.Background(), test.run.Name)
@@ -224,6 +247,9 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 func TestEvaluationCollectionEnvelopesKeepEmptyArrays(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := api.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	native := fake.NewClientBuilder().WithScheme(scheme).Build()

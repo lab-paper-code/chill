@@ -275,10 +275,35 @@ type EvaluationIssuanceFidelity struct {
 	GeneratorQuality          EvaluationGeneratorQuality `json:"generatorQuality"`
 }
 
+// EvaluationStageProgress records an observed harness boundary, not a verdict.
+type EvaluationStageProgress struct {
+	// +kubebuilder:validation:Enum=loadStarted;loadEnded;drainStarted;drainEnded;flushStarted;collectStarted;collectEnded;judgeStarted;judgeEnded
+	Phase string `json:"phase"`
+	// +kubebuilder:validation:Format=date-time
+	At string `json:"at"`
+	// ProducerRowsMissing counts planned requests without producer final rows at drain end.
+	// +optional
+	ProducerRowsMissing map[string]int64 `json:"producerRowsMissing,omitempty"`
+	// CollectionLoss contains per-workload producer capture loss counts, when recorded.
+	// +optional
+	CollectionLoss map[string]int64 `json:"collectionLoss,omitempty"`
+	// Bytes is the number of collected raw artifact bytes written, not wire bytes.
+	// +optional
+	Bytes *int64 `json:"bytes,omitempty"`
+}
+
 type EvaluationStageStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +optional
 	ProvisionalD1 *EvaluationProvisionalD1 `json:"provisionalD1,omitempty"`
+	// Progress preserves harness observation order; absent boundaries are not inferred.
+	// +optional
+	// +listType=atomic
+	Progress []EvaluationStageProgress `json:"progress,omitempty"`
+	// LastProgressAt is the latest harness signal, independent of provisionalD1.asOf.
+	// +optional
+	// +kubebuilder:validation:Format=date-time
+	LastProgressAt string `json:"lastProgressAt,omitempty"`
 	// +optional
 	// +listType=map
 	// +listMapKey=type
