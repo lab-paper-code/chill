@@ -1037,8 +1037,12 @@ class EvaluationTests(unittest.TestCase):
                      'offered': len(config['traceOffsets'][NAME]), 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
                      'datasetRef': {'name': 'different-provenance', 'uid': 'different'}, 'sourceSHA': 'different-revision'}
+            if mode == 'drain-progress':
+                tail_drain = 'import time;time.sleep(.3)\n'
             tail = ('import time;time.sleep(60)\n' if mode in ('watchdog', 'failed-job', 'late-reader-error') else
                     'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained","at":' + repr(END) + '}),flush=True)\n')
+            if mode == 'drain-progress':
+                tail = tail_drain + tail
             if mode == 'hot-log':
                 tail = 'sys.stdout.write(\'{"diagnostic":1}\\n\'*50000);sys.stdout.flush()\n' + tail
             if mode in ('slow-reducer', 'slow-status'):
@@ -1054,6 +1058,7 @@ class EvaluationTests(unittest.TestCase):
                         'import time;time.sleep(60)\n')
             script = ('import sys,json\nprint(' + repr(json.dumps(ready)) + ',flush=True)\nsys.stdin.readline()\n'
                       'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n'
+                      + ('import time;time.sleep(.3)\n' if mode == 'drain-progress' else '') +
                       'print(json.dumps({"evaluationEvent":"window-end","at":' + repr(END) + '}),flush=True)\n' + tail)
             pod = {'metadata': {'name': 'producer', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]},
                    'status': {'phase': 'Running', 'containerStatuses': [
@@ -1142,12 +1147,20 @@ class EvaluationTests(unittest.TestCase):
                 original_capture(capture, source)
                 capture.error = OSError('late reader failure')
             with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(evidence_io, 'module', side_effect=modules), patch.object(conductor.time, 'monotonic', side_effect=(lambda: 100) if mode == 'hot-log' else clock):
-                slow = patch.object(conductor.ProvisionalD1, 'poll', side_effect=slow_reducer) if mode == 'slow-reducer' else patch.object(conductor.ProvisionalD1, 'poll', return_value=None)
+                polls = []
+                slow = (patch.object(conductor.ProvisionalD1, 'poll', side_effect=slow_reducer) if mode == 'slow-reducer' else
+                        patch.object(conductor.ProvisionalD1, 'poll', side_effect=lambda _phase: polls.append([s['phase'] for s in signals])) if mode == 'drain-progress' else
+                        patch.object(conductor.ProvisionalD1, 'poll', return_value=None))
                 with slow:
                     late = patch.object(conductor.ProducerLog, 'capture', new=fail_after_stream_ends) if mode == 'late-reader-error' else patch.object(controller, 'monitor', controller.monitor)
                     status = patch.object(input_snapshot, 'kubectl', side_effect=slow_status) if mode == 'slow-status' else nullcontext()
                     with late, status:
                         result = self.finish_stage_policy(controller, mode, process, root, go, jobs, job_polls, signals, publications)
+                    if mode == 'drain-progress':
+                        # RUN-3: no live-D1 reparse once load ended, so the drain-time publish carries its boundaries.
+                        self.assertTrue(polls, 'provisional D1 must still run during load')
+                        self.assertFalse([seen for seen in polls if 'loadEnded' in seen], 'provisional reparse ran during drain')
+                        self.assertIn(3, publications, 'drain boundaries must be published before drainEnded')
                     if mode == 'slow-status':
                         self.assertEqual(len(blocked), 1, 'the actual status publisher must block once after GO')
                         self.assertGreaterEqual(blocked[0]['statusBlockedSeconds'], 60)
@@ -1176,7 +1189,7 @@ class EvaluationTests(unittest.TestCase):
         controller.run()
         process[0].stdin.close()
         phase = evidence_io.load(root / 'measured/phase.json')
-        self.assertEqual(phase['status'], 'DRAINED_NOT_EVALUATED' if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status') else 'PARTIAL_DRAIN_NOT_EVALUATED')
+        self.assertEqual(phase['status'], 'DRAINED_NOT_EVALUATED' if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status', 'drain-progress') else 'PARTIAL_DRAIN_NOT_EVALUATED')
         self.assertEqual(set(phase['starts']), {NAME})
         self.assertTrue(phase['diagnosticErrors'])
         self.assertTrue((root / 'measured/collected.json').exists())
@@ -1197,10 +1210,10 @@ class EvaluationTests(unittest.TestCase):
                          ['loadStarted', 'loadEnded', 'drainStarted', 'drainEnded', 'flushStarted', 'collectStarted', 'collectEnded'])
         self.assertEqual(boundaries[0]['at'], START)
         self.assertEqual(boundaries[1]['at'], END)
-        expected_missing = (0 if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status') else 3 if mode == 'late-watchdog-rows' else 1)
+        expected_missing = (0 if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status', 'drain-progress') else 3 if mode == 'late-watchdog-rows' else 1)
         self.assertEqual(boundaries[3]['producerRowsMissing'], {NAME: expected_missing})
         self.assertEqual(boundaries[-1]['bytes'], 42)
-        self.assertEqual(len(publications) - 4, len(job_polls) - (2 if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status') else 1))
+        self.assertEqual(len(publications) - 4, len(job_polls) - (2 if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status', 'drain-progress') else 1))
         self.assertEqual(publications[-4:], [4, 5, 6, 7], 'post-ingestion boundaries publish once each')
 
     def test_stop_cleanup_tail_is_in_final_phase_without_replacing_primary_error(self):
@@ -1289,6 +1302,9 @@ class EvaluationTests(unittest.TestCase):
     def test_status_publish_blocked_60_seconds_does_not_block_producer_capture(self):
         self.exercise_stage_policy('slow-status')
 
+
+    def test_drain_boundaries_publish_without_provisional_reparse(self):
+        self.exercise_stage_policy('drain-progress')
     def test_missing_cpu_samples_and_provenance_labels_do_not_gate_go_or_drain(self):
         self.exercise_stage_policy('normal')
 
