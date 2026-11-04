@@ -61,6 +61,17 @@ test("selected decision capacity renders recorded diagnostics without inventing 
   assert.equal(nodes(tree).some(node=>node.type==="badge"),false)
 })
 
+test("capacity demand labels the recorded planning floor rather than zero observed traffic",()=>{
+  const screen=harness().load("../features/scheduler-history.tsx")
+  const decision={search:{loads:[{uid:"idle",inputsPerSecond:0,recentInputsPerSecond:0}]},capacity:{workloads:[{uid:"idle",rate:40,minimumDemand:40,kappaNew:50,kappaRetained:50,scaleDown:{windowMax:40}}]}}
+  const tree=screen.DecisionCapacity({capacity:decision.capacity,headroom:.25,names:new Map()})
+  const headers=nodes(tree).filter(node=>node.type==="th").map(node=>node.props.children)
+  const cells=nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children)
+  assert.equal(headers[4],"계획 수요 (req/s)")
+  assert.equal(cells[4],"40.0000")
+  assert.equal(headers.includes("최근 수요 (req/s)"),false)
+})
+
 test("judgment history defaults to decision/action on the server, not mixed power records",()=>{
   const h=harness(),screen=h.load("../features/scheduler-history.tsx")
   screen.SchedulerHistoryPage({})

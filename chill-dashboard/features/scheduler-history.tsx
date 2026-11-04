@@ -86,8 +86,8 @@ export function DecisionCapacity({capacity,headroom,names}:{capacity?:SchedulerC
   const recorded=(value:unknown):value is number=>typeof value==="number"&&Number.isFinite(value)
   const number=(value:unknown)=>recorded(value)?value.toFixed(4):"미기록"
   return <section className="space-y-2">
-    <h3 className="font-semibold"><span tabIndex={0} title="결정 기록의 진단값이며 평가 판정이 아닙니다. 모든 수치는 req/s입니다. 보호 수요는 기록된 max(수요, windowMax) × (1 + scaleDownHeadroomFraction), 여유는 목표 κ − 보호 수요입니다. 미기록은 0을 뜻하지 않습니다.">선택 계획 용량 근거</span></h3>
-    {!capacity?.workloads?.length?<p>미기록</p>:<div className="overflow-x-auto"><table className="w-full text-sm"><caption className="sr-only">선택 계획의 서비스별 용량 진단 · req/s</caption><thead><tr>{["서비스","목표 κ (req/s)","전환 중 유지 κ (req/s)","보호 수요 (req/s)","최근 수요 (req/s)","windowMax (req/s)","여유 (req/s)"].map(label=><th key={label} scope="col" className="p-2 text-left">{label}</th>)}</tr></thead>
+    <h3 className="font-semibold"><span tabIndex={0} title="결정 기록의 진단값이며 평가 판정이 아닙니다. 모든 수치는 req/s입니다. 계획 수요는 결정이 쓴 유효 수요로, 최근·창 평균 중 큰 값에 대기분을 더하고 최소 수요 하한을 적용한 값입니다. 보호 수요는 기록된 max(계획 수요, windowMax) × (1 + scaleDownHeadroomFraction), 여유는 목표 κ − 보호 수요입니다. 미기록은 0을 뜻하지 않습니다.">선택 계획 용량 근거</span></h3>
+    {!capacity?.workloads?.length?<p>미기록</p>:<div className="overflow-x-auto"><table className="w-full text-sm"><caption className="sr-only">선택 계획의 서비스별 용량 진단 · req/s</caption><thead><tr>{["서비스","목표 κ (req/s)","전환 중 유지 κ (req/s)","보호 수요 (req/s)","계획 수요 (req/s)","windowMax (req/s)","여유 (req/s)"].map(label=><th key={label} scope="col" className="p-2 text-left">{label}</th>)}</tr></thead>
       <tbody>{capacity.workloads.map(row=>{
         const maximum=row.scaleDown?.windowMax
         const protectedDemand=recorded(row.rate)&&recorded(maximum)&&recorded(headroom)?Math.max(row.rate,maximum)*(1+headroom):undefined
