@@ -11,7 +11,7 @@ import type { LiveState } from "@/lib/live"
 import type { PoolsView, PowerModeActuator, SchedulerControllerState, SchedulerAllocation } from "@/lib/read-types"
 import { parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { safeSource } from "@/lib/source-export"
-import { deviceReasons, displayTime, liveReason, routingShare } from "@/lib/live-display"
+import { deviceReasons, displayTime, liveReason } from "@/lib/live-display"
 import { LiveObservation, ObservationAge } from "@/components/observation-age"
 import { SourceJSON, SourceExport, StatusBadge } from "@/components/read-region"
 import { ServingInstance } from "@/components/serving-instance"
@@ -41,9 +41,8 @@ function InstanceRows({row,state,resources}:{row:DeviceRow;state:LiveState;resou
   return <div className="devices-instance-list">{instances.length?instances.map((item,index)=><div className="devices-instance" role="group" aria-label={`물리 인스턴스 ${index+1}`} key={item.id}>
     <div className="devices-instance-label" aria-hidden="true">물리 인스턴스 {index+1}</div>
     {item.services.length?item.services.map(service=>{
-      const share=item.live?undefined:routingShare(resources?.snapshot.routing?.[service.uid]??undefined,item.id)
       return <div className="devices-service-instance" key={service.uid} style={{"--service-color":`var(--chart-${Array.from(service.uid).reduce((sum,char)=>sum+char.charCodeAt(0),0)%5+1})`} as React.CSSProperties}>
-        {item.live?<ServingInstance instance={item.live} workloadUID={service.uid} weights={state.snapshot?.routing[service.uid]} name={service.name||"서비스명 미기록"}/>:<div className="devices-rest-instance"><strong>{service.name||"서비스명 미기록"}</strong><StatusBadge tone={item.stopped||item.ready===null?"idle":item.ready?"ok":"warn"}>{item.stopped?"중단":item.ready===null?"상태 미확인":item.ready?"준비됨":"준비 중"}</StatusBadge><span aria-label="실제 분배율">{share==null?"분배 미관측":`${number(share)}%`}</span><span aria-label="처리 요청">처리 {number(item.pool?(item.pool.running[service.uid]??0):undefined)}</span><span aria-label="대기 요청">대기 {number(item.pool?(item.pool.waiting[service.uid]??0):undefined)}</span></div>}
+        {item.live?<ServingInstance instance={item.live} workloadUID={service.uid} weights={state.snapshot?.routing[service.uid]} name={service.name||"서비스명 미기록"}/>:<div className="devices-rest-instance"><strong>{service.name||"서비스명 미기록"}</strong><StatusBadge tone={item.stopped||item.ready===null?"idle":item.ready?"ok":"warn"}>{item.stopped?"중단":item.ready===null?"상태 미확인":item.ready?"준비됨":"준비 중"}</StatusBadge><span aria-label="실제 분배율">분배 미관측</span><span aria-label="처리 요청">처리 {number(item.pool?(item.pool.running[service.uid]??0):undefined)}</span><span aria-label="대기 요청">대기 {number(item.pool?(item.pool.waiting[service.uid]??0):undefined)}</span></div>}
         <Link className="devices-service-link" href={`/workloads/${encodeURIComponent(service.name||service.uid)}?uid=${encodeURIComponent(service.uid)}`} aria-label={`${service.name||"서비스"} 상세`}><ChevronRight aria-hidden="true"/></Link>
       </div>
     }):<p className="devices-empty-instance">서비스 미확인</p>}

@@ -82,6 +82,17 @@ test("REST pool sparse counters remain observed zero without fabricating routing
   assert.ok(counts.every(value=>/>[^<]*\b0\b/.test(value)),"a missing UID in an observed pool counter map means zero")
 })
 
+test("unready REST instance with retained routing weight leaves actual distribution unobserved",()=>{
+  const live=state()
+  live.snapshot!.instances=[]
+  const uid="service-private-uid",id="unready-rest"
+  const snapshot={nodes:[],workloads:[{uid,name:"영상 분석"}],instances:[{id,node:{uid:"node-private-uid",name:"장치 A"},workloadUID:uid,ready:false,stopped:false}],routing:{[uid]:{[id]:1000}}}
+  const html=render(live,false,{"v1/scheduler/state":{snapshot}})
+  const share=html.match(/aria-label="실제 분배율"[^>]*>([^<]*)</)?.[1]
+  assert.notEqual(share,"100%","a retained declaration is not actual dispatch")
+  assert.equal(share,"분배 미관측")
+})
+
 test("device header and aggregate power retain shared connection and age slots",()=>{
   const live=state()
   live.metrics=[{type:"metrics",at,seq:1,bucketAt:at,nodes:{},workloads:{},pool:{wholeWatts:20,activeWatts:20}}]
