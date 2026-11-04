@@ -66,6 +66,8 @@ class Harness:
         self.prefix='experiments/'+self.execution['runUID']+'/'+self.scope
         self.root=self.run/self.scope if self.scope!='run' else self.run
         self.harness_module=None
+        progress_path = self.root / 'stage-progress.json'
+        self.progress_records = input_snapshot.load(progress_path) if progress_path.exists() else []
     def upload(self,path,key): return self.store.put(key,path)
     def emit(self,value,name,key=None):
         path=self.root/name;input_snapshot.save(path,value);return self.upload(path,key or self.prefix+'/'+self.step+'/'+name)
@@ -78,7 +80,8 @@ class Harness:
         if 'stageID' not in self.execution: config['evaluation'].pop('stageFolder',None)
         path=self.root/'binding.json';input_snapshot.save(path,binding)
         args=SimpleNamespace(binding=path,out=self.root,stage=self.spec.get('row',binding['schedule'][0]['id']))
-        return self.harness_module.CPO(args,go_callback=self.go,provisional_callback=self.provisional)
+        return self.harness_module.CPO(args,go_callback=self.go,provisional_callback=self.provisional,
+                                       progress_callback=self.progress,progress_publish_callback=self.publish_progress)
     def go(self,value):
         value.update({key:self.execution[key] for key in ('runUID','stageUID','stageID')})
         path=self.root/'measured/go.json';input_snapshot.save(path,value)
@@ -86,10 +89,24 @@ class Harness:
     def provisional(self, value):
         if not self.execution.get('stageName'):
             return
-        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': self.execution['stageUID']},
-                 {'op': 'add', 'path': '/status/provisionalD1', 'value': value}]
+        self.status([{'op': 'add', 'path': '/status/provisionalD1', 'value': value}])
+    def status(self, operations):
+        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': self.execution['stageUID']}, *operations]
         input_snapshot.kubectl(self.execution['namespace'], 'patch', 'evaluationstage', self.execution['stageName'],
                                '--subresource=status', '--type=json', '-p', json.dumps(patch))
+    def progress(self, phase, at=None, **facts):
+        record = {'phase': phase, 'at': at or input_snapshot.now(), **facts}
+        self.progress_records.append(record)
+        print('EVALUATION_PROGRESS ' + json.dumps(record), flush=True)
+    def publish_progress(self):
+        now = input_snapshot.now()
+        try:
+            input_snapshot.save(self.root / 'stage-progress.json', self.progress_records)
+            # RFC 6902 add replaces object members and also works on the first publication.
+            self.status([{'op': 'add', 'path': '/status/progress', 'value': self.progress_records},
+                         {'op': 'add', 'path': '/status/lastProgressAt', 'value': now}])
+        except Exception as error:
+            print('EVALUATION_PROGRESS_ERROR ' + json.dumps({'at': now, 'error': str(error)}), flush=True)
     def factor(self):
         input_snapshot.check_fleet(self, self.spec)
         self.controller().factor()
@@ -99,7 +116,6 @@ class Harness:
         input_snapshot.check_fleet(self, self.spec)
         last = [0]
         def monitor(instance, offset, folder):
-            instance.disk_boundary()
             if time.monotonic() - last[0] >= 30:
                 targets = input_snapshot.check_target(self, self.spec['target'])
                 path = folder / 'target-observations.json'
@@ -119,11 +135,15 @@ class Harness:
              {'startSkewNanos': skew, 'maximumStartSkewNanos': self.spec['loadGenerator']['barrier']['maxStartSkewNanos'],
               'accepted': skew <= self.spec['loadGenerator']['barrier']['maxStartSkewNanos']})
     def judge(self):
+        self.progress('judgeStarted')
+        self.publish_progress()
         controller_binding=self.root/'binding.json';folder=self.root/'measured'
         if self.spec.get('failureInjection'): self.injections(folder)
         self.measurement=publication.verdict(judgment.judge(controller_binding,folder))
         if not input_snapshot.load(folder/'generator-barrier.json')['accepted']:
             self.measurement={'verdict':'INVALID','reason':'GeneratorInvalid'}
+        self.progress('judgeEnded')
+        self.publish_progress()
     def injections(self,folder):
         records=[]
         for plan in self.spec['failureInjection']:

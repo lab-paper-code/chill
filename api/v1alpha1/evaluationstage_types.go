@@ -195,12 +195,15 @@ type EvaluationProvisionalRequests struct {
 	DeadlineSuccess        int64            `json:"deadlineSuccess"`
 	RequiredSuccessfulRank int64            `json:"requiredSuccessfulRank"`
 	Outcomes               map[string]int64 `json:"outcomes"`
-	// UnfinishedOrUnsent counts requests without a suitable completed HTTP final as of the snapshot,
-	// including requests still in flight or without a client result. It is not a settled loss count.
-	UnfinishedOrUnsent int64                           `json:"unfinishedOrUnsent"`
-	SLO                EvaluationRequestSLO            `json:"slo"`
-	Reachable          bool                            `json:"reachable"`
-	Substages          []EvaluationProvisionalSubstage `json:"substages"`
+	// UnfinishedOrUnsent excludes collection loss; in-flight requests with client rows
+	// but without a suitable completed HTTP final remain unfinished at the snapshot.
+	UnfinishedOrUnsent int64 `json:"unfinishedOrUnsent"`
+	// CollectionLoss counts missing client rows when the producer drained marker is absent.
+	// +optional
+	CollectionLoss int64                           `json:"collectionLoss,omitempty"`
+	SLO            EvaluationRequestSLO            `json:"slo"`
+	Reachable      bool                            `json:"reachable"`
+	Substages      []EvaluationProvisionalSubstage `json:"substages"`
 }
 
 type EvaluationRequestSLO struct {
@@ -275,10 +278,32 @@ type EvaluationIssuanceFidelity struct {
 	GeneratorQuality          EvaluationGeneratorQuality `json:"generatorQuality"`
 }
 
+// EvaluationStageProgress records an observed harness boundary, not a verdict.
+type EvaluationStageProgress struct {
+	// +kubebuilder:validation:Enum=loadStarted;loadEnded;drainStarted;drainEnded;flushStarted;collectStarted;collectEnded;judgeStarted;judgeEnded
+	Phase string `json:"phase"`
+	// +kubebuilder:validation:Format=date-time
+	At string `json:"at"`
+	// ProducerRowsMissing counts planned requests without producer final rows at drain end.
+	// +optional
+	ProducerRowsMissing map[string]int64 `json:"producerRowsMissing,omitempty"`
+	// Bytes is the number of collected raw artifact bytes written, not wire bytes.
+	// +optional
+	Bytes *int64 `json:"bytes,omitempty"`
+}
+
 type EvaluationStageStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +optional
 	ProvisionalD1 *EvaluationProvisionalD1 `json:"provisionalD1,omitempty"`
+	// Progress preserves harness observation order; absent boundaries are not inferred.
+	// +optional
+	// +listType=atomic
+	Progress []EvaluationStageProgress `json:"progress,omitempty"`
+	// LastProgressAt is the latest harness signal, independent of provisionalD1.asOf.
+	// +optional
+	// +kubebuilder:validation:Format=date-time
+	LastProgressAt string `json:"lastProgressAt,omitempty"`
 	// +optional
 	// +listType=map
 	// +listMapKey=type

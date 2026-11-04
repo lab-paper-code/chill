@@ -153,11 +153,83 @@ Absent procedure histories, conditions, and timestamps remain null; absent
 not record procedure `status` or stage `phase`, so those fields are not exposed.
 Recorded procedure/stage `measurementVerdict` and stage `conditions` are
 projected under their CRD field names, never derived from times or conditions.
-The existing Run-level `phase` projection is unchanged. No RBAC expansion is
-needed: `serving_entrypoint_rbac.yaml` already grants EvaluationStage get/list,
-and `dashboard_reader_rbac.yaml` grants get/list/watch in the evaluation-enabled
-profile namespaces alongside EvaluationRun reads. This view does not mutate CRDs
-or add progress judgment.
+The existing Run-level `phase` projection is unchanged.
+
+Stage list/detail reads also expose recorded `progress[]` and `lastProgressAt`,
+and a server read projection `loadJobs[]`. These are facts, not a stalled/running
+judgment or a new condition. For example:
+```json
+{"progress":[{"phase":"loadStarted","at":"2026-11-04T03:46:10Z"},{"phase":"loadEnded","at":"2026-11-04T04:16:10Z"},{"phase":"drainStarted","at":"2026-11-04T04:16:10Z"},{"phase":"drainEnded","at":"2026-11-04T04:22:13Z","producerRowsMissing":{"plc-anomaly":2}},{"phase":"flushStarted","at":"2026-11-04T04:22:13Z"},{"phase":"collectStarted","at":"2026-11-04T04:22:18Z"},{"phase":"collectEnded","at":"2026-11-04T04:23:20Z","bytes":4096}],"lastProgressAt":"2026-11-04T04:23:20Z","loadJobs":[{"name":"load-example","uid":"job-uid","status":"Failed","startedAt":"2026-11-04T03:45:50Z","reason":"BackoffLimitExceeded"}]}
+```
+
+`progress` is append-only in harness observation order, not sorted by producer
+clocks. Only observed boundaries are appended; absent boundaries are not filled
+from planned durations, GO, Job state, or a measurement verdict.
+
+| Phase | Owning step and observation |
+|---|---|
+| `loadStarted` | `conductor.CPO.run`: first producer JSONL `evaluationEvent=start`; uses that producer's `at`, not GO |
+| `loadEnded` | `conductor.CPO.run`: all created producers emitted `window-end`; latest recorded producer `at` |
+| `drainStarted` | `conductor.CPO.run`: that observed window-end boundary starts the drain-only interval |
+| `drainEnded` | `conductor.CPO.run`: exits the producer drain/terminal-check/partial cleanup path and records `drainedUTC`, including partial drain |
+| `flushStarted` | `conductor.CPO.run`: enters the existing `flushSeconds` sleep |
+| `collectStarted`, `collectEnded` | `conductor.CPO.run`: immediately before/after `archive.collect`; the end includes `bytes`, the sum of saved raw artifact byte sizes (compressed files, not transferred bytes or all workspace files) |
+| `judgeStarted`, `judgeEnded` | `evaluation.Harness.judge`: before judgment and after verdict plus generator-barrier handling; an exception leaves no end boundary |
+
+`drainEnded.producerRowsMissing` records per-workload frozen planned requests
+minus observed producer final rows at drain time (bounded below by zero), or zero
+when that producer emitted `drained`. This is **drain-time producer-row evidence**,
+not an in-flight count or the reducer's gateway-final-based `unfinishedOrUnsent`.
+No later enrichment rewrites a boundary; final reducer numbers belong to judged
+publication evidence.
+The producer-row source is the same evaluator disk stream used by
+`phase.producerCapture`, sampled before the final writer join/disk-tail recount.
+The phase counters are then finalized from the joined stream and may include
+later rows or a later drained marker. Do not replace or enrich the recorded
+boundary with those final counters, `collectionLoss`, or reducer outcomes.
+Run/stage `procedures[]` remain the authority for the broader factor/stage/judge/
+cleanup execution and publication boundaries. No separate `judged` alias is added;
+the requested finer judgment interval is explicitly `judgeStarted`/`judgeEnded`.
+The harness logs each boundary as `EVALUATION_PROGRESS <JSON>` in its stage/judge
+Pod. Producer event handlers only append to an in-memory progress list: no
+Kubernetes call runs inside JSONL boundary handling. The existing `flushSeconds`
+producer poll publishes the entire progress list and `lastProgressAt` together
+through the same UID-tested status patch path as `provisionalD1`. Re-publication
+replaces the full array (RFC 6902 object-member `add`), so the first write needs
+no initial array and a failed write cannot lose or duplicate pending records.
+No progress status publication runs before GO. The first heartbeat publication
+occurs after release, so optional status IO cannot consume a producer Ready barrier.
+The publication also saves `stage-progress.json` in the shared stage workspace
+so the separate judge process retains prior boundaries. After ingestion ends,
+drain/flush/collect/judge boundaries each publish once.
+`lastProgressAt` is independent of `provisionalD1.asOf`; blocking flush/collection
+calls do not invent periodic signals, and no additional heartbeat timer exists.
+Producer stdout is independently appended/flushed by one reader thread per
+producer. A blocked heartbeat/status publisher pauses the main-loop disk parser,
+not these pipe readers; the regression holds the status call for 60 seconds
+while all 134,156 producer request rows reach disk.
+Status publication errors are logged as `EVALUATION_PROGRESS_ERROR`; this
+diagnostic write does not stop or invalidate an otherwise observable measurement.
+
+`loadJobs` comes only from namespace Job objects selected by the existing
+`edge.dacs.io/workload-role=load-generator`, `evaluation-run-uid` and
+`evaluation-stage` labels, joined to the exact controller EvaluationStage UID.
+Collection reads list Jobs once and index them for all Runs; detail reads list
+once with the Run UID selector. A replaced stage's old Jobs and other Runs'
+Jobs cannot supply facts. `name`/`uid`, nullable `startedAt` (`status.startTime`),
+optional `completedAt` (`status.completionTime`) and terminal condition `reason`
+come directly from Kubernetes. `Complete=True` means `Succeeded`, `Failed=True`
+means `Failed`, otherwise `Active` means nonterminal (including not-yet-started),
+not a claim that a Pod is running. A failed Pod count alone is not a failed Job.
+Workload/shard fields are not exposed: existing Job metadata has no such labels.
+Deleted Jobs are absent; no harness history is fabricated from their old names.
+Empty progress/Job lists and an unrecorded heartbeat are omitted.
+
+RBAC is unchanged: GET evaluation projections run under serving-entrypoint,
+which already has Job `get,list` in its configured profile namespaces.
+Dashboard-reader does not need a native Job grant. Existing EvaluationStage
+read grants and the harness's status patch grant are unchanged. No live grant
+or deployment is performed by this change.
 
 #### 실험 게시물 페이지·적용 SLO 출처
 

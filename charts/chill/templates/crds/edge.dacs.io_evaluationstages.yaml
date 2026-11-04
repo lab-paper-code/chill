@@ -777,6 +777,11 @@ spec:
                 - name
                 - uid
                 type: object
+              lastProgressAt:
+                description: LastProgressAt is the latest harness signal, independent
+                  of provisionalD1.asOf.
+                format: date-time
+                type: string
               measurementVerdict:
                 enum:
                 - PASS
@@ -992,6 +997,46 @@ spec:
                   - workloadUID
                   type: object
                 type: array
+              progress:
+                description: Progress preserves harness observation order; absent
+                  boundaries are not inferred.
+                items:
+                  description: EvaluationStageProgress records an observed harness
+                    boundary, not a verdict.
+                  properties:
+                    at:
+                      format: date-time
+                      type: string
+                    bytes:
+                      description: Bytes is the number of collected raw artifact bytes
+                        written, not wire bytes.
+                      format: int64
+                      type: integer
+                    phase:
+                      enum:
+                      - loadStarted
+                      - loadEnded
+                      - drainStarted
+                      - drainEnded
+                      - flushStarted
+                      - collectStarted
+                      - collectEnded
+                      - judgeStarted
+                      - judgeEnded
+                      type: string
+                    producerRowsMissing:
+                      additionalProperties:
+                        format: int64
+                        type: integer
+                      description: ProducerRowsMissing counts planned requests without
+                        producer final rows at drain end.
+                      type: object
+                  required:
+                  - at
+                  - phase
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               provisionalD1:
                 description: EvaluationProvisionalD1 is the latest closed-minute request
                   projection, not a verdict.
@@ -1203,6 +1248,11 @@ spec:
                   workloads:
                     additionalProperties:
                       properties:
+                        collectionLoss:
+                          description: CollectionLoss counts missing client rows when
+                            the producer drained marker is absent.
+                          format: int64
+                          type: integer
                         deadlineSuccess:
                           format: int64
                           type: integer
@@ -1290,8 +1340,8 @@ spec:
                           type: array
                         unfinishedOrUnsent:
                           description: |-
-                            UnfinishedOrUnsent counts requests without a suitable completed HTTP final as of the snapshot,
-                            including requests still in flight or without a client result. It is not a settled loss count.
+                            UnfinishedOrUnsent excludes collection loss; in-flight requests with client rows
+                            but without a suitable completed HTTP final remain unfinished at the snapshot.
                           format: int64
                           type: integer
                       required:
