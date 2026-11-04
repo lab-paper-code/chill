@@ -177,6 +177,7 @@ Query owns public progress and per-cell coverage projection.
 `search.examined`, `search.comparedNodes`를 담는다. `capacity`는 비교 기간, 고른 route 시각, Workload별 κ 합과 판정,
 가중치, 사용한 용량표 행, 모든 노드 계획과 제외 사유다([스케줄러 구현 설계 5.3절](scheduler-implementation.md#53-전환에너지선택)).
 `GET /api/v1/scheduler/state?view=summary`와 `/api/v1/observations/scheduler?view=summary`의 decision도 원본 순서의 `workloads[]`(`uid`, `state`, 선택적 `reason`)를 그대로 제공한다.
+이력 summary는 catalog를 복원하지 않고 저장된 decision의 `workloads[]`를 직접 읽으므로 과거 상태·사유와 순서를 유지한다.
 `comparedNodes`는 keep 밖의 적격 노드 계획이 있는 Node이며 `expectedJoules`는 이 Node만 합산한다.
 관측 기록의 인스턴스는 profile을 `profileID`로, Workload를 `workloadUID` 하나로 보존한다.
 

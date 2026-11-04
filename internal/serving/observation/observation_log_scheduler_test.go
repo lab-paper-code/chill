@@ -170,6 +170,29 @@ func TestSchedulerDefaultSelectionsKeepBoundedReadAndOffsets(t *testing.T) {
 	}
 }
 
+func TestSchedulerSummaryPreservesRecordedWorkloadStates(t *testing.T) {
+	from := observationTestHour.Add(10 * time.Minute)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	clock.set(from)
+	workloads := []serving.SchedulerWorkloadState{
+		{UID: "fixed", State: "Fixed", Reason: "MeasurementEvidenceMissing"},
+		{UID: "controlled", State: "Controlled"},
+	}
+	decision := serving.SchedulerDecision{At: from, Status: "Keep", Workloads: workloads}
+	if err := log.SchedulerRecord(SchedulerObservation{At: from, Decision: &decision}); err != nil {
+		t.Fatal(err)
+	}
+	for _, selection := range []SchedulerObservationSelection{{Summary: true}, {Summary: true, Order: "desc"}} {
+		page, _, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(time.Minute), 10, 0, selection)
+		if err != nil || len(page) != 1 || page[0].Decision == nil {
+			t.Fatalf("stored summary decision missing: page=%+v err=%v", page, err)
+		}
+		if got := page[0].Decision.Workloads; !reflect.DeepEqual(got, workloads) {
+			t.Fatalf("stored summary workload states: got %+v, want %+v", got, workloads)
+		}
+	}
+}
+
 func TestSchedulerSummarySkipsUnselectedEvidenceAndCatalog(t *testing.T) {
 	from := observationTestHour.Add(10 * time.Minute)
 	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
@@ -190,7 +213,7 @@ func TestSchedulerSummarySkipsUnselectedEvidenceAndCatalog(t *testing.T) {
 			if record.Offset == nil {
 				t.Fatal("summary lost original append offset")
 			}
-			if record.Decision != nil && (record.Decision.Status != "Keep" || len(record.Decision.Workloads) != 0 || record.Snapshot == nil || len(record.Snapshot.Instances) != 0 || len(record.Snapshot.WorkloadIDs) != 0) {
+			if record.Decision != nil && (record.Decision.Status != "Keep" || len(record.Decision.Workloads) != 1 || record.Decision.Workloads[0].UID != "w" || record.Snapshot == nil || len(record.Snapshot.Instances) != 0 || len(record.Snapshot.WorkloadIDs) != 0) {
 				t.Fatalf("summary lost identity or retained evidence: %+v", record)
 			}
 			if record.Power != nil && (record.PowerJoules == nil || *record.PowerJoules != 12.5 || len(record.Power.Samples) != 0 || !record.Power.StartedAt.Equal(from)) {
