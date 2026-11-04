@@ -615,3 +615,32 @@ func assertHarnessWritesOnlyMounts(t *testing.T, pod corev1.PodSpec) {
 		}
 	}
 }
+
+// Audit R13: a terminated harness Pod collected by TTL/GC must not hide the step's stored result.
+func TestCollectedPodUsesStoredResult(t *testing.T) {
+	for _, stored := range []bool{true, false} {
+		t.Run(map[bool]string{true: "stored result completes", false: "no result stays lost"}[stored], func(t *testing.T) {
+			ctx := context.Background()
+			parent := fixtureRun("collected")
+			startRun(parent)
+			r, store := fixtureRuntime(t, parent, fixtureConfig())
+			p := api.EvaluationProcedure{Step: api.EvaluationStepPrepare}
+			if _, _, err := r.advance(ctx, parent, nil, api.EvaluationStepPrepare, &p); err != nil || p.JobRef == nil {
+				t.Fatalf("create Job: ref=%v err=%v", p.JobRef, err)
+			}
+			p.PodRef = &api.EvaluationObjectReference{Name: "collected-pod", UID: "collected-pod-uid"}
+			if stored {
+				store.put(evidenceKey(parent.UID, "run/prepare/result.json"), map[string]any{
+					"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "step": api.EvaluationStepPrepare,
+					"execution": map[string]string{"status": complete}, "startedAt": fixtureTime, "finishedAt": fixtureTime})
+			}
+			result, done, err := r.advance(ctx, parent, nil, api.EvaluationStepPrepare, &p)
+			if stored && (err != nil || !done || result == nil || p.FinishedAt == nil) {
+				t.Fatalf("stored result must complete the step after Pod collection: done=%v err=%v", done, err)
+			}
+			if !stored && !errors.Is(err, errExecutionLost) {
+				t.Fatalf("missing result with a vanished Pod must stay ExecutionLost, got %v", err)
+			}
+		})
+	}
+}

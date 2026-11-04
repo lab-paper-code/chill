@@ -237,9 +237,6 @@ func (r *Runtime) advance(ctx context.Context, run *api.EvaluationRun, stage *ap
 	if len(pods.Items) > 1 {
 		return nil, false, errExecutionLost
 	}
-	if len(pods.Items) == 0 && p.PodRef != nil {
-		return nil, false, errExecutionLost
-	}
 	if len(pods.Items) == 1 {
 		pod := &pods.Items[0]
 		if !metav1.IsControlledBy(pod, job) || p.PodRef != nil && p.PodRef.UID != pod.UID {
@@ -263,6 +260,10 @@ func (r *Runtime) advance(ctx context.Context, run *api.EvaluationRun, stage *ap
 	var result stepResult
 	evidence, err := readJSON(ctx, store, run.Spec.EvidenceStore, evidenceKey(run.UID, scope(stageID)+"/"+step+"/result.json"), &result)
 	if errors.Is(err, evidencestore.ErrNotFound) {
+		// A recorded Pod that is gone without a stored result is lost; with one, the result decides.
+		if len(pods.Items) == 0 && p.PodRef != nil {
+			return nil, false, errExecutionLost
+		}
 		for _, c := range job.Status.Conditions {
 			if c.Status == corev1.ConditionTrue && (c.Type == batchv1.JobComplete || c.Type == batchv1.JobFailed) {
 				return nil, false, fmt.Errorf("%s: Job terminated without stored result", api.EvaluationReasonRemoteEffectUnknown)
