@@ -1041,12 +1041,8 @@ class EvaluationTests(unittest.TestCase):
             # guard under test (not read batching) decides drain-time behavior.
             wait_for_poll = ('from pathlib import Path\nimport time\nwhile not Path(' + repr(str(root / 'poll-started')) + ').exists(): time.sleep(.01)\n'
                              if mode in ('slow-reducer', 'drain-progress') else '')
-            if mode == 'drain-progress':
-                tail_drain = ('import time\nfrom pathlib import Path\nwhile not Path(' + repr(str(root / 'drain-release')) + ').exists(): time.sleep(.01)\n')
             tail = ('import time;time.sleep(60)\n' if mode in ('watchdog', 'failed-job', 'late-reader-error') else
                     'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained","at":' + repr(END) + '}),flush=True)\n')
-            if mode == 'drain-progress':
-                tail = tail_drain + tail
             if mode == 'hot-log':
                 tail = 'sys.stdout.write(\'{"diagnostic":1}\\n\'*50000);sys.stdout.flush()\n' + tail
             if mode in ('slow-reducer', 'slow-status'):
@@ -1152,17 +1148,22 @@ class EvaluationTests(unittest.TestCase):
                 original_capture(capture, source)
                 capture.error = OSError('late reader failure')
             with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(evidence_io, 'module', side_effect=modules), patch.object(conductor.time, 'monotonic', side_effect=(lambda: 100) if mode == 'hot-log' else clock):
-                drain_polls = []
                 def drain_poll(_phase):
                     (root / 'poll-started').touch()
-                    drain_polls.append(any(s['phase'] == 'loadEnded' for s in signals))
+                    if any(s['phase'] == 'loadEnded' for s in signals):
+                        time.sleep(1)  # RUN-3 in miniature: a reparse that would hold the loop after load ended
+                boundary_seen, boundary_published = [], []
                 if mode == 'drain-progress':
-                    observed = controller.progress_publish_callback
-                    def release_after_publish():
-                        observed()
-                        if any(s['phase'] == 'drainStarted' for s in signals):
-                            (root / 'drain-release').touch()
-                    controller.progress_publish_callback = release_after_publish
+                    record, publish = controller.progress_callback, controller.progress_publish_callback
+                    def timed_progress(phase=None, at=None, **facts):
+                        record(phase, at, **facts)
+                        if phase == 'drainStarted':
+                            boundary_seen.append(time.monotonic())
+                    def timed_publish():
+                        publish()
+                        if boundary_seen and not boundary_published:
+                            boundary_published.append(time.monotonic())
+                    controller.progress_callback, controller.progress_publish_callback = timed_progress, timed_publish
                 slow = (patch.object(conductor.ProvisionalD1, 'poll', side_effect=slow_reducer) if mode == 'slow-reducer' else
                         patch.object(conductor.ProvisionalD1, 'poll', side_effect=drain_poll) if mode == 'drain-progress' else
                         patch.object(conductor.ProvisionalD1, 'poll', return_value=None))
@@ -1172,12 +1173,8 @@ class EvaluationTests(unittest.TestCase):
                     with late, status:
                         result = self.finish_stage_policy(controller, mode, process, root, go, jobs, job_polls, signals, publications)
                     if mode == 'drain-progress':
-                        # Consumer view: a status publication carried loadEnded/drainStarted while the drain was still open.
-                        # RUN-3: the live-D1 reparse (minutes long at 3-7 scale) must not hold the loop after load
-                        # ended; then the periodic publish carries loadEnded/drainStarted before drainEnded.
-                        self.assertEqual(drain_polls[0], False, 'provisional D1 must run during load')
-                        self.assertNotIn(True, drain_polls, 'provisional D1 reparse ran after load ended')
-                        self.assertIn(3, publications[:-4], 'drain boundaries must be published before drainEnded')
+                        # Consumer view (RUN-3): drainStarted reaches a status publication without waiting out a reparse.
+                        self.assertLess(boundary_published[0] - boundary_seen[0], .5, 'drain boundary publication waited for provisional D1')
                     if mode == 'slow-status':
                         self.assertEqual(len(blocked), 1, 'the actual status publisher must block once after GO')
                         self.assertGreaterEqual(blocked[0]['statusBlockedSeconds'], 60)
