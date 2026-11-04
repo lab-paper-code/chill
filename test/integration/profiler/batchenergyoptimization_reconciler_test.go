@@ -233,7 +233,9 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRe
 		batchcontroller.RunName(parent.Name, idle, 3),
 		batchcontroller.RunName(parent.Name, idle, 4),
 	}
-	if curves.calls != 1 || !runNamesEqual(curves.activeRuns, wantActiveNames) ||
+	// D28 derives once for current-condition b1 infeasibility, then once after
+	// every planned batch completes; the first call is not a terminal/retry.
+	if curves.calls != 2 || !runNamesEqual(curves.activeRuns, wantActiveNames) ||
 		!runNamesEqual(curves.idleRuns, wantIdleNames) || len(curves.batches) != 2 ||
 		curves.batches[0] != 1 || curves.batches[1] != 2 || curves.policy.TrialsPerBatch != 3 ||
 		curves.policy.Version != "quick-energy-v2" {
@@ -348,6 +350,7 @@ func createBatchEnergyOptimization(
 				TargetNode: "lattepanda",
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
+				Workload:         "mobilenet",
 				WarmupIterations: 20, DurationSeconds: 30,
 				Dataset: "vqav2-val-subset",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
@@ -585,9 +588,17 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 	}
 	active := protocol("saturated-serial-fixed-batch")
 	active.WarmupIterations = 20
+	active.StartupWarmupIterations = 20
+	active.WorkloadName = "mobilenet"
+	active.WorkloadUID = "workload-uid"
+	active.WorkloadResourceVersion = "1"
+	active.SLOPercentile = 95
+	active.SLOTargetLatencyNanos = int64(time.Second)
+	active.MinServiceSamples = 59
 	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	idle := protocol("idle-model-loaded")
 	idle.SettlingDurationSeconds = 5
+	idle.StartupWarmupIterations = 20
 	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
 		Name: "integration-curve", LogicalModel: "mobilenet-v2-050",
 		DeviceClass: "lattepanda-3-delta-8g", NodeUID: "node-uid",

@@ -465,7 +465,11 @@ func preparationNativeHTTPClient(t *testing.T, ctx context.Context, config nativ
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}, actorConfig.Policy
+	// Immutable batch samples are startup-only (Policy.Batches is json:"-");
+	// the native HTTP ACK carries only the applied mutable policy.
+	ackPolicy := actorConfig.Policy
+	ackPolicy.Batches = nil
+	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}, ackPolicy
 }
 
 func assertPreparedInstanceObserved(t *testing.T, ctx context.Context, operations *servingops.Operations, pod *core.Pod, node serving.NodeReference) {

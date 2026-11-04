@@ -54,6 +54,7 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 				TargetNode: "lattepanda",
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
+				Workload:         "mobilenet",
 				WarmupIterations: 20,
 				DurationSeconds:  30,
 				Dataset:          "vqav2-val-subset",

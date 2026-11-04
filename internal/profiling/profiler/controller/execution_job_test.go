@@ -103,7 +103,6 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertArgument(t, runtimeContainer.Args, "--store-endpoint="+binding.Endpoint)
-	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout=30s")
 	assertArgument(t, runtimeContainer.Args, "--max-workload-result-bytes=8388608")
 	assertArgument(t, runtimeContainer.Args, "--raw-object-key=profiling-runs/"+string(run.UID)+"/raw.json")
 	for _, container := range append(slices.Clone(pod.InitContainers), pod.Containers...) {
@@ -134,7 +133,10 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	workloads := findContainer(t, pod.Containers, "workload-observer")
 	assertArgument(t, runtimeContainer.Args, "--attempt-timeout="+plan.AttemptTimeout.String())
 	assertArgument(t, runtimeContainer.Args, "--metric-result-timeout="+plan.AttemptTimeout.String())
-	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout="+plan.AttemptTimeout.String())
+	if plan.WorkloadResultTimeout != plan.AttemptTimeout {
+		t.Fatal("workload result wait does not cover the full frozen attempt budget")
+	}
+	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout="+plan.WorkloadResultTimeout.String())
 	assertArgument(t, workloads.Args, "--end-wait-timeout="+plan.AttemptTimeout.String())
 	assertArgument(t, workloads.Args, "--end-fence-timeout="+plan.AttemptTimeout.String())
 	assertArgument(t, workloads.Args, "--kube-api-server=https://kubernetes.example:6443")

@@ -60,6 +60,9 @@ var _ = Describe("ProfilingRun API", func() {
 		Entry("active mode without dataset", func(run *edgev1alpha1.ProfilingRun) {
 			run.Spec.Measurement.Dataset = ""
 		}),
+		Entry("active mode without Workload", func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.Workload = ""
+		}),
 		Entry("idle mode with dataset", func(run *edgev1alpha1.ProfilingRun) {
 			configureIdleProfilingRun(run)
 			run.Spec.Measurement.Dataset = "vqav2-val-subset"
@@ -77,9 +80,8 @@ var _ = Describe("ProfilingRun API", func() {
 			run.Spec.MetricObservation.DurationSeconds = run.Spec.Measurement.DurationSeconds - 1
 		}),
 		Entry("idle mode without settling duration", func(run *edgev1alpha1.ProfilingRun) {
-			run.Spec.Measurement.WarmupIterations = 0
-			run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
-			run.Spec.Measurement.Dataset = ""
+			configureIdleProfilingRun(run)
+			run.Spec.Measurement.SettlingDurationSeconds = nil
 		}),
 	)
 
@@ -143,6 +145,8 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode: "saturated-serial-fixed-batch",
 				Dataset:      "vqav2-val-subset",
+				Workload:     "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
+				SLOPercentile: 95, SLOTargetLatencyNanos: int64(time.Second), MinServiceSamples: 59,
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
@@ -157,4 +161,10 @@ func configureIdleProfilingRun(run *edgev1alpha1.ProfilingRun) {
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
 	run.Spec.Measurement.Dataset = ""
+	run.Spec.Measurement.Workload = ""
+	run.Spec.Measurement.WorkloadUID = ""
+	run.Spec.Measurement.WorkloadResourceVersion = ""
+	run.Spec.Measurement.SLOPercentile = 0
+	run.Spec.Measurement.SLOTargetLatencyNanos = 0
+	run.Spec.Measurement.MinServiceSamples = 0
 }

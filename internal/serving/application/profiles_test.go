@@ -198,7 +198,10 @@ func TestPreparationFreezesCurrentDeclarationImageInCommonConfig(t *testing.T) {
 		}
 		facts, err := json.Marshal(map[string]any{
 			"schemaVersion": "chill.dacs.io/profiler-execution-facts.v1alpha8", "metricObserverImage": image,
-			"declarations": []any{map[string]any{"deviceClass": "gpu", "runtime": map[string]string{"payload": string(payload)}}},
+			"declarations": []any{map[string]any{
+				"deviceClass": "gpu", "node": profile.NodeName, "runtime": map[string]string{"payload": string(payload)},
+				"access": map[string]any{"gpuUUID": profile.RuntimeMetadata.GPUUUID, "resources": map[string]string{"nvidia.com/gpu": "1"}},
+			}},
 		})
 		if err != nil {
 			t.Fatal(err)

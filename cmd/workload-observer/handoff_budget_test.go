@@ -15,10 +15,10 @@ import (
 )
 
 func TestExecuteCausalFenceUsesRemainingAttemptBudget(t *testing.T) {
-	for _, delaySeconds := range []int{35, 80} {
+	for _, beyondBudget := range []bool{false, true} {
 		name := "118s runtime plus 35s final read"
-		if delaySeconds == 80 {
-			name = "causal fence beyond 181s fails"
+		if beyondBudget {
+			name = "causal fence beyond frozen attempt fails"
 		}
 		t.Run(name, func(t *testing.T) {
 			directory := t.TempDir()
@@ -29,8 +29,12 @@ func TestExecuteCausalFenceUsesRemainingAttemptBudget(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan := sampleStopExecutionPlan(t, config)
-			if plan.AttemptTimeout != 181*time.Second || plan.WorkloadEndFenceTimeout != plan.AttemptTimeout {
+			if plan.WorkloadEndFenceTimeout != plan.AttemptTimeout {
 				t.Fatalf("causal fence does not inherit frozen attempt budget: %+v", plan)
+			}
+			delaySeconds := 35
+			if beyondBudget {
+				delaySeconds = int(plan.AttemptTimeout/time.Second) - 118 + 35
 			}
 			// Explicit 100:1 wall-time scaling of the caller's global budget and
 			// producer/final-read delays. Keep the derived fence cap unscaled to
@@ -66,7 +70,7 @@ func TestExecuteCausalFenceUsesRemainingAttemptBudget(t *testing.T) {
 			}
 			select {
 			case <-time.After(time.Duration(delaySeconds) * second):
-				if delaySeconds == 80 {
+				if beyondBudget {
 					select {
 					case err := <-done:
 						if !errors.Is(err, context.DeadlineExceeded) {
@@ -103,7 +107,7 @@ func TestExecuteCausalFenceUsesRemainingAttemptBudget(t *testing.T) {
 					t.Fatalf("causal handoff lost coverage: result=%+v err=%v", result, err)
 				}
 			case err := <-done:
-				if delaySeconds == 35 || !errors.Is(err, context.DeadlineExceeded) {
+				if !beyondBudget || !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("observer did not preserve remaining attempt budget: %v", err)
 				}
 			}

@@ -728,6 +728,8 @@ func validRun() *edgev1alpha1.ProfilingRun {
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode: "saturated-serial-fixed-batch", Dataset: "vqav2-val-subset",
+				Workload: "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
+				SLOPercentile: 95, SLOTargetLatencyNanos: int64(time.Second), MinServiceSamples: 59,
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,

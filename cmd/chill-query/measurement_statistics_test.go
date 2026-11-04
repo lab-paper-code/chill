@@ -591,7 +591,7 @@ func statisticsHTTPResponse(
 	objects.payloads[evidencestore.ObjectLocation{Store: cr.Status.Result.Store, Key: cr.Status.Result.Key}] = payload
 	cr.Status.Result.Size = int64(len(payload))
 	cr.Status.Phase = string(api.MeasurementPhaseComplete)
-	if err := reader.Create(context.Background(), cr); err != nil {
+	if err := reader.Update(context.Background(), cr); err != nil {
 		t.Fatal(err)
 	}
 	results, err := querykube.NewKubernetesBatchEnergyOptimizationResultQuery(
@@ -664,17 +664,20 @@ func statisticsFixture(
 		64,
 	)
 	base.Workload = runconfig.CurrentWorkloadContract()
+	base.Measurement.DurationToleranceSeconds = .5
+	base.Measurement.WarmupBatchSizes = []int{1, 2}
 	base.Actor = base.ActorConfig()
 	base.Actor.MemoryRequestBytes = 128 << 20
 	base.Actor.MemoryLimitBytes = 1024 << 20
 	idle := base
 	idle.Measurement = runconfig.MeasurementContract{
-		Batch:                   1,
-		WarmupBatchSizes:        base.Measurement.WarmupBatchSizes,
-		StartupWarmupIterations: base.Measurement.StartupWarmupIterations,
-		SettlingDurationSeconds: 60,
-		DurationSeconds:         30,
-		WorkloadMode:            runconfig.IdleModelLoadedWorkloadMode,
+		Batch:                    1,
+		WarmupBatchSizes:         base.Measurement.WarmupBatchSizes,
+		StartupWarmupIterations:  base.Measurement.StartupWarmupIterations,
+		SettlingDurationSeconds:  60,
+		DurationSeconds:          30,
+		DurationToleranceSeconds: base.Measurement.DurationToleranceSeconds,
+		WorkloadMode:             runconfig.IdleModelLoadedWorkloadMode,
 	}
 	idle.Actor = idle.ActorConfig()
 	idle.Actor.MemoryRequestBytes = base.Actor.MemoryRequestBytes
@@ -719,12 +722,19 @@ func statisticsFixture(
 				},
 			},
 			TrialsPerBatch: 2, PointPolicy: api.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: "0.8"},
+			BatchSizes: []int32{1, 2},
 			ActiveProtocol: api.ActiveProtocolSpec{
-				WarmupIterations: int32(base.Measurement.WarmupIterations),
-				DurationSeconds:  30,
-				Dataset:          base.Measurement.Dataset.Name,
+				Workload:                 base.Measurement.WorkloadName,
+				WarmupIterations:         int32(base.Measurement.WarmupIterations),
+				DurationSeconds:          int32(base.Measurement.DurationSeconds),
+				DurationToleranceSeconds: ptr.To(base.Measurement.DurationToleranceSeconds),
+				Dataset:                  base.Measurement.Dataset.Name,
 			},
-			IdleProtocol: api.IdleProtocolSpec{SettlingDurationSeconds: 60, DurationSeconds: 30},
+			IdleProtocol: api.IdleProtocolSpec{
+				SettlingDurationSeconds:  int32(idle.Measurement.SettlingDurationSeconds),
+				DurationSeconds:          int32(idle.Measurement.DurationSeconds),
+				DurationToleranceSeconds: ptr.To(idle.Measurement.DurationToleranceSeconds),
+			},
 		},
 	}
 	metricProtocol := api.ProfilingRunMetricObservationSpec{
@@ -757,16 +767,25 @@ func statisticsFixture(
 			objects.payloads[id.Location()] = data
 			mode := campaign.WorkloadModeActive
 			measurement := api.ProfilingRunMeasurementSpec{
-				Batch:            1,
-				WorkloadMode:     config.Measurement.WorkloadMode,
-				DurationSeconds:  30,
-				WarmupIterations: int32(config.Measurement.WarmupIterations),
-				Dataset:          cr.Spec.ActiveProtocol.Dataset,
+				Batch:                    int32(config.Measurement.Batch),
+				WorkloadMode:             config.Measurement.WorkloadMode,
+				DurationSeconds:          int32(config.Measurement.DurationSeconds),
+				DurationToleranceSeconds: ptr.To(config.Measurement.DurationToleranceSeconds),
+				WarmupIterations:         int32(config.Measurement.WarmupIterations),
+				StartupWarmupIterations:  int32(config.Measurement.StartupWarmupIterations),
+				WarmupBatchSizes:         append([]int32(nil), cr.Spec.BatchSizes...),
 			}
 			if isIdle {
 				mode = campaign.WorkloadModeIdle
-				measurement.Dataset = ""
-				measurement.SettlingDurationSeconds = ptr.To(int32(60))
+				measurement.SettlingDurationSeconds = ptr.To(int32(config.Measurement.SettlingDurationSeconds))
+			} else {
+				measurement.Dataset = config.Measurement.Dataset.Name
+				measurement.Workload = config.Measurement.WorkloadName
+				measurement.WorkloadUID = config.Measurement.WorkloadUID
+				measurement.WorkloadResourceVersion = config.Measurement.WorkloadResourceVersion
+				measurement.SLOPercentile = config.Measurement.SLOPercentile
+				measurement.SLOTargetLatencyNanos = config.Measurement.SLOTargetLatencyNanos
+				measurement.MinServiceSamples = int32(config.Measurement.MinServiceSamples)
 			}
 			ref := campaign.CompletedTrialReference{
 				Run:         campaign.RunReference{Namespace: cr.Namespace, Name: name, UID: name},
@@ -900,11 +919,21 @@ func statisticsFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
+	resultBytes, err := record.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects.payloads[evidencestore.ObjectLocation{Store: "evidence", Key: "result"}] = resultBytes
+	cr.Status.Phase = string(api.MeasurementPhaseComplete)
+	cr.Status.Outcome = string(record.Spec().Outcome)
 	cr.Status.Result = &api.ProfilingRunEvidenceReference{
 		Store:         "evidence",
 		Key:           "result",
-		Size:          1,
+		Size:          int64(len(resultBytes)),
 		SchemaVersion: record.SchemaVersion(),
+	}
+	if err := reader.Create(context.Background(), cr); err != nil {
+		t.Fatal(err)
 	}
 	return cr, record, objects, reader, loader
 }

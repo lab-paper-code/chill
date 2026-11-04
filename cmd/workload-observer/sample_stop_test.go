@@ -40,7 +40,7 @@ func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
 	}
 	directory := t.TempDir()
 	opts, config := sampleStopConfiguration(t, directory)
-	server, firstRead := sampleStopMetricSource(config)
+	server, firstRead, delayFinalRead := sampleStopMetricSource(config)
 	defer server.Close()
 	config.Metrics.Endpoint, config.Metrics.ThermalEndpoint = server.URL, server.URL
 	plan := sampleStopExecutionPlan(t, config)
@@ -60,9 +60,18 @@ func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
 	preflightOnly := pod.DeepCopy()
 	preflightOnly.Name, preflightOnly.UID = "preflight-only", "preflight-only-uid"
 	preflightOnly.OwnerReferences = nil
-	installPodObservationReactors(t, client, *pod, *preflightOnly, make(chan string, 2), watch.NewRaceFreeFake(), retained)
+	installPodObservationReactors(
+		t, client, *pod, *preflightOnly, make(chan string, 2), watch.NewRaceFreeFake(), retained)
 	workloadDone := make(chan error, 1)
-	go func() { workloadDone <- execute(ctx, opts, client.CoreV1(), time.Millisecond) }()
+	workloadExited := make(chan struct{})
+	go func() {
+		defer close(workloadExited)
+		workloadDone <- execute(ctx, opts, client.CoreV1(), time.Millisecond)
+	}()
+	defer func() {
+		cancel()
+		<-workloadExited
+	}()
 	waitForFile(t, opts.readyPath)
 	if err := worker.PublishSignal(opts.windowStartPath); err != nil {
 		t.Fatal(err)
@@ -109,35 +118,56 @@ func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
 	// Give the initial real source response time to be retained before the
 	// producer starts, without changing the frozen one-second polling interval.
 	time.Sleep(time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond)
-	started, ended, calls := runSampleStopProducer(t, ctx, config, metricDone, workloadDone)
-	if err := worker.PublishSignal(opts.endPath); err != nil {
-		t.Fatal(err)
-	}
-	handoff := time.NewTimer(plan.MetricResultTimeout)
-	defer handoff.Stop()
-	select {
-	case err := <-metricDone:
-		if err != nil {
-			t.Fatal(err)
+	var started, ended time.Time
+	var calls int
+	producerEnded := make(chan struct{})
+	runtime := sampleStopRuntimeFunc(func(
+		runtimeCtx context.Context, request worker.RuntimeRequest,
+	) (worker.RuntimeMeasurement, error) {
+		started, ended, calls = runSampleStopProducer(t, runtimeCtx, config, metricDone, workloadDone)
+		delayFinalRead(ended)
+		if err := worker.PublishSignal(opts.endPath); err != nil {
+			return worker.RuntimeMeasurement{}, err
 		}
-	case <-handoff.C:
+		close(producerEnded)
+		return sampleStopRuntime(t, directory, opts, config, plan, started, ended).Measure(runtimeCtx, request)
+	})
+	fenceDone := make(chan error, 1)
+	go func() {
+		select {
+		case <-producerEnded:
+		case <-ctx.Done():
+			fenceDone <- ctx.Err()
+			return
+		}
+		select {
+		case err := <-metricDone:
+			if err != nil {
+				fenceDone <- err
+				return
+			}
+		case <-ctx.Done():
+			fenceDone <- ctx.Err()
+			return
+		}
+		// Only successful real metric-process exit supplies the same-watch fence.
+		fence := pod.DeepCopy()
+		fence.ResourceVersion = "21"
+		fence.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:  endFenceContainerName,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+		}}
+		retained.Modify(fence)
+		fenceDone <- <-workloadDone
+	}()
+	defer func() {
+		wasLive := ctx.Err() == nil
 		cancel()
-		err := <-metricDone
-		t.Fatalf("metric observer did not exit within frozen result budget %s after producer end: %v",
-			plan.MetricResultTimeout, err)
-	}
-	// Only an actual successful metric-process exit supplies this same-watch
-	// Pod status event. Workload observation must cover its final power read.
-	fence := pod.DeepCopy()
-	fence.ResourceVersion = "21"
-	fence.Status.ContainerStatuses = []corev1.ContainerStatus{{
-		Name:  endFenceContainerName,
-		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
-	}}
-	retained.Modify(fence)
-	if err := <-workloadDone; err != nil {
-		t.Fatal(err)
-	}
+		if err := <-fenceDone; wasLive && err != nil {
+			t.Errorf("metric-exit workload fence: %v", err)
+		}
+	}()
+	sampleStopCommit(t, ctx, runtime, config, opts, metricResult, directory, plan)
 	assertSampleStopCoverage(t, metricResult, opts.resultPath, started, ended, calls, plan)
 }
 
@@ -185,10 +215,18 @@ func assertSampleStopCoverage(
 	if err := metrics.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if len(metrics.Failures) != 0 || len(metrics.Samples) < 119 || metrics.Samples[0].ObservedAt.After(started) ||
-		metrics.Samples[len(metrics.Samples)-1].ObservedAt.Before(ended) ||
-		metrics.Summary.ObservationDurationSeconds < 118 {
-		t.Fatalf("metric source does not cover the 118-second producer: %+v", metrics)
+	if len(metrics.Failures) < 2 || metrics.Summary.Failures != len(metrics.Failures) ||
+		metrics.Summary.Attempts != len(metrics.Samples)+len(metrics.Failures) ||
+		metrics.Summary.SuccessfulSamples != len(metrics.Samples) ||
+		len(metrics.Samples) < 119 || metrics.Samples[0].ObservedAt.After(started) ||
+		metrics.Samples[len(metrics.Samples)-1].ObservedAt.Before(ended.Add(35*time.Second)) ||
+		metrics.Summary.ObservationDurationSeconds < 153 {
+		t.Fatalf("metric source does not cover 118s producer plus 35s final-read retries: %+v", metrics)
+	}
+	for _, failure := range metrics.Failures {
+		if failure.ObservedAt.Before(ended) || failure.Reason != metricobserver.FailureReasonSourceRead {
+			t.Fatalf("unexpected final-read failure telemetry: %+v", failure)
+		}
 	}
 	workloadPayload, err := os.ReadFile(workloadResult)
 	if err != nil {
@@ -206,8 +244,8 @@ func assertSampleStopCoverage(
 		t.Fatalf("workload coverage lost the producer or metric-exit fence: %+v", workloads)
 	}
 	t.Logf("sample minimum=30s nominal metric=31s producer calls=%d elapsed=%s "+
-		"metric support=%gs workload support=%s failure bound=%s",
-		calls, ended.Sub(started), metrics.Summary.ObservationDurationSeconds,
+		"final unavailable=35s failures=%d metric support=%gs workload support=%s failure bound=%s",
+		calls, ended.Sub(started), len(metrics.Failures), metrics.Summary.ObservationDurationSeconds,
 		workloads.CoverageEndedAt.Sub(workloads.CoverageStartedAt), plan.AttemptTimeout)
 }
 
@@ -276,16 +314,36 @@ func sampleStopExecutionPlan(t *testing.T, config profilingrun.RunConfig) profil
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.MetricObservationTimeout != plan.AttemptTimeout || plan.AttemptTimeout <= 118*time.Second {
-		t.Fatalf("observer bound does not cover producer stop: %+v", plan)
+	expectedAttempt := time.Duration(config.Metrics.DurationSeconds+config.Measurement.SettlingDurationSeconds+
+		frozen.Policy.AttemptTimeoutOverheadSeconds) * time.Second
+	if plan.MetricObservationTimeout != plan.AttemptTimeout || plan.AttemptTimeout != expectedAttempt ||
+		plan.WorkloadEndFenceTimeout != plan.AttemptTimeout || config.Metrics.TimeoutMilliseconds != 500 {
+		t.Fatalf("regression requires the derived frozen attempt and 500ms requests: %+v", plan)
 	}
 	return plan
 }
 
-func sampleStopMetricSource(config profilingrun.RunConfig) (*httptest.Server, <-chan struct{}) {
+func sampleStopMetricSource(config profilingrun.RunConfig) (
+	*httptest.Server, <-chan struct{}, func(time.Time),
+) {
 	firstRead := make(chan struct{})
 	var once sync.Once
+	var mu sync.Mutex
+	var unavailableUntil time.Time
+	delayFinalRead := func(ended time.Time) {
+		mu.Lock()
+		unavailableUntil = ended.Add(35 * time.Second)
+		mu.Unlock()
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		unavailable := time.Now().Before(unavailableUntil)
+		mu.Unlock()
+		if unavailable {
+			// Fail promptly: every real HTTP request retains its frozen 500ms timeout.
+			http.Error(w, "simulated final power source temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		// The real source requires an explicitly typed GAUGE power family;
 		// untyped exposition would fail every read and exhaust final retries.
 		_, _ = fmt.Fprintf(w, "# TYPE %s gauge\n%s{hostname=\"lattepanda\",device_type=\"test_device\"} 5.2\n"+
@@ -301,5 +359,5 @@ func sampleStopMetricSource(config profilingrun.RunConfig) (*httptest.Server, <-
 			config.Metrics.ThermalMetrics.MaximumTemperatureCelsius, config.Metrics.ThermalMetrics.MaximumTemperatureCelsius)
 		once.Do(func() { close(firstRead) })
 	}))
-	return server, firstRead
+	return server, firstRead, delayFinalRead
 }

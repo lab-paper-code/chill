@@ -95,6 +95,8 @@ func deriverIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.Measurement.DurationSeconds = 30
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
+	config.Measurement.SLOPercentile, config.Measurement.MinServiceSamples, config.Measurement.SLOTargetLatencyNanos = 0, 0, 0
+	config.Measurement.WorkloadName, config.Measurement.WorkloadUID, config.Measurement.WorkloadResourceVersion = "", "", ""
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
