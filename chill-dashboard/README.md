@@ -25,6 +25,9 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
+결정 상세의 선택 계획 용량 근거는 저장된 `decision.capacity.workloads`의 `kappaNew`, `kappaRetained`, `rate`, `scaleDown.windowMax`를 req/s로 표시한다. `rate`는 관측 유입이 아닌 계획 수요이며, 서버가 최근·창 평균 중 큰 값에 대기분을 더하고 `MinimumDemand` 하한을 적용해 기록한 유효 수요다. 보호 수요는 같은 결정의 `settings.scaleDownHeadroomFraction`으로 `max(rate, windowMax) × (1 + fraction)`, 여유는 목표 κ와 보호 수요의 차이만 표시하며 입력 부재는 미기록이다. 판정·평가 입력을 새로 만들지 않는다. 인스턴스의 `capacity`는 `internal/serving/application/profiles.go` 및 `kube/observer.go`에서 `MaxQueueSize`로 공급되는 요청 수용 한도(개)이며 κ(req/s)나 최대 배치가 아니다.
+
+
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
 
 게시 에너지는 MEASURED의 `power.wholePoolJoules`만 풀 전체로, PARTIAL의 `power.observedJoules`는 관측 J(일부 노드 coverage 미달)로 표시한다. 평균 전력도 같은 범위를 따르며 차트는 풀 전체·관측을 별도 계열로 구분한다. UNAVAILABLE은 수치 대신 미기록과 게시 사유를 보여준다. 상태 없는 과거 게시만 기존 최상위 wholePoolJoules를 사용한다. 회귀 원자료 `lib/fixtures/experiment-partial-energy.json`은 control-330의 7-7 r2 게시(`72234778-e8b5-44a2-94c4-5125bad5c69d`) 원문이다.

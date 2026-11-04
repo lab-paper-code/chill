@@ -5,7 +5,7 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams, type ReadonlyURLSearchParams } from "next/navigation"
 import type { QueryObserverBaseResult } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
-import type { SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
+import type { SchedulerCapacity, SchedulerObservation, SchedulerObservationPage, SchedulerObservationSummary, SchedulerObservationSummaryPage } from "@/lib/read-types"
 import type { WorkloadSummary } from "@/lib/domain"
 import { parseSchedulerJSON, nanosToMilliseconds } from "@/lib/scheduler"
 import { schedulerRecordRef, schedulerRecordParams, readSchedulerRecord, schedulerRecordPath, schedulerRecordMatches, schedulerPageParams, schedulerComparisonParams, schedulerHistoryNodeMatches, schedulerHistoryKindMatches, schedulerScopeChanges, historyReturnTo, type SchedulerRecordRef } from "@/lib/scheduler-history"
@@ -82,6 +82,21 @@ export function HistoryPaging({history}:{history:SchedulerHistoryQuery<Scheduler
   return <div className="grid gap-2">{history.query.data?.gapUntil&&<p role="status">{gapNotice(history.query.data.gapUntil)}</p>}<div className="flex gap-2"><Button variant="outline" onClick={()=>history.page()} disabled={history.cursor==="0"}>처음으로</Button><Button variant="outline" onClick={()=>history.page(history.query.data?.nextCursor)} disabled={!history.query.data?.nextCursor}>다음 기록 보기</Button></div></div>
 }
 
+export function DecisionCapacity({capacity,headroom,names}:{capacity?:SchedulerCapacity|null;headroom?:number;names:ReadonlyMap<string,string>}){
+  const recorded=(value:unknown):value is number=>typeof value==="number"&&Number.isFinite(value)
+  const number=(value:unknown)=>recorded(value)?value.toFixed(4):"미기록"
+  return <section className="space-y-2">
+    <h3 className="font-semibold"><span tabIndex={0} title="결정 기록의 진단값이며 평가 판정이 아닙니다. 모든 수치는 req/s입니다. 계획 수요는 결정이 쓴 유효 수요로, 최근·창 평균 중 큰 값에 대기분을 더하고 최소 수요 하한을 적용한 값입니다. 보호 수요는 기록된 max(계획 수요, windowMax) × (1 + scaleDownHeadroomFraction), 여유는 목표 κ − 보호 수요입니다. 미기록은 0을 뜻하지 않습니다.">선택 계획 용량 근거</span></h3>
+    {!capacity?.workloads?.length?<p>미기록</p>:<div className="overflow-x-auto"><table className="w-full text-sm"><caption className="sr-only">선택 계획의 서비스별 용량 진단 · req/s</caption><thead><tr>{["서비스","목표 κ (req/s)","전환 중 유지 κ (req/s)","보호 수요 (req/s)","계획 수요 (req/s)","windowMax (req/s)","여유 (req/s)"].map(label=><th key={label} scope="col" className="p-2 text-left">{label}</th>)}</tr></thead>
+      <tbody>{capacity.workloads.map(row=>{
+        const maximum=row.scaleDown?.windowMax
+        const protectedDemand=recorded(row.rate)&&recorded(maximum)&&recorded(headroom)?Math.max(row.rate,maximum)*(1+headroom):undefined
+        const spare=recorded(row.kappaNew)&&recorded(protectedDemand)?row.kappaNew-protectedDemand:undefined
+        return <tr key={row.uid}>{[names.get(row.uid)??row.uid,number(row.kappaNew),number(row.kappaRetained),number(protectedDemand),number(row.rate),number(maximum),number(spare)].map((value,index)=><td key={index} className="border-t p-2 tabular-nums">{value}</td>)}</tr>
+      })}</tbody></table></div>}
+  </section>
+}
+
 function RecordDetails({row,names}:{row:SchedulerHistoryRow;names:ReadonlyMap<string,string>}){
   const event=row.event,decision=event.decision,snapshot=event.snapshot
   const view=decision&&snapshot?{settings:decision.settings,state:{decision,snapshot,actions:snapshot.actions,results:null}}:null
@@ -93,6 +108,7 @@ function RecordDetails({row,names}:{row:SchedulerHistoryRow;names:ReadonlyMap<st
       <SchedulerDecisionSummary at={when(decision.at)} status={`${judgmentLabels[decision.status]??"판단 미확인"} (${decision.status})`} reasons={decision.reasons}/>
       <SchedulerWorkloadStates workloads={decision.workloads} names={serviceNames}/>
       <details><summary>판단 입력·설정</summary><Facts items={[["자동 운영 설정 대상",decision.settings.autonomousWorkloads==null?"미기록":`${decision.settings.autonomousWorkloads.length}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"미기록"]]}/></details>
+      <DecisionCapacity capacity={decision.capacity} headroom={decision.settings.scaleDownHeadroomFraction} names={serviceNames}/>
       {view?<>{candidatePlans(decision.keep,decision.target).map(candidate=><details key={candidate.id}><summary>{candidate.keep?"유지안 근거":"선택 목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}
     </>}
     {snapshot&&<details><summary>기록의 실제 구성</summary><SnapshotDetails snapshot={snapshot}/></details>}
