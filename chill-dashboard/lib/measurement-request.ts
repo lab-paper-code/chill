@@ -282,10 +282,9 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
 export function manifest(d: Draft, context: Context, namespace: string) {
   const v = view(d, context)
   const p = v.protocol.values
-  const selectedWorkload=context.workloads.find(item=>item.desired.metadata.name===d.workload)
   const spec: MeasurementPlanSpec & {activeProtocol:ActiveProtocol} = {
     state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node },
-    activeProtocol: { ...v.protocol.spec?.activeProtocol, workload: selectedWorkload?.desired.metadata.name??d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
+    activeProtocol: { ...v.protocol.spec?.activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     trialsPerBatch: v.trials,
     // The CRD forbids batchSizes when the artifact declares its own set.
@@ -301,7 +300,9 @@ export function begin(from: string | null, context: Context) {
   const source = from ? context.plans.find(p => p.metadata.name === from) : undefined
   if (!source) return { draft: emptyDraft, index: 0, error: from ? "복사할 측정을 찾지 못해서 처음부터 골라요." : "", copied: false }
   const s = source.spec
-  const draft: Draft = { workload: s.activeProtocol.workload??"", model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
+  // A copied name is a selection only while that Workload is still one of the choices.
+  const workload = context.workloads.some(item => item.desired.metadata.name === s.activeProtocol.workload) ? s.activeProtocol.workload! : ""
+  const draft: Draft = { workload, model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
   const v = view(draft, context)
   const open = steps.findIndex(step => step !== "name" && step !== "review" && v.problem(step))
   return { draft, index: open < 0 ? steps.indexOf("name") : open, error: open < 0 ? "" : v.problem(steps[open]), copied: true }
