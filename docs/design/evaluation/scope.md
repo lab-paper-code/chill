@@ -19,7 +19,7 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 
 ## 2. 블랙박스 경계
 
-평가자는 CHILL을 시험 대상으로만 본다. 내부 상태를 판정·보정·시작 조건에 쓰지 않는다.
+평가자는 CHILL을 시험 대상으로만 본다. 내부 상태를 판정·보정·시작 조건에 쓰지 않는다. 예외는 하나다. 실험 시작 조건에 한해 B3 gate의 점검 대상을 고를 때 CHILL이 공개한 결정(인스턴스 Ready·routed 여부)을 쓸 수 있다. 이 값은 판정·보정에는 쓰지 않는다.
 
 ### 쓸 수 있는 입력
 
@@ -32,10 +32,11 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 | 요청 HTTP final | `GET /api/v1/observations/raw` | 현재 D1 지연 출처. B1 적용 뒤에는 진단 참고값 |
 | 선언된 전력계 | 현재 `GET /api/v1/observations/power`(`powerMeasurement.meters[].sourceIdentity`). B2 적용 뒤에는 평가자가 전력계 게이트웨이를 직접 읽음 | 에너지 적분, 공백 기록 |
 | Kubernetes API(선언·실행·환경 확인) | Dataset·Workload·Preprocessor 정의, 참여 Node 신원·readiness, 참여 Node의 Pod 환경, 자기 Job/Pod(UID 기록), 대상 Pod readiness·imageID, 장애 주입 대상 | 입력 검증·preflight·환경 확인·실행·정리·주입. 판정 보정에는 쓰지 않음 |
+| CHILL이 공개한 인스턴스 결정(예외) | 공개 scheduler API의 인스턴스 Ready·routed 여부 | B3 gate의 점검 대상 선택에만 씀. 판정·보정에는 쓰지 않음 |
 
 ### 쓰지 않는 입력
 
-- κ, d, 계획기 결정·후보·Fixed/Pending 사유, scheduler state/snapshot, profile 값.
+- κ, d, 계획기 결정·후보·Fixed/Pending 사유, scheduler state/snapshot, profile 값. 단, 위 예외(시작 조건의 점검 대상 선택)는 허용한다.
 - 시작 상태 복원·내부 모드 주입(W1 cutover로 `mode`·`startState`·`control` 삭제, [measurement-api §W1](../serving/measurement-api.md#w1-외부-블랙박스-평가-cutover)).
 - gateway·observer 관측으로 평가자 증거를 보충·보정하는 것.
   - 사례(2026-11-04): 한 단계에서 IC producer stdout 꼬리가 수집 중 끊겼다. 같은 요청 전체가 gateway raw에는 있었다. 결정은 gateway 행으로 client 행을 복원하지 않는 것이다. 손실은 `collectionLoss`로 드러내고, 분모와 판정식은 그대로 둔다. 원인은 conductor 수집 경로에서 고친다.
@@ -46,7 +47,7 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 |---|---|---|
 | B1 | D1 지연을 client 측정으로 바꾼다. 기준은 MLPerf LoadGen 방식으로, 요청을 보내기로 예정된 시각부터 응답을 받은 시각까지다([MLPerf inference rules](https://github.com/mlcommons/inference_policies/blob/master/inference_rules.adoc)). 늦게 보낸 요청의 발행 지연도 지연에 들어간다. gateway HTTP final `elapsedNanos`는 진단 참고값으로만 남긴다. 현재 구현은 `request_analysis.py` `request_timing`이 gateway 값을 SLO 지연으로 쓴다. | 판정 규칙 변경이다. 회차 3 이후 Run부터 적용하고 judgment 계약 버전을 한 번 올린다(ADR 0019). 회차 1·2 결과는 이전 규칙으로 보존하며 다시 판정하지 않는다. 구현 보류 |
 | B2 | 평가자가 전력계 게이트웨이를 직접 읽는 독립 경로를 추가한다. CHILL observation API를 거치지 않는다. | 구현 보류 |
-| B3 | executor gate를 허용한다. 조건은 정확 일치나 전체 거절 유형이 아닐 것이다. 현재 응답만 보고, CHILL 동작을 바꾸지 않으며, 실패하면 다시 확인한 뒤 시작하고, 제외한 인스턴스는 사유를 기록한다. | refactor-reviewer 감사로 현재 gate가 조건을 만족하는지 확인 중 |
+| B3 | executor gate를 허용한다. 조건은 정확 일치나 전체 거절 유형이 아닐 것이다. 현재 응답만 보고, CHILL 동작을 바꾸지 않으며, 실패하면 다시 확인한 뒤 시작하고, 제외한 인스턴스는 사유를 기록한다. 점검 대상은 CHILL이 공개한 Ready·routed 인스턴스로 고른다(§2 예외). Node NotReady 검사는 실험 참여 노드로만 좁힌다. 점검 대상 executor가 실패하면 시작을 보류한다. | refactor-reviewer 감사(2026-11-04 exact-match audit §6) 결과 반영. gate는 저장소 밖 운영 도구라 참여 노드 범위 축소는 main이 적용한다 |
 
 ## 3. 소유 계약
 
