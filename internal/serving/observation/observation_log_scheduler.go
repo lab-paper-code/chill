@@ -508,8 +508,9 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	var line struct {
 		At       time.Time
 		Decision *struct {
-			At     time.Time
-			Status string
+			At        time.Time
+			Status    string
+			Workloads []serving.SchedulerWorkloadState `json:"workloads"`
 		}
 		Snapshot *struct{ At time.Time }
 		Settings *struct {
@@ -535,7 +536,7 @@ func (l *ObservationLog) decodeSchedulerPageRecord(read *observationRead, raw []
 	}
 	record := SchedulerObservation{At: line.At, Node: line.Node, PowerJoules: line.PowerJoules}
 	if d := line.Decision; d != nil {
-		record.Decision = &serving.SchedulerDecision{At: d.At, Status: d.Status}
+		record.Decision = &serving.SchedulerDecision{At: d.At, Status: d.Status, Workloads: d.Workloads}
 	}
 	if s := line.Snapshot; s != nil {
 		record.Snapshot = &serving.SchedulerSnapshot{At: s.At}
