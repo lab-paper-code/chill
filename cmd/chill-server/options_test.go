@@ -26,3 +26,38 @@ func TestServerHasNoSplitRouterFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluationStoreConfiguration(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unset", true: "partial"}[partial], func(t *testing.T) {
+			t.Setenv("EVALUATION_STORE_ACCESS_KEY_ID", "")
+			t.Setenv("EVALUATION_STORE_SECRET_ACCESS_KEY", "")
+			var opts options
+			flags := flag.NewFlagSet("chill-server", flag.ContinueOnError)
+			opts.bindFlags(flags)
+			if partial {
+				if err := flags.Parse([]string{"--evaluation-store-name=evaluation"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := opts.validate()
+			if !partial {
+				if err != nil && strings.Contains(err.Error(), "evaluation store") {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("partial evaluation store configuration accepted")
+			}
+			for _, missing := range []string{
+				"--evaluation-store-endpoint", "--evaluation-store-bucket", "--evaluation-store-region",
+				"EVALUATION_STORE_ACCESS_KEY_ID", "EVALUATION_STORE_SECRET_ACCESS_KEY",
+			} {
+				if !strings.Contains(err.Error(), missing) {
+					t.Fatalf("missing input %s not reported: %v", missing, err)
+				}
+			}
+		})
+	}
+}
