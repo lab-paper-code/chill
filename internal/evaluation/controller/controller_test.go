@@ -352,6 +352,7 @@ func TestRunStageStoredResultWorkflow(t *testing.T) {
 		if podSpec.Containers[0].VolumeMounts[3].MountPath != "/private" {
 			t.Fatal("private credential volume must mount at /private")
 		}
+		assertHarnessWritesOnlyMounts(t, podSpec)
 		step := job.Labels[api.EvaluationLabelStep]
 		stageID := job.Labels[api.EvaluationLabelStage]
 		result := map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "step": step, "execution": map[string]string{"status": complete}, "startedAt": fixtureTime, "finishedAt": fixtureTime}
@@ -570,19 +571,47 @@ func assertPublishedWorkspaceDeleted(ctx context.Context, t *testing.T, r Runtim
 	}
 }
 
-func TestPublishedResidualRunKeepsWorkspace(t *testing.T) {
+func TestPublishedIncompleteRunKeepsWorkspace(t *testing.T) {
 	ctx := context.Background()
 	parent := fixtureRun("residual")
 	startRun(parent)
 	workspace := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "residual-work", Namespace: parent.Namespace, UID: "work-uid"}}
 	parent.Status.Workspace = ref(workspace)
-	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonResidualState, "")
-	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPublished, metav1.ConditionTrue, complete, "")
-	r, _ := fixtureRuntime(t, parent, workspace)
-	if _, err := (&RunReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
-		t.Fatal(err)
+	for name, conditions := range map[string][2]metav1.ConditionStatus{
+		"residual cleanup":             {metav1.ConditionTrue, metav1.ConditionFalse},
+		"failed execution (no result)": {metav1.ConditionFalse, metav1.ConditionTrue},
+	} {
+		t.Run(name, func(t *testing.T) {
+			run := parent.DeepCopy()
+			condition(&run.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, conditions[0], api.EvaluationReasonProcedureFailed, "")
+			condition(&run.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, conditions[1], api.EvaluationReasonResidualState, "")
+			condition(&run.Status.Conditions, 1, api.EvaluationConditionPublished, metav1.ConditionTrue, complete, "")
+			r, _ := fixtureRuntime(t, run, workspace.DeepCopy())
+			if _, err := (&RunReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(workspace), &corev1.PersistentVolumeClaim{}); err != nil {
+				t.Fatalf("published run without complete execution and cleanup must keep its workspace: %v", err)
+			}
+		})
 	}
-	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(workspace), &corev1.PersistentVolumeClaim{}); err != nil {
-		t.Fatalf("residual run must keep its workspace for the release path: %v", err)
+}
+
+// The harness may write only to mounted volumes: the uploaded workspace and in-memory /private.
+func assertHarnessWritesOnlyMounts(t *testing.T, pod corev1.PodSpec) {
+	t.Helper()
+	security := pod.Containers[0].SecurityContext
+	if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem {
+		t.Fatal("harness container root filesystem must be read-only")
+	}
+	for _, volume := range pod.Volumes {
+		if volume.HostPath != nil {
+			t.Fatalf("harness must not mount host paths: %s", volume.Name)
+		}
+	}
+	for _, env := range pod.Containers[0].Env {
+		if env.Name == "HOME" && env.Value != "/private" {
+			t.Fatalf("HOME must be on a writable mount, got %s", env.Value)
+		}
 	}
 }
