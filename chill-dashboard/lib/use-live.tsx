@@ -3,10 +3,11 @@
 import * as React from "react"
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query"
 import { usePathname, useSearchParams } from "next/navigation"
-import { ApiError, relay, useSession, warmingRetry, warmingDelay, isCoverageWarming } from "@/lib/client"
+import { ApiError, errorDetails, relay, useSession, warmingRetry, warmingDelay, isCoverageWarming } from "@/lib/client"
 import { applyLiveMessage, connectLive, initialLiveState, parseLiveMessage, type LiveConnection, type LiveState } from "@/lib/live"
 import { fixtureMessages } from "@/lib/live-fixture"
 import { seedRecentLiveEvents } from "@/lib/live-history"
+import { SourceJSON } from "@/components/read-region"
 
 type LiveContextValue = {state:LiveState;status:string;reconnect:()=>void}
 const LiveContext=React.createContext<LiveContextValue|null>(null)
@@ -71,7 +72,7 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
         try {return (await relay(path,token,signal)).data}
         catch(error) {
           if(signal.aborted || !warmingRetry(attempt,error))throw error
-          update(state=>["unauthorized","forbidden"].includes(state.status)?state:{...state,eventArchiveError:"초기화 중"})
+          update(state=>["unauthorized","forbidden"].includes(state.status)?state:{...state,eventArchiveError:"초기화 중",eventArchiveErrorDetail:errorDetails(error)})
           signal.throwIfAborted()
           const {promise,resolve,reject}=Promise.withResolvers<void>()
           const cancel=()=>{clearTimeout(timer);reject(signal.reason)}
@@ -83,14 +84,14 @@ export function LiveProvider({children}:{children:React.ReactNode}) {
     },update,abort.signal).catch(error=>{
       if(abort.signal.aborted)return
       if(error instanceof ApiError && error.status===401){window.dispatchEvent(new Event("chill-unauthorized"));return}
-      update(state=>["unauthorized","forbidden"].includes(state.status) ? state : {...state,eventArchiveError:isCoverageWarming(error)?"초기화 중":"최근 사건 기록 조회 실패"})
+      update(state=>["unauthorized","forbidden"].includes(state.status) ? state : {...state,eventArchiveError:isCoverageWarming(error)?"초기화 중":"최근 사건 기록 조회 실패",eventArchiveErrorDetail:errorDetails(error)})
     })
     return ()=>{abort.abort();signals.delete(abort)}
   },[operating,scene,token,epoch,signals,queryClient,liveKey,archiveAttempt])
 
   const value=React.useMemo(()=>({state,status:state.status,reconnect}),[state,reconnect])
   return <LiveContext.Provider value={value}>
-    {operating && state.eventArchiveError && <div role="status" className="notice">{state.eventArchiveError} <button type="button" onClick={()=>setArchiveAttempt(attempt=>attempt+1)}>다시 조회</button></div>}
+    {operating && state.eventArchiveError && <div role="status" className="notice">{state.eventArchiveError} <button type="button" onClick={()=>setArchiveAttempt(attempt=>attempt+1)}>다시 조회</button>{state.eventArchiveErrorDetail!==undefined&&<SourceJSON inline title="문제 자세히 보기" value={state.eventArchiveErrorDetail}/>}</div>}
     {children}
   </LiveContext.Provider>
 }

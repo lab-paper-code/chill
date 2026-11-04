@@ -40,6 +40,7 @@ export type LiveState = {
   powerScale:number
   definitions:Record<string,LiveWorkload>;resyncRequired:boolean;historyGaps:LiveGap[]
   resumeHistory:LiveResumeHistory|null;eventArchive:Omit<RecordedLivePage,"events"> & {partial:boolean}|null;eventArchiveError:string|null
+  eventArchiveErrorDetail?: unknown
 }
 export function initialLiveState():LiveState {
   return {snapshot:null,checkpoint:null,metrics:[],events:[],gaps:[],lastReceivedAt:null,lastObservedAt:null,lastPower:null,powerScale:1,status:"idle",definitions:{},resyncRequired:false,historyGaps:[],resumeHistory:null,eventArchive:null,eventArchiveError:null}

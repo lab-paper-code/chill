@@ -32,6 +32,7 @@ for(const outcome of ["recover","unmount","session"] as const)test(`provider eve
     "@/lib/client":{...client,useSession:()=>({token:"token",epoch:1,config:{},signals})},
     "@/lib/live":{...live,connectLive:()=>({close:()=>{},reconnect:()=>{}})},
     "@/lib/live-fixture":{},"@/lib/live-history":history,
+    "@/components/read-region":{SourceJSON:()=>null},
   }
   const provider=load<{LiveProvider:React.ComponentType<{children:React.ReactNode}>}>("./use-live.tsx",modules)
   const previous=globalThis.fetch
@@ -80,6 +81,7 @@ test("exhausted event seed offers an explicit retry that restores the archive",a
     "@/lib/client":{...client,useSession:()=>({token:"token",epoch:1,config:{},signals})},
     "@/lib/live":{...live,connectLive:()=>({close:()=>{},reconnect:()=>{}})},
     "@/lib/live-fixture":{},"@/lib/live-history":history,
+    "@/components/read-region":{SourceJSON:()=>null},
   }
   const provider=load<{LiveProvider:(props:{children:React.ReactNode})=>React.ReactElement}>("./use-live.tsx",modules)
   const previous=globalThis.fetch

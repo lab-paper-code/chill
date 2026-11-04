@@ -85,6 +85,7 @@ test("provider leaves retention status to the live header instead of placing it 
     "next/navigation":{useSearchParams:()=>new URLSearchParams(),usePathname:()=>"/"},
     "@/lib/client":{useSession:()=>({token:"secret",epoch:1,config:{},signals:new Set()}),relay:()=>{}},
     "@/lib/live":live,"@/lib/live-fixture":{},"@/lib/live-history":{},
+    "@/components/read-region":{SourceJSON:()=>null},
   }
   const source=readFileSync(new URL("./use-live.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
@@ -147,6 +148,7 @@ test("provider seed reentry uses the current identity and cancels the previous i
     }},
     "@/lib/live":{...live,connectLive:()=>({close:()=>{},reconnect:()=>{}})},
     "@/lib/live-fixture":{},"@/lib/live-history":history,
+    "@/components/read-region":{SourceJSON:()=>null},
   }
   const source=readFileSync(new URL("./use-live.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText

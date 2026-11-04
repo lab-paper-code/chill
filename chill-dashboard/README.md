@@ -31,6 +31,8 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 2026-11-04 최근 사건 범위 조회 조사: 저장된 동일 3분 요청은 relay `DashboardRelayTimeout`(504), 서버 직접 조회는 70.8초·8,955B였다(`main-history-502-504.md`, `main-direct-repro.json`) — 응답 크기 초과가 아니라 서버 범위 스캔 비용이다. 회차 3 자동 복원의 특정 실패 응답은 저장되지 않아 같은 원인으로 확정하지 않는다. 범위·재시도·timeout을 임의로 바꾸지 않는다.
 
+결과 조회·d 측정 요청·최근 사건 복원의 원래 오류는 공통 “문제 자세히 보기” 안에만 보존한다(status, 구조화 code/message, transport 예외 name/message, 요청 pathname). d 셀은 coverage/BEO 조회를 구분한다. 요청 쿼리 전체·헤더·본문·원시 응답 body는 상세에 넣지 않으며 새 로깅/전송이나 재시도는 추가하지 않는다. 이 진단 보존은 과거 실패 원인 확정이나 실패 자체의 해결을 뜻하지 않는다.
+
 결정 상세의 선택 계획 용량 근거는 저장된 `decision.capacity.workloads`의 `kappaNew`, `kappaRetained`, `rate`, `scaleDown.windowMax`를 req/s로 표시한다. `rate`는 관측 유입이 아닌 계획 수요이며, 서버가 최근·창 평균 중 큰 값에 대기분을 더하고 `MinimumDemand` 하한을 적용해 기록한 유효 수요다. 보호 수요는 같은 결정의 `settings.scaleDownHeadroomFraction`으로 `max(rate, windowMax) × (1 + fraction)`, 여유는 목표 κ와 보호 수요의 차이만 표시하며 입력 부재는 미기록이다. 판정·평가 입력을 새로 만들지 않는다. 인스턴스의 `capacity`는 `internal/serving/application/profiles.go` 및 `kube/observer.go`에서 `MaxQueueSize`로 공급되는 요청 수용 한도(개)이며 κ(req/s)나 최대 배치가 아니다.
 
 

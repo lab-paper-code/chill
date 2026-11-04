@@ -117,6 +117,7 @@ for(const failure of ["timeout","transport"] as const)test(`RUN-2 diagnostic: ge
     assert.equal(result.data,undefined)
     assert.equal(requests,1)
     assert.match(app.render(result),/role="alert"/)
+    if(failure==="transport")assert.match(app.render(result),/TypeError|AbortError/)
     if(failure==="timeout")assert.deepEqual(result.error.data,{code:"DashboardRelayTimeout"})
   } finally {unsubscribe();app.cache.clear();await disconnect()}
 })
