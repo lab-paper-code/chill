@@ -17,7 +17,7 @@ def publication_requests(judgment):
               'gatewayCompletedLatencyNS', 'latencyScope', 'scheduledLatencyNS', 'actualLatencyNS',
               'deadlineSuccess', 'deadlineSuccessFraction', 'requiredSuccessfulRank', 'D1', 'slo', 'workload',
               'workloadUID', 'definitionID', 'actualGatewayIdentities', 'substages', 'identityMissingReason',
-              'quarantinedRequestIDs', 'quarantinedClientRows', 'quarantinedRequestCount',
+              'quarantinedRequestIDs', 'quarantinedClientRows', 'identityMismatchClientRows', 'quarantinedRequestCount',
               'observedDefinitions', 'rawEvidenceErrorCount', 'unkeyedRawRowCount')
     result = {}
     for name, value in judgment['requests'].items():

@@ -40,9 +40,11 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
         quarantined = {rid for rid, count in counts.items() if count > 1}
         quarantined.update(item['requestID'] for item in indexed['summary'].get('finalConflicts', []))
         quarantined.update(indexed['summary'].get('invalidFinalRequestIDs', []))
-        if any(row.get('workloadUID') not in (None, workload['uid']) for row in rows):
-            raise ValueError('IdentityMismatch: returned Workload UID differs from frozen identity')
-        usable = [row for row in rows if row.get('requestID') not in quarantined]
+        # A row naming another Workload is set aside like other quarantined rows; it never
+        # counts as a success here, the offered denominator is unchanged, and the count is reported.
+        mismatched = [row for row in rows if row.get('workloadUID') not in (None, workload['uid'])]
+        usable = [row for row in rows if row.get('requestID') not in quarantined and
+                  row.get('workloadUID') in (None, workload['uid'])]
         supported = any(row.get('requestID') in indexed['finals'] for row in usable)
         start = phase['starts'].get(name, {}).get('monotonicNS')
         quality = analysis.issuance_fidelity(rows, trace['offsetsNS'], start, round(stage['seconds'] * 1e9), analysis.stats, config['generatorQuality'])
@@ -98,6 +100,7 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
                          'actualGatewayIdentities': len(identities), 'observedDefinitions': identities, 'substages': substages,
                          'rawEvidenceErrors': indexed['errors'], 'quarantinedRequestIDs': sorted(quarantined),
                          'quarantinedClientRows': len(rows)-len(usable),
+                         'identityMismatchClientRows': len(mismatched),
                          'rawEvidenceErrorCount': len(indexed['errors']), 'quarantinedRequestCount': len(quarantined),
                          'unkeyedRawRowCount': len(indexed['summary'].get('unkeyedRows', [])),
                          'identityMissingReason': None if identity_known else 'Actual returned request IDs lack one complete frozen-UID definition identity'}
