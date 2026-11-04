@@ -848,3 +848,32 @@ func BenchmarkSchedulerFilteredSummaryArchive(b *testing.B) {
 		})
 	}
 }
+
+func TestSchedulerSummaryTimestampPrefilterPreservesSelection(t *testing.T) {
+	from := observationTestHour.Add(time.Minute)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, from)
+	for _, raw := range []string{
+		fmt.Sprintf(`{"at":%q,"snapshot":{"unused":%q}}`, from.Add(-time.Second).Format(time.RFC3339Nano), strings.Repeat("x", 1<<20)),
+		fmt.Sprintf(`{"at":%q,"decision":{"status":"first"}}`, from.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"decision":{"status":"second"},"at":%q}`, from.Add(time.Second).Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"at":%q,"decision":{"status":"excluded"}}`, from.Add(2*time.Second).Format(time.RFC3339Nano)),
+	} {
+		appendObservationLine(t, log, clock, raw)
+	}
+	for index, order := range []string{"asc", "desc"} {
+		selection := SchedulerObservationSelection{Summary: true, Filter: "decision", Order: order}
+		page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(2*time.Second), 2, 0, selection)
+		if err != nil || len(page) != 2 || next != -1 {
+			t.Fatalf("%s summary: %+v next=%d err=%v", order, page, next, err)
+		}
+		want := []string{"first", "second"}
+		if index == 1 {
+			slices.Reverse(want)
+		}
+		for i, record := range page {
+			if record.Decision.Status != want[i] {
+				t.Fatalf("%s prefilter changed selected result: %+v", order, page)
+			}
+		}
+	}
+}

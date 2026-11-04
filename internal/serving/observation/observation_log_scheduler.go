@@ -457,6 +457,12 @@ func (l *ObservationLog) SchedulerObservationPage(ctx context.Context, from, to 
 	records := make([]SchedulerObservation, 0, limit)
 	position, matched, next := 0, 0, -1
 	err = l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
+		if selection.Summary {
+			at, err := observationTimestamp(raw)
+			if err != nil || !serving.ObservationInInterval(at, from, to) {
+				return err
+			}
+		}
 		var envelope schedulerObservationEnvelope
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
@@ -598,6 +604,12 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 	var entries []entry
 	position := 0
 	err := l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
+		if selection.Summary {
+			at, err := observationTimestamp(raw)
+			if err != nil || !serving.ObservationInInterval(at, from, to) {
+				return err
+			}
+		}
 		var envelope schedulerObservationEnvelope
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
@@ -646,11 +658,17 @@ func (l *ObservationLog) schedulerSelectedPage(read *observationRead, from, to t
 	position = 0
 	if len(selected) != 0 {
 		err = l.scanStream(read, observationSchedulerStream, func(raw []byte) error {
-			var envelope struct{ At time.Time }
-			if err := json.Unmarshal(raw, &envelope); err != nil {
+			var header struct{ At time.Time }
+			if selection.Summary {
+				var err error
+				header.At, err = observationTimestamp(raw)
+				if err != nil {
+					return err
+				}
+			} else if err := json.Unmarshal(raw, &header); err != nil {
 				return err
 			}
-			if !serving.ObservationInInterval(envelope.At, from, to) {
+			if !serving.ObservationInInterval(header.At, from, to) {
 				return nil
 			}
 			original := position

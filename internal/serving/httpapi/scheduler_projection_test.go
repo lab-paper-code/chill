@@ -127,10 +127,64 @@ func TestSchedulerCurrentProjectionBoundsUnusedPopulations(t *testing.T) {
 	}
 	history := newSchedulerReadEvidence()
 	records := history.observations([]observation.SchedulerObservation{{Snapshot: &state.Snapshot}})
-	if len(records[0].Snapshot.Options) != 500 || len(records[0].Snapshot.Arrivals) != 2_000 || len(history.Profiles) != 501 {
-		t.Fatal("current read changed retained history evidence")
+	if len(records[0].Snapshot.Options) != 0 || len(records[0].Snapshot.Arrivals) != 0 || len(history.Profiles) != 1 {
+		t.Fatal("compact history retained unused option/arrival populations")
 	}
 	if records[0].Snapshot.ArrivalCount != nil || records[0].Snapshot.OptionCount != nil {
 		t.Fatal("current read counts leaked into historical reads")
 	}
+}
+
+func TestSchedulerCompactOmitsUnusedPlanPopulations(t *testing.T) {
+	decision := serving.SchedulerDecision{Capacity: &serving.SchedulerCapacity{
+		Plans:     make([]serving.SchedulerNodePlan, 2000),
+		Workloads: []serving.SchedulerCapacityWorkload{{UID: "service", Rate: 12}},
+	}}
+	snapshot := serving.SchedulerSnapshot{
+		DispatchOccupancy: make([]serving.DispatchOccupancy, 2000),
+		Options:           make([]serving.SchedulerOption, 2000),
+		Arrivals:          make([]serving.SchedulerArrival, 2000),
+		Outstanding:       []serving.SchedulerRequest{{ID: "pending"}},
+	}
+	event := observation.SchedulerObservation{Decision: &decision, Snapshot: &snapshot}
+	full, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := newSchedulerReadEvidence()
+	raw, err := json.Marshal(evidence.observations([]observation.SchedulerObservation{event}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw)*10 >= len(full) {
+		t.Fatalf("compact still scales with unused populations: full=%d compact=%d", len(full), len(raw))
+	}
+	var rows []struct {
+		Decision   struct{ Capacity map[string]json.RawMessage }
+		Snapshot   map[string]json.RawMessage
+		Projection string
+		Omitted    []string
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].Projection != "compact" || len(rows[0].Omitted) != 4 {
+		t.Fatalf("compact export lacks projection disclosure: %s", raw)
+	}
+	if _, present := rows[0].Decision.Capacity["plans"]; present {
+		t.Fatal("compact retained capacity plans")
+	}
+	for _, key := range []string{"dispatchOccupancy", "options", "arrivals"} {
+		if _, present := rows[0].Snapshot[key]; present {
+			t.Fatalf("compact retained snapshot %s", key)
+		}
+	}
+	if len(rows[0].Decision.Capacity["workloads"]) == 0 || len(rows[0].Snapshot["outstanding"]) == 0 {
+		t.Fatal("compact lost selected workload or outstanding request evidence")
+	}
+	if len(decision.Capacity.Plans) != 2000 || len(snapshot.DispatchOccupancy) != 2000 ||
+		len(snapshot.Options) != 2000 || len(snapshot.Arrivals) != 2000 {
+		t.Fatal("compact changed full/exact-record evidence")
+	}
+	t.Logf("full=%d compact=%d bytes", len(full), len(raw))
 }

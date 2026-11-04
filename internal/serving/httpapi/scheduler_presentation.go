@@ -13,9 +13,9 @@ import (
 
 const schedulerSummaryView = "summary"
 
-// Compact history shares repeated profile evidence without changing it.
-// Current-state reads additionally project raw latency populations to counts.
-// These response-local references never change the stored observation contract.
+// Compact reads share repeated profile evidence and omit unused search/input
+// populations. Current-state reads additionally project latency samples to counts.
+// These response-local projections never change stored observations or full reads.
 type schedulerEvidenceRef struct {
 	Ref string `json:"$ref"`
 }
@@ -77,31 +77,38 @@ func (e *schedulerReadEvidence) candidate(candidate *serving.SchedulerCandidate)
 	return &schedulerReadCandidate{candidate, e.instances(candidate.Instances)}
 }
 
+type schedulerReadCapacity struct {
+	*serving.SchedulerCapacity
+	Plans []serving.SchedulerNodePlan `json:"plans,omitempty"`
+}
+
 type schedulerReadDecision struct {
 	*serving.SchedulerDecision
-	Keep   *schedulerReadCandidate `json:"keep"`
-	Target *schedulerReadCandidate `json:"target"`
+	Keep     *schedulerReadCandidate `json:"keep"`
+	Target   *schedulerReadCandidate `json:"target"`
+	Capacity *schedulerReadCapacity  `json:"capacity,omitempty"`
 }
 
 func (e *schedulerReadEvidence) decision(decision *serving.SchedulerDecision) *schedulerReadDecision {
 	if decision == nil {
 		return nil
 	}
-	return &schedulerReadDecision{SchedulerDecision: decision, Keep: e.candidate(&decision.Keep), Target: e.candidate(decision.Target)}
-}
-
-type schedulerReadOption struct {
-	*serving.SchedulerOption
-	Instance schedulerReadInstance `json:"instance"`
+	result := &schedulerReadDecision{SchedulerDecision: decision, Keep: e.candidate(&decision.Keep), Target: e.candidate(decision.Target)}
+	if decision.Capacity != nil {
+		result.Capacity = &schedulerReadCapacity{SchedulerCapacity: decision.Capacity}
+	}
+	return result
 }
 
 type schedulerReadSnapshot struct {
 	*serving.SchedulerSnapshot
-	Instances    []schedulerReadInstance    `json:"instances"`
-	Options      []schedulerReadOption      `json:"options"`
-	Reservations []schedulerReadReservation `json:"reservations,omitempty"`
-	ArrivalCount *int                       `json:"arrivalCount,omitempty"`
-	OptionCount  *int                       `json:"optionCount,omitempty"`
+	Instances         []schedulerReadInstance     `json:"instances"`
+	Options           []serving.SchedulerOption   `json:"options,omitempty"`
+	Reservations      []schedulerReadReservation  `json:"reservations,omitempty"`
+	Arrivals          []serving.SchedulerArrival  `json:"arrivals,omitempty"`
+	DispatchOccupancy []serving.DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
+	ArrivalCount      *int                        `json:"arrivalCount,omitempty"`
+	OptionCount       *int                        `json:"optionCount,omitempty"`
 }
 
 type schedulerReadReservation struct {
@@ -119,12 +126,6 @@ func (e *schedulerReadEvidence) snapshot(snapshot *serving.SchedulerSnapshot) *s
 		for i := range snapshot.Reservations {
 			reservation := &snapshot.Reservations[i]
 			result.Reservations[i] = schedulerReadReservation{reservation, e.candidate(reservation.Target)}
-		}
-	}
-	if snapshot.Options != nil {
-		result.Options = make([]schedulerReadOption, len(snapshot.Options))
-		for i := range snapshot.Options {
-			result.Options[i] = schedulerReadOption{&snapshot.Options[i], e.instance(&snapshot.Options[i].Instance)}
 		}
 	}
 	return result
@@ -151,12 +152,7 @@ type schedulerReadBatch struct {
 }
 
 func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerState) schedulerReadState {
-	// The current dashboard reads neither the arrival log nor catalog options.
-	// Keep their counts, without registering profiles reachable only from options.
-	snapshot := state.Snapshot
-	snapshot.Arrivals = nil
-	snapshot.Options = nil
-	projected := schedulerReadState{state, e.snapshot(&snapshot), e.decision(&state.Decision)}
+	projected := schedulerReadState{state, e.snapshot(&state.Snapshot), e.decision(&state.Decision)}
 	arrivals, options := len(state.Snapshot.Arrivals), len(state.Snapshot.Options)
 	projected.Snapshot.ArrivalCount = &arrivals
 	projected.Snapshot.OptionCount = &options
@@ -174,20 +170,33 @@ func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerStat
 
 type schedulerReadObservation struct {
 	*observation.SchedulerObservation
-	Decision *schedulerReadDecision `json:"decision,omitempty"`
-	Snapshot *schedulerReadSnapshot `json:"snapshot,omitempty"`
+	Decision   *schedulerReadDecision `json:"decision,omitempty"`
+	Snapshot   *schedulerReadSnapshot `json:"snapshot,omitempty"`
+	Projection string                 `json:"projection"`
+	Omitted    []string               `json:"omitted,omitempty"`
 }
 
 func (e *schedulerReadEvidence) observations(records []observation.SchedulerObservation) []schedulerReadObservation {
 	result := make([]schedulerReadObservation, len(records))
 	for i := range records {
-		result[i] = schedulerReadObservation{&records[i], e.decision(records[i].Decision), e.snapshot(records[i].Snapshot)}
+		result[i] = schedulerReadObservation{
+			SchedulerObservation: &records[i],
+			Decision:             e.decision(records[i].Decision),
+			Snapshot:             e.snapshot(records[i].Snapshot),
+			Projection:           "compact",
+		}
+		if records[i].Decision != nil && records[i].Decision.Capacity != nil {
+			result[i].Omitted = append(result[i].Omitted, "decision.capacity.plans")
+		}
+		if records[i].Snapshot != nil {
+			result[i].Omitted = append(result[i].Omitted, "snapshot.dispatchOccupancy", "snapshot.options", "snapshot.arrivals")
+		}
 	}
 	return result
 }
 
-// History lists carry identity, row labels and workload autonomy states; exact-record
-// reads retain the complete payload. This projection never changes the journal/catalog.
+// History lists carry identity, row labels and workload autonomy states.
+// Unprojected exact-record reads retain the complete journal/catalog payload.
 type schedulerHistoryDecision struct {
 	At        time.Time                        `json:"at"`
 	Status    string                           `json:"status"`

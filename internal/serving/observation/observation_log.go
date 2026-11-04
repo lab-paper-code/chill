@@ -35,7 +35,7 @@ type ObservationLogConfig struct {
 	Definitions []string
 	Outcomes    []string
 	Retention   time.Duration
-	// EventLookupHours bounds append-time hours read by each exact event query.
+	// EventLookupHours bounds append-time hours read by each event query page.
 	EventLookupHours int
 	// OccupancyTail bounds receipt lookback and late native supplement delivery.
 	OccupancyTail time.Duration
