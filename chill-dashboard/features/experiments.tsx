@@ -14,7 +14,6 @@ import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Empty, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { ExperimentCoverage, ExperimentFacts, ExperimentInjections, ExperimentJudgment, ExperimentLimits, ExperimentMetadata, ExperimentOutcome, ExperimentResultRow, ExperimentStageResults, ExperimentVerdict, HistoricalExperimentError, useHistoricalExperiments, usePublishedExperimentFacts } from "@/features/experiments-conclusion"
 import { SchedulerIntervalEvents } from "@/features/scheduler-evidence"
@@ -25,7 +24,7 @@ const intervalTable="w-full text-sm tabular-nums max-md:[&>thead]:sr-only max-md
 
 function ExperimentHelp() {
   const [open,setOpen]=React.useState(false)
-  return <Tooltip open={open} onOpenChange={setOpen}><TooltipTrigger asChild><Button variant="ghost" aria-expanded={open} onClick={event=>{event.preventDefault();setOpen(value=>!value)}}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-80 whitespace-normal leading-relaxed">D1는 게시된 판정입니다. 성공/요청은 기한 안에 성공한 수/offered이며 미발행도 분모에 포함됩니다. 결과 막대는 발행 요청의 완료·시간 초과·오류·미완료를 구분하며 미발행은 별도입니다. 완료 지연은 completed 응답 기준입니다. 선언 SLO는 동결 정의의 목표이며 적용 확인은 요청 identity와 출처까지 연결된 경우입니다. 구간 성공률은 part 실측이며 아래 차트는 단계 집계입니다. 비교 차이는 후보−기준이고 정책 효과를 보장하지 않습니다. 사건은 같은 기간의 클러스터 전체 기록이며 인과를 뜻하지 않습니다.</TooltipContent></Tooltip>
+  return <Tooltip open={open} onOpenChange={setOpen}><TooltipTrigger asChild><Button variant="ghost" aria-expanded={open} onClick={event=>{event.preventDefault();setOpen(value=>!value)}}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-80 whitespace-normal leading-relaxed">D1는 게시된 판정입니다. 성공/요청의 분모는 예정 도착 offered입니다. 발행 증거 비율은 수집된 클라이언트 행의 발행 증거 기준이며, 발행 증거 부족에는 행 누락이 포함되어 실제 미발행과 같지 않습니다. gateway 전수 관측은 게시 필드가 없으면 미기록입니다. 요청 배출은 게시 당시 판정이며 수집 손실 여부를 보정하지 않습니다. 결과 막대는 클라이언트 증거의 완료·시간 초과·오류·미완료입니다. 완료 지연은 completed 응답 기준입니다. 선언 SLO는 동결 정의의 목표이며 적용 확인은 요청 identity와 출처까지 연결된 경우입니다. 구간 성공률은 part 실측이며 아래 차트는 단계 집계입니다. 비교 차이는 후보−기준이고 정책 효과를 보장하지 않습니다. 사건은 같은 기간의 클러스터 전체 기록이며 인과를 뜻하지 않습니다.</TooltipContent></Tooltip>
 }
 
 function SelectedValues({row,service="",onSelect}:{row:ExperimentHeatmapRow;service?:string;onSelect?:(service:string)=>void}) {
@@ -120,7 +119,6 @@ function ExperimentDetail({run,runs,pending=false,error,refetch}:{run:Experiment
   const names=React.useMemo(()=>[...new Set(rows.flatMap(row=>[row.stage,...(row.other?[row.other]:[])].flatMap(stage=>experimentRows(stage).map(item=>item.name))))],[rows])
   const params=useSearchParams(),requestedService=params.get("service")??"",service=requestedService||(names.length===1?names[0]:"")
   const trigger=React.useRef<HTMLElement|null>(null),selectionArea=React.useRef<HTMLElement|null>(null)
-  const [cleanupOpen,setCleanupOpen]=React.useState(false)
   const selectedRow=rows.find(row=>Object.entries(experimentIntervalSelection(run,row)).every(([key,value])=>(params.get(key)??(key==="al"?run.id:""))===value))
   const selected=selectedRow??rows.find(row=>row.other)??rows[0],drawerRow=params.get("sheet")==="closed"?undefined:selectedRow
   React.useEffect(()=>{if(!requestedService&&names.length===1)commitExperimentSelection(window.location,window.history,{service:names[0]})},[names,requestedService])
@@ -132,7 +130,7 @@ function ExperimentDetail({run,runs,pending=false,error,refetch}:{run:Experiment
   return <>
     <section aria-label="게시 결과 요약" className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-3"><ExperimentVerdict run={run}/><ExperimentHelp/></div>
-      {run.outcome?.cleanup?.status==="Failed"&&<><Button variant="outline" onClick={()=>setCleanupOpen(true)}>정리 실패 · 풀 상태 확인</Button><Dialog open={cleanupOpen} onOpenChange={setCleanupOpen}><DialogContent className="max-h-[85vh] overflow-y-auto" aria-describedby={undefined}><DialogHeader><DialogTitle>풀 상태 확인</DialogTitle></DialogHeader><EvaluationCleanup run={run}/></DialogContent></Dialog></>}
+      <EvaluationCleanup run={run}/>
       {rows.length>1&&<label className="text-sm">{rows.some(row=>row.other)?"비교쌍":"단계"} <select className="min-h-11 max-w-full rounded border bg-background px-2" value={selected?.key??""} onChange={event=>{const row=rows.find(row=>row.key===event.target.value);if(row)commitExperimentSelection(window.location,window.history,{...experimentIntervalSelection(run,row),sheet:drawerRow?"":"closed",eventSide:""})}}>{rows.map(row=><option key={row.key} value={row.key}>{row.other?`${row.stage.id} / ${row.other.id}`:row.stage.id}</option>)}</select></label>}
     </section>
     <section aria-label="선택 단계 수치" className="min-w-0 space-y-2">{selected?<><h2 className="text-sm font-semibold">{selected.stage.id} · 단계 집계</h2><SelectedValues row={selected} onSelect={name=>open(selected,name)}/></>:<Empty title="실측 단계 없음"/>}</section>

@@ -16,6 +16,15 @@ const compiled=transpileModule(readFileSync(new URL("../features/experiments-con
 const components:Record<string,ComponentType<{run:Experiment;runs?:Experiment[];pending?:boolean;error?:boolean;stage?:ExperimentStage}>>={}
 const modules:Record<string,unknown>={"@/lib/client":{},"@/components/ui/button":{},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experiments,"@/lib/measurements":measurements,"lucide-react":{TriangleAlert:()=>null}}
 new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),components)
+const r2b=experiments.decodeExperiment(readFileSync(new URL("./fixtures/experiment-r2b-results.json",import.meta.url),"utf8"))
+test("saved r2b client evidence gap is not asserted to be unsent traffic",()=>{
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:r2b,stage:r2b.stages[0]}))
+  assert.match(html,/클라이언트 행 누락 4,125/)
+  assert.match(html,/클라이언트 수집 130,031/)
+  assert.match(html,/gateway 관측 미기록/)
+  assert.doesNotMatch(html,/미발행 4,125|부분 발행/)
+  assert.match(html,/발행 증거 부족 4,125/)
+})
 const stage=(id:string)=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{}})
 const run:Experiment={schemaVersion:"serving-experiment.v1alpha1",id:"comparison",from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",status:"FAIL",sources:[],stages:[stage("candidate"),stage("baseline"),stage("unpaired")],comparisons:[{left:{stageID:"candidate"},right:{stageID:"baseline"},reason:"조건 확인"}]}
 
@@ -149,7 +158,7 @@ test("published operator results expose service failures, declared SLO, outcomes
   const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:publication,stage}))
   const matrix=html.match(/<table[^>]+aria-label="서비스별 결과"[\s\S]*?<\/table>/)?.[0]??""
   assert.equal((matrix.match(/<tbody>[\s\S]*?<\/tbody>/)?.[0].match(/<tr\b/g)??[]).length,2)
-  for(const value of ["선언 SLO","p95","1,000","p99","36","적용 미확인","15 / 100","15.00%","1,950","1,200","완료 40","시간 초과 10","오류 29","미완료 1","미발행 20","80.00%","부분 발행"])assert.ok(matrix.includes(value),value)
+  for(const value of ["선언 SLO","p95","1,000","p99","36","적용 미확인","15 / 100","15.00%","1,950","1,200","완료 40","시간 초과 10","오류 29","미완료 1","발행 증거 부족 20","80.00%","부분 증거"])assert.ok(matrix.includes(value),value)
   const sensor=matrix.match(/<tr[^>]*>[\s\S]*?sensor[\s\S]*?<\/tr>/g)?.at(-1)??""
   assert.ok(sensor.includes("시간 초과 미기록"))
   assert.ok(sensor.includes("오류 미기록"))

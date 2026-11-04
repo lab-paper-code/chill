@@ -102,7 +102,7 @@ export function ExperimentStageResults({run,stage,provisional,service="",onSelec
     {provisional&&<header className="space-y-1"><h2 className="font-semibold">실행 중 · 잠정</h2><p className="text-sm tabular-nums">asOf {resultTime(provisional.asOf)} · 집계 마감 {resultTime(provisional.closedThrough)} (KST)</p><p className="text-xs text-muted-foreground">현재 요청은 집계 마감까지의 예정 도착입니다. 결과 대기·미발행 포함은 진행 중 요청을 포함하며 이후 성공으로 바뀔 수 있습니다. 요청 배출 전에는 판정하지 않습니다.</p></header>}
     <div className="overflow-x-auto">
       <table aria-label="서비스별 결과" className="w-full text-left text-sm tabular-nums">
-        <thead><tr>{["서비스","D1 판정",provisional?"적용 SLO":"선언 SLO",provisional?"성공 / 필요":"성공 / 요청",provisional?"현재 요청 · 도달 상태":"완료 지연 p95 / p50 (ms)",provisional?"요청 결과":"발행 요청 결과","부하 발행률"].map(label=><th scope="col" key={label} className="whitespace-nowrap p-2 font-medium">{label}</th>)}</tr></thead>
+        <thead><tr>{["서비스","D1 판정",provisional?"적용 SLO":"선언 SLO",provisional?"성공 / 필요":"성공 / 요청",provisional?"현재 요청 · 도달 상태":"완료 지연 p95 / p50 (ms)",provisional?"요청 결과":"클라이언트 증거·요청 결과",provisional?"부하 발행률":"발행 증거 비율"].map(label=><th scope="col" key={label} className="whitespace-nowrap p-2 font-medium">{label}</th>)}</tr></thead>
         <tbody>{results.map(({row,verdict,declaredSLO,appliedSLO,success,offered,fraction,p95,p50,outcomes:counts,fidelity})=>{
           const total=provisional?finite(offered):finite(fidelity.issued)??finite(row.original.clientRows)
           return <tr key={row.source} className="border-t align-top">
@@ -114,9 +114,9 @@ export function ExperimentStageResults({run,stage,provisional,service="",onSelec
             <td className="min-w-64 p-2">
               <div aria-hidden="true" className="mb-1 flex h-3 overflow-hidden rounded-sm bg-muted">{outcomes.map(([key,,color])=>{const count=finite(counts[key]);return count!==null&&total!==null&&total>0?<span key={key} className={color} style={{width:`${count/total*100}%`}}/>:null})}</div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">{outcomes.map(([key,label,color])=><span key={key} className="whitespace-nowrap"><i aria-hidden="true" className={`mr-1 inline-block size-2 ${color}`}/>{label} {resultNumber(counts[key])}</span>)}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{provisional?<>결과 대기·미발행 포함 {resultNumber(row.original.unfinishedOrUnsent)}<span className="block">위 결과 분류와 겹치는 집계 · 미발행 {resultNumber(fidelity.unissued)}</span></>:<>미발행 {resultNumber(fidelity.unissued)}</>}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{provisional?<>결과 대기·미발행 포함 {resultNumber(row.original.unfinishedOrUnsent)}<span className="block">위 결과 분류와 겹치는 집계 · 미발행 {resultNumber(fidelity.unissued)}</span></>:<><span className="block">클라이언트 수집 {resultNumber(row.original.clientRows)}</span><span className="block">클라이언트 행 누락 {resultNumber(fidelity.missingClientRows)} · 초과 {resultNumber(fidelity.extraClientRows)}</span><span className="block">발행 증거 부족 {resultNumber(fidelity.unissued)}</span><span className="block">gateway 관측 미기록</span></>}</div>
             </td>
-            <td className="whitespace-nowrap p-2">{resultPercent(finite(fidelity.issuanceFraction))}<span className="block text-xs text-muted-foreground">{resultWord(fidelity.status)}</span></td>
+            <td className="whitespace-nowrap p-2">{resultPercent(finite(fidelity.issuanceFraction))}<span className="block text-xs text-muted-foreground">{!provisional&&fidelity.status==="PARTIAL"?"부분 증거":resultWord(fidelity.status)}</span></td>
           </tr>
         })}{!results.length&&<tr><td colSpan={7} className="p-3 text-muted-foreground">서비스 결과 미기록</td></tr>}</tbody>
       </table>

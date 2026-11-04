@@ -145,6 +145,13 @@ test("return observation requires matching UID and explicit pool release, not re
   assert.doesNotMatch(render(),/반환 관측/)
   observed={...observed,conditions:[{type:"PoolAcquired",status:"False"}]}
   assert.match(render(),/반환 관측/)
+  assert.doesNotMatch(render(),/자원 반환 확인 요청|확인 제출/)
+  for(const residuals of [[],null,undefined]) {
+    const publication={...run,outcome:{cleanup:{status:"Failed",residuals}}}
+    const html=renderToStaticMarkup(React.createElement(exports.EvaluationCleanup!,{run:publication}))
+    assert.match(html,residuals===null||residuals===undefined?/정리 잔여 자원.*미기록/:/잔여 없음/)
+    assert.match(html,/게시 당시 정리/)
+  }
   observed={...observed,uid:"new"}
   assert.doesNotMatch(render(),/반환 관측/)
   assert.match(render(),/미확인/)
