@@ -1012,13 +1012,6 @@ spec:
                         written, not wire bytes.
                       format: int64
                       type: integer
-                    collectionLoss:
-                      additionalProperties:
-                        format: int64
-                        type: integer
-                      description: CollectionLoss contains per-workload producer capture
-                        loss counts, when recorded.
-                      type: object
                     phase:
                       enum:
                       - loadStarted

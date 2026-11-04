@@ -284,9 +284,6 @@ type EvaluationStageProgress struct {
 	// ProducerRowsMissing counts planned requests without producer final rows at drain end.
 	// +optional
 	ProducerRowsMissing map[string]int64 `json:"producerRowsMissing,omitempty"`
-	// CollectionLoss contains per-workload producer capture loss counts, when recorded.
-	// +optional
-	CollectionLoss map[string]int64 `json:"collectionLoss,omitempty"`
 	// Bytes is the number of collected raw artifact bytes written, not wire bytes.
 	// +optional
 	Bytes *int64 `json:"bytes,omitempty"`

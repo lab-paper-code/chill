@@ -1393,13 +1393,6 @@ func (in *EvaluationStageProgress) DeepCopyInto(out *EvaluationStageProgress) {
 			(*out)[key] = val
 		}
 	}
-	if in.CollectionLoss != nil {
-		in, out := &in.CollectionLoss, &out.CollectionLoss
-		*out = make(map[string]int64, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
-	}
 	if in.Bytes != nil {
 		in, out := &in.Bytes, &out.Bytes
 		*out = new(int64)

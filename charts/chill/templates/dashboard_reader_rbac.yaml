@@ -56,9 +56,6 @@ rules:
   - apiGroups: [edge.dacs.io]
     resources: [evaluationruns, loadscenarios, evaluationstages]
     verbs: [get, list, watch]
-  - apiGroups: [batch]
-    resources: [jobs]
-    verbs: [list]
   {{- end }}
 {{- range $namespace := $profileNamespaces | uniq | sortAlpha }}
 ---

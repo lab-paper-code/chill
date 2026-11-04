@@ -180,18 +180,23 @@ from planned durations, GO, Job state, or a measurement verdict.
 minus observed producer final rows at drain time (bounded below by zero), or zero
 when that producer emitted `drained`. This is **drain-time producer-row evidence**,
 not an in-flight count or the reducer's gateway-final-based `unfinishedOrUnsent`.
-Optional `collectionLoss:{workload:count}` passes through the producer capture
-owner's separately recorded loss counts when available. No later enrichment
-rewrites a boundary; final reducer numbers belong to judged publication evidence.
+No later enrichment rewrites a boundary; final reducer numbers belong to judged
+publication evidence.
 Run/stage `procedures[]` remain the authority for the broader factor/stage/judge/
 cleanup execution and publication boundaries. No separate `judged` alias is added;
 the requested finer judgment interval is explicitly `judgeStarted`/`judgeEnded`.
 The harness logs each boundary as `EVALUATION_PROGRESS <JSON>` in its stage/judge
-Pod, and uses the same UID-tested EvaluationStage status JSON patch path as
-`provisionalD1`. `lastProgressAt` advances on each existing producer Job poll at
-`flushSeconds` cadence and each boundary signal, even without a new closed minute.
-It is independent of `provisionalD1.asOf`; blocking flush/collection calls do not
-invent periodic signals, and no additional heartbeat timer exists.
+Pod. Producer event handlers only append to an in-memory progress list: no
+Kubernetes call runs inside JSONL boundary handling. The existing `flushSeconds`
+producer poll publishes the entire progress list and `lastProgressAt` together
+through the same UID-tested status patch path as `provisionalD1`. Re-publication
+replaces the full array (RFC 6902 object-member `add`), so the first write needs
+no initial array and a failed write cannot lose or duplicate pending records.
+The publication also saves `stage-progress.json` in the shared stage workspace
+so the separate judge process retains prior boundaries. After ingestion ends,
+drain/flush/collect/judge boundaries each publish once.
+`lastProgressAt` is independent of `provisionalD1.asOf`; blocking flush/collection
+calls do not invent periodic signals, and no additional heartbeat timer exists.
 Status publication errors are logged as `EVALUATION_PROGRESS_ERROR`; this
 diagnostic write does not stop or invalidate an otherwise observable measurement.
 
@@ -209,11 +214,11 @@ Workload/shard fields are not exposed: existing Job metadata has no such labels.
 Deleted Jobs are absent; no harness history is fabricated from their old names.
 Empty progress/Job lists and an unrecorded heartbeat are omitted.
 
-RBAC: serving-entrypoint already has Job `get,list` in its configured profile
-namespaces; dashboard-reader gains only batch Job `list` in its existing
-evaluation-enabled namespaced read role. Existing EvaluationStage get/list/watch
-grants and the harness's status patch grant are unchanged. No live grant or
-deployment is performed by this change.
+RBAC is unchanged: GET evaluation projections run under serving-entrypoint,
+which already has Job `get,list` in its configured profile namespaces.
+Dashboard-reader does not need a native Job grant. Existing EvaluationStage
+read grants and the harness's status patch grant are unchanged. No live grant
+or deployment is performed by this change.
 
 #### 실험 게시물 페이지·적용 SLO 출처
 

@@ -72,7 +72,7 @@ if reader:
         for resource in ("evaluationruns", "loadscenarios", "evaluationstages"):
             for verb in ("get", "list", "watch"):
                 assert ((namespace, "edge.dacs.io", resource, verb, ()) in reader_resources) == evaluation_enabled
-        assert ((namespace, "batch", "jobs", "list", ()) in reader_resources) == evaluation_enabled
+        assert (namespace, "batch", "jobs", "list", ()) not in reader_resources
         assert (namespace, "batch", "jobs", "get", ()) not in reader_resources
 else:
     assert not reader_objects, "disabled reader rendered RBAC"

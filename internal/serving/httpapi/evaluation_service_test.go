@@ -117,7 +117,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 			CurrentProcedure: "stage", StartedAt: &start, GoAt: &start,
 			Progress: []api.EvaluationStageProgress{
 				{Phase: "loadStarted", At: "2026-11-04T01:00:01.123456789Z"},
-				{Phase: "drainEnded", At: "2026-11-04T01:01:00Z", ProducerRowsMissing: map[string]int64{"workload": 1}, CollectionLoss: map[string]int64{"workload": 1}},
+				{Phase: "drainEnded", At: "2026-11-04T01:01:00Z", ProducerRowsMissing: map[string]int64{"workload": 1}},
 			},
 			LastProgressAt: "2026-11-04T01:01:05.123456789Z",
 			ProvisionalD1: &api.EvaluationProvisionalD1{
@@ -178,7 +178,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 				 "provisionalD1":{"asOf":"2026-11-04T01:00:59.123456789Z","closedThrough":"2026-11-04T01:00:00Z","provisional":true,
 					"workloads":{"workload":{"offered":2,"deadlineSuccess":1,"requiredSuccessfulRank":2,"outcomes":{"completed":1},
 						"unfinishedOrUnsent":1,"slo":{"percentile":95,"targetLatencyNanos":1},"reachable":true,"substages":[]}},"generatorQuality":{}},
-				 "progress":[{"phase":"loadStarted","at":"2026-11-04T01:00:01.123456789Z"},{"phase":"drainEnded","at":"2026-11-04T01:01:00Z","producerRowsMissing":{"workload":1},"collectionLoss":{"workload":1}}],
+				 "progress":[{"phase":"loadStarted","at":"2026-11-04T01:00:01.123456789Z"},{"phase":"drainEnded","at":"2026-11-04T01:01:00Z","producerRowsMissing":{"workload":1}}],
 				 "lastProgressAt":"2026-11-04T01:01:05.123456789Z",
 				 "loadJobs":[{"name":"load-first","uid":"load-uid","status":"Active","startedAt":"2026-11-04T01:00:00Z"}],
 				 "procedures":[
