@@ -33,7 +33,7 @@ function render(kind:"list"|"detail") {
   "@/components/measurement-filters":{MeasurementFilters:()=>null},"@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[plan]}}),useMeasurementCoverage:()=>({data:{cells:[]}})},
   "@/features/measurement-runs":{MeasurementChildRuns:()=>null},
   "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
-  "@/components/screen":{Screen:container,Facts:()=>null,Rows:container},"@/components/ui/button":{Button:container},
+  "@/components/screen":{Screen:container,Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([label,value])=>createElement("div",{key:label},createElement("dt",null,label),createElement("dd",null,value)))),Rows:container},"@/components/ui/button":{Button:container},
   "@/components/measurement-navigation":{MeasurementStatus:()=>null,MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
   "@/components/status-cell":{StatusCell:()=>null},
   "@/components/data-table":{DataTable:({columns,data}:{columns:{value:(row:unknown)=>ReactNode}[];data:unknown[]})=>createElement("div",null,data.map((row,index)=>createElement("div",{key:index},columns.map((column,index)=>createElement("div",{key:index},column.value(row))))))},
@@ -57,4 +57,9 @@ test("R19 review: first error never hides different failure codes or catalog sta
  assert.match(visible,/전력 관측 시간 초과/)
  assert.match(visible,/카탈로그 조회 불가/)
  assert.doesNotMatch(visible,/실행 오류 설명|GPU 메모리 부족 설명|전력 관측 시간 초과 설명/)
+})
+test("historical request without a Workload renders missing provenance",()=>{
+ const value=render("detail").match(/<dt>Workload<\/dt><dd>([^<]+)<\/dd>/)?.[1]
+ assert.ok(value)
+ assert.notEqual(value,plan.spec.state.candidate.modelSpec)
 })

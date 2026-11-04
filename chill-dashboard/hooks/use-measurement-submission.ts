@@ -4,7 +4,7 @@ import { useState, type Dispatch, type SetStateAction } from "react"
 import { useRouter } from "next/navigation"
 import { ApiError, useChillMutation } from "@/lib/client"
 import type { MeasurementMutation, MeasurementPreflight } from "@/lib/read-types"
-import { fillDefaults, manifest, requestCheckCurrent, requestHref, steps, view, type Context, type Draft } from "@/lib/measurement-request"
+import { updateDraft, manifest, requestCheckCurrent, requestHref, steps, view, type Context, type Draft } from "@/lib/measurement-request"
 import type { Compatibility } from "@/lib/measurement-coverage"
 
 export function failure(error: ApiError) {
@@ -30,7 +30,7 @@ export function useMeasurementSubmission({ d, setD, context, namespace, source, 
   const passed=requestCheckCurrent(checkedInput,inputKey,admitted,answer?.resolves)
   const pending=dry.isPending||pre.isPending
   const update=(patch:Partial<Draft>)=>{
-    setD(current=>fillDefaults({...current,...patch,...(patch.preprocessor!==undefined?{explicitPreprocessor:!!patch.preprocessor}:{}),...(patch.dataset!==undefined?{explicitDataset:!!patch.dataset}:{})},context))
+    setD(current=>updateDraft(current,patch,context))
     setError("");setCheckedInput(null);dry.reset();pre.reset();send.reset()
   }
   function verify() {

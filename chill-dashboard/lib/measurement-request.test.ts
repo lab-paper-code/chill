@@ -28,7 +28,7 @@ test("request query batches decode, deduplicate and sort without accepting malfo
 test("default protocol comes from newest server request with the same condition, never another mode or Node",()=>{
   const newer={...plan,metadata:{...plan.metadata,name:"newer",creationTimestamp:"2026-10-31T00:00:00Z"},spec:{...plan.spec,retryLimit:2}}
   const selected=requestDefaults(condition,[plan,newer],[])
-  assert.deepEqual(selected?.spec,newer.spec)
+  assert.deepEqual(selected?.spec,{...newer.spec,activeProtocol:{...newer.spec.activeProtocol,workload:undefined}})
   assert.match(selected?.source??"",/newer/)
   for(const patch of [{model:"other"},{deviceClass:"other"},{node:"other"},{path:"cpu"},{powerMode:"15W"}])assert.equal(requestDefaults({...condition,...patch},[plan],[]),null)
   assert.equal(requestDefaults({...condition,node:""},[plan],[])?.spec.state.targetNode,"node")
@@ -49,7 +49,7 @@ test("unmeasured targets reuse successful protocol without copying another devic
   const defaults=requestDefaults(otherTarget,[success],[])
   assert.equal(defaults?.exact,false)
   assert.match(defaults?.source??"",/source.*device.*같은 모델/)
-  assert.deepEqual(defaults?.spec,{...plan.spec,state:{...plan.spec.state,targetNode:""},batchSizes:undefined})
+  assert.deepEqual(defaults?.spec,{...plan.spec,state:{...plan.spec.state,targetNode:""},activeProtocol:{...plan.spec.activeProtocol,workload:undefined},batchSizes:undefined})
   const pathOnly=requestDefaults({...condition,model:"new-model"},[success],[])
   assert.match(pathOnly?.source??"",/같은 실행 경로/)
   assert.equal(requestDefaults({...otherTarget,model:"new-model"},[success],[]),null)
