@@ -33,3 +33,24 @@ export function deviceRows(state:LiveState,inventory?:InventoryView,pools?:Pools
 }
 export function devicePowerScale(rows:DeviceRow[],retainedScale:number):number {return Math.max(1,retainedScale,...rows.map(row=>row.watts??0))}
 export function devicePowerPercent(row:DeviceRow,scale:number):number|null {return row.watts===null?null:Math.max(0,Math.min(100,row.watts/scale*100))}
+
+// Keep live serving facts separate from REST-only instances: readiness does not imply routing.
+export function deviceInstances(row:DeviceRow,state:LiveState,resources?:SchedulerSnapshot) {
+  return row.instances.map(id=>{
+    const live=state.snapshot?.instances.find(item=>item.id===id&&item.node.uid===row.uid)
+    const pool=row.poolInstances.find(item=>item.id===id)
+    const actual=resources?.instances?.find(item=>item.id===id&&item.node.uid===row.uid)
+    const services=new Map<string,WorkloadRef>()
+    for(const workload of pool?.workloads??[])services.set(workload.uid,workload)
+    if(actual?.workloadUID)services.set(actual.workloadUID,row.services.find(item=>item.uid===actual.workloadUID)??{uid:actual.workloadUID,name:""})
+    if(live)for(const workload of state.snapshot?.workloads??[])if(belongsToPool(live,workload.uid))services.set(workload.uid,workload)
+    if(live?.ownerWorkloadUID&&!services.has(live.ownerWorkloadUID))services.set(live.ownerWorkloadUID,row.services.find(item=>item.uid===live.ownerWorkloadUID)??{uid:live.ownerWorkloadUID,name:""})
+    return {id,live,pool,actual,ready:live?.ready??pool?.ready??actual?.ready??null,stopped:live?.stopped??pool?.stopped??actual?.stopped??null,services:[...services.values()]}
+  })
+}
+
+export function deviceImageName(image:string|undefined):string {
+  if(!image)return "미기록"
+  if(/^(sha256|sha512):/.test(image))return "이미지 식별자"
+  return image.split("@")[0].split("/").at(-1)||"미기록"
+}

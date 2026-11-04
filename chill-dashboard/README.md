@@ -239,8 +239,13 @@ the browser used an isolated ChillServer-contract fixture and performed no live 
 서비스 영향과 관측 공백은 독립 상태·aria-live 요약으로 제공하고, 서비스 선택은 공통 Sheet 한 개를 사용한다.
 후보·추정·부하·용량 근거는 `/?open=service:UID&evidence=candidates|estimates|load|capacity`로
 연결하며, `view=snapshot` 직접 진입도 첫 수신 응답을 고정하고 최신 판단을 명시적으로 채택한다.
-`/operations/devices`는 전력 추세와 이름순 장치·배치 표 두 영역이다. 계측 범위와 구성 범위를
-구분하고 사양·전력모드·측정/가용/제외 역할·준비/제외 사유·실제 할당은 선택 Sheet에서 조회한다.
+`/operations/devices`는 장치별 배치를 먼저 보여 주고 전체 전력 이력은 접어 둔다. 장치명·준비 상태,
+공통 눈금 전력, 서비스별 인스턴스 관측을 한 행에서 읽는다. 실제 분배율·처리/대기는 루트와 같은
+`ServingInstance`로 표시하며 REST-only 배치에는 live 분배나 요청 수를 추정하지 않는다.
+선택 Sheet는 준비·전력모드·현재 W → 인스턴스 → 전력 추세 → 운영 조건 → 원본 정보 순서다.
+UID·프로파일·이미지 원문·실행 경로·Kubernetes 준비·사양·할당은 복사/다운로드 가능한 원본 정보로 옮긴다.
+이미지 요약은 원문에 있는 마지막 이름:태그만 사용한다. 전력 관측과 경고는 항상 같은 슬롯을 유지하며,
+추세의 시각·관측/공백 범위 표는 `관측 구간` 펼침에서 조회한다.
 구 POOL 상세 링크는 `workload` 범위와 `open` 선택을 분리하며 장치 선택은 `node`로 장치 화면에 매핑한다.
 `Feasible`은 `실행 가능`이며 SLO 충족 판정이 아니다. 후보의 서비스 평가 항목이 없으면
 `평가 대상 없음`을 표시하고 동일 후보 ID의 유지안·목표는 한 번만 표시한다.
