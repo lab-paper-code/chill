@@ -221,10 +221,13 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
   Retirement is an enumerated node plan: `schedulerPlan` supplies its measured
   stop/drain/remove chain before the normal capacity, transition, reserve and
   H-energy evaluation. `decide` materializes exactly the evaluated instances.
-  A plan removing live occupancy without preparing replacement capacity is admitted
-  only when every controlled Workload meets the same final/backlog SLO judgment
-  as Keep and its net gain over Keep at the common H exceeds the existing
-  evidence uncertainty bound. Overload ranking cannot trade unrelated healthy
+  A plan removing live occupancy is admitted only when every controlled Workload
+  meets the same final/backlog SLO judgment as Keep. When Keep is feasible,
+  optional retirement must also exceed the existing common-H gain uncertainty
+  bound. When Keep is infeasible and the whole target is feasible, the existing
+  higher-energy recovery exception applies, including a replacement whose
+  source removal and destination prepare are on different nodes. A node-local
+  removal is not by itself proof of optional shrinkage. Overload ranking cannot trade unrelated healthy
   retirement for cheaper energy. Feasible, net-positive retirement remains
   possible with an Unconfirmed sibling: physical confirmation is node-local,
   never a global retirement veto. Disabled ownership, scale-down stabilization,

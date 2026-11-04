@@ -72,3 +72,60 @@ func TestPlannerRetirementUsesSLOAndHorizonGain(t *testing.T) {
 		})
 	}
 }
+
+// A node-local removal can be the source half of required cross-node recovery,
+// not optional shrinkage. MaxReplicas leaves no room to retain the old source.
+func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, 10*time.Minute, time.Hour
+	s.MaxReplicas, s.MaxInstances = 1, 4
+	s.Controls.Power = false
+	s.ScaleDownStabilization = time.Minute
+	snap.Workloads[0].SLO.TargetLatency = time.Second
+	old := snap.Instances[0]
+	destination := poolsAddNode(&snap, "recovery-b", map[string]float64{"fixed": 10})
+	replacement := poolsInstance(old, "recovery-b-option", destination, "fixed", "w1")
+	replacement.Profile.IdleBaselineWatts = 30
+	snap.Options = append(snap.Options, poolsOption(replacement))
+	snap.Routing = map[string]map[string]int32{"w1": {old.ID: schedulerRouteUnits}}
+	snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: true, Supply: 40, WindowMax: 80}}
+	snap.Costs = []OperationCost{
+		poolsCost(schedulerActionPrepare, destination, "unloaded", schedulerState(replacement), "fixed"),
+		poolsCost(schedulerActionRemove, old.Node, schedulerState(old), "unloaded", "fixed", schedulerState(old)),
+	}
+	capacityLoad(s, &snap, snap.Workloads[0], 80)
+	rows := capacityRowsForTest(s, snap, func(o SchedulerOption) float64 {
+		if o.Instance.Node == old.Node {
+			return 40
+		}
+		return 100
+	})
+	d := capacityDecideForTest(t, s, snap, rows)
+	if d.Status != schedulerStatusFeasible || d.Target == nil || d.Target.Keep ||
+		len(d.Target.Instances) != 1 || d.Target.Instances[0].Node != destination {
+		t.Fatalf("cross-node recovery rejected: status=%s target=%+v reasons=%v", d.Status, d.Target, d.Reasons)
+	}
+	if d.Target.ExpectedJoules == nil || d.Keep.ExpectedJoules == nil || *d.Target.ExpectedJoules <= *d.Keep.ExpectedJoules {
+		t.Fatal("fixture must require higher-energy recovery")
+	}
+	kinds := make([]string, 0, len(d.Target.Actions))
+	for _, a := range d.Target.Actions {
+		kinds = append(kinds, a.Kind)
+	}
+	if !slices.Equal(kinds, []string{schedulerActionPrepare, schedulerActionRoute, schedulerActionStop, schedulerActionDrain, schedulerActionRemove}) {
+		t.Fatalf("recovery lost prepare/route/retire ordering: %v", kinds)
+	}
+	// Better than A's κ=40 is not enough: κ=60 still cannot serve λ=80.
+	// An infeasible target must not acquire the feasible-recovery exception.
+	for n := range rows {
+		if rows[n].Input.Node == destination {
+			kappa := 60.0
+			rows[n].Kappa = &kappa
+		}
+	}
+	d = capacityDecideForTest(t, s, snap, rows)
+	if d.Status != SchedulerStatusOverload || d.Target == nil || !d.Target.Keep ||
+		len(d.Target.Instances) != 1 || d.Target.Instances[0].ID != old.ID || len(d.Target.Actions) != 0 {
+		t.Fatalf("less-bad infeasible target retired A: status=%s target=%+v reasons=%v", d.Status, d.Target, d.Reasons)
+	}
+}

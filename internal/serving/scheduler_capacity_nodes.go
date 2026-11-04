@@ -108,7 +108,8 @@ func (p *capacityPlanner) build() error {
 		}
 		p.examined += len(p.plans[n])
 	}
-	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
+	keep := p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1)
+	p.keepWatts, p.keepFeasible = keep.joules, keep.feasible
 	return nil
 }
 

@@ -181,7 +181,15 @@ func (p *capacityPlanner) admits(res *capacityResult) bool {
 	}
 	for n, j := range res.choice {
 		if p.plans[n][j].retires {
-			if !res.feasible || res.keepJoules <= res.joules {
+			if !res.feasible {
+				return false
+			}
+			// A feasible target repairing infeasible Keep is recovery, including
+			// a replacement whose source and destination are on different Nodes.
+			if !p.keepFeasible {
+				return true
+			}
+			if res.keepJoules <= res.joules {
 				return false
 			}
 			keep := capacityResult{choice: make([]int, len(p.plans))}

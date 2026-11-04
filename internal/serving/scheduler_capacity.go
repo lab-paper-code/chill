@@ -333,22 +333,23 @@ func schedulerCanonical(s SchedulerSnapshot) SchedulerSnapshot {
 }
 
 type capacityPlanner struct {
-	ctx       context.Context
-	settings  SchedulerSettings
-	snapshot  SchedulerSnapshot
-	keep      SchedulerCandidate
-	rows      map[string]CapacityRow
-	options   []SchedulerOption
-	pending   []SchedulerInstance // uncreated commitments, counted once without capacity
-	ws        []capacityWorkload
-	index     map[string]int
-	plans     [][]*capacityPlan // per Node; plans[n][0] is keep
-	compared  []bool
-	period    float64
-	keepWatts float64 // keep energy is linear in the common comparison window
-	examined  int
-	searched  SchedulerPlanSearch
-	variants  map[string]SchedulerOption // capacity variants by profile ID and batch limit
+	ctx          context.Context
+	settings     SchedulerSettings
+	snapshot     SchedulerSnapshot
+	keep         SchedulerCandidate
+	rows         map[string]CapacityRow
+	options      []SchedulerOption
+	pending      []SchedulerInstance // uncreated commitments, counted once without capacity
+	ws           []capacityWorkload
+	index        map[string]int
+	plans        [][]*capacityPlan // per Node; plans[n][0] is keep
+	compared     []bool
+	period       float64
+	keepWatts    float64 // keep energy is linear in the common comparison window
+	keepFeasible bool    // full Keep judgment, shared by admission and recovery
+	examined     int
+	searched     SchedulerPlanSearch
+	variants     map[string]SchedulerOption // capacity variants by profile ID and batch limit
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.
