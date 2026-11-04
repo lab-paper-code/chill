@@ -97,7 +97,7 @@ def start_gate(context):
             attempt = {'at': input_snapshot.now(), 'passed': False, 'error': str(error)}
         attempts.append(attempt)
         input_snapshot.save(path, attempts)
-        if attempt['passed']:
+        if attempt['passed'] and time.monotonic() <= deadline:
             return
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -106,11 +106,21 @@ def start_gate(context):
 
 
 def start_watcher(context, step):
-    return subprocess.Popen([sys.executable, str(Path(__file__).resolve()), 'watch', '--out', str(context.root),
+    return subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--out', str(context.root),
                              '--step', step, '--namespace', context.execution['namespace'],
                              '--api-url', context.config['chillAPIURL'],
                              '--watch-seconds', str(timeboxes(context)['watchSeconds']),
-                             '--parent-pid', str(os.getpid())])
+                             '--parent-pid', str(os.getpid())], start_new_session=True)
+
+
+def stop_watcher(context, process):
+    """A slow diagnostic cycle never delays the step: after apiSeconds the group is killed."""
+    process.terminate()
+    try:
+        process.wait(timeout=timeboxes(context)['apiSeconds'])
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
 
 
 def append(path, value):
@@ -263,7 +273,6 @@ class Watcher:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['watch'])
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--step', choices=['stage', 'finish'], required=True)
     parser.add_argument('--namespace', required=True)

@@ -187,9 +187,7 @@ class Harness:
             try:
                 getattr(self,step.replace('-','_'))()
             finally:
-                if watcher is not None:
-                    watcher.terminate()
-                    watcher.wait()
+                if watcher is not None: live.stop_watcher(self, watcher)
             reason=self.reason
         except Exception as error:
             status='Failed';candidate=str(error).split(':',1)[0]
