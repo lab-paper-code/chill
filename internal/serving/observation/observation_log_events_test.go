@@ -234,7 +234,7 @@ func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
 				}
 				wantNext := boundary.Format(time.RFC3339Nano)
 				if i == 0 {
-					wantNext = observationTestHour.Format(time.RFC3339Nano) + "/1"
+					wantNext = observationTestHour.Format(time.RFC3339Nano) + "/0/1"
 				} else if i == 2 {
 					wantNext = boundary.Add(time.Hour).Format(time.RFC3339Nano)
 				}
@@ -247,7 +247,7 @@ func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
 				t.Fatalf("append-hour continuation lost/duplicated facts or hydrated catalog: %v reads=%d", got, archive.catalogReads)
 			}
 			hour := observationTestHour.Format(time.RFC3339Nano)
-			for _, bad := range []string{hour + "/", hour + "/-1", hour + "/+1", hour + "/1/2", hour + "/999999999999999999999", hour + "/3", boundary.Add(24 * time.Hour).Format(time.RFC3339Nano)} {
+			for _, bad := range []string{hour + "/", hour + "/-1", hour + "/+1", hour + "/1", hour + "/1/2", hour + "/0/-1", hour + "/0/+1", hour + "/0/999999999999999999999", hour + "/3/0", boundary.Add(24 * time.Hour).Format(time.RFC3339Nano)} {
 				if _, _, _, err := log.EventObservationPage(context.Background(), from, from.Add(3*time.Second), 1, bad); rawErrorCode(err) != powerSeriesInvalidQuery {
 					t.Fatalf("invalid cursor accepted %q: %v", bad, err)
 				}
@@ -257,16 +257,17 @@ func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
 }
 
 func TestEventRangeRecoversAppendAfterFirstPage(t *testing.T) {
+	const firstReason = "first"
 	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	from := observationTestHour.Add(time.Minute)
 	clock.set(from)
-	if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: from, Event: "raised", Source: "observer", Reason: "first"}); err != nil {
+	if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: from, Event: "raised", Source: "observer", Reason: firstReason}); err != nil {
 		t.Fatal(err)
 	}
 	boundary := observationTestHour.Add(time.Hour)
 	clock.set(boundary.Add(time.Second))
 	page, next, _, err := log.EventObservationPage(context.Background(), from, from.Add(time.Second), 1, "")
-	if err != nil || len(page) != 1 || page[0].Cluster.Reason != "first" || next != boundary.Format(time.RFC3339Nano) {
+	if err != nil || len(page) != 1 || page[0].Cluster.Reason != firstReason || next != boundary.Format(time.RFC3339Nano) {
 		t.Fatalf("first page: %+v next=%q err=%v", page, next, err)
 	}
 	if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: from, Event: "raised", Source: "observer", Reason: "late"}); err != nil {
@@ -275,6 +276,55 @@ func TestEventRangeRecoversAppendAfterFirstPage(t *testing.T) {
 	page, next, _, err = log.EventObservationPage(context.Background(), from, from.Add(time.Second), 1, next)
 	if err != nil || len(page) != 1 || page[0].Cluster.Reason != "late" || next != "" {
 		t.Fatalf("late append: %+v next=%q err=%v", page, next, err)
+	}
+}
+
+func TestEventContinuationPreservesEachStreamAppendPosition(t *testing.T) {
+	for _, exact := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exact=%t", exact), func(t *testing.T) {
+			at := observationTestHour.Add(time.Minute)
+			log, _ := clockedObservationLog(t, ObservationLogConfig{}, at)
+			for _, reason := range []string{"C1", "C2"} {
+				if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: at, Event: "raised", Source: "observer", Reason: reason}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			read := func(cursor string) ([]RecordedEvent, string, error) {
+				var events []RecordedEvent
+				var next string
+				var err error
+				if exact {
+					events, next, _, err = log.EventObservations(context.Background(), at, 1, cursor)
+				} else {
+					events, next, _, err = log.EventObservationPage(context.Background(), at, at.Add(time.Second), 1, cursor)
+				}
+				return events, next, err
+			}
+			page, next, err := read("")
+			if err != nil || len(page) != 1 || page[0].Cluster == nil || page[0].Cluster.Reason != "C1" || next == "" {
+				t.Fatalf("first page: %+v next=%q err=%v", page, next, err)
+			}
+			for _, id := range []string{"S", "S2"} {
+				if err := log.SchedulerRecord(SchedulerObservation{At: at, Action: &SchedulerActionObservation{ID: id, Kind: "power"}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := []string{"C1"}
+			for next != "" {
+				page, next, err = read(next)
+				if err != nil || len(page) != 1 {
+					t.Fatalf("continuation: %+v next=%q err=%v", page, next, err)
+				}
+				if page[0].Action != nil {
+					got = append(got, page[0].Action.ID)
+				} else {
+					got = append(got, page[0].Cluster.Reason)
+				}
+			}
+			if !reflect.DeepEqual(got, []string{"C1", "S", "S2", "C2"}) {
+				t.Fatalf("cross-stream append lost or duplicated facts: %v", got)
+			}
+		})
 	}
 }
 

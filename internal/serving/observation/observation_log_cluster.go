@@ -109,7 +109,7 @@ func (l *ObservationLog) eventObservationPage(ctx context.Context, eventFrom, ev
 	if eventFrom.IsZero() || limit <= 0 {
 		return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "an event timestamp and positive event bound are required"}
 	}
-	from, offset, err := eventAppendCursor(from, now, cursor)
+	from, offsets, err := eventAppendCursor(from, now, cursor)
 	if err != nil {
 		return nil, "", coverage, err
 	}
@@ -135,26 +135,31 @@ func (l *ObservationLog) eventObservationPage(ctx context.Context, eventFrom, ev
 	to = minTime(to, read.now)
 	var scanner observationScanner
 	for hour := from; hour.Before(scanTo); hour = hour.Add(time.Hour) {
-		matched := 0
-		for _, stream := range []string{observationSchedulerStream, observationClusterStream} {
+		var consumed [2]int // cluster, scheduler; independent append positions.
+		for streamIndex, stream := range []string{observationSchedulerStream, observationClusterStream} {
+			index := 1 - streamIndex
 			for _, source := range read.sources[stream] {
 				if !source.hour.Equal(hour) {
 					continue
 				}
 				err := read.scanSource(stream, source, &scanner, func(raw []byte) error {
+					if consumed[index] < offsets[index] {
+						consumed[index]++
+						return nil
+					}
 					at, match, err := eventHeader(raw, stream, eventFrom, eventTo)
-					if err != nil || !match {
+					if err != nil {
 						return err
 					}
-					if matched < offset {
-						matched++
+					if !match {
+						consumed[index]++
 						return nil
 					}
 					if len(events) == limit {
-						next = hour.Format(time.RFC3339Nano) + "/" + strconv.Itoa(matched)
+						next = hour.Format(time.RFC3339Nano) + "/" + strconv.Itoa(max(consumed[0], offsets[0])) + "/" + strconv.Itoa(max(consumed[1], offsets[1]))
 						return errObservationStop
 					}
-					matched++
+					consumed[index]++
 					event := RecordedEvent{At: at}
 					if stream == observationSchedulerStream {
 						err = json.Unmarshal(raw, &event)
@@ -175,11 +180,11 @@ func (l *ObservationLog) eventObservationPage(ctx context.Context, eventFrom, ev
 					return nil, "", coverage, err
 				}
 			}
+			if offsets[index] > consumed[index] {
+				return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "event cursor exceeds rows in its append stream"}
+			}
 		}
-		if offset > matched {
-			return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "event cursor exceeds matching rows in its append hour"}
-		}
-		offset = 0
+		offsets = [2]int{}
 	}
 complete:
 	coverage = read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}, observationClusterStream: {from, to}})
@@ -207,22 +212,26 @@ func observationTimestamp(raw []byte) (time.Time, error) {
 	return header.At, err
 }
 
-func eventAppendCursor(from, now time.Time, cursor string) (time.Time, int, error) {
+func eventAppendCursor(from, now time.Time, cursor string) (time.Time, [2]int, error) {
+	var offsets [2]int
 	if cursor == "" {
-		return from, 0, nil
+		return from, offsets, nil
 	}
-	hour, rows, hasRows := strings.Cut(cursor, "/")
-	next, err := time.Parse(time.RFC3339Nano, hour)
-	offset := 0
+	parts := strings.Split(cursor, "/")
+	next, err := time.Parse(time.RFC3339Nano, parts[0])
 	valid := err == nil && !next.Before(from) && !next.After(now) && next.Equal(next.Truncate(time.Hour))
-	if hasRows {
-		offset, err = strconv.Atoi(rows)
-		valid = valid && err == nil && offset >= 0 && rows == strconv.Itoa(offset)
+	if len(parts) == 3 {
+		for i, rows := range parts[1:] {
+			offsets[i], err = strconv.Atoi(rows)
+			valid = valid && err == nil && offsets[i] >= 0 && rows == strconv.Itoa(offsets[i])
+		}
+	} else {
+		valid = valid && len(parts) == 1
 	}
 	if !valid {
-		return from, 0, &serving.Error{Code: "InvalidQuery", Message: "an append-hour event cursor with an optional matching-row offset is required"}
+		return from, offsets, &serving.Error{Code: "InvalidQuery", Message: "an append-hour event cursor with optional cluster/scheduler row offsets is required"}
 	}
-	return next.UTC(), offset, nil
+	return next.UTC(), offsets, nil
 }
 
 func eventHeader(raw []byte, stream string, from, to time.Time) (time.Time, bool, error) {

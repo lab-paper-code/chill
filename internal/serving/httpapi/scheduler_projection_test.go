@@ -160,11 +160,16 @@ func TestSchedulerCompactOmitsUnusedPlanPopulations(t *testing.T) {
 		t.Fatalf("compact still scales with unused populations: full=%d compact=%d", len(full), len(raw))
 	}
 	var rows []struct {
-		Decision struct{ Capacity map[string]json.RawMessage }
-		Snapshot map[string]json.RawMessage
+		Decision   struct{ Capacity map[string]json.RawMessage }
+		Snapshot   map[string]json.RawMessage
+		Projection string
+		Omitted    []string
 	}
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		t.Fatal(err)
+	}
+	if rows[0].Projection != "compact" || len(rows[0].Omitted) != 4 {
+		t.Fatalf("compact export lacks projection disclosure: %s", raw)
 	}
 	if _, present := rows[0].Decision.Capacity["plans"]; present {
 		t.Fatal("compact retained capacity plans")

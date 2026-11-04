@@ -254,9 +254,10 @@ identitySource `{store,key}`가 모두 있어야 단계 적용 SLO를 연결한�
 정확 시점과 범위 조회는 같은 append-hour continuation 규칙을 쓴다.
 `coverage={from,to,sources,gaps}`는 event-time이 아니라 이번 호출이 시도한 append-time
 구간이며 누락 archive 시간도 포함한다. 빈 페이지는 `events:[]`이며 오류가 아니다.
-`nextCursor`는 다음 append-hour RFC3339Nano 또는 `<append-hour>/<matching-row-offset>`다.
-hour만 있는 기존 형식은 offset 0이다. 같은 hour의 사건이 limit를 넘으면 그 hour를 다시
-읽고 이미 반환한 matching 행 수만큼 건너뛰므로 오류·누락 없이 이어 읽는다.
+`nextCursor`는 다음 append-hour RFC3339Nano 또는 `<append-hour>/<cluster-row-offset>/<scheduler-row-offset>`다.
+hour만 있는 기존 형식은 두 offset 모두 0이다. `hour/n` 형식은 받지 않는다.
+각 offset은 해당 stream에서 이미 소비한 저장 행 수(비매칭 행 포함)이며 stream별 append
+순서에서 독립적으로 건너뛴다. 다른 stream의 새 append가 기존 위치를 밀지 않는다.
 다음 요청에는 동일 `at` 또는 동일 `from/to`와 `cursor=<nextCursor>`를 전달한다.
 호출당 append-hour 예산은 기존 `servingEntrypoint.observationStorage.eventLookupHours`
 (기본 1, `--observation-event-lookup-hours`)로 정한다. [비용 근거와 상세 계약](observability-split.md#exact-event-recovery).

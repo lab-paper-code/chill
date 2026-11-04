@@ -152,12 +152,7 @@ type schedulerReadBatch struct {
 }
 
 func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerState) schedulerReadState {
-	// The current dashboard reads neither the arrival log nor catalog options.
-	// Keep their counts, without registering profiles reachable only from options.
-	snapshot := state.Snapshot
-	snapshot.Arrivals = nil
-	snapshot.Options = nil
-	projected := schedulerReadState{state, e.snapshot(&snapshot), e.decision(&state.Decision)}
+	projected := schedulerReadState{state, e.snapshot(&state.Snapshot), e.decision(&state.Decision)}
 	arrivals, options := len(state.Snapshot.Arrivals), len(state.Snapshot.Options)
 	projected.Snapshot.ArrivalCount = &arrivals
 	projected.Snapshot.OptionCount = &options
@@ -175,14 +170,27 @@ func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerStat
 
 type schedulerReadObservation struct {
 	*observation.SchedulerObservation
-	Decision *schedulerReadDecision `json:"decision,omitempty"`
-	Snapshot *schedulerReadSnapshot `json:"snapshot,omitempty"`
+	Decision   *schedulerReadDecision `json:"decision,omitempty"`
+	Snapshot   *schedulerReadSnapshot `json:"snapshot,omitempty"`
+	Projection string                 `json:"projection"`
+	Omitted    []string               `json:"omitted,omitempty"`
 }
 
 func (e *schedulerReadEvidence) observations(records []observation.SchedulerObservation) []schedulerReadObservation {
 	result := make([]schedulerReadObservation, len(records))
 	for i := range records {
-		result[i] = schedulerReadObservation{&records[i], e.decision(records[i].Decision), e.snapshot(records[i].Snapshot)}
+		result[i] = schedulerReadObservation{
+			SchedulerObservation: &records[i],
+			Decision:             e.decision(records[i].Decision),
+			Snapshot:             e.snapshot(records[i].Snapshot),
+			Projection:           "compact",
+		}
+		if records[i].Decision != nil && records[i].Decision.Capacity != nil {
+			result[i].Omitted = append(result[i].Omitted, "decision.capacity.plans")
+		}
+		if records[i].Snapshot != nil {
+			result[i].Omitted = append(result[i].Omitted, "snapshot.dispatchOccupancy", "snapshot.options", "snapshot.arrivals")
+		}
 	}
 	return result
 }

@@ -78,10 +78,12 @@ page preserves the existing array shape: `{"events":[],"nextCursor":"2026-11-03T
 Coverage bounds describe the append-time interval attempted, including absent
 archive hours; `to` is exclusive and clamped to the captured append head.
 Exact and range event reads share `nextCursor`: a next append-hour RFC3339Nano
-timestamp, or `<append-hour>/<matching-row-offset>` when the event limit is
-reached within an hour. A legacy hour-only cursor means offset zero. Rereads
-skip that many matching scheduler/cluster rows in the hour instead of rejecting
-busy hours. Malformed, pre-window, future, or out-of-range row offsets return
+timestamp, or `<append-hour>/<cluster-row-offset>/<scheduler-row-offset>` when
+the event limit is reached within an hour. A legacy hour-only cursor means both
+offsets are zero; the undeployed `hour/n` form is rejected. Offsets count consumed
+stored rows (including nonmatches) independently in each stream's append order,
+so a new append in the other stream cannot shift the saved position.
+Malformed, pre-window, future, or out-of-range row offsets return
 `400 InvalidQuery`. Range queries sort events only within each response page;
 continuations follow append hours and rows, not global event-time order.
 Clients must follow continuations, including pages containing matches: both
@@ -118,8 +120,11 @@ fall back to full JSON decoding. Compact scheduler responses omit
 `decision.capacity.plans` and `snapshot.dispatchOccupancy/options/arrivals`;
 selected workload capacity, candidates and operation evidence remain.
 Stored journals/catalogs and history reads without `view=compact` retain the
-full record. Compact JSON/export consumers must identify it as a projection,
-not the complete stored evidence.
+full record. Each compact history record declares `projection:"compact"` and
+`omitted`, listing the projected field paths applicable to that record.
+Compact JSON/export consumers must preserve that disclosure, not label the
+projection complete stored evidence. Retrieve the original with the existing
+exact-record scheduler read without `view=compact`.
 
 #### Direct dispatch occupancy
 `GET /api/v1/observations/occupancy?from=<RFC3339Nano>&to=<RFC3339Nano>`
