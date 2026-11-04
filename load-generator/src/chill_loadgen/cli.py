@@ -14,13 +14,19 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, TextIO, Tuple
 
 from chill_loadgen import __version__
-from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, _valid_identifier
+from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, _valid_identifier, encode_inputs
 from chill_loadgen.schedule import ScheduledRequest, partition_schedule, run_schedule
 
 # A request sent this late after its scheduled time is reported as delayed.
 DELAY_TOLERANCE_NS = 10_000_000
 
 Record = Tuple[str, Dict[str, bytes]]
+PreparedRecord = Tuple[str, bytes]
+
+
+def prepare_records(records: Sequence[Record]) -> List[PreparedRecord]:
+    """Encode each sample once, before the release clock or any fork/request thread."""
+    return [(record_id, encode_inputs(inputs)) for record_id, inputs in records]
 
 
 def load_records(dataset_dir: Path, fields: Sequence[str]) -> List[Record]:
@@ -75,7 +81,7 @@ def shard_schedule(offsets: Sequence[int], shard_index: int, shard_count: int) -
 
 
 def replay_open_loop(
-    records: Sequence[Record], *, workload: str, offsets: Sequence[int],
+    records: Sequence[PreparedRecord], *, workload: str, offsets: Sequence[int],
     new_client: Callable[[], WorkloadHTTPClient], out: TextIO, start_ns: int,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
@@ -108,7 +114,7 @@ def replay_open_loop(
         client = None
         try:
             index = int(request.request_id)
-            record_id, inputs = records[index % len(records)]
+            record_id, body = records[index % len(records)]
             scheduled = start_ns + request.scheduled_offset_ns
             client = new_client()
             sent = clock_ns()
@@ -117,7 +123,7 @@ def replay_open_loop(
                        latenessNs=sent - scheduled,
                        delayed=sent - scheduled > DELAY_TOLERANCE_NS, issued=True)
             try:
-                response = client.infer(workload, inputs)
+                response = client.infer(workload, body)
                 row.update(status=response.status_code, requestID=response.request_id,
                            workloadUID=response.workload_uid)
             except OSError as error:
@@ -193,9 +199,10 @@ def replay(
 
     if arrivals != "closed-loop" and rate is None:
         raise ValueError("rate is required for open-loop arrivals")
+    prepared = prepare_records(records)
     if open_loop and arrivals != "closed-loop":
         replay_open_loop(
-            records, workload=workload,
+            prepared, workload=workload,
             offsets=arrival_offsets_ns(arrivals, rate, duration, seed),
             new_client=new_client, out=out, start_ns=clock_ns(),
             clock_ns=clock_ns, sleep=sleep,
@@ -216,7 +223,7 @@ def replay(
             # A sender behind schedule stops at the duration instead of draining it.
             if clock_ns() - start_ns >= duration_ns:
                 return
-            record_id, inputs = records[int(request.request_id) % len(records)]
+            record_id, body = prepared[int(request.request_id) % len(prepared)]
             line: Dict[str, object] = {
                 "workload": workload,
                 "record": record_id,
@@ -226,7 +233,7 @@ def replay(
             sent_ns = clock_ns()
             line["sentMonotonicNS"] = sent_ns
             try:
-                response: InferenceResponse = client.infer(workload, inputs)
+                response: InferenceResponse = client.infer(workload, body)
                 line.update(
                     status=response.status_code,
                     requestID=response.request_id,

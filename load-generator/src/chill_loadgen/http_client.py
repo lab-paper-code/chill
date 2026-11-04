@@ -34,6 +34,20 @@ class InferenceResponse:
     workload_uid: Optional[str] = None
 
 
+def encode_inputs(inputs: Mapping[str, bytes]) -> bytes:
+    """Validate and encode one raw sample before replay starts."""
+    if not isinstance(inputs, Mapping) or not inputs:
+        raise ValueError("inputs must be a nonempty mapping of field name to bytes")
+    fields = []
+    for name, data in inputs.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("input field names must be nonempty strings")
+        if not isinstance(data, bytes) or not data:
+            raise ValueError("input field data must be nonempty bytes")
+        fields.append({"name": name, "datatype": "BYTES", "data": base64.b64encode(data).decode("ascii")})
+    return json.dumps({"inputs": fields}).encode("utf-8")
+
+
 class WorkloadHTTPClient:
     def __init__(
         self,
@@ -121,20 +135,10 @@ class WorkloadHTTPClient:
         )
         return client
 
-    def infer(self, workload_id: str, inputs: Mapping[str, bytes]) -> InferenceResponse:
-        """Send one raw sample: every preprocessor input field name mapped to its bytes."""
+    def infer(self, workload_id: str, body: bytes) -> InferenceResponse:
+        """Send a sample already validated and serialized by encode_inputs."""
         if not _valid_identifier(workload_id):
             raise ValueError("workload_id must be a Kubernetes DNS subdomain name")
-        if not isinstance(inputs, Mapping) or not inputs:
-            raise ValueError("inputs must be a nonempty mapping of field name to bytes")
-        fields = []
-        for name, data in inputs.items():
-            if not isinstance(name, str) or not name:
-                raise ValueError("input field names must be nonempty strings")
-            if not isinstance(data, bytes) or not data:
-                raise ValueError("input field data must be nonempty bytes")
-            fields.append({"name": name, "datatype": "BYTES", "data": base64.b64encode(data).decode("ascii")})
-        body = json.dumps({"inputs": fields}).encode("utf-8")
 
         # An idle keep-alive socket readable before we send means the peer closed it
         # (ChillServer's idle timeout); reopen once here, never after the request is sent.
