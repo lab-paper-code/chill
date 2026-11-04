@@ -102,7 +102,7 @@ func TestTempoHeadroomSettingsBoundsSCH55(t *testing.T) {
 	}
 }
 
-func TestTempoHeadroomPositiveWeightsAndIdleSCH55(t *testing.T) {
+func TestTempoHeadroomPositiveWeightsSCH55(t *testing.T) {
 	p := tempoAdmissionFixture(10, 10, 100, 20)
 	p.settings.ScaleDownHeadroomFraction = 1
 	p.plans[0][1].items[0] = append(p.plans[0][1].items[0], capacityItem{id: "zero", kappa: .001, e: 2})
@@ -110,12 +110,10 @@ func TestTempoHeadroomPositiveWeightsAndIdleSCH55(t *testing.T) {
 	if !p.admits(&result) || result.weights[0]["zero"] != 0 || result.sums[0][0] != 20 {
 		t.Fatalf("zero weight counted as supply: %+v", result)
 	}
-	if !p.idleWindowAllowed(result, map[string]bool{"old": true, "zero": true}) {
-		t.Fatal("idle removal lost no positive supply")
-	}
 	p.plans[0][1].items[0][0].kappa = 19
-	if p.idleWindowAllowed(result, map[string]bool{"old": true, "zero": true}) {
-		t.Fatal("idle cleanup erased h=1 margin")
+	result = p.evaluate([]int{1}, 0)
+	if p.admits(&result) {
+		t.Fatal("retirement erased h=1 margin")
 	}
 	// W=0 still protects the current rate; no historical maximum is required.
 	p = tempoAdmissionFixture(10, 0, 100, 11)

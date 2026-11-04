@@ -33,9 +33,6 @@ const (
 	// schedulerGainWithinUncertainty keeps the current configuration when the
 	// chosen transition saves no more than the selected evidence's conditional B.
 	schedulerGainWithinUncertainty = "TransitionGainWithinUncertainty"
-	// schedulerIdleInstanceRemoved names an instance unrouted for one
-	// observation window that the target removes.
-	schedulerIdleInstanceRemoved = "IdleInstanceRemoved"
 	// schedulerRoutedStopsFirst names a node plan that stops a routed
 	// instance before its route.
 	schedulerRoutedStopsFirst = "RoutedInstanceStopsBeforeRoute"

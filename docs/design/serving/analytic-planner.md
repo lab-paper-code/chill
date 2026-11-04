@@ -182,7 +182,7 @@ snapshot 인스턴스의 `WorkloadUID`와 Pod owner/routing 참조는 같은 소
 | 디스패치 점유 | snapshot의 `dispatchOccupancy`는 immutable 측정 record에서 도출한다. 행 입력에 Node UID, mode, runtime/model, 값과 source를 포함한다 |
 | 탐색 병렬 | `planSearchWorkers`≥1이다. sample은 3이고 CPU 예약과 무관한 도구 병렬성이며 실제 경합·gateway/Tick 관측으로 평가한다 |
 | 판단 기록 | `decision.capacity`는 구성의 판정, 에너지, 사슬과 `search`를 기록한다. `management`의 `capacity-row-built`는 행과 계산시간을 기록한다 |
-| 인스턴스 시간 | `unroutedSince`와 `heldUntil`은 controller의 메모리 상태이며 유휴 제거와 Overload 준비 유지에 사용한다 |
+| 인스턴스 시간 | `unroutedSince`는 controller 유휴 이력이며 `heldUntil`은 Overload 준비 유지에 사용한다. 이력은 retirement의 SLO·H 판정을 면제하지 않는다 |
 | 최소 이득 | `OperationTrial.energyUncertaintyJoules`와 실제 선택한 `NodeBaseline.wattsUncertainty`를 signed 노출량으로 전파한다. `gainUncertaintyJoules`는 B-only 문턱이다 |
 | 두 박자 | `scaleDownStabilizationNanos`≥0인 정수 ns(기본 300초, 시연 120초, 0이면 지속 대기 없음). `transitionReserveFraction`은 유한한 `[0,1]`(기본 0)이며 NaN/±Inf/범위 밖은 거절한다. 값은 코드의 정책 상수가 아니라 scheduler 설정 기본값·sample/binding에서 제공한다 |
 
@@ -217,13 +217,21 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 - **재사용 증거.** 분배되지 않은 준비된 인스턴스는 예약 slot(`targetID`)이나 그 Workload의 소유가 있을 때만 계획이 다시 쓴다.
 - **무한 값.** 용량이 없어 대기, 비우는 시간, 초과량이 정해지지 않으면 기록에서 그 필드가 빠지고 후보의 `worstExceedance`는 float 최댓값이다.
 - **탐색 비용.** 평가 하나는 노드 8개에서 약 5 µs이고 이웃 크기는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)이다. 시간 예산은 판단 시작부터 재므로 노드 계획 만들기도 그 안에 든다.
-- **유휴 제거.** 관측 창 하나 이상 어느 Workload에서도 가중치가 0인 인스턴스는,
-  고른 해도 가중치를 주지 않으면 stop, drain, remove로 정리한다(`IdleInstanceRemoved:<인스턴스>`).
-  controller는 가중치를 잃은 시각을 `unroutedSince`에 기록한다.
-  대상은 그 인스턴스의 κ 없이도 판정이 성립하는 자동제어 Workload 소유 인스턴스와 소유 Workload가 없는 인스턴스다.
-  꺼진 Workload 소유 인스턴스는 유지한다. prepare는 Workload를 Pod owner로 남기고 routing annotation은 route가 기록한다.
-  이 규칙은 측정 가능한 빈 노드를 확보한다. 빈 노드는 다음 판단에서 가장 낮은 모드로 내려간다.
-  controller가 다시 시작하면 유휴 시각을 처음부터 잰다.
+- **Retirement — v2.1.** Idle time is not permission to mutate a selected target.
+  Retirement is an enumerated node plan: `schedulerPlan` supplies its measured
+  stop/drain/remove chain before the normal capacity, transition, reserve and
+  H-energy evaluation. `decide` materializes exactly the evaluated instances.
+  A plan removing live occupancy without preparing replacement capacity is admitted
+  only when every controlled Workload meets the same final/backlog SLO judgment
+  as Keep and its net gain over Keep at the common H exceeds the existing
+  evidence uncertainty bound. Overload ranking cannot trade unrelated healthy
+  retirement for cheaper energy. Feasible, net-positive retirement remains
+  possible with an Unconfirmed sibling: physical confirmation is node-local,
+  never a global retirement veto. Disabled ownership, scale-down stabilization,
+  partial observation, hold, bridge and reserve protections still apply.
+  `unroutedSince` remains captured controller history, not an energy exemption.
+  Terminated-only occupancy reclamation is not serving retirement: its κ is
+  already zero, and the existing physical stop/drain/remove obligations remain.
 - **준비한 인스턴스의 분배.** 해가 준비하는 새 인스턴스는 모두 그 해의 가중치를 받는다. 새 인스턴스 하나라도 가중치가 0인 해는 후보에서 빠지고 교체 회수의 되돌린 해도 같다. 근거: m4 r7에서 rasp5 q1-lut와 q2(κ 25.69 + 29.30)가 지금 가중치 467/533으로 λ 40.35를 받았고, 적재한 genesis3 q2의 노드 전력(49.80 W)이 빈 노드(49.97 W)보다 작아 그 준비가 T 동안 1.5 J 싸게 나왔다. 그 인스턴스는 가중치 0으로 준비되고 약 80 s 뒤 유휴 제거로 지워졌고, 다음 판단이 다시 준비해 2 req/s와 40 req/s에서 약 100 s 주기로 되풀이했다.
 - **만든 뒤 끊기.** 모드를 바꾸지 않는 노드 계획에서 분배된 인스턴스(어느 Workload에서든 가중치가 0보다 큰 인스턴스)의 stop, drain, remove는 그 노드 계획의 route 뒤에만 온다. 자원이 겹쳐 prepare 전에 지워야 하는 분배된 인스턴스가 있는 같은 모드의 교체는 `RoutedInstanceStopsBeforeRoute`로 빠진다. 그래서 그 교체 동안 분배된 κ는 지금 값에서 줄지 않고, route 뒤에는 최종 판정을 지나는 `κ_new`가 된다. 그 노드의 교체는 다른 해가 부하를 옮겨 그 인스턴스가 분배에서 빠진 뒤(유휴 제거) 열린다. 모드 변경은 power 동작 전에 노드의 인스턴스를 모두 멈추고 다른 길이 없으므로(노드 하나가 서빙하는 Workload의 모드 올리기) 후보로 남고, 멈춘 인스턴스는 `κ_ret`에서 빠지며 사슬 시간은 r에 들어가 3장 대기 판정을 받는다. 근거: m4 r7 07:08:31에서 genesis3 q2(κ 70.94, 가중치 532)를 같은 CPU의 q1으로 바꾸는 계획이 q2 stop을 첫 동작으로 두었고, 전환 판정은 rasp5 q1 하나(κ_ret 25.69)로 λ 38.6을 받았다. rasp5 prepare가 68 s 걸리는 동안 SLO는 0%로 떨어졌다. 07:00:38의 rasp5 q1 교체와 06:51:28의 genesis2 교체도 같은 순서였다.
 - **교체 회수.** 지금 인스턴스를 지우고 다른 인스턴스를 들이거나 배치 policy를 바꾸는 노드 계획(교체)은, 그 노드만 keep으로 되돌린 해도 충족하면 관측 창의 최소 부하에서 T 동안의 에너지로 비교한다. 최소 부하는 관측 창을 제어 주기로 나눈 구간마다의 도착률 중 가장 작은 값이다. 교체가 그 부하에서 keep보다 에너지가 크거나 같으면 keep으로 되돌리고 `ReplacementUnpaid:<노드>`를 남긴다.
@@ -246,7 +254,7 @@ controller 상태와 기존 단일 계획기에 연결하며 실제 클러스터
 - 빠른 박자는 별도 제어 루프가 아니라 매 Tick의 후보 제한이다. fast는 keep、분배 변경、안전한 순증설、물리 제거·정지 없이 κ가 증가하는 정책 변경(용량 회복)이다. 현재 Ready 집합의 중간 분배도 매 주기 계속한다. 수용 한계에서는 허용된 후보 사이에서도 기존 전체 충족→최종 충족→leximin→에너지 순서를 그대로 적용한다.
 - slow는 실물 제거·정지、에너지 절감만을 위한 교체(κ 비증가·joules 감소)、추가+제거 혼합 후보이며 하강 안정화가 필요하다. 분류가 겹치면 slow를 우선하여 증설에 제거를 섞어 우회하지 않는다. 느린 박자는 같은 Tick에서 하강 안정화 조건이 열린 범위의 전체 후보를 추가하는 것이다. 후보 허가 뒤 κ/대기/가중치/SLO·leximin·minimumGain·교체 회수 순서는 바꾸지 않는다. 축소/교체에 포함된 모든 Workload가 조건을 만족해야 하며 다른 Workload의 준비 완료나 하강을 기다리는 전역 장벽은 없다.
 - `W = settings.scaleDownStabilizationNanos`, `d_w(t)`는 기존 계획기의 유효 수요(queued·minimum demand 포함)다. 하강 판정 수요는 `D_w(t) = max { d_w(s) | t−W < s ≤ t }`다. 왼쪽 경계 관측은 W가 지난 순간 만료한다. 정상 관측이 W 전체를 덮은 경우에만, 현재 실제 Ready/ACK 가용 공급 `C_w(t)`에 대해 `D_w(t) < C_w(t)`이면 slow 후보에 적격이다. 후보의 전환·최종 κ/SLO도 D를 감당해야 하며, 에너지 비교의 실제 부하 가정과 하강 보호용 D를 기록에서 구분한다. 이는 과거 기준률 아래에 머문 시간을 재는 방식이 아니다. 국소 고점, 선택·확장·축소가 창을 재기준하거나 이력을 지우지 않는다.
-- **Cycle 5 / SCH-55·56:** 최종 에너지 하강 route와 idle 후처리는 `h=scaleDownHeadroomFraction`(유한 `[0,1]`, 기본0)의 `max(현재 유효수요,D)×(1+h)`를 실제 양수 정수 weight/각 κ로 검사한다. weight0은 공급이 아니다. 공유 `reductionDemand`·bridge·reserve·실제 요청 J는 할증하지 않는다. `.25`는 offline 대조값이지 배포 권고가 아니다.
+- **Cycle 5 / SCH-55·56:** 최종 에너지 하강 route와 retirement 후보는 `h=scaleDownHeadroomFraction`(유한 `[0,1]`, 기본0)의 `max(현재 유효수요,D)×(1+h)`를 실제 양수 정수 weight/각 κ로 검사한다. weight0은 공급이 아니다. 공유 `reductionDemand`·bridge·reserve·실제 요청 J는 할증하지 않는다. `.25`는 offline 대조값이지 배포 권고가 아니다.
 - **조건부 부족 회복:** Node-local slow 후보를 `requiresRecovery` UID와 함께 전역 조합까지 남긴다. 동일 관측 keep의 해당 UID κ/대기 SLO 미충족과 목표 완전 충족·backlog 보호 때만 해당 UID growing/Allowed timing을 면제한다. 다른 UID 에너지 하강은 독립 판정한다. partial/held·unknown·예약·소유권·Ready/native ACK·old+new peak·bridge·reserve·H는 면제하지 않는다. 중단형 power 변경은 handoff가 아니다. 증명 전 진단 후보는 공개 `eligible=false`이며 target이 아니다. `Observe.Allowed`와 에너지/leximin/payback/dwell은 유지한다.
 - **Cycle 6 / SCH-26·50:** growing의 old 양수 ID 보존은 exact physical ID의 `Terminated` 증거에만 면제한다. NotReady·논리 Stopped·관측 소실·TargetID alias는 면제하지 않으며 dead+live 혼합의 live 공급은 보존한다. slow의 완전충족 recovery timing 예외는 그대로다. Terminated는 κ=0이지 allocation 반환이 아니므로 same-Node stop/drain/remove 의존성을 유지한다. 공급0 우선 후보 탐색·목적함수 변경·standby·주기 튜닝은 추가하지 않는다.
 - `scheduler_tempo.go`의 `SchedulerTempo.Observe`/`Selected`와 `SchedulerDownState`를 이 계약으로 교체한다. `baselineRate`, `previousRate`, `downSince`, `elapsedNanos`, `globalSince` 및 선택 후 재기준을 삭제하고 UID별 시각·유효 수요 관측 이력과 연속 유효 관측 시작만 유지한다. W 밖 표본은 만료한다. 공백·시각 역행·설정 변경·UID 교체·controller 재시작은 영향 범위 이력을 비우며 새 W를 채우기 전에는 보류한다. W=0이면 현재 유효 수요만 사용하고 기간 대기는 없지만 수요<공급 판정은 남긴다. 불완전 관측 창·`DemandIncreasing`·최소 인스턴스 하나 등 기존 보호도 유지한다. 유휴 제거·배치/자원 축소·교체 회수 후처리도 같은 판정으로 탐색 뒤 우회하지 않는다.

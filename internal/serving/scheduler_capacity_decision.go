@@ -57,8 +57,6 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			target.Routing[d.UID] = map[string]int32{}
 		}
 	}
-	removed := false
-	idleRemoved := map[string]bool{}
 	for n, j := range best.choice {
 		plan := p.plans[n][j]
 		if !plan.keep {
@@ -68,20 +66,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			if reason := schedulerPhysicalChangeReason(p.snapshot, i.Node); reason != "" {
 				decision.Reasons = appendUnique(decision.Reasons, fmt.Sprintf("%s:%s:%s", reason, i.Node.Name, i.Node.UID))
 			}
-			if best.bridge == nil && p.idleRemovable(i, best, target.Routing) {
-				idleRemoved[i.ID] = true
-				reason, reserves := p.idleTransition(best, idleRemoved)
-				record.TransitionReserves = append(record.TransitionReserves, reserves...)
-				if reason != "" {
-					delete(idleRemoved, i.ID)
-					target.Instances = append(target.Instances, i)
-					decision.Reasons = appendUnique(decision.Reasons, reason)
-					continue
-				}
-				decision.Reasons = append(decision.Reasons, schedulerIdleInstanceRemoved+":"+i.ID)
-				removed = true
-				continue
-			}
+			// The selected instances are exactly those scored by evaluate.
 			target.Instances = append(target.Instances, i)
 		}
 	}
@@ -102,7 +87,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 		}
 	}
 	// A protected Workload keeps its serving routes when keep is the fallback.
-	if best.keep && !removed && (p.sameRouting(target.Routing) || best.unroutes) {
+	if best.keep && (p.sameRouting(target.Routing) || best.unroutes) {
 		chosen := decision.Keep
 		chosen.Status = target.Status
 		decision.Target, decision.Status = &chosen, schedulerStatusKeep
@@ -119,42 +104,6 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	decision.Target, decision.Status = &target, target.Status
 	return decision
-}
-
-// idleRemovable reports an instance unrouted for one observation window that
-// the chosen plan set leaves unrouted: owned by or serving a controlled
-// Workload whose judgments still hold without its κ, or owned by nobody. The
-// removal is for measurability and the lowest mode of an emptied Node, not
-// energy.
-func (p *capacityPlanner) idleRemovable(i SchedulerInstance, best capacityResult, routing map[string]map[string]int32) bool {
-	if schedulerPhysicalChangeReason(p.snapshot, i.Node) != "" || !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
-		return false
-	}
-	// Measurement and excluded Nodes keep their instances.
-	if slices.ContainsFunc(p.snapshot.Nodes, func(n SchedulerNode) bool {
-		return n.Node == i.Node && (n.Measurement || slices.Contains(n.Reasons, NodeExcluded))
-	}) {
-		return false
-	}
-	uid := i.WorkloadUID
-	if uid == "" {
-		uid = i.OwnerWorkloadUID
-	}
-	if uid == "" && !p.snapshot.EmptyNodeScaleDownAllowed || uid != "" && !p.snapshot.ScaleDown[uid].Allowed {
-		return false
-	}
-	// An instance owned by nobody and routed by no Workload serves nobody.
-	w, controlled := p.index[uid]
-	if uid == "" || !controlled {
-		return uid == ""
-	}
-	if !best.feasible || i.WorkloadUID == "" {
-		return true
-	}
-	knew := best.sums[w][0]
-	demand := p.ws[w]
-	demand.rate = max(demand.rate, p.snapshot.ScaleDown[uid].WindowMax) * (1 + p.settings.ScaleDownHeadroomFraction)
-	return capacityJudge(demand, knew, best.sums[w][1], knew > 0, best.route).satisfied
 }
 
 // sameRouting reports whether the controlled Workloads keep their current routes.
