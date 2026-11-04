@@ -77,6 +77,9 @@ keeps `events` and adds the range query's `ObservationCoverage`. An empty exact
 page preserves the existing array shape: `{"events":[],"nextCursor":"2026-11-03T20:00:00Z","coverage":{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","sources":[],"gaps":[{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"cluster","reason":"StreamUnavailable"},{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"scheduler","reason":"StreamUnavailable"}]}}`.
 Coverage bounds describe the append-time interval attempted, including absent
 archive hours; `to` is exclusive and clamped to the captured append head.
+Both exact and range pages return the event's top-level `at` in canonical UTC
+RFC3339Nano, matching the live-frame identity even when stored rows use offsets.
+This read-side normalization does not change stored bytes or event instants.
 Exact and range event reads share `nextCursor`: a next append-hour RFC3339Nano
 timestamp, or `<append-hour>/<cluster-row-offset>/<scheduler-row-offset>` when
 the event limit is reached within an hour. A legacy hour-only cursor means both

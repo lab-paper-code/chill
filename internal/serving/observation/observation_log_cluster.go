@@ -160,7 +160,7 @@ func (l *ObservationLog) eventObservationPage(ctx context.Context, eventFrom, ev
 						return errObservationStop
 					}
 					consumed[index]++
-					event := RecordedEvent{At: at}
+					var event RecordedEvent
 					if stream == observationSchedulerStream {
 						err = json.Unmarshal(raw, &event)
 					} else {
@@ -169,6 +169,7 @@ func (l *ObservationLog) eventObservationPage(ctx context.Context, eventFrom, ev
 					if err != nil {
 						return err
 					}
+					event.At = at.UTC()
 					events = append(events, event)
 					return nil
 				})

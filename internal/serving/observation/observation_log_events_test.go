@@ -9,6 +9,51 @@ import (
 	"time"
 )
 
+func TestEventRecoveryPreservesUTCIdentity(t *testing.T) {
+	for _, exact := range []bool{false, true} {
+		for _, scheduler := range []bool{false, true} {
+			t.Run(fmt.Sprintf("exact=%t/scheduler=%t", exact, scheduler), func(t *testing.T) {
+				requested := observationTestHour.Add(time.Second).UTC()
+				stored := requested.In(time.FixedZone("stored-offset", 3600))
+				archive := newReadableObservationArchive(t)
+				log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, requested)
+				var err error
+				if scheduler {
+					err = log.SchedulerRecord(SchedulerObservation{At: stored, Action: &SchedulerActionObservation{ID: "action", Kind: "power", Phase: "failed"}})
+				} else {
+					err = log.ClusterRecord(ClusterObservation{Kind: "issue", At: stored, Event: "raised", Source: "observer", Reason: "not-ready"})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var events []RecordedEvent
+				if exact {
+					events, _, _, err = log.EventObservations(context.Background(), requested, 10, "")
+				} else {
+					events, _, _, err = log.EventObservationPage(context.Background(), requested.Add(-time.Second), requested.Add(time.Second), 10, "")
+				}
+				if err != nil || len(events) != 1 {
+					t.Fatalf("event recovery: events=%+v err=%v", events, err)
+				}
+				body, err := json.Marshal(events[0])
+				if err != nil {
+					t.Fatal(err)
+				}
+				var wire struct {
+					At string `json:"at"`
+				}
+				if err := json.Unmarshal(body, &wire); err != nil {
+					t.Fatal(err)
+				}
+				want := requested.Format(time.RFC3339Nano)
+				if wire.At != want {
+					t.Fatalf("recovered event lost UTC live-frame identity %s: %s", want, body)
+				}
+			})
+		}
+	}
+}
+
 func TestArchivedEventRecoverySkipsCatalogHydration(t *testing.T) {
 	const timedOut = "timeout"
 	ctx := context.Background()
