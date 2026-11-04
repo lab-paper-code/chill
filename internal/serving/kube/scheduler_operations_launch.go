@@ -81,6 +81,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				continue
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.snapshotLocked().Workloads)
+			var routeTouches map[string][]string
 			if action.Kind == servingstate.OperationRoute {
 				scope, empty := c.routeOperationScopeLocked(target, *selectedTarget, selectedTarget != &target)
 				operation.WorkloadUIDs = scope
@@ -89,7 +90,8 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				}
 				current, _ := c.runtime.SchedulerRouting()
 				physical := c.runtime.Instances()
-				rebased, policies := c.rebaseRouteLocked(*controlledTarget(operation), target.ID, current, physical)
+				rebased, policies, touched := c.rebaseRouteLocked(*controlledTarget(operation), target.ID, current, physical)
+				routeTouches = touched
 				operation.Target, operation.PolicyInstances = &rebased, policies
 				active := servingstate.PositiveWorkloadScope(rebased, scope)
 				if len(active) == 0 {
@@ -110,6 +112,9 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				})
 			if run == nil {
 				continue
+			}
+			if action.Kind == servingstate.OperationRoute {
+				c.recordRouteWriterLocked(target.ID, operation, routeTouches)
 			}
 			c.wg.Add(1)
 			go func(operation servingstate.Operation, run *actionRun) {

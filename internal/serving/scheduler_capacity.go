@@ -342,6 +342,7 @@ type capacityPlanner struct {
 	keep      SchedulerCandidate
 	rows      map[string]CapacityRow
 	options   []SchedulerOption
+	pending   []SchedulerInstance // uncreated commitments, counted once without capacity
 	ws        []capacityWorkload
 	index     map[string]int
 	plans     [][]*capacityPlan // per Node; plans[n][0] is keep
@@ -397,6 +398,14 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 		p.index[w.d.UID] = len(p.ws)
 		p.ws = append(p.ws, w)
+	}
+	for _, node := range snapshot.Nodes {
+		for _, instance := range schedulerUncreatedReservations(snapshot, node.Node) {
+			p.pending = append(p.pending, instance)
+			if w, ok := p.index[instance.WorkloadUID]; ok {
+				p.ws[w].current++
+			}
+		}
 	}
 	p.options = schedulerMeasuredOptions(ctx, snapshot)
 	// The capacity table keys rows by the variants of the snapshot options.

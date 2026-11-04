@@ -15,6 +15,7 @@ import (
 
 const (
 	OperationPrepare         = "prepare"
+	OperationTransition      = "transition"
 	OperationRemove          = "remove"
 	OperationPower           = "power"
 	OperationIdle            = "idle"

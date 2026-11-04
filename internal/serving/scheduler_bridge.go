@@ -177,11 +177,10 @@ func (b *schedulerBridgeCompiler) physicalBudget() string {
 	for id := range b.prepares {
 		counts[b.out.instances[id].WorkloadUID]++
 	}
-	uncreated := 0
-	for _, node := range p.snapshot.Nodes {
-		uncreated += schedulerUncreatedReservations(p.snapshot, node.Node)
+	for _, pending := range p.pending {
+		counts[pending.WorkloadUID]++
 	}
-	if len(p.snapshot.Instances)+len(b.prepares)+uncreated > p.settings.MaxInstances {
+	if len(p.snapshot.Instances)+len(b.prepares)+len(p.pending) > p.settings.MaxInstances {
 		return schedulerPlanInfeasibleResources
 	}
 	for uid, count := range counts {

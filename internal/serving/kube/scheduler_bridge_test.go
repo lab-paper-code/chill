@@ -183,7 +183,7 @@ func TestSkippedBridgeChainConsumesExistingACKSCH51(t *testing.T) {
 func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 	for _, receipt := range []bool{true, false} {
 		t.Run(map[bool]string{true: "acknowledged", false: "no-ack"}[receipt], func(t *testing.T) {
-			c, goal, _ := acknowledgedHandoffFixture(t)
+			c, goal, physical := acknowledgedHandoffFixture(t)
 			c.ctx = context.Background()
 			c.operations = &servingops.Operations{Runtime: c.runtime}
 			stage := *c.runs["acknowledged-route"].result.Operation.Target
@@ -207,6 +207,11 @@ func TestSkippedBridgeChainPreservesTerminalUIDSCH51(t *testing.T) {
 			next.Instances = []serving.SchedulerInstance{w2, recovered}
 			next.Routing = map[string]map[string]int32{w2.WorkloadUID: {w2.ID: 1000}, "w1": {recovered.ID: 1}}
 			c.state.Snapshot.Instances = append(c.state.Snapshot.Instances, recovered)
+			recoveredPhysical := physical
+			recoveredPhysical.State.ID = recovered.ID
+			if err := c.runtime.InstallInstances([]serving.ReadyInstance{physical, recoveredPhysical}); err != nil {
+				t.Fatal(err)
+			}
 			first := serving.Action{ID: "skip-w2", Kind: servingstate.OperationRoute, RouteTarget: &stage}
 			second := serving.Action{ID: "restore-w1", Kind: servingstate.OperationRoute, RouteTarget: &next, DependsOn: []string{first.ID}}
 			stop := serving.Action{ID: "old-w2-stop", Kind: servingstate.OperationStop, Instance: w2.ID, DependsOn: []string{first.ID}, Status: servingstate.NativeOperationComplete}

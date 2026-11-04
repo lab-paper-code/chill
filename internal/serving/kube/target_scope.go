@@ -145,17 +145,18 @@ func (c *reservationState) orderRouteChild(action serving.Action, owner string) 
 
 // Rebase under the ledger lock immediately before admission. The owner keeps
 // its original delta, not an obsolete whole-workload route declaration.
-func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate, owner string, current map[string]map[string]int32, physical []serving.InstanceState) (serving.SchedulerCandidate, []string) {
+func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate, owner string, current map[string]map[string]int32, physical []serving.InstanceState) (serving.SchedulerCandidate, []string, map[string][]string) {
 	parent := c.runs[transitionRunKind+"/"+owner]
-	if parent == nil || parent.result.Before.Routing == nil {
-		return selected, nil
+	if parent == nil {
+		return selected, nil, nil
 	}
 	result := selected
 	result.Instances = nil
 	result.Routing = make(map[string]map[string]int32, len(selected.Routing))
 	policies := []string{}
+	touched := make(map[string][]string, len(selected.Routing))
 	for uid, wanted := range selected.Routing {
-		routeOnly := !workloadHasPhysicalScope(parent, uid)
+		routeOnly := !servingstate.HasPhysicalWorkloadScope(parent.result.Operation.Target.Instances, parent.result.Before, parent.scope.Nodes, uid)
 		ready, newer, held, withdrawn := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 		instances := map[string]serving.SchedulerInstance{}
 		owned := map[string]bool{}
@@ -211,6 +212,10 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 				}
 			}
 		}
+		for id := range owned {
+			touched[uid] = append(touched[uid], id)
+		}
+		slices.Sort(touched[uid])
 		result.Routing[uid] = serving.SchedulerRebaseRouting(current[uid], delta, ready, newer)
 		ids := make([]string, 0, len(result.Routing[uid]))
 		for id := range result.Routing[uid] {
@@ -221,19 +226,11 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 			result.Instances = append(result.Instances, instances[id])
 		}
 	}
-	return result, policies
-}
-
-func workloadHasPhysicalScope(parent *actionRun, uid string) bool {
-	return slices.ContainsFunc(parent.result.Operation.Target.Instances, func(instance serving.SchedulerInstance) bool {
-		return instance.WorkloadUID == uid && slices.Contains(parent.scope.Nodes, instance.Node)
-	}) || slices.ContainsFunc(parent.result.Before.Instances, func(instance serving.InstanceState) bool {
-		return slices.Contains(parent.scope.Nodes, instance.Node) &&
-			(instance.OwnerWorkloadUID == uid || parent.result.Before.Routing[uid][instance.ID] > 0)
-	})
+	return result, policies, touched
 }
 
 func (c *reservationState) routeInstanceFenceLocked(parent *actionRun, uid string, current map[string]int32, actual serving.SchedulerInstance) (newer, held, withdrawn bool) {
+	newer = c.routeWriters[uid].Protects(parent.started, actual.ID)
 	for _, other := range c.runs {
 		if other.owner == parent.owner || !other.reserved || !slices.Contains(other.scope.Nodes, actual.Node) {
 			continue
@@ -250,4 +247,21 @@ func (c *reservationState) routeInstanceFenceLocked(parent *actionRun, uid strin
 		}
 	}
 	return newer, held, withdrawn
+}
+
+// The same mu critical section admits the route and advances its writer fence.
+// A missing/failed completion cannot roll back an already authorized write.
+func (c *reservationState) recordRouteWriterLocked(owner string, operation servingstate.Operation, touched map[string][]string) {
+	parent := c.runs[transitionRunKind+"/"+owner]
+	if parent == nil {
+		return
+	}
+	if c.routeWriters == nil {
+		c.routeWriters = map[string]servingstate.RouteWriter{}
+	}
+	for uid, instances := range touched {
+		if operation.ControlsWorkload(uid) && !c.routeWriters[uid].AdmittedAt.After(parent.started) {
+			c.routeWriters[uid] = servingstate.RouteWriter{AdmittedAt: parent.started, Instances: instances}
+		}
+	}
 }
