@@ -110,21 +110,13 @@ def publish(context):
     definition={'schema':'evaluation-definition.v1alpha1','run':{'name':context.execution['runName'],'uid':context.execution['runUID']},'spec':run_spec,'loadScenarios':[{'name':s['ref']['name'],'uid':s['ref']['uid'],'spec':s['spec']} for s in scenarios],'workloads':list(definitions.values())}
     finish=procedures['finish']
     children=context.execution['childRefs']
-    created_ids={child['stageID'] for child in children}
-    cleanup_results=[finish]+[procedures[child['stageID']]['cleanup-jobs'] for child in children]
-    cleanup=execution_outcome([entry for value in cleanup_results for entry in ({'execution':value.get('cleanup',not_started)},value)]+[{'execution':child.get('cleanup',not_started)} for child in children])
-    uncertain=next((child for child in children if child['uncertain']),None)
-    if uncertain:
-        reason=uncertain['execution']['reason']
-        cleanup={'status':'Failed','reason':reason if reason in ('ExecutionLost','RemoteEffectUnknown') else 'RemoteEffectUnknown'}
-    elif any('Unknown' in injection['reason'] or 'Requested' in injection['reason'] for stage in stage_outcomes if stage['id'] in created_ids for injection in stage['injections']):
-        cleanup={'status':'Failed','reason':'RemoteEffectUnknown'}
-    if cleanup['status']!='Complete': cleanup={**cleanup,'status':'Failed'}
-    elif not children: cleanup=finish['cleanup']
+    # Finish re-observes all run-owned Jobs/Pods and restores every settings receipt.
+    # Earlier execution loss or cleanup attempts cannot override that final boundary.
+    cleanup=finish.get('cleanup',not_started)
     unjudged=next((stage['measurement'] for stage in stage_outcomes if stage['measurement']['verdict']=='NOT_EVALUATED'),None)
     measured=verdict(aggregated)
     if measured['verdict']=='NOT_EVALUATED' and unjudged: measured=unjudged
-    outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]),'measurement':measured,'cleanup':cleanup,'stages':stage_outcomes}
+    outcome={'execution':execution_outcome([procedures['prepare'],finish]+[{'execution':stage['execution']} for stage in stage_outcomes]+[{'execution':child['execution']} for child in children]),'measurement':measured,'cleanup':cleanup,'stages':stage_outcomes}
     residuals=[];seen_refs=set()
     def collect_residuals(value,reason='ResidualState'):
         if not isinstance(value,dict): return
@@ -147,16 +139,6 @@ def publish(context):
         for key in ('details','cleanup'):
             collect_residuals(value.get(key),reason)
     collect_residuals(finish)
-    path=context.run/'publication-run-residual.json'
-    try: context.store.get({'store':context.store.name,'key':'experiments/'+context.execution['runUID']+'/run/residual.json'},path)
-    except FileNotFoundError: pass
-    else: collect_residuals(input_snapshot.load(path))
-    for child in children:
-        sid=child['stageID'];collect_residuals(procedures[sid]['cleanup-jobs'])
-        path=context.run/('publication-finalizer-'+sid+'.json')
-        try: context.store.get({'store':context.store.name,'key':'experiments/'+context.execution['runUID']+'/stages/'+sid+'/finalizer.json'},path)
-        except FileNotFoundError: continue
-        collect_residuals(input_snapshot.load(path))
     outcome['cleanup']={**outcome['cleanup'],'residuals':residuals}
     sources = [{key:obj[key] for key in ('store','key')} for obj in objects + existing_sources]
     summary={'schemaVersion':'serving-experiment.v1alpha1','id':context.execution['runUID'],'from':start,'to':end,'status':measurement,'stages':stages,'sources':sources,'definition':definition,'outcome':outcome}

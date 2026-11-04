@@ -119,7 +119,7 @@ def power_window():
 
 
 class EvaluationTests(unittest.TestCase):
-    def test_publication_links_frozen_applied_slo_source(self):
+    def exercise_publication(self, lost=False, residual=False):
         temporary_directory = tempfile.TemporaryDirectory
         with temporary_directory() as directory:
             root = Path(directory)
@@ -148,6 +148,16 @@ class EvaluationTests(unittest.TestCase):
             records = {'experiments/run/stages/one/' + step + '/result.json': {
                 **complete, 'measurement': {'verdict': 'PASS'}} for step in ('factor', 'stage', 'judge', 'cleanup-jobs')}
             records.update({'experiments/run/run/' + step + '/result.json': complete for step in ('prepare', 'finish')})
+            if lost:
+                execution['childRefs'] = [{'stageID': 'one', 'uid': 'stage', 'name': 'stage',
+                    'execution': {'status': 'Failed', 'reason': 'ExecutionLost'},
+                    'cleanup': {'status': 'Complete', 'reason': 'ProcedureComplete'}, 'uncertain': True}]
+                # A missing stage result must not erase the controller's execution failure.
+                del records['experiments/run/stages/one/stage/result.json']
+            if residual:
+                records['experiments/run/run/finish/result.json'] = {
+                    **complete, 'cleanup': {'status': 'Failed', 'reason': 'ResidualState'},
+                    'residuals': [{'kind': 'Pod', 'name': 'remaining-producer', 'reason': 'ResidualState'}]}
             def get(ref, destination):
                 if ref['key'] not in records:
                     raise FileNotFoundError(ref['key'])
@@ -164,6 +174,11 @@ class EvaluationTests(unittest.TestCase):
                             and row['slo'] == declared['slo'] and row['slo']['percentile'] == 95
                             and any(item['store'] == source['store'] and item['key'] == source['key'] for item in summary['sources']))
                 self.assertTrue(verified, 'Applied p95 SLO must be verifiable from the published source set')
+                if lost:
+                    self.assertEqual(summary['outcome']['execution'], {'status': 'Failed', 'reason': 'ExecutionLost'})
+                    self.assertEqual(summary['outcome']['cleanup']['status'], 'Failed' if residual else 'Complete')
+                    self.assertEqual(summary['outcome']['cleanup']['residuals'],
+                        [{'kind': 'Pod', 'name': 'remaining-producer', 'reason': 'ResidualState'}] if residual else [])
                 return SimpleNamespace(returncode=0, stderr='')
             env = {'CHILL_EVIDENCE_BUCKET': 'bucket', 'CHILL_EVIDENCE_ENDPOINT': 'https://store.invalid',
                    'CHILL_EVIDENCE_REGION': 'region', 'AWS_ACCESS_KEY_ID': 'test', 'AWS_SECRET_ACCESS_KEY': 'test'}
@@ -171,6 +186,13 @@ class EvaluationTests(unittest.TestCase):
                  side_effect=lambda **kwargs: temporary_directory(prefix=kwargs['prefix'], dir=root)), \
                  patch.object(publication.subprocess, 'run', side_effect=publish):
                 publication.publish(context)
+
+    def test_publication_links_frozen_applied_slo_source(self):
+        self.exercise_publication()
+
+    def test_execution_loss_cleanup_uses_latest_observations(self):
+        self.exercise_publication(lost=True)
+        self.exercise_publication(lost=True, residual=True)
 
     def test_all_no_load_stages_cannot_become_summary_pass(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -791,13 +813,14 @@ class EvaluationTests(unittest.TestCase):
             controller.ws = {w['name']: w for w in config['workloads']}
             controller.a = SimpleNamespace(stage='e5-test')
             controller.monitor = lambda *args: 0
-            controller.go_callback = lambda value: None
+            go = []
+            controller.go_callback = go.append
             controller.provisional_callback = None
             ready = {'evaluationEvent': 'ready', 'at': START, 'barrierSeconds': 10000000000,
                      'offered': 1, 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
                      'datasetRef': {'name': 'different-provenance', 'uid': 'different'}, 'sourceSHA': 'different-revision'}
-            tail = ('import time;time.sleep(60)\n' if mode == 'watchdog' else
+            tail = ('import time;time.sleep(60)\n' if mode in ('watchdog', 'failed-job') else
                     'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained"}),flush=True)\n')
             script = ('import sys,json\nprint(' + repr(json.dumps(ready)) + ',flush=True)\nsys.stdin.readline()\n'
                       'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n' + tail)
@@ -823,7 +846,8 @@ class EvaluationTests(unittest.TestCase):
                 if args[:2] == ['get', 'pod']:
                     return pod
                 if args[:2] == ['get', 'job']:
-                    return {**jobs[0], 'status': {'conditions': [{'type': 'Complete', 'status': 'True'}]}}
+                    terminal = 'Failed' if mode == 'failed-job' and go else 'Complete'
+                    return {**jobs[0], 'status': {'conditions': [{'type': terminal, 'status': 'True'}]}}
                 if args[0] == 'exec':
                     process[0].stdin.write(b'release\n')
                     process[0].stdin.flush()
@@ -843,6 +867,18 @@ class EvaluationTests(unittest.TestCase):
                 return original_module(name, path)
             evidence_io.save(root / 'settings-patch.json', {'accepted': True})
             with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(evidence_io, 'module', side_effect=modules):
+                if mode == 'failed-job':
+                    try:
+                        with self.assertRaisesRegex(RuntimeError, 'ProducerFailed: load-'):
+                            controller.run()
+                    finally:
+                        if process[0]:
+                            process[0].stdin.close()
+                    phase = evidence_io.load(root / 'measured/phase.json')
+                    self.assertEqual(phase['status'], 'STOP')
+                    self.assertIn(jobs[0]['metadata']['name'], phase['error'])
+                    self.assertTrue(go, 'failure must be observed after GO')
+                    return
                 controller.run()
             process[0].stdin.close()
             phase = evidence_io.load(root / 'measured/phase.json')
@@ -860,6 +896,9 @@ class EvaluationTests(unittest.TestCase):
 
     def test_drain_watchdog_stops_owned_writers_and_collects(self):
         self.exercise_stage_policy('watchdog')
+
+    def test_failed_producer_job_fails_stage_without_waiting_for_log_eof(self):
+        self.exercise_stage_policy('failed-job')
 
     def test_cleanup_never_deletes_harness_or_unknown_job_uid(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -906,7 +945,7 @@ class EvaluationTests(unittest.TestCase):
                 api.fail_put = restore_failure
                 controller = object.__new__(conductor.CPO)
                 controller.out = root
-                controller.c = {'evaluation': {'execution': {'runUID': 'run', 'childRefs': [{'uid': 'stage'}]}}}
+                controller.c = {'evaluation': {'execution': {'runUID': 'run', 'childRefs': [{'uid': 'stage', 'stageID': 'one'}]}}}
                 controller.tb, controller.residuals = {'drainSeconds': 0}, []
                 job = {'kind': 'Job', 'metadata': {'name': 'load-one', 'uid': 'job',
                        'labels': {'edge.dacs.io/evaluation-run-uid': 'run'},
@@ -963,6 +1002,33 @@ class EvaluationTests(unittest.TestCase):
                     evidence = evidence_io.load(root / 'cleanup-outcome.json')['attempts']
                     self.assertEqual(len(evidence), 2)
                     self.assertEqual(evidence[0]['cleanup']['status'], 'Failed' if cleanup_failure else 'Complete')
+
+    def test_finish_observes_old_harness_writers_but_not_itself(self):
+        for remaining in (False, True):
+            with self.subTest(remaining=remaining):
+                controller = object.__new__(conductor.CPO)
+                controller.c = {'evaluation': {'execution': {'runUID': 'run', 'childRefs': [{'uid': 'stage', 'stageID': 'one'}]}}}
+                controller.tb, controller.residuals = {'drainSeconds': 0}, []
+                controller.cleanup_jobs = lambda: None
+                labels = {'edge.dacs.io/evaluation-run-uid': 'run', 'edge.dacs.io/evaluation-stage': 'one'}
+                job = {'metadata': {'name': 'old-stage', 'uid': 'old', 'labels': labels,
+                       'ownerReferences': [{'kind': 'EvaluationStage', 'uid': 'stage'}]},
+                       'status': {'conditions': [] if remaining else [{'type': 'Failed', 'status': 'True'}]}}
+                pod = {'metadata': {'name': 'old-stage-pod', 'labels': labels},
+                       'status': {'phase': 'Running' if remaining else 'Failed'}}
+                finish = {'metadata': {'name': 'self-finish', 'uid': 'self', 'labels': {**labels, 'edge.dacs.io/evaluation-stage': 'run'},
+                          'ownerReferences': [{'kind': 'EvaluationRun', 'uid': 'run'}]}}
+                own_pod = {'metadata': {'name': 'self-pod', 'labels': finish['metadata']['labels']}, 'status': {'phase': 'Running'}}
+                controller.io = SimpleNamespace(k=lambda args: {'items': [job, finish] if args[1] == 'jobs' else [pod, own_pod]})
+                if remaining:
+                    with self.assertRaisesRegex(RuntimeError, 'ResidualState'):
+                        controller.finish()
+                    self.assertEqual(controller.residuals, [
+                        {'kind': 'Job', 'name': 'old-stage', 'reason': 'ResidualState'},
+                        {'kind': 'Pod', 'name': 'old-stage-pod', 'reason': 'ResidualState'}])
+                else:
+                    controller.finish()
+                    self.assertEqual(controller.residuals, [])
 
     def test_slo_failure_is_valid_without_internal_diagnostics(self):
         with tempfile.TemporaryDirectory() as directory:

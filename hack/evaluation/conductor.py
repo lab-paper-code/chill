@@ -458,6 +458,13 @@ class CPO:
                 self.record_go(folder, jobs, pods, phase['goUTC'])
             while True:
                 self.monitor(0, folder)
+                for name, job in jobs.items():
+                    current = self.io.k(['get', 'job', job['metadata']['name'], '-o', 'json'])
+                    if current['metadata']['uid'] != job['metadata']['uid']:
+                        raise RuntimeError('IdentityMismatch: generator Job UID')
+                    if any(c['type'] == 'Failed' and c['status'] == 'True' for c in current.get('status', {}).get('conditions', [])):
+                        evidence_io.save(folder / ('terminal-' + name + '.json'), current)
+                        raise RuntimeError('ProducerFailed: ' + job['metadata']['name'] + ' (' + name + ')')
                 for key, _ in selector.select(.2):
                     name, output = key.data
                     try:
@@ -679,8 +686,34 @@ class CPO:
             time.sleep(.2)
 
     def finish(self):
-        # Cleanup only evaluation-owned effects and the deliberately patched settings paths.
-        self.cleanup_jobs()
+        # Cleanup and the lost-writer check are independent safety obligations.
+        try:
+            self.cleanup_jobs()
+        finally:
+            self.observe_stage_writers()
+        if self.residuals:
+            raise RuntimeError('ResidualState: earlier evaluation harness writers remain')
+
+    def observe_stage_writers(self):
+        execution = self.c['evaluation']['execution']
+        stages = {child['stageID'] for child in execution.get('childRefs', [])}
+        selector = 'edge.dacs.io/workload-role=system,edge.dacs.io/evaluation-run-uid=' + execution['runUID']
+        deadline = time.monotonic() + self.tb['drainSeconds']
+        while True:
+            jobs = self.io.k(['get', 'jobs', '-l', selector, '-o', 'json'])['items']
+            residuals = [{'kind': 'Job', 'name': job['metadata']['name'], 'reason': 'ResidualState'} for job in jobs
+                         if self.owned(job) and not any(c['type'] in ('Complete', 'Failed') and c['status'] == 'True'
+                                                       for c in job.get('status', {}).get('conditions', []))]
+            pods = self.io.k(['get', 'pods', '-l', selector, '-o', 'json'])['items']
+            residuals.extend({'kind': 'Pod', 'name': pod['metadata']['name'], 'reason': 'ResidualState'} for pod in pods
+                             if pod['metadata'].get('labels', {}).get('edge.dacs.io/evaluation-stage') in stages
+                             and pod.get('status', {}).get('phase') not in ('Succeeded', 'Failed'))
+            if not residuals:
+                return
+            if time.monotonic() >= deadline:
+                self.residuals.extend(residuals)
+                return
+            time.sleep(.2)
 
 
 def self_check():

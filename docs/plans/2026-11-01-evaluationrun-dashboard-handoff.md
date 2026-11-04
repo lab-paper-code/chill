@@ -118,6 +118,9 @@ Run 목록·단건의 `liveTarget`은 생성 시 저장한 `edge.dacs.io/evaluat
 `outcome.stages[].id`도 `summary.stages[].id`와 같은 키다. 값이 없는 축은 생략하지 않고 reason(`NotStarted` 등)으로 채워 게시한다.
 정리가 실패하면 `outcome.cleanup.residuals[]` = `[{"kind": "Node|Pod|Job|SchedulerSettings", "name": "…", "reason": "…"}]`로 남은 자원을 싣는다(운영자가 kubectl로 찾을 대상).
 
+생성기를 만든 conductor는 로그 EOF와 무관하게 실행 루프마다 정확한 Job UID의 `Failed` 상태를 확인하고, 해당 Job 이름을 담은 `ProducerFailed` 실행 실패로 즉시 정리 단계에 넘긴다.
+실행 실패(`ExecutionLost` 포함)는 정리 실패가 아니다. run 전체의 마지막 `finish`가 evaluator-owned Job/Pod 정리와 settings 원복을 재관측한 결과로 `CleanupComplete`와 pool 반환을 결정한다. 앞선 실행 불명·정리 시도는 이 최종 결과를 덮어쓰지 않으며, 게시 `outcome.cleanup.residuals[]`도 마지막 정리에서 관측한 잔여물만 담는다. 정리를 확인하지 못하면 실패와 해당 증거를 유지한다.
+
 ## 4. 대시보드가 읽을 것 — 추측 대신
 
 | 화면 개념 | 읽는 곳 | 비고 |
