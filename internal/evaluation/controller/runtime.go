@@ -29,7 +29,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-const configName = "chill-evaluation-config"
 const maximumResultBytes int64 = 4 << 20
 const (
 	complete           = "Complete"

@@ -62,7 +62,9 @@ const (
 	EvaluationLabelStep                          = "edge.dacs.io/evaluation-step"
 	EvaluationReleaseAnnotation                  = "edge.dacs.io/evaluation-release"
 	EvaluationRunFinalizer                       = "edge.dacs.io/evaluation-run"
-	EvaluationStageFinalizer                     = "edge.dacs.io/evaluation-stage"
+	// EvaluationConfigName is the namespace ConfigMap a Run freezes when it takes the pool.
+	EvaluationConfigName     = "chill-evaluation-config"
+	EvaluationStageFinalizer = "edge.dacs.io/evaluation-stage"
 )
 
 // +kubebuilder:validation:Enum=PASS;FAIL;INVALID;NOT_EVALUATED
@@ -413,6 +415,47 @@ func validateEvaluationGenerator(generator Generator) error {
 		}
 	}
 	return nil
+}
+
+// EvaluationWorkloadCoverage is the one rule binding a stage to its LoadScenario: the
+// generator shards and the evaluation config's operational workloads name exactly the
+// scenario's workloads. The controller enforces it when it freezes inputs; preflight
+// reports the same rule.
+func EvaluationWorkloadCoverage(scenario LoadScenarioSpec, shards map[string]int32, config map[string]string) error {
+	// Exact keys: struct decoding would also match "Workloads", which the harness never reads.
+	var operational map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(config["operational"]), &operational); err != nil {
+		return fmt.Errorf("%s: operational evaluation config: %v", EvaluationReasonFrozenInputInvalid, err)
+	}
+	var workloads map[string]json.RawMessage
+	if raw, ok := operational["workloads"]; ok {
+		if err := json.Unmarshal(raw, &workloads); err != nil {
+			return fmt.Errorf("%s: operational workloads: %v", EvaluationReasonFrozenInputInvalid, err)
+		}
+	}
+	names := make(map[string]bool, len(scenario.Workloads))
+	for _, workload := range scenario.Workloads {
+		names[workload.Name] = true
+	}
+	if !namesExactly(names, shards) {
+		return fmt.Errorf("%s: declared generator shard coverage: shards must name exactly the LoadScenario workloads", EvaluationReasonFrozenInputInvalid)
+	}
+	if !namesExactly(names, workloads) {
+		return fmt.Errorf("%s: operational workload coverage: operational workloads must name exactly the LoadScenario workloads", EvaluationReasonFrozenInputInvalid)
+	}
+	return nil
+}
+
+func namesExactly[V any](names map[string]bool, keyed map[string]V) bool {
+	if len(keyed) != len(names) {
+		return false
+	}
+	for name := range keyed {
+		if !names[name] {
+			return false
+		}
+	}
+	return true
 }
 
 func validateEvaluationPower(power PowerMeasurement) error {

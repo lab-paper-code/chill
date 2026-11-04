@@ -123,6 +123,27 @@ func TestLoadScenarioValidate(t *testing.T) {
 	}
 }
 
+// The operational config is read by exact key, as the harness reads it: an unrelated
+// key differing only in case neither rejects a covering config nor substitutes for it.
+func TestEvaluationWorkloadCoverageExactOperationalKey(t *testing.T) {
+	scenario := LoadScenarioSpec{Workloads: []EvaluationWorkloadReference{{Name: "a"}}}
+	shards := map[string]int32{"a": 1}
+	for _, test := range []struct {
+		operational string
+		wantError   bool
+	}{
+		{`{"workloads":{"a":{}}}`, false},
+		{`{"workloads":{"a":{}},"Workloads":false}`, false},
+		{`{"Workloads":{"a":{}}}`, true},
+		{`{"workloads":{"a":{},"b":{}}}`, true},
+	} {
+		err := EvaluationWorkloadCoverage(scenario, shards, map[string]string{"operational": test.operational})
+		if (err != nil) != test.wantError {
+			t.Fatalf("%s: err=%v, wantError=%v", test.operational, err, test.wantError)
+		}
+	}
+}
+
 func TestAggregateMeasurement(t *testing.T) {
 	for _, test := range []struct {
 		name     string

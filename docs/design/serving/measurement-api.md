@@ -124,6 +124,19 @@ mode·startState·control이나 CHILL 이미지 대조 입력은 없고, `loadGe
 공개 설정 patch 검증 경계가 실제 필드·값을 검증한다. 새 단계에 복원 상태나 내부 모드를
 자동 주입하지 않는다.
 
+단계마다 `loadGenerator.shards`와 `chill-evaluation-config`의 `operational.workloads`는
+LoadScenario 워크로드 이름과 정확히 같아야 한다(`api.EvaluationWorkloadCoverage` 한 곳).
+controller가 입력을 동결하는 획득 시점에 이 규칙으로 판정해 pool을 잡기 전에
+`FrozenInputInvalid`로 끝낸다. preflight는 같은 함수를 `coverage/<stageID>` check로 보고하고
+POST 생성은 그 실패를 거절하지만, 획득 전 설정 변경까지 보증하지는 않는다.
+
+삭제(중지) 요청이 접수된 Run의 EvaluationView는 `stopRequested:{at,by}`를 싣는다. `at`은
+Run의 deletionTimestamp이고 `by`는 `edge.dacs.io/stop-requested-by` annotation(없으면 `""`)이다.
+deletionTimestamp가 없으면 annotation이 있어도 키를 생략하며 `phase`는 바꾸지 않는다. 실행 중
+단계의 harness는 부모 Run 삭제를 보면 STOP 경로로 generator Job을 지우고, 삭제 중인 Run은
+publish 시도 결과가 기록된 뒤에만 finalizer를 제거한다.
+
+
 preflight의 `liveTarget[]`는 `{component,resource,liveImageIDs,ready}`다. `specImage`·`match`와
 digest 채택은 없고 실제 target readiness로 검사한다. POST 접수는 현재 관측을
 `edge.dacs.io/evaluation-live-target` annotation에 남긴다. EvaluationView.liveTarget은

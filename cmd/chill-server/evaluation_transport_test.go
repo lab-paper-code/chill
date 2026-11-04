@@ -35,17 +35,21 @@ func evaluationFixture(
 		Name: "server", Ready: true, ImageID: "repo/server@sha256:live",
 	}}
 	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns", UID: "load-uid"}}
+	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns", UID: "load-uid"},
+		Spec: api.LoadScenarioSpec{Workloads: []api.EvaluationWorkloadReference{{Name: "workload"}}}}
+	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: api.EvaluationConfigName, Namespace: "ns"},
+		Data: map[string]string{"operational": `{"workloads":{"workload":{}}}`}}
 	sequence := 0
-	native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, load).WithInterceptorFuncs(interceptor.Funcs{
-		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-			sequence++
-			if obj.GetUID() == "" {
-				obj.SetUID(types.UID(fmt.Sprintf("created-%d", sequence)))
-			}
-			return c.Create(ctx, obj, opts...)
-		},
-	}).Build()
+	native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, load, config).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				sequence++
+				if obj.GetUID() == "" {
+					obj.SetUID(types.UID(fmt.Sprintf("created-%d", sequence)))
+				}
+				return c.Create(ctx, obj, opts...)
+			},
+		}).Build()
 	image := api.EvaluationImage{Image: "repo/server@sha256:live", SourceSHA: "source"}
 	spec := api.EvaluationRunSpec{
 		Question: "compare", EvidenceStore: "evidence", Harness: image,

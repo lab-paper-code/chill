@@ -222,6 +222,28 @@ class EvaluationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, '^TargetUnavailable'):
                     live.start_gate(harness)
 
+    def test_parent_run_deletion_stops_stage_load(self):
+        # Defect 20: deleting the parent Run is the operator's stop; the running stage must end
+        # through the conductor's STOP path instead of offering the whole load window.
+        for deleting in (False, True):
+            with self.subTest(deleting=deleting), tempfile.TemporaryDirectory() as directory:
+                harness, _, _, _ = live_fixture(Path(directory))
+                harness.execution['runName'], harness.spec['target'] = 'run-name', {}
+                parent = {'metadata': {'name': 'run-name', 'uid': 'run', **({'deletionTimestamp': START} if deleting else {})}}
+                controller = SimpleNamespace(observe_generators=lambda folder: None)
+                def run():
+                    controller.monitor(0, harness.root / 'measured')
+                    raise RuntimeError('LoadContinued')
+                controller.run = run
+                def kubectl(namespace, *args):
+                    self.assertEqual((namespace, *args), ('release', 'get', 'evaluationrun', 'run-name'))
+                    return parent
+                with patch.object(live, 'start_gate'), patch.object(harness, 'controller', return_value=controller), \
+                        patch.object(input_snapshot, 'check_target', return_value=[]), patch.object(input_snapshot, 'check_fleet'), \
+                        patch.object(input_snapshot, 'kubectl', side_effect=kubectl):
+                    with self.assertRaisesRegex(RuntimeError, '^Stopped' if deleting else '^LoadContinued'):
+                        harness.stage()
+
     def test_stop_watcher_kills_process_group_when_cycle_overruns(self):
         with tempfile.TemporaryDirectory() as directory:
             harness, _, _, _ = live_fixture(Path(directory))

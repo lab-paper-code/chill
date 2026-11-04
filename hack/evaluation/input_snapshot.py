@@ -111,11 +111,6 @@ def stage_config(spec, scenario, execution, config, root):
     if (not isinstance(generator.get('nodeName'), str) or not generator['nodeName'] or not isinstance(resources, dict) or set(resources) - {'requests', 'limits'} or
             any(not isinstance(values, dict) or set(values) - {'memory'} for values in resources.values())):
         raise ValueError('FrozenInputInvalid: generator nodeName and memory-only resources required')
-    names = {w['name'] for w in scenario['workloads']}
-    if set(generator['shards']) != names or any(type(n) is not int or n < 1 for n in generator['shards'].values()):
-        raise ValueError('FrozenInputInvalid: declared generator shard coverage')
-    if set(operational.get('workloads', {})) != names:
-        raise ValueError('FrozenInputInvalid: operational workload coverage')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9-]{0,39}', spec['row']):
         raise ValueError('FrozenInputInvalid: safe row label required')
     workloads = []

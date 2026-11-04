@@ -59,6 +59,13 @@ type EvaluationView struct {
 	Phase            string
 	PublicationID    string
 	LiveTarget       []EvaluationLiveTarget
+	// StopRequested is present only once the Run is being deleted; phase is unchanged
+	// because load may still run until the stage harness observes the deletion.
+	StopRequested *EvaluationStopRequest
+}
+type EvaluationStopRequest struct {
+	At metav1.Time
+	By string
 }
 type EvaluationProcedure struct {
 	Step               string
