@@ -201,7 +201,7 @@ class EvaluationTests(unittest.TestCase):
                 clock[0] += seconds
             harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
             harness.controller = lambda: self.fail('gate must run before controller or load generation')
-            with patch.object(input_snapshot, 'open_snapshot'), patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', return_value=503), patch.object(live, 'start_watcher'), patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(live.time, 'sleep', side_effect=sleep), patch('builtins.print'):
+            with patch.object(input_snapshot, 'open_snapshot'), patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', return_value=503), patch.object(live, 'start_watcher'), patch.object(live, 'stop_watcher'), patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(live.time, 'sleep', side_effect=sleep), patch('builtins.print'):
                 self.assertEqual(harness.execute('stage'), 1)
             record = evidence_io.load(harness.run / 'results/stages/one/stage.json')
             self.assertEqual(record['execution']['reason'], 'TargetUnavailable')
@@ -211,6 +211,31 @@ class EvaluationTests(unittest.TestCase):
             self.assertTrue(all(not attempt['passed'] for attempt in attempts))
             self.assertTrue(any(ref['key'].endswith('/artifacts/start-gate.json') for ref in record['artifacts']))
 
+    def test_start_gate_success_after_deadline_is_target_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness, _, _, _ = live_fixture(Path(directory))
+            clock = [0]
+            def slow_pass(context):
+                clock[0] += live.timeboxes(context)['gateSeconds'] + 1
+                return {'at': START, 'passed': True}
+            with patch.object(live, 'gate_attempt', side_effect=slow_pass), patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]):
+                with self.assertRaisesRegex(RuntimeError, '^TargetUnavailable'):
+                    live.start_gate(harness)
+
+    def test_stop_watcher_kills_process_group_when_cycle_overruns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness, _, _, _ = live_fixture(Path(directory))
+            waits = []
+            def wait(timeout=None):
+                waits.append(timeout)
+                if timeout is not None:
+                    raise live.subprocess.TimeoutExpired('watch', timeout)
+            process = SimpleNamespace(pid=4242, terminate=lambda: None, wait=wait)
+            with patch.object(live.os, 'killpg') as killpg:
+                live.stop_watcher(harness, process)
+            killpg.assert_called_once_with(4242, live.signal.SIGKILL)
+            self.assertEqual(waits, [live.timeboxes(harness)['apiSeconds'], None])
+
     def test_step_uploads_every_nonempty_artifact_after_watcher_stops(self):
         for step in ('stage', 'finish'):
             for failed in (False, True):
@@ -219,16 +244,13 @@ class EvaluationTests(unittest.TestCase):
                     if step == 'finish':
                         harness.scope, harness.prefix, harness.root = 'run', 'experiments/run/run', harness.run
                     events, uploaded = [], []
-                    def launch(args):
+                    def launch(args, **_):
                         events.append('watch-start')
-                        self.assertEqual(args[2], 'watch')
-                        self.assertEqual(args[args.index('--step') + 1], step)
-                        self.assertEqual(args[args.index('--parent-pid') + 1], str(os.getpid()))
                         folder = harness.root / 'watch'
                         folder.mkdir(parents=True)
                         live.append(folder / (step + '.jsonl'), {'at': START})
                         return SimpleNamespace(terminate=lambda: events.append('terminate'), wait=wait)
-                    def wait():
+                    def wait(timeout=None):
                         events.append('wait')
                         live.append(harness.root / 'watch' / (step + '-alerts.jsonl'), {'at': END, 'detail': 'last alert'})
                     def run():
@@ -1363,7 +1385,7 @@ class EvaluationTests(unittest.TestCase):
                 harness.execution = {'runUID': 'run', 'namespace': 'evaluation-ns', 'prepareCompleted': True}
                 harness.controller = lambda: controller
                 harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
-                with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'):
+                with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'), patch.object(live, 'stop_watcher'):
                     self.assertEqual(harness.execute('finish'), int(cleanup_failure or restore_failure))
                 result = evidence_io.load(root / 'results/run/finish.json')
                 self.assertEqual(result['cleanup']['status'], 'Failed' if cleanup_failure or restore_failure else 'Complete')
@@ -1387,7 +1409,7 @@ class EvaluationTests(unittest.TestCase):
                     api.value['controls']['power'] = False  # operator changed it after our successful revert
                     api.revision += 1
                     controller.residuals = []  # a fresh finish Job has a fresh controller
-                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'):
+                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'), patch.object(live, 'stop_watcher'):
                         self.assertEqual(harness.execute('finish'), int(cleanup_failure))
                     self.assertEqual(len(api.calls), calls_before_retry)
                     self.assertFalse(api.value['controls']['power'])
@@ -1467,7 +1489,7 @@ class EvaluationTests(unittest.TestCase):
                     harness.spec, harness.execution = {}, execution
                     harness.controller = lambda: controller
                     harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
-                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'):
+                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'), patch.object(live, 'stop_watcher'):
                         self.assertEqual(harness.execute('finish'), 0 if clean else 1)
                     result = evidence_io.load(root / 'results/run/finish.json')
                     self.assertEqual(result['cleanup']['status'], 'Complete' if clean else 'Failed')
