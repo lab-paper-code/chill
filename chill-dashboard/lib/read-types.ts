@@ -80,8 +80,7 @@ export type SchedulerSettings = {
   // Runtime --request-timeout in nanoseconds, read-only; only GET settings carries it.
   requestTimeout?:WireInteger
 }
-export type SchedulerModelPath = {name:string;artifact:string;files:string[]|null;image:string;runtimeFamily:string;backend:string;preprocessor:{image:string;architecture:string;path:string};firstfloor?:{maxBatchSize:number;maxQueueSize:number;deadlinePolicy?:string}|null}
-export type SchedulerDefinition = {name:string;uid:string;generation:WireInteger;model:{name:string;uid:string;generation:WireInteger;paths:SchedulerModelPath[]|null};preprocessor?:{name:string;input:{name:string}[]|null;output:{name:string}[]|null;maxNewTokens?:number};dataset?:{name:string;uid:string}|null;slo:{percentile:number;targetLatencyNanos:WireInteger}}
+export type SchedulerDefinition = {name:string;uid:string;generation:WireInteger;model:{name:string;uid:string;generation:WireInteger;paths:unknown[]|null};slo:{percentile:number;targetLatencyNanos:WireInteger}}
 export type SchedulerAllocation = {gpuUUID?:string;memoryBytes:WireInteger}
 export type SchedulerNode = {node:NodeRef;powerMode:string;ready:boolean;gpuUUIDs:string[]|null;memoryBytes:WireInteger;reserved:SchedulerAllocation;nonServing:SchedulerAllocation[]|null;observedAt:string;reasons?:string[];measurement?:boolean}
 // internal/profiling/derivation/curve_plan.go CurveProtocolContract; idle protocols have no dataset.

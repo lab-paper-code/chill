@@ -4,7 +4,7 @@ import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { useChillQuery, useChillMutation, useSession, ApiError, type ChillMutationInput, type RelayResponse } from "@/lib/client"
-import type { OperationResult, PoolsView, Routing, SchedulerDefinition, SchedulerInstance, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
+import type { OperationResult, PoolsView, Routing, SchedulerSettings, SchedulerSettingsChange, SchedulerControllerState, SchedulerObservationPage, WireInteger } from "@/lib/read-types"
 import { millisecondsToNanos, nanosToMilliseconds, wireInteger, marginMilliseconds, preciseJSONSupported, parseSchedulerJSON, stringifySchedulerJSON, settingsEqual } from "@/lib/scheduler"
 import { settingFields as fields, settingControls as controls, settingTargets, writableSettingKeys, type SettingField as Field } from "@/lib/scheduler-settings"
 import { safeSource } from "@/lib/source-export"
@@ -146,16 +146,6 @@ function EditRow({editKey,label,help,changed,initial,unit,range,save,disabled,no
   </div></SheetContent></Sheet>
 }
 
-// MatchesProfile (serving/runtime.go) plus physical readiness/ownership, not current routing.
-function routeCandidate(instance:SchedulerInstance,definition:SchedulerDefinition|undefined) {
-  if(!definition||!instance.ready||instance.stopped||instance.terminated||!instance.profile||(instance.ownerWorkloadUID&&instance.ownerWorkloadUID!==definition.uid))return false
-  const c=instance.profile.condition,pre=definition.preprocessor
-  const same=(a:readonly string[]|null|undefined,b:readonly string[]|null|undefined)=>(a?.length??0)===(b?.length??0)&&(a??[]).every((value,index)=>value===b?.[index])
-  if(!pre||c.logicalModel!==definition.model.name||c.preprocessor.name!==pre.name||!same(c.preprocessor.inputs,pre.input?.map(field=>field.name))||!same(c.preprocessor.outputs,pre.output?.map(field=>field.name))||(c.preprocessor.maxNewTokens??0)!==(pre.maxNewTokens??0)||!definition.dataset||!c.activeProtocol.dataset||definition.dataset.uid!==c.activeProtocol.dataset.uid)return false
-  return definition.model.paths?.some(path=>path.name===c.artifact.executionPath&&path.artifact===c.artifact.name&&same(path.files,c.artifact.files)&&path.image===c.artifact.image&&path.runtimeFamily===c.runtimeFamily&&path.backend===c.backend&&path.preprocessor.image===c.preprocessor.image&&path.preprocessor.architecture===c.preprocessor.architecture&&path.preprocessor.path===c.preprocessor.path&&
-    (!path.firstfloor&&!c.firstfloor||!!path.firstfloor&&!!c.firstfloor&&path.firstfloor.maxBatchSize===c.firstfloor.maxBatchSize&&path.firstfloor.maxQueueSize===c.firstfloor.maxQueueSize&&(path.firstfloor.deadlinePolicy??"")===(c.firstfloor.deadlinePolicy??"")))??false
-}
-
 // Diff the declaration shown when the dialog opened, so unrelated UID changes stay untouched.
 function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapshot?:SchedulerControllerState["snapshot"];disabled:boolean;apply:(before:Routing,after:Routing,reason:string)=>void}) {
   const [open,setOpen]=React.useState(false),[text,setText]=React.useState(""),[reason,setReason]=React.useState(""),[error,setError]=React.useState(""),[before,setBefore]=React.useState<Routing>({}),id=React.useId()
@@ -180,8 +170,7 @@ function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapsho
       apply(before,parsed as Routing,reason.trim());setOpen(false)
     } catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       {Object.entries(routing).map(([uid,weights],index)=>{
-        const definition=services.find(service=>service.uid===uid)
-        const candidates=instances.filter(item=>routeCandidate(item,definition)&&!Object.entries(routing).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0)&&!Object.entries(snapshot?.routing??{}).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0))
+        const candidates=instances.filter(item=>item.ready&&!item.stopped&&!item.terminated&&(!item.ownerWorkloadUID||item.ownerWorkloadUID===uid)&&!Object.entries(routing).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0)&&!Object.entries(snapshot?.routing??{}).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0))
         const rows:[string,number|undefined][]=[...Object.entries(weights),...candidates.filter(item=>!Object.hasOwn(weights,item.id)).map(item=>[item.id,undefined] as [string,undefined])]
         return <fieldset key={index} className="grid min-w-0 gap-3 rounded-md border p-3">
         <legend className="px-1">서비스 {index+1}</legend>

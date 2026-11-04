@@ -190,9 +190,7 @@ test("routing table edits preserve route, block and release semantics and reject
   pageRunner.render(SchedulerSettingsPage)
   const editor=elements(pageRunner.render(SchedulerSettingsPage)).find(node=>typeof node.props.apply==="function"&&"initial" in node.props)!
   const runner=pageRunner,applied:unknown[]=[]
-  const path={name:"cpu",artifact:"model",files:[],image:"model-image",runtimeFamily:"ort",backend:"cpu",preprocessor:{image:"pre-image",architecture:"arm64",path:"/pre"}}
-  const condition={logicalModel:"model",artifact:{executionPath:"cpu",name:"model",files:[],image:"model-image"},runtimeFamily:"ort",backend:"cpu",preprocessor:{name:"pre",...path.preprocessor,inputs:[],outputs:[]},activeProtocol:{dataset:{uid:"data"}}}
-  const props={...editor.props,snapshot:{workloads:[["service","Service A"],["release","Service B"],["new","Service C"]].map(([uid,name])=>({uid,name,model:{name:"model",paths:[path]},preprocessor:{name:"pre",input:[],output:[]},dataset:{uid:"data"}})),instances:[{id:"instance",ownerWorkloadUID:"service",workloadUID:"service",node:{name:"Device"},ready:true,profile:{condition}},{id:"new-instance",ownerWorkloadUID:"new",workloadUID:"new",node:{name:"Other device"},ready:true,profile:{condition}}]},apply:(...args:unknown[])=>applied.push(args)}
+  const props={...editor.props,snapshot:{workloads:[{uid:"service",name:"Service A"},{uid:"release",name:"Service B"},{uid:"new",name:"Service C"}],instances:[{id:"instance",ownerWorkloadUID:"service",workloadUID:"service",node:{name:"Device"},ready:true},{id:"new-instance",ownerWorkloadUID:"new",workloadUID:"new",node:{name:"Other device"},ready:true}]},apply:(...args:unknown[])=>applied.push(args)}
   const component=editor.type as (props:Record<string,unknown>)=>unknown
   let tree=elements(runner.render(component,props))
   ;(tree.find(node=>node.type==="row-dialog")!.props.onOpenChange as (open:boolean)=>void)(true)
@@ -233,11 +231,8 @@ test("routing table edits preserve route, block and release semantics and reject
 
 test("manual ready instances with no active route remain selectable in the routing table",()=>{
   const runner=hooks(),settings={controls:{},autonomousWorkloads:[],staticRouting:{}}
-  const path={name:"cpu",artifact:"model",files:[],image:"model-image",runtimeFamily:"ort",backend:"cpu",preprocessor:{image:"pre-image",architecture:"arm64",path:"/pre"},firstfloor:{maxBatchSize:1,maxQueueSize:4}}
-  const definition={uid:"manual",name:"Manual service",model:{name:"model",paths:[path]},preprocessor:{name:"pre",input:[],output:[]},dataset:{uid:"data"}}
-  const condition={logicalModel:"model",artifact:{executionPath:"cpu",name:"model",files:[],image:"model-image"},runtimeFamily:"ort",backend:"cpu",preprocessor:{name:"pre",...path.preprocessor,inputs:[],outputs:[]},firstfloor:path.firstfloor,activeProtocol:{dataset:{uid:"data"}}}
-  const instance={id:"physical",ownerWorkloadUID:"manual",workloadUID:"",node:{name:"Device"},ready:true,stopped:false,profile:{id:"measured",condition}}
-  const snapshot={workloads:[definition],instances:[instance,{...instance,id:"unready",ready:false},{...instance,id:"stopped",stopped:true},{...instance,id:"other-owner",ownerWorkloadUID:"other"},{...instance,id:"incompatible",profile:{condition:{...condition,logicalModel:"other"}}}],routing:{}}
+  const instance={id:"physical",ownerWorkloadUID:"manual",workloadUID:"",node:{name:"Device"},ready:true,stopped:false,profileID:"measured"}
+  const snapshot={workloads:[{uid:"manual",name:"Manual service"}],instances:[instance,{...instance,id:"unready",ready:false},{...instance,id:"stopped",stopped:true},{...instance,id:"terminated",terminated:true},{...instance,id:"other-owner",ownerWorkloadUID:"other"}],routing:{}}
   const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string,options?:{onResponse?:(response:{etag:null},data:unknown)=>void})=>{const data=path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{snapshot}:undefined;if(path==="v1/scheduler/settings")options?.onResponse?.({etag:null},data);return {data}}}})
   runner.render(SchedulerSettingsPage)
   const editor=elements(runner.render(SchedulerSettingsPage)).find(node=>typeof node.props.apply==="function")!
