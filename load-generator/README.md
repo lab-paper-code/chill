@@ -46,6 +46,7 @@ for the shared shard dispatcher; runtime images are unchanged.
 Results are written and flushed as JSONL on completion, without retaining rows
 or completed request threads. A condition counter tracks active requests and
 drains them even when scheduling raises; the arrival path never joins a thread.
+The counter has its own lock, so blocked output does not block later arrivals.
 Workers are daemon threads to avoid Python 3.8 interpreter shutdown-lock
 retention, but replay always waits for their output and connection cleanup.
 Memory after schedule preparation depends on concurrent requests, not completed

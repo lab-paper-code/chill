@@ -126,6 +126,38 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(len(output.getvalue().splitlines()), 100)
         self.assertTrue(all(ref() is None for ref in completed))
 
+    def test_evaluation_output_backpressure_does_not_block_arrivals(self):
+        blocked, release = threading.Event(), threading.Event()
+        inferred = []
+
+        class Output(io.StringIO):
+            def write(self, text):
+                blocked.set()
+                if not release.wait(2):
+                    raise AssertionError("output blocked later arrivals")
+                return super().write(text)
+
+        class Client(FakeClient):
+            def infer(self, *args):
+                inferred.append(True)
+                if len(inferred) == 3:
+                    release.set()
+                return super().infer(*args)
+
+        def schedule(requests, submit, **kwargs):
+            submit(requests[0], False)
+            self.assertTrue(blocked.wait(2))
+            for request in requests[1:]:
+                submit(request, False)
+
+        output = Output()
+        with patch("chill_loadgen.cli.run_schedule", side_effect=schedule):
+            replay_open_loop(
+                [("q1", {"image": b"a"})], workload="vqa", offsets=[0] * 3,
+                new_client=Client, out=output, start_ns=0, clock_ns=lambda: 0,
+            )
+        self.assertEqual(len(output.getvalue().splitlines()), 3)
+
     def test_evaluation_schedule_failure_still_drains_without_joining(self):
         entered, release, finished = threading.Event(), threading.Event(), threading.Event()
         errors = []

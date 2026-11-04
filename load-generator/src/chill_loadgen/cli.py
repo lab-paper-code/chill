@@ -84,7 +84,7 @@ def replay_open_loop(
 ) -> None:
     """Dispatch every planned arrival independently, without an in-flight cap."""
     lock = threading.Lock()
-    drained = threading.Condition(lock)
+    drained = threading.Condition()
     active = 0
     failure: Optional[BaseException] = None
 
@@ -129,7 +129,7 @@ def replay_open_loop(
                        serviceLatencyMs=(finished - sent) / 1_000_000)
             emit(row)
         except BaseException as error:
-            with lock:
+            with drained:
                 if failure is None:
                     failure = error
         finally:
