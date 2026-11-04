@@ -13,12 +13,13 @@ import { initialLiveState } from "./live.ts"
 import * as resourcesData from "../features/resources-data.ts"
 import type { OperatingPowerSeries } from "./read-types.ts"
 import type * as ClientModule from "./client.tsx"
+import * as icons from "lucide-react"
 
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){
   const exports:Record<string,(props:Record<string,unknown>)=>ReactElement>={}
   const code=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-  new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")||name.startsWith("./")?{}:require(name)),exports)
+  new Function("require","exports",code)((name:string)=>modules[name]??(name==="lucide-react"?icons:name.startsWith("@/")||name.startsWith("./")?{}:require(name)),exports)
   return exports
 }
 test("rendered power chart retains interval timestamps, breaks nulls and labels measured zero",()=>{
@@ -182,7 +183,7 @@ test("power interval keeps meter zero, incomplete evidence and pool aggregates i
   assert.doesNotMatch(html,/data-column="meterComplete"/)
 })
 
-test("device power presents one observation range and no explanatory paragraph",()=>{
+test("device power preserves the chart and observation range inside disclosures",()=>{
   const query={error:null,isPending:false,refetch:()=>{}},state={...initialLiveState(),status:"fixture" as const}
   const chart=load("../features/power-series.tsx",{"@/lib/power-series":powerSeries,"@/lib/live-display":displayHelpers})
   const screen=load("../features/resources.tsx",{
@@ -195,10 +196,10 @@ test("device power presents one observation range and no explanatory paragraph",
     "./power-series":{...chart,usePowerSeries:()=>({query,points:[{from:1000,to:6000,wholeWatts:0,nodes:{}}]})},
   })
   const html=renderToStaticMarkup(createElement(screen.DevicesPage,{}))
-  const facts=html.match(/<table class="devices-table devices-power-facts"[\s\S]*?<\/table>/)![0]
-  assert.equal((facts.match(/<th>/g)??[]).length,4)
-  assert.equal((html.match(/aria-label="전력 관측 범위"/g)??[]).length,1)
-  assert.doesNotMatch(html,/<p>최근 15분/)
+  assert.equal((html.match(/<svg[^>]*role="img"/g)??[]).length,1)
+  assert.match(html,/<\/svg><details[^>]*><summary>[^<]+<\/summary><table/)
+  assert.ok(html.includes(displayTime(new Date(1000).toISOString(),"KST")))
+  assert.ok(html.includes(displayTime(new Date(6000).toISOString(),"KST")))
 })
 
 test("live power visibly identifies an old bucket response after the real decoder error boundary",()=>{
