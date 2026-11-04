@@ -3,7 +3,7 @@
 import type { UseQueryResult } from "@tanstack/react-query"
 import type { ApiError } from "@/lib/client"
 import { useChillQuery } from "@/lib/client"
-import { evaluationLastProgressAt, evaluationRemaining, type ActiveEvaluations, type EvaluationPhaseSummary, type EvaluationStageProgress, type EvaluationProgressProcedure, type EvaluationProgressEvent } from "@/lib/evaluation-active"
+import { evaluationLastProgressAt, evaluationProgressOngoing, evaluationRemaining, type ActiveEvaluations, type EvaluationPhaseSummary, type EvaluationStageProgress, type EvaluationProgressProcedure, type EvaluationProgressEvent, type EvaluationProgressOwner } from "@/lib/evaluation-active"
 import { StatusCell } from "@/components/status-cell"
 import { STATUS_AXES } from "@/lib/status"
 
@@ -16,20 +16,20 @@ export function EvaluationStatusCell() {
 
 const actions:Record<string,string>={"delete-serving-pod":"서비스 Pod 삭제","cordon-delete":"노드 차단·Pod 삭제",uncordon:"노드 차단 해제"}
 const outcomes:Record<string,string>={Executed:"실행됨",Cancelled:"취소됨",Invalid:"무효"}
-const progressLabels:Record<EvaluationProgressEvent["phase"],{boundary:string;current:string}>={
-  loadStarted:{boundary:"부하 시작",current:"부하 진행 중"},
-  loadEnded:{boundary:"부하 종료",current:"drain · 시작 미기록"},
-  drainStarted:{boundary:"drain 시작",current:"drain 진행 중"},
-  drainEnded:{boundary:"drain 종료",current:"flush · 시작 미기록"},
-  flushStarted:{boundary:"flush 시작",current:"flush 진행 중"},
-  collectStarted:{boundary:"수집 시작",current:"수집 진행 중"},
-  collectEnded:{boundary:"수집 종료",current:"판정 · 시작 미기록"},
-  judgeStarted:{boundary:"판정 시작",current:"판정 진행 중"},
-  judgeEnded:{boundary:"판정 종료",current:"판정 종료 기록"},
+const progressLabels:Record<EvaluationProgressEvent["phase"],{boundary:string;ongoing?:string}>={
+  loadStarted:{boundary:"부하 시작",ongoing:"부하 진행 중"},
+  loadEnded:{boundary:"부하 종료"},
+  drainStarted:{boundary:"drain 시작",ongoing:"drain 진행 중"},
+  drainEnded:{boundary:"drain 종료"},
+  flushStarted:{boundary:"flush 시작",ongoing:"flush 진행 중"},
+  collectStarted:{boundary:"수집 시작",ongoing:"수집 진행 중"},
+  collectEnded:{boundary:"수집 종료"},
+  judgeStarted:{boundary:"판정 시작",ongoing:"판정 진행 중"},
+  judgeEnded:{boundary:"판정 종료"},
 }
 const progressTime=(value:string)=>new Date(value).toLocaleTimeString("ko-KR",{timeZone:"Asia/Seoul",hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"})
 
-export function EvaluationActiveDetails({active,now,name,uid,stageProgress,stageActive=false,procedures}:{active:Pick<UseQueryResult<ActiveEvaluations,ApiError>,"data"|"error"|"isPending"|"refetch">;now:number;name?:string;uid?:string;stageProgress?:EvaluationStageProgress;stageActive?:boolean;procedures?:EvaluationProgressProcedure[]|null}) {
+export function EvaluationActiveDetails({active,now,name,uid,stageProgress,parentRun,procedures}:{active:Pick<UseQueryResult<ActiveEvaluations,ApiError>,"data"|"error"|"isPending"|"refetch">;now:number;name?:string;uid?:string;stageProgress?:EvaluationStageProgress;parentRun?:EvaluationProgressOwner;procedures?:EvaluationProgressProcedure[]|null}) {
   const runs=active.data?.items.filter(run=>(!name||run.name===name)&&(!uid||run.uid===uid))??[]
   return <div className="live-evaluations" aria-label="진행 중 실험">
     {active.isPending&&<span role="status">실험 조회 중</span>}
@@ -44,9 +44,8 @@ export function EvaluationActiveDetails({active,now,name,uid,stageProgress,stage
       const stage=stageProgress?.id===run.stage?.id?stageProgress:undefined
       const progress=stage?.progress
       const lastBoundary=progress?.[progress.length-1]
-      const boundaryActive=stageActive&&!stage?.finishedAt&&(lastBoundary?.phase.startsWith("judge")?stage?.currentProcedure==="judge":stage?.currentProcedure==="stage"||lastBoundary?.phase==="collectEnded"&&stage?.currentProcedure==="judge")
       const progressLabel=lastBoundary
-        ?boundaryActive?`현재 구간: ${progressLabels[lastBoundary.phase].current}`:`마지막 관측: ${progressLabels[lastBoundary.phase].boundary} ${progressTime(lastBoundary.at)}${lastBoundary.phase.endsWith("Started")?" · 종료 미기록":""}`
+        ?evaluationProgressOngoing(stage,parentRun)?`현재 구간: ${progressLabels[lastBoundary.phase].ongoing}`:`마지막 관측: ${progressLabels[lastBoundary.phase].boundary} ${progressTime(lastBoundary.at)}${lastBoundary.phase.endsWith("Started")?" · 종료 미기록":""}`
         :"구간 경계 미기록"
       const lastProgressAt=evaluationLastProgressAt(stage,procedures)
       const stageProcedures=stage?.procedures

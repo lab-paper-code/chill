@@ -55,9 +55,9 @@
 아래 실행 단계: 기존 절차 → 부하 Job 표 → 최신 condition
 ```
 
-- 자식 단계 미종료·부모 Running·같은 단계·부모 currentProcedure 빈 값/미제공(자식 실행 중의 실제 wire)일 때 자식 자신의 stage/judge 절차와 일치하는 경계만 현재 구간으로 표시한다. 마지막 시작 경계는 진행 중, 종료 경계는 다음 구간 시작 미기록, 판정 종료는 종료 사실이다. 자식 종료/cleanup 진입·부모 finish/publish 진입·현재 단계/자식 절차 불일치이면 `마지막 관측: 경계 시각`으로 표시하고 시작만 남은 경계는 종료 미기록이다. 없는 경계는 보충하지 않으며 배열 순서를 시각순으로 바꾸지 않는다.
+- `evaluationProgressOngoing()`이 부모 Running·동일 단계·부모 절차 빈 값/미제공, 자식 단계 미종료, 자식 절차 stage/judge, 그 절차의 최신 기록 존재·종료 미기록, 마지막 경계가 소유 절차의 시작인지 모두 확인한다. 모두 맞을 때만 진행 중이며 하나라도 아니면 `마지막 관측: 경계 시각`이다. 시작만 남으면 종료 미기록, 끝 경계는 기록된 종료 사실로 남기고 다음 구간의 현재 진행을 만들지 않는다. 없는 경계는 보충하지 않으며 배열 순서를 시각순으로 바꾸지 않는다.
 - `drainEnded.producerRowsMissing`는 서비스별 생성기 결과 행 부족 수(진행 중 요청 수 아님), `collectEnded.bytes`는 저장된 원시 자료 크기다. 0과 비영 수 모두 중립적인 사실로 표시한다.
 - `lastProgressAt`·`provisionalD1.asOf`·자식/부모 절차 시각 중 최신값의 경과만 표시한다. flush·수집 중 주기 신호가 없을 수 있으며 정체 임계값은 없다.
 - 구간 기록이 있으면 GO 기반 남은 시간·계획 진행률·계획상 part 강조를 생략한다. 빈 progress는 경계 미기록, 필드가 없는 구 서버만 기존 계획 fallback이다. 계획 정의 표와 큰 절차의 권위는 유지한다.
 - 부하 Job은 단계별 이름·진행 중/완료/실패·시작·완료·실패 사유를 표로 읽는다. 누락 필드는 미기록, loadJobs 미제공은 표 생략, 빈 배열은 부하 Job 없음이다.
-- `evaluation-run-ui.test.ts`의 실제 `EvaluationRunPage`→`EvaluationActiveDetails` 통합 렌더로 drain/flush/수집/판정·빠진 경계·시계 역전·구 서버·Job 실패·시작 경계만 남은 종료 단계/부모 Finishing·부모 절차 빈 값/미제공과 자식 stage/judge/cleanup을 확인한다. 생성기 지연 판정·D1·절차 실행/게시 계약은 바꾸지 않는다.
+- `evaluation-run-ui.test.ts`의 실제 `EvaluationRunPage`→`EvaluationActiveDetails` 통합 렌더로 drain/flush/수집/판정·빠진 경계·시계 역전·구 서버·Job 실패를 확인한다. 한 표 기반 회귀가 부모 prepare/빈 값/미제공/finish/publish, 자식 stage/judge/cleanup, 단계 종료 여부와 최신 절차 종료 여부, 아홉 구간 경계를 함께 검사한다. 서버는 절차 결과/실패의 finishedAt을 먼저 저장하고 다음 reconcile에서 currentProcedure를 옮기므로 그 중간 상태도 포함한다(`controller/stage.go:123-196`, `jobs.go:292-295`, `run.go:149-164,184,225,398-401`). 생성기 지연 판정·D1·절차 실행/게시 계약은 바꾸지 않는다.
