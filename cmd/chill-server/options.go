@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/kubeconfig"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -17,6 +19,7 @@ import (
 type options struct {
 	bindAddress, servingNamespace, tlsCert, tlsKey, observationDirectory             string
 	storeName, storeEndpoint, storeBucket, storeRegion                               string
+	evaluationStore                                                                  stores3.Config
 	queryURL, dashboardURL                                                           string
 	storeCredentialsSecret                                                           string
 	kube                                                                             kubeconfig.Options
@@ -52,6 +55,8 @@ type options struct {
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
+	o.evaluationStore.AccessKeyID = os.Getenv("EVALUATION_STORE_ACCESS_KEY_ID")
+	o.evaluationStore.SecretAccessKey = os.Getenv("EVALUATION_STORE_SECRET_ACCESS_KEY")
 	f.IntVar(&o.resourceMaxSamples, "resource-max-samples", 0,
 		"Maximum samples per resource batch; required from deployment config.")
 	f.IntVar(&o.resourceMaxContainers, "resource-max-containers", 0, "Maximum containers per resource sample.")
@@ -100,6 +105,10 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.storeEndpoint, "store-endpoint", "", "S3-compatible Evidence Store endpoint.")
 	f.StringVar(&o.storeBucket, "store-bucket", "", "Evidence Store bucket.")
 	f.StringVar(&o.storeRegion, "store-region", "", "Evidence Store region.")
+	f.StringVar(&o.evaluationStore.LogicalStore, "evaluation-store-name", "", "Optional evaluation Evidence Store name.")
+	f.StringVar(&o.evaluationStore.Endpoint, "evaluation-store-endpoint", "", "Evaluation S3-compatible endpoint.")
+	f.StringVar(&o.evaluationStore.Bucket, "evaluation-store-bucket", "", "Evaluation Evidence Store bucket.")
+	f.StringVar(&o.evaluationStore.Region, "evaluation-store-region", "", "Evaluation Evidence Store region.")
 	f.StringVar(&o.storeCredentialsSecret, "store-credentials-secret", "",
 		"Evidence Store credentials Secret used by generated serving preparations.")
 	f.BoolVar(&o.materializeProfile, "materialize-profile", false,
@@ -163,6 +172,9 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 }
 
 func (o options) validate() error {
+	if err := o.validateEvaluationStore(); err != nil {
+		return err
+	}
 	if err := o.validatePprof(); err != nil {
 		return err
 	}
@@ -222,6 +234,26 @@ func (o options) validate() error {
 		return err
 	}
 	return o.validateKubernetesAPIBudget()
+}
+func (o options) validateEvaluationStore() error {
+	fields := []struct{ name, value string }{
+		{"--evaluation-store-name", o.evaluationStore.LogicalStore},
+		{"--evaluation-store-endpoint", o.evaluationStore.Endpoint},
+		{"--evaluation-store-bucket", o.evaluationStore.Bucket},
+		{"--evaluation-store-region", o.evaluationStore.Region},
+		{"EVALUATION_STORE_ACCESS_KEY_ID", o.evaluationStore.AccessKeyID},
+		{"EVALUATION_STORE_SECRET_ACCESS_KEY", o.evaluationStore.SecretAccessKey},
+	}
+	var missing []string
+	for _, field := range fields {
+		if strings.TrimSpace(field.value) == "" {
+			missing = append(missing, field.name)
+		}
+	}
+	if len(missing) != 0 && len(missing) != len(fields) {
+		return fmt.Errorf("incomplete evaluation store configuration: missing %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func (o options) validateResources() error {

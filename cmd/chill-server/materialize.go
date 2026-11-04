@@ -12,17 +12,29 @@ import (
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 )
 
-func objectStore(opts options) (*stores3.Store, error) {
-	return stores3.New(stores3.Config{
+func (opts options) storeConfig() stores3.Config {
+	return stores3.Config{
 		LogicalStore: opts.storeName, Endpoint: opts.storeEndpoint,
 		Bucket: opts.storeBucket, Region: opts.storeRegion,
 		AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
 		SessionToken: os.Getenv("AWS_SESSION_TOKEN"),
-	})
+	}
+}
+
+func objectStores(opts options) (objects, evaluationObjects *stores3.Store, evaluationName string, err error) {
+	objects, err = stores3.New(opts.storeConfig())
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if opts.evaluationStore.LogicalStore == "" {
+		return objects, objects, opts.storeName, nil
+	}
+	evaluationObjects, err = stores3.New(opts.evaluationStore)
+	return objects, evaluationObjects, opts.evaluationStore.LogicalStore, err
 }
 
 func materializeProfile(ctx context.Context, opts options) error {
-	objects, err := objectStore(opts)
+	objects, err := stores3.New(opts.storeConfig())
 	if err != nil {
 		return err
 	}

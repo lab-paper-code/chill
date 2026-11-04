@@ -110,6 +110,12 @@ spec:
             - {{ printf "--store-bucket=%s" .Values.evidenceStore.connection.bucket | quote }}
             - {{ printf "--store-region=%s" .Values.evidenceStore.connection.region | quote }}
             - {{ printf "--store-credentials-secret=%s" $credentialsSecret | quote }}
+            {{- if and .Values.evaluation.enabled ((.Values.evaluation.store).enabled) }}
+            - {{ printf "--evaluation-store-name=%s" .Values.evaluation.store.name | quote }}
+            - {{ printf "--evaluation-store-endpoint=http://%s.%s.svc.cluster.local.:9000" .Values.evaluation.store.name .Release.Namespace | quote }}
+            - {{ printf "--evaluation-store-bucket=%s" .Values.evaluation.store.bucket | quote }}
+            - {{ printf "--evaluation-store-region=%s" .Values.evaluation.store.region | quote }}
+            {{- end }}
             - {{ printf "--queue-limit=%s" (.Values.servingEntrypoint.queueLimit | toJson) | quote }}
             - {{ printf "--request-timeout=%s" .Values.servingEntrypoint.requestTimeout | quote }}
             - {{ printf "--operation-timeout=%s" .Values.servingEntrypoint.operationTimeout | quote }}
@@ -194,6 +200,18 @@ spec:
                 secretKeyRef:
                   name: {{ $credentialsSecret }}
                   key: {{ . | quote }}
+            {{- end }}
+            {{- if and .Values.evaluation.enabled ((.Values.evaluation.store).enabled) }}
+            - name: EVALUATION_STORE_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.evaluation.store.credentialsSecret | quote }}
+                  key: access-key
+            - name: EVALUATION_STORE_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.evaluation.store.credentialsSecret | quote }}
+                  key: secret-key
             {{- end }}
           ports:
             - name: https

@@ -61,7 +61,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	objects, err := objectStore(opts)
+	objects, evaluationObjects, evaluationStoreName, err := objectStores(opts)
 	if err != nil {
 		return err
 	}
@@ -199,14 +199,14 @@ func run(ctx context.Context, opts options) (retErr error) {
 	handlerConfig.OnMutationAction = publisher.action
 
 	experiments := &experimentService{
-		reader: objects, lister: objects, store: opts.storeName, maxBytes: opts.maxRequestBytes,
+		reader: evaluationObjects, lister: evaluationObjects, store: evaluationStoreName, maxBytes: opts.maxRequestBytes,
 	}
 	handlerConfig.ListExperiments = experiments.list
 	handlerConfig.GetExperiment = experiments.get
 	evaluations := evaluation.New(store.Client(), store.Client(), opts.servingNamespace, evaluationSettings(scheduler))
 	httpapi.ConfigureEvaluations(&handlerConfig, evaluations)
-	configureEvaluationTemplate(&handlerConfig, evaluations, opts.storeName, experiments)
-	evaluationLoads := evaluation.NewLoadService(store.Client(), opts.servingNamespace, objects)
+	configureEvaluationTemplate(&handlerConfig, evaluations, evaluationStoreName, experiments)
+	evaluationLoads := evaluation.NewLoadService(store.Client(), opts.servingNamespace, evaluationObjects)
 	httpapi.ConfigureLoadScenarios(&handlerConfig, evaluationLoads)
 	handler, err := httpapi.NewHandler(manager, execution, authorizer, observationLog, observer, handlerConfig)
 	if err != nil {

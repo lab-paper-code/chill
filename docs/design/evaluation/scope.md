@@ -66,6 +66,9 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 저장 계약 변경과 작업용 객체 정리는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md), 과거 과학 기록 보존은 [ADR 0032 Consequences](../../adr/0032-experiment-execution-boundary.md#consequences), 게시 정정은 [실험 SRS EXP-14](../../spec/experiments/SRS.md#3-요구사항)를 따른다.
 additive optional 필드(예: stage `progress`·`lastProgressAt`·`loadJobs`, `collectionLoss`)는 버전을 올리지 않는다.
 
+ChillServer의 `--evaluation-store-name`, `--evaluation-store-endpoint`, `--evaluation-store-bucket`, `--evaluation-store-region`과 `EVALUATION_STORE_ACCESS_KEY_ID` / `EVALUATION_STORE_SECRET_ACCESS_KEY`는 함께 설정하거나 모두 생략한다.
+설정하면 실험 목록·상세, evaluation template의 저장소·최근 게시, LoadScenario 입력 목록·traceRefs 조회만 전용 저장소를 사용하며 이전 저장소를 병행 조회하지 않는다.
+
 ## 4. 확장 방향
 
 순서는 c → a → b → d로 확정했다(사용자 결정). 상태는 보류이며, E5 회차 결과가 안정된 뒤 사용자가 착수를 지시한다. 각 항목은 측정 표 하나를 채울 때만 진행한다.
