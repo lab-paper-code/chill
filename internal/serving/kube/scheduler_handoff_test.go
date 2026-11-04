@@ -82,6 +82,9 @@ func handoffController(t *testing.T) *SchedulerController {
 	settings.MaxInstances, settings.MaxReplicas = 4, 4
 	settings.ScaleDownStabilization = time.Hour
 	settings.CapacityWindow = 10 * time.Millisecond
+	// Deterministic measured durations need one tail sample for this lifecycle
+	// fixture; population-heavy statistical precision is tested in serving.
+	settings.CapacityTailSamples = 1
 	settings.ObservationWindow = 100 * time.Millisecond
 	uid := settings.AutonomousWorkloads[0]
 	settings.MinimumDemand = map[string]float64{uid: 2500}
@@ -164,6 +167,9 @@ func admittedHandoff(t *testing.T, partial bool) (*SchedulerController, *serving
 	}}
 	if partial {
 		goal.Actions[1].RouteTarget = &serving.SchedulerCandidate{ID: "ready-source-subset", Instances: []serving.SchedulerInstance{a}, Routing: map[string]map[string]int32{uid: {a.ID: 1000}}}
+		other := &serving.SchedulerCandidate{ID: "other-source-handoff", Instances: []serving.SchedulerInstance{a, untouched}, Routing: map[string]map[string]int32{uid: {a.ID: 1000, untouched.ID: 0}}}
+		goal.Actions = append(goal.Actions, serving.Action{ID: "other-handoff", Kind: servingstate.OperationRoute, RouteTarget: other, DependsOn: []string{"prepare-replacement"}})
+		goal.Actions[5].DependsOn = []string{"other-handoff"}
 	}
 	c.startTransition(goal, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() {})
 	newer := &serving.SchedulerCandidate{ID: "newer-reweight", Instances: []serving.SchedulerInstance{a, d}, Routing: map[string]map[string]int32{uid: {a.ID: 900, d.ID: 100}}, Actions: []serving.Action{{ID: "newer-route", Kind: servingstate.OperationRoute}}}
@@ -176,6 +182,11 @@ func admittedHandoff(t *testing.T, partial bool) (*SchedulerController, *serving
 	handoffDispatch(t, c, goal, goal.Actions[1])
 	requireCompletedContinuationAction(t, c.runs["final-handoff"], "actual handoff")
 	handoffSnapshot(t, c)
+	if partial {
+		handoffDispatch(t, c, goal, goal.Actions[7])
+		requireCompletedContinuationAction(t, c.runs["other-handoff"], "independent completed handoff")
+		handoffSnapshot(t, c)
+	}
 	return c, goal
 }
 
@@ -196,9 +207,9 @@ func TestBorrowedRouteContextCannotPreserveOwnersRetiree(t *testing.T) {
 
 func TestPositiveRebasedSourceRefusesStopAndReturnsKnownEffects(t *testing.T) {
 	c, goal := admittedHandoff(t, true)
-	handoffDispatch(t, c, goal, goal.Actions[2])
+	handoffDispatch(t, c, goal, goal.Actions...)
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
-	if c.runs["stop-source"] != nil || parent.action.Status != servingstate.NativeOperationFailed {
+	if c.runs["stop-source"] != nil || c.runs["unstarted-stop"] != nil || parent.action.Status != servingstate.NativeOperationFailed {
 		t.Fatal("positive rebased source was stopped or owner did not fail")
 	}
 	finishFailedHandoff(t, c, goal, false)

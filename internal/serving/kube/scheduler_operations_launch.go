@@ -78,6 +78,9 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 				selectedTarget, dependencyTarget = intermediate, intermediate
 			}
 			if !c.dependenciesReady(action, *dependencyTarget, c.runtime) {
+				if parent := c.runs[transitionRunKind+"/"+target.ID]; parent != nil && parent.action.Status == servingstate.NativeOperationFailed && action.Kind == servingstate.OperationStop {
+					return
+				}
 				continue
 			}
 			operation := scheduledOperation(action, selectedTarget, config, c.powerTargets, c.snapshotLocked().Workloads)
