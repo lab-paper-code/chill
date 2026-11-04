@@ -2289,7 +2289,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 				capacityLoad(s, &snap, snap.Workloads[0], 200)
 			case "backlog":
 				for range 100 {
-					snap.Outstanding = append(snap.Outstanding, SchedulerRequest{Definition: snap.Workloads[0]})
+					snap.Outstanding = append(snap.Outstanding, SchedulerRequest{Definition: snap.Workloads[0], Phase: phasePending})
 				}
 			case "routing-off":
 				s.Controls.Routing = false

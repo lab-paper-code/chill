@@ -380,7 +380,11 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 			}
 		}
 		for _, r := range snapshot.Outstanding {
-			if r.Definition != nil && r.Definition.UID == state.UID {
+			// Assignment reserves a slot before native dispatch, not service
+			// start. Only observed running/returning work leaves backlog.
+			if r.Definition != nil && r.Definition.UID == state.UID &&
+				(r.Phase == phasePending || r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred) &&
+				(r.RemainingLifetime == nil || *r.RemainingLifetime > 0) {
 				w.queued++
 			}
 		}
