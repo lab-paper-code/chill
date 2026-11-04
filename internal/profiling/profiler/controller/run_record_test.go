@@ -5,10 +5,13 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
 func TestRunRecordsRoundTripJobCarriedRunConfig(t *testing.T) {
 	run := testRun()
+	run.Spec.Measurement.StartupWarmupIterations = 0
+	run.Spec.Measurement.WarmupBatchSizes = nil
 	want := resolvedRunForPrepared(t, currentPreparedRun(t))
 	job, err := buildExecutionJob(
 		run,
@@ -35,5 +38,83 @@ func TestRunRecordsRoundTripJobCarriedRunConfig(t *testing.T) {
 		if volume.ConfigMap != nil {
 			t.Fatalf("Job retained a separate ConfigMap record volume: %#v", volume)
 		}
+	}
+}
+
+func TestValidatePreparedForRunSeparatesResolvedWorkloadFacts(t *testing.T) {
+	prepared := currentPreparedRun(t)
+	measurement := &prepared.RunConfig.Measurement
+	measurement.SLOPercentile = 99
+	minimum, err := profilingrun.MinimumServiceSamples(measurement.SLOPercentile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	measurement.MinServiceSamples = minimum
+	measurement.SLOTargetLatencyNanos = 2_000_000_000
+	measurement.WorkloadUID = "resolved-workload-uid"
+	measurement.WorkloadResourceVersion = "42"
+	if err := validateResolvedRunForRun(testRun(), resolvedRunForPrepared(t, prepared)); err != nil {
+		t.Fatalf("resolved Workload facts are not caller-selected request fields: %v", err)
+	}
+}
+
+func TestValidatePreparedForRunChecksFrozenChildContractExceptResourceVersion(t *testing.T) {
+	prepared := currentPreparedRun(t)
+	for _, test := range []struct {
+		name   string
+		mutate func(*edgev1alpha1.ProfilingRunMeasurementSpec)
+	}{
+		{"UID", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.WorkloadUID = "replacement-workload" }},
+		{"percentile and N", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOPercentile, m.MinServiceSamples = 99, 299 }},
+		{"target", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOTargetLatencyNanos++ }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			child := testRun()
+			source := prepared.RunConfig.Measurement
+			child.Spec.Measurement.WorkloadUID = source.WorkloadUID
+			child.Spec.Measurement.WorkloadResourceVersion = "plan-provenance-rv"
+			child.Spec.Measurement.SLOPercentile = source.SLOPercentile
+			child.Spec.Measurement.SLOTargetLatencyNanos = source.SLOTargetLatencyNanos
+			child.Spec.Measurement.MinServiceSamples = int32(source.MinServiceSamples)
+			if err := validateResolvedRunForRun(child, resolvedRunForPrepared(t, prepared)); err != nil {
+				t.Fatalf("frozen child or RV-only difference was rejected: %v", err)
+			}
+			test.mutate(&child.Spec.Measurement)
+			if err := validatePreparedForRun(child, prepared); err == nil {
+				t.Fatal("child's selected frozen contract was not checked")
+			}
+		})
+	}
+}
+
+func TestValidatePreparedForRunRejectsSelectedMeasurementDrift(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*edgev1alpha1.ProfilingRun)
+	}{
+		{name: "Workload", mutate: func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.Workload = "different-workload"
+		}},
+		{name: "startup warmup", mutate: func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.StartupWarmupIterations++
+		}},
+		{name: "warmup domain", mutate: func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.WarmupBatchSizes = []int32{1, 2}
+		}},
+		{name: "batch", mutate: func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.Batch++
+		}},
+		{name: "dataset", mutate: func(run *edgev1alpha1.ProfilingRun) {
+			run.Spec.Measurement.Dataset = "different-dataset"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := testRun()
+			test.mutate(run)
+			if err := validatePreparedForRun(run, currentPreparedRun(t)); err == nil ||
+				err.Error() != "RunConfig does not match ProfilingRun spec" {
+				t.Fatalf("selected measurement drift must be rejected, got %v", err)
+			}
+		})
 	}
 }

@@ -130,6 +130,15 @@ func reuseCondition(condition profilederivation.CurvePlanSpec) profilederivation
 	condition.Name, condition.NodeUID = "", ""
 	condition.RuntimeImage = ""
 	condition.MetricSource = profilederivation.CurveMetricSourceContract{}
+	condition.Actor = profilederivation.PerformanceCondition(condition).Actor
+	condition.Actor.GPUUUID = ""
+	// The command is derived from the recipe; normalize its physical GPU
+	// argument too, while retaining semantic runtime and warmup arguments.
+	condition.Actor.BuildRunnerCommand()
+	for _, protocol := range []*profilederivation.CurveProtocolContract{&condition.ActiveProtocol, &condition.IdleProtocol} {
+		protocol.SLOPercentile, protocol.MinServiceSamples, protocol.SLOTargetLatencyNanos = 0, 0, 0
+		protocol.WorkloadName, protocol.WorkloadUID, protocol.WorkloadResourceVersion = "", "", ""
+	}
 	condition.ActiveProtocol.DurationSeconds, condition.ActiveProtocol.MetricDurationSeconds = 0, 0
 	condition.IdleProtocol.DurationSeconds, condition.IdleProtocol.MetricDurationSeconds = 0, 0
 	if condition.RuntimeAccess != nil {

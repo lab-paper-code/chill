@@ -15,7 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
 
-const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha9"
+const RawMeasurementSchemaVersion = "chill.dacs.io/profiling-raw-measurement.v1alpha10"
 
 // RawMeasurement contains only facts available to the in-Job worker before it
 // exits. Kubernetes terminal state is deliberately excluded.

@@ -211,6 +211,7 @@ func managerProfile(d *serving.Definition) serving.Profile {
 	profile := serving.Profile{ID: "measured", Condition: derivation.CurvePlanSpec{LogicalModel: d.Model.Name, RuntimeFamily: path.RuntimeFamily, Backend: path.Backend, Firstfloor: path.Firstfloor,
 		Artifact:     derivation.CurveArtifactContract{ExecutionPath: path.Name, Name: path.Artifact, Files: path.Files, Image: path.Image},
 		Preprocessor: derivation.CurvePreprocessorContract{Name: d.Preprocessor.Name, Image: path.Preprocessor.Image, Architecture: path.Preprocessor.Architecture, Path: path.Preprocessor.Path, MaxNewTokens: int(d.Preprocessor.MaxNewTokens)}}}
+	profile.Condition.Actor.Model = d.Model.Name
 	for _, field := range d.Preprocessor.Input {
 		profile.Condition.Preprocessor.Inputs = append(profile.Condition.Preprocessor.Inputs, field.Name)
 	}

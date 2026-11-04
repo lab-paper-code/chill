@@ -18,7 +18,6 @@ import (
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	resource "k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
 	ptr "k8s.io/utils/ptr"
@@ -26,16 +25,8 @@ import (
 )
 
 func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.PrepareSpec) (evidence *servingstate.PreparationEvidence, err error) {
-	if err := ValidatePreparation(spec); err != nil {
-		return nil, err
-	}
-	p := spec.Instance.Profile
 	node := spec.Instance.Node
-	desiredImage, err := o.Observer.CurrentRuntimeImage(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	host, delivery, err := measuredRuntimeDelivery(p)
+	pod, delivery, err := o.PreparationPod(spec)
 	if err != nil {
 		return nil, err
 	}
@@ -43,40 +34,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 	if err != nil {
 		return nil, err
 	}
-	requests := core.ResourceList{core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
-	limits := core.ResourceList{core.ResourceMemory: *resource.NewQuantity(int64(spec.MemoryBytes), resource.BinarySI)}
-	initResources := core.ResourceRequirements{Requests: requests, Limits: limits}
-	if spec.Instance.Allocation.GPUUUID != "" {
-		requests = requests.DeepCopy()
-		limits = limits.DeepCopy()
-		requests["nvidia.com/gpu"] = resource.MustParse("1")
-		limits["nvidia.com/gpu"] = resource.MustParse("1")
-	}
-	if host.AcceleratorResource != "" {
-		requests = requests.DeepCopy()
-		limits = limits.DeepCopy()
-		requests[host.AcceleratorResource] = resource.MustParse("1")
-		limits[host.AcceleratorResource] = resource.MustParse("1")
-	}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.Config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent, profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole}, Annotations: map[string]string{servingstate.ServingProfileAnnotation: p.ID, servingstate.ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), servingstate.ServingPolicyAnnotation: decisionID, servingstate.ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{servingstate.SourceFinalizer}}, Spec: core.PodSpec{NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), InitContainers: []core.Container{
-		{Name: "artifact", Image: p.Condition.Artifact.Image, Command: []string{"sh", "-ec"}, Args: append([]string{`cp "$@" /chill-artifact/`, "--"}, p.Condition.Artifact.Files...), Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
-		{Name: "preprocessor", Image: p.Condition.Preprocessor.Image, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", p.Condition.Preprocessor.Path}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}},
-		{Name: "profile", Image: desiredImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
-	}, Containers: []core.Container{{Name: "firstfloor", Image: desiredImage, Command: []string{"/opt/chill/bin/serving-worker"}, Args: []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}, Ports: []core.ContainerPort{{Name: "http", ContainerPort: 8080}}, Resources: core.ResourceRequirements{Requests: requests, Limits: limits}, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/model", ReadOnly: true}, {Name: "preprocessor", MountPath: "/preprocessor", ReadOnly: true}, {Name: "profile", MountPath: "/profile", ReadOnly: true}, {Name: "config", MountPath: "/config", ReadOnly: true}}, TerminationMessagePolicy: core.TerminationMessageFallbackToLogsOnError, ReadinessProbe: &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}}}, Volumes: []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}}}}
-	o.placeServingPod(pod, spec.Owner, spec.Instance)
-	if spec.Instance.Allocation.GPUUUID != "" {
-		pod.Spec.Containers[0].Env = []core.EnvVar{{Name: "CUDA_VISIBLE_DEVICES", Value: spec.Instance.Allocation.GPUUUID}}
-	}
-	if delivery != nil {
-		runtime := &pod.Spec.Containers[0]
-		runtime.VolumeMounts = append(runtime.VolumeMounts, host.VolumeMounts...)
-		runtime.SecurityContext = &core.SecurityContext{Privileged: ptr.To(host.Privileged), AllowPrivilegeEscalation: ptr.To(host.Privileged)}
-		pod.Spec.Volumes = append(pod.Spec.Volumes, host.Volumes...)
-		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: host.SupplementalGroups}
-	} else if access := p.Condition.RuntimeAccess; access != nil && len(access.SupplementalGroups) != 0 {
-		// Reproduce the measured device-group access (e.g. Jetson video group for CUDA).
-		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: slices.Clone(access.SupplementalGroups)}
-	}
+	pod.Annotations[servingstate.ServingPolicyAnnotation] = decisionID
 	// ponytail: admitted just before the Pod create; the remaining window closes with M3 single-writer fencing.
 	if _, err = o.AdmittedNode(ctx, node); err != nil {
 		return nil, err
@@ -96,7 +54,7 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 		pod = existing
 	}
 	evidence = &servingstate.PreparationEvidence{PodUID: string(pod.UID), NodeUID: node.UID, DecisionID: decisionID,
-		Created: created, RuntimeImage: desiredImage, RunnerCommand: spec.Config.RunnerCommand}
+		Created: created, RuntimeImage: spec.Config.RuntimeImage, RunnerCommand: spec.Config.RunnerCommand}
 	defer func() {
 		if err == nil || errors.Is(err, context.Canceled) {
 			return
@@ -131,6 +89,57 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 		}
 	}
 	return evidence, o.Wait(ctx, func() (bool, error) { return o.PrepareObserved(ctx, pod) })
+}
+
+// PreparationPod builds the actual serving Pod from the frozen actor recipe.
+// The returned delivery body is mounted with the actor config, not re-resolved.
+func (o *Operations) PreparationPod(spec servingstate.PrepareSpec) (*core.Pod, []byte, error) {
+	if err := ValidatePreparation(spec); err != nil {
+		return nil, nil, err
+	}
+	p := spec.Instance.Profile
+	node := spec.Instance.Node
+	host, delivery, err := measuredRuntimeDelivery(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime, err := native.RuntimeContainer(&spec.Config)
+	if err != nil {
+		return nil, nil, err
+	}
+	initResources := core.ResourceRequirements{
+		Requests: core.ResourceList{core.ResourceMemory: runtime.Resources.Requests[core.ResourceMemory]},
+		Limits:   core.ResourceList{core.ResourceMemory: runtime.Resources.Limits[core.ResourceMemory]},
+	}
+	runtime.Name = "firstfloor"
+	runtime.Command = []string{"/opt/chill/bin/serving-worker"}
+	runtime.Args = []string{"--config=/config/config.json", "--bind-address=:8080", "--node-name=" + node.Name}
+	runtime.Ports = []core.ContainerPort{{Name: "http", ContainerPort: 8080}}
+	runtime.VolumeMounts = append(runtime.VolumeMounts,
+		core.VolumeMount{Name: "profile", MountPath: "/profile", ReadOnly: true},
+		core.VolumeMount{Name: "config", MountPath: "/config", ReadOnly: true})
+	runtime.TerminationMessagePolicy = core.TerminationMessageFallbackToLogsOnError
+	runtime.ReadinessProbe = &core.Probe{ProbeHandler: core.ProbeHandler{HTTPGet: &core.HTTPGetAction{Path: "/v2/health/ready", Port: port8080()}}, PeriodSeconds: 1}
+	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Namespace: o.Config.Namespace, Name: spec.Name, Labels: map[string]string{"app.kubernetes.io/component": servingstate.ServingInstanceComponent, profilingrun.MeasurementWorkloadLabelKey: profilingrun.ServingInstanceRole}, Annotations: map[string]string{servingstate.ServingProfileAnnotation: p.ID, servingstate.ServingWeightAnnotation: strconv.Itoa(int(spec.Instance.Weight)), servingstate.ServingPolicyAnnotation: spec.Config.Policy.DecisionID, servingstate.ServingSlotAnnotation: spec.Instance.ID}, Finalizers: []string{servingstate.SourceFinalizer}}, Spec: core.PodSpec{
+		NodeName: node.Name, RestartPolicy: core.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false),
+		InitContainers: []core.Container{
+			{Name: "artifact", Image: spec.Config.ArtifactImage, Command: []string{"sh", "-ec"}, Args: append([]string{`cp "$@" /chill-artifact/`, "--"}, spec.Config.ArtifactFiles...), Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "artifact", MountPath: "/chill-artifact"}}},
+			{Name: "preprocessor", Image: spec.Config.PreprocessorImage, Command: []string{"sh", "-ec"}, Args: []string{`cp -R "$1"/. /chill-preprocessor/`, "--", spec.Config.PreprocessorPath}, Resources: initResources, VolumeMounts: []core.VolumeMount{{Name: "preprocessor", MountPath: "/chill-preprocessor"}}},
+			{Name: "profile", Image: spec.Config.RuntimeImage, Command: []string{"/opt/chill/bin/serving-entrypoint"}, Args: []string{"--materialize-profile", "--store-name=" + spec.Store.Store, "--store-endpoint=" + spec.Store.Endpoint, "--store-bucket=" + spec.Store.Bucket, "--store-region=" + spec.Store.Region, "--profile-object-key=" + spec.Bundle.Key, "--profile-object-size=" + strconv.FormatInt(spec.Bundle.Size, 10), "--profile-output=/profile/bundle.json"}, Resources: initResources, Env: []core.EnvVar{secretEnvOperation("AWS_ACCESS_KEY_ID", spec.Store.CredentialsSecretName, component.EvidenceStoreAccessKeyKey), secretEnvOperation("AWS_SECRET_ACCESS_KEY", spec.Store.CredentialsSecretName, component.EvidenceStoreSecretKeyKey)}, VolumeMounts: []core.VolumeMount{{Name: "profile", MountPath: "/profile"}}},
+		},
+		Containers: []core.Container{runtime},
+		Volumes:    []core.Volume{{Name: "artifact", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "preprocessor", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "profile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}, {Name: "config", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: spec.Name}}}}},
+	}}
+	o.placeServingPod(pod, spec.Owner, spec.Instance)
+	if delivery != nil {
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, host.VolumeMounts...)
+		pod.Spec.Containers[0].SecurityContext = &core.SecurityContext{Privileged: ptr.To(host.Privileged), AllowPrivilegeEscalation: ptr.To(host.Privileged)}
+		pod.Spec.Volumes = append(pod.Spec.Volumes, host.Volumes...)
+		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: host.SupplementalGroups}
+	} else if access := p.Condition.RuntimeAccess; access != nil && len(access.SupplementalGroups) != 0 {
+		pod.Spec.SecurityContext = &core.PodSecurityContext{SupplementalGroups: slices.Clone(access.SupplementalGroups)}
+	}
+	return pod, delivery, nil
 }
 
 // PrepareObserved reports whether the runtime holds the prepared Pod's

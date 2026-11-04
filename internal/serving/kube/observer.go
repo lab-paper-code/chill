@@ -699,7 +699,7 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	// Delivery changes only the verified artifact's mount location, not the
 	// measured runtime, model bytes, provider, device or execution allocation.
 	expected.ModelFiles = deliveredModelFiles(condition.Artifact.Files)
-	return firstfloor.Spec{Endpoint: endpoint, ModelName: "chill_model", InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Routing: routing, Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[servingstate.ServingPolicyAnnotation]}, nil
+	return firstfloor.Spec{Endpoint: endpoint, ModelName: condition.Actor.Model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Routing: routing, Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[servingstate.ServingPolicyAnnotation]}, nil
 }
 
 func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass) error {
@@ -811,8 +811,9 @@ func validateSourceResources(runtime *corev1.Container, node *corev1.Node, profi
 	memoryLimit := runtime.Resources.Limits[corev1.ResourceMemory]
 	memoryRequest := runtime.Resources.Requests[corev1.ResourceMemory]
 	nodeMemory := node.Status.Allocatable[corev1.ResourceMemory]
+	// The request reserves scheduling capacity; the limit bounds runtime usage.
 	for _, batch := range profile.Batches {
-		if batch.MemoryBytes == 0 || memoryLimit.Sign() <= 0 || memoryRequest.Sign() <= 0 || uint64(memoryLimit.Value()) < batch.MemoryBytes || uint64(memoryRequest.Value()) < batch.MemoryBytes || nodeMemory.Sign() <= 0 || uint64(nodeMemory.Value()) < batch.MemoryBytes {
+		if batch.MemoryBytes == 0 || memoryLimit.Sign() <= 0 || memoryRequest.Sign() <= 0 || memoryRequest.Cmp(memoryLimit) > 0 || uint64(memoryLimit.Value()) < batch.MemoryBytes || nodeMemory.Sign() <= 0 || uint64(nodeMemory.Value()) < batch.MemoryBytes {
 			return errors.New("measured batch memory exceeds actual current memory domain")
 		}
 	}

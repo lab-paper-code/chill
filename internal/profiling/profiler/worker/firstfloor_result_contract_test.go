@@ -18,6 +18,7 @@ import (
 const pythonActiveResult = `
 import json, sys, time
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 sys.path.insert(0, sys.argv[1])
 import measurement
@@ -34,6 +35,8 @@ request["datasetPath"] = str(work / "dataset")
 for ready in request["observerReadyPaths"] + [request["workloadWindowReadyPath"]]:
     Path(ready).write_text("signal\n")
 CPU_MAX, AFFINITY, CPUSET = "max 100000", [0, 1, 2, 3], "0-3"
+clock = [0.0]
+epoch = datetime(2026, 7, 16, 3, 0, tzinfo=timezone.utc)
 
 class FakeActor(measurement.FirstfloorSession):
     counter = 0
@@ -58,7 +61,7 @@ class FakeActor(measurement.FirstfloorSession):
         if path.endswith("/state"):
             return {"ready": True, "requests": [], "acceptedRequests": FakeActor.counter,
                     "completedRequests": FakeActor.counter, "executions": FakeActor.counter}
-        time.sleep(0.002)
+        clock[0] += 0.51
         FakeActor.counter += 1
         batch = run["measurement"]["batch"]
         return {"batchSize": batch, "executionComplete": True, "batchIDs": [FakeActor.counter],
@@ -70,7 +73,10 @@ process = mock.Mock(poll=mock.Mock(return_value=None))
 with mock.patch.object(measurement, "FirstfloorSession", FakeActor), \
         mock.patch.object(measurement.subprocess, "Popen", return_value=process), \
         mock.patch.object(measurement, "memory_peak", return_value=(123456, "cgroup-v2-memory.peak:runtime-container-lifetime")), \
-        mock.patch.object(common, "cpu_stat", return_value={"usage_usec": 1}):
+        mock.patch.object(common, "cpu_stat", return_value={"usage_usec": 1}), \
+        mock.patch.object(common.time, "monotonic", side_effect=lambda: clock[0]), \
+        mock.patch.object(common.time, "perf_counter_ns", side_effect=lambda: int(clock[0] * 1e9)), \
+        mock.patch.object(common, "now", side_effect=lambda: (epoch + timedelta(seconds=clock[0])).isoformat()):
     result = measurement.execute_sampled(request, work, run, "x86_64", CPU_MAX, AFFINITY, CPUSET, None)
 json.dump(result, sys.stdout, allow_nan=False)
 `
@@ -88,7 +94,6 @@ func TestPythonFirstfloorActiveResultPassesGoValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := testRunConfig(t)
-	config.Measurement.DurationSeconds = 1
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}

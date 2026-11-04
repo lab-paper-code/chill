@@ -113,6 +113,11 @@ func readMeasurementStatistics(
 	if err != nil {
 		return nil, err
 	}
+	// Match Serving's condition projection from the same Loader-verified evidence.
+	shared, err = projection.ProjectMeasuredCurveCondition(shared, active[0])
+	if err != nil {
+		return nil, err
+	}
 	factBatches := curve.MeasurementBatches()
 	statistics := &queryapi.BatchEnergyOptimizationStatistics{
 		Batches: []queryapi.BatchEnergyOptimizationBatchStatistics{},

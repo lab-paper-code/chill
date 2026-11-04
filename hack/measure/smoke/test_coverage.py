@@ -30,7 +30,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                   variant=True, allocatable='20Gi', memory_fraction=0.8, policy_limit=17179869184,
                   model='mobilenet-v2-050', device='raspberry-pi-5-8g', runtime_image='new-runtime',
                   node_uid='node-uid', timing_seconds=None, power_mode='fixed', timing_power_mode=None,
-                  selection_available=True, current_id=None, display_status=None):
+                  selection_available=True, current_id=None, display_status=None, workload_percentile=99):
     """Exercise generate_coverage, not just its independent selection helpers."""
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -96,7 +96,10 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                 'artifacts': [{'name': 'artifact', 'source': {'architecture': 'arm64'}}]}}]},
             'preprocessors': {'items': [{'metadata': {'name': 'pre'}, 'spec': {
                 'artifacts': [{'target': {'model': model, 'artifact': 'artifact'}}], 'input': {'fields': []}}}]},
-            'datasets': {'items': [{'metadata': {'name': 'dataset'}, 'spec': {'fields': []}}]}}
+            'datasets': {'items': [{'metadata': {'name': 'dataset'}, 'spec': {'fields': []}}]},
+            'workloads': [{'desired': {'metadata': {'name': 'actual-workload'}, 'spec': {
+                'modelRef': {'name': model}, 'preprocessorRef': {'name': 'pre'},
+                'datasetRef': {'name': 'dataset'}, 'slo': {'percentile': workload_percentile, 'targetLatency': '1s'}}}}]}
         values = root / 'runtime.json'
         values.write_text(json.dumps({'profiling': {'executionDeclarations': [{'deviceClass': device,
             'runtime': {'payload': json.dumps({'image': runtime_image, 'architecture': 'arm64',
@@ -134,8 +137,11 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                 patch.object(gen.subprocess, 'check_output', side_effect=kubectl), \
                 contextlib.redirect_stdout(io.StringIO()):
             gen.generate_coverage(output, policy_path)
-        return {name: json.loads((output / (name + '.json')).read_text()) for name in
-                ('summary', 'cells', 'existing-cells', 'excluded-batches', 'excluded-cells', 'resume-plan')}
+        captured = {name: json.loads((output / (name + '.json')).read_text()) for name in
+                    ('summary', 'cells', 'existing-cells', 'excluded-batches', 'excluded-cells', 'resume-plan')}
+        captured['manifests'] = [document for path in output.glob('lanes/*.yaml')
+                                 for document in gen.yaml.safe_load_all(path.read_text())]
+        return captured
 
 
 def generation_self_check(gen):
@@ -216,14 +222,16 @@ def timing_generation_self_check(gen):
         assert planned['summary']['manifestCellCount'] == 1, planned['excluded-cells']
         assert planned['cells'][0]['batches'] == [1, 2]
         assert all(row['timingSource'] is None for row in planned['cells'][0]['batchEstimates'])
-    historical = generate_case(gen, phase='Failed', image='old-runtime', timing_seconds=61)
-    assert historical['summary']['manifestCellCount'] == 0
-    assert [r['batch'] for r in historical['excluded-batches']] == [1, 2]
-    current = generate_case(gen, phase='Failed', image='new-runtime', timing_seconds=61)
-    assert current['summary']['manifestCellCount'] == 0
-    assert [r['batch'] for r in current['excluded-batches']] == [1, 2]
-    assert all(r['reason'] == gen.load(gen.HERE / 'coverage-plan.json')['excludedBatchReason']
-               for r in current['excluded-batches'])
+    for image in ('old-runtime', 'new-runtime'):
+        planned = generate_case(gen, phase='Failed', image=image, timing_seconds=61)
+        assert planned['summary']['manifestCellCount'] == 1
+        assert planned['cells'][0]['batches'] == [1, 2]
+        assert planned['excluded-batches'] == []
+        assert planned['cells'][0]['minimumServiceSamplesPerTrial'] == 299
+        spec = planned['manifests'][0]['spec']
+        assert spec['activeProtocol']['workload'] == 'actual-workload'
+        assert spec['activeProtocol']['durationSeconds'] == 30
+        assert spec['trialsPerBatch'] == 3
     higher_mode = generate_case(gen, image='new-runtime', timing_seconds=61,
         power_mode='high', timing_power_mode='low', variant=False, cell_annotation=False)
     assert higher_mode['summary']['manifestCellCount'] == 1, higher_mode['excluded-cells']
@@ -231,9 +239,9 @@ def timing_generation_self_check(gen):
     assert all(row['timingSource'] is None for row in higher_mode['cells'][0]['batchEstimates'])
     same_mode = generate_case(gen, phase='Failed', image='new-runtime', timing_seconds=61,
                              power_mode='high', timing_power_mode='high')
-    assert [r['batch'] for r in same_mode['excluded-batches']] == [1, 2]
+    assert same_mode['cells'][0]['batches'] == [1, 2] and not same_mode['excluded-batches']
     assert all(r['timingSource'] is None or r['timingSource']['powerMode'] == 'high'
-               for r in same_mode['excluded-batches'])
+               for r in same_mode['cells'][0]['batchEstimates'])
 
 
 def coverage_self_check(gen):
@@ -282,10 +290,10 @@ def coverage_self_check(gen):
                          "completedTrials": [{"evidence": {"schemaVersion": gen.SHARED_EVIDENCE_SCHEMA}}]}}
     assert gen.coverage_shared_result(result)
     old_result = copy.deepcopy(result)
-    old_result["result"]["curvePlan"]["schemaVersion"] = "chill.dacs.io/curve-plan.v1alpha9"
+    old_result["result"]["curvePlan"]["schemaVersion"] = "chill.dacs.io/curve-plan.v1alpha10"
     assert not gen.coverage_shared_result(old_result)
     old_result = copy.deepcopy(result)
-    old_result["result"]["completedTrials"][0]["evidence"]["schemaVersion"] = "chill.dacs.io/profiling-execution-evidence.v1alpha15"
+    old_result["result"]["completedTrials"][0]["evidence"]["schemaVersion"] = "chill.dacs.io/profiling-execution-evidence.v1alpha16"
     assert not gen.coverage_shared_result(old_result)
     assert gen.coverage_runtime_images(gen.HERE.parents[1] / policy["runtimeValues"])
     plan = {"metadata": {"name": "old", "creationTimestamp": "2026-01-01"},
@@ -348,31 +356,20 @@ def coverage_self_check(gen):
     assert included == [1, 3, 16] and reason is None
     assert estimates[-1]["secondsPerCall"] is None  # another class is not grounds for exclusion
     assert estimates[1]["estimatedCallsInWindow"] is None
-    slow = dict(timings[0], secondsPerCall=60)
-    assert gen.coverage_batch_plan(cell, [1], [slow], policy, execution_conditions=execution_conditions)[0] == [1]
-    slow["secondsPerCall"] = 60.001
-    included, estimates, reason = gen.coverage_batch_plan(cell, [1], [slow], policy, execution_conditions=execution_conditions)
-    assert included == [] and reason == policy["excludedBatchReason"] and estimates[0]["estimatedCallsInWindow"] == 0
+    slow = dict(timings[0], secondsPerCall=60.001)
     included, estimates, reason = gen.coverage_batch_plan(cell, [1, 2], [slow], policy, execution_conditions=execution_conditions)
-    assert included == [] and estimates[1]["secondsPerCall"] is None and estimates[1]["excludedFromBatch"] == 1
+    assert included == [1, 2] and reason is None and estimates[0]["estimatedCallsInWindow"] == 0
     fast = timings[0]
     mixed = [fast, dict(fast, batch=2, secondsPerCall=61), dict(fast, batch=4, secondsPerCall=.1)]
     included, estimates, reason = gen.coverage_batch_plan(cell, [4, 1, 2], mixed, policy, execution_conditions=execution_conditions)
-    assert included == [1] and estimates[-1]["excludedFromBatch"] == 2 and estimates[-1]["estimatedCallsInWindow"] == 600
+    assert included == [1, 2, 4] and reason is None
     assert gen.coverage_batch_plan(cell, [1, 2, 4], mixed, policy, declared=True,
-                               execution_conditions=execution_conditions)[2] == policy["declaredBatchConflictReason"]
-    two_calls = dict(policy, minCallsInWindow=2)
-    assert gen.coverage_batch_plan(cell, [1], [dict(fast, secondsPerCall=40)], two_calls,
-                               execution_conditions=execution_conditions)[0] == []
+                                  execution_conditions=execution_conditions)[0] == [1, 2, 4]
     active = {"durationSeconds": 60, "durationToleranceSeconds": 0,
               "metricObservation": {"durationSeconds": 62}}
-    gen.coverage_active_protocol(active, [{"included": True, "secondsPerCall": 37.294},
-                                     {"included": False, "secondsPerCall": 900}], policy)
-    assert active["durationSeconds"] == 60 and active["durationToleranceSeconds"] == 0
-    assert active["metricObservation"]["durationSeconds"] == 137
-    active["metricObservation"]["durationSeconds"] = 62
-    gen.coverage_active_protocol(active, [{"included": True, "secondsPerCall": None}], policy)
-    assert active["metricObservation"]["durationSeconds"] == 662
+    gen.coverage_active_protocol(active, policy)
+    assert active["durationSeconds"] == 30 and active["durationToleranceSeconds"] == 0
+    assert active["metricObservation"]["durationSeconds"] == 32
     facts = {"condition": {"logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
                           "powerMode": "mode", "runtimeImage": execution_conditions["runtimeImage"]},
              "request": {"name": "source", "uid": "source-uid"},
@@ -426,6 +423,26 @@ def coverage_self_check(gen):
 
 
 class CoverageGenerationTest(unittest.TestCase):
+    def test_actual_workload_percentile_and_unambiguous_source(self):
+        gen = load_coverage_plan()
+        planned = generate_case(gen, phase='Failed', workload_percentile=95)
+        self.assertEqual(planned['cells'][0]['minimumServiceSamplesPerTrial'], 59)
+        with self.assertRaises(ValueError):
+            generate_case(gen, phase='Failed', workload_percentile=100)
+        spec = {'state': {'candidate': {'modelSpec': 'model', 'preprocessor': 'pre'}},
+                'activeProtocol': {'dataset': 'data'}}
+        workload = {'desired': {'metadata': {'name': 'actual'}, 'spec': {
+            'modelRef': {'name': 'model'}, 'preprocessorRef': {'name': 'pre'},
+            'datasetRef': {'name': 'data'}, 'slo': {'percentile': 99}}}}
+        self.assertEqual(gen.coverage_workload(copy.deepcopy(spec), [workload]), 299)
+        for sources in ([], [workload, copy.deepcopy(workload)]):
+            with self.assertRaises(ValueError):
+                gen.coverage_workload(copy.deepcopy(spec), sources)
+        wrong_inputs = copy.deepcopy(workload)
+        wrong_inputs['desired']['spec']['datasetRef']['name'] = 'other'
+        with self.assertRaises(ValueError):
+            gen.coverage_workload(copy.deepcopy(spec), [wrong_inputs])
+
     def test_generation_conditions(self):
         coverage_self_check(load_coverage_plan())
 

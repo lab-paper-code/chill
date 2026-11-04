@@ -69,7 +69,7 @@ spec:
                     type: string
                   durationSeconds:
                     format: int32
-                    minimum: 1
+                    minimum: 30
                     type: integer
                   durationToleranceSeconds:
                     default: 0.5
@@ -103,11 +103,17 @@ spec:
                     format: int32
                     minimum: 0
                     type: integer
+                  workload:
+                    description: Workload supplies the actual SLO percentile and latency
+                      for this sweep.
+                    minLength: 1
+                    type: string
                 required:
                 - dataset
                 - durationSeconds
                 - metricObservation
                 - warmupIterations
+                - workload
                 type: object
                 x-kubernetes-validations:
                 - message: duration tolerance must be less than duration
@@ -258,7 +264,8 @@ spec:
                   TrialsPerBatch is the number of completed active and idle observations used
                   to compare each batch under the minimum-energy objective.
                 format: int32
-                minimum: 2
+                maximum: 3
+                minimum: 3
                 type: integer
             required:
             - activeProtocol

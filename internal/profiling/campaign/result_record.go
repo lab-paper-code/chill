@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const resultRecordSchemaVersion = "chill.dacs.io/batch-energy-optimization-result.v1alpha4"
+const resultRecordSchemaVersion = "chill.dacs.io/batch-energy-optimization-result.v1alpha5"
 
 // TerminalOutcome is the stable terminal outcome published by a measurement
 // method.

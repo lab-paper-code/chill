@@ -138,6 +138,11 @@ spec:
                       undershoot.
                     minimum: 0
                     type: number
+                  minServiceSamples:
+                    description: MinServiceSamples is the native sample count derived
+                      from SLOPercentile.
+                    format: int32
+                    type: integer
                   settlingDurationSeconds:
                     description: |-
                       SettlingDurationSeconds is required only for model-loaded idle. The
@@ -145,14 +150,48 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  sloPercentile:
+                    type: number
+                  sloTargetLatencyNanos:
+                    format: int64
+                    type: integer
+                  startupWarmupIterations:
+                    description: |-
+                      StartupWarmupIterations is derived from the campaign's active protocol,
+                      including for idle actors; it is not the idle measurement call count.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  warmupBatchSizes:
+                    description: WarmupBatchSizes freezes the campaign's complete
+                      planned warmup domain.
+                    items:
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    type: array
                   warmupIterations:
                     format: int32
                     minimum: 0
                     type: integer
+                  workload:
+                    description: Workload names the cluster-scoped source of the active
+                      stop-policy SLO.
+                    minLength: 1
+                    type: string
                   workloadMode:
                     enum:
                     - saturated-serial-fixed-batch
                     - idle-model-loaded
+                    type: string
+                  workloadResourceVersion:
+                    description: WorkloadResourceVersion records provenance only,
+                      never admission identity.
+                    type: string
+                  workloadUID:
+                    description: |-
+                      WorkloadUID freezes the source identity for campaign children. Together
+                      with the SLO fields below it bypasses mutable Workload resolution.
                     type: string
                 required:
                 - batch
@@ -167,7 +206,11 @@ spec:
                 - message: measurement fields must match the selected workloadMode
                   rule: 'self.workloadMode == ''idle-model-loaded'' ? self.warmupIterations
                     == 0 && has(self.settlingDurationSeconds) && !has(self.dataset)
-                    : !has(self.settlingDurationSeconds) && has(self.dataset)'
+                    && !has(self.workload) : !has(self.settlingDurationSeconds) &&
+                    has(self.dataset) && has(self.workload)'
+                - message: active measurement requires at least thirty seconds
+                  rule: self.workloadMode == 'idle-model-loaded' || self.durationSeconds
+                    >= 30
               metricObservation:
                 description: MetricObservation fixes polling behavior. The source
                   is resolved from TargetNode.

@@ -107,6 +107,19 @@ func (m MeasurementContract) ValidateDurationTolerance() error {
 	return nil
 }
 
+// MinimumServiceSamples is quantile coverage at the existing 95% confidence
+// convention, not precision of a percentile estimate or a capacity proof.
+func MinimumServiceSamples(percentile float64) (int, error) {
+	if math.IsNaN(percentile) || math.IsInf(percentile, 0) || percentile <= 0 || percentile >= 100 {
+		return 0, errors.New("Workload SLO percentile must be finite and in (0, 100) for finite sample coverage")
+	}
+	count := math.Ceil(math.Log(.05) / math.Log(percentile/100))
+	if count > float64(int(^uint(0)>>1)) {
+		return 0, errors.New("Workload SLO sample count exceeds the supported range")
+	}
+	return int(count), nil
+}
+
 func (i RunConfig) validateDelivery() error {
 	delivery := i.Delivery
 	if err := validateCandidateRuntimePackages(delivery.RuntimePackages); err != nil {
@@ -250,13 +263,24 @@ func (i RunConfig) validateMeasurementMode() error {
 		if (!isRKNNExecution(i) && i.Measurement.Batch != 1) ||
 			i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
-			i.Measurement.Dataset != nil {
+			i.Measurement.Dataset != nil || i.Measurement.MinServiceSamples != 0 || i.Measurement.SLOPercentile != 0 {
 			return errors.New("model-loaded idle measurement protocol is invalid")
 		}
 		return nil
 	}
 	if i.Measurement.SettlingDurationSeconds != 0 {
 		return errors.New("active measurement cannot contain settlingDurationSeconds")
+	}
+	minimum, err := MinimumServiceSamples(i.Measurement.SLOPercentile)
+	if err != nil {
+		return err
+	}
+	if i.Measurement.MinServiceSamples != minimum || i.Measurement.DurationSeconds < 30 {
+		return errors.New("active measurement requires at least 30 seconds and the derived native service sample count")
+	}
+	if !cleanValue(i.Measurement.WorkloadName) || !cleanValue(i.Measurement.WorkloadUID) ||
+		i.Measurement.SLOTargetLatencyNanos <= 0 {
+		return errors.New("active measurement requires the frozen source Workload identity and positive SLO target")
 	}
 	dataset := i.Measurement.Dataset
 	if dataset == nil || !cleanValue(dataset.Name) || !cleanValue(dataset.UID) || !cleanValue(dataset.Image) ||

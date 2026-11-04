@@ -270,7 +270,13 @@ func writeTestRunConfig(t *testing.T, directory, endpoint string) {
 		Latched:                   "frozen_thermal_latched",
 		MaximumTemperatureCelsius: "frozen_thermal_max_celsius",
 	}
-	runConfig.Measurement.DurationSeconds = 1
+	// These tests exercise observer handoff/failure behavior, not active trial
+	// stopping. Use a valid short idle window rather than an invalid <30s active
+	// protocol; the separate sample-stop regression retains the active 30/31s.
+	runConfig.Measurement = profilingrun.MeasurementContract{
+		Batch: 1, SettlingDurationSeconds: 1, DurationSeconds: 1,
+		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
+	}
 	runConfig.Metrics.DurationSeconds = 1
 	runConfig.Metrics.IntervalMilliseconds = 20
 	runConfig.Metrics.TimeoutMilliseconds = 10

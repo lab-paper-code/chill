@@ -404,14 +404,14 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 				RuntimeVersion: version, Backend: config.State.Backend, Provider: provider,
 				AvailableProviders: []string{provider}, Inputs: config.State.Preprocessor.Inputs,
 				BatchSize: config.Measurement.Batch, WarmupIterations: config.Measurement.WarmupIterations,
-				WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 2, MeasurementMode: "duration",
+				WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 59, MeasurementMode: "duration",
 				MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano),
 				MeasurementElapsedSeconds: 30, TargetDurationSeconds: &duration, CPUContract: cpu, DerivedContract: derived,
 				RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano),
-					MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano), LatencyMilliseconds: []float64{1, 2}}},
-				Latency:     map[string]float64{"p95": 2, "mean": 1.5},
+					MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano), LatencyMilliseconds: make([]float64, 59)}},
+				Latency:     map[string]float64{"p95": 2, "mean": 2},
 				MemoryBytes: 123456, MemorySource: "cgroup-v2-memory.peak:runtime-container-lifetime",
-				Firstfloor: retainedFirstfloorEvidence(config, cpu, 2, provider, version),
+				Firstfloor: retainedFirstfloorEvidence(config, cpu, 59, provider, version),
 			},
 		}
 		recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
@@ -419,6 +419,7 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 			recordIDs[i], units[i] = "record-"+strconv.Itoa(i), 1
 		}
 		for i := range raw.Runtime.RepetitionResults[0].LatencyMilliseconds {
+			raw.Runtime.RepetitionResults[0].LatencyMilliseconds[i] = 2
 			raw.Runtime.RepetitionResults[0].NativeSamples = append(raw.Runtime.RepetitionResults[0].NativeSamples, profilingrun.NativeServiceSample{
 				BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
 				RunnerServiceMilliseconds: 0.7, PreprocessMilliseconds: 0.1, PostprocessMilliseconds: 0.1,

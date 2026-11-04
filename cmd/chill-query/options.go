@@ -25,6 +25,8 @@ type options struct {
 	metricSourcesKey                            string
 	workloadObservationKey                      string
 	actuationPoliciesKey                        string
+	executionPoliciesKey                        string
+	measurementMemoryFraction                   float64
 	kubeAPIQPS                                  float64
 	kubeAPIBurst                                int
 }
@@ -80,11 +82,22 @@ func (o *options) bindFlags(flags *flag.FlagSet) {
 		"",
 		"ConfigMap key containing versioned Node actuation policies.",
 	)
+	flags.StringVar(
+		&o.executionPoliciesKey, "execution-policies-key", "",
+		"ConfigMap key containing versioned worker execution envelopes.",
+	)
+	flags.Float64Var(
+		&o.measurementMemoryFraction, "measurement-memory-fraction", 0,
+		"Required measurement runtime fraction of Node allocatable memory (0 < fraction < 1).",
+	)
 }
 
 func (o options) validate() error {
 	if o.requestTimeout <= 0 || o.maxRequestBytes <= 0 || o.maxEvidenceBytes <= 0 {
 		return errors.New("query timeout and read bounds must be positive")
+	}
+	if math.IsNaN(o.measurementMemoryFraction) || o.measurementMemoryFraction <= 0 || o.measurementMemoryFraction >= 1 {
+		return errors.New("measurement-memory-fraction must be between 0 and 1 (exclusive)")
 	}
 	if o.kubeAPIQPS <= 0 || math.IsNaN(o.kubeAPIQPS) || math.IsInf(o.kubeAPIQPS, 0) ||
 		o.kubeAPIQPS > math.MaxFloat32 || float32(o.kubeAPIQPS) == 0 {
@@ -107,6 +120,7 @@ func (o options) validate() error {
 		"metric-sources key":       o.metricSourcesKey,
 		"workload-observation key": o.workloadObservationKey,
 		"actuation-policies key":   o.actuationPoliciesKey,
+		"execution-policies key":   o.executionPoliciesKey,
 	} {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
 			return fmt.Errorf("%s is required without surrounding whitespace", name)

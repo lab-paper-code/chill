@@ -37,17 +37,17 @@ func TestValidateRuntimeRejectsMaterialDrift(t *testing.T) {
 	}
 }
 
-func TestRuntimeDurationToleranceChangesAcceptance(t *testing.T) {
+func TestActiveDurationToleranceCannotShortenMinimumWindow(t *testing.T) {
 	config := firstfloorRunConfig()
 	result := firstfloorResult(config)
 	result.MeasurementElapsedSeconds = 29.6
 	config.Measurement.DurationToleranceSeconds = .5
+	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
+		t.Fatal("duration tolerance shortened the required elapsed window")
+	}
+	result.MeasurementElapsedSeconds = 30
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
-	}
-	config.Measurement.DurationToleranceSeconds = .25
-	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
-		t.Fatal("selected duration tolerance did not change evidence acceptance")
 	}
 }
 
@@ -102,6 +102,11 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 
 func validRuntimeResult(config RunConfig) RuntimeResult {
 	targetDuration := float64(config.Measurement.DurationSeconds)
+	count := config.Measurement.MinServiceSamples
+	samples := make([]float64, count)
+	for index := range samples {
+		samples[index] = 1
+	}
 	return RuntimeResult{
 		SchemaVersion: RuntimeResultSchemaVersion, Status: "Succeeded",
 		ExperimentID: "pod-uid", NodeName: config.TargetNode.Name, Model: config.State.Model,
@@ -110,7 +115,7 @@ func validRuntimeResult(config RunConfig) RuntimeResult {
 		AvailableProviders: []string{config.State.Backend},
 		Inputs:             config.State.Preprocessor.Inputs,
 		BatchSize:          1, WarmupIterations: 20, WarmupCompletedAt: "2026-01-01T00:00:00Z",
-		InferenceCount: 1, MeasurementMode: "duration",
+		InferenceCount: count, MeasurementMode: "duration",
 		MeasurementStartedAt: "2026-01-01T00:00:01Z", MeasurementEndedAt: "2026-01-01T00:00:31Z",
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
 		CPUContract: RuntimeCPU{
@@ -123,7 +128,7 @@ func validRuntimeResult(config RunConfig) RuntimeResult {
 		},
 		RepetitionResults: []Repetition{{
 			Repetition: 1, MeasurementStartedAt: "2026-01-01T00:00:01Z",
-			MeasurementEndedAt: "2026-01-01T00:00:31Z", LatencyMilliseconds: []float64{1},
+			MeasurementEndedAt: "2026-01-01T00:00:31Z", LatencyMilliseconds: samples,
 		}},
 	}
 }

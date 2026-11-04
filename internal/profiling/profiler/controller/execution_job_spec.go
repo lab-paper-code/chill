@@ -9,6 +9,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
@@ -21,15 +22,13 @@ import (
 )
 
 const (
-	modelVolumeName                 = "model"
+	modelVolumeName                 = "artifact"
 	preprocessorVolumeName          = "preprocessor"
 	datasetVolumeName               = "dataset"
 	coordinationVolumeName          = "coordination"
 	workspaceVolumeName             = "workspace"
 	workloadObserverTokenVolumeName = "workload-observer-kube-api"
 
-	modelMountPath                 = "/model"
-	preprocessorMountPath          = "/preprocessor"
 	datasetMountPath               = "/dataset"
 	coordinationMountPath          = "/coordination"
 	workspaceMountPath             = "/workspace"
@@ -69,15 +68,13 @@ func buildExecutionJob(
 	if err != nil {
 		return nil, fmt.Errorf("derive measurement Job policy: %w", err)
 	}
-	if options.measurementMemoryLimitBytes > 0 {
-		plan.RuntimeMemoryLimitBytes = min(plan.RuntimeMemoryLimitBytes, options.measurementMemoryLimitBytes)
-		if plan.RuntimeMemoryLimitBytes < plan.RuntimeMemoryRequestBytes {
-			return nil, errors.New("measurement Node memory limit is below the runtime memory request")
-		}
-	}
 	runtimeProjection, err := projectRuntimeJob(prepared.RunConfig)
 	if err != nil {
 		return nil, fmt.Errorf("project runtime Job contract: %w", err)
+	}
+	runtimeBase, err := firstfloor.RuntimeContainer(&prepared.RunConfig.Actor)
+	if err != nil {
+		return nil, fmt.Errorf("project runtime container: %w", err)
 	}
 	runConfigBytes, err := prepared.RunConfig.CanonicalJSON()
 	if err != nil {
@@ -138,7 +135,7 @@ func buildExecutionJob(
 					SecurityContext: runtimePodSecurityContext(runtimeProjection.SupplementalGroups),
 					InitContainers:  deliveryContainers(prepared.RunConfig),
 					Containers: []corev1.Container{
-						runtimeContainer(prepared, runConfig, binding, rawKey, plan, runtimeProjection),
+						runtimeContainer(prepared, runtimeBase, runConfig, binding, rawKey, plan, runtimeProjection),
 						metricObserverContainer(prepared, runConfig, plan),
 						workloadObserverContainer(prepared, runConfig, selectorLabelKeys, options, plan),
 					},
@@ -150,8 +147,8 @@ func buildExecutionJob(
 	for i := range job.Spec.Template.Spec.InitContainers {
 		// File-copy page cache is charged to the init cgroup, not the observers.
 		job.Spec.Template.Spec.InitContainers[i].Resources = corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryRequestBytes, resource.BinarySI)},
-			Limits:   corev1.ResourceList{corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryLimitBytes, resource.BinarySI)},
+			Requests: corev1.ResourceList{corev1.ResourceMemory: runtimeBase.Resources.Requests[corev1.ResourceMemory]},
+			Limits:   corev1.ResourceList{corev1.ResourceMemory: runtimeBase.Resources.Limits[corev1.ResourceMemory]},
 		}
 	}
 	if err := controllerutil.SetControllerReference(run, job, scheme); err != nil {
@@ -165,10 +162,10 @@ func buildExecutionJob(
 // the dataset profiling records to /dataset/<recordID>/<field>.
 func deliveryContainers(config profilingrun.RunConfig) []corev1.Container {
 	containers := []corev1.Container{
-		copyContainer("artifact", config.Images.Artifact, modelVolumeName, artifactCopyMountPath,
-			append([]string{`cp "$@" ` + artifactCopyMountPath + `/`, "artifact-copy"}, config.State.ArtifactFiles...)),
-		copyContainer("preprocessor", config.State.Preprocessor.Image, preprocessorVolumeName, preprocessorCopyMountPath,
-			[]string{`cp -R "$1"/. ` + preprocessorCopyMountPath + `/`, "--", config.State.Preprocessor.Path}),
+		copyContainer("artifact", config.Actor.ArtifactImage, modelVolumeName, artifactCopyMountPath,
+			append([]string{`cp "$@" ` + artifactCopyMountPath + `/`, "artifact-copy"}, config.Actor.ArtifactFiles...)),
+		copyContainer("preprocessor", config.Actor.PreprocessorImage, preprocessorVolumeName, preprocessorCopyMountPath,
+			[]string{`cp -R "$1"/. ` + preprocessorCopyMountPath + `/`, "--", config.Actor.PreprocessorPath}),
 	}
 	if dataset := config.Measurement.Dataset; dataset != nil {
 		containers = append(containers, copyContainer("dataset", dataset.Image, datasetVolumeName, datasetCopyMountPath,
@@ -189,6 +186,7 @@ func copyContainer(name, image, volume, mountPath string, args []string) corev1.
 
 func runtimeContainer(
 	prepared profiler.PreparedRun,
+	container corev1.Container,
 	runConfig string,
 	binding storekube.Binding,
 	rawKey string,
@@ -196,58 +194,41 @@ func runtimeContainer(
 	projection runtimeJobProjection,
 ) corev1.Container {
 	config := prepared.RunConfig
-	resources := corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryRequestBytes, resource.BinarySI),
-		},
-		Limits: corev1.ResourceList{
-			corev1.ResourceMemory: *resource.NewQuantity(plan.RuntimeMemoryLimitBytes, resource.BinarySI),
-		},
-	}
-	if projection.AcceleratorResource != "" {
-		resources.Requests[projection.AcceleratorResource] = resource.MustParse("1")
-		resources.Limits[projection.AcceleratorResource] = resource.MustParse("1")
-	}
-	volumeMounts := []corev1.VolumeMount{
-		{Name: modelVolumeName, MountPath: modelMountPath, ReadOnly: true},
-		{Name: preprocessorVolumeName, MountPath: preprocessorMountPath, ReadOnly: true},
-		{Name: coordinationVolumeName, MountPath: coordinationMountPath},
-		{Name: workspaceVolumeName, MountPath: workspaceMountPath},
-	}
+	container.Name = "runtime"
+	container.ImagePullPolicy = corev1.PullIfNotPresent
+	container.VolumeMounts = append(container.VolumeMounts,
+		corev1.VolumeMount{Name: coordinationVolumeName, MountPath: coordinationMountPath},
+		corev1.VolumeMount{Name: workspaceVolumeName, MountPath: workspaceMountPath})
 	if config.Measurement.Dataset != nil {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: datasetVolumeName, MountPath: datasetMountPath, ReadOnly: true})
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: datasetVolumeName, MountPath: datasetMountPath, ReadOnly: true})
 	}
-	volumeMounts = append(volumeMounts, projection.VolumeMounts...)
-	return corev1.Container{
-		Name: "runtime", Image: config.Images.Runtime, ImagePullPolicy: corev1.PullIfNotPresent,
-		Command: []string{"/measurement-worker"},
-		Args: []string{
-			"--run-config=" + runConfig,
-			"--attempt-timeout=" + plan.AttemptTimeout.String(),
-			"--observer-ready-timeout=" + plan.ObserverReadyTimeout.String(),
-			"--metric-result-timeout=" + plan.MetricResultTimeout.String(),
-			"--max-latency-samples=" + strconv.Itoa(plan.MaxLatencySamples),
-			"--max-input-bytes=" + strconv.FormatInt(plan.MaxInputBytes, 10),
-			"--max-runtime-result-bytes=" + strconv.FormatInt(plan.MaxRuntimeResultBytes, 10),
-			"--max-metric-result-bytes=" + strconv.FormatInt(plan.MaxMetricResultBytes, 10),
-			"--workload-result-timeout=" + plan.WorkloadResultTimeout.String(),
-			"--max-workload-result-bytes=" + strconv.FormatInt(plan.MaxWorkloadResultBytes, 10),
-			"--store-name=" + binding.Store,
-			"--store-endpoint=" + binding.Endpoint,
-			"--store-bucket=" + binding.Bucket,
-			"--store-region=" + binding.Region,
-			"--raw-object-key=" + rawKey,
-		},
-		Env: []corev1.EnvVar{
-			fieldEnv("POD_UID", "metadata.uid"), fieldEnv("NODE_NAME", "spec.nodeName"),
-			secretEnv("AWS_ACCESS_KEY_ID", binding.CredentialsSecretName, component.EvidenceStoreAccessKeyKey),
-			secretEnv("AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey),
-		},
-		Resources:                resources,
-		SecurityContext:          projection.SecurityContext,
-		VolumeMounts:             volumeMounts,
-		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	container.VolumeMounts = append(container.VolumeMounts, projection.VolumeMounts...)
+	container.Command = []string{"/measurement-worker"}
+	container.Args = []string{
+		"--run-config=" + runConfig,
+		"--attempt-timeout=" + plan.AttemptTimeout.String(),
+		"--observer-ready-timeout=" + plan.ObserverReadyTimeout.String(),
+		"--metric-result-timeout=" + plan.MetricResultTimeout.String(),
+		"--max-latency-samples=" + strconv.Itoa(plan.MaxLatencySamples),
+		"--max-input-bytes=" + strconv.FormatInt(plan.MaxInputBytes, 10),
+		"--max-runtime-result-bytes=" + strconv.FormatInt(plan.MaxRuntimeResultBytes, 10),
+		"--max-metric-result-bytes=" + strconv.FormatInt(plan.MaxMetricResultBytes, 10),
+		"--workload-result-timeout=" + plan.WorkloadResultTimeout.String(),
+		"--max-workload-result-bytes=" + strconv.FormatInt(plan.MaxWorkloadResultBytes, 10),
+		"--store-name=" + binding.Store,
+		"--store-endpoint=" + binding.Endpoint,
+		"--store-bucket=" + binding.Bucket,
+		"--store-region=" + binding.Region,
+		"--raw-object-key=" + rawKey,
 	}
+	container.Env = append(container.Env,
+		fieldEnv("POD_UID", "metadata.uid"), fieldEnv("NODE_NAME", "spec.nodeName"),
+		secretEnv("AWS_ACCESS_KEY_ID", binding.CredentialsSecretName, component.EvidenceStoreAccessKeyKey),
+		secretEnv("AWS_SECRET_ACCESS_KEY", binding.CredentialsSecretName, component.EvidenceStoreSecretKeyKey),
+	)
+	container.SecurityContext = projection.SecurityContext
+	container.TerminationMessagePolicy = corev1.TerminationMessageFallbackToLogsOnError
+	return container
 }
 
 func metricObserverContainer(

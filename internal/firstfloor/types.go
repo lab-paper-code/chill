@@ -97,20 +97,37 @@ type Policy struct {
 	Batches        []BatchProfile `json:"-"`                        // Immutable bundle, loaded once. Policy file never repeats samples.
 }
 type Config struct {
-	Model            string   `json:"model"`
-	Inputs           []string `json:"inputs"`  // raw input field names
-	Outputs          []string `json:"outputs"` // raw output field names
-	MaxNewTokens     int      `json:"maxNewTokens,omitempty"`
-	RunnerCommand    []string `json:"runnerCommand"`
-	RunnerTimeoutMS  int      `json:"runnerTimeoutMS"`
-	MaxQueueRequests int      `json:"maxQueueRequests"`
-	MaxQueueBytes    int      `json:"maxQueueBytes"`
-	MaxRequestBytes  int      `json:"maxRequestBytes"`
-	Mode             string   `json:"mode"` // serving or profiling
-	BatchSizes       []int    `json:"batchSizes"`
-	MaxBatchSize     int      `json:"maxBatchSize"`
-	ProfilePath      string   `json:"profilePath,omitempty"`
-	Policy           Policy   `json:"policy"`
+	// Execution conditions are frozen once and projected to both serving and measurement.
+	RuntimeImage        string            `json:"runtimeImage,omitempty"`
+	Backend             string            `json:"backend,omitempty"`
+	Artifact            string            `json:"artifact,omitempty"`
+	ArtifactImage       string            `json:"artifactImage,omitempty"`
+	ArtifactFiles       []string          `json:"artifactFiles,omitempty"`
+	Preprocessor        string            `json:"preprocessor,omitempty"`
+	PreprocessorImage   string            `json:"preprocessorImage,omitempty"`
+	PreprocessorPath    string            `json:"preprocessorPath,omitempty"`
+	RuntimePackages     map[string]string `json:"runtimePackages,omitempty"`
+	PowerMode           string            `json:"powerMode,omitempty"`
+	MemoryRequestBytes  int64             `json:"memoryRequestBytes,omitempty"`
+	MemoryLimitBytes    int64             `json:"memoryLimitBytes,omitempty"`
+	GPUUUID             string            `json:"gpuUUID,omitempty"`
+	AcceleratorResource string            `json:"acceleratorResource,omitempty"`
+	WarmupBatchSizes    []int             `json:"warmupBatchSizes,omitempty"`
+	WarmupIterations    int               `json:"warmupIterations,omitempty"`
+	Model               string            `json:"model"`
+	Inputs              []string          `json:"inputs"`  // raw input field names
+	Outputs             []string          `json:"outputs"` // raw output field names
+	MaxNewTokens        int               `json:"maxNewTokens,omitempty"`
+	RunnerCommand       []string          `json:"runnerCommand"`
+	RunnerTimeoutMS     int               `json:"runnerTimeoutMS"`
+	MaxQueueRequests    int               `json:"maxQueueRequests"`
+	MaxQueueBytes       int               `json:"maxQueueBytes"`
+	MaxRequestBytes     int               `json:"maxRequestBytes"`
+	Mode                string            `json:"mode"` // serving or profiling
+	BatchSizes          []int             `json:"batchSizes"`
+	MaxBatchSize        int               `json:"maxBatchSize"`
+	ProfilePath         string            `json:"profilePath,omitempty"`
+	Policy              Policy            `json:"policy"`
 }
 type Progress struct {
 	RequestID         string    `json:"requestID"`

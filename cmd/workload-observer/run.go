@@ -34,6 +34,10 @@ func execute(
 	if coreClient == nil {
 		return errors.New("Kubernetes core client is required")
 	}
+	// All preparation, retained observation and causal end-fence draining share
+	// this one frozen attempt budget; measurement-end does not restart it.
+	ctx, cancel := context.WithTimeout(ctx, opts.endWaitTimeout)
+	defer cancel()
 	ctx, stop := worker.StopOnRuntimeFailure(ctx, opts.runtimeFailedPath, pollInterval)
 	defer stop()
 	runConfig, err := worker.ParseVerifiedRunConfig(opts.runConfig)
@@ -95,7 +99,7 @@ func execute(
 	started := make(chan struct{})
 	observed := make(chan observation, 1)
 	go func() {
-		result, observeErr := observer.Observe(observeContext, request, func() { close(started) })
+		result, observeErr := observer.Observe(ctx, observeContext.Done(), request, func() { close(started) })
 		observed <- observation{result: result, err: observeErr}
 	}()
 

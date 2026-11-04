@@ -7,11 +7,12 @@ import (
 	"io"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha18"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha19"
 
 	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
 	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
@@ -41,6 +42,7 @@ type RunConfig struct {
 	Measurement   MeasurementContract      `json:"measurement"`
 	Metrics       MetricContract           `json:"metrics"`
 	Workload      WorkloadContract         `json:"workload"`
+	Actor         firstfloor.Config        `json:"actor"`
 	Actuation     *ActuationContract       `json:"actuation,omitempty"`
 }
 
@@ -164,10 +166,18 @@ type NvidiaLockedGPUClockTarget struct {
 type MeasurementContract struct {
 	Batch                    int           `json:"batch"`
 	WarmupIterations         int           `json:"warmupIterations"`
+	StartupWarmupIterations  int           `json:"startupWarmupIterations,omitempty"`
 	SettlingDurationSeconds  int           `json:"settlingDurationSeconds,omitempty"`
 	Duration                 time.Duration `json:"-"`
 	DurationSeconds          int           `json:"durationSeconds"`
 	DurationToleranceSeconds float64       `json:"durationToleranceSeconds"`
+	MinServiceSamples        int           `json:"minServiceSamples,omitempty"`
+	SLOPercentile            float64       `json:"sloPercentile,omitempty"`
+	SLOTargetLatencyNanos    int64         `json:"sloTargetLatencyNanos,omitempty"`
+	WorkloadName             string        `json:"workloadName,omitempty"`
+	WorkloadUID              string        `json:"workloadUID,omitempty"`
+	WorkloadResourceVersion  string        `json:"workloadResourceVersion,omitempty"`
+	WarmupBatchSizes         []int         `json:"warmupBatchSizes,omitempty"`
 	WorkloadMode             string        `json:"workloadMode"`
 	// Dataset is present for active measurement only.
 	Dataset *DatasetContract `json:"dataset,omitempty"`

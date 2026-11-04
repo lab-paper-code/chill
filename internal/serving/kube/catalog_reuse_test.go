@@ -13,13 +13,18 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const reuseTargetGPU = "GPU-target"
+const (
+	reuseTargetGPU       = "GPU-target"
+	reuseSourceGPU       = "GPU-source"
+	reuseDifferentSuffix = "-different"
+)
 
 func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	t.Helper()
@@ -34,9 +39,14 @@ func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	}
 	source.NodeName, source.Condition.NodeUID = "genesis2", "genesis2-uid"
 	source.Condition.MetricSource.NodeName, source.MetricSource.NodeName = source.NodeName, source.NodeName
-	source.Condition.Backend, source.RuntimeMetadata.Runtime = "ort-cuda", "ort-cuda"
-	source.RuntimeMetadata.GPUUUID = "GPU-source"
-	source.Condition.RuntimeAccess = &profilederivation.CurveRuntimeAccessContract{GPUUUID: "GPU-source", Resources: map[string]string{"nvidia.com/gpu": "1"}}
+	source.Condition.Backend, source.RuntimeMetadata.Runtime = profilingrun.FirstfloorORTCUDABackend, profilingrun.FirstfloorORTCUDABackend
+	source.RuntimeMetadata.GPUUUID = reuseSourceGPU
+	source.RuntimeMetadata.Device = "cuda"
+	source.RuntimeMetadata.Providers = []string{"CUDAExecutionProvider"}
+	source.RuntimeMetadata.AvailableProviders = []string{"CUDAExecutionProvider", "CPUExecutionProvider"}
+	source.Condition.Actor.Backend, source.Condition.Actor.GPUUUID = profilingrun.FirstfloorORTCUDABackend, reuseSourceGPU
+	source.Condition.Actor.BuildRunnerCommand()
+	source.Condition.RuntimeAccess = &profilederivation.CurveRuntimeAccessContract{GPUUUID: reuseSourceGPU, Resources: map[string]string{"nvidia.com/gpu": "1"}}
 	source.RuntimeDelivery = json.RawMessage(`{"gpuUUID":"GPU-source"}`)
 	target := cloneCatalogProfile(source)
 	target.ID = "chill-system/confirmation/confirmation-uid"
@@ -45,6 +55,8 @@ func reuseProfilesFixture(t *testing.T) (serving.Profile, serving.Profile) {
 	target.Condition.MetricSource.NodeName, target.MetricSource.NodeName = target.NodeName, target.NodeName
 	target.Condition.MetricSource.Endpoint = "http://target-meter"
 	target.RuntimeMetadata.GPUUUID, target.Condition.RuntimeAccess.GPUUUID = reuseTargetGPU, reuseTargetGPU
+	target.Condition.Actor.GPUUUID = reuseTargetGPU
+	target.Condition.Actor.BuildRunnerCommand()
 	target.RuntimeDelivery = json.RawMessage(`{"gpuUUID":"GPU-target"}`)
 	target.MeasuredAt = target.MeasuredAt.Add(time.Minute)
 	return source, target
@@ -61,6 +73,56 @@ func reuseView(t *testing.T, source, target serving.Profile, maximum float64) Ca
 		t.Fatal(err)
 	}
 	return view
+}
+
+func TestProfileReuseNormalizesPhysicalGPUCommandWithoutDroppingRecipe(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*serving.Profile)
+	}{
+		{"matching", func(*serving.Profile) {}},
+		{"warmup-iterations", func(p *serving.Profile) { p.Condition.Actor.WarmupIterations++ }},
+		{"warmup-batches", func(p *serving.Profile) { p.Condition.Actor.WarmupBatchSizes = []int{1, 2} }},
+		{"backend", func(p *serving.Profile) { p.Condition.Actor.Backend = "rknnlite" }},
+		{"artifact", func(p *serving.Profile) { p.Condition.Actor.ArtifactImage += reuseDifferentSuffix }},
+		{"preprocessor", func(p *serving.Profile) { p.Condition.Actor.PreprocessorPath += reuseDifferentSuffix }},
+		{"runtime-package", func(p *serving.Profile) {
+			p.Condition.Actor.RuntimePackages = map[string]string{"onnxruntime-gpu": "different"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source, target := reuseProfilesFixture(t)
+			for _, profile := range []serving.Profile{source, target} {
+				command := strings.Join(profile.Condition.Actor.RunnerCommand, " ")
+				if !strings.Contains(command, "--runtime ort-cuda") ||
+					!strings.Contains(command, "--gpu-uuid "+profile.RuntimeMetadata.GPUUUID) {
+					t.Fatalf("fixture lacks physical CUDA command: %s", command)
+				}
+			}
+			if reflect.DeepEqual(source.Condition.Actor.RunnerCommand, target.Condition.Actor.RunnerCommand) {
+				t.Fatal("distinct physical GPUs have identical unnormalized commands")
+			}
+			test.mutate(&target)
+			target.Condition.Actor.BuildRunnerCommand()
+			check := serving.ProfileReuseCheck{MaximumRelativeDifference: .05, MinimumMeasurementSeconds: 30, MinimumTrials: 3}
+			accepted := test.name == "matching"
+			if err := compareReuseProfiles(source, target, &check); (err == nil) != accepted {
+				t.Fatalf("recipe comparison accepted=%v, error=%v", accepted, err)
+			}
+			view := reuseView(t, source, target, .05)
+			wantProfiles := 1
+			if accepted {
+				wantProfiles = 2
+			}
+			if len(view.ReuseChecks) != 1 || (view.ReuseChecks[0].Outcome == servingstate.MeasurementAccepted) != accepted ||
+				len(view.Profiles) != wantProfiles {
+				t.Fatalf("recipe reuse accepted=%v: %+v", accepted, view)
+			}
+			if accepted && !reflect.DeepEqual(view.Profiles[1].Condition.Actor.RunnerCommand, target.Condition.Actor.RunnerCommand) {
+				t.Fatal("reuse lost target physical CUDA command")
+			}
+		})
+	}
 }
 
 func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing.T) {
@@ -134,7 +196,7 @@ func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 		name   string
 		mutate func(*serving.Profile, *serving.Profile)
 	}{
-		{"device-family", func(_, p *serving.Profile) { p.Condition.DeviceClass += "-different" }},
+		{"device-family", func(_, p *serving.Profile) { p.Condition.DeviceClass += reuseDifferentSuffix }},
 		{"power-mode", func(_, p *serving.Profile) { p.Condition.PowerMode = "different" }},
 		{"runner-version", func(_, p *serving.Profile) { p.RuntimeMetadata.RuntimeVersion += "-other-version" }},
 		{"short-window", func(_, p *serving.Profile) { p.Condition.ActiveProtocol.DurationSeconds = 29 }},
@@ -395,6 +457,11 @@ func TestProfileReuseSelectedMinimumsAndIdentity(t *testing.T) {
 func TestProfileReuseIgnoresHistoricalRuntimeImage(t *testing.T) {
 	source, target := reuseProfilesFixture(t)
 	target.Condition.RuntimeImage += "-new-image"
+	target.Condition.Actor.RuntimeImage = "new-runtime-image"
+	source.Condition.Actor.GPUUUID, target.Condition.Actor.GPUUUID = "GPU-source", reuseTargetGPU
+	target.Condition.ActiveProtocol.SLOPercentile = 95
+	target.Condition.ActiveProtocol.MinServiceSamples = 59
+	target.Condition.ActiveProtocol.WorkloadUID = "other-source-declaration"
 	check := serving.ProfileReuseCheck{MaximumRelativeDifference: .05, MinimumMeasurementSeconds: 30, MinimumTrials: 3}
 	if err := compareReuseProfiles(source, target, &check); err != nil {
 		t.Fatal("historical image blocked otherwise verified reuse", err)

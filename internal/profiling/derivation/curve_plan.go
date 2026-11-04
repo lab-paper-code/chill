@@ -13,11 +13,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha10"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha11"
 	curveRuntimeFirstfloor = "firstfloor"
 	curveBackendORTCUDA    = "ort-cuda"
 	curveBackendORTCPU     = "ort-cpu"
@@ -47,6 +48,7 @@ type CurveProtocolContract struct {
 	// Dataset is the active protocol's sample source; idle protocols have none.
 	Dataset                    *CurveDatasetContract `json:"dataset,omitempty"`
 	WarmupIterations           int                   `json:"warmupIterations"`
+	StartupWarmupIterations    int                   `json:"startupWarmupIterations,omitempty"`
 	SettlingDurationSeconds    int                   `json:"settlingDurationSeconds"`
 	DurationSeconds            int                   `json:"durationSeconds"`
 	DurationToleranceSeconds   float64               `json:"durationToleranceSeconds"`
@@ -56,6 +58,12 @@ type CurveProtocolContract struct {
 	MetricObserverImage        string                `json:"metricObserverImage"`
 	WorkloadObserverImage      string                `json:"workloadObserverImage"`
 	WorkloadSchemaVersion      string                `json:"workloadSchemaVersion"`
+	SLOPercentile              float64               `json:"sloPercentile,omitempty"`
+	MinServiceSamples          int                   `json:"minServiceSamples,omitempty"`
+	SLOTargetLatencyNanos      int64                 `json:"sloTargetLatencyNanos,omitempty"`
+	WorkloadName               string                `json:"workloadName,omitempty"`
+	WorkloadUID                string                `json:"workloadUID,omitempty"`
+	WorkloadResourceVersion    string                `json:"workloadResourceVersion,omitempty"`
 }
 
 // CurveConversionContract identifies how the immutable plan artifact was derived.
@@ -95,23 +103,28 @@ type CurvePreprocessorContract struct {
 
 // CurvePlanSpec is the raw material selected for one measurement plan.
 type CurvePlanSpec struct {
-	Name              string                          `json:"name"`
-	LogicalModel      string                          `json:"logicalModel"`
-	DeviceClass       string                          `json:"deviceClass"`
-	NodeUID           string                          `json:"nodeUID"`
-	RuntimeFamily     string                          `json:"runtimeFamily"`
-	Backend           string                          `json:"backend"`
-	Firstfloor        *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
-	RuntimeAccess     *CurveRuntimeAccessContract     `json:"runtimeAccess,omitempty"`
-	RuntimeImage      string                          `json:"runtimeImage"`
-	PowerMode         string                          `json:"powerMode"`
-	MetricSource      CurveMetricSourceContract       `json:"metricSource"`
-	ActiveProtocol    CurveProtocolContract           `json:"activeProtocol"`
-	IdleProtocol      CurveProtocolContract           `json:"idleProtocol"`
-	Conversion        CurveConversionContract         `json:"conversion"`
-	Artifact          CurveArtifactContract           `json:"artifact"`
-	Preprocessor      CurvePreprocessorContract       `json:"preprocessor"`
-	PlannedBatchSizes []int                           `json:"plannedBatchSizes"`
+	Name          string                          `json:"name"`
+	LogicalModel  string                          `json:"logicalModel"`
+	DeviceClass   string                          `json:"deviceClass"`
+	NodeUID       string                          `json:"nodeUID"`
+	RuntimeFamily string                          `json:"runtimeFamily"`
+	Backend       string                          `json:"backend"`
+	Firstfloor    *modelcompat.FirstfloorSettings `json:"firstfloor,omitempty"`
+	RuntimeAccess *CurveRuntimeAccessContract     `json:"runtimeAccess,omitempty"`
+	RuntimeImage  string                          `json:"runtimeImage"`
+	// RuntimeVersion/RuntimeProvider are filled from verified measurement facts;
+	// pre-execution plans leave them unknown rather than guessing from the image.
+	RuntimeVersion    string                    `json:"runtimeVersion,omitempty"`
+	RuntimeProvider   string                    `json:"runtimeProvider,omitempty"`
+	Actor             firstfloor.Config         `json:"actor"`
+	PowerMode         string                    `json:"powerMode"`
+	MetricSource      CurveMetricSourceContract `json:"metricSource"`
+	ActiveProtocol    CurveProtocolContract     `json:"activeProtocol"`
+	IdleProtocol      CurveProtocolContract     `json:"idleProtocol"`
+	Conversion        CurveConversionContract   `json:"conversion"`
+	Artifact          CurveArtifactContract     `json:"artifact"`
+	Preprocessor      CurvePreprocessorContract `json:"preprocessor"`
+	PlannedBatchSizes []int                     `json:"plannedBatchSizes"`
 }
 
 type curvePlanRecord struct {
@@ -399,6 +412,17 @@ func cleanCurvePath(value string) bool {
 // CloneCurvePlanSpec separates caller-owned mutable execution conditions.
 func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.PlannedBatchSizes = append([]int(nil), shared.PlannedBatchSizes...)
+	shared.Actor.Inputs = slices.Clone(shared.Actor.Inputs)
+	shared.Actor.Outputs = slices.Clone(shared.Actor.Outputs)
+	shared.Actor.RunnerCommand = slices.Clone(shared.Actor.RunnerCommand)
+	shared.Actor.BatchSizes = slices.Clone(shared.Actor.BatchSizes)
+	shared.Actor.WarmupBatchSizes = slices.Clone(shared.Actor.WarmupBatchSizes)
+	shared.Actor.Policy.Batches = slices.Clone(shared.Actor.Policy.Batches)
+	for index := range shared.Actor.Policy.Batches {
+		shared.Actor.Policy.Batches[index].ServiceSamplesMS = slices.Clone(shared.Actor.Policy.Batches[index].ServiceSamplesMS)
+	}
+	shared.Actor.ArtifactFiles = slices.Clone(shared.Actor.ArtifactFiles)
+	shared.Actor.RuntimePackages = maps.Clone(shared.Actor.RuntimePackages)
 	shared.Artifact.Files = slices.Clone(shared.Artifact.Files)
 	shared.Preprocessor.Inputs = slices.Clone(shared.Preprocessor.Inputs)
 	shared.Preprocessor.Outputs = slices.Clone(shared.Preprocessor.Outputs)
@@ -418,4 +442,32 @@ func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 		shared.RuntimeAccess = &access
 	}
 	return shared
+}
+
+// PerformanceCondition retains the execution recipe while removing collection
+// procedure and incidental provenance. Batch rows are selected separately.
+func PerformanceCondition(condition CurvePlanSpec) CurvePlanSpec {
+	condition.Name = ""
+	condition.PlannedBatchSizes = nil
+	condition.RuntimeImage = ""
+	condition.MetricSource = CurveMetricSourceContract{}
+	condition.Conversion = CurveConversionContract{}
+	dataset := condition.ActiveProtocol.Dataset
+	condition.ActiveProtocol = CurveProtocolContract{Dataset: dataset}
+	condition.IdleProtocol = CurveProtocolContract{}
+	if condition.Firstfloor != nil {
+		settings := *condition.Firstfloor
+		settings.MaxQueueSize = 0
+		settings.DeadlinePolicy = ""
+		condition.Firstfloor = &settings
+	}
+	condition.Actor.RuntimeImage = ""
+	condition.Actor.Mode = ""
+	condition.Actor.ProfilePath = ""
+	condition.Actor.Policy = firstfloor.Policy{}
+	condition.Actor.RunnerTimeoutMS = 0
+	condition.Actor.MaxQueueRequests = 0
+	condition.Actor.MaxQueueBytes = 0
+	condition.Actor.MaxRequestBytes = 0
+	return condition
 }

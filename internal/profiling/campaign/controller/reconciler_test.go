@@ -369,7 +369,7 @@ func newPolicyMismatchCampaignFixture(t *testing.T, excess bool) (*api.BatchEner
 	}
 	for attempt := 1; attempt <= 3; attempt++ {
 		run := appendRun(batchenergyoptimization.WorkloadModeIdle, 1, attempt)
-		evidence.idle[run.Name] = curveFixtureIdleEvidence(t, idle, string(run.UID)+"-pod", 4)
+		evidence.idle[run.Name] = curveFixtureIdleEvidence(t, idle, string(run.UID)+"-pod")
 	}
 	return parent, objects, evidence, &policyMismatchDependencies{CurveDeriver: deriver, plan: plan}
 }

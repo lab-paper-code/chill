@@ -75,8 +75,8 @@ func TestCatalogMeasurementFactsReuseLoadedRaw(t *testing.T) {
 
 func assertCatalogMeasurementBatchFacts(t *testing.T, row profilederivation.MeasurementBatchFacts) {
 	t.Helper()
-	if row.LatencySampleCount != 6 || row.ActiveTrialCount != 3 || row.IdleTrialCount != 3 ||
-		row.CompletedItems != 6 || row.CompletedCalls != 6 {
+	if row.LatencySampleCount != 180 || row.ActiveTrialCount != 3 || row.IdleTrialCount != 3 ||
+		row.CompletedItems != 180 || row.CompletedCalls != 180 {
 		t.Fatalf("raw-derived repetition/call counts changed: %+v", row)
 	}
 	for _, quantity := range []struct {
@@ -87,8 +87,8 @@ func assertCatalogMeasurementBatchFacts(t *testing.T, row profilederivation.Meas
 		{"client p95", row.P95Milliseconds, 2},
 		{"idle W", row.IdleWatts, 4},
 		{"active W", row.ActiveWatts, 6},
-		{"total J/item", row.TotalJoulesPerItem, 90},
-		{"incremental J/item", row.IncrementalJoulesPerItem, 30},
+		{"total J/item", row.TotalJoulesPerItem, 3},
+		{"incremental J/item", row.IncrementalJoulesPerItem, 1},
 	} {
 		if quantity.value == nil || *quantity.value != quantity.want {
 			t.Errorf("%s = %v, want %g", quantity.name, quantity.value, quantity.want)
@@ -122,7 +122,7 @@ func TestCatalogMeasurementFactsPreserveObservedZero(t *testing.T) {
 		t.Fatalf("observed zero incremental energy/CI became absent: %+v", row)
 	}
 	if row.IdleWatts == nil || *row.IdleWatts != 4 || row.ActiveWatts == nil || *row.ActiveWatts != 4 ||
-		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 60 {
+		row.TotalJoulesPerItem == nil || *row.TotalJoulesPerItem != 2 {
 		t.Fatalf("zero incremental energy changed positive wall measurement facts: %+v", row)
 	}
 }

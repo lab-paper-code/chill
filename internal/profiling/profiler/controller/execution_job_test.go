@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -11,10 +12,15 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/component"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/operations"
+	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -93,7 +99,7 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 			t.Fatalf("runtime %s mount is writable", path)
 		}
 	}
-	if _, err := argumentValue(runtimeContainer.Args, runConfigArgumentPrefix); err != nil {
+	if _, err := runConfigArgument(runtimeContainer.Args); err != nil {
 		t.Fatal(err)
 	}
 	assertArgument(t, runtimeContainer.Args, "--store-endpoint="+binding.Endpoint)
@@ -118,10 +124,19 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 		t.Fatalf("Evidence Store credentials were not projected by Secret reference: %#v", runtimeContainer.Env)
 	}
 	observer := findContainer(t, pod.Containers, "metric-observer")
+	plan, err := profiler.DeriveExecutionPlan(prepared.RunConfig, resolved.ExecutionPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
 	assertArgument(t, observer.Args, "--memory-budget-bytes=67108864")
-	assertArgument(t, observer.Args, "--end-wait-timeout=31s")
+	assertArgument(t, observer.Args, "--end-wait-timeout="+plan.AttemptTimeout.String())
 	assertArgument(t, observer.Args, "--max-result-bytes=8388608")
 	workloads := findContainer(t, pod.Containers, "workload-observer")
+	assertArgument(t, runtimeContainer.Args, "--attempt-timeout="+plan.AttemptTimeout.String())
+	assertArgument(t, runtimeContainer.Args, "--metric-result-timeout="+plan.AttemptTimeout.String())
+	assertArgument(t, runtimeContainer.Args, "--workload-result-timeout="+plan.AttemptTimeout.String())
+	assertArgument(t, workloads.Args, "--end-wait-timeout="+plan.AttemptTimeout.String())
+	assertArgument(t, workloads.Args, "--end-fence-timeout="+plan.AttemptTimeout.String())
 	assertArgument(t, workloads.Args, "--kube-api-server=https://kubernetes.example:6443")
 	assertArgument(t, workloads.Args, "--max-events=10000")
 	assertArgument(t, workloads.Args,
@@ -129,57 +144,124 @@ func TestBuildExecutionJobRecordsRunConfigAndDeliveryBinding(t *testing.T) {
 	assertWorkloadObserverCredentialIsolation(t, pod, runtimeContainer, observer, workloads)
 }
 
-func TestExecutionJobsCapsRuntimeAndInitMemoryByNodeAllocatable(t *testing.T) {
-	for _, fraction := range []float64{0.8, 0.5} {
-		for _, policyLimit := range []int64{16 << 30, 1 << 30} {
-			t.Run(fmt.Sprintf("%g/%d", fraction, policyLimit), func(t *testing.T) {
-				run := testRun()
-				resolved := resolvedRunForPrepared(t, currentPreparedRun(t))
-				resolved.ExecutionPolicy.Policy.RuntimeMemoryLimitBytes = policyLimit
-				// Observer requests are independent and may exceed the runtime cap.
-				resolved.ExecutionPolicy.Policy.ObserverMemoryRequestBytes = 2 << 30
-				resolved.ExecutionPolicy.Policy.ObserverMemoryLimitBytes = 2 << 30
-				node := &corev1.Node{
-					ObjectMeta: metav1.ObjectMeta{Name: resolved.Prepared.RunConfig.TargetNode.Name, UID: types.UID(resolved.Prepared.RunConfig.TargetNode.UID)},
-					Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("4Gi")}},
-				}
-				scheme := executionJobTestScheme(t)
-				kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(node).Build()
-				options := testExecutionJobOptions()
-				options.MeasurementMemoryFraction = fraction
-				jobs, err := NewExecutionJobs(kube, scheme, staticEvidenceStoreResolver{binding: testEvidenceStoreBinding()}, options)
-				if err != nil {
-					t.Fatal(err)
-				}
-				job, created, err := jobs.Ensure(context.Background(), run, resolved)
-				if err != nil || !created {
-					t.Fatalf("create Job: created=%v err=%v", created, err)
-				}
-				runtime := findContainer(t, job.Spec.Template.Spec.Containers, runtimeContainerName)
-				if got, want := runtime.Resources.Limits.Memory().Value(), min(policyLimit, int64(float64(int64(4<<30))*fraction)); got != want {
-					t.Fatalf("runtime memory limit = %d, want %d (min(policy, 4Gi * %g))", got, want, fraction)
-				}
-				if got := runtime.Resources.Requests.Memory().Value(); got != resolved.ExecutionPolicy.Policy.RuntimeMemoryRequestBytes {
-					t.Fatalf("existing memory request changed: %d", got)
-				}
-				for _, container := range job.Spec.Template.Spec.InitContainers {
-					if got, want := container.Resources.Limits.Memory().Value(), runtime.Resources.Limits.Memory().Value(); got != want {
-						t.Fatalf("init %s memory limit = %d, want runtime limit %d", container.Name, got, want)
-					}
-					if got := container.Resources.Requests.Memory().Value(); got != resolved.ExecutionPolicy.Policy.RuntimeMemoryRequestBytes {
-						t.Fatalf("init %s does not share the runtime scheduling request: %d", container.Name, got)
-					}
-				}
-				// Recovery uses the immutable Job spec, not new settings or Node facts.
-				jobs.options.MeasurementMemoryFraction = 0.25
-				if err := kube.Delete(context.Background(), node); err != nil {
-					t.Fatal(err)
-				}
-				if _, created, err := jobs.Ensure(context.Background(), run, resolved); err != nil || created {
-					t.Fatalf("recover retained Job: created=%v err=%v", created, err)
-				}
-			})
+func TestExecutionJobsKeepFrozenActorMemoryWithoutNodeLookup(t *testing.T) {
+	run := testRun()
+	resolved := resolvedRunForPrepared(t, currentPreparedRun(t))
+	resolved.Prepared.RunConfig.Actor.MemoryRequestBytes = 256 << 20
+	resolved.Prepared.RunConfig.Actor.MemoryLimitBytes = 2 << 30
+	scheme := executionJobTestScheme(t)
+	kube := fake.NewClientBuilder().WithScheme(scheme).Build()
+	jobs, err := NewExecutionJobs(kube, scheme, staticEvidenceStoreResolver{binding: testEvidenceStoreBinding()}, testExecutionJobOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, created, err := jobs.Ensure(context.Background(), run, resolved)
+	if err != nil || !created {
+		t.Fatalf("create Job without current Node facts: created=%v err=%v", created, err)
+	}
+	runtime := findContainer(t, job.Spec.Template.Spec.Containers, runtimeContainerName)
+	for _, container := range append(slices.Clone(job.Spec.Template.Spec.InitContainers), runtime) {
+		if container.Resources.Requests.Memory().Value() != 256<<20 || container.Resources.Limits.Memory().Value() != 2<<30 {
+			t.Fatalf("%s did not retain frozen memory: %#v", container.Name, container.Resources)
 		}
+	}
+	raw, err := runConfigArgument(runtime.Args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded profilingrun.RunConfig
+	if err := json.Unmarshal([]byte(raw), &recorded); err != nil {
+		t.Fatal(err)
+	}
+	if recorded.Actor.MemoryRequestBytes != 256<<20 || recorded.Actor.MemoryLimitBytes != 2<<30 {
+		t.Fatalf("serialized actor differs from actual Job memory: %#v", recorded.Actor)
+	}
+	if _, created, err := jobs.Ensure(context.Background(), run, resolved); err != nil || created {
+		t.Fatalf("recover retained Job: created=%v err=%v", created, err)
+	}
+}
+
+func TestServingPodAndMeasurementJobProjectTheSameFrozenConfig(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint(changed), func(t *testing.T) {
+			prepared := currentPreparedRun(t)
+			if changed {
+				actor := &prepared.RunConfig.Actor
+				actor.RuntimeImage = "registry.example/frozen-runtime:changed"
+				actor.ArtifactImage, actor.ArtifactFiles = "registry.example/frozen-artifact:changed", []string{"/changed/model.onnx"}
+				actor.PreprocessorImage, actor.PreprocessorPath = "registry.example/frozen-preprocessor:changed", "/changed/preprocessor"
+				actor.MemoryRequestBytes, actor.MemoryLimitBytes = 256<<20, 2<<30
+				actor.GPUUUID, actor.AcceleratorResource = "GPU-frozen", "nvidia.com/gpu"
+			}
+			actor := prepared.RunConfig.Actor
+			job, err := buildExecutionJob(testRun(), resolvedRunForPrepared(t, prepared), testEvidenceStoreBinding(), testExecutionJobOptions(), executionJobTestScheme(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile := &serving.Profile{ID: "frozen-profile", RuntimeMetadata: &firstfloor.RuntimeMetadata{GPUUUID: actor.GPUUUID}}
+			profile.Condition.Actor = actor
+			profile.Condition.NodeUID = prepared.RunConfig.TargetNode.UID
+			profile.Condition.Firstfloor = prepared.RunConfig.State.Firstfloor
+			profile.Condition.Backend = prepared.RunConfig.State.Backend
+			profile.Condition.Artifact.Image = prepared.RunConfig.Images.Artifact
+			profile.Condition.Artifact.Files = prepared.RunConfig.State.ArtifactFiles
+			profile.Condition.Preprocessor.Image = prepared.RunConfig.State.Preprocessor.Image
+			profile.Condition.Preprocessor.Path = prepared.RunConfig.State.Preprocessor.Path
+			servingConfig := actor
+			servingConfig.Mode, servingConfig.ProfilePath = servingstate.NativeServingMode, "/profile/bundle.json"
+			servingConfig.Policy.ProfileID = profile.ID
+			spec := servingstate.PrepareSpec{
+				Name: "frozen-instance", Config: servingConfig, Store: testEvidenceStoreBinding(),
+				Bundle:      evidencestore.ObjectIdentity{Store: testEvidenceStoreBinding().Store, Key: "bundle", Size: 1},
+				MemoryBytes: uint64(actor.MemoryLimitBytes),
+				Instance: serving.SchedulerInstance{
+					Profile: profile, Node: serving.NodeReference{Name: prepared.RunConfig.TargetNode.Name, UID: prepared.RunConfig.TargetNode.UID},
+					Allocation: serving.SchedulerAllocation{MemoryBytes: uint64(actor.MemoryLimitBytes), GPUUUID: actor.GPUUUID},
+				},
+			}
+			// No Observer/current-image resolver exists in this actual Pod builder.
+			o := &operations.Operations{Config: operations.OperationConfig{Namespace: "measurements"}}
+			pod, _, err := o.PreparationPod(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			worker := pod.Spec.Containers[0]
+			measurement := findContainer(t, job.Spec.Template.Spec.Containers, runtimeContainerName)
+			if worker.Image != actor.RuntimeImage || measurement.Image != actor.RuntimeImage ||
+				!reflect.DeepEqual(worker.Resources, measurement.Resources) {
+				t.Fatalf("real Pod/Job performance projection differs: serving=%#v measurement=%#v", worker, measurement)
+			}
+			for _, container := range []corev1.Container{worker, measurement} {
+				if container.Resources.Requests.Memory().Value() != actor.MemoryRequestBytes || container.Resources.Limits.Memory().Value() != actor.MemoryLimitBytes {
+					t.Fatalf("%s ignored Config memory mutation", container.Name)
+				}
+				for _, path := range []string{"/model", "/preprocessor"} {
+					if !reflect.DeepEqual(findMountPath(t, worker.VolumeMounts, path), findMountPath(t, measurement.VolumeMounts, path)) {
+						t.Fatalf("shared artifact/preprocessor mounts differ at %s", path)
+					}
+				}
+				if changed {
+					if !slices.Contains(container.Env, corev1.EnvVar{Name: "CUDA_VISIBLE_DEVICES", Value: actor.GPUUUID}) {
+						t.Fatalf("%s ignored Config GPU mutation: %#v", container.Name, container)
+					}
+					gpu := container.Resources.Limits[corev1.ResourceName(actor.AcceleratorResource)]
+					if gpu.Value() != 1 {
+						t.Fatalf("%s ignored Config accelerator resource", container.Name)
+					}
+				} else if _, hasCPU := container.Resources.Limits[corev1.ResourceCPU]; hasCPU || slices.ContainsFunc(container.Env, func(env corev1.EnvVar) bool { return env.Name == "CUDA_VISIBLE_DEVICES" }) {
+					t.Fatalf("%s changed default CPU/GPU environment", container.Name)
+				}
+			}
+			for _, containers := range [][]corev1.Container{pod.Spec.InitContainers, job.Spec.Template.Spec.InitContainers} {
+				if containers[0].Image != actor.ArtifactImage || containers[1].Image != actor.PreprocessorImage ||
+					!slices.Contains(containers[0].Args, actor.ArtifactFiles[0]) || !slices.Contains(containers[1].Args, actor.PreprocessorPath) {
+					t.Fatalf("copy init ignored frozen Config recipe: %#v", containers)
+				}
+			}
+			if pod.Spec.InitContainers[2].Image != actor.RuntimeImage {
+				t.Fatal("profile materializer looked up another runtime image")
+			}
+		})
 	}
 }
 
@@ -193,10 +275,10 @@ func assertDeliveryTopology(t *testing.T, pod corev1.PodSpec, config profilingru
 		name, image, mount string
 		args               []string
 	}{
-		{"artifact", config.Images.Artifact, "/chill-artifact",
-			append([]string{`cp "$@" /chill-artifact/`, "artifact-copy"}, config.State.ArtifactFiles...)},
-		{"preprocessor", config.State.Preprocessor.Image, "/chill-preprocessor",
-			[]string{`cp -R "$1"/. /chill-preprocessor/`, "--", config.State.Preprocessor.Path}},
+		{"artifact", config.Actor.ArtifactImage, "/chill-artifact",
+			append([]string{`cp "$@" /chill-artifact/`, "artifact-copy"}, config.Actor.ArtifactFiles...)},
+		{"preprocessor", config.Actor.PreprocessorImage, "/chill-preprocessor",
+			[]string{`cp -R "$1"/. /chill-preprocessor/`, "--", config.Actor.PreprocessorPath}},
 		{"dataset", config.Measurement.Dataset.Image, "/chill-dataset",
 			[]string{`cp -R "$1"/profiling/. /chill-dataset/`, "--", config.Measurement.Dataset.Path}},
 	} {
@@ -328,12 +410,14 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	run := testRun()
 	settling := int32(60)
 	run.Spec.Measurement.WarmupIterations = 0
+	run.Spec.Measurement.StartupWarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	run.Spec.Measurement.Dataset = ""
+	run.Spec.Measurement.Workload = ""
 	prepared := currentPreparedRun(t)
 	prepared.RunConfig.Measurement = profilingrun.MeasurementContract{
-		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60,
+		Batch: 1, WarmupIterations: 0, SettlingDurationSeconds: 60, WarmupBatchSizes: []int{1},
 		DurationSeconds:          30,
 		DurationToleranceSeconds: .5,
 		WorkloadMode:             profilingrun.IdleModelLoadedWorkloadMode,
@@ -571,7 +655,6 @@ func testExecutionJobOptions() ExecutionJobOptions {
 	return ExecutionJobOptions{
 		WorkloadObserverServiceAccountName: "chill-workload-observer",
 		WorkloadObserverKubeAPIServer:      "https://kubernetes.example:6443",
-		MeasurementMemoryFraction:          0.8,
 	}
 }
 
@@ -582,6 +665,9 @@ func currentPreparedRun(t *testing.T) profiler.PreparedRun {
 	prepared.RunConfig.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	prepared.RunConfig.Images.WorkloadObserver = testWorkloadObserverImage
 	prepared.RunConfig.Workload = profilingrun.CurrentWorkloadContract()
+	prepared.RunConfig.Actor = prepared.RunConfig.ActorConfig()
+	prepared.RunConfig.Actor.MemoryRequestBytes = 128 << 20
+	prepared.RunConfig.Actor.MemoryLimitBytes = 1 << 30
 	return prepared
 }
 
@@ -632,6 +718,9 @@ func currentRKNNPreparedRun(t *testing.T, resourceName string) profiler.Prepared
 			Privileged: true, SupplementalGroups: []int64{44, 110},
 		},
 	}
+	config.Actor = config.ActorConfig()
+	config.Actor.MemoryRequestBytes = 128 << 20
+	config.Actor.MemoryLimitBytes = 1 << 30
 	return prepared
 }
 

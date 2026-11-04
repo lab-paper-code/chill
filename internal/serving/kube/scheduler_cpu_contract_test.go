@@ -29,7 +29,13 @@ func measuredCPUPreparationFixture() servingstate.PrepareSpec {
 		Instance: serving.SchedulerInstance{ID: "measured-slot", Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: &profile, Weight: 1, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}},
 		Store:    storekube.Binding{Store: "evidence", Endpoint: "http://evidence", Bucket: "bucket", Region: "region", CredentialsSecretName: "credentials"},
 		Bundle:   evidencestore.ObjectIdentity{Store: "evidence", Key: "bundle", Size: 1},
-		Config:   native.Config{Mode: "serving", Model: "chill_model", ProfilePath: "/profile/bundle.json", Policy: native.Policy{DecisionID: "bootstrap", ProfileID: profile.ID, MaxBatchSize: 1}},
+		Config: native.Config{
+			Mode: "serving", Model: profile.Condition.Actor.Model, ProfilePath: "/profile/bundle.json",
+			RuntimeImage: profile.Condition.RuntimeImage, MemoryRequestBytes: 1024, MemoryLimitBytes: 1024,
+			ArtifactImage: profile.Condition.Artifact.Image, ArtifactFiles: profile.Condition.Artifact.Files,
+			PreprocessorImage: profile.Condition.Preprocessor.Image, PreprocessorPath: profile.Condition.Preprocessor.Path,
+			Policy: native.Policy{DecisionID: "bootstrap", ProfileID: profile.ID, MaxBatchSize: 1},
+		},
 	}
 }
 

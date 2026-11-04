@@ -3,10 +3,54 @@ package profilingrun
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 )
+
+func TestActiveTrialRequiresBothElapsedWindowAndNativeSampleCoverage(t *testing.T) {
+	config := firstfloorRunConfig()
+	config.Measurement.DurationToleranceSeconds = .5
+	for _, test := range []struct {
+		name    string
+		elapsed float64
+		count   int
+		valid   bool
+	}{
+		{"sample limited complete", 118, 59, true},
+		{"time limited complete", 30, 120, true},
+		{"time alone is insufficient", 118, 58, false},
+		{"samples alone are insufficient", 29.9, 59, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := firstfloorResult(config)
+			result.MeasurementElapsedSeconds = test.elapsed
+			started, err := time.Parse(time.RFC3339Nano, result.MeasurementStartedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.MeasurementEndedAt = started.Add(time.Duration(test.elapsed * float64(time.Second))).Format(time.RFC3339Nano)
+			result.InferenceCount = test.count
+			result.Firstfloor.ExecutionCount = uint64(test.count)
+			result.Firstfloor.InferenceCount = uint64(test.count)
+			result.Firstfloor.BatchExecutionCounts["1"] = uint64(test.count)
+			repetition := &result.RepetitionResults[0]
+			repetition.MeasurementEndedAt = result.MeasurementEndedAt
+			template := repetition.NativeSamples[0]
+			repetition.LatencyMilliseconds = make([]float64, test.count)
+			repetition.NativeSamples = make([]NativeServiceSample, test.count)
+			for index := range repetition.NativeSamples {
+				repetition.LatencyMilliseconds[index] = 1
+				repetition.NativeSamples[index] = template
+				repetition.NativeSamples[index].BatchID = uint64(index + 1)
+			}
+			if err := ValidateRuntime(config, "pod-uid", result); (err == nil) != test.valid {
+				t.Fatalf("valid=%t, error=%v", test.valid, err)
+			}
+		})
+	}
+}
 
 func firstfloorRunConfig() RunConfig {
 	config := validRunConfig()
@@ -26,17 +70,21 @@ func firstfloorResult(config RunConfig) RuntimeResult {
 	result.Firstfloor = &FirstfloorRuntimeEvidence{
 		Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,
 		DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy),
-		ExecutionCount: 1, InferenceCount: 1, BatchExecutionCounts: map[string]uint64{"1": 1},
+		ExecutionCount: uint64(result.InferenceCount), InferenceCount: uint64(result.InferenceCount),
+		BatchExecutionCounts: map[string]uint64{"1": uint64(result.InferenceCount)},
 		Runtime: firstfloor.RuntimeMetadata{Runtime: FirstfloorORTCPUBackend, RuntimeVersion: result.RuntimeVersion,
 			ModelFiles: config.State.ModelFiles(), Inputs: config.State.Preprocessor.Inputs,
 			Outputs: config.State.Preprocessor.Outputs, Providers: []string{cpuExecutionProvider},
 			AvailableProviders: []string{cpuExecutionProvider}, Device: "cpu", CPUAffinity: []int{0, 1, 2, 3},
 			IntraOpThreads: 4, InterOpThreads: 1, InitializedBatches: []int{1, 2, 4}, CgroupCPUMax: "400000 100000", CPUSet: "0-3"},
 	}
-	result.RepetitionResults[0].NativeSamples = []NativeServiceSample{{BatchID: 21, BatchSize: 1,
-		RecordIDs: []string{"262148000"}, Units: []int{1}, RunnerServiceMilliseconds: 0.7,
-		PreprocessMilliseconds: 0.1, BackendCallMilliseconds: 0.4, PostprocessMilliseconds: 0.1,
-		NativeRequestMilliseconds: 0.9}}
+	result.RepetitionResults[0].NativeSamples = make([]NativeServiceSample, result.InferenceCount)
+	for index := range result.RepetitionResults[0].NativeSamples {
+		result.RepetitionResults[0].NativeSamples[index] = NativeServiceSample{BatchID: uint64(21 + index), BatchSize: 1,
+			RecordIDs: []string{"262148000"}, Units: []int{1}, RunnerServiceMilliseconds: 0.7,
+			PreprocessMilliseconds: 0.1, BackendCallMilliseconds: 0.4, PostprocessMilliseconds: 0.1,
+			NativeRequestMilliseconds: 0.9}
+	}
 	return result
 }
 
@@ -110,7 +158,9 @@ func TestFirstfloorGenerativeNativeSamplesRequireFirstToken(t *testing.T) {
 	if err := ValidateRuntime(config, "pod-uid", result); err == nil {
 		t.Fatal("generative native sample without a first-token span was accepted")
 	}
-	result.RepetitionResults[0].NativeSamples[0].FirstTokenMilliseconds = 0.3
+	for index := range result.RepetitionResults[0].NativeSamples {
+		result.RepetitionResults[0].NativeSamples[index].FirstTokenMilliseconds = 0.3
+	}
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}

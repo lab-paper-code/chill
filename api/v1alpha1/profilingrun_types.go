@@ -84,7 +84,8 @@ type ProfilingRunCandidateSpec struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
-// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) : !has(self.settlingDurationSeconds) && has(self.dataset)",message="measurement fields must match the selected workloadMode"
+// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) && !has(self.workload) : !has(self.settlingDurationSeconds) && has(self.dataset) && has(self.workload)",message="measurement fields must match the selected workloadMode"
+// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' || self.durationSeconds >= 30",message="active measurement requires at least thirty seconds"
 type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Batch int32 `json:"batch"`
@@ -116,6 +117,41 @@ type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	Dataset string `json:"dataset,omitempty"`
+
+	// Workload names the cluster-scoped source of the active stop-policy SLO.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Workload string `json:"workload,omitempty"`
+
+	// WorkloadUID freezes the source identity for campaign children. Together
+	// with the SLO fields below it bypasses mutable Workload resolution.
+	// +optional
+	WorkloadUID string `json:"workloadUID,omitempty"`
+
+	// WorkloadResourceVersion records provenance only, never admission identity.
+	// +optional
+	WorkloadResourceVersion string `json:"workloadResourceVersion,omitempty"`
+
+	// +optional
+	SLOPercentile float64 `json:"sloPercentile,omitempty"`
+
+	// +optional
+	SLOTargetLatencyNanos int64 `json:"sloTargetLatencyNanos,omitempty"`
+
+	// MinServiceSamples is the native sample count derived from SLOPercentile.
+	// +optional
+	MinServiceSamples int32 `json:"minServiceSamples,omitempty"`
+
+	// WarmupBatchSizes freezes the campaign's complete planned warmup domain.
+	// +optional
+	// +kubebuilder:validation:items:Minimum=1
+	WarmupBatchSizes []int32 `json:"warmupBatchSizes,omitempty"`
+
+	// StartupWarmupIterations is derived from the campaign's active protocol,
+	// including for idle actors; it is not the idle measurement call count.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	StartupWarmupIterations int32 `json:"startupWarmupIterations,omitempty"`
 }
 
 // ProfilingRunMetricObservationSpec contains policy only, never an endpoint.

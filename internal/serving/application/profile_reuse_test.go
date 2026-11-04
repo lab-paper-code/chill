@@ -30,6 +30,8 @@ func TestMeasuredReusePreparationKeepsTargetIdentity(t *testing.T) {
 	profile.ID = "measurements/confirmation/uid/reuse"
 	profile.NodeName, profile.Condition.NodeUID = "genesis3", "target-uid"
 	profile.RuntimeMetadata.GPUUUID = "GPU-target"
+	profile.Condition.Actor.GPUUUID = profile.RuntimeMetadata.GPUUUID
+	profile.Condition.Actor.BuildRunnerCommand()
 	profile.Reuse = &serving.ProfileReuseCheck{
 		SourceProfileID: "measurements/original/uid", ConfirmationProfileID: "measurements/confirmation/uid",
 		SourceNode: serving.NodeReference{Name: "genesis2", UID: "source-uid"},

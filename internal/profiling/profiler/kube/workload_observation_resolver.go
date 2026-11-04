@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -92,4 +94,30 @@ func (r *KubernetesWorkloadObservationResolver) ResolveWorkloadObservation(
 		return profiler.ResolvedWorkloadObservation{}, errors.New("workload-observer image is required without surrounding whitespace")
 	}
 	return profiler.ResolvedWorkloadObservation{Image: facts.Image}, nil
+}
+
+// ResolveMeasurementWorkload reads the actual Workload, never an assumed p95.
+func (r *KubernetesWorkloadObservationResolver) ResolveMeasurementWorkload(
+	ctx context.Context, name string, selection profiler.CandidateSelection,
+) (profilingrun.MeasurementContract, error) {
+	workload := &edgev1alpha1.Workload{}
+	if err := r.reader.Get(ctx, types.NamespacedName{Name: name}, workload); err != nil {
+		return profilingrun.MeasurementContract{}, fmt.Errorf("get measurement Workload %q: %w", name, err)
+	}
+	if workload.UID == "" || workload.ResourceVersion == "" ||
+		workload.Spec.ModelRef.Name != selection.ModelSpec ||
+		workload.Spec.PreprocessorRef.Name != selection.Preprocessor ||
+		workload.Spec.DatasetRef == nil || workload.Spec.DatasetRef.Name != selection.Dataset ||
+		workload.Spec.SLO.TargetLatency.Duration <= 0 {
+		return profilingrun.MeasurementContract{}, errors.New("measurement Workload identity, model, preprocessor, dataset or SLO differs from the selected measurement")
+	}
+	minimum, err := profilingrun.MinimumServiceSamples(workload.Spec.SLO.Percentile)
+	if err != nil {
+		return profilingrun.MeasurementContract{}, err
+	}
+	return profilingrun.MeasurementContract{
+		WorkloadName: workload.Name, WorkloadUID: string(workload.UID), WorkloadResourceVersion: workload.ResourceVersion,
+		SLOPercentile: workload.Spec.SLO.Percentile, SLOTargetLatencyNanos: workload.Spec.SLO.TargetLatency.Duration.Nanoseconds(),
+		MinServiceSamples: minimum,
+	}, nil
 }

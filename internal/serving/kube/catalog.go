@@ -425,6 +425,10 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			}
 		}
 	}
+	condition, err = profilerprojection.ProjectMeasuredCurveCondition(condition, active[0])
+	if err != nil {
+		return serving.Profile{}, nil, err
+	}
 	profile := serving.Profile{
 		ID: source.String() + "/" + string(campaign.UID), Reference: resultReference,
 		NodeName: state.TargetNode, Condition: condition, Evidence: evidenceReferences,

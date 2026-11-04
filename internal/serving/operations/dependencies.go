@@ -26,7 +26,6 @@ type removalState interface {
 type sourceObserver interface {
 	Refresh(context.Context) error
 	RefreshWithin(context.Context, time.Duration) error
-	CurrentRuntimeImage(context.Context, *serving.Profile) (string, error)
 	RestoreRemovalSource(*core.Pod, string, string) error
 	ObserveRemovalStopped(*core.Pod) bool
 	RetireRemovedSource(types.UID, *serving.Runtime) error

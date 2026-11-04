@@ -510,6 +510,7 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 		resolvers.metrics,
 		resolvers.workloads,
 		resolvers.actuation,
+		resolvers,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -520,6 +521,12 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
 	measurement := config.Measurement
 	measurement.Dataset = nil
+	measurement.WorkloadName = ""
+	measurement.WorkloadUID = ""
+	measurement.WorkloadResourceVersion = ""
+	measurement.SLOPercentile = 0
+	measurement.SLOTargetLatencyNanos = 0
+	measurement.MinServiceSamples = 0
 	request := PreparationRequest{
 		Candidate: CandidateSelection{
 			ModelSpec:     config.State.Model,
@@ -530,6 +537,7 @@ func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
 			Preprocessor:  config.State.Preprocessor.Name,
 		},
 		TargetNode:  config.TargetNode.Name,
+		Workload:    config.Measurement.WorkloadName,
 		Measurement: measurement,
 		Metrics: MetricObservationPolicy{
 			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
@@ -557,6 +565,9 @@ func preparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050.onnx"}
 	config.Images.WorkloadObserver = "registry.example/workload-observer@sha256:" + strings.Repeat("d", 64)
 	config.Workload = profilingrun.CurrentWorkloadContract()
+	config.Actor = config.ActorConfig()
+	config.Actor.MemoryRequestBytes = 128 << 20
+	config.Actor.MemoryLimitBytes = 1 << 30
 	candidateBytes, err := os.ReadFile("testdata/candidate-report.json")
 	if err != nil {
 		t.Fatal(err)
@@ -635,6 +646,9 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 	}
 	config.Candidate.Inputs = report.Inputs
 	config.Delivery = report.RuntimeDelivery()
+	config.Actor = config.ActorConfig()
+	config.Actor.MemoryRequestBytes = 128 << 20
+	config.Actor.MemoryLimitBytes = 1 << 30
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -675,9 +689,15 @@ func fixtureResolvers(config profilingrun.RunConfig, report []byte) *fakePrepara
 		}},
 		workloads: &fakeWorkloadObservationResolver{result: ResolvedWorkloadObservation{
 			Image: config.Images.WorkloadObserver,
-		}},
+		}, measurement: config.Measurement},
 		actuation: &fakeActuationPolicyResolver{},
 	}
+}
+
+func (r *fakePreparationResolvers) Resolve(_ context.Context, config profilingrun.RunConfig) (FrozenExecutionPolicy, error) {
+	policy := testExecutionPolicySpec(config.Measurement.WorkloadMode)
+	return FrozenExecutionPolicy{SchemaVersion: FrozenExecutionPolicySchemaVersion, Source: validExecutionPolicySource(),
+		Policy: ExecutionPolicy{SchemaVersion: ExecutionPolicySchemaVersion, ExecutionPolicySpec: policy}}, nil
 }
 
 type fakeCandidateResolver struct {
@@ -718,9 +738,10 @@ type fakeMetricResolver struct {
 }
 
 type fakeWorkloadObservationResolver struct {
-	result ResolvedWorkloadObservation
-	err    error
-	calls  int
+	result      ResolvedWorkloadObservation
+	err         error
+	calls       int
+	measurement profilingrun.MeasurementContract
 }
 
 type fakeActuationPolicyResolver struct {
@@ -744,6 +765,12 @@ func (r *fakeWorkloadObservationResolver) ResolveWorkloadObservation(
 ) (ResolvedWorkloadObservation, error) {
 	r.calls++
 	return r.result, r.err
+}
+
+func (r *fakeWorkloadObservationResolver) ResolveMeasurementWorkload(
+	context.Context, string, CandidateSelection,
+) (profilingrun.MeasurementContract, error) {
+	return r.measurement, nil
 }
 
 func (r *fakeMetricResolver) ResolveMetricSource(_ context.Context, nodeName string) (ResolvedMetricSource, error) {

@@ -152,7 +152,7 @@ func TestObserverRetainsRestartedServingProcess(t *testing.T) {
 		go func() {
 			time.Sleep(4 * time.Millisecond)
 			pod := readyPod("serving-new", "containerd://new", 1)
-			created <- errors.Join(kubeClient.Create(context.Background(), executorService(pod)), kubeClient.Create(context.Background(), pod))
+			created <- errors.Join(kubeClient.Create(context.Background(), executorService(pod)), kubeClient.Create(context.Background(), executorConfig(t, pod)), kubeClient.Create(context.Background(), pod))
 		}()
 	})
 	if err != nil {
@@ -305,7 +305,7 @@ func TestObserverDoesNotCloseOnAmbiguousPostReadBackPods(t *testing.T) {
 		// With its executor Service, the native read of either Pod succeeds,
 		// so only the ambiguity keeps the observation open.
 		pod := readyPod("serving-b", "containerd://b", 0)
-		if err := errors.Join(kubeClient.Create(context.Background(), executorService(pod)), kubeClient.Create(context.Background(), pod)); err != nil {
+		if err := errors.Join(kubeClient.Create(context.Background(), executorService(pod)), kubeClient.Create(context.Background(), executorConfig(t, pod)), kubeClient.Create(context.Background(), pod)); err != nil {
 			t.Fatalf("create ambiguous serving Pod: %v", err)
 		}
 		ready = true
@@ -446,11 +446,11 @@ func newObserver(t *testing.T, reader client.Reader, request transitionkube.Requ
 		t.Fatalf("New() error = %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v2/models/chill_model/state" {
+		if r.URL.Path != "/v2/models/"+request.Model+"/state" {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{Mode: "serving", ProfileID: "fixture-profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}})
+		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{Model: request.Model, Mode: "serving", ProfileID: "fixture-profile", Runtime: native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "fixture", ModelFiles: []string{"/model/model.onnx"}, CPUAffinity: []int{0}, IntraOpThreads: 1}}})
 	}))
 	t.Cleanup(server.Close)
 	endpoint, _ := url.Parse(server.URL)
@@ -471,6 +471,7 @@ func newClient(t *testing.T, objects ...client.Object) client.WithWatch {
 	for _, object := range objects {
 		if pod, ok := object.(*corev1.Pod); ok {
 			objects = append(objects, executorService(pod))
+			objects = append(objects, executorConfig(t, pod))
 		}
 	}
 	sourceAt := time.Now().UTC().Add(-time.Hour)
@@ -490,6 +491,15 @@ func executorService(pod *corev1.Pod) *corev1.Service {
 		Spec: corev1.ServiceSpec{ClusterIP: "10.96.0.10", Selector: map[string]string{"edge.dacs.io/serving-pod-uid": string(pod.UID)},
 			Ports: []corev1.ServicePort{{Name: "http", Protocol: corev1.ProtocolTCP, Port: 8080}}},
 	}
+}
+
+func executorConfig(t *testing.T, pod *corev1.Pod) *corev1.ConfigMap {
+	t.Helper()
+	raw, err := json.Marshal(native.Config{Model: testRequest().Model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: pod.Name}, Data: map[string]string{"config.json": string(raw)}}
 }
 
 type nativeHTTPTransport struct{ endpoint *url.URL }

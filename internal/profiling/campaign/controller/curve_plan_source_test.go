@@ -7,19 +7,27 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+const curvePlanWorkloadUID = "workload-uid"
 
 func TestCurvePlanSourcePlansBatchFourWithBatchOneIdle(t *testing.T) {
 	for _, declared := range []bool{false, true} {
@@ -94,6 +102,7 @@ func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 		shared.Conversion.TargetPlatform != "cpu" {
 		t.Fatalf("recorded curve plan = %+v", shared)
 	}
+	assertFrozenWorkloadStartup(t, shared, parent, wantBatches)
 	wantKey := "batch-energy-optimizations/parent-uid/curve-plan.json"
 	if store.puts != 1 || store.opens != 1 || store.lastIdentity.Key != wantKey {
 		t.Fatalf("first record calls = puts %d, opens %d, identity %+v", store.puts, store.opens, store.lastIdentity)
@@ -125,6 +134,148 @@ func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 		recoveredReference.Size != int64(len(storedPayload)) {
 		t.Fatalf("recovery = reference %+v, puts %d, opens %d, prepares %d",
 			recoveredReference, store.puts, store.opens, len(preparer.requests))
+	}
+}
+
+func TestCurvePlanSourceRecoversFrozenWorkloadBeforeChildren(t *testing.T) {
+	for _, mutation := range []string{"status-only", "slo", "p100", "tuple", "deleted", "recreated"} {
+		t.Run(mutation, func(t *testing.T) {
+			ctx := context.Background()
+			config := curveFixtureRunConfig(t)
+			payload, err := os.ReadFile("../../profiler/testdata/candidate-report.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			report, err := profilingrun.DecodeCandidateReport(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := curvePlanModel(report)
+			model.Spec.Artifacts[0].Derivation = nil
+			parent := testParent()
+			parent.Spec.State = edgev1alpha1.MeasurementStateSpec{
+				TargetNode: config.TargetNode.Name,
+				Candidate: edgev1alpha1.ProfilingRunCandidateSpec{
+					ModelSpec: config.State.Model, DeviceClass: config.State.DeviceClass,
+					ExecutionPath: config.Candidate.ExecutionPath, PowerMode: profilingrun.FixedPowerMode,
+					Preprocessor: config.State.Preprocessor.Name,
+				},
+			}
+			parent.Spec.BatchSizes = []int32{1}
+			parent.Spec.ActiveProtocol.DurationSeconds = 30
+			parent.Spec.ActiveProtocol.Dataset = config.Measurement.Dataset.Name
+			metric := edgev1alpha1.ProfilingRunMetricObservationSpec{
+				IntervalMilliseconds: int32(config.Metrics.IntervalMilliseconds),
+				TimeoutMilliseconds:  int32(config.Metrics.TimeoutMilliseconds),
+				DurationSeconds:      int32(config.Metrics.DurationSeconds),
+			}
+			parent.Spec.ActiveProtocol.MetricObservation = metric
+			parent.Spec.IdleProtocol.MetricObservation = metric
+			workload := &edgev1alpha1.Workload{
+				ObjectMeta: metav1.ObjectMeta{Name: parent.Spec.ActiveProtocol.Workload, UID: curvePlanWorkloadUID, ResourceVersion: "7"},
+				Spec: edgev1alpha1.WorkloadSpec{
+					ModelRef:        edgev1alpha1.CatalogReference{Name: config.State.Model},
+					PreprocessorRef: edgev1alpha1.CatalogReference{Name: config.State.Preprocessor.Name},
+					DatasetRef:      &edgev1alpha1.CatalogReference{Name: config.Measurement.Dataset.Name},
+					SLO:             edgev1alpha1.WorkloadSLO{Percentile: 95, TargetLatency: metav1.Duration{Duration: time.Second}},
+				},
+			}
+			scheme := runtime.NewScheme()
+			if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			native := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&edgev1alpha1.Workload{}).
+				WithObjects(parent, model, workload).Build()
+			workloads, err := profilerkube.NewKubernetesWorkloadObservationResolver(native, profilerkube.WorkloadObservationResolverOptions{
+				Namespace: parent.Namespace, ConfigMapName: "unused-image-source", ConfigMapKey: "facts",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ports := &frozenWorkloadPreparationPorts{config: config, report: payload, workloads: workloads}
+			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recording := &recordingCurvePlanPreparer{preparer: preparer}
+			store := newFakeCurvePlanStore()
+			options := CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20}
+			source, err := NewCurvePlanSource(native, ports, recording, store, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, reference, _, err := source.Resolve(ctx, parent)
+			if err != nil {
+				t.Fatalf("freeze plan through production preparation: %v", err)
+			}
+			if len(recording.prepared) != 2 || ports.workloadResolutions != 1 {
+				t.Fatalf("initial prepares=%d, Workload resolutions=%d", len(recording.prepared), ports.workloadResolutions)
+			}
+			original := recording.prepared[0].RunConfig
+			mutateFrozenWorkload(t, native, workload, mutation)
+			// Restart with a recorded plan and no child Runs. Recovery must pass
+			// the frozen source to the real Preparer, not re-read the Workload.
+			restarted, err := NewCurvePlanSource(native, ports, recording, store, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recovered, recoveredReference, transition, err := restarted.Resolve(ctx, parent)
+			if err != nil {
+				t.Fatalf("recover before children after %s: %v", mutation, err)
+			}
+			counts := [3]int{len(recording.prepared), ports.workloadResolutions, store.puts}
+			if counts != [3]int{3, 1, 1} || transition != nil ||
+				reference != recoveredReference || !reflect.DeepEqual(plan.Shared(), recovered.Shared()) {
+				t.Fatalf("recovery prepares=%d, Workload resolutions=%d, writes=%d, transition=%+v",
+					len(recording.prepared), ports.workloadResolutions, store.puts, transition)
+			}
+			active := recording.prepared[2].RunConfig
+			if active.Measurement.WorkloadUID != curvePlanWorkloadUID || active.Measurement.WorkloadResourceVersion != "7" ||
+				active.Measurement.WorkloadName != workload.Name || active.Measurement.SLOPercentile != 95 ||
+				active.Measurement.MinServiceSamples != 59 || active.Measurement.SLOTargetLatencyNanos != int64(time.Second) ||
+				active.State.Model != original.State.Model || active.State.Preprocessor.Name != original.State.Preprocessor.Name ||
+				!reflect.DeepEqual(active.Measurement.Dataset, original.Measurement.Dataset) ||
+				!reflect.DeepEqual(active.Actor, original.Actor) {
+				t.Fatalf("recovery changed the frozen recipe or Workload contract: %+v", active)
+			}
+			runs := &edgev1alpha1.ProfilingRunList{}
+			if err := native.List(ctx, runs); err != nil || len(runs.Items) != 0 {
+				t.Fatalf("pre-child recovery Runs=%+v, err=%v", runs.Items, err)
+			}
+		})
+	}
+}
+
+type recordingCurvePlanPreparer struct {
+	preparer *profiler.Preparer
+	prepared []profiler.PreparedRun
+}
+
+func (p *recordingCurvePlanPreparer) Prepare(ctx context.Context, request profiler.PreparationRequest) (profiler.PreparedRun, error) {
+	prepared, err := p.preparer.Prepare(ctx, request)
+	if err == nil {
+		p.prepared = append(p.prepared, prepared)
+	}
+	return prepared, err
+}
+
+func assertFrozenWorkloadStartup(
+	t *testing.T, shared profilederivation.CurvePlanSpec,
+	parent *edgev1alpha1.BatchEnergyOptimization, batches []int,
+) {
+	t.Helper()
+	if shared.ActiveProtocol.SLOPercentile != 95 || shared.ActiveProtocol.MinServiceSamples != 59 ||
+		shared.ActiveProtocol.SLOTargetLatencyNanos != 1_000_000_000 ||
+		shared.ActiveProtocol.WorkloadName != parent.Spec.ActiveProtocol.Workload ||
+		shared.ActiveProtocol.WorkloadUID != curvePlanWorkloadUID || shared.ActiveProtocol.WorkloadResourceVersion != "1" {
+		t.Fatalf("recorded Workload contract = %+v", shared.ActiveProtocol)
+	}
+	if shared.Actor.WarmupIterations != int(parent.Spec.ActiveProtocol.WarmupIterations) ||
+		shared.ActiveProtocol.StartupWarmupIterations != shared.Actor.WarmupIterations ||
+		shared.IdleProtocol.StartupWarmupIterations != shared.Actor.WarmupIterations ||
+		!slices.Equal(shared.Actor.WarmupBatchSizes, batches) {
+		t.Fatalf("recorded common startup = %+v, active=%+v, idle=%+v",
+			shared.Actor, shared.ActiveProtocol, shared.IdleProtocol)
 	}
 }
 
@@ -624,6 +775,17 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		},
 		Workload: profilingrun.CurrentWorkloadContract(),
 	}
+	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		config.Measurement.SLOPercentile = 95
+		config.Measurement.MinServiceSamples = 59
+		config.Measurement.SLOTargetLatencyNanos = 1_000_000_000
+		config.Measurement.WorkloadName = request.Workload
+		config.Measurement.WorkloadUID = curvePlanWorkloadUID
+		config.Measurement.WorkloadResourceVersion = "1"
+	}
+	config.Actor = config.ActorConfig()
+	config.Actor.MemoryRequestBytes = 128 << 20
+	config.Actor.MemoryLimitBytes = 1024 << 20
 	if request.Candidate.Dataset != "" {
 		config.Measurement.Dataset = &profilingrun.DatasetContract{
 			Name: request.Candidate.Dataset, UID: "dataset-uid", Image: "dataset@sha256:ffffffff", Path: "/artifact/dataset",

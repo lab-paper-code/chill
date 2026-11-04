@@ -13,6 +13,7 @@ spec:
       powerMode: fixed
     targetNode: example-node
   activeProtocol:
+    workload: mobilenet
     warmupIterations: 20
     durationSeconds: 30
     dataset: vqav2-val-subset

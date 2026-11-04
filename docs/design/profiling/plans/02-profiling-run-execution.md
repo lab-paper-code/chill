@@ -12,4 +12,5 @@
 - 근거 커밋: `714dfd10` raw samples/preprocessor 실행, `719341eb` runtime 실패 시 observer 종료. 현행 serialization/handoff는 [Measurement Worker](../components/measurement-worker.md), 저장은 [Evidence Store](../components/evidence-store.md).
 - 남은 것: 재측정은 새 Run identity다. 에너지 계산은 [Plan 3](03-profile-admission-derivation.md); live-state 확인과 실제 실행 가능성을 static compatibility에서 추정하지 않는다.
 - 2026-11-02 저장 계약 변경: RunConfig v1alpha18, curve-plan v1alpha10, active runtime v1alpha9, idle runtime v1alpha7로 단일 cutover한다. 이전 quota/affinity 실행은 새 공유 실행 측정으로 자동 재사용하지 않으며 과거 원시·publication은 변경하지 않는다. 위 live 결과는 과거 four-CPU 실행의 관측이며 새 공유 실행 성능 검증 결과가 아니다.
+- 2026-11-05 v3 parity 저장 계약: RunConfig v1alpha19, curve-plan v1alpha11, finalized v1alpha17, raw active v1alpha10/idle v1alpha8로 단일 cutover한다. 공통 firstfloor Config가 actor startup과 container resource/image/recipe를 결정한다. native ProfileBundle과 active/idle runtime result body는 그대로다. 이전 source evidence는 읽을 수 없으며 재측정으로 새 결과를 만든다; object 삭제는 사용자 결정이며 inventory만 남긴다.
 - [Profiling index](../README.md)

@@ -188,10 +188,13 @@ func TestBatchEnergyOptimizationResultQueryRejectsContentTheReferenceDoesNotDesc
 		"trailing content": {payload: append(bytes.Clone(payload), ' '), match: "where the reference declares"},
 		"unsupported schema": {
 			payload: bytes.Replace(
-				payload, []byte("batch-energy-optimization-result.v1alpha4"), []byte("batch-energy-optimization-result.v9alpha9"), 1,
+				payload, []byte("batch-energy-optimization-result.v1alpha5"), []byte("batch-energy-optimization-result.v9alpha9"), 1,
 			),
 			match: "unsupported batch-energy-optimization result schema",
 		},
+	}
+	if bytes.Equal(tests["unsupported schema"].payload, payload) {
+		t.Fatal("unsupported-schema fixture did not mutate the result schema")
 	}
 	for name, test := range tests {
 		test := test

@@ -36,12 +36,7 @@ def deadline_policy(settings: dict[str, Any]) -> str:
 
 
 def initialized_batches(run: dict[str, Any]) -> list[int]:
-    maximum = run["state"]["firstfloor"]["maxBatchSize"]
-    capability = run["delivery"]["artifactCapability"]
-    declared = capability.get("declaredBatchSizes")
-    if declared is None:
-        declared = range(1, maximum + 1)
-    batches = [batch for batch in declared if batch <= maximum]
+    batches = run["actor"]["batchSizes"]
     if not batches or run["measurement"]["batch"] not in batches:
         raise common.ContractError("configured initialized batches must include the selected fixed K")
     return batches
@@ -190,7 +185,7 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
     for field in ("intraOpThreads", "interOpThreads"):
         common.require_integer(actual.get(field), f"actual {field}", 0)
     if (actual.get("cpuAffinity") != affinity or actual.get("initializedBatches") != initialized_batches(run) or
-            actual.get("warmupIterations") != run["measurement"]["warmupIterations"]):
+            actual.get("warmupIterations") != run["actor"].get("warmupIterations", 0)):
         raise common.ContractError("actual initialized batches, warmup, affinity or threads differ from frozen conditions")
     providers = actual.get("providers")
     if not isinstance(providers, list) or (
@@ -310,24 +305,14 @@ def wait_ready(process: subprocess.Popen, session: FirstfloorSession, timeout: f
 
 
 def worker_config(request: dict[str, Any]) -> dict[str, Any]:
-    run = request["runConfig"]
-    backend = run["state"]["backend"]
-    preprocessor = run["state"]["preprocessor"]
-    command = [sys.executable, str(Path(__file__).with_name("runner.py")), "--runtime", backend,
-               "--model-dir", request["modelDirectory"], "--preprocessor", request["preprocessorPath"],
-               "--warmup-iterations", str(run["measurement"]["warmupIterations"]),
-               "--warmup-batch", str(run["measurement"]["batch"])]
-    if backend == "ort-cuda":
-        command += ["--gpu-uuid", run["delivery"]["runtimeAccess"]["gpuUUID"]]
-    config = {"model": run["state"]["model"], "mode": "profiling",
-              "inputs": preprocessor["inputs"], "outputs": preprocessor["outputs"],
-              "runnerCommand": command, "runnerTimeoutMS": request["observerReadyTimeoutMilliseconds"],
-              "maxQueueRequests": run["state"]["firstfloor"]["maxQueueSize"],
-              "policy": {"deadlinePolicy": deadline_policy(run["state"]["firstfloor"])},
-              "maxQueueBytes": min(request["maxInputBytes"], FRAME_BYTES), "maxRequestBytes": FRAME_BYTES,
-              "batchSizes": initialized_batches(run), "maxBatchSize": run["state"]["firstfloor"]["maxBatchSize"]}
-    if preprocessor.get("maxNewTokens", 0) > 0:
-        config["maxNewTokens"] = preprocessor["maxNewTokens"]
+    # Go freezes the common startup body. Only the profiling lifecycle envelope
+    # differs; never reconstruct runtime/provider/domains or runner arguments here.
+    config = json.loads(json.dumps(request["runConfig"]["actor"]))
+    config.update(mode="profiling", profilePath="",
+                  runnerTimeoutMS=request["observerReadyTimeoutMilliseconds"],
+                  maxQueueBytes=min(request["maxInputBytes"], FRAME_BYTES),
+                  maxRequestBytes=FRAME_BYTES)
+    config["policy"] = {"deadlinePolicy": deadline_policy(request["runConfig"]["state"]["firstfloor"])}
     return config
 
 
@@ -355,7 +340,8 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
         delivery_path.write_text(json.dumps(run["delivery"], allow_nan=False), encoding="utf-8")
         config = worker_config(request)
         if run["state"]["backend"] == "rknnlite":
-            config["runnerCommand"] += ["--delivery-json", str(delivery_path)]
+            config["runnerCommand"] = [str(delivery_path) if arg == "/config/delivery.json" else arg
+                                       for arg in config["runnerCommand"]]
         config_path.write_text(json.dumps(config, allow_nan=False), encoding="utf-8")
         with socket.socket() as address:
             address.bind(("127.0.0.1", 0))

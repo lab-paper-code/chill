@@ -35,7 +35,7 @@ type profilerControllerShared struct {
 	power             profilerapp.MetricSourceResolver
 	actuationPolicies profilerapp.ActuationPolicyResolver
 	preparer          profilercontroller.RunPreparer
-	executionPolicies profilercontroller.ExecutionPolicyResolver
+	executionPolicies profilerapp.ExecutionPolicyResolver
 	stores            profilercontroller.EvidenceStoreBindingResolver
 	evidence          *currentEvidenceStore
 	retainedEvidence  *evidencekube.RetainedLoader
@@ -79,7 +79,6 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 		profilercontroller.ExecutionJobOptions{
 			WorkloadObserverServiceAccountName: opts.workloadObserverServiceAccount,
 			WorkloadObserverKubeAPIServer:      opts.workloadObserverKubeAPIServer,
-			MeasurementMemoryFraction:          opts.measurementMemoryFraction,
 		},
 	)
 	if err != nil {
@@ -155,19 +154,20 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct actuation-policy resolver: %w", err)
 	}
-	preparer, err := profilerapp.NewPreparer(candidates, nodes, power, workloads, actuationPolicies)
-	if err != nil {
-		return nil, fmt.Errorf("construct Run preparer: %w", err)
-	}
 	executionPolicies, err := profilerkube.NewKubernetesExecutionPolicyResolver(
 		reader,
 		profilerkube.ExecutionPolicyResolverOptions{
 			Namespace: opts.watchNamespace, ConfigMapName: opts.factSourceConfigMap,
-			ConfigMapKey: opts.executionPoliciesKey,
+			ConfigMapKey:              opts.executionPoliciesKey,
+			MeasurementMemoryFraction: opts.measurementMemoryFraction,
 		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct execution-policy resolver: %w", err)
+	}
+	preparer, err := profilerapp.NewPreparer(candidates, nodes, power, workloads, actuationPolicies, executionPolicies)
+	if err != nil {
+		return nil, fmt.Errorf("construct Run preparer: %w", err)
 	}
 	stores, err := profilerkube.NewKubernetesEvidenceStoreResolver(
 		reader,

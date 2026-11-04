@@ -45,6 +45,12 @@ consuming the same watch until the Run Pod reports successful termination of
 and atomically publishes its result. This Pod status resource-version fence is
 causally post-end; neither discretionary bookmarks nor later lists prove progress.
 
+The worker and workload observer establish their frozen attempt contexts before
+preparation. Measurement-end closes a separate stop signal; it does not cancel
+or detach the workload observer's original context. The causal fence and both
+result handoffs consume that context's remaining attempt budget, not independent
+post-runtime waits. Runtime failure and the original deadline still stop draining.
+
 Retain material events drained before the fence. Receipt times cannot prove
 whether source transitions preceded runtime end, so ambiguous drain timing remains
 explicit uncertainty, not an ignored event. Missing fence, expired history,

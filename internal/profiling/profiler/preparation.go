@@ -32,6 +32,7 @@ type CandidateSelection struct {
 type PreparationRequest struct {
 	Candidate   CandidateSelection
 	TargetNode  string
+	Workload    string
 	Measurement profilingrun.MeasurementContract
 	Metrics     MetricObservationPolicy
 }
@@ -98,10 +99,15 @@ type MetricSourceResolver interface {
 
 type WorkloadObservationResolver interface {
 	ResolveWorkloadObservation(context.Context) (ResolvedWorkloadObservation, error)
+	ResolveMeasurementWorkload(context.Context, string, CandidateSelection) (profilingrun.MeasurementContract, error)
 }
 
 type ActuationPolicyResolver interface {
 	ResolveActuationPolicy(context.Context, ActuationSelection) (FrozenActuationPolicy, error)
+}
+
+type ExecutionPolicyResolver interface {
+	Resolve(context.Context, profilingrun.RunConfig) (FrozenExecutionPolicy, error)
 }
 
 type PreparedRun struct {
@@ -140,6 +146,7 @@ type Preparer struct {
 	metrics    MetricSourceResolver
 	workloads  WorkloadObservationResolver
 	actuation  ActuationPolicyResolver
+	execution  ExecutionPolicyResolver
 }
 
 func NewPreparer(
@@ -148,18 +155,31 @@ func NewPreparer(
 	metrics MetricSourceResolver,
 	workloads WorkloadObservationResolver,
 	actuation ActuationPolicyResolver,
+	execution ExecutionPolicyResolver,
 ) (*Preparer, error) {
-	if candidates == nil || nodes == nil || metrics == nil || workloads == nil || actuation == nil {
-		return nil, errors.New("candidate, Node, metric-source, workload-observation, and actuation-policy resolvers are required")
+	if candidates == nil || nodes == nil || metrics == nil || workloads == nil || actuation == nil || execution == nil {
+		return nil, errors.New("candidate, Node, metric-source, workload-observation, actuation-policy, and execution-policy resolvers are required")
 	}
 	return &Preparer{
-		candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads, actuation: actuation,
+		candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads, actuation: actuation, execution: execution,
 	}, nil
 }
 
 func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (PreparedRun, error) {
 	if err := request.Validate(); err != nil {
 		return PreparedRun{}, err
+	}
+	if request.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode && request.Measurement.WorkloadUID == "" {
+		stop, err := p.workloads.ResolveMeasurementWorkload(ctx, request.Workload, request.Candidate)
+		if err != nil {
+			return PreparedRun{}, fmt.Errorf("resolve measurement Workload: %w", err)
+		}
+		request.Measurement.SLOPercentile = stop.SLOPercentile
+		request.Measurement.MinServiceSamples = stop.MinServiceSamples
+		request.Measurement.SLOTargetLatencyNanos = stop.SLOTargetLatencyNanos
+		request.Measurement.WorkloadName = stop.WorkloadName
+		request.Measurement.WorkloadUID = stop.WorkloadUID
+		request.Measurement.WorkloadResourceVersion = stop.WorkloadResourceVersion
 	}
 	candidate, err := p.candidates.ResolveCandidate(ctx, request.Candidate)
 	if err != nil {
@@ -205,6 +225,15 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	)
 	if err != nil {
 		return PreparedRun{}, err
+	}
+	executionPolicy, err := p.execution.Resolve(ctx, runConfig)
+	if err != nil {
+		return PreparedRun{}, fmt.Errorf("resolve actor memory envelope: %w", err)
+	}
+	runConfig.Actor.MemoryRequestBytes = executionPolicy.Policy.RuntimeMemoryRequestBytes
+	runConfig.Actor.MemoryLimitBytes = executionPolicy.Policy.RuntimeMemoryLimitBytes
+	if err := runConfig.Validate(); err != nil {
+		return PreparedRun{}, fmt.Errorf("validate RunConfig: %w", err)
 	}
 	if err := profilingrun.ValidateCandidateReport(candidate.ReportBytes, runConfig); err != nil {
 		return PreparedRun{}, fmt.Errorf("validate resolved candidate report: %w", err)
@@ -308,9 +337,7 @@ func (p *Preparer) freeze(
 		Workload:  profilingrun.CurrentWorkloadContract(),
 		Actuation: actuation,
 	}
-	if err := config.Validate(); err != nil {
-		return profilingrun.RunConfig{}, fmt.Errorf("validate RunConfig: %w", err)
-	}
+	config.Actor = config.ActorConfig()
 	return config, nil
 }
 
@@ -433,6 +460,25 @@ func (r PreparationRequest) Validate() error {
 	if active := workloadMode != profilingrun.IdleModelLoadedWorkloadMode; active != (r.Candidate.Dataset != "") ||
 		strings.TrimSpace(r.Candidate.Dataset) != r.Candidate.Dataset {
 		return errors.New("active measurement requires a dataset and idle measurement has none")
+	}
+	if active := workloadMode != profilingrun.IdleModelLoadedWorkloadMode; active != (r.Workload != "") {
+		return errors.New("active measurement requires a Workload reference and idle measurement has none")
+	}
+	return r.validateFrozenWorkload()
+}
+
+func (r PreparationRequest) validateFrozenWorkload() error {
+	measurement := r.Measurement
+	if measurement.WorkloadUID != "" || measurement.WorkloadResourceVersion != "" ||
+		measurement.SLOPercentile != 0 || measurement.SLOTargetLatencyNanos != 0 || measurement.MinServiceSamples != 0 {
+		minimum, err := profilingrun.MinimumServiceSamples(measurement.SLOPercentile)
+		if err != nil || measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode ||
+			strings.TrimSpace(measurement.WorkloadUID) == "" ||
+			strings.TrimSpace(measurement.WorkloadUID) != measurement.WorkloadUID ||
+			measurement.WorkloadName != r.Workload || measurement.SLOTargetLatencyNanos <= 0 ||
+			measurement.MinServiceSamples != minimum {
+			return errors.New("frozen Workload requires its source UID, SLO percentile, positive target, and derived native sample count")
+		}
 	}
 	return nil
 }

@@ -45,6 +45,10 @@ func execute(
 	stdout, stderr io.Writer,
 	deps dependencies,
 ) (err error) {
+	// Establish the frozen attempt deadline once, before preparation/runtime.
+	// Coordinator, both result readers and evidence commit inherit its remainder.
+	ctx, cancel := context.WithTimeout(ctx, opts.attemptTimeout)
+	defer cancel()
 	defer func() {
 		if err == nil {
 			return

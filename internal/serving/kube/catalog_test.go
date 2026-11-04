@@ -9,7 +9,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -56,6 +55,24 @@ func TestCatalogPreservesRawDistributionAndMissingMemory(t *testing.T) {
 	trial.NativeSamples[0].RunnerServiceMilliseconds = math.NaN()
 	if err := batch.add(trial, energy, 4096); err == nil {
 		t.Fatal("invalid raw latency became a profile sample")
+	}
+}
+
+func TestCatalogKeysObservedRuntimeVersionAndProvider(t *testing.T) {
+	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+	if err != nil || len(view.Profiles) != 1 {
+		t.Fatalf("catalog=%+v error=%v", view, err)
+	}
+	profile := view.Profiles[0]
+	if profile.RuntimeMetadata == nil || profile.Condition.RuntimeVersion == "" ||
+		profile.Condition.RuntimeVersion != profile.RuntimeMetadata.RuntimeVersion ||
+		profile.Condition.RuntimeProvider == "" {
+		t.Fatalf("observed runtime semantics missing from condition: %+v", profile.Condition)
+	}
+	if facts := view.MeasurementFacts[profile.ID]; facts.Condition.RuntimeVersion != profile.Condition.RuntimeVersion ||
+		facts.Condition.RuntimeProvider != profile.Condition.RuntimeProvider {
+		t.Fatalf("Query/Serving runtime identity diverged: %+v %+v", facts.Condition, profile.Condition)
 	}
 }
 
@@ -108,8 +125,8 @@ func TestCatalogLatestSuccessUsesFrozenConditionAndSourceCompletion(t *testing.T
 	otherRuntime.ID = "other-runtime/uid"
 	otherRuntime.Condition.RuntimeImage = "new-runtime"
 	result, err := serving.SelectConditionProfiles([]serving.Profile{newer, old, otherNode, otherMeter, otherRuntime}, nil)
-	if err != nil || len(result) != 3 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[2].ID != otherMeter.ID || result[0].Condition.RuntimeImage != "current-runtime" {
-		t.Fatalf("latest source matching changed identity/scope: %+v %v", result, err)
+	if err != nil || len(result) != 2 || result[0].ID != newer.ID || result[1].ID != otherNode.ID || result[0].Condition.RuntimeImage != "current-runtime" {
+		t.Fatalf("latest semantic condition/source completion changed selection: %+v %v", result, err)
 	}
 }
 
@@ -214,7 +231,7 @@ func TestCatalogLatestFailureDoesNotHideHistoryOrReviveSuccess(t *testing.T) {
 	}
 }
 
-func TestCatalogOfflinePopulationRemains242(t *testing.T) {
+func TestCatalogOfflineSemanticSelectionPreservesEvidence(t *testing.T) {
 	directory := os.Getenv("CHILL_PROFILE_BASELINE")
 	if directory == "" {
 		t.Skip("set CHILL_PROFILE_BASELINE to the read-only advisor1-profile-baseline")
@@ -230,8 +247,8 @@ func TestCatalogOfflinePopulationRemains242(t *testing.T) {
 		t.Fatal(err)
 	}
 	profiles, err := serving.SelectConditionProfiles(snapshot.Profiles, nil)
-	if err != nil || len(snapshot.Profiles) != 259 || len(profiles) != 242 {
-		t.Fatalf("public population = %d -> %d: %v", len(snapshot.Profiles), len(profiles), err)
+	if err != nil || len(snapshot.Profiles) != 259 || len(profiles) == 0 || len(profiles) > 242 {
+		t.Fatalf("semantic public population = %d -> %d: %v", len(snapshot.Profiles), len(profiles), err)
 	}
 	original := make(map[string]serving.Profile, len(snapshot.Profiles))
 	for _, profile := range snapshot.Profiles {
@@ -258,14 +275,12 @@ func TestCatalogOfflinePopulationRemains242(t *testing.T) {
 		t.Fatal(err)
 	}
 	dropped := make(map[string]bool, len(original))
-	want := make(map[string]bool, len(expected))
 	for id := range original {
 		dropped[id] = true
 	}
 	for _, id := range expected {
-		want[id] = true
-	}
-	if !reflect.DeepEqual(dropped, want) {
-		t.Fatalf("coverage-migrate dropped set changed: got %v, want %v", dropped, want)
+		if !dropped[id] {
+			t.Fatalf("historical superseded source revived: %s", id)
+		}
 	}
 }

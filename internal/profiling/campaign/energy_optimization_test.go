@@ -85,7 +85,7 @@ func TestQuickEnergyStepsOverAGapInThePlannedBatchSizeSet(t *testing.T) {
 	}
 }
 
-func TestQuickEnergySweepsEveryPlannedBatchBeforeDeriving(t *testing.T) {
+func TestQuickEnergySweepsEveryPlannedBatchBeforeSelectingMinimum(t *testing.T) {
 	planned := []int{1, 2, 4, 8}
 	curveCalls := 0
 	method := newTestQuickEnergyMethod(t, func(batches []int) (CurveResult, error) {
@@ -102,9 +102,39 @@ func TestQuickEnergySweepsEveryPlannedBatchBeforeDeriving(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := Measurement{WorkloadMode: WorkloadModeActive, Batch: planned[index]}
-		if plan.Next == nil || *plan.Next != want || plan.Result != nil || curveCalls != 0 {
-			t.Fatalf("prefix %v: plan=%+v, curve calls=%d; want %+v without derivation",
+		if plan.Next == nil || *plan.Next != want || plan.Result != nil || curveCalls != 1 {
+			t.Fatalf("prefix %v: plan=%+v, curve calls=%d; want %+v without heuristic truncation",
 				planned[:index], plan, curveCalls, want)
+		}
+	}
+}
+
+func TestQuickEnergyRequiresThreeIndependentTrials(t *testing.T) {
+	for _, trials := range []int{0, 1, 2, 4} {
+		if _, err := NewQuickEnergyMinimization(QuickEnergyConfig{TrialsPerBatch: trials}, nil); err == nil {
+			t.Fatalf("accepted %d trials instead of three", trials)
+		}
+	}
+}
+
+func TestQuickEnergyOnlyStopsEarlyForCurrentBatchOneServiceImpossibility(t *testing.T) {
+	for _, outcome := range []string{ServiceImpossibleOutcome, "MinimumFound/LocalMinimum", ""} {
+		method := newTestQuickEnergyMethod(t, func(batches []int) (CurveResult, error) {
+			if !reflect.DeepEqual(batches, []int{1}) {
+				t.Fatalf("feasibility batches=%v", batches)
+			}
+			return CurveResult{Continue: outcome == "", Outcome: outcome, Detail: "current verified trials"}, nil
+		})
+		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{1, 2, 4}, Completed: completedForBatches([]int{1}, 3)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if outcome == ServiceImpossibleOutcome {
+			if plan.Result == nil || plan.Result.Outcome != outcome || plan.Next != nil {
+				t.Fatalf("impossible cell did not end at batch one: %+v", plan)
+			}
+		} else if plan.Next == nil || plan.Next.Batch != 2 || plan.Result != nil {
+			t.Fatalf("heuristic outcome %q truncated the planned sweep: %+v", outcome, plan)
 		}
 	}
 }

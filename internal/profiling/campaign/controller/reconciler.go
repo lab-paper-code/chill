@@ -146,15 +146,9 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 			return ctrl.Result{}, errors.New("CreateRun decision omitted its measurement")
 		}
 		attempt := nextAttempt(*decision.Run, snapshot.Trials)
-		run, buildErr := BuildRun(parent, *decision.Run, attempt, curvePlan.Shared().Backend)
-		if buildErr != nil {
-			return ctrl.Result{}, fmt.Errorf("build ProfilingRun: %w", buildErr)
-		}
-		if createErr := r.client.Create(ctx, run); createErr != nil {
-			if !apierrors.IsAlreadyExists(createErr) {
-				return ctrl.Result{}, fmt.Errorf("create ProfilingRun %q: %w", run.Name, createErr)
-			}
-			alreadyExists = true
+		alreadyExists, err = r.createMeasurementRun(ctx, parent, *decision.Run, attempt, curvePlan)
+		if err != nil {
+			return ctrl.Result{}, err
 		}
 	case batchenergyoptimization.ActionWait:
 	case batchenergyoptimization.ActionFinish:
@@ -181,6 +175,31 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return ctrl.Result{Requeue: true}, nil
 	}
 	return requeueFor(decision, transition), nil
+}
+
+func (r *BatchEnergyOptimizationReconciler) createMeasurementRun(
+	ctx context.Context, parent *edgev1alpha1.BatchEnergyOptimization,
+	measurement batchenergyoptimization.Measurement, attempt int, plan profilederivation.CurvePlan,
+) (bool, error) {
+	run, err := BuildRun(parent, measurement, attempt, plan.Shared().Backend)
+	if err != nil {
+		return false, fmt.Errorf("build ProfilingRun: %w", err)
+	}
+	if measurement.WorkloadMode == batchenergyoptimization.WorkloadModeActive {
+		projectFrozenWorkload(&run.Spec.Measurement, plan.Shared().ActiveProtocol)
+	}
+	batches := plan.PlannedBatchSizes()
+	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(batches))
+	for index, batch := range batches {
+		run.Spec.Measurement.WarmupBatchSizes[index] = int32(batch)
+	}
+	if err := r.client.Create(ctx, run); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return false, fmt.Errorf("create ProfilingRun %q: %w", run.Name, err)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // handleTrialProjectionFailure records only immutable trial-contract failures

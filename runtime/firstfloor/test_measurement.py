@@ -22,13 +22,14 @@ PREPROCESSOR = {"name": "mobilenet-imagenet", "uid": "pre-uid", "image": "regist
 
 class MeasurementBoundaryTest(unittest.TestCase):
     def test_selected_deadline_policy_defaults_validates_and_reaches_worker(self):
-        request = {"modelDirectory": "/model", "preprocessorPath": "/preprocessor", "maxInputBytes": 1024,
-                   "observerReadyTimeoutMilliseconds": 1000,
-                   "runConfig": {"state": {"model": "model", "backend": "ort-cpu",
-                                          "firstfloor": {"maxBatchSize": 4, "maxQueueSize": 8},
-                                          "preprocessor": dict(PREPROCESSOR)},
-                                 "measurement": {"batch": 1, "warmupIterations": 0},
-                                 "delivery": {"artifactCapability": {}}}}
+        actor = {"model": "model", "inputs": ["image"], "outputs": ["label"],
+                 "batchSizes": [1, 2, 3, 4], "warmupBatchSizes": [1, 4],
+                 "runnerCommand": ["python3", "/opt/chill/runtime/firstfloor/runner.py",
+                                   "--runtime", "ort-cpu", "--model-dir", "/model",
+                                   "--preprocessor", "/preprocessor", "--warmup-batch", "1",
+                                   "--warmup-batch", "4"]}
+        request = {"maxInputBytes": 1024, "observerReadyTimeoutMilliseconds": 1000,
+                   "runConfig": {"actor": actor, "state": {"firstfloor": {}}}}
         settings = request["runConfig"]["state"]["firstfloor"]
         config = measurement.worker_config(request)
         self.assertEqual(config["policy"]["deadlinePolicy"], "keep")
@@ -41,8 +42,15 @@ class MeasurementBoundaryTest(unittest.TestCase):
         self.assertNotIn("--model", command)
         self.assertNotIn("--intra-op-threads", command)
         self.assertNotIn("--cpu-affinity", command)
-        request["runConfig"]["state"]["preprocessor"]["maxNewTokens"] = 32
+        request["runConfig"]["actor"]["maxNewTokens"] = 32
         self.assertEqual(measurement.worker_config(request)["maxNewTokens"], 32)
+        # The runtime consumes the exact frozen command, including every measured
+        # warmup K; changing a deciding field cannot be lost to reconstruction.
+        self.assertEqual(config["batchSizes"], [1, 2, 3, 4])
+        self.assertEqual(config["warmupBatchSizes"], [1, 4])
+        actor["runnerCommand"][-1] = "2"
+        self.assertEqual(measurement.worker_config(request)["runnerCommand"][-1], "2")
+        self.assertEqual(config["runnerCommand"][-1], "4")
         for policy in ("drop", "keep", "defer"):
             settings["deadlinePolicy"] = policy
             self.assertEqual(measurement.worker_config(request)["policy"]["deadlinePolicy"], policy)
@@ -54,8 +62,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
 
 
     def test_sparse_actual_initialized_batches_do_not_fabricate_batch_one(self):
-        run = {"state": {"firstfloor": {"maxBatchSize": 8}},
-               "delivery": {"artifactCapability": {"declaredBatchSizes": [2, 4, 16]}},
+        run = {"actor": {"batchSizes": [2, 4]},
                "measurement": {"batch": 4}}
         self.assertEqual(measurement.initialized_batches(run), [2, 4])
         run["measurement"]["batch"] = 1
@@ -138,6 +145,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
                                           "artifactFiles": ["/artifact/onnx/vision.onnx", "/artifact/onnx/decoder.onnx"],
                                           "preprocessor": dict(PREPROCESSOR, inputs=["image", "question"], outputs=["answer"])},
                                  "measurement": {"batch": 4, "warmupIterations": 2},
+                                 "actor": {"batchSizes": [1, 2, 4], "warmupIterations": 2},
                                  "delivery": {"artifactCapability": {"declaredBatchSizes": [1, 2, 4]},
                                               "runtimeAccess": {"gpuUUID": "GPU-actual", "resources": {"nvidia.com/gpu": "1"}}}}}
         actual = {"runtime": "ort-cuda", "runtimeVersion": "1.20.0", "numpyVersion": "2.1.0",

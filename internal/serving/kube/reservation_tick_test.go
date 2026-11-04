@@ -138,6 +138,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				spec := measuredCPUPreparationFixture()
 				spec.Instance = serving.SchedulerInstance{ID: "option-" + profile.ID, Node: serving.NodeReference{Name: profile.NodeName, UID: profile.Condition.NodeUID}, Profile: &profile, Allocation: serving.SchedulerAllocation{MemoryBytes: 1024}, MaxBatch: 1, Capacity: 4}
 				spec.Config.Policy.ProfileID = profile.ID
+				spec.Config.Model = profile.Condition.Actor.Model
 				c.config.Preparations[profile.ID] = spec
 				c.config.DispatchOccupancy = append(c.config.DispatchOccupancy, serving.DispatchOccupancy{Node: spec.Instance.Node, PowerMode: profile.Condition.PowerMode, RuntimeImage: profile.Condition.RuntimeImage, Model: profile.Condition.LogicalModel, Source: "AC-39 measured fixture"})
 				ref := evidencestore.ObjectIdentity{Store: "raw", Key: "baseline-" + profile.ID, Size: 1}
@@ -247,7 +248,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 					t.Errorf("request reached wrong physical service: %s", r.URL.Host)
 				}
 				progress := native.Progress{RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID, Definition: request.Context.Definition, Phase: "finished", At: time.Now(), BatchID: 1, BatchSize: 1, ProfileID: "b-profile", ExecutionComplete: true, Units: 1}
-				_ = json.NewEncoder(w).Encode(native.Response{ModelName: "chill_model", ID: request.ID, ExecutionComplete: true, Progress: progress, Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}})
+				_ = json.NewEncoder(w).Encode(native.Response{ModelName: c.config.Preparations["b-profile"].Config.Model, ID: request.ID, ExecutionComplete: true, Progress: progress, Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}})
 				executed <- request
 			}))
 			defer server.Close()
@@ -426,7 +427,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 			t.Errorf("request bypassed Ready reserve: %s", r.URL.Host)
 		}
 		progress := native.Progress{RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID, Definition: request.Context.Definition, Phase: "finished", At: time.Now(), BatchID: 1, BatchSize: 1, ProfileID: "b-profile", ExecutionComplete: true, Units: 1}
-		_ = json.NewEncoder(w).Encode(native.Response{ModelName: "chill_model", ID: request.ID, ExecutionComplete: true, Progress: progress, Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}})
+		_ = json.NewEncoder(w).Encode(native.Response{ModelName: profiles[0].Condition.Actor.Model, ID: request.ID, ExecutionComplete: true, Progress: progress, Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}})
 		executed <- request
 	}))
 	defer server.Close()

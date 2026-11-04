@@ -49,7 +49,17 @@ func validatePreparedForRun(run *edgev1alpha1.ProfilingRun, prepared profiler.Pr
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(request.Preparation, preparationFromRunConfig(prepared.RunConfig)) {
+	actual := preparationFromRunConfig(prepared.RunConfig)
+	if request.Preparation.Measurement.WorkloadUID != "" {
+		actual.Measurement.WorkloadName = prepared.RunConfig.Measurement.WorkloadName
+		actual.Measurement.WorkloadUID = prepared.RunConfig.Measurement.WorkloadUID
+		actual.Measurement.SLOPercentile = prepared.RunConfig.Measurement.SLOPercentile
+		actual.Measurement.SLOTargetLatencyNanos = prepared.RunConfig.Measurement.SLOTargetLatencyNanos
+		actual.Measurement.MinServiceSamples = prepared.RunConfig.Measurement.MinServiceSamples
+	}
+	// ResourceVersion remains in raw RunConfig, but never gates admission.
+	request.Preparation.Measurement.WorkloadResourceVersion = ""
+	if !reflect.DeepEqual(request.Preparation, actual) {
 		return errors.New("RunConfig does not match ProfilingRun spec")
 	}
 	return nil
@@ -57,15 +67,26 @@ func validatePreparedForRun(run *edgev1alpha1.ProfilingRun, prepared profiler.Pr
 
 func preparationFromRunConfig(config profilingrun.RunConfig) profiler.PreparationRequest {
 	measurement := config.Measurement
-	measurement.Dataset = nil
 	request := profiler.PreparationRequest{
 		Candidate: profiler.CandidateSelection{
 			ModelSpec: config.State.Model, DeviceClass: config.State.DeviceClass, Node: config.TargetNode.Name,
 			ExecutionPath: config.Candidate.ExecutionPath, PowerMode: config.State.PowerMode,
 			Preprocessor: config.State.Preprocessor.Name,
 		},
-		TargetNode:  config.TargetNode.Name,
-		Measurement: measurement,
+		TargetNode: config.TargetNode.Name,
+		Workload:   measurement.WorkloadName,
+		// Standalone source facts are resolved, not selected. Campaign source
+		// facts are added to the comparison above only when the spec freezes them.
+		Measurement: profilingrun.MeasurementContract{
+			Batch:                    measurement.Batch,
+			WarmupIterations:         measurement.WarmupIterations,
+			StartupWarmupIterations:  measurement.StartupWarmupIterations,
+			SettlingDurationSeconds:  measurement.SettlingDurationSeconds,
+			DurationSeconds:          measurement.DurationSeconds,
+			DurationToleranceSeconds: measurement.DurationToleranceSeconds,
+			WarmupBatchSizes:         measurement.WarmupBatchSizes,
+			WorkloadMode:             measurement.WorkloadMode,
+		},
 		Metrics: profiler.MetricObservationPolicy{
 			IntervalMilliseconds: config.Metrics.IntervalMilliseconds,
 			TimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,

@@ -17,6 +17,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -25,6 +26,66 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestBatchOneInfeasibilityUsesFastestCurrentServiceNotSlowPercentile(t *testing.T) {
+	for _, test := range []struct{ oneFeasibleCall, wrongCondition, grayBelowServicePlus29MS bool }{
+		{false, false, false}, {true, false, false}, {false, true, false}, {false, false, true},
+	} {
+		fixture := newCurveDeriverFixture(t)
+		activeExecution, _, err := fixture.evidence.active[fixture.activeRuns[0].Name].Records()
+		if err != nil {
+			t.Fatal(err)
+		}
+		idleExecution, _, err := fixture.evidence.idle[fixture.idleRuns[0].Name].Records()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config := activeExecution.RunConfig
+		config.Measurement.SLOTargetLatencyNanos = 600000
+		if test.grayBelowServicePlus29MS {
+			// Minimum observed service is .7ms: .7ms < 1ms < .7ms+29ms.
+			// D28 treats margin, dispatch occupancy and waiting as zero.
+			config.Measurement.SLOTargetLatencyNanos = 1000000
+		}
+		spec, err := profilerprojection.ProjectCurvePlanSpec("feasibility", config, idleExecution.RunConfig,
+			profilederivation.CurveConversionContract{}, []int{1, 2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := profilederivation.NewCurvePlan(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if test.wrongCondition {
+			config.TargetNode.UID = "different-physical-node"
+		}
+		runs := fixture.activeRuns[:fixture.policy.TrialsPerBatch]
+		for index, run := range runs {
+			raw := curveFixtureActiveRaw(config, run.Name+"-pod", 6)
+			if test.oneFeasibleCall && index == 0 {
+				raw.Runtime.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds = .6
+			}
+			fixture.evidence.active[run.Name] = curveFixtureVerifiedActiveRaw(t, raw)
+		}
+		result, err := fixture.deriver.Derive(context.Background(), plan, runs, fixture.idleRuns, []int{1}, fixture.policy)
+		if test.wrongCondition {
+			if err == nil {
+				t.Fatal("different-condition evidence established infeasibility")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if test.oneFeasibleCall || test.grayBelowServicePlus29MS {
+			if !result.Continue || result.Outcome == batchenergyoptimization.ServiceImpossibleOutcome {
+				t.Fatalf("slow percentile alone truncated sweep: %+v", result)
+			}
+		} else if result.Outcome != batchenergyoptimization.ServiceImpossibleOutcome || result.Continue {
+			t.Fatalf("same-condition impossible batch one did not terminate: %+v", result)
+		}
+	}
+}
 
 func TestCurveDeriverAcceptsBatchFourWithBatchOneIdle(t *testing.T) {
 	fixture := newCurveDeriverFixture(t, 4)
@@ -188,7 +249,7 @@ func TestCurveDeriverAcceptsObservedVariationAndRejectsNonWitnessConditionDrift(
 			}
 			config.Images.Runtime = "registry.example/different-sdk@sha256:" + strings.Repeat("f", 64)
 			if idle {
-				drifted.evidence.idle[run.Name] = curveFixtureIdleEvidence(t, config, "different-sdk-pod", 4)
+				drifted.evidence.idle[run.Name] = curveFixtureIdleEvidence(t, config, "different-sdk-pod")
 			} else {
 				drifted.evidence.active[run.Name] = curveFixtureActiveEvidence(t, config, "different-sdk-pod", 6)
 			}
@@ -204,7 +265,7 @@ func TestCurveDeriverAcceptsObservedVariationAndRejectsNonWitnessConditionDrift(
 func TestCurveDeriverCollectorsPreserveEvidenceOrder(t *testing.T) {
 	fixture := newCurveDeriverFixture(t)
 	activeRuns := []edgev1alpha1.ProfilingRun{
-		fixture.activeRuns[1], fixture.activeRuns[0], fixture.activeRuns[5], fixture.activeRuns[4],
+		fixture.activeRuns[1], fixture.activeRuns[0], fixture.activeRuns[4], fixture.activeRuns[3],
 	}
 	passBatches, activeWitness, err := fixture.deriver.collectActiveTrials(
 		context.Background(), activeRuns, []int{1, 2},
@@ -373,7 +434,9 @@ func newCurveDeriverFixture(t *testing.T, batches ...int) curveDeriverFixture {
 	idleRunConfig := base
 	idleRunConfig.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
-		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
+		WorkloadMode:            profilingrun.IdleModelLoadedWorkloadMode,
+		StartupWarmupIterations: base.Measurement.StartupWarmupIterations,
+		WarmupBatchSizes:        base.Measurement.WarmupBatchSizes,
 	}
 	if err := idleRunConfig.Validate(); err != nil {
 		t.Fatal(err)
@@ -397,7 +460,7 @@ func newCurveDeriverFixture(t *testing.T, batches ...int) curveDeriverFixture {
 	fixture := curveDeriverFixture{
 		evidence: evidence, plan: plan,
 		policy: profilederivation.EnergyObjectivePolicy{
-			Version: "quick-energy-v2", TrialsPerBatch: 4, ConfidenceLevel: .95,
+			Version: "quick-energy-v2", TrialsPerBatch: 3, ConfidenceLevel: .95,
 		},
 	}
 	for _, batch := range batches {
@@ -413,7 +476,7 @@ func newCurveDeriverFixture(t *testing.T, batches ...int) curveDeriverFixture {
 	}
 	for trial := 1; trial <= fixture.policy.TrialsPerBatch; trial++ {
 		name := fmt.Sprintf("idle-t%d", trial)
-		verified := curveFixtureIdleEvidence(t, idleRunConfig, name+"-pod", 4)
+		verified := curveFixtureIdleEvidence(t, idleRunConfig, name+"-pod")
 		fixture.idleRuns = append(fixture.idleRuns, curveFixtureRun(name, idleRunConfig.Measurement))
 		evidence.idle[name] = verified
 	}
@@ -548,10 +611,9 @@ func curveFixtureIdleEvidence(
 	t *testing.T,
 	config profilingrun.RunConfig,
 	podUID string,
-	watts float64,
 ) profilerevidence.VerifiedIdleEvidence {
 	t.Helper()
-	activeShape := curveFixtureActiveRaw(config, podUID, watts)
+	activeShape := curveFixtureActiveRaw(config, podUID, 4)
 	started := activeShape.Metrics.StartedAt
 	raw := profilerevidence.IdleRawMeasurement{
 		SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion,

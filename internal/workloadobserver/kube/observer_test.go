@@ -327,7 +327,7 @@ func TestObserveRejectsPreparationFailuresBeforeStarted(t *testing.T) {
 		source := &fakePodSource{listErr: errors.New("denied")}
 		observer := mustObserver(t, source)
 		called := false
-		_, err := observer.Observe(context.Background(), testRequest(4), func() { called = true })
+		_, err := observer.Observe(context.Background(), nil, testRequest(4), func() { called = true })
 		if err == nil || called {
 			t.Fatalf("Observe() error/callback = %v/%v", err, called)
 		}
@@ -338,7 +338,7 @@ func TestObserveRejectsPreparationFailuresBeforeStarted(t *testing.T) {
 		source.watchErr = errors.New("denied")
 		observer := mustObserver(t, source)
 		called := false
-		_, err := observer.Observe(context.Background(), testRequest(4), func() { called = true })
+		_, err := observer.Observe(context.Background(), nil, testRequest(4), func() { called = true })
 		if err == nil || called {
 			t.Fatalf("Observe() error/callback = %v/%v", err, called)
 		}
@@ -348,7 +348,7 @@ func TestObserveRejectsPreparationFailuresBeforeStarted(t *testing.T) {
 		source := &fakePodSource{list: &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "10"}}}
 		observer := mustObserver(t, source)
 		called := false
-		_, err := observer.Observe(context.Background(), testRequest(4), func() { called = true })
+		_, err := observer.Observe(context.Background(), nil, testRequest(4), func() { called = true })
 		if err == nil || called {
 			t.Fatalf("Observe() error/callback = %v/%v", err, called)
 		}
@@ -436,13 +436,13 @@ type observationResult struct {
 
 func observeAsync(
 	observer *Observer,
-	ctx context.Context,
+	endContext context.Context,
 	request Request,
 	started chan struct{},
 ) <-chan observationResult {
 	result := make(chan observationResult, 1)
 	go func() {
-		value, err := observer.Observe(ctx, request, func() { close(started) })
+		value, err := observer.Observe(context.Background(), endContext.Done(), request, func() { close(started) })
 		result <- observationResult{value: value, err: err}
 	}()
 	return result

@@ -63,7 +63,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*servingops.Operations, serving.S
 		pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
 		pod.Annotations[servingstate.ServingProfileAnnotation] = profile.ID
 		pod.Annotations[servingstate.ServingPolicyAnnotation] = "old-route"
-		cfg := native.Config{Model: "chill_model", Mode: "serving",
+		cfg := native.Config{Model: profile.Condition.Actor.Model, Mode: "serving",
 			Inputs: []string{"input"}, Outputs: []string{"output"},
 			RunnerCommand:   []string{"python3", "../../../runtime/firstfloor/runner.py", "--echo", "--preprocessor", "../../../runtime/firstfloor/testdata/echo", "--warmup-iterations", "1"},
 			RunnerTimeoutMS: 3000, MaxQueueRequests: 4, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20,

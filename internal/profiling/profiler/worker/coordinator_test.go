@@ -39,7 +39,7 @@ func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 			raw.Workload.Target.NodeUID != config.TargetNode.UID {
 			t.Fatalf("unexpected raw measurement: %#v", raw)
 		}
-		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
+		return createdReceipt(identity), nil
 	}}
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(_ context.Context, request RuntimeRequest) (profilingrun.RuntimeResult, error) {
@@ -84,7 +84,7 @@ func TestCoordinatorCommitsCanonicalIdleRawMeasurement(t *testing.T) {
 			!raw.Runtime.ModelResidentAtEnd || raw.Workload == nil {
 			t.Fatalf("unexpected idle raw measurement: %#v", raw)
 		}
-		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
+		return createdReceipt(identity), nil
 	}}
 	coordinator := mustCoordinator(t,
 		runtimeMeasurementFunc(func(_ context.Context, request RuntimeRequest) (RuntimeMeasurement, error) {
@@ -229,7 +229,7 @@ func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 	config := testRunConfig(t)
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, _ []byte) (evidencestore.Receipt, error) {
 		identity.Size++
-		return receipt(identity, evidencestore.CreateOutcomeCreated), nil
+		return createdReceipt(identity), nil
 	}}
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {
@@ -332,11 +332,11 @@ func mustCoordinator(
 	return coordinator
 }
 
-func receipt(identity evidencestore.ObjectIdentity, outcome evidencestore.CreateOutcome) evidencestore.Receipt {
+func createdReceipt(identity evidencestore.ObjectIdentity) evidencestore.Receipt {
 	return evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion,
 		Object:        identity,
-		Outcome:       outcome,
+		Outcome:       evidencestore.CreateOutcomeCreated,
 	}
 }
 
@@ -378,6 +378,12 @@ func testIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	t.Helper()
 	config := testRunConfig(t)
 	config.Measurement.WarmupIterations = 0
+	config.Measurement.MinServiceSamples = 0
+	config.Measurement.SLOPercentile = 0
+	config.Measurement.SLOTargetLatencyNanos = 0
+	config.Measurement.WorkloadName = ""
+	config.Measurement.WorkloadUID = ""
+	config.Measurement.WorkloadResourceVersion = ""
 	config.Measurement.SettlingDurationSeconds = 30
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
@@ -463,6 +469,20 @@ func testFirstfloorEvidence(
 func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.RuntimeResult {
 	started := time.Date(2026, time.July, 16, 3, 0, 0, 0, time.UTC)
 	targetDuration := float64(config.Measurement.DurationSeconds)
+	latencies := make([]float64, 59)
+	nativeSamples := make([]profilingrun.NativeServiceSample, 59)
+	recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
+	for i := range recordIDs {
+		recordIDs[i], units[i] = "record-"+strconv.Itoa(i), 1
+	}
+	for i := range latencies {
+		latencies[i] = 2
+		nativeSamples[i] = profilingrun.NativeServiceSample{
+			BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
+			RunnerServiceMilliseconds: 0.7,
+			BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9,
+		}
+	}
 	return profilingrun.RuntimeResult{
 		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded",
 		ExperimentID: podUID, NodeName: config.TargetNode.Name, Model: config.State.Model,
@@ -473,7 +493,7 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		Inputs:            config.State.Preprocessor.Inputs,
 		WarmupIterations:  config.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
-		InferenceCount:    2, MeasurementMode: "duration",
+		InferenceCount:    59, MeasurementMode: "duration",
 		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 		MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
@@ -483,19 +503,12 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 			NodeSnapshot: config.TargetNode,
 		},
 		MemoryBytes: testMemoryBytes, MemorySource: testMemorySource,
-		Firstfloor: testFirstfloorEvidence(config, "1.16.0", 2),
+		Firstfloor: testFirstfloorEvidence(config, "1.16.0", 59),
 		RepetitionResults: []profilingrun.Repetition{{
 			Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),
-			LatencyMilliseconds: []float64{1, 2},
-			NativeSamples: []profilingrun.NativeServiceSample{
-				{BatchID: 1, BatchSize: config.Measurement.Batch, RecordIDs: []string{"r"}, Units: []int{1},
-					RunnerServiceMilliseconds: 0.7,
-					BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9},
-				{BatchID: 2, BatchSize: config.Measurement.Batch, RecordIDs: []string{"r"}, Units: []int{1},
-					RunnerServiceMilliseconds: 0.7,
-					BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9},
-			},
+			LatencyMilliseconds: latencies,
+			NativeSamples:       nativeSamples,
 		}},
 	}
 }

@@ -364,6 +364,11 @@ func acceptedActiveFixture(t *testing.T) profilerevidence.VerifiedEvidence {
 		},
 		Workload: &workload,
 	}
+	raw.Runtime.InferenceCount = 60
+	raw.Runtime.RepetitionResults[0].LatencyMilliseconds = make([]float64, 60)
+	for index := range raw.Runtime.RepetitionResults[0].LatencyMilliseconds {
+		raw.Runtime.RepetitionResults[0].LatencyMilliseconds[index] = float64(1 + index%2)
+	}
 	applyFirstfloorRuntime(config, &raw.Runtime)
 	rawBytes, err := raw.CanonicalJSON()
 	if err != nil {

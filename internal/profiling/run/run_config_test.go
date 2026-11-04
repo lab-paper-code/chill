@@ -12,6 +12,32 @@ func decodeTestRunConfig(payload []byte) (RunConfig, error) {
 	return config, err
 }
 
+func TestSampleCoverageDerivesFromWorkloadPercentile(t *testing.T) {
+	for _, test := range []struct {
+		percentile float64
+		want       int
+	}{{95, 59}, {99, 299}, {90, 29}} {
+		got, err := MinimumServiceSamples(test.percentile)
+		if err != nil || got != test.want {
+			t.Fatalf("percentile %g: count=%d err=%v", test.percentile, got, err)
+		}
+	}
+	for _, percentile := range []float64{0, -1, 100, 101} {
+		if _, err := MinimumServiceSamples(percentile); err == nil {
+			t.Fatalf("accepted percentile %g", percentile)
+		}
+	}
+	config := validRunConfig()
+	config.SchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha18"
+	if err := config.Validate(); err == nil {
+		t.Fatal("previous RunConfig schema accepted")
+	}
+	config = validRunConfig()
+	config.Measurement.MinServiceSamples = 58
+	if err := config.Validate(); err == nil {
+		t.Fatal("undersampled requested stop policy accepted")
+	}
+}
 func TestRunConfigDecoderRejectsExplicitNullActuation(t *testing.T) {
 	payload, err := json.Marshal(validRunConfig())
 	if err != nil {
@@ -422,9 +448,13 @@ func validRunConfig() RunConfig {
 			AllocatableCPU:  "4",
 		},
 		Measurement: MeasurementContract{
-			Batch:            1,
-			WarmupIterations: 20,
-			DurationSeconds:  30,
+			Batch:                   1,
+			WarmupIterations:        20,
+			StartupWarmupIterations: 20,
+			DurationSeconds:         30,
+			SLOPercentile:           95, MinServiceSamples: 59, SLOTargetLatencyNanos: 1000000000,
+			WorkloadName: "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
+			WarmupBatchSizes: []int{1},
 			WorkloadMode:     "saturated-serial-fixed-batch",
 			Dataset: &DatasetContract{
 				Name: "vqav2-val-subset", UID: "dataset-uid", Image: image, Path: "/artifact/vqav2-val-subset",

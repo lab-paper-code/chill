@@ -19,8 +19,8 @@ func FreezeConfiguredExecutionPolicy(
 	if len(raw) == 0 {
 		return FrozenExecutionPolicy{}, errors.New("execution-policy catalog is empty")
 	}
-	if err := config.Validate(); err != nil {
-		return FrozenExecutionPolicy{}, fmt.Errorf("validate RunConfig: %w", err)
+	if config.State.DeviceClass == "" || config.Candidate.ExecutionPath == "" || config.Measurement.WorkloadMode == "" {
+		return FrozenExecutionPolicy{}, errors.New("execution-policy selection requires DeviceClass, execution path, and workload mode")
 	}
 	var catalog ExecutionPolicyCatalog
 	if err := yaml.UnmarshalStrict(raw, &catalog); err != nil {

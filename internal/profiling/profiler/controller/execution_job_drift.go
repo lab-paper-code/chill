@@ -59,7 +59,7 @@ func normalizeRunConfigArguments(pod *corev1.PodSpec, expected profilingrun.RunC
 	}
 	for containerIndex := range pod.Containers {
 		container := &pod.Containers[containerIndex]
-		raw, err := argumentValue(container.Args, runConfigArgumentPrefix)
+		raw, err := runConfigArgument(container.Args)
 		if err != nil {
 			return fmt.Errorf("container %q: %w", container.Name, err)
 		}

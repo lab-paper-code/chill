@@ -64,6 +64,15 @@ compatibility file. Resolve candidate compatibility before Job creation. Only
 runtime execution material enters `RunConfig.delivery`; selected policy payloads
 stay controller-side Job provenance.
 
+Job recovery compares caller-selected fields (including Workload name) with the
+requested ProfilingRun. Standalone SLO/sample-count/source facts resolved during
+preparation are not caller-selected. Campaign children instead carry the plan's
+frozen Workload UID, percentile, target and native sample count, so those selected
+facts are retained and checked without rereading the Workload. ResourceVersion
+is raw provenance only and never an admission/identity gate. A standalone Run
+warms its one selected batch by default; campaign children carry the full frozen
+measured warmup domain.
+
 `profilingrun.ExecutionState.ArtifactPath` comes from the trusted artifact
 declaration and is recorded in RunConfig. Adapter owns destination: `model.onnx`
 for ORT, `model.rknn` for RKNNLite; callers cannot choose it. RKNNLite projects
@@ -87,14 +96,55 @@ durable Node power-mode request-generation/readback/transition handoff, not a
 NodeActuation CRD or Lease. Settling duration uses the common measurement protocol
 and execution provenance, not a parallel execution type.
 
-Shared CPU cutover: RunConfig v1alpha18 has no CPU allocation object. Jobs carry
+### Sample-driven active stop
+
+RunConfig v1alpha19 freezes the referenced Workload's name, UID, resourceVersion,
+SLO percentile and target latency. Model, preprocessor and dataset must match the
+measurement selection; no percentile is inferred or defaulted. The existing 95%
+confidence convention gives `ceil(log(.05) / log(percentile/100))` completed native
+service calls per trial (59 at p95). Percentile 100 cannot have finite coverage and
+is rejected for this measurement contract.
+
+Each of the three independently restarted active trials for every planned batch
+runs until **both** elapsed time is at least 30 seconds (or the longer requested
+minimum) and its derived service-call count is complete. Budget exhaustion and
+the immutable safety timeout fail the trial; neither is successful completion.
+Native/client sample alignment and actual counts/windows remain retained evidence.
+Metric observation follows the runtime end fence, including sample-limited windows.
+
+The sample minimum is not a successful upper bound: 59 calls at 2 seconds
+complete at 118 seconds even with the sample YAML's 30-second minimum and
+31-second nominal metric duration. The immutable selected execution policy's
+`AttemptTimeout` (`Metrics.DurationSeconds + settling duration +
+attemptTimeoutOverheadSeconds`) is the producer's total failure budget, applied
+by `cmd/measurement-worker` to its root attempt context. The Job's longer
+`ActiveDeadline` is the outer Kubernetes safety budget, not a completion rule.
+Both observers' measurement-end waits use that producer failure bound; the metric
+observer's `ObserveUntil` watchdog and pre-readiness capacity admission use the
+same bound, including its final real power read. Interval/per-read timeout and
+the producer's actual elapsed windows remain unchanged. Runtime failure still
+interrupts both observers immediately; reaching a safety bound is never success.
+
+The sweep does not stop at a local energy minimum or a slow p95. Only batch-one
+evidence from all three current-condition, same-device trials whose fastest
+observed native service call already exceeds the frozen SLO target can end the
+cell at batch one. Its terminal `BatchServiceExceedsSLO` records negative capacity,
+not a usable batch or invented positive κ. Old-regime evidence cannot select this
+branch. The original planned warmup domain remains unchanged.
+
+For iid continuous service samples, the pooled sample maximum covers population
+q95 with probability `1-.95^59 ≈ .9515` at 59 samples. This minimal coverage is not
+a precise p95 estimate, an independence/stationarity check or proof of κ safety;
+59 is a count of calls, not a count of tail exceedances.
+
+Shared CPU policy: RunConfig v1alpha19 has no CPU allocation or thread-tuning field. Jobs carry
 no CPU requests/limits and the runner accepts no affinity or thread override.
 ORT SessionOptions defaults are unchanged; session readback records 0 for automatic
 thread selection, not a fixed single thread. Actual cgroup quota (v2 `max`, v1 `-1`
 included), cpuset/affinity, usage and throttling remain runtime evidence. Active
-runtime/raw v1alpha9, idle runtime/raw v1alpha7 and finalized v1alpha16 are deployed
-together after dependent campaigns finish. Old controlled evidence/publications
-are not rewritten or admitted through a compatibility reader. Memory/GPU/Node
+runtime body v1alpha9 and idle runtime body v1alpha7 are unchanged. Active raw v1alpha10,
+idle raw v1alpha8 and finalized v1alpha17 cut over together after dependent campaigns finish.
+Old controlled evidence/publications are not rewritten or admitted through a compatibility reader. Memory/GPU/Node
 identity, ownership and physical-return checks remain mandatory.
 
 
@@ -157,8 +207,9 @@ without a separate runtime contract change. Runtime emits signals without
 reading observer results; observers cannot choose a window from observed values.
 
 Metric helper validates config, constructs frozen edge source, emits readiness,
-bounded-waits start, observes RunConfig power duration, bounded-waits end, publishes
-result, exits. Workload helper validates config/own Pod/Job, probes readiness,
+bounded-waits start, observes until runtime end within the producer attempt
+failure bound, publishes its final real read/result and exits. Workload helper
+validates config/own Pod/Job, probes readiness,
 establishes fresh retained list-watch after warm-up, retains changes through end
 and same-watch successful `metric-observer` termination, then publishes. See
 [workload contract](workload-observer.md) for causal coverage/ambiguous drain facts.
@@ -192,10 +243,15 @@ runtime exit/message once to `ProfilingRun.status.runtimeTermination` on Job
 failure, surviving Pod deletion; diagnostic only, never parsed. Kubernetes owns
 native failure state.
 
-Observer images enter measurement-protocol identity; runtime/worker image enters
-execution-state identity. Rebuild changes newly resolved identities, not validity
-of retained earlier profiles. Curve active/idle pairing requires one runtime
-image/protocol each; campaign and baseline use one image set.
+Observer images enter measurement-protocol provenance; runtime/worker image enters
+execution-state provenance. CurvePlan v1alpha11 freezes the common actor startup
+recipe and runtime package versions separately from active/idle collection and
+sample-stop policy. Active/idle pairing still checks the recorded recipe and
+protocol, but latest-success performance identity excludes exact runtime image,
+observers, windows and meter identity. Artifact/preprocessor recipes and images,
+input population, initialized/warmup domains and CPU/thread/memory/power settings
+remain semantic conditions. A collection-only change cannot revive a replaced
+older sibling; latest failed selection and explicit reuse remain separate.
 
 ## Kubernetes execution and bounded capacity
 
@@ -222,8 +278,12 @@ Required relationships:
   measured reserve for model/session/outputs/bounded input-generation temp/worker.
 - Retained latency cap and serialized-runtime-result cap fit memory and handoff.
 - Workspace fits private result plus one bounded evidence candidate, not image layer.
-- Common deadline covers artifact/model/input preparation, observer synchronization,
-  warm-up, measurement, handoff and evidence commit.
+- Common deadline is established once before worker preparation and covers
+  artifact/model/input preparation, observer synchronization, warm-up, measurement,
+  both result handoffs and evidence commit. Metric/workload result and causal
+  end-fence caps equal the frozen attempt timeout and inherit only its remaining
+  context budget; runtime completion does not start a new global deadline or a
+  nominal-window final-read allowance.
 
 Derive capacities from resources/duration, never predicted throughput. Oversize
 artifact shape or inability to retain full latency distribution fails explicitly;

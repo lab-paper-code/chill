@@ -60,6 +60,13 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 	}
 	for i := range result.RepetitionResults {
 		repetition := &result.RepetitionResults[i]
+		original := repetition.LatencyMilliseconds
+		if len(original) > 0 && len(original) < config.Measurement.MinServiceSamples {
+			repetition.LatencyMilliseconds = make([]float64, config.Measurement.MinServiceSamples)
+			for index := range repetition.LatencyMilliseconds {
+				repetition.LatencyMilliseconds[index] = original[index%len(original)]
+			}
+		}
 		repetition.NativeSamples = make([]profilingrun.NativeServiceSample, len(repetition.LatencyMilliseconds))
 		for j := range repetition.NativeSamples {
 			executions++
@@ -71,6 +78,7 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 		}
 	}
 	result.Firstfloor = fixtureFirstfloorEvidence(config, result.RuntimeVersion, uint64(executions))
+	result.InferenceCount = executions
 }
 
 // applyFirstfloorIdleRuntime makes an idle runtime fixture valid firstfloor evidence.

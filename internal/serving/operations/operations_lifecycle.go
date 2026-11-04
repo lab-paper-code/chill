@@ -82,12 +82,16 @@ func (o *Operations) removeInstance(ctx context.Context, node serving.NodeRefere
 		return err
 	}
 	if id != "" && status.State.Terminated == nil {
+		model, err := o.nativeModel(ctx, pod)
+		if err != nil {
+			return err
+		}
 		if err = o.Wait(ctx, func() (bool, error) {
 			endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, pod)
 			if e != nil {
 				return false, e
 			}
-			state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: "chill_model"})
+			state, e := o.Native.State(ctx, sdk.Spec{Endpoint: endpoint, ModelName: model})
 			if e != nil {
 				return false, e
 			}

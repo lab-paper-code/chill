@@ -210,13 +210,14 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if !slices.Equal(result.Inputs, config.State.Preprocessor.Inputs) {
 		return errors.New("runtime input field evidence does not match the frozen preprocessor inputs")
 	}
-	minimumElapsed := float64(config.Measurement.DurationSeconds) - config.Measurement.DurationToleranceSeconds
-	if result.MeasurementMode != "duration" || result.InferenceCount < 1 ||
+	minimumElapsed := float64(config.Measurement.DurationSeconds)
+	if result.MeasurementMode != "duration" || result.InferenceCount < config.Measurement.MinServiceSamples ||
+		math.IsNaN(result.MeasurementElapsedSeconds) || math.IsInf(result.MeasurementElapsedSeconds, 0) ||
 		result.MeasurementElapsedSeconds < minimumElapsed {
 		return errors.New("runtime measurement evidence is incomplete")
 	}
-	if len(result.RepetitionResults) < 1 {
-		return errors.New("runtime result must contain at least one repetition result")
+	if len(result.RepetitionResults) != 1 {
+		return errors.New("one restarted trial must contain exactly one repetition result")
 	}
 	if result.TargetDurationSeconds == nil ||
 		*result.TargetDurationSeconds != float64(config.Measurement.DurationSeconds) {

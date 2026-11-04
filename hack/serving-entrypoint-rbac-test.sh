@@ -148,7 +148,7 @@ def grants(role, resource, verb):
 
 query = next(d for d in documents if d.get("kind") == "ClusterRole"
                and d["metadata"]["name"] == "chill-query-preflight-reader")
-for kind in ("modelspecs", "deviceclasses", "preprocessors", "datasets"):
+for kind in ("workloads", "modelspecs", "deviceclasses", "preprocessors", "datasets"):
     if not grants(query, kind, "get"):
         sys.exit("query preflight lacks cluster-scope " + kind + " get")
 for kind in ("preprocessors", "datasets"):

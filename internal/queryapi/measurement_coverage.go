@@ -215,25 +215,21 @@ type MeasurementCoverageResponse struct {
 	NextActions       []MeasurementNextAction     `json:"nextActions"`
 }
 
-// MeasurementVariantID uses measured conditions, not request goals or image
-// versions. Frozen image references remain provenance, not profile validity gates.
+// MeasurementVariantID shares serving's semantic execution condition. Collection
+// windows, observers and meters remain available on the original condition.
 func MeasurementVariantID(condition any) string {
-	raw, _ := json.Marshal(condition)
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) == nil {
-		delete(fields, "name")
-		delete(fields, "plannedBatchSizes")
-		delete(fields, "runtimeImage")
-		for _, field := range []string{"artifact", "preprocessor", "activeProtocol", "idleProtocol"} {
-			var nested map[string]json.RawMessage
-			if json.Unmarshal(fields[field], &nested) == nil && nested != nil {
-				delete(nested, "image")
-				delete(nested, "metricObserverImage")
-				delete(nested, "workloadObserverImage")
-				fields[field], _ = json.Marshal(nested)
-			}
+	var raw []byte
+	if spec, ok := condition.(profilederivation.CurvePlanSpec); ok {
+		raw, _ = json.Marshal(profilederivation.PerformanceCondition(spec))
+	} else {
+		raw, _ = json.Marshal(condition)
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(raw, &fields) == nil && fields != nil {
+			delete(fields, "name")
+			delete(fields, "plannedBatchSizes")
+			delete(fields, "runtimeImage")
+			raw, _ = json.Marshal(fields)
 		}
-		raw, _ = json.Marshal(fields)
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

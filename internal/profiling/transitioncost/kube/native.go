@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"slices"
 	"strconv"
@@ -114,7 +115,18 @@ func (o *Observer) nativeInstance(ctx context.Context, pod *core.Pod,
 	if port < 1 || net.ParseIP(service.Spec.ClusterIP) == nil || service.Spec.Selector["edge.dacs.io/serving-pod-uid"] != string(pod.UID) {
 		return transitioncost.NativeInstanceObservation{}, errors.New("native Service HTTP endpoint unavailable")
 	}
-	endpoint := "http://" + net.JoinHostPort(service.Spec.ClusterIP, strconv.Itoa(int(port))) + "/v2/models/chill_model/state"
+	cm := &core.ConfigMap{}
+	if err := o.reader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}, cm); err != nil {
+		return transitioncost.NativeInstanceObservation{}, fmt.Errorf("get native startup Config: %w", err)
+	}
+	var config native.Config
+	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
+		return transitioncost.NativeInstanceObservation{}, err
+	}
+	if config.Model == "" {
+		return transitioncost.NativeInstanceObservation{}, errors.New("native startup Config model required")
+	}
+	endpoint := "http://" + net.JoinHostPort(service.Spec.ClusterIP, strconv.Itoa(int(port))) + "/v2/models/" + url.PathEscape(config.Model) + "/state"
 	state, err := o.readNativeState(ctx, endpoint)
 	if err != nil {
 		return transitioncost.NativeInstanceObservation{}, err

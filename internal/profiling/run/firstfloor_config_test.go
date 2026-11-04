@@ -26,7 +26,30 @@ func firstfloorFrozenConfig(backend string) RunConfig {
 		config.State.ArtifactFiles = []string{"/artifact/mobilenet-v2-050-rk3588-bs2.rknn"}
 		config.Measurement.Batch = 2
 	}
+	config.Actor = config.ActorConfig()
+	config.Actor.MemoryRequestBytes = 128 << 20
+	config.Actor.MemoryLimitBytes = 1024 << 20
 	return config
+}
+
+func TestActorRecipeSeparatesCapabilitiesFromMeasuredWarmup(t *testing.T) {
+	config := firstfloorFrozenConfig(FirstfloorORTCPUBackend)
+	config.Measurement.WarmupBatchSizes = []int{1, 4}
+	actor := config.ActorConfig()
+	if len(actor.BatchSizes) != 4 || actor.BatchSizes[2] != 3 ||
+		len(actor.WarmupBatchSizes) != 2 || actor.WarmupBatchSizes[1] != 4 {
+		t.Fatalf("capability and measured warmup domains were conflated: %+v", actor)
+	}
+	command := strings.Join(actor.RunnerCommand, " ")
+	if !strings.Contains(command, "--warmup-batch 1 --warmup-batch 4") ||
+		strings.Contains(command, "--warmup-batch 3") {
+		t.Fatalf("runner did not receive exactly the measured warmup domain: %s", command)
+	}
+	config.Measurement.WarmupBatchSizes[1] = 2
+	config.State.Preprocessor.Inputs[0] = "changed"
+	if actor.WarmupBatchSizes[1] != 4 || actor.Inputs[0] != "image" {
+		t.Fatal("frozen actor recipe aliases mutable preparation inputs")
+	}
 }
 
 func TestFrozenDeadlinePolicyDefaultIdentityAndCopies(t *testing.T) {

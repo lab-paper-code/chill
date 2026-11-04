@@ -163,11 +163,15 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 	}
 	id := MeasurementVariantID(spec)
 	for name, change := range map[string]func(*profilederivation.CurvePlanSpec){
-		"exact":         func(*profilederivation.CurvePlanSpec) {},
-		"dataset UID":   func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.Dataset.UID = "new-uid" },
-		"protocol":      func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
-		"metric source": func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },
-		"mutable image": func(s *profilederivation.CurvePlanSpec) { s.RuntimeImage = "registry.example/image:tag" },
+		"exact":              func(*profilederivation.CurvePlanSpec) {},
+		"dataset UID":        func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.Dataset.UID = "new-uid" },
+		"protocol":           func(s *profilederivation.CurvePlanSpec) { s.ActiveProtocol.WarmupIterations++ },
+		"metric source":      func(s *profilederivation.CurvePlanSpec) { s.MetricSource.Endpoint = "http://new-metrics" },
+		"mutable image":      func(s *profilederivation.CurvePlanSpec) { s.RuntimeImage = "registry.example/image:tag" },
+		"artifact image":     func(s *profilederivation.CurvePlanSpec) { s.Artifact.Image = "registry.example/artifact:new" },
+		"preprocessor image": func(s *profilederivation.CurvePlanSpec) { s.Preprocessor.Image = "registry.example/preprocessor:new" },
+		"observed runtime":   func(s *profilederivation.CurvePlanSpec) { s.RuntimeVersion = "1.27" },
+		"observed provider":  func(s *profilederivation.CurvePlanSpec) { s.RuntimeProvider = "CPUExecutionProvider" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := original.Shared()
@@ -190,7 +194,7 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 			if !got.SubsetAllowed || !got.SearchMayStopEarly {
 				t.Fatalf("batch selection flags = %#v", got)
 			}
-			if name == MeasurementConditionExact || name == "mutable image" {
+			if name == "exact" || name == "protocol" || name == "metric source" || name == "mutable image" {
 				if got.ConditionMatch != MeasurementConditionExact || got.VariantID == nil || *got.VariantID != id ||
 					!reflect.DeepEqual(got.MeasuredBatches, []int{1}) || !reflect.DeepEqual(got.MissingBatches, []int{2, 4}) {
 					t.Fatalf("exact batch plan = %#v", got)
@@ -253,12 +257,10 @@ func batchEnergyOptimizationPreflightProtocol(mode string) profilederivation.Cur
 	}
 }
 
-func TestR19ImageVersionsDoNotInvalidateMeasuredBatches(t *testing.T) {
+func TestRuntimeAndObserverImagesDoNotInvalidateMeasuredBatches(t *testing.T) {
 	original := batchEnergyOptimizationPreflightPlan(t)
 	spec := original.Shared()
 	spec.RuntimeImage = "registry.example/runtime:new"
-	spec.Artifact.Image = "registry.example/artifact:new"
-	spec.Preprocessor.Image = "registry.example/preprocessor:new"
 	spec.ActiveProtocol.MetricObserverImage = "registry.example/metric:new"
 	spec.ActiveProtocol.WorkloadObserverImage = "registry.example/workload:new"
 	spec.IdleProtocol.MetricObserverImage = "registry.example/metric:other"

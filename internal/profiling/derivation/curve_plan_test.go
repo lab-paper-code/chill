@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 const (
@@ -140,6 +142,10 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	if _, err := DecodeCurvePlan(append(canonical, []byte(` {}`)...)); err == nil {
 		t.Fatal("expected trailing plan value rejection")
 	}
+	retired := bytes.Replace(canonical, []byte(curvePlanSchemaVersion), []byte("chill.dacs.io/curve-plan.v1alpha10"), 1)
+	if _, err := DecodeCurvePlan(retired); err == nil {
+		t.Fatal("preceding curve-plan schema accepted")
+	}
 
 	// Inputs and projections are copies, not mutation paths into the initialized record.
 	shared.PlannedBatchSizes[0] = 99
@@ -169,6 +175,38 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	verified.Shared.Conversion.ToolVersion = "other-version"
 	if _, err := VerifyCurvePlan(contract, verified); err == nil {
 		t.Fatal("expected verified conversion drift rejection")
+	}
+}
+
+func TestCurvePlanOwnsActorRecipeAndRuntimeVersions(t *testing.T) {
+	const changed = "changed"
+	spec := validCurvePlanSpec()
+	spec.Actor = firstfloor.Config{
+		Inputs: []string{"input"}, Outputs: []string{"output"},
+		RunnerCommand: []string{"runner"}, BatchSizes: []int{1, 2},
+		WarmupBatchSizes: []int{1, 2},
+		ArtifactFiles:    []string{"/artifact/model.onnx"},
+	}
+	spec.Actor.RuntimePackages = map[string]string{"onnxruntime": "1.27"}
+	plan, err := NewCurvePlan(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []CurvePlanSpec{spec, plan.Shared()} {
+		candidate.Actor.Inputs[0] = changed
+		candidate.Actor.Outputs[0] = changed
+		candidate.Actor.RunnerCommand[0] = changed
+		candidate.Actor.BatchSizes[0] = 99
+		candidate.Actor.WarmupBatchSizes[0] = 99
+		candidate.Actor.ArtifactFiles[0] = "/changed"
+		candidate.Actor.RuntimePackages["onnxruntime"] = changed
+	}
+	got := plan.Shared()
+	if got.Actor.Inputs[0] != "input" || got.Actor.Outputs[0] != "output" ||
+		got.Actor.RunnerCommand[0] != "runner" || got.Actor.BatchSizes[0] != 1 ||
+		got.Actor.WarmupBatchSizes[0] != 1 || got.Actor.RuntimePackages["onnxruntime"] != "1.27" ||
+		got.Actor.ArtifactFiles[0] != "/artifact/model.onnx" {
+		t.Fatalf("caller mutated frozen actor recipe: %+v", got)
 	}
 }
 

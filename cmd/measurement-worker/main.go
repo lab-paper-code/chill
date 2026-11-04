@@ -24,9 +24,7 @@ func main() {
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithTimeout(rootCtx, options.attemptTimeout)
-	defer cancel()
-	if err := execute(ctx, options, os.Stdout, os.Stderr, productionDependencies()); err != nil {
+	if err := execute(rootCtx, options, os.Stdout, os.Stderr, productionDependencies()); err != nil {
 		log.Printf("measurement worker failed: %s", diagnostic(err))
 		os.Exit(exitCode(err))
 	}

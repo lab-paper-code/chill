@@ -101,7 +101,7 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 	}
 	row := statistics.Batches[0]
 	if row.Batch != 1 || row.ActiveTrialCount != 2 || row.IdleTrialCount != 2 ||
-		row.LatencySampleCount != 42 ||
+		row.LatencySampleCount != 1260 ||
 		row.LatencyP95Milliseconds != 1 ||
 		row.Confidence.Level != .8 ||
 		row.Confidence.HalfWidth == 0 ||
@@ -133,6 +133,62 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 	}
 	if !reflect.DeepEqual(view.Result.ResultRecordSpec, before) {
 		t.Fatal("sealed detail projection changed")
+	}
+}
+
+func TestRetainedQueryResultMatchesServingObservedCondition(t *testing.T) {
+	cr, record, objects, reader, loader := statisticsFixture(t)
+	ctx := context.Background()
+	retainedReader := campaignevidence.Reader{
+		Runs: statisticsRuns{Reader: reader},
+		ReadObject: func(ctx context.Context, id evidencestore.ObjectIdentity) ([]byte, error) {
+			return readStatisticsObject(ctx, objects, id)
+		},
+	}
+	retained, err := retainedReader.LoadPlan(ctx, cr, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := record.Spec().CompletedTrials[0]
+	run := &api.ProfilingRun{}
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: ref.Run.Namespace, Name: ref.Run.Name}, run); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := loader.Load(ctx, run, evidencestore.ObjectIdentity{
+		Store: run.Status.Evidence.Store, Key: run.Status.Evidence.Key, Size: run.Status.Evidence.Size,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Serving's catalog applies this shared projection to its first verified active trial.
+	servingCondition, err := projection.ProjectMeasuredCurveCondition(retained.Plan.Shared(), verified.ForDerivation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if servingCondition.RuntimeProvider != "CPUExecutionProvider" || servingCondition.RuntimeVersion != "1.16.0" {
+		t.Fatalf("fixture lacks observed runtime semantics: %+v", servingCondition)
+	}
+	query, err := querykube.NewKubernetesBatchEnergyOptimizationResultQuery(
+		reader, objects, newMeasurementStatistics(reader, objects, loader),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := query.Read(ctx, cr.Namespace, cr.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := queryapi.BuildBatchEnergyOptimizationResult(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.MeasurementFacts == nil {
+		t.Fatal("retained Query result omitted measurement facts")
+	}
+	got := result.MeasurementFacts.Condition
+	if !reflect.DeepEqual(got, servingCondition) ||
+		queryapi.MeasurementVariantID(got) != queryapi.MeasurementVariantID(servingCondition) {
+		t.Fatalf("retained Query/Serving condition or variant diverged: got %+v want %+v", got, servingCondition)
 	}
 }
 
@@ -514,7 +570,7 @@ func assertStatisticsReportingResponse(
 	} else if body.Statistics == nil || len(body.Statistics.Batches) != 1 ||
 		body.StatisticsReason != nil || body.MeasurementFactsReason != nil ||
 		body.Statistics.Batches[0].ActiveTrialCount != 2 || body.Statistics.Batches[0].IdleTrialCount != 2 ||
-		body.Statistics.Batches[0].LatencySampleCount != 42 {
+		body.Statistics.Batches[0].LatencySampleCount != 1260 {
 		t.Fatalf("statistics changed: %s", response.Body.String())
 	}
 }
@@ -608,13 +664,21 @@ func statisticsFixture(
 		64,
 	)
 	base.Workload = runconfig.CurrentWorkloadContract()
+	base.Actor = base.ActorConfig()
+	base.Actor.MemoryRequestBytes = 128 << 20
+	base.Actor.MemoryLimitBytes = 1024 << 20
 	idle := base
 	idle.Measurement = runconfig.MeasurementContract{
 		Batch:                   1,
+		WarmupBatchSizes:        base.Measurement.WarmupBatchSizes,
+		StartupWarmupIterations: base.Measurement.StartupWarmupIterations,
 		SettlingDurationSeconds: 60,
 		DurationSeconds:         30,
 		WorkloadMode:            runconfig.IdleModelLoadedWorkloadMode,
 	}
+	idle.Actor = idle.ActorConfig()
+	idle.Actor.MemoryRequestBytes = base.Actor.MemoryRequestBytes
+	idle.Actor.MemoryLimitBytes = base.Actor.MemoryLimitBytes
 	shared, err := projection.ProjectCurvePlanSpec(
 		"statistics",
 		base,
@@ -885,7 +949,7 @@ func statisticsTrial(
 			CPUAffinity:        cpu.AffinityCPUs,
 			IntraOpThreads:     cpu.ORTIntraOpThreads,
 			InterOpThreads:     cpu.ORTInterOpThreads,
-			InitializedBatches: []int{1},
+			InitializedBatches: config.Actor.BatchSizes,
 			CgroupCPUMax:       cpu.CgroupCPUMax,
 			CPUSet:             cpu.CPUSetEffective,
 		},
@@ -988,17 +1052,19 @@ func statisticsTrial(
 			},
 		}).CanonicalJSON()
 	} else {
-		latencies := []float64{100, 100}
+		// Repeat both populations equally to retain the pooled p95 distribution.
+		count, latency := 60, float64(100)
 		if index == 1 {
-			latencies = make([]float64, 40)
-			for i := range latencies {
-				latencies[i] = 1
-			}
+			count, latency = 1200, 1
+		}
+		latencies := make([]float64, count)
+		for i := range latencies {
+			latencies[i] = latency
 		}
 		ff.ExecutionCount = uint64(len(latencies))
 		ff.InferenceCount = ff.ExecutionCount
 		ff.BatchExecutionCounts["1"] = ff.ExecutionCount
-		ff.Runtime.WarmupIterations = config.Measurement.WarmupIterations
+		ff.Runtime.WarmupIterations = config.Actor.WarmupIterations
 		var samples []runconfig.NativeServiceSample
 		for i := range latencies {
 			samples = append(samples, runconfig.NativeServiceSample{

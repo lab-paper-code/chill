@@ -145,9 +145,9 @@ func (o options) validate() error {
 		o.workloadResultTimeout <= handoffPollInterval {
 		return errors.New("Job-derived worker timeouts are invalid")
 	}
-	if o.observerReadyTimeout >= o.attemptTimeout || o.metricResultTimeout >= o.attemptTimeout ||
-		o.workloadResultTimeout >= o.attemptTimeout {
-		return errors.New("handoff timeouts must be shorter than the total worker attempt timeout")
+	if o.observerReadyTimeout >= o.attemptTimeout || o.metricResultTimeout > o.attemptTimeout ||
+		o.workloadResultTimeout > o.attemptTimeout {
+		return errors.New("observer readiness must be shorter than the attempt timeout; result handoffs must not exceed it")
 	}
 	if o.maxLatencySamples < 1 || o.maxInputBytes < 1 ||
 		o.maxRuntimeResultBytes < 1 || o.maxMetricResultBytes < 1 || o.maxWorkloadResultBytes < 1 {

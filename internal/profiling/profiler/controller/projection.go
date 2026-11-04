@@ -40,12 +40,19 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				Dataset:       spec.Measurement.Dataset,
 			},
 			TargetNode: spec.TargetNode,
+			Workload:   spec.Measurement.Workload,
 			Measurement: profilingrun.MeasurementContract{
 				Batch:                    int(spec.Measurement.Batch),
 				WarmupIterations:         int(spec.Measurement.WarmupIterations),
+				StartupWarmupIterations:  int(spec.Measurement.StartupWarmupIterations),
 				DurationSeconds:          int(spec.Measurement.DurationSeconds),
 				DurationToleranceSeconds: tolerance,
 				WorkloadMode:             spec.Measurement.WorkloadMode,
+				WorkloadUID:              spec.Measurement.WorkloadUID,
+				WorkloadResourceVersion:  spec.Measurement.WorkloadResourceVersion,
+				SLOPercentile:            spec.Measurement.SLOPercentile,
+				SLOTargetLatencyNanos:    spec.Measurement.SLOTargetLatencyNanos,
+				MinServiceSamples:        int(spec.Measurement.MinServiceSamples),
 			},
 			Metrics: profiler.MetricObservationPolicy{
 				IntervalMilliseconds: int(spec.MetricObservation.IntervalMilliseconds),
@@ -53,6 +60,20 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				DurationSeconds:      int(spec.MetricObservation.DurationSeconds),
 			},
 		},
+	}
+	if spec.Measurement.WorkloadUID != "" {
+		request.Preparation.Measurement.WorkloadName = spec.Measurement.Workload
+	}
+	if request.Preparation.Measurement.StartupWarmupIterations == 0 &&
+		spec.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		request.Preparation.Measurement.StartupWarmupIterations = int(spec.Measurement.WarmupIterations)
+	}
+	for _, batch := range spec.Measurement.WarmupBatchSizes {
+		request.Preparation.Measurement.WarmupBatchSizes = append(request.Preparation.Measurement.WarmupBatchSizes, int(batch))
+	}
+	// A standalone Run plans only its measured batch; campaigns supply their full domain.
+	if len(request.Preparation.Measurement.WarmupBatchSizes) == 0 {
+		request.Preparation.Measurement.WarmupBatchSizes = []int{int(spec.Measurement.Batch)}
 	}
 	if spec.Measurement.SettlingDurationSeconds != nil {
 		request.Preparation.Measurement.SettlingDurationSeconds = int(*spec.Measurement.SettlingDurationSeconds)

@@ -556,7 +556,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 			BatchSize:                 config.Measurement.Batch,
 			WarmupIterations:          config.Measurement.WarmupIterations,
 			WarmupCompletedAt:         started.Add(-time.Second).UTC().Format(time.RFC3339Nano),
-			InferenceCount:            2,
+			InferenceCount:            59,
 			MeasurementMode:           "duration",
 			MeasurementStartedAt:      started.UTC().Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
@@ -579,9 +579,9 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 				Repetition:           1,
 				MeasurementStartedAt: started.UTC().Format(time.RFC3339Nano),
 				MeasurementEndedAt:   started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
-				LatencyMilliseconds:  []float64{1, 2},
+				LatencyMilliseconds:  make([]float64, 59),
 			}},
-			Latency: map[string]float64{"p95": 2, "mean": 1.5},
+			Latency: map[string]float64{"p95": 2, "mean": 2},
 		},
 		Metrics: metricobserver.Result{
 			Source: metricobserver.SourceIdentity{
@@ -615,6 +615,9 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 				SourceTimestampAbsent:      true,
 			},
 		},
+	}
+	for i := range raw.Runtime.RepetitionResults[0].LatencyMilliseconds {
+		raw.Runtime.RepetitionResults[0].LatencyMilliseconds[i] = 2
 	}
 	runPod := workloadobserver.Pod{
 		Namespace: "chill-system", Name: "profiling-run-pod", UID: podUID, Phase: "Running",

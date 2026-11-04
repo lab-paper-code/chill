@@ -158,6 +158,7 @@ rules:
       - modelspecs
       - preprocessors
       - datasets
+      - workloads
     verbs:
       - get
   - apiGroups:

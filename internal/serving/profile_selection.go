@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
@@ -80,14 +79,7 @@ func ExcludeReplacedConditionProfiles(profiles []Profile, replaced map[string]bo
 }
 
 func profileConditionKey(profile Profile) (string, error) {
-	condition := profile.Condition
-	condition.Name = ""
-	condition.PlannedBatchSizes = nil
-	condition.RuntimeImage = ""
-	payload, err := json.Marshal(struct {
-		Condition    profilederivation.CurvePlanSpec `json:"condition"`
-		MetricSource metricobserver.SourceIdentity   `json:"metricSource"`
-	}{condition, profile.MetricSource})
+	payload, err := json.Marshal(profilederivation.PerformanceCondition(profile.Condition))
 	if err != nil {
 		return "", fmt.Errorf("encode frozen profile condition: %w", err)
 	}

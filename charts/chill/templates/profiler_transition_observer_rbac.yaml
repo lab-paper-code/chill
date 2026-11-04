@@ -58,11 +58,12 @@ rules:
       - nodes
     verbs:
       - get
-  # Each coexistent runner is read through its chill-executor-<Pod UID> Service.
+  # Each coexistent runner is read through its Pod-bound Service and startup Config.
   - apiGroups:
       - ""
     resources:
       - services
+      - configmaps
     verbs:
       - get
   - apiGroups:

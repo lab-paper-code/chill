@@ -17,7 +17,8 @@ type BatchEnergyOptimizationSpec struct {
 
 	// TrialsPerBatch is the number of completed active and idle observations used
 	// to compare each batch under the minimum-energy objective.
-	// +kubebuilder:validation:Minimum=2
+	// +kubebuilder:validation:Minimum=3
+	// +kubebuilder:validation:Maximum=3
 	TrialsPerBatch int32 `json:"trialsPerBatch"`
 
 	// +optional
@@ -68,11 +69,14 @@ func (p BatchEnergyOptimizationPointPolicySpec) Confidence() (float64, error) {
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
 // +kubebuilder:validation:XValidation:rule="self.metricObservation.durationSeconds >= self.durationSeconds",message="metricObservation.durationSeconds must cover durationSeconds"
 type ActiveProtocolSpec struct {
+	// Workload supplies the actual SLO percentile and latency for this sweep.
+	// +kubebuilder:validation:MinLength=1
+	Workload string `json:"workload"`
 
 	// +kubebuilder:validation:Minimum=0
 	WarmupIterations int32 `json:"warmupIterations"`
 
-	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Minimum=30
 	DurationSeconds int32 `json:"durationSeconds"`
 
 	// +optional

@@ -41,7 +41,7 @@ func TestResultRecordCanonicalEncodingIsStableAndPreservesDetailValue(t *testing
 		decodedSpec.ExcludedTrials[0].Run.Namespace != "chill-system" {
 		t.Fatalf("Run namespaces were not retained: %+v", decodedSpec)
 	}
-	if decoded.SchemaVersion() != "chill.dacs.io/batch-energy-optimization-result.v1alpha4" {
+	if decoded.SchemaVersion() != "chill.dacs.io/batch-energy-optimization-result.v1alpha5" {
 		t.Fatalf("schema version = %q", decoded.SchemaVersion())
 	}
 }
@@ -56,6 +56,7 @@ func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, schema := range []string{
+		"chill.dacs.io/batch-energy-optimization-result.v1alpha4",
 		"chill.dacs.io/batch-energy-optimization-result.v1alpha2",
 		"chill.dacs.io/batch-energy-optimization-result.v1alpha1",
 		"chill.dacs.io/batch-energy-optimization-result.v1alpha0",
@@ -63,7 +64,7 @@ func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
 	} {
 		mutated := bytes.Replace(
 			payload,
-			[]byte("chill.dacs.io/batch-energy-optimization-result.v1alpha4"),
+			[]byte("chill.dacs.io/batch-energy-optimization-result.v1alpha5"),
 			[]byte(schema),
 			1,
 		)

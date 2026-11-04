@@ -60,6 +60,7 @@ func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIde
 
 	measurement := config.Measurement
 	measurement.Batch = 0
+	measurement.WorkloadResourceVersion = ""
 	protocol, err := digestIdentity(measurementProtocolIdentitySchemaVersion, struct {
 		Measurement profilingrun.MeasurementContract `json:"measurement"`
 		Sampling    metricSamplingProtocol           `json:"sampling"`

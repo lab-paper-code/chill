@@ -46,15 +46,18 @@ func TestBindsEvidenceToRecordedRun(t *testing.T) {
 	}
 }
 
-func TestAcceptsHistoricalRunConfigWithoutDurationTolerance(t *testing.T) {
+func TestRunConfigRequiresRecordedDurationTolerance(t *testing.T) {
 	run := &edgev1alpha1.ProfilingRun{}
 	config := profilingrun.RunConfig{}
 	defaulted := .5
 	run.Spec.Measurement.DurationToleranceSeconds = &defaulted
-	if err := validateRunConfig(run, config); err != nil {
-		t.Fatalf("historical zero tolerance rejected: %v", err)
+	if err := validateRunConfig(run, config); err == nil {
+		t.Fatal("missing historical tolerance was silently accepted")
 	}
 	config.Measurement.DurationToleranceSeconds = .5
+	if err := validateRunConfig(run, config); err != nil {
+		t.Fatalf("exact tolerance rejected: %v", err)
+	}
 	explicit := .3
 	run.Spec.Measurement.DurationToleranceSeconds = &explicit
 	if err := validateRunConfig(run, config); err == nil || !strings.Contains(err.Error(), "Run protocol") {
@@ -262,4 +265,25 @@ func TestLoadPlanSeparatesStatusAcceptanceFromIdentityBinding(t *testing.T) {
 			}
 		})
 	}
+	t.Run("retired plan schema", func(t *testing.T) {
+		planBytes = []byte(strings.Replace(string(planBytes), plan.SchemaVersion(), "chill.dacs.io/curve-plan.v1alpha10", 1))
+		if _, err := reader.ReadPlan(context.Background(), base, result); err == nil ||
+			!strings.Contains(err.Error(), "unsupported curve-plan schema") {
+			t.Fatalf("old plan reached consumer: %v", err)
+		}
+	})
+	t.Run("retired result schema", func(t *testing.T) {
+		body, err := result.CanonicalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body = []byte(strings.Replace(string(body), result.SchemaVersion(), "chill.dacs.io/batch-energy-optimization-result.v1alpha4", 1))
+		oldReader := Reader{ReadObject: func(context.Context, evidencestore.ObjectIdentity) ([]byte, error) {
+			return body, nil
+		}}
+		if _, err := oldReader.Read(context.Background(), base); err == nil ||
+			!strings.Contains(err.Error(), "unsupported batch-energy-optimization result schema") {
+			t.Fatalf("old result reached consumer: %v", err)
+		}
+	})
 }

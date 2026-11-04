@@ -205,8 +205,8 @@ func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
 		profile.RuntimeMetadata == nil || profile.IdleBaselineWatts != 4 || profile.MeasuredAt.IsZero() ||
 		profile.MetricSource.NodeName != "lattepanda" || len(profile.MetricSource.MetricLabels) == 0 ||
 		profile.RuntimeMetadata.IntraOpThreads != 2 || len(profile.RuntimeMetadata.CPUAffinity) != 2 ||
-		batch.MemoryBytes != 4096 || len(batch.DurationNanos) != 6 || batch.DurationNanos[0] != 500000 ||
-		math.Abs(batch.EnergyPerInputJoules-30) > 1e-9 || batch.EnergyBelowResolution {
+		batch.MemoryBytes != 4096 || len(batch.DurationNanos) != 180 || batch.DurationNanos[0] != 500000 ||
+		math.Abs(batch.EnergyPerInputJoules-1) > 1e-9 || batch.EnergyBelowResolution {
 		t.Fatalf("frozen identity or measured raw distribution changed: %+v", profile)
 	}
 }
@@ -231,7 +231,7 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 			if !tc.below {
 				if len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
 					view.Insufficiencies[0].Code != "NegativeIncrementalEnergy" ||
-					!strings.Contains(view.Insufficiencies[0].Reason, "batch 1 incremental energy -30 J/item has 95% CI [") {
+					!strings.Contains(view.Insufficiencies[0].Reason, "batch 1 incremental energy -1 J/item has 95% CI [") {
 					t.Fatalf("resolved negative estimate was not diagnosed with value and CI: %+v", view)
 				}
 				return
@@ -242,7 +242,7 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 			profile := view.Profiles[0]
 			batch := profile.Batches[0]
 			if batch.EnergyPerInputJoules != 0 || !batch.EnergyBelowResolution ||
-				len(batch.DurationNanos) != 6 || batch.MemoryBytes != 4096 {
+				len(batch.DurationNanos) != 180 || batch.MemoryBytes != 4096 {
 				t.Fatalf("below-resolution serving contract changed other measured facts: %+v", batch)
 			}
 			native := profile.NativeBundle().Batches[0]
@@ -274,7 +274,7 @@ func TestCatalogTwoTrialsReloadAndSelectedConfidence(t *testing.T) {
 		}
 		profile := view.Profiles[0]
 		if profile.ConfidenceLevel != want || profile.TrialsPerBatch != 2 || profile.IdleBaselineWatts != 4 ||
-			len(profile.Batches[0].DurationNanos) != 4 || profile.Batches[0].EnergyPerInputJoules != 37.5 {
+			len(profile.Batches[0].DurationNanos) != 120 || profile.Batches[0].EnergyPerInputJoules != 1.25 {
 			t.Fatalf("selected two-trial measurement lost serving values: %+v", profile)
 		}
 	}
@@ -349,6 +349,7 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 	active.Measurement.DurationToleranceSeconds = .5
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
+		StartupWarmupIterations: active.Measurement.StartupWarmupIterations, WarmupBatchSizes: slices.Clone(active.Measurement.WarmupBatchSizes),
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
 	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1})
 	if err != nil {
@@ -504,10 +505,10 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 		Runtime: profilingrun.RuntimeResult{SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", ExperimentID: podUID,
 			NodeName: config.TargetNode.Name, Model: config.State.Model, Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 			Backend: config.State.Backend, Provider: provider, AvailableProviders: []string{provider}, Inputs: config.State.Preprocessor.Inputs,
-			BatchSize: 1, WarmupIterations: config.Measurement.WarmupIterations, WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 2,
+			BatchSize: 1, WarmupIterations: config.Measurement.WarmupIterations, WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 60,
 			MeasurementMode: "duration", MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), MeasurementElapsedSeconds: 30,
 			TargetDurationSeconds: &targetDuration, MemoryBytes: memory,
-			CPUContract: cpu, DerivedContract: derived, RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), LatencyMilliseconds: []float64{1, 2}}}}}
+			CPUContract: cpu, DerivedContract: derived, RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: end.Format(time.RFC3339Nano), LatencyMilliseconds: make([]float64, 60)}}}}
 	modelFiles := make([]string, len(config.State.ArtifactFiles))
 	for i, file := range config.State.ArtifactFiles {
 		modelFiles[i] = "/model/" + filepath.Base(file)
@@ -519,13 +520,21 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: []int{1},
 			CgroupCPUMax: measuredTwoCoreCPUMax, CPUSet: "0-3"}}
 	activeNative := native
-	activeNative.ExecutionCount, activeNative.InferenceCount = 2, 2
-	activeNative.BatchExecutionCounts = map[string]uint64{"1": 2}
+	activeNative.ExecutionCount, activeNative.InferenceCount = 60, 60
+	activeNative.BatchExecutionCounts = map[string]uint64{"1": 60}
 	raw.Runtime.Firstfloor = &activeNative
 	raw.Runtime.MemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
-	raw.Runtime.RepetitionResults[0].NativeSamples = []profilingrun.NativeServiceSample{
+	population := []profilingrun.NativeServiceSample{
 		{BatchID: 1, BatchSize: 1, RecordIDs: []string{"r1"}, Units: []int{1}, RunnerServiceMilliseconds: 0.5, BackendCallMilliseconds: 0.25, NativeRequestMilliseconds: 0.75},
 		{BatchID: 2, BatchSize: 1, RecordIDs: []string{"r2"}, Units: []int{1}, RunnerServiceMilliseconds: 1.5, BackendCallMilliseconds: 1, NativeRequestMilliseconds: 1.75},
+	}
+	repetition := &raw.Runtime.RepetitionResults[0]
+	repetition.NativeSamples = make([]profilingrun.NativeServiceSample, 60)
+	for index := range repetition.NativeSamples {
+		repetition.LatencyMilliseconds[index] = float64(1 + index%2)
+		repetition.NativeSamples[index] = population[index%len(population)]
+		repetition.NativeSamples[index].BatchID = uint64(index + 1)
+		repetition.NativeSamples[index].RecordIDs = []string{fmt.Sprintf("r%d", index+1)}
 	}
 	idle := profilerevidence.IdleRawMeasurement{SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,
 		Runtime: profilingrun.IdleRuntimeResult{SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded", PodUID: podUID, NodeName: config.TargetNode.Name,

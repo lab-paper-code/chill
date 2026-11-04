@@ -49,8 +49,8 @@ func TestOptionsRejectInvalidDeliveryContract(t *testing.T) {
 		func(options *options) { options.storeName = " store " },
 		func(options *options) { options.workspacePath = "workspace" },
 		func(options *options) { options.attemptTimeout = 0 },
-		func(options *options) { options.metricResultTimeout = options.attemptTimeout },
-		func(options *options) { options.workloadResultTimeout = options.attemptTimeout },
+		func(options *options) { options.metricResultTimeout = options.attemptTimeout + 1 },
+		func(options *options) { options.workloadResultTimeout = options.attemptTimeout + 1 },
 		func(options *options) { options.maxInputBytes = 0 },
 		func(options *options) { options.rawObjectKey = "" },
 	}
@@ -60,5 +60,14 @@ func TestOptionsRejectInvalidDeliveryContract(t *testing.T) {
 		if err := candidate.validate(); err == nil {
 			t.Fatalf("invalid delivery contract %d accepted", index)
 		}
+	}
+}
+
+func TestOptionsAcceptResultHandoffsSharingAttemptDeadline(t *testing.T) {
+	opts := validOptions(t)
+	opts.metricResultTimeout = opts.attemptTimeout
+	opts.workloadResultTimeout = opts.attemptTimeout
+	if err := opts.validate(); err != nil {
+		t.Fatal(err)
 	}
 }

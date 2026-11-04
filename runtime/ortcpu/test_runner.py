@@ -73,6 +73,16 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 },
             },
             "images": {},
+            "actor": {
+                "model": "mobilenet-v2-050", "mode": "profiling",
+                "runnerCommand": ["python3", "/opt/chill/runtime/firstfloor/runner.py",
+                                  "--model-dir", "/model", "--preprocessor", "/preprocessor",
+                                  "--warmup-batch", "1", "--warmup-iterations", "2"],
+                "batchSizes": [1], "warmupBatchSizes": [1], "warmupIterations": 2,
+                "maxBatchSize": 1, "maxQueueRequests": 1, "maxQueueBytes": 1024,
+                "maxRequestBytes": 1024, "runnerTimeoutMS": 30000,
+                "inputs": ["image"], "outputs": ["label"], "policy": {"deadlinePolicy": "keep"},
+            },
             "delivery": {"artifactCapability": {}},
             "targetNode": {
                 "name": "lattepanda",
@@ -84,7 +94,14 @@ def valid_request(model_path: Path) -> dict[str, object]:
             "measurement": {
                 "batch": 1,
                 "warmupIterations": 2,
-                "durationSeconds": 1,
+                "startupWarmupIterations": 2,
+                "durationSeconds": 30,
+                "sloPercentile": 95,
+                "minServiceSamples": 59,
+                "sloTargetLatencyNanos": 1_000_000_000,
+                "workloadName": "mobilenet",
+                "workloadUID": "workload-uid",
+                "workloadResourceVersion": "1",
                 "durationToleranceSeconds": 0.5,
                 "workloadMode": runner.SUPPORTED_WORKLOAD,
                 "dataset": {
@@ -115,6 +132,50 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
 
 
 class RunnerTest(unittest.TestCase):
+    def test_stop_policy_uses_actual_percentile_and_rejects_false_counts(self) -> None:
+        request = valid_request(Path("/model"))
+        validate(request)
+        del request["runConfig"]["measurement"]["workloadResourceVersion"]
+        validate(request)
+        request["runConfig"]["measurement"].update(sloPercentile=99, minServiceSamples=299)
+        validate(request)
+        for changes in ({"minServiceSamples": 58}, {"sloPercentile": 100},
+                        {"sloPercentile": True}, {"durationSeconds": 29}):
+            bad = valid_request(Path("/model"))
+            bad["runConfig"]["measurement"].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(runner.ContractError):
+                validate(bad)
+
+    def test_real_loop_requires_time_and_samples_in_every_restarted_trial(self) -> None:
+        for seconds_per_call, expected_calls in ((0.25, 120), (2.0, 59)):
+            for batch in (1, 2, 4):
+                sessions = []
+                for trial in range(3):
+                    clock = [0.0]
+                    session = FakeSession()
+                    sessions.append(session)
+                    request = valid_request(Path("/model"))
+                    request["runConfig"]["measurement"]["batch"] = batch
+                    def complete_call():
+                        session.calls.append("run")
+                        clock[0] += seconds_per_call
+                    session.run = complete_call
+                    with ExitStack() as stack:
+                        stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
+                        stack.enter_context(mock.patch.object(runner, "publish_immutable"))
+                        stack.enter_context(mock.patch.object(runner, "cpu_stat", return_value={}))
+                        stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]))
+                        stack.enter_context(mock.patch.object(runner.time, "perf_counter_ns", side_effect=lambda: int(clock[0] * 1e9)))
+                        result = runner.execute_loaded(
+                            request, session, "test-ort", ["CPUExecutionProvider"], "x86_64",
+                            "max 100000", [0], "0", lambda: None, "CPUExecutionProvider")
+                    with self.subTest(seconds_per_call=seconds_per_call, batch=batch, trial=trial):
+                        self.assertEqual(result["inferenceCount"], expected_calls)
+                        self.assertGreaterEqual(result["inferenceCount"], 59)
+                        self.assertGreaterEqual(result["measurementElapsedSecondsMonotonic"], 30)
+                        self.assertEqual(len(result["repetitionResults"][0]["latencyMs"]), expected_calls)
+                self.assertEqual(len({id(session) for session in sessions}), 3)
+
     def test_raw_sample_contract_fields_are_required_by_mode(self) -> None:
         validate(valid_idle_request(Path("/model")))
         for mutate, message in [
@@ -216,7 +277,7 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             request = valid_request(model)
-            request["runConfig"]["schemaVersion"] = "unsupported"
+            request["runConfig"]["schemaVersion"] = "chill.dacs.io/profiling-run-config.v1alpha18"
             with self.assertRaisesRegex(
                 runner.ContractError, "supported CPU RunConfig schema"
             ):
@@ -282,8 +343,8 @@ class RunnerTest(unittest.TestCase):
 
     def test_producer_budgets_fail_before_growth(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "latency sample budget"):
-            runner.measurement_complete(0.5, 1, 10, 10)
-        self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10))
+            runner.measurement_complete(0.5, 1, 10, 10, 10)
+        self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10, 10))
         with self.assertRaisesRegex(runner.ContractError, "runtime result exceeds"):
             runner.encode_result({"samples": [1, 2, 3]}, 1)
 
@@ -379,8 +440,8 @@ class RunnerTest(unittest.TestCase):
                     ],
                 )
             )
-            stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0, 1.1, 1.1]))
-            ticks = iter([0, 5_000_000])
+            stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0] + [30.1] * 60))
+            ticks = iter(value for index in range(59) for value in (index * 10_000_000, index * 10_000_000 + 5_000_000))
             stack.enter_context(mock.patch.object(
                 runner.time, "perf_counter_ns", side_effect=lambda: session.calls.append("timer") or next(ticks)
             ))
@@ -404,7 +465,7 @@ class RunnerTest(unittest.TestCase):
             [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
             + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
         )
-        self.assertEqual(session.calls, ["prepare", "timer", "run", "timer"])
+        self.assertEqual(session.calls, ["prepare", "timer", "run", "timer"] * 59)
         self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
         self.assertEqual(result["inputs"], ["image"])
         self.assertNotIn("outputValidation", result)
@@ -412,7 +473,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(result["experimentId"], "pod-uid")
         self.assertEqual(result["nodeName"], request["scheduledNodeName"])
         self.assertEqual(result["provider"], "CPUExecutionProvider")
-        self.assertEqual(result["inferenceCount"], 1)
+        self.assertEqual(result["inferenceCount"], 59)
         self.assertEqual(result["latencyMs"]["mean"], 5.0)
         self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
         self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")

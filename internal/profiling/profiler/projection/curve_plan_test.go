@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -56,6 +57,18 @@ func TestCurvePlanIdleBatchPolicy(t *testing.T) {
 
 func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) {
 	active := curvePlanRunConfig()
+	active.Actor = firstfloor.Config{
+		RuntimeImage: active.Images.Runtime, Backend: active.State.Backend,
+		MemoryRequestBytes: 1024, MemoryLimitBytes: 1024,
+		BatchSizes: []int{1, 2}, WarmupBatchSizes: []int{1, 2}, WarmupIterations: 1,
+	}
+	active.Measurement.SLOPercentile = 95
+	active.Measurement.StartupWarmupIterations = 1
+	active.Measurement.MinServiceSamples = 59
+	active.Measurement.SLOTargetLatencyNanos = 100000000
+	active.Measurement.WorkloadName = "workload"
+	active.Measurement.WorkloadUID = "workload-uid"
+	active.Measurement.WorkloadResourceVersion = "version"
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
@@ -78,6 +91,16 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 		spec.IdleProtocol.Dataset != nil {
 		t.Fatalf("projected preprocessing contract = %+v %+v", spec.Artifact, spec.Preprocessor)
 	}
+	if spec.Actor.MemoryLimitBytes != active.Actor.MemoryLimitBytes ||
+		!slices.Equal(spec.Actor.WarmupBatchSizes, active.Actor.WarmupBatchSizes) ||
+		spec.ActiveProtocol.MinServiceSamples != active.Measurement.MinServiceSamples ||
+		spec.ActiveProtocol.StartupWarmupIterations != active.Measurement.StartupWarmupIterations ||
+		spec.ActiveProtocol.SLOPercentile != active.Measurement.SLOPercentile ||
+		spec.ActiveProtocol.SLOTargetLatencyNanos != active.Measurement.SLOTargetLatencyNanos ||
+		spec.ActiveProtocol.WorkloadUID != active.Measurement.WorkloadUID ||
+		spec.ActiveProtocol.WorkloadResourceVersion != active.Measurement.WorkloadResourceVersion {
+		t.Fatalf("actor or sample-stop provenance lost: %+v", spec)
+	}
 	plan, err := profilederivation.NewCurvePlan(spec)
 	if err != nil {
 		t.Fatalf("construct curve plan: %v", err)
@@ -88,6 +111,26 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	}
 	if err := validateCurvePlanRunConfig(idle, idle.TargetNode.UID, recorded, recorded.IdleProtocol); err != nil {
 		t.Fatalf("validate idle RunConfig against projected plan: %v", err)
+	}
+	before, err := ProjectRunIdentities(active, active.TargetNode.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.Measurement.WorkloadResourceVersion = "status-only-new-version"
+	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err != nil {
+		t.Fatalf("Workload observation provenance blocked curve admission: %v", err)
+	}
+	after, err := ProjectRunIdentities(active, active.TargetNode.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.MeasurementProtocolIdentity != after.MeasurementProtocolIdentity ||
+		recorded.ActiveProtocol.WorkloadResourceVersion != "version" {
+		t.Fatal("ResourceVersion changed selected identity or lost raw provenance")
+	}
+	active.Measurement.WorkloadUID = "replacement-workload"
+	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err == nil {
+		t.Fatal("replacement Workload UID was admitted")
 	}
 }
 

@@ -1,11 +1,8 @@
 {
   "schemaVersion": "coverage-plan.v2",
-  "source": "Fixed-window planning policy; precision is measured after execution, not a planning target",
-  "precisionMeaning": "셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님",
-  "windowSeconds": 60,
-  "minCallsInWindow": 1,
-  "callDurationEstimateMultiplier": 2,
-  "unknownCallDurationSeconds": 600,
+  "source": "Sample-driven planning: every batch and restarted trial meets elapsed and Workload-derived native service sample minima",
+  "precisionMeaning": "Sample-maximum quantile coverage is not precise p95 estimation or proof of kappa safety",
+  "windowSeconds": 30,
   "idleSeconds": 10,
   "undeclaredBatchSizes": [1, 2, 4, 8, 16, 32],
   "cellAnnotation": "chill.dacs.io/coverage-cell",
@@ -17,7 +14,6 @@
   "laneLastModelExecutionPaths": {
     "smolvlm2-500m-video-instruct": ["firstfloor-ort-cuda-amd64"]
   },
-  "excludedBatchReason": "창 안 유의미 추론 불가",
   "memoryExcludedBatchReason": "측정 불가(메모리)",
   "memoryReviewReason": "메모리 제외 정책 재검토 필요",
   "memoryMaxBatch": [

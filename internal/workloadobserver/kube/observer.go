@@ -77,18 +77,19 @@ func (o *Observer) Probe(ctx context.Context, request Request) error {
 }
 
 // Observe lists active Pods, establishes a watch from the list resourceVersion,
-// then calls onStarted exactly once. After cancellation it drains that same
-// watch until the frozen Run Pod reports successful termination of the end-fence
-// companion. Post-start failures are retained as incomplete evidence.
+// then calls onStarted exactly once. When end closes it drains that same watch
+// until the frozen Run Pod reports successful termination of the end-fence
+// companion. The caller context bounds both observation and draining.
 func (o *Observer) Observe(
 	ctx context.Context,
+	end <-chan struct{},
 	request Request,
 	onStarted func(),
 ) (workloadobserver.Result, error) {
 	if err := validateRequest(request, onStarted); err != nil {
 		return workloadobserver.Result{}, err
 	}
-	watchContext, stopWatch := context.WithCancel(context.WithoutCancel(ctx))
+	watchContext, stopWatch := context.WithCancel(ctx)
 	defer stopWatch()
 	prepared, err := o.prepare(ctx, watchContext, request)
 	if err != nil {
@@ -109,7 +110,7 @@ func (o *Observer) Observe(
 	}
 
 	onStarted()
-	return o.receive(ctx, prepared.retry, request, prepared.active, result)
+	return o.receive(ctx, end, prepared.retry, request, prepared.active, result)
 }
 
 func (o *Observer) prepare(
@@ -156,6 +157,7 @@ func (o *Observer) prepare(
 
 func (o *Observer) receive(
 	ctx context.Context,
+	end <-chan struct{},
 	retry *watchtools.RetryWatcher,
 	request Request,
 	active map[string]workloadobserver.Pod,
@@ -235,13 +237,19 @@ func (o *Observer) receive(
 		return nil
 	}
 	endFence := func() (workloadobserver.Result, error) {
+		if cause := context.Cause(ctx); cause != nil {
+			return fail(workloadobserver.FailureReasonEndFenceFailed, fmt.Sprintf("workload observation interrupted: %v", cause))
+		}
 		if endFenceResourceVersion != "" {
 			return finish(nil)
 		}
-		fenceContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), request.EndFenceTimeout)
+		fenceContext, cancel := context.WithTimeout(ctx, request.EndFenceTimeout)
 		defer cancel()
 
 		for {
+			if err := fenceContext.Err(); err != nil {
+				return fail(workloadobserver.FailureReasonEndFenceFailed, fmt.Sprintf("causal end fence interrupted: %v", err))
+			}
 			select {
 			case <-fenceContext.Done():
 				return fail(
@@ -272,6 +280,8 @@ func (o *Observer) receive(
 	for {
 		select {
 		case <-ctx.Done():
+			return endFence()
+		case <-end:
 			return endFence()
 		case event, ok := <-retry.ResultChan():
 			if !ok {

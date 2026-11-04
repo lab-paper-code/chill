@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha18",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha19",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -62,7 +62,15 @@
   "measurement": {
     "batch": 1,
     "warmupIterations": 20,
+    "startupWarmupIterations": 20,
     "durationSeconds": 30,
+    "sloPercentile": 95,
+    "minServiceSamples": 59,
+    "sloTargetLatencyNanos": 1000000000,
+    "workloadName": "mobilenet",
+    "workloadUID": "workload-uid",
+    "workloadResourceVersion": "1",
+    "warmupBatchSizes": [1],
     "workloadMode": "saturated-serial-fixed-batch",
     "dataset": {
       "name": "vqav2-val-subset",
@@ -92,6 +100,21 @@
     "intervalMilliseconds": 1000,
     "timeoutMilliseconds": 500,
     "durationSeconds": 31
+  },
+  "actor": {
+    "runtimeImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "artifact": "canonical-onnx", "artifactFiles": ["/artifact/mobilenet-v2-050.onnx"],
+    "artifactImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "preprocessor": "mobilenet-imagenet", "preprocessorPath": "/artifact/mobilenet-nchw",
+    "preprocessorImage": "registry.local/chill/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "backend": "ort-cpu", "powerMode": "fixed",
+    "memoryRequestBytes": 134217728, "memoryLimitBytes": 1073741824,
+    "warmupBatchSizes": [1], "warmupIterations": 20,
+    "model": "mobilenet-v2-050", "inputs": ["image"], "outputs": ["label"],
+    "runnerCommand": ["python3", "/opt/chill/runtime/firstfloor/runner.py", "--runtime", "ort-cpu", "--model-dir", "/model", "--preprocessor", "/preprocessor", "--warmup-iterations", "20", "--warmup-batch", "1"],
+    "runnerTimeoutMS": 0, "maxQueueRequests": 32, "maxQueueBytes": 0, "maxRequestBytes": 0,
+    "mode": "", "batchSizes": [1,2,3,4], "maxBatchSize": 4,
+    "policy": {"decisionID": "", "profileID": "", "maxBatchWaitMS": 0, "deadlinePolicy": "keep"}
   },
   "workload": {
     "schemaVersion": "chill.dacs.io/workload-contract.v1alpha1"

@@ -8,6 +8,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -55,10 +56,13 @@ func BuildRun(
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
 			Batch:                    int32(measurement.Batch),
 			WarmupIterations:         protocol.WarmupIterations,
+			StartupWarmupIterations:  parent.Spec.ActiveProtocol.WarmupIterations,
 			DurationSeconds:          protocol.DurationSeconds,
 			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
 			WorkloadMode:             activeWorkloadMode,
 			Dataset:                  protocol.Dataset,
+			Workload:                 protocol.Workload,
+			WarmupBatchSizes:         append([]int32(nil), parent.Spec.BatchSizes...),
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	case batchenergyoptimization.WorkloadModeIdle:
@@ -67,10 +71,12 @@ func BuildRun(
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
 			Batch:                    int32(profilingrun.IdleExecutionBatch(backend, measurement.Batch)),
 			WarmupIterations:         0,
+			StartupWarmupIterations:  parent.Spec.ActiveProtocol.WarmupIterations,
 			SettlingDurationSeconds:  &settling,
 			DurationSeconds:          protocol.DurationSeconds,
 			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
 			WorkloadMode:             idleWorkloadMode,
+			WarmupBatchSizes:         append([]int32(nil), parent.Spec.BatchSizes...),
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	}
@@ -90,4 +96,13 @@ func BuildRun(
 		},
 		Spec: spec,
 	}, nil
+}
+
+func projectFrozenWorkload(measurement *edgev1alpha1.ProfilingRunMeasurementSpec, protocol profilederivation.CurveProtocolContract) {
+	measurement.Workload = protocol.WorkloadName
+	measurement.WorkloadUID = protocol.WorkloadUID
+	measurement.WorkloadResourceVersion = protocol.WorkloadResourceVersion
+	measurement.SLOPercentile = protocol.SLOPercentile
+	measurement.SLOTargetLatencyNanos = protocol.SLOTargetLatencyNanos
+	measurement.MinServiceSamples = int32(protocol.MinServiceSamples)
 }

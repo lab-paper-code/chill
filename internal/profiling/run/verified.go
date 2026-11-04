@@ -112,6 +112,14 @@ func cloneRunConfig(source RunConfig) RunConfig {
 	result.State.ArtifactFiles = slices.Clone(source.State.ArtifactFiles)
 	result.State.Preprocessor.Inputs = slices.Clone(source.State.Preprocessor.Inputs)
 	result.State.Preprocessor.Outputs = slices.Clone(source.State.Preprocessor.Outputs)
+	result.Measurement.WarmupBatchSizes = slices.Clone(source.Measurement.WarmupBatchSizes)
+	result.Actor.Inputs = slices.Clone(source.Actor.Inputs)
+	result.Actor.Outputs = slices.Clone(source.Actor.Outputs)
+	result.Actor.ArtifactFiles = slices.Clone(source.Actor.ArtifactFiles)
+	result.Actor.RunnerCommand = slices.Clone(source.Actor.RunnerCommand)
+	result.Actor.BatchSizes = slices.Clone(source.Actor.BatchSizes)
+	result.Actor.WarmupBatchSizes = slices.Clone(source.Actor.WarmupBatchSizes)
+	result.Actor.RuntimePackages = maps.Clone(source.Actor.RuntimePackages)
 	if source.Measurement.Dataset != nil {
 		dataset := *source.Measurement.Dataset
 		result.Measurement.Dataset = &dataset

@@ -138,7 +138,8 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 			},
 			ActiveProtocol: edgev1alpha1.ActiveProtocolSpec{
 				WarmupIterations: 20, DurationSeconds: 75,
-				Dataset: "vqav2-val-subset",
+				Workload: "mobilenet",
+				Dataset:  "vqav2-val-subset",
 				MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 					IntervalMilliseconds: 2500, TimeoutMilliseconds: 2400, DurationSeconds: 78,
 				},

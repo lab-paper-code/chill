@@ -62,6 +62,7 @@ func TestQueryAPICompatibilityRouteUsesProductionResolver(t *testing.T) {
 		requestTimeout: time.Second, maxRequestBytes: 8 << 20, maxEvidenceBytes: 64 << 20,
 		factSourceConfigMap: "facts", executionFactsKey: "execution", metricSourcesKey: "metrics",
 		workloadObservationKey: "workload", actuationPoliciesKey: "actuation",
+		executionPoliciesKey: "execution", measurementMemoryFraction: 0.8,
 	}, queryTestAuthorizer(t))
 	if err != nil {
 		t.Fatal(err)

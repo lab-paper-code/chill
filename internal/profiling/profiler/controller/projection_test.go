@@ -3,6 +3,7 @@ package controller
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,57 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	}
 }
 
+func TestProjectRequestValidatesFrozenWorkloadContract(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*edgev1alpha1.ProfilingRunMeasurementSpec)
+	}{
+		{"missing UID", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.WorkloadUID = "" }},
+		{"missing percentile", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOPercentile = 0 }},
+		{"wrong native N", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.MinServiceSamples = 299 }},
+		{"missing target", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOTargetLatencyNanos = 0 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			run := testRun()
+			measurement := &run.Spec.Measurement
+			measurement.WorkloadUID = "source-workload-uid"
+			measurement.SLOPercentile = 95
+			measurement.SLOTargetLatencyNanos = 1_000_000_000
+			measurement.MinServiceSamples = 59
+			if _, err := ProjectRequest(run.Spec); err != nil {
+				t.Fatalf("complete frozen source without ResourceVersion rejected: %v", err)
+			}
+			test.mutate(measurement)
+			if _, err := ProjectRequest(run.Spec); err == nil {
+				t.Fatal("partial or inconsistent frozen source was accepted")
+			}
+		})
+	}
+}
+
+func TestProjectRequestDefaultsSingleRunWarmupDomain(t *testing.T) {
+	for _, batches := range [][]int32{nil, {1, 2, 4}} {
+		run := testRun()
+		run.Spec.Measurement.Batch = 4
+		run.Spec.Measurement.StartupWarmupIterations = 0
+		run.Spec.Measurement.WarmupBatchSizes = batches
+		request, err := ProjectRequest(run.Spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []int{4}
+		if len(batches) != 0 {
+			want = []int{1, 2, 4}
+		}
+		measurement := request.Preparation.Measurement
+		if !slices.Equal(measurement.WarmupBatchSizes, want) ||
+			measurement.StartupWarmupIterations != int(run.Spec.Measurement.WarmupIterations) {
+			t.Fatalf("warmup projection for %v = %#v, want domain %v and startup %d",
+				batches, measurement, want, run.Spec.Measurement.WarmupIterations)
+		}
+	}
+}
+
 func TestProjectRequestDurationToleranceDefaultAndSelection(t *testing.T) {
 	run := testRun()
 	request, err := ProjectRequest(run.Spec)
@@ -49,9 +101,11 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	run := testRun()
 	settling := int32(60)
 	run.Spec.Measurement.WarmupIterations = 0
+	run.Spec.Measurement.StartupWarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	run.Spec.Measurement.Dataset = ""
+	run.Spec.Measurement.Workload = ""
 
 	request, err := ProjectRequest(run.Spec)
 	if err != nil {
@@ -246,8 +300,10 @@ func testRun() *edgev1alpha1.ProfilingRun {
 				TargetNode: "lattepanda",
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
-				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
-				WorkloadMode: "saturated-serial-fixed-batch", Dataset: "vqav2-val-subset",
+				Batch: 1, WarmupIterations: 20, StartupWarmupIterations: 20, DurationSeconds: 30,
+				WarmupBatchSizes: []int32{1},
+				WorkloadMode:     "saturated-serial-fixed-batch", Dataset: "vqav2-val-subset",
+				Workload: "mobilenet",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,

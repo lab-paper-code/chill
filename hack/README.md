@@ -577,16 +577,15 @@ records the selected Node per recovered cell; other Unknown cells stay excluded.
 Coverage resolves the current runtime image for the selected class, execution
 path's runtime family/backend and eligible Node from `profiling.executionDeclarations`
 in `runtimeValues` (`charts/chill/values-operating.yaml`, read with PyYAML).
-Target selection and request reuse call the same explicit comparison:
-`runtimeImage`, `curveSchema` and `evidenceSchema`. Completed results must have
-curve-plan v1alpha10 and finalized execution-evidence v1alpha16 (shared CPU
-RunConfig v1alpha18). Their runtime image comes from the verified public profile
-condition, not from a historical cell annotation. A current completed measurement
-is reused; a current in-progress request suppresses duplicate generation; a
-different runtime/version or Failed request does not suppress a new request.
-Pending requests record those three fields in
-`chill.dacs.io/coverage-execution-conditions`; absent/old annotations are not a
-shared-execution claim. There is no old annotation reader or CPU sizing/matching.
+Target selection and request reuse compare the current `curveSchema` and
+`evidenceSchema`; `runtimeImage` is retained provenance, not performance identity.
+Completed results must have curve-plan v1alpha11 and finalized execution-evidence
+v1alpha17, sealing strict RunConfig v1alpha19. There is no old-schema reader.
+A current completed measurement is reused; a current in-progress request
+suppresses duplicate generation. A Failed/latest-selected request does not revive
+an older successful sibling or suppress regeneration; replacement lineage remains
+separate from reuse eligibility. Pending requests record these schema identities
+and image provenance in `chill.dacs.io/coverage-execution-conditions`.
 CPU-controlled evidence is not promoted by merely ignoring its CPU fields.
 No result is deleted. `inputs/current-runtime-images.json`,
 `inputs/required-execution-conditions.json`, stale/current-runtime lists and
@@ -601,26 +600,23 @@ request, quota or affinity is inherited or generated.
 Three independent sessions, one warmup iteration, all declared artifact batches
 (omit `spec.batchSizes`), or the configured powers-of-two planner batch set
 bounded by runtime maximum when undeclared are used.
-Every model and included batch uses the same config `windowSeconds` active
-window (default 60 seconds), independently repeated three times. Start with
-the full planner batch set, then retain a batch only if its same-cell
-measured time allows `floor(windowSeconds / secondsPerCall) >= minCallsInWindow`
-(default one call). The conservative time is the slowest measurement of that
-exact model/class/path/power-mode/batch, including client overhead, whose runtime image and
-curve/evidence versions match the cell's required execution conditions through
-the same `coverage_condition_matches` predicate as target/reuse selection.
-`timings.json` retains those execution conditions per timing; old CPU-controlled
-curve/evidence versions are not timing evidence for shared execution. Without a
-matching timing the batch remains included unless a smaller batch was already
-excluded by a matching timing. Once a matching batch fails the threshold, all
-larger batches in the same cell are excluded, even with unknown or apparently
-faster timings. `excludedFromBatch` records the first failure. Another model,
-device class, path, power mode, runtime or evidence version never starts this monotone exclusion.
-`excluded-batches.json` records “창 안 유의미 추론 불가”; if no batches survive,
-`excluded-cells.json` records the cell and no BEO is emitted. A partially
-filtered artifact-declared set also excludes the cell rather than violating the
-server's indivisible declaration contract. There is no SLO-based shortcut,
-second phase, sample-count target, dynamic window extension, or window cap.
+Every planned batch receives three independently restarted trials, each stopping
+only after both the configured minimum elapsed window (30 seconds by default)
+and the Workload-derived native service-call count are complete. The generator
+reads `/api/v1/workloads` and selects the named Workload matching the exact model,
+preprocessor and dataset; absent or ambiguous sources fail rather than inventing
+a percentile. The controller freezes that Workload's identity and SLO. At the
+existing 95% confidence convention the count is
+`ceil(log(.05)/log(workload.slo.percentile/100))`: 59 for p95, 299 for p99.
+The pooled maximum's minimal quantile coverage is not a precise percentile
+estimate or proof of κ safety.
+
+Historical slow calls remain timing provenance and conditional work estimates;
+they never drop a batch or truncate the larger planned batches.
+`minCallsInWindow` and the monotone throughput exclusion are removed. Only the
+campaign's verified same-device, same-condition batch-one service evidence can
+establish the SLO-impossible exception; a slow p95 or old CPU-regime result cannot.
+The existing scoped memory safety/review exclusions below remain separate.
 
 `coverage-plan.v2` is a **single cutover** from the old class-wide integer map to
 `memoryMaxBatch` rule records; the generator rejects v1 and has no dual reader.
@@ -681,25 +677,22 @@ never reconstructed from today's runtime defaults. Original lattepanda/RTX
 failure observations are retained from git and saved coverage summaries; rounded
 limits and missing native/frozen worker envelopes remain unknown.
 
-The active metric observation deadline includes the last in-flight call:
-`windowSeconds + ceil(max(included batch call bounds)) + inherited metric padding`.
-Each known call bound is the slowest same-condition model/class/path/power-mode/batch estimate multiplied
-by config `callDurationEstimateMultiplier` (2); unknown timings use config
-`unknownCallDurationSeconds` (600). Excluded batches do not inflate the deadline.
-This changes observer/worker budgets, not the runtime's 60-second start window,
-actual power integration window, or `durationToleranceSeconds`: tolerance only
-allows measurement undershoot and must remain finite, nonnegative and below
-the measurement duration. Both tolerance and metric duration are frozen in
-RunConfig/curve identity; no storage schema or acceptance rule changes.
-The policy is part of the shared plan hash, so changing these settings renames
-every newly generated cell, not just slow cells; existing requests are skipped
-only under the explicit execution-condition comparison above, never rewritten.
+Metric observation follows the runtime's actual end fence through sample-limited
+windows; its immutable safety timeout remains a failure bound, never a successful
+stop. The generator preserves inherited metric padding above the elapsed minimum,
+without call-duration multipliers or invented rates for unknown timings.
+Active evidence must satisfy the full elapsed minimum regardless of the retained
+`durationToleranceSeconds`; observation windows and exact images are provenance,
+not performance-key identity.
+The policy contributes to deterministic request naming. Existing requests are
+reused only through the explicit current-schema conditions above, never rewritten.
 A running feeder keeps its frozen plan until the operator explicitly replaces it.
-Idle uses the inherited fixed window or config `idleSeconds` (10 seconds).
-Reports state: “셀별 정밀도(CI)는 측정 후 기록하며 목표치가 아님”.
-Estimates include active windows, three shared-idle windows and their settling
-time, plus the configured 20-second overhead per active or idle run. Variable
-load/warmup/polling time is not included. MNV/PLC precede Smol, with power modes
+Idle retains its inherited window or config `idleSeconds` (10 seconds).
+Work estimates use `3 × Σ_batch max(windowSeconds, n_min × secondsPerCall)` where
+same-condition timing exists. Unknown rates contribute only the elapsed lower
+bound, explicitly not a completion estimate. Idle/settling and the existing
+20-second per-Run overhead scenario are added; variable startup/warmup/polling are
+not included. MNV/PLC precede Smol, with power modes
 grouped within each priority tier. `laneLastExecutionPaths` and the model-specific
 `laneLastModelExecutionPaths` stably move CUDA VLM and Smol CUDA amd64 cells to
 the end of their lane tier, without delaying MNV/PLC on the shared amd64 path.

@@ -249,6 +249,7 @@ deps:
   profile-derivation:
     anyVendorDeps: true
     mayDependOn:
+      - firstfloor
       - power-window
       - model-compat
   power-window:
@@ -298,6 +299,7 @@ deps:
       - metric-core
       - node-actuator-core
       - profiling-run
+      - firstfloor
 
   profiler-evidence:
     mayDependOn:
@@ -471,6 +473,7 @@ deps:
 
   profiler-controller:
     mayDependOn:
+      - firstfloor
       - api
       - platform-core
       - evidence-core

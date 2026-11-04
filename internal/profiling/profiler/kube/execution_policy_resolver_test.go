@@ -2,13 +2,16 @@ package kube
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/yaml"
 )
@@ -31,11 +34,12 @@ func TestKubernetesExecutionPolicyResolverFreezesSelectedConfigMapPolicy(t *test
 		Data: map[string]string{"execution-policies.yaml": string(raw)},
 	}
 	resolver, err := NewKubernetesExecutionPolicyResolver(
-		fake.NewClientBuilder().WithObjects(configMap).Build(),
+		fake.NewClientBuilder().WithObjects(configMap, executionPolicyNode(config, "4Gi")).Build(),
 		ExecutionPolicyResolverOptions{
-			Namespace:     testSystemNamespace,
-			ConfigMapName: "chill-profiler-facts",
-			ConfigMapKey:  "execution-policies.yaml",
+			Namespace:                 testSystemNamespace,
+			ConfigMapName:             "chill-profiler-facts",
+			ConfigMapKey:              "execution-policies.yaml",
+			MeasurementMemoryFraction: 0.8,
 		},
 	)
 	if err != nil {
@@ -64,9 +68,10 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 	resolver, err := NewKubernetesExecutionPolicyResolver(
 		fake.NewClientBuilder().WithObjects(configMap).Build(),
 		ExecutionPolicyResolverOptions{
-			Namespace:     testSystemNamespace,
-			ConfigMapName: "facts",
-			ConfigMapKey:  "execution-policies.yaml",
+			Namespace:                 testSystemNamespace,
+			ConfigMapName:             "facts",
+			ConfigMapKey:              "execution-policies.yaml",
+			MeasurementMemoryFraction: 0.8,
 		},
 	)
 	if err != nil {
@@ -87,6 +92,7 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 		fake.NewClientBuilder().WithObjects(malformedConfigMap).Build(),
 		ExecutionPolicyResolverOptions{
 			Namespace: testSystemNamespace, ConfigMapName: "facts", ConfigMapKey: "execution-policies.yaml",
+			MeasurementMemoryFraction: 0.8,
 		},
 	)
 	if err != nil {
@@ -96,6 +102,50 @@ func TestKubernetesExecutionPolicyResolverFailsClosedForBinaryData(t *testing.T)
 		t.Fatal("malformed execution-policy catalog was accepted")
 	} else if reason, terminal := profiler.TerminalResolutionReason(err); !terminal || reason != profiler.ResolutionReasonExecutionPolicyInvalid {
 		t.Fatalf("malformed execution-policy classification = %q, terminal=%t", reason, terminal)
+	}
+}
+
+func TestExecutionPolicyResolverFreezesNodeCappedMemoryBeforePreparation(t *testing.T) {
+	for _, fraction := range []float64{0.8, 0.5} {
+		for _, policyLimit := range []int64{16 << 30, 1 << 30} {
+			t.Run(fmt.Sprintf("%g/%d", fraction, policyLimit), func(t *testing.T) {
+				config := currentRunConfig(t)
+				policy := controllerExecutionPolicySpec(config.Measurement.WorkloadMode)
+				policy.RuntimeMemoryLimitBytes = policyLimit
+				raw, err := yaml.Marshal(profiler.ExecutionPolicyCatalog{
+					SchemaVersion: profiler.ExecutionPolicyCatalogSchemaVersion, Policies: []profiler.ExecutionPolicySpec{policy},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				configMap := &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{Namespace: testSystemNamespace, Name: "facts", UID: testFactsUID, ResourceVersion: "42"},
+					Data:       map[string]string{"policy": string(raw)},
+				}
+				resolver, err := NewKubernetesExecutionPolicyResolver(
+					fake.NewClientBuilder().WithObjects(configMap, executionPolicyNode(config, "4Gi")).Build(),
+					ExecutionPolicyResolverOptions{Namespace: testSystemNamespace, ConfigMapName: "facts", ConfigMapKey: "policy", MeasurementMemoryFraction: fraction},
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				frozen, err := resolver.Resolve(context.Background(), config)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := min(policyLimit, int64(float64(int64(4<<30))*fraction))
+				if frozen.Policy.RuntimeMemoryLimitBytes != want || frozen.Policy.RuntimeMemoryRequestBytes != policy.RuntimeMemoryRequestBytes {
+					t.Fatalf("selected actor envelope = %d/%d, want %d/%d", frozen.Policy.RuntimeMemoryRequestBytes, frozen.Policy.RuntimeMemoryLimitBytes, policy.RuntimeMemoryRequestBytes, want)
+				}
+			})
+		}
+	}
+}
+
+func executionPolicyNode(config profilingrun.RunConfig, memory string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: config.TargetNode.Name, UID: types.UID(config.TargetNode.UID)},
+		Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(memory)}},
 	}
 }
 

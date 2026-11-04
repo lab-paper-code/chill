@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
@@ -26,12 +29,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
+	ctrlfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func measuredAdoptionProfile() serving.Profile {
-	return serving.Profile{
+	profile := serving.Profile{
 		ID: "measurements/complete/uid", NodeName: "node",
 		Condition: derivation.CurvePlanSpec{
 			NodeUID: "node-uid", Backend: "ort-cuda", RuntimeImage: "registry/cuda@sha256:measured",
@@ -55,6 +60,15 @@ func measuredAdoptionProfile() serving.Profile {
 			{Batch: 2, MemoryBytes: 4096, DurationNanos: []float64{3e6}},
 		},
 	}
+	profile.Condition.Actor = native.Config{
+		Model: "mobilenet", Backend: "ort-cuda", RuntimeImage: profile.Condition.RuntimeImage,
+		MemoryRequestBytes: 4096 + 128<<20, MemoryLimitBytes: 4096 + 128<<20,
+		Inputs: []string{"image"}, Outputs: []string{"label"}, MaxNewTokens: 16,
+		BatchSizes: []int{1, 2, 4}, MaxBatchSize: 4, MaxQueueRequests: 8,
+		WarmupBatchSizes: []int{1, 2}, WarmupIterations: 5, GPUUUID: "GPU-measured",
+	}
+	profile.Condition.Actor.BuildRunnerCommand()
+	return profile
 }
 
 func TestPositiveProfileKeepsExistingBundleAndBatchJSON(t *testing.T) {
@@ -104,7 +118,7 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 		t.Fatal("selection fabricated readiness/evidence/publication")
 	}
 	if !reflect.DeepEqual(spec.Config.BatchSizes, []int{1, 2, 4}) || spec.Config.Policy.MaxBatchSize != 2 ||
-		spec.MemoryBytes != 4098 || spec.Store.CredentialsSecretName != "actual-secret" {
+		spec.MemoryBytes != uint64(profile.Condition.Actor.MemoryLimitBytes) || spec.Store.CredentialsSecretName != "actual-secret" {
 		t.Fatalf("lost measured startup/delivery facts: %+v", spec)
 	}
 	if spec.Instance.Allocation.GPUUUID != "GPU-measured" ||
@@ -138,6 +152,8 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 				profile.Batches[i].Batch = k
 				want = append(want, fmt.Sprint(k))
 			}
+			profile.Condition.Actor.WarmupBatchSizes = allowed
+			profile.Condition.Actor.BuildRunnerCommand()
 			spec, err := service.measuredPreparation(context.Background(), profile, 2)
 			if err != nil {
 				t.Fatal(err)
@@ -156,9 +172,112 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	}
 }
 
-// The queued request bytes firstfloor admits fit in the Pod memory above the
-// measured peak: the limit adds servingMemoryBytes, half of which is the queue.
-func TestMeasuredPreparationReservesQueueMemoryAboveMeasuredPeak(t *testing.T) {
+func TestPreparationFreezesCurrentDeclarationImageInCommonConfig(t *testing.T) {
+	ctx := context.Background()
+	service := schedulerTestService(t, schedulerTestConfiguration())
+	profile := measuredAdoptionProfile()
+	profile.Condition.DeviceClass, profile.Condition.RuntimeFamily = "gpu", "firstfloor"
+	profile.Condition.Actor.ArtifactImage = "registry/artifact:measured"
+	profile.Condition.Actor.ArtifactFiles = profile.Condition.Artifact.Files
+	profile.Condition.Actor.PreprocessorImage = "registry/preprocessor:measured"
+	profile.Condition.Actor.PreprocessorPath = "/preprocessor/pre"
+	profile.Condition.Artifact.Image = profile.Condition.Actor.ArtifactImage
+	profile.Condition.Preprocessor.Image = profile.Condition.Actor.PreprocessorImage
+	profile.Condition.Preprocessor.Path = profile.Condition.Actor.PreprocessorPath
+	if _, err := service.kube.CoreV1().Nodes().Create(ctx, &core.Node{ObjectMeta: meta.ObjectMeta{Name: profile.NodeName, UID: "node-uid"}}, meta.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	declaration := func(image string) *core.ConfigMap {
+		payload, err := json.Marshal(map[string]any{
+			"schemaVersion": "chill.dacs.io/runtime-declaration.v1alpha2", "image": image,
+			"architecture": "amd64", "runtime": map[string]any{"family": "firstfloor", "backends": []string{"ort-cuda"}},
+			"verification": "exact-image-runtime-inspection-v1",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		facts, err := json.Marshal(map[string]any{
+			"schemaVersion": "chill.dacs.io/profiler-execution-facts.v1alpha8", "metricObserverImage": image,
+			"declarations": []any{map[string]any{"deviceClass": "gpu", "runtime": map[string]string{"payload": string(payload)}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Name: "execution-facts", Namespace: "serving", UID: "facts-uid", ResourceVersion: "1"}, Data: map[string]string{"execution-facts.yaml": string(facts)}}
+	}
+	const declaredImage = "registry/runtime:current-B"
+	reader := ctrlfake.NewClientBuilder().WithScheme(service.store.Client().Scheme()).WithObjects(declaration(declaredImage)).Build()
+	resolves := 0
+	observer, err := servingkube.NewObserver(service.cluster, service.store, service.kube, service.execution, &sdk.Client{}, servingkube.ObserverConfig{
+		Namespace: "serving", RuntimeImage: func(ctx context.Context, p *serving.Profile) (string, error) {
+			resolves++
+			c := p.Condition
+			return profilerkube.ResolveRuntimeImage(ctx, reader, profilerkube.CandidateResolverOptions{
+				Namespace: "serving", ConfigMapName: "execution-facts", ConfigMapKey: "execution-facts.yaml",
+			}, c.DeviceClass, p.NodeName, c.RuntimeFamily, c.Backend)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = observer.Close() })
+	service.observer = observer
+	var puts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			http.Error(w, "only immutable bundle upload expected", http.StatusBadRequest)
+			return
+		}
+		puts.Add(1)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Error(err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	service.objects, err = stores3.New(stores3.Config{
+		LogicalStore: "store", Bucket: "bucket", Endpoint: server.URL, Region: "region",
+		AccessKeyID: "access", SecretAccessKey: "secret", TempDir: t.TempDir(), HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.opts = Options{
+		StoreName: "store", StoreEndpoint: server.URL, StoreBucket: "bucket", StoreRegion: "region", StoreCredentialsSecret: "credentials",
+		OperationTimeout: time.Minute, MaxEvidenceBytes: 1 << 20, MaxRequestBytes: 1 << 20,
+	}
+	config := schedulerTestConfiguration()
+	config.Settings.ServingMemoryBytes = 128 << 20
+	spec, err := service.preparation(ctx, config, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Config.RuntimeImage != declaredImage || spec.Instance.RuntimeImage != spec.Config.RuntimeImage || resolves != 1 || puts.Load() != 1 {
+		t.Fatalf("preparation image was not selected once into common Config: %+v resolves=%d puts=%d", spec, resolves, puts.Load())
+	}
+	current := &core.ConfigMap{}
+	if err := reader.Get(ctx, types.NamespacedName{Namespace: "serving", Name: "execution-facts"}, current); err != nil {
+		t.Fatal(err)
+	}
+	current.Data = declaration("registry/runtime:later-C").Data
+	if err := reader.Update(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	pod, _, err := service.operations.PreparationPod(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Spec.Containers[0].Image != declaredImage || pod.Spec.InitContainers[2].Image != declaredImage || resolves != 1 {
+		t.Fatal("launch re-resolved the declaration or used historical image A")
+	}
+	if spec.Instance.Profile.Condition.Actor.RuntimeImage != profile.Condition.Actor.RuntimeImage || profile.Condition.Actor.RuntimeImage == declaredImage {
+		t.Fatal("current launch image rewrote historical measurement provenance")
+	}
+}
+
+// Queue bytes fit inside the frozen measured envelope, rather than defining a
+// second serving-only memory limit.
+func TestMeasuredPreparationBoundsQueueWithinFrozenEnvelope(t *testing.T) {
 	service := &SchedulerService{
 		kube: fake.NewSimpleClientset(&core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}}),
 		opts: Options{
@@ -209,6 +328,10 @@ func TestMeasuredPreparationUsesSharedCPUWithoutAllocation(t *testing.T) {
 			profile.RuntimeMetadata.IntraOpThreads, profile.RuntimeMetadata.InterOpThreads = threads, 0
 			profile.RuntimeMetadata.CgroupCPUMax = "max 100000"
 			profile.RuntimeMetadata.GPUUUID = ""
+			profile.Condition.Backend = "ort-cpu"
+			profile.Condition.Actor.Backend = profile.Condition.Backend
+			profile.Condition.Actor.GPUUUID = ""
+			profile.Condition.Actor.BuildRunnerCommand()
 			spec, err := service.measuredPreparation(context.Background(), profile, 128<<20)
 			if err != nil {
 				t.Fatal(err)

@@ -56,7 +56,7 @@ func resolvedRunFromJob(run *edgev1alpha1.ProfilingRun, job *batchv1.Job) (Resol
 	if err != nil {
 		return ResolvedRun{}, err
 	}
-	rawConfig, err := argumentValue(runtimeContainer.Args, runConfigArgumentPrefix)
+	rawConfig, err := runConfigArgument(runtimeContainer.Args)
 	if err != nil {
 		return ResolvedRun{}, err
 	}
@@ -109,7 +109,8 @@ func namedContainer(containers []corev1.Container, name string) (corev1.Containe
 	return *matched, nil
 }
 
-func argumentValue(args []string, prefix string) (string, error) {
+func runConfigArgument(args []string) (string, error) {
+	const prefix = runConfigArgumentPrefix
 	var value string
 	for _, argument := range args {
 		if !strings.HasPrefix(argument, prefix) {

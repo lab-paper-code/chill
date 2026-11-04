@@ -40,6 +40,7 @@ func ProjectCurvePlanSpec(
 		Firstfloor:     modelcompat.CloneFirstfloorRuntimeSettings(active.State.Firstfloor),
 		RuntimeAccess:  projectCurveRuntimeAccess(active.Delivery.RuntimeAccess),
 		RuntimeImage:   active.Images.Runtime,
+		Actor:          active.Actor,
 		PowerMode:      active.State.PowerMode,
 		MetricSource:   projectCurveMetricSource(active.Metrics),
 		ActiveProtocol: activeProtocol,
@@ -64,6 +65,21 @@ func ProjectCurvePlanSpec(
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("active and idle curve RunConfigs disagree: %w", err)
 	}
 	return spec, nil
+}
+
+// ProjectMeasuredCurveCondition attaches observed semantic runtime facts without
+// treating an exact image reference as a version or introducing a validity gate.
+func ProjectMeasuredCurveCondition(
+	condition profilederivation.CurvePlanSpec,
+	active profilerevidence.VerifiedEvidence,
+) (profilederivation.CurvePlanSpec, error) {
+	_, raw, err := active.Records()
+	if err != nil {
+		return profilederivation.CurvePlanSpec{}, err
+	}
+	condition.RuntimeVersion = raw.Runtime.RuntimeVersion
+	condition.RuntimeProvider = raw.Runtime.Provider
+	return condition, nil
 }
 
 // ProjectVerifiedCurveState binds Loader-verified execution conditions to the
@@ -194,6 +210,9 @@ func validateCurvePlanRunConfig(
 	if !sameFirstfloorSettings(config.State.Firstfloor, spec.Firstfloor) {
 		return errors.New("RunConfig contradicts curve-plan firstfloor settings")
 	}
+	if !reflect.DeepEqual(config.Actor, spec.Actor) {
+		return errors.New("RunConfig contradicts curve-plan actor facts")
+	}
 	if !reflect.DeepEqual(projectCurveRuntimeAccess(config.Delivery.RuntimeAccess), spec.RuntimeAccess) {
 		return errors.New("RunConfig contradicts curve-plan accelerator delivery")
 	}
@@ -207,6 +226,9 @@ func validateCurvePlanRunConfig(
 	if err != nil {
 		return err
 	}
+	// ResourceVersion is observation provenance, not a selected condition.
+	projectedProtocol.WorkloadResourceVersion = ""
+	protocol.WorkloadResourceVersion = ""
 	if !reflect.DeepEqual(projectedProtocol, protocol) {
 		return errors.New("RunConfig contradicts curve-plan measurement-protocol facts")
 	}
@@ -259,9 +281,16 @@ func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.Curv
 		WorkloadMode:               config.Measurement.WorkloadMode,
 		Dataset:                    dataset,
 		WarmupIterations:           config.Measurement.WarmupIterations,
+		StartupWarmupIterations:    config.Measurement.StartupWarmupIterations,
 		SettlingDurationSeconds:    config.Measurement.SettlingDurationSeconds,
 		DurationSeconds:            config.Measurement.DurationSeconds,
 		DurationToleranceSeconds:   config.Measurement.DurationToleranceSeconds,
+		SLOPercentile:              config.Measurement.SLOPercentile,
+		MinServiceSamples:          config.Measurement.MinServiceSamples,
+		SLOTargetLatencyNanos:      config.Measurement.SLOTargetLatencyNanos,
+		WorkloadName:               config.Measurement.WorkloadName,
+		WorkloadUID:                config.Measurement.WorkloadUID,
+		WorkloadResourceVersion:    config.Measurement.WorkloadResourceVersion,
 		MetricIntervalMilliseconds: config.Metrics.IntervalMilliseconds,
 		MetricTimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
 		MetricDurationSeconds:      config.Metrics.DurationSeconds,

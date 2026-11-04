@@ -60,6 +60,15 @@ new stored fields. Job event capacity allows power plus a thermal failure per
 tick. Raw validation binds the exact source and RunConfig. Parsing must preserve
 missing/unsupported signals and reject duplicates/malformed values.
 
+For profiling sample-count stops, the CLI's end wait and `ObserveUntil.Duration`
+watchdog derive from the frozen producer `AttemptTimeout`, not the nominal
+metric duration or the active trial's minimum elapsed duration. Admission covers
+that entire schedule at the original interval and per-read timeout. This is a
+failure bound, not a predicted successful duration: the sample 30/31-second
+protocol permits 59 two-second calls to finish at 118 seconds with real metric
+support through producer completion and the subsequent successful metric-exit
+fence for WorkloadObserver.
+
 ## Dependency and exclusions
 
 `Profiler -> internal/metricobserver <- internal/metricobserver/edgemetrics ->

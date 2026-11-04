@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -59,10 +57,11 @@ func (o *SchedulerService) preparation(
 	if err != nil {
 		return spec, err
 	}
-	spec.Instance.RuntimeImage, err = o.observer.CurrentRuntimeImage(ctx, &profile)
+	spec.Config.RuntimeImage, err = o.observer.CurrentRuntimeImage(ctx, &profile)
 	if err != nil {
 		return spec, err
 	}
+	spec.Instance.RuntimeImage = spec.Config.RuntimeImage
 	spec.Instance.RunnerCommand = spec.Config.RunnerCommand
 	raw, err := json.Marshal(profile.NativeBundle())
 	if err != nil {
@@ -162,23 +161,28 @@ func (o *SchedulerService) measuredPreparation(
 	if string(node.UID) != p.Condition.NodeUID {
 		return spec, fmt.Errorf("measured Node UID required")
 	}
-	var memory uint64
+	// The measured resource envelope is an execution condition, not a fresh
+	// serving-only cap derived from an observed peak.
+	memory := p.Condition.Actor.MemoryLimitBytes
+	if memory <= 0 {
+		return spec, fmt.Errorf("measured actor memory envelope required")
+	}
+	var peak uint64
 	for _, batch := range p.Batches {
 		if batch.MemoryBytes == 0 {
 			return spec, fmt.Errorf("profile batch %d lacks measured memory", batch.Batch)
 		}
-		memory = max(memory, batch.MemoryBytes)
+		peak = max(peak, batch.MemoryBytes)
+	}
+	if peak >= uint64(memory) {
+		return spec, fmt.Errorf("measured actor memory envelope has no queue headroom")
 	}
 	// ponytail: Go's default GOGC=100 lets the firstfloor heap reach twice its live
 	// queue, so the queue cap is half the headroom; measure queue RSS if it OOMs again.
-	queueBytes := min(servingMemory/2, native.MaxFrameBytes)
+	queueBytes := min(min(servingMemory, uint64(memory)-peak)/2, native.MaxFrameBytes)
 	if queueBytes < 1 {
 		return spec, fmt.Errorf("settings.servingMemoryBytes must hold the firstfloor queue")
 	}
-	if memory == 0 || servingMemory > uint64(1<<63-1) || memory > uint64(1<<63-1)-servingMemory {
-		return spec, fmt.Errorf("bounded measured memory required")
-	}
-	memory += servingMemory
 	binding := storekube.Binding{
 		Store: o.opts.StoreName, Endpoint: o.opts.StoreEndpoint, Bucket: o.opts.StoreBucket,
 		Region: o.opts.StoreRegion, CredentialsSecretName: o.opts.StoreCredentialsSecret,
@@ -194,49 +198,27 @@ func (o *SchedulerService) measuredPreparation(
 			"preparation override required for measured backend %s host delivery contract", p.Condition.Backend,
 		)
 	}
+	actor := p.Condition.Actor
+	actor.Mode = "serving"
+	actor.ProfilePath = "/profile/bundle.json"
+	actor.RunnerTimeoutMS = int(o.opts.OperationTimeout / time.Millisecond)
+	actor.MaxQueueBytes = int(queueBytes)
+	actor.MaxRequestBytes = int(min(o.opts.MaxRequestBytes, int64(native.MaxFrameBytes)))
+	actor.Policy = native.Policy{
+		DecisionID: name, ProfileID: p.ID, MaxBatchSize: p.Batches[len(p.Batches)-1].Batch,
+		DeadlinePolicy: settings.DeadlinePolicy,
+	}
 	spec = servingstate.PrepareSpec{
-		Name: name, Store: binding, MemoryBytes: memory,
+		Name: name, Store: binding, MemoryBytes: uint64(memory),
 		Instance: serving.SchedulerInstance{
 			ID: name, Node: serving.NodeReference{Name: p.NodeName, UID: p.Condition.NodeUID},
 			Allocation: serving.SchedulerAllocation{
-				GPUUUID: runtime.GPUUUID, MemoryBytes: memory,
+				GPUUUID: runtime.GPUUUID, MemoryBytes: uint64(memory),
 			},
 			Capacity: int(settings.MaxQueueSize), Weight: 1,
 			MaxBatch: p.Batches[len(p.Batches)-1].Batch,
 		},
-		Config: native.Config{
-			Model:        "chill_model",
-			Inputs:       slices.Clone(p.Condition.Preprocessor.Inputs),
-			Outputs:      slices.Clone(p.Condition.Preprocessor.Outputs),
-			MaxNewTokens: p.Condition.Preprocessor.MaxNewTokens,
-			RunnerCommand: []string{
-				"python3", "/opt/chill/runtime/firstfloor/runner.py", "--runtime", p.Condition.Backend,
-				"--model-dir", "/model", "--preprocessor", "/preprocessor",
-				"--warmup-iterations", strconv.Itoa(runtime.WarmupIterations),
-			},
-			RunnerTimeoutMS: int(
-				o.opts.OperationTimeout / time.Millisecond,
-			), MaxQueueRequests: int(settings.MaxQueueSize),
-			MaxQueueBytes:   int(queueBytes),
-			MaxRequestBytes: int(min(o.opts.MaxRequestBytes, int64(native.MaxFrameBytes))),
-			Mode:            "serving", BatchSizes: slices.Clone(runtime.InitializedBatches),
-			MaxBatchSize: int(settings.MaxBatchSize), ProfilePath: "/profile/bundle.json",
-			Policy: native.Policy{
-				DecisionID: name, ProfileID: p.ID, MaxBatchSize: p.Batches[len(p.Batches)-1].Batch,
-				DeadlinePolicy: settings.DeadlinePolicy,
-			},
-		},
-	}
-	// The policy can grow within this immutable measured domain without replacing
-	// the runner. Warm all measured K, never additional initialized capabilities.
-	for _, batch := range p.Batches {
-		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--warmup-batch", strconv.Itoa(batch.Batch))
-	}
-	if runtime.GPUUUID != "" {
-		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--gpu-uuid", runtime.GPUUUID)
-	}
-	if rknn {
-		spec.Config.RunnerCommand = append(spec.Config.RunnerCommand, "--delivery-json", "/config/delivery.json")
+		Config: actor,
 	}
 	// Validate against the same measured bundle the scheduler publishes, then retain
 	// only the immutable startup reference in the persisted preparation.

@@ -579,7 +579,7 @@ func kindInstance(t *testing.T, kube kubernetes.Interface, c *SchedulerControlle
 		actual.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: native.Metadata{
-			Model: "chill_model", Mode: "serving", ProfileID: profile.ID, AppliedAt: time.Now().UTC(),
+			Model: profile.Condition.Actor.Model, Mode: "serving", ProfileID: profile.ID, AppliedAt: time.Now().UTC(),
 			Runtime: actual, MaxQueueRequests: 4, MaxBatchSize: 1, ModelInstanceCount: 1,
 		}})
 	}))

@@ -90,8 +90,8 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
-# Resolving a campaign intent reads cluster-scoped model, device class,
-# preprocessor, dataset, and target Node inputs.
+# Resolving a campaign intent reads cluster-scoped Workload SLO, model,
+# device class, preprocessor, dataset, and target Node inputs.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -101,7 +101,7 @@ metadata:
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
-    resources: ["modelspecs", "deviceclasses", "preprocessors", "datasets"]
+    resources: ["workloads", "modelspecs", "deviceclasses", "preprocessors", "datasets"]
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["nodes"]
@@ -200,6 +200,8 @@ spec:
             - {{ printf "--metric-sources-key=%s" .Values.profiler.factSource.metricSourcesKey | quote }}
             - {{ printf "--workload-observation-key=%s" .Values.profiler.factSource.workloadObservationKey | quote }}
             - {{ printf "--actuation-policies-key=%s" .Values.profiler.factSource.actuationPoliciesKey | quote }}
+            - {{ printf "--execution-policies-key=%s" .Values.profiler.factSource.executionPoliciesKey | quote }}
+            - {{ printf "--measurement-memory-fraction=%v" .Values.profiler.measurementMemoryFraction | quote }}
           env:
             - name: POD_NAMESPACE
               valueFrom:

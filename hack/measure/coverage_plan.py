@@ -98,13 +98,13 @@ def coverage_declared_on_node(cell, node, device, model, declarations, has_polic
     return False
 
 
-SHARED_CURVE_SCHEMA = "chill.dacs.io/curve-plan.v1alpha10"
-SHARED_EVIDENCE_SCHEMA = "chill.dacs.io/profiling-execution-evidence.v1alpha16"
+SHARED_CURVE_SCHEMA = "chill.dacs.io/curve-plan.v1alpha11"
+SHARED_EVIDENCE_SCHEMA = "chill.dacs.io/profiling-execution-evidence.v1alpha17"
 EXECUTION_CONDITIONS_ANNOTATION = "chill.dacs.io/coverage-execution-conditions"
 
 
 def coverage_shared_result(result):
-    """Current finalized evidence seals RunConfig v1alpha18; old CPU runs never cover shared cells."""
+    """Current finalized evidence seals RunConfig v1alpha19; old contracts never cover v3 cells."""
     record = result.get("result") or {}
     trials = record.get("completedTrials") or []
     return (record.get("curvePlan", {}).get("schemaVersion") == SHARED_CURVE_SCHEMA and bool(trials) and
@@ -252,6 +252,28 @@ def coverage_inputs(spec, model, artifact, preprocessors, datasets):
         dataset = compatible[0]
     spec["state"]["candidate"]["preprocessor"] = pre["metadata"]["name"]
     spec["activeProtocol"]["dataset"] = dataset
+
+
+def coverage_workload(spec, workloads):
+    """Resolve the real catalog Workload whose SLO the controller will freeze."""
+    candidate = spec["state"]["candidate"]
+    active = spec["activeProtocol"]
+    matches = [view["desired"] for view in workloads if view.get("desired") and
+               view["desired"]["spec"]["modelRef"]["name"] == candidate["modelSpec"] and
+               view["desired"]["spec"]["preprocessorRef"]["name"] == candidate["preprocessor"] and
+               view["desired"]["spec"].get("datasetRef", {}).get("name") == active["dataset"]]
+    selected = next((workload for workload in matches if
+                     workload["metadata"]["name"] == active.get("workload")), None)
+    if selected is None:
+        if len(matches) != 1:
+            raise ValueError("no unambiguous source Workload for " + candidate["modelSpec"])
+        selected = matches[0]
+    percentile = selected["spec"]["slo"]["percentile"]
+    if (type(percentile) not in (int, float) or not math.isfinite(percentile) or
+            not 0 < percentile < 100):
+        raise ValueError("source Workload SLO requires a finite percentile in (0, 100)")
+    active["workload"] = selected["metadata"]["name"]
+    return math.ceil(math.log(.05) / math.log(percentile / 100))
 
 
 def coverage_timings(results):
@@ -445,7 +467,7 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False, executio
     memory_max = rule["maxBatch"] if memory_status == "applied" else None
     review = rule is not None and memory_status != "applied"
     estimates = []
-    excluded_from = None
+    # Native sample coverage extends the window; slow historical calls never remove K.
     for batch in sorted(batches):
         # CPU and accelerator paths of one model differ by orders of magnitude; never borrow across paths.
         measured = [r for r in timings if r["model"] == model and r["deviceClass"] == device and
@@ -454,36 +476,29 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False, executio
                     coverage_condition_matches(r.get("executionConditions"), execution_conditions)]
         source = max(measured, key=lambda r: r["secondsPerCall"]) if measured else None
         calls = math.floor(policy["windowSeconds"] / source["secondsPerCall"]) if source else None
-        if calls is not None and calls < policy["minCallsInWindow"] and excluded_from is None:
-            excluded_from = batch
         over_memory = memory_max is not None and batch > memory_max
-        included = excluded_from is None and not over_memory and not review
+        included = not over_memory and not review
         estimates.append({"batch": batch, "secondsPerCall": source["secondsPerCall"] if source else None,
                           "estimatedCallsInWindow": calls, "timingSource": source, "included": included,
                           "reason": None if included else (
                               policy["memoryReviewReason"] if review else
-                              policy["memoryExcludedBatchReason"] if over_memory else policy["excludedBatchReason"]),
-                          "excludedFromBatch": excluded_from,
+                              policy["memoryExcludedBatchReason"]),
                           "memoryPolicy": None if rule is None else {
                               "status": memory_status, "rule": rule, "currentConditions": dict(
                                   execution_conditions or {}, executionPath=cell["executionPath"])}})
     included = [r["batch"] for r in estimates if r["included"]]
     reason = None if included else (
-        policy["memoryReviewReason"] if review else policy["memoryExcludedBatchReason"] if all(
-            r["reason"] == policy["memoryExcludedBatchReason"] for r in estimates) else policy["excludedBatchReason"])
+        policy["memoryReviewReason"] if review else policy["memoryExcludedBatchReason"])
     if declared and included and included != sorted(batches):
         included, reason = [], policy["declaredBatchConflictReason"]
     return included, estimates, reason
 
 
-def coverage_active_protocol(active, estimates, policy):
+def coverage_active_protocol(active, policy):
     seconds = policy["windowSeconds"]
     padding = max(0, active["metricObservation"]["durationSeconds"] - active["durationSeconds"])
-    tail = max((r["secondsPerCall"] * policy["callDurationEstimateMultiplier"]
-                if r["secondsPerCall"] is not None else policy["unknownCallDurationSeconds"])
-               for r in estimates if r["included"])
     active.update(durationSeconds=seconds, warmupIterations=policy["warmupIterations"])
-    active["metricObservation"]["durationSeconds"] = seconds + math.ceil(tail) + padding
+    active["metricObservation"]["durationSeconds"] = seconds + padding
 
 
 def generate_coverage(output, policy_path, preflight=False, pilot=False):
@@ -505,12 +520,11 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             raise ValueError("memory exclusion limit must be positive bytes or null")
     if policy["sessions"] != 3 or policy["warmupIterations"] != 1:
         raise ValueError("coverage requires three independent sessions and one warmup iteration")
-    for key in ("windowSeconds", "minCallsInWindow", "idleSeconds"):
+    for key in ("windowSeconds", "idleSeconds"):
         if type(policy[key]) is not int or policy[key] < 1:
             raise ValueError(key + " must be a positive integer")
-    for key in ("callDurationEstimateMultiplier", "unknownCallDurationSeconds"):
-        if type(policy[key]) not in (int, float) or not math.isfinite(policy[key]) or policy[key] < 1:
-            raise ValueError(key + " must be finite and at least one")
+    if policy["windowSeconds"] < 30:
+        raise ValueError("active coverage requires at least thirty seconds")
     namespace = "/api/v1/namespaces/" + NS
     inputs = {}
     for name, path in (
@@ -518,7 +532,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             ("plans", namespace + "/batch-energy-optimizations"),
             ("profiles", "/api/v1/scheduler/profiles"), ("inventory", "/api/v1/inventory"),
             ("models", "/api/v1/models"), ("preprocessors", "/api/v1/preprocessors"),
-            ("datasets", "/api/v1/datasets")):
+            ("datasets", "/api/v1/datasets"), ("workloads", "/api/v1/workloads")):
         inputs[name] = coverage_api(path)
         write_json(output / "inputs" / (name + ".json"), inputs[name])
     write_json(output / "coverage-plan.json", policy)
@@ -643,8 +657,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
         if not declared:
             spec["batchSizes"] = batches
         coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
+        minimum_samples = coverage_workload(spec, inputs["workloads"])
         seconds = policy["windowSeconds"]
-        coverage_active_protocol(spec["activeProtocol"], estimates, policy)
+        coverage_active_protocol(spec["activeProtocol"], policy)
         idle = spec["idleProtocol"]
         idle_padding = max(0, idle["metricObservation"]["durationSeconds"] - idle.get("durationSeconds", policy["idleSeconds"]))
         idle["durationSeconds"] = idle.get("durationSeconds") or policy["idleSeconds"]
@@ -660,7 +675,9 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                "deviceClass": device,
                "powerMode": cell["powerMode"], "inheritedProtocol": inherited, "batches": batches,
                "activeSecondsPerSession": seconds, "candidateBatches": candidate_batches, "batchEstimates": estimates,
-               "activeSeconds": seconds * len(batches) * policy["sessions"],
+               "minimumServiceSamplesPerTrial": minimum_samples,
+               "activeSeconds": policy["sessions"] * sum(max(seconds, minimum_samples * r["secondsPerCall"])
+                   if r["secondsPerCall"] is not None else seconds for r in estimates if r["included"]),
                "idleSeconds": policy["sessions"] * (idle["durationSeconds"] + idle.get("settlingDurationSeconds", 0)),
                "runCount": (len(batches) + 1) * policy["sessions"]}
         row["runtimeMeasurementMissing"] = cell["id"] in stale_ids
@@ -688,7 +705,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                "excludedBatchesByModel": dict(Counter(r["model"] for r in excluded_batches)),
                "excludedCellsByModel": dict(Counter(r["model"] for r in excluded_cells)),
                "unknownTimingBatchCount": sum(r["secondsPerCall"] is None for cell in rows for r in cell["batchEstimates"]),
-               "estimateMeaning": f"active + shared idle (including settling) + {policy['runOverheadSeconds']}s/run; excludes variable load/warmup and feeder polling",
+               "estimateMeaning": f"sample/time work estimate + shared idle + {policy['runOverheadSeconds']}s/run; unknown rates use only the elapsed lower bound, not a completion estimate; excludes variable load/warmup and feeder polling",
                "lanes": {node: {"cellCount": len(lane),
                                   "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
                                   "idleSeconds": sum(r["idleSeconds"] for r, _ in lane),

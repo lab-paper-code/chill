@@ -46,18 +46,25 @@ func NewMetricResultFile(config MetricResultFileConfig) (*MetricResultFile, erro
 }
 
 func (f *MetricResultFile) Read(ctx context.Context) (metricobserver.VerifiedResult, error) {
+	// The caller's attempt deadline takes precedence over this reader cap.
 	waitCtx, cancel := context.WithTimeout(ctx, f.config.WaitTimeout)
 	defer cancel()
 	ticker := time.NewTicker(f.config.PollInterval)
 	defer ticker.Stop()
 
 	for {
+		if err := waitCtx.Err(); err != nil {
+			return metricobserver.VerifiedResult{}, fmt.Errorf("wait for metric result file: %w", err)
+		}
 		var result metricobserver.Result
 		err := decodeJSONFile(f.config.Path, f.config.MaxBytes, &result)
 		if err == nil {
 			verified, err := metricobserver.VerifyResult(result)
 			if err != nil {
 				return metricobserver.VerifiedResult{}, fmt.Errorf("validate metric result file: %w", err)
+			}
+			if err := waitCtx.Err(); err != nil {
+				return metricobserver.VerifiedResult{}, fmt.Errorf("wait for metric result file: %w", err)
 			}
 			return verified, nil
 		}

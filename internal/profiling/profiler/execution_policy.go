@@ -67,6 +67,12 @@ func DeriveExecutionPlan(
 	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
 	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
 	interval := time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond
+	// A sample-driven trial has no successful upper duration: its minimum
+	// elapsed window and service-call count must both complete. The frozen
+	// producer attempt timeout is the failure bound, not a predicted tail.
+	// Admit and retain the unchanged polling schedule through that whole bound.
+	attemptTimeout := metricDuration + settlingDuration +
+		time.Duration(policy.AttemptTimeoutOverheadSeconds)*time.Second
 	metrics := config.Metrics
 	thermal := metricobserver.ThermalMetricIdentity{
 		ObservationAvailable: metrics.ThermalMetrics.ObservationAvailable,
@@ -76,7 +82,7 @@ func DeriveExecutionPlan(
 		MaximumTemperatureCelsius: metrics.ThermalMetrics.MaximumTemperatureCelsius,
 	}
 	_, err := metricobserver.RequiredCapacity(metricobserver.Request{
-		Duration: metricDuration, Interval: interval,
+		Duration: attemptTimeout, Interval: interval,
 		RequestTimeout: time.Duration(metrics.TimeoutMilliseconds) * time.Millisecond,
 	}, metricobserver.SourceIdentity{
 		Kind: metrics.SourceKind, Endpoint: metrics.Endpoint, Metric: metrics.PowerMetric,
@@ -96,16 +102,16 @@ func DeriveExecutionPlan(
 
 		ActiveDeadline: metricDuration + settlingDuration +
 			time.Duration(policy.ActiveDeadlineOverheadSeconds)*time.Second,
-		AttemptTimeout: metricDuration + settlingDuration +
-			time.Duration(policy.AttemptTimeoutOverheadSeconds)*time.Second,
+		AttemptTimeout:       attemptTimeout,
 		ObserverReadyTimeout: time.Duration(policy.ObserverReadyTimeoutSeconds) * time.Second,
 		ObserverStartTimeout: settlingDuration +
 			time.Duration(policy.ObserverStartOverheadSeconds)*time.Second,
-		MetricObservationTimeout: metricDuration,
-		MetricResultTimeout: metricDuration - time.Duration(config.Measurement.DurationSeconds)*time.Second +
-			time.Duration(policy.MetricResultOverheadSeconds)*time.Second,
-		WorkloadEndFenceTimeout: time.Duration(policy.WorkloadEndFenceTimeoutSeconds) * time.Second,
-		WorkloadResultTimeout:   time.Duration(policy.WorkloadResultTimeoutSeconds) * time.Second,
+		MetricObservationTimeout: attemptTimeout,
+		// Result readers share the deadline established before runtime startup;
+		// neither handoff gets a fresh allowance after the measurement ends.
+		MetricResultTimeout:     attemptTimeout,
+		WorkloadEndFenceTimeout: attemptTimeout,
+		WorkloadResultTimeout:   attemptTimeout,
 
 		MaxLatencySamples:      policy.MaxLatencySamples,
 		MaxInputBytes:          policy.MaxInputBytes,
@@ -135,14 +141,20 @@ func validateExecutionPlan(plan ExecutionPlan) error {
 		return errors.New("execution policy active deadline must exceed the attempt timeout")
 	}
 	for name, timeout := range map[string]time.Duration{
-		"observer ready timeout":     plan.ObserverReadyTimeout,
-		"observer start timeout":     plan.ObserverStartTimeout,
-		"metric result timeout":      plan.MetricResultTimeout,
-		"workload end-fence timeout": plan.WorkloadEndFenceTimeout,
-		"workload result timeout":    plan.WorkloadResultTimeout,
+		"observer ready timeout": plan.ObserverReadyTimeout,
+		"observer start timeout": plan.ObserverStartTimeout,
 	} {
 		if timeout <= 0 || timeout >= plan.AttemptTimeout {
 			return fmt.Errorf("execution policy %s must be positive and below the attempt timeout", name)
+		}
+	}
+	for name, timeout := range map[string]time.Duration{
+		"metric result timeout":      plan.MetricResultTimeout,
+		"workload result timeout":    plan.WorkloadResultTimeout,
+		"workload end-fence timeout": plan.WorkloadEndFenceTimeout,
+	} {
+		if timeout <= 0 || timeout > plan.AttemptTimeout {
+			return fmt.Errorf("execution policy %s must be positive and at most the attempt timeout", name)
 		}
 	}
 	return nil

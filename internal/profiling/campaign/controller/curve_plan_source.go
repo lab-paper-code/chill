@@ -177,7 +177,7 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	active, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
 		Batch:        plannedBatchSizes[0],
-	}, "")
+	}, "", plannedBatchSizes, nil)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
 	}
@@ -192,7 +192,7 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	idle, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeIdle,
 		Batch:        plannedBatchSizes[0],
-	}, active.RunConfig.State.Backend)
+	}, active.RunConfig.State.Backend, plannedBatchSizes, nil)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare idle curve-plan RunConfig: %w", err)
 	}
@@ -278,8 +278,8 @@ func (s *CurvePlanSource) readStored(
 
 // recoverTransition returns the transition material for a campaign whose plan
 // is already frozen. Owned Runs need no transition; they are only created
-// after it. Before them the transition is prepared from the current policy for
-// the frozen plan's first batch, bound to the frozen plan's Node UID.
+// after it. Before them the transition uses the current actuation policy and
+// the frozen Workload contract, bound to the frozen plan's Node UID.
 func (s *CurvePlanSource) recoverTransition(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
@@ -309,10 +309,11 @@ func (s *CurvePlanSource) recoverTransition(
 	if len(batches) == 0 {
 		return nil, errors.New("frozen curve plan has no planned batch sizes")
 	}
+	protocol := plan.Shared().ActiveProtocol
 	active, err := s.projector.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
 		Batch:        batches[0],
-	}, "")
+	}, "", batches, &protocol)
 	if err != nil {
 		return nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
 	}
@@ -371,10 +372,19 @@ func (p *CurvePlanProjector) prepare(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	measurement batchenergyoptimization.Measurement,
 	backend string,
+	plannedBatchSizes []int,
+	frozenWorkload *profilederivation.CurveProtocolContract,
 ) (profiler.PreparedRun, error) {
 	run, err := BuildRun(parent, measurement, 1, backend)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
+	}
+	if frozenWorkload != nil {
+		projectFrozenWorkload(&run.Spec.Measurement, *frozenWorkload)
+	}
+	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(plannedBatchSizes))
+	for index, batch := range plannedBatchSizes {
+		run.Spec.Measurement.WarmupBatchSizes[index] = int32(batch)
 	}
 	requested, err := profilercontroller.ProjectRequest(run.Spec)
 	if err != nil {

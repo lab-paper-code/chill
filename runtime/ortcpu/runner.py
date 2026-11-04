@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha18"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha19"
 RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha9"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha3"
 SUPPORTED_WORKLOAD = "saturated-serial-fixed-batch"
@@ -293,6 +293,7 @@ def validate_request(
         "candidate",
         "state",
         "images",
+        "actor",
         "delivery",
         "targetNode",
         "measurement",
@@ -307,6 +308,17 @@ def validate_request(
         raise ContractError("CPU ORT runtime requires a supported CPU RunConfig schema")
 
     state = require_object(run_config["state"], "run_config.state")
+    actor = require_object(run_config["actor"], "run_config.actor")
+    require_string(actor.get("model"), "actor.model")
+    command = actor.get("runnerCommand")
+    if not isinstance(command, list) or not command or any(not isinstance(item, str) or not item for item in command):
+        raise ContractError("actor.runnerCommand must be a nonempty string array")
+    for field in ("batchSizes", "warmupBatchSizes"):
+        values = actor.get(field)
+        if not isinstance(values, list) or not values:
+            raise ContractError("actor." + field + " must be a nonempty batch domain")
+        for batch in values:
+            require_integer(batch, "actor." + field, 1)
     require_fields(
         state,
         {
@@ -359,7 +371,12 @@ def validate_request(
     }
     require_fields(
         measurement,
-        common_measurement_fields | ({"dataset"} if active else {"settlingDurationSeconds"}),
+        common_measurement_fields | ({"warmupBatchSizes"} if "warmupBatchSizes" in measurement else set()) |
+        ({"startupWarmupIterations"} if "startupWarmupIterations" in measurement else set()) |
+        ({"dataset", "sloPercentile", "minServiceSamples", "sloTargetLatencyNanos",
+          "workloadName", "workloadUID"} |
+         ({"workloadResourceVersion"} if "workloadResourceVersion" in measurement else set())
+         if active else {"settlingDurationSeconds"}),
         "run_config.measurement",
     )
     require_integer(measurement["batch"], "run_config.measurement.batch", 1)
@@ -391,6 +408,20 @@ def validate_request(
     elif measurement["workloadMode"] != SUPPORTED_WORKLOAD:
         raise ContractError("unsupported measurement implementation contract")
     else:
+        percentile = measurement["sloPercentile"]
+        if (isinstance(percentile, bool) or not isinstance(percentile, (int, float)) or
+                not math.isfinite(percentile) or not 0 < percentile < 100):
+            raise ContractError("run_config.measurement.sloPercentile must be in (0, 100)")
+        minimum = require_integer(measurement["minServiceSamples"], "measurement.minServiceSamples", 1)
+        if minimum != math.ceil(math.log(0.05) / math.log(percentile / 100)):
+            raise ContractError("measurement.minServiceSamples must derive from the Workload SLO percentile")
+        if measurement["durationSeconds"] < 30:
+            raise ContractError("active measurement requires at least 30 seconds")
+        if request["maxLatencySamples"] < minimum:
+            raise ContractError("latency sample budget cannot cover the requested stop policy")
+        for field in ("workloadName", "workloadUID"):
+            require_string(measurement[field], "measurement." + field)
+        require_integer(measurement["sloTargetLatencyNanos"], "measurement.sloTargetLatencyNanos", 1)
         dataset = require_object(measurement["dataset"], "run_config.measurement.dataset")
         require_fields(dataset, {"name", "uid", "image", "path"}, "run_config.measurement.dataset")
         for field in ("name", "uid", "image"):
@@ -656,13 +687,13 @@ def percentile(samples: list[float], fraction: float) -> float:
 
 
 def measurement_complete(
-    elapsed: float, duration: int, sample_count: int, max_samples: int
+    elapsed: float, duration: int, sample_count: int, max_samples: int, min_samples: int
 ) -> bool:
-    if elapsed >= duration:
+    if elapsed >= duration and sample_count >= min_samples:
         return True
     if sample_count >= max_samples:
         raise ContractError(
-            "latency sample budget exhausted before measurement duration"
+            "latency sample budget exhausted before measurement stop policy"
         )
     return False
 
@@ -849,6 +880,7 @@ def execute_loaded(
                 measurement["durationSeconds"],
                 len(samples),
                 request["maxLatencySamples"],
+                measurement["minServiceSamples"],
             ):
                 break
     except Exception as error:

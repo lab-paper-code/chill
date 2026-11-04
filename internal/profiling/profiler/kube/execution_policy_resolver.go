@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -14,13 +15,14 @@ import (
 )
 
 type ExecutionPolicyResolverOptions struct {
-	Namespace     string
-	ConfigMapName string
-	ConfigMapKey  string
+	Namespace                 string
+	ConfigMapName             string
+	ConfigMapKey              string
+	MeasurementMemoryFraction float64
 }
 
-// KubernetesExecutionPolicyResolver reads installation-time worker envelopes.
-// RunConfigResolver selects the envelope before the Job records and executes it.
+// KubernetesExecutionPolicyResolver selects installation-time worker envelopes
+// and freezes the runtime memory cap before the actor/curve recipe is recorded.
 type KubernetesExecutionPolicyResolver struct {
 	reader  client.Reader
 	options ExecutionPolicyResolverOptions
@@ -32,6 +34,9 @@ func NewKubernetesExecutionPolicyResolver(
 ) (*KubernetesExecutionPolicyResolver, error) {
 	if reader == nil {
 		return nil, errors.New("Kubernetes API reader is required")
+	}
+	if math.IsNaN(options.MeasurementMemoryFraction) || options.MeasurementMemoryFraction <= 0 || options.MeasurementMemoryFraction >= 1 {
+		return nil, errors.New("measurement memory fraction must be between 0 and 1 (exclusive)")
 	}
 	for name, value := range map[string]string{
 		"namespace":      options.Namespace,
@@ -78,6 +83,22 @@ func (r *KubernetesExecutionPolicyResolver) Resolve(
 	})
 	if err != nil {
 		return profiler.FrozenExecutionPolicy{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonExecutionPolicyInvalid, err)
+	}
+	node := &corev1.Node{}
+	if err := r.reader.Get(ctx, types.NamespacedName{Name: config.TargetNode.Name}, node); err != nil {
+		return profiler.FrozenExecutionPolicy{}, fmt.Errorf("get measurement Node memory: %w", err)
+	}
+	if string(node.UID) != config.TargetNode.UID {
+		return profiler.FrozenExecutionPolicy{}, errors.New("measurement Node UID changed since resolution")
+	}
+	allocatable, ok := node.Status.Allocatable[corev1.ResourceMemory]
+	if !ok || allocatable.Sign() <= 0 {
+		return profiler.FrozenExecutionPolicy{}, errors.New("measurement Node has no positive allocatable memory")
+	}
+	limit := int64(float64(allocatable.Value()) * r.options.MeasurementMemoryFraction)
+	frozen.Policy.RuntimeMemoryLimitBytes = min(frozen.Policy.RuntimeMemoryLimitBytes, limit)
+	if frozen.Policy.RuntimeMemoryLimitBytes < frozen.Policy.RuntimeMemoryRequestBytes {
+		return profiler.FrozenExecutionPolicy{}, errors.New("measurement Node memory limit is below the runtime memory request")
 	}
 	return frozen, nil
 }

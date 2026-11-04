@@ -14,6 +14,7 @@ func validOptions() options {
 		factSourceConfigMap: "chill-profiler-facts",
 		executionFactsKey:   "execution-facts.yaml", metricSourcesKey: "metric-sources.yaml",
 		workloadObservationKey: "workload-observation.yaml", actuationPoliciesKey: "actuation-policies.yaml",
+		executionPoliciesKey: "execution-policies.yaml", measurementMemoryFraction: 0.8,
 		kubeAPIQPS: 200, kubeAPIBurst: 400,
 		requestTimeout: 30 * time.Second, maxRequestBytes: 8 << 20, maxEvidenceBytes: 64 << 20,
 	}
@@ -53,6 +54,10 @@ func TestOptionsValidate(t *testing.T) {
 		"padded workload-observation key":  func(o *options) { o.workloadObservationKey = " workload-observation.yaml" },
 		"missing actuation-policies key":   func(o *options) { o.actuationPoliciesKey = "" },
 		"padded actuation-policies key":    func(o *options) { o.actuationPoliciesKey = "actuation-policies.yaml " },
+		"missing execution-policies key":   func(o *options) { o.executionPoliciesKey = "" },
+		"zero memory fraction":             func(o *options) { o.measurementMemoryFraction = 0 },
+		"unit memory fraction":             func(o *options) { o.measurementMemoryFraction = 1 },
+		"NaN memory fraction":              func(o *options) { o.measurementMemoryFraction = math.NaN() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			invalid := validOptions()

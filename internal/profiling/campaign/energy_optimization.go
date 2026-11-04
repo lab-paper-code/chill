@@ -20,6 +20,9 @@ type CurveResult struct {
 	Detail   any
 }
 
+// ServiceImpossibleOutcome records negative capacity, never a usable batch or κ.
+const ServiceImpossibleOutcome = "BatchServiceExceedsSLO"
+
 type QuickEnergyConfig struct {
 	TrialsPerBatch int
 }
@@ -32,7 +35,7 @@ type quickEnergyMinimization struct {
 // NewQuickEnergyMinimization constructs the full planned-batch energy sweep.
 // The exact objective is owned by the derivation boundary.
 func NewQuickEnergyMinimization(config QuickEnergyConfig, curve CurveSource) (Method, error) {
-	if config.TrialsPerBatch < 2 {
+	if config.TrialsPerBatch != 3 {
 		return nil, errors.New("quick-energy configuration is outside the supported range")
 	}
 	return &quickEnergyMinimization{config: config, curve: curve}, nil
@@ -79,6 +82,23 @@ func (s *quickEnergyMinimization) Plan(observed Observed) (Plan, error) {
 		return Plan{Next: &first}, nil
 	}
 
+	// Only verified current-condition batch-one service evidence may shorten a
+	// sweep. A slow percentile or a non-improving energy neighbor cannot.
+	if highestActive == 1 && observed.PlannedBatchSizes[0] == 1 && s.curve != nil {
+		result, err := s.curve([]int{1})
+		if err != nil {
+			return Plan{}, fmt.Errorf("derive batch-one feasibility: %w", err)
+		}
+		if result.Outcome == ServiceImpossibleOutcome {
+			return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
+		}
+		if len(observed.PlannedBatchSizes) == 1 {
+			if result.Continue {
+				return Plan{}, errors.New("energy derivation continued after exhausting the planned search space")
+			}
+			return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
+		}
+	}
 	if next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive); found {
 		measurement := Measurement{WorkloadMode: WorkloadModeActive, Batch: next}
 		return Plan{Next: &measurement}, nil
