@@ -129,3 +129,22 @@ func HasPhysicalWorkloadScope(target []serving.SchedulerInstance, before Operati
 		return slices.Contains(nodes, instance.Node) && (instance.OwnerWorkloadUID == uid || before.Routing[uid][instance.ID] > 0)
 	})
 }
+
+// FailedStopCleanup finishes only duties of an already completed stop. Original
+// dependencies remain intact; failed routes, new stops and prepares are not retried.
+func FailedStopCleanup(target serving.SchedulerCandidate, completed []serving.Action) serving.SchedulerCandidate {
+	actions := target.Actions
+	target.Actions = nil
+	for _, action := range actions {
+		if action.Kind != OperationDrain && action.Kind != OperationRemove {
+			continue
+		}
+		if slices.ContainsFunc(completed, func(stop serving.Action) bool {
+			return stop.Kind == OperationStop && stop.Status == NativeOperationComplete &&
+				stop.Instance == action.Instance && stop.Node == action.Node
+		}) {
+			target.Actions = append(target.Actions, action)
+		}
+	}
+	return target
+}

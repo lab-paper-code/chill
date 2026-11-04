@@ -317,7 +317,7 @@ func (c *reservationState) dependenciesComplete(action serving.Action, plan serv
 	for _, dep := range action.DependsOn {
 		run := c.runs[dep]
 		if run != nil && run.action.Status == servingstate.NativeOperationComplete {
-			if action.Kind == servingstate.OperationStop && run.action.RouteTarget != nil {
+			if action.Kind == servingstate.OperationStop && run.action.Kind == servingstate.OperationRoute {
 				uids := c.handoffScope(action, run.action, plan)
 				if run.result == nil || len(uids) == 0 || !run.result.Operation.ControlsWorkload(uids[0]) {
 					return false
@@ -326,6 +326,18 @@ func (c *reservationState) dependenciesComplete(action serving.Action, plan serv
 				// Recheck this source's handoff, not unrelated routes.
 				proof.WorkloadUIDs = uids
 				selected, physical := controlledTarget(proof), runtime.Instances()
+				if selected == nil {
+					return false
+				}
+				for _, weights := range selected.Routing {
+					if weights[action.Instance] > 0 {
+						if parent := c.returnProofParent(run); parent != nil && parent.action.Status == servingstate.NativeOperationRunning {
+							parent.action.Status, parent.action.Reason = servingstate.NativeOperationFailed, "completed route still assigns traffic to retiring source"
+							parent.result.Status, parent.result.Error, parent.result.EndedAt = servingstate.NativeOperationFailed, parent.action.Reason, time.Now().UTC()
+						}
+						return false
+					}
+				}
 				if !c.routingTargetPresent(selected, c.state.Snapshot, physical, true, runtime) && !c.composedRoutePresent(run, selected, c.state.Snapshot, physical, runtime) {
 					return false
 				}

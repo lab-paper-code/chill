@@ -212,10 +212,7 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 				}
 			}
 		}
-		for id := range owned {
-			touched[uid] = append(touched[uid], id)
-		}
-		slices.Sort(touched[uid])
+		touched[uid] = servingstate.RouteWriterDestinations(owned, held)
 		result.Routing[uid] = serving.SchedulerRebaseRouting(current[uid], delta, ready, newer)
 		ids := make([]string, 0, len(result.Routing[uid]))
 		for id := range result.Routing[uid] {
