@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -77,6 +78,9 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		// failed execution (e.g. an artifact upload failed) or unconfirmed cleanup keeps it.
 		if !isTrue(run.Status.Conditions, api.EvaluationConditionExecutionComplete) || !isTrue(run.Status.Conditions, api.EvaluationConditionCleanupComplete) {
 			return ctrl.Result{}, nil
+		}
+		if err := r.deleteRunJobs(ctx, run); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, r.deleteWorkspace(ctx, run)
 	}
@@ -518,6 +522,35 @@ func aggregateReason(run *api.EvaluationRun, children map[string]*api.Evaluation
 
 // deleteWorkspace removes the scratch PVC once every step uploaded its evidence and the
 // run is published; unpublished runs keep it for the existing cleanup/release paths.
+// deleteRunJobs removes the finished harness Jobs of a published, cleaned run. Their Pods
+// still mount the workspace, so pvc-protection would otherwise keep it forever; every step
+// result and artifact is already stored. Jobs of other runs or foreign owners are untouched.
+func (r *RunReconciler) deleteRunJobs(ctx context.Context, run *api.EvaluationRun) error {
+	owners := map[types.UID]bool{run.UID: true}
+	for _, child := range run.Status.ChildRefs {
+		owners[child.UID] = true
+	}
+	var jobs batchv1.JobList
+	if err := r.APIReader.List(ctx, &jobs, client.InNamespace(run.Namespace),
+		client.MatchingLabels{api.EvaluationLabelRunUID: string(run.UID), "edge.dacs.io/workload-role": "system"}); err != nil {
+		return err
+	}
+	background := metav1.DeletePropagationBackground
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		owner := metav1.GetControllerOf(job)
+		if owner == nil || !owners[owner.UID] {
+			continue
+		}
+		uid := job.UID
+		err := r.Client.Delete(ctx, job, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}, PropagationPolicy: &background})
+		if client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *RunReconciler) deleteWorkspace(ctx context.Context, run *api.EvaluationRun) error {
 	if run.Status.Workspace == nil {
 		return nil
