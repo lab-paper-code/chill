@@ -16,6 +16,8 @@ HERE=Path(__file__).resolve().parent
 REPO=HERE.parent.parent
 TOKEN='/var/run/secrets/kubernetes.io/serviceaccount/token'
 CA='/etc/chill/ca/tls.crt'
+TIMEBOXES = {'setupSeconds': 300, 'barrierSeconds': 300, 'drainSeconds': 120, 'flushSeconds': 5,
+             'collectSeconds': 300, 'apiSeconds': 30, 'watchSeconds': 60, 'gateSeconds': 300}
 
 
 def now(): return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -97,8 +99,7 @@ def environment(run, scientific):
 def stage_config(spec, scenario, execution, config, root):
     operational = json.loads(config['operational'])
     ignored = sorted(set(operational) - {'timeboxes', 'tokenSafetyMarginSeconds', 'workloads', 'collection'})
-    timeboxes = {'setupSeconds': 300, 'barrierSeconds': 300, 'drainSeconds': 120, 'flushSeconds': 5,
-                 'collectSeconds': 300, 'apiSeconds': 30}
+    timeboxes = dict(TIMEBOXES)
     ignored.extend('timeboxes.' + key for key in set(operational.get('timeboxes', {})) - set(timeboxes))
     timeboxes.update({key: value for key, value in operational.get('timeboxes', {}).items() if key in timeboxes})
     if 'drainTimeoutSeconds' in config:

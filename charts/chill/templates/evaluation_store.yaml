@@ -1,0 +1,211 @@
+{{- if and .Values.evaluation.enabled .Values.evaluation.store.enabled }}
+{{- $store := .Values.evaluation.store }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $store.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+    app.kubernetes.io/component: evaluation-store
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ $store.storageClassName | quote }}
+  resources:
+    requests:
+      storage: {{ $store.storageSize | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $store.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+    app.kubernetes.io/component: evaluation-store
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "chill.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: evaluation-store
+  template:
+    metadata:
+      labels:
+        {{- include "chill.labels" . | nindent 8 }}
+        app.kubernetes.io/component: evaluation-store
+      annotations:
+        kubectl.kubernetes.io/default-container: evidence-store
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: iam-directory
+          image: {{ $store.image | quote }}
+          imagePullPolicy: {{ $store.imagePullPolicy }}
+          command: [mkdir, -p, /data/.iam]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
+          resources:
+            {{- toYaml $store.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: evidence-store
+          image: {{ $store.image | quote }}
+          imagePullPolicy: {{ $store.imagePullPolicy }}
+          env:
+            - name: VGW_BACKEND
+              value: posix
+            - name: VGW_BACKEND_ARGS
+              value: /data
+            - name: VGW_PORT
+              value: ":9000"
+            - name: VGW_REGION
+              value: {{ $store.region | quote }}
+            - name: VGW_HEALTH
+              value: /_/health
+            - name: VGW_IAM_DIR
+              value: /data/.iam
+            - name: ROOT_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $store.credentialsSecret }}
+                  key: access-key
+            - name: ROOT_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $store.credentialsSecret }}
+                  key: secret-key
+          ports:
+            - name: s3
+              containerPort: 9000
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /_/health
+              port: s3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /_/health
+              port: s3
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
+          resources:
+            {{- toYaml $store.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $store.name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $store.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+    app.kubernetes.io/component: evaluation-store
+    service.edgemesh.kubeedge.io/service-proxy-name: ""
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "chill.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: evaluation-store
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+      protocol: TCP
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $store.name }}-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chill.labels" . | nindent 4 }}
+    app.kubernetes.io/component: evaluation-store
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: 60
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "chill.labels" . | nindent 8 }}
+        app.kubernetes.io/component: evaluation-store
+      annotations:
+        kubectl.kubernetes.io/default-container: bootstrap
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bootstrap
+          image: {{ $store.bootstrapImage | quote }}
+          imagePullPolicy: {{ $store.imagePullPolicy }}
+          args: [ensure-bucket]
+          env:
+            - name: STORE_ENDPOINT
+              value: {{ printf "http://%s:9000" $store.name | quote }}
+            - name: STORE_BUCKET
+              value: {{ $store.bucket | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $store.credentialsSecret }}
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $store.credentialsSecret }}
+                  key: secret-key
+            - name: AWS_DEFAULT_REGION
+              value: {{ $store.region | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+            runAsGroup: 1000
+            runAsNonRoot: true
+            runAsUser: 1000
+          resources:
+            {{- toYaml $store.bootstrapResources | nindent 12 }}
+{{- end }}

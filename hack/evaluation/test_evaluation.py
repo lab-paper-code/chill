@@ -22,6 +22,7 @@ import conductor
 import evaluation
 import evidence_io
 import input_snapshot
+import live
 import judgment as judgment_rules
 import publication
 import request_analysis
@@ -120,7 +121,191 @@ def power_window():
                        'sourceIdentity': SOURCE, 'samples': 15} for name, joules in (('idle', 100), ('serving', 200))]}
 
 
+def live_fixture(root):
+    harness = object.__new__(evaluation.Harness)
+    harness.run, harness.root = root, root / 'stages/one'
+    harness.scope, harness.prefix = 'stages/one', 'experiments/run/stages/one'
+    harness.execution = {'runUID': 'run', 'stageID': 'one', 'namespace': 'release'}
+    harness.config = {'chillAPIURL': 'https://chill.invalid', 'operational': '{}'}
+    harness.spec = {'loadGenerator': {'nodeName': 'generator'}, 'powerMeasurement': {'nodes': [{'name': 'meter'}]},
+                    'settingsPatch': {'autonomousWorkloads': ['stage-workload']}}
+    harness.snapshot = {'runSpec': {'settingsPatch': {'autonomousWorkloads': ['run-workload']}},
+                        'bindings': {'one': {'config': {'timeboxes': {**input_snapshot.TIMEBOXES,
+                                                                    'watchSeconds': 2, 'gateSeconds': 5}}}}}
+    instances = [{'podUID': uid, 'ready': uid != 'unready', 'node': {'name': node}, 'ownerWorkloadUID': owner}
+                 for uid, node, owner in [('active', 'dynamic', 'stage-workload'), ('unready', 'other', 'run-workload'),
+                                          ('unrouted', 'meter', 'stage-workload'), ('retired', 'meter', 'stage-workload')]]
+    state = {'snapshot': {'instances': instances},
+             'decision': {'at': START, 'keep': {'routing': {'workload': {'active/model': 1, 'retired/model': 1}}}},
+             'actions': [{'kind': 'stop', 'instance': 'retired/model', 'status': 'running'}]}
+    nodes = [{'metadata': {'name': name}, 'status': {'conditions': [{'type': 'Ready', 'status': 'True'}],
+                                                   'nodeInfo': {'bootID': 'original-boot'}}}
+             for name in ('generator', 'meter', 'dynamic', 'other')]
+    objects = {'nodes': nodes,
+               'services': [{'metadata': {'name': 'chill-executor-' + instance['podUID']},
+                             'spec': {'clusterIP': '10.0.0.1', 'ports': [{'port': 8000}]}} for instance in instances],
+               'pods': [{'metadata': {'uid': instance['podUID'], 'name': 'serving-' + instance['podUID']},
+                         'spec': {'nodeName': instance['node']['name']}, 'status': {}} for instance in instances],
+               'jobs': []}
+    def kube(namespace, verb, resource):
+        assert namespace == 'release' and verb == 'get'
+        return {'items': objects[resource]}
+    return harness, state, objects, kube
+
+
 class EvaluationTests(unittest.TestCase):
+    def test_start_gate_only_blocks_participating_not_ready_nodes(self):
+        for blocked in ('generator', 'meter', 'dynamic', 'other'):
+            with self.subTest(node=blocked), tempfile.TemporaryDirectory() as directory:
+                harness, state, objects, kube = live_fixture(Path(directory))
+                next(node for node in objects['nodes'] if node['metadata']['name'] == blocked)['status']['conditions'][0]['status'] = 'False'
+                with patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', return_value=200):
+                    attempt = live.gate_attempt(harness)
+                self.assertEqual(attempt['passed'], blocked == 'other')
+                self.assertEqual(attempt['participatingNodes'], ['dynamic', 'generator', 'meter'])
+                self.assertEqual(attempt['notReady'], [] if blocked == 'other' else [blocked])
+                self.assertEqual(attempt['notReadyNonParticipating'], ['other'] if blocked == 'other' else [])
+
+    def test_start_gate_rechecks_and_records_exclusion_reasons(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness, state, objects, kube = live_fixture(Path(directory))
+            clock = [0]
+            def sleep(seconds):
+                clock[0] += seconds
+            with patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', side_effect=[503, 200]) as probe, patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(live.time, 'sleep', side_effect=sleep):
+                live.start_gate(harness)
+            attempts = evidence_io.load(harness.root / 'start-gate.json')
+            self.assertEqual([attempt['passed'] for attempt in attempts], [False, True])
+            self.assertEqual(clock[0], 2)
+            self.assertEqual(probe.call_count, 2)
+            self.assertEqual(attempts[-1]['excludedExecutors'], {
+                'chill-executor-unready': {'reason': 'notReadyInCHILL', 'node': 'other'},
+                'chill-executor-unrouted': {'reason': 'notRouted', 'node': 'meter'},
+                'chill-executor-retired': {'reason': 'retiring:stop', 'node': 'meter'}})
+            self.assertEqual(list(attempts[-1]['executors']), ['chill-executor-active'])
+
+    def test_start_gate_requires_an_executor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness, state, objects, kube = live_fixture(Path(directory))
+            objects['services'] = []
+            with patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube):
+                attempt = live.gate_attempt(harness)
+            self.assertFalse(attempt['passed'])
+            self.assertEqual(attempt['executors'], {})
+
+    def test_start_gate_timeout_is_target_unavailable_and_preserves_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            harness, state, objects, kube = live_fixture(Path(directory))
+            clock = [0]
+            def sleep(seconds):
+                clock[0] += seconds
+            harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
+            harness.controller = lambda: self.fail('gate must run before controller or load generation')
+            with patch.object(input_snapshot, 'open_snapshot'), patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', return_value=503), patch.object(live, 'start_watcher'), patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(live.time, 'sleep', side_effect=sleep), patch('builtins.print'):
+                self.assertEqual(harness.execute('stage'), 1)
+            record = evidence_io.load(harness.run / 'results/stages/one/stage.json')
+            self.assertEqual(record['execution']['reason'], 'TargetUnavailable')
+            self.assertEqual(clock[0], 5)
+            attempts = evidence_io.load(harness.root / 'start-gate.json')
+            self.assertEqual(len(attempts), 4)
+            self.assertTrue(all(not attempt['passed'] for attempt in attempts))
+            self.assertTrue(any(ref['key'].endswith('/artifacts/start-gate.json') for ref in record['artifacts']))
+
+    def test_step_uploads_every_nonempty_artifact_after_watcher_stops(self):
+        for step in ('stage', 'finish'):
+            for failed in (False, True):
+                with self.subTest(step=step, failed=failed), tempfile.TemporaryDirectory() as directory:
+                    harness, _, _, _ = live_fixture(Path(directory))
+                    if step == 'finish':
+                        harness.scope, harness.prefix, harness.root = 'run', 'experiments/run/run', harness.run
+                    events, uploaded = [], []
+                    def launch(args):
+                        events.append('watch-start')
+                        self.assertEqual(args[2], 'watch')
+                        self.assertEqual(args[args.index('--step') + 1], step)
+                        self.assertEqual(args[args.index('--parent-pid') + 1], str(os.getpid()))
+                        folder = harness.root / 'watch'
+                        folder.mkdir(parents=True)
+                        live.append(folder / (step + '.jsonl'), {'at': START})
+                        return SimpleNamespace(terminate=lambda: events.append('terminate'), wait=wait)
+                    def wait():
+                        events.append('wait')
+                        live.append(harness.root / 'watch' / (step + '-alerts.jsonl'), {'at': END, 'detail': 'last alert'})
+                    def run():
+                        events.append('step')
+                        evidence_io.save(harness.root / 'measured/evidence.json', {'observed': True})
+                        (harness.root / 'empty').touch()
+                        if failed:
+                            raise RuntimeError('TargetUnavailable: test target')
+                    def upload(path, key):
+                        self.assertEqual(events[-1], 'wait')
+                        uploaded.append(key)
+                        return {'store': 'test', 'key': key, 'size': path.stat().st_size}
+                    setattr(harness, step, run)
+                    harness.upload = upload
+                    with patch.object(input_snapshot, 'open_snapshot'), patch.object(live.subprocess, 'Popen', side_effect=launch), patch('builtins.print'):
+                        self.assertEqual(harness.execute(step), int(failed))
+                    self.assertEqual(events, ['watch-start', 'step', 'terminate', 'wait'])
+                    record = evidence_io.load(harness.run / 'results' / harness.scope / (step + '.json'))
+                    files = {path.relative_to(harness.root).as_posix() for path in harness.root.rglob('*')
+                             if path.is_file() and path.stat().st_size and 'results' not in path.relative_to(harness.root).parts}
+                    prefix = harness.prefix + '/' + step + '/artifacts/'
+                    artifact_files = {ref['key'][len(prefix):] for ref in record['artifacts']}
+                    self.assertEqual(artifact_files, files)
+                    self.assertEqual(set(uploaded), {prefix + name for name in files} | {harness.prefix + '/' + step + '/result.json'})
+
+    def test_live_watcher_records_diagnostics_memory_and_deduplicated_alerts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            harness, state, objects, kube = live_fixture(root)
+            state['decision'].update(status='Pending', workloads=[{'uid': 'workload-full', 'state': 'Fixed', 'reason': 'ReservedScope: diagnostic'}],
+                                     search={'loads': [{'workloadUID': 'workload-full', 'inputsPerSecond': 1, 'recentInputsPerSecond': 2}]})
+            state['actions'] = [{'id': 'power-change', 'kind': 'power', 'node': {'name': 'dynamic'}, 'status': 'partial'}]
+            objects['nodes'][0]['status']['conditions'][0]['status'] = 'False'
+            objects['pods'][0]['status']['containerStatuses'] = [{'restartCount': 2, 'lastState': {'terminated': {'reason': 'OOMKilled'}}}]
+            objects['jobs'] = [{'metadata': {'name': 'load-failed'}, 'status': {'conditions': [{'type': 'Failed', 'status': 'True'}]}}]
+            def api(config, path):
+                if path == '/api/v1/scheduler/settings':
+                    return {'scaleDownStabilizationNanos': 60_000_000_000}
+                if path == '/api/v1/scheduler':
+                    return {'state': state}
+                return {'nodes': [{'node': {'name': 'meter'}, 'meterComplete': False, 'gapCount': 2, 'maximumSampleGapSeconds': 4}]}
+            watcher = live.Watcher(root, 'stage', harness.config, 'release', os.getpid())
+            with patch.object(input_snapshot, 'api', side_effect=api), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', return_value=503), patch('builtins.print') as log:
+                watcher.cycle()
+                watcher.held_since['workload-full'] -= live.dt.timedelta(seconds=61)
+                objects['nodes'][0]['status']['nodeInfo']['bootID'] = 'changed-boot'
+                watcher.cycle()
+                count = log.call_count
+                watcher.cycle()
+                self.assertEqual(log.call_count, count)
+            rows = [json.loads(line) for line in watcher.rows.read_text().splitlines()]
+            self.assertEqual(len(rows), 3)
+            row = rows[-1]
+            self.assertGreaterEqual(row['workloads']['workload']['heldSeconds'], 60)
+            self.assertEqual(row['instances'], {'total': 4, 'ready': 3, 'routable': 2, 'replacementCandidates': 0})
+            self.assertEqual(row['loadJobs'], {'load-failed': 'Failed'})
+            self.assertEqual(row['servingPodIssues'][0]['last'], 'OOMKilled')
+            self.assertEqual(row['power']['meter']['gapCount'], 2)
+            self.assertGreater(row['harness']['vmRSSKiB'], 0)
+            self.assertGreaterEqual(row['harness']['vmHWMKiB'], row['harness']['vmRSSKiB'])
+            alerts = [json.loads(line) for line in watcher.alerts.read_text().splitlines()]
+            self.assertEqual({alert['key'][0] for alert in alerts},
+                             {'held', 'actionOnRisingLoad', 'action', 'executor', 'node', 'pod', 'loadJob'})
+            self.assertTrue(any(alert['key'][2] == 'reboot' for alert in alerts if alert['key'][0] == 'node'))
+            self.assertTrue(all(call.args[0].startswith('EVALUATION_ALERT ') for call in log.call_args_list))
+
+    def test_live_watcher_records_cycle_errors_without_stopping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            watcher = live.Watcher(Path(directory), 'finish', {}, 'release', -1)
+            with patch.object(input_snapshot, 'api', side_effect=OSError('API offline')), patch.object(input_snapshot, 'kubectl', side_effect=OSError('kube offline')):
+                watcher.cycle()
+                watcher.cycle()
+            rows = [json.loads(line) for line in watcher.rows.read_text().splitlines()]
+            self.assertEqual(len(rows), 2)
+            for row in rows:
+                self.assertTrue(all(name + 'Error' in row for name in ('scheduler', 'kube', 'power', 'harness')))
+
     def exercise_publication(self, lost=False, residual=False):
         temporary_directory = tempfile.TemporaryDirectory
         with temporary_directory() as directory:
@@ -1178,7 +1363,7 @@ class EvaluationTests(unittest.TestCase):
                 harness.execution = {'runUID': 'run', 'namespace': 'evaluation-ns', 'prepareCompleted': True}
                 harness.controller = lambda: controller
                 harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
-                with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'):
+                with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'):
                     self.assertEqual(harness.execute('finish'), int(cleanup_failure or restore_failure))
                 result = evidence_io.load(root / 'results/run/finish.json')
                 self.assertEqual(result['cleanup']['status'], 'Failed' if cleanup_failure or restore_failure else 'Complete')
@@ -1202,7 +1387,7 @@ class EvaluationTests(unittest.TestCase):
                     api.value['controls']['power'] = False  # operator changed it after our successful revert
                     api.revision += 1
                     controller.residuals = []  # a fresh finish Job has a fresh controller
-                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'):
+                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'):
                         self.assertEqual(harness.execute('finish'), int(cleanup_failure))
                     self.assertEqual(len(api.calls), calls_before_retry)
                     self.assertFalse(api.value['controls']['power'])
@@ -1282,7 +1467,7 @@ class EvaluationTests(unittest.TestCase):
                     harness.spec, harness.execution = {}, execution
                     harness.controller = lambda: controller
                     harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
-                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'):
+                    with patch('builtins.print'), patch.object(input_snapshot, 'open_snapshot'), patch.object(live, 'start_watcher'):
                         self.assertEqual(harness.execute('finish'), 0 if clean else 1)
                     result = evidence_io.load(root / 'results/run/finish.json')
                     self.assertEqual(result['cleanup']['status'], 'Complete' if clean else 'Failed')

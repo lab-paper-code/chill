@@ -19,6 +19,9 @@
 {{- if and .Values.evidenceStore.enabled (empty .Values.evidenceStore.configRef.name) -}}
 {{- fail "evidenceStore.configRef.name must not be empty when evidenceStore.enabled=true" -}}
 {{- end -}}
+{{- if and .Values.evaluation.enabled .Values.evaluation.store.enabled (empty .Values.evaluation.store.credentialsSecret) -}}
+{{- fail "evaluation.store.credentialsSecret must not be empty when evaluation.store.enabled=true" -}}
+{{- end -}}
 {{- if .Values.query.enabled -}}
 {{- if lt (int .Values.query.replicaCount) 1 -}}
 {{- fail "query.replicaCount must be positive when query.enabled=true" -}}

@@ -1,4 +1,11 @@
 {{- if .Values.evaluation.enabled }}
+{{- $config := deepCopy .Values.evaluation.config }}
+{{- if .Values.evaluation.store.enabled }}
+{{- $_ := set $config "evidenceEndpoint" (printf "http://%s.%s.svc.cluster.local.:9000" .Values.evaluation.store.name .Release.Namespace) }}
+{{- $_ := set $config "evidenceBucket" .Values.evaluation.store.bucket }}
+{{- $_ := set $config "evidenceRegion" .Values.evaluation.store.region }}
+{{- $_ := set $config "evidenceCredentialsSecret" .Values.evaluation.store.credentialsSecret }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,7 +15,7 @@ metadata:
     app.kubernetes.io/component: evaluation
     {{- include "chill.labels" . | nindent 4 }}
 data:
-  {{- range $key, $value := .Values.evaluation.config }}
+  {{- range $key, $value := $config }}
   {{ $key }}: {{ $value | toString | quote }}
   {{- end }}
 {{- end }}
