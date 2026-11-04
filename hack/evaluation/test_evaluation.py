@@ -1037,8 +1037,12 @@ class EvaluationTests(unittest.TestCase):
                      'offered': len(config['traceOffsets'][NAME]), 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
                      'datasetRef': {'name': 'different-provenance', 'uid': 'different'}, 'sourceSHA': 'different-revision'}
+            # Hold the load window open until provisional D1 actually ran, so the
+            # guard under test (not read batching) decides drain-time behavior.
+            wait_for_poll = ('from pathlib import Path\nimport time\nwhile not Path(' + repr(str(root / 'poll-started')) + ').exists(): time.sleep(.01)\n'
+                             if mode in ('slow-reducer', 'drain-progress') else '')
             if mode == 'drain-progress':
-                tail_drain = 'import time;time.sleep(.3)\n'
+                tail_drain = ('import time\nfrom pathlib import Path\nwhile not Path(' + repr(str(root / 'drain-release')) + ').exists(): time.sleep(.01)\n')
             tail = ('import time;time.sleep(60)\n' if mode in ('watchdog', 'failed-job', 'late-reader-error') else
                     'sys.stdout.write(\'{"partial":\');sys.stdout.flush();sys.exit(7)\n' if mode == 'eof' else 'print(json.dumps({"evaluationEvent":"drained","at":' + repr(END) + '}),flush=True)\n')
             if mode == 'drain-progress':
@@ -1058,7 +1062,7 @@ class EvaluationTests(unittest.TestCase):
                         'import time;time.sleep(60)\n')
             script = ('import sys,json\nprint(' + repr(json.dumps(ready)) + ',flush=True)\nsys.stdin.readline()\n'
                       'print(json.dumps({"evaluationEvent":"start","at":' + repr(START) + ',"monotonicNS":1}),flush=True)\n'
-                      + ('import time;time.sleep(.3)\n' if mode == 'drain-progress' else '') +
+                      + wait_for_poll +
                       'print(json.dumps({"evaluationEvent":"window-end","at":' + repr(END) + '}),flush=True)\n' + tail)
             pod = {'metadata': {'name': 'producer', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]},
                    'status': {'phase': 'Running', 'containerStatuses': [
@@ -1114,6 +1118,7 @@ class EvaluationTests(unittest.TestCase):
             evidence_io.save(root / 'settings-patch.json', {'accepted': True})
             clock = conductor.time.monotonic
             def slow_reducer(_phase):
+                (root / 'poll-started').touch()
                 # The reducer must not starve the independent evidence writer.
                 deadline = time.monotonic() + 10
                 while not (root / 'producer-finished').exists() and time.monotonic() < deadline:
@@ -1147,9 +1152,19 @@ class EvaluationTests(unittest.TestCase):
                 original_capture(capture, source)
                 capture.error = OSError('late reader failure')
             with patch.object(conductor.subprocess, 'Popen', side_effect=launch), patch.object(conductor, 'ProducerResources', return_value=telemetry), patch.object(evidence_io, 'module', side_effect=modules), patch.object(conductor.time, 'monotonic', side_effect=(lambda: 100) if mode == 'hot-log' else clock):
-                polls = []
+                drain_polls = []
+                def drain_poll(_phase):
+                    (root / 'poll-started').touch()
+                    drain_polls.append(any(s['phase'] == 'loadEnded' for s in signals))
+                if mode == 'drain-progress':
+                    observed = controller.progress_publish_callback
+                    def release_after_publish():
+                        observed()
+                        if any(s['phase'] == 'drainStarted' for s in signals):
+                            (root / 'drain-release').touch()
+                    controller.progress_publish_callback = release_after_publish
                 slow = (patch.object(conductor.ProvisionalD1, 'poll', side_effect=slow_reducer) if mode == 'slow-reducer' else
-                        patch.object(conductor.ProvisionalD1, 'poll', side_effect=lambda _phase: polls.append([s['phase'] for s in signals])) if mode == 'drain-progress' else
+                        patch.object(conductor.ProvisionalD1, 'poll', side_effect=drain_poll) if mode == 'drain-progress' else
                         patch.object(conductor.ProvisionalD1, 'poll', return_value=None))
                 with slow:
                     late = patch.object(conductor.ProducerLog, 'capture', new=fail_after_stream_ends) if mode == 'late-reader-error' else patch.object(controller, 'monitor', controller.monitor)
@@ -1157,10 +1172,12 @@ class EvaluationTests(unittest.TestCase):
                     with late, status:
                         result = self.finish_stage_policy(controller, mode, process, root, go, jobs, job_polls, signals, publications)
                     if mode == 'drain-progress':
-                        # RUN-3: no live-D1 reparse once load ended, so the drain-time publish carries its boundaries.
-                        self.assertTrue(polls, 'provisional D1 must still run during load')
-                        self.assertFalse([seen for seen in polls if 'loadEnded' in seen], 'provisional reparse ran during drain')
-                        self.assertIn(3, publications, 'drain boundaries must be published before drainEnded')
+                        # Consumer view: a status publication carried loadEnded/drainStarted while the drain was still open.
+                        # RUN-3: the live-D1 reparse (minutes long at 3-7 scale) must not hold the loop after load
+                        # ended; then the periodic publish carries loadEnded/drainStarted before drainEnded.
+                        self.assertEqual(drain_polls[0], False, 'provisional D1 must run during load')
+                        self.assertNotIn(True, drain_polls, 'provisional D1 reparse ran after load ended')
+                        self.assertIn(3, publications[:-4], 'drain boundaries must be published before drainEnded')
                     if mode == 'slow-status':
                         self.assertEqual(len(blocked), 1, 'the actual status publisher must block once after GO')
                         self.assertGreaterEqual(blocked[0]['statusBlockedSeconds'], 60)
@@ -1254,7 +1271,10 @@ class EvaluationTests(unittest.TestCase):
                 return SimpleNamespace(f_bavail=max(0, minimum + headroom - size), f_frsize=1)
             controller.monitor = conductor.CPO.monitor.__get__(controller)
             try:
-                with patch.object(conductor.os, 'statvfs', side_effect=available), patch.object(conductor.ProvisionalD1, 'poll', side_effect=lambda _: time.sleep(.2)):
+                def slow_poll(_):
+                    (root / 'poll-started').touch()  # releases the fixture's load-window hold
+                    time.sleep(.2)
+                with patch.object(conductor.os, 'statvfs', side_effect=available), patch.object(conductor.ProvisionalD1, 'poll', side_effect=slow_poll):
                     with self.assertRaisesRegex(RuntimeError, 'EvidenceCapacityInsufficient'):
                         controller.run()
             finally:
