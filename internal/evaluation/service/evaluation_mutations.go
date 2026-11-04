@@ -78,8 +78,8 @@ func (s *Service) evaluationView(
 			CurrentProcedure: stage.Status.CurrentProcedure, Procedures: evaluationProcedures(stage.Status.Procedures),
 			StartedAt: stage.Status.StartedAt, FinishedAt: stage.Status.FinishedAt, GoAt: stage.Status.GoAt,
 			ProvisionalD1: stage.Status.ProvisionalD1,
-			Progress:      stage.Status.Progress, LastProgressAt: stage.Status.LastProgressAt,
-			LoadJobs: loadJobs[evaluationLoadJobKey{run.UID, stage.UID, stage.Spec.StageID}],
+			Progress:      append([]api.EvaluationStageProgress{}, stage.Status.Progress...), LastProgressAt: stage.Status.LastProgressAt,
+			LoadJobs: stageLoadJobs(loadJobs, evaluationLoadJobKey{run.UID, stage.UID, stage.Spec.StageID}),
 		})
 	}
 	return value, nil
@@ -111,10 +111,7 @@ func (s *Service) List(ctx context.Context) ([]EvaluationView, error) {
 		stage := &children.Items[i]
 		stages[client.ObjectKeyFromObject(stage)] = stage
 	}
-	loadJobs, err := s.evaluationLoadJobs(ctx, "")
-	if err != nil {
-		return nil, err
-	}
+	loadJobs := s.evaluationLoadJobs(ctx, "")
 	result := make([]EvaluationView, 0, len(runs.Items))
 	for i := range runs.Items {
 		value, err := s.evaluationView(ctx, &runs.Items[i], stages, loadJobs)
@@ -130,10 +127,7 @@ func (s *Service) Get(ctx context.Context, name string) (EvaluationView, error) 
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &run); err != nil {
 		return EvaluationView{}, err
 	}
-	loadJobs, err := s.evaluationLoadJobs(ctx, run.UID)
-	if err != nil {
-		return EvaluationView{}, err
-	}
+	loadJobs := s.evaluationLoadJobs(ctx, run.UID)
 	return s.evaluationView(ctx, &run, nil, loadJobs)
 }
 
@@ -144,14 +138,24 @@ type evaluationLoadJobKey struct {
 }
 
 // evaluationLoadJobs batches authoritative producer Job facts for a whole read.
-func (s *Service) evaluationLoadJobs(ctx context.Context, runUID types.UID) (map[evaluationLoadJobKey][]EvaluationLoadJob, error) {
+// stageLoadJobs is null when Jobs were not observed and [] when a listed stage has none.
+func stageLoadJobs(jobs map[evaluationLoadJobKey][]EvaluationLoadJob, key evaluationLoadJobKey) []EvaluationLoadJob {
+	if jobs == nil {
+		return nil
+	}
+	return append([]EvaluationLoadJob{}, jobs[key]...)
+}
+
+// evaluationLoadJobs is a supplementary observation: a failed LIST yields nil (loadJobs null)
+// and never fails the Run/Stage read.
+func (s *Service) evaluationLoadJobs(ctx context.Context, runUID types.UID) map[evaluationLoadJobKey][]EvaluationLoadJob {
 	labels := client.MatchingLabels{"edge.dacs.io/workload-role": "load-generator"}
 	if runUID != "" {
 		labels[api.EvaluationLabelRunUID] = string(runUID)
 	}
 	var jobs batchv1.JobList
 	if err := s.reader.List(ctx, &jobs, client.InNamespace(s.namespace), labels); err != nil {
-		return nil, err
+		return nil
 	}
 	result := make(map[evaluationLoadJobKey][]EvaluationLoadJob)
 	for i := range jobs.Items {
@@ -178,7 +182,7 @@ func (s *Service) evaluationLoadJobs(ctx context.Context, runUID types.UID) (map
 		key := evaluationLoadJobKey{types.UID(job.Labels[api.EvaluationLabelRunUID]), owner.UID, job.Labels[api.EvaluationLabelStage]}
 		result[key] = append(result[key], value)
 	}
-	return result, nil
+	return result
 }
 func (s *Service) Create(
 	ctx context.Context, request EvaluationRequest, actor string,
