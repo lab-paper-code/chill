@@ -778,9 +778,9 @@ func writeError(w http.ResponseWriter, err error) error {
 	var domain *serving.Error
 	if errors.As(err, &domain) {
 		result = *domain
-	} else if status == http.StatusUnauthorized || status == http.StatusForbidden {
+	} else if status == http.StatusUnauthorized {
 		result.Message = http.StatusText(status)
-	} else if status == http.StatusNotFound || status == http.StatusConflict {
+	} else if status == http.StatusForbidden || status == http.StatusNotFound || status == http.StatusConflict {
 		result.Message = err.Error()
 	}
 	return writeJSON(w, status, result)
