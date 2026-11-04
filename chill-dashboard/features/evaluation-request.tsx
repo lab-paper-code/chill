@@ -248,7 +248,7 @@ export function EvaluationRunPage({name}:{name:string}) {
         </div>
         <p className="break-words text-sm"><span className="text-muted-foreground">등록 질문 </span>{definitionNotice??(typeof planSpec?.question==="string"?planSpec.question:"미기록")}</p>
         <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm tabular-nums"><strong>워크로드 {completePlan?`${workloads.length}개`:stagesNotice??loadNotice??"미기록"}</strong><span>실행 단계 {stagesNotice??`${stages.length}개`}</span><span>부하 구간 {completePlan?`${parts.length}개`:stagesNotice??loadNotice??"미기록"}</span><span>부하 계획 {plannedSeconds===null?stagesNotice??loadNotice??"미기록":`${plannedSeconds.toLocaleString("ko-KR")}초`}</span><span>{finished?"전체 실행":"실행 경과"} {elapsed!==null&&Number.isFinite(elapsed)?`${elapsed.toLocaleString("ko-KR")}초`:"미기록"}</span></p>
-        {!run.finishedAt&&run.phase!=="Done"&&<EvaluationActiveDetails key={run.uid} active={active} name={name} uid={uid||run.uid} now={now} stageProgress={run.stages?.find(stage=>stage.id===activeStage?.id)}/>}
+        {!run.finishedAt&&run.phase!=="Done"&&<EvaluationActiveDetails key={run.uid} active={active} name={name} uid={uid||run.uid} now={now} stageProgress={run.stages?.find(stage=>stage.id===activeStage?.id)} procedures={run.procedures}/>}
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">{[["시작 (KST)",run.startedAt],["종료 (KST)",run.finishedAt]].map(([label,value])=><div key={label} className="flex gap-2"><dt>{label}</dt><dd>{value?formatMeasurementTime(value):"미기록"}</dd></div>)}</dl>
       </section>
       {provisional&&<section aria-label="실행 중 잠정 서비스 결과"><ExperimentStageResults provisional={provisional}/></section>}

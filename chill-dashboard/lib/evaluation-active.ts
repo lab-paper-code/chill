@@ -4,14 +4,15 @@ export type ActiveInjection = {id:string;action:string;offsetSeconds:number;outc
 export type ActiveEvaluation = {name:string;uid:string;startedAt?:string;stageIndex:number;stagesTotal:number;stage?:{id:string;startedAt?:string;goAt?:string;plannedSeconds:number;injections:ActiveInjection[]}}
 export type ActiveEvaluations = {items:ActiveEvaluation[]}
 export type EvaluationPhaseSummary = {name:string;uid:string;phase:string}
-export type EvaluationStageProgress = {id:string;procedures?:{startedAt:string|null;finishedAt:string|null}[]|null;provisionalD1?:{asOf?:string}|null}
-export function evaluationLastProgressAt(stage:EvaluationStageProgress|undefined):number|null {
+export type EvaluationProgressProcedure = {step:string;startedAt:string|null;finishedAt:string|null}
+export type EvaluationStageProgress = {id:string;procedures?:EvaluationProgressProcedure[]|null;provisionalD1?:{asOf?:string}|null}
+export function evaluationLastProgressAt(stage:EvaluationStageProgress|undefined,procedures:EvaluationProgressProcedure[]|null|undefined):number|null {
   let latest:number|null=null
   const record=(value:string|null|undefined)=>{
     const at=value?Date.parse(value):NaN
     if(Number.isFinite(at)&&(latest===null||at>latest))latest=at
   }
-  for(const procedure of stage?.procedures??[]){
+  for(const procedure of [...stage?.procedures??[],...procedures??[]]){
     record(procedure.startedAt)
     record(procedure.finishedAt)
   }

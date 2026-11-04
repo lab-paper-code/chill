@@ -18,8 +18,9 @@ const baseRun={name:"arbitrary-run",uid:"selected",phase:"Done",currentStage:"tr
 function renderRun(run:Record<string,unknown>,publication?:Record<string,unknown>,loads=[scenario],entries:active.ActiveEvaluation[]=[],queries:Record<string,Record<string,unknown>>={}) {
   const clock={...React,useState:(initial:unknown)=>React.useState(initial===0?Date.parse("2026-11-03T00:02:30Z"):initial)}
   const query=(path:string)=>queries[path]??{data:path==="v1/evaluations/active"?{items:entries}:path.startsWith("v1/experiments/")?publication:path==="v1/evaluations/load-scenarios"?{items:loads}:run}
-  const modules={react:clock,"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams("uid=selected"),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({})},"@/lib/client":{useChillQuery:query},"@/lib/evaluation-request":request,"@/lib/evaluation-author":author,"@/lib/evaluation-active":active,"@/lib/scheduler-settings":settings,"@/lib/labels":labels,"@/lib/scheduler":scheduler,"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements,"@/components/screen":{Screen:({children}:{children:React.ReactNode})=>React.createElement("main",null,children)},"@/components/read-region":{QueryGate:"div",SourceJSON:"pre"},"@/components/ui/button":{Button:"button"},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"span",TooltipContent:"aside"},"@/features/evaluation-active":{EvaluationActiveDetails:()=>null}}
+  const modules={react:clock,"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams("uid=selected"),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({})},"@/lib/client":{useChillQuery:query},"@/lib/evaluation-request":request,"@/lib/evaluation-author":author,"@/lib/evaluation-active":active,"@/lib/scheduler-settings":settings,"@/lib/labels":labels,"@/lib/scheduler":scheduler,"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements,"@/components/screen":{Screen:({children}:{children:React.ReactNode})=>React.createElement("main",null,children)},"@/components/read-region":{QueryGate:"div",SourceJSON:"pre"},"@/components/ui/button":{Button:"button"},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"span",TooltipContent:"aside"}}
   Object.assign(modules,{"@/features/experiments-conclusion":load("../features/experiments-conclusion.tsx",{"@/lib/client":{},"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements})})
+  Object.assign(modules,{"@/features/evaluation-active":load("../features/evaluation-active.tsx",{"@/lib/evaluation-active":active})})
   const {EvaluationRunPage}=load("../features/evaluation-request.tsx",modules)
   return renderToStaticMarkup(React.createElement(EvaluationRunPage as React.ComponentType<{name:string}>,{name:"arbitrary-run"}))
 }
@@ -82,14 +83,32 @@ test("planned end replaces zero remaining with elapsed and reports only recorded
   const entry={name:"arbitrary-run",uid:"selected",stageIndex:1,stagesTotal:1,stage:{id:"trial",goAt:"2026-11-03T00:00:00Z",plannedSeconds:120,injections:[]}}
   const {EvaluationActiveDetails}=load("../features/evaluation-active.tsx",{"@/lib/evaluation-active":active})
   const render=(stageProgress?:unknown)=>text(renderToStaticMarkup(React.createElement(EvaluationActiveDetails as React.ComponentType<{active:unknown;now:number;stageProgress?:unknown}>,{active:{data:{items:[entry]}},now:Date.parse("2026-11-03T00:03:10Z"),stageProgress})))
-  assert.match(render(),/계획 시간 경과 · 종료 처리 단계 신호 미수신/)
+  assert.match(render(),/계획 시간 경과 · 종료 처리 단계 미기록/)
   assert.match(render(),/계획 종료 후 경과 \(초\)70/)
   assert.doesNotMatch(render(),/계획상 남은 시간|정상|종료 처리 중/)
   const progress={id:"trial",procedures:[{step:"Execute",startedAt:"2026-11-03T00:00:10Z",finishedAt:"2026-11-03T00:02:10Z"}],provisionalD1:{asOf:"2026-11-03T00:02:30Z"}}
   assert.match(render(progress),/진행 신호 없음 40초/)
-  assert.match(render(progress),/종료 처리 단계 신호 미수신/)
+  assert.match(render(progress),/종료 처리 신호 미수신/)
   assert.match(render({...progress,provisionalD1:{asOf:"2026-11-03T00:01:00Z"}}),/진행 신호 없음 60초/)
   assert.doesNotMatch(render({...progress,id:"another"}),/진행 신호 없음 \d+초/)
+})
+
+test("run detail distinguishes recorded post-load procedures and parent progress from absent signals",()=>{
+  const entry:active.ActiveEvaluation={name:baseRun.name,uid:baseRun.uid,stageIndex:1,stagesTotal:1,stage:{id:"trial",goAt:baseRun.startedAt,plannedSeconds:120,injections:[]}}
+  const stage={id:"trial",procedures:[{step:"stage",startedAt:baseRun.startedAt,finishedAt:null}],finishedAt:null}
+  const run={...baseRun,phase:"Running",finishedAt:undefined,currentStage:"trial",currentProcedure:"stage",stages:[stage]}
+  let screen=text(renderRun(run,undefined,[scenario],[entry]))
+  assert.match(screen,/계획 시간 경과 · 종료 처리 신호 미수신/)
+  assert.match(screen,/진행 신호 없음 150초/)
+  screen=text(renderRun({...run,stages:[{...stage,procedures:[{...stage.procedures[0],finishedAt:"2026-11-03T00:02:00Z"},{step:"judge",startedAt:"2026-11-03T00:02:10Z",finishedAt:null}]}]},undefined,[scenario],[entry]))
+  assert.match(screen,/종료 처리: 측정 판정 중.*시작/)
+  assert.match(screen,/진행 신호 없음 20초/)
+  assert.doesNotMatch(screen,/종료 처리 신호 미수신/)
+  screen=text(renderRun({...run,phase:"Finishing",procedures:[{step:"finish",startedAt:"2026-11-03T00:02:20Z",finishedAt:null}],stages:[{...stage,finishedAt:"2026-11-03T00:02:00Z",procedures:[{...stage.procedures[0],finishedAt:"2026-11-03T00:02:00Z"}]}]},undefined,[scenario],[entry]))
+  assert.match(screen,/진행 신호 없음 10초/)
+  screen=text(renderRun({...run,stages:[{id:"trial"}]},undefined,[scenario],[entry]))
+  assert.match(screen,/계획 시간 경과 · 종료 처리 단계 미기록/)
+  assert.doesNotMatch(screen,/종료 처리 신호 미수신/)
 })
 
 test("operator reads service distributions and labeled run and stage setting changes without JSON",()=>{

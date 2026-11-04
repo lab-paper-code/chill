@@ -3,7 +3,7 @@
 import type { UseQueryResult } from "@tanstack/react-query"
 import type { ApiError } from "@/lib/client"
 import { useChillQuery } from "@/lib/client"
-import { evaluationLastProgressAt, evaluationRemaining, type ActiveEvaluations, type EvaluationPhaseSummary, type EvaluationStageProgress } from "@/lib/evaluation-active"
+import { evaluationLastProgressAt, evaluationRemaining, type ActiveEvaluations, type EvaluationPhaseSummary, type EvaluationStageProgress, type EvaluationProgressProcedure } from "@/lib/evaluation-active"
 import { StatusCell } from "@/components/status-cell"
 import { STATUS_AXES } from "@/lib/status"
 
@@ -18,7 +18,7 @@ const actions:Record<string,string>={"delete-serving-pod":"서비스 Pod 삭제"
 const outcomes:Record<string,string>={Executed:"실행됨",Cancelled:"취소됨",Invalid:"무효"}
 
 
-export function EvaluationActiveDetails({active,now,name,uid,stageProgress}:{active:Pick<UseQueryResult<ActiveEvaluations,ApiError>,"data"|"error"|"isPending"|"refetch">;now:number;name?:string;uid?:string;stageProgress?:EvaluationStageProgress}) {
+export function EvaluationActiveDetails({active,now,name,uid,stageProgress,procedures}:{active:Pick<UseQueryResult<ActiveEvaluations,ApiError>,"data"|"error"|"isPending"|"refetch">;now:number;name?:string;uid?:string;stageProgress?:EvaluationStageProgress;procedures?:EvaluationProgressProcedure[]|null}) {
   const runs=active.data?.items.filter(run=>(!name||run.name===name)&&(!uid||run.uid===uid))??[]
   return <div className="live-evaluations" aria-label="진행 중 실험">
     {active.isPending&&<span role="status">실험 조회 중</span>}
@@ -30,10 +30,16 @@ export function EvaluationActiveDetails({active,now,name,uid,stageProgress}:{act
       const elapsed=now&&Number.isFinite(goAt)?Math.max(0,Math.floor((now-goAt)/1000)):null
       const planned=run.stage?.plannedSeconds
       const afterLoad=elapsed!==null&&typeof planned==="number"&&Number.isFinite(planned)&&elapsed>=planned
-      const lastProgressAt=evaluationLastProgressAt(stageProgress?.id===run.stage?.id?stageProgress:undefined)
+      const stage=stageProgress?.id===run.stage?.id?stageProgress:undefined
+      const lastProgressAt=evaluationLastProgressAt(stage,procedures)
+      const stageProcedures=stage?.procedures
+      const loadIndex=stageProcedures?.findIndex(procedure=>procedure.step==="stage")??-1
+      const postLoad=[...(stageProcedures??[]).filter((procedure,index)=>index>loadIndex&&loadIndex>=0||["judge","cleanup-jobs"].includes(procedure.step)),...(procedures??[]).filter(procedure=>["finish","publish"].includes(procedure.step))].filter(procedure=>procedure.startedAt&&Number.isFinite(Date.parse(procedure.startedAt))).sort((a,b)=>Date.parse(b.startedAt!)-Date.parse(a.startedAt!))[0]
+      const procedureLabels:Record<string,string>={judge:"측정 판정","cleanup-jobs":"작업 정리",finish:"정리",publish:"게시"}
+      const postLoadLabel=postLoad?`종료 처리: ${procedureLabels[postLoad.step]??postLoad.step} ${postLoad.finishedAt?"종료 기록":"중"} (시작 ${new Date(postLoad.startedAt!).toLocaleTimeString("ko-KR",{timeZone:"Asia/Seoul",hour12:false})})`:stageProcedures==null?"종료 처리 단계 미기록":"종료 처리 신호 미수신"
       const silentSeconds=now&&lastProgressAt!==null?Math.max(0,Math.floor((now-lastProgressAt)/1000)):null
       return <details key={run.uid} className="live-evaluation" open>
-        <summary>{afterLoad?"계획 시간 경과 · 종료 처리 단계 신호 미수신":"부하 계획 시간"}</summary>
+        <summary>{afterLoad?`계획 시간 경과 · ${postLoadLabel}`:"부하 계획 시간"}</summary>
         <div className="live-evaluation-details space-y-3">
           <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm tabular-nums">
             <div><dt className="text-muted-foreground">현재 단계</dt><dd>{run.stage?.id??"미기록"} <span className="text-muted-foreground">({run.stageIndex}/{run.stagesTotal})</span></dd></div>
