@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 890" width="1600" height="890" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif">
+  <defs>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+    <marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#C2410C"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+    <style>
+      .t{font-size:17px;fill:#0F172A;text-anchor:middle;dominant-baseline:middle}
+      .sm{font-size:14px;fill:#475569;text-anchor:middle;dominant-baseline:middle}
+      .h{font-size:16px;font-weight:700;fill:#1E3A8A}
+      .lbl{font-size:15px;font-weight:700;dominant-baseline:middle}
+      .pod{fill:#fff;stroke:#2563EB;stroke-width:2}
+      .run{fill:#DCFCE7;stroke:#15803D;stroke-width:2}
+      .job{fill:#FFEDD5;stroke:#C2410C;stroke-width:2;stroke-dasharray:6 4}
+      .idle{fill:#F8FAFC;stroke:#94A3B8;stroke-width:1.5;stroke-dasharray:4 4}
+      .agent{fill:#F1F5F9;stroke:#64748B;stroke-width:1.5}
+      .disk{fill:#FEF3C7;stroke:#B45309;stroke-width:2}
+      .grp{fill:#fff;stroke:#BFDBFE;stroke-width:1.5}
+      .dev{fill:#fff;stroke:#334155;stroke-width:2}
+    </style>
+  </defs>
+
+  <!-- ===== 사람 ===== -->
+  <g fill="#fff" stroke="#475569" stroke-width="2">
+    <circle cx="220" cy="62" r="16"/><path d="M190,122 a30,30 0 0 1 60,0 z"/>
+    <circle cx="560" cy="62" r="16"/><path d="M530,122 a30,30 0 0 1 60,0 z"/>
+  </g>
+  <text x="220" y="138" class="t" font-weight="700">운영자</text>
+  <text x="560" y="138" class="t" font-weight="700">서비스 사용자</text>
+
+  <!-- ===== 범례 ===== -->
+  <g transform="translate(1010,30)">
+    <rect x="0" y="0" width="560" height="120" rx="10" fill="#fff" stroke="#CBD5E1"/>
+    <rect x="20" y="20" width="34" height="22" rx="5" class="pod"/><text x="64" y="32" class="sm" style="text-anchor:start">상시 실행 Pod</text>
+    <rect x="180" y="20" width="34" height="22" rx="5" class="run"/><text x="224" y="32" class="sm" style="text-anchor:start">추론 실행 Pod</text>
+    <rect x="340" y="20" width="34" height="22" rx="5" class="job"/><text x="384" y="32" class="sm" style="text-anchor:start">측정할 때만 실행</text>
+    <path class="disk" d="M500,18 v18 a14,5 0 0 0 28,0 v-18 a14,5 0 0 0 -28,0 a14,5 0 0 0 28,0"/><text x="514" y="58" class="sm">디스크</text>
+    <line x1="20" y1="90" x2="60" y2="90" stroke="#15803D" stroke-width="4" marker-end="url(#g)"/><text x="70" y="90" class="sm" style="text-anchor:start">요청 흐름</text>
+    <line x1="180" y1="90" x2="220" y2="90" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#o)"/><text x="230" y="90" class="sm" style="text-anchor:start">측정 흐름</text>
+    <line x1="340" y1="90" x2="380" y2="90" stroke="#475569" stroke-width="2" stroke-dasharray="3 4" marker-end="url(#s)"/><text x="390" y="90" class="sm" style="text-anchor:start">전력 설정 · 조작</text>
+  </g>
+
+  <!-- ===== 제어 노드 ===== -->
+  <rect x="40" y="180" width="1520" height="340" rx="16" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="2.5"/>
+  <text x="62" y="206" font-size="20" font-weight="800" fill="#1D4ED8">제어·관리 영역</text>
+
+  <!-- 화면 -->
+  <rect x="70" y="240" width="300" height="255" rx="12" class="grp"/>
+  <text x="88" y="264" class="h">화면</text>
+  <rect x="95" y="300" width="250" height="60" rx="8" class="pod"/><text x="220" y="330" class="t">웹 대시보드</text>
+  <rect x="95" y="410" width="250" height="60" rx="8" class="pod"/><text x="220" y="440" class="t">조회 서버</text>
+
+  <!-- 서비스 처리 -->
+  <rect x="420" y="240" width="400" height="255" rx="12" class="grp"/>
+  <text x="438" y="264" class="h">서비스 처리</text>
+  <rect x="440" y="290" width="240" height="90" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="3"/>
+  <text x="560" y="320" class="t" font-size="21" font-weight="800">CHILL 서버</text>
+  <text x="560" y="352" class="sm" fill="#1E3A8A">요청 접수 · 배치 결정 · 기록</text>
+  <path class="disk" d="M705,302 v60 a47,10 0 0 0 94,0 v-60 a47,10 0 0 0 -94,0 a47,10 0 0 0 94,0"/>
+  <text x="752" y="342" class="t" font-size="15">요청 기록</text>
+
+  <!-- 설치·측정 관리 -->
+  <rect x="870" y="240" width="300" height="255" rx="12" class="grp"/>
+  <text x="888" y="264" class="h">설치 · 측정 관리</text>
+  <rect x="895" y="300" width="250" height="60" rx="8" class="pod"/>
+  <text x="1020" y="322" class="t">관리자 프로그램</text><text x="1020" y="344" class="sm">구성 요소 설치·유지</text>
+  <rect x="895" y="410" width="250" height="60" rx="8" class="pod"/><text x="1020" y="440" class="t">측정 관리 프로그램</text>
+
+  <!-- 측정 결과 저장소 -->
+  <rect x="1220" y="240" width="310" height="255" rx="12" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="1238" y="264" class="h" fill="#92400E">측정 결과 저장소</text>
+  <path class="disk" d="M1300,290 v58 a75,12 0 0 0 150,0 v-58 a75,12 0 0 0 -150,0 a75,12 0 0 0 150,0"/>
+  <text x="1375" y="328" class="t" font-size="15">측정 원본 (보존)</text>
+  <rect x="1245" y="410" width="260" height="60" rx="8" class="pod"/><text x="1375" y="440" class="t">파일 저장소</text>
+
+  <!-- ===== 작업 장비 (제목은 아래쪽: 위에서 내려오는 선과 겹치지 않게) ===== -->
+  <rect x="40" y="600" width="1520" height="270" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="2.5"/>
+  <text x="62" y="849" font-size="20" font-weight="800" fill="#15803D">작업 장비</text>
+  <text x="170" y="849" font-size="15" fill="#166534">정보 에이전트는 모든 장비 · 전력 에이전트는 지원 장비에 추가 · 계획기는 장비당 실행 Pod 1개 배치</text>
+
+  <rect x="60" y="615" width="355" height="200" rx="12" class="dev"/>
+  <rect x="75" y="630" width="130" height="90" rx="8" class="agent"/><text x="140" y="655" class="sm">정보 에이전트</text><text x="140" y="680" class="sm">+ 전력 에이전트</text><text x="140" y="704" class="sm" style="font-size:11px">전력 제어 지원 시</text>
+  <rect x="220" y="630" width="180" height="90" rx="8" class="run"/><text x="310" y="665" class="t">추론 실행 Pod</text><text x="310" y="690" class="sm">서비스 A</text>
+  <text x="78" y="790" class="h" fill="#0F172A">PC + GPU</text><text x="400" y="790" class="sm" style="text-anchor:end" fill="#15803D">서비스 중</text>
+
+  <rect x="435" y="615" width="355" height="200" rx="12" class="dev"/>
+  <rect x="450" y="630" width="130" height="90" rx="8" class="agent"/><text x="515" y="655" class="sm">정보 에이전트</text><text x="515" y="680" class="sm">+ 전력 에이전트</text><text x="515" y="704" class="sm" style="font-size:11px">전력 제어 지원 시</text>
+  <rect x="595" y="630" width="180" height="90" rx="8" class="run"/><text x="685" y="665" class="t">추론 실행 Pod</text><text x="685" y="690" class="sm">서비스 B</text>
+  <text x="453" y="790" class="h" fill="#0F172A">Jetson</text><text x="775" y="790" class="sm" style="text-anchor:end" fill="#15803D">서비스 중</text>
+
+  <rect x="810" y="615" width="355" height="200" rx="12" class="dev"/>
+  <rect x="825" y="630" width="130" height="90" rx="8" class="agent"/><text x="890" y="665" class="sm">정보 에이전트</text><text x="890" y="690" class="sm">사양 보고</text>
+  <rect x="970" y="630" width="180" height="90" rx="8" class="idle"/><text x="1060" y="665" class="sm">미사용</text><text x="1060" y="690" class="sm">고정 전력 모드 대기</text>
+  <text x="828" y="790" class="h" fill="#0F172A">Raspberry Pi</text><text x="1150" y="790" class="sm" style="text-anchor:end">대기</text>
+
+  <rect x="1185" y="615" width="355" height="200" rx="12" class="dev"/>
+  <rect x="1200" y="630" width="130" height="90" rx="8" class="agent"/><text x="1265" y="665" class="sm">정보 에이전트</text><text x="1265" y="690" class="sm">사양 보고</text>
+  <rect x="1345" y="630" width="180" height="90" rx="8" class="job"/><text x="1435" y="665" class="t">측정 작업</text><text x="1435" y="690" class="sm">측정할 때만 실행</text>
+  <text x="1203" y="790" class="h" fill="#0F172A">RK3588</text><text x="1525" y="790" class="sm" style="text-anchor:end" fill="#C2410C">측정 중</text>
+
+  <!-- ===== 연결선: 가로 구간은 서로 다른 높이(레인), 라벨은 선 옆 빈 공간 ===== -->
+  <!-- 사용자 → 서버 -->
+  <path d="M560,150 V288" fill="none" stroke="#15803D" stroke-width="4" marker-end="url(#g)"/>
+  <text x="574" y="164" class="lbl" fill="#15803D">추론 요청</text>
+
+  <!-- 운영자 → 대시보드 → 조회 서버 / 서버 -->
+  <path d="M220,150 V298" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="3 4" marker-end="url(#s)"/>
+  <text x="234" y="164" class="lbl" fill="#475569">확인 · 조작</text>
+  <path d="M440,365 H395 V440 H347" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+  <path d="M345,330 H438" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+
+  <!-- 서버 → 추론 실행 파드 (레인 y=560, y=580) -->
+  <path d="M480,380 V560 H310 V628" fill="none" stroke="#15803D" stroke-width="4" marker-end="url(#g)"/>
+  <text x="395" y="545" class="lbl" fill="#15803D" text-anchor="middle">요청 전달</text>
+  <path d="M560,380 V580 H685 V628" fill="none" stroke="#15803D" stroke-width="4" marker-end="url(#g)"/>
+
+  <!-- 서버 → 장비 도우미: 전력 설정 (레인 y=545) -->
+  <path d="M640,380 V545 H515 V628" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="3 4" marker-end="url(#s)"/>
+  <text x="730" y="580" class="lbl" fill="#475569">Node 목표 전력 설정</text>
+
+  <!-- 측정: 관리자 → 측정 관리 → 측정 작업 → 저장소 -->
+  <path d="M1020,360 V408" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+  <path d="M1020,470 V575 H1400 V628" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#o)"/>
+  <text x="1210" y="561" class="lbl" fill="#C2410C" text-anchor="middle">측정 실행</text>
+  <path d="M1480,630 V472" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#o)"/>
+  <text x="1492" y="560" class="lbl" fill="#C2410C">결과 저장</text>
+  <path d="M1375,410 V372" fill="none" stroke="#B45309" stroke-width="2" marker-end="url(#b)"/>
+
+  <!-- 저장소 → 서버 (상단 레인 y=222) -->
+  <path d="M1245,440 H1195 V222 H620 V288" fill="none" stroke="#B45309" stroke-width="2.5" marker-end="url(#b)"/>
+  <text x="905" y="207" class="lbl" fill="#B45309" text-anchor="middle">측정 결과로 배치 결정</text>
+</svg>

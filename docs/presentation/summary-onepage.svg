@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="54" class="h" style="text-anchor:start;fill:#0F172A;font-size:32px">CHILL 한 장 요약</text>
+<rect x="60" y="90" width="1800" height="100" rx="16" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="960" y="128" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:22px">이기종 엣지 장비에서 AI 추론 서비스를 운영하는 환경에서</text>
+<text x="960" y="164" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:25px">응답 시간 목표를 만족하는 배치 중 에너지가 가장 적은 배치를 자동 선택</text>
+<rect x="60" y="226" width="420" height="500" rx="16" fill="#FEF2F2" stroke="#B91C1C" stroke-width="2"/>
+<text x="86" y="272" class="h" style="text-anchor:start;fill:#B91C1C;font-size:26px">문제</text>
+<circle cx="92" cy="338" r="4" fill="#B91C1C"/>
+<text x="106" y="338" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">장비 이질성</text>
+<text x="106" y="368" class="s" style="text-anchor:start;font-size:15px">x86+GPU · Jetson · RK3588 · Raspberry Pi</text>
+<circle cx="92" cy="432" r="4" fill="#B91C1C"/>
+<text x="106" y="432" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">동일 모델도 장비 · 전력 설정별로</text>
+<text x="106" y="462" class="s" style="text-anchor:start;font-size:15px">속도 · 에너지 차이 큼 (최대 약 6배)</text>
+<circle cx="92" cy="526" r="4" fill="#B91C1C"/>
+<text x="106" y="526" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">사양만으로 최적 배치 판단 불가</text>
+<text x="106" y="556" class="s" style="text-anchor:start;font-size:15px"></text>
+<circle cx="92" cy="620" r="4" fill="#B91C1C"/>
+<text x="106" y="620" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">요청량 변동</text>
+<text x="106" y="650" class="s" style="text-anchor:start;font-size:15px">고정 배치로는 부하 변화 대응 불가</text>
+<path d="M484,476 H516" fill="none" stroke="#475569" stroke-width="3" marker-end="url(#s)"/>
+<rect x="520" y="226" width="420" height="500" rx="16" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="546" y="272" class="h" style="text-anchor:start;fill:#7C3AED;font-size:26px">해법</text>
+<circle cx="552" cy="338" r="4" fill="#7C3AED"/>
+<text x="566" y="338" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">① 측정</text>
+<text x="566" y="368" class="s" style="text-anchor:start;font-size:15px">장비 × 모델 × 전력 설정별 실측</text>
+<circle cx="552" cy="432" r="4" fill="#7C3AED"/>
+<text x="566" y="432" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">② 선택</text>
+<text x="566" y="462" class="s" style="text-anchor:start;font-size:15px">목표 만족 배치 중 에너지 최소</text>
+<circle cx="552" cy="526" r="4" fill="#7C3AED"/>
+<text x="566" y="526" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">③ 적용</text>
+<text x="566" y="556" class="s" style="text-anchor:start;font-size:15px">전력 모드 · 실행 Pod · 요청 분배 자동 변경</text>
+<circle cx="552" cy="620" r="4" fill="#7C3AED"/>
+<text x="566" y="620" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">10초 주기 반복</text>
+<text x="566" y="650" class="s" style="text-anchor:start;font-size:15px">요청량 변화 시 재판단</text>
+<path d="M944,476 H976" fill="none" stroke="#475569" stroke-width="3" marker-end="url(#s)"/>
+<rect x="980" y="226" width="420" height="500" rx="16" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1006" y="272" class="h" style="text-anchor:start;fill:#1D4ED8;font-size:26px">검증 환경</text>
+<circle cx="1012" cy="338" r="4" fill="#1D4ED8"/>
+<text x="1026" y="338" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">실제 장비 10대</text>
+<text x="1026" y="368" class="s" style="text-anchor:start;font-size:15px">x86 서버 3 · Jetson 4 · Orange Pi · LattePanda · RPi 5</text>
+<circle cx="1012" cy="432" r="4" fill="#1D4ED8"/>
+<text x="1026" y="432" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">서비스 3개</text>
+<text x="1026" y="462" class="s" style="text-anchor:start;font-size:15px">이미지 분류 · PLC 이상탐지 · 영상 질의응답</text>
+<circle cx="1012" cy="526" r="4" fill="#1D4ED8"/>
+<text x="1026" y="526" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">장비별 전력계</text>
+<text x="1026" y="556" class="s" style="text-anchor:start;font-size:15px">콘센트 단위 실측 (Shelly)</text>
+<circle cx="1012" cy="620" r="4" fill="#1D4ED8"/>
+<text x="1026" y="620" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">Kubernetes 기반</text>
+<text x="1026" y="650" class="s" style="text-anchor:start;font-size:15px">엣지 장비는 KubeEdge로 연결</text>
+<path d="M1404,476 H1436" fill="none" stroke="#475569" stroke-width="3" marker-end="url(#s)"/>
+<rect x="1440" y="226" width="420" height="500" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="2"/>
+<text x="1466" y="272" class="h" style="text-anchor:start;fill:#15803D;font-size:26px">현재 위치</text>
+<circle cx="1472" cy="338" r="4" fill="#15803D"/>
+<text x="1486" y="338" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">실제 클러스터 실험으로 검증</text>
+<text x="1486" y="368" class="s" style="text-anchor:start;font-size:15px">요청 증가 · 여유 구간에서 자동 재배치 확인</text>
+<circle cx="1472" cy="432" r="4" fill="#15803D"/>
+<text x="1486" y="432" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">사례: 요청 급증</text>
+<text x="1486" y="462" class="s" style="text-anchor:start;font-size:15px">판단 후 10초 내 장비 1대 추가</text>
+<circle cx="1472" cy="526" r="4" fill="#15803D"/>
+<text x="1486" y="526" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">사례: 여유 구간</text>
+<text x="1486" y="556" class="s" style="text-anchor:start;font-size:15px">6대 재배치 · 예상 에너지 −3.6%</text>
+<circle cx="1472" cy="620" r="4" fill="#15803D"/>
+<text x="1486" y="620" class="lb" style="text-anchor:start;fill:#0F172A;font-size:19px">남은 과제</text>
+<text x="1486" y="650" class="s" style="text-anchor:start;font-size:15px">부하 증가 후반 처리 용량 부족 · 에너지 절감 일관성 미확인</text>
+<rect x="60" y="764" width="1800" height="260" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="84" y="804" class="h" style="text-anchor:start;fill:#0F172A;font-size:20px">제어 주기 (10초)</text>
+<rect x="100" y="840" width="380" height="116" rx="14" fill="#fff" stroke="#475569" stroke-width="2.2"/>
+<text x="290.0" y="886" class="lb" style="text-anchor:middle;fill:#475569;font-size:22px">상태 수집</text>
+<text x="290.0" y="922" class="s" style="text-anchor:middle;font-size:16px">요청량 · 장비 상태 · 측정값</text>
+<path d="M484,898 H536" fill="none" stroke="#475569" stroke-width="3" marker-end="url(#s)"/>
+<rect x="540" y="840" width="380" height="116" rx="14" fill="#fff" stroke="#1D4ED8" stroke-width="2.2"/>
+<text x="730.0" y="886" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:22px">처리 한도표</text>
+<text x="730.0" y="922" class="s" style="text-anchor:middle;font-size:16px">목표 만족 최대 요청률</text>
+<path d="M924,898 H976" fill="none" stroke="#1D4ED8" stroke-width="3" marker-end="url(#s)"/>
+<rect x="980" y="840" width="380" height="116" rx="14" fill="#fff" stroke="#7C3AED" stroke-width="2.2"/>
+<text x="1170.0" y="886" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:22px">배치 선택</text>
+<text x="1170.0" y="922" class="s" style="text-anchor:middle;font-size:16px">목표 만족 · 에너지 최소</text>
+<path d="M1364,898 H1416" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#s)"/>
+<rect x="1420" y="840" width="380" height="116" rx="14" fill="#fff" stroke="#15803D" stroke-width="2.2"/>
+<text x="1610.0" y="886" class="lb" style="text-anchor:middle;fill:#15803D;font-size:22px">적용</text>
+<text x="1610.0" y="922" class="s" style="text-anchor:middle;font-size:16px">전력 · Pod · 분배 변경</text>
+<path d="M1610.0,958 V990 H290.0 V960" fill="none" stroke="#7C3AED" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#p)"/>
+<text x="960" y="1006" class="s" style="text-anchor:middle;fill:#7C3AED;font-size:14px">적용 결과는 다음 주기 상태 수집에 반영</text>
+<text x="1840" y="1066" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">사례 수치: 실제 클러스터 실험 기록 · 과제: 실험 결과 보고서</text>
+</svg>

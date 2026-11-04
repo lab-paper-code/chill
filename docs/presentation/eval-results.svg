@@ -1,0 +1,170 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="50" class="h" style="text-anchor:start;fill:#0F172A;font-size:26px">평가 결과: 실제 클러스터 7개 부하 시나리오</text>
+<text x="60" y="86" class="s" style="text-anchor:start;font-size:16px">장비 7대 · 서비스 3개 · 시나리오별 최신 결과 · 동일 요청을 고정 배치(기준선)에도 재생해 비교</text>
+<rect x="60" y="120" width="1250" height="760" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<rect x="312.7142857142857" y="140" width="116" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<path d="M318.7142857142857,182 L318.7,173.2 L422.7,173.2 L422.7142857142857,182 Z" fill="#E0E7FF" stroke="#6366F1" stroke-width="1.8"/>
+<text x="370.7142857142857" y="210" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">일정 부하</text>
+<text x="370.7142857142857" y="230" class="s" style="text-anchor:middle;font-size:11px">30분</text>
+<rect x="454.1428571428571" y="140" width="116" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<path d="M460.1428571428571,182 L460.1,173.2 L506.9,173.2 L506.9,155.7 L564.1,155.7 L564.1428571428571,182 Z" fill="#E0E7FF" stroke="#6366F1" stroke-width="1.8"/>
+<text x="512.1428571428571" y="210" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">버스트</text>
+<text x="512.1428571428571" y="230" class="s" style="text-anchor:middle;font-size:11px">15분 · 영상만 급증</text>
+<rect x="595.5714285714286" y="140" width="116" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<path d="M601.5714285714286,182 L601.6,167.4 L636.2,167.4 L636.2,161.5 L670.9,161.5 L670.9,155.7 L705.6,155.7 L705.5714285714286,182 Z" fill="#E0E7FF" stroke="#6366F1" stroke-width="1.8"/>
+<text x="653.5714285714286" y="210" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">점진 증가</text>
+<text x="653.5714285714286" y="230" class="s" style="text-anchor:middle;font-size:11px">30분 · 3단계</text>
+<rect x="736.9999999999999" y="140" width="116" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<path d="M742.9999999999999,182 L743.0,146.9 L847.0,146.9 L846.9999999999999,182 Z" fill="#E0E7FF" stroke="#6366F1" stroke-width="1.8"/>
+<path d="M740.9999999999999,152.8 H848.9999999999999" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="846.9999999999999" y="164.76923076923077" class="s" style="text-anchor:end;fill:#B91C1C;font-size:10px">한도</text>
+<text x="794.9999999999999" y="210" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">한계 초과</text>
+<text x="794.9999999999999" y="230" class="s" style="text-anchor:middle;font-size:11px">15분</text>
+<rect x="878.4285714285713" y="140" width="116" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<path d="M884.4285714285713,182 L884.4,173.2 L936.4,173.2 L936.4,155.7 L988.4,155.7 L988.4285714285713,182 Z" fill="#E0E7FF" stroke="#6366F1" stroke-width="1.8"/>
+<text x="936.4285714285713" y="210" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">급감 · 재급증</text>
+<text x="936.4285714285713" y="230" class="s" style="text-anchor:middle;font-size:11px">20분</text>
+<rect x="1019.8571428571429" y="140" width="116" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<path d="M1025.857142857143,182 L1025.9,173.2 L1129.9,173.2 L1129.857142857143,182 Z" fill="#E0E7FF" stroke="#6366F1" stroke-width="1.8"/>
+<text x="1077.857142857143" y="210" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">1시간 지속</text>
+<text x="1077.857142857143" y="230" class="s" style="text-anchor:middle;font-size:11px">60분</text>
+<rect x="1161.2857142857142" y="140" width="116" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<path d="M1167.2857142857142,182 L1167.3,173.2 L1271.3,173.2 L1271.2857142857142,182 Z" fill="#E0E7FF" stroke="#6366F1" stroke-width="1.8"/>
+<text x="1188.0857142857142" y="167.23076923076923" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:13px">✕</text>
+<text x="1208.8857142857141" y="167.23076923076923" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:13px">✕</text>
+<text x="1219.2857142857142" y="210" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">장애 주입</text>
+<text x="1219.2857142857142" y="230" class="s" style="text-anchor:middle;font-size:11px">15분 · Pod 삭제</text>
+<text x="84" y="166" class="lb" style="text-anchor:start;fill:#334155;font-size:15px">부하 시나리오</text>
+<text x="84" y="188" class="s" style="text-anchor:start;font-size:12px">(형태는 개념도)</text>
+<path d="M84,252 H1286" fill="none" stroke="#E2E8F0" stroke-width="1.5"/>
+<text x="84" y="290" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">① 응답 시간</text>
+<text x="84" y="316" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">목표 충족</text>
+<rect x="307.7142857142857" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="327.7142857142857" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">이미지</text>
+<rect x="350.7142857142857" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="370.7142857142857" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">PLC</text>
+<rect x="393.7142857142857" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="413.7142857142857" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">영상</text>
+<rect x="449.1428571428571" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="469.1428571428571" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">이미지</text>
+<rect x="492.1428571428571" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="512.1428571428571" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">PLC</text>
+<rect x="535.1428571428571" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="555.1428571428571" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">영상</text>
+<rect x="590.5714285714286" y="278" width="40" height="34" rx="8" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="610.5714285714286" y="300" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:11px">이미지</text>
+<rect x="633.5714285714286" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="653.5714285714286" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">PLC</text>
+<rect x="676.5714285714286" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="696.5714285714286" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">영상</text>
+<rect x="731.9999999999999" y="278" width="126" height="34" rx="17" fill="#FEF3C7" stroke="#B45309" stroke-width="1.2"/>
+<text x="794.9999999999999" y="300" class="s" style="text-anchor:middle;fill:#B45309;font-size:10.5px">의도적 과부하 · 판정 제외</text>
+<rect x="873.4285714285713" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="893.4285714285713" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">이미지</text>
+<rect x="916.4285714285713" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="936.4285714285713" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">PLC</text>
+<rect x="959.4285714285713" y="278" width="40" height="34" rx="8" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="979.4285714285713" y="300" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:11px">영상</text>
+<rect x="1014.8571428571429" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1034.857142857143" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">이미지</text>
+<rect x="1057.857142857143" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1077.857142857143" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">PLC</text>
+<rect x="1100.857142857143" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1120.857142857143" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">영상</text>
+<rect x="1156.2857142857142" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1176.2857142857142" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">이미지</text>
+<rect x="1199.2857142857142" y="278" width="40" height="34" rx="8" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1219.2857142857142" y="300" class="lb" style="text-anchor:middle;fill:#15803D;font-size:11px">PLC</text>
+<rect x="1242.2857142857142" y="278" width="40" height="34" rx="8" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="1262.2857142857142" y="300" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:11px">영상</text>
+<rect x="292" y="334" width="24" height="16" rx="5" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="324" y="347" class="s" style="text-anchor:start;fill:#0F172A;font-size:12.5px">충족</text>
+<rect x="380" y="334" width="24" height="16" rx="5" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="412" y="347" class="s" style="text-anchor:start;fill:#0F172A;font-size:12.5px">미충족</text>
+<text x="490" y="347" class="s" style="text-anchor:start;font-size:12.5px">이미지 = 이미지 분류 · PLC = PLC 이상탐지 · 영상 = 영상 질의응답</text>
+<path d="M84,372 H1286" fill="none" stroke="#E2E8F0" stroke-width="1.5"/>
+<text x="84" y="410" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">② 에너지</text>
+<text x="84" y="436" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">기준선 대비</text>
+<text x="84" y="466" class="s" style="text-anchor:start;font-size:12.5px">장비 7대 에너지 합</text>
+<text x="84" y="486" class="s" style="text-anchor:start;font-size:12.5px">동일 시간 · 동일 요청</text>
+<path d="M290,630 H1286" fill="none" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="284" y="635" class="s" style="text-anchor:end;font-size:12px">기준선</text>
+<text x="284" y="520" class="lb" style="text-anchor:end;fill:#15803D;font-size:13px">↑ 절감</text>
+<text x="284" y="710" class="lb" style="text-anchor:end;fill:#B91C1C;font-size:13px">↓ 증가</text>
+<rect x="344.7142857142857" y="498.64864864864876" width="52" height="131.35135135135127" rx="5" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="370.7142857142857" y="486.64864864864876" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">4.4% 적게</text>
+<text x="370.7142857142857" y="760" class="s" style="text-anchor:middle;fill:#0F172A;font-size:12px">CHILL 176.9</text>
+<text x="370.7142857142857" y="780" class="s" style="text-anchor:middle;font-size:12px">고정 185.0</text>
+<rect x="486.1428571428571" y="562.7485380116959" width="52" height="67.25146198830402" rx="5" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="512.1428571428571" y="550.7485380116959" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">2.2% 적게</text>
+<text x="512.1428571428571" y="760" class="s" style="text-anchor:middle;fill:#0F172A;font-size:12px">CHILL 100.3</text>
+<text x="512.1428571428571" y="780" class="s" style="text-anchor:middle;font-size:12px">고정 102.6</text>
+<rect x="627.5714285714286" y="630" width="52" height="23.351648351648194" rx="5" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="653.5714285714286" y="675.3516483516482" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:14px">0.8% 많이</text>
+<text x="653.5714285714286" y="760" class="s" style="text-anchor:middle;fill:#0F172A;font-size:12px">CHILL 220.1</text>
+<text x="653.5714285714286" y="780" class="s" style="text-anchor:middle;font-size:12px">고정 218.4</text>
+<rect x="768.9999999999999" y="623.0015552099537" width="52" height="6.998444790046259" rx="5" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="794.9999999999999" y="611.0015552099537" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">0.2% 적게</text>
+<text x="794.9999999999999" y="760" class="s" style="text-anchor:middle;fill:#0F172A;font-size:12px">CHILL 128.3</text>
+<text x="794.9999999999999" y="780" class="s" style="text-anchor:middle;font-size:12px">고정 128.6</text>
+<rect x="910.4285714285713" y="630" width="52" height="58.273381294963784" rx="5" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="936.4285714285713" y="710.2733812949638" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:14px">1.9% 많이</text>
+<text x="936.4285714285713" y="760" class="s" style="text-anchor:middle;fill:#0F172A;font-size:12px">CHILL 141.7</text>
+<text x="936.4285714285713" y="780" class="s" style="text-anchor:middle;font-size:12px">고정 139.0</text>
+<rect x="1051.857142857143" y="495.415986949429" width="52" height="134.58401305057097" rx="5" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1077.857142857143" y="483.415986949429" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">4.5% 적게</text>
+<text x="1077.857142857143" y="760" class="s" style="text-anchor:middle;fill:#0F172A;font-size:12px">CHILL 351.3</text>
+<text x="1077.857142857143" y="780" class="s" style="text-anchor:middle;font-size:12px">고정 367.8</text>
+<text x="1219.2857142857142" y="616" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:12px">기준선 없음</text>
+<text x="1219.2857142857142" y="658" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:11px">(장애 시나리오)</text>
+<text x="284" y="770" class="s" style="text-anchor:end;font-size:12px">에너지 (kJ)</text>
+<text x="1286" y="850" class="s" style="text-anchor:end;font-size:12px">% = (고정 − CHILL) ÷ 고정 · 1 kJ = 1,000 J</text>
+<rect x="1340" y="120" width="520" height="470" rx="16" fill="#F8FAFC" stroke="#475569" stroke-width="2"/>
+<text x="1364" y="156" class="h" style="text-anchor:start;fill:#0F172A;font-size:19px">기준선: 고정 배치</text>
+<text x="1364" y="188" class="lb" style="text-anchor:start;fill:#334155;font-size:14px">배치를 한 번 정한 뒤 실험 내내 변경하지 않는 운영 방식</text>
+<rect x="1364" y="214" width="472" height="76" rx="10" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1380" y="258" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">CHILL</text>
+<path d="M1470.0,257.6 L1578.0,257.6 L1578.0,232.0 L1693.2,232.0 L1693.2,248.0 L1830.0,248.0" fill="none" stroke="#7C3AED" stroke-width="3"/>
+<rect x="1364" y="306" width="472" height="76" rx="10" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1380" y="350" class="lb" style="text-anchor:start;fill:#475569;font-size:15px">고정 배치</text>
+<path d="M1470.0,320.8 L1830.0,320.8" fill="none" stroke="#475569" stroke-width="3"/>
+<text x="1830" y="400" class="s" style="text-anchor:end;font-size:11.5px">시간 → (선 높이: 사용 장비 · 전력 수준, 개념도)</text>
+<text x="1364" y="440" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13.5px">배치</text>
+<text x="1468" y="440" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">점진 증가 시나리오 종료 시점(부하 90%)에 CHILL이 선택한</text>
+<text x="1468" y="470" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">장비 · 전력 모드 · 요청 분배를 그대로 고정</text>
+<text x="1364" y="500" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13.5px">통제 조건</text>
+<text x="1468" y="500" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">동일 요청을 동일 시각에 재생 (순서 · 양 동일)</text>
+<text x="1364" y="530" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13.5px">측정 항목</text>
+<text x="1468" y="530" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">시나리오 동안 장비 7대 전력계 에너지 합</text>
+<text x="1364" y="570" class="s" style="text-anchor:start;fill:#334155;font-size:12.5px">부하가 낮은 구간에도 고부하용 배치가 유지됨</text>
+<rect x="1340" y="610" width="520" height="270" rx="16" fill="#FEF2F2" stroke="#B91C1C" stroke-width="2"/>
+<text x="1364" y="646" class="h" style="text-anchor:start;fill:#B91C1C;font-size:19px">미해결 문제</text>
+<rect x="1364" y="676" width="112" height="30" rx="15" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.2"/>
+<text x="1420" y="696" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:12px">점진 증가</text>
+<text x="1490" y="696" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">후반 처리 용량 부족 · 이미지 분류 목표 미충족</text>
+<rect x="1364" y="728" width="112" height="30" rx="15" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.2"/>
+<text x="1420" y="748" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:12px">급감 · 재급증</text>
+<text x="1490" y="748" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">영상 질의응답 지연 · 에너지 1.9% 증가</text>
+<rect x="1364" y="780" width="112" height="30" rx="15" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.2"/>
+<text x="1420" y="800" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:12px">장애 주입</text>
+<text x="1490" y="800" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">Pod 삭제 시 영상 질의응답 114건 시간 초과</text>
+<text x="1364" y="856" class="s" style="text-anchor:start;font-size:12.5px">PLC 이상탐지: 전 시나리오 목표 충족</text>
+<rect x="60" y="904" width="1800" height="108" rx="16" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="90" y="966" class="h" style="text-anchor:start;fill:#7C3AED;font-size:22px">결론</text>
+<text x="170" y="950" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">응답 시간: 판정 대상 6개 시나리오 중 3개는 전 서비스 충족, 3개는 서비스 1개씩 미충족</text>
+<text x="170" y="984" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">에너지: 기준선 대비 4개 시나리오 0.2~4.5% 절감, 2개 시나리오 0.8~1.9% 증가 (일관된 절감 미확인)</text>
+<text x="1840" y="1048" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">시나리오별 1회 실험 (반복 측정 없음) · 일정 부하 · 급감 · 1시간 · 장애 주입은 최신 재실행 결과</text>
+</svg>

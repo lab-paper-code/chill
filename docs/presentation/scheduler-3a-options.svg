@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="40" class="h" style="text-anchor:start;fill:#0F172A;font-size:24px">스케줄러 ③-A 후보 만들기 (1): 장비 한 대에 어떤 선택지가 있나</text>
+<rect x="1500" y="10" width="360" height="64" rx="6" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<rect x="1508" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1548.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">① 얼마나</text>
+<rect x="1595" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1635.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">② 후보</text>
+<rect x="1682" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1722.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">③ 채점</text>
+<rect x="1769" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1809.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">④ 탐색</text>
+<text x="1490" y="43" class="s" style="text-anchor:end;font-size:13px">그림 ③에서 이 부분</text>
+<rect x="60" y="100" width="820" height="590" rx="14" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+<text x="80" y="130" class="h" style="text-anchor:start;fill:#7C3AED">측정된 실행 조합과 담당 서비스를 고른다</text>
+<rect x="80" y="170" width="780" height="70" rx="8" fill="#F5F3FF" stroke="#C4B5FD" stroke-width="1.2"/>
+<circle cx="106" cy="205" r="12" fill="#7C3AED"/>
+<text x="106" y="206" class="n" style="text-anchor:middle">1</text>
+<text x="132" y="195" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">전력 모드</text>
+<text x="132" y="220" class="s" style="text-anchor:start;font-size:14px">예: MAXN · 15W · 30W · 50W</text>
+<rect x="80" y="250" width="780" height="70" rx="8" fill="#F5F3FF" stroke="#C4B5FD" stroke-width="1.2"/>
+<circle cx="106" cy="285" r="12" fill="#7C3AED"/>
+<text x="106" y="286" class="n" style="text-anchor:middle">2</text>
+<text x="132" y="275" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">실행 방식</text>
+<text x="132" y="300" class="s" style="text-anchor:start;font-size:14px">CPU · GPU · NPU, 정밀도(일반 · 경량)</text>
+<rect x="80" y="330" width="780" height="70" rx="8" fill="#F5F3FF" stroke="#C4B5FD" stroke-width="1.2"/>
+<circle cx="106" cy="365" r="12" fill="#7C3AED"/>
+<text x="106" y="366" class="n" style="text-anchor:middle">3</text>
+<text x="132" y="355" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">자원 조건</text>
+<text x="132" y="380" class="s" style="text-anchor:start;font-size:14px">GPU 장치 · 메모리</text>
+<rect x="80" y="410" width="780" height="70" rx="8" fill="#F5F3FF" stroke="#C4B5FD" stroke-width="1.2"/>
+<circle cx="106" cy="445" r="12" fill="#7C3AED"/>
+<text x="106" y="446" class="n" style="text-anchor:middle">4</text>
+<text x="132" y="435" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">묶음 크기 상한</text>
+<text x="132" y="460" class="s" style="text-anchor:start;font-size:14px">한 번에 최대 몇 건까지 묶을지</text>
+<rect x="80" y="490" width="780" height="70" rx="8" fill="#F5F3FF" stroke="#C4B5FD" stroke-width="1.2"/>
+<circle cx="106" cy="525" r="12" fill="#7C3AED"/>
+<text x="106" y="526" class="n" style="text-anchor:middle">5</text>
+<text x="132" y="515" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">담당 서비스</text>
+<text x="132" y="540" class="s" style="text-anchor:start;font-size:14px">이 Pod가 처리할 서비스 하나</text>
+<text x="80" y="590" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:15px">측정 · 용량 · 전환 조건을 확인한 조합만 선택지가 된다</text>
+<text x="80" y="622" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">새 배치는 장비 한 대에 실행 Pod 하나</text>
+<rect x="920" y="100" width="940" height="590" rx="14" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="940" y="130" class="h" style="text-anchor:start;fill:#7C3AED">예: jetsono (Jetson AGX Orin)</text>
+<text x="940" y="158" class="s" style="text-anchor:start;font-size:14px">지금: MODE_15W · GPU · 이미지 분류 서비스</text>
+<rect x="940" y="186" width="900" height="65" rx="10" fill="#F8FAFC" stroke="#475569" stroke-width="1.5"/>
+<text x="960" y="208" class="lb" style="text-anchor:start;fill:#475569;font-size:16px">그대로 두기</text>
+<text x="1820" y="208" class="lb" style="text-anchor:end;fill:#475569;font-size:15px">1개</text>
+<circle cx="966" cy="236" r="2.8" fill="#475569"/>
+<text x="976" y="236" class="s" style="text-anchor:start;font-size:14px">지금 Pod · 전력 모드 유지</text>
+<rect x="950.0" y="257.0" width="900.0" height="173.0" rx="10" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/><rect x="945.0" y="261.0" width="900.0" height="173.0" rx="10" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/><rect x="940" y="265" width="900" height="173" rx="10" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="960" y="287" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:16px">바꾸기</text>
+<text x="1820" y="287" class="lb" style="text-anchor:end;fill:#7C3AED;font-size:15px">106개</text>
+<circle cx="966" cy="315" r="2.8" fill="#7C3AED"/>
+<text x="976" y="315" class="s" style="text-anchor:start;font-size:14px">MAXN · GPU · 묶음 2 · 이미지 분류</text>
+<circle cx="966" cy="342" r="2.8" fill="#7C3AED"/>
+<text x="976" y="342" class="s" style="text-anchor:start;font-size:14px">MODE_30W · GPU · 묶음 1 · 이미지 분류</text>
+<circle cx="966" cy="369" r="2.8" fill="#7C3AED"/>
+<text x="976" y="369" class="s" style="text-anchor:start;font-size:14px">MAXN · CPU · PLC 이상탐지</text>
+<circle cx="966" cy="396" r="2.8" fill="#7C3AED"/>
+<text x="976" y="396" class="s" style="text-anchor:start;font-size:14px">MODE_50W · GPU · 묶음 4 · 영상 질의응답</text>
+<circle cx="966" cy="423" r="2.8" fill="#7C3AED"/>
+<text x="976" y="423" class="s" style="text-anchor:start;fill:#94A3B8;font-size:14px">… 측정된 조합마다 하나씩</text>
+<rect x="940" y="452" width="900" height="65" rx="10" fill="#FFFBEB" stroke="#B45309" stroke-width="1.5"/>
+<text x="960" y="474" class="lb" style="text-anchor:start;fill:#B45309;font-size:16px">비우기</text>
+<text x="1820" y="474" class="lb" style="text-anchor:end;fill:#B45309;font-size:15px">1개</text>
+<circle cx="966" cy="502" r="2.8" fill="#B45309"/>
+<text x="976" y="502" class="s" style="text-anchor:start;font-size:14px">Pod를 비움 (빈 장비는 따로 절전 검토)</text>
+<rect x="940" y="533" width="900" height="64" rx="10" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2"/>
+<text x="1390.0" y="557" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:18px">초기 실험의 계획 공간 예: jetsono 108개</text>
+<text x="1390.0" y="581" class="s" style="text-anchor:middle;font-size:13px">허용된 측정 조합을 열거한 결과 (그대로 · 비우기 포함)</text>
+<path d="M880,395.0 H918" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<rect x="60" y="730" width="1800" height="320" rx="14" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="80" y="760" class="h" style="text-anchor:start;fill:#7C3AED">초기 실험의 전체 계획 공간 열거값 (장비 8대 · 서비스 3개 · 모든 묶음 크기 포함)</text>
+<text x="240" y="800" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">jetsono</text>
+<rect x="260" y="789" width="1170.0" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="1440.0" y="800" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">108개</text>
+<text x="240" y="830" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">jetsonx</text>
+<rect x="260" y="819" width="1224.1666666666667" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="1494.1666666666667" y="830" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">113개</text>
+<text x="240" y="860" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">jetson-nano</text>
+<rect x="260" y="849" width="725.8333333333334" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="995.8333333333334" y="860" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">67개</text>
+<text x="240" y="890" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">genesis3</text>
+<rect x="260" y="879" width="595.8333333333333" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="865.8333333333333" y="890" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">55개</text>
+<text x="240" y="920" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">genesis2</text>
+<rect x="260" y="909" width="509.1666666666667" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="779.1666666666667" y="920" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">47개</text>
+<text x="240" y="950" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">orangepi</text>
+<rect x="260" y="939" width="465.8333333333333" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="735.8333333333333" y="950" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">43개</text>
+<text x="240" y="980" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">rasp5</text>
+<rect x="260" y="969" width="379.1666666666667" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="649.1666666666667" y="980" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">35개</text>
+<text x="240" y="1010" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">lattepanda</text>
+<rect x="260" y="999" width="260.0" height="22" rx="4" fill="#DDD6FE" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="530.0" y="1010" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">24개</text>
+<text x="1840" y="1026" class="lb" style="text-anchor:end;fill:#7C3AED;font-size:15px">→ ③-B: 선택지마다 무엇을 계산하고, 장비끼리 어떻게 묶나</text>
+<text x="1840" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">개수는 초기 실험의 전체 열거값 (당시 CPU 자원 변형 포함) · 현재 적격 후보 수와 다름 · 개별 조합은 설명용</text>
+</svg>

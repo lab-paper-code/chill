@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="44" class="h" style="text-anchor:start;fill:#0F172A;font-size:26px">추론 실행 Pod 안쪽: 런타임 firstfloor</text>
+<text x="60" y="80" class="s" style="text-anchor:start;font-size:16px">요청 처리 흐름 그림의 ④~⑧ 구간을 펼친 그림 · 장비마다 Pod 1개 · Pod 안에 프로세스 2개</text>
+<text x="195" y="212" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:13px">Pod 바깥</text>
+<rect x="60" y="230" width="270" height="148" rx="12" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="2.5"/>
+<text x="195" y="262" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:18px">CHILL 서버</text>
+<text x="195" y="294" class="s" style="text-anchor:middle;fill:#0F172A;font-size:14px">요청 1건씩 전달</text>
+<text x="195" y="320" class="s" style="text-anchor:middle;font-size:13px">+ 요청 번호 · 약속 시간</text>
+<text x="195" y="344" class="s" style="text-anchor:middle;font-size:13px">+ 이미 지난 시간</text>
+<rect x="60" y="394" width="270" height="136" rx="12" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="195" y="424" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:17px">묶음 규칙</text>
+<text x="195" y="454" class="s" style="text-anchor:middle;fill:#0F172A;font-size:14px">최대 묶음 · 최대 대기</text>
+<text x="195" y="480" class="s" style="text-anchor:middle;font-size:13px">스케줄러가 정해 설정 파일로</text>
+<text x="195" y="504" class="s" style="text-anchor:middle;font-size:13px">Pod가 1초마다 확인</text>
+<rect x="372" y="130" width="1488" height="510" rx="18" fill="#F0FDF4" stroke="#15803D" stroke-width="2.5"/>
+<text x="396" y="162" class="h" style="text-anchor:start;fill:#15803D;font-size:19px">추론 실행 Pod</text>
+<rect x="396" y="184" width="754" height="436" rx="14" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="416" y="214" class="lb" style="text-anchor:start;fill:#15803D;font-size:17px">① 요청 처리기 (Go)</text>
+<text x="1130" y="215" class="s" style="text-anchor:end;font-size:13px">한 번에 한 묶음만 실행</text>
+<text x="424" y="246" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">대기열: 남은 시간이 짧은 요청이 맨 앞</text>
+<path d="M442,262 H1104 A18,42.0 0 0 1 1104,346 H442 A18,42.0 0 0 1 442,262 Z" fill="#FFFBEB" stroke="#B45309" stroke-width="2"/>
+<path d="M1104,262 A18,42.0 0 0 0 1104,346" fill="none" stroke="#B45309" stroke-width="2"/>
+<rect x="454" y="276" width="104" height="56" rx="8" fill="#fff" stroke="#B91C1C" stroke-width="2"/>
+<text x="506" y="298" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">E</text>
+<text x="506" y="320" class="s" style="text-anchor:middle;fill:#B91C1C;font-size:12px">남은 90ms</text>
+<rect x="572" y="276" width="104" height="56" rx="8" fill="#fff" stroke="#B45309" stroke-width="2"/>
+<text x="624" y="298" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">D</text>
+<text x="624" y="320" class="s" style="text-anchor:middle;fill:#B45309;font-size:12px">남은 210ms</text>
+<rect x="690" y="276" width="104" height="56" rx="8" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="742" y="298" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">C</text>
+<text x="742" y="320" class="s" style="text-anchor:middle;fill:#15803D;font-size:12px">남은 380ms</text>
+<rect x="808" y="276" width="104" height="56" rx="8" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="860" y="298" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">B</text>
+<text x="860" y="320" class="s" style="text-anchor:middle;fill:#15803D;font-size:12px">남은 540ms</text>
+<rect x="926" y="276" width="104" height="56" rx="8" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="978" y="298" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">A</text>
+<text x="978" y="320" class="s" style="text-anchor:middle;fill:#15803D;font-size:12px">남은 620ms</text>
+<text x="424" y="370" class="s" style="text-anchor:start;font-size:13px">남은 시간 = 약속 시간 − 이미 지난 시간</text>
+<path d="M773.0,350 V392" fill="none" stroke="#B45309" stroke-width="2.5" marker-end="url(#a)"/>
+<rect x="424" y="394" width="698" height="128" rx="12" fill="#F0FDF4" stroke="#15803D" stroke-width="2"/>
+<text x="444" y="422" class="lb" style="text-anchor:start;fill:#15803D;font-size:15px">묶음 고르기 · 대기열이 바뀌거나 실행이 끝날 때마다</text>
+<circle cx="456" cy="450" r="12" fill="#15803D"/>
+<text x="456" y="451" class="n" style="text-anchor:middle">1</text>
+<text x="476" y="451" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">약속 안에 끝나는 크기만 남긴다 (측정된 실행 시간으로)</text>
+<circle cx="456" cy="474" r="12" fill="#15803D"/>
+<text x="456" y="475" class="n" style="text-anchor:middle">2</text>
+<text x="476" y="475" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">그중 1건당 에너지가 가장 적은 크기를 고른다</text>
+<circle cx="456" cy="498" r="12" fill="#15803D"/>
+<text x="456" y="499" class="n" style="text-anchor:middle">3</text>
+<text x="476" y="499" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">더 큰 묶음이 이득이면 잠깐 기다린다 (최대 대기 · 남은 시간 안에서)</text>
+<path d="M773.0,522 V538" fill="none" stroke="#15803D" stroke-width="2.5" marker-end="url(#g)"/>
+<rect x="615.0" y="540" width="340" height="52" rx="6" fill="#fff" stroke="#15803D" stroke-width="1.5"/>
+<rect x="609.0" y="546" width="340" height="52" rx="6" fill="#fff" stroke="#15803D" stroke-width="1.5"/>
+<rect x="603.0" y="552" width="340" height="52" rx="6" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="773.0" y="580" class="lb" style="text-anchor:middle;fill:#14532D;font-size:16px">묶음 N건</text>
+<rect x="1260" y="184" width="576" height="436" rx="14" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="1280" y="214" class="lb" style="text-anchor:start;fill:#15803D;font-size:17px">② 모델 실행기 (Python)</text>
+<text x="1280" y="240" class="s" style="text-anchor:start;font-size:13px">Pod가 뜰 때 모델을 한 번 올려 두고 계속 사용</text>
+<rect x="1284" y="262" width="528" height="88" rx="10" fill="#DCFCE7" stroke="#15803D" stroke-width="1.8"/>
+<text x="1304" y="290" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">전처리</text>
+<text x="1304" y="316" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">원본 → 모델 입력 (예: 이미지 → 숫자 배열)</text>
+<text x="1304" y="336" class="s" style="text-anchor:start;font-size:12px">서비스마다 등록된 전처리 코드</text>
+<path d="M1548.0,352 V372" fill="none" stroke="#15803D" stroke-width="2.5" marker-end="url(#g)"/>
+<rect x="1284" y="374" width="528" height="88" rx="10" fill="#DCFCE7" stroke="#15803D" stroke-width="1.8"/>
+<text x="1304" y="402" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">모델 실행</text>
+<text x="1304" y="428" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">ONNX Runtime CPU · GPU / RKNN NPU</text>
+<text x="1304" y="448" class="s" style="text-anchor:start;font-size:12px">장비 · 실행 방식은 스케줄러가 고른 대로</text>
+<path d="M1548.0,464 V484" fill="none" stroke="#15803D" stroke-width="2.5" marker-end="url(#g)"/>
+<rect x="1284" y="486" width="528" height="88" rx="10" fill="#DCFCE7" stroke="#15803D" stroke-width="1.8"/>
+<text x="1304" y="514" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">후처리</text>
+<text x="1304" y="540" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">모델 출력 → 응답 형식</text>
+<text x="1304" y="560" class="s" style="text-anchor:start;font-size:12px">단계별 시간을 함께 기록</text>
+<path d="M1152,420 H1258" fill="none" stroke="#15803D" stroke-width="3" marker-end="url(#g)"/>
+<text x="1205.0" y="404" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">묶음 N건</text>
+<path d="M1258,500 H1152" fill="none" stroke="#1D4ED8" stroke-width="3" marker-end="url(#b)"/>
+<text x="1205.0" y="524" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">결과 N건</text>
+<text x="1205.0" y="462" class="s" style="text-anchor:middle;fill:#64748B;font-size:12px">파이프</text>
+<path d="M330,304 H422" fill="none" stroke="#1D4ED8" stroke-width="3" marker-end="url(#b)"/>
+<text x="350" y="290" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">요청</text>
+<path d="M330,462 H422" fill="none" stroke="#7C3AED" stroke-width="2.5" stroke-dasharray="6 4" marker-end="url(#p)"/>
+<text x="350" y="448" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:13px">규칙</text>
+<rect x="60" y="680" width="1040" height="360" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="84" y="712" class="h" style="text-anchor:start;fill:#0F172A;font-size:17px">실제 측정: orangepi · 이미지 분류 · 묶음 크기별</text>
+<text x="110" y="746" class="lb" style="text-anchor:middle;fill:#475569;font-size:13px">묶음</text>
+<text x="170" y="746" class="lb" style="text-anchor:start;fill:#475569;font-size:13px">1건당 에너지</text>
+<text x="1070" y="746" class="lb" style="text-anchor:end;fill:#475569;font-size:13px">묶음 실행 시간</text>
+<text x="110" y="783" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">1건</text>
+<rect x="170" y="769" width="519.2727272727273" height="26" rx="4" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="699.2727272727273" y="783" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">0.102 J</text>
+<rect x="1057.6969696969697" y="773" width="12.303030303030303" height="18" rx="3" fill="#FEF3C7" stroke="#B45309" stroke-width="1.2"/>
+<text x="1049.6969696969697" y="783" class="s" style="text-anchor:end;fill:#B45309;font-size:13px">20.3ms</text>
+<text x="110" y="827" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">2건</text>
+<rect x="170" y="813" width="478.5454545454545" height="26" rx="4" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="658.5454545454545" y="827" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">0.094 J</text>
+<rect x="1047.6969696969697" y="817" width="22.3030303030303" height="18" rx="3" fill="#FEF3C7" stroke="#B45309" stroke-width="1.2"/>
+<text x="1039.6969696969697" y="827" class="s" style="text-anchor:end;fill:#B45309;font-size:13px">36.8ms</text>
+<text x="110" y="871" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">4건</text>
+<rect x="170" y="857" width="412.3636363636364" height="26" rx="4" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="592.3636363636364" y="871" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">0.081 J</text>
+<rect x="1025.1515151515152" y="861" width="44.84848484848485" height="18" rx="3" fill="#FEF3C7" stroke="#B45309" stroke-width="1.2"/>
+<text x="1017.1515151515152" y="871" class="s" style="text-anchor:end;fill:#B45309;font-size:13px">74ms</text>
+<text x="110" y="915" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">8건</text>
+<rect x="170" y="901" width="392.0" height="26" rx="4" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="572.0" y="915" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">0.077 J</text>
+<rect x="980.2424242424242" y="905" width="89.75757575757576" height="18" rx="3" fill="#FEF3C7" stroke="#B45309" stroke-width="1.2"/>
+<text x="972.2424242424242" y="915" class="s" style="text-anchor:end;fill:#B45309;font-size:13px">148.1ms</text>
+<text x="110" y="959" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:15px">16건</text>
+<rect x="170" y="945" width="386.90909090909093" height="26" rx="4" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="566.909090909091" y="959" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">0.076 J</text>
+<rect x="871.1515151515151" y="949" width="198.84848484848484" height="18" rx="3" fill="#FEF3C7" stroke="#B45309" stroke-width="1.2"/>
+<text x="863.1515151515151" y="959" class="s" style="text-anchor:end;fill:#B45309;font-size:13px">328.1ms</text>
+<text x="84" y="1012" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">크게 묶을수록 1건당 에너지는 줄고(0.102 → 0.076 J) 실행은 길어진다(20 → 328ms) → 약속 안에 끝나는 크기 중 가장 이득인 크기</text>
+<rect x="1140" y="680" width="720" height="360" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1164" y="712" class="h" style="text-anchor:start;fill:#0F172A;font-size:17px">응답과 함께 돌려주는 기록</text>
+<rect x="1164" y="744" width="80" height="32" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="1.2"/>
+<text x="1204" y="761" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">대기</text>
+<text x="1260" y="760" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">대기열에 있던 시간</text>
+<rect x="1164" y="790" width="80" height="32" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="1.2"/>
+<text x="1204" y="807" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">묶음</text>
+<text x="1260" y="806" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">몇 건으로 묶였나</text>
+<rect x="1164" y="836" width="80" height="32" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="1.2"/>
+<text x="1204" y="853" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">실행</text>
+<text x="1260" y="852" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">전처리 · 모델 · 후처리 시간</text>
+<rect x="1164" y="882" width="80" height="32" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="1.2"/>
+<text x="1204" y="899" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">결과</text>
+<text x="1260" y="898" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">완료 · 마감 초과 · 전처리 실패</text>
+<path d="M1164,958 H1836" fill="none" stroke="#E2E8F0" stroke-width="1.5"/>
+<text x="1164" y="986" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">측정 Job도 같은 firstfloor로 잰다</text>
+<text x="1164" y="1012" class="s" style="text-anchor:start;font-size:13px">→ 왼쪽 측정값이 실제 운영과 같은 조건</text>
+<text x="1840" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">현재 코드 기준 정상 흐름 · 대기열 A~E는 설명용 예시 · 측정값은 실제 평가 기록</text>
+</svg>

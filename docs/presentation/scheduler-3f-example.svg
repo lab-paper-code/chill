@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="40" class="h" style="text-anchor:start;fill:#0F172A;font-size:24px">스케줄러 ③-F 실제 판단 하나를 처음부터 끝까지</text>
+<text x="60" y="72" class="s" style="text-anchor:start;font-size:15px">2026-10-29 실험 중 기록된 판단 · 장비 9대 · 서비스 3개 · 탐색 2.77초</text>
+<rect x="1500" y="10" width="360" height="64" rx="6" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<rect x="1508" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1548.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">① 얼마나</text>
+<rect x="1595" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1635.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">② 후보</text>
+<rect x="1682" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1722.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">③ 채점</text>
+<rect x="1769" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1809.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">④ 탐색</text>
+<text x="1490" y="43" class="s" style="text-anchor:end;font-size:13px">그림 ③에서 이 부분</text>
+<rect x="60" y="100" width="600" height="640" rx="14" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+<circle cx="90" cy="132" r="12" fill="#7C3AED"/>
+<text x="90" y="133" class="n" style="text-anchor:middle">1</text>
+<text x="112" y="133" class="h" style="text-anchor:start;fill:#7C3AED">장비별 선택지 (그림 ③-A)</text>
+<text x="84" y="180" class="big" style="text-anchor:start;fill:#94A3B8;font-size:28px">230개</text>
+<text x="198" y="180" class="big" style="text-anchor:start;fill:#475569;font-size:28px">→</text>
+<text x="240" y="180" class="big" style="text-anchor:start;fill:#15803D;font-size:28px">쓸 수 있는 110개</text>
+<text x="196" y="240" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">genesis3</text>
+<rect x="210" y="228" width="30.4" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="240.4" y="228" width="349.59999999999997" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="600.0" y="241" class="s" style="text-anchor:start;font-size:14px">4 / 50</text>
+<text x="196" y="286" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">orangepi</text>
+<rect x="210" y="274" width="273.59999999999997" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="483.59999999999997" y="274" width="15.2" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="508.8" y="287" class="s" style="text-anchor:start;font-size:14px">36 / 38</text>
+<text x="196" y="332" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">jetson-nano</text>
+<rect x="210" y="320" width="281.2" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<text x="501.2" y="333" class="s" style="text-anchor:start;font-size:14px">37 / 37</text>
+<text x="196" y="378" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">jetsono</text>
+<rect x="210" y="366" width="15.2" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="225.2" y="366" width="220.39999999999998" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="455.6" y="379" class="s" style="text-anchor:start;font-size:14px">2 / 31</text>
+<text x="196" y="424" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">rasp5</text>
+<rect x="210" y="412" width="114.0" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="324.0" y="412" width="106.39999999999999" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="440.4" y="425" class="s" style="text-anchor:start;font-size:14px">15 / 29</text>
+<text x="196" y="470" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">lattepanda</text>
+<rect x="210" y="458" width="83.6" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="293.6" y="458" width="83.6" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="387.2" y="471" class="s" style="text-anchor:start;font-size:14px">11 / 22</text>
+<text x="196" y="516" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">jetsonx</text>
+<rect x="210" y="504" width="22.799999999999997" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="232.8" y="504" width="121.6" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="364.4" y="517" class="s" style="text-anchor:start;font-size:14px">3 / 19</text>
+<text x="196" y="562" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">genesis2</text>
+<rect x="210" y="550" width="7.6" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="217.6" y="550" width="7.6" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="235.2" y="563" class="s" style="text-anchor:start;font-size:14px">1 / 2</text>
+<text x="196" y="608" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">orin-nano</text>
+<rect x="210" y="596" width="7.6" height="24" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<rect x="217.6" y="596" width="7.6" height="24" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="235.2" y="609" class="s" style="text-anchor:start;font-size:14px">1 / 2</text>
+<rect x="210" y="702" width="16" height="16" rx="3" fill="#BBF7D0" stroke="#15803D" stroke-width="1.2"/>
+<text x="234" y="710" class="s" style="text-anchor:start;font-size:14px">쓸 수 있는 선택지</text>
+<rect x="380" y="702" width="16" height="16" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="404" y="710" class="s" style="text-anchor:start;font-size:14px">용량 · 전환 · 운영 조건으로 제외</text>
+<rect x="700" y="100" width="600" height="640" rx="14" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+<circle cx="730" cy="132" r="12" fill="#7C3AED"/>
+<text x="730" y="133" class="n" style="text-anchor:middle">2</text>
+<text x="752" y="133" class="h" style="text-anchor:start;fill:#7C3AED">조합 탐색: 한 걸음씩 (그림 ③-D)</text>
+<rect x="1340" y="100" width="520" height="640" rx="14" fill="#F0FDF4" stroke="#15803D" stroke-width="2"/>
+<circle cx="1370" cy="132" r="12" fill="#15803D"/>
+<text x="1370" y="133" class="n" style="text-anchor:middle">3</text>
+<text x="1392" y="133" class="h" style="text-anchor:start;fill:#15803D">고른 배치: 필요량 vs 처리 한도</text>
+<text x="1364" y="210" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">PLC 이상탐지</text>
+<rect x="1364" y="232" width="438.095238095238" height="32" rx="4" fill="#BBF7D0" stroke="#15803D" stroke-width="1.5"/>
+<path d="M1488.4588744588743,224 V272" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="1364" y="292" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:14px">필요 40건/초</text>
+<text x="1824" y="292" class="lb" style="text-anchor:end;fill:#15803D;font-size:14px">처리 한도 140.8건/초</text>
+<text x="1364" y="370" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">이미지 분류</text>
+<rect x="1364" y="392" width="438.0952380952381" height="32" rx="4" fill="#BBF7D0" stroke="#15803D" stroke-width="1.5"/>
+<path d="M1697.1522723157705,384 V432" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="1364" y="452" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:14px">필요 20건/초</text>
+<text x="1824" y="452" class="lb" style="text-anchor:end;fill:#15803D;font-size:14px">처리 한도 26.3건/초</text>
+<text x="1364" y="530" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">영상 질의응답</text>
+<rect x="1364" y="552" width="438.0952380952381" height="32" rx="4" fill="#BBF7D0" stroke="#15803D" stroke-width="1.5"/>
+<path d="M1719.2123552123553,544 V592" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="1364" y="612" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:14px">필요 0.3건/초</text>
+<text x="1824" y="612" class="lb" style="text-anchor:end;fill:#15803D;font-size:14px">처리 한도 0.37건/초</text>
+<text x="1364" y="712" class="lb" style="text-anchor:start;fill:#15803D;font-size:15px">세 서비스 모두 필요량보다 처리 한도가 크다</text>
+<rect x="60" y="780" width="1800" height="260" rx="14" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<text x="1840" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">집계는 실제 판단 기록 기반 · 걸음 수와 곡선 모양은 설명용 예시</text>
+<text x="724" y="176" class="s" style="text-anchor:start;fill:#0F172A;font-size:15px;font-weight:700">지금 배치에서 출발해 한 걸음씩 내려간다</text>
+<path d="M770,210 V560 H1260" fill="none" stroke="#475569" stroke-width="2"/>
+<text x="760" y="220" class="s" style="text-anchor:end;fill:#B91C1C;font-size:12px;font-weight:400">나쁨</text>
+<text x="760" y="554" class="s" style="text-anchor:end;fill:#15803D;font-size:12px;font-weight:400">좋음</text>
+<text x="1260" y="584" class="s" style="text-anchor:end;fill:#475569;font-size:12px;font-weight:400">걸음 →</text>
+<path d="M800,230 L890,330" fill="none" stroke="#7C3AED" stroke-width="3"/>
+<path d="M890,330 L980,410" fill="none" stroke="#7C3AED" stroke-width="3"/>
+<path d="M980,410 L1070,460" fill="none" stroke="#7C3AED" stroke-width="3"/>
+<path d="M1070,460 L1160,495" fill="none" stroke="#B45309" stroke-width="3" stroke-dasharray="6 4"/>
+<path d="M1160,495 L1250,502" fill="none" stroke="#B45309" stroke-width="3" stroke-dasharray="6 4"/>
+<circle cx="800" cy="230" r="9" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<circle cx="890" cy="330" r="9" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<circle cx="980" cy="410" r="9" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<circle cx="1070" cy="460" r="9" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<circle cx="1160" cy="495" r="9" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<circle cx="1250" cy="502" r="9" fill="#DCFCE7" stroke="#15803D" stroke-width="2.5"/>
+<text x="814" y="226" class="s" style="text-anchor:start;fill:#7C3AED;font-size:13px;font-weight:700">지금 배치</text>
+<text x="900" y="318" class="s" style="text-anchor:start;fill:#7C3AED;font-size:13px;font-weight:700">2대까지 바꿔 1위로</text>
+<text x="1050" y="438" class="s" style="text-anchor:start;fill:#B45309;font-size:13px;font-weight:700">3대로 넓힌 뒤에도 반복</text>
+<text x="1250" y="535" class="s" style="text-anchor:end;fill:#15803D;font-size:13px;font-weight:700">멈춤 = 선택</text>
+<rect x="724" y="600" width="552" height="110" rx="10" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="744" y="622" class="s" style="text-anchor:start;fill:#7C3AED;font-size:14px;font-weight:800">탐색 전체 합계 (같은 배치를 다시 평가할 수 있음)</text>
+<text x="744" y="652" class="s" style="text-anchor:start;fill:#0F172A;font-size:15px;font-weight:800">평가 269,708회 · 운영 제약 통과 37,925회</text>
+<text x="744" y="681" class="s" style="text-anchor:start;fill:#64748B;font-size:13px">운영 제약으로 탈락 231,783회 · 약속 통과 수와는 다름</text>
+<rect x="1000" y="186" width="276" height="104" rx="8" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+<text x="1014" y="206" class="s" style="text-anchor:start;fill:#7C3AED;font-size:13px;font-weight:800">한 걸음의 이웃 수 상한</text>
+<text x="1014" y="230" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">2대 단계 최대 약 3,800개</text>
+<text x="1014" y="252" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">3대 단계 최대 약 6.4만 개</text>
+<text x="1014" y="274" class="s" style="text-anchor:start;fill:#15803D;font-size:13px">운영 조건을 확인하고 1위로 이동</text>
+
+<path d="M1000,568 V598" fill="none" stroke="#7C3AED" stroke-width="2" marker-end="url(#p)"/>
+<text x="80" y="812" class="s" style="text-anchor:start;fill:#7C3AED;font-size:17px;font-weight:800">이 판단에서 일어난 일: 걸음을 반복하다 더 나아지지 않으면 멈춘다</text>
+<rect x="90" y="880" width="230" height="100" rx="12" fill="#fff" stroke="#94A3B8" stroke-width="2.2"/>
+<text x="205" y="922" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:19px;font-weight:800">선택지 230개</text>
+<text x="205" y="952" class="s" style="text-anchor:middle;fill:#475569;font-size:14px;font-weight:400">장비 9대</text>
+<path d="M320,930 H368" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<rect x="370" y="880" width="230" height="100" rx="12" fill="#fff" stroke="#15803D" stroke-width="2.2"/>
+<text x="485" y="922" class="s" style="text-anchor:middle;fill:#15803D;font-size:19px;font-weight:800">쓸 수 있는 110개</text>
+<text x="485" y="952" class="s" style="text-anchor:middle;fill:#475569;font-size:14px;font-weight:400">용량 · 전환 · 운영 조건 확인</text>
+<path d="M600,930 H648" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<rect x="650" y="840" width="920" height="180" rx="16" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="670" y="866" class="s" style="text-anchor:start;fill:#7C3AED;font-size:15px;font-weight:800">한 걸음 (반복)</text>
+<rect x="690" y="890" width="240" height="80" rx="12" fill="#fff" stroke="#7C3AED" stroke-width="2.2"/>
+<text x="810" y="925" class="s" style="text-anchor:middle;fill:#7C3AED;font-size:18px;font-weight:800">① 이웃 평가</text>
+<text x="810" y="952" class="s" style="text-anchor:middle;fill:#475569;font-size:13px;font-weight:400">합계 269,708회</text>
+<rect x="990" y="890" width="240" height="80" rx="12" fill="#fff" stroke="#7C3AED" stroke-width="2.2"/>
+<text x="1110" y="925" class="s" style="text-anchor:middle;fill:#7C3AED;font-size:18px;font-weight:800">② 운영 제약 통과</text>
+<text x="1110" y="952" class="s" style="text-anchor:middle;fill:#475569;font-size:13px;font-weight:400">합계 37,925회</text>
+<rect x="1290" y="890" width="240" height="80" rx="12" fill="#fff" stroke="#7C3AED" stroke-width="2.2"/>
+<text x="1410" y="925" class="s" style="text-anchor:middle;fill:#7C3AED;font-size:18px;font-weight:800">③ 1위로 이동</text>
+<path d="M930,930 H988" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<path d="M1230,930 H1288" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<path d="M1410,970 V1012 H810 V972" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<text x="1110.0" y="990" class="s" style="text-anchor:middle;fill:#7C3AED;font-size:13px;font-weight:700">더 나아졌으면 그 자리에서 다시</text>
+<path d="M1570,930 H1618" fill="none" stroke="#15803D" stroke-width="3" marker-end="url(#g)"/>
+<text x="1594" y="912" class="s" style="text-anchor:middle;fill:#15803D;font-size:13px;font-weight:800">멈춤</text>
+<rect x="1620" y="880" width="220" height="100" rx="12" fill="#F0FDF4" stroke="#15803D" stroke-width="2.2"/>
+<text x="1730" y="916" class="s" style="text-anchor:middle;fill:#15803D;font-size:17px;font-weight:800">탐색에서 찾은</text>
+<text x="1730" y="949" class="s" style="text-anchor:middle;fill:#15803D;font-size:20px;font-weight:800">최선 1개</text></svg>

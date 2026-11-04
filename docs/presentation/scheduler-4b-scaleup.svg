@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="44" class="h" style="text-anchor:start;fill:#0F172A;font-size:24px">스케줄러 ④-B 요청 증가 대응: 장비 추가 투입으로 처리 한도 확대</text>
+<text x="60" y="78" class="s" style="text-anchor:start;font-size:15px">2026-10-31 실험 기록 · 이미지 분류 요청이 두 번 급증한 구간 (09:44 ~ 09:49)</text>
+<rect x="60" y="110" width="560" height="600" rx="16" fill="#fff" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="82" y="144" class="h" style="text-anchor:start;fill:#0F172A;font-size:19px">① 09:44 초기 상태</text>
+<text x="82" y="170" class="s" style="text-anchor:start;font-size:13px">이미지 요청 45 → 52건/초</text>
+<rect x="82" y="196" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="94" y="220" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetson-nano</text>
+<text x="320" y="221" class="s" style="text-anchor:end;font-size:12px">MAXN</text>
+<rect x="94" y="236" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="207" y="260" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="207" y="282" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+<text x="94" y="324" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이미지 요청 26%</text>
+<rect x="344" y="196" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="356" y="220" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">rasp5</text>
+<text x="582" y="221" class="s" style="text-anchor:end;font-size:12px">고정</text>
+<rect x="356" y="236" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="469" y="260" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="469" y="282" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+<text x="356" y="324" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이미지 요청 74%</text>
+<rect x="82" y="364" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="94" y="388" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">orangepi</text>
+<text x="320" y="389" class="s" style="text-anchor:end;font-size:12px">고정</text>
+<rect x="94" y="404" width="226" height="62" rx="10" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="207" y="440" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:13px">비어 있음</text>
+<rect x="344" y="364" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="356" y="388" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetsonx</text>
+<text x="582" y="389" class="s" style="text-anchor:end;font-size:12px">20W 2코어</text>
+<rect x="356" y="404" width="226" height="62" rx="10" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="469" y="440" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:13px">비어 있음</text>
+<text x="82" y="550" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">이미지 분류: 필요량 vs 처리 한도</text>
+<rect x="82" y="568" width="183.50000000000003" height="28" rx="4" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<path d="M343.5,560 V604" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="82" y="624" class="lb" style="text-anchor:start;fill:#B45309;font-size:14px">한도 36.7건/초</text>
+<text x="598" y="624" class="lb" style="text-anchor:end;fill:#B91C1C;font-size:14px">필요 52.3건/초</text>
+<rect x="82" y="642" width="516" height="44" rx="10" fill="#FFFBEB" stroke="#B45309" stroke-width="1.5"/>
+<text x="340.0" y="669" class="lb" style="text-anchor:middle;fill:#B45309;font-size:14px">처리 한도 &lt; 필요량 → 재배치 판단</text>
+<path d="M626,410 H674" fill="none" stroke="#7C3AED" stroke-width="4" marker-end="url(#p)"/>
+<rect x="680" y="110" width="560" height="600" rx="16" fill="#fff" stroke="#15803D" stroke-width="2.5"/>
+<text x="702" y="144" class="h" style="text-anchor:start;fill:#0F172A;font-size:19px">② 09:45 orangepi 투입</text>
+<text x="702" y="170" class="s" style="text-anchor:start;font-size:13px">판단 후 10초 내 반영</text>
+<rect x="702" y="196" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="714" y="220" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetson-nano</text>
+<text x="940" y="221" class="s" style="text-anchor:end;font-size:12px">MAXN</text>
+<rect x="714" y="236" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="827" y="260" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="827" y="282" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+<text x="714" y="324" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이미지 요청 14%</text>
+<rect x="964" y="196" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="976" y="220" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">rasp5</text>
+<text x="1202" y="221" class="s" style="text-anchor:end;font-size:12px">고정</text>
+<rect x="976" y="236" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1089" y="260" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="1089" y="282" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+<text x="976" y="324" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이미지 요청 36%</text>
+<rect x="702" y="364" width="250" height="152" rx="12" fill="#fff" stroke="#15803D" stroke-width="3"/>
+<text x="714" y="388" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">orangepi</text>
+<text x="940" y="389" class="s" style="text-anchor:end;font-size:12px">고정</text>
+<rect x="714" y="404" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="827" y="428" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="827" y="450" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+
+<text x="714" y="492" class="lb" style="text-anchor:start;fill:#15803D;font-size:13px">신규 투입</text>
+<text x="940" y="492" class="lb" style="text-anchor:end;fill:#15803D;font-size:13px">50%</text>
+<rect x="964" y="364" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="976" y="388" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetsonx</text>
+<text x="1202" y="389" class="s" style="text-anchor:end;font-size:12px">20W 2코어</text>
+<rect x="976" y="404" width="226" height="62" rx="10" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.2"/>
+<text x="1089" y="440" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:13px">비어 있음</text>
+<text x="702" y="550" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">이미지 분류: 필요량 vs 처리 한도</text>
+<rect x="702" y="568" width="367.5" height="28" rx="4" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<path d="M975.0,560 V604" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="702" y="624" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">한도 73.5건/초</text>
+<text x="1218" y="624" class="lb" style="text-anchor:end;fill:#B91C1C;font-size:14px">필요 54.6건/초</text>
+<rect x="702" y="642" width="516" height="44" rx="10" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5"/>
+<text x="960.0" y="669" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">처리 한도 &gt; 필요량 · 목표 회복</text>
+<path d="M1246,410 H1294" fill="none" stroke="#7C3AED" stroke-width="4" marker-end="url(#p)"/>
+<rect x="1300" y="110" width="560" height="600" rx="16" fill="#fff" stroke="#15803D" stroke-width="2.5"/>
+<text x="1322" y="144" class="h" style="text-anchor:start;fill:#0F172A;font-size:19px">③ 09:49 jetsonx 투입</text>
+<text x="1322" y="170" class="s" style="text-anchor:start;font-size:13px">요청 87.5건/초로 재급증 · 약 70초 후 반영</text>
+<rect x="1322" y="196" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1334" y="220" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetson-nano</text>
+<text x="1560" y="221" class="s" style="text-anchor:end;font-size:12px">MAXN</text>
+<rect x="1334" y="236" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1447" y="260" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="1447" y="282" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+<text x="1334" y="324" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이미지 요청 11%</text>
+<rect x="1584" y="196" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1596" y="220" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">rasp5</text>
+<text x="1822" y="221" class="s" style="text-anchor:end;font-size:12px">고정</text>
+<rect x="1596" y="236" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1709" y="260" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="1709" y="282" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+<text x="1596" y="324" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이미지 요청 30%</text>
+<rect x="1322" y="364" width="250" height="152" rx="12" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1334" y="388" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">orangepi</text>
+<text x="1560" y="389" class="s" style="text-anchor:end;font-size:12px">고정</text>
+<rect x="1334" y="404" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1447" y="428" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="1447" y="450" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+<text x="1334" y="492" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이미지 요청 41%</text>
+<rect x="1584" y="364" width="250" height="152" rx="12" fill="#fff" stroke="#15803D" stroke-width="3"/>
+<text x="1596" y="388" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetsonx</text>
+<text x="1822" y="389" class="s" style="text-anchor:end;font-size:12px">15W 6코어</text>
+<rect x="1596" y="404" width="226" height="62" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1709" y="428" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">추론 Pod</text>
+<text x="1709" y="450" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">이미지 분류</text>
+
+<text x="1596" y="492" class="lb" style="text-anchor:start;fill:#15803D;font-size:13px">신규 투입</text>
+<text x="1822" y="492" class="lb" style="text-anchor:end;fill:#15803D;font-size:13px">18%</text>
+<text x="1322" y="550" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">이미지 분류: 필요량 vs 처리 한도</text>
+<rect x="1322" y="568" width="447.5" height="28" rx="4" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<path d="M1800.0,560 V604" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="1322" y="624" class="lb" style="text-anchor:start;fill:#B45309;font-size:14px">한도 89.5건/초</text>
+<text x="1838" y="624" class="lb" style="text-anchor:end;fill:#B91C1C;font-size:14px">필요 95.6건/초</text>
+<rect x="1322" y="642" width="516" height="44" rx="10" fill="#FFFBEB" stroke="#B45309" stroke-width="1.5"/>
+<text x="1580.0" y="669" class="lb" style="text-anchor:middle;fill:#B45309;font-size:14px">한도 확대 후에도 요청 증가로 여전히 부족</text>
+<text x="1840" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">모든 값: 실제 판단 기록 · ③ 이후에도 과부하 상태 지속</text>
+<rect x="60" y="750" width="1800" height="290" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="84" y="780" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">시간별 추이: 이미지 분류 필요량(빨강)과 처리 한도(초록)</text>
+<path d="M230,1000.0 H1560" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="220" y="1000.0" class="s" style="text-anchor:end;font-size:12px">0</text>
+<path d="M230,904.5454545454545 H1560" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="220" y="904.5454545454545" class="s" style="text-anchor:end;font-size:12px">50</text>
+<path d="M230,809.0909090909091 H1560" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="220" y="809.0909090909091" class="s" style="text-anchor:end;font-size:12px">100</text>
+<text x="1600" y="1004" class="s" style="text-anchor:start;font-size:12px">단위: 건/초</text>
+<text x="332.3076923076923" y="1020" class="s" style="text-anchor:middle;font-size:12px">09:45</text>
+<text x="536.9230769230769" y="1020" class="s" style="text-anchor:middle;font-size:12px">09:46</text>
+<text x="741.5384615384615" y="1020" class="s" style="text-anchor:middle;font-size:12px">09:47</text>
+<text x="946.1538461538461" y="1020" class="s" style="text-anchor:middle;font-size:12px">09:48</text>
+<text x="1150.7692307692307" y="1020" class="s" style="text-anchor:middle;font-size:12px">09:49</text>
+<text x="1355.3846153846155" y="1020" class="s" style="text-anchor:middle;font-size:12px">09:50</text>
+<text x="1560.0" y="1020" class="s" style="text-anchor:middle;font-size:12px">09:51</text>
+<path d="M230.0,929.9363636363636 H352.7692307692308 V859.6818181818182 H1137.128205128205 V829.1363636363636 H1560.0 V829.1363636363636 V1000 H230.0 Z" fill="#DCFCE7" stroke="none" opacity="0.7"/>
+<path d="M230.0,929.9363636363636 H352.7692307692308 V859.6818181818182 H1137.128205128205 V829.1363636363636 H1560.0 V829.1363636363636" fill="none" stroke="#15803D" stroke-width="3"/>
+<path d="M281.2,913.9 L318.7,900.2 L421.0,895.8 L455.1,895.4 L489.2,893.7 L523.3,896.9 L557.4,896.7 L591.5,898.1 L625.6,890.6 L659.7,898.6 L697.2,900.0 L731.3,900.9 L762.0,892.7 L796.1,899.2 L826.8,897.5 L860.9,900.3 L898.4,833.0" fill="none" stroke="#B91C1C" stroke-width="2.5"/>
+<path d="M898.4,833.0 L1239.4,817.5" fill="none" stroke="#B91C1C" stroke-width="2" stroke-dasharray="5 4"/>
+<path d="M1239.4,817.5 L1273.5,812.1 L1307.6,814.6 L1341.7,816.9 L1375.8,814.8 L1409.9,817.1 L1444.1,816.7 L1478.2,806.2 L1512.3,805.7 L1546.4,814.1" fill="none" stroke="#B91C1C" stroke-width="2.5"/>
+<circle cx="281.2" cy="913.9" r="3" fill="#B91C1C"/>
+<circle cx="318.7" cy="900.2" r="3" fill="#B91C1C"/>
+<circle cx="421.0" cy="895.8" r="3" fill="#B91C1C"/>
+<circle cx="455.1" cy="895.4" r="3" fill="#B91C1C"/>
+<circle cx="489.2" cy="893.7" r="3" fill="#B91C1C"/>
+<circle cx="523.3" cy="896.9" r="3" fill="#B91C1C"/>
+<circle cx="557.4" cy="896.7" r="3" fill="#B91C1C"/>
+<circle cx="591.5" cy="898.1" r="3" fill="#B91C1C"/>
+<circle cx="625.6" cy="890.6" r="3" fill="#B91C1C"/>
+<circle cx="659.7" cy="898.6" r="3" fill="#B91C1C"/>
+<circle cx="697.2" cy="900.0" r="3" fill="#B91C1C"/>
+<circle cx="731.3" cy="900.9" r="3" fill="#B91C1C"/>
+<circle cx="762.0" cy="892.7" r="3" fill="#B91C1C"/>
+<circle cx="796.1" cy="899.2" r="3" fill="#B91C1C"/>
+<circle cx="826.8" cy="897.5" r="3" fill="#B91C1C"/>
+<circle cx="860.9" cy="900.3" r="3" fill="#B91C1C"/>
+<circle cx="898.4" cy="833.0" r="3" fill="#B91C1C"/>
+<circle cx="1239.4" cy="817.5" r="3" fill="#B91C1C"/>
+<circle cx="1273.5" cy="812.1" r="3" fill="#B91C1C"/>
+<circle cx="1307.6" cy="814.6" r="3" fill="#B91C1C"/>
+<circle cx="1341.7" cy="816.9" r="3" fill="#B91C1C"/>
+<circle cx="1375.8" cy="814.8" r="3" fill="#B91C1C"/>
+<circle cx="1409.9" cy="817.1" r="3" fill="#B91C1C"/>
+<circle cx="1444.1" cy="816.7" r="3" fill="#B91C1C"/>
+<circle cx="1478.2" cy="806.2" r="3" fill="#B91C1C"/>
+<circle cx="1512.3" cy="805.7" r="3" fill="#B91C1C"/>
+<circle cx="1546.4" cy="814.1" r="3" fill="#B91C1C"/>
+<circle cx="352.7692307692308" cy="859.6818181818182" r="7" fill="#fff" stroke="#15803D" stroke-width="3"/>
+<text x="364.7692307692308" y="847.6818181818182" class="lb" style="text-anchor:start;fill:#15803D;font-size:13px">orangepi 투입 · 36.7 → 73.5</text>
+<circle cx="1137.128205128205" cy="829.1363636363636" r="7" fill="#fff" stroke="#15803D" stroke-width="3"/>
+<text x="1149.128205128205" y="867.1363636363636" class="lb" style="text-anchor:start;fill:#15803D;font-size:13px">jetsonx 투입 · 73.5 → 89.5</text>
+<text x="906.4102564102564" y="820.9545454545455" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:13px">요청 급증 87.5</text>
+<path d="M1600,820 H1634" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="1644" y="820" class="s" style="text-anchor:start;font-size:13px;fill:#0F172A">필요 처리량 (판단마다)</text>
+<path d="M1600,850 H1634" fill="none" stroke="#15803D" stroke-width="3"/>
+<text x="1644" y="850" class="s" style="text-anchor:start;font-size:13px;fill:#0F172A">처리 한도 (실제 반영 시점)</text>
+<text x="1600" y="900" class="s" style="text-anchor:start;font-size:13px">빨강이 초록 아래: 목표 충족</text>
+<text x="1600" y="924" class="s" style="text-anchor:start;font-size:13px">빨강이 초록 위: 처리 부족</text>
+<text x="1600" y="948" class="s" style="text-anchor:start;font-size:13px">점선: 해당 구간</text>
+<text x="1600" y="972" class="s" style="text-anchor:start;font-size:13px">요청량 기록 없음</text></svg>

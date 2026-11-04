@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="50" class="h" style="text-anchor:start;fill:#0F172A;font-size:26px">필요성: 동일 AI 모델도 실행 장비에 따라 속도와 에너지가 크게 달라짐</text>
+<text x="60" y="86" class="s" style="text-anchor:start;font-size:16px">실측값 · 이미지 분류 모델(MobileNet-V2) · 묶음 크기 1</text>
+<rect x="60" y="120" width="1060" height="800" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="84" y="156" class="h" style="text-anchor:start;fill:#0F172A;font-size:19px">① 장비별 처리 시간과 요청당 에너지</text>
+<path d="M150,816.0 H1030" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="138" y="821.0" class="s" style="text-anchor:end;font-size:13px">0.0 J</text>
+<path d="M150,631.625 H1030" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="138" y="636.625" class="s" style="text-anchor:end;font-size:13px">0.1 J</text>
+<path d="M150,447.25 H1030" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="138" y="452.25" class="s" style="text-anchor:end;font-size:13px">0.2 J</text>
+<path d="M150,262.875 H1030" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="138" y="267.875" class="s" style="text-anchor:end;font-size:13px">0.3 J</text>
+<path d="M150.0,226 V816" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="150.0" y="840" class="s" style="text-anchor:middle;font-size:13px">5ms</text>
+<path d="M329.3396414396454,226 V816" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="329.3396414396454" y="840" class="s" style="text-anchor:middle;font-size:13px">10ms</text>
+<path d="M508.67928287929084,226 V816" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="508.67928287929084" y="840" class="s" style="text-anchor:middle;font-size:13px">20ms</text>
+<path d="M745.7533934253839,226 V816" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="745.7533934253839" y="840" class="s" style="text-anchor:middle;font-size:13px">50ms</text>
+<path d="M925.0930348650295,226 V816" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="925.0930348650295" y="840" class="s" style="text-anchor:middle;font-size:13px">100ms</text>
+<path d="M1030.0,226 V816" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="1030.0" y="840" class="s" style="text-anchor:middle;font-size:13px">150ms</text>
+<text x="590.0" y="868" class="lb" style="text-anchor:middle;fill:#334155;font-size:14px">요청당 처리 시간 (로그 축)</text>
+<text x="84" y="196" class="lb" style="text-anchor:start;fill:#334155;font-size:14px">요청당 에너지 (J)</text>
+<rect x="152" y="613.1875" width="501.4700251156345" height="200.8125" rx="10" fill="#F0FDF4" stroke="none" stroke-width="0"/>
+<text x="164" y="800.0" class="lb" style="text-anchor:start;fill:#15803D;font-size:13px">빠르고 효율적인 영역</text>
+<path d="M264.39036639364963,277.625 L332.42594934345516,351.375" fill="none" stroke="#CBD5E1" stroke-width="2"/>
+<path d="M432.3422443307604,639.0 L524.3648374684194,644.53125" fill="none" stroke="#CBD5E1" stroke-width="2"/>
+<path d="M636.0414089159729,681.40625 L748.0202789139809,721.96875" fill="none" stroke="#CBD5E1" stroke-width="2"/>
+<path d="M755.5525348443463,320.03124999999994 L853.9511172146998,567.09375" fill="none" stroke="#CBD5E1" stroke-width="2"/>
+<rect x="255.39036639364963" y="268.625" width="18" height="18" rx="3" fill="#B45309" stroke="#fff" stroke-width="2"/>
+<text x="250.39036639364963" y="283.625" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">genesis3</text>
+<circle cx="332.42594934345516" cy="351.375" r="9" fill="#1D4ED8" stroke="#fff" stroke-width="2"/>
+<rect x="423.3422443307604" y="630.0" width="18" height="18" rx="3" fill="#B45309" stroke="#fff" stroke-width="2"/>
+<text x="420.3422443307604" y="625.0" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">jetsono</text>
+<circle cx="524.3648374684194" cy="644.53125" r="9" fill="#1D4ED8" stroke="#fff" stroke-width="2"/>
+<circle cx="597.9438119005829" cy="598.4375" r="9" fill="#1D4ED8" stroke="#fff" stroke-width="2"/>
+<text x="609.9438119005829" y="584.4375" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">lattepanda</text>
+<circle cx="600.949714245047" cy="688.78125" r="9" fill="#1D4ED8" stroke="#fff" stroke-width="2"/>
+<text x="588.949714245047" y="710.78125" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">rasp5</text>
+<rect x="627.0414089159729" y="672.40625" width="18" height="18" rx="3" fill="#B45309" stroke="#fff" stroke-width="2"/>
+<text x="650.0414089159729" y="669.40625" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">jetsonx</text>
+<circle cx="748.0202789139809" cy="721.96875" r="9" fill="#1D4ED8" stroke="#fff" stroke-width="2"/>
+<rect x="746.5525348443463" y="311.03124999999994" width="18" height="18" rx="3" fill="#B45309" stroke="#fff" stroke-width="2"/>
+<text x="769.5525348443463" y="326.03124999999994" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">jetson-nano</text>
+<circle cx="853.9511172146998" cy="567.09375" r="9" fill="#1D4ED8" stroke="#fff" stroke-width="2"/>
+<circle cx="924.2637636059483" cy="651.90625" r="9" fill="#1D4ED8" stroke="#fff" stroke-width="2"/>
+<text x="910.2637636059483" y="635.90625" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">orangepi</text>
+<rect x="397.2217802347074" y="242.875" width="300" height="58" rx="10" fill="#FFFBEB" stroke="#B45309" stroke-width="1.5"/>
+<text x="411.2217802347074" y="266.875" class="lb" style="text-anchor:start;fill:#B45309;font-size:14px">최단 처리 시간: 서버 GPU (genesis3)</text>
+<text x="411.2217802347074" y="288.875" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">7.8ms · 요청당 0.29 J</text>
+<rect x="735.1914203474589" y="751.46875" width="360" height="58" rx="10" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5"/>
+<text x="749.1914203474589" y="775.46875" class="lb" style="text-anchor:start;fill:#15803D;font-size:14px">최소 에너지: Jetson Xavier NX CPU</text>
+<text x="749.1914203474589" y="797.46875" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">0.05 J (서버 GPU의 약 1/6) · 처리 시간 6.5배</text>
+<circle cx="780" cy="242" r="8" fill="#1D4ED8"/>
+<text x="796" y="247" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">CPU로 실행</text>
+<rect x="892" y="234" width="16" height="16" rx="3" fill="#B45309"/>
+<text x="916" y="247" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">GPU로 실행</text>
+<text x="772" y="274" class="s" style="text-anchor:start;font-size:12px">회색 선: 동일 장비</text>
+<rect x="1150" y="120" width="710" height="250" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1174" y="156" class="h" style="text-anchor:start;fill:#0F172A;font-size:19px">② 사양만으로는 판단 불가</text>
+<rect x="1174" y="178" width="322" height="170" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.2"/>
+<text x="1190" y="208" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">GPU 실행이 항상 유리하지 않음</text>
+<text x="1190" y="244" class="s" style="text-anchor:start;fill:#B45309;font-size:14px">genesis3 GPU · 7.8ms · 0.29 J</text>
+<text x="1190" y="272" class="s" style="text-anchor:start;fill:#1D4ED8;font-size:14px">genesis3 CPU · 10.1ms · 0.25 J</text>
+<path d="M1190,294 H1480" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1190" y="324" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">처리 시간 23% 단축 · 에너지 16% 증가</text>
+<rect x="1517" y="178" width="322" height="170" rx="12" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1.2"/>
+<text x="1533" y="208" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">고성능 장비가 효율적이지 않음</text>
+<text x="1533" y="244" class="s" style="text-anchor:start;fill:#B45309;font-size:14px">서버 GPU · 0.29 J / 건</text>
+<text x="1533" y="272" class="s" style="text-anchor:start;fill:#15803D;font-size:14px">Jetson Xavier NX · 0.05 J / 건</text>
+<path d="M1533,294 H1823" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1533" y="324" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">소형 보드의 요청당 에너지 약 1/6</text>
+<rect x="1150" y="390" width="710" height="530" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1174" y="426" class="h" style="text-anchor:start;fill:#0F172A;font-size:19px">③ 요청량 변동</text>
+<text x="1174" y="454" class="s" style="text-anchor:start;font-size:14px">이미지 분류 요청량 · 실험 기록 (10초 간격)</text>
+<path d="M1230,780.0 H1830" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1220" y="785.0" class="s" style="text-anchor:end;font-size:12px">0</text>
+<path d="M1230,652.7272727272727 H1830" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1220" y="657.7272727272727" class="s" style="text-anchor:end;font-size:12px">50</text>
+<path d="M1230,525.4545454545455 H1830" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1220" y="530.4545454545455" class="s" style="text-anchor:end;font-size:12px">100</text>
+<text x="1276.1538461538462" y="802" class="s" style="text-anchor:middle;font-size:12px">09:45</text>
+<text x="1460.7692307692307" y="802" class="s" style="text-anchor:middle;font-size:12px">09:47</text>
+<text x="1645.3846153846152" y="802" class="s" style="text-anchor:middle;font-size:12px">09:49</text>
+<text x="1830.0" y="802" class="s" style="text-anchor:middle;font-size:12px">09:51</text>
+<path d="M1253.1,780 L1253.1,665.2 L1270.0,646.9 L1316.2,641.0 L1331.5,640.5 L1346.9,638.2 L1362.3,642.5 L1377.7,642.3 L1393.1,644.1 L1408.5,634.1 L1423.8,644.8 L1440.8,646.6 L1456.2,647.9 L1470.0,636.9 L1485.4,645.6 L1499.2,643.3 L1514.6,647.1 L1531.5,557.3 L1685.4,536.7 L1700.8,529.5 L1716.2,532.8 L1731.5,535.9 L1746.9,533.1 L1762.3,536.1 L1777.7,535.6 L1793.1,521.6 L1808.5,520.9 L1823.8,532.1 L1823.8,780 Z" fill="#FEE2E2" opacity="0.6"/>
+<path d="M1253.1,665.2 L1270.0,646.9 L1316.2,641.0 L1331.5,640.5 L1346.9,638.2 L1362.3,642.5 L1377.7,642.3 L1393.1,644.1 L1408.5,634.1 L1423.8,644.8 L1440.8,646.6 L1456.2,647.9 L1470.0,636.9 L1485.4,645.6 L1499.2,643.3 L1514.6,647.1 L1531.5,557.3 L1685.4,536.7 L1700.8,529.5 L1716.2,532.8 L1731.5,535.9 L1746.9,533.1 L1762.3,536.1 L1777.7,535.6 L1793.1,521.6 L1808.5,520.9 L1823.8,532.1" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="1259.076923076923" y="693.2" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:14px">45건/초</text>
+<text x="1823.8461538461538" y="504.8727272727273" class="lb" style="text-anchor:end;fill:#B91C1C;font-size:14px">약 100건/초</text>
+<text x="1830" y="476" class="s" style="text-anchor:end;font-size:12px">단위: 건/초</text>
+<rect x="1174" y="820" width="662" height="78" rx="12" fill="#FEF2F2" stroke="#FECACA" stroke-width="1.2"/>
+<text x="1194" y="852" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:15px">6분 사이 요청량 2배 이상 증가</text>
+<text x="1194" y="880" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">고정 배치로는 대응이 어려워 주기적 재배치 필요</text>
+<rect x="60" y="940" width="1800" height="100" rx="16" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="90" y="998" class="h" style="text-anchor:start;fill:#7C3AED;font-size:22px">CHILL의 접근</text>
+<circle cx="318" cy="990" r="12" fill="#7C3AED"/>
+<text x="318" y="991" class="n" style="text-anchor:middle">1</text>
+<text x="344" y="982" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">실측</text>
+<text x="344" y="1010" class="s" style="text-anchor:start;font-size:14px">장비 × 실행 방식 × 전력 설정별</text>
+<path d="M740,990 H800" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<circle cx="838" cy="990" r="12" fill="#7C3AED"/>
+<text x="838" y="991" class="n" style="text-anchor:middle">2</text>
+<text x="864" y="982" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">배치 선택</text>
+<text x="864" y="1010" class="s" style="text-anchor:start;font-size:14px">응답 시간 목표 만족 배치 중 에너지 최소</text>
+<path d="M1260,990 H1320" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<circle cx="1358" cy="990" r="12" fill="#7C3AED"/>
+<text x="1358" y="991" class="n" style="text-anchor:middle">3</text>
+<text x="1384" y="982" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">주기적 재판단</text>
+<text x="1384" y="1010" class="s" style="text-anchor:start;font-size:14px">10초 주기 요청량 확인 · 필요 시 재배치</text>
+<text x="1860" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">측정값: 장비별 기본 실행 조합의 중앙값 (2026-10 실험 기록) · genesis2 · orin-nano는 실험에서 제외</text>
+</svg>

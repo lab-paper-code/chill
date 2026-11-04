@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1000" width="1920" height="1000" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#C2410C"/></marker>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;text-anchor:middle;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;text-anchor:middle;dominant-baseline:middle}
+.h{font-size:19px;font-weight:800;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="960" y="34" class="h" style="text-anchor:middle;fill:#0F172A;font-size:22px">스케줄러 판단 흐름: 응답 시간 목표를 만족하는 후보 중 에너지 최소 배치 선택</text>
+<rect x="40" y="80" width="300" height="700" rx="14" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1.5"/>
+<text x="60" y="104" class="h" style="text-anchor:start;fill:#334155">입력</text>
+<rect x="60" y="150" width="260" height="92" rx="10" fill="#fff" stroke="#64748B" stroke-width="2"/>
+<text x="190.0" y="176.0" class="t">측정 결과</text>
+<text x="190.0" y="201.0" class="s">장비·모델·전력 모드별</text>
+<text x="190.0" y="221.0" class="s">속도와 전력</text>
+<rect x="60" y="270" width="260" height="92" rx="10" fill="#fff" stroke="#64748B" stroke-width="2"/>
+<text x="190.0" y="296.0" class="t">응답 시간 목표</text>
+<text x="190.0" y="321.0" class="s">서비스별</text>
+<text x="190.0" y="341.0" class="s">예: 요청 95%가 1초 이내</text>
+<rect x="60" y="420" width="260" height="92" rx="10" fill="#fff" stroke="#64748B" stroke-width="2"/>
+<text x="190.0" y="456.0" class="t">현재 요청량</text>
+<text x="190.0" y="481.0" class="s">최근 도착률 · 대기 수</text>
+<rect x="60" y="540" width="260" height="92" rx="10" fill="#fff" stroke="#64748B" stroke-width="2"/>
+<text x="190.0" y="576.0" class="t">현재 상태</text>
+<text x="190.0" y="601.0" class="s">장비별 배치 · 전력 모드</text>
+<rect x="60" y="660" width="260" height="92" rx="10" fill="#fff" stroke="#64748B" stroke-width="2"/>
+<text x="190.0" y="686.0" class="t">전환 비용</text>
+<text x="190.0" y="711.0" class="s">전력 변경·준비·정리의</text>
+<text x="190.0" y="731.0" class="s">측정된 시간과 전력</text>
+<rect x="400" y="80" width="1100" height="250" rx="14" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="2.5"/>
+<text x="420" y="104" class="h" style="text-anchor:start;fill:#1D4ED8">1단계 · 미리 계산: 장비별 처리 한도표</text>
+<text x="1480" y="130" class="s" style="text-anchor:end">시작 시 · 서비스·측정 근거·완료 여유·한도표 설정 변경 시 계산</text>
+<rect x="430" y="150" width="300" height="150" rx="10" fill="#fff" stroke="#1D4ED8" stroke-width="2"/>
+<text x="580.0" y="205.0" class="t">후보 하나 고르기</text>
+<text x="580.0" y="230.0" class="s">장비 + 전력 모드 +</text>
+<text x="580.0" y="250.0" class="s">실행 방식 + 묶음 크기 상한</text>
+<circle cx="446" cy="166" r="12" fill="#1D4ED8"/>
+<text x="446" y="167" class="n">1</text>
+<rect x="790" y="150" width="300" height="150" rx="10" fill="#fff" stroke="#1D4ED8" stroke-width="2"/>
+<text x="940.0" y="205.0" class="t">가상 요청 재생</text>
+<text x="940.0" y="230.0" class="s">실행 시간·요청 사이 점유 시간으로</text>
+<text x="940.0" y="250.0" class="s">요청률을 높이며 재생</text>
+<circle cx="806" cy="166" r="12" fill="#1D4ED8"/>
+<text x="806" y="167" class="n">2</text>
+<rect x="1150" y="150" width="320" height="150" rx="10" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1310.0" y="205.0" class="t">처리 한도 기록</text>
+<text x="1310.0" y="230.0" class="s">목표를 만족하는</text>
+<text x="1310.0" y="250.0" class="s">최대 요청률 (초당 건수)</text>
+<circle cx="1166" cy="166" r="12" fill="#1D4ED8"/>
+<text x="1166" y="167" class="n">3</text>
+<path d="M730,225 H788" fill="none" stroke="#1D4ED8" stroke-width="3" marker-end="url(#b)"/>
+<path d="M1090,225 H1148" fill="none" stroke="#1D4ED8" stroke-width="3" marker-end="url(#b)"/>
+<path d="M320,196 H428" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+<path d="M320,316 H380 V240 H428" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+<rect x="400" y="380" width="1100" height="400" rx="14" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="420" y="404" class="h" style="text-anchor:start;fill:#7C3AED">2단계 · 주기마다 판단</text>
+<text x="1480" y="405" class="s" style="text-anchor:end">10초 주기 반복</text>
+<rect x="430" y="470" width="230" height="180" rx="10" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="545.0" y="530.0" class="t">필요 처리량</text>
+<text x="545.0" y="555.0" class="s">서비스별 요청률</text>
+<text x="545.0" y="575.0" class="s">밀린 요청과</text>
+<text x="545.0" y="595.0" class="s">최소 보장량을 반영</text>
+<circle cx="446" cy="486" r="12" fill="#7C3AED"/>
+<text x="446" y="487" class="n">1</text>
+<rect x="700" y="470" width="230" height="180" rx="10" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="815.0" y="530.0" class="t">후보 배치 만들기</text>
+<text x="815.0" y="555.0" class="s">장비마다: 유지 / 바꾸기 /</text>
+<text x="815.0" y="575.0" class="s">비우기 중 하나</text>
+<text x="815.0" y="595.0" class="s">→ 장비 조합</text>
+<circle cx="716" cy="486" r="12" fill="#7C3AED"/>
+<text x="716" y="487" class="n">2</text>
+<rect x="970" y="470" width="230" height="180" rx="10" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="1085.0" y="530.0" class="t">목표 검사</text>
+<text x="1085.0" y="555.0" class="s">처리 한도 합 ≥ 필요량?</text>
+<text x="1085.0" y="575.0" class="s">전환 중 밀린 요청도</text>
+<text x="1085.0" y="595.0" class="s">목표 시간 이내?</text>
+<circle cx="986" cy="486" r="12" fill="#7C3AED"/>
+<text x="986" y="487" class="n">3</text>
+<rect x="1240" y="470" width="230" height="180" rx="10" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2"/>
+<text x="1355.0" y="530.0" class="t">에너지 비교 · 선택</text>
+<text x="1355.0" y="553.0" class="s">전환 에너지 + 운영 전력×시간</text>
+<text x="1355.0" y="575.0" class="s">+ 요청 처리 에너지</text>
+<text x="1355.0" y="597.0" class="s">탐색해 통과한 후보 중 최소</text>
+<circle cx="1256" cy="486" r="12" fill="#7C3AED"/>
+<text x="1256" y="487" class="n">4</text>
+<path d="M660,560.0 H698" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<path d="M930,560.0 H968" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<path d="M1200,560.0 H1238" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+
+
+<path d="M320,466 H428" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+<path d="M320,586 H360 V760 H815.0 V652" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+<path d="M320,706 H345 V770 H1355.0 V652" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+<path d="M1310,300 V340 H1085.0 V468" fill="none" stroke="#1D4ED8" stroke-width="3" marker-end="url(#b)"/>
+<text x="1097.0" y="440" class="lb" style="text-anchor:start;fill:#1D4ED8">처리 한도표</text>
+<rect x="1560" y="80" width="320" height="700" rx="14" fill="#F0FDF4" stroke="#15803D" stroke-width="2.5"/>
+<text x="1580" y="104" class="h" style="text-anchor:start;fill:#15803D">결과: 새 배치</text>
+<rect x="1580" y="170" width="280" height="110" rx="10" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="1720.0" y="205.0" class="t">장비별 담당</text>
+<text x="1720.0" y="230.0" class="s">어느 장비가 어느 서비스를</text>
+<text x="1720.0" y="250.0" class="s">어떤 방식으로 처리</text>
+<rect x="1580" y="320" width="280" height="110" rx="10" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="1720.0" y="365.0" class="t">장비별 전력 모드</text>
+<text x="1720.0" y="390.0" class="s">조건이 허용하면 유휴 장비 절전</text>
+<rect x="1580" y="470" width="280" height="110" rx="10" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="1720.0" y="515.0" class="t">요청 분배 비율</text>
+<text x="1720.0" y="540.0" class="s">처리 한도에 비례</text>
+<rect x="1580" y="620" width="280" height="110" rx="10" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="1720.0" y="665.0" class="t">묶음 규칙</text>
+<text x="1720.0" y="690.0" class="s">최대 묶음 크기</text>
+<path d="M1470,560.0 H1578" fill="none" stroke="#15803D" stroke-width="3" marker-end="url(#g)"/>
+<rect x="400" y="830" width="1480" height="130" rx="14" fill="#FFF7ED" stroke="#C2410C" stroke-width="2"/>
+<text x="420" y="854" class="h" style="text-anchor:start;fill:#C2410C">실행 · 관측 (대표 흐름 · 실제 순서는 전환 조건에 따라 결정)</text>
+<rect x="440" y="880" width="235" height="60" rx="10" fill="#fff" stroke="#C2410C" stroke-width="2"/>
+<text x="557" y="910" class="t" style="font-size:16px">전력 모드 변경</text>
+<path d="M675,910 H723" fill="none" stroke="#C2410C" stroke-width="2.5" marker-end="url(#o)"/>
+<rect x="725" y="880" width="235" height="60" rx="10" fill="#fff" stroke="#C2410C" stroke-width="2"/>
+<text x="842" y="910" class="t" style="font-size:16px">새 실행 Pod 준비</text>
+<path d="M960,910 H1008" fill="none" stroke="#C2410C" stroke-width="2.5" marker-end="url(#o)"/>
+<rect x="1010" y="880" width="235" height="60" rx="10" fill="#fff" stroke="#C2410C" stroke-width="2"/>
+<text x="1127" y="910" class="t" style="font-size:16px">요청 분배 전환</text>
+<path d="M1245,910 H1293" fill="none" stroke="#C2410C" stroke-width="2.5" marker-end="url(#o)"/>
+<rect x="1295" y="880" width="235" height="60" rx="10" fill="#fff" stroke="#C2410C" stroke-width="2"/>
+<text x="1412" y="910" class="t" style="font-size:16px">안 쓰는 Pod 정리</text>
+<path d="M1530,910 H1578" fill="none" stroke="#C2410C" stroke-width="2.5" marker-end="url(#o)"/>
+<rect x="1580" y="880" width="235" height="60" rx="10" fill="#fff" stroke="#C2410C" stroke-width="2"/>
+<text x="1697" y="910" class="t" style="font-size:16px">요청 처리 · 기록</text>
+<path d="M1720,780 V828" fill="none" stroke="#15803D" stroke-width="3" marker-end="url(#g)"/>
+<path d="M1697,940 V980 H20 V466 H58" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#o)"/>
+<text x="30" y="820" class="lb" style="text-anchor:start;fill:#C2410C">다음 판단에 반영</text>
+<text x="400" y="806" class="s" style="text-anchor:start;font-size:14px">후보를 단계적으로 변경하며 개선 탐색 (출발점: 현재 배치 · 전부 비운 배치)</text><text x="1500" y="806" class="s" style="text-anchor:end;font-size:14px;fill:#B91C1C">목표 만족 후보가 없으면 초과량이 가장 작은 후보</text></svg>

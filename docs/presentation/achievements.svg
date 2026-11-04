@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="50" class="h" style="text-anchor:start;fill:#0F172A;font-size:26px">목표별 달성 현황</text>
+<text x="60" y="86" class="s" style="text-anchor:start;font-size:16px">근거: 실제 클러스터 실험 기록 (장비 7대 · 서비스 3개 · 시나리오별 최신 결과)</text>
+<rect x="60" y="120" width="580" height="800" rx="18" fill="#F0FDF4" stroke="#15803D" stroke-width="2"/>
+<circle cx="104" cy="164" r="20" fill="#15803D"/>
+<text x="104" y="171" class="lb" style="text-anchor:middle;fill:#fff;font-size:20px">✓</text>
+<text x="136" y="162" class="h" style="text-anchor:start;fill:#15803D;font-size:24px">달성</text>
+<text x="136" y="188" class="s" style="text-anchor:start;font-size:14px">실험으로 확인</text>
+<rect x="80" y="220" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="80" y="220" width="8" height="152" rx="4" fill="#15803D" stroke="none" stroke-width="0"/>
+<text x="106" y="258" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">실측 기반 판단</text>
+<text x="106" y="296" class="s" style="text-anchor:start;fill:#334155;font-size:15px">장비 · 실행 방식 · 전력 설정별 속도와 에너지 실측</text>
+<path d="M106,316 H600" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="106" y="348" class="s" style="text-anchor:start;fill:#15803D;font-size:14px">장비 7대 × 서비스 3개 측정값 사용</text>
+<rect x="80" y="392" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="80" y="392" width="8" height="152" rx="4" fill="#15803D" stroke="none" stroke-width="0"/>
+<text x="106" y="430" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">이기종 장비 동시 운영</text>
+<text x="106" y="468" class="s" style="text-anchor:start;fill:#334155;font-size:15px">서버 · Jetson · Raspberry Pi · RK3588에서 서비스 3개 운영</text>
+<path d="M106,488 H600" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="106" y="520" class="s" style="text-anchor:start;fill:#15803D;font-size:14px">7개 부하 시나리오 전부 수행</text>
+<rect x="80" y="564" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="80" y="564" width="8" height="152" rx="4" fill="#15803D" stroke="none" stroke-width="0"/>
+<text x="106" y="602" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">자동 재배치</text>
+<text x="106" y="640" class="s" style="text-anchor:start;fill:#334155;font-size:15px">10초 주기 판단 · 장비 투입 · 서비스 전환 · 전력 변경</text>
+<path d="M106,660 H600" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="106" y="692" class="s" style="text-anchor:start;fill:#15803D;font-size:14px">실제 판단 1회에 장비 6대 변경</text>
+<rect x="80" y="736" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="80" y="736" width="8" height="152" rx="4" fill="#15803D" stroke="none" stroke-width="0"/>
+<text x="106" y="774" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">PLC 이상탐지 응답 시간</text>
+<text x="106" y="812" class="s" style="text-anchor:start;fill:#334155;font-size:15px">가장 엄격한 목표(36ms) 전 시나리오 충족</text>
+<path d="M106,832 H600" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="106" y="864" class="s" style="text-anchor:start;fill:#15803D;font-size:14px">판정 대상 6개 시나리오 전부 충족</text>
+<rect x="670" y="120" width="580" height="800" rx="18" fill="#FFFBEB" stroke="#B45309" stroke-width="2"/>
+<circle cx="714" cy="164" r="20" fill="#B45309"/>
+<text x="714" y="171" class="lb" style="text-anchor:middle;fill:#fff;font-size:20px">△</text>
+<text x="746" y="162" class="h" style="text-anchor:start;fill:#B45309;font-size:24px">부분 달성</text>
+<text x="746" y="188" class="s" style="text-anchor:start;font-size:14px">조건부 확인</text>
+<rect x="690" y="220" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="690" y="220" width="8" height="152" rx="4" fill="#B45309" stroke="none" stroke-width="0"/>
+<text x="716" y="258" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">응답 시간 목표</text>
+<text x="716" y="296" class="s" style="text-anchor:start;fill:#334155;font-size:15px">6개 시나리오 중 3개 전 서비스 충족</text>
+<path d="M716,316 H1210" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="716" y="348" class="s" style="text-anchor:start;fill:#B45309;font-size:14px">점진 증가 · 급감 · 장애 주입에서 서비스 1개씩 미충족</text>
+<rect x="690" y="392" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="690" y="392" width="8" height="152" rx="4" fill="#B45309" stroke="none" stroke-width="0"/>
+<text x="716" y="430" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">에너지 절감</text>
+<text x="716" y="468" class="s" style="text-anchor:start;fill:#334155;font-size:15px">기준선 대비 4개 시나리오 0.2~4.5% 절감</text>
+<path d="M716,488 H1210" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="716" y="520" class="s" style="text-anchor:start;fill:#B45309;font-size:14px">2개 시나리오 0.8~1.9% 증가</text>
+<rect x="690" y="564" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="690" y="564" width="8" height="152" rx="4" fill="#B45309" stroke="none" stroke-width="0"/>
+<text x="716" y="602" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">장애 대응</text>
+<text x="716" y="640" class="s" style="text-anchor:start;fill:#334155;font-size:15px">삭제된 Pod를 분배에서 제외하고 처리 지속</text>
+<path d="M716,660 H1210" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="716" y="692" class="s" style="text-anchor:start;fill:#B45309;font-size:14px">영상 질의응답 114건 시간 초과</text>
+<rect x="690" y="736" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="690" y="736" width="8" height="152" rx="4" fill="#B45309" stroke="none" stroke-width="0"/>
+<text x="716" y="774" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">부하 증가 시 확장</text>
+<text x="716" y="812" class="s" style="text-anchor:start;fill:#334155;font-size:15px">장비 추가 투입으로 처리 한도 확대</text>
+<path d="M716,832 H1210" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="716" y="864" class="s" style="text-anchor:start;fill:#B45309;font-size:14px">부하 증가 후반 처리 용량 부족</text>
+<rect x="1280" y="120" width="580" height="800" rx="18" fill="#FEF2F2" stroke="#B91C1C" stroke-width="2"/>
+<circle cx="1324" cy="164" r="20" fill="#B91C1C"/>
+<text x="1324" y="171" class="lb" style="text-anchor:middle;fill:#fff;font-size:20px">✕</text>
+<text x="1356" y="162" class="h" style="text-anchor:start;fill:#B91C1C;font-size:24px">미달성</text>
+<text x="1356" y="188" class="s" style="text-anchor:start;font-size:14px">근거 부족 · 미측정</text>
+<rect x="1300" y="220" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="1300" y="220" width="8" height="152" rx="4" fill="#B91C1C" stroke="none" stroke-width="0"/>
+<text x="1326" y="258" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">일관된 에너지 절감</text>
+<text x="1326" y="296" class="s" style="text-anchor:start;fill:#334155;font-size:15px">전 시나리오 절감 근거 없음</text>
+<path d="M1326,316 H1820" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="1326" y="348" class="s" style="text-anchor:start;fill:#B91C1C;font-size:14px">시나리오별 절감 · 증가 혼재</text>
+<rect x="1300" y="392" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="1300" y="392" width="8" height="152" rx="4" fill="#B91C1C" stroke="none" stroke-width="0"/>
+<text x="1326" y="430" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">기능별 기여도</text>
+<text x="1326" y="468" class="s" style="text-anchor:start;fill:#334155;font-size:15px">묶음 처리 · 전력 조절 등 기능별 효과 분리</text>
+<path d="M1326,488 H1820" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="1326" y="520" class="s" style="text-anchor:start;fill:#B91C1C;font-size:14px">결함 수정 후 재측정 미실시</text>
+<rect x="1300" y="564" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="1300" y="564" width="8" height="152" rx="4" fill="#B91C1C" stroke="none" stroke-width="0"/>
+<text x="1326" y="602" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">반복 측정</text>
+<text x="1326" y="640" class="s" style="text-anchor:start;fill:#334155;font-size:15px">동일 실험 반복을 통한 편차 확인</text>
+<path d="M1326,660 H1820" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="1326" y="692" class="s" style="text-anchor:start;fill:#B91C1C;font-size:14px">현재 시나리오별 1회</text>
+<rect x="1300" y="736" width="540" height="152" rx="14" fill="#fff" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="1300" y="736" width="8" height="152" rx="4" fill="#B91C1C" stroke="none" stroke-width="0"/>
+<text x="1326" y="774" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">상시 자동 운영</text>
+<text x="1326" y="812" class="s" style="text-anchor:start;fill:#334155;font-size:15px">실험 외 상시 자동 제어</text>
+<path d="M1326,832 H1820" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="1326" y="864" class="s" style="text-anchor:start;fill:#B91C1C;font-size:14px">현재 실험 시에만 활성화</text>
+<rect x="60" y="940" width="1800" height="80" rx="16" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="90" y="988" class="h" style="text-anchor:start;fill:#7C3AED;font-size:20px">요약</text>
+<text x="170" y="988" class="lb" style="text-anchor:start;fill:#0F172A;font-size:18px">측정 – 판단 – 재배치 전 과정이 실제 클러스터에서 동작함을 확인. 전 시나리오 응답 시간 목표 충족과 일관된 에너지 절감은 미확인.</text>
+<text x="1860" y="1062" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">평가 범위 외: 점진 감소 · 타 서비스 급증 · 전원 · 네트워크 장애</text>
+</svg>

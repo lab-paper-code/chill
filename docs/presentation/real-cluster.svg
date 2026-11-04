@@ -1,0 +1,269 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1310" width="1920" height="1310" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#C2410C"/></marker>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<style>
+.t{font-size:16px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.m{font-size:14px;font-weight:700;fill:#334155;dominant-baseline:middle}
+.s{font-size:13px;fill:#475569;dominant-baseline:middle}
+.x{font-size:12px;fill:#475569;dominant-baseline:middle}
+.ip{font-size:11px;fill:#64748B;dominant-baseline:middle;font-family:'DejaVu Sans Mono',monospace}
+.c{font-size:13px;font-weight:700;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+</style></defs>
+<g fill="#fff" stroke="#475569" stroke-width="2"><circle cx="212.0" cy="40" r="14"/><path d="M185.0,94 a27,27 0 0 1 54,0 z"/><circle cx="494.0" cy="40" r="14"/><path d="M467.0,94 a27,27 0 0 1 54,0 z"/></g>
+<text x="248.0" y="70" class="t" style="text-anchor:start">운영자</text>
+<text x="248.0" y="92" class="x" style="text-anchor:start">브라우저</text>
+<text x="530.0" y="70" class="t" style="text-anchor:start">서비스 사용자</text>
+<text x="530.0" y="92" class="x" style="text-anchor:start">앱 · 부하 생성기</text>
+<rect x="980" y="14" width="900" height="112" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<rect x="998" y="30" width="30" height="20" rx="4" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="1036" y="41" class="s" style="text-anchor:start">CHILL 구성 요소</text>
+<rect x="1213" y="30" width="30" height="20" rx="4" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="1251" y="41" class="s" style="text-anchor:start">추론 Pod 자리</text>
+<rect x="1428" y="30" width="30" height="20" rx="4" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1466" y="41" class="s" style="text-anchor:start">서비스 후보 제외</text>
+<rect x="1643" y="30" width="30" height="20" rx="4" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1681" y="41" class="s" style="text-anchor:start">CHILL 외부 구성 요소</text>
+<rect x="998" y="72" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="1008" y="79" width="12" height="10" rx="2" fill="#B45309"/><line x1="1011" y1="76" x2="1011" y2="79" stroke="#B45309" stroke-width="2"/><line x1="1017" y1="76" x2="1017" y2="79" stroke="#B45309" stroke-width="2"/>
+<text x="1068" y="85" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<text x="1130" y="84" class="s" style="text-anchor:start">장비 전원 콘센트의 전력계</text>
+<path d="M1400,96 H1446" fill="none" stroke="#15803D" stroke-width="3" marker-end="url(#g)"/>
+<text x="1456" y="96" class="s" style="text-anchor:start">추론 요청</text>
+<path d="M1580,96 H1626" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#o)"/>
+<text x="1636" y="96" class="s" style="text-anchor:start">전력 측정값</text>
+<rect x="40" y="140" width="1840" height="600" rx="16" fill="#EFF6FF" stroke="#1D4ED8" stroke-width="2.5"/>
+<text x="1860" y="158" class="lb" style="text-anchor:end;fill:#1D4ED8;font-size:16px">클라우드 노드 3대 · kubelet으로 직접 연결</text>
+<rect x="60" y="172" width="586" height="455" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="76" y="196" class="t" style="text-anchor:start;font-size:18px">genesis1</text>
+<text x="226.0" y="197" class="m" style="text-anchor:start">제어 노드 · 서비스 후보 제외</text>
+<text x="226.0" y="222" class="s" style="text-anchor:start">x86 12코어 · RAM 64GB · RTX 2080 Ti</text>
+<text x="630" y="222" class="ip" style="text-anchor:end">155.230.35.213</text>
+<text x="76" y="260" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13px">CHILL</text>
+<rect x="76.0" y="272" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="212.0" y="291.0" class="c" style="text-anchor:middle;fill:#1E3A8A">웹 대시보드</text>
+<rect x="358.0" y="272" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="494.0" y="291.0" class="c" style="text-anchor:middle;fill:#1E3A8A">CHILL 서버 · 포트 31104</text>
+<rect x="76.0" y="318" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="212.0" y="337.0" class="c" style="text-anchor:middle;fill:#1E3A8A">관리자 프로그램</text>
+<rect x="358.0" y="318" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="494.0" y="337.0" class="c" style="text-anchor:middle;fill:#1E3A8A">측정 관리 프로그램</text>
+<rect x="76.0" y="364" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="212.0" y="383.0" class="c" style="text-anchor:middle;fill:#1E3A8A">조회 서버</text>
+<rect x="358.0" y="364" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="494.0" y="383.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<text x="76" y="422" class="lb" style="text-anchor:start;fill:#64748B;font-size:13px">외부</text>
+<rect x="76.0" y="434" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="212.0" y="453.0" class="c" style="text-anchor:middle;fill:#475569">Shelly 수신기 · 전력값 중계</text>
+<rect x="358.0" y="434" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="494.0" y="453.0" class="c" style="text-anchor:middle;fill:#475569">Kubernetes 제어부 · etcd</text>
+<rect x="76.0" y="480" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="212.0" y="499.0" class="c" style="text-anchor:middle;fill:#475569">로컬 이미지 저장소 :5000</text>
+<rect x="358.0" y="480" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="494.0" y="499.0" class="c" style="text-anchor:middle;fill:#475569">KubeEdge CloudCore</text>
+<rect x="76.0" y="526" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="212.0" y="545.0" class="c" style="text-anchor:middle;fill:#475569">Ceph 디스크 ×2</text>
+<rect x="358.0" y="526" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="494.0" y="545.0" class="c" style="text-anchor:middle;fill:#475569">온도 수집기 · EdgeMesh</text>
+<rect x="291.0" y="591" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="301.0" y="598" width="12" height="10" rx="2" fill="#B45309"/><line x1="304.0" y1="595" x2="304.0" y2="598" stroke="#B45309" stroke-width="2"/><line x1="310.0" y1="595" x2="310.0" y2="598" stroke="#B45309" stroke-width="2"/>
+<text x="361.0" y="604" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<rect x="667" y="172" width="586" height="455" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="683" y="196" class="t" style="text-anchor:start;font-size:18px">genesis2</text>
+<text x="783" y="197" class="m" style="text-anchor:start;font-size:13px">저장소 · GPU 오류(Xid 79) 반복으로 제외</text>
+<text x="683" y="222" class="s" style="text-anchor:start">x86 6코어 · RAM 64GB · RTX 2080 Ti</text>
+<text x="1237" y="222" class="ip" style="text-anchor:end">155.230.35.200</text>
+<text x="683" y="260" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13px">CHILL</text>
+<rect x="683.0" y="272" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="819.0" y="291.0" class="c" style="text-anchor:middle;fill:#1E3A8A">측정 결과 저장소 (S3)</text>
+<rect x="965.0" y="272" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="1101.0" y="291.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="683.0" y="318" width="272.0" height="36" rx="6" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="819.0" y="337.0" class="c" style="text-anchor:middle;fill:#94A3B8">서비스 후보 제외</text>
+<text x="683" y="422" class="lb" style="text-anchor:start;fill:#64748B;font-size:13px">외부</text>
+<rect x="683.0" y="434" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="819.0" y="453.0" class="c" style="text-anchor:middle;fill:#475569">Prometheus 모니터링</text>
+<rect x="965.0" y="434" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1101.0" y="453.0" class="c" style="text-anchor:middle;fill:#475569">Ceph 디스크 ×2</text>
+<rect x="683.0" y="480" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="819.0" y="499.0" class="c" style="text-anchor:middle;fill:#475569">온도 수집기 · EdgeMesh</text>
+<rect x="898.0" y="591" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="908.0" y="598" width="12" height="10" rx="2" fill="#B45309"/><line x1="911.0" y1="595" x2="911.0" y2="598" stroke="#B45309" stroke-width="2"/><line x1="917.0" y1="595" x2="917.0" y2="598" stroke="#B45309" stroke-width="2"/>
+<text x="968.0" y="604" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<rect x="1274" y="172" width="586" height="455" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="1290" y="196" class="t" style="text-anchor:start;font-size:18px">genesis3</text>
+<text x="1390" y="197" class="m" style="text-anchor:start">서버 · 추론 후보</text>
+<text x="1290" y="222" class="s" style="text-anchor:start">x86 12코어 · RAM 64GB · RTX 2080 Ti</text>
+<text x="1844" y="222" class="ip" style="text-anchor:end">155.230.35.215</text>
+<text x="1290" y="242" class="x" style="text-anchor:start">GPU 클럭 모드: fixed · 1500 · 1200 · 900 MHz</text>
+<text x="1290" y="260" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13px">CHILL</text>
+<rect x="1290.0" y="272" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="1426.0" y="291.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="1572.0" y="272" width="272.0" height="36" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="1708.0" y="291.0" class="c" style="text-anchor:middle;fill:#1E3A8A">전력 조절 에이전트</text>
+<rect x="1290.0" y="318" width="272.0" height="36" rx="6" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="1426.0" y="337.0" class="c" style="text-anchor:middle;fill:#166534">추론 Pod 자리</text>
+<text x="1290" y="422" class="lb" style="text-anchor:start;fill:#64748B;font-size:13px">외부</text>
+<rect x="1290.0" y="434" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1426.0" y="453.0" class="c" style="text-anchor:middle;fill:#475569">Ceph 디스크 ×1</text>
+<rect x="1572.0" y="434" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1708.0" y="453.0" class="c" style="text-anchor:middle;fill:#475569">온도 수집기 · EdgeMesh</text>
+<rect x="1290.0" y="480" width="272.0" height="36" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1426.0" y="499.0" class="c" style="text-anchor:middle;fill:#475569">모니터링 화면 서버</text>
+<rect x="1505.0" y="591" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="1515.0" y="598" width="12" height="10" rx="2" fill="#B45309"/><line x1="1518.0" y1="595" x2="1518.0" y2="598" stroke="#B45309" stroke-width="2"/><line x1="1524.0" y1="595" x2="1524.0" y2="598" stroke="#B45309" stroke-width="2"/>
+<text x="1575.0" y="604" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M353.0,615 V643" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<path d="M960.0,615 V643" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<path d="M1567.0,615 V643" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<path d="M1567.0,643 H50" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<rect x="667" y="657" width="1193" height="50" rx="10" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.5"/>
+<text x="683" y="674" class="m" style="text-anchor:start;fill:#92400E;font-size:13px">Rook-Ceph 공유 디스크 (외부) · genesis1·2·3 디스크 5개를 하나로 묶음</text>
+<text x="683" y="694" class="s" style="text-anchor:start">CHILL 디스크: 측정 원본 128Gi · 요청 기록 32Gi · 실험 작업공간 400Gi</text>
+<path d="M494.0,100 V270" fill="none" stroke="#15803D" stroke-width="3.5" marker-end="url(#g)"/>
+<text x="504.0" y="158" class="lb" style="text-anchor:start;fill:#15803D">추론 요청</text>
+<path d="M212.0,100 V270" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="3 4" marker-end="url(#s)"/>
+<text x="222.0" y="158" class="lb" style="text-anchor:start;fill:#475569">확인 · 조작</text>
+<rect x="40" y="760" width="1840" height="58" rx="12" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="70" y="780" class="m" style="text-anchor:start;fill:#5B21B6">장비 IP 대역 155.230.34.x · 155.230.35.x</text>
+<text x="70" y="801" class="s" style="text-anchor:start;fill:#6D28D9">엣지 장비는 KubeEdge(CloudCore ↔ EdgeCore)로 클러스터에 연결</text>
+<text x="680.5" y="780" class="m" style="text-anchor:start;fill:#5B21B6">EdgeMesh: CHILL 서버 → 선택된 장비의 추론 Pod로 요청 전달</text>
+<text x="680.5" y="801" class="s" style="text-anchor:start;fill:#6D28D9">Shelly 플러그: 각 장비의 전력을 Wi-Fi로 Shelly 수신기에 실시간 전송</text>
+<path d="M630.0,290.0 H656.5 V852" fill="none" stroke="#15803D" stroke-width="3.5" marker-end="url(#g)"/>
+<rect x="40" y="838" width="1840" height="430" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="2.5"/>
+<text x="70" y="860" class="lb" style="text-anchor:start;fill:#15803D;font-size:16px">엣지 노드 7대 · KubeEdge(EdgeCore)로 연결</text>
+<rect x="60.0" y="880" width="246" height="350" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="72.0" y="902" class="t" style="text-anchor:start;font-size:17px">jetsono</text>
+<text x="294.0" y="903" class="ip" style="text-anchor:end">155.230.34.203</text>
+<text x="72.0" y="928" class="m" style="text-anchor:start">Jetson AGX Orin</text>
+<text x="72.0" y="950" class="s" style="text-anchor:start">12코어 · GPU · 64GB</text>
+<text x="72.0" y="972" class="x" style="text-anchor:start">전력 모드 4개: MAXN · 15/30/50W</text>
+<text x="72.0" y="991" class="x" style="text-anchor:start;fill:#1D4ED8">현재 MODE_15W</text>
+<rect x="72.0" y="1008" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="183.0" y="1025.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="72.0" y="1050" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="183.0" y="1067.0" class="c" style="text-anchor:middle;fill:#1E3A8A">전력 조절 에이전트</text>
+<rect x="72.0" y="1092" width="222" height="32" rx="6" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="183.0" y="1109.0" class="c" style="text-anchor:middle;fill:#166534">추론 Pod 자리</text>
+<rect x="72.0" y="1134" width="222" height="32" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="183.0" y="1151.0" class="c" style="text-anchor:middle;fill:#475569">EdgeCore · EdgeMesh · 온도</text>
+<rect x="121.0" y="1196" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="131.0" y="1203" width="12" height="10" rx="2" fill="#B45309"/><line x1="134.0" y1="1200" x2="134.0" y2="1203" stroke="#B45309" stroke-width="2"/><line x1="140.0" y1="1200" x2="140.0" y2="1203" stroke="#B45309" stroke-width="2"/>
+<text x="191.0" y="1209" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M183.0,1220 V1252" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<rect x="319.0" y="880" width="246" height="350" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="331.0" y="902" class="t" style="text-anchor:start;font-size:17px">jetsonx</text>
+<text x="553.0" y="903" class="ip" style="text-anchor:end">155.230.34.179</text>
+<text x="331.0" y="928" class="m" style="text-anchor:start">Jetson Xavier NX</text>
+<text x="331.0" y="950" class="s" style="text-anchor:start">6코어 · GPU · 8GB</text>
+<text x="331.0" y="972" class="x" style="text-anchor:start">전력 모드 9개: 10/15/20W × 코어 수</text>
+<text x="331.0" y="991" class="x" style="text-anchor:start;fill:#1D4ED8">현재 MODE_20W_2CORE</text>
+<rect x="331.0" y="1008" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="442.0" y="1025.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="331.0" y="1050" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="442.0" y="1067.0" class="c" style="text-anchor:middle;fill:#1E3A8A">전력 조절 에이전트</text>
+<rect x="331.0" y="1092" width="222" height="32" rx="6" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="442.0" y="1109.0" class="c" style="text-anchor:middle;fill:#166534">추론 Pod 자리</text>
+<rect x="331.0" y="1134" width="222" height="32" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="442.0" y="1151.0" class="c" style="text-anchor:middle;fill:#475569">EdgeCore · EdgeMesh · 온도</text>
+<rect x="380.0" y="1196" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="390.0" y="1203" width="12" height="10" rx="2" fill="#B45309"/><line x1="393.0" y1="1200" x2="393.0" y2="1203" stroke="#B45309" stroke-width="2"/><line x1="399.0" y1="1200" x2="399.0" y2="1203" stroke="#B45309" stroke-width="2"/>
+<text x="450.0" y="1209" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M442.0,1220 V1252" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<rect x="578.0" y="880" width="246" height="350" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="590.0" y="902" class="t" style="text-anchor:start;font-size:17px">orin-nano</text>
+<text x="812.0" y="903" class="ip" style="text-anchor:end">155.230.35.207</text>
+<text x="590.0" y="928" class="m" style="text-anchor:start">Jetson Orin Nano</text>
+<text x="590.0" y="950" class="s" style="text-anchor:start">6코어 · GPU · 8GB</text>
+<text x="590.0" y="972" class="x" style="text-anchor:start">전력 모드 4개: 7/15/25W · MAXN_SUPER</text>
+<text x="590.0" y="991" class="x" style="text-anchor:start;fill:#1D4ED8">현재 15W</text>
+<rect x="590.0" y="1008" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="701.0" y="1025.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="590.0" y="1050" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="701.0" y="1067.0" class="c" style="text-anchor:middle;fill:#1E3A8A">전력 조절 에이전트</text>
+<rect x="590.0" y="1092" width="222" height="32" rx="6" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="701.0" y="1109.0" class="c" style="text-anchor:middle;fill:#94A3B8">서비스 후보 제외</text>
+<rect x="590.0" y="1134" width="222" height="32" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="701.0" y="1151.0" class="c" style="text-anchor:middle;fill:#475569">EdgeCore · EdgeMesh · 온도</text>
+<rect x="639.0" y="1196" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="649.0" y="1203" width="12" height="10" rx="2" fill="#B45309"/><line x1="652.0" y1="1200" x2="652.0" y2="1203" stroke="#B45309" stroke-width="2"/><line x1="658.0" y1="1200" x2="658.0" y2="1203" stroke="#B45309" stroke-width="2"/>
+<text x="709.0" y="1209" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M701.0,1220 V1252" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<rect x="837.0" y="880" width="246" height="350" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="849.0" y="902" class="t" style="text-anchor:start;font-size:17px">jetson-nano</text>
+<text x="1071.0" y="903" class="ip" style="text-anchor:end">155.230.35.199</text>
+<text x="849.0" y="928" class="m" style="text-anchor:start">Jetson Nano</text>
+<text x="849.0" y="950" class="s" style="text-anchor:start">4코어 · GPU · 4GB</text>
+<text x="849.0" y="972" class="x" style="text-anchor:start">전력 모드 2개: MAXN · 5W</text>
+<text x="849.0" y="991" class="x" style="text-anchor:start;fill:#1D4ED8">현재 MAXN</text>
+<rect x="849.0" y="1008" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="960.0" y="1025.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="849.0" y="1050" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="960.0" y="1067.0" class="c" style="text-anchor:middle;fill:#1E3A8A">전력 조절 에이전트</text>
+<rect x="849.0" y="1092" width="222" height="32" rx="6" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="960.0" y="1109.0" class="c" style="text-anchor:middle;fill:#166534">추론 Pod 자리</text>
+<rect x="849.0" y="1134" width="222" height="32" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="960.0" y="1151.0" class="c" style="text-anchor:middle;fill:#475569">EdgeCore · EdgeMesh · 온도</text>
+<rect x="898.0" y="1196" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="908.0" y="1203" width="12" height="10" rx="2" fill="#B45309"/><line x1="911.0" y1="1200" x2="911.0" y2="1203" stroke="#B45309" stroke-width="2"/><line x1="917.0" y1="1200" x2="917.0" y2="1203" stroke="#B45309" stroke-width="2"/>
+<text x="968.0" y="1209" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M960.0,1220 V1252" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<rect x="1096.0" y="880" width="246" height="350" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="1108.0" y="902" class="t" style="text-anchor:start;font-size:17px">orangepi</text>
+<text x="1330.0" y="903" class="ip" style="text-anchor:end">155.230.34.143</text>
+<text x="1108.0" y="928" class="m" style="text-anchor:start">Orange Pi 5 Plus</text>
+<text x="1108.0" y="950" class="s" style="text-anchor:start">8코어 · RK3588 NPU · 16GB</text>
+<text x="1108.0" y="972" class="x" style="text-anchor:start">전력 모드 고정</text>
+<rect x="1108.0" y="1008" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="1219.0" y="1025.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="1108.0" y="1050" width="222" height="32" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1219.0" y="1067" class="c" style="text-anchor:middle;fill:#94A3B8">전력 조절 없음 (고정)</text>
+<rect x="1108.0" y="1092" width="222" height="32" rx="6" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="1219.0" y="1109.0" class="c" style="text-anchor:middle;fill:#166534">추론 Pod 자리</text>
+<rect x="1108.0" y="1134" width="222" height="32" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1219.0" y="1151.0" class="c" style="text-anchor:middle;fill:#475569">EdgeCore · EdgeMesh · 온도</text>
+<rect x="1157.0" y="1196" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="1167.0" y="1203" width="12" height="10" rx="2" fill="#B45309"/><line x1="1170.0" y1="1200" x2="1170.0" y2="1203" stroke="#B45309" stroke-width="2"/><line x1="1176.0" y1="1200" x2="1176.0" y2="1203" stroke="#B45309" stroke-width="2"/>
+<text x="1227.0" y="1209" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M1219.0,1220 V1252" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<rect x="1355.0" y="880" width="246" height="350" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="1367.0" y="902" class="t" style="text-anchor:start;font-size:17px">lattepanda</text>
+<text x="1589.0" y="903" class="ip" style="text-anchor:end">155.230.34.144</text>
+<text x="1367.0" y="928" class="m" style="text-anchor:start">LattePanda 3 Delta</text>
+<text x="1367.0" y="950" class="s" style="text-anchor:start">x86 4코어 · CPU · 8GB</text>
+<text x="1367.0" y="972" class="x" style="text-anchor:start">전력 모드 고정</text>
+<rect x="1367.0" y="1008" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="1478.0" y="1025.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="1367.0" y="1050" width="222" height="32" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1478.0" y="1067" class="c" style="text-anchor:middle;fill:#94A3B8">전력 조절 없음 (고정)</text>
+<rect x="1367.0" y="1092" width="222" height="32" rx="6" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="1478.0" y="1109.0" class="c" style="text-anchor:middle;fill:#166534">추론 Pod 자리</text>
+<rect x="1367.0" y="1134" width="222" height="32" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1478.0" y="1151.0" class="c" style="text-anchor:middle;fill:#475569">EdgeCore · EdgeMesh · 온도</text>
+<rect x="1416.0" y="1196" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="1426.0" y="1203" width="12" height="10" rx="2" fill="#B45309"/><line x1="1429.0" y1="1200" x2="1429.0" y2="1203" stroke="#B45309" stroke-width="2"/><line x1="1435.0" y1="1200" x2="1435.0" y2="1203" stroke="#B45309" stroke-width="2"/>
+<text x="1486.0" y="1209" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M1478.0,1220 V1252" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<rect x="1614.0" y="880" width="246" height="350" rx="12" fill="#fff" stroke="#334155" stroke-width="2"/>
+<text x="1626.0" y="902" class="t" style="text-anchor:start;font-size:17px">rasp5</text>
+<text x="1848.0" y="903" class="ip" style="text-anchor:end">155.230.34.243</text>
+<text x="1626.0" y="928" class="m" style="text-anchor:start">Raspberry Pi 5</text>
+<text x="1626.0" y="950" class="s" style="text-anchor:start">4코어 · CPU · 8GB</text>
+<text x="1626.0" y="972" class="x" style="text-anchor:start">전력 모드 고정</text>
+<rect x="1626.0" y="1008" width="222" height="32" rx="6" fill="#DBEAFE" stroke="#2563EB" stroke-width="1.5"/>
+<text x="1737.0" y="1025.0" class="c" style="text-anchor:middle;fill:#1E3A8A">장비 정보 에이전트</text>
+<rect x="1626.0" y="1050" width="222" height="32" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1737.0" y="1067" class="c" style="text-anchor:middle;fill:#94A3B8">전력 조절 없음 (고정)</text>
+<rect x="1626.0" y="1092" width="222" height="32" rx="6" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="1737.0" y="1109.0" class="c" style="text-anchor:middle;fill:#166534">추론 Pod 자리</text>
+<rect x="1626.0" y="1134" width="222" height="32" rx="6" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="1737.0" y="1151.0" class="c" style="text-anchor:middle;fill:#475569">EdgeCore · EdgeMesh · 온도</text>
+<rect x="1675.0" y="1196" width="124" height="24" rx="12" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<rect x="1685.0" y="1203" width="12" height="10" rx="2" fill="#B45309"/><line x1="1688.0" y1="1200" x2="1688.0" y2="1203" stroke="#B45309" stroke-width="2"/><line x1="1694.0" y1="1200" x2="1694.0" y2="1203" stroke="#B45309" stroke-width="2"/>
+<text x="1745.0" y="1209" class="c" style="text-anchor:middle;fill:#92400E">Shelly 플러그</text>
+<path d="M1737.0,1220 V1252" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5"/>
+<path d="M1737.0,1252 H50 V452.0 H74.0" fill="none" stroke="#C2410C" stroke-width="2.5" stroke-dasharray="7 5" marker-end="url(#o)"/>
+<text x="70" y="1252" class="s" style="text-anchor:start"></text>
+<text x="1860" y="1288" class="x" style="text-anchor:end;fill:#64748B">2026-11-03 실제 클러스터 기준 · 실행 중 추론 Pod 없음(자리만 표시) · 서비스 후보 제외: 스케줄러 설정 기준</text>
+<rect x="24" y="132" width="1872" height="1170" rx="20" fill="none" stroke="#7C3AED" stroke-width="3" stroke-dasharray="10 6"/><text x="44" y="1288" class="lb" style="text-anchor:start;fill:#5B21B6;font-size:17px">Kubernetes 클러스터 1개 · 노드 10대 (v1.31 제어부 + KubeEdge v1.18)</text></svg>

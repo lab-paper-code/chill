@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="40" class="h" style="text-anchor:start;fill:#0F172A;font-size:24px">스케줄러 ③-B 후보 만들기 (2): 선택지마다 무엇을 계산하고, 장비끼리 어떻게 묶나</text>
+<rect x="1500" y="10" width="360" height="64" rx="6" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<rect x="1508" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1548.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">① 얼마나</text>
+<rect x="1595" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1635.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">② 후보</text>
+<rect x="1682" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1722.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">③ 채점</text>
+<rect x="1769" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1809.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">④ 탐색</text>
+<text x="1490" y="43" class="s" style="text-anchor:end;font-size:13px">그림 ③에서 이 부분</text>
+<rect x="60" y="100" width="1800" height="330" rx="14" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+<text x="80" y="130" class="h" style="text-anchor:start;fill:#7C3AED">선택지 하나를 실제로 실행하면: 바꾸는 순서 (예: jetsono를 MODE_15W → MAXN, 이미지 분류 GPU Pod로 교체)</text>
+<rect x="100" y="166" width="380" height="72" rx="10" fill="#fff" stroke="#475569" stroke-width="2"/>
+<circle cx="122" cy="188" r="12" fill="#475569"/>
+<text x="122" y="189" class="n" style="text-anchor:middle">1</text>
+<text x="290.0" y="192" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">요청 멈추기 · 처리 완료 대기</text>
+<text x="290.0" y="216" class="s" style="text-anchor:middle;font-size:13px">처리 중인 요청을 마무리한 뒤 전력 변경</text>
+<path d="M480,202 H524" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="526" y="166" width="380" height="72" rx="10" fill="#fff" stroke="#B45309" stroke-width="2"/>
+<circle cx="548" cy="188" r="12" fill="#B45309"/>
+<text x="548" y="189" class="n" style="text-anchor:middle">2</text>
+<text x="716.0" y="192" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">전력 모드 변경</text>
+<text x="716.0" y="216" class="s" style="text-anchor:middle;font-size:13px">MODE_15W → MAXN</text>
+<path d="M906,202 H950" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="952" y="166" width="380" height="72" rx="10" fill="#fff" stroke="#1D4ED8" stroke-width="2"/>
+<circle cx="974" cy="188" r="12" fill="#1D4ED8"/>
+<text x="974" y="189" class="n" style="text-anchor:middle">3</text>
+<text x="1142.0" y="192" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">기존 Pod 정리 · 새 Pod 준비</text>
+<text x="1142.0" y="216" class="s" style="text-anchor:middle;font-size:13px">기존 Pod 제거 후 모델을 올려 준비 완료</text>
+<path d="M1332,202 H1376" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="1378" y="166" width="380" height="72" rx="10" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<circle cx="1400" cy="188" r="12" fill="#15803D"/>
+<text x="1400" y="189" class="n" style="text-anchor:middle">4</text>
+<text x="1568.0" y="192" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:16px">요청 분배 전환</text>
+<text x="1568.0" y="216" class="s" style="text-anchor:middle;font-size:13px">새 Pod로 요청을 보냄</text>
+<path d="M100,294 H1758" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+<text x="100" y="316" class="lb" style="text-anchor:start;fill:#475569;font-size:13px">지금</text>
+<text x="1758" y="316" class="lb" style="text-anchor:end;fill:#475569;font-size:13px">10분 (비교 기간)</text>
+<path d="M1127.96,280 V308" fill="none" stroke="#15803D" stroke-width="3"/>
+<text x="1127.96" y="268" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">분배 전환 시점</text>
+<rect x="100" y="334" width="1027.96" height="30" rx="6" fill="#FEF3C7" stroke="#B45309" stroke-width="1.5"/>
+<text x="613.98" y="349" class="lb" style="text-anchor:middle;fill:#B45309;font-size:13px">바꾸는 중 (①~④): 시간 · 에너지 = 단계별 실측 비용</text>
+<rect x="1127.96" y="334" width="630.04" height="30" rx="6" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1442.98" y="349" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">바꾼 뒤: 새 배치로 운영</text>
+
+<rect x="60" y="470" width="860" height="570" rx="14" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="80" y="500" class="h" style="text-anchor:start;fill:#7C3AED">선택지마다 미리 계산해 붙여 두는 값</text>
+<rect x="80" y="536" width="820" height="80" rx="10" fill="#fff" stroke="#1D4ED8" stroke-width="1.5"/>
+<text x="100" y="564" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">처리 한도</text>
+<text x="100" y="592" class="s" style="text-anchor:start;font-size:13px">새 Pod가 감당하는 초당 건수</text>
+<rect x="670" y="562" width="210" height="28" rx="14" fill="#fff" stroke="#1D4ED8" stroke-width="1.2"/>
+<text x="775" y="577" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:12px">1단계 처리 한도표에서</text>
+<rect x="80" y="628" width="820" height="80" rx="10" fill="#fff" stroke="#B45309" stroke-width="1.5"/>
+<text x="100" y="656" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">바꾸는 데 걸리는 시간</text>
+<text x="100" y="684" class="s" style="text-anchor:start;font-size:13px">단계별 실측 최대시간을 합침</text>
+<rect x="670" y="654" width="210" height="28" rx="14" fill="#fff" stroke="#B45309" stroke-width="1.2"/>
+<text x="775" y="669" class="lb" style="text-anchor:middle;fill:#B45309;font-size:12px">약속 검사 B에서 사용</text>
+<rect x="80" y="720" width="820" height="80" rx="10" fill="#fff" stroke="#B45309" stroke-width="1.5"/>
+<text x="100" y="748" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">바꾸는 동안 남는 처리 한도</text>
+<text x="100" y="776" class="s" style="text-anchor:start;font-size:13px">그동안 계속 요청을 받는 기존 Pod</text>
+<rect x="670" y="746" width="210" height="28" rx="14" fill="#fff" stroke="#B45309" stroke-width="1.2"/>
+<text x="775" y="761" class="lb" style="text-anchor:middle;fill:#B45309;font-size:12px">약속 검사 B에서 사용</text>
+<rect x="80" y="812" width="820" height="80" rx="10" fill="#fff" stroke="#15803D" stroke-width="1.5"/>
+<text x="100" y="840" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">장비 전력 (전 · 중 · 후)</text>
+<text x="100" y="868" class="s" style="text-anchor:start;font-size:13px">상태별 실측 기반 대기 전력</text>
+<rect x="670" y="838" width="210" height="28" rx="14" fill="#fff" stroke="#15803D" stroke-width="1.2"/>
+<text x="775" y="853" class="lb" style="text-anchor:middle;fill:#15803D;font-size:12px">에너지 비교에서 사용</text>
+<rect x="80" y="904" width="820" height="80" rx="10" fill="#fff" stroke="#15803D" stroke-width="1.5"/>
+<text x="100" y="932" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">바꾸는 작업 에너지</text>
+<text x="100" y="960" class="s" style="text-anchor:start;font-size:13px">전력 변경 · 준비 · 정리의 평균 실측 비용</text>
+<rect x="670" y="930" width="210" height="28" rx="14" fill="#fff" stroke="#15803D" stroke-width="1.2"/>
+<text x="775" y="945" class="lb" style="text-anchor:middle;fill:#15803D;font-size:12px">에너지 비교에서 사용</text>
+
+<rect x="960" y="470" width="900" height="570" rx="14" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+<text x="980" y="500" class="h" style="text-anchor:start;fill:#7C3AED">장비끼리 묶기: 장비마다 선택지 하나씩 고르면 '배치 후보' 하나</text>
+<text x="1000" y="558" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetsono</text>
+<rect x="1140" y="540" width="300" height="36" rx="18" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1290" y="559" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:13px">MAXN · GPU · 이미지</text>
+<text x="1000" y="604" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">jetsonx</text>
+<rect x="1140" y="586" width="300" height="36" rx="18" fill="#F8FAFC" stroke="#475569" stroke-width="1.5"/>
+<text x="1290" y="605" class="lb" style="text-anchor:middle;fill:#475569;font-size:13px">그대로 두기</text>
+<text x="1000" y="650" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">rasp5</text>
+<rect x="1140" y="632" width="300" height="36" rx="18" fill="#FFFBEB" stroke="#B45309" stroke-width="1.5"/>
+<text x="1290" y="651" class="lb" style="text-anchor:middle;fill:#B45309;font-size:13px">비우기</text>
+<text x="1000" y="696" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">genesis3</text>
+<rect x="1140" y="678" width="300" height="36" rx="18" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1290" y="697" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:13px">GPU · 영상 질의응답</text>
+<text x="1000" y="742" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">orangepi</text>
+<rect x="1140" y="724" width="300" height="36" rx="18" fill="#F8FAFC" stroke="#475569" stroke-width="1.5"/>
+<text x="1290" y="743" class="lb" style="text-anchor:middle;fill:#475569;font-size:13px">그대로 두기</text>
+<path d="M1460,558 H1480 V738 H1460" fill="none" stroke="#7C3AED" stroke-width="2"/>
+<path d="M1480,648 H1508" fill="none" stroke="#7C3AED" stroke-width="2.5" marker-end="url(#p)"/>
+<rect x="1510" y="608" width="320" height="80" rx="12" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1670" y="634" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:17px">배치 후보 1개</text>
+<text x="1670" y="662" class="s" style="text-anchor:middle;font-size:13px">→ 약속 검사 · 에너지 비교</text>
+<path d="M980,786 H1840" fill="none" stroke="#E2E8F0" stroke-width="1.5"/>
+<text x="980" y="816" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">초기 실험의 전체 계획 공간 (장비 8대 · 모든 묶음 크기)</text>
+<text x="980" y="870" class="s" style="text-anchor:start;font-size:15px">108 × 113 × 67 × 55 × 47 × 43 × 35 × 24</text>
+<text x="1840" y="870" class="big" style="text-anchor:end;fill:#B91C1C;font-size:30px">약 76조 개</text>
+<text x="980" y="918" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:14px">→ 모두 볼 수 없다. 지금 배치에서 장비 2~3대만 바꾼 후보를 차례로 본다</text>
+<text x="980" y="946" class="s" style="text-anchor:start;font-size:13px">최대 열거 이웃: 2대 약 10만 · 3대 약 1,100만 (시간 한도 전에 모두 볼 수 있다는 뜻은 아님)</text>
+<text x="980" y="980" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:14px">→ ③-C: 후보 하나를 채점하는 식 · ③-D: 장비 2~3대씩 바꿔 가며 찾기</text>
+<text x="1840" y="1066" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">개수는 초기 실험의 전체 열거값 · 현재 적격 후보 수와 다름 · 교체 예시는 설명용</text>
+</svg>

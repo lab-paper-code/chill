@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1040" width="1920" height="1040" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="50" class="h" style="text-anchor:start;fill:#0F172A;font-size:26px">향후 계획</text>
+<text x="60" y="86" class="s" style="text-anchor:start;font-size:16px">근거: 평가 보고서의 후속 과제 및 미해결 문제</text>
+<rect x="60" y="120" width="1800" height="200" rx="18" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="88" y="158" class="h" style="text-anchor:start;fill:#7C3AED;font-size:20px">① 우선 과제 (순서 확정)</text>
+<text x="88" y="184" class="s" style="text-anchor:start;font-size:14px">재실험 전 기반 정비</text>
+<path d="M88,208 H474 L498,252 L474,296 H88 Z" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<circle cx="116" cy="252" r="12" fill="#7C3AED"/>
+<text x="116" y="253" class="n" style="text-anchor:middle">1</text>
+<text x="140" y="246" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">클러스터 설정 정리</text>
+<text x="140" y="272" class="s" style="text-anchor:start;font-size:13.5px">제어 노드 디스크 · 배치 규칙</text>
+<path d="M526,208 H912 L936,252 L912,296 H526 L550,252 Z" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<circle cx="574" cy="252" r="12" fill="#7C3AED"/>
+<text x="574" y="253" class="n" style="text-anchor:middle">2</text>
+<text x="598" y="246" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">미사용 코드 정리</text>
+<text x="598" y="272" class="s" style="text-anchor:start;font-size:13.5px">게이트웨이 분리 잔여 코드 제거</text>
+<path d="M964,208 H1350 L1374,252 L1350,296 H964 L988,252 Z" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<circle cx="1012" cy="252" r="12" fill="#7C3AED"/>
+<text x="1012" y="253" class="n" style="text-anchor:middle">3</text>
+<text x="1036" y="246" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">실험 근거 조회 API</text>
+<text x="1036" y="272" class="s" style="text-anchor:start;font-size:13.5px">결과 공개 형식부터 구현</text>
+<path d="M1402,208 H1788 L1812,252 L1788,296 H1402 L1426,252 Z" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<circle cx="1450" cy="252" r="12" fill="#7C3AED"/>
+<text x="1450" y="253" class="n" style="text-anchor:middle">4</text>
+<text x="1474" y="246" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">대시보드 실시간 표시</text>
+<text x="1474" y="272" class="s" style="text-anchor:start;font-size:13.5px">실행 단계 실시간 표시</text>
+<text x="60" y="370" class="h" style="text-anchor:start;fill:#0F172A;font-size:20px">② 미해결 문제별 후속 실험</text>
+<text x="560" y="370" class="s" style="text-anchor:start;font-size:14px">순서 미정</text>
+<rect x="60" y="394" width="440" height="80" rx="14" fill="#FEF2F2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="84" y="442" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:16px">부하 증가 후반 처리 용량 부족</text>
+<path d="M506,434 H556" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="562" y="394" width="1298" height="80" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="588" y="428" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">빈 장비 대상 이미지 분류 실측 · 대형 묶음 측정 추가</text>
+<text x="588" y="454" class="s" style="text-anchor:start;font-size:13.5px">추가 투입 후보 413개 전부 측정값 부재로 제외됨</text>
+<rect x="1700" y="418" width="140" height="32" rx="16" fill="#fff" stroke="#B45309" stroke-width="1.5"/>
+<text x="1770" y="439" class="lb" style="text-anchor:middle;fill:#B45309;font-size:13px">과제 등록</text>
+<rect x="60" y="494" width="440" height="80" rx="14" fill="#FEF2F2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="84" y="542" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:16px">기능별 기여도 미확인</text>
+<path d="M506,534 H556" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="562" y="494" width="1298" height="80" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="588" y="528" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">수정 버전에서 기능별 비활성화 비교 실험</text>
+<text x="588" y="554" class="s" style="text-anchor:start;font-size:13.5px">묶음 처리 · 전력 조절 등 기여도 분리</text>
+<rect x="1700" y="518" width="140" height="32" rx="16" fill="#fff" stroke="#B45309" stroke-width="1.5"/>
+<text x="1770" y="539" class="lb" style="text-anchor:middle;fill:#B45309;font-size:13px">과제 등록</text>
+<rect x="60" y="594" width="440" height="80" rx="14" fill="#FEF2F2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="84" y="642" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:16px">장애 시 영상 질의응답 시간 초과</text>
+<path d="M506,634 H556" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="562" y="594" width="1298" height="80" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="588" y="628" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">장애 주입 자동화 및 반복 시험</text>
+<text x="588" y="654" class="s" style="text-anchor:start;font-size:13.5px">요청 처리 중인 Pod 대상 자동 주입</text>
+<rect x="1700" y="618" width="140" height="32" rx="16" fill="#fff" stroke="#B45309" stroke-width="1.5"/>
+<text x="1770" y="639" class="lb" style="text-anchor:middle;fill:#B45309;font-size:13px">과제 등록</text>
+<rect x="60" y="694" width="440" height="80" rx="14" fill="#FEF2F2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="84" y="742" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:16px">상시 자동 운영 미검증</text>
+<path d="M506,734 H556" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="562" y="694" width="1298" height="80" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="588" y="728" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">자동 제어 활성 상태 부하 실험</text>
+<text x="588" y="754" class="s" style="text-anchor:start;font-size:13.5px">판단별 탐색 과정 기록 검증 포함</text>
+<rect x="1700" y="718" width="140" height="32" rx="16" fill="#fff" stroke="#1D4ED8" stroke-width="1.5"/>
+<text x="1770" y="739" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:13px">승인 대기</text>
+<rect x="60" y="794" width="440" height="80" rx="14" fill="#FEF2F2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="84" y="842" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:16px">반복 측정 없음</text>
+<path d="M506,834 H556" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#s)"/>
+<rect x="562" y="794" width="1298" height="80" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="588" y="828" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">동일 실험 반복으로 편차 측정</text>
+<text x="588" y="854" class="s" style="text-anchor:start;font-size:13.5px">결과 재현성 확인</text>
+<rect x="1700" y="818" width="140" height="32" rx="16" fill="#fff" stroke="#475569" stroke-width="1.5"/>
+<text x="1770" y="839" class="lb" style="text-anchor:middle;fill:#475569;font-size:13px">일정 미정</text>
+<rect x="60" y="904" width="1800" height="108" rx="16" fill="#F0FDF4" stroke="#15803D" stroke-width="2"/>
+<text x="90" y="966" class="h" style="text-anchor:start;fill:#15803D;font-size:22px">평가 방향</text>
+<text x="210" y="950" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">후속 실험 결과로 응답 시간 목표 충족 범위와 에너지 절감 일관성 재판정</text>
+<text x="210" y="984" class="s" style="text-anchor:start;fill:#334155;font-size:16px">현재 결과만으로 에너지 절감 또는 응답 시간 보장을 주장하지 않음</text>
+</svg>

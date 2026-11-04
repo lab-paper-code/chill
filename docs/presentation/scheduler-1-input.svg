@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="44" class="h" style="text-anchor:start;fill:#0F172A;font-size:24px">스케줄러 ① 입력: 10초마다 클러스터의 '사진 한 장'을 찍는다</text>
+<text x="60" y="78" class="s" style="text-anchor:start;font-size:15px">실제 기록: 2026-10-31 00:29:19 판단 시점 (그림 ④ Before와 같은 순간)</text>
+<path d="M80,126 H1840" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#s)"/>
+<circle cx="160" cy="126" r="6" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="160" y="154" class="s" style="text-anchor:middle;fill:#64748B;font-size:12px">00:28:49</text>
+<circle cx="460" cy="126" r="6" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="460" y="154" class="s" style="text-anchor:middle;fill:#64748B;font-size:12px">00:28:59</text>
+<circle cx="760" cy="126" r="6" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="760" y="154" class="s" style="text-anchor:middle;fill:#64748B;font-size:12px">00:29:09</text>
+<circle cx="1060" cy="126" r="11" fill="#7C3AED" stroke="#7C3AED" stroke-width="2"/>
+<text x="1060" y="154" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:14px">00:29:19</text>
+<circle cx="1360" cy="126" r="6" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="1360" y="154" class="s" style="text-anchor:middle;fill:#64748B;font-size:12px">00:29:29</text>
+<circle cx="1660" cy="126" r="6" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="1660" y="154" class="s" style="text-anchor:middle;fill:#64748B;font-size:12px">00:29:39</text>
+<text x="1840" y="112" class="s" style="text-anchor:end;font-size:13px">10초마다 한 장 · 측정 결과와 비용은 1분마다 새로 읽음</text>
+<path d="M1060,166 V184" fill="none" stroke="#7C3AED" stroke-width="3" marker-end="url(#p)"/>
+<rect x="60" y="186" width="1430" height="860" rx="18" fill="#fff" stroke="#7C3AED" stroke-width="3"/>
+<rect x="60" y="186" width="1430" height="48" rx="18" fill="#EDE9FE" stroke="#7C3AED" stroke-width="3"/>
+<rect x="63" y="216" width="1424" height="18" rx="0" fill="#EDE9FE" stroke="#EDE9FE" stroke-width="0"/>
+<text x="84" y="216" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:18px">판단 시점 스냅샷 · 00:29:19</text>
+<text x="1466" y="217" class="s" style="text-anchor:end;font-size:13px">모은 뒤 고정 · 판단하는 동안 바뀌지 않음</text>
+<rect x="84" y="254" width="440" height="250" rx="12" fill="#fff" stroke="#B91C1C" stroke-width="2"/>
+<rect x="98" y="266" width="76" height="24" rx="12" fill="#fff" stroke="#B91C1C" stroke-width="1.2"/>
+<text x="136.0" y="279" class="tag" style="text-anchor:middle;fill:#B91C1C">지킬 것</text>
+<text x="188" y="280" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">응답 시간 약속</text>
+<rect x="316" y="266" width="194" height="24" rx="12" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1"/>
+<text x="413.0" y="279" class="s" style="text-anchor:middle;fill:#475569;font-size:12px">Kubernetes API</text>
+<rect x="104" y="310" width="400" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="120" y="334" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:15px">이미지 분류</text>
+<text x="488" y="334" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">95%가 1초 안</text>
+<rect x="104" y="370" width="400" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="120" y="394" class="lb" style="text-anchor:start;fill:#C2410C;font-size:15px">PLC 이상탐지</text>
+<text x="488" y="394" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">95%가 36ms 안</text>
+<rect x="104" y="430" width="400" height="46" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="120" y="454" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">영상 질의응답</text>
+<text x="488" y="454" class="lb" style="text-anchor:end;fill:#0F172A;font-size:15px">95%가 7.0초 안</text>
+<rect x="544" y="254" width="920" height="250" rx="12" fill="#fff" stroke="#1D4ED8" stroke-width="2"/>
+<rect x="558" y="266" width="90" height="24" rx="12" fill="#fff" stroke="#1D4ED8" stroke-width="1.2"/>
+<text x="603.0" y="279" class="tag" style="text-anchor:middle;fill:#1D4ED8">지금 상황</text>
+<text x="662" y="280" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">현재 요청량</text>
+<rect x="1208" y="266" width="242" height="24" rx="12" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1"/>
+<text x="1329.0" y="279" class="s" style="text-anchor:middle;fill:#475569;font-size:12px">요청 기록 디스크 · 서버 메모리</text>
+<text x="704" y="322" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">PLC 이상탐지</text>
+<rect x="720" y="308" width="497.77777777777777" height="26" rx="4" fill="#fff" stroke="#C2410C" stroke-width="2"/>
+<text x="1227.7777777777778" y="322" class="lb" style="text-anchor:start;fill:#C2410C;font-size:14px">초당 40건</text>
+<text x="704" y="366" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">이미지 분류</text>
+<rect x="720" y="352" width="390.1333333333333" height="26" rx="4" fill="#fff" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1120.1333333333332" y="366" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:14px">초당 31.35건</text>
+<text x="704" y="410" class="lb" style="text-anchor:end;fill:#0F172A;font-size:14px">영상 질의응답</text>
+<rect x="720" y="396" width="4" height="26" rx="4" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="734" y="410" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:14px">초당 0.3건</text>
+<text x="564" y="474" class="s" style="text-anchor:start;font-size:13px">최근 도착률 (최근 60초 · 10초 중 큰 값)</text>
+<text x="1444" y="474" class="lb" style="text-anchor:end;fill:#B45309;font-size:14px">지금 밀려 있는 요청: 2건</text>
+<rect x="84" y="524" width="1380" height="270" rx="12" fill="#fff" stroke="#1D4ED8" stroke-width="2"/>
+<rect x="98" y="536" width="90" height="24" rx="12" fill="#fff" stroke="#1D4ED8" stroke-width="1.2"/>
+<text x="143.0" y="549" class="tag" style="text-anchor:middle;fill:#1D4ED8">지금 상황</text>
+<text x="202" y="550" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">현재 상태: 장비 9대 · 실행 Pod 6개</text>
+<rect x="1196" y="536" width="254" height="24" rx="12" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1"/>
+<text x="1323.0" y="549" class="s" style="text-anchor:middle;fill:#475569;font-size:12px">Kubernetes API · 서버</text>
+<rect x="104" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="114" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">jetsono</text>
+<text x="114" y="620" class="s" style="text-anchor:start;font-size:12px">15W</text>
+<rect x="112" y="634" width="124" height="72" rx="8" fill="#FFEDD5" stroke="#C2410C" stroke-width="1.8"/>
+<text x="174" y="660" class="lb" style="text-anchor:middle;fill:#C2410C;font-size:12px">추론 Pod</text>
+<text x="174" y="682" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:12px">PLC 이상탐지</text>
+<text x="114" y="730" class="s" style="text-anchor:start;fill:#0F172A;font-size:12px">분배 6.7%</text>
+
+<rect x="252" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="262" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">jetsonx</text>
+<text x="262" y="620" class="s" style="text-anchor:start;font-size:12px">20W 2코어</text>
+<rect x="260" y="634" width="124" height="72" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="322" y="674" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:12px">비어 있음</text>
+
+<rect x="400" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="410" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">jetson-nano</text>
+<text x="410" y="620" class="s" style="text-anchor:start;font-size:12px">MAXN</text>
+<rect x="408" y="634" width="124" height="72" rx="8" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="1.8"/>
+<text x="470" y="660" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:12px">추론 Pod</text>
+<text x="470" y="682" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:12px">이미지 분류</text>
+<text x="410" y="730" class="s" style="text-anchor:start;fill:#0F172A;font-size:12px">분배 26.5%</text>
+
+<rect x="548" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="558" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">rasp5</text>
+<text x="558" y="620" class="s" style="text-anchor:start;font-size:12px">고정</text>
+<rect x="556" y="634" width="124" height="72" rx="8" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="1.8"/>
+<text x="618" y="660" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:12px">추론 Pod</text>
+<text x="618" y="682" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:12px">이미지 분류</text>
+<text x="558" y="730" class="s" style="text-anchor:start;fill:#0F172A;font-size:12px">분배 33.4%</text>
+
+<rect x="696" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="706" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">lattepanda</text>
+<text x="706" y="620" class="s" style="text-anchor:start;font-size:12px">고정</text>
+<rect x="704" y="634" width="124" height="72" rx="8" fill="#FFEDD5" stroke="#C2410C" stroke-width="1.8"/>
+<text x="766" y="660" class="lb" style="text-anchor:middle;fill:#C2410C;font-size:12px">추론 Pod</text>
+<text x="766" y="682" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:12px">PLC 이상탐지</text>
+<text x="706" y="730" class="s" style="text-anchor:start;fill:#0F172A;font-size:12px">분배 93.3%</text>
+
+<rect x="844" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="854" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">orangepi</text>
+<text x="854" y="620" class="s" style="text-anchor:start;font-size:12px">고정</text>
+<rect x="852" y="634" width="124" height="72" rx="8" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="1.8"/>
+<text x="914" y="660" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:12px">추론 Pod</text>
+<text x="914" y="682" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:12px">이미지 분류</text>
+<text x="854" y="730" class="s" style="text-anchor:start;fill:#0F172A;font-size:12px">분배 40.1%</text>
+
+<rect x="992" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1002" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">genesis3</text>
+<text x="1002" y="620" class="s" style="text-anchor:start;font-size:12px">고정</text>
+<rect x="1000" y="634" width="124" height="72" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.8"/>
+<text x="1062" y="660" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:12px">추론 Pod</text>
+<text x="1062" y="682" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:12px">영상 질의응답</text>
+<text x="1002" y="730" class="s" style="text-anchor:start;fill:#0F172A;font-size:12px">분배 100%</text>
+
+<rect x="1140" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1150" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">genesis2</text>
+<text x="1150" y="620" class="s" style="text-anchor:start;font-size:12px">고정</text>
+<rect x="1148" y="634" width="124" height="72" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1210" y="674" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:12px">비어 있음</text>
+
+<rect x="1288" y="578" width="140" height="196" rx="10" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1298" y="600" class="lb" style="text-anchor:start;fill:#0F172A;font-size:13px">orin-nano</text>
+<text x="1298" y="620" class="s" style="text-anchor:start;font-size:12px">7W</text>
+<rect x="1296" y="634" width="124" height="72" rx="8" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1358" y="674" class="s" style="text-anchor:middle;fill:#94A3B8;font-size:12px">비어 있음</text>
+
+<rect x="84" y="814" width="680" height="210" rx="12" fill="#fff" stroke="#B45309" stroke-width="2"/>
+<rect x="98" y="826" width="62" height="24" rx="12" fill="#fff" stroke="#B45309" stroke-width="1.2"/>
+<text x="129.0" y="839" class="tag" style="text-anchor:middle;fill:#B45309">측정값</text>
+<text x="174" y="840" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">측정 결과</text>
+<rect x="616" y="826" width="134" height="24" rx="12" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1"/>
+<text x="683.0" y="839" class="s" style="text-anchor:middle;fill:#475569;font-size:12px">측정 결과 저장소</text>
+<rect x="104" y="874" width="640" height="44" rx="8" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+<text x="120" y="897" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">실행 조합 (장비 · 전력 모드 · 실행 방식)</text>
+<text x="728" y="897" class="lb" style="text-anchor:end;fill:#B45309;font-size:16px">78개</text>
+<rect x="104" y="932" width="640" height="44" rx="8" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+<text x="120" y="955" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">요청 사이 점유 시간</text>
+<text x="728" y="955" class="lb" style="text-anchor:end;fill:#B45309;font-size:16px">45개</text>
+<text x="104" y="1002" class="s" style="text-anchor:start;font-size:13px">각 조합의 실행 시간 · 전력 → 그림 ② 처리 한도표의 재료</text>
+<rect x="784" y="814" width="680" height="210" rx="12" fill="#fff" stroke="#B45309" stroke-width="2"/>
+<rect x="798" y="826" width="62" height="24" rx="12" fill="#fff" stroke="#B45309" stroke-width="1.2"/>
+<text x="829.0" y="839" class="tag" style="text-anchor:middle;fill:#B45309">측정값</text>
+<text x="874" y="840" class="lb" style="text-anchor:start;fill:#0F172A;font-size:17px">바꾸는 비용</text>
+<rect x="1316" y="826" width="134" height="24" rx="12" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1"/>
+<text x="1383.0" y="839" class="s" style="text-anchor:middle;fill:#475569;font-size:12px">측정 결과 저장소</text>
+<rect x="804" y="874" width="640" height="44" rx="8" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+<text x="820" y="897" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">준비 · 정리 · 전력 변경 측정</text>
+<text x="1428" y="897" class="lb" style="text-anchor:end;fill:#B45309;font-size:16px">172개</text>
+<rect x="804" y="932" width="640" height="44" rx="8" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+<text x="820" y="955" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">상태별 대기 전력 측정</text>
+<text x="1428" y="955" class="lb" style="text-anchor:end;fill:#B45309;font-size:16px">86개</text>
+<text x="804" y="1002" class="s" style="text-anchor:start;font-size:13px">바꾸는 데 걸리는 시간 · 에너지 → 그림 ③ 채점의 재료</text>
+<rect x="1520" y="186" width="340" height="330" rx="14" fill="#F8FAFC" stroke="#64748B" stroke-width="1.8"/>
+<text x="1540" y="218" class="h" style="text-anchor:start;fill:#475569;font-size:17px">규칙 숫자</text>
+<rect x="1710" y="204" width="130" height="24" rx="12" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="1"/>
+<text x="1775" y="217" class="s" style="text-anchor:middle;font-size:12px">스케줄러 설정</text>
+<text x="1540" y="262" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">판단 주기</text>
+<text x="1840" y="262" class="lb" style="text-anchor:end;fill:#475569;font-size:15px">10초</text>
+<path d="M1540,290 H1840" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1540" y="320" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">요청량 관측 기간</text>
+<text x="1840" y="320" class="lb" style="text-anchor:end;fill:#475569;font-size:15px">60초</text>
+<path d="M1540,348 H1840" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1540" y="378" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">에너지 비교 기간</text>
+<text x="1840" y="378" class="lb" style="text-anchor:end;fill:#475569;font-size:15px">10분</text>
+<path d="M1540,406 H1840" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1540" y="436" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">제외 장비</text>
+<text x="1840" y="436" class="lb" style="text-anchor:end;fill:#475569;font-size:15px">목록으로 지정</text>
+<rect x="1520" y="546" width="340" height="500" rx="14" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="1540" y="578" class="h" style="text-anchor:start;fill:#7C3AED;font-size:17px">이 한 장이 쓰이는 곳</text>
+<rect x="1540" y="616" width="300" height="100" rx="12" fill="#fff" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1690" y="656" class="lb" style="text-anchor:middle;fill:#1D4ED8;font-size:18px">② 처리 한도표</text>
+<text x="1690" y="686" class="s" style="text-anchor:middle;font-size:13px">약속 + 측정 결과</text>
+<path d="M1690,718 V744" fill="none" stroke="#7C3AED" stroke-width="2.5" marker-end="url(#p)"/>
+<rect x="1540" y="746" width="300" height="100" rx="12" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<text x="1690" y="786" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:18px">③ 판단</text>
+<text x="1690" y="816" class="s" style="text-anchor:middle;font-size:13px">사진 한 장 전부 + 처리 한도표</text>
+<path d="M1690,848 V874" fill="none" stroke="#7C3AED" stroke-width="2.5" marker-end="url(#p)"/>
+<rect x="1540" y="876" width="300" height="100" rx="12" fill="#fff" stroke="#15803D" stroke-width="2"/>
+<text x="1690" y="916" class="lb" style="text-anchor:middle;fill:#15803D;font-size:18px">④ 실행 결과</text>
+<text x="1690" y="946" class="s" style="text-anchor:middle;font-size:13px">다음 사진에 다시 찍힘</text>
+<text x="1840" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">모든 값은 실제 판단 기록 · 약속 값은 실험에 등록된 서비스 정의</text>
+</svg>

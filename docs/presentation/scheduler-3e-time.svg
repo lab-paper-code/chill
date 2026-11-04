@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="40" class="h" style="text-anchor:start;fill:#0F172A;font-size:24px">스케줄러 ③-E 탐색: 얼마나 걸리나</text>
+<rect x="1500" y="10" width="360" height="64" rx="6" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<rect x="1508" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1548.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">① 얼마나</text>
+<rect x="1595" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1635.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">② 후보</text>
+<rect x="1682" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1722.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">③ 채점</text>
+<rect x="1769" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1809.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">④ 탐색</text>
+<text x="1490" y="43" class="s" style="text-anchor:end;font-size:13px">그림 ③에서 이 부분</text>
+<rect x="60" y="96" width="820" height="560" rx="14" fill="#F5F3FF" stroke="#7C3AED" stroke-width="2"/>
+<text x="80" y="126" class="h" style="text-anchor:start;fill:#7C3AED">계산량: 무엇에 비례하나</text>
+<text x="84" y="170" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">장비 N대 · P는 장비당 현재 선택 외 적격 대안 수</text>
+<rect x="80" y="200" width="780" height="92" rx="10" fill="#fff" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="100" y="226" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">한 걸음 (2대까지)</text>
+<text x="100" y="256" class="t" style="text-anchor:start;font-size:18px">N × P  +  N(N−1)/2 × P²</text>
+<text x="840" y="272" class="s" style="text-anchor:end;font-size:13px">장비 쌍 수 × 선택지²</text>
+<rect x="80" y="304" width="780" height="92" rx="10" fill="#fff" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="100" y="330" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">넓히는 걸음 (3대까지)</text>
+<text x="100" y="360" class="t" style="text-anchor:start;font-size:18px">… + N(N−1)(N−2)/6 × P³</text>
+<text x="840" y="376" class="s" style="text-anchor:end;font-size:13px">장비 세 쌍 수 × 선택지³</text>
+<rect x="80" y="408" width="780" height="92" rx="10" fill="#fff" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="100" y="434" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">대략적인 전체 시간 추정</text>
+<text x="100" y="464" class="t" style="text-anchor:start;font-size:18px">걸음 수 × 한 걸음 이웃 수 × 평가 1개 시간</text>
+<text x="840" y="480" class="s" style="text-anchor:end;font-size:13px">걸음 수는 상황과 시간 한도에 따라 다름</text>
+<text x="84" y="532" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">오프라인 약 3µs/평가: 일꾼 3개 평균 처리율 환산</text>
+<text x="84" y="562" class="lb" style="text-anchor:start;fill:#15803D;font-size:15px">요청을 하나씩 재생하지 않고 합계로 계산</text>
+<text x="84" y="592" class="s" style="text-anchor:start;font-size:14px">이웃 수는 장비·선택지 수에 좌우 · 한 번 훑는 이웃 수는 다항식</text>
+<rect x="920" y="96" width="940" height="560" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="940" y="126" class="h" style="text-anchor:start">오프라인 측정 (서비스 3개 · 일꾼 3개 · 제한 없이 실행)</text>
+<text x="944" y="162" class="lb" style="text-anchor:start;fill:#475569;font-size:13px">조건 (선택지 합)</text>
+<text x="1210" y="162" class="lb" style="text-anchor:start;fill:#475569;font-size:13px">시간 · 평가 횟수</text>
+<text x="944" y="196" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">장비 5대 · 묶음 1</text>
+<text x="944" y="216" class="s" style="text-anchor:start;font-size:12px">선택지 합 25</text>
+<rect x="1210" y="186" width="4" height="22" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1224" y="197" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">10ms · 4,426개</text>
+<text x="944" y="254" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">장비 5대 · 묶음 2</text>
+<text x="944" y="274" class="s" style="text-anchor:start;font-size:12px">선택지 합 45</text>
+<rect x="1210" y="244" width="4.2" height="22" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1224.2" y="255" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">60ms · 25,944개</text>
+<text x="944" y="312" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">장비 8대 · 묶음 1 · 모드 2</text>
+<text x="944" y="332" class="s" style="text-anchor:start;font-size:12px">선택지 합 54</text>
+<rect x="1210" y="302" width="15.049999999999999" height="22" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1235.05" y="313" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">215ms · 71,135개</text>
+<text x="944" y="370" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">장비 8대 · 묶음 1 · 모드 4</text>
+<text x="944" y="390" class="s" style="text-anchor:start;font-size:12px">선택지 합 80</text>
+<rect x="1210" y="360" width="46.760000000000005" height="22" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1266.76" y="371" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">668ms · 218,981개</text>
+<text x="944" y="428" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">장비 8대 · 묶음 2 · 모드 1</text>
+<text x="944" y="448" class="s" style="text-anchor:start;font-size:12px">선택지 합 74</text>
+<rect x="1210" y="418" width="50.12" height="22" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1270.12" y="429" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">716ms · 207,960개</text>
+<text x="944" y="486" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">장비 8대 · 묶음 2 · 모드 2</text>
+<text x="944" y="506" class="s" style="text-anchor:start;font-size:12px">선택지 합 100</text>
+<rect x="1210" y="476" width="105.0" height="22" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1325.0" y="487" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">1.50초 · 514,944개</text>
+<text x="944" y="544" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">장비 8대 · 묶음 2 · 모드 4</text>
+<text x="944" y="564" class="s" style="text-anchor:start;font-size:12px">선택지 합 152</text>
+<text x="1210" y="544" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:13px">제한 없이 5.50초 · 1,628,880회</text>
+<text x="1210" y="578" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">5초 제한 시 약 5초 · 1,533,768회</text>
+<text x="1210" y="610" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">이 사례에서는 고른 배치·에너지 동일</text>
+<rect x="60" y="696" width="700" height="340" rx="14" fill="#FEF2F2" stroke="#B91C1C" stroke-width="1.8"/>
+<text x="80" y="726" class="h" style="text-anchor:start;fill:#B91C1C">시간 한도: 판단 주기 10초의 절반 = 5초</text>
+<circle cx="86" cy="774" r="2.8" fill="#B91C1C"/>
+<text x="98" y="774" class="s" style="text-anchor:start;fill:#0F172A;font-size:15px">판단이 다음 주기를 밀어내지 않도록 탐색 시간을 묶어 둔다</text>
+<circle cx="86" cy="814" r="2.8" fill="#B91C1C"/>
+<text x="98" y="814" class="s" style="text-anchor:start;fill:#0F172A;font-size:15px">한도에 닿으면 그때까지 찾은 최선을 쓴다</text>
+<circle cx="86" cy="854" r="2.8" fill="#B91C1C"/>
+<text x="98" y="854" class="s" style="text-anchor:start;fill:#0F172A;font-size:15px">5초는 새 평가를 멈추는 기준: 약간 넘을 수 있다</text>
+<circle cx="86" cy="894" r="2.8" fill="#B91C1C"/>
+<text x="98" y="894" class="s" style="text-anchor:start;fill:#0F172A;font-size:15px">끊긴 판단은 '탐색 중단'으로 기록된다</text>
+<text x="98" y="940" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:15px">실제 기록에서 최대 약 5.01초</text>
+<rect x="800" y="696" width="1060" height="340" rx="14" fill="#fff" stroke="#15803D" stroke-width="2.2"/>
+<text x="824" y="730" class="h" style="text-anchor:start;fill:#15803D">확인된 실제 판단 한 건 · 2026-10-29</text>
+<text x="824" y="774" class="lb" style="text-anchor:start;fill:#475569;font-size:16px">장비 9대 · 서비스 3개</text>
+<rect x="824" y="802" width="480" height="104" rx="12" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5"/>
+<text x="1064" y="834" class="s" style="text-anchor:middle;font-size:16px">탐색 시간</text>
+<text x="1064" y="874" class="big" style="text-anchor:middle;fill:#15803D">2.77초</text>
+<rect x="1324" y="802" width="510" height="104" rx="12" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1579" y="834" class="s" style="text-anchor:middle;font-size:16px">평가 횟수</text>
+<text x="1579" y="874" class="big" style="text-anchor:middle;fill:#7C3AED">269,708회</text>
+<text x="824" y="954" class="lb" style="text-anchor:start;fill:#15803D;font-size:16px">이 판단은 5초 한도에 닿지 않고 탐색을 마쳤다</text>
+<text x="824" y="996" class="s" style="text-anchor:start;font-size:14px">단일 기록의 예시이며, 전체 판단의 시간 분포를 뜻하지 않음</text>
+<text x="1840" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">오프라인: 같은 탐색을 단독으로 실행 · 실제 클러스터: 2026-10-29 판단 1건의 탐색 기록</text>
+</svg>

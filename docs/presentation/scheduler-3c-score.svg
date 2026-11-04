@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="40" class="h" style="text-anchor:start;fill:#0F172A;font-size:24px">스케줄러 ③-C 채점: 후보 하나를 어떻게 채점하고 줄 세우나</text>
+<rect x="1500" y="10" width="360" height="64" rx="6" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<rect x="1508" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1548.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">① 얼마나</text>
+<rect x="1595" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1635.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">② 후보</text>
+<rect x="1682" y="18" width="81" height="48" rx="4" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2.5"/>
+<text x="1722.5" y="43" class="tag" style="text-anchor:middle;fill:#7C3AED;font-size:12px">③ 채점</text>
+<rect x="1769" y="18" width="81" height="48" rx="4" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1809.5" y="43" class="tag" style="text-anchor:middle;fill:#CBD5E1;font-size:12px">④ 탐색</text>
+<text x="1490" y="43" class="s" style="text-anchor:end;font-size:13px">그림 ③에서 이 부분</text>
+<rect x="60" y="96" width="580" height="560" rx="14" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<circle cx="88" cy="126" r="12" fill="#7C3AED"/>
+<text x="88" y="127" class="n" style="text-anchor:middle">A</text>
+<text x="110" y="127" class="h" style="text-anchor:start;fill:#7C3AED">바꾼 뒤: 감당할 수 있나</text>
+<rect x="80" y="156" width="540" height="96" rx="10" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="350.0" y="192" class="t" style="text-anchor:middle;font-size:22px">처리 한도 합  ≥  필요 처리량</text>
+<text x="350.0" y="228" class="s" style="text-anchor:middle;font-size:13px">서비스마다 · 새 배치에서 그 서비스를 맡은 Pod 한도를 더함</text>
+<text x="84" y="286" class="lb" style="text-anchor:start;fill:#475569;font-size:14px">실제 판단 (그림 ③-F)</text>
+<text x="84" y="326" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">PLC 이상탐지</text>
+<circle cx="600" cy="326" r="12" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="600" y="327" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">✓</text>
+<rect x="84" y="342" width="495.2380952380951" height="26" rx="4" fill="#BBF7D0" stroke="#15803D" stroke-width="1.4"/>
+<path d="M224.69264069264065,336 V374" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="84" y="386" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">필요 40  ≤  한도 140.8 건/초</text>
+<text x="84" y="422" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">이미지 분류</text>
+<circle cx="600" cy="422" r="12" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="600" y="423" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">✓</text>
+<rect x="84" y="438" width="495.2380952380952" height="26" rx="4" fill="#BBF7D0" stroke="#15803D" stroke-width="1.4"/>
+<path d="M460.6069165308709,432 V470" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="84" y="482" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">필요 20  ≤  한도 26.3 건/초</text>
+<text x="84" y="518" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">영상 질의응답</text>
+<circle cx="600" cy="518" r="12" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="600" y="519" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">✓</text>
+<rect x="84" y="534" width="495.2380952380952" height="26" rx="4" fill="#BBF7D0" stroke="#15803D" stroke-width="1.4"/>
+<path d="M485.54440154440147,528 V566" fill="none" stroke="#B91C1C" stroke-width="3"/>
+<text x="84" y="578" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">필요 0.3  ≤  한도 0.37 건/초</text>
+<text x="84" y="636" class="lb" style="text-anchor:start;fill:#B91C1C;font-size:13px">하나라도 모자라면 이 후보는 약속 위반</text>
+<rect x="670" y="96" width="580" height="560" rx="14" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<circle cx="698" cy="126" r="12" fill="#7C3AED"/>
+<text x="698" y="127" class="n" style="text-anchor:middle">B</text>
+<text x="720" y="127" class="h" style="text-anchor:start;fill:#7C3AED">바꾸는 동안: 밀린 요청을 제때 처리하나</text>
+<rect x="690" y="162" width="540" height="62" rx="10" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.2"/>
+<circle cx="714" cy="193" r="12" fill="#7C3AED"/>
+<text x="714" y="194" class="n" style="text-anchor:middle">1</text>
+<text x="736" y="184" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">밀린 요청</text>
+<text x="736" y="208" class="s" style="text-anchor:start;fill:#0F172A;font-size:12px">지금 밀린 요청 + (필요량 − 남는 한도, 음수면 0) × 바꾸는 시간</text>
+<rect x="690" y="234" width="540" height="62" rx="10" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.2"/>
+<circle cx="714" cy="265" r="12" fill="#7C3AED"/>
+<text x="714" y="266" class="n" style="text-anchor:middle">2</text>
+<text x="736" y="256" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">기다리는 시간</text>
+<text x="736" y="280" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">밀린 요청 ÷ 새 배치의 처리 한도</text>
+<rect x="690" y="306" width="540" height="62" rx="10" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.2"/>
+<circle cx="714" cy="337" r="12" fill="#7C3AED"/>
+<text x="714" y="338" class="n" style="text-anchor:middle">3</text>
+<text x="736" y="328" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:15px">통과 조건</text>
+<text x="736" y="352" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">기다리는 시간 ≤ 약속 시간 − 서버·네트워크 몫</text>
+<text x="694" y="396" class="lb" style="text-anchor:start;fill:#475569;font-size:13px">예: 요청이 초당 40건으로 늘었을 때 (약속 1초 → 허용 대기 0.82초)</text>
+<text x="694" y="422" class="s" style="text-anchor:start;font-size:13px">지금 한도 34.3 → 바꾸는 동안 초당 5.7건씩 밀림</text>
+<rect x="690" y="456" width="540" height="76" rx="10" fill="#FEF2F2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="710" y="478" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">후보 X · 준비 20.2초</text>
+<circle cx="1206" cy="494" r="12" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="1206" y="495" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:14px">✗</text>
+<text x="710" y="508" class="s" style="text-anchor:start;fill:#B91C1C;font-size:14px">밀린 요청 5.7 × 20.2 = 115건   →   대기 115 ÷ 69.2 = 1.67초</text>
+<rect x="690" y="546" width="540" height="76" rx="10" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5"/>
+<text x="710" y="568" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">후보 Y · 준비 10.7초</text>
+<circle cx="1206" cy="584" r="12" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1206" y="585" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">✓</text>
+<text x="710" y="598" class="s" style="text-anchor:start;fill:#15803D;font-size:14px">밀린 요청 5.7 × 10.7 = 61건   →   대기 61 ÷ 144 = 0.42초</text>
+<text x="694" y="636" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">준비가 길수록 더 많이 쌓인다 → 빨리 준비되는 후보가 유리</text>
+<rect x="1280" y="96" width="580" height="560" rx="14" fill="#fff" stroke="#7C3AED" stroke-width="2"/>
+<circle cx="1308" cy="126" r="12" fill="#7C3AED"/>
+<text x="1308" y="127" class="n" style="text-anchor:middle">E</text>
+<text x="1330" y="127" class="h" style="text-anchor:start;fill:#7C3AED">에너지: 앞으로 10분 동안 몇 J을 쓰나</text>
+<rect x="1300" y="156" width="540" height="96" rx="10" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.5"/>
+<text x="1570.0" y="192" class="t" style="text-anchor:middle;font-size:20px">전체 = 장비 에너지 + 요청 처리 에너지</text>
+<text x="1570" y="228" class="s" style="text-anchor:middle;font-size:13px">실측 비용으로 계산한 예상 에너지</text>
+<text x="1304" y="286" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">장비 에너지 (장비마다)</text>
+<text x="1304" y="318" class="s" style="text-anchor:start;font-size:13px">그대로 두면</text>
+<rect x="1304" y="330" width="532" height="30" rx="4" fill="#E2E8F0" stroke="#475569" stroke-width="1.2"/>
+<text x="1570.0" y="346" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">지금 전력 × 10분</text>
+<text x="1304" y="386" class="s" style="text-anchor:start;font-size:13px">바꾸면</text>
+<rect x="1304" y="398" width="117.04" height="30" rx="4" fill="#FEF3C7" stroke="#B45309" stroke-width="1.2"/>
+<rect x="1421.04" y="398" width="159.6" height="30" rx="4" fill="#FFEDD5" stroke="#B45309" stroke-width="1.2"/>
+<rect x="1580.6399999999999" y="398" width="255.35999999999999" height="30" rx="4" fill="#DCFCE7" stroke="#15803D" stroke-width="1.2"/>
+<text x="1362.52" y="446" class="s" style="text-anchor:middle;fill:#B45309;font-size:12px">바꾸는 작업 J</text>
+<text x="1500.84" y="466" class="s" style="text-anchor:middle;fill:#B45309;font-size:12px">바꾸는 중 전력×시간</text>
+<text x="1708.32" y="446" class="s" style="text-anchor:middle;fill:#15803D;font-size:12px">바꾼 뒤 전력 × 남은 시간</text>
+<text x="1304" y="506" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">요청 처리 에너지</text>
+<rect x="1304" y="520" width="532" height="46" rx="8" fill="#F5F3FF" stroke="#7C3AED" stroke-width="1.2"/>
+<text x="1570.0" y="544" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:14px">처리할 요청 수 × 그 Pod의 요청 1건당 에너지</text>
+<text x="1304" y="636" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13px">바꾸는 비용이 크면 절약분이 상쇄된다</text>
+<rect x="60" y="690" width="1800" height="360" rx="14" fill="#fff" stroke="#C4B5FD" stroke-width="1.5"/>
+<text x="80" y="720" class="h" style="text-anchor:start;fill:#7C3AED">A·B를 통과한 후보끼리는 에너지 최소, 같으면 지금 배치</text>
+<rect x="80" y="760" width="520" height="62" rx="10" fill="#fff" stroke="#15803D" stroke-width="1.8"/>
+<circle cx="110" cy="791" r="12" fill="#15803D"/>
+<text x="110" y="792" class="n" style="text-anchor:middle">1</text>
+<text x="136" y="792" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">A · B를 모두 통과한 후보가 먼저</text>
+<path d="M340,824 V844" fill="none" stroke="#7C3AED" stroke-width="2" marker-end="url(#p)"/>
+<rect x="80" y="846" width="520" height="62" rx="10" fill="#fff" stroke="#7C3AED" stroke-width="1.8"/>
+<circle cx="110" cy="877" r="12" fill="#7C3AED"/>
+<text x="110" y="878" class="n" style="text-anchor:middle">2</text>
+<text x="136" y="878" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">그중 10분 에너지가 적은 순</text>
+<path d="M340,910 V930" fill="none" stroke="#7C3AED" stroke-width="2" marker-end="url(#p)"/>
+<rect x="80" y="932" width="520" height="62" rx="10" fill="#fff" stroke="#475569" stroke-width="1.8"/>
+<circle cx="110" cy="963" r="12" fill="#475569"/>
+<text x="110" y="964" class="n" style="text-anchor:middle">3</text>
+<text x="136" y="964" class="lb" style="text-anchor:start;fill:#0F172A;font-size:16px">에너지가 같으면 지금 배치</text>
+<text x="660" y="760" class="lb" style="text-anchor:start;fill:#475569;font-size:14px">예: 초당 40건 상황의 후보 3개</text>
+<text x="660" y="796" class="lb" style="text-anchor:start;fill:#475569;font-size:14px">후보</text>
+<text x="1080" y="796" class="lb" style="text-anchor:start;fill:#475569;font-size:14px">A</text>
+<text x="1180" y="796" class="lb" style="text-anchor:start;fill:#475569;font-size:14px">B</text>
+<text x="1300" y="796" class="lb" style="text-anchor:start;fill:#475569;font-size:14px">비교 범위</text>
+<text x="1600" y="796" class="lb" style="text-anchor:start;fill:#475569;font-size:14px">결과</text>
+<path d="M660,812 H1820" fill="none" stroke="#E2E8F0" stroke-width="1.5"/>
+<rect x="648" y="826" width="1180" height="48" rx="8" fill="#F0FDF4" stroke="#15803D" stroke-width="1.5"/>
+<text x="660" y="850" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">서버 CPU 실행 추가 (후보 Y)</text>
+<circle cx="1090" cy="850" r="12" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1090" y="851" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">✓</text>
+<circle cx="1190" cy="850" r="12" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1190" y="851" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">✓</text>
+<text x="1300" y="850" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">약속 충족 후보</text>
+<rect x="1600" y="836" width="120" height="28" rx="14" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1660" y="851" class="lb" style="text-anchor:middle;fill:#15803D;font-size:13px">1위 · 선택</text>
+<text x="660" y="906" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">저전력 실행 추가 (후보 X)</text>
+<circle cx="1090" cy="906" r="12" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1090" y="907" class="lb" style="text-anchor:middle;fill:#15803D;font-size:14px">✓</text>
+<circle cx="1190" cy="906" r="12" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="1190" y="907" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:14px">✗</text>
+<text x="1300" y="906" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">약속 미충족</text>
+<rect x="1600" y="892" width="120" height="28" rx="14" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="1660" y="907" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:13px">약속 위반</text>
+<text x="660" y="962" class="lb" style="text-anchor:start;fill:#0F172A;font-size:15px">그대로 두기</text>
+<circle cx="1090" cy="962" r="12" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="1090" y="963" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:14px">✗</text>
+<text x="1190" y="962" class="s" style="text-anchor:middle;font-size:14px">—</text>
+<text x="1300" y="962" class="s" style="text-anchor:start;fill:#0F172A;font-size:14px">—</text>
+<rect x="1600" y="948" width="120" height="28" rx="14" fill="#FEE2E2" stroke="#B91C1C" stroke-width="1.5"/>
+<text x="1660" y="963" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:13px">약속 위반</text>
+<text x="660" y="1024" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:14px">에너지가 가장 적어도 약속을 어기면 뽑히지 않는다 → 약속이 먼저, 절약은 그다음</text>
+<text x="1840" y="1068" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">A: 실제 판단 · B·줄 세우기: 초기 실험 기록에 초당 40건 가상 부하를 넣은 오프라인 계산</text>
+</svg>

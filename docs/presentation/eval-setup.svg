@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" font-family="NanumSquare, 'Noto Sans CJK KR', sans-serif"><defs>
+<marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker>
+<marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1D4ED8"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#15803D"/></marker>
+<marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#7C3AED"/></marker>
+<marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#B45309"/></marker>
+<style>.t{font-size:18px;font-weight:800;fill:#0F172A;dominant-baseline:middle}
+.s{font-size:14px;fill:#475569;dominant-baseline:middle}
+.h{font-size:17px;font-weight:800;fill:#334155;dominant-baseline:middle}
+.n{font-size:13px;font-weight:800;fill:#fff;text-anchor:middle;dominant-baseline:middle}
+.lb{font-size:14px;font-weight:800;dominant-baseline:middle}
+.tag{font-size:12px;font-weight:800;dominant-baseline:middle}
+.big{font-size:30px;font-weight:800;dominant-baseline:middle}</style></defs>
+<text x="60" y="50" class="h" style="text-anchor:start;fill:#0F172A;font-size:26px">평가 방식: 무엇을, 어떤 부하로, 어떻게 판정했나</text>
+<text x="60" y="86" class="s" style="text-anchor:start;font-size:16px">실제 클러스터 · 7개 시나리오를 순서대로 실행 · 같은 요청을 기준선(고정 배치)에도 재생해 비교</text>
+<rect x="60" y="110" width="1800" height="370" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="84" y="142" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">① 시나리오 순서와 부하 크기 (α = 최대 처리량 대비 비율)</text>
+<path d="M190,390.0 H1830" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="180" y="394.0" class="s" style="text-anchor:end;font-size:12px">0</text>
+<path d="M190,346.2 H1830" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="180" y="350.15384615384613" class="s" style="text-anchor:end;font-size:12px">0.3</text>
+<path d="M190,302.3 H1830" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="180" y="306.3076923076923" class="s" style="text-anchor:end;font-size:12px">0.6</text>
+<path d="M190,258.5 H1830" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="180" y="262.46153846153845" class="s" style="text-anchor:end;font-size:12px">0.9</text>
+<path d="M190,214.6 H1830" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="180" y="218.6153846153846" class="s" style="text-anchor:end;font-size:12px">1.2</text>
+<text x="180" y="186" class="lb" style="text-anchor:end;fill:#334155;font-size:13px">α</text>
+<text x="232.05128205128204" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">시작</text>
+<text x="232.05128205128204" y="188" class="s" style="text-anchor:middle;font-size:11.5px">10분</text>
+<path d="M274.1,192 V390" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="400.2564102564103" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">일정 부하</text>
+<text x="400.2564102564103" y="188" class="s" style="text-anchor:middle;font-size:11.5px">30분</text>
+<path d="M526.4,192 V390" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="589.4871794871794" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">버스트</text>
+<text x="589.4871794871794" y="188" class="s" style="text-anchor:middle;font-size:11.5px">15분</text>
+<path d="M652.6,192 V390" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="778.7179487179487" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">점진 증가</text>
+<text x="778.7179487179487" y="188" class="s" style="text-anchor:middle;font-size:11.5px">30분</text>
+<path d="M904.9,192 V390" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="967.948717948718" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">한계 초과</text>
+<text x="967.948717948718" y="188" class="s" style="text-anchor:middle;font-size:11.5px">15분</text>
+<path d="M1031.0,192 V390" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1115.1282051282053" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">급감 · 재급증</text>
+<text x="1115.1282051282053" y="188" class="s" style="text-anchor:middle;font-size:11.5px">20분</text>
+<path d="M1199.2,192 V390" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1451.5384615384617" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">1시간 지속</text>
+<text x="1451.5384615384617" y="188" class="s" style="text-anchor:middle;font-size:11.5px">60분</text>
+<path d="M1703.8,192 V390" fill="none" stroke="#E2E8F0" stroke-width="1"/>
+<text x="1766.923076923077" y="170" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13.5px">장애 주입</text>
+<text x="1766.923076923077" y="188" class="s" style="text-anchor:middle;font-size:11.5px">15분</text>
+<path d="M190,390 V390.0 H274.1 V346.2 H526.4 V346.2 H652.6 V316.9 H736.7 V287.7 H820.8 V258.5 H904.9 V214.6 H1031.0 V346.2 H1115.1 V258.5 H1199.2 V346.2 H1703.8 V346.2 H1830.0 V390 Z" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2.5"/>
+<path d="M526.4,346.2 V258.5 H652.6 V346.2" fill="none" stroke="#7C3AED" stroke-width="3"/>
+<text x="589.4871794871794" y="246.46153846153845" class="lb" style="text-anchor:middle;fill:#7C3AED;font-size:12px">영상만 0.9</text>
+<text x="400.2564102564102" y="364.15384615384613" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.3</text>
+<text x="589.4871794871794" y="364.15384615384613" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.3</text>
+<text x="694.6153846153845" y="334.9230769230769" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.5</text>
+<text x="778.7179487179487" y="305.6923076923077" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.7</text>
+<text x="862.8205128205128" y="276.46153846153845" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.9</text>
+<text x="967.948717948718" y="232.6153846153846" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">1.2</text>
+<text x="1073.0769230769233" y="364.15384615384613" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.3</text>
+<text x="1157.1794871794873" y="276.46153846153845" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.9</text>
+<text x="1451.5384615384614" y="364.15384615384613" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.3</text>
+<text x="1766.923076923077" y="364.15384615384613" class="lb" style="text-anchor:middle;fill:#1E3A8A;font-size:12.5px">0.3</text>
+<text x="232.05128205128204" y="376" class="s" style="text-anchor:middle;font-size:11px">무부하</text>
+<path d="M1729.1,344.2 V265.8" fill="none" stroke="#B91C1C" stroke-width="2"/>
+<circle cx="1729.1" cy="265.8" r="4" fill="#B91C1C"/>
+<path d="M1754.3,344.2 V265.8" fill="none" stroke="#B91C1C" stroke-width="2"/>
+<circle cx="1754.3" cy="265.8" r="4" fill="#B91C1C"/>
+<path d="M1787.9,344.2 V265.8" fill="none" stroke="#B91C1C" stroke-width="2"/>
+<circle cx="1787.9" cy="265.8" r="4" fill="#B91C1C"/>
+<text x="1766.923076923077" y="236.53846153846155" class="lb" style="text-anchor:middle;fill:#B91C1C;font-size:11px">Pod 삭제 → 장비 격리 → 해제</text>
+<rect x="1360" y="128" width="22" height="14" rx="3" fill="#DBEAFE" stroke="#1D4ED8" stroke-width="2"/>
+<text x="1390" y="136" class="s" style="text-anchor:start;fill:#0F172A;font-size:12.5px">세 서비스 공통</text>
+<path d="M1510,135 H1536" fill="none" stroke="#7C3AED" stroke-width="3"/>
+<text x="1544" y="136" class="s" style="text-anchor:start;fill:#0F172A;font-size:12.5px">영상 질의응답</text>
+<path d="M1660,127 V143" fill="none" stroke="#B91C1C" stroke-width="2"/>
+<text x="1670" y="136" class="s" style="text-anchor:start;fill:#0F172A;font-size:12.5px">장애 주입 시점</text>
+<rect x="274.1025641025641" y="410" width="1429.7435897435898" height="40" rx="8" fill="#F1F5F9" stroke="#475569" stroke-width="1.5"/>
+<text x="988.9743589743589" y="431" class="lb" style="text-anchor:middle;fill:#334155;font-size:13px">기준선: 같은 6개 시나리오(170분)를 고정 배치로 다시 재생 · 같은 요청 · 같은 시각</text>
+<text x="180" y="431" class="lb" style="text-anchor:end;fill:#334155;font-size:13px">비교용</text>
+<rect x="60" y="500" width="580" height="540" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="84" y="536" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">② 실험 환경</text>
+<rect x="670" y="500" width="580" height="540" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="694" y="536" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">③ 서비스와 부하 크기</text>
+<rect x="1280" y="500" width="580" height="540" rx="16" fill="#fff" stroke="#CBD5E1" stroke-width="1.5"/>
+<text x="1304" y="536" class="h" style="text-anchor:start;fill:#0F172A;font-size:18px">④ 측정과 판정</text>
+<text x="84" y="570" class="lb" style="text-anchor:start;fill:#334155;font-size:14px">추론 장비 7대 · 장비당 추론 Pod 최대 1개</text>
+<rect x="84" y="592" width="532" height="32" rx="8" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+<text x="100" y="609" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">genesis3</text>
+<text x="230" y="609" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">x86 서버 · RTX 2080 Ti</text>
+<rect x="84" y="632" width="532" height="32" rx="8" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+<text x="100" y="649" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">jetsono</text>
+<text x="230" y="649" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">Jetson AGX Orin</text>
+<rect x="84" y="672" width="532" height="32" rx="8" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+<text x="100" y="689" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">jetsonx</text>
+<text x="230" y="689" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">Jetson Xavier NX</text>
+<rect x="84" y="712" width="532" height="32" rx="8" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+<text x="100" y="729" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">jetson-nano</text>
+<text x="230" y="729" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">Jetson Nano</text>
+<rect x="84" y="752" width="532" height="32" rx="8" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+<text x="100" y="769" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">orangepi</text>
+<text x="230" y="769" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">Orange Pi 5 Plus · RK3588</text>
+<rect x="84" y="792" width="532" height="32" rx="8" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+<text x="100" y="809" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">lattepanda</text>
+<text x="230" y="809" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">LattePanda 3 Delta</text>
+<rect x="84" y="832" width="532" height="32" rx="8" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+<text x="100" y="849" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">rasp5</text>
+<text x="230" y="849" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">Raspberry Pi 5</text>
+<text x="84" y="884" class="lb" style="text-anchor:start;fill:#334155;font-size:14px">추론에서 제외</text>
+<text x="100" y="912" class="s" style="text-anchor:start;font-size:13px">· genesis1: CHILL 서버 · 입구 전용</text>
+<text x="100" y="936" class="s" style="text-anchor:start;font-size:13px">· genesis2: GPU 오류(Xid 79) 반복</text>
+<text x="100" y="960" class="s" style="text-anchor:start;font-size:13px">· orin-nano: 실험 대상 외</text>
+<path d="M84,988 H616" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="84" y="1014" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">전력: 장비마다 콘센트 전력계(Shelly)로 측정</text>
+<text x="694" y="570" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:15px">요청률 = α × 몫 × 최대 처리량 R</text>
+<rect x="686" y="590" width="548" height="34" rx="6" fill="#F1F5F9" stroke="none" stroke-width="0"/>
+<text x="698" y="608" class="lb" style="text-anchor:start;fill:#334155;font-size:12.5px">서비스</text>
+<text x="824" y="608" class="lb" style="text-anchor:start;fill:#334155;font-size:12.5px">목표 (95%)</text>
+<text x="946" y="608" class="lb" style="text-anchor:start;fill:#334155;font-size:12.5px">R (건/초)</text>
+<text x="1054" y="608" class="lb" style="text-anchor:start;fill:#334155;font-size:12.5px">몫</text>
+<text x="1120" y="608" class="lb" style="text-anchor:start;fill:#334155;font-size:12.5px">α 0.3일 때</text>
+<text x="698" y="654" class="lb" style="text-anchor:start;fill:#1D4ED8;font-size:13.5px">이미지 분류</text>
+<text x="824" y="654" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">1,000ms</text>
+<text x="946" y="654" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">235.9</text>
+<text x="1054" y="654" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">45%</text>
+<text x="1120" y="654" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">31.8건/초</text>
+<path d="M686,676 H1234" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="698" y="698" class="lb" style="text-anchor:start;fill:#B45309;font-size:13.5px">PLC 이상탐지</text>
+<text x="824" y="698" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">36ms</text>
+<text x="946" y="698" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">387.4</text>
+<text x="1054" y="698" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">10%</text>
+<text x="1120" y="698" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">11.6건/초</text>
+<path d="M686,720 H1234" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="698" y="742" class="lb" style="text-anchor:start;fill:#7C3AED;font-size:13.5px">영상 질의응답</text>
+<text x="824" y="742" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">7,034ms</text>
+<text x="946" y="742" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">1.29</text>
+<text x="1054" y="742" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">45%</text>
+<text x="1120" y="742" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">0.17건/초</text>
+<text x="694" y="780" class="s" style="text-anchor:start;fill:#0F172A;font-size:13px">R: 장비 7대를 그 서비스에만 쓸 때의 처리 한도 합</text>
+<text x="694" y="804" class="s" style="text-anchor:start;font-size:13px">세 서비스의 R을 동시에 낼 수 있다는 뜻은 아님</text>
+<path d="M694,826 H1226" fill="none" stroke="#F1F5F9" stroke-width="1"/>
+<text x="694" y="856" class="lb" style="text-anchor:start;fill:#334155;font-size:14px">요청 내용</text>
+<text x="710" y="884" class="s" style="text-anchor:start;font-size:13px">· 이미지 분류: 이미지 1장</text>
+<text x="710" y="908" class="s" style="text-anchor:start;font-size:13px">· PLC 이상탐지: 압출기 센서 구간 데이터</text>
+<text x="710" y="932" class="s" style="text-anchor:start;font-size:13px">· 영상 질의응답: VQAv2 질문 · 이미지</text>
+<text x="694" y="970" class="s" style="text-anchor:start;fill:#1D4ED8;font-size:13px">예: 일정 부하 30분 이미지 분류 요청 57,495건</text>
+<path d="M1320,592 H1820" fill="none" stroke="#94A3B8" stroke-width="2"/>
+<circle cx="1320" cy="592" r="6" fill="#fff" stroke="#475569" stroke-width="2"/>
+<text x="1320" y="574" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">예정</text>
+<circle cx="1470" cy="592" r="6" fill="#fff" stroke="#475569" stroke-width="2"/>
+<text x="1470" y="574" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">송신</text>
+<circle cx="1610" cy="592" r="6" fill="#fff" stroke="#475569" stroke-width="2"/>
+<text x="1610" y="574" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">수신</text>
+<circle cx="1820" cy="592" r="6" fill="#fff" stroke="#475569" stroke-width="2"/>
+<text x="1820" y="574" class="lb" style="text-anchor:middle;fill:#0F172A;font-size:13px">응답</text>
+<rect x="1610" y="586" width="210" height="12" rx="6" fill="#DCFCE7" stroke="#15803D" stroke-width="1.5"/>
+<text x="1395.0" y="616" class="s" style="text-anchor:middle;font-size:12px">생성기 지연</text>
+<text x="1540.0" y="616" class="s" style="text-anchor:middle;font-size:12px">입구 지연</text>
+<text x="1715.0" y="616" class="lb" style="text-anchor:middle;fill:#15803D;font-size:12.5px">응답 시간 (판정)</text>
+<rect x="1304" y="650" width="532" height="80" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<rect x="1304" y="650" width="6" height="80" rx="3" fill="#15803D" stroke="none" stroke-width="0"/>
+<text x="1324" y="674" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">부하 생성</text>
+<text x="1324" y="698" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">응답을 기다리지 않고 예정 시각에 송신</text>
+<text x="1324" y="718" class="s" style="text-anchor:start;font-size:12.5px">무작위(Poisson) 도착 · 고정 seed로 기준선과 동일</text>
+<rect x="1304" y="742" width="532" height="80" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<rect x="1304" y="742" width="6" height="80" rx="3" fill="#15803D" stroke="none" stroke-width="0"/>
+<text x="1324" y="766" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">응답 시간 충족</text>
+<text x="1324" y="790" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">계획 요청 중 목표 시간 안 성공 ≥ 95%</text>
+<text x="1324" y="810" class="s" style="text-anchor:start;font-size:12.5px">실패 · 거절 · 미완료도 분모에 포함</text>
+<rect x="1304" y="834" width="532" height="80" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<rect x="1304" y="834" width="6" height="80" rx="3" fill="#15803D" stroke="none" stroke-width="0"/>
+<text x="1324" y="858" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">에너지</text>
+<text x="1324" y="882" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">장비 7대 전력계 합 · 전환 비용 포함</text>
+<text x="1324" y="902" class="s" style="text-anchor:start;font-size:12.5px">전력 기록 공백이 장비별 1% 넘으면 판정 불가</text>
+<rect x="1304" y="926" width="532" height="80" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+<rect x="1304" y="926" width="6" height="80" rx="3" fill="#475569" stroke="none" stroke-width="0"/>
+<text x="1324" y="950" class="lb" style="text-anchor:start;fill:#0F172A;font-size:14px">실험 유효성</text>
+<text x="1324" y="974" class="s" style="text-anchor:start;fill:#0F172A;font-size:13.5px">50ms 넘게 늦은 송신 ≤ 1%</text>
+<text x="1324" y="994" class="s" style="text-anchor:start;font-size:12.5px">넘으면 실험 무효 (서버 실패로 세지 않음)</text>
+<text x="1860" y="1066" class="s" style="text-anchor:end;fill:#64748B;font-size:12px">시나리오별 1회 실행 · 고정 seed 1세트 · 근거: 실험 결과 보고서 (2026-10-30)</text>
+</svg>
