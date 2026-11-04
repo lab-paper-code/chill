@@ -381,7 +381,8 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 					result: &servingstate.OperationResult{Operation: servingstate.Operation{ID: action.ID, Kind: servingstate.OperationPrepare, Node: ref, Instance: wanted.ID,
 						WorkloadUIDs: []string{"workload"}, Target: target,
 						Prepare: &servingstate.PrepareSpec{Instance: wanted, Config: native.Config{Policy: policy}, Owner: &serving.WorkloadReference{UID: "workload"}}},
-						Status: action.Status, EndedAt: ended}}
+						Status: action.Status, EndedAt: ended,
+						Preparation: &servingstate.PreparationEvidence{PodUID: string(uid), NodeUID: ref.UID, DecisionID: target.ID, Created: true}}}
 				if i == 2 {
 					child.result.Error = timeoutOutcome
 				}

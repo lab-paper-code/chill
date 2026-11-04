@@ -30,8 +30,10 @@ func (c *reservationState) unconfirmedActionReason(action serving.Action, target
 			if !slices.Contains(uids, wanted.WorkloadUID) || target.Routing[wanted.WorkloadUID][wanted.ID] <= 0 {
 				continue
 			}
+			// Other unknown occupants exclude physical work, not a confirmed
+			// destination's route policy. The node itself must still be Ready.
 			for _, node := range c.state.Snapshot.Nodes {
-				if node.Node == wanted.Node && (!node.Ready || slices.Contains(node.Reasons, serving.NodeInstanceUnavailable)) {
+				if node.Node == wanted.Node && !node.Ready {
 					return fmt.Sprintf("%s: action %s node %s instance %s", serving.NodeInstanceUnavailable, action.ID, node.Node.UID, wanted.ID)
 				}
 			}

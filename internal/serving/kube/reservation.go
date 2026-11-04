@@ -416,10 +416,13 @@ func (c *reservationState) ownerNodeReturned(run *actionRun, ref serving.NodeRef
 		if member.result == nil {
 			return false
 		}
-		// Without a frozen API identity, a lost prepare response is not absence.
+		// Scope Pods include preexisting occupants. Only this prepare's own
+		// admitted Pod identity or API creation evidence closes a lost Create.
 		operation := member.result.Operation
+		creation := member.result.Preparation
+		creationKnown := operation.PodUID != "" || creation != nil && creation.PodUID != "" && creation.NodeUID == ref.UID
 		if (operation.Kind == servingstate.OperationPrepare || operation.Kind == servingstate.OperationResize) &&
-			operation.Node == ref && operation.PodUID == "" && len(member.scope.Pods) == 0 && !member.result.EffectsNotStarted {
+			operation.Node == ref && !creationKnown && !member.result.EffectsNotStarted {
 			return false
 		}
 		for _, pod := range pods {
