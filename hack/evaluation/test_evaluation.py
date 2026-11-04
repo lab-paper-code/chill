@@ -504,8 +504,9 @@ class EvaluationTests(unittest.TestCase):
                     self.assertEqual(no_load['requests'][name]['substages'][0]['D1'], 'INVALID_NO_LOAD')
                 clients[NAME][0]['workloadUID'] = 'wrong-workload'
                 (root / (NAME + '-client.jsonl')).write_text(json.dumps(clients[NAME][0])+'\n')
-                with self.assertRaisesRegex(ValueError, 'Workload UID'):
-                    judgment_rules.judge(root / 'binding.json', root)
+                mismatched = judgment_rules.judge(root / 'binding.json', root)
+                self.assertEqual(mismatched['requests'][NAME]['identityMismatchClientRows'], 1)
+                self.assertEqual(mismatched['requests'][NAME]['deadlineSuccess'], 0)
 
     def test_lateness_and_missing_sends_are_quality_facts_not_global_invalidity(self):
         quality = {'latenessToleranceNS': 50000000, 'maxExceedingFraction': .01}
@@ -1665,6 +1666,36 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(provisional['unfinishedOrUnsent'], final['unfinishedOrUnsent'])
             published = input_snapshot.module('capture_tables', conductor.HERE / 'tables.py').publication_requests({'requests': {NAME: final}})[NAME]
             self.assertEqual(published['collectionLoss'], final['collectionLoss'])
+
+    def test_foreign_workload_row_is_set_aside_without_stopping_other_workloads(self):
+        # Exact-match audit R15: one row naming another Workload used to abort every workload's judgment.
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, _, _, config = fixture(Path(directory))
+        first = config['workloads'][0]
+        second = {**first, 'name': 'second', 'uid': 'second-uid'}
+        config['workloads'] = [first, second]
+        for workload in config['workloads']:
+            workload['slo'] = {'percentile': 50, 'targetLatencyNanos': 10}
+        traces = {name: {'offsetsNS': [0, 1], 'offered': 2} for name in (NAME, 'second')}
+        phase = {'stage': {'seconds': 2, 'parts': [{'id': 'all', 'seconds': 2, 'rates': {NAME: 1, 'second': 1}}], 'traces': traces},
+                 'starts': {name: {'at': START, 'monotonicNS': 100} for name in (NAME, 'second')}}
+        def rows(prefix, uid):
+            return [{'requestIndex': i, 'scheduledOffsetNs': i, 'requestID': prefix + str(i), 'workloadUID': uid,
+                     'sentMonotonicNS': 100 + i, 'issued': True} for i in range(2)]
+        clients = {NAME: rows('a', first['uid']), 'second': rows('b', 'second-uid')}
+        clients[NAME][1]['workloadUID'] = 'someone-else'
+        finals = {rid: {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1}
+                  for rid in ('a0', 'a1', 'b0', 'b1')}
+        indexes = {uid: {'errors': [], 'identities': [], 'summary': {}, 'finals': finals} for uid in (first['uid'], 'second-uid')}
+        result = judgment_rules.reduce_requests(config, phase, clients, indexes)
+        mismatched, other = result[NAME], result['second']
+        self.assertEqual(mismatched['identityMismatchClientRows'], 1)
+        self.assertEqual((mismatched['offered'], mismatched['deadlineSuccess']), (2, 1), 'foreign row must not count as success')
+        self.assertEqual(mismatched['collectionLoss'], 0, 'a received row is not collection loss')
+        self.assertEqual(other['identityMismatchClientRows'], 0, 'always reported, 0 included')
+        self.assertEqual((other['offered'], other['deadlineSuccess'], other['D1']), (2, 2, 'OBSERVED_THRESHOLD_MET'))
+        published = input_snapshot.module('capture_tables', conductor.HERE / 'tables.py').publication_requests({'requests': result})
+        self.assertEqual(published[NAME]['identityMismatchClientRows'], 1)
 
     def test_generator_index_diagnostics_do_not_discard_http_finals(self):
         with tempfile.TemporaryDirectory() as directory:
