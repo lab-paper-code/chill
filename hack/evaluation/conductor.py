@@ -712,21 +712,31 @@ class CPO:
         procedures = [p for child in execution.get('childRefs', []) for p in child.get('procedures') or []]
         recorded_jobs = {p['jobRef']['uid']: p['jobRef'] for p in procedures if p.get('jobRef')}
         recorded_pods = {p['podRef']['uid']: p['podRef'] for p in procedures if p.get('podRef')}
+        recorded_pod_jobs = {p['podRef']['uid']: p['jobRef']['uid'] for p in procedures if p.get('podRef') and p.get('jobRef')}
         selector = 'edge.dacs.io/workload-role=system,edge.dacs.io/evaluation-run-uid=' + execution['runUID']
         deadline = time.monotonic() + self.tb['drainSeconds']
         while True:
             jobs = [job for job in self.io.k(['get', 'jobs', '-l', selector, '-o', 'json'])['items'] if self.owned(job)]
+            job_statuses = {job['metadata']['uid']: job.get('status', {}) for job in jobs}
+            completed_jobs = {uid for uid, status in job_statuses.items()
+                              if not status.get('active') and not status.get('terminating') and
+                              (status.get('succeeded', 0) >= 1 or any(c['type'] == 'Complete' and c['status'] == 'True'
+                                                                    for c in status.get('conditions', [])))}
             job_uids = set(recorded_jobs) | {job['metadata']['uid'] for job in jobs}
             pods = [pod for pod in self.io.k(['get', 'pods', '-l', selector, '-o', 'json'])['items']
                     if pod['metadata']['uid'] in recorded_pods or any(
                         owner.get('kind') == 'Job' and owner.get('uid') in job_uids
                         for owner in pod['metadata'].get('ownerReferences', []))]
             residuals = [{'kind': 'Pod', 'name': ref['name'], 'reason': 'RemoteEffectUnknown'}
-                         for uid, ref in recorded_pods.items() if not any(pod['metadata']['uid'] == uid for pod in pods)]
+                         for uid, ref in recorded_pods.items() if recorded_pod_jobs.get(uid) not in completed_jobs
+                         and not any(pod['metadata']['uid'] == uid for pod in pods)]
             for uid in job_uids:
-                if not any(any(owner.get('uid') == uid for owner in pod['metadata'].get('ownerReferences', [])) for pod in pods):
+                status = job_statuses.get(uid, {})
+                active = status.get('active') or status.get('terminating')
+                if active or (uid not in completed_jobs and not any(
+                        any(owner.get('uid') == uid for owner in pod['metadata'].get('ownerReferences', [])) for pod in pods)):
                     ref = recorded_jobs.get(uid) or next(job['metadata'] for job in jobs if job['metadata']['uid'] == uid)
-                    residuals.append({'kind': 'Job', 'name': ref['name'], 'reason': 'RemoteEffectUnknown'})
+                    residuals.append({'kind': 'Job', 'name': ref['name'], 'reason': 'ResidualState' if active else 'RemoteEffectUnknown'})
             for pod in pods:
                 statuses = pod.get('status', {}).get('containerStatuses', [])
                 terminated = bool(statuses) and all('terminated' in status.get('state', {}) for status in statuses)
