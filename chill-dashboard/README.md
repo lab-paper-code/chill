@@ -166,6 +166,10 @@ retain integer literals while removing credentials.
 게시 결과의 서비스 자세히는 같은 기간 사건을 자동 조회하지 않는다. 사용자가 `같은 기간 사건 조회` 버튼을 누르면 후보/기준 각각의 실제 `from/to`로 최근 10개(`order=desc`)를 조회한다. 범위는 선택 서비스가 아닌 `같은 기간 사건 · 클러스터 전체`다. `nextCursor`가 있으면 `일부 기록`과 다음 cursor로 이어지는 `더 보기`를 제공하고, 보존 공백은 서버 `gapUntil`로 표시한다. 현재 페이지를 구간 전체나 사건 총수로 표시하지 않는다.
 사건 행은 원본 offset과 kind/at/id/node/startedAt로 정확한 기록을 연다. `/records`의 `returnTo`는 API에 보내지 않는 UI 상태이며 앱 내부 `/experiments` 경로만 허용한다. `실험 구간으로 돌아가기`는 게시 ID, `al/as/b/bs`, 서비스와 목록 offset이 포함된 원래 URL로 돌아가 같은 Sheet를 복원한다. 구간 사건과 성능의 시간 대응은 인과 판정이 아니다.
 
+회차 3 결과 첫 진입의 `status:0 / 응답 본문 미수신`은 `lib/client.tsx`에서 fetch가 Response를 반환하기 전 거절된 경로지만, 저장 자료에는 실패 원본 예외·AbortSignal 상태·CDP `loadingFailed`가 없어 원인은 미확정이다. relay timeout은 504이며 브라우저 요청은 동일 origin이다. 정상 TanStack observer 취소는 상태를 복원하므로 이를 오류 노출의 원인으로 단정해 억제하지 않는다. `lib/experiment-result-transport.test.ts`는 실제 loopback HTTP와 저장된 40,900B 응답(`lib/fixtures/experiment-r3-7-7-results.json`)으로 취소·복귀, 결과 렌더링, 연결 실패와 504의 오류 표시를 구별한다.
+
+live-r3 로컬 게이트(2026-11-04): Node 24.14.0, offline frozen install(479개 재사용·다운로드 0), tsc·eslint, 운영 summary fixture를 포함한 테스트 **654/654**, 기본 Next build 통과. OPS-1·RUN-1·OPS-2·Job 사유는 수정 전 동작 회귀 실패를 확인했다. RUN-2의 취소·복귀 진단은 정상 결과 렌더링으로 통과했으며 운영에서 발생한 원래 오류를 재현한 것은 아니다. 운영 클러스터·대시보드에는 접근하지 않았다.
+
 설정의 정본은 `/settings?tab=configuration|models|preprocessors|datasets`다(기본 운영 설정).
 운영 설정은 `section` 범위·`edit` 수정 Sheet 선택을 URL에 보존한다. 분배는 서비스·인스턴스·가중치 표와 접힌 JSON에서 편집하며 기존 차단/기본 복귀/순차 적용 의미를 유지한다. 카탈로그 목록은 필드·파일·실행 방식 수와 연결 서비스 수를 우선하고 긴 주소·해시는 원문에 접는다.
 기본 `section=targets`에는 CHILL 자동 운영 서비스(`autonomousWorkloads`), 최소 수요(`minimumDemand`), 계획 제외 장비(`excludedNodes`)가 접히지 않은 표로 모인다. 서비스 목록·상세의 자동 운영 값은 이 화면의 `edit=autonomousWorkloads&workload=<UID>`로 이동하며 직접 PUT하지 않는다. 변경 작업이 없는 목록은 진행 열을 숨기고, 진행 서비스와 함께 보일 때 없는 값은 흐리게 표시한다.
