@@ -99,10 +99,12 @@ def start_gate(context):
         input_snapshot.save(path, attempts)
         if attempt['passed'] and time.monotonic() <= deadline:
             return
+        # The next attempt would start at or after the deadline: stop now. In-flight work is
+        # bounded by the existing per-call timeouts (apiSeconds, kubectl 60s, health 5s).
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        if remaining <= boxes['watchSeconds']:
             raise RuntimeError('TargetUnavailable: start gate did not pass within gateSeconds')
-        time.sleep(min(boxes['watchSeconds'], remaining))
+        time.sleep(boxes['watchSeconds'])
 
 
 def start_watcher(context, step):

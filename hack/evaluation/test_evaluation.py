@@ -205,9 +205,9 @@ class EvaluationTests(unittest.TestCase):
                 self.assertEqual(harness.execute('stage'), 1)
             record = evidence_io.load(harness.run / 'results/stages/one/stage.json')
             self.assertEqual(record['execution']['reason'], 'TargetUnavailable')
-            self.assertEqual(clock[0], 5)
+            self.assertLess(clock[0], 5)  # gateSeconds=5, watchSeconds=2: attempts at 0, 2, 4; none at the deadline
             attempts = evidence_io.load(harness.root / 'start-gate.json')
-            self.assertEqual(len(attempts), 4)
+            self.assertEqual(len(attempts), 3)
             self.assertTrue(all(not attempt['passed'] for attempt in attempts))
             self.assertTrue(any(ref['key'].endswith('/artifacts/start-gate.json') for ref in record['artifacts']))
 
