@@ -73,6 +73,10 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		return r.removeFinalizer(ctx, run)
 	}
 	if isTrue(run.Status.Conditions, api.EvaluationConditionPublished) {
+		// Residual or unconfirmed cleanup keeps the workspace for the existing release path.
+		if !isTrue(run.Status.Conditions, api.EvaluationConditionCleanupComplete) {
+			return ctrl.Result{}, nil
+		}
 		return ctrl.Result{}, r.deleteWorkspace(ctx, run)
 	}
 	if run.Status.FinishedAt != nil {
