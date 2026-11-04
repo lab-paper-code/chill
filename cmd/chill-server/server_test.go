@@ -39,7 +39,7 @@ func TestArchiveInBackgroundRunsOneFlushAtATime(t *testing.T) {
 	for range 3 {
 		ticked := make(chan struct{})
 		go func() {
-			archiveInBackground(context.Background(), running, time.Minute, flush)
+			archiveInBackground(context.Background(), running, flush)
 			close(ticked)
 		}()
 		select {
@@ -54,7 +54,7 @@ func TestArchiveInBackgroundRunsOneFlushAtATime(t *testing.T) {
 		t.Fatalf("started %d Flushes, want 1", got)
 	}
 	<-running
-	archiveInBackground(context.Background(), running, time.Minute, flush)
+	archiveInBackground(context.Background(), running, flush)
 	running <- struct{}{}
 	if got := started.Load(); got != 2 {
 		t.Fatalf("Flush after the previous one finished: started %d, want 2", got)

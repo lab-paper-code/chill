@@ -89,6 +89,10 @@ func (a *Authorizer) Authorize(ctx context.Context, token, verb, path string) (P
 	// waiting at its own deadline. ponytail: a canceled first caller fails its
 	// followers once (fail-closed); detach the review context if that shows up.
 	shared := a.inFlight.DoChan(string(key.token[:])+"\x00"+verb+"\x00"+path, func() (any, error) {
+		// A previous flight may have filled the cache after our initial miss.
+		if principal, ok := a.allowed.Get(key); ok {
+			return principal.(Principal), nil
+		}
 		principal, err := a.review(ctx, token, verb, path)
 		if err == nil {
 			a.allowed.Add(key, principal, allowedReviewTTL)

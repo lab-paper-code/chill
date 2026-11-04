@@ -644,3 +644,63 @@ func TestCollectedPodUsesStoredResult(t *testing.T) {
 		})
 	}
 }
+
+// Finished harness Job Pods mount the workspace, so pvc-protection keeps it until the Jobs go.
+// A published, cleaned run (including one already stuck in deletion) loses its own Jobs;
+// a residual run keeps them and its workspace. Another run's Job is never touched.
+func TestPublishedRunReleasesHarnessJobs(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name         string
+		clean, stuck bool
+	}{{"complete run", true, false}, {"complete run, workspace already deleting", true, true}, {"residual run", false, false}} {
+		clean := tc.clean
+		t.Run(tc.name, func(t *testing.T) {
+			run := fixtureRun("released")
+			startRun(run)
+			run.Status.ChildRefs = []api.EvaluationChildReference{{StageID: "first", EvaluationObjectReference: api.EvaluationObjectReference{Name: "child", UID: "child-uid"}}}
+			workspace := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "released-work", Namespace: run.Namespace, UID: "work-uid"}}
+			if tc.stuck {
+				// The live state after d96d42f7: deletion requested, held by pvc-protection.
+				deleted := metav1.NewTime(fixtureTime)
+				workspace.DeletionTimestamp, workspace.Finalizers = &deleted, []string{"kubernetes.io/pvc-protection"}
+			}
+			run.Status.Workspace = ref(workspace)
+			cleanup := metav1.ConditionTrue
+			if !clean {
+				cleanup = metav1.ConditionFalse
+			}
+			condition(&run.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionTrue, complete, "")
+			condition(&run.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, cleanup, api.EvaluationReasonResidualState, "")
+			condition(&run.Status.Conditions, 1, api.EvaluationConditionPublished, metav1.ConditionTrue, complete, "")
+			job := func(name string, owner types.UID, runUID types.UID) *batchv1.Job {
+				controller := true
+				return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: run.Namespace, UID: types.UID(name + "-uid"),
+					Labels:          map[string]string{api.EvaluationLabelRunUID: string(runUID), "edge.dacs.io/workload-role": "system"},
+					OwnerReferences: []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "EvaluationStage", Name: "owner", UID: owner, Controller: &controller}}}}
+			}
+			own := []*batchv1.Job{job("run-prepare", run.UID, run.UID), job("child-stage", "child-uid", run.UID)}
+			foreign := job("other-stage", "other-child", "other-run")
+			r, _ := fixtureRuntime(t, run, workspace.DeepCopy(), own[0], own[1], foreign)
+			if _, err := (&RunReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+				t.Fatal(err)
+			}
+			for _, j := range own {
+				err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(j), &batchv1.Job{})
+				if clean && !apierrors.IsNotFound(err) || !clean && err != nil {
+					t.Fatalf("own Job %s: clean=%v err=%v", j.Name, clean, err)
+				}
+			}
+			if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(foreign), &batchv1.Job{}); err != nil {
+				t.Fatalf("another run's Job must stay: %v", err)
+			}
+			if tc.stuck {
+				return // pvc-protection releases it once the Pods are gone; that is kube-controller behavior
+			}
+			err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(workspace), &corev1.PersistentVolumeClaim{})
+			if clean && !apierrors.IsNotFound(err) || !clean && err != nil {
+				t.Fatalf("workspace: clean=%v err=%v", clean, err)
+			}
+		})
+	}
+}
