@@ -149,7 +149,7 @@ func (s *Service) liveTarget(
 	}
 	count := 0
 	for _, pod := range pods.Items {
-		if pod.DeletionTimestamp != nil {
+		if pod.DeletionTimestamp != nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 			continue
 		}
 		count++

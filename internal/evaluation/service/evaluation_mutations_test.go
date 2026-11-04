@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -110,6 +111,77 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 			}
 			if fault == "unready" && (result.LiveTarget[0].Ready || len(result.LiveTarget[0].LiveImageIDs) != 1) {
 				t.Fatal("live target readiness lost")
+			}
+		})
+	}
+}
+
+func TestEvaluationTargetIgnoresTerminatedDeploymentPods(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		phase      corev1.PodPhase
+		live       bool
+		wantReady  bool
+		wantImages int
+	}{
+		{"completed with serving replica", corev1.PodSucceeded, true, true, 1},
+		{"failed with serving replica", corev1.PodFailed, true, true, 1},
+		{"completed only", corev1.PodSucceeded, false, false, 0},
+		{"failed only", corev1.PodFailed, false, false, 0},
+		{"pending replica", corev1.PodPending, true, false, 2},
+		{"unready running replica", corev1.PodRunning, true, false, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			service, request := evaluationFixture(t)
+			ctx := context.Background()
+			selector := map[string]string{"app": "server"}
+			deployment := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": "apps/v1", "kind": "Deployment",
+				"metadata": map[string]interface{}{"name": "server", "namespace": "ns"},
+				"spec": map[string]interface{}{"selector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{"app": "server"},
+				}},
+			}}
+			if err := service.client.Create(ctx, deployment); err != nil {
+				t.Fatal(err)
+			}
+			request.Spec.Target.Components[0].Resource.APIVersion = "apps/v1"
+			request.Spec.Target.Components[0].Resource.Kind = "Deployment"
+			pod := &corev1.Pod{}
+			if err := service.client.Get(ctx, client.ObjectKey{Namespace: "ns", Name: "server"}, pod); err != nil {
+				t.Fatal(err)
+			}
+			if tc.live {
+				pod.Labels = selector
+				if err := service.client.Update(ctx, pod); err != nil {
+					t.Fatal(err)
+				}
+				pod.Status.Phase = corev1.PodRunning
+				if err := service.client.Status().Update(ctx, pod); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stale := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "previous-replica", Namespace: "ns", Labels: selector,
+					OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "ReplicaSet", Name: "previous", UID: "previous"}}},
+				Status: corev1.PodStatus{Phase: tc.phase,
+					Conditions:        []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}},
+					ContainerStatuses: []corev1.ContainerStatus{{Name: "server", ImageID: "repo/server@sha256:previous"}},
+				},
+			}
+			if err := service.client.Create(ctx, stale); err != nil {
+				t.Fatal(err)
+			}
+			result, err := service.Preflight(ctx, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := result.LiveTarget[0]
+			if target.Ready != tc.wantReady || len(target.LiveImageIDs) != tc.wantImages {
+				t.Fatalf("target=%+v, want ready=%v images=%d", target, tc.wantReady, tc.wantImages)
+			}
+			if _, err := service.Create(ctx, request, "operator"); (err == nil) != tc.wantReady {
+				t.Fatalf("create error=%v, want ready=%v", err, tc.wantReady)
 			}
 		})
 	}
