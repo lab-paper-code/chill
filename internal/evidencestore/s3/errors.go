@@ -10,6 +10,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
+const preconditionFailedCode = "PreconditionFailed"
+
 func translate(operation string, err error) error {
 	if err == nil {
 		return nil
@@ -28,7 +30,7 @@ func translate(operation string, err error) error {
 			return fmt.Errorf("%w: %s: %w", evidencestore.ErrNotFound, operation, err)
 		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken":
 			return fmt.Errorf("%w: %s: %w", evidencestore.ErrAuthentication, operation, err)
-		case "PreconditionFailed", "ConditionalRequestConflict":
+		case preconditionFailedCode, "ConditionalRequestConflict":
 			return fmt.Errorf("%w: %s: %w", evidencestore.ErrPrecondition, operation, err)
 		case "BucketAlreadyExists", "BucketAlreadyOwnedByYou", "OperationAborted":
 			return fmt.Errorf("%w: %s: %w", evidencestore.ErrPrecondition, operation, err)
@@ -57,5 +59,5 @@ func isPrecondition(err error) bool {
 	if !errors.As(err, &apiError) {
 		return false
 	}
-	return apiError.ErrorCode() == "PreconditionFailed" || apiError.ErrorCode() == "ConditionalRequestConflict"
+	return apiError.ErrorCode() == preconditionFailedCode || apiError.ErrorCode() == "ConditionalRequestConflict"
 }

@@ -278,6 +278,7 @@ func stringValue(value *string) string {
 }
 
 type fakeClient struct {
+	*awss3.Client
 	put          func(context.Context, *awss3.PutObjectInput) (*awss3.PutObjectOutput, error)
 	get          func(context.Context, *awss3.GetObjectInput) (*awss3.GetObjectOutput, error)
 	deleteObject func(context.Context, *awss3.DeleteObjectInput) (*awss3.DeleteObjectOutput, error)

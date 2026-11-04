@@ -22,10 +22,10 @@ import (
 
 type nopWriter struct{}
 
-func (nopWriter) PutImmutable(
-	_ context.Context, object evidencestore.ObjectIdentity, _ io.Reader,
+func (nopWriter) StreamImmutable(
+	_ context.Context, _ evidencestore.ObjectLocation, produce func(io.Writer) error,
 ) (evidencestore.Receipt, error) {
-	return evidencestore.Receipt{Object: object, Outcome: evidencestore.CreateOutcomeCreated}, nil
+	return evidencestore.Receipt{}, produce(io.Discard)
 }
 
 // The tool and the ChillServer integrate the same records to the same joules.

@@ -31,7 +31,7 @@ var observationStreams = []string{observationRequestStream, observationScheduler
 type ObservationLogConfig struct {
 	Directory   string
 	Store       string
-	Writer      evidencestore.ImmutableWriter
+	Writer      evidencestore.StreamingImmutableWriter
 	Definitions []string
 	Outcomes    []string
 	Retention   time.Duration

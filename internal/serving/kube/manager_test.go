@@ -79,6 +79,14 @@ func (c *managerAPI) Update(ctx context.Context, obj client.Object, opts ...clie
 
 type managerArchive struct{ directory string }
 
+func (a managerArchive) StreamImmutable(ctx context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error) (evidencestore.Receipt, error) {
+	var content bytes.Buffer
+	if err := produce(&content); err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	return a.PutImmutable(ctx, evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: int64(content.Len())}, &content)
+}
+
 func (a managerArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, input io.Reader) (evidencestore.Receipt, error) {
 	name := filepath.Join(a.directory, identity.Key)
 	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {

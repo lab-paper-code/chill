@@ -27,7 +27,12 @@ type observationArchive struct {
 	puts map[string]int
 }
 
-func (a *observationArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
+func (a *observationArchive) StreamImmutable(_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error) (evidencestore.Receipt, error) {
+	var buffer bytes.Buffer
+	if err := produce(&buffer); err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	identity := evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: int64(buffer.Len())}
 	a.mu.Lock()
 	if a.puts == nil {
 		a.puts = map[string]int{}
@@ -40,7 +45,7 @@ func (a *observationArchive) PutImmutable(_ context.Context, identity evidencest
 	if err := identity.Validate(); err != nil {
 		return evidencestore.Receipt{}, err
 	}
-	data, err := io.ReadAll(source)
+	data, err := io.ReadAll(&buffer)
 	if err != nil || int64(len(data)) != identity.Size {
 		return evidencestore.Receipt{}, errors.Join(err, errors.New("incomplete archive write"))
 	}

@@ -96,42 +96,29 @@ func (l *ObservationLog) upload(ctx context.Context, hour time.Time, stream stri
 	if err != nil || len(files) == 0 {
 		return err
 	}
-	// The compressed hour stages on scratch space, out of process memory and
-	// off the volume the archive drains.
-	compressed, err := os.CreateTemp("", ".archive-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = compressed.Close(); _ = os.Remove(compressed.Name()) }()
-	l.config.Diagnostics.Mark(serving.DiagnosticCompress, serving.DiagnosticBegin, "", 0)
-	writer := gzip.NewWriter(compressed) // Zero header time: equal input, equal bytes.
-	for _, segment := range files {
-		file, err := os.Open(segment.path)
-		if err != nil {
-			return err
-		}
-		_, err = io.Copy(writer, file)
-		if err = errors.Join(err, file.Close()); err != nil {
-			return err
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	l.config.Diagnostics.Mark(serving.DiagnosticCompress, serving.DiagnosticEnd, "", 0)
-	size, err := compressed.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-	if _, err := compressed.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	object := evidencestore.ObjectIdentity{
+	location := evidencestore.ObjectLocation{
 		Store: l.config.Store, Key: observationArchivePrefix + observationHour(hour) + "/" + stream + ".jsonl.gz",
-		Size: size,
 	}
 	l.config.Diagnostics.Mark(serving.DiagnosticUpload, serving.DiagnosticBegin, "", 0)
-	_, err = l.config.Writer.PutImmutable(ctx, object, compressed)
+	_, err = l.config.Writer.StreamImmutable(ctx, location, func(output io.Writer) error {
+		l.config.Diagnostics.Mark(serving.DiagnosticCompress, serving.DiagnosticBegin, "", 0)
+		defer l.config.Diagnostics.Mark(serving.DiagnosticCompress, serving.DiagnosticEnd, "", 0)
+		writer := gzip.NewWriter(output) // Zero header time: equal input, equal bytes.
+		for _, segment := range files {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			file, err := os.Open(segment.path)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(writer, file)
+			if err = errors.Join(err, file.Close()); err != nil {
+				return err
+			}
+		}
+		return writer.Close()
+	})
 	l.config.Diagnostics.Mark(serving.DiagnosticUpload, serving.DiagnosticEnd, "", 0)
 	return err
 }

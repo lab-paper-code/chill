@@ -13,6 +13,12 @@ type ImmutableWriter interface {
 	PutImmutable(context.Context, ObjectIdentity, io.Reader) (Receipt, error)
 }
 
+// StreamingImmutableWriter creates unknown-size content without staging a full
+// object. produce must return all generation errors; success commits atomically.
+type StreamingImmutableWriter interface {
+	StreamImmutable(context.Context, ObjectLocation, func(io.Writer) error) (Receipt, error)
+}
+
 // Reader opens an object for independent verification. The caller owns and
 // must close the returned stream.
 type Reader interface {

@@ -18,7 +18,7 @@ var RuntimeObservationConstructor func(RuntimeTestObservationConfig) (RuntimeTes
 type RuntimeTestObservationConfig struct {
 	Directory   string
 	Store       string
-	Writer      evidencestore.ImmutableWriter
+	Writer      evidencestore.StreamingImmutableWriter
 	Retention   time.Duration
 	Diagnostics *Diagnostics
 }

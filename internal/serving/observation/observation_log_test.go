@@ -33,7 +33,12 @@ type observationArchive struct {
 	puts map[string]int
 }
 
-func (a *observationArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
+func (a *observationArchive) StreamImmutable(_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error) (evidencestore.Receipt, error) {
+	var buffer bytes.Buffer
+	if err := produce(&buffer); err != nil {
+		return evidencestore.Receipt{}, err
+	}
+	identity := evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: int64(buffer.Len())}
 	a.mu.Lock()
 	if a.puts == nil {
 		a.puts = map[string]int{}
@@ -46,7 +51,7 @@ func (a *observationArchive) PutImmutable(_ context.Context, identity evidencest
 	if err := identity.Validate(); err != nil {
 		return evidencestore.Receipt{}, err
 	}
-	data, err := io.ReadAll(source)
+	data, err := io.ReadAll(&buffer)
 	if err != nil || int64(len(data)) != identity.Size {
 		return evidencestore.Receipt{}, errors.Join(err, errors.New("incomplete archive write"))
 	}
@@ -79,7 +84,7 @@ type pausedObservationArchive struct {
 	once    sync.Once
 }
 
-func (a *pausedObservationArchive) PutImmutable(ctx context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
+func (a *pausedObservationArchive) StreamImmutable(ctx context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error) (evidencestore.Receipt, error) {
 	pause := false
 	a.once.Do(func() {
 		pause = true
@@ -88,7 +93,7 @@ func (a *pausedObservationArchive) PutImmutable(ctx context.Context, identity ev
 	if pause {
 		<-a.resume
 	}
-	return a.observationArchive.PutImmutable(ctx, identity, source)
+	return a.observationArchive.StreamImmutable(ctx, location, produce)
 }
 
 // observationClock chooses the write time, and so the segment file, in tests.
@@ -860,17 +865,17 @@ func TestObservationStartupIgnoresOtherHistory(t *testing.T) {
 
 type discardObservationArchive struct{ bytes int64 }
 
-func (a *discardObservationArchive) PutImmutable(_ context.Context, identity evidencestore.ObjectIdentity, source io.Reader) (evidencestore.Receipt, error) {
-	n, err := io.Copy(io.Discard, source)
-	a.bytes += n
-	if err == nil && n != identity.Size {
-		err = errors.New("incomplete archive write")
-	}
-	return evidencestore.Receipt{}, err
+func (a *discardObservationArchive) StreamImmutable(_ context.Context, _ evidencestore.ObjectLocation, produce func(io.Writer) error) (evidencestore.Receipt, error) {
+	return evidencestore.Receipt{}, produce(a)
 }
 
-// The hourly archive streams gzip through a scratch file, so a large hour
-// never sits in process memory.
+func (a *discardObservationArchive) Write(data []byte) (int, error) {
+	a.bytes += int64(len(data))
+	return len(data), nil
+}
+
+// The hourly archive streams gzip directly, without a scratch file or a
+// complete compressed hour in process memory.
 func TestObservationArchiveStreamsLargeHour(t *testing.T) {
 	scratch := t.TempDir()
 	t.Setenv("TMPDIR", scratch)
@@ -901,9 +906,8 @@ func TestObservationArchiveStreamsLargeHour(t *testing.T) {
 	}
 }
 
-// Full scratch space fails staging: the hour stays local and unmarked, and
-// the next pass archives it once space returns.
-func TestObservationArchiveRecoversAfterStagingFailure(t *testing.T) {
+// Archives do not depend on scratch availability.
+func TestObservationArchiveWithoutScratch(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
 	archive := &observationArchive{directory: t.TempDir()}
@@ -911,13 +915,6 @@ func TestObservationArchiveRecoversAfterStagingFailure(t *testing.T) {
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Second), observationTestHour.Add(time.Minute+10*time.Second))
 	hour := filepath.Join(observationLog.root, "20261020T10")
 	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
-	if err := observationLog.Flush(ctx); err == nil {
-		t.Fatal("staging failure was hidden")
-	}
-	if _, err := os.Stat(hour); err != nil || len(archive.puts) != 0 {
-		t.Fatalf("hour lost or sent without staging: %v %v", err, archive.puts)
-	}
-	t.Setenv("TMPDIR", t.TempDir())
 	if err := observationLog.Flush(ctx); err != nil {
 		t.Fatal(err)
 	}

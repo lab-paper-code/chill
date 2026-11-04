@@ -58,10 +58,10 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 
 type settingsArchive struct{ directory string }
 
-func (a settingsArchive) PutImmutable(
-	_ context.Context, identity evidencestore.ObjectIdentity, input io.Reader,
+func (a settingsArchive) StreamImmutable(
+	_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error,
 ) (evidencestore.Receipt, error) {
-	output := filepath.Join(a.directory, identity.Key)
+	output := filepath.Join(a.directory, location.Key)
 	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
 		return evidencestore.Receipt{}, err
 	}
@@ -69,11 +69,13 @@ func (a settingsArchive) PutImmutable(
 	if err != nil {
 		return evidencestore.Receipt{}, err
 	}
-	n, err := io.Copy(file, input)
-	err = errors.Join(err, file.Sync(), file.Close())
-	if err != nil || n != identity.Size {
-		return evidencestore.Receipt{}, errors.Join(err, errors.New("archive incomplete"))
+	err = produce(file)
+	info, statErr := file.Stat()
+	err = errors.Join(err, statErr, file.Sync(), file.Close())
+	if err != nil {
+		return evidencestore.Receipt{}, err
 	}
+	identity := evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: info.Size()}
 	return evidencestore.Receipt{
 		SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: evidencestore.CreateOutcomeCreated,
 	}, nil
