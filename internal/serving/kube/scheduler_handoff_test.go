@@ -100,6 +100,7 @@ func handoffController(t *testing.T) *SchedulerController {
 		c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded", To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: ref})
 	}
 	snapshot := handoffSnapshot(t, c)
+	c.runtime.EnableSchedulerRouting()
 	c.capacity.Ensure(ctx, *settings, snapshot)
 	c.capacity.Wait()
 	// Require more than two measured executors so the return test exercises
@@ -239,6 +240,14 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 	t.Helper()
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
 	before, _ := c.runtime.SchedulerRouting()
+	uid := c.config.Settings.AutonomousWorkloads[0]
+	var admittedIC atomic.Int32
+	c.config.OnAction = func(result servingstate.OperationResult) error {
+		if result.Status == starting && result.Operation.Kind == servingstate.OperationRoute && result.Operation.ControlsWorkload(uid) {
+			admittedIC.Add(1)
+		}
+		return nil
+	}
 	var decision serving.SchedulerDecision
 	for range 4 {
 		var err error
@@ -273,8 +282,10 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 		c.wg.Wait()
 	}
 	snapshot := handoffSnapshot(t, c)
-	uid := c.config.Settings.AutonomousWorkloads[0]
 	routing, _ := c.runtime.SchedulerRouting()
+	if admittedIC.Load() == 0 {
+		t.Fatal("no actual IC route was admitted after physical return")
+	}
 	if !slices.ContainsFunc(snapshot.Instances, func(instance serving.SchedulerInstance) bool {
 		return slices.Contains(parent.scope.Nodes, instance.Node) && before[uid][instance.ID] <= 0 &&
 			instance.Ready && !instance.Stopped && routing[uid][instance.ID] > 0
