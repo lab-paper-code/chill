@@ -358,7 +358,7 @@ func serve(ctx context.Context, opts options, chillServer *initializingHandler, 
 	defer sourceTicker.Stop()
 	profileTicker := time.NewTicker(opts.profileInterval)
 	defer profileTicker.Stop()
-	maintenanceTicker := time.NewTicker(time.Minute)
+	maintenanceTicker := time.NewTicker(observation.MaintenanceInterval)
 	defer maintenanceTicker.Stop()
 	maintaining := make(chan struct{}, 1)
 	var serveError error

@@ -70,7 +70,7 @@ func TestWorkerSignalCancelsUploadAndJoinsAbort(t *testing.T) {
 				LogicalStore: "evidence", Bucket: "bucket", Region: "region", Endpoint: receiver.URL,
 				RequestTimeout: time.Second,
 			},
-			scanInterval: time.Minute, shutdownTimeout: 2 * time.Minute,
+			shutdownTimeout: 2 * time.Minute,
 		})
 	}()
 	defer func() { cancel(); <-done }()

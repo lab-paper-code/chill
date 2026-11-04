@@ -186,6 +186,15 @@ container = worker_pod["containers"][0]
 assert container["image"] == owner_pod["containers"][0]["image"]
 assert container["command"] == ["/observation-archiver"]
 assert container["securityContext"] == owner_pod["containers"][0]["securityContext"]
+owner_container = owner_pod["containers"][0]
+owner_args = dict(arg.split("=", 1) for arg in owner_container["args"])
+worker_args = dict(arg.split("=", 1) for arg in container["args"])
+assert worker_args["--request-timeout"] == owner_args["--request-timeout"]
+assert worker_args["--shutdown-timeout"] == owner_args["--drain-timeout"]
+assert "--scan-interval" not in worker_args, "worker must reuse the existing maintenance cadence"
+assert worker_pod["terminationGracePeriodSeconds"] == owner_pod["terminationGracePeriodSeconds"]
+assert next(e["value"] for e in container["env"] if e["name"] == "GOMEMLIMIT") == next(
+    e["value"] for e in owner_container["env"] if e["name"] == "GOMEMLIMIT")
 assert not container["resources"] and not worker_pod["automountServiceAccountToken"]
 assert effective(worker_pod["serviceAccountName"]) == (set(), set())
 mounts = {m["mountPath"]: m for m in container["volumeMounts"]}
@@ -295,6 +304,12 @@ check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" 
 	--set 'servingEntrypoint.profileNamespaces={chill-system,measurements}'
 check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true
+check "" "" "${serving[@]}" --set servingEntrypoint.requestTimeout=30s \
+	--set servingEntrypoint.drainTimeout=129s --set servingEntrypoint.terminationGracePeriodSeconds=164 \
+	--set servingEntrypoint.goMemLimit=1GiB
+check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
+	--set servingEntrypoint.requestTimeout=30s --set servingEntrypoint.drainTimeout=129s \
+	--set servingEntrypoint.terminationGracePeriodSeconds=164 --set servingEntrypoint.goMemLimit=1GiB
 check chill-dashboard-user "" "${serving[@]}" --set dashboard.callerServiceAccount=chill-dashboard-user
 check chill-dashboard-user "" -f "${repo_root}/charts/chill/values-profiler.yaml" "${serving[@]}" \
 	--set evaluation.enabled=true --set dashboard.enabled=true --set servingEntrypoint.namespace=serving \
@@ -319,7 +334,6 @@ for field in storageClassName claimName volumeName localPath nodeHostname; do
 done
 reject_dashboard observationStorage.localPath "${serving[@]}" --set servingEntrypoint.observationStorage.localPath=relative
 reject_dashboard observationStorage.directory "${serving[@]}" --set servingEntrypoint.observationStorage.directory=/data/../other
-reject_dashboard observationArchiver.resources "${serving[@]}" --set servingEntrypoint.observationArchiver.resources.requests.memory=64Mi
 reject_dashboard dashboard.reader.enabled --set dashboard.reader.enabled=true
 reject_dashboard dashboard.reader.enabled "${serving[@]}" --set-string dashboard.reader.enabled=true
 reject_dashboard dashboard.callerServiceAccount --set dashboard.callerServiceAccount=chill-dashboard-user

@@ -533,14 +533,6 @@ servingEntrypoint:
     # Copy the complete quiescent owner directory with UID 65532 access before startup.
     localPath: ""
     nodeHostname: ""
-  observationArchiver:
-    scanInterval: 1m
-    requestTimeout: 129s
-    shutdownTimeout: 194s
-    terminationGracePeriodSeconds: 194
-    goMemLimit: 3GiB
-    # Independent BestEffort process; no CPU or memory reservations/quotas.
-    resources: {}
   queueLimit: 1024
   # Approved all-profile lifetime/drain maxima; 30s remains for HTTP shutdown.
   requestTimeout: 129s

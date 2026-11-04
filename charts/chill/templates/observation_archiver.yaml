@@ -1,7 +1,6 @@
 {{- if .Values.servingEntrypoint.enabled }}
 {{- $name := printf "%s-observation-archiver" (include "chill.fullname" .) -}}
 {{- $storage := .Values.servingEntrypoint.observationStorage -}}
-{{- $worker := .Values.servingEntrypoint.observationArchiver -}}
 {{- $ownerPath := trimPrefix "/data" $storage.directory | trimAll "/" -}}
 {{- $controlPath := ternary "archive-control" (printf "%s/archive-control" $ownerPath) (empty $ownerPath) -}}
 {{- $credentialsSecret := default (printf "%s-evidence-store-credentials" (include "chill.systemName" .)) .Values.evidenceStore.credentialsSecret.name -}}
@@ -42,7 +41,7 @@ spec:
     spec:
       serviceAccountName: {{ $name }}
       automountServiceAccountToken: false
-      terminationGracePeriodSeconds: {{ $worker.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ .Values.servingEntrypoint.terminationGracePeriodSeconds }}
       securityContext:
 {{- toYaml .Values.servingEntrypoint.podSecurityContext | nindent 8 }}
       containers:
@@ -53,16 +52,15 @@ spec:
           args:
             - "--observation-directory=/observations"
             - "--archive-control-directory=/archive-control"
-            - {{ printf "--scan-interval=%s" $worker.scanInterval | quote }}
-            - {{ printf "--request-timeout=%s" $worker.requestTimeout | quote }}
-            - {{ printf "--shutdown-timeout=%s" $worker.shutdownTimeout | quote }}
+            - {{ printf "--request-timeout=%s" .Values.servingEntrypoint.requestTimeout | quote }}
+            - {{ printf "--shutdown-timeout=%s" .Values.servingEntrypoint.drainTimeout | quote }}
             - {{ printf "--store-name=%s" (default (printf "%s-evidence-store" (include "chill.systemName" .)) .Values.evidenceStore.connection.name) | quote }}
             - {{ printf "--store-endpoint=%s" (default (printf "http://%s-evidence-store.%s.svc.cluster.local:9000" (include "chill.systemName" .) .Release.Namespace) .Values.evidenceStore.connection.endpoint) | quote }}
             - {{ printf "--store-bucket=%s" .Values.evidenceStore.connection.bucket | quote }}
             - {{ printf "--store-region=%s" .Values.evidenceStore.connection.region | quote }}
           env:
             - name: GOMEMLIMIT
-              value: {{ $worker.goMemLimit | quote }}
+              value: {{ .Values.servingEntrypoint.goMemLimit | quote }}
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

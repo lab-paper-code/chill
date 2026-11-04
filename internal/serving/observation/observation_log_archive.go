@@ -9,6 +9,9 @@ import (
 
 const observationArchivePrefix = "serving/observations." + observationVersion + "/"
 
+// MaintenanceInterval is the existing local maintenance and sealed-hour scan cadence.
+const MaintenanceInterval = time.Minute
+
 // removeHour excludes capture opens, but never holds an append lock over removal.
 // maintenance has already crossed the append frontier, so this hour cannot change.
 func (l *ObservationLog) removeHour(hour time.Time) (bool, error) {

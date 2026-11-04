@@ -75,9 +75,6 @@
 {{- fail "servingEntrypoint.observationStorage.directory must not contain dot path components" -}}
 {{- end -}}
 {{- end -}}
-{{- if not (empty .Values.servingEntrypoint.observationArchiver.resources) -}}
-{{- fail "servingEntrypoint.observationArchiver.resources must remain empty (BestEffort)" -}}
-{{- end -}}
 {{- end -}}
 {{- if not (kindIs "string" .Values.dashboard.callerServiceAccount) -}}
 {{- fail "dashboard.callerServiceAccount must be a string" -}}

@@ -121,7 +121,7 @@ func exerciseWorkerUpload(t *testing.T, raw io.Reader, requestTimeout, partDelay
 		defer close(done)
 		runErr = run(ctx, options{
 			directory: directory, controlDirectory: filepath.Join(directory, "archive-control"),
-			store: config, scanInterval: time.Minute, shutdownTimeout: 2 * time.Minute,
+			store: config, shutdownTimeout: 2 * time.Minute,
 		})
 	}()
 	defer func() {

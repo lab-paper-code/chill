@@ -16,9 +16,9 @@ import (
 )
 
 type options struct {
-	directory, controlDirectory   string
-	store                         stores3.Config
-	scanInterval, shutdownTimeout time.Duration
+	directory, controlDirectory string
+	store                       stores3.Config
+	shutdownTimeout             time.Duration
 }
 
 func (o *options) bindFlags(f *flag.FlagSet) {
@@ -31,7 +31,6 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.StringVar(&o.store.Region, "store-region", "", "Evidence Store region.")
 	f.DurationVar(&o.store.RequestTimeout, "request-timeout", 30*time.Second,
 		"Bound of each multipart SDK request, not the whole upload.")
-	f.DurationVar(&o.scanInterval, "scan-interval", time.Minute, "Sealed-hour scan cadence.")
 	f.DurationVar(&o.shutdownTimeout, "shutdown-timeout", 0,
 		"Required process cancel/join budget from deployment configuration.")
 }
@@ -42,8 +41,8 @@ func (o options) validate() error {
 			return errors.New("observation and archive-control directories must be clean absolute paths")
 		}
 	}
-	if o.scanInterval <= 0 || o.store.RequestTimeout <= 0 || o.shutdownTimeout <= 0 {
-		return errors.New("scan-interval, request-timeout and shutdown-timeout must be positive")
+	if o.store.RequestTimeout <= 0 || o.shutdownTimeout <= 0 {
+		return errors.New("request-timeout and shutdown-timeout must be positive")
 	}
 	if o.store.RequestTimeout >= o.shutdownTimeout {
 		return errors.New("shutdown-timeout must exceed request-timeout to allow bounded multipart abort and join")
@@ -99,7 +98,7 @@ func runArchive(ctx context.Context, opts options,
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- run(lifetime, opts.scanInterval, func(err error) {
+		done <- run(lifetime, observation.MaintenanceInterval, func(err error) {
 			ctrl.Log.Error(err, "publish sealed observation hours")
 		})
 	}()

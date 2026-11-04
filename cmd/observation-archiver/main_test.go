@@ -16,7 +16,7 @@ func TestArchiveCancellationJoinsCleanup(t *testing.T) {
 			entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			done := make(chan error, 1)
 			go func() {
-				done <- runArchive(ctx, options{scanInterval: time.Minute, shutdownTimeout: time.Second},
+				done <- runArchive(ctx, options{shutdownTimeout: time.Second},
 					func(ctx context.Context, _ time.Duration, _ func(error)) error {
 						close(entered)
 						<-ctx.Done()
@@ -68,7 +68,7 @@ func TestArchiveCancellationJoinsCleanup(t *testing.T) {
 func TestArchiveRunnerErrorReturnsWithoutSignal(t *testing.T) {
 	want := errors.New("worker initialization failed")
 	ctx := context.Background()
-	err := runArchive(ctx, options{scanInterval: time.Minute, shutdownTimeout: time.Second},
+	err := runArchive(ctx, options{shutdownTimeout: time.Second},
 		func(context.Context, time.Duration, func(error)) error { return want })
 	if !errors.Is(err, want) || ctx.Err() != nil {
 		t.Fatalf("runner error=%v parent=%v", err, ctx.Err())
@@ -82,7 +82,7 @@ func TestArchiveOptionsUseExistingBudgets(t *testing.T) {
 	if err := flags.Parse([]string{
 		"--observation-directory=/observations", "--archive-control-directory=/archive-control",
 		"--store-name=evidence", "--store-endpoint=https://store", "--store-bucket=bucket", "--store-region=region",
-		"--request-timeout=129s", "--shutdown-timeout=194s", "--scan-interval=1m",
+		"--request-timeout=129s", "--shutdown-timeout=194s",
 	}); err != nil {
 		t.Fatal(err)
 	}

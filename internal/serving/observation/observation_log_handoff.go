@@ -358,3 +358,27 @@ func validateObservationUpload(receipt observationUpload, seal observationSeal, 
 	}
 	return nil
 }
+
+// Only serving retirement unlinks sealed inputs in the owner protocol. Resume
+// that interrupted RemoveAll only with the matching all-stream receipt; intact
+// uploaded hours still restore with their unresolved-assignment barriers.
+func (l *ObservationLog) finishInterruptedRetirement(hour time.Time, seal observationSeal, inputErr error) error {
+	if !errors.Is(inputErr, os.ErrNotExist) {
+		return inputErr
+	}
+	path := observationReceiptPath(filepath.Join(l.config.Directory, "archive-control"), hour)
+	var receipt observationUpload
+	if err := readControlJSON(path, &receipt); err != nil {
+		return errors.Join(inputErr, err)
+	}
+	if err := validateObservationUpload(receipt, seal, l.config.Store); err != nil {
+		return errors.Join(inputErr, err)
+	}
+	if err := l.removeAll(filepath.Join(l.root, seal.Hour)); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}

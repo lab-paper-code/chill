@@ -142,22 +142,29 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		return nil, err
 	}
 	sealed := map[time.Time]bool{}
+	retainedHours := hours[:0]
 	for _, hour := range hours {
 		seal, err := readObservationSeal(l.root, hour)
 		if errors.Is(err, os.ErrNotExist) {
+			retainedHours = append(retainedHours, hour)
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		if err := checkSealedInputs(l.root, seal, false); err != nil {
-			return nil, err
+		if inputErr := checkSealedInputs(l.root, seal, false); inputErr != nil {
+			if err := l.finishInterruptedRetirement(hour, seal, inputErr); err != nil {
+				return nil, err
+			}
+			continue
 		}
+		retainedHours = append(retainedHours, hour)
 		sealed[hour] = true
 		if end := hour.Add(time.Hour); end.After(l.appendFloor) {
 			l.appendFloor = end
 		}
 	}
+	hours = retainedHours
 	// A crash can leave one torn line at the end of each stream's last file.
 	for _, stream := range observationStreams {
 		for index := len(hours) - 1; index >= 0; index-- {
