@@ -24,9 +24,9 @@ import (
 )
 
 // The API boundary supplies Pod creation/termination, not operation receipts.
-func handoffController(t *testing.T) *SchedulerController {
+func handoffController(t *testing.T, extraNodes ...string) *SchedulerController {
 	t.Helper()
-	c, ready := tickReadySubsetController(t, nil, "c", "d")
+	c, ready := tickReadySubsetController(t, nil, append([]string{"c", "d"}, extraNodes...)...)
 	ready.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	c.ctx = ctx
@@ -278,7 +278,7 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 		t.Fatal("admitted IC route did not complete native/runtime application")
 	}
 	if !slices.ContainsFunc(snapshot.Instances, func(instance serving.SchedulerInstance) bool {
-		return slices.Contains(parent.scope.Nodes, instance.Node) && before[uid][instance.ID] <= 0 &&
+		return slices.Contains(parent.result.Operation.Nodes, instance.Node) && before[uid][instance.ID] <= 0 &&
 			instance.Ready && !instance.Stopped && routing[uid][instance.ID] > 0
 	}) {
 		t.Fatalf("next IC route did not admit Ready capacity after return: %v; reasons=%v demand=%v capacity=%+v", routing, decision.Reasons, c.config.Settings.MinimumDemand, decision.Capacity.Workloads)

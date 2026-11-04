@@ -166,7 +166,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	}
 	c.launch(serving.SchedulerCandidate{}, c.config)
 	c.wg.Wait()
-	if api.deleteCalls != 0 {
+	if api.deleteCalls.Load() != 0 {
 		t.Fatal("late ACK was compensated")
 	}
 	fresh, err := c.capture(c.ctx, time.Now(), c.config)
@@ -189,7 +189,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	parent.returnObserved = false
 	c.releaseObservedScopes(nodes, pods, physical, time.Now())
 	fresh, _ = c.reconcileSnapshot(fresh, time.Now(), c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-	if parent.reserved || child.reserved || len(fresh.Reservations) != 0 || api.deleteCalls != 0 {
+	if parent.reserved || child.reserved || len(fresh.Reservations) != 0 || api.deleteCalls.Load() != 0 {
 		t.Fatal("eligible fresh tick did not return the owner without compensation")
 	}
 	if c.runs["never-started-route"] != nil || child.result.Status != servingstate.NativeOperationPartial || parent.result.Status != servingstate.NativeOperationFailed {

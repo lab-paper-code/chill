@@ -25,6 +25,7 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ktesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -159,6 +160,8 @@ func sequenceHarness(t *testing.T) (*admissionHarness, *writeLog, *memEvidence) 
 	h.controller.store.client = podsInKube{Client: h.controller.store.client, create: func(pod *core.Pod) error {
 		log.mu.Lock()
 		defer log.mu.Unlock()
+		pod.UID = types.UID(pod.Name + "-created-pod")
+		pod.Labels[servingstate.InstancePodUIDLabel] = string(pod.UID)
 		err := h.kube.Tracker().Create(pods, pod, pod.Namespace)
 		if err == nil {
 			log.events = append(log.events, "pod+")

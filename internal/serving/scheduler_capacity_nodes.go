@@ -192,19 +192,20 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 	}
 	plans := []*capacityPlan{keep}
 	reason := ""
+	physicalReason := schedulerPhysicalChangeReason(p.snapshot, node.Node)
 	switch {
 	case slices.Contains(common[n].Reasons, NodePlacementInventoryMissing):
 		reason = NodePlacementInventoryMissing
 	case schedulerReservedNode(p.snapshot, node.Node):
 		reason = "ReservedNode"
-	case !node.Ready:
-		reason = "NodeUnavailable"
+	case physicalReason == schedulerNodeUnavailable:
+		reason = schedulerNodeUnavailable
 	case node.Measurement:
 		reason = "MeasurementNode"
 	case slices.Contains(node.Reasons, NodeExcluded):
 		reason = NodeExcluded
-	case slices.Contains(node.Reasons, NodeInstanceUnavailable):
-		reason = NodeInstanceUnavailable
+	case physicalReason != "":
+		reason = physicalReason
 	case slices.Contains(node.Reasons, NodePlacementBudgetUnavailable):
 		reason = NodePlacementBudgetUnavailable
 	case slices.ContainsFunc(current, p.fixed):

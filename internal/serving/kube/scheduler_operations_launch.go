@@ -53,6 +53,7 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 
 func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	actions, intermediate := c.intermediateActions(target)
+	var blocked map[string]string
 	// Decide eligible old-source stops before starting policy refreshes that can
 	// supersede the existing acknowledged handoff proof in this same tick.
 	for phase := range 2 {
@@ -77,7 +78,14 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			if action.From == readySubsetRoute {
 				selectedTarget, dependencyTarget = intermediate, intermediate
 			}
-			if !c.dependenciesReady(action, *dependencyTarget, c.runtime) {
+			reason := c.unconfirmedActionReason(action, *selectedTarget)
+			if reason != "" || !c.dependenciesComplete(action, *dependencyTarget, c.runtime) {
+				if reason != "" {
+					if blocked == nil {
+						blocked = map[string]string{}
+					}
+					blocked[action.ID] = reason
+				}
 				if parent := c.runs[transitionRunKind+"/"+target.ID]; parent != nil && parent.action.Status == servingstate.NativeOperationFailed && action.Kind == servingstate.OperationStop {
 					return
 				}
@@ -156,6 +164,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 			}(operation, run)
 		}
 	}
+	c.failUnconfirmedTransitionLocked(target, actions, blocked, config)
 }
 
 func (c *SchedulerController) intermediateActions(
@@ -295,23 +304,8 @@ func (c *reservationState) dependenciesReady(action serving.Action, target servi
 	if action.RouteTarget != nil {
 		target = *action.RouteTarget
 	}
-	if action.Node.UID != "" && slices.ContainsFunc(c.state.Snapshot.Instances, func(instance serving.SchedulerInstance) bool {
-		return instance.Node == action.Node && !instance.Ready && !instance.Stopped && !instance.Terminated
-	}) {
+	if c.unconfirmedActionReason(action, target) != "" {
 		return false
-	}
-	if action.Kind == servingstate.OperationRoute {
-		uids := c.targetWorkloadsLocked(target)
-		for _, wanted := range target.Instances {
-			if !slices.Contains(uids, wanted.WorkloadUID) || target.Routing[wanted.WorkloadUID][wanted.ID] <= 0 {
-				continue
-			}
-			if slices.ContainsFunc(c.state.Snapshot.Instances, func(actual serving.SchedulerInstance) bool {
-				return (actual.ID == wanted.ID || actual.TargetID == wanted.ID) && !actual.Ready && !actual.Stopped
-			}) {
-				return false
-			}
-		}
 	}
 	return c.dependenciesComplete(action, plan, runtime)
 }

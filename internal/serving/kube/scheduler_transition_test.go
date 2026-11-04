@@ -467,9 +467,20 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 		!slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == id && a.Status == servingstate.NativeOperationFailed }) {
 		t.Fatalf("lost prepared effect kept its owner running: target %v lost %+v actions %+v", fixtureTarget(controller), lost, snapshot.Actions)
 	}
-	// Execution failure alone retains ownership. An authoritative empty LIST
-	// after retirement supplies the missing physical-return proof.
-	controller.releaseObservedScopes(nil, nil, nil, now.Add(time.Minute))
+	// Execution failure alone retains ownership. An authoritative empty Pod LIST
+	// on the same exact, settled Node supplies the physical-return proof.
+	var nodes []core.Node
+	for _, run := range controller.runs {
+		if run.owner == controller.runs[id].owner {
+			for _, ref := range run.scope.Nodes {
+				nodes = append(nodes, core.Node{ObjectMeta: meta.ObjectMeta{Name: ref.Name, UID: types.UID(ref.UID)}})
+			}
+			if ref := run.result.Operation.Node; ref.UID != "" {
+				nodes = append(nodes, core.Node{ObjectMeta: meta.ObjectMeta{Name: ref.Name, UID: types.UID(ref.UID)}})
+			}
+		}
+	}
+	controller.releaseObservedScopes(nodes, nil, nil, now.Add(time.Minute))
 	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")

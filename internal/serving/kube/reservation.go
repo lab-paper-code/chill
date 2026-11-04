@@ -166,17 +166,83 @@ func (c *reservationState) returnProofParent(run *actionRun) *actionRun {
 
 // This check also runs when there are no Pods: absence is not permission to
 // release while an authorized sibling can still publish a remote write.
-func (c *reservationState) ownerReturnTerminal(run *actionRun) bool {
-	if parent := c.returnProofParent(run); parent != nil &&
-		(parent.action.Status == servingstate.NativeOperationRunning || parent.action.Status == servingstate.NativeOperationCancel) {
+func (c *reservationState) ownerReturnTerminal(run *actionRun, node serving.NodeReference, cleanup []serving.Action) bool {
+	parent := c.returnProofParent(run)
+	if parent != nil && (parent.action.Status == servingstate.NativeOperationRunning || parent.action.Status == servingstate.NativeOperationCancel) {
 		return false
 	}
+	active := func(sibling *actionRun) bool {
+		return sibling != nil && sibling.owner == run.owner &&
+			(sibling.action.Status == servingstate.NativeOperationRunning || sibling.action.Status == servingstate.NativeOperationCancel) &&
+			c.returnWriterTouches(sibling, node)
+	}
 	for _, sibling := range c.runs {
-		if sibling.owner == run.owner && (sibling.action.Status == servingstate.NativeOperationRunning || sibling.action.Status == servingstate.NativeOperationCancel) {
+		if active(sibling) {
+			return false
+		}
+	}
+	if parent == nil {
+		return true
+	}
+	for _, receipt := range parent.routeReceipts {
+		if active(receipt) {
+			return false
+		}
+	}
+	for _, action := range cleanup {
+		if node.UID == "" || action.Node.UID == "" || action.Node == node {
 			return false
 		}
 	}
 	return true
+}
+
+func (c *reservationState) pendingOwnerCleanup(parent *actionRun) []serving.Action {
+	if parent == nil || parent.action.Status != servingstate.NativeOperationFailed || parent.result == nil || parent.result.Operation.Target == nil {
+		return nil
+	}
+	// A failed owner can still dispatch the unstarted tail of a completed stop.
+	// Terminal parent/children alone do not close that future-writer obligation.
+	target := *parent.result.Operation.Target
+	var completed []serving.Action
+	for _, action := range target.Actions {
+		child := c.runs[action.ID]
+		if action.Kind == servingstate.OperationStop && child != nil && child.owner == parent.owner && child.result != nil &&
+			child.result.Status == servingstate.NativeOperationComplete && actionEquivalent(action, child.action) {
+			completed = append(completed, child.action)
+		}
+	}
+	cleanup := servingstate.FailedStopCleanup(target, completed).Actions
+	return slices.DeleteFunc(cleanup, func(action serving.Action) bool {
+		if action.Status == servingstate.NativeOperationCancel || action.Status == servingstate.NativeOperationComplete || action.Status == servingstate.NativeOperationFailed {
+			return true
+		}
+		child := c.runs[action.ID]
+		return child != nil && child.owner == parent.owner && actionEquivalent(action, child.action)
+	})
+}
+
+// The admitted scope, not just action.Node, bounds multi-node policy writers.
+// An unclassified or identity-less writer cannot establish independence.
+func (c *reservationState) returnWriterTouches(run *actionRun, node serving.NodeReference) bool {
+	if node.UID == "" {
+		return true
+	}
+	if run.result == nil {
+		return true
+	}
+	operation := run.result.Operation
+	switch operation.Kind {
+	case servingstate.OperationPrepare, servingstate.OperationStop, servingstate.OperationDrain, servingstate.OperationRemove, servingstate.OperationPower:
+		if operation.Node.UID != "" {
+			return operation.Node == node
+		}
+	case servingstate.OperationRoute, servingstate.OperationUnroute, servingstate.OperationRelease, servingstate.OperationResize:
+	default:
+		return true
+	}
+	return len(run.scope.Nodes) == 0 || slices.Contains(run.scope.Nodes, node) ||
+		operation.Node == node || slices.Contains(operation.Nodes, node)
 }
 
 func (c *reservationState) authorize(operation servingstate.Operation) error {
@@ -197,37 +263,278 @@ func (c *reservationState) authorize(operation servingstate.Operation) error {
 func (c *reservationState) releaseObservedScopes(nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	observedOwners := map[string]bool{}
 	for _, run := range c.runs {
-		if !run.reserved || run.action.Status == servingstate.NativeOperationRunning || run.action.Status == servingstate.NativeOperationCancel || run.result == nil || !run.result.EndedAt.Before(observedAt) {
+		if !run.reserved || observedOwners[run.owner] {
 			continue
 		}
-		if !c.ownerReturnTerminal(run) {
+		observedOwners[run.owner] = true
+		c.releaseObservedOwnerScopes(run, nodes, pods, physical, observedAt)
+	}
+}
+
+func (c *reservationState) releaseObservedOwnerScopes(run *actionRun, nodes []core.Node, pods []core.Pod, physical []serving.InstanceState, observedAt time.Time) {
+	var held []serving.NodeReference
+	parent, fresh := c.observedReturnParent(run, observedAt)
+	if !fresh {
+		return
+	}
+	podNodes, instanceNodes := map[string]serving.NodeReference{}, map[string]serving.NodeReference{}
+	associated := true
+	for _, member := range c.runs {
+		if member.owner != run.owner {
 			continue
 		}
-		returned := true
-		for _, sibling := range c.runs {
-			if sibling.owner == run.owner && sibling.result != nil && !sibling.result.EndedAt.Before(observedAt) {
-				returned = false
+		if !member.reserved {
+			continue
+		}
+		if member.result == nil || member.action.Status == servingstate.NativeOperationRunning || member.action.Status == servingstate.NativeOperationCancel {
+			continue
+		}
+		for _, node := range member.scope.Nodes {
+			if !slices.Contains(held, node) {
+				held = append(held, node)
 			}
 		}
-		for _, ref := range run.scope.Nodes {
-			for _, node := range nodes {
-				if node.Name == ref.Name && string(node.UID) == ref.UID {
-					if node.Labels[chillmeta.PowerModeState] == chillmeta.PowerModePending {
-						returned = false
+		for _, uid := range member.scope.Pods {
+			if _, found := podNodes[uid]; found {
+				continue
+			}
+			ref, known := c.returnResourceNode(run.owner, uid, true, pods, physical)
+			podNodes[uid], associated = ref, associated && known
+		}
+		for _, id := range member.scope.Instances {
+			if _, found := instanceNodes[id]; found {
+				continue
+			}
+			ref, known := c.returnResourceNode(run.owner, id, false, pods, physical)
+			instanceNodes[id], associated = ref, associated && known
+		}
+	}
+	for _, node := range podNodes {
+		associated = associated && slices.Contains(held, node)
+	}
+	for _, node := range instanceNodes {
+		associated = associated && slices.Contains(held, node)
+	}
+	if !associated {
+		return
+	}
+	if parent != nil {
+		run = parent
+	}
+	cleanup := c.pendingOwnerCleanup(parent)
+	var returned []serving.NodeReference
+	for _, node := range held {
+		if c.ownerNodeReturned(run, node, cleanup, nodes, pods, physical) {
+			returned = append(returned, node)
+		}
+	}
+	c.pruneReturnedOwnerScopes(run.owner, returned, podNodes, instanceNodes, cleanup)
+	if parent != nil {
+		parent.returnObserved = !slices.ContainsFunc(held, func(node serving.NodeReference) bool { return !slices.Contains(returned, node) })
+		for _, member := range c.runs {
+			if member.owner == run.owner && member.reserved &&
+				len(member.scope.Nodes)+len(member.scope.Pods)+len(member.scope.Instances)+len(member.scope.Workloads)+len(member.scope.Routing) != 0 {
+				parent.returnObserved = false
+			}
+		}
+	}
+}
+
+func (c *reservationState) observedReturnParent(run *actionRun, observedAt time.Time) (*actionRun, bool) {
+	parent := c.returnProofParent(run)
+	for _, member := range c.runs {
+		if member.owner != run.owner {
+			continue
+		}
+		// Preserve the conservative all-sibling timestamp maximum.
+		if member.result != nil && !member.result.EndedAt.Before(observedAt) {
+			return parent, false
+		}
+		if parent == nil {
+			parent = c.returnProofParent(member)
+		}
+	}
+	if parent != nil {
+		if parent.action.Status == servingstate.NativeOperationRunning || parent.action.Status == servingstate.NativeOperationCancel {
+			return parent, false
+		}
+		for _, receipt := range parent.routeReceipts {
+			if receipt != nil && receipt.result != nil && !receipt.result.EndedAt.Before(observedAt) {
+				return parent, false
+			}
+		}
+	}
+	return parent, true
+}
+
+func (c *reservationState) pruneReturnedOwnerScopes(owner string, returned []serving.NodeReference, podNodes, instanceNodes map[string]serving.NodeReference, cleanup []serving.Action) {
+	// Detach reduced slices: admitted operations and sibling scopes can share
+	// backing arrays. Neither immutable evidence nor another member is scratch.
+	for _, member := range c.runs {
+		if member.owner != owner || !member.reserved {
+			continue
+		}
+		if slices.ContainsFunc(member.scope.Nodes, func(node serving.NodeReference) bool { return slices.Contains(returned, node) }) {
+			member.scope.Nodes = slices.DeleteFunc(slices.Clone(member.scope.Nodes), func(node serving.NodeReference) bool { return slices.Contains(returned, node) })
+		}
+		if slices.ContainsFunc(member.scope.Pods, func(uid string) bool { return slices.Contains(returned, podNodes[uid]) }) {
+			member.scope.Pods = slices.DeleteFunc(slices.Clone(member.scope.Pods), func(uid string) bool { return slices.Contains(returned, podNodes[uid]) })
+		}
+		if slices.ContainsFunc(member.scope.Instances, func(id string) bool { return slices.Contains(returned, instanceNodes[id]) }) {
+			member.scope.Instances = slices.DeleteFunc(slices.Clone(member.scope.Instances), func(id string) bool { return slices.Contains(returned, instanceNodes[id]) })
+		}
+		if member.result == nil || !c.ownerReturnTerminal(member, serving.NodeReference{}, cleanup) ||
+			len(member.scope.Nodes)+len(member.scope.Pods)+len(member.scope.Instances) != 0 {
+			continue
+		}
+		member.scope.Workloads, member.scope.Routing, member.scope.Owners = nil, nil, nil
+		if member.action.Kind != transitionRunKind {
+			member.reserved = false
+		}
+	}
+}
+
+func (c *reservationState) ownerNodeReturned(run *actionRun, ref serving.NodeReference, cleanup []serving.Action, nodes []core.Node, pods []core.Pod, physical []serving.InstanceState) bool {
+	if ref.UID == "" || !c.ownerReturnTerminal(run, ref, cleanup) {
+		return false
+	}
+	settled := slices.ContainsFunc(nodes, func(node core.Node) bool {
+		return node.Name == ref.Name && string(node.UID) == ref.UID && node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModePending
+	})
+	if !settled {
+		return false
+	}
+	for _, member := range c.runs {
+		if member.owner != run.owner || !member.reserved {
+			continue
+		}
+		if member.result == nil && len(member.scope.Nodes)+len(member.scope.Pods)+len(member.scope.Instances)+len(member.scope.Workloads)+len(member.scope.Routing) == 0 {
+			continue
+		}
+		if member.result == nil {
+			return false
+		}
+		// Scope Pods include preexisting occupants. Only this prepare's own
+		// admitted Pod identity or API creation evidence closes a lost Create.
+		operation := member.result.Operation
+		creation := member.result.Preparation
+		creationKnown := operation.PodUID != "" || creation != nil && creation.PodUID != "" && creation.NodeUID == ref.UID
+		if (operation.Kind == servingstate.OperationPrepare || operation.Kind == servingstate.OperationResize) &&
+			operation.Node == ref && !creationKnown && !member.result.EffectsNotStarted {
+			return false
+		}
+		for _, pod := range pods {
+			if pod.Spec.NodeName == ref.Name &&
+				(slices.Contains(member.scope.Pods, string(pod.UID)) || slices.Contains(member.scope.Workloads, servingstate.WorkloadOwner(pod.OwnerReferences)) || slices.Contains(member.scope.Owners, servingstate.WorkloadOwner(pod.OwnerReferences))) &&
+				!c.knownOwnerEffectConfirmed(member, &pod, physical) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Resolve only exact admitted/current identities. Missing inventory is not a
+// mapping, and conflicting identities cannot authorize dropping an entry.
+func (c *reservationState) returnResourceNode(owner, id string, pod bool, pods []core.Pod, physical []serving.InstanceState) (serving.NodeReference, bool) {
+	var ref serving.NodeReference
+	ambiguous := false
+	include := func(node serving.NodeReference) {
+		if node.UID == "" || node.Name == "" {
+			return
+		}
+		if ref.UID != "" && ref != node {
+			ambiguous = true
+		}
+		ref = node
+	}
+	for _, member := range c.runs {
+		if member.owner != owner || member.result == nil {
+			continue
+		}
+		includeAdmittedReturnNodes(member, id, pod, include)
+		if pod {
+			for _, current := range pods {
+				if string(current.UID) == id {
+					if ref.UID != "" && ref.Name != current.Spec.NodeName {
+						ambiguous = true
+					}
+					for _, node := range member.scope.Nodes {
+						if node.Name == current.Spec.NodeName {
+							include(node)
+						}
 					}
 				}
 			}
-			for _, pod := range pods {
-				if pod.Spec.NodeName == ref.Name && (slices.Contains(run.scope.Pods, string(pod.UID)) || slices.Contains(run.scope.Workloads, servingstate.WorkloadOwner(pod.OwnerReferences)) || slices.Contains(run.scope.Owners, servingstate.WorkloadOwner(pod.OwnerReferences))) && !c.knownOwnerEffectConfirmed(run, &pod, physical) {
-					returned = false
-				}
+		}
+	}
+	if ref.UID == "" {
+		for _, state := range physical {
+			if returnIdentityMatches(id, pod, state.ID, state.PodUID) {
+				include(state.Node)
 			}
 		}
-		if run.action.Kind == transitionRunKind {
-			run.returnObserved = returned
-		} else if returned {
-			run.reserved = false
+	}
+	if ref.UID == "" {
+		// Only absent exact evidence permits single-node scope association.
+		// A reused child scope can retain Pods admitted on other parent nodes.
+		for _, member := range c.runs {
+			if member.owner == owner && member.result != nil {
+				includeScopedReturnNode(member.scope, id, pod, include)
+			}
+		}
+	}
+	return ref, ref.UID != "" && !ambiguous
+}
+
+func includeScopedReturnNode(scope resourceScope, id string, pod bool, include func(serving.NodeReference)) {
+	if (pod && slices.Contains(scope.Pods, id) || !pod && slices.Contains(scope.Instances, id)) && len(scope.Nodes) > 0 &&
+		!slices.ContainsFunc(scope.Nodes, func(node serving.NodeReference) bool { return node != scope.Nodes[0] }) {
+		include(scope.Nodes[0])
+	}
+}
+
+func returnIdentityMatches(id string, pod bool, instance, uid string) bool {
+	if pod {
+		executorPod, _, exact := strings.Cut(instance, "/")
+		return uid == id || exact && executorPod == id
+	}
+	return instance == id
+}
+
+func includeAdmittedReturnNodes(member *actionRun, id string, pod bool, include func(serving.NodeReference)) {
+	result, operation := member.result, member.result.Operation
+	if returnIdentityMatches(id, pod, operation.Instance, operation.PodUID) || !pod && member.prepareIdentity == id {
+		include(operation.Node)
+	}
+	if operation.Prepare != nil && returnIdentityMatches(id, pod, operation.Prepare.Instance.ID, operation.Prepare.Instance.PodUID) {
+		include(operation.Prepare.Instance.Node)
+	}
+	if evidence := result.Preparation; evidence != nil && pod && evidence.PodUID == id && evidence.NodeUID == operation.Node.UID {
+		include(operation.Node)
+	}
+	for _, state := range result.Before.Instances {
+		if returnIdentityMatches(id, pod, state.ID, state.PodUID) {
+			include(state.Node)
+		}
+	}
+	for _, state := range result.Actual.Instances {
+		if returnIdentityMatches(id, pod, state.ID, state.PodUID) {
+			include(state.Node)
+		}
+	}
+	if operation.Target != nil {
+		for _, state := range operation.Target.Instances {
+			if returnIdentityMatches(id, pod, state.ID, state.PodUID) {
+				include(state.Node)
+			}
+		}
+		for _, action := range operation.Target.Actions {
+			if returnIdentityMatches(id, pod, action.Instance, "") {
+				include(action.Node)
+			}
 		}
 	}
 }
@@ -249,6 +556,11 @@ func (c *reservationState) knownOwnerEffectConfirmed(run *actionRun, pod *core.P
 	for _, sibling := range c.runs {
 		if sibling.owner == parent.owner && sibling.result != nil && sibling.result.EndedAt.After(after) {
 			after = sibling.result.EndedAt
+		}
+	}
+	for _, receipt := range parent.routeReceipts {
+		if receipt != nil && receipt.owner == parent.owner && receipt.result != nil && receipt.result.EndedAt.After(after) {
+			after = receipt.result.EndedAt
 		}
 	}
 	preexisting, untouched := untouchedExecutorProof(parent, pod, physical, after)

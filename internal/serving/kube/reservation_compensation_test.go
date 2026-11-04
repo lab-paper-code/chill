@@ -27,20 +27,20 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			actual := c.state.Snapshot.Instances[1]
 			uid := c.config.Settings.AutonomousWorkloads[0]
 			ctx := c.ctx
-			writes := api.podWrites
+			writes := api.podWrites.Load()
 			status, failure := child.result.Status, child.result.Error
 			c.launch(serving.SchedulerCandidate{}, c.config)
 			c.wg.Wait()
 			cleanupID := child.action.ID + "/compensate/" + actual.ID
 			cleanup := c.runs[cleanupID]
 			if evidence != "unclaimed" && evidence != "canceled" {
-				if cleanup != nil || api.podWrites != writes || api.deleteCalls != 0 || !parent.reserved || !child.reserved {
+				if cleanup != nil || api.podWrites.Load() != writes || api.deleteCalls.Load() != 0 || !parent.reserved || !child.reserved {
 					t.Fatalf("%s changed protected Pod/reservation", evidence)
 				}
 				return
 			}
-			if cleanup == nil || cleanup.action.Status != servingstate.NativeOperationComplete || cleanup.owner != parent.owner || api.deleteCalls != 1 {
-				t.Fatalf("existing stop/drain/remove did not complete: %+v, deletes=%d", cleanup, api.deleteCalls)
+			if cleanup == nil || cleanup.action.Status != servingstate.NativeOperationComplete || cleanup.owner != parent.owner || api.deleteCalls.Load() != 1 {
+				t.Fatalf("existing stop/drain/remove did not complete: %+v, deletes=%d", cleanup, api.deleteCalls.Load())
 			}
 			if len(cleanup.result.DrainNative[actual.ID].Requests) != 0 {
 				t.Fatal("retirement bypassed native drain")
@@ -65,7 +65,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			c.state.Snapshot = fresh
 			c.launch(serving.SchedulerCandidate{}, c.config)
 			c.wg.Wait()
-			if api.deleteCalls != 1 {
+			if api.deleteCalls.Load() != 1 {
 				t.Fatal("compensation was not idempotent")
 			}
 		})
@@ -108,7 +108,7 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 	c.state.Snapshot = fresh
 	c.launch(serving.SchedulerCandidate{}, c.config)
 	c.wg.Wait()
-	if api.deleteCalls != 1 || !parent.reserved || !child.reserved {
+	if api.deleteCalls.Load() != 1 || !parent.reserved || !child.reserved {
 		t.Fatal("R4b did not retire once while retaining the physical-return obligation")
 	}
 	fresh, err = c.capture(c.ctx, time.Now(), c.config)

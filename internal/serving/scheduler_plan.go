@@ -55,9 +55,27 @@ func SchedulerLowestMode(baselines []NodeBaseline, node NodeReference) string {
 // schedulerAvailable reports a Ready Node outside the measurement POOL and the
 // excluded Nodes without a CHILL serving instance whose power mode can change.
 func schedulerAvailable(snapshot SchedulerSnapshot, n SchedulerNode) bool {
-	return n.Ready && !schedulerReservedNode(snapshot, n.Node) && !n.Measurement && !slices.Contains(n.Reasons, NodeExcluded) && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
-		!slices.Contains(n.Reasons, NodeInstanceUnavailable) &&
+	return schedulerPhysicalChangeReason(snapshot, n.Node) == "" && !schedulerReservedNode(snapshot, n.Node) && !n.Measurement && !slices.Contains(n.Reasons, NodeExcluded) && !slices.Contains(n.Reasons, NodePowerModeUnavailable) &&
 		!slices.ContainsFunc(snapshot.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
+}
+
+const schedulerNodeUnavailable = "NodeUnavailable"
+
+// schedulerPhysicalChangeReason uses exact node and executor confirmation, not
+// serving eligibility. A stopped executor still needs native drain confirmation;
+// a terminated executor does not.
+func schedulerPhysicalChangeReason(snapshot SchedulerSnapshot, node NodeReference) string {
+	index := slices.IndexFunc(snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
+	if index < 0 || !snapshot.Nodes[index].Ready {
+		return schedulerNodeUnavailable
+	}
+	if slices.Contains(snapshot.Nodes[index].Reasons, NodeInstanceUnavailable) ||
+		slices.ContainsFunc(snapshot.Instances, func(i SchedulerInstance) bool {
+			return i.Node == node && !i.Terminated && !i.Ready
+		}) {
+		return NodeInstanceUnavailable
+	}
+	return ""
 }
 
 // schedulerCommonNodes preserves already-authorized Fixed power changes. New
@@ -521,10 +539,8 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			if n.Node != oldNode.Node || n.PowerMode == oldNode.PowerMode {
 				continue
 			}
-			if slices.ContainsFunc(p.snap.Instances, func(i SchedulerInstance) bool {
-				return i.Node == n.Node && !i.Ready && !i.Stopped && !i.Terminated
-			}) {
-				p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, n.Node.Name, n.Node.UID))
+			if reason := schedulerPhysicalChangeReason(p.snap, n.Node); reason != "" {
+				p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", reason, n.Node.Name, n.Node.UID))
 				continue
 			}
 			from := oldNode.PowerMode
@@ -593,12 +609,6 @@ func (p *schedulerPlanState) prepareTargets(c SchedulerCandidate) {
 		if wanted.Terminated || schedulerReservedNode(p.snap, wanted.Node) {
 			continue
 		}
-		if slices.ContainsFunc(p.snap.Instances, func(actual SchedulerInstance) bool {
-			return actual.Node == wanted.Node && !actual.Ready && !actual.Stopped && !actual.Terminated
-		}) {
-			p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", NodeInstanceUnavailable, wanted.Node.Name, wanted.Node.UID))
-			continue
-		}
 		if running := p.runningPreparation(wanted); running != "" {
 			p.prepares = append(p.prepares, running)
 			continue
@@ -610,6 +620,10 @@ func (p *schedulerPlanState) prepareTargets(c SchedulerCandidate) {
 			}
 		}
 		if exists {
+			continue
+		}
+		if reason := schedulerPhysicalChangeReason(p.snap, wanted.Node); reason != "" {
+			p.reasons = appendUnique(p.reasons, fmt.Sprintf("%s:%s:%s", reason, wanted.Node.Name, wanted.Node.UID))
 			continue
 		}
 		p.freePreparationResources(wanted)
@@ -671,7 +685,7 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 		if node.Node != wanted.Node {
 			continue
 		}
-		if slices.Contains(node.Reasons, NodeInstanceUnavailable) {
+		if schedulerPhysicalChangeReason(p.snap, wanted.Node) != "" {
 			return false // Unknown physical ownership is not free coexistence capacity.
 		}
 		allocations := append([]SchedulerAllocation{node.Reserved}, node.NonServing...)
@@ -700,6 +714,9 @@ func (p *schedulerPlanState) preparationFits(wanted SchedulerInstance) bool {
 }
 
 func (p *schedulerPlanState) retirePreparationBlocker(actual SchedulerInstance) {
+	if schedulerPhysicalChangeReason(p.snap, actual.Node) != "" {
+		return
+	}
 	for _, old := range p.snap.Actions {
 		if old.Kind == schedulerActionRemove && old.Instance == actual.ID && old.Node == actual.Node && old.Status == phaseRunning {
 			p.stops[actual.ID] = old.ID
@@ -715,7 +732,7 @@ func (p *schedulerPlanState) retirePreparationBlocker(actual SchedulerInstance) 
 
 func (p *schedulerPlanState) retireOld(c SchedulerCandidate, route string) {
 	for _, i := range p.snap.Instances {
-		if schedulerReservedNode(p.snap, i.Node) {
+		if schedulerReservedNode(p.snap, i.Node) || schedulerPhysicalChangeReason(p.snap, i.Node) != "" {
 			continue
 		}
 		exists := false
