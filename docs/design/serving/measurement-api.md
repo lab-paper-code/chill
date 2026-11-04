@@ -824,7 +824,7 @@ cache 접근 전 기존 TokenReview와 정확
 | 상황 | 응답 |
 |---|---|
 | 토큰 없음/무효 | 401, cache 데이터 없음 |
-| URL/namespace resource SAR 거부 | 403, cache 데이터 없음 |
+| URL/namespace resource SAR 거부 | 403, cache 데이터 없음. ChillServer 응답 `message`는 SAR이 요구한 권한(`forbidden: requires <verb> on /chill<path>` 또는 resource·namespace)만 담고 토큰·신원은 담지 않는다 |
 | 인증/SAR 서비스 장애 | 503 `AuthorizationUnavailable`, 오래된 데이터도 제공하지 않음 |
 | 초기 필수 입력 없음 | 503 `CoverageWarming`, `Retry-After: 2`; 빠른 오류를 사용 가능 응답으로 세지 않음 |
 | 일부 source 갱신 실패 | 200 partial, source 오류/영향 범위·마지막 기준 시각 보존 |

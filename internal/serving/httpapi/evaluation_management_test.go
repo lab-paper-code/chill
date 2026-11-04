@@ -52,6 +52,11 @@ func TestEvaluationMutationRequiresAuthorizationAndDurableAudit(t *testing.T) {
 			}
 		} else if response.Code != http.StatusForbidden {
 			t.Fatalf("authorization status=%d", response.Code)
+		} else if body := response.Body.String(); !strings.Contains(body, `"code":"Forbidden"`) ||
+			!strings.Contains(body, "requires post on /chill/api/v1/evaluations") || strings.Contains(body, "caller") ||
+			strings.Contains(body, "operator") {
+			// The denial names the permission the review required, never the token or identity.
+			t.Fatalf("forbidden body=%s", body)
 		}
 	}
 }
