@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import copy
+import json
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -19,6 +21,7 @@ def validate(request: dict[str, object]) -> None:
 class FakeSession:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.executions = 0
 
     def get_providers(self) -> list[str]:
         return ["CPUExecutionProvider"]
@@ -26,8 +29,10 @@ class FakeSession:
     def prepare_next(self) -> None:
         self.calls.append("prepare")
 
-    def run(self) -> None:
+    def run(self) -> dict[str, object]:
         self.calls.append("run")
+        self.executions += 1
+        return {"precedingIdleNanos": None if self.executions == 1 else 0}
 
 
 def valid_request(model_path: Path) -> dict[str, object]:
@@ -98,6 +103,7 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "durationSeconds": 30,
                 "sloPercentile": 95,
                 "minServiceSamples": 59,
+                "cadence": json.loads((Path(__file__).parent.parent / "firstfloor/testdata/cadence.json").read_text()),
                 "sloTargetLatencyNanos": 1_000_000_000,
                 "workloadName": "mobilenet",
                 "workloadUID": "workload-uid",
@@ -147,18 +153,18 @@ class RunnerTest(unittest.TestCase):
                 validate(bad)
 
     def test_real_loop_requires_time_and_samples_in_every_restarted_trial(self) -> None:
-        for seconds_per_call, expected_calls in ((0.25, 120), (2.0, 59)):
+        for seconds_per_call, expected_calls in ((0.25, 120), (2.0, 60)):
             for batch in (1, 2, 4):
-                sessions = []
                 for trial in range(3):
                     clock = [0.0]
                     session = FakeSession()
-                    sessions.append(session)
                     request = valid_request(Path("/model"))
                     request["runConfig"]["measurement"]["batch"] = batch
                     def complete_call():
                         session.calls.append("run")
                         clock[0] += seconds_per_call
+                        session.executions += 1
+                        return {"precedingIdleNanos": None if session.executions == 1 else 0}
                     session.run = complete_call
                     with ExitStack() as stack:
                         stack.enter_context(mock.patch.object(runner, "wait_for_signal"))
@@ -171,10 +177,31 @@ class RunnerTest(unittest.TestCase):
                             "max 100000", [0], "0", lambda: None, "CPUExecutionProvider")
                     with self.subTest(seconds_per_call=seconds_per_call, batch=batch, trial=trial):
                         self.assertEqual(result["inferenceCount"], expected_calls)
-                        self.assertGreaterEqual(result["inferenceCount"], 59)
+                        self.assertGreaterEqual(result["inferenceCount"] - 1, 59)
                         self.assertGreaterEqual(result["measurementElapsedSecondsMonotonic"], 30)
                         self.assertEqual(len(result["repetitionResults"][0]["latencyMs"]), expected_calls)
-                self.assertEqual(len({id(session) for session in sessions}), 3)
+
+    def test_cadence_strict_reader_rejects_unfrozen_or_unknown_inputs(self) -> None:
+        valid = valid_request(Path("/model"))
+        valid["runConfig"]["measurement"]["cadence"]["provenance"]["seed"] = 17
+        validate(valid)
+        changes = (
+            lambda m: m.pop("cadence"),
+            lambda m: m["cadence"].update(seed=1),
+            lambda m: m["cadence"]["provenance"].update(seed=True),
+            lambda m: m["cadence"]["provenance"].update(draws=[]),
+            lambda m: m["cadence"]["provenance"]["draws"][0].update(elementIndex=1),
+            lambda m: m["cadence"]["provenance"]["phases"][0]["elements"][0].update(gapNanos=1.5),
+            lambda m: m["cadence"]["provenance"]["phases"][0]["elements"][0].update(sourceIndex=1),
+            lambda m: m["cadence"]["provenance"]["sources"][0].update(windowEnd="2026-11-04T00:00:00Z"),
+            lambda m: m["cadence"]["target"].update(boundary="gateway-gap"),
+            lambda m: m["cadence"]["target"].update(conditionalModel="unconditioned"),
+        )
+        for change in changes:
+            request = copy.deepcopy(valid)
+            change(request["runConfig"]["measurement"])
+            with self.subTest(change=change), self.assertRaises(runner.ContractError):
+                validate(request)
 
     def test_raw_sample_contract_fields_are_required_by_mode(self) -> None:
         validate(valid_idle_request(Path("/model")))
@@ -343,8 +370,8 @@ class RunnerTest(unittest.TestCase):
 
     def test_producer_budgets_fail_before_growth(self) -> None:
         with self.assertRaisesRegex(runner.ContractError, "latency sample budget"):
-            runner.measurement_complete(0.5, 1, 10, 10, 10)
-        self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10, 10))
+            runner.measurement_complete(0.5, 1, 10, 10, 10, 9)
+        self.assertTrue(runner.measurement_complete(1.0, 1, 10, 10, 10, 10))
         with self.assertRaisesRegex(runner.ContractError, "runtime result exceeds"):
             runner.encode_result({"samples": [1, 2, 3]}, 1)
 
@@ -440,8 +467,8 @@ class RunnerTest(unittest.TestCase):
                     ],
                 )
             )
-            stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0] + [30.1] * 60))
-            ticks = iter(value for index in range(59) for value in (index * 10_000_000, index * 10_000_000 + 5_000_000))
+            stack.enter_context(mock.patch.object(runner.time, "monotonic", side_effect=[0.0] + [30.1] * 61))
+            ticks = iter(value for index in range(60) for value in (index * 10_000_000, index * 10_000_000 + 5_000_000))
             stack.enter_context(mock.patch.object(
                 runner.time, "perf_counter_ns", side_effect=lambda: session.calls.append("timer") or next(ticks)
             ))
@@ -465,7 +492,7 @@ class RunnerTest(unittest.TestCase):
             [mock.call(Path(path), 30.0) for path in request["observerReadyPaths"]]
             + [mock.call(Path(request["workloadWindowReadyPath"]), 30.0)],
         )
-        self.assertEqual(session.calls, ["prepare", "timer", "run", "timer"] * 59)
+        self.assertEqual(session.calls, ["prepare", "timer", "run", "timer"] * 60)
         self.assertEqual(result["schemaVersion"], runner.RESULT_SCHEMA)
         self.assertEqual(result["inputs"], ["image"])
         self.assertNotIn("outputValidation", result)
@@ -473,7 +500,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(result["experimentId"], "pod-uid")
         self.assertEqual(result["nodeName"], request["scheduledNodeName"])
         self.assertEqual(result["provider"], "CPUExecutionProvider")
-        self.assertEqual(result["inferenceCount"], 59)
+        self.assertEqual(result["inferenceCount"], 60)
         self.assertEqual(result["latencyMs"]["mean"], 5.0)
         self.assertEqual(result["cpuContract"]["cgroupCPUStatDelta"], {"usage_usec": 20})
         self.assertEqual(result["derivedExecutionContract"]["nodeSnapshot"]["uid"], "node-uid")

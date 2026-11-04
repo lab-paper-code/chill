@@ -10,6 +10,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -209,7 +210,8 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 
 func batchEnergyOptimizationPreflightPlan(t *testing.T) profilederivation.CurvePlan {
 	t.Helper()
-	active := batchEnergyOptimizationPreflightProtocol("saturated")
+	active := batchEnergyOptimizationPreflightProtocol("empirical-cadence-fixed-batch")
+	active.Cadences = fixtures.Cadences(1, 2, 4)
 	active.WarmupIterations = 20
 	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	idle := batchEnergyOptimizationPreflightProtocol("idle-model-loaded")

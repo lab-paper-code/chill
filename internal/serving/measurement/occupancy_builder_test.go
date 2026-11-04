@@ -11,7 +11,9 @@ import (
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -48,7 +50,7 @@ func syntheticOccupancyFixture() occupancyFixture {
 		profile: &serving.Profile{
 			ID:       "allowed/beo/beo-uid",
 			NodeName: "node",
-			Batches:  []serving.BatchProfile{{Batch: 2, DurationNanos: []float64{10e6, 20e6, 30e6}}},
+			Batches:  []serving.BatchProfile{{Batch: 2, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 10e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 20e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 2, 30e6)}}},
 		},
 		node: &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}},
 		workload: &api.Workload{
@@ -165,6 +167,15 @@ func TestOccupancyDerivationFreezesProtocolAndCompleteElapsedBudget(t *testing.T
 	}
 }
 
+func TestOccupancyProfileRejectsNonfiniteServiceWire(t *testing.T) {
+	for _, value := range []string{"1e999", "NaN", "Infinity"} {
+		var batch serving.BatchProfile
+		if err := json.Unmarshal([]byte(`{"batch":2,"serviceSamples":[{"trialID":"physical-trial","serviceDurationNanos":`+value+`}]}`), &batch); err == nil {
+			t.Fatal("nonfinite service crossed paired profile wire")
+		}
+	}
+}
+
 func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 	for name, change := range map[string]func(*occupancyFixture){
 		"SLO ceil": func(f *occupancyFixture) {
@@ -183,22 +194,18 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 		"workers cannot hold batch": func(f *occupancyFixture) { f.policy.Workers = 1 },
 		"worker cap":                func(f *occupancyFixture) { f.policy.Workers = 65 },
 		"lifetime cannot hold queued batches": func(f *occupancyFixture) {
-			f.profile.Batches[0].DurationNanos = []float64{1e9}
+			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 1e9), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1e9)}
 		},
 		"byte supply cap": func(f *occupancyFixture) {
 			f.preprocessor.Spec.Input.Fields[0].MaxBytes = 32 << 20
 		},
 		"native byte cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueBytes = 8191 },
 		"queue count cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueRequests = 5 },
-		"zero service":    func(f *occupancyFixture) { f.profile.Batches[0].DurationNanos = []float64{0} },
+		"zero service": func(f *occupancyFixture) {
+			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 0), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 0)}
+		},
 		"negative service": func(f *occupancyFixture) {
-			f.profile.Batches[0].DurationNanos = []float64{-1}
-		},
-		"nonfinite service": func(f *occupancyFixture) {
-			f.profile.Batches[0].DurationNanos = []float64{math.Inf(1)}
-		},
-		"nan service": func(f *occupancyFixture) {
-			f.profile.Batches[0].DurationNanos = []float64{math.NaN()}
+			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, -1), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, -1)}
 		},
 		"elapsed overflow": func(f *occupancyFixture) {
 			f.policy.CollectionSeconds = math.MaxInt32
@@ -221,7 +228,10 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 func TestOccupancyBurstDoesNotDeriveWorkersWarmupOrDurationFromService(t *testing.T) {
 	for _, population := range [][]float64{{1e6}, {10e6, 20e6, 30e6}, {300e6}} {
 		f := syntheticOccupancyFixture()
-		f.profile.Batches[0].DurationNanos = population
+		f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, int64(population[0]))}
+		for i, service := range population {
+			f.profile.Batches[0].ServiceSamples = append(f.profile.Batches[0].ServiceSamples, fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", uint64(i+1), int64(service)))
+		}
 		f.preparation.Config.MaxQueueBytes = 8 * 1024
 		f.preparation.Config.MaxQueueRequests = 6
 		task, err := f.build()
@@ -263,7 +273,7 @@ func TestOccupancyBurstLifetimeIncludesPartialQueuedBatchAndMargin(t *testing.T)
 	f := syntheticOccupancyFixture()
 	f.workload.Spec.SLO.TargetLatency.Duration = time.Second
 	f.policy.Workers = 9
-	f.profile.Batches[0].DurationNanos = []float64{398e6}
+	f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 398e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 398e6)}
 	task, err := f.build()
 	if err != nil {
 		t.Fatal("exact lifetime boundary rejected", err)
@@ -271,7 +281,7 @@ func TestOccupancyBurstLifetimeIncludesPartialQueuedBatchAndMargin(t *testing.T)
 	if task.Spec.Conditions.WaitingBatches != 4 {
 		t.Fatal("partial outstanding batch was rounded down")
 	}
-	f.profile.Batches[0].DurationNanos = []float64{399e6}
+	f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 399e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 399e6)}
 	_, err = f.build()
 	requireOccupancyError(t, err, "OccupancyInfeasible")
 }

@@ -24,10 +24,12 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/application"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	core "k8s.io/api/core/v1"
@@ -402,10 +404,10 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *testing.T) {
 	at := time.Date(2026, 10, 15, 18, 22, 30, 0, time.UTC)
 	profile := &serving.Profile{ID: "profile", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "profile", Size: 123},
-		Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{12, 34}, EnergyPerInputJoules: 0, EnergyBelowResolution: true}}}
+		Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 12), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 34)}, EnergyPerInputJoules: 0, EnergyBelowResolution: true}}}
 	equalProfile := *profile
 	differentProfile := *profile
-	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{56}}}
+	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 56), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 56)}}}
 	instances := []serving.SchedulerInstance{
 		{ID: "physical", TargetID: "selected-slot", Node: serving.NodeReference{UID: "node-uid"}, Profile: profile, Reasons: []string{"PolicyAckPending"}},
 		{ID: "equal", Profile: &equalProfile},
@@ -458,7 +460,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 	if profileFields := wire.Profile; len(profileFields) != 1 || profileFields["$ref"] == nil {
 		t.Fatal("compact wire response still includes the repeated inline profile")
 	}
-	if profile.Batches[0].DurationNanos[0] != 12 || instances[0].Profile != profile {
+	if profile.Batches[0].ServiceSamples[0].ServiceDurationNanos != 12 || instances[0].Profile != profile {
 		t.Fatal("read projection mutated the raw source")
 	}
 }

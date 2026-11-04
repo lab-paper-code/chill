@@ -17,8 +17,10 @@ import (
 	serving "github.com/lab-paper-code/chill/internal/serving"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
@@ -420,10 +422,11 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	instance := snapshot.Instances[0]
 	profile := *instance.Profile
 	profile.Batches = make([]serving.BatchProfile, 6)
+	cadence := fixtures.Cadence()
 	for b := range profile.Batches {
-		profile.Batches[b] = serving.BatchProfile{Batch: b + 1, DurationNanos: make([]float64, 200)}
-		for s := range profile.Batches[b].DurationNanos {
-			profile.Batches[b].DurationNanos[s] = 12345678.9 + float64(s)
+		profile.Batches[b] = serving.BatchProfile{Batch: b + 1, ServiceSamples: make([]firstfloor.ServiceSample, 200)}
+		for s := range profile.Batches[b].ServiceSamples {
+			profile.Batches[b].ServiceSamples[s] = fixtures.ServiceSample(cadence, "physical-trial", uint64(s), 12345679+int64(s))
 		}
 	}
 	instance.Profile = &profile

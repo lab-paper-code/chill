@@ -1,15 +1,16 @@
 package firstfloor
 
-import "math"
+import (
+	"math"
+	"time"
+)
 
-func serviceCost(b BatchProfile, percentile float64) float64 {
-	if len(b.ServiceSamplesMS) == 0 {
+func serviceCost(b BatchProfile, percentile float64, gap *int64) float64 {
+	value, _, ok := b.Distribution.QuantileNanos(gap, percentile)
+	if !ok {
 		return math.Inf(1)
 	}
-	// stat.Quantile Empirical on sorted NaN-free samples (validatePolicy and
-	// the replay sort them): the first i with i+1 >= p*n.
-	x := b.ServiceSamplesMS
-	return x[max(0, int(math.Ceil(percentile/100*float64(len(x))))-1)]
+	return float64(value) / float64(time.Millisecond)
 }
 
 // RemainingSLOMS uses frozen sender and native elapsed spans, never remote UTC.
@@ -18,8 +19,8 @@ func RemainingSLOMS(r RequestState) float64 {
 	return r.Context.SLO.TargetMS - r.Context.SenderElapsedMS - r.ElapsedMS
 }
 func SLOExpired(r RequestState) bool { return RemainingSLOMS(r) <= 0 }
-func requestSlack(r RequestState, b BatchProfile) float64 {
-	return RemainingSLOMS(r) - r.Context.CompletionMarginMS - serviceCost(b, r.Context.SLO.Percentile)
+func requestSlack(r RequestState, b BatchProfile, gap *int64) float64 {
+	return RemainingSLOMS(r) - r.Context.CompletionMarginMS - serviceCost(b, r.Context.SLO.Percentile, gap)
 }
 func allowedBatch(p Policy, size int) bool {
 	return p.MaxBatchSize >= 0 && (p.MaxBatchSize == 0 || size <= p.MaxBatchSize)
@@ -27,11 +28,11 @@ func allowedBatch(p Policy, size int) bool {
 func sameQueue(a, b RequestState) bool {
 	return a.Context.WorkloadUID == b.Context.WorkloadUID && a.Context.Definition == b.Context.Definition
 }
-func minimumService(p Policy, q RequestState) float64 {
+func minimumService(p Policy, q RequestState, gap *int64) float64 {
 	cost := math.Inf(1)
 	for _, b := range p.Batches {
 		if allowedBatch(p, b.Size) {
-			cost = math.Min(cost, serviceCost(b, q.Context.SLO.Percentile))
+			cost = math.Min(cost, serviceCost(b, q.Context.SLO.Percentile, gap))
 		}
 	}
 	return cost
@@ -90,11 +91,11 @@ func compatibleCount(requests []RequestState, head int) int {
 	}
 	return count
 }
-func batchFeasible(requests []RequestState, head int, b BatchProfile) bool {
+func batchFeasible(requests []RequestState, head int, b BatchProfile, gap *int64) bool {
 	previous := -1
 	for range b.Size {
 		previous = nextCompatible(requests, head, previous)
-		if previous < 0 || requestSlack(requests[previous], b) < 0 {
+		if previous < 0 || requestSlack(requests[previous], b, gap) < 0 {
 			return false
 		}
 	}
@@ -106,7 +107,20 @@ func batchFeasible(requests []RequestState, head int, b BatchProfile) bool {
 // has Size=0 and identifies the single rejected/demoted RequestID. Running work
 // is never preempted; only expired queued drops can be selected while active.
 // ponytail: bounded O(requests*profiles*b) scan; index only if measured CPU warrants it.
-func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
+func ChooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchChoice {
+	choice := chooseBatch(p, requests, gapDecision)
+	choice.DecisionIdleNanos = gapDecision
+	choice.DecisionIdleApproximate = true
+	for _, b := range p.Batches {
+		if b.Size == choice.Size {
+			choice.ConditionalSupport = b.Distribution.support(gapDecision)
+			break
+		}
+	}
+	return choice
+}
+
+func chooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchChoice {
 	if p.FixedBatchSize > 0 {
 		return chooseFixedBatch(p.FixedBatchSize, requests)
 	}
@@ -134,11 +148,11 @@ func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
 		if b.Size < 1 || b.Size > count || !allowedBatch(p, b.Size) {
 			continue
 		}
-		cost := serviceCost(b, r.Context.SLO.Percentile) / float64(b.Size)
+		cost := serviceCost(b, r.Context.SLO.Percentile, gapDecision) / float64(b.Size)
 		if throughput.Size == 0 || cost < perItemCost || cost == perItemCost && b.Size > throughput.Size {
 			throughput, perItemCost = b, cost
 		}
-		if r.Phase != phaseDeferred && batchFeasible(requests, head, b) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
+		if r.Phase != phaseDeferred && batchFeasible(requests, head, b, gapDecision) && (available.Size == 0 || b.EnergyPerItemJ < available.EnergyPerItemJ || b.EnergyPerItemJ == available.EnergyPerItemJ && b.Size > available.Size) {
 			available = b
 		}
 	}
@@ -154,7 +168,7 @@ func ChooseBatch(p Policy, requests []RequestState) BatchChoice {
 		return choice
 	}
 	choice.Size, choice.Reason = available.Size, "available_energy"
-	return energyGainWait(p, requests, head, count, available, choice)
+	return energyGainWait(p, requests, head, count, available, choice, gapDecision)
 }
 func queueHeads(requests []RequestState) (head, deferred int, active bool) {
 	head, deferred = -1, -1
@@ -173,7 +187,7 @@ func queueHeads(requests []RequestState) (head, deferred int, active bool) {
 	}
 	return head, deferred, active
 }
-func energyGainWait(p Policy, requests []RequestState, head, count int, available BatchProfile, choice BatchChoice) BatchChoice {
+func energyGainWait(p Policy, requests []RequestState, head, count int, available BatchProfile, choice BatchChoice, gapDecision *int64) BatchChoice {
 	r := requests[head]
 	if r.ArrivalRate <= 0 {
 		return choice
@@ -183,16 +197,24 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 			continue
 		}
 		fill := float64(b.Size-count) / r.ArrivalRate * 1000
+		// Filling extends idle before this service; a competing queue's follow-up
+		// starts at age zero after this batch finishes, not at today's idle age.
+		var futureGap *int64
+		if gapDecision != nil {
+			n := *gapDecision + int64(fill*float64(time.Millisecond))
+			futureGap = &n
+		}
 		allowed := p.MaxBatchWaitMS
 		for _, q := range requests {
 			if !normalRequest(q) {
 				continue
 			}
-			slack := requestSlack(q, b)
+			slack := requestSlack(q, b, futureGap)
 			if sameQueue(q, r) {
 				allowed = math.Min(allowed, p.MaxBatchWaitMS-q.QueueMS)
 			} else {
-				slack -= minimumService(p, q)
+				zero := int64(0)
+				slack -= minimumService(p, q, &zero)
 			}
 			allowed = math.Min(allowed, slack)
 		}
@@ -200,6 +222,7 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 			choice.Size = 0
 			choice.WaitMS = fill
 			choice.Reason = "measured_energy_gain_fill"
+			choice.ConditionalSupport = b.Distribution.support(futureGap)
 			return choice
 		}
 	}

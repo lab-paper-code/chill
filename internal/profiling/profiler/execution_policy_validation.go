@@ -49,7 +49,7 @@ func (p ExecutionPolicy) Validate() error {
 	if strings.TrimSpace(p.ExecutionPath) == "" || strings.TrimSpace(p.ExecutionPath) != p.ExecutionPath {
 		return errors.New("execution-policy executionPath is required without surrounding whitespace")
 	}
-	if p.WorkloadMode != profilingrun.SaturatedSerialFixedBatchWorkloadMode &&
+	if p.WorkloadMode != profilingrun.EmpiricalCadenceFixedBatchWorkloadMode &&
 		p.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		return fmt.Errorf("unsupported execution-policy workloadMode %q", p.WorkloadMode)
 	}

@@ -25,6 +25,7 @@ import (
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -56,8 +57,8 @@ func measuredAdoptionProfile() serving.Profile {
 			WarmupIterations: 5, InitializedBatches: []int{1, 2, 4},
 		},
 		Batches: []serving.BatchProfile{
-			{Batch: 1, MemoryBytes: 2048, DurationNanos: []float64{2e6, 1e6}},
-			{Batch: 2, MemoryBytes: 4096, DurationNanos: []float64{3e6}},
+			{Batch: 1, MemoryBytes: 2048, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 2e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1e6)}},
+			{Batch: 2, MemoryBytes: 4096, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 3e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 3e6)}},
 		},
 	}
 	profile.Condition.Actor = native.Config{
@@ -68,35 +69,40 @@ func measuredAdoptionProfile() serving.Profile {
 		WarmupBatchSizes: []int{1, 2}, WarmupIterations: 5, GPUUUID: "GPU-measured",
 	}
 	profile.Condition.Actor.BuildRunnerCommand()
+	for i := range profile.Batches {
+		distribution, err := native.NewServiceDistribution(profile.Batches[i].ServiceSamples)
+		if err != nil {
+			panic(err)
+		}
+		profile.Batches[i].ServiceDistribution = distribution
+	}
 	return profile
 }
 
-func TestPositiveProfileKeepsExistingBundleAndBatchJSON(t *testing.T) {
+func TestPositiveProfileCarriesPairedServiceToNativeConsumer(t *testing.T) {
 	profile := measuredAdoptionProfile()
 	profile.Batches[0].EnergyPerInputJoules = 0.5
 	profile.Batches[1].EnergyPerInputJoules = 1
-	for _, tc := range []struct {
-		name string
-		body any
-		want string
-	}{
-		{name: "immutable native bundle", body: profile.NativeBundle(),
-			want: `{"profileID":"measurements/complete/uid","batches":[` +
-				`{"size":1,"serviceSamplesMS":[1,2],"energyPerItemJ":0.5},` +
-				`{"size":2,"serviceSamplesMS":[3],"energyPerItemJ":1}]}`},
-		{name: "serving batches", body: profile.Batches,
-			want: `[{"batch":1,"durationNanos":[2000000,1000000],"energyPerInputJoules":0.5,"memoryBytes":2048},` +
-				`{"batch":2,"durationNanos":[3000000],"energyPerInputJoules":1,"memoryBytes":4096}]`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := json.Marshal(tc.body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != tc.want {
-				t.Fatalf("existing positive profile JSON changed:\n got %s\nwant %s", got, tc.want)
-			}
-		})
+	payload, err := json.Marshal(profile.NativeBundle())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle native.ProfileBundle
+	if err := json.Unmarshal(payload, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	for _, batch := range bundle.Batches {
+		distribution, err := native.NewServiceDistribution(batch.ServiceSamples)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, ok := distribution.QuantileNanos(nil, 95); !ok {
+			t.Fatal("startup support lost across native bundle wire")
+		}
+		gap := fixtures.Cadence().Draw(0).TargetIdleNanos
+		if _, _, ok := distribution.QuantileNanos(&gap, 95); !ok {
+			t.Fatal("known-gap support lost across native bundle wire")
+		}
 	}
 }
 func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *testing.T) {
@@ -133,11 +139,6 @@ func TestMeasuredPreparationKeepsSparseInitializationAndNoReadinessClaims(t *tes
 	// Runner warmup (SmolVLM2 79 s on rasp5) is bounded by the operation, not by one HTTP request.
 	if spec.Config.RunnerTimeoutMS != int(time.Hour/time.Millisecond) {
 		t.Fatalf("runner timeout %d ms, want the operation timeout", spec.Config.RunnerTimeoutMS)
-	}
-	bundle := profile.NativeBundle()
-	if !reflect.DeepEqual(bundle.Batches[0].ServiceSamplesMS, []float64{1, 2}) ||
-		profile.Batches[0].DurationNanos[0] != 2e6 {
-		t.Fatal("shared bundle producer changed raw distribution")
 	}
 	profile.Batches[1].MemoryBytes = 0
 	if _, err = service.measuredPreparation(context.Background(), profile, 2); err == nil {

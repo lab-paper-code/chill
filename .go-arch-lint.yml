@@ -299,6 +299,8 @@ deps:
       - metric-core
       - node-actuator-core
       - profiling-run
+      # Retained serving G prefers the existing semantic execution condition.
+      - profile-derivation
       - firstfloor
 
   profiler-evidence:
@@ -319,6 +321,7 @@ deps:
   profiler-projection:
     mayDependOn:
       - evidence-core
+      - firstfloor
       - metric-core
       - profile-derivation
       - profiler-evidence
@@ -357,6 +360,7 @@ deps:
   serving-httpapi:
     mayDependOn:
       - serving-core
+      - firstfloor
       - serving-state
       - serving-operations
       - serving-observation
@@ -490,6 +494,8 @@ deps:
       - platform-core
       - device-class
       - evidence-kube
+      - evidence-core
+      - firstfloor
       - metric-edgemetrics
       - model-compat
       - model-catalog

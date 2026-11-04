@@ -144,7 +144,7 @@ func currentExecutionPolicyTestRunConfig(t *testing.T) profilingrun.RunConfig {
 
 func executionPolicyCatalogFixture(t *testing.T) []byte {
 	t.Helper()
-	activeSpec := testExecutionPolicySpec(profilingrun.SaturatedSerialFixedBatchWorkloadMode)
+	activeSpec := testExecutionPolicySpec(profilingrun.EmpiricalCadenceFixedBatchWorkloadMode)
 	activeSpec.Name = testConfiguredActivePolicy
 	idleSpec := activeSpec
 	idleSpec.Name = testConfiguredIdlePolicy

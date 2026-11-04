@@ -14,20 +14,20 @@ import (
 const (
 	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha19"
 
-	SaturatedSerialFixedBatchWorkloadMode = "saturated-serial-fixed-batch"
-	IdleModelLoadedWorkloadMode           = "idle-model-loaded"
-	RKNNLiteExecutionPath                 = "rknnlite"
-	FirstfloorRuntimeFamily               = "firstfloor"
-	FirstfloorORTCPUBackend               = "ort-cpu"
-	FirstfloorORTCUDABackend              = "ort-cuda"
-	FirstfloorRKNNLiteBackend             = "rknnlite"
-	cpuExecutionProvider                  = "CPUExecutionProvider"
-	memoryPeakCgroupV1                    = "cgroup-v1-memory.max_usage_in_bytes:runtime-container-lifetime"
-	memoryPeakCgroupV2                    = "cgroup-v2-memory.peak:runtime-container-lifetime"
-	memorySampledCgroupV2                 = "cgroup-v2-memory.current-samples:measurement-window"
-	FixedPowerMode                        = "fixed"
-	ActuatorKindJetsonNVPModel            = "JetsonNVPModel"
-	ActuatorKindNvidiaLockedGPUClock      = "NvidiaLockedGPUClock"
+	EmpiricalCadenceFixedBatchWorkloadMode = "empirical-cadence-fixed-batch"
+	IdleModelLoadedWorkloadMode            = "idle-model-loaded"
+	RKNNLiteExecutionPath                  = "rknnlite"
+	FirstfloorRuntimeFamily                = "firstfloor"
+	FirstfloorORTCPUBackend                = "ort-cpu"
+	FirstfloorORTCUDABackend               = "ort-cuda"
+	FirstfloorRKNNLiteBackend              = "rknnlite"
+	cpuExecutionProvider                   = "CPUExecutionProvider"
+	memoryPeakCgroupV1                     = "cgroup-v1-memory.max_usage_in_bytes:runtime-container-lifetime"
+	memoryPeakCgroupV2                     = "cgroup-v2-memory.peak:runtime-container-lifetime"
+	memorySampledCgroupV2                  = "cgroup-v2-memory.current-samples:measurement-window"
+	FixedPowerMode                         = "fixed"
+	ActuatorKindJetsonNVPModel             = "JetsonNVPModel"
+	ActuatorKindNvidiaLockedGPUClock       = "NvidiaLockedGPUClock"
 )
 
 // RunConfig is the exact model, runtime, Node, workload, and observation
@@ -164,21 +164,22 @@ type NvidiaLockedGPUClockTarget struct {
 }
 
 type MeasurementContract struct {
-	Batch                    int           `json:"batch"`
-	WarmupIterations         int           `json:"warmupIterations"`
-	StartupWarmupIterations  int           `json:"startupWarmupIterations,omitempty"`
-	SettlingDurationSeconds  int           `json:"settlingDurationSeconds,omitempty"`
-	Duration                 time.Duration `json:"-"`
-	DurationSeconds          int           `json:"durationSeconds"`
-	DurationToleranceSeconds float64       `json:"durationToleranceSeconds"`
-	MinServiceSamples        int           `json:"minServiceSamples,omitempty"`
-	SLOPercentile            float64       `json:"sloPercentile,omitempty"`
-	SLOTargetLatencyNanos    int64         `json:"sloTargetLatencyNanos,omitempty"`
-	WorkloadName             string        `json:"workloadName,omitempty"`
-	WorkloadUID              string        `json:"workloadUID,omitempty"`
-	WorkloadResourceVersion  string        `json:"workloadResourceVersion,omitempty"`
-	WarmupBatchSizes         []int         `json:"warmupBatchSizes,omitempty"`
-	WorkloadMode             string        `json:"workloadMode"`
+	Batch                    int                         `json:"batch"`
+	WarmupIterations         int                         `json:"warmupIterations"`
+	StartupWarmupIterations  int                         `json:"startupWarmupIterations,omitempty"`
+	SettlingDurationSeconds  int                         `json:"settlingDurationSeconds,omitempty"`
+	Duration                 time.Duration               `json:"-"`
+	DurationSeconds          int                         `json:"durationSeconds"`
+	DurationToleranceSeconds float64                     `json:"durationToleranceSeconds"`
+	MinServiceSamples        int                         `json:"minServiceSamples,omitempty"`
+	SLOPercentile            float64                     `json:"sloPercentile,omitempty"`
+	SLOTargetLatencyNanos    int64                       `json:"sloTargetLatencyNanos,omitempty"`
+	WorkloadName             string                      `json:"workloadName,omitempty"`
+	WorkloadUID              string                      `json:"workloadUID,omitempty"`
+	WorkloadResourceVersion  string                      `json:"workloadResourceVersion,omitempty"`
+	WarmupBatchSizes         []int                       `json:"warmupBatchSizes,omitempty"`
+	Cadence                  *firstfloor.CadenceContract `json:"cadence,omitempty"`
+	WorkloadMode             string                      `json:"workloadMode"`
 	// Dataset is present for active measurement only.
 	Dataset *DatasetContract `json:"dataset,omitempty"`
 }

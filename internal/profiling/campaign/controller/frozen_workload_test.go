@@ -7,6 +7,7 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -15,6 +16,7 @@ import (
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	projection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	run "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -80,7 +82,7 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 				t.Fatal(err)
 			}
 			ports := &frozenWorkloadPreparationPorts{config: config, report: payload, workloads: workloads}
-			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
+			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports, fixtureCadenceResolver)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -107,7 +109,7 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 				t.Fatal(err)
 			}
 			activeConfig, idleConfig := prepare(initialActive), prepare(initialIdle)
-			spec, err := projection.ProjectCurvePlanSpec("frozen-workload", activeConfig, idleConfig, derivation.CurveConversionContract{}, []int{1})
+			spec, err := projection.ProjectCurvePlanSpec("frozen-workload", activeConfig, idleConfig, derivation.CurveConversionContract{}, []int{1}, fixtures.Cadences([]int{1}...))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -249,6 +251,14 @@ func (p *frozenWorkloadPreparationPorts) ResolveMeasurementWorkload(ctx context.
 
 func (p *frozenWorkloadPreparationPorts) ResolveActuationPolicy(context.Context, profiler.ActuationSelection) (profiler.FrozenActuationPolicy, error) {
 	return profiler.FrozenActuationPolicy{}, nil
+}
+
+func fixtureCadenceResolver(_ context.Context, config run.RunConfig) (map[int]*firstfloor.CadenceContract, error) {
+	batches := config.Measurement.WarmupBatchSizes
+	if len(batches) == 0 {
+		batches = []int{config.Measurement.Batch}
+	}
+	return fixtures.Cadences(batches...), nil
 }
 
 func (p *frozenWorkloadPreparationPorts) Resolve(_ context.Context, _ run.RunConfig) (profiler.FrozenExecutionPolicy, error) {

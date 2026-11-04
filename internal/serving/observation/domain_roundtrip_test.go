@@ -17,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) {
@@ -145,7 +146,12 @@ func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	c := snap.Instances[0].Profile.Condition
 	snap.DispatchOccupancy = []serving.DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
-	p.Batches = []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{8e5, 1e6, 1.2e6}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
+	p.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 8e5), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 2, 1.2e6)}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
+	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
+	if err != nil {
+		panic(err)
+	}
+	p.Batches[0].ServiceDistribution = distribution
 	snap.Instances[0].Profile = &p
 	snap.Options[0].Instance = snap.Instances[0]
 	snap.Workloads[0].SLO = serving.SLO{Percentile: 95, TargetLatency: 20 * time.Millisecond}
@@ -203,7 +209,12 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := serving.ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
 	d := &serving.Definition{Name: "workload", UID: "w1", Generation: 1, Model: serving.Model{Name: "model", UID: "m", Generation: 1, Paths: []serving.ModelPath{path}}, Preprocessor: serving.Preprocessor{Name: "pre", Input: []serving.RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []serving.RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"}, SLO: serving.SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
-	p := &serving.Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: []float64{float64(10 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
+	p := &serving.Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, int64(10*time.Millisecond)), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, int64(10*time.Millisecond))}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
+	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
+	if err != nil {
+		panic(err)
+	}
+	p.Batches[0].ServiceDistribution = distribution
 	p.RuntimeMetadata = &firstfloor.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1}
 	i := serving.SchedulerInstance{ID: "i1", Node: node.Node, Profile: p, WorkloadUID: d.UID, Allocation: serving.SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{d.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall-n1", IdleScope: "node-exclusive-wall"}
 	b := serving.NodeBaseline{ID: "unloaded-n1", Node: node.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-n1", Scope: "node-exclusive-wall", MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "idle"}}
@@ -215,7 +226,7 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 
 func directFixture(batch int) (*serving.Profile, map[string]firstfloor.Metadata, time.Time) {
 	at := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
-	p := &serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: batch, DurationNanos: []float64{100 * float64(batch)}}}}
+	p := &serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: batch, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 100*int64(batch)), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 100*int64(batch))}}}}
 	p.Condition.NodeUID = "node-uid"
 	p.Condition.LogicalModel = "model"
 	p.Condition.PowerMode = "fixture-fixed-mode"

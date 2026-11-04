@@ -27,6 +27,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -205,9 +206,25 @@ func assertCatalogRawProfile(t *testing.T, profile serving.Profile) {
 		profile.RuntimeMetadata == nil || profile.IdleBaselineWatts != 4 || profile.MeasuredAt.IsZero() ||
 		profile.MetricSource.NodeName != "lattepanda" || len(profile.MetricSource.MetricLabels) == 0 ||
 		profile.RuntimeMetadata.IntraOpThreads != 2 || len(profile.RuntimeMetadata.CPUAffinity) != 2 ||
-		batch.MemoryBytes != 4096 || len(batch.DurationNanos) != 180 || batch.DurationNanos[0] != 500000 ||
+		batch.MemoryBytes != 4096 || len(batch.ServiceSamples) != 180 || batch.ServiceSamples[0].ServiceDurationNanos != 500000 ||
 		math.Abs(batch.EnergyPerInputJoules-1) > 1e-9 || batch.EnergyBelowResolution {
 		t.Fatalf("frozen identity or measured raw distribution changed: %+v", profile)
+	}
+}
+
+func TestRetainedCatalogUsesActualGapServicePairs(t *testing.T) {
+	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
+	if err != nil || len(view.Profiles) != 1 {
+		t.Fatalf("retained admission failed: %+v %v", view, err)
+	}
+	distribution := view.Profiles[0].Batches[0].ServiceDistribution
+	short, long := int64(1_001_000), int64(100_001_000)
+	shortService, _, shortOK := distribution.QuantileNanos(&short, .95)
+	longService, _, longOK := distribution.QuantileNanos(&long, .95)
+	startupService, _, startupOK := distribution.QuantileNanos(nil, .95)
+	if !shortOK || !longOK || !startupOK || shortService != 1500000 || longService != 500000 || startupService != 500000 {
+		t.Fatalf("retained pairs lost their actual gap/startup conditions: short=%d long=%d startup=%d", shortService, longService, startupService)
 	}
 }
 
@@ -242,7 +259,7 @@ func TestCatalogNegativeIncrementalEnergyResolution(t *testing.T) {
 			profile := view.Profiles[0]
 			batch := profile.Batches[0]
 			if batch.EnergyPerInputJoules != 0 || !batch.EnergyBelowResolution ||
-				len(batch.DurationNanos) != 180 || batch.MemoryBytes != 4096 {
+				len(batch.ServiceSamples) != 180 || batch.MemoryBytes != 4096 {
 				t.Fatalf("below-resolution serving contract changed other measured facts: %+v", batch)
 			}
 			native := profile.NativeBundle().Batches[0]
@@ -274,7 +291,7 @@ func TestCatalogTwoTrialsReloadAndSelectedConfidence(t *testing.T) {
 		}
 		profile := view.Profiles[0]
 		if profile.ConfidenceLevel != want || profile.TrialsPerBatch != 2 || profile.IdleBaselineWatts != 4 ||
-			len(profile.Batches[0].DurationNanos) != 120 || profile.Batches[0].EnergyPerInputJoules != 1.25 {
+			len(profile.Batches[0].ServiceSamples) != 120 || profile.Batches[0].EnergyPerInputJoules != 1.25 {
 			t.Fatalf("selected two-trial measurement lost serving values: %+v", profile)
 		}
 	}
@@ -351,7 +368,7 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
 		StartupWarmupIterations: active.Measurement.StartupWarmupIterations, WarmupBatchSizes: slices.Clone(active.Measurement.WarmupBatchSizes),
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
-	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1})
+	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1}, fixtures.Cadences([]int{1}...))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,22 +536,29 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 		Runtime: firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelFiles: modelFiles, Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs,
 			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: []int{1},
 			CgroupCPUMax: measuredTwoCoreCPUMax, CPUSet: "0-3"}}
-	activeNative := native
-	activeNative.ExecutionCount, activeNative.InferenceCount = 60, 60
-	activeNative.BatchExecutionCounts = map[string]uint64{"1": 60}
-	raw.Runtime.Firstfloor = &activeNative
-	raw.Runtime.MemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
-	population := []profilingrun.NativeServiceSample{
-		{BatchID: 1, BatchSize: 1, RecordIDs: []string{"r1"}, Units: []int{1}, RunnerServiceMilliseconds: 0.5, BackendCallMilliseconds: 0.25, NativeRequestMilliseconds: 0.75},
-		{BatchID: 2, BatchSize: 1, RecordIDs: []string{"r2"}, Units: []int{1}, RunnerServiceMilliseconds: 1.5, BackendCallMilliseconds: 1, NativeRequestMilliseconds: 1.75},
-	}
-	repetition := &raw.Runtime.RepetitionResults[0]
-	repetition.NativeSamples = make([]profilingrun.NativeServiceSample, 60)
-	for index := range repetition.NativeSamples {
-		repetition.LatencyMilliseconds[index] = float64(1 + index%2)
-		repetition.NativeSamples[index] = population[index%len(population)]
-		repetition.NativeSamples[index].BatchID = uint64(index + 1)
-		repetition.NativeSamples[index].RecordIDs = []string{fmt.Sprintf("r%d", index+1)}
+	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		activeNative := native
+		activeNative.ExecutionCount, activeNative.InferenceCount = 60, 60
+		activeNative.BatchExecutionCounts = map[string]uint64{"1": 60}
+		raw.Runtime.Firstfloor = &activeNative
+		raw.Runtime.MemorySource = "cgroup-v2-memory.peak:runtime-container-lifetime"
+		population := []profilingrun.NativeServiceSample{
+			{BatchID: 1, BatchSize: 1, RecordIDs: []string{"r1"}, Units: []int{1}, RunnerServiceMilliseconds: 0.5, BackendCallMilliseconds: 0.25, NativeRequestMilliseconds: 0.75},
+			{BatchID: 2, BatchSize: 1, RecordIDs: []string{"r2"}, Units: []int{1}, RunnerServiceMilliseconds: 1.5, BackendCallMilliseconds: 1, NativeRequestMilliseconds: 1.75},
+		}
+		repetition := &raw.Runtime.RepetitionResults[0]
+		repetition.NativeSamples = make([]profilingrun.NativeServiceSample, 60)
+		for index := range repetition.NativeSamples {
+			repetition.LatencyMilliseconds[index] = float64(1 + index%2)
+			repetition.NativeSamples[index] = population[index%len(population)]
+			repetition.NativeSamples[index].BatchID = uint64(index + 1)
+			repetition.NativeSamples[index].RecordIDs = []string{fmt.Sprintf("r%d", index+1)}
+			service := int64(500000)
+			if index%2 != 0 {
+				service = 1500000
+			}
+			repetition.NativeSamples[index].ServiceSample = fixtures.ServiceSample(config.Measurement.Cadence, podUID, uint64(index), service)
+		}
 	}
 	idle := profilerevidence.IdleRawMeasurement{SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,
 		Runtime: profilingrun.IdleRuntimeResult{SchemaVersion: profilingrun.IdleRuntimeResultSchemaVersion, Status: "Succeeded", PodUID: podUID, NodeName: config.TargetNode.Name,
@@ -573,7 +597,7 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 	inputs := slices.Clone(profile.RuntimeMetadata.Inputs)
 	preprocessor := profile.Condition.Preprocessor.Inputs[0]
 	profile.Evidence[0].Key = callerMutation
-	profile.Batches[0].DurationNanos[0] = 999
+	profile.Batches[0].ServiceSamples[0].ServiceDurationNanos = 999
 	profile.Condition.Firstfloor.MaxBatchSize = 999
 	profile.Condition.PlannedBatchSizes[0] = 999
 	profile.Condition.Preprocessor.Inputs[0] = callerMutation
@@ -597,7 +621,7 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 			profile.MetricSource.MetricLabels[callerMutation] != "" {
 			t.Fatalf("caller mutation reached retained admission: %+v", profile)
 		}
-		profile.Batches[0].DurationNanos[0] = 999
+		profile.Batches[0].ServiceSamples[0].ServiceDurationNanos = 999
 		profile.Condition.Firstfloor.MaxBatchSize = 999
 	}
 }

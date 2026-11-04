@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 const testARM64Architecture = "arm64"
@@ -511,6 +513,11 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 		resolvers.workloads,
 		resolvers.actuation,
 		resolvers,
+		func(_ context.Context, config profilingrun.RunConfig) (map[int]*firstfloor.CadenceContract, error) {
+			cadences := fixtures.Cadences(config.Measurement.WarmupBatchSizes...)
+			cadences[config.Measurement.Batch] = fixtures.Cadence()
+			return cadences, nil
+		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -520,6 +527,7 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 
 func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
 	measurement := config.Measurement
+	measurement.Cadence = nil
 	measurement.Dataset = nil
 	measurement.WorkloadName = ""
 	measurement.WorkloadUID = ""

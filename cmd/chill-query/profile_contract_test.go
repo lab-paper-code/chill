@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -12,21 +11,27 @@ import (
 
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
-	samples := make([]float64, 100000)
-	// JSON cannot encode this value. Success proves the actual owner/query HTTP
-	// projections never visit the excluded latency vector, even temporarily.
-	samples[0] = math.NaN()
+	samples := make([]firstfloor.ServiceSample, 100000)
+	cadence := fixtures.Cadence()
+	for i := range samples {
+		samples[i] = fixtures.ServiceSample(cadence, "physical-trial", uint64(i), 123456789)
+	}
+	// The actual owner/query HTTP
+	// projections must omit the excluded paired service population.
+	samples[0].ServiceDurationNanos = 987654321
 	profile := serving.Profile{
 		ID:      "allowed/request/uid",
-		Batches: []serving.BatchProfile{{Batch: 1, DurationNanos: samples, MemoryBytes: 1024}},
+		Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: samples, MemoryBytes: 1024}},
 	}
 	owner := servingkube.CatalogView{
 		Profiles:         []serving.Profile{profile},
@@ -56,7 +61,7 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 		t.Fatalf("public projection failed: %d %s", response.Code, response.Body.String())
 	}
 	for _, body := range []string{string(wire), response.Body.String()} {
-		for _, key := range []string{"durationNanos", "measurementFacts"} {
+		for _, key := range []string{"serviceSamples", "measurementFacts"} {
 			if strings.Contains(body, `"`+key+`"`) {
 				t.Fatalf("raw field serialized: %s", key)
 			}
@@ -82,7 +87,8 @@ func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 		restored.Instance.Profile.Batches[0].MemoryBytes != 1024 {
 		t.Fatalf("profile paging/restore contract lost: %s", response.Body.String())
 	}
-	if len(profile.Batches[0].DurationNanos) != 100000 || !math.IsNaN(profile.Batches[0].DurationNanos[0]) ||
+	if len(profile.Batches[0].ServiceSamples) != 100000 ||
+		profile.Batches[0].ServiceSamples[0].ServiceDurationNanos != 987654321 ||
 		owner.MeasurementFacts == nil ||
 		preparations[profile.ID].Instance.Profile != &profile {
 		t.Fatal("read projection mutated scheduler originals")

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
@@ -138,6 +139,13 @@ func reuseCondition(condition profilederivation.CurvePlanSpec) profilederivation
 	for _, protocol := range []*profilederivation.CurveProtocolContract{&condition.ActiveProtocol, &condition.IdleProtocol} {
 		protocol.SLOPercentile, protocol.MinServiceSamples, protocol.SLOTargetLatencyNanos = 0, 0, 0
 		protocol.WorkloadName, protocol.WorkloadUID, protocol.WorkloadResourceVersion = "", "", ""
+		if protocol.Cadences != nil {
+			targets := make(map[int]*firstfloor.CadenceContract, len(protocol.Cadences))
+			for batch, cadence := range protocol.Cadences {
+				targets[batch] = &firstfloor.CadenceContract{Target: cadence.Target}
+			}
+			protocol.Cadences = targets
+		}
 	}
 	condition.ActiveProtocol.DurationSeconds, condition.ActiveProtocol.MetricDurationSeconds = 0, 0
 	condition.IdleProtocol.DurationSeconds, condition.IdleProtocol.MetricDurationSeconds = 0, 0
@@ -232,7 +240,7 @@ func reusedProfile(source, target serving.Profile, check serving.ProfileReuseChe
 	profile.Batches = slices.Clone(source.Batches)
 	for index := range profile.Batches {
 		batch := &profile.Batches[index]
-		batch.DurationNanos = slices.Clone(batch.DurationNanos)
+		batch.ServiceSamples = firstfloor.CloneServiceSamples(batch.ServiceSamples)
 		confirmation := target.Batches[slices.IndexFunc(target.Batches, func(candidate serving.BatchProfile) bool { return candidate.Batch == batch.Batch })]
 		if confirmation.MemoryBytes > batch.MemoryBytes {
 			batch.MemoryBytes = confirmation.MemoryBytes

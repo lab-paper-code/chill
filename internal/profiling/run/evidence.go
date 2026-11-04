@@ -152,16 +152,24 @@ type Repetition struct {
 // RecordIDs and Units are per request of the batch; units are analysis
 // observations, not the batching unit.
 type NativeServiceSample struct {
-	BatchID                   uint64   `json:"batchID"`
-	BatchSize                 int      `json:"batchSize"`
-	RecordIDs                 []string `json:"recordIDs"`
-	Units                     []int    `json:"units"`
-	RunnerServiceMilliseconds float64  `json:"runnerServiceMs"`
-	PreprocessMilliseconds    float64  `json:"preprocessMs"`
-	BackendCallMilliseconds   float64  `json:"backendCallMs"`
-	PostprocessMilliseconds   float64  `json:"postprocessMs"`
-	FirstTokenMilliseconds    float64  `json:"firstTokenMs,omitempty"`
-	NativeRequestMilliseconds float64  `json:"nativeRequestMs"`
+	BatchID   uint64   `json:"batchID"`
+	BatchSize int      `json:"batchSize"`
+	RecordIDs []string `json:"recordIDs"`
+	Units     []int    `json:"units"`
+	firstfloor.ServiceSample
+	RunnerServiceMilliseconds float64 `json:"runnerServiceMs"`
+	PreprocessMilliseconds    float64 `json:"preprocessMs"`
+	BackendCallMilliseconds   float64 `json:"backendCallMs"`
+	PostprocessMilliseconds   float64 `json:"postprocessMs"`
+	FirstTokenMilliseconds    float64 `json:"firstTokenMs,omitempty"`
+	NativeRequestMilliseconds float64 `json:"nativeRequestMs"`
+}
+
+// Clone preserves pair/provenance ownership along with aligned request metadata.
+func (s NativeServiceSample) Clone() NativeServiceSample {
+	s.ServiceSample = s.ServiceSample.Clone()
+	s.RecordIDs, s.Units = slices.Clone(s.RecordIDs), slices.Clone(s.Units)
+	return s
 }
 
 // MeasurementWindow returns the runtime's wall-clock steady-measurement
@@ -280,7 +288,7 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	if err := validateFirstfloorRuntimeEvidence(config, result.Firstfloor, uint64(result.InferenceCount)); err != nil {
 		return err
 	}
-	return validateNativeSamples(config, result.RepetitionResults)
+	return validateNativeSamples(config, result.ExperimentID, result.RepetitionResults)
 }
 
 // MemorySample is one actual whole-container memory.current reading.
@@ -430,13 +438,22 @@ func validateFirstfloorBackend(config RunConfig, evidence *FirstfloorRuntimeEvid
 	return nil
 }
 
-func validateNativeSamples(config RunConfig, repetitions []Repetition) error {
+func validateNativeSamples(config RunConfig, trialID string, repetitions []Repetition) error {
 	seen := make(map[uint64]struct{})
+	knownGapCalls := 0
+	var callIndex uint64
 	for _, repetition := range repetitions {
 		if len(repetition.NativeSamples) != len(repetition.LatencyMilliseconds) {
 			return errors.New("firstfloor native and client samples are not correlated")
 		}
 		for index, sample := range repetition.NativeSamples {
+			if err := validateServicePair(config, trialID, sample, callIndex); err != nil {
+				return err
+			}
+			callIndex++
+			if sample.PrecedingIdleNanos != nil {
+				knownGapCalls++
+			}
 			if sample.BatchID == 0 || sample.BatchSize != config.Measurement.Batch {
 				return errors.New("firstfloor native batch identity mismatch")
 			}
@@ -458,6 +475,38 @@ func validateNativeSamples(config RunConfig, repetitions []Repetition) error {
 				return errors.New("firstfloor nested monotonic span order is invalid")
 			}
 		}
+	}
+	if knownGapCalls < config.Measurement.MinServiceSamples {
+		return errors.New("firstfloor known-gap service calls are incomplete")
+	}
+	return nil
+}
+
+// Pair integrity is admitted at the raw/retained reader boundary. The first
+// measured exchange has no pacing draw; subsequent calls retain the actual
+// frozen draw as well as the independently observed monotonic gap.
+func validateServicePair(config RunConfig, trialID string, sample NativeServiceSample, callIndex uint64) error {
+	if sample.ServiceDurationNanos <= 0 || trialID == "" || sample.TrialID != trialID ||
+		(sample.PrecedingIdleNanos != nil && *sample.PrecedingIdleNanos < 0) {
+		return errors.New("firstfloor canonical service pair or physical trial identity is invalid")
+	}
+	serviceMS := float64(sample.ServiceDurationNanos) / 1e6
+	if sample.RunnerServiceMilliseconds != serviceMS {
+		return errors.New("firstfloor diagnostic service differs from canonical integer duration")
+	}
+	if callIndex == 0 {
+		if sample.TargetIdleNanos != nil || sample.TraceDrawRef != nil {
+			return errors.New("firstfloor initial exchange must not invent a cadence draw")
+		}
+		return nil
+	}
+	if sample.PrecedingIdleNanos == nil || sample.TargetIdleNanos == nil || sample.TraceDrawRef == nil ||
+		config.Measurement.Cadence == nil || len(config.Measurement.Cadence.Provenance.Draws) == 0 {
+		return errors.New("firstfloor paced exchange is missing actual gap or cadence lineage")
+	}
+	draw := config.Measurement.Cadence.Draw(callIndex - 1)
+	if *sample.TargetIdleNanos != draw.TargetIdleNanos || *sample.TraceDrawRef != draw.Ref {
+		return errors.New("firstfloor exchange cadence draw does not match the frozen sequence")
 	}
 	return nil
 }

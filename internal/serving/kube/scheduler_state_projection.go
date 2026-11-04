@@ -105,6 +105,10 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		}
 		if state.Native != nil {
 			m := state.Native.Metadata
+			if state.Native.LastServiceEndAgeNanos != nil {
+				age := *state.Native.LastServiceEndAgeNanos
+				instance.LastServiceEndAgeNanos = &age
+			}
 			instance.Allocation.GPUUUID = m.Runtime.GPUUUID
 			instance.Ready = instance.Ready && state.Native.Ready
 			instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, m.MaxBatchSize, m.Policy.FixedBatchSize

@@ -287,7 +287,7 @@ def coverage_timings(results):
                                 "curveSchema": SHARED_CURVE_SCHEMA,
                                 "evidenceSchema": SHARED_EVIDENCE_SCHEMA}
         for batch in facts["batches"]:
-            active = [q for q in batch["quality"] if q["workloadMode"] == "saturated-serial-fixed-batch"]
+            active = [q for q in batch["quality"] if q["workloadMode"] == "empirical-cadence-fixed-batch"]
             calls = batch.get("completedCalls", 0)
             seconds = sum(q["windowSeconds"] for q in active)
             if calls > 0 and active and math.isfinite(seconds) and seconds > 0:
@@ -437,7 +437,7 @@ def coverage_memory_limit(cell, policies, node, memory_fraction):
     """Mirror ExecutionJobs' min(policy, int64(float64(allocatable.Value()) * fraction))."""
     matches = [p for p in policies if p["deviceClass"] in ("*", cell["deviceClass"]["name"]) and
                p["executionPath"] == cell["executionPath"] and
-               p["workloadMode"] == "saturated-serial-fixed-batch"]
+               p["workloadMode"] == "empirical-cadence-fixed-batch"]
     exact = [p for p in matches if p["deviceClass"] == cell["deviceClass"]["name"]]
     selected = exact or matches
     if len(selected) != 1:

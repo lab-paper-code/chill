@@ -165,10 +165,6 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct execution-policy resolver: %w", err)
 	}
-	preparer, err := profilerapp.NewPreparer(candidates, nodes, power, workloads, actuationPolicies, executionPolicies)
-	if err != nil {
-		return nil, fmt.Errorf("construct Run preparer: %w", err)
-	}
 	stores, err := profilerkube.NewKubernetesEvidenceStoreResolver(
 		reader,
 		profilerkube.EvidenceStoreResolverOptions{
@@ -185,6 +181,30 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	evidence := &currentEvidenceStore{
 		reader: reader, namespace: opts.watchNamespace,
 		resolver: stores, factory: newEvidenceObjectStore,
+	}
+	evaluation := evaluationcontroller.NewRuntime(reader, component.ProfilerEvidenceStagingPath)
+	cadence, err := profilerkube.NewKubernetesCadenceResolver(
+		reader, opts.watchNamespace,
+		func(ctx context.Context, run *edgev1alpha1.EvaluationRun) (evidencestore.Reader, error) {
+			store, err := evaluation.Store(ctx, run.Namespace, run.Spec.EvidenceStore, run.Status.FrozenConfig.Values)
+			if err != nil {
+				return nil, err
+			}
+			objects, ok := store.(evidencestore.Reader)
+			if !ok {
+				return nil, fmt.Errorf("evaluation evidence store does not expose immutable reads")
+			}
+			return objects, nil
+		}, evidence,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct serving cadence resolver: %w", err)
+	}
+	preparer, err := profilerapp.NewPreparer(
+		candidates, nodes, power, workloads, actuationPolicies, executionPolicies, cadence.ResolveCadence,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct Run preparer: %w", err)
 	}
 	return &profilerControllerShared{
 		reader: reader, candidates: candidates, nodes: nodes, power: power,
@@ -337,6 +357,22 @@ func (s *currentEvidenceStore) OpenLocation(
 	return store.OpenLocation(ctx, location)
 }
 
+func (s *currentEvidenceStore) List(ctx context.Context, prefix string) ([]evidencestore.ObjectIdentity, error) {
+	binding, err := s.resolver.Resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	store, err := s.openBinding(ctx, binding)
+	if err != nil {
+		return nil, err
+	}
+	lister, ok := store.(evidencestore.Lister)
+	if !ok {
+		return nil, fmt.Errorf("current evidence store does not expose archive listing")
+	}
+	return lister.List(ctx, prefix)
+}
+
 func (s *currentEvidenceStore) resolve(
 	ctx context.Context,
 	logicalStore string,
@@ -351,6 +387,12 @@ func (s *currentEvidenceStore) resolve(
 			binding.Store, logicalStore,
 		)
 	}
+	return s.openBinding(ctx, binding)
+}
+
+func (s *currentEvidenceStore) openBinding(
+	ctx context.Context, binding storekube.Binding,
+) (profilerevidence.ObjectStore, error) {
 	credentials, err := storekube.LoadCredentials(
 		ctx, s.reader, s.namespace, binding.CredentialsSecretName,
 	)

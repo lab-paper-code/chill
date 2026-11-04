@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,9 +28,9 @@ func TestCatalogPreservesRawDistributionAndMissingMemory(t *testing.T) {
 	batch := catalogBatch{profile: serving.BatchProfile{Batch: 2}}
 	trial := profilederivation.Trial{Batch: 2, LatencyMilliseconds: []float64{1.25, 4, 2}}
 	trial.NativeSamples = []profilederivation.NativeServiceSample{
-		{BatchID: 1, BatchSize: 2, RunnerServiceMilliseconds: 0.25},
-		{BatchID: 2, BatchSize: 2, RunnerServiceMilliseconds: 3},
-		{BatchID: 3, BatchSize: 2, RunnerServiceMilliseconds: 1},
+		{BatchID: 1, BatchSize: 2, ServiceSample: firstfloor.ServiceSample{ServiceDurationNanos: 250000, TrialID: "physical-trial"}},
+		{BatchID: 2, BatchSize: 2, ServiceSample: firstfloor.ServiceSample{ServiceDurationNanos: 3000000, TrialID: "physical-trial"}},
+		{BatchID: 3, BatchSize: 2, ServiceSample: firstfloor.ServiceSample{ServiceDurationNanos: 1000000, TrialID: "physical-trial"}},
 	}
 	energy := profilederivation.EnergyTrial{Batch: 2, IncrementalWorkJoulesPerItem: 0.7,
 		ActiveWindowWallJoulesPerItem: 2, IdleBaselineSecondsPerItem: .1}
@@ -40,10 +40,10 @@ func TestCatalogPreservesRawDistributionAndMissingMemory(t *testing.T) {
 	if err := batch.add(trial, energy, 2048); err != nil {
 		t.Fatal(err)
 	}
-	want := []float64{250000, 3000000, 1000000, 250000, 3000000, 1000000}
+	want := []int64{250000, 3000000, 1000000, 250000, 3000000, 1000000}
 	for index, sample := range want {
-		if batch.profile.DurationNanos[index] != sample {
-			t.Fatalf("raw duration %d = %g, want %g", index, batch.profile.DurationNanos[index], sample)
+		if batch.profile.ServiceSamples[index].ServiceDurationNanos != sample {
+			t.Fatalf("raw duration %d = %d, want %d", index, batch.profile.ServiceSamples[index].ServiceDurationNanos, sample)
 		}
 	}
 	if batch.missingMemory || batch.wallPowerSum/float64(batch.trials) != 20 {
@@ -52,10 +52,15 @@ func TestCatalogPreservesRawDistributionAndMissingMemory(t *testing.T) {
 	if err := batch.add(trial, energy, 0); err != nil || !batch.missingMemory {
 		t.Fatalf("absent measured memory was filled: %+v, %v", batch, err)
 	}
-	trial.NativeSamples[0].RunnerServiceMilliseconds = math.NaN()
-	if err := batch.add(trial, energy, 4096); err == nil {
-		t.Fatal("invalid raw latency became a profile sample")
+}
+
+func catalogServiceSamples(durations ...int64) []firstfloor.ServiceSample {
+	samples := make([]firstfloor.ServiceSample, 0, len(durations)*2)
+	for _, duration := range durations {
+		samples = append(samples, fixtures.ServiceSample(fixtures.Cadence(), "catalog-physical-trial", 0, duration))
+		samples = append(samples, fixtures.ServiceSample(fixtures.Cadence(), "catalog-physical-trial", 1, duration))
 	}
+	return samples
 }
 
 func TestCatalogKeysObservedRuntimeVersionAndProvider(t *testing.T) {

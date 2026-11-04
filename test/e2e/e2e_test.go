@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,7 +22,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	"github.com/lab-paper-code/chill/test/utils"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 const namespace = "chill-system"
@@ -201,6 +204,8 @@ func newE2EClient() client.Client {
 }
 
 func e2eProfilingRun(namespaceName, name string) *edgev1alpha1.ProfilingRun {
+	cadence, err := json.Marshal(fixtures.Cadence())
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespaceName, Name: name},
 		Spec: edgev1alpha1.ProfilingRunSpec{
@@ -213,7 +218,8 @@ func e2eProfilingRun(namespaceName, name string) *edgev1alpha1.ProfilingRun {
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 1, DurationSeconds: 1,
-				WorkloadMode: "saturated-serial-fixed-batch",
+				WorkloadMode: "empirical-cadence-fixed-batch",
+				Cadence:      &apiextensions.JSON{Raw: cadence},
 				Dataset:      "gc-fixture",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

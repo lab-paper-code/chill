@@ -85,6 +85,35 @@ Serving configurations must be measured, not inferred. Profiling and serving sha
 
 Before a CurvePlan or RunConfig is recorded, the shared preparer freezes runtime memory at `min(executionPolicyDefaults.runtimeMemoryLimitBytes, floor(Node.status.allocatable.memory × profiler.measurementMemoryFraction))` in `Actor.MemoryLimitBytes`, with the selected runtime request in `Actor.MemoryRequestBytes`. The Node UID must match the resolved Run. The chart defaults remain fraction **0.8**, **16 GiB** upper limit and **128 MiB** request. Query preflight receives the same execution-policy key and memory fraction. Actual serving Pods and measurement Jobs both call `firstfloor.RuntimeContainer` with that frozen Config for image, CPU/memory/accelerator resources, performance environment and artifact/preprocessor mounts; launching does not reselect memory or image. Copy-init containers share its memory envelope; metric/workload observers retain their separate configured limits. File-copy page cache belongs to the init cgroup, not the metric observer. Serving therefore uses the measured pressure envelope rather than substituting peak-observed bytes plus overhead. Near-limit reclaim is not claimed to be measurement-neutral; an OOM fails the existing Job rather than publishing a measurement.
 
+Active empirical cadence is server-owned: Query preflight and Profiler preparation
+resolve the latest completed retained EvaluationStage matching the pinned Workload
+and dataset population. Its parent UID, input-snapshot binding, materialized
+schedule, actual producer windows and stage manifest identify the trace; request
+artifacts are read as gzip JSONL from their recorded immutable identities.
+Serving catalog identities come from the existing observation-store listing,
+while Evaluation evidence uses its own frozen store binding and credentials.
+Missing attributable evidence reports `BootstrapServingTracePrerequisite`; there
+is no client-supplied cadence or rate-derived/default gap.
+
+The pure profiler trace join keeps final HTTP identity authoritative, enriches
+only missing native fields, and retains partial/unknown physical batches before
+checking full membership and consecutive IDs. Current canonical native G is
+preferred; archived actor-running/finished or legacy offsets are explicitly
+labelled proxy boundaries, not relabelled canonical G. Same execution conditions
+and K are preferred, otherwise only G is borrowed within the one selected
+context. Evidence acquisition and physical joining happen once, then every
+planned K gets its own frozen selection (or the standalone current K). A shared
+base-K law is not silently copied to other batches: observed K and borrowed
+status remain accurate for each child. Actual record cardinality, not equal
+phase weighting, drives seed-0 resampling. Explicit frozen draws cover the
+configured sample floor and cycle for longer elapsed-floor trials. Child/recovery
+execution consumes its selected frozen body without source rediscovery.
+Zero-load separators remain in the full semantic schedule and advance the actual
+producer cursor, but are not empty pacing populations. Only offered phases get
+source elements; adjacency never crosses phase or separator boundaries.
+Profiling may depend inward on derivation's existing semantic-condition
+normalization; Kubernetes/evidence acquisition stays in the adapter.
+
 ## Dependency rule
 Ownership: DeviceClass stable hardware; ModelSpec immutable artifact/path requirements; Kubernetes placement/allocation/lifecycle; Helm install identity/RBAC; CHILL frozen decisions/evidence/derivation. Pure leaves import no Kubernetes/CHILL API/controller-runtime; adapters depend inward. No generic ExecutionContract/plugin framework, compatibility status controller or implicit scheduler authorization.
 

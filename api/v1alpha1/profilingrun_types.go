@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -84,7 +85,7 @@ type ProfilingRunCandidateSpec struct {
 }
 
 // +kubebuilder:validation:XValidation:rule="!has(self.durationToleranceSeconds) || self.durationToleranceSeconds < double(self.durationSeconds)",message="duration tolerance must be less than duration"
-// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) && !has(self.workload) : !has(self.settlingDurationSeconds) && has(self.dataset) && has(self.workload)",message="measurement fields must match the selected workloadMode"
+// +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' ? self.warmupIterations == 0 && has(self.settlingDurationSeconds) && !has(self.dataset) && !has(self.workload) && !has(self.cadence) : !has(self.settlingDurationSeconds) && has(self.dataset) && has(self.workload)",message="measurement fields must match the selected workloadMode"
 // +kubebuilder:validation:XValidation:rule="self.workloadMode == 'idle-model-loaded' || self.durationSeconds >= 30",message="active measurement requires at least thirty seconds"
 type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=1
@@ -108,7 +109,7 @@ type ProfilingRunMeasurementSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	DurationToleranceSeconds *float64 `json:"durationToleranceSeconds,omitempty"`
 
-	// +kubebuilder:validation:Enum=saturated-serial-fixed-batch;idle-model-loaded
+	// +kubebuilder:validation:Enum=empirical-cadence-fixed-batch;idle-model-loaded
 	WorkloadMode string `json:"workloadMode"`
 
 	// Dataset names the cluster-scoped Dataset whose profiling records active
@@ -122,6 +123,13 @@ type ProfilingRunMeasurementSpec struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	Workload string `json:"workload,omitempty"`
+
+	// Server-generated active children carry their already-frozen cadence.
+	// Standalone requests resolve it server-side; loaded-idle carries none.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Type=object
+	Cadence *apiextensionsv1.JSON `json:"cadence,omitempty"`
 
 	// WorkloadUID freezes the source identity for campaign children. Together
 	// with the SLO fields below it bypasses mutable Workload resolution.

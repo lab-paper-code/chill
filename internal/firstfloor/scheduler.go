@@ -107,7 +107,7 @@ func (s *Scheduler) Update(ctx context.Context, cfg *Config) error {
 	if next.Policy.ProfileID != current.Policy.ProfileID {
 		return errors.New("profile changes require restart")
 	}
-	// Samples are already sorted and immutable; do not mutate them on updates.
+	// Paired samples and their hydrated index are immutable across updates.
 	if !durationOK(next.Policy.MaxBatchWaitMS) || !identity(next.Policy.DecisionID) {
 		return errors.New("invalid mutable policy")
 	}
@@ -271,6 +271,9 @@ func (a *schedulerActor) progress(r *request, phase string, now time.Time, o run
 		p.PreprocessMS = o.preprocessMS
 		p.PostprocessMS = o.postprocessMS
 		p.FirstTokenMS = o.firstMS
+		if o.sample.ServiceDurationNanos > 0 {
+			p.ServiceSample = &o.sample
+		}
 	} else {
 		p.QueueMS = p.NativeElapsedMS
 		p.ProfileID = a.cfg.Policy.ProfileID
@@ -293,6 +296,10 @@ func (a *schedulerActor) fail(e error) {
 }
 func (a *schedulerActor) requestStates(now time.Time) []RequestState {
 	out := make([]RequestState, 0, len(a.queue)+len(a.deferred)+len(a.active))
+	var gap, exchangeElapsed *int64
+	if len(a.active) > 0 && a.s != nil && a.s.runner != nil {
+		_, gap, exchangeElapsed = a.s.runner.exchangeState()
+	}
 	for index, list := range [][]*request{a.queue, a.deferred, a.active} {
 		for _, r := range list {
 			phase := phaseQueued
@@ -323,6 +330,10 @@ func (a *schedulerActor) requestStates(now time.Time) []RequestState {
 				rate = 1000 / rr.intervalMS
 			}
 			out = append(out, RequestState{Context: r.context, QueueMS: q, ElapsedMS: elapsed, ArrivalRate: rate, Phase: phase, BatchID: id, BatchSize: size, ServiceElapsedMS: service, ProfileID: policy.ProfileID, DecisionID: policy.DecisionID})
+			if phase == phaseRunning {
+				out[len(out)-1].PrecedingIdleNanos = gap
+				out[len(out)-1].ExchangeElapsedNanos = exchangeElapsed
+			}
 			if !r.lifetime.IsZero() {
 				remaining := milliseconds(r.lifetime.Sub(now))
 				out[len(out)-1].RemainingLifetimeMS = &remaining
@@ -340,7 +351,8 @@ func (a *schedulerActor) state(now time.Time) State {
 			ages[uid] = append(ages[uid], last+rr.intervalMS)
 		}
 	}
-	return State{At: now.UTC(), Ready: a.s.Ready(), Metadata: a.s.metadata(), Requests: a.requestStates(now), AcceptedRequests: a.accepted, CompletedRequests: a.completed, Executions: a.executions, ArrivalAgesMS: ages}
+	age, _, _ := a.s.runner.exchangeState()
+	return State{At: now.UTC(), Ready: a.s.Ready(), Metadata: a.s.metadata(), Requests: a.requestStates(now), AcceptedRequests: a.accepted, CompletedRequests: a.completed, Executions: a.executions, ArrivalAgesMS: ages, LastServiceEndAgeNanos: age, DecisionIdleApproximate: true}
 }
 func requestError(r *request, now time.Time) error {
 	e := r.ctx.Err()
@@ -402,7 +414,12 @@ func (a *schedulerActor) startBatch(ctx context.Context, now, next time.Time) ti
 		if a.cfg.Mode == modeProfiling {
 			choice = BatchChoice{Size: 1, WorkloadUID: a.queue[0].context.WorkloadUID, Definition: a.queue[0].context.Definition}
 		} else {
-			choice = ChooseBatch(a.cfg.Policy, a.requestStates(now))
+			age, known := a.s.runner.decisionIdleNanos()
+			var decisionGap *int64
+			if known {
+				decisionGap = &age
+			}
+			choice = ChooseBatch(a.cfg.Policy, a.requestStates(now), decisionGap)
 		}
 		if choice.Reason == OutcomeDeadlineDrop || choice.Reason == ReasonDeadlineDefer {
 			for i, r := range a.queue {
@@ -464,7 +481,7 @@ func (s *Scheduler) executeBatch(ctx context.Context, batch []*request, id uint6
 		return
 	}
 	tensors, data := packBatch(snapshot.Inputs, batch, len(batch))
-	o, e := s.runner.infer(ctx, id, tensors, data)
+	o, e := s.runner.infer(ctx, id, tensors, data, nil, "")
 	s.completed <- result{output: o, err: e, complete: true}
 }
 
@@ -473,11 +490,11 @@ func (s *Scheduler) executeProfile(ctx context.Context, batch []*request, id uin
 	pr := batch[0].profile
 	tensors, data := packBatch(snapshot.Inputs, batch, pr.BatchSize)
 	span := time.Now()
-	o, e := s.runner.infer(ctx, id, tensors, data)
+	o, e := s.runner.infer(ctx, id, tensors, data, pr.CadenceDraw, pr.TrialID)
 	if e != nil {
-		return result{err: e, complete: true}
+		return result{output: o, err: e, complete: true}
 	}
-	reply := ProfileResponse{BatchSize: pr.BatchSize, BatchIDs: []uint64{id}, NativeSamplesMS: []float64{milliseconds(time.Since(span))}, ServiceSamplesMS: []float64{o.serviceMS}, BackendSamplesMS: []float64{o.backendMS}, PreprocessSamplesMS: []float64{o.preprocessMS}, PostprocessSamplesMS: []float64{o.postprocessMS}, Units: make([]int, len(o.items)), ExecutionComplete: true}
+	reply := ProfileResponse{BatchSize: pr.BatchSize, BatchIDs: []uint64{id}, NativeSamplesMS: []float64{milliseconds(time.Since(span))}, ServiceSamples: []ServiceSample{o.sample}, BackendSamplesMS: []float64{o.backendMS}, PreprocessSamplesMS: []float64{o.preprocessMS}, PostprocessSamplesMS: []float64{o.postprocessMS}, Units: make([]int, len(o.items)), ExecutionComplete: true}
 	if snapshot.MaxNewTokens > 0 {
 		reply.FirstTokenSamplesMS = []float64{o.firstMS}
 	}

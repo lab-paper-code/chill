@@ -24,7 +24,7 @@ from ortcpu import runner as common
 REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha2"
 FRAME_BYTES = 64 << 20
 PROVIDERS = {"ort-cpu": "CPUExecutionProvider", "ort-cuda": "CUDAExecutionProvider", "rknnlite": ""}
-# ponytail: seed is a constant; move it to the active protocol configuration when an experiment varies the seed.
+# Dataset sampling is independent of the frozen cadence references, not independent arrival trials.
 SAMPLE_SEED = 0
 
 
@@ -108,7 +108,7 @@ def native_sample(response: dict[str, Any], batch: int, record_ids: list[str], g
     common.require_integer(response.get("batchSize"), "actual batchSize", 1)
     if response.get("batchSize") != batch or response.get("executionComplete") is not True:
         raise common.ContractError("actor did not complete exactly one requested fixed-K execution")
-    keys = ["batchIDs", "serviceSamplesMS", "preprocessSamplesMS", "backendSamplesMS",
+    keys = ["batchIDs", "serviceSamples", "preprocessSamplesMS", "backendSamplesMS",
             "postprocessSamplesMS", "nativeSamplesMS"]
     if generative:
         keys.append("firstTokenSamplesMS")
@@ -120,7 +120,32 @@ def native_sample(response: dict[str, Any], batch: int, record_ids: list[str], g
     batch_id = common.require_integer(arrays[0][0], "native batch ID", 1)
     if batch_id > (1 << 64) - 1:
         raise common.ContractError("native batch ID exceeds uint64")
-    service = milliseconds(arrays[1][0], "native service sample")
+    pair = common.require_object(arrays[1][0], "native service pair")
+    common.require_fields(pair, {"serviceDurationNanos", "precedingIdleNanos", "trialID"} |
+                          ({"targetIdleNanos"} if "targetIdleNanos" in pair else set()) |
+                          ({"traceDrawRef"} if "traceDrawRef" in pair else set()), "native service pair")
+    service_nanos = common.require_integer(pair["serviceDurationNanos"], "native serviceDurationNanos", 1)
+    if service_nanos > (1 << 63) - 1:
+        raise common.ContractError("native serviceDurationNanos exceeds int64")
+    common.require_string(pair["trialID"], "native trialID")
+    for field in ("precedingIdleNanos", "targetIdleNanos"):
+        if pair.get(field) is not None:
+            value = common.require_integer(pair[field], "native " + field)
+            if value > (1 << 63) - 1:
+                raise common.ContractError("native idle exceeds int64")
+    ref = pair.get("traceDrawRef")
+    if (ref is None) != (pair.get("targetIdleNanos") is None):
+        raise common.ContractError("native target and draw identity must be paired")
+    if ref is not None:
+        ref = common.require_object(ref, "native traceDrawRef")
+        common.require_fields(ref, {"phase", "elementIndex", "drawIndex"}, "native traceDrawRef")
+        common.require_string(ref["phase"], "native draw phase")
+        common.require_integer(ref["elementIndex"], "native draw elementIndex")
+        if common.require_integer(ref["drawIndex"], "native drawIndex") > (1 << 64) - 1:
+            raise common.ContractError("native drawIndex exceeds uint64")
+        if pair["precedingIdleNanos"] is None:
+            raise common.ContractError("startup sample cannot claim a cadence draw")
+    service = service_nanos / 1_000_000.0
     preprocess = milliseconds(arrays[2][0], "native preprocess sample", positive=False)
     backend = milliseconds(arrays[3][0], "native backend sample")
     postprocess = milliseconds(arrays[4][0], "native postprocess sample", positive=False)
@@ -133,9 +158,9 @@ def native_sample(response: dict[str, Any], batch: int, record_ids: list[str], g
         common.require_integer(value, "native units item", 1)
     if preprocess + backend + postprocess > service or service > native or native > total:
         raise common.ContractError("native timing spans are not nested")
-    sample = {"batchID": batch_id, "batchSize": batch, "recordIDs": list(record_ids), "units": units,
-              "runnerServiceMs": service, "preprocessMs": preprocess, "backendCallMs": backend,
-              "postprocessMs": postprocess, "nativeRequestMs": native}
+    sample = dict(pair, batchID=batch_id, batchSize=batch, recordIDs=list(record_ids), units=units,
+                  runnerServiceMs=service, preprocessMs=preprocess, backendCallMs=backend,
+                  postprocessMs=postprocess, nativeRequestMs=native)
     if generative:
         sample["firstTokenMs"] = milliseconds(arrays[6][0], "native first-token sample")
     return sample
@@ -227,6 +252,12 @@ class FirstfloorSession:
         self.record_ids: list[str] = []
         self.baseline: dict[str, int] = {}
         self.rng = random.Random(SAMPLE_SEED)
+        measurement = request["runConfig"]["measurement"]
+        cadence = measurement["cadence"] if measurement["workloadMode"] != common.IDLE_WORKLOAD else None
+        self.cadence_draws = cadence["provenance"]["draws"] if cadence is not None else []
+        self.cadence_elements = ({phase["name"]: phase["elements"] for phase in cadence["provenance"]["phases"]}
+                                 if cadence is not None else {})
+        self.prepared_draw: dict[str, Any] | None = None
         self.records: list[str] = []
         if "datasetPath" in request:
             with os.scandir(request["datasetPath"]) as entries:
@@ -269,11 +300,21 @@ class FirstfloorSession:
         inputs = [{"name": name, "data": [base64.b64encode((root / record / name).read_bytes()).decode("ascii")
                                           for record in self.record_ids]}
                   for name in run["state"]["preprocessor"]["inputs"]]
-        self.payload = json.dumps({"batchSize": batch, "inputs": inputs}, separators=(",", ":")).encode()
+        body = {"batchSize": batch, "inputs": inputs, "trialID": self.request["podUID"]}
+        self.prepared_draw = None
+        if self.samples:
+            index = len(self.samples) - 1
+            ref = self.cadence_draws[index % len(self.cadence_draws)]
+            self.prepared_draw = {
+                "targetIdleNanos": self.cadence_elements[ref["phase"]][ref["elementIndex"]]["gapNanos"],
+                "ref": dict(ref, drawIndex=index),
+            }
+            body["cadenceDraw"] = self.prepared_draw
+        self.payload = json.dumps(body, separators=(",", ":")).encode()
         if len(self.payload) > FRAME_BYTES:
             raise common.ContractError("native JSON input exceeds worker request capacity")
 
-    def run(self) -> None:
+    def run(self) -> dict[str, Any]:
         if self.payload is None:
             raise common.ContractError("native input has not been prepared")
         payload, self.payload = self.payload, None
@@ -281,9 +322,18 @@ class FirstfloorSession:
         run = self.request["runConfig"]
         sample = native_sample(response, run["measurement"]["batch"], self.record_ids,
                                run["state"]["preprocessor"].get("maxNewTokens", 0) > 0)
+        if sample["trialID"] != self.request["podUID"]:
+            raise common.ContractError("native sample trial differs from the physical request pod")
+        if self.prepared_draw is None:
+            if sample.get("targetIdleNanos") is not None or sample.get("traceDrawRef") is not None:
+                raise common.ContractError("initial unpaced exchange invented a cadence draw")
+        elif (sample.get("targetIdleNanos") != self.prepared_draw["targetIdleNanos"] or
+              sample.get("traceDrawRef") != self.prepared_draw["ref"]):
+            raise common.ContractError("native sample differs from the requested frozen draw")
         if self.samples and sample["batchID"] <= self.samples[-1]["batchID"]:
             raise common.ContractError("native batch IDs must increase monotonically")
         self.samples.append(sample)
+        return sample
 
 
 def wait_ready(process: subprocess.Popen, session: FirstfloorSession, timeout: float) -> None:

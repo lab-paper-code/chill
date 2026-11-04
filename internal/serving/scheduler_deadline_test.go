@@ -21,11 +21,13 @@ func TestReplayCompletionIsNativeCompletionPlusMargin(t *testing.T) {
 			d := snap.Workloads[0]
 			d.SLO.TargetLatency = 607 * time.Millisecond
 			snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
-			snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
+			snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{float64(100 * time.Millisecond)})
 			r := SchedulerRequest{ID: "consumed", Definition: d, ReceivedAt: snap.At.Add(-time.Duration(senderMS) * time.Millisecond), Elapsed: time.Duration(senderMS) * time.Millisecond, Phase: phase, Instance: "i1", BatchID: "actual", NativeSenderElapsedMS: &senderMS}
 			want := time.Duration(senderMS)*time.Millisecond + 100*time.Millisecond + 7*time.Millisecond
 			if phase == phaseRunning {
 				r.RunningElapsed = 20 * time.Millisecond
+				exchangeElapsed := int64(r.RunningElapsed)
+				r.ExchangeElapsedNanos = &exchangeElapsed
 				r.Elapsed += r.RunningElapsed
 				r.ReceivedAt = r.ReceivedAt.Add(-r.RunningElapsed)
 			}
@@ -73,7 +75,7 @@ func TestSchedulerReplayDropsAtSLOBoundaryWhileBatchRuns(t *testing.T) {
 	queued.UID = "queued"
 	queued.SLO.TargetLatency = 5 * time.Millisecond
 	snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
-	snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{float64(100 * time.Millisecond)}
+	snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{float64(100 * time.Millisecond)})
 	zero := 0.0
 	snap.Outstanding = []SchedulerRequest{{ID: "active", Definition: d, ReceivedAt: snap.At, Phase: phaseRunning, Instance: "i1", BatchID: "actual", NativeSenderElapsedMS: &zero}, {ID: "queued", Definition: &queued, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero}}
 	state := schedulerReplayState{settings: s, snap: snap, c: SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}, rng: rand.New(rand.NewPCG(1, 0)), horizon: float64(s.ComparisonPeriod), out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
@@ -108,7 +110,7 @@ func TestSchedulerReplayDeferredFIFOAndNormalEDF(t *testing.T) {
 	normal.SLO.TargetLatency = 20 * time.Millisecond
 	snap.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDefer
 	snap.Instances[0].MaxBatch = 2
-	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, BatchProfile{Batch: 2, DurationNanos: []float64{float64(5 * time.Millisecond)}, EnergyPerInputJoules: 1, MemoryBytes: 100})
+	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
 	zero := 0.0
 	snap.Outstanding = []SchedulerRequest{
 		{ID: "deferred-a", QueueOrder: 0, Definition: d, ReceivedAt: snap.At, Phase: phaseDeferred, Instance: "i1", NativeSenderElapsedMS: &zero},
@@ -149,7 +151,7 @@ func TestSchedulerReplayKeepOverdueUsesMinimumServiceCost(t *testing.T) {
 	d := snap.Workloads[0]
 	d.SLO.TargetLatency = time.Millisecond
 	snap.Instances[0].MaxBatch = 2
-	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, BatchProfile{Batch: 2, DurationNanos: []float64{float64(5 * time.Millisecond)}, EnergyPerInputJoules: 5, MemoryBytes: 100})
+	snap.Instances[0].Profile.Batches = append(snap.Instances[0].Profile.Batches, schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 5, MemoryBytes: 100}, []float64{float64(5 * time.Millisecond)}))
 	zero := 0.0
 	for _, id := range []string{"a", "b", "c"} {
 		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: id, Definition: d, ReceivedAt: snap.At, Phase: phaseQueued, Instance: "i1", NativeSenderElapsedMS: &zero})

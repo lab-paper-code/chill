@@ -75,6 +75,7 @@ func TestBatchingOffSnapshotReplay(t *testing.T) {
 				t.Fatal(err)
 			}
 			snap := c.Snapshot
+			schedulerHydrateCapture(t, snap)
 			// Raw captures remain unchanged; these rows belong to this replay's
 			// current-contract input, not the archived keys.
 			currentRows := slices.Clone(rows)

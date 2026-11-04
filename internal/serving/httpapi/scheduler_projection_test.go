@@ -6,18 +6,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
-	samples := make([]float64, 2_000_000)
+	samples := make([]firstfloor.ServiceSample, 2_000_000)
+	cadence := fixtures.Cadence()
 	for i := range samples {
-		samples[i] = 123456789
+		samples[i] = fixtures.ServiceSample(cadence, "physical-trial", uint64(i), 123456789)
 	}
 	profile := &serving.Profile{ID: "measured", Batches: []serving.BatchProfile{{
-		Batch: 1, DurationNanos: samples, EnergyPerInputJoules: 0, EnergyBelowResolution: true, MemoryBytes: 8192,
+		Batch: 1, ServiceSamples: samples, EnergyPerInputJoules: 0, EnergyBelowResolution: true, MemoryBytes: 8192,
 	}}}
 	instance := serving.SchedulerInstance{ID: "physical", Profile: profile}
 	state := servingkube.SchedulerControllerState{Snapshot: serving.SchedulerSnapshot{
@@ -45,10 +48,10 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 		var wire struct {
 			Profiles map[string]struct {
 				Batches []struct {
-					DurationNanos         []float64 `json:"durationNanos"`
-					DurationSampleCount   int       `json:"durationSampleCount"`
-					EnergyBelowResolution bool      `json:"energyBelowResolution"`
-					MemoryBytes           uint64    `json:"memoryBytes"`
+					ServiceSamples        []firstfloor.ServiceSample `json:"serviceSamples"`
+					DurationSampleCount   int                        `json:"durationSampleCount"`
+					EnergyBelowResolution bool                       `json:"energyBelowResolution"`
+					MemoryBytes           uint64                     `json:"memoryBytes"`
 				} `json:"batches"`
 			} `json:"profiles"`
 		}
@@ -56,11 +59,11 @@ func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 			t.Fatal(err)
 		}
 		batch := wire.Profiles["measured"].Batches[0]
-		if len(batch.DurationNanos) != 0 || batch.DurationSampleCount != len(samples) || !batch.EnergyBelowResolution || batch.MemoryBytes != 8192 {
+		if len(batch.ServiceSamples) != 0 || batch.DurationSampleCount != len(samples) || !batch.EnergyBelowResolution || batch.MemoryBytes != 8192 {
 			t.Fatalf("profile projection lost scalar evidence: %+v", batch)
 		}
 	}
-	if state.Snapshot.Instances[0].Profile != profile || len(profile.Batches[0].DurationNanos) != len(samples) {
+	if state.Snapshot.Instances[0].Profile != profile || len(profile.Batches[0].ServiceSamples) != len(samples) {
 		t.Fatal("current read mutated scheduler evidence")
 	}
 }

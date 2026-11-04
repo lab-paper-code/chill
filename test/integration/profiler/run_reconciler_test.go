@@ -17,6 +17,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
+	"github.com/lab-paper-code/chill/test/fixtures"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	batchv1 "k8s.io/api/batch/v1"
@@ -714,6 +716,10 @@ func resolvedRun(
 }
 
 func validRun() *edgev1alpha1.ProfilingRun {
+	cadence, err := json.Marshal(fixtures.Cadence())
+	if err != nil {
+		panic(err)
+	}
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Name: "durable-job-identity", Namespace: profilerIntegrationNamespace,
 			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Now())}},
@@ -727,7 +733,8 @@ func validRun() *edgev1alpha1.ProfilingRun {
 			},
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
-				WorkloadMode: "saturated-serial-fixed-batch", Dataset: "vqav2-val-subset",
+				WorkloadMode: "empirical-cadence-fixed-batch", Dataset: "vqav2-val-subset",
+				Cadence:  &apiextensions.JSON{Raw: cadence},
 				Workload: "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
 				SLOPercentile: 95, SLOTargetLatencyNanos: int64(time.Second), MinServiceSamples: 59,
 			},

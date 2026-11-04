@@ -1,0 +1,36 @@
+{
+  "target": {
+    "loadContext": "workload-alone-schedule",
+    "boundary": "native-exchange-end-to-next-start",
+    "conditionalModel": "nearest-gap-uniform-physical-trial",
+    "schedule": [
+      {"name": "low", "offeredLoad": "low", "sharingContext": "alone"},
+      {"name": "high", "offeredLoad": "high", "sharingContext": "alone"}
+    ]
+  },
+  "provenance": {
+    "seed": 0,
+    "drawRule": "uniform-selected-records-with-replacement-frozen-cycle",
+    "sources": [{
+      "object": {"store": "trace-store", "key": "sha256/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 1024},
+      "boundary": "native-exchange-end-to-next-start",
+      "sourceRevision": "corrected-serving-trace",
+      "loadContext": "donor-alone-schedule",
+      "workload": "smol",
+      "nodeUID": "donor-node",
+      "executionPath": "ort-cpu",
+      "powerMode": "MAXN",
+      "physicalInstanceID": "donor-instance",
+      "trialID": "donor-physical-trial",
+      "observedBatch": 1,
+      "windowStart": "2026-11-05T00:00:00Z",
+      "windowEnd": "2026-11-05T00:01:00Z",
+      "borrowed": true
+    }],
+    "phases": [
+      {"name": "low", "elements": [{"gapNanos": 5000000000, "sourceIndex": 0, "batchID": 2}]},
+      {"name": "high", "elements": [{"gapNanos": 7000000000, "sourceIndex": 0, "batchID": 3}]}
+    ],
+    "draws": [{"phase": "high", "elementIndex": 0}, {"phase": "low", "elementIndex": 0}]
+  }
+}

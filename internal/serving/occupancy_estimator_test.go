@@ -11,7 +11,7 @@ import (
 
 func directFixture(batch int) (*Profile, map[string]firstfloor.Metadata, time.Time) {
 	at := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
-	p := &Profile{ID: "profile", NodeName: "node", Batches: []BatchProfile{{Batch: batch, DurationNanos: []float64{100 * float64(batch)}}}}
+	p := &Profile{ID: "profile", NodeName: "node", Batches: []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: batch}, []float64{100 * float64(batch)})}}
 	p.Condition.NodeUID = "node-uid"
 	p.Condition.LogicalModel = "model"
 	p.Condition.PowerMode = "fixture-fixed-mode"

@@ -18,6 +18,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
@@ -387,6 +388,7 @@ func testIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.Measurement.SettlingDurationSeconds = 30
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
+	config.Measurement.Cadence = nil
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -469,8 +471,8 @@ func testFirstfloorEvidence(
 func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.RuntimeResult {
 	started := time.Date(2026, time.July, 16, 3, 0, 0, 0, time.UTC)
 	targetDuration := float64(config.Measurement.DurationSeconds)
-	latencies := make([]float64, 59)
-	nativeSamples := make([]profilingrun.NativeServiceSample, 59)
+	latencies := make([]float64, 60)
+	nativeSamples := make([]profilingrun.NativeServiceSample, 60)
 	recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
 	for i := range recordIDs {
 		recordIDs[i], units[i] = "record-"+strconv.Itoa(i), 1
@@ -479,6 +481,7 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		latencies[i] = 2
 		nativeSamples[i] = profilingrun.NativeServiceSample{
 			BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
+			ServiceSample:             fixtures.ServiceSample(config.Measurement.Cadence, podUID, uint64(i), 700000),
 			RunnerServiceMilliseconds: 0.7,
 			BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9,
 		}
@@ -493,7 +496,7 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		Inputs:            config.State.Preprocessor.Inputs,
 		WarmupIterations:  config.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
-		InferenceCount:    59, MeasurementMode: "duration",
+		InferenceCount:    60, MeasurementMode: "duration",
 		MeasurementStartedAt:      started.Format(time.RFC3339Nano),
 		MeasurementEndedAt:        started.Add(30 * time.Second).Format(time.RFC3339Nano),
 		MeasurementElapsedSeconds: 30, TargetDurationSeconds: &targetDuration,
@@ -503,7 +506,7 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 			NodeSnapshot: config.TargetNode,
 		},
 		MemoryBytes: testMemoryBytes, MemorySource: testMemorySource,
-		Firstfloor: testFirstfloorEvidence(config, "1.16.0", 59),
+		Firstfloor: testFirstfloorEvidence(config, "1.16.0", 60),
 		RepetitionResults: []profilingrun.Repetition{{
 			Repetition: 1, MeasurementStartedAt: started.Format(time.RFC3339Nano),
 			MeasurementEndedAt:  started.Add(30 * time.Second).Format(time.RFC3339Nano),

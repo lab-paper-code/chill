@@ -102,7 +102,7 @@ func TestValidateRuntimeRejectsInvalidRepetitionEvidence(t *testing.T) {
 
 func validRuntimeResult(config RunConfig) RuntimeResult {
 	targetDuration := float64(config.Measurement.DurationSeconds)
-	count := config.Measurement.MinServiceSamples
+	count := config.Measurement.MinServiceSamples + 1
 	samples := make([]float64, count)
 	for index := range samples {
 		samples[index] = 1

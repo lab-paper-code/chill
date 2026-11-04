@@ -556,7 +556,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 			BatchSize:                 config.Measurement.Batch,
 			WarmupIterations:          config.Measurement.WarmupIterations,
 			WarmupCompletedAt:         started.Add(-time.Second).UTC().Format(time.RFC3339Nano),
-			InferenceCount:            59,
+			InferenceCount:            60,
 			MeasurementMode:           "duration",
 			MeasurementStartedAt:      started.UTC().Format(time.RFC3339Nano),
 			MeasurementEndedAt:        started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
@@ -579,7 +579,7 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 				Repetition:           1,
 				MeasurementStartedAt: started.UTC().Format(time.RFC3339Nano),
 				MeasurementEndedAt:   started.Add(30 * time.Second).UTC().Format(time.RFC3339Nano),
-				LatencyMilliseconds:  make([]float64, 59),
+				LatencyMilliseconds:  make([]float64, 60),
 			}},
 			Latency: map[string]float64{"p95": 2, "mean": 2},
 		},
@@ -636,7 +636,9 @@ func validRaw(t *testing.T, config profilingrun.RunConfig) RawMeasurement {
 		InitialActivePods: []workloadobserver.Pod{runPod}, FinalActivePods: []workloadobserver.Pod{runPod},
 		Continuous: true,
 	}
-	applyFirstfloorRuntime(config, &raw.Runtime)
+	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		applyFirstfloorRuntime(config, &raw.Runtime)
+	}
 	return raw
 }
 

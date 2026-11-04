@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -20,6 +21,7 @@ func ProjectCurvePlanSpec(
 	active, idle profilingrun.RunConfig,
 	conversion profilederivation.CurveConversionContract,
 	plannedBatchSizes []int,
+	cadences map[int]*firstfloor.CadenceContract,
 ) (profilederivation.CurvePlanSpec, error) {
 	activeProtocol, err := projectCurveProtocol(active)
 	if err != nil {
@@ -29,6 +31,7 @@ func ProjectCurvePlanSpec(
 	if err != nil {
 		return profilederivation.CurvePlanSpec{}, fmt.Errorf("project idle curve protocol: %w", err)
 	}
+	activeProtocol.Cadences = firstfloor.CloneCadences(cadences)
 
 	spec := profilederivation.CurvePlanSpec{
 		Name:           name,
@@ -229,6 +232,11 @@ func validateCurvePlanRunConfig(
 	// ResourceVersion is observation provenance, not a selected condition.
 	projectedProtocol.WorkloadResourceVersion = ""
 	protocol.WorkloadResourceVersion = ""
+	if protocol.Cadences != nil {
+		protocol.Cadences = map[int]*firstfloor.CadenceContract{
+			config.Measurement.Batch: protocol.Cadences[config.Measurement.Batch],
+		}
+	}
 	if !reflect.DeepEqual(projectedProtocol, protocol) {
 		return errors.New("RunConfig contradicts curve-plan measurement-protocol facts")
 	}
@@ -291,6 +299,7 @@ func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.Curv
 		WorkloadName:               config.Measurement.WorkloadName,
 		WorkloadUID:                config.Measurement.WorkloadUID,
 		WorkloadResourceVersion:    config.Measurement.WorkloadResourceVersion,
+		Cadences:                   currentCadence(config),
 		MetricIntervalMilliseconds: config.Metrics.IntervalMilliseconds,
 		MetricTimeoutMilliseconds:  config.Metrics.TimeoutMilliseconds,
 		MetricDurationSeconds:      config.Metrics.DurationSeconds,
@@ -298,4 +307,11 @@ func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.Curv
 		WorkloadObserverImage:      config.Images.WorkloadObserver,
 		WorkloadSchemaVersion:      config.Workload.SchemaVersion,
 	}, nil
+}
+
+func currentCadence(config profilingrun.RunConfig) map[int]*firstfloor.CadenceContract {
+	if config.Measurement.Cadence == nil {
+		return nil
+	}
+	return map[int]*firstfloor.CadenceContract{config.Measurement.Batch: config.Measurement.Cadence.Clone()}
 }

@@ -324,9 +324,9 @@ func manualBatchPreparation(t *testing.T) (*admissionHarness, servingstate.Prepa
 	h, _, _ := sequenceHarness(t)
 	spec := h.controller.config.Preparations[manualPrepare().ProfileID]
 	spec.Instance.Profile.Batches = []serving.BatchProfile{
-		{Batch: 1, DurationNanos: []float64{1000}},
-		{Batch: 2, DurationNanos: []float64{2000}},
-		{Batch: 4, DurationNanos: []float64{4000}},
+		{Batch: 1, ServiceSamples: catalogServiceSamples(1000)},
+		{Batch: 2, ServiceSamples: catalogServiceSamples(2000)},
+		{Batch: 4, ServiceSamples: catalogServiceSamples(4000)},
 	}
 	spec.Instance.MaxBatch, spec.Config.Policy.MaxBatchSize = 4, 4
 	spec.Instance.Profile.Condition.Firstfloor.MaxBatchSize = 4

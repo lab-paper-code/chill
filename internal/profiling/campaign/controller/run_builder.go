@@ -3,6 +3,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -10,11 +11,12 @@ import (
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
-	activeWorkloadMode = "saturated-serial-fixed-batch"
+	activeWorkloadMode = profilingrun.EmpiricalCadenceFixedBatchWorkloadMode
 	idleWorkloadMode   = "idle-model-loaded"
 
 	labelBatchEnergyOptimization = "edge.dacs.io/batch-energy-optimization"
@@ -98,11 +100,19 @@ func BuildRun(
 	}, nil
 }
 
-func projectFrozenWorkload(measurement *edgev1alpha1.ProfilingRunMeasurementSpec, protocol profilederivation.CurveProtocolContract) {
+func projectFrozenActiveProtocol(
+	measurement *edgev1alpha1.ProfilingRunMeasurementSpec, protocol profilederivation.CurveProtocolContract,
+) error {
 	measurement.Workload = protocol.WorkloadName
 	measurement.WorkloadUID = protocol.WorkloadUID
 	measurement.WorkloadResourceVersion = protocol.WorkloadResourceVersion
 	measurement.SLOPercentile = protocol.SLOPercentile
 	measurement.SLOTargetLatencyNanos = protocol.SLOTargetLatencyNanos
 	measurement.MinServiceSamples = int32(protocol.MinServiceSamples)
+	body, err := json.Marshal(protocol.Cadences[int(measurement.Batch)])
+	if err != nil {
+		return fmt.Errorf("encode frozen cadence: %w", err)
+	}
+	measurement.Cadence = &apiextensionsv1.JSON{Raw: body}
+	return nil
 }

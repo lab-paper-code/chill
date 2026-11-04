@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 const (
@@ -318,6 +319,7 @@ func TestVerifyCurvePlanOwnsTheVerifiedState(t *testing.T) {
 func TestDeriveCurveFollowsSparsePlannedBatchSizeSequence(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
+	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -342,6 +344,7 @@ func TestDeriveCurveFollowsSparsePlannedBatchSizeSequence(t *testing.T) {
 func TestDeriveCurveRejectsSkippedPlannedBatchSize(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
+	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -481,6 +484,7 @@ func TestEnergyOptimizationSelectsGlobalMinimumAfterLocalMinimum(t *testing.T) {
 func TestEnergyOptimizationFollowsSparsePlannedBatchSizes(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
+	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -545,7 +549,7 @@ func validCurvePlanSpec() CurvePlanSpec {
 			SourceKind: "prometheus", NodeName: "orangepi", Endpoint: "http://metrics",
 			PowerMetric: "power_watts",
 		},
-		ActiveProtocol: testCurveProtocol("saturated", testImage("metric", "8"), testImage("workload", "9")),
+		ActiveProtocol: testCurveProtocol("empirical-cadence-fixed-batch", testImage("metric", "8"), testImage("workload", "9")),
 		IdleProtocol:   testCurveProtocol("idle-model-loaded", testImage("metric", "8"), testImage("workload", "9")),
 		Conversion: CurveConversionContract{
 			TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
@@ -561,6 +565,7 @@ func validCurvePlanSpec() CurvePlanSpec {
 		PlannedBatchSizes: []int{1, 2, 4},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
+	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	shared.ActiveProtocol.Dataset = &CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	shared.IdleProtocol.SettlingDurationSeconds = 5
 	return shared
@@ -572,6 +577,7 @@ func testCurvePlanSpec(batchCount int) CurvePlanSpec {
 	for index := range shared.PlannedBatchSizes {
 		shared.PlannedBatchSizes[index] = index + 1
 	}
+	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	return shared
 }
 

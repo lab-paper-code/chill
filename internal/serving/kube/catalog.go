@@ -466,6 +466,10 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			continue
 		}
 		memory := profilederivation.MaxMemory(batch.memory, idleMemory)
+		batch.profile.ServiceDistribution, err = firstfloor.NewServiceDistribution(batch.profile.ServiceSamples)
+		if err != nil {
+			return serving.Profile{}, nil, fmt.Errorf("hydrate batch %d service pairs: %w", batchSize, err)
+		}
 		batch.profile.MemoryBytes, batch.profile.MemoryBasis = memory.Bytes, memory.Basis
 		batch.profile.EnergyPerInputJoules = batch.energySum / float64(batch.trials)
 		point, err := profilederivation.Aggregate(batch.energyTrials, energyPolicy)
@@ -532,7 +536,7 @@ func cloneCatalogProfile(profile serving.Profile) serving.Profile {
 	profile.Evidence = slices.Clone(profile.Evidence)
 	profile.Batches = slices.Clone(profile.Batches)
 	for i := range profile.Batches {
-		profile.Batches[i].DurationNanos = slices.Clone(profile.Batches[i].DurationNanos)
+		profile.Batches[i].ServiceSamples = firstfloor.CloneServiceSamples(profile.Batches[i].ServiceSamples)
 	}
 	profile.Condition = profilederivation.CloneCurvePlanSpec(profile.Condition)
 	if profile.RuntimeMetadata != nil {
@@ -593,11 +597,7 @@ func (b *catalogBatch) add(trial profilederivation.Trial, energy profilederivati
 		return errors.New("measured active wall power or duration is missing or invalid")
 	}
 	for _, sample := range trial.NativeSamples {
-		nanos := sample.RunnerServiceMilliseconds * 1e6
-		if sample.BatchSize != trial.Batch || sample.BatchID == 0 || nanos <= 0 || math.IsNaN(nanos) || math.IsInf(nanos, 0) {
-			return errors.New("raw runner service cannot be represented as finite positive nanoseconds")
-		}
-		b.profile.DurationNanos = append(b.profile.DurationNanos, nanos)
+		b.profile.ServiceSamples = append(b.profile.ServiceSamples, sample.ServiceSample.Clone())
 	}
 	b.trials++
 	b.clientLatencies = append(b.clientLatencies, trial.LatencyMilliseconds...)

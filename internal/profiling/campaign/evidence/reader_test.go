@@ -16,6 +16,8 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	projection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -136,7 +138,7 @@ func TestUnsupportedWorkloadModePrecedesReferenceModeMismatch(t *testing.T) {
 	if err := validateRun(cr, run, ref); !errors.Is(err, ErrUnsupportedWorkloadMode) {
 		t.Fatalf("completion or evidence masked unsupported Run mode: %v", err)
 	}
-	run.Spec.Measurement.WorkloadMode = "saturated-serial-fixed-batch"
+	run.Spec.Measurement.WorkloadMode = "empirical-cadence-fixed-batch"
 	if err := validateRun(cr, run, ref); err == nil || err.Error() != "Run workload mode contradicts completed trial reference" {
 		t.Fatalf("supported mode mismatch lost its diagnostic: %v", err)
 	}
@@ -170,11 +172,15 @@ func TestRunCompletionPrecedesEvidenceAndProtocol(t *testing.T) {
 }
 
 func completedRunFixture() (*edgev1alpha1.BatchEnergyOptimization, *edgev1alpha1.ProfilingRun, campaign.CompletedTrialReference) {
+	cadence, err := json.Marshal(fixtures.Cadence())
+	if err != nil {
+		panic(err)
+	}
 	cr := &edgev1alpha1.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "campaign", UID: "campaign-uid"}}
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "run", UID: "run-uid", Generation: 2,
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(cr, edgev1alpha1.GroupVersion.WithKind("BatchEnergyOptimization"))}},
-		Spec: edgev1alpha1.ProfilingRunSpec{Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 1, WorkloadMode: "saturated-serial-fixed-batch"}},
+		Spec: edgev1alpha1.ProfilingRunSpec{Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 1, WorkloadMode: "empirical-cadence-fixed-batch", Cadence: &apiextensions.JSON{Raw: cadence}}},
 		Status: edgev1alpha1.ProfilingRunStatus{
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{Store: "store", Key: "execution", Size: 1, SchemaVersion: "schema"},
 			Conditions: []metav1.Condition{
@@ -203,7 +209,7 @@ func TestLoadPlanSeparatesStatusAcceptanceFromIdentityBinding(t *testing.T) {
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
-	spec, err := projection.ProjectCurvePlanSpec("reader-plan", active, idle, derivation.CurveConversionContract{}, []int{1})
+	spec, err := projection.ProjectCurvePlanSpec("reader-plan", active, idle, derivation.CurveConversionContract{}, []int{1}, fixtures.Cadences([]int{1}...))
 	if err != nil {
 		t.Fatal(err)
 	}

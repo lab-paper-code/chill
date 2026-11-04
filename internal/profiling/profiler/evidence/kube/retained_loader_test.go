@@ -22,6 +22,7 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -404,14 +405,14 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 				RuntimeVersion: version, Backend: config.State.Backend, Provider: provider,
 				AvailableProviders: []string{provider}, Inputs: config.State.Preprocessor.Inputs,
 				BatchSize: config.Measurement.Batch, WarmupIterations: config.Measurement.WarmupIterations,
-				WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 59, MeasurementMode: "duration",
+				WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano), InferenceCount: 60, MeasurementMode: "duration",
 				MeasurementStartedAt: start.Format(time.RFC3339Nano), MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano),
 				MeasurementElapsedSeconds: 30, TargetDurationSeconds: &duration, CPUContract: cpu, DerivedContract: derived,
 				RepetitionResults: []profilingrun.Repetition{{Repetition: 1, MeasurementStartedAt: start.Format(time.RFC3339Nano),
-					MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano), LatencyMilliseconds: make([]float64, 59)}},
+					MeasurementEndedAt: start.Add(30 * time.Second).Format(time.RFC3339Nano), LatencyMilliseconds: make([]float64, 60)}},
 				Latency:     map[string]float64{"p95": 2, "mean": 2},
 				MemoryBytes: 123456, MemorySource: "cgroup-v2-memory.peak:runtime-container-lifetime",
-				Firstfloor: retainedFirstfloorEvidence(config, cpu, 59, provider, version),
+				Firstfloor: retainedFirstfloorEvidence(config, cpu, 60, provider, version),
 			},
 		}
 		recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
@@ -422,6 +423,7 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 			raw.Runtime.RepetitionResults[0].LatencyMilliseconds[i] = 2
 			raw.Runtime.RepetitionResults[0].NativeSamples = append(raw.Runtime.RepetitionResults[0].NativeSamples, profilingrun.NativeServiceSample{
 				BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
+				ServiceSample:             fixtures.ServiceSample(config.Measurement.Cadence, podUID, uint64(i), 700000),
 				RunnerServiceMilliseconds: 0.7, PreprocessMilliseconds: 0.1, PostprocessMilliseconds: 0.1,
 				BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9,
 			})

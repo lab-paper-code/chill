@@ -128,8 +128,8 @@ func TestProfileReuseNormalizesPhysicalGPUCommandWithoutDroppingRecipe(t *testin
 func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing.T) {
 	source, target := reuseProfilesFixture(t)
 	for index := range target.Batches {
-		for sample := range target.Batches[index].DurationNanos {
-			target.Batches[index].DurationNanos[sample] *= 1.04
+		for sample := range target.Batches[index].ServiceSamples {
+			target.Batches[index].ServiceSamples[sample].ServiceDurationNanos = target.Batches[index].ServiceSamples[sample].ServiceDurationNanos * 104 / 100
 		}
 		target.Batches[index].MeanWallWatts *= 1.04
 		target.Batches[index].MemoryBytes *= 2
@@ -148,7 +148,7 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 		profile.NodeName != target.NodeName || profile.RuntimeMetadata.GPUUUID != reuseTargetGPU ||
 		profile.Condition.RuntimeAccess.GPUUUID != reuseTargetGPU || string(profile.RuntimeDelivery) != string(target.RuntimeDelivery) ||
 		!reflect.DeepEqual(profile.MetricSource, target.MetricSource) || profile.IdleBaselineWatts != target.IdleBaselineWatts ||
-		!reflect.DeepEqual(profile.Batches[0].DurationNanos, source.Batches[0].DurationNanos) ||
+		!reflect.DeepEqual(profile.Batches[0].ServiceSamples, source.Batches[0].ServiceSamples) ||
 		profile.Batches[0].EnergyPerInputJoules != source.Batches[0].EnergyPerInputJoules ||
 		profile.Batches[0].MemoryBytes != target.Batches[0].MemoryBytes || profile.Reuse == nil ||
 		profile.Batches[0].MemoryBasis != target.Batches[0].MemoryBasis ||
@@ -158,10 +158,10 @@ func TestProfileReuseMaterializesTargetIdentityAndRetainsConfirmation(t *testing
 	if !reflect.DeepEqual(profile.RuntimeMetadata, target.RuntimeMetadata) {
 		t.Fatal("reuse replaced target shared CPU observations")
 	}
-	profile.Batches[0].DurationNanos[0] = -1
+	profile.Batches[0].ServiceSamples[0].ServiceDurationNanos = -1
 	profile.RuntimeMetadata.GPUUUID = "mutated"
 	profile.Reuse.Batches[0].ServiceRelativeDifference = 9
-	if source.Batches[0].DurationNanos[0] <= 0 || target.RuntimeMetadata.GPUUUID != reuseTargetGPU || view.ReuseChecks[0].Batches[0].ServiceRelativeDifference > .05 {
+	if source.Batches[0].ServiceSamples[0].ServiceDurationNanos <= 0 || target.RuntimeMetadata.GPUUUID != reuseTargetGPU || view.ReuseChecks[0].Batches[0].ServiceRelativeDifference > .05 {
 		t.Fatal("mutable reused view aliases original or confirmation check")
 	}
 }
@@ -207,11 +207,11 @@ func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 				profile.Condition.Firstfloor.MaxBatchSize = 2
 				profile.RuntimeMetadata.InitializedBatches = []int{1, 2}
 			}
-			s.Batches = append(s.Batches, serving.BatchProfile{Batch: 2, DurationNanos: []float64{100}, MeanWallWatts: 10})
+			s.Batches = append(s.Batches, serving.BatchProfile{Batch: 2, ServiceSamples: catalogServiceSamples(100), MeanWallWatts: 10})
 		}},
 		{"service-difference", func(_, p *serving.Profile) {
-			for index := range p.Batches[0].DurationNanos {
-				p.Batches[0].DurationNanos[index] *= 1.06
+			for index := range p.Batches[0].ServiceSamples {
+				p.Batches[0].ServiceSamples[index].ServiceDurationNanos = p.Batches[0].ServiceSamples[index].ServiceDurationNanos * 106 / 100
 			}
 		}},
 		{"active-power-difference", func(_, p *serving.Profile) { p.Batches[0].MeanWallWatts *= 1.06 }},

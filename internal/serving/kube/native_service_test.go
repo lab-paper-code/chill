@@ -28,6 +28,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	core "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -439,7 +440,7 @@ func preparationNativeHTTPClient(t *testing.T, ctx context.Context, config nativ
 	actorConfig.MaxQueueRequests, actorConfig.MaxQueueBytes, actorConfig.MaxRequestBytes = 4, 1<<20, 1<<20
 	actorConfig.RunnerTimeoutMS = 3000
 	actorConfig.RunnerCommand = []string{"env", "CHILL_NATIVE_STATE_RUNNER=" + string(runtimeJSON), os.Args[0], "-test.run=^TestNativeStateRunnerProcess$"}
-	actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, ServiceSamplesMS: []float64{1}, EnergyPerItemJ: 1}}
+	actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 1000000), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}
 	if err := native.ValidateConfig(&actorConfig); err != nil {
 		t.Fatal(err)
 	}

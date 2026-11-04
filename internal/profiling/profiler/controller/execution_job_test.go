@@ -412,6 +412,7 @@ func TestBuildExecutionJobExtendsOnlyIdleTimingEnvelope(t *testing.T) {
 	run.Spec.Measurement.StartupWarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+	run.Spec.Measurement.Cadence = nil
 	run.Spec.Measurement.Dataset = ""
 	run.Spec.Measurement.Workload = ""
 	prepared := currentPreparedRun(t)

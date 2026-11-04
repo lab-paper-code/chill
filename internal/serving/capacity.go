@@ -72,7 +72,8 @@ type CapacityRow struct {
 	Elapsed             time.Duration      `json:"elapsedNanos,omitempty"`
 	// Previous marks a recorded row from an earlier build that stands in while
 	// this build computes the row.
-	Previous bool `json:"previous,omitempty"`
+	Previous           bool                        `json:"previous,omitempty"`
+	ConditionalService *ConditionalServiceEvidence `json:"conditionalService,omitempty"`
 }
 
 // CapacityVariants lists option o's measured max-batch variants (batch sizes up
@@ -119,13 +120,22 @@ func (in CapacityInput) Key() string {
 	return "shared-cpu/" + hex.EncodeToString(sum[:12])
 }
 
-// capacityThroughput is the largest b/(mean service time + b × occupancy)
-// over batches up to b (req/s).
-func capacityThroughput(p *Profile, b int, occupancy time.Duration) float64 {
+// capacityThroughput opens search with an optimistic observed-support ceiling.
+// A quiet-gap marginal mean is not an upper bound on short-gap throughput.
+func capacityThroughput(p *Profile, b int) float64 {
 	mu := 0.0
 	for _, batch := range p.Batches {
-		if mean, ok := p.MeanNanos(batch.Batch); ok && batch.Batch <= b {
-			mu = max(mu, float64(batch.Batch)/(mean+float64(batch.Batch)*float64(occupancy))*1e9)
+		if batch.Batch > b {
+			continue
+		}
+		minimum := int64(math.MaxInt64)
+		for _, sample := range batch.ServiceSamples {
+			if sample.ServiceDurationNanos > 0 {
+				minimum = min(minimum, sample.ServiceDurationNanos)
+			}
+		}
+		if minimum != math.MaxInt64 {
+			mu = max(mu, float64(batch.Batch)/float64(minimum)*1e9)
 		}
 	}
 	return mu
@@ -148,14 +158,16 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 	began := time.Now()
 	in := NewCapacityInput(settings, occupancy, o, w)
 	row := CapacityRow{Key: in.Key(), Input: in}
-	row.Mu = capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch, in.DispatchOccupancy.PerRequest)
+	row.Mu = capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch)
 	// A mean is not a lower bound: replay may choose any observed sample of
 	// any batch up to MaxBatch. Only skip when even the fastest cannot fit.
 	minimum := math.Inf(1)
 	for _, batch := range o.Instance.Profile.Batches {
 		if batch.Batch <= o.Instance.MaxBatch {
-			for _, duration := range batch.DurationNanos {
-				minimum = min(minimum, duration)
+			for _, sample := range batch.ServiceSamples {
+				if sample.ServiceDurationNanos > 0 {
+					minimum = min(minimum, float64(sample.ServiceDurationNanos))
+				}
 			}
 		}
 	}
@@ -168,6 +180,7 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 	}
 	r := &capacityReplay{settings: settings, at: at, occupancy: *in.DispatchOccupancy, option: o, w: w, gaps: map[[2]int][]float64{}}
 	b := capacityBuilder{settings: settings, percentile: w.SLO.Percentile, replay: r.window}
+	row.ConditionalService = &r.conditional
 	if err := b.build(ctx, &row); err != nil {
 		return row, err
 	}
@@ -254,12 +267,13 @@ func (b *capacityBuilder) judge(ctx context.Context, lambda float64) (CapacityJu
 // capacityReplay replays windows of one option instance; gaps are the
 // unit-rate exponential gaps per (seed, request count), shared across rates.
 type capacityReplay struct {
-	settings  SchedulerSettings
-	at        time.Time
-	occupancy DispatchOccupancy
-	option    SchedulerOption
-	w         *Definition
-	gaps      map[[2]int][]float64
+	settings    SchedulerSettings
+	at          time.Time
+	occupancy   DispatchOccupancy
+	option      SchedulerOption
+	w           *Definition
+	gaps        map[[2]int][]float64
+	conditional ConditionalServiceEvidence
 }
 
 // capacityWindowLimit can only disprove a window; a passing window still
@@ -326,6 +340,7 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	instance := o.Instance
 	instance.ID, instance.TargetID, instance.OwnerWorkloadUID = "capacity", "", ""
 	instance.WorkloadUID, instance.Ready, instance.Stopped = w.UID, true, false
+	instance.LastServiceEndAgeNanos = nil // each synthetic window starts a new actor
 	instance.Weight, instance.ObservedAt = 1, at
 	snapshot := SchedulerSnapshot{
 		At: at, ObservationEnd: at, Workloads: []*Definition{w},
@@ -341,6 +356,9 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{}, &limit)
 	if err != nil {
 		return 0, false, err
+	}
+	if estimate.ConditionalService != nil {
+		b.conditional.merge(*estimate.ConditionalService)
 	}
 	if limit.failed {
 		return -1, false, nil // A failed window has no complete percentile sample.

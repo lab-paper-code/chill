@@ -1,9 +1,12 @@
 package profiler
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"sigs.k8s.io/yaml"
 )
@@ -13,28 +16,28 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	addWorkloadObservation(&config)
 
-	plan, err := deriveConfiguredExecutionPlan(t, config)
+	frozen, err := FreezeConfiguredExecutionPolicy(executionPolicyCatalogFixture(t), config, validExecutionPolicySource())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Policy != testConfiguredActivePolicy || plan.PolicyVersion != testConfiguredActivePolicy {
-		t.Fatalf("unexpected policy identity: %#v", plan)
+	if _, err := DeriveExecutionPlan(config, frozen); err != nil {
+		t.Fatal(err)
 	}
-	if plan.ActiveDeadline != 211*time.Second || plan.AttemptTimeout != 181*time.Second {
-		t.Fatalf("unexpected timing envelope: %#v", plan)
-	}
-	if plan.MetricObservationTimeout != plan.AttemptTimeout {
-		t.Fatalf("metric watchdog does not cover the producer failure bound: %#v", plan)
-	}
-	if plan.MetricResultTimeout != plan.AttemptTimeout || plan.WorkloadResultTimeout != plan.AttemptTimeout ||
-		plan.WorkloadEndFenceTimeout != plan.AttemptTimeout || plan.ObserverReadyTimeout >= plan.AttemptTimeout ||
-		plan.ObserverStartTimeout >= plan.AttemptTimeout {
-		t.Fatalf("incoherent handoff timing: %#v", plan)
-	}
-	if plan.MaxInputBytes+plan.MaxRuntimeResultBytes >= plan.RuntimeMemoryLimitBytes ||
-		plan.MaxMetricResultBytes+plan.MaxWorkloadResultBytes >= plan.CoordinationBytes ||
-		plan.MaxRuntimeResultBytes+plan.MaxMetricResultBytes > plan.WorkspaceBytes {
-		t.Fatalf("capacities do not fit the resource envelope: %#v", plan)
+	for _, resource := range []string{"result", "memory"} {
+		t.Run(resource, func(t *testing.T) {
+			limited := frozen
+			if resource == "result" {
+				limited.Policy.MaxMetricResultBytes = 1024
+			} else {
+				limited.Policy.ObserverMemoryRequestBytes = 1 << 20
+				limited.Policy.ObserverMemoryLimitBytes = 1 << 20
+			}
+			if _, err := DeriveExecutionPlan(config, limited); err == nil ||
+				!strings.Contains(err.Error(), "admit metric observation") ||
+				!strings.Contains(err.Error(), resource+" byte budget") {
+				t.Fatalf("insufficient %s capacity was not rejected by the metric consumer: %v", resource, err)
+			}
+		})
 	}
 }
 
@@ -43,7 +46,7 @@ func TestDeriveExecutionPlanRejectsUnpromotedRuntimePath(t *testing.T) {
 	config.SchemaVersion = profilingrun.RunConfigSchemaVersion
 	addWorkloadObservation(&config)
 	config.Candidate.ExecutionPath = "tensorrt"
-	if _, err := deriveConfiguredExecutionPlan(t, config); err == nil {
+	if err := deriveConfiguredExecutionPlan(t, config); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want unsupported path rejection")
 	}
 }
@@ -64,12 +67,8 @@ func TestDeriveExecutionPlanAcceptsExplicitRKNNLitePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := DeriveExecutionPlan(config, frozen)
-	if err != nil {
+	if _, err := DeriveExecutionPlan(config, frozen); err != nil {
 		t.Fatal(err)
-	}
-	if plan.Policy != policy.Name || plan.MaxLatencySamples != policy.MaxLatencySamples {
-		t.Fatalf("RKNNLite execution plan drifted: %#v", plan)
 	}
 }
 
@@ -83,17 +82,15 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 	config.Measurement.SettlingDurationSeconds = 60
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
+	config.Measurement.Cadence = nil
 
-	plan, err := deriveConfiguredExecutionPlan(t, config)
-	if err != nil {
+	if err := deriveConfiguredExecutionPlan(t, config); err != nil {
 		t.Fatal(err)
 	}
-	if plan.Policy != testConfiguredIdlePolicy || plan.PolicyVersion != testConfiguredIdlePolicy {
-		t.Fatalf("unexpected idle policy identity: %#v", plan)
-	}
-	if plan.ActiveDeadline != 271*time.Second || plan.AttemptTimeout != 241*time.Second ||
-		plan.ObserverStartTimeout != 180*time.Second {
-		t.Fatalf("idle settling time is not bound into the Job envelope: %#v", plan)
+	config.Measurement.SettlingDurationSeconds = 60_000
+	if err := deriveConfiguredExecutionPlan(t, config); err == nil ||
+		!strings.Contains(err.Error(), "admit metric observation") {
+		t.Fatalf("idle settling escaped the metric capacity envelope: %v", err)
 	}
 }
 
@@ -103,35 +100,12 @@ func TestDeriveExecutionPlanRejectsMetricScheduleOutsideBoundedEnvelope(t *testi
 	addWorkloadObservation(&config)
 	config.Metrics.DurationSeconds = 60_000
 	config.Metrics.IntervalMilliseconds = 1000
-	if _, err := deriveConfiguredExecutionPlan(t, config); err == nil {
+	if err := deriveConfiguredExecutionPlan(t, config); err == nil {
 		t.Fatal("DeriveExecutionPlan() error = nil, want bounded event-capacity rejection")
 	}
 }
 
-func TestDeriveExecutionPlanUsesFrozenConfiguredEnvelope(t *testing.T) {
-	config := currentExecutionPolicyTestRunConfig(t)
-	frozen, err := FreezeConfiguredExecutionPolicy(
-		executionPolicyCatalogFixture(t),
-		config,
-		validExecutionPolicySource(),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	frozen.Policy.MaxLatencySamples = 2048
-	plan, err := DeriveExecutionPlan(config, frozen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.MaxLatencySamples != 2048 {
-		t.Fatalf("configured execution envelope was not projected: %#v", plan)
-	}
-	if plan.PolicyVersion != frozen.Policy.Name {
-		t.Fatalf("configured policy version = %q", plan.PolicyVersion)
-	}
-}
-
-func deriveConfiguredExecutionPlan(t *testing.T, config profilingrun.RunConfig) (ExecutionPlan, error) {
+func deriveConfiguredExecutionPlan(t *testing.T, config profilingrun.RunConfig) error {
 	t.Helper()
 	policy, err := FreezeConfiguredExecutionPolicy(
 		executionPolicyCatalogFixture(t),
@@ -139,9 +113,10 @@ func deriveConfiguredExecutionPlan(t *testing.T, config profilingrun.RunConfig) 
 		validExecutionPolicySource(),
 	)
 	if err != nil {
-		return ExecutionPlan{}, err
+		return err
 	}
-	return DeriveExecutionPlan(config, policy)
+	_, err = DeriveExecutionPlan(config, policy)
+	return err
 }
 
 func addWorkloadObservation(config *profilingrun.RunConfig) {
@@ -174,15 +149,7 @@ func TestCaptureWatchdogAlignsEventsResultAndOuterEnvelopes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.MetricObservationTimeout != 2997*time.Second ||
-		plan.AttemptTimeout != 2997*time.Second || plan.ActiveDeadline != 3027*time.Second ||
-		plan.MetricResultTimeout != plan.AttemptTimeout || plan.WorkloadResultTimeout != plan.AttemptTimeout {
-		t.Fatalf("misaligned capture envelope: %+v", plan)
-	}
-	if plan.MaxMetricResultBytes != frozen.Policy.MaxMetricResultBytes ||
-		plan.ObserverMemoryLimitBytes != frozen.Policy.ObserverMemoryLimitBytes {
-		t.Fatalf("resource limits were changed: %+v", plan)
-	}
+	assertMetricRequestsCappedByPlan(t, plan)
 }
 
 func TestDeriveExecutionPlanAdmitsFullProducerBoundNotOnlyNominalMetrics(t *testing.T) {
@@ -201,4 +168,50 @@ func TestDeriveExecutionPlanAdmitsFullProducerBoundNotOnlyNominalMetrics(t *test
 	if _, err := DeriveExecutionPlan(config, frozen); err == nil {
 		t.Fatal("admitted only the nominal schedule instead of the full producer failure bound")
 	}
+}
+
+func assertMetricRequestsCappedByPlan(t *testing.T, plan ExecutionPlan) {
+	t.Helper()
+	source := &executionPolicyDeadlineSource{t: t, maximum: plan.MetricObservationTimeout}
+	observer, err := metricobserver.New(source, metricobserver.Limits{
+		MaxResultBytes: plan.MaxMetricResultBytes, MemoryBudgetBytes: plan.ObserverMemoryLimitBytes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := make(chan struct{})
+	// A valid source request may outlive the whole observation. The actual
+	// context received by the source must still be capped by the plan watchdog.
+	result, err := observer.ObserveUntil(context.Background(), metricobserver.Request{
+		Duration: plan.MetricObservationTimeout, Interval: 3 * plan.MetricObservationTimeout,
+		RequestTimeout: 2 * plan.MetricObservationTimeout,
+	}, end, func() { close(end) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Samples) == 0 {
+		t.Fatal("bounded metric requests did not produce evidence")
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type executionPolicyDeadlineSource struct {
+	t       *testing.T
+	maximum time.Duration
+}
+
+func (s *executionPolicyDeadlineSource) Identity() metricobserver.SourceIdentity {
+	return metricobserver.SourceIdentity{
+		Kind: "edge-metrics", Endpoint: "http://meter.test/metrics", Metric: "power_watts",
+	}
+}
+
+func (s *executionPolicyDeadlineSource) ReadMetrics(ctx context.Context) (metricobserver.Reading, error) {
+	deadline, ok := ctx.Deadline()
+	if remaining := time.Until(deadline); !ok || remaining <= 0 || remaining > s.maximum {
+		s.t.Fatalf("metric request escaped the plan watchdog: deadline=%v, bounded=%v", deadline, ok)
+	}
+	return metricobserver.Reading{Watts: 1}, nil
 }

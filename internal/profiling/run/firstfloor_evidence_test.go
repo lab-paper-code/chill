@@ -7,6 +7,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestActiveTrialRequiresBothElapsedWindowAndNativeSampleCoverage(t *testing.T) {
@@ -18,10 +19,11 @@ func TestActiveTrialRequiresBothElapsedWindowAndNativeSampleCoverage(t *testing.
 		count   int
 		valid   bool
 	}{
-		{"sample limited complete", 118, 59, true},
+		{"sample limited complete", 118, 60, true},
 		{"time limited complete", 30, 120, true},
 		{"time alone is insufficient", 118, 58, false},
 		{"samples alone are insufficient", 29.9, 59, false},
+		{"startup does not count as a known gap", 118, 59, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := firstfloorResult(config)
@@ -44,6 +46,7 @@ func TestActiveTrialRequiresBothElapsedWindowAndNativeSampleCoverage(t *testing.
 				repetition.LatencyMilliseconds[index] = 1
 				repetition.NativeSamples[index] = template
 				repetition.NativeSamples[index].BatchID = uint64(index + 1)
+				repetition.NativeSamples[index].ServiceSample = fixtures.ServiceSample(config.Measurement.Cadence, result.ExperimentID, uint64(index), 700000)
 			}
 			if err := ValidateRuntime(config, "pod-uid", result); (err == nil) != test.valid {
 				t.Fatalf("valid=%t, error=%v", test.valid, err)
@@ -81,7 +84,8 @@ func firstfloorResult(config RunConfig) RuntimeResult {
 	result.RepetitionResults[0].NativeSamples = make([]NativeServiceSample, result.InferenceCount)
 	for index := range result.RepetitionResults[0].NativeSamples {
 		result.RepetitionResults[0].NativeSamples[index] = NativeServiceSample{BatchID: uint64(21 + index), BatchSize: 1,
-			RecordIDs: []string{"262148000"}, Units: []int{1}, RunnerServiceMilliseconds: 0.7,
+			ServiceSample: fixtures.ServiceSample(config.Measurement.Cadence, result.ExperimentID, uint64(index), 700000),
+			RecordIDs:     []string{"262148000"}, Units: []int{1}, RunnerServiceMilliseconds: 0.7,
 			PreprocessMilliseconds: 0.1, BackendCallMilliseconds: 0.4, PostprocessMilliseconds: 0.1,
 			NativeRequestMilliseconds: 0.9}
 	}
@@ -139,6 +143,10 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 			r.RepetitionResults[0].NativeSamples[0].PostprocessMilliseconds = math.Inf(1)
 		}},
 		{"first token without generation", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].FirstTokenMilliseconds = 0.3 }},
+		{"missing canonical duration", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 0 }},
+		{"donor is not physical trial", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].TrialID = "donor-trial" }},
+		{"unknown gap after startup", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[1].PrecedingIdleNanos = nil }},
+		{"wrong cadence lineage", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[1].TraceDrawRef.DrawIndex++ }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -204,7 +212,7 @@ func TestFirstfloorNativeSamplesRejectReusedBatchIdentity(t *testing.T) {
 	repetition := firstfloorResult(config).RepetitionResults[0]
 	repetition.LatencyMilliseconds = []float64{1, 1}
 	repetition.NativeSamples = append(repetition.NativeSamples, repetition.NativeSamples[0])
-	if err := validateNativeSamples(config, []Repetition{repetition}); err == nil {
+	if err := validateNativeSamples(config, "pod-uid", []Repetition{repetition}); err == nil {
 		t.Fatal("reused batch ID accepted")
 	}
 }

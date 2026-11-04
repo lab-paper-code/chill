@@ -857,7 +857,12 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 	profile.RuntimeMetadata.Outputs = profile.Condition.Preprocessor.Outputs
 	profile.RuntimeMetadata.InitializedBatches = []int{1}
 	profile.Evidence = []evidencestore.ObjectIdentity{{Store: "raw", Key: "tick-profile", Size: 1}}
-	profile.Batches[0].DurationNanos = []float64{float64(time.Millisecond)}
+	profile.Batches[0].ServiceSamples = catalogServiceSamples(int64(time.Millisecond))
+	distribution, distributionErr := native.NewServiceDistribution(profile.Batches[0].ServiceSamples)
+	if distributionErr != nil {
+		t.Fatal(distributionErr)
+	}
+	profile.Batches[0].ServiceDistribution = distribution
 	prepared := &atomic.Bool{}
 	kube := kubefake.NewSimpleClientset()
 	profiles := []serving.Profile{}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -128,11 +127,12 @@ func (d *Definition) SameExecution(o *Definition) bool {
 }
 
 type BatchProfile struct {
-	Batch                 int       `json:"batch"`
-	DurationNanos         []float64 `json:"durationNanos"`
-	EnergyPerInputJoules  float64   `json:"energyPerInputJoules"`
-	EnergyBelowResolution bool      `json:"energyBelowResolution,omitempty"`
-	MemoryBytes           uint64    `json:"memoryBytes"`
+	Batch                 int                             `json:"batch"`
+	ServiceSamples        []firstfloor.ServiceSample      `json:"serviceSamples"`
+	ServiceDistribution   *firstfloor.ServiceDistribution `json:"-"`
+	EnergyPerInputJoules  float64                         `json:"energyPerInputJoules"`
+	EnergyBelowResolution bool                            `json:"energyBelowResolution,omitempty"`
+	MemoryBytes           uint64                          `json:"memoryBytes"`
 	// MemoryBasis is transient derivation lineage; retained observation profile
 	// bodies keep their existing stored contract. Catalog reads expose it.
 	MemoryBasis   profilederivation.MemoryBasis `json:"-"`
@@ -201,12 +201,12 @@ type ProfileReuseBatchCheck struct {
 // MeanNanos is the mean measured execution time of batch b.
 func (p *Profile) MeanNanos(b int) (float64, bool) {
 	for _, batch := range p.Batches {
-		if batch.Batch == b && len(batch.DurationNanos) > 0 {
+		if batch.Batch == b && len(batch.ServiceSamples) > 0 {
 			sum := 0.0
-			for _, d := range batch.DurationNanos {
-				sum += d
+			for _, sample := range batch.ServiceSamples {
+				sum += float64(sample.ServiceDurationNanos)
 			}
-			return sum / float64(len(batch.DurationNanos)), true
+			return sum / float64(len(batch.ServiceSamples)), true
 		}
 	}
 	return 0, false
@@ -215,13 +215,9 @@ func (p *Profile) MeanNanos(b int) (float64, bool) {
 func (p *Profile) NativeBundle() firstfloor.ProfileBundle {
 	bundle := firstfloor.ProfileBundle{ProfileID: p.ID, Batches: make([]firstfloor.BatchProfile, len(p.Batches))}
 	for i, batch := range p.Batches {
-		samples := make([]float64, len(batch.DurationNanos))
-		for j, value := range batch.DurationNanos {
-			samples[j] = value / float64(time.Millisecond)
-		}
-		slices.Sort(samples)
 		bundle.Batches[i] = firstfloor.BatchProfile{
-			Size: batch.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: batch.EnergyPerInputJoules,
+			Size: batch.Batch, ServiceSamples: batch.ServiceSamples, Distribution: batch.ServiceDistribution,
+			EnergyPerItemJ: batch.EnergyPerInputJoules,
 		}
 	}
 	return bundle
@@ -389,24 +385,25 @@ type ReadyInstance struct {
 }
 
 type BackendProgress struct {
-	RequestID         string    `json:"requestID"`
-	WorkloadUID       string    `json:"workloadUID"`
-	Definition        string    `json:"definition"`
-	Phase             string    `json:"phase"`
-	At                time.Time `json:"at"`
-	Outcome           string    `json:"outcome,omitempty"`
-	Error             string    `json:"error,omitempty"`
-	BatchID           uint64    `json:"batchID,omitempty"`
-	BatchSize         int       `json:"batchSize,omitempty"`
-	ProfileID         string    `json:"profileID,omitempty"`
-	DecisionID        string    `json:"decisionID,omitempty"`
-	QueueMS           float64   `json:"queueMS"`
-	ServiceMS         float64   `json:"serviceMS"`
-	BackendMS         float64   `json:"backendMS"`
-	PreprocessMS      float64   `json:"preprocessMS"`
-	PostprocessMS     float64   `json:"postprocessMS"`
-	FirstTokenMS      float64   `json:"firstTokenMS,omitempty"`
-	Units             int       `json:"units,omitempty"`
-	NativeElapsedMS   float64   `json:"nativeElapsedMS"`
-	ExecutionComplete bool      `json:"executionComplete"`
+	RequestID         string                    `json:"requestID"`
+	WorkloadUID       string                    `json:"workloadUID"`
+	Definition        string                    `json:"definition"`
+	Phase             string                    `json:"phase"`
+	At                time.Time                 `json:"at"`
+	Outcome           string                    `json:"outcome,omitempty"`
+	Error             string                    `json:"error,omitempty"`
+	BatchID           uint64                    `json:"batchID,omitempty"`
+	BatchSize         int                       `json:"batchSize,omitempty"`
+	ProfileID         string                    `json:"profileID,omitempty"`
+	DecisionID        string                    `json:"decisionID,omitempty"`
+	QueueMS           float64                   `json:"queueMS"`
+	ServiceMS         float64                   `json:"serviceMS"`
+	BackendMS         float64                   `json:"backendMS"`
+	PreprocessMS      float64                   `json:"preprocessMS"`
+	PostprocessMS     float64                   `json:"postprocessMS"`
+	FirstTokenMS      float64                   `json:"firstTokenMS,omitempty"`
+	Units             int                       `json:"units,omitempty"`
+	NativeElapsedMS   float64                   `json:"nativeElapsedMS"`
+	ExecutionComplete bool                      `json:"executionComplete"`
+	ServiceSample     *firstfloor.ServiceSample `json:"serviceSample,omitempty"`
 }

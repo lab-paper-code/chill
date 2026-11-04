@@ -116,7 +116,7 @@ func TestBuildRunUsesTheActiveProtocol(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	measurement := run.Spec.Measurement
-	if measurement.WorkloadMode != "saturated-serial-fixed-batch" || measurement.Batch != 2 ||
+	if measurement.WorkloadMode != "empirical-cadence-fixed-batch" || measurement.Batch != 2 ||
 		measurement.SettlingDurationSeconds != nil ||
 		measurement.WarmupIterations != parent.Spec.ActiveProtocol.WarmupIterations {
 		t.Fatalf("active Run does not match the active protocol: %+v", measurement)

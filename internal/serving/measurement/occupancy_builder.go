@@ -116,19 +116,20 @@ func deriveOccupancy(namespace string, intent OccupancyIntent, policy DispatchOc
 	if err != nil {
 		return nil, err
 	}
-	var population []float64
-	for _, batch := range profile.Batches {
-		if batch.Batch == int(intent.Batch) {
-			population = batch.DurationNanos
+	var selected *serving.BatchProfile
+	for index := range profile.Batches {
+		if profile.Batches[index].Batch == int(intent.Batch) {
+			selected = &profile.Batches[index]
 			break
 		}
 	}
-	if len(population) == 0 {
+	if selected == nil || len(selected.ServiceSamples) == 0 {
 		return nil, occupancyInfeasible("selected batch has no measured service population")
 	}
+	population := selected.ServiceSamples
 	tail, sum := 0.0, 0.0
-	for _, nanos := range population {
-		seconds := nanos / 1e9
+	for _, sample := range population {
+		seconds := float64(sample.ServiceDurationNanos) / 1e9
 		if seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 			return nil, occupancyInfeasible("profile batch times must be finite and positive")
 		}

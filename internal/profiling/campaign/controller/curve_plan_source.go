@@ -128,6 +128,7 @@ func (p *CurvePlanProjector) Project(
 		idle.RunConfig,
 		conversion,
 		plannedBatchSizes,
+		active.Cadences,
 	)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, fmt.Errorf("project curve-plan specification: %w", err)
@@ -380,7 +381,9 @@ func (p *CurvePlanProjector) prepare(
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
 	if frozenWorkload != nil {
-		projectFrozenWorkload(&run.Spec.Measurement, *frozenWorkload)
+		if err := projectFrozenActiveProtocol(&run.Spec.Measurement, *frozenWorkload); err != nil {
+			return profiler.PreparedRun{}, err
+		}
 	}
 	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(plannedBatchSizes))
 	for index, batch := range plannedBatchSizes {

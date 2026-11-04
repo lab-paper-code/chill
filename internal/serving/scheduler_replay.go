@@ -52,18 +52,22 @@ type schedulerReplayRequest struct {
 }
 
 type schedulerReplayInstance struct {
-	config       SchedulerInstance
-	loaded       bool
-	ready        bool
-	stopped      bool
-	queue        []*schedulerReplayRequest
-	batch        []*schedulerReplayRequest
-	finish       float64
-	wake         float64
-	outstanding  int
-	policy       firstfloor.Policy
-	arrivalTimes map[string][]float64
-	occupancy    float64 // selected measured, DOM or configured extra ns/request
+	config           SchedulerInstance
+	loaded           bool
+	ready            bool
+	stopped          bool
+	queue            []*schedulerReplayRequest
+	batch            []*schedulerReplayRequest
+	finish           float64
+	nativeFinish     float64 // service ends before retained dispatch occupancy/path return
+	lastNativeFinish float64
+	hasNativeFinish  bool
+	gapNanos         int64 // reusable query storage; no per-dispatch allocation
+	wake             float64
+	outstanding      int
+	policy           firstfloor.Policy
+	arrivalTimes     map[string][]float64
+	occupancy        float64 // selected measured, DOM or configured extra ns/request
 }
 
 type schedulerReplayResult struct {
@@ -74,6 +78,56 @@ type schedulerReplayResult struct {
 	assumptions []string
 	sources     []string
 	outcomes    map[string]map[string]int
+	conditional ConditionalServiceEvidence
+}
+
+// ConditionalServiceEvidence describes the support actually queried by replay.
+// It is evidence of sparsity/extrapolation, not a conditional-tail safety gate.
+type ConditionalServiceEvidence struct {
+	Queries               int   `json:"queries"`
+	StartupQueries        int   `json:"startupQueries"`
+	MaximumDistanceNanos  int64 `json:"maximumDistanceNanos"`
+	MinimumTrialCount     int   `json:"minimumTrialCount"`
+	OutsideSupportQueries int   `json:"outsideSupportQueries"`
+}
+
+func (e *ConditionalServiceEvidence) record(gap *int64, support firstfloor.ConditionalSupport) {
+	if e.Queries == 0 {
+		e.MinimumTrialCount = support.TrialCount
+	} else {
+		e.MinimumTrialCount = min(e.MinimumTrialCount, support.TrialCount)
+	}
+	e.Queries++
+	if gap == nil {
+		e.StartupQueries++
+	}
+	e.MaximumDistanceNanos = max(e.MaximumDistanceNanos, support.DistanceNanos)
+	if support.OutsideSupport {
+		e.OutsideSupportQueries++
+	}
+}
+
+func (e *ConditionalServiceEvidence) merge(other ConditionalServiceEvidence) {
+	if other.Queries == 0 {
+		return
+	}
+	if e.Queries == 0 {
+		e.MinimumTrialCount = other.MinimumTrialCount
+	} else {
+		e.MinimumTrialCount = min(e.MinimumTrialCount, other.MinimumTrialCount)
+	}
+	e.Queries += other.Queries
+	e.StartupQueries += other.StartupQueries
+	e.MaximumDistanceNanos = max(e.MaximumDistanceNanos, other.MaximumDistanceNanos)
+	e.OutsideSupportQueries += other.OutsideSupportQueries
+}
+
+func (i *schedulerReplayInstance) idleNanos(now float64) *int64 {
+	if !i.hasNativeFinish {
+		return nil
+	}
+	i.gapNanos = int64(math.Max(0, now-i.lastNativeFinish))
+	return &i.gapNanos
 }
 
 // schedulerReplayEstimate replays candidate c once with seed and records each
@@ -100,6 +154,7 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	if err != nil {
 		return c, err
 	}
+	c.ConditionalService = &r.conditional
 	if capacity != nil && capacity.failed {
 		return c, nil // Partial samples are not an estimate.
 	}
@@ -265,6 +320,10 @@ func (s *schedulerReplayState) initializeInstances() {
 	s.applied, s.previousRoute = s.c, s.snap.Routing
 	addInstance := func(i SchedulerInstance, loaded bool) {
 		x := &schedulerReplayInstance{config: i, loaded: loaded, ready: loaded && i.Ready, stopped: i.Stopped, finish: math.Inf(1), wake: 0, arrivalTimes: map[string][]float64{}}
+		if loaded && i.LastServiceEndAgeNanos != nil {
+			age := *i.LastServiceEndAgeNanos + max(int64(0), int64(s.snap.At.Sub(i.ObservedAt)))
+			x.lastNativeFinish, x.hasNativeFinish = -float64(age), true
+		}
 		if i.Profile != nil {
 			x.policy = schedulerPolicy(i)
 		}
@@ -450,21 +509,21 @@ func (s *schedulerReplayState) initializeRunning() bool {
 			s.out.reasons = append(s.out.reasons, "RunningBatchOutsideProfile:"+i.config.ID)
 			return false
 		}
-		residual := []float64{}
-		elapsed := float64(head.source.RunningElapsed)
-		for _, v := range b.DurationNanos {
-			if v > elapsed {
-				residual = append(residual, v-elapsed)
-			}
+		elapsed := int64(0)
+		if head.source.ExchangeElapsedNanos != nil {
+			elapsed = *head.source.ExchangeElapsedNanos
 		}
-		if len(residual) == 0 {
+		gap := head.source.PrecedingIdleNanos
+		sample, support, ok := b.ServiceDistribution.SampleResidual(gap, elapsed, s.rng)
+		s.out.conditional.record(gap, support)
+		if !ok {
 			s.out.reasons = append(s.out.reasons, "RunningElapsedOutsideProfileRange:"+i.config.ID)
 			return false
 		}
-		remaining := residual[s.rng.IntN(len(residual))]
-		i.finish = remaining
+		remaining := float64(sample.ServiceDurationNanos - elapsed)
+		i.nativeFinish, i.finish = remaining, remaining
 		if s.counted(i.config.Node) {
-			s.out.energy += b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (elapsed + remaining)
+			s.out.energy += b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (float64(elapsed) + remaining)
 		}
 		s.out.assumptions = appendUnique(s.out.assumptions, "running incremental joules spread uniformly over sampled conditioned service interval")
 	}

@@ -1,6 +1,11 @@
 package profilederivation
 
-import "time"
+import (
+	"slices"
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
+)
 
 type Sample struct {
 	ObservedAt time.Time `json:"observedAt"`
@@ -31,16 +36,23 @@ type Trial struct {
 // NativeServiceSample copies one runtime batch execution unchanged. RecordIDs
 // and Units are per request; units are analysis observations only.
 type NativeServiceSample struct {
-	BatchID                   uint64   `json:"batchID"`
-	BatchSize                 int      `json:"batchSize"`
-	RecordIDs                 []string `json:"recordIDs"`
-	Units                     []int    `json:"units"`
-	RunnerServiceMilliseconds float64  `json:"runnerServiceMs"`
-	PreprocessMilliseconds    float64  `json:"preprocessMs"`
-	BackendCallMilliseconds   float64  `json:"backendCallMs"`
-	PostprocessMilliseconds   float64  `json:"postprocessMs"`
-	FirstTokenMilliseconds    float64  `json:"firstTokenMs,omitempty"`
-	NativeRequestMilliseconds float64  `json:"nativeRequestMs"`
+	BatchID   uint64   `json:"batchID"`
+	BatchSize int      `json:"batchSize"`
+	RecordIDs []string `json:"recordIDs"`
+	Units     []int    `json:"units"`
+	firstfloor.ServiceSample
+	RunnerServiceMilliseconds float64 `json:"runnerServiceMs"`
+	PreprocessMilliseconds    float64 `json:"preprocessMs"`
+	BackendCallMilliseconds   float64 `json:"backendCallMs"`
+	PostprocessMilliseconds   float64 `json:"postprocessMs"`
+	FirstTokenMilliseconds    float64 `json:"firstTokenMs,omitempty"`
+	NativeRequestMilliseconds float64 `json:"nativeRequestMs"`
+}
+
+func (s NativeServiceSample) Clone() NativeServiceSample {
+	s.ServiceSample = s.ServiceSample.Clone()
+	s.RecordIDs, s.Units = slices.Clone(s.RecordIDs), slices.Clone(s.Units)
+	return s
 }
 
 type EnergyTrial struct {

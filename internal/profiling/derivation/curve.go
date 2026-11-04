@@ -213,8 +213,7 @@ func cloneEnergyTrials(trials []EnergyTrial) []EnergyTrial {
 func cloneNativeSamples(samples []NativeServiceSample) []NativeServiceSample {
 	cloned := append([]NativeServiceSample(nil), samples...)
 	for index := range cloned {
-		cloned[index].RecordIDs = append([]string(nil), samples[index].RecordIDs...)
-		cloned[index].Units = append([]int(nil), samples[index].Units...)
+		cloned[index] = samples[index].Clone()
 	}
 	return cloned
 }

@@ -126,7 +126,7 @@ func (d *CurveDeriver) Derive(
 			}
 			for _, repetition := range raw.Runtime.RepetitionResults {
 				for _, sample := range repetition.NativeSamples {
-					service := sample.RunnerServiceMilliseconds * 1e6
+					service := float64(sample.ServiceDurationNanos)
 					if minimumService == 0 || service < minimumService {
 						minimumService = service
 					}

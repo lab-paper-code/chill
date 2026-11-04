@@ -15,21 +15,35 @@ import (
 	"time"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/yaml"
 )
 
-// Like the standalone metric tail regression, this uses the freshly built
-// executable. No accelerated clock: the real CLI waits, polling watchdog and
-// same-watch workload end fence must all survive 59 simulated two-second calls.
+// The executable, source reads and same-watch handoff use real wall time.
+// Inference and cadence below are explicitly simulated, not hardware evidence.
+// Both cases retain 60 actual simulated exchanges: startup has no G/draw,
+// leaving the required 59 known-gap pairs in the immutable raw commit.
 func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
+	runStandaloneSampleStop(t, 2*time.Second, 0, 30, 31)
+}
+
+func TestStandaloneObserversCoverSmolLikeLongActiveTrial(t *testing.T) {
+	// The service proxy uses the old Smol source value, but the five-second
+	// offered-load gap is a controlled fixture, not recorded Smol performance.
+	runStandaloneSampleStop(t, 867359811*time.Nanosecond, 5*time.Second, 165, 166)
+}
+
+func runStandaloneSampleStop(t *testing.T, service, gap time.Duration, minimumSeconds, nominalMetricSeconds int) {
+	t.Helper()
 	binary := os.Getenv("CHILL_METRIC_OBSERVER_BIN")
 	if binary == "" {
 		t.Skip("set CHILL_METRIC_OBSERVER_BIN to the built standalone observer")
@@ -39,7 +53,7 @@ func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := t.TempDir()
-	opts, config := sampleStopConfiguration(t, directory)
+	opts, config := sampleStopConfiguration(t, directory, gap, minimumSeconds, nominalMetricSeconds)
 	server, firstRead, delayFinalRead := sampleStopMetricSource(config)
 	defer server.Close()
 	config.Metrics.Endpoint, config.Metrics.ThermalEndpoint = server.URL, server.URL
@@ -119,18 +133,18 @@ func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
 	// producer starts, without changing the frozen one-second polling interval.
 	time.Sleep(time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond)
 	var started, ended time.Time
-	var calls int
+	var samples []profilingrun.NativeServiceSample
 	producerEnded := make(chan struct{})
 	runtime := sampleStopRuntimeFunc(func(
 		runtimeCtx context.Context, request worker.RuntimeRequest,
 	) (worker.RuntimeMeasurement, error) {
-		started, ended, calls = runSampleStopProducer(t, runtimeCtx, config, metricDone, workloadDone)
+		started, ended, samples = runSampleStopProducer(t, runtimeCtx, config, opts.podUID, service, metricDone, workloadDone)
 		delayFinalRead(ended)
 		if err := worker.PublishSignal(opts.endPath); err != nil {
 			return worker.RuntimeMeasurement{}, err
 		}
 		close(producerEnded)
-		return sampleStopRuntime(t, directory, opts, config, plan, started, ended).Measure(runtimeCtx, request)
+		return sampleStopRuntime(t, directory, opts, config, plan, started, ended, samples).Measure(runtimeCtx, request)
 	})
 	fenceDone := make(chan error, 1)
 	go func() {
@@ -168,10 +182,12 @@ func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
 		}
 	}()
 	sampleStopCommit(t, ctx, runtime, config, opts, metricResult, directory, plan)
-	assertSampleStopCoverage(t, metricResult, opts.resultPath, started, ended, calls, plan)
+	assertSampleStopCoverage(t, metricResult, opts.resultPath, started, ended, len(samples), plan)
 }
 
-func sampleStopConfiguration(t *testing.T, directory string) (options, profilingrun.RunConfig) {
+func sampleStopConfiguration(
+	t *testing.T, directory string, gap time.Duration, minimumSeconds, nominalMetricSeconds int,
+) (options, profilingrun.RunConfig) {
 	t.Helper()
 	writeWorkloadTestRunConfig(t, directory)
 	opts := workloadTestOptions(directory)
@@ -196,6 +212,24 @@ func sampleStopConfiguration(t *testing.T, directory string) (options, profiling
 		config.Measurement.MinServiceSamples != 59 {
 		t.Fatal("regression requires the shipped 30/31-second protocol and p95 n59 stop")
 	}
+	// Reuse the shared contract shape, but identify this as synthetic input.
+	// Freeze both the phase population and its draw cycle before deriving F10.
+	config.Measurement.Cadence = fixtures.Cadence()
+	config.Measurement.Cadence.Target.LoadContext = "simulated-observer-lifecycle"
+	config.Measurement.Cadence.Target.Schedule[0].OfferedLoad = "controlled-test-calls"
+	config.Measurement.Cadence.Target.Schedule[0].SharingContext = "test-only"
+	source := &config.Measurement.Cadence.Provenance.Sources[0]
+	source.LoadContext = config.Measurement.Cadence.Target.LoadContext
+	source.SourceRevision, source.Workload = "test-simulator", "simulated-inference"
+	source.Object.Key = "synthetic-observer-lifecycle"
+	source.PhysicalInstanceID, source.TrialID = "simulated-instance", "simulated-donor"
+	config.Measurement.DurationSeconds = minimumSeconds
+	config.Metrics.DurationSeconds = nominalMetricSeconds
+	for phase := range config.Measurement.Cadence.Provenance.Phases {
+		for element := range config.Measurement.Cadence.Provenance.Phases[phase].Elements {
+			config.Measurement.Cadence.Provenance.Phases[phase].Elements[element].GapNanos = int64(gap)
+		}
+	}
 	return opts, config
 }
 
@@ -218,10 +252,11 @@ func assertSampleStopCoverage(
 	if len(metrics.Failures) < 2 || metrics.Summary.Failures != len(metrics.Failures) ||
 		metrics.Summary.Attempts != len(metrics.Samples)+len(metrics.Failures) ||
 		metrics.Summary.SuccessfulSamples != len(metrics.Samples) ||
-		len(metrics.Samples) < 119 || metrics.Samples[0].ObservedAt.After(started) ||
+		len(metrics.Samples) < int(ended.Sub(started)/time.Second) ||
+		metrics.Samples[0].ObservedAt.After(started) ||
 		metrics.Samples[len(metrics.Samples)-1].ObservedAt.Before(ended.Add(35*time.Second)) ||
-		metrics.Summary.ObservationDurationSeconds < 153 {
-		t.Fatalf("metric source does not cover 118s producer plus 35s final-read retries: %+v", metrics)
+		metrics.Summary.ObservationDurationSeconds < ended.Sub(started).Seconds()+35 {
+		t.Fatalf("metric source does not cover the paced producer plus 35s final-read retries: %+v", metrics)
 	}
 	for _, failure := range metrics.Failures {
 		if failure.ObservedAt.Before(ended) || failure.Reason != metricobserver.FailureReasonSourceRead {
@@ -243,40 +278,82 @@ func assertSampleStopCoverage(
 		workloads.CoverageEndedAt.Before(metrics.EndedAt) || workloads.LastResourceVersion != "21" {
 		t.Fatalf("workload coverage lost the producer or metric-exit fence: %+v", workloads)
 	}
-	t.Logf("sample minimum=30s nominal metric=31s producer calls=%d elapsed=%s "+
+	t.Logf("producer calls=%d known-gap pairs=%d elapsed=%s "+
 		"final unavailable=35s failures=%d metric support=%gs workload support=%s failure bound=%s",
-		calls, ended.Sub(started), len(metrics.Failures), metrics.Summary.ObservationDurationSeconds,
+		calls, calls-1, ended.Sub(started), len(metrics.Failures), metrics.Summary.ObservationDurationSeconds,
 		workloads.CoverageEndedAt.Sub(workloads.CoverageStartedAt), plan.AttemptTimeout)
 }
 
 func runSampleStopProducer(
-	t *testing.T, ctx context.Context, config profilingrun.RunConfig, metricDone, workloadDone <-chan error,
-) (time.Time, time.Time, int) {
+	t *testing.T, ctx context.Context, config profilingrun.RunConfig, trialID string, service time.Duration,
+	metricDone, workloadDone <-chan error,
+) (time.Time, time.Time, []profilingrun.NativeServiceSample) {
 	t.Helper()
 	started := time.Now()
-	calls := 0
-	for time.Since(started) < time.Duration(config.Measurement.DurationSeconds)*time.Second ||
-		calls < config.Measurement.MinServiceSamples {
-		timer := time.NewTimer(2 * time.Second)
-		select {
-		case <-timer.C:
-			calls++
-		case err := <-metricDone:
-			timer.Stop()
-			t.Fatalf("metric observer ended early at call %d, elapsed %s: %v", calls, time.Since(started), err)
-		case err := <-workloadDone:
-			timer.Stop()
-			t.Fatalf("workload observer ended early at call %d: %v", calls, err)
-		case <-ctx.Done():
-			timer.Stop()
-			t.Fatal(ctx.Err())
+	var oldWatchdog <-chan time.Time
+	if config.Metrics.DurationSeconds == 166 {
+		timer := time.NewTimer(166 * time.Second)
+		defer timer.Stop()
+		oldWatchdog = timer.C
+	}
+	crossedOldWatchdog := false
+	var samples []profilingrun.NativeServiceSample
+	wait := func(duration time.Duration) {
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
+		for {
+			select {
+			case <-timer.C:
+				return
+			case <-oldWatchdog:
+				crossedOldWatchdog = true
+				oldWatchdog = nil
+				t.Log("paced producer remains active beyond the old 166s metric watchdog")
+			case err := <-metricDone:
+				t.Fatalf("metric observer ended while producer active at call %d, elapsed %s: %v",
+					len(samples), time.Since(started), err)
+			case err := <-workloadDone:
+				t.Fatalf("workload observer ended while producer active at call %d: %v", len(samples), err)
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
 		}
 	}
-	ended := time.Now()
-	if calls != 59 || ended.Sub(started) < 118*time.Second {
-		t.Fatalf("producer stop: calls=%d elapsed=%s", calls, ended.Sub(started))
+	recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
+	for index := range recordIDs {
+		recordIDs[index], units[index] = "record-"+strconv.Itoa(index), 1
 	}
-	return started, ended, calls
+	var previousEnd time.Time
+	for time.Since(started) < time.Duration(config.Measurement.DurationSeconds)*time.Second ||
+		len(samples)-1 < config.Measurement.MinServiceSamples {
+		pair := firstfloor.ServiceSample{TrialID: trialID}
+		if len(samples) > 0 {
+			draw := config.Measurement.Cadence.Draw(uint64(len(samples) - 1))
+			wait(time.Duration(draw.TargetIdleNanos))
+			pair.TargetIdleNanos, pair.TraceDrawRef = &draw.TargetIdleNanos, &draw.Ref
+		}
+		exchangeStart := time.Now()
+		if !previousEnd.IsZero() {
+			actualGap := exchangeStart.Sub(previousEnd).Nanoseconds()
+			pair.PrecedingIdleNanos = &actualGap
+		}
+		wait(service)
+		previousEnd = time.Now()
+		pair.ServiceDurationNanos = previousEnd.Sub(exchangeStart).Nanoseconds()
+		serviceMS := float64(pair.ServiceDurationNanos) / 1e6
+		samples = append(samples, profilingrun.NativeServiceSample{
+			BatchID: uint64(len(samples) + 1), BatchSize: config.Measurement.Batch,
+			RecordIDs: recordIDs, Units: units, ServiceSample: pair,
+			RunnerServiceMilliseconds: serviceMS, BackendCallMilliseconds: serviceMS, NativeRequestMilliseconds: serviceMS,
+		})
+	}
+	ended := time.Now()
+	if len(samples) != 60 ||
+		(config.Metrics.DurationSeconds == 166 && (!crossedOldWatchdog || ended.Sub(started) <= 347*time.Second)) {
+		t.Fatalf("producer stop: calls=%d elapsed=%s crossed old watchdog=%t",
+			len(samples), ended.Sub(started), crossedOldWatchdog)
+	}
+	return started, ended, samples
 }
 
 func sampleStopExecutionPlan(t *testing.T, config profilingrun.RunConfig) profiler.ExecutionPlan {

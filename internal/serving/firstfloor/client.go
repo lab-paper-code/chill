@@ -174,7 +174,7 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	return result, nil
 }
 func progress(p native.Progress) serving.BackendProgress {
-	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, PreprocessMS: p.PreprocessMS, PostprocessMS: p.PostprocessMS, FirstTokenMS: p.FirstTokenMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete}
+	return serving.BackendProgress{RequestID: p.RequestID, WorkloadUID: p.WorkloadUID, Definition: p.Definition, Phase: p.Phase, At: p.At, Outcome: p.Outcome, BatchID: p.BatchID, BatchSize: p.BatchSize, ProfileID: p.ProfileID, DecisionID: p.DecisionID, QueueMS: p.QueueMS, ServiceMS: p.ServiceMS, BackendMS: p.BackendMS, PreprocessMS: p.PreprocessMS, PostprocessMS: p.PostprocessMS, FirstTokenMS: p.FirstTokenMS, Units: p.Units, NativeElapsedMS: p.NativeElapsedMS, ExecutionComplete: p.ExecutionComplete, ServiceSample: p.ServiceSample}
 }
 func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (serving.BackendResult, error) {
 	if d.Definition == nil || d.Input == nil || d.RequestID == "" || spec.Profile == nil {

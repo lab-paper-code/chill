@@ -10,6 +10,7 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -163,7 +164,8 @@ func coverageSizeAddProfile(base *CoverageBase, task api.BatchEnergyOptimization
 
 func coverageSizeCondition(task api.BatchEnergyOptimization, group int) profilederivation.CurvePlanSpec {
 	active := profilederivation.CurveProtocolContract{
-		WorkloadMode: "active",
+		WorkloadMode: "empirical-cadence-fixed-batch",
+		Cadences:     fixtures.Cadences(1, 4, 8),
 		Dataset: &profilederivation.CurveDatasetContract{
 			Name: "imagenet-validation", UID: "dataset-uid",
 		},
@@ -174,7 +176,7 @@ func coverageSizeCondition(task api.BatchEnergyOptimization, group int) profiled
 		WorkloadSchemaVersion: "workload.v1",
 	}
 	idle := active
-	idle.WorkloadMode, idle.Dataset = "idle", nil
+	idle.WorkloadMode, idle.Dataset, idle.Cadences = "idle-model-loaded", nil, nil
 	return profilederivation.CurvePlanSpec{
 		Name: fmt.Sprintf("frozen-condition-%02d", group), LogicalModel: task.Spec.State.Candidate.ModelSpec,
 		DeviceClass: coverageSizeClass, NodeUID: coverageSizeNodeUID, RuntimeFamily: "onnxruntime", Backend: "cpu",

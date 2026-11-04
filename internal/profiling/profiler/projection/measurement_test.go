@@ -15,6 +15,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
+	"github.com/lab-paper-code/chill/test/fixtures"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -23,12 +24,13 @@ import (
 
 func TestMeasurementQualityDistinguishesUnsetPolicyWithoutJudgingObservations(t *testing.T) {
 	start := time.Date(2026, 11, 1, 8, 18, 26, 0, time.UTC)
-	for _, mode := range []string{profilingrun.SaturatedSerialFixedBatchWorkloadMode, profilingrun.IdleModelLoadedWorkloadMode} {
+	for _, mode := range []string{profilingrun.EmpiricalCadenceFixedBatchWorkloadMode, profilingrun.IdleModelLoadedWorkloadMode} {
 		t.Run(mode, func(t *testing.T) {
 			config := projectionRunConfigWithWorkloadContract()
 			config.Measurement.WorkloadMode = mode
 			if mode == profilingrun.IdleModelLoadedWorkloadMode {
 				config.Measurement.Dataset = nil
+				config.Measurement.Cadence = nil
 			}
 			protocol, err := projectCurveProtocol(config)
 			if err != nil {
@@ -48,8 +50,8 @@ func TestMeasurementQualityDistinguishesUnsetPolicyWithoutJudgingObservations(t 
 				if quality.PolicyPassed != nil || quality.PolicyReason != "PolicyUnset" {
 					t.Fatalf("capture settings or observations invented an acceptance policy: %+v", quality)
 				}
-				if quality.WorkloadMode != mode || quality.Protocol != protocol ||
-					quality.WindowSeconds != 30 || quality.SuccessfulSamples != len(metrics.Samples) ||
+				if quality.WorkloadMode != mode || quality.Protocol.WorkloadMode != mode ||
+					quality.Protocol.DurationSeconds != 30 || quality.WindowSeconds != 30 || quality.SuccessfulSamples != len(metrics.Samples) ||
 					quality.ReadFailures != len(metrics.Failures) ||
 					quality.MaximumSampleGapSeconds != metrics.Summary.MaximumSampleGapSeconds ||
 					quality.SourceTimestampAbsent != metrics.Summary.SourceTimestampAbsent {
@@ -204,7 +206,8 @@ func projectionRunConfig() profilingrun.RunConfig {
 		},
 		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
 		Measurement: profilingrun.MeasurementContract{
-			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, WorkloadMode: "saturated",
+			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, WorkloadMode: "empirical-cadence-fixed-batch",
+			Cadence: fixtures.Cadence(),
 			Dataset: &profilingrun.DatasetContract{
 				Name: "vqav2-val-subset", UID: "dataset-uid", Image: "dataset", Path: "/artifact/vqav2-val-subset",
 			},

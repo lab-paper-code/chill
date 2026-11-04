@@ -6,6 +6,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 const (
@@ -61,8 +62,8 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 	for i := range result.RepetitionResults {
 		repetition := &result.RepetitionResults[i]
 		original := repetition.LatencyMilliseconds
-		if len(original) > 0 && len(original) < config.Measurement.MinServiceSamples {
-			repetition.LatencyMilliseconds = make([]float64, config.Measurement.MinServiceSamples)
+		if len(original) > 0 && len(original) <= config.Measurement.MinServiceSamples {
+			repetition.LatencyMilliseconds = make([]float64, config.Measurement.MinServiceSamples+1)
 			for index := range repetition.LatencyMilliseconds {
 				repetition.LatencyMilliseconds[index] = original[index%len(original)]
 			}
@@ -72,6 +73,7 @@ func applyFirstfloorRuntime(config profilingrun.RunConfig, result *profilingrun.
 			executions++
 			repetition.NativeSamples[j] = profilingrun.NativeServiceSample{
 				BatchID: uint64(executions), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
+				ServiceSample:             fixtures.ServiceSample(config.Measurement.Cadence, result.ExperimentID, uint64(executions-1), 700000),
 				RunnerServiceMilliseconds: 0.7, PreprocessMilliseconds: 0.1, PostprocessMilliseconds: 0.1,
 				BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9,
 			}

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -224,11 +223,11 @@ func schedulerValidateService(i SchedulerInstance, reasons []string) ([]string, 
 		if b.MemoryBytes > maxMemory {
 			maxMemory = b.MemoryBytes
 		}
-		if len(b.DurationNanos) == 0 || b.EnergyPerInputJoules < 0 || !schedulerFinite(b.EnergyPerInputJoules) {
+		if len(b.ServiceSamples) == 0 || b.ServiceDistribution == nil || b.EnergyPerInputJoules < 0 || !schedulerFinite(b.EnergyPerInputJoules) {
 			reasons = appendUnique(reasons, "MissingServiceEnergyEvidence:"+i.ID)
 		}
-		for _, v := range b.DurationNanos {
-			if v <= 0 || !schedulerFinite(v) {
+		for _, sample := range b.ServiceSamples {
+			if sample.ServiceDurationNanos <= 0 || sample.TrialID == "" || sample.PrecedingIdleNanos != nil && *sample.PrecedingIdleNanos < 0 {
 				reasons = appendUnique(reasons, "InvalidServiceSample:"+i.ID)
 			}
 		}
@@ -270,13 +269,6 @@ func schedulerPolicy(i SchedulerInstance) firstfloor.Policy {
 		p.DeadlinePolicy = i.Profile.Condition.Firstfloor.DeadlinePolicy
 	}
 	p.DeadlinePolicy = firstfloor.EffectiveDeadlinePolicy(p.DeadlinePolicy)
-	for _, b := range i.Profile.Batches {
-		samples := make([]float64, len(b.DurationNanos))
-		for j, v := range b.DurationNanos {
-			samples[j] = v / 1e6
-		}
-		sort.Float64s(samples)
-		p.Batches = append(p.Batches, firstfloor.BatchProfile{Size: b.Batch, ServiceSamplesMS: samples, EnergyPerItemJ: b.EnergyPerInputJoules})
-	}
+	p.Batches = i.Profile.NativeBundle().Batches
 	return p
 }

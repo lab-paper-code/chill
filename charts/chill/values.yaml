@@ -197,7 +197,7 @@ profiling:
     - name: cpu-ort-arm64-active-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cpu-ort-arm64-idle-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-arm64
@@ -205,7 +205,7 @@ profiling:
     - name: cpu-ort-amd64-active-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-amd64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cpu-ort-amd64-idle-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-amd64
@@ -213,7 +213,7 @@ profiling:
     - name: cuda-ort-nano-active-v1
       deviceClass: jetson-nano-4g
       executionPath: firstfloor-ort-cuda-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-nano-idle-v1
       deviceClass: jetson-nano-4g
       executionPath: firstfloor-ort-cuda-arm64
@@ -221,7 +221,7 @@ profiling:
     - name: cpu-ort-int8-arm64-active-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-int8-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cpu-ort-int8-arm64-idle-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-int8-arm64
@@ -229,7 +229,7 @@ profiling:
     - name: cpu-ort-int8-amd64-active-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-int8-amd64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cpu-ort-int8-amd64-idle-v1
       deviceClass: "*"
       executionPath: firstfloor-ort-cpu-int8-amd64
@@ -237,7 +237,7 @@ profiling:
     - name: cuda-ort-agx-orin-active-v1
       deviceClass: jetson-agx-orin-64g
       executionPath: firstfloor-ort-cuda-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-agx-orin-idle-v1
       deviceClass: jetson-agx-orin-64g
       executionPath: firstfloor-ort-cuda-arm64
@@ -245,7 +245,7 @@ profiling:
     - name: cuda-ort-orin-nano-active-v1
       deviceClass: jetson-orin-nano-8g
       executionPath: firstfloor-ort-cuda-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-orin-nano-idle-v1
       deviceClass: jetson-orin-nano-8g
       executionPath: firstfloor-ort-cuda-arm64
@@ -253,7 +253,7 @@ profiling:
     - name: cuda-ort-xavier-active-v1
       deviceClass: jetson-xavier-nx-8g
       executionPath: firstfloor-ort-cuda-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-xavier-idle-v1
       deviceClass: jetson-xavier-nx-8g
       executionPath: firstfloor-ort-cuda-arm64
@@ -264,7 +264,7 @@ profiling:
     - name: cuda-ort-rnn-nano-active-v1
       deviceClass: jetson-nano-4g
       executionPath: firstfloor-ort-cuda-rnn-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-rnn-nano-idle-v1
       deviceClass: jetson-nano-4g
       executionPath: firstfloor-ort-cuda-rnn-arm64
@@ -272,7 +272,7 @@ profiling:
     - name: cuda-ort-rnn-agx-orin-active-v1
       deviceClass: jetson-agx-orin-64g
       executionPath: firstfloor-ort-cuda-rnn-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-rnn-agx-orin-idle-v1
       deviceClass: jetson-agx-orin-64g
       executionPath: firstfloor-ort-cuda-rnn-arm64
@@ -280,7 +280,7 @@ profiling:
     - name: cuda-ort-rnn-orin-nano-active-v1
       deviceClass: jetson-orin-nano-8g
       executionPath: firstfloor-ort-cuda-rnn-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-rnn-orin-nano-idle-v1
       deviceClass: jetson-orin-nano-8g
       executionPath: firstfloor-ort-cuda-rnn-arm64
@@ -291,7 +291,7 @@ profiling:
     - name: cuda-ort-vlm-agx-orin-active-v1
       deviceClass: jetson-agx-orin-64g
       executionPath: firstfloor-ort-cuda-vlm-arm64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-vlm-agx-orin-idle-v1
       deviceClass: jetson-agx-orin-64g
       executionPath: firstfloor-ort-cuda-vlm-arm64
@@ -299,7 +299,7 @@ profiling:
     - name: cuda-ort-edge-server-active-v1
       deviceClass: edge-server-rtx-2080-ti-64g
       executionPath: firstfloor-ort-cuda-amd64
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: cuda-ort-edge-server-idle-v1
       deviceClass: edge-server-rtx-2080-ti-64g
       executionPath: firstfloor-ort-cuda-amd64
@@ -307,7 +307,7 @@ profiling:
     - name: rknnlite-active-v1
       deviceClass: orangepi-5-plus-16g
       executionPath: firstfloor-rknnlite
-      workloadMode: saturated-serial-fixed-batch
+      workloadMode: empirical-cadence-fixed-batch
     - name: rknnlite-idle-v1
       deviceClass: orangepi-5-plus-16g
       executionPath: firstfloor-rknnlite

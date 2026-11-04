@@ -22,6 +22,17 @@ metadata:
     {{- $labels | nindent 4 }}
 rules:
   - apiGroups: ["edge.dacs.io"]
+    resources: ["evaluationruns"]
+    verbs: ["list"]
+  - apiGroups: ["edge.dacs.io"]
+    resources: ["evaluationstages", "loadscenarios"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - {{ ternary .Values.evaluation.store.credentialsSecret .Values.evaluation.config.evidenceCredentialsSecret .Values.evaluation.store.enabled | quote }}
+    verbs: ["get"]
+  - apiGroups: ["edge.dacs.io"]
     resources: ["profilingruns", "batchenergyoptimizations", "operationcostmeasurements", "dispatchoccupancymeasurements"]
     verbs: ["get", "list"]
   - apiGroups: ["batch"]

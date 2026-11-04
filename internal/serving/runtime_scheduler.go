@@ -504,6 +504,11 @@ func (r *Runtime) extendNativeOutstandingLocked(request *SchedulerRequest, call 
 			request.QueueOrder = order
 			request.QueueAge = time.Duration(native.QueueMS * float64(time.Millisecond))
 			request.RunningElapsed = time.Duration(native.ServiceElapsedMS * float64(time.Millisecond))
+			request.PrecedingIdleNanos = native.PrecedingIdleNanos
+			if native.ExchangeElapsedNanos != nil {
+				elapsed := *native.ExchangeElapsedNanos
+				request.ExchangeElapsedNanos = &elapsed
+			}
 			request.ArrivalRate = native.ArrivalRate
 			request.NativeSenderElapsedMS = &native.Context.SenderElapsedMS
 			request.BatchID = strconv.FormatUint(native.BatchID, 10)
@@ -511,6 +516,9 @@ func (r *Runtime) extendNativeOutstandingLocked(request *SchedulerRequest, call 
 			if age > 0 {
 				if request.Phase == phaseRunning {
 					request.RunningElapsed += age
+					if request.ExchangeElapsedNanos != nil {
+						*request.ExchangeElapsedNanos += int64(age)
+					}
 				} else if request.Phase == phaseQueued || request.Phase == phaseDeferred {
 					request.QueueAge += age
 				}

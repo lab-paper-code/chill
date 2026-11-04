@@ -1482,7 +1482,7 @@ func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ScaleDownStabilization = 300 * time.Second
 	profile := *snap.Instances[0].Profile
-	profile.Batches = append(slices.Clone(profile.Batches), BatchProfile{Batch: 2, DurationNanos: []float64{float64(15 * time.Millisecond)}, EnergyPerInputJoules: 0.8, MemoryBytes: 100})
+	profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 0.8, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
 	snap.Instances[0].Profile = &profile
 	option := snap.Instances[0]
 	option.MaxBatch = 2
@@ -1569,7 +1569,7 @@ func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
 	profile := *add.Profile
-	profile.Batches = []BatchProfile{{Batch: 1, DurationNanos: []float64{float64(time.Millisecond)}, EnergyPerInputJoules: 3, MemoryBytes: 100}}
+	profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 3, MemoryBytes: 100}, []float64{float64(time.Millisecond)})}
 	add.Profile = &profile
 	snap.Options = append(snap.Options, poolsOption(add))
 	prepare := poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(add), "fixed")

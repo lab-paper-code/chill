@@ -4,6 +4,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestIdleMeasurementDoesNotSelectTrialsByEnvironmentalObservations(t *testing.T) {
@@ -52,7 +54,7 @@ func TestNativeTimingSurvivesEnergyProjectionWithoutReplacingClientLatency(t *te
 	trial := Trial{StateIdentity: "state", EnvironmentIdentity: "environment", TrialID: "active",
 		Batch: 2, CompletedCalls: 1, CompletedItems: 2, WindowStart: start, WindowEnd: start.Add(time.Second),
 		LatencyMilliseconds: []float64{10}, Samples: []Sample{{start, 6}, {start.Add(time.Second), 6}},
-		NativeSamples: []NativeServiceSample{{BatchID: 3, BatchSize: 2, RunnerServiceMilliseconds: 5, BackendCallMilliseconds: 2, NativeRequestMilliseconds: 8}},
+		NativeSamples: []NativeServiceSample{{BatchID: 3, BatchSize: 2, ServiceSample: fixtures.ServiceSample(fixtures.Cadence(), "active", 0, 5000000), RunnerServiceMilliseconds: 5, BackendCallMilliseconds: 2, NativeRequestMilliseconds: 8}},
 	}
 	baseline := IdleBaseline{StateIdentity: "state", EnvironmentIdentity: "environment", MeasurementProtocolIdentity: "idle", ModelLoadedIdleMeanWallWatts: 4}
 	result, err := IncrementalWorkTrial(trial, baseline)
@@ -71,7 +73,7 @@ func TestNativeTimingSurvivesEnergyProjectionWithoutReplacingClientLatency(t *te
 
 func TestCurveCopiesRetainedNativeEvidence(t *testing.T) {
 	point := Point{Trials: []EnergyTrial{{ClientLatencyMilliseconds: []float64{10},
-		NativeSamples: []NativeServiceSample{{BatchID: 1, RunnerServiceMilliseconds: 5}}}}}
+		NativeSamples: []NativeServiceSample{{BatchID: 1, ServiceSample: fixtures.ServiceSample(fixtures.Cadence(), "active", 0, 5000000), RunnerServiceMilliseconds: 5}}}}}
 	copy := clonePoint(point)
 	copy.Trials[0].ClientLatencyMilliseconds[0] = 100
 	copy.Trials[0].NativeSamples[0].RunnerServiceMilliseconds = 50

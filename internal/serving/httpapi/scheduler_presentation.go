@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
@@ -147,8 +148,8 @@ type schedulerReadProfile struct {
 
 type schedulerReadBatch struct {
 	*serving.BatchProfile
-	DurationNanos       []float64 `json:"durationNanos,omitempty"`
-	DurationSampleCount int       `json:"durationSampleCount"`
+	ServiceSamples      []firstfloor.ServiceSample `json:"serviceSamples,omitempty"`
+	DurationSampleCount int                        `json:"durationSampleCount"`
 }
 
 func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerState) schedulerReadState {
@@ -161,7 +162,7 @@ func (e *schedulerReadEvidence) state(state *servingkube.SchedulerControllerStat
 		batches := make([]schedulerReadBatch, len(profile.Batches))
 		for i := range profile.Batches {
 			batch := &profile.Batches[i]
-			batches[i] = schedulerReadBatch{BatchProfile: batch, DurationSampleCount: len(batch.DurationNanos)}
+			batches[i] = schedulerReadBatch{BatchProfile: batch, DurationSampleCount: len(batch.ServiceSamples)}
 		}
 		e.Profiles[key] = schedulerReadProfile{profile, batches}
 	}

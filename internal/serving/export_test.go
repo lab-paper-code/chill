@@ -99,3 +99,10 @@ func CapacityBridgeObservationFixture(t *testing.T) (SchedulerCandidate, Runtime
 		Writer: &observationArchive{directory: t.TempDir()},
 	}
 }
+
+func NativeHTTPObservationFixture(t *testing.T, execute func(context.Context, Dispatch) (BackendResult, error)) (*Runtime, *Definition, RuntimeTestObservation) {
+	t.Helper()
+	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	r.instances[instance.ID].Execute = execute
+	return r, r.workloads["w1"].definition, r.config.ObservationLog.(*runtimeTestLog).RuntimeTestObservation
+}

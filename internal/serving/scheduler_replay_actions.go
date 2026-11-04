@@ -24,6 +24,7 @@ func (s *schedulerReplayState) completeActions() bool {
 				if i != nil {
 					i.loaded = true
 					i.ready = true
+					i.hasNativeFinish = false // preparation creates a new physical actor
 				}
 			case schedulerActionRemove:
 				if i := s.byID[a.action.Instance]; i != nil {

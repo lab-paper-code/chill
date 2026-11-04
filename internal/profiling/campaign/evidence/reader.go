@@ -253,7 +253,7 @@ func validateRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alph
 	mode := batchenergyoptimization.WorkloadModeActive
 	if run.Spec.Measurement.WorkloadMode == "idle-model-loaded" {
 		mode = batchenergyoptimization.WorkloadModeIdle
-	} else if run.Spec.Measurement.WorkloadMode != "saturated-serial-fixed-batch" {
+	} else if run.Spec.Measurement.WorkloadMode != profilingrun.EmpiricalCadenceFixedBatchWorkloadMode {
 		return ErrUnsupportedWorkloadMode
 	}
 	if mode != reference.Measurement.WorkloadMode {

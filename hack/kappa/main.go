@@ -310,10 +310,16 @@ func nodeLatencies(settings serving.SchedulerSettings, snapshot serving.Schedule
 		}
 		d := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
 		for _, b := range o.Instance.Profile.Batches {
-			if b.Batch != 1 || len(b.DurationNanos) == 0 || d == nil {
+			if b.Batch != 1 || len(b.ServiceSamples) == 0 || d == nil {
 				continue
 			}
-			ms := (quantile(b.DurationNanos, q)+float64(d.PerRequest))/1e6 + settings.CompletionMarginMS
+			// This display is a marginal diagnostic, not the conditional replay
+			// model or its optimistic empirical-support throughput ceiling.
+			durations := make([]float64, len(b.ServiceSamples))
+			for index, sample := range b.ServiceSamples {
+				durations[index] = float64(sample.ServiceDurationNanos)
+			}
+			ms := (quantile(durations, q)+float64(d.PerRequest))/1e6 + settings.CompletionMarginMS
 			if old, ok := out[o.Instance.Node.Name]; !ok || ms < old {
 				out[o.Instance.Node.Name] = ms
 			}

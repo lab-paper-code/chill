@@ -9,9 +9,11 @@ import (
 
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestSchedulerSummaryWhitelist(t *testing.T) {
@@ -113,11 +115,16 @@ func TestSchedulerSummaryPoolReturnFacts(t *testing.T) {
 }
 
 func TestSchedulerSummaryLargeState(t *testing.T) {
+	samples := make([]firstfloor.ServiceSample, 3<<20)
+	cadence := fixtures.Cadence()
+	for i := range samples {
+		samples[i] = fixtures.ServiceSample(cadence, "physical-trial", uint64(i), 1000)
+	}
 	state := servingkube.SchedulerControllerState{
 		Snapshot: serving.SchedulerSnapshot{
 			At: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC),
 			Options: []serving.SchedulerOption{{Instance: serving.SchedulerInstance{
-				Profile: &serving.Profile{Batches: []serving.BatchProfile{{DurationNanos: make([]float64, 3<<20)}}},
+				Profile: &serving.Profile{Batches: []serving.BatchProfile{{ServiceSamples: samples}}},
 			}}},
 		},
 	}

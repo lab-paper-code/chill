@@ -263,7 +263,8 @@ func (i RunConfig) validateMeasurementMode() error {
 		if (!isRKNNExecution(i) && i.Measurement.Batch != 1) ||
 			i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
-			i.Measurement.Dataset != nil || i.Measurement.MinServiceSamples != 0 || i.Measurement.SLOPercentile != 0 {
+			i.Measurement.Dataset != nil || i.Measurement.MinServiceSamples != 0 ||
+			i.Measurement.SLOPercentile != 0 || i.Measurement.Cadence != nil {
 			return errors.New("model-loaded idle measurement protocol is invalid")
 		}
 		return nil
@@ -287,7 +288,7 @@ func (i RunConfig) validateMeasurementMode() error {
 		!validArtifactPath(dataset.Path) {
 		return errors.New("active measurement requires a frozen dataset name, UID, image, and clean path")
 	}
-	return nil
+	return i.Measurement.Cadence.Validate()
 }
 
 // validateArtifactFiles requires clean absolute model files whose names the
@@ -348,7 +349,7 @@ func IsSupportedFirstfloorRunConfig(i RunConfig) bool {
 		(i.State.Backend == FirstfloorORTCPUBackend || i.State.Backend == FirstfloorORTCUDABackend ||
 			i.State.Backend == FirstfloorRKNNLiteBackend) &&
 		i.State.Firstfloor != nil &&
-		(i.Measurement.WorkloadMode == SaturatedSerialFixedBatchWorkloadMode ||
+		(i.Measurement.WorkloadMode == EmpiricalCadenceFixedBatchWorkloadMode ||
 			i.Measurement.WorkloadMode == IdleModelLoadedWorkloadMode)
 }
 

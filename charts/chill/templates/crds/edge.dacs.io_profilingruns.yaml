@@ -123,6 +123,12 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  cadence:
+                    description: |-
+                      Server-generated active children carry their already-frozen cadence.
+                      Standalone requests resolve it server-side; loaded-idle carries none.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   dataset:
                     description: |-
                       Dataset names the cluster-scoped Dataset whose profiling records active
@@ -183,7 +189,7 @@ spec:
                     type: string
                   workloadMode:
                     enum:
-                    - saturated-serial-fixed-batch
+                    - empirical-cadence-fixed-batch
                     - idle-model-loaded
                     type: string
                   workloadResourceVersion:
@@ -208,8 +214,8 @@ spec:
                 - message: measurement fields must match the selected workloadMode
                   rule: 'self.workloadMode == ''idle-model-loaded'' ? self.warmupIterations
                     == 0 && has(self.settlingDurationSeconds) && !has(self.dataset)
-                    && !has(self.workload) : !has(self.settlingDurationSeconds) &&
-                    has(self.dataset) && has(self.workload)'
+                    && !has(self.workload) && !has(self.cadence) : !has(self.settlingDurationSeconds)
+                    && has(self.dataset) && has(self.workload)'
                 - message: active measurement requires at least thirty seconds
                   rule: self.workloadMode == 'idle-model-loaded' || self.durationSeconds
                     >= 30

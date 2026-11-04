@@ -151,7 +151,7 @@ func executionPolicyNode(config profilingrun.RunConfig, memory string) *corev1.N
 
 func controllerExecutionPolicyCatalog(t *testing.T) []byte {
 	t.Helper()
-	active := controllerExecutionPolicySpec(profilingrun.SaturatedSerialFixedBatchWorkloadMode)
+	active := controllerExecutionPolicySpec(profilingrun.EmpiricalCadenceFixedBatchWorkloadMode)
 	active.Name = testConfiguredActiveExecutionPolicy
 	idle := active
 	idle.Name = testConfiguredIdleExecutionPolicy

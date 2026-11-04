@@ -79,9 +79,10 @@ type ErrorResponse struct {
 	Progress          *Progress `json:"progress,omitempty"`
 }
 type BatchProfile struct {
-	Size             int       `json:"size"`
-	ServiceSamplesMS []float64 `json:"serviceSamplesMS"`
-	EnergyPerItemJ   float64   `json:"energyPerItemJ"`
+	Size           int                  `json:"size"`
+	ServiceSamples []ServiceSample      `json:"serviceSamples"`
+	Distribution   *ServiceDistribution `json:"-"`
+	EnergyPerItemJ float64              `json:"energyPerItemJ"`
 }
 type ProfileBundle struct {
 	ProfileID string         `json:"profileID"`
@@ -130,25 +131,26 @@ type Config struct {
 	Policy              Policy            `json:"policy"`
 }
 type Progress struct {
-	RequestID         string    `json:"requestID"`
-	WorkloadUID       string    `json:"workloadUID"`
-	Definition        string    `json:"definition"`
-	Phase             string    `json:"phase"`
-	At                time.Time `json:"at"`
-	BatchID           uint64    `json:"batchID,omitempty"`
-	BatchSize         int       `json:"batchSize,omitempty"`
-	ProfileID         string    `json:"profileID,omitempty"`
-	DecisionID        string    `json:"decisionID,omitempty"`
-	QueueMS           float64   `json:"queueMS"`
-	ServiceMS         float64   `json:"serviceMS"`
-	BackendMS         float64   `json:"backendMS"`
-	PreprocessMS      float64   `json:"preprocessMS"`
-	PostprocessMS     float64   `json:"postprocessMS"`
-	FirstTokenMS      float64   `json:"firstTokenMS,omitempty"` // generative paths only
-	Units             int       `json:"units,omitempty"`        // successful requests only
-	NativeElapsedMS   float64   `json:"nativeElapsedMS"`
-	ExecutionComplete bool      `json:"executionComplete"`
-	Outcome           string    `json:"outcome,omitempty"`
+	RequestID         string         `json:"requestID"`
+	WorkloadUID       string         `json:"workloadUID"`
+	Definition        string         `json:"definition"`
+	Phase             string         `json:"phase"`
+	At                time.Time      `json:"at"`
+	BatchID           uint64         `json:"batchID,omitempty"`
+	BatchSize         int            `json:"batchSize,omitempty"`
+	ProfileID         string         `json:"profileID,omitempty"`
+	DecisionID        string         `json:"decisionID,omitempty"`
+	QueueMS           float64        `json:"queueMS"`
+	ServiceMS         float64        `json:"serviceMS"`
+	BackendMS         float64        `json:"backendMS"`
+	PreprocessMS      float64        `json:"preprocessMS"`
+	PostprocessMS     float64        `json:"postprocessMS"`
+	FirstTokenMS      float64        `json:"firstTokenMS,omitempty"` // generative paths only
+	Units             int            `json:"units,omitempty"`        // successful requests only
+	NativeElapsedMS   float64        `json:"nativeElapsedMS"`
+	ExecutionComplete bool           `json:"executionComplete"`
+	Outcome           string         `json:"outcome,omitempty"`
+	ServiceSample     *ServiceSample `json:"serviceSample,omitempty"`
 }
 type RuntimeMetadata struct {
 	Runtime        string   `json:"runtime"`
@@ -204,6 +206,10 @@ type RequestState struct {
 	ProfileID           string         `json:"profileID,omitempty"`
 	DecisionID          string         `json:"decisionID,omitempty"`
 	RemainingLifetimeMS *float64       `json:"remainingLifetimeMS,omitempty"`
+	// Actual IPC-boundary fields. Both are nil until the exchange begins;
+	// a nil preceding idle with nonnil elapsed identifies a startup exchange.
+	PrecedingIdleNanos   *int64 `json:"precedingIdleNanos"`
+	ExchangeElapsedNanos *int64 `json:"exchangeElapsedNanos"`
 }
 type State struct {
 	At                time.Time            `json:"at"`
@@ -214,31 +220,39 @@ type State struct {
 	CompletedRequests uint64               `json:"completedRequests"`
 	Executions        uint64               `json:"executions"`
 	ArrivalAgesMS     map[string][]float64 `json:"arrivalAgesMS"`
+	// Decision-age approximation before packing/goroutine startup, not G_actual.
+	LastServiceEndAgeNanos  *int64 `json:"lastServiceEndAgeNanos"`
+	DecisionIdleApproximate bool   `json:"decisionIdleApproximate"`
 }
 type BatchChoice struct {
-	RequestID   string
-	WorkloadUID string
-	Definition  string
-	Size        int
-	WaitMS      float64
-	Reason      string
+	RequestID               string
+	WorkloadUID             string
+	Definition              string
+	Size                    int
+	WaitMS                  float64
+	Reason                  string
+	DecisionIdleNanos       *int64
+	DecisionIdleApproximate bool
+	ConditionalSupport      ConditionalSupport
 }
 
 // ProfileRequest is exactly one execution of BatchSize samples.
 type ProfileRequest struct {
-	BatchSize int     `json:"batchSize"`
-	Inputs    []Field `json:"inputs"`
+	BatchSize   int          `json:"batchSize"`
+	Inputs      []Field      `json:"inputs"`
+	CadenceDraw *CadenceDraw `json:"cadenceDraw,omitempty"`
+	TrialID     string       `json:"trialID"`
 }
 type ProfileResponse struct {
-	BatchSize            int       `json:"batchSize"`
-	BatchIDs             []uint64  `json:"batchIDs"`
-	NativeSamplesMS      []float64 `json:"nativeSamplesMS"`
-	ServiceSamplesMS     []float64 `json:"serviceSamplesMS"`
-	BackendSamplesMS     []float64 `json:"backendSamplesMS"`
-	PreprocessSamplesMS  []float64 `json:"preprocessSamplesMS"`
-	PostprocessSamplesMS []float64 `json:"postprocessSamplesMS"`
-	FirstTokenSamplesMS  []float64 `json:"firstTokenSamplesMS,omitempty"` // generative paths only
-	Units                []int     `json:"units"`                         // per request of the execution
-	NativeElapsedMS      float64   `json:"nativeElapsedMS"`
-	ExecutionComplete    bool      `json:"executionComplete"`
+	BatchSize            int             `json:"batchSize"`
+	BatchIDs             []uint64        `json:"batchIDs"`
+	NativeSamplesMS      []float64       `json:"nativeSamplesMS"`
+	ServiceSamples       []ServiceSample `json:"serviceSamples"`
+	BackendSamplesMS     []float64       `json:"backendSamplesMS"`
+	PreprocessSamplesMS  []float64       `json:"preprocessSamplesMS"`
+	PostprocessSamplesMS []float64       `json:"postprocessSamplesMS"`
+	FirstTokenSamplesMS  []float64       `json:"firstTokenSamplesMS,omitempty"` // generative paths only
+	Units                []int           `json:"units"`                         // per request of the execution
+	NativeElapsedMS      float64         `json:"nativeElapsedMS"`
+	ExecutionComplete    bool            `json:"executionComplete"`
 }

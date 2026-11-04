@@ -136,6 +136,7 @@ func (s *schedulerReplayState) expireRequests() {
 func (s *schedulerReplayState) completeExecution() {
 	for _, i := range s.instances {
 		if i.finish <= s.now {
+			i.lastNativeFinish, i.hasNativeFinish = i.nativeFinish, true
 			for _, r := range i.batch {
 				r.running = false
 				r.returning = true
@@ -315,7 +316,8 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 				states = append(states, s.nativeRequestState(i, r))
 			}
 			s.entries, s.states = entries, states
-			choice := firstfloor.ChooseBatch(i.policy, states)
+			gapDecision := i.idleNanos(s.now)
+			choice := firstfloor.ChooseBatch(i.policy, states, gapDecision)
 			if choice.Reason == firstfloor.OutcomeDeadlineDrop || choice.Reason == firstfloor.ReasonDeadlineDefer {
 				index := -1
 				for j, r := range i.queue {
@@ -381,10 +383,18 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 				s.out.reasons = append(s.out.reasons, "BatchPolicyOutsideProfile:"+i.config.ID)
 				return false
 			}
-			duration := b.DurationNanos[s.rng.IntN(len(b.DurationNanos))]
-			// The batch completes, and the instance takes its next batch, after
-			// the service sample plus the occupancy of each request.
-			i.finish = s.now + duration + i.occupancy*float64(len(i.batch))
+			gap := i.idleNanos(s.now)
+			sample, support, ok := b.ServiceDistribution.Sample(gap, s.rng)
+			s.out.conditional.record(gap, support)
+			if !ok {
+				s.out.reasons = append(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
+				return false
+			}
+			duration := float64(sample.ServiceDurationNanos)
+			// Trace gap selects S; arrivals/queue already supplied the gap.
+			// Retain the current occupancy model without treating it as native S.
+			i.nativeFinish = s.now + duration
+			i.finish = i.nativeFinish + i.occupancy*float64(len(i.batch))
 			s.addBatchEnergy(i, b, duration)
 			break
 		}

@@ -285,6 +285,7 @@ func TestOperationCostLiveSnapshotReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, snap := capture.Settings, capture.State.Snapshot
+	schedulerHydrateCapture(t, snap)
 	if err := s.Validate(); err != nil {
 		t.Fatalf("capture must contain explicit proposed scheduler settings: %v", err)
 	}

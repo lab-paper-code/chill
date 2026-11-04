@@ -66,11 +66,18 @@ func DeriveExecutionPlan(
 
 	metricDuration := time.Duration(config.Metrics.DurationSeconds) * time.Second
 	settlingDuration := time.Duration(config.Measurement.SettlingDurationSeconds) * time.Second
+	if config.Measurement.Cadence != nil {
+		pacing, err := config.Measurement.Cadence.PacingBudget(config.Measurement.MinServiceSamples)
+		if err != nil {
+			return ExecutionPlan{}, err
+		}
+		metricDuration += time.Duration(pacing)
+	}
 	interval := time.Duration(config.Metrics.IntervalMilliseconds) * time.Millisecond
-	// A sample-driven trial has no successful upper duration: its minimum
-	// elapsed window and service-call count must both complete. The frozen
-	// producer attempt timeout is the failure bound, not a predicted tail.
-	// Admit and retain the unchanged polling schedule through that whole bound.
+	// Pacing is part of the variable active wall. The frozen draw allowance
+	// covers the known-gap stop and an elapsed-floor overshoot; the existing
+	// startup/service/final-read envelope remains the failure bound. All
+	// observers, result readers, capacity and the Job use this same lifecycle.
 	attemptTimeout := metricDuration + settlingDuration +
 		time.Duration(policy.AttemptTimeoutOverheadSeconds)*time.Second
 	metrics := config.Metrics

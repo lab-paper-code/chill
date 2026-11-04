@@ -3,6 +3,8 @@ package serving
 import (
 	"math"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 // RequestRow is one request in the requests stream. A final row supersedes the
@@ -50,7 +52,14 @@ type RequestRow struct {
 	FirstTokenMS            float64    `json:"firstTokenMS,omitempty"`
 	Units                   int        `json:"units,omitempty"`
 	NativeElapsedMS         *float64   `json:"nativeElapsedMS,omitempty"`
-	ProfileBody             *Profile   `json:"-"`
+	// Canonical runner-exchange spans share the native monotonic clock.
+	// A missing preceding idle is unknown/startup, never an observed zero.
+	ServiceDurationNanos int64                      `json:"serviceDurationNanos,omitempty"`
+	PrecedingIdleNanos   *int64                     `json:"precedingIdleNanos,omitempty"`
+	NativeTrialID        string                     `json:"nativeTrialID,omitempty"`
+	TargetIdleNanos      *int64                     `json:"targetIdleNanos,omitempty"`
+	TraceDrawRef         *firstfloor.CadenceDrawRef `json:"traceDrawRef,omitempty"`
+	ProfileBody          *Profile                   `json:"-"`
 	// finished is the latest native finished record; closing fills missing stages from it.
 	finished *BackendProgress
 	// AssignedHour holds this request's assigned row; it stays local until the final row.
@@ -154,6 +163,10 @@ func (r *RequestRow) FoldNative(p *BackendProgress) {
 	}
 	r.BatchID, r.BatchSize, r.QueueMS, r.ServiceMS, r.BackendMS = p.BatchID, p.BatchSize, p.QueueMS, p.ServiceMS, p.BackendMS
 	r.PreprocessMS, r.PostprocessMS, r.FirstTokenMS, r.Units = p.PreprocessMS, p.PostprocessMS, p.FirstTokenMS, p.Units
+	if sample := p.ServiceSample; sample != nil {
+		r.ServiceDurationNanos, r.PrecedingIdleNanos = sample.ServiceDurationNanos, sample.PrecedingIdleNanos
+		r.NativeTrialID, r.TargetIdleNanos, r.TraceDrawRef = sample.TrialID, sample.TargetIdleNanos, sample.TraceDrawRef
+	}
 	native := p.NativeElapsedMS
 	r.NativeElapsedMS = &native
 	if p.DecisionID != "" {

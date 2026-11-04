@@ -32,10 +32,10 @@ func (f sampleStopRuntimeFunc) Measure(
 // observer executable, HTTP retries, LIST/WATCH, file readers and Coordinator are real.
 func sampleStopRuntime(
 	t *testing.T, directory string, opts options, config profilingrun.RunConfig,
-	plan profiler.ExecutionPlan, started, ended time.Time,
+	plan profiler.ExecutionPlan, started, ended time.Time, samples []profilingrun.NativeServiceSample,
 ) *worker.CPURuntime {
 	t.Helper()
-	payload, err := json.Marshal(sampleStopRuntimeRecord(config, opts.podUID, started, ended))
+	payload, err := json.Marshal(sampleStopRuntimeRecord(config, opts.podUID, started, ended, samples))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,9 +108,42 @@ func sampleStopCommit(
 	if err := json.Unmarshal(store.payload, &raw); err != nil {
 		t.Fatal(err)
 	}
-	if raw.Runtime.InferenceCount != 59 || raw.Workload == nil || !raw.Workload.Continuous ||
-		raw.Runtime.MeasurementElapsedSeconds < 118 || raw.Metrics.Summary.ObservationDurationSeconds < 153 {
+	if raw.Runtime.InferenceCount != 60 || raw.Workload == nil || !raw.Workload.Continuous ||
+		raw.Runtime.MeasurementElapsedSeconds < 120 ||
+		raw.Metrics.Summary.ObservationDurationSeconds < raw.Runtime.MeasurementElapsedSeconds+35 {
 		t.Fatalf("raw commit lost real observer/caller coverage: %+v", raw)
+	}
+	if config.Metrics.DurationSeconds == 166 && raw.Runtime.MeasurementElapsedSeconds <= 347 {
+		t.Fatal("long active raw commit did not survive the old 166s watchdog")
+	}
+	assertSampleStopNativePairs(t, raw, config, opts)
+}
+
+func assertSampleStopNativePairs(
+	t *testing.T, raw evidence.RawMeasurement, config profilingrun.RunConfig, opts options,
+) {
+	t.Helper()
+	known := 0
+	for _, repetition := range raw.Runtime.RepetitionResults {
+		for index, sample := range repetition.NativeSamples {
+			if sample.ServiceDurationNanos <= 0 || sample.TrialID != opts.podUID {
+				t.Fatalf("raw commit lost the simulated native service/trial pair: %+v", sample)
+			}
+			if index == 0 {
+				if sample.PrecedingIdleNanos != nil || sample.TargetIdleNanos != nil || sample.TraceDrawRef != nil {
+					t.Fatalf("session startup invented a preceding gap or draw: %+v", sample)
+				}
+				continue
+			}
+			if sample.PrecedingIdleNanos == nil || sample.TargetIdleNanos == nil || sample.TraceDrawRef == nil ||
+				*sample.PrecedingIdleNanos < *sample.TargetIdleNanos {
+				t.Fatalf("raw commit lost an actual paced atomic pair: %+v", sample)
+			}
+			known++
+		}
+	}
+	if known < config.Measurement.MinServiceSamples {
+		t.Fatalf("raw commit has %d known-gap pairs, need %d", known, config.Measurement.MinServiceSamples)
 	}
 }
 
@@ -161,26 +194,18 @@ func (s *sampleStopRawStore) PutImmutable(
 }
 
 func sampleStopRuntimeRecord(
-	config profilingrun.RunConfig, podUID string, started, ended time.Time,
+	config profilingrun.RunConfig, podUID string, started, ended time.Time, native []profilingrun.NativeServiceSample,
 ) profilingrun.RuntimeResult {
 	const provider = "CPUExecutionProvider"
 	cpu := profilingrun.RuntimeCPU{
 		CgroupCPUMax: "400000 100000", AffinityCPUCount: 4,
 		AffinityCPUs: []int{0, 1, 2, 3}, CPUSetEffective: "0-3",
 	}
-	recordIDs, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
-	for i := range recordIDs {
-		recordIDs[i], units[i] = "record-"+strconv.Itoa(i), 1
+	latencies := make([]float64, len(native))
+	for index, sample := range native {
+		latencies[index] = sample.NativeRequestMilliseconds
 	}
-	latencies := make([]float64, 59)
-	native := make([]profilingrun.NativeServiceSample, 59)
-	for i := range native {
-		latencies[i] = 2000
-		native[i] = profilingrun.NativeServiceSample{
-			BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
-			RunnerServiceMilliseconds: 2000, BackendCallMilliseconds: 2000, NativeRequestMilliseconds: 2000,
-		}
-	}
+	calls := uint64(len(native))
 	target := float64(config.Measurement.DurationSeconds)
 	return profilingrun.RuntimeResult{
 		SchemaVersion: profilingrun.RuntimeResultSchemaVersion, Status: "Succeeded", ExperimentID: podUID,
@@ -189,7 +214,7 @@ func sampleStopRuntimeRecord(
 		Provider: provider, AvailableProviders: []string{provider}, BatchSize: config.Measurement.Batch,
 		Inputs: config.State.Preprocessor.Inputs, WarmupIterations: config.Measurement.WarmupIterations,
 		WarmupCompletedAt: started.Add(-time.Second).Format(time.RFC3339Nano),
-		InferenceCount:    59, MeasurementMode: "duration", MeasurementStartedAt: started.Format(time.RFC3339Nano),
+		InferenceCount:    int(calls), MeasurementMode: "duration", MeasurementStartedAt: started.Format(time.RFC3339Nano),
 		MeasurementEndedAt: ended.Format(time.RFC3339Nano), MeasurementElapsedSeconds: ended.Sub(started).Seconds(),
 		TargetDurationSeconds: &target, CPUContract: cpu,
 		DerivedContract: profilingrun.DerivedContract{
@@ -199,8 +224,8 @@ func sampleStopRuntimeRecord(
 		Firstfloor: &profilingrun.FirstfloorRuntimeEvidence{
 			Mode: "profiling", ModelInstanceCount: 1, MaxBatchSize: 4, MaxQueueSize: 32,
 			DeadlinePolicy: modelcompat.EffectiveDeadlinePolicy(config.State.Firstfloor.DeadlinePolicy),
-			ExecutionCount: 59, InferenceCount: 59 * uint64(config.Measurement.Batch),
-			BatchExecutionCounts: map[string]uint64{strconv.Itoa(config.Measurement.Batch): 59},
+			ExecutionCount: calls, InferenceCount: calls * uint64(config.Measurement.Batch),
+			BatchExecutionCounts: map[string]uint64{strconv.Itoa(config.Measurement.Batch): calls},
 			Runtime: firstfloor.RuntimeMetadata{
 				Runtime: config.State.Backend, RuntimeVersion: "1.16.0", ModelFiles: config.State.ModelFiles(),
 				Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs,

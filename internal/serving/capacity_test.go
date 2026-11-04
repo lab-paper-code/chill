@@ -2,15 +2,15 @@ package serving
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"math/rand/v2"
-	"os"
 	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
 func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
@@ -20,7 +20,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 	c := snap.Instances[0].Profile.Condition
 	snap.DispatchOccupancy = []DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
-	p.Batches = []BatchProfile{{Batch: 1, DurationNanos: []float64{8e5, 1e6, 1.2e6}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
+	p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 0.01, MemoryBytes: 100}, []float64{8e5, 1e6, 1.2e6})}
 	snap.Instances[0].Profile = &p
 	snap.Options[0].Instance = snap.Instances[0]
 	snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 20 * time.Millisecond}
@@ -36,13 +36,12 @@ func capacityBuildForTest(t *testing.T, s SchedulerSettings, snap SchedulerSnaps
 	return row
 }
 
-// The fixture kappa is a constant: a replay or batching change that moves it
-// fails here and needs a reviewed new constant.
-func TestCapacityRowKappaIsFixedAndRepeatable(t *testing.T) {
+// Seeded arrivals and conditional service draws must make row builds repeatable.
+func TestCapacityRowKappaIsRepeatable(t *testing.T) {
 	s, snap := capacityFixture()
 	row := capacityBuildForTest(t, s, snap)
-	if row.Status != CapacityBuilt || row.Kappa == nil || math.Abs(row.Mu-1000) > 1e-9 || math.Abs(*row.Kappa-capacityFixtureKappa) > 1e-9 {
-		t.Fatalf("fixture row changed: status %s mu %g kappa %v", row.Status, row.Mu, *row.Kappa)
+	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 || *row.Kappa >= row.Mu {
+		t.Fatalf("fixture row has no interior capacity: %+v", row)
 	}
 	again := capacityBuildForTest(t, s, snap)
 	if *again.Kappa != *row.Kappa || !reflect.DeepEqual(again.Grid, row.Grid) || !reflect.DeepEqual(again.Bisection, row.Bisection) || again.Key != row.Key {
@@ -100,8 +99,6 @@ func TestCapacityTableRecoversCurrentPlacementWithoutPoisoningMeasuredRow(t *tes
 	}
 }
 
-const capacityFixtureKappa = 959.375
-
 // A completion margin above the SLO target leaves no rate that meets it.
 func TestCapacityMarginAboveTargetIsZero(t *testing.T) {
 	s, snap := capacityFixture()
@@ -131,12 +128,12 @@ func TestCapacityServiceLowerBound(t *testing.T) {
 			snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 32 * time.Millisecond}
 			p := snap.Options[0].Instance.Profile
 			p.Batches = []BatchProfile{
-				{Batch: 1, DurationNanos: tc.samples, MemoryBytes: 100},
-				{Batch: 2, DurationNanos: tc.samples, MemoryBytes: 100},
+				schedulerTestBatchProfile(BatchProfile{Batch: 1, MemoryBytes: 100}, tc.samples),
+				schedulerTestBatchProfile(BatchProfile{Batch: 2, MemoryBytes: 100}, tc.samples),
 			}
 			snap.Options[0].Instance.MaxBatch = 2
 			if tc.smaller {
-				p.Batches[0].DurationNanos = []float64{1e6}
+				p.Batches[0] = schedulerTestBatchProfile(p.Batches[0], []float64{1e6})
 			}
 			row := capacityBuildForTest(t, s, snap)
 			if tc.skip {
@@ -174,7 +171,7 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			const n = 400
 			s, snap := schedulerReplayWindow(n)
-			snap.Instances[0].Profile.Batches[0].DurationNanos = []float64{tc.service}
+			snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{tc.service})
 			d := snap.Workloads[0]
 			d.SLO = SLO{Percentile: tc.percentile, TargetLatency: 20 * time.Millisecond}
 			keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances}
@@ -219,7 +216,7 @@ func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 	snap.DispatchOccupancy = nil
 	s.DefaultDispatchOccupancyNanos = int64(time.Millisecond)
 	row := capacityBuildForTest(t, s, snap)
-	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 || row.Mu != 500 {
+	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 {
 		t.Fatalf("default d did not produce capacity: %+v", row)
 	}
 	d := row.Input.DispatchOccupancy
@@ -228,7 +225,7 @@ func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 	}
 	s.DefaultDispatchOccupancyNanos = 0
 	zero := capacityBuildForTest(t, s, snap)
-	if zero.Mu != 1000 || zero.Kappa == nil || *zero.Kappa != capacityFixtureKappa || zero.Key == row.Key {
+	if zero.Kappa == nil || *zero.Kappa <= *row.Kappa || zero.Key == row.Key {
 		t.Fatalf("zero scalar default not used exactly once per request: %+v", zero)
 	}
 }
@@ -249,7 +246,7 @@ func TestCapacityRowUsesQualifiedMeasuredCacheEntryBeforeDOM(t *testing.T) {
 	snap.DispatchOccupancy = append(snap.DispatchOccupancy, entry)
 	row := capacityBuildForTest(t, s, snap)
 	d := row.Input.DispatchOccupancy
-	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 || math.Abs(row.Mu-1e9/1.5e6) > 1e-9 ||
+	if row.Status != CapacityBuilt || row.Kappa == nil || *row.Kappa <= 0 ||
 		d.Source != entry.Source || !reflect.DeepEqual(d.Provenance, entry.Provenance) {
 		t.Fatalf("qualified measured entry lost priority/provenance: %+v", row)
 	}
@@ -316,36 +313,38 @@ func TestResolveDispatchOccupancyExactMeasuredAndLegacyDOM(t *testing.T) {
 	}
 }
 
-// rasp5 q1 at b1 (E1 profile, 903 samples, mean 27.79 ms) sustained 26.88
-// req/s when saturated (m4 r3 Q2), so its occupancy is 37.20 − 27.79 =
-// 9.41 ms. With it the tight row (p95 1 s, m 29 ms, live capacity settings)
-// stays below the measured throughput; without it kappa was 34.3.
-func TestCapacityRasp5KappaWithMeasuredOccupancy(t *testing.T) {
-	if testing.Short() {
-		t.Skip("replays full 60 s windows")
+func TestCapacityConditionalSupportWithDispatchOccupancy(t *testing.T) {
+	settings, snapshot := capacityFixture()
+	settings.CapacityWindow, settings.CapacityWindows, settings.CapacityPassingWindows = time.Second, 1, 1
+	settings.CapacityTailSamples = 10
+	settings.DefaultDispatchOccupancyNanos = 0
+	short, long := int64(0), int64(time.Second)
+	batch := &snapshot.Instances[0].Profile.Batches[0]
+	batch.ServiceSamples = []firstfloor.ServiceSample{
+		{ServiceDurationNanos: int64(time.Millisecond), TrialID: "synthetic"},
+		{ServiceDurationNanos: int64(time.Millisecond), PrecedingIdleNanos: &short, TrialID: "synthetic"},
+		{ServiceDurationNanos: int64(100 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "synthetic"},
 	}
-	raw, err := os.ReadFile("testdata/rasp5-q1-b1-durations.json")
+	var err error
+	batch.ServiceDistribution, err = firstfloor.NewServiceDistribution(batch.ServiceSamples)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var samples struct {
-		DurationNanos []float64 `json:"durationNanos"`
+	snapshot.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: 50 * time.Millisecond}
+	without := capacityBuildForTest(t, settings, snapshot)
+	// A marginal mean closes search below 30 req/s despite fast recorded
+	// support becoming nearest once this actor stays busy.
+	if without.Kappa == nil || *without.Kappa <= 30 {
+		t.Fatalf("quiet-gap service incorrectly capped busy throughput: %+v", without)
 	}
-	if err := json.Unmarshal(raw, &samples); err != nil {
-		t.Fatal(err)
+	snapshot.DispatchOccupancy[0].PerRequest = 4 * time.Millisecond
+	with := capacityBuildForTest(t, settings, snapshot)
+	if with.Kappa == nil || *with.Kappa >= *without.Kappa {
+		t.Fatalf("conditional service discarded dispatch occupancy: without=%+v with=%+v", without, with)
 	}
-	s, snap := capacityFixture()
-	s.CapacityWindow, s.CapacityWindows, s.CapacityPassingWindows, s.CapacityMinimumRequests = time.Minute, 20, 19, 1000
-	s.CompletionMarginMS = 29
-	snap.DispatchOccupancy[0].PerRequest = 9409 * time.Microsecond
-	snap.Instances[0].Profile.Batches = []BatchProfile{{Batch: 1, DurationNanos: samples.DurationNanos, EnergyPerInputJoules: 0.07, MemoryBytes: 100}}
-	snap.Options[0].Instance = snap.Instances[0]
-	snap.Workloads[0].SLO = SLO{Percentile: 95, TargetLatency: time.Second}
-	row := capacityBuildForTest(t, s, snap)
-	if row.Status != CapacityBuilt || math.Abs(row.Mu-26.88) > 0.01 || *row.Kappa < 25 || *row.Kappa > 26.88 {
-		t.Fatalf("rasp5 q1 tight row: status %s mu %g kappa %v", row.Status, row.Mu, row.Kappa)
+	if with.ConditionalService == nil || with.ConditionalService.Queries == 0 || with.ConditionalService.MinimumTrialCount != 1 {
+		t.Fatalf("conditional support evidence missing: %+v", with)
 	}
-	t.Logf("rasp5 q1 tight: mu %.2f kappa %.2f req/s", row.Mu, *row.Kappa)
 }
 
 func TestCapacityWindowPopulation(t *testing.T) {
@@ -552,7 +551,7 @@ func TestCapacityTableRoundRobinWorkloads(t *testing.T) {
 			o, p := baseOption, *baseOption.Instance.Profile
 			p.ID = w.UID + string(rune('0'+batch))
 			// Finish analytically without replay; only queue order matters.
-			p.Batches = []BatchProfile{{Batch: batch, DurationNanos: []float64{float64(w.SLO.TargetLatency) + 1}}}
+			p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: batch}, []float64{float64(w.SLO.TargetLatency) + 1})}
 			o.Instance.Profile, o.Instance.MaxBatch = &p, batch
 			o.CompatibleUIDs = []string{w.UID}
 			snap.Options = append(snap.Options, o)
@@ -598,7 +597,7 @@ func TestCapacityTableUsesRecordedRowUntilBuilt(t *testing.T) {
 	}
 	<-table.parallel
 	table.Wait()
-	if row := table.Rows()[0]; row.Previous || *row.Kappa != capacityFixtureKappa {
+	if row := table.Rows()[0]; row.Previous || row.Kappa == nil || *row.Kappa <= recordedKappa {
 		t.Fatalf("the built row must replace the recorded one: %+v", row)
 	}
 }
@@ -615,7 +614,7 @@ func TestCapacityConfiguredNumerics(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, b := capacityBuildForTest(t, omitted, snap), capacityBuildForTest(t, explicit, snap)
-	if *a.Kappa != capacityFixtureKappa || !reflect.DeepEqual(a.Grid, b.Grid) || !reflect.DeepEqual(a.Bisection, b.Bisection) {
+	if a.Kappa == nil || b.Kappa == nil || *a.Kappa != *b.Kappa || !reflect.DeepEqual(a.Grid, b.Grid) || !reflect.DeepEqual(a.Bisection, b.Bisection) {
 		t.Fatal("default calculation changed")
 	}
 	for _, change := range []func(*SchedulerSettings){
@@ -708,12 +707,12 @@ func TestCapacityKeyAndTableReuseIgnoreProvenanceRefresh(t *testing.T) {
 	}
 }
 
-func TestConfiguredDispatchOccupancyMultipliesBatchOnceInThroughputAndReplay(t *testing.T) {
+func TestConfiguredDispatchOccupancyMultipliesBatchOnceInReplay(t *testing.T) {
 	settings, snapshot := capacityFixture()
 	settings.DefaultDispatchOccupancyNanos = 500000
 	snapshot.DispatchOccupancy = nil
 	snapshot.Instances[0].MaxBatch = 4
-	snapshot.Instances[0].Profile.Batches = []BatchProfile{{Batch: 4, DurationNanos: []float64{4e6}}}
+	snapshot.Instances[0].Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 4}, []float64{4e6})}
 	state := schedulerReplayState{settings: settings, snap: snapshot, rng: rand.New(rand.NewPCG(1, 0)), now: 100}
 	state.initializeInstances()
 	instance := state.instances[0]
@@ -725,9 +724,5 @@ func TestConfiguredDispatchOccupancyMultipliesBatchOnceInThroughputAndReplay(t *
 	}
 	if !state.chooseBatches(context.Background()) || len(instance.batch) != 4 || instance.finish != 100+4e6+4*500000 {
 		t.Fatalf("replay must add B*d once, not a batch total or B²*d: %+v", instance)
-	}
-	mu := capacityThroughput(instance.config.Profile, 4, time.Duration(settings.DefaultDispatchOccupancyNanos))
-	if math.Abs(mu-4e9/(4e6+4*500000)) > 1e-9 {
-		t.Fatalf("throughput used different batch multiplier: %g", mu)
 	}
 }

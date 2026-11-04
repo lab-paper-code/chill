@@ -74,7 +74,7 @@ func TestBuildProfilingRunsPreservesOwnerUIDAndOriginalAttemptLabels(t *testing.
 					},
 				},
 				Spec: edgev1alpha1.ProfilingRunSpec{Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
-					Batch: 4, WorkloadMode: "saturated-serial-fixed-batch",
+					Batch: 4, WorkloadMode: "empirical-cadence-fixed-batch",
 				}},
 			}
 			view := BuildProfilingRuns(ProfilingRunsSnapshot{Namespace: queryTestNamespace, Runs: []edgev1alpha1.ProfilingRun{run}})

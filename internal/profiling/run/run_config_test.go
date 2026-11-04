@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func decodeTestRunConfig(payload []byte) (RunConfig, error) {
@@ -268,6 +270,10 @@ func TestRunConfigRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	tests := []func(*RunConfig){
 		func(i *RunConfig) { i.Candidate.Verdict = "Unknown" },
 		func(i *RunConfig) { i.TargetNode.ResourceVersion = "" },
+		func(i *RunConfig) { i.Measurement.Cadence = nil },
+		func(i *RunConfig) { i.Measurement.Cadence.Target.LoadContext = "" },
+		func(i *RunConfig) { i.Measurement.Cadence.Provenance.Sources = nil },
+		func(i *RunConfig) { i.Measurement.Cadence.Provenance.Draws[0].ElementIndex = -1 },
 		func(i *RunConfig) { i.Metrics.NodeName = testDifferentIdentity },
 	}
 	for _, mutate := range tests {
@@ -455,7 +461,8 @@ func validRunConfig() RunConfig {
 			SLOPercentile:           95, MinServiceSamples: 59, SLOTargetLatencyNanos: 1000000000,
 			WorkloadName: "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
 			WarmupBatchSizes: []int{1},
-			WorkloadMode:     "saturated-serial-fixed-batch",
+			WorkloadMode:     "empirical-cadence-fixed-batch",
+			Cadence:          fixtures.Cadence(),
 			Dataset: &DatasetContract{
 				Name: "vqav2-val-subset", UID: "dataset-uid", Image: image, Path: "/artifact/vqav2-val-subset",
 			},

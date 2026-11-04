@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import copy
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,10 @@ import measurement
 
 PREPROCESSOR = {"name": "mobilenet-imagenet", "uid": "pre-uid", "image": "registry/pre:1", "architecture": "amd64",
                 "path": "/artifact/mobilenet-nchw", "inputs": ["image"], "outputs": ["label"]}
+
+def frozen_cadence():
+    return json.loads((Path(__file__).parent / "testdata/cadence.json").read_text())
+
 
 
 class MeasurementBoundaryTest(unittest.TestCase):
@@ -71,25 +76,28 @@ class MeasurementBoundaryTest(unittest.TestCase):
 
 
     def test_native_samples_require_actual_aligned_nested_timings(self):
-        response = {"batchSize": 2, "executionComplete": True, "batchIDs": [9], "serviceSamplesMS": [2.0],
+        pair = {"serviceDurationNanos": 2_000_001, "precedingIdleNanos": None, "trialID": "physical-pod"}
+        response = {"batchSize": 2, "executionComplete": True, "batchIDs": [9], "serviceSamples": [pair],
                     "preprocessSamplesMS": [0.25], "backendSamplesMS": [1.0], "postprocessSamplesMS": [0.25],
                     "nativeSamplesMS": [3.0], "units": [1, 3], "nativeElapsedMS": 4.0}
         records = ["r1", "r0"]
         sample = measurement.native_sample(response, 2, records, False)
-        self.assertEqual(sample, {"batchID": 9, "batchSize": 2, "recordIDs": ["r1", "r0"], "units": [1, 3],
-                                  "runnerServiceMs": 2.0, "preprocessMs": 0.25, "backendCallMs": 1.0,
-                                  "postprocessMs": 0.25, "nativeRequestMs": 3.0})
+        self.assertEqual(sample["serviceDurationNanos"], 2_000_001)
+        self.assertIsNone(sample["precedingIdleNanos"])
+        self.assertEqual((sample["batchID"], sample["recordIDs"], sample["units"]), (9, records, [1, 3]))
         generative = measurement.native_sample(dict(response, firstTokenSamplesMS=[1.5]), 2, records, True)
         self.assertEqual(generative["firstTokenMs"], 1.5)
-        for key in ("batchIDs", "serviceSamplesMS", "preprocessSamplesMS", "backendSamplesMS",
+        for key in ("batchIDs", "serviceSamples", "preprocessSamplesMS", "backendSamplesMS",
                     "postprocessSamplesMS", "nativeSamplesMS"):
             for invalid in (None, [], [1, 2]):
-                with self.subTest(key=key, invalid=invalid):
-                    bad = dict(response, **{key: invalid})
-                    with self.assertRaises(measurement.common.ContractError):
-                        measurement.native_sample(bad, 2, records, False)
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(measurement.common.ContractError):
+                    measurement.native_sample(dict(response, **{key: invalid}), 2, records, False)
         for changes in ({"backendSamplesMS": [3.0]}, {"preprocessSamplesMS": [1.0]}, {"nativeSamplesMS": [1.0]},
-                        {"serviceSamplesMS": [float("nan")]}, {"serviceSamplesMS": [0.0]},
+                        {"serviceSamples": [dict(pair, serviceDurationNanos=0)]},
+                        {"serviceSamples": [dict(pair, serviceDurationNanos=2.5)]},
+                        {"serviceSamples": [dict(pair, precedingIdleNanos=-1)]},
+                        {"serviceSamples": [dict(pair, serviceDurationNanos=1 << 63)]},
+                        {"serviceSamples": [dict(pair, trialID="")]},
                         {"postprocessSamplesMS": [-0.1]}, {"batchIDs": [True]}, {"batchIDs": [1 << 64]},
                         {"units": [1]}, {"units": [1, 0]}, {"units": [1, True]}, {"units": None},
                         {"firstTokenSamplesMS": [1.0]}, {"batchSize": 1}, {"executionComplete": False},
@@ -100,6 +108,10 @@ class MeasurementBoundaryTest(unittest.TestCase):
             measurement.native_sample(response, 2, ["r1"], False)
         with self.assertRaises(measurement.common.ContractError):
             measurement.native_sample(response, 2, records, True)
+        legacy = dict(response, serviceSamplesMS=[2.0])
+        legacy.pop("serviceSamples")
+        with self.assertRaises(measurement.common.ContractError):
+            measurement.native_sample(legacy, 2, records, False)
 
     def test_sampling_draws_fresh_seeded_records_from_input_fields_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -109,9 +121,10 @@ class MeasurementBoundaryTest(unittest.TestCase):
                 (record / "image").write_bytes(f"jpeg-{index}".encode())
                 (record / "question").write_bytes(b"unused field")
             (Path(directory) / "README").write_text("not a record")
-            request = {"datasetPath": directory,
+            request = {"datasetPath": directory, "podUID": "physical-pod",
                        "runConfig": {"state": {"model": "model", "preprocessor": dict(PREPROCESSOR)},
-                                     "measurement": {"batch": 2}}}
+                                     "measurement": {"batch": 2, "workloadMode": measurement.common.SUPPORTED_WORKLOAD,
+                                                     "cadence": frozen_cadence()}}}
             session = measurement.FirstfloorSession(1, request)
             self.assertEqual(session.records, [f"q{index}" for index in range(5)])
             expected = random.Random(measurement.SAMPLE_SEED)
@@ -121,13 +134,15 @@ class MeasurementBoundaryTest(unittest.TestCase):
                 draws.append(session.record_ids)
                 self.assertEqual(session.record_ids, expected.sample(session.records, 2))
                 body = json.loads(session.payload)
-                self.assertEqual(body, {"batchSize": 2, "inputs": [{"name": "image", "data": [
+                self.assertEqual(body, {"batchSize": 2, "trialID": "physical-pod", "inputs": [{"name": "image", "data": [
                     base64.b64encode(f"jpeg-{record[1:]}".encode()).decode() for record in session.record_ids]}]})
             self.assertGreater(len({tuple(draw) for draw in draws}), 1)
             again = measurement.FirstfloorSession(1, request)
             again.prepare_next()
             self.assertEqual(again.record_ids, draws[0])
-            response = {"batchSize": 2, "executionComplete": True, "batchIDs": [1], "serviceSamplesMS": [2.0],
+            response = {"batchSize": 2, "executionComplete": True, "batchIDs": [1],
+                        "serviceSamples": [{"serviceDurationNanos": 2_000_000, "precedingIdleNanos": None,
+                                            "trialID": "physical-pod"}],
                         "preprocessSamplesMS": [0.5], "backendSamplesMS": [1.0], "postprocessSamplesMS": [0.5],
                         "nativeSamplesMS": [3.0], "units": [1, 1], "nativeElapsedMS": 4.0}
             with mock.patch.object(again, "json_call", return_value=response):
@@ -137,6 +152,83 @@ class MeasurementBoundaryTest(unittest.TestCase):
             request["runConfig"]["measurement"]["batch"] = 6
             with self.assertRaisesRegex(measurement.common.ContractError, "fewer profiling records"):
                 measurement.FirstfloorSession(1, request)
+
+    def test_profile_calls_cycle_frozen_cadence_and_preserve_pairs_through_long_active_wall(self):
+        # This fake clock tests collection behavior, not real runtime performance.
+        for backend in ("ort-cpu", "rknnlite"):
+            for initial_gap, expected_calls in ((None, 60), (123, 59)):
+                with self.subTest(backend=backend, initial_gap=initial_gap), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "record").mkdir()
+                    (root / "record/image").write_bytes(b"image")
+                    request = {
+                        "datasetPath": directory, "podUID": "new-physical-pod", "scheduledNodeName": "node",
+                        "observerReadyPaths": [], "observerReadyTimeoutMilliseconds": 1000,
+                        "workloadWindowStartPath": str(root / "window"), "workloadWindowReadyPath": str(root / "ready"),
+                        "measurementStartPath": str(root / "start"), "measurementEndPath": str(root / "end"),
+                        "maxLatencySamples": 1000,
+                        "runConfig": {
+                            "state": {"model": "model", "runtimeFamily": "firstfloor", "backend": backend,
+                                      "preprocessor": dict(PREPROCESSOR)},
+                            "targetNode": {"name": "node", "uid": "node-uid"},
+                            "measurement": {"batch": 1, "warmupIterations": 0, "durationSeconds": 30,
+                                            "minServiceSamples": 59, "workloadMode": measurement.common.SUPPORTED_WORKLOAD,
+                                            "cadence": frozen_cadence()},
+                        },
+                    }
+                    clock = [0]
+                    received = []
+                    session = measurement.FirstfloorSession(1, request)
+
+                    def profile_call(method, path, payload=None):
+                        self.assertEqual((method, path), ("POST", "/v2/models/model/profile"))
+                        body = json.loads(payload)
+                        received.append(body)
+                        self.assertEqual(body["trialID"], "new-physical-pod")
+                        pair = {"serviceDurationNanos": 2_000_001, "trialID": "new-physical-pod"}
+                        if len(received) == 1:
+                            self.assertNotIn("cadenceDraw", body)
+                            pair["precedingIdleNanos"] = initial_gap
+                        else:
+                            index = len(received) - 2
+                            phase, target = ("high", 7_000_000_000) if index % 2 == 0 else ("low", 5_000_000_000)
+                            self.assertEqual(body["cadenceDraw"], {
+                                "targetIdleNanos": target,
+                                "ref": {"phase": phase, "elementIndex": 0, "drawIndex": index},
+                            })
+                            # The native owner tests real remaining-idle pacing at IPC.
+                            pair.update(precedingIdleNanos=target + 17, targetIdleNanos=target,
+                                        traceDrawRef=body["cadenceDraw"]["ref"])
+                            clock[0] += target + 17
+                        clock[0] += 4_000_000
+                        return {"batchSize": 1, "executionComplete": True, "batchIDs": [len(received)],
+                                "serviceSamples": [pair], "preprocessSamplesMS": [0.25], "backendSamplesMS": [1.0],
+                                "postprocessSamplesMS": [0.25], "nativeSamplesMS": [3.0], "units": [1],
+                                "nativeElapsedMS": 4.0}
+
+                    with ExitStack() as stack:
+                        stack.enter_context(mock.patch.object(session, "json_call", side_effect=profile_call))
+                        stack.enter_context(mock.patch.object(measurement.common, "wait_for_signal"))
+                        stack.enter_context(mock.patch.object(measurement.common, "publish_immutable"))
+                        stack.enter_context(mock.patch.object(measurement.common, "cpu_stat", return_value={}))
+                        stack.enter_context(mock.patch.object(measurement.time, "monotonic", side_effect=lambda: clock[0] / 1e9))
+                        stack.enter_context(mock.patch.object(measurement.time, "perf_counter_ns", side_effect=lambda: clock[0]))
+                        stack.enter_context(mock.patch.object(measurement.time, "sleep", side_effect=AssertionError("Python must not pace")))
+                        result = measurement.common.execute_loaded(
+                            request, session, "test-runtime", [], "aarch64", "max 100000", [0], "0",
+                            lambda: None, measurement.PROVIDERS[backend])
+                    self.assertEqual(result["inferenceCount"], expected_calls)
+                    self.assertGreater(result["measurementElapsedSecondsMonotonic"], 166)
+                    self.assertEqual(sum(row["precedingIdleNanos"] is not None for row in session.samples), 59)
+                    encoded = json.loads(measurement.common.encode_result({"nativeSamples": session.samples}, 100_000))
+                    rows = encoded["nativeSamples"]
+                    self.assertEqual(rows[0]["precedingIdleNanos"], initial_gap)
+                    self.assertNotIn("traceDrawRef", rows[0])
+                    self.assertEqual(rows[-1]["serviceDurationNanos"], 2_000_001)
+                    self.assertEqual(rows[-1]["trialID"], "new-physical-pod")
+                    self.assertEqual(rows[-1]["recordIDs"], ["record"])
+                    self.assertIsInstance(rows[-1]["precedingIdleNanos"], int)
+                    self.assertEqual(rows[-1]["traceDrawRef"]["drawIndex"], expected_calls - 2)
 
     def test_actual_runtime_rejects_provider_fallback_and_changed_conditions(self):
         request = {"modelDirectory": "/model", "maxInputBytes": 1024,
@@ -231,7 +323,8 @@ class WaitReadyTest(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         session = measurement.FirstfloorSession(server.server_address[1],
-                                                {"runConfig": {"state": {"model": "m"}}})
+                                                {"runConfig": {"state": {"model": "m"},
+                                                               "measurement": {"workloadMode": measurement.common.IDLE_WORKLOAD}}})
         measurement.wait_ready(SimpleNamespace(poll=lambda: None), session, 5.0)
         self.assertEqual(session.json_call("GET", session.path + "/slow"), {})
         session.connection.close()

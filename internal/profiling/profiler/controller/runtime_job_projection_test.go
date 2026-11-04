@@ -16,7 +16,7 @@ func TestFirstfloorCUDAJobProjectsDeclaredAcceleratorAccess(t *testing.T) {
 			RuntimeFamily: profilingrun.FirstfloorRuntimeFamily, Backend: profilingrun.FirstfloorORTCUDABackend,
 			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32},
 		},
-		Measurement: profilingrun.MeasurementContract{WorkloadMode: profilingrun.SaturatedSerialFixedBatchWorkloadMode},
+		Measurement: profilingrun.MeasurementContract{WorkloadMode: profilingrun.EmpiricalCadenceFixedBatchWorkloadMode},
 		Delivery: profilingrun.CandidateRuntimeDelivery{
 			ArtifactCapability: &profilingrun.CandidateArtifactCapability{},
 			RuntimeAccess: &profilingrun.CandidateReportRuntimeAccess{

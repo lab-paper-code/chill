@@ -31,7 +31,7 @@ func IdleTrial(evidence, reference profilerevidence.VerifiedIdleEvidence) (profi
 	config := frozen.RunConfig
 	spec, err := ProjectCurvePlanSpec(
 		"idle-baseline", config, config,
-		profilederivation.CurveConversionContract{}, []int{config.Measurement.Batch},
+		profilederivation.CurveConversionContract{}, []int{config.Measurement.Batch}, nil,
 	)
 	if err != nil {
 		return profilederivation.IdleTrial{}, err

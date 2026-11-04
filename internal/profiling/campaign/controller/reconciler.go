@@ -186,7 +186,9 @@ func (r *BatchEnergyOptimizationReconciler) createMeasurementRun(
 		return false, fmt.Errorf("build ProfilingRun: %w", err)
 	}
 	if measurement.WorkloadMode == batchenergyoptimization.WorkloadModeActive {
-		projectFrozenWorkload(&run.Spec.Measurement, plan.Shared().ActiveProtocol)
+		if err := projectFrozenActiveProtocol(&run.Spec.Measurement, plan.Shared().ActiveProtocol); err != nil {
+			return false, err
+		}
 	}
 	batches := plan.PlannedBatchSizes()
 	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(batches))

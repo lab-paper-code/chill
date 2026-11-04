@@ -80,14 +80,19 @@ func unframe(b []byte, n int) ([][]byte, error) {
 }
 
 type Runner struct {
-	input      io.WriteCloser
-	output     io.ReadCloser
-	cancel     context.CancelFunc
-	exited     chan struct{}
-	timeout    time.Duration
-	metadata   RuntimeMetadata
-	generative bool
-	closeOnce  sync.Once
+	input       io.WriteCloser
+	output      io.ReadCloser
+	cancel      context.CancelFunc
+	exited      chan struct{}
+	timeout     time.Duration
+	metadata    RuntimeMetadata
+	generative  bool
+	closeOnce   sync.Once
+	clockMu     sync.Mutex
+	lastEnd     time.Time
+	exchangeAt  time.Time
+	exchangeGap *int64
+	trialID     string
 }
 
 func StartRunner(ctx context.Context, cfg *Config) (*Runner, error) {
@@ -114,6 +119,7 @@ func StartRunner(ctx context.Context, cfg *Config) (*Runner, error) {
 		return nil, err
 	}
 	r := &Runner{input: input, output: output, cancel: cancel, exited: make(chan struct{}), timeout: time.Duration(cfg.RunnerTimeoutMS) * time.Millisecond, generative: cfg.MaxNewTokens > 0}
+	r.trialID = fmt.Sprintf("runner-%d-%d", command.Process.Pid, time.Now().UnixNano())
 	go func() { _ = command.Wait(); close(r.exited) }()
 	if err = childOutput.Close(); err != nil {
 		r.Close()
@@ -180,22 +186,57 @@ type runnerOutput struct {
 	outputs                              []Field
 	serviceMS, backendMS                 float64
 	preprocessMS, postprocessMS, firstMS float64
+	sample                               ServiceSample
 }
 
 // Only the actor's active batch calls infer. Caller cancellation never reaches
 // this context; capacity remains occupied until reply or process termination.
-func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, data [][]byte) (runnerOutput, error) {
+func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, data [][]byte, draw *CadenceDraw, trialID string) (runnerOutput, error) {
+	// Natural packing/transport idle already counts toward the frozen target.
+	// Startup has no preceding anchor, even if Python warmed up during init.
+	r.clockMu.Lock()
+	lastEnd := r.lastEnd
+	r.clockMu.Unlock()
+	if draw != nil && !lastEnd.IsZero() {
+		if remaining := time.Duration(draw.TargetIdleNanos) - time.Since(lastEnd); remaining > 0 {
+			wait := time.NewTimer(remaining)
+			defer wait.Stop()
+			select {
+			case <-wait.C:
+			case <-ctx.Done():
+				return runnerOutput{}, ctx.Err()
+			}
+		}
+	}
+	if trialID == "" {
+		trialID = r.trialID
+	}
 	type reply struct {
 		o runnerOutput
 		e error
 	}
 	done := make(chan reply, 1)
 	go func() {
+		r.clockMu.Lock()
 		started := time.Now()
-		o, e := r.exchange(id, tensors, data)
-		if e == nil {
-			o.serviceMS = milliseconds(time.Since(started))
+		var gap *int64
+		if !r.lastEnd.IsZero() {
+			n := started.Sub(r.lastEnd).Nanoseconds()
+			gap = &n
 		}
+		r.exchangeAt, r.exchangeGap = started, gap
+		r.clockMu.Unlock()
+		o, e := r.exchange(id, tensors, data)
+		ended := time.Now()
+		o.serviceMS = milliseconds(ended.Sub(started))
+		o.sample = ServiceSample{ServiceDurationNanos: ended.Sub(started).Nanoseconds(), PrecedingIdleNanos: gap, TrialID: trialID}
+		if draw != nil {
+			o.sample.TargetIdleNanos = &draw.TargetIdleNanos
+			o.sample.TraceDrawRef = &draw.Ref
+		}
+		r.clockMu.Lock()
+		r.lastEnd, r.exchangeAt, r.exchangeGap = ended, time.Time{}, nil
+		r.clockMu.Unlock()
 		done <- reply{o, e}
 	}()
 	timer := time.NewTimer(r.timeout)
@@ -214,6 +255,35 @@ func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, dat
 		r.Close()
 		return runnerOutput{}, ctx.Err()
 	}
+}
+
+func (r *Runner) decisionIdleNanos() (int64, bool) {
+	r.clockMu.Lock()
+	defer r.clockMu.Unlock()
+	if r.lastEnd.IsZero() {
+		return 0, false
+	}
+	return time.Since(r.lastEnd).Nanoseconds(), true
+}
+
+// exchangeState owns all clock synchronization; actors never access Runner locks.
+func (r *Runner) exchangeState() (age, gap, elapsed *int64) {
+	r.clockMu.Lock()
+	defer r.clockMu.Unlock()
+	now := time.Now()
+	if !r.lastEnd.IsZero() {
+		n := now.Sub(r.lastEnd).Nanoseconds()
+		age = &n
+	}
+	if !r.exchangeAt.IsZero() {
+		n := now.Sub(r.exchangeAt).Nanoseconds()
+		elapsed = &n
+		if r.exchangeGap != nil {
+			n := *r.exchangeGap
+			gap = &n
+		}
+	}
+	return
 }
 func (r *Runner) exchange(id uint64, tensors []wireTensor, data [][]byte) (runnerOutput, error) {
 	if err := writeFrame(r.input, frame{Type: "infer", BatchID: id, Tensors: tensors}, data); err != nil {

@@ -22,6 +22,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 	sdk "github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -69,7 +70,7 @@ func routeAcknowledgmentFixture(t *testing.T) (*servingops.Operations, serving.S
 			RunnerTimeoutMS: 3000, MaxQueueRequests: 4, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20,
 			MaxBatchSize: 1, BatchSizes: []int{1},
 			Policy: native.Policy{DecisionID: "old-route", ProfileID: profile.ID, MaxBatchSize: 1, DeadlinePolicy: "keep",
-				Batches: []native.BatchProfile{{Size: 1, ServiceSamplesMS: []float64{1}, EnergyPerItemJ: 1}}},
+				Batches: []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 1000000), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}},
 		}
 		if err := native.ValidateConfig(&cfg); err != nil {
 			t.Fatal(err)

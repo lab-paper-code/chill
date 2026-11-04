@@ -21,6 +21,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -109,7 +110,7 @@ func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 	}
 	storedPayload := store.objects[store.lastIdentity.Location()]
 	if len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
-		preparer.requests[0].Measurement.WorkloadMode != profilingrun.SaturatedSerialFixedBatchWorkloadMode ||
+		preparer.requests[0].Measurement.WorkloadMode != profilingrun.EmpiricalCadenceFixedBatchWorkloadMode ||
 		preparer.requests[1].Measurement.Batch != 1 ||
 		preparer.requests[1].Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		t.Fatalf("projected preparation requests = %+v", preparer.requests)
@@ -193,7 +194,7 @@ func TestCurvePlanSourceRecoversFrozenWorkloadBeforeChildren(t *testing.T) {
 				t.Fatal(err)
 			}
 			ports := &frozenWorkloadPreparationPorts{config: config, report: payload, workloads: workloads}
-			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
+			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports, fixtureCadenceResolver)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -330,7 +331,7 @@ func TestCurvePlanSourceRecoveryRequiresOwnedRuns(t *testing.T) {
 		t.Fatalf("resolve before children exist: %v", err)
 	}
 	if len(preparer.requests) != prepared+1 ||
-		preparer.requests[prepared].Measurement.WorkloadMode != profilingrun.SaturatedSerialFixedBatchWorkloadMode ||
+		preparer.requests[prepared].Measurement.WorkloadMode != profilingrun.EmpiricalCadenceFixedBatchWorkloadMode ||
 		preparer.requests[prepared].Measurement.Batch != plan.PlannedBatchSizes()[0] || store.puts != 0 {
 		t.Fatalf("pre-child preparation = %+v, puts %d", preparer.requests[prepared:], store.puts)
 	}
@@ -492,7 +493,7 @@ func TestCurvePlanProjectorPreservesPhaseOrderAndErrorIdentity(t *testing.T) {
 	}
 	wantCalls := []string{
 		"resolve-candidate",
-		"prepare:" + profilingrun.SaturatedSerialFixedBatchWorkloadMode,
+		"prepare:" + profilingrun.EmpiricalCadenceFixedBatchWorkloadMode,
 		"prepare:" + profilingrun.IdleModelLoadedWorkloadMode,
 		"read-model",
 	}
@@ -776,6 +777,9 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		Workload: profilingrun.CurrentWorkloadContract(),
 	}
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		if config.Measurement.Cadence == nil {
+			config.Measurement.Cadence = fixtures.Cadence()
+		}
 		config.Measurement.SLOPercentile = 95
 		config.Measurement.MinServiceSamples = 59
 		config.Measurement.SLOTargetLatencyNanos = 1_000_000_000
@@ -805,6 +809,13 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		return profiler.PreparedRun{}, fmt.Errorf("invalid prepared config fixture: %w", err)
 	}
 	prepared := profiler.PreparedRun{RunConfig: config}
+	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		cadences, err := fixtureCadenceResolver(context.Background(), config)
+		if err != nil {
+			return profiler.PreparedRun{}, err
+		}
+		prepared.Cadences = cadences
+	}
 	if config.Actuation != nil {
 		policy := actuatedPreparedRun(testParent()).ActuationPolicy
 		policy.Policy.Name = config.Actuation.PolicyName

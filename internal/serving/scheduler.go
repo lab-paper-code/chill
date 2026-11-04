@@ -306,8 +306,11 @@ type SchedulerInstance struct {
 	FixedBatchSize int                            `json:"fixedBatchSize,omitempty"` // Strict baseline B; autonomous control never moves it.
 	MaxWait        time.Duration                  `json:"maxWaitNanos"`
 	ObservedAt     time.Time                      `json:"observedAt"`
-	IdleMeter      string                         `json:"idleMeter"`
-	IdleScope      string                         `json:"idleScope"`
+	// LastServiceEndAgeNanos is worker-clock idle age at ObservedAt, not HTTP return age.
+	// Nil means this physical actor has no known completed native exchange.
+	LastServiceEndAgeNanos *int64 `json:"lastServiceEndAgeNanos,omitempty"`
+	IdleMeter              string `json:"idleMeter"`
+	IdleScope              string `json:"idleScope"`
 	// UnroutedSince is when the instance last lost every positive route weight
 	// (nil while routed); after one observation window unrouted it is removed.
 	UnroutedSince *time.Time `json:"unroutedSince,omitempty"`
@@ -324,22 +327,26 @@ type SchedulerOption struct {
 	CompatibleUIDs []string          `json:"compatibleUIDs"`
 }
 type SchedulerRequest struct {
-	ID                    string         `json:"id"`
-	QueueOrder            int            `json:"queueOrder"`
-	RemainingLifetime     *time.Duration `json:"remainingLifetimeNanos,omitempty"`
-	Definition            *Definition    `json:"definition"`
-	DefinitionID          string         `json:"definitionID,omitempty"` // Stored records keep Definition.Identity().
-	ReceivedAt            time.Time      `json:"receivedAt"`
-	Elapsed               time.Duration  `json:"elapsedNanos"`
-	QueueAge              time.Duration  `json:"queueAgeNanos"`
-	Phase                 string         `json:"phase"` // pending, assigned, queued, deferred, running, returning
-	Instance              string         `json:"instance,omitempty"`
-	BatchID               string         `json:"batchID,omitempty"`
-	RunningElapsed        time.Duration  `json:"runningElapsedNanos"`
-	ReturnElapsed         time.Duration  `json:"returnElapsedNanos"`
-	ArrivalRate           float64        `json:"arrivalRate"`
-	NativeSenderElapsedMS *float64       `json:"nativeSenderElapsedMS,omitempty"`
-	NativeOutcome         string         `json:"nativeOutcome,omitempty"`
+	ID                string         `json:"id"`
+	QueueOrder        int            `json:"queueOrder"`
+	RemainingLifetime *time.Duration `json:"remainingLifetimeNanos,omitempty"`
+	Definition        *Definition    `json:"definition"`
+	DefinitionID      string         `json:"definitionID,omitempty"` // Stored records keep Definition.Identity().
+	ReceivedAt        time.Time      `json:"receivedAt"`
+	Elapsed           time.Duration  `json:"elapsedNanos"`
+	QueueAge          time.Duration  `json:"queueAgeNanos"`
+	Phase             string         `json:"phase"` // pending, assigned, queued, deferred, running, returning
+	Instance          string         `json:"instance,omitempty"`
+	BatchID           string         `json:"batchID,omitempty"`
+	RunningElapsed    time.Duration  `json:"runningElapsedNanos"`
+	// PrecedingIdleNanos and ExchangeElapsedNanos refer to the actual IPC exchange,
+	// not the actor running span. Nil prior idle preserves startup/unknown history.
+	PrecedingIdleNanos    *int64        `json:"precedingIdleNanos,omitempty"`
+	ExchangeElapsedNanos  *int64        `json:"exchangeElapsedNanos,omitempty"`
+	ReturnElapsed         time.Duration `json:"returnElapsedNanos"`
+	ArrivalRate           float64       `json:"arrivalRate"`
+	NativeSenderElapsedMS *float64      `json:"nativeSenderElapsedMS,omitempty"`
+	NativeOutcome         string        `json:"nativeOutcome,omitempty"`
 }
 type SchedulerArrival struct {
 	ID          string        `json:"id"`
@@ -492,19 +499,20 @@ type SchedulerEstimate struct {
 	PredictedOutcomes    map[string]int `json:"predictedOutcomes"`
 }
 type SchedulerCandidate struct {
-	ID              string                      `json:"id"`
-	Keep            bool                        `json:"keep"`
-	Nodes           []SchedulerNode             `json:"nodes,omitempty"`
-	Instances       []SchedulerInstance         `json:"instances,omitempty"`
-	Routing         map[string]map[string]int32 `json:"routing,omitempty"`
-	Actions         []Action                    `json:"actions"`
-	Status          string                      `json:"status"`
-	Reasons         []string                    `json:"reasons"`
-	SLO             []SchedulerEstimate         `json:"slo,omitempty"`
-	ExpectedJoules  *float64                    `json:"expectedJoules"`
-	WorstExceedance float64                     `json:"worstExceedance"`
-	Assumptions     []string                    `json:"assumptions,omitempty"`
-	Sources         []string                    `json:"sources,omitempty"`
+	ID                 string                      `json:"id"`
+	Keep               bool                        `json:"keep"`
+	Nodes              []SchedulerNode             `json:"nodes,omitempty"`
+	Instances          []SchedulerInstance         `json:"instances,omitempty"`
+	Routing            map[string]map[string]int32 `json:"routing,omitempty"`
+	Actions            []Action                    `json:"actions"`
+	Status             string                      `json:"status"`
+	Reasons            []string                    `json:"reasons"`
+	SLO                []SchedulerEstimate         `json:"slo,omitempty"`
+	ExpectedJoules     *float64                    `json:"expectedJoules"`
+	WorstExceedance    float64                     `json:"worstExceedance"`
+	Assumptions        []string                    `json:"assumptions,omitempty"`
+	Sources            []string                    `json:"sources,omitempty"`
+	ConditionalService *ConditionalServiceEvidence `json:"conditionalService,omitempty"`
 }
 type SchedulerSearch struct {
 	// Examined counts the node plans built for the decision.

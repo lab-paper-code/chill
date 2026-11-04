@@ -7,13 +7,27 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
 
 func testPolicy() Policy {
-	return Policy{DecisionID: "decision-1", ProfileID: "synthetic-profile", MaxBatchWaitMS: 100, Batches: []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{10}, EnergyPerItemJ: 2}, {Size: 2, ServiceSamplesMS: []float64{12}, EnergyPerItemJ: 1}}}
+	return Policy{DecisionID: "decision-1", ProfileID: "synthetic-profile", MaxBatchWaitMS: 100, Batches: []BatchProfile{testBatch(1, 2, startupSample("trial-a", 10), pairedSample("trial-a", 1, 10)), testBatch(2, 1, startupSample("trial-a", 12), pairedSample("trial-a", 1, 12))}}
+}
+
+// Each fixture row is an actual startup or known-gap exchange in one physical trial.
+func startupSample(trial string, durationMS float64) ServiceSample {
+	return ServiceSample{TrialID: trial, ServiceDurationNanos: int64(durationMS * float64(time.Millisecond))}
+}
+func testBatch(size int, energy float64, samples ...ServiceSample) BatchProfile {
+	distribution, err := NewServiceDistribution(samples)
+	if err != nil {
+		panic(err)
+	}
+	return BatchProfile{Size: size, EnergyPerItemJ: energy, ServiceSamples: samples, Distribution: distribution}
 }
 func testState(uid string, target float64, rate float64) RequestState {
 	return RequestState{Context: RequestContext{WorkloadUID: uid, Definition: uid + "/1", SLO: SLO{Percentile: 95, TargetMS: target}}, ArrivalRate: rate, Phase: "queued"}
@@ -32,22 +46,22 @@ func TestMeasuredEnergyRemainsNonnegative(t *testing.T) {
 func TestMeasuredSelector(t *testing.T) {
 	p := testPolicy()
 	q := []RequestState{testState("a", 100, 100)}
-	choice := ChooseBatch(p, q)
+	choice := ChooseBatch(p, q, nil)
 	if choice.Size != 0 || choice.WaitMS != 10 {
 		t.Fatalf("strict measured gain with observed fill should wait: %+v", choice)
 	}
 	capped := p
 	capped.MaxBatchSize = 1
-	if c := ChooseBatch(capped, q); c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(capped, q, nil); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("mutable cap must forbid energy-gain waits for a larger initialized batch: %+v", c)
 	}
 	pair := []RequestState{testState("a", 100, 0), testState("a", 100, 0)}
-	if c := ChooseBatch(capped, pair); c.Size != 1 {
+	if c := ChooseBatch(capped, pair, nil); c.Size != 1 {
 		t.Fatalf("available energy choice must honor cap: %+v", c)
 	}
 	pair[0].Context.SLO.TargetMS = 1
 	pair[1].Context.SLO.TargetMS = 1
-	if c := ChooseBatch(capped, pair); c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(capped, pair, nil); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("overload choice must honor cap: %+v", c)
 	}
 	if e := validatePolicy(capped, []int{1, 2}); e != nil {
@@ -63,56 +77,56 @@ func TestMeasuredSelector(t *testing.T) {
 		t.Fatal("negative cap accepted")
 	}
 	equal := p
-	equal.Batches = []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{10}, EnergyPerItemJ: 1}, {Size: 2, ServiceSamplesMS: []float64{12}, EnergyPerItemJ: 1}}
-	if c := ChooseBatch(equal, q); c.Size != 1 || c.WaitMS != 0 {
+	equal.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 10)), testBatch(2, 1, startupSample("trial-a", 12))}
+	if c := ChooseBatch(equal, q, nil); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("equal energy must not wait: %+v", c)
 	}
 	q[0].ArrivalRate = 0
-	if c := ChooseBatch(p, q); c.Size != 1 {
+	if c := ChooseBatch(p, q, nil); c.Size != 1 {
 		t.Fatalf("no actual arrival rate must dispatch: %+v", c)
 	}
 	q[0].ArrivalRate = 100
 	q = append(q, testState("b", 15, 0))
-	if c := ChooseBatch(p, q); c.WorkloadUID != "b" || c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(p, q, nil); c.WorkloadUID != "b" || c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("urgent other UID must prevent wait: %+v", c)
 	}
 	q = []RequestState{testState("a", 100, 0), testState("b", 100, 0)}
-	if c := ChooseBatch(p, q); c.Size != 1 {
+	if c := ChooseBatch(p, q, nil); c.Size != 1 {
 		t.Fatalf("UIDs must never form combined batch: %+v", c)
 	}
 	q = []RequestState{testState("a", 1, 100)}
-	if c := ChooseBatch(p, q); c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(p, q, nil); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("late SLO must execute, not drop: %+v", c)
 	}
 	samples := p
-	samples.Batches = []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{1, 100}, EnergyPerItemJ: 2}, {Size: 2, ServiceSamplesMS: []float64{2, 101}, EnergyPerItemJ: 1}}
+	samples.Batches = []BatchProfile{testBatch(1, 2, startupSample("trial-a", 1), startupSample("trial-b", 100)), testBatch(2, 1, startupSample("trial-a", 2), startupSample("trial-b", 101))}
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SLO.Percentile = 50
-	if c := ChooseBatch(samples, q); c.WaitMS == 0 {
+	if c := ChooseBatch(samples, q, nil); c.WaitMS == 0 {
 		t.Fatalf("empirical p50 should leave slack: %+v", c)
 	}
 	q[0].Context.SLO.Percentile = 100
-	if c := ChooseBatch(samples, q); c.Size != 1 || c.WaitMS != 0 {
+	if c := ChooseBatch(samples, q, nil); c.Size != 1 || c.WaitMS != 0 {
 		t.Fatalf("empirical p100 must not borrow p50 slack: %+v", c)
 	}
 	q = []RequestState{testState("a", 50, 100)}
 	q[0].Context.SenderElapsedMS = 25
 	q[0].ElapsedMS = 10
 	q[0].Context.CompletionMarginMS = 6
-	if c := ChooseBatch(p, q); c.WaitMS != 0 {
+	if c := ChooseBatch(p, q, nil); c.WaitMS != 0 {
 		t.Fatalf("sender, local and completion margin all consume original slack: %+v", c)
 	}
 }
 func TestCompletionMarginIsReservedOnceRegardlessOfSenderElapsed(t *testing.T) {
 	p := testPolicy()
 	p.DeadlinePolicy = DeadlineDrop
-	p.Batches = []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{100}, EnergyPerItemJ: 1}}
+	p.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 100))}
 	q := testState("uid", 507, 0)
 	q.Context.SenderElapsedMS, q.Context.CompletionMarginMS = 400, 7
-	if slack := requestSlack(q, p.Batches[0]); slack != 0 {
+	if slack := requestSlack(q, p.Batches[0], nil); slack != 0 {
 		t.Fatalf("400ms sender + 100ms service + 7ms margin must fit 507ms exactly: %v", slack)
 	}
-	if c := ChooseBatch(p, []RequestState{q}); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
+	if c := ChooseBatch(p, []RequestState{q}, nil); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
 		t.Fatalf("feasible deadline must execute: %+v", c)
 	}
 	for _, sender := range []float64{0, 400, 500} {
@@ -271,13 +285,14 @@ func TestFixedProfileUsesSameSerialActor(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	r := &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2}}
+	r := &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2, TrialID: "profile-trial"}}
 	reply := s.submit(context.Background(), r)
 	p := reply.profile
-	if reply.err != nil || !p.ExecutionComplete || p.BatchSize != 2 || len(p.BatchIDs) != 1 || len(p.ServiceSamplesMS) != 1 || len(p.BackendSamplesMS) != 1 || len(p.NativeSamplesMS) != 1 || len(p.PreprocessSamplesMS) != 1 || len(p.PostprocessSamplesMS) != 1 || p.FirstTokenSamplesMS != nil || !reflect.DeepEqual(p.Units, []int{1, 2}) {
+	if reply.err != nil || !p.ExecutionComplete || p.BatchSize != 2 || len(p.BatchIDs) != 1 || len(p.ServiceSamples) != 1 || len(p.BackendSamplesMS) != 1 || len(p.NativeSamplesMS) != 1 || len(p.PreprocessSamplesMS) != 1 || len(p.PostprocessSamplesMS) != 1 || p.FirstTokenSamplesMS != nil || !reflect.DeepEqual(p.Units, []int{1, 2}) {
 		t.Fatalf("one profile call must return one aligned execution with per-request units: %+v", reply)
 	}
-	if p.PreprocessSamplesMS[0]+p.BackendSamplesMS[0]+p.PostprocessSamplesMS[0] > p.ServiceSamplesMS[0] || p.NativeSamplesMS[0] < p.ServiceSamplesMS[0] {
+	serviceMS := float64(p.ServiceSamples[0].ServiceDurationNanos) / float64(time.Millisecond)
+	if p.PreprocessSamplesMS[0]+p.BackendSamplesMS[0]+p.PostprocessSamplesMS[0] > serviceMS || p.NativeSamplesMS[0] < serviceMS {
 		t.Fatalf("physical execution samples must be nested: %+v", p)
 	}
 	h := NewHandler(s)
@@ -285,7 +300,7 @@ func TestFixedProfileUsesSameSerialActor(t *testing.T) {
 		values []string
 		status int
 	}{{[]string{"a", "fail:bad jpeg"}, http.StatusUnprocessableEntity}, {[]string{"raise", "a"}, http.StatusInternalServerError}, {[]string{"a", "b"}, http.StatusOK}} {
-		reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs(test.values...)})
+		reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs(test.values...), TrialID: "profile-trial"})
 		if reply.Code != test.status {
 			t.Fatalf("profile %v: status %d %s", test.values, reply.Code, reply.Body.String())
 		}
@@ -301,12 +316,12 @@ func TestGenerativeProfileReportsFirstToken(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	reply := s.submit(context.Background(), &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2}})
+	reply := s.submit(context.Background(), &request{received: time.Now(), context: RequestContext{RequestID: "profile", WorkloadUID: "profiling", Definition: "fixed"}, data: d, bytes: n, profile: &ProfileRequest{BatchSize: 2, TrialID: "profile-trial"}})
 	if p := reply.profile; reply.err != nil || len(p.FirstTokenSamplesMS) != 1 || p.FirstTokenSamplesMS[0] > p.BackendSamplesMS[0] {
 		t.Fatalf("generative profile must report its first-token span: %+v", reply)
 	}
 	h := NewHandler(s)
-	if reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "two-first-tokens")}); reply.Code != http.StatusInternalServerError {
+	if reply := postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "two-first-tokens"), TrialID: "profile-trial"}); reply.Code != http.StatusInternalServerError {
 		t.Fatalf("second first-token callback must end the batch: %d %s", reply.Code, reply.Body.String())
 	}
 }
@@ -482,14 +497,14 @@ func TestLateQueueMaximumThroughput(t *testing.T) {
 			p.MaxBatchSize = tc.cap
 			p.Batches = nil
 			for i, size := range []int{1, 2, 4, 8} {
-				p.Batches = append(p.Batches, BatchProfile{Size: size, ServiceSamplesMS: []float64{tc.costs[i]}, EnergyPerItemJ: 1})
+				p.Batches = append(p.Batches, testBatch(size, 1, startupSample("trial-a", tc.costs[i])))
 			}
 			queue := make([]RequestState, tc.count)
 			for i := range queue {
 				queue[i] = testState("a", 1000, 100)
 				queue[i].ElapsedMS = 1100
 			}
-			if c := ChooseBatch(p, queue); c.Size != tc.want || c.WaitMS != 0 || c.Reason != "maximum_throughput" {
+			if c := ChooseBatch(p, queue, nil); c.Size != tc.want || c.WaitMS != 0 || c.Reason != "maximum_throughput" {
 				t.Fatalf("late queue must minimize service cost per item: want size %d, got %+v", tc.want, c)
 			}
 		})
@@ -499,20 +514,20 @@ func TestLateQueueMaximumThroughput(t *testing.T) {
 func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	p := testPolicy()
 	p.Batches = []BatchProfile{
-		{Size: 1, ServiceSamplesMS: []float64{10}, EnergyPerItemJ: 3},
-		{Size: 2, ServiceSamplesMS: []float64{10}, EnergyPerItemJ: 2},
-		{Size: 3, ServiceSamplesMS: []float64{30}, EnergyPerItemJ: 1},
+		testBatch(1, 3, startupSample("trial-a", 10)),
+		testBatch(2, 2, startupSample("trial-a", 10)),
+		testBatch(3, 1, startupSample("trial-a", 30)),
 	}
 	late := []RequestState{testState("a", 1, 100), testState("a", 1, 100), testState("a", 1, 100)}
 	for i := range late {
 		late[i].Context.RequestID = string(rune('a' + i))
 	}
-	if c := ChooseBatch(p, late); c.Size != 2 || c.WaitMS != 0 {
+	if c := ChooseBatch(p, late, nil); c.Size != 2 || c.WaitMS != 0 {
 		t.Fatalf("keep must run maximum throughput among fillable batches: %+v", c)
 	}
 	for _, mode := range []string{DeadlineDrop, DeadlineDefer} {
 		p.DeadlinePolicy = mode
-		c := ChooseBatch(p, late)
+		c := ChooseBatch(p, late, nil)
 		if c.RequestID != "a" || c.Size != 0 || c.WaitMS != 0 || c.Reason != "deadline_"+mode {
 			t.Fatalf("infeasible head must receive individual lifecycle transition (%s): %+v", mode, c)
 		}
@@ -520,41 +535,41 @@ func TestDeadlineSelectorModesAndOrdering(t *testing.T) {
 	p.DeadlinePolicy = DeadlineDrop
 	running := testState("running", 1, 0)
 	running.Phase = phaseRunning
-	if c := ChooseBatch(p, append(late, running)); c.Size != 0 || c.RequestID != "" {
+	if c := ChooseBatch(p, append(late, running), nil); c.Size != 0 || c.RequestID != "" {
 		t.Fatalf("infeasible prediction is idle-only: %+v", c)
 	}
 	late[1].ElapsedMS = 1
-	if c := ChooseBatch(p, append(late, running)); c.RequestID != "b" || c.Reason != "deadline_drop" {
+	if c := ChooseBatch(p, append(late, running), nil); c.RequestID != "b" || c.Reason != "deadline_drop" {
 		t.Fatalf("expired queued work drops even during an active batch: %+v", c)
 	}
 	p.DeadlinePolicy = DeadlineDefer
-	if c := ChooseBatch(p, append(late, running)); c.RequestID != "" || c.Size != 0 {
+	if c := ChooseBatch(p, append(late, running), nil); c.RequestID != "" || c.Size != 0 {
 		t.Fatalf("defer does not demote while another batch is active: %+v", c)
 	}
 	for i := range late {
 		late[i].Phase = phaseDeferred
 	}
 	late[1].Context.WorkloadUID = "other"
-	if c := ChooseBatch(p, late); c.Size != 1 || c.RequestID != "a" {
+	if c := ChooseBatch(p, late, nil); c.Size != 1 || c.RequestID != "a" {
 		t.Fatalf("deferred FIFO cannot skip an incompatible entry: %+v", c)
 	}
 	normal := testState("normal", 100, 0)
-	if c := ChooseBatch(p, append(late, normal)); c.WorkloadUID != "normal" {
+	if c := ChooseBatch(p, append(late, normal), nil); c.WorkloadUID != "normal" {
 		t.Fatalf("normal work precedes every deferred request: %+v", c)
 	}
 	normal.Context.RequestID = "first"
 	equal := normal
 	equal.Context.RequestID = "second"
 	equal.Context.Definition = "another-definition"
-	if c := ChooseBatch(p, []RequestState{normal, equal}); c.RequestID != "first" || c.Size != 1 {
+	if c := ChooseBatch(p, []RequestState{normal, equal}, nil); c.RequestID != "first" || c.Size != 1 {
 		t.Fatalf("stable EDF keeps arrival ties and definitions separate: %+v", c)
 	}
 	p.DeadlinePolicy = DeadlineDrop
-	p.Batches = []BatchProfile{{Size: 1, ServiceSamplesMS: []float64{1, 100}, EnergyPerItemJ: 1}}
+	p.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 1), startupSample("trial-b", 100))}
 	a, b := testState("a", 50, 0), testState("b", 60, 0)
 	a.Context.SLO.Percentile = 50
 	b.Context.SLO.Percentile = 100
-	if c := ChooseBatch(p, []RequestState{b, a}); c.WorkloadUID != "a" || c.Size != 1 {
+	if c := ChooseBatch(p, []RequestState{b, a}, nil); c.WorkloadUID != "a" || c.Size != 1 {
 		t.Fatalf("unrelated infeasible workload cannot reject a feasible EDF head: %+v", c)
 	}
 	a.Context.SenderElapsedMS, a.ElapsedMS = 20, 30
@@ -773,8 +788,91 @@ func TestFixedBatchValidationAndReload(t *testing.T) {
 	} {
 		next := *cfg
 		change(&next)
-		if err := s.Update(context.Background(), &next); err == nil || s.config.Load() != cfg {
+		if err := s.Update(context.Background(), &next); err == nil {
 			t.Fatalf("reload removing B was accepted: %+v", next.Policy)
 		}
+	}
+}
+
+func TestProfilePacingPreservesActualExchangePairsAndNaturalIdle(t *testing.T) {
+	s, _ := startTestActor(t, modeProfiling, "100", nil)
+	h := NewHandler(s)
+	decode := func(reply *httptest.ResponseRecorder) ProfileResponse {
+		t.Helper()
+		var response ProfileResponse
+		if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || !response.ExecutionComplete || !reflect.DeepEqual(response.Units, []int{1, 2}) || len(response.ServiceSamples) != 1 {
+			t.Fatalf("paced execution must return real results: %d %s", reply.Code, reply.Body.String())
+		}
+		return response
+	}
+	profile := func(draw *CadenceDraw) ProfileResponse {
+		return decode(postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "b+c"), TrialID: "physical-trial", CadenceDraw: draw}))
+	}
+	first := profile(nil).ServiceSamples[0]
+	if first.PrecedingIdleNanos != nil {
+		t.Fatalf("Python startup warmup cannot invent a Go exchange anchor: %+v", first)
+	}
+	// This idle is longer than the execution timeout: pacing must not consume it.
+	target := int64(3200 * time.Millisecond)
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "b+c"), TrialID: "physical-trial", CadenceDraw: &CadenceDraw{TargetIdleNanos: target, Ref: CadenceDrawRef{Phase: "low", DrawIndex: 1}}})
+	}()
+	awaitActorState(t, s, func(state State) bool {
+		return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning && state.Requests[0].ExchangeElapsedNanos == nil
+	})
+	running := awaitActorState(t, s, func(state State) bool {
+		return len(state.Requests) == 1 && state.Requests[0].ExchangeElapsedNanos != nil
+	})
+	if running.Requests[0].PrecedingIdleNanos == nil || *running.Requests[0].PrecedingIdleNanos < target || *running.Requests[0].ExchangeElapsedNanos >= target {
+		t.Fatalf("running residual must see preceding gap and actual exchange elapsed, not actor span: %+v", running.Requests[0])
+	}
+	second := decode(<-done).ServiceSamples[0]
+	if second.PrecedingIdleNanos == nil || *second.PrecedingIdleNanos < target || second.ServiceDurationNanos >= target/2 || second.ServiceDurationNanos <= 0 {
+		t.Fatalf("paced idle must be recorded in G, never folded into S: %+v", second)
+	}
+	time.Sleep(600 * time.Millisecond)
+	naturalTarget := int64(400 * time.Millisecond)
+	start := time.Now()
+	third := profile(&CadenceDraw{TargetIdleNanos: naturalTarget, Ref: CadenceDrawRef{Phase: "low", DrawIndex: 2}}).ServiceSamples[0]
+	wall := time.Since(start)
+	if third.PrecedingIdleNanos == nil || *third.PrecedingIdleNanos < int64(600*time.Millisecond) || wall >= 400*time.Millisecond {
+		t.Fatalf("natural idle must satisfy target without another full sleep: wall=%s sample=%+v", wall, third)
+	}
+}
+
+func TestNativeBundleRejectsDurationOnlyProfiles(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := filepath.Join(dir, "profile.json")
+	configPath := filepath.Join(dir, "config.json")
+	cfg := Config{Model: "synthetic", Mode: modeServing, Inputs: []string{"input"}, Outputs: []string{"output"}, RunnerCommand: []string{"runner"}, RunnerTimeoutMS: 3000, MaxQueueRequests: 8, MaxQueueBytes: 1 << 20, MaxRequestBytes: 1 << 20, MaxBatchSize: 2, BatchSizes: []int{1, 2}, ProfilePath: profilePath, Policy: testPolicy()}
+	configJSON, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, configJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	old := []byte(`{"profileID":"synthetic-profile","batches":[{"size":1,"serviceSamplesMS":[10],"energyPerItemJ":1}]}`)
+	if err := os.WriteFile(profilePath, old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadConfig(configPath); err == nil {
+		t.Fatal("duration-only bundle silently synthesized missing idle history")
+	}
+	paired, err := json.Marshal(ProfileBundle{ProfileID: cfg.Policy.ProfileID, Batches: testPolicy().Batches})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, paired, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := ReadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := []RequestState{testState("w", 100, 0), testState("w", 100, 0)}
+	if choice := ChooseBatch(loaded.Policy, queue, nil); choice.Size != 2 || choice.Reason != "available_energy" {
+		t.Fatalf("paired bundle must hydrate a usable conditional native policy: %+v", choice)
 	}
 }

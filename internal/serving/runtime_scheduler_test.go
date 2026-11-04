@@ -180,7 +180,7 @@ func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 			request.Elapsed, request.RemainingLifetime, wantElapsed, wantRemaining)
 	}
 	estimate := schedulerRequireEstimate(t, schedulerKeepForTest(t, settings, snapshot), d.UID)
-	wantCompletion := float64(wantElapsed) + snapshot.Instances[0].Profile.Batches[0].DurationNanos[0]
+	wantCompletion := float64(wantElapsed) + float64(snapshot.Instances[0].Profile.Batches[0].ServiceSamples[0].ServiceDurationNanos)
 	if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != wantCompletion ||
 		estimate.NormalizedExceedance <= 0 {
 		t.Fatalf("decision concealed already elapsed SLO time: %+v; want completion=%g", estimate, wantCompletion)
@@ -1001,5 +1001,52 @@ func TestSelectiveTargetPreservesUnreadyWorkloadAC39(t *testing.T) {
 	target.Routing["w1"] = map[string]int32{}
 	if err := r.ApplySchedulerWorkloadsTarget(target, []string{"w2"}); err == nil {
 		t.Fatal("changed preserved UID was accepted")
+	}
+}
+
+func TestRuntimeReplayRunningResidualUsesExchangeGapAndElapsed(t *testing.T) {
+	for _, startup := range []bool{false, true} {
+		settings, snapshot := schedulerFixture()
+		settings.AutonomousWorkloads = nil
+		settings.DefaultDispatchOccupancyNanos = 0
+		d := snapshot.Workloads[0]
+		d.SLO.TargetLatency = time.Second
+		busy, long := int64(0), int64(100*time.Millisecond)
+		b := &snapshot.Instances[0].Profile.Batches[0]
+		*b = schedulerTestPairedBatch(*b, []native.ServiceSample{
+			{ServiceDurationNanos: int64(30 * time.Millisecond), TrialID: "physical-a"},
+			{ServiceDurationNanos: int64(2 * time.Millisecond), PrecedingIdleNanos: &busy, TrialID: "physical-a"},
+			{ServiceDurationNanos: int64(20 * time.Millisecond), PrecedingIdleNanos: &long, TrialID: "physical-a"},
+		})
+		elapsed := int64(5 * time.Millisecond)
+		prior := &long
+		if startup {
+			prior = nil
+		}
+		call := &Call{
+			receipt:    Receipt{ID: "running", UID: d.UID, ReceivedAt: snapshot.At.Add(-60 * time.Millisecond)},
+			definition: d, identity: d.Identity(), assignment: &Assignment{Instance: "i1"},
+		}
+		runtime := &Runtime{
+			calls: map[string]*Call{"running": call},
+			instances: map[string]*runtimeInstance{"i1": {ReadyInstance: ReadyInstance{State: InstanceState{
+				ID: "i1", ObservedAt: snapshot.At.Add(-3 * time.Millisecond),
+				Native: &native.State{Requests: []native.RequestState{{
+					Context: native.RequestContext{RequestID: "running", WorkloadUID: d.UID, Definition: d.Identity()},
+					Phase:   phaseRunning, BatchID: 1, ServiceElapsedMS: 50,
+					PrecedingIdleNanos: prior, ExchangeElapsedNanos: &elapsed,
+				}}},
+			}}}},
+		}
+		snapshot.Outstanding = runtime.SchedulerInputs(func() time.Time { return snapshot.At }).Outstanding
+		got := schedulerKeepForTest(t, settings, snapshot)
+		estimate := schedulerRequireEstimate(t, got, d.UID)
+		want := float64(72 * time.Millisecond)
+		if startup {
+			want = float64(82 * time.Millisecond)
+		}
+		if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != want {
+			t.Fatalf("startup=%t residual must use actual prior gap and exchange age, not actor elapsed: %+v reasons=%v", startup, estimate, got.Reasons)
+		}
 	}
 }

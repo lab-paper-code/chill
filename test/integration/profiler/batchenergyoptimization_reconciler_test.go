@@ -12,6 +12,7 @@ import (
 	batchcontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -586,7 +587,8 @@ func integrationCurvePlan(t *testing.T) profilederivation.CurvePlan {
 			WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 		}
 	}
-	active := protocol("saturated-serial-fixed-batch")
+	active := protocol("empirical-cadence-fixed-batch")
+	active.Cadences = fixtures.Cadences(1, 2)
 	active.WarmupIterations = 20
 	active.StartupWarmupIterations = 20
 	active.WorkloadName = "mobilenet"

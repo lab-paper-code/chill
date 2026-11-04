@@ -57,6 +57,9 @@ func validatePreparedForRun(run *edgev1alpha1.ProfilingRun, prepared profiler.Pr
 		actual.Measurement.SLOTargetLatencyNanos = prepared.RunConfig.Measurement.SLOTargetLatencyNanos
 		actual.Measurement.MinServiceSamples = prepared.RunConfig.Measurement.MinServiceSamples
 	}
+	if request.Preparation.Measurement.Cadence != nil {
+		actual.Measurement.Cadence = prepared.RunConfig.Measurement.Cadence
+	}
 	// ResourceVersion remains in raw RunConfig, but never gates admission.
 	request.Preparation.Measurement.WorkloadResourceVersion = ""
 	if !reflect.DeepEqual(request.Preparation, actual) {

@@ -34,7 +34,9 @@ import (
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/queryapi/readapi"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
+	"github.com/lab-paper-code/chill/test/fixtures"
 	corev1 "k8s.io/api/core/v1"
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -683,11 +685,7 @@ func statisticsFixture(
 	idle.Actor.MemoryRequestBytes = base.Actor.MemoryRequestBytes
 	idle.Actor.MemoryLimitBytes = base.Actor.MemoryLimitBytes
 	shared, err := projection.ProjectCurvePlanSpec(
-		"statistics",
-		base,
-		idle,
-		derivation.CurveConversionContract{},
-		[]int{1, 2},
+		"statistics", base, idle, derivation.CurveConversionContract{}, []int{1, 2}, fixtures.Cadences(1, 2),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -779,6 +777,11 @@ func statisticsFixture(
 				mode = campaign.WorkloadModeIdle
 				measurement.SettlingDurationSeconds = ptr.To(int32(config.Measurement.SettlingDurationSeconds))
 			} else {
+				cadence, err := json.Marshal(config.Measurement.Cadence)
+				if err != nil {
+					t.Fatal(err)
+				}
+				measurement.Cadence = &apiextensions.JSON{Raw: cadence}
 				measurement.Dataset = config.Measurement.Dataset.Name
 				measurement.Workload = config.Measurement.WorkloadName
 				measurement.WorkloadUID = config.Measurement.WorkloadUID
@@ -1097,7 +1100,8 @@ func statisticsTrial(
 		var samples []runconfig.NativeServiceSample
 		for i := range latencies {
 			samples = append(samples, runconfig.NativeServiceSample{
-				BatchID: uint64(i + 1), BatchSize: 1, RecordIDs: []string{"record"}, Units: []int{1},
+				ServiceSample: fixtures.ServiceSample(config.Measurement.Cadence, name, uint64(i), 700000),
+				BatchID:       uint64(i + 1), BatchSize: 1, RecordIDs: []string{"record"}, Units: []int{1},
 				RunnerServiceMilliseconds: .7, PreprocessMilliseconds: .1, PostprocessMilliseconds: .1,
 				BackendCallMilliseconds: .4, NativeRequestMilliseconds: .9,
 			})
