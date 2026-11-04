@@ -74,7 +74,7 @@ type EvaluationStage struct {
 	// An empty recorded list stays [] (harness reports, no boundary yet); unrecorded is null.
 	Progress       []api.EvaluationStageProgress `json:"progress"`
 	LastProgressAt string                        `json:"lastProgressAt,omitempty"`
-	LoadJobs       []EvaluationLoadJob           `json:"loadJobs,omitempty"`
+	LoadJobs       []EvaluationLoadJob           `json:"loadJobs"`
 }
 type EvaluationLoadJob struct {
 	Name        string       `json:"name"`

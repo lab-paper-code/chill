@@ -7,12 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"errors"
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	evaluation "github.com/lab-paper-code/chill/internal/evaluation/service"
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestEvaluationViewFlattensStatus(t *testing.T) {
@@ -185,7 +189,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 					{"step":"factor","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"RecordedReason","measurementVerdict":"PASS"},
 					{"step":"stage","startedAt":"2026-11-04T01:01:00Z","finishedAt":null}
 				 ],"startedAt":"2026-11-04T01:00:00Z","finishedAt":null,"goAt":"2026-11-04T01:00:00Z"},
-				{"id":"second","name":"a-stage","uid":"second-uid","conditions":null,"procedures":null,"startedAt":null,"finishedAt":null,"goAt":null,"progress":null}
+				{"id":"second","name":"a-stage","uid":"second-uid","conditions":null,"procedures":null,"startedAt":null,"finishedAt":null,"goAt":null,"progress":null,"loadJobs":[]}
 			]
 		}`},
 		{"absent", &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "ns"}},
@@ -289,7 +293,7 @@ func TestEvaluationStageProgressDistinguishesEmptyFromUnrecorded(t *testing.T) {
 		progress []api.EvaluationStageProgress
 		want     string
 	}{{[]api.EvaluationStageProgress{}, "[]"}, {nil, "null"}} {
-		raw, err := json.Marshal(evaluationViewDTO(evaluation.EvaluationView{Stages: []evaluation.EvaluationStage{{ID: "s", Progress: test.progress}}}))
+		raw, err := json.Marshal(evaluationViewDTO(evaluation.EvaluationView{Stages: []evaluation.EvaluationStage{{ID: "s", Progress: test.progress, LoadJobs: []evaluation.EvaluationLoadJob{}}}}))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,6 +305,48 @@ func TestEvaluationStageProgressDistinguishesEmptyFromUnrecorded(t *testing.T) {
 		}
 		if got := string(view.Stages[0]["progress"]); got != test.want {
 			t.Fatalf("progress=%s want=%s", got, test.want)
+		}
+		if got := string(view.Stages[0]["loadJobs"]); got != "[]" {
+			t.Fatalf("listed stage without Jobs must report loadJobs=[], got %s", got)
+		}
+	}
+}
+
+// loadJobs is supplementary: a forbidden Job LIST must not fail the Run/Stage read.
+func TestEvaluationReadSurvivesJobListFailure(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := api.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	stage := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "ns", UID: "s-uid"}, Spec: api.EvaluationStageSpec{StageID: "one"}}
+	run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "run", Namespace: "ns", UID: "run-uid"},
+		Status: api.EvaluationRunStatus{ChildRefs: []api.EvaluationChildReference{{StageID: "one", EvaluationObjectReference: api.EvaluationObjectReference{Name: "s", UID: "s-uid"}}}}}
+	native := interceptor.NewClient(fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, stage).Build(), interceptor.Funcs{
+		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, options ...client.ListOption) error {
+			if _, ok := list.(*batchv1.JobList); ok {
+				return apierrors.NewForbidden(batchv1.Resource("jobs"), "", errors.New("denied"))
+			}
+			return c.List(ctx, list, options...)
+		}})
+	var config HandlerConfig
+	ConfigureEvaluations(&config, evaluation.New(native, native, "ns", nil))
+	detail, err := config.GetEvaluation(context.Background(), "run")
+	if err != nil {
+		t.Fatalf("Run read must not fail on Job LIST: %v", err)
+	}
+	list, err := config.ListEvaluations(context.Background())
+	if err != nil {
+		t.Fatalf("Run list must not fail on Job LIST: %v", err)
+	}
+	for _, view := range []EvaluationView{detail, list.Items[0]} {
+		raw, _ := json.Marshal(view.Stages[0])
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &fields)
+		if string(fields["loadJobs"]) != "null" {
+			t.Fatalf("unobserved Jobs must be null, got %s", fields["loadJobs"])
 		}
 	}
 }
