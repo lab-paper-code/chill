@@ -25,6 +25,14 @@ test("saved r2b client evidence gap is not asserted to be unsent traffic",()=>{
   assert.doesNotMatch(html,/미발행 4,125|부분 발행/)
   assert.match(html,/발행 증거 부족 4,125/)
 })
+test("saved partial energy exposes each node coverage independently",()=>{
+  const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:r2b,stage:r2b.stages[0]}))
+  const table=html.match(/<table[^>]+aria-label="노드별 에너지 coverage"[\s\S]*?<\/table>/)?.[0]??""
+  assert.match(table,/genesis3.*122,354.*1\.44%.*5\.82.*15.*공백 정책 미충족/)
+  assert.match(table,/jetsono.*0\.89%.*계측 불완전.*공백 정책 충족/)
+  assert.equal((table.match(/<tbody>[\s\S]*?<\/tbody>/)?.[0].match(/<tr\b/g)??[]).length,7)
+  assert.doesNotMatch(html,/partial\/unavailable source or coverage below reporting policy/)
+})
 const stage=(id:string)=>({id,from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",kpis:{}})
 const run:Experiment={schemaVersion:"serving-experiment.v1alpha1",id:"comparison",from:"2026-10-30T00:00:00Z",to:"2026-10-30T00:01:00Z",status:"FAIL",sources:[],stages:[stage("candidate"),stage("baseline"),stage("unpaired")],comparisons:[{left:{stageID:"candidate"},right:{stageID:"baseline"},reason:"조건 확인"}]}
 

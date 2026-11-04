@@ -74,11 +74,20 @@ function ExperimentEnergy({stage}:{stage:ExperimentStage}) {
   return <section aria-label="에너지·배출" className="space-y-1 border-y py-3 text-sm">
     <p><strong>에너지 {publishedText(power.energyStatus??energy.offered)||"미기록"}</strong>{joules!==null?` · ${joules.toLocaleString("ko-KR",{maximumFractionDigits:1})} J ${partial?"관측 (일부 노드 coverage 미달)":"풀 전체"}`:" · 미기록"}{affected>0?` · ${affected}/${nodes.length} 노드 계측 출처 또는 공백 기준 미충족`:reasons.length?` · ${reasons[0]}${reasons.length>1?` 외 ${reasons.length-1}개`:""}`:""}{gap!==null&&` · 최대 공백 ${gap.toLocaleString("ko-KR",{minimumFractionDigits:1,maximumFractionDigits:1})} s`}</p>
     <p>{partial?"관측 평균 전력":"풀 평균 전력"} {resultNumber(meanWatts,"W")} W{partial&&" (일부 노드 coverage 미달)"}</p>
-    <p className={drain.complete===false?"text-destructive":"text-muted-foreground"}>요청 배출 {drain.complete===true?"완료":drain.complete===false?"미완료":"미기록"}{drainReasons.length?` · ${drainReasons.map(reason=>reason==="ProducerEOFWithoutCompleteDrain"?"생성기 종료 후 요청 배출 미완료":reason).join(", ")}`:""}</p>
+    <p className={drain.complete===false?"text-destructive":"text-muted-foreground"}> 게시 당시 요청 배출 {drain.complete===true?"완료":drain.complete===false?"미완료":"미기록"}{drainReasons.length?` · ${drainReasons.map(reason=>reason==="ProducerEOFWithoutCompleteDrain"?"생성기 종료 후 요청 배출 미완료":reason).join(", ")}`:""}</p>
     <details className="text-xs"><summary className="min-h-11 cursor-pointer">에너지 계측 근거·배출 포함 범위</summary>
       <div className="space-y-2 pb-2">
         <p>부하 구간 {resultTime(power.from)} – {resultTime(power.to)}{nodes.length?` · 선언 ${nodes.length}노드`:""}</p>
-        {reasons.length>0&&<ul className="list-inside list-disc">{reasons.map(reason=><li className="break-words" key={reason}>{reason}</li>)}</ul>}
+        {nodes.length>0&&<div className="overflow-x-auto"><table aria-label="노드별 에너지 coverage" className="w-full text-left tabular-nums">
+          <thead><tr>{["노드","관측 J","coverage","사유"].map(label=><th scope="col" className="p-2 font-medium" key={label}>{label}</th>)}</tr></thead>
+          <tbody>{nodes.map((node,index)=>{const source=object(node.sourceIdentity),nodeReasons=Array.isArray(node.reasons)?node.reasons.filter((reason):reason is string=>typeof reason==="string"):[];return <tr className="border-t align-top" key={String(object(node.node).uid??index)}>
+            <th scope="row" className="p-2 font-normal">{publishedText(object(node.node).name)||"미기록"}</th>
+            <td className="whitespace-nowrap p-2">{resultNumber("reportedMeterJoules" in node?node.reportedMeterJoules:"meterJoules" in node?node.meterJoules:node.joules)} J</td>
+            <td className="whitespace-nowrap p-2">공백 {resultPercent(finite(node.gapFraction))}<span className="block">최대 {finite(node.maximumSampleGapSeconds)?.toLocaleString("ko-KR",{maximumFractionDigits:2})??"미기록"} s</span><span className="block">읽기 실패 {resultNumber(node.readFailures)}</span></td>
+            <td className="p-2"><span className="block">{node.meterComplete===true?"계측 완전":node.meterComplete===false?"계측 불완전":"계측 완전성 미기록"}</span><span className="block">{node.policyMet===true?"공백 정책 충족":node.policyMet===false?"공백 정책 미충족":"공백 정책 미기록"}</span><span className="block">출처 {publishedText(source.kind)||"미기록"}{typeof source.metric==="string"?` / ${source.metric}`:""}</span>{nodeReasons.map(reason=><span className="block break-words" key={reason}>{reason}</span>)}</td>
+          </tr>})}</tbody>
+        </table></div>}
+        {reasons.filter(reason=>!nodes.some(node=>reason.startsWith(`Declared Node ${object(node.node).name}:`)&&reason.includes("partial/unavailable source or coverage below reporting policy"))).map(reason=><p className="break-words" key={reason}>{reason}</p>)}
         <p>배출 포함 에너지 {publishedText(drainPower.energyStatus??energy.drainInclusive)||"미기록"} · {resultNumber(drainEnergy.joules)} J{drainEnergy.joules!==null&&(drainEnergy.partial?" 관측 (일부 노드 coverage 미달)":" 풀 전체")}</p>
         {Object.keys(drainPower).length>0&&<p>배출 포함 구간 {resultTime(drainPower.from)} – {resultTime(drainPower.to)}</p>}
         <p>공백 정책: 비율 {resultPercent(finite(object(coverage.policy).maxGapFraction))} · 단일 공백 {resultNumber(object(coverage.policy).maxSingleGapSeconds)} s</p>
