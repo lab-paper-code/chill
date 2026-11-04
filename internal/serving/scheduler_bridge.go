@@ -440,9 +440,12 @@ func (p *capacityPlanner) bridgeRequestJoules(b *schedulerBridgeSchedule, w capa
 		if stage.UID != w.d.UID {
 			continue
 		}
-		until := stage.At.Seconds()
+		until := min(stage.At.Seconds(), window)
 		joules += power(weights) * (until - at)
 		at = until
+		if at >= window {
+			return joules
+		}
 		for _, action := range b.actions {
 			if action.ID == stage.Action {
 				weights = action.RouteTarget.Routing[w.d.UID]
@@ -450,13 +453,14 @@ func (p *capacityPlanner) bridgeRequestJoules(b *schedulerBridgeSchedule, w capa
 			}
 		}
 	}
-	return joules + power(weights)*(route-at) + w.rate*finalMean*(window-route)
+	return joules + power(weights)*max(0, min(route, window)-at) + w.rate*finalMean*max(0, window-route)
 }
 
 func (b *schedulerBridgeSchedule) nodeJoules(plan *capacityPlan, n int, r, t float64) float64 {
 	joules := plan.energy(r, t)
 	if b != nil && !plan.keep {
-		joules += (plan.before - plan.mid) * b.delays[n]
+		delay := b.delays[n]
+		joules += plan.before*min(delay, t) - plan.mid*min(delay, max(0, min(r, t)-plan.preMean))
 	}
 	return joules
 }

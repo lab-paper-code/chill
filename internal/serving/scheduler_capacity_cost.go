@@ -8,12 +8,12 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-// energy is the Node's joules over [0, t] when the route lands at r.
+// energy charges committed operations in full and waiting/serving only in [0, t].
 func (p *capacityPlan) energy(r, t float64) float64 {
 	if p.keep {
 		return p.before * t
 	}
-	return p.preJ + p.mid*(r-p.preMean) + p.postJ + p.after*(t-r-p.postMean)
+	return p.preJ + p.mid*max(0, min(r, t)-p.preMean) + p.postJ + p.after*max(0, t-r-p.postMean)
 }
 
 // A trial's shift/gap error is deterministic: repeated uses add, shared uses
@@ -68,8 +68,8 @@ func (plan *capacityPlan) addBounds(bounds schedulerEnergyBounds, r, t, sign flo
 	for source, value := range plan.operationBounds {
 		bounds[source] += sign * value
 	}
-	add(plan.midBound, r-plan.preMean)
-	add(plan.afterBound, t-r-plan.postMean)
+	add(plan.midBound, max(0, min(r, t)-plan.preMean))
+	add(plan.afterBound, max(0, t-r-plan.postMean))
 }
 
 // chain plans the Node change with schedulerPlan and sums the measured costs
@@ -294,11 +294,12 @@ func (p *capacityPlanner) gainBound(keep, best capacityResult) float64 {
 			if best.bridge != nil && !p.plans[n][j].keep {
 				plan, delay := p.plans[n][j], best.bridge.delays[n]
 				for _, weighted := range []struct {
-					bound schedulerBaselineBound
-					sign  float64
-				}{{plan.beforeBound, -1}, {plan.midBound, 1}} {
+					bound   schedulerBaselineBound
+					sign    float64
+					seconds float64
+				}{{plan.beforeBound, -1, min(delay, best.period)}, {plan.midBound, 1, min(delay, max(0, min(best.route, best.period)-plan.preMean))}} {
 					if weighted.bound.watts != 0 {
-						bounds[schedulerBoundSource{reference: weighted.bound.reference, trial: -1}] += weighted.sign * delay * weighted.bound.watts
+						bounds[schedulerBoundSource{reference: weighted.bound.reference, trial: -1}] += weighted.sign * weighted.seconds * weighted.bound.watts
 					}
 				}
 			}

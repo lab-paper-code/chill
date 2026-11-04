@@ -389,12 +389,12 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	if len(decision.Capacity.TransitionReserves) != 1 || !decision.Capacity.TransitionReserves[0].Allowed || decision.Capacity.TransitionReserves[0].Required != 3 {
 		t.Fatalf("reserve judgment missing: %+v", decision.Capacity)
 	}
-	// Both nodes are charged over W=H+100ms: removal consumes 1 J,
+	// Both nodes are charged over the configured H: removal consumes 1 J,
 	// unloaded A consumes 5 W afterward, and Ready reserve B consumes
-	// 20 W throughout, including the part beyond the configured horizon.
+	// 20 W throughout the same horizon.
 	window := decision.Capacity.Period.Seconds()
-	if window <= settings.ComparisonPeriod.Seconds() {
-		t.Fatal("transition did not extend the common comparison window")
+	if window != settings.ComparisonPeriod.Seconds() {
+		t.Fatal("transition changed the common comparison horizon")
 	}
 	wantJoules := 1 + 5*(window-.1) + 20*window
 	if decision.Target.ExpectedJoules == nil || math.Abs(*decision.Target.ExpectedJoules-wantJoules) > 1e-6 {

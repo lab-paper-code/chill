@@ -201,13 +201,13 @@ func TestCapacityCombinedHorizonBoundary(t *testing.T) {
 	}
 	choice := []int{1, 1}
 	res := p.evaluate(choice, p.routeOf(choice))
-	if res.exclusion != "" || !p.admits(&res) || res.period != 121 {
-		t.Fatal("combined chain was not scored over route+post+period")
+	if res.exclusion != "" || !p.admits(&res) || res.period != 60 {
+		t.Fatal("combined chain changed the common horizon or eligibility")
 	}
 	p.plans[1][1].postMax = 50
 	res = p.evaluate(choice, p.routeOf(choice))
-	if res.exclusion != "" || !p.admits(&res) || res.period != 120 {
-		t.Fatal("exact old horizon boundary changed the window rule")
+	if res.exclusion != "" || !p.admits(&res) || res.period != 60 {
+		t.Fatal("exact horizon boundary changed the common window rule")
 	}
 }
 
