@@ -21,15 +21,16 @@ import { RecordsNavigation, RecordsRange } from "@/components/records-navigation
 import { candidatePlans } from "@/lib/live-display"
 
 export function SchedulerIntervalEvents({from,to,returnTo,label}:{from:string;to:string;returnTo?:string;label?:string}) {
+  const [requested,setRequested]=React.useState(false)
   const params=new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"desc",limit:"10"})
-  const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${params}`,{decoder:parseSchedulerJSON})
+  const query=useChillQuery<SchedulerObservationSummaryPage>(`v1/observations/scheduler?${params}`,{enabled:requested,decoder:parseSchedulerJSON})
   const destination=historyReturnTo(returnTo),historyParams=new URLSearchParams({from,to,filter:"decision-action",order:"desc"})
   if(destination)historyParams.set("returnTo",destination)
   if(query.data?.nextCursor)historyParams.set("cursor",query.data.nextCursor)
   return <section className="space-y-3" aria-label={`${label?`${label} · `:""}같은 기간 사건 · 클러스터 전체`}>
     <h3 className="text-sm font-semibold">{label&&`${label} · `}같은 기간 사건 · 클러스터 전체</h3>
     <p className="text-sm tabular-nums">{when(from)} ~ {when(to)}</p>
-    <QueryGate query={query}>{query.data&&<>
+    {!requested?<Button type="button" variant="outline" onClick={()=>setRequested(true)}>같은 기간 사건 조회</Button>:<QueryGate query={query}>{query.data&&<>
       {query.data.gapUntil&&<p role="status">{gapNotice(query.data.gapUntil)}</p>}
       <p role="status" className="text-sm">{query.data.nextCursor||query.data.gapUntil?"일부 기록 · ":""}최근 10개</p>
       {query.data.events?.length?<div className="overflow-x-auto"><table className="w-full text-sm">
@@ -45,7 +46,7 @@ export function SchedulerIntervalEvents({from,to,returnTo,label}:{from:string;to
         })}</tbody>
       </table></div>:<p role="status">불러온 범위 기록 없음</p>}
       <Link className="inline-flex min-h-11 items-center underline underline-offset-4" href={`/records?${historyParams}`}>{query.data.nextCursor?"구간 기록 더 보기":"구간 기록 열기"}</Link>
-    </>}</QueryGate>
+    </>}</QueryGate>}
   </section>
 }
 

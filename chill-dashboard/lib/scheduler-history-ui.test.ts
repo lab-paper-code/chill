@@ -187,6 +187,7 @@ test("interval preview requests latest cluster events and keeps exact identity a
   const path=`v1/observations/scheduler?${new URLSearchParams({from,to,view:"summary",filter:"decision-action",order:"desc",limit:"10"})}`
   const event={at:"2026-11-01T00:30:00.123456789Z",offset:9007199254740993n,action:{id:"action",kind:"route",phase:"starting",node:{name:"node",uid:"node-uid"},startedAt:"2026-11-01T00:29:59.123456789Z"}}
   const h=harness("",{[path]:{data:{events:[event],nextCursor:"older",gapUntil:from}}})
+  h.modules.react={useState:()=>[true,()=>{}]}
   h.modules["./scheduler"]={actionKinds:{route:"분배"},actionNodeName:(node:{name:string})=>node.name}
   const tree=h.load("../features/scheduler-evidence.tsx").SchedulerIntervalEvents({from,to,returnTo,label:"기준"})
   assert.equal(h.calls[0],path)
@@ -226,6 +227,34 @@ test("candidate and baseline previews use their own absolute ranges without serv
     assert.equal(params.has("returnTo"),false)
     return {from:params.get("from"),to:params.get("to")}
   }),intervals.map(({from,to})=>({from,to})))
+})
+
+test("published interval observations issue no request until the explicit query button is clicked",()=>{
+  const from="2026-11-04T10:00:34.817685Z",to="2026-11-04T10:15:35.090158Z"
+  const h=harness(),requests:string[]=[]
+  let requested=false
+  h.modules.react={useState:(initial:boolean)=>[requested||initial,(value:boolean)=>{requested=value}]}
+  h.modules["@/lib/client"]={useChillQuery:(path:string,options:{enabled?:boolean})=>{
+    if(options.enabled===false)return {isPending:true,error:null}
+    requests.push(path)
+    return {data:{events:[{at:from,decision:{status:"Keep"}}]},error:null}
+  }}
+  h.modules["./scheduler"]={judgmentLabels:{Keep:"현재 구성 유지"}}
+  const preview=h.load("../features/scheduler-evidence.tsx").SchedulerIntervalEvents
+  const props={from,to,returnTo:"/experiments/results?a=published&service=camera",label:"선택 단계"}
+  const initial=preview(props)
+  assert.deepEqual(requests,[])
+  assert.equal(nodes(initial).some(node=>node.type==="table"),false)
+  const button=nodes(initial).find(node=>node.type==="button"&&node.props.children==="같은 기간 사건 조회")
+  assert.ok(button,"opening a service detail must offer an explicit observation query")
+  ;(button.props.onClick as ()=>void)()
+  const loaded=preview(props)
+  assert.equal(requests.length,1)
+  const query=new URL(requests[0],"https://dashboard.invalid").searchParams
+  assert.deepEqual(Object.fromEntries(query),{from,to,view:"summary",filter:"decision-action",order:"desc",limit:"10"})
+  assert.ok(nodes(loaded).some(node=>node.type==="table"))
+  assert.ok(nodes(loaded).some(node=>node.type==="a"&&String(node.props.href).startsWith("/records?")))
+  assert.ok(nodes(loaded).some(node=>node.props.children==="판단 · 현재 구성 유지"))
 })
 
 test("selected record keeps an accessible experiment return link inside its Sheet",()=>{

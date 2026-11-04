@@ -163,7 +163,7 @@ retain integer literals while removing credentials.
 
 기록 종류는 `kind=requests|power`와 기본 판단·변경으로 전환한다. 서비스 변경은 `scope=management`, 운영 설정 변경은 `scope=scheduler&filter=settings`, 기존 판단 비교는 `compare=1`이다. 종류 전환은 대상·정확한 기간·limit를 유지하고 API별 cursor·선택은 초기화한다. 같은 종류의 다음 페이지는 제출된 기간·원본 cursor를 유지한다.
 전력 조회는 서비스 UID를 API 필터로 보내지 않고 이동 맥락으로만 유지한다. `/changes?scope=scheduler`는 페이지 redirect에서 설정 변경으로 분기한다. 반복 definition/outcome, 인증 변경 전 requests/power 종류, 불완전한 과거 참조의 식별자 오류를 보존한다. 분배 동작(route/unroute/release)의 선택 근거는 선언/실제 비율과 선택된 operation의 이유·행위자·설정 검증 시각을 표시하며 journal 재조회로 대체하지 않는다.
-실험 구간의 판단·전환은 후보/기준 각각의 실제 `from/to`로 최근 10개(`order=desc`)를 조회한다. 범위는 선택 서비스가 아닌 `같은 기간 사건 · 클러스터 전체`다. `nextCursor`가 있으면 `일부 기록`과 다음 cursor로 이어지는 `더 보기`를 제공하고, 보존 공백은 서버 `gapUntil`로 표시한다. 현재 페이지를 구간 전체나 사건 총수로 표시하지 않는다.
+게시 결과의 서비스 자세히는 같은 기간 사건을 자동 조회하지 않는다. 사용자가 `같은 기간 사건 조회` 버튼을 누르면 후보/기준 각각의 실제 `from/to`로 최근 10개(`order=desc`)를 조회한다. 범위는 선택 서비스가 아닌 `같은 기간 사건 · 클러스터 전체`다. `nextCursor`가 있으면 `일부 기록`과 다음 cursor로 이어지는 `더 보기`를 제공하고, 보존 공백은 서버 `gapUntil`로 표시한다. 현재 페이지를 구간 전체나 사건 총수로 표시하지 않는다.
 사건 행은 원본 offset과 kind/at/id/node/startedAt로 정확한 기록을 연다. `/records`의 `returnTo`는 API에 보내지 않는 UI 상태이며 앱 내부 `/experiments` 경로만 허용한다. `실험 구간으로 돌아가기`는 게시 ID, `al/as/b/bs`, 서비스와 목록 offset이 포함된 원래 URL로 돌아가 같은 Sheet를 복원한다. 구간 사건과 성능의 시간 대응은 인과 판정이 아니다.
 
 설정의 정본은 `/settings?tab=configuration|models|preprocessors|datasets`다(기본 운영 설정).
