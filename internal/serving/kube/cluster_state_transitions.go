@@ -38,7 +38,7 @@ func (c *reservationState) startTransition(target *serving.SchedulerCandidate, c
 	before := servingstate.OperationState{At: started.UTC(), Instances: make([]serving.InstanceState, 0, len(c.state.Snapshot.Instances))}
 	before.Routing = c.state.Snapshot.Routing
 	for _, instance := range c.state.Snapshot.Instances {
-		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node})
+		before.Instances = append(before.Instances, serving.InstanceState{ID: instance.ID, PodUID: instance.PodUID, Node: instance.Node, OwnerWorkloadUID: instance.OwnerWorkloadUID})
 	}
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, Before: before, Status: servingstate.NativeOperationRunning, StartedAt: started}, started: started}
 	parent.admittedControls = controls

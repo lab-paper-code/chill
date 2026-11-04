@@ -154,8 +154,8 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 	result.Instances = nil
 	result.Routing = make(map[string]map[string]int32, len(selected.Routing))
 	policies := []string{}
-	routeOnly := len(parent.scope.Nodes) == 0
 	for uid, wanted := range selected.Routing {
+		routeOnly := !workloadHasPhysicalScope(parent, uid)
 		ready, newer, held, withdrawn := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 		instances := map[string]serving.SchedulerInstance{}
 		owned := map[string]bool{}
@@ -222,6 +222,15 @@ func (c *reservationState) rebaseRouteLocked(selected serving.SchedulerCandidate
 		}
 	}
 	return result, policies
+}
+
+func workloadHasPhysicalScope(parent *actionRun, uid string) bool {
+	return slices.ContainsFunc(parent.result.Operation.Target.Instances, func(instance serving.SchedulerInstance) bool {
+		return instance.WorkloadUID == uid && slices.Contains(parent.scope.Nodes, instance.Node)
+	}) || slices.ContainsFunc(parent.result.Before.Instances, func(instance serving.InstanceState) bool {
+		return slices.Contains(parent.scope.Nodes, instance.Node) &&
+			(instance.OwnerWorkloadUID == uid || parent.result.Before.Routing[uid][instance.ID] > 0)
+	})
 }
 
 func (c *reservationState) routeInstanceFenceLocked(parent *actionRun, uid string, current map[string]int32, actual serving.SchedulerInstance) (newer, held, withdrawn bool) {

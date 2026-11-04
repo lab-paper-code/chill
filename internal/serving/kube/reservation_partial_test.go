@@ -175,3 +175,48 @@ func TestResetInheritsContainedLocalReservation(t *testing.T) {
 		t.Fatalf("reset lost contained local ownership identity: owners=%v error=%v", owners, err)
 	}
 }
+
+func TestMixedPhysicalWorkloadKeepsIndependentRouteDelta(t *testing.T) {
+	c, target, first := acknowledgedHandoffFixture(t)
+	uid := target.Instances[0].WorkloadUID
+	a, b := target.Instances[0], target.Instances[0]
+	b.ID, b.Node = "second-ready", serving.NodeReference{Name: "second", UID: "second"}
+	profile := *b.Profile
+	profile.ID, profile.NodeName, profile.Condition.NodeUID = "second-profile", b.Node.Name, b.Node.UID
+	b.Profile = &profile
+	second := first
+	second.Profile = &profile
+	second.State.ID, second.State.Node, second.State.Profile = b.ID, b.Node, profile.ID
+	native := *first.State.Native
+	native.Metadata.ProfileID, native.Metadata.Policy.ProfileID = profile.ID, profile.ID
+	second.State.Native = &native
+	c.runtime.SetProfiles([]serving.Profile{*a.Profile, profile})
+	if err := c.runtime.InstallInstances([]serving.ReadyInstance{first, second}); err != nil {
+		t.Fatal(err)
+	}
+	current := serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{a, b},
+		Routing: map[string]map[string]int32{uid: {a.ID: 700, b.ID: 300}}}
+	if err := c.runtime.ApplySchedulerWorkloadsTarget(current, []string{uid}); err != nil {
+		t.Fatal(err)
+	}
+	c.state.Snapshot.Instances, c.state.Snapshot.Routing = current.Instances, current.Routing
+	u := a
+	u.ID, u.Node, u.WorkloadUID = "preparing-u", serving.NodeReference{Name: "physical", UID: "physical"}, "physical-workload"
+	goal := serving.SchedulerCandidate{ID: "mixed-owner", Instances: []serving.SchedulerInstance{a, b, u},
+		Routing: map[string]map[string]int32{uid: {a.ID: 300, b.ID: 700}, u.WorkloadUID: {u.ID: 1000}},
+		Actions: []serving.Action{{ID: "prepare-u", Kind: servingstate.OperationPrepare, Node: u.Node, Instance: u.ID}}}
+	installTestTransition(c, &goal)
+	parent := c.runs[transitionRunKind+"/"+goal.ID]
+	parent.result.Before.Routing = current.Routing
+	selected := controlledTarget(servingstate.Operation{Target: &goal, WorkloadUID: uid})
+	c.mu.Lock()
+	rebased, _ := c.rebaseRouteLocked(*selected, goal.ID, current.Routing, c.runtime.Instances())
+	c.mu.Unlock()
+	if err := c.runtime.ApplySchedulerWorkloadsTarget(rebased, []string{uid}); err != nil {
+		t.Fatal(err)
+	}
+	applied, _ := c.runtime.SchedulerRouting()
+	if applied[uid][a.ID] != 300 || applied[uid][b.ID] != 700 {
+		t.Fatalf("another workload's physical action swallowed the independent route delta: %v", applied)
+	}
+}
