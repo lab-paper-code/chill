@@ -432,55 +432,39 @@ test("run detail reads load Jobs including failure reasons, distinguishes empty 
   assert.doesNotMatch(renderProgress({loadJobs:null}),/aria-label="부하 Job"/)
 })
 
-test("server-persisted parent child and procedure boundaries jointly decide ongoing progress",()=>{
-  // stage.go:134-178 persists a completed procedure before moving currentProcedure.
-  // jobs.go:292-295 and run.go:398-401 both finish that record, including failures.
+test("representative persisted transitions never turn a completed or unowned procedure into ongoing progress",()=>{
+  const waiting={phase:"Running",currentStage:"trial"}
   const open={step:"stage",startedAt:baseRun.startedAt,finishedAt:null}
-  const closed={...open,finishedAt:"2026-11-03T00:02:20Z"}
-  const childStates=[
-    {name:"stage result persisted before the next reconcile",currentProcedure:"stage",finishedAt:null,procedures:[closed],ongoingStep:""},
-    {name:"stage running",currentProcedure:"stage",finishedAt:null,procedures:[open],ongoingStep:"stage"},
-    {name:"judge running",currentProcedure:"judge",finishedAt:null,procedures:[closed,{...open,step:"judge"}],ongoingStep:"judge"},
-    {name:"judge result or failure persisted",currentProcedure:"judge",finishedAt:null,procedures:[closed,{...closed,step:"judge"}],ongoingStep:""},
-    {name:"cleanup running",currentProcedure:"cleanup-jobs",finishedAt:null,procedures:[closed,{...closed,step:"judge"},{...open,step:"cleanup-jobs"}],ongoingStep:""},
-    {name:"cleanup completed and stage finished",currentProcedure:"cleanup-jobs",finishedAt:"2026-11-03T00:02:25Z",procedures:[closed,{...closed,step:"judge"},{...closed,step:"cleanup-jobs"}],ongoingStep:""},
-    {name:"interrupted stage retains its open procedure",currentProcedure:"stage",finishedAt:"2026-11-03T00:02:25Z",procedures:[open],ongoingStep:""},
-    {name:"interrupted judge retains its open procedure",currentProcedure:"judge",finishedAt:"2026-11-03T00:02:25Z",procedures:[closed,{...open,step:"judge"}],ongoingStep:""},
-    {name:"missing procedure history",currentProcedure:"stage",finishedAt:null,procedures:undefined,ongoingStep:""},
-    {name:"latest matching procedure is completed",currentProcedure:"stage",finishedAt:null,procedures:[open,closed],ongoingStep:""},
-    {name:"latest matching procedure is open",currentProcedure:"stage",finishedAt:null,procedures:[closed,open],ongoingStep:"stage"},
+  const closed={...open,finishedAt:"2026-11-03T00:02:02Z"}
+  const judge={step:"judge",startedAt:"2026-11-03T00:02:05Z",finishedAt:null}
+  const judged={...judge,finishedAt:"2026-11-03T00:02:20Z"}
+  const cleanup={step:"cleanup-jobs",startedAt:"2026-11-03T00:02:21Z",finishedAt:null}
+  const collecting={id:"trial",currentProcedure:"stage",finishedAt:null,procedures:[open],progress:progressEvents.slice(0,6)}
+  const judging={id:"trial",currentProcedure:"judge",finishedAt:null,procedures:[closed,judge],progress:progressEvents.slice(0,8)}
+  const cleaning={...judging,currentProcedure:"cleanup-jobs",procedures:[closed,judged,cleanup]}
+  const completed={...cleaning,finishedAt:"2026-11-03T00:02:25Z",procedures:[closed,judged,{...cleanup,finishedAt:"2026-11-03T00:02:24Z"}]}
+  // runtime.go:93-108 reuses one record per step. stage.go:134-178 persists its
+  // result/failure finishedAt before currentProcedure advances on the next reconcile.
+  const cases=[
+    {name:"prepare has no child",parent:{phase:"Running",currentProcedure:"prepare"},stage:undefined,ongoing:false,expected:undefined},
+    {name:"stage running with omitted parent procedure",parent:waiting,stage:collecting,ongoing:true,expected:"현재 구간: 수집 진행 중"},
+    {name:"judge running with empty parent procedure",parent:{...waiting,currentProcedure:""},stage:judging,ongoing:true,expected:"현재 구간: 판정 진행 중"},
+    {name:"stage result persisted before the next reconcile",parent:waiting,stage:{...collecting,procedures:[closed]},ongoing:false,expected:"마지막 관측: 수집 시작 09:01:25 · 종료 미기록"},
+    {name:"judge result or failure persisted",parent:waiting,stage:{...judging,procedures:[closed,judged]},ongoing:false,expected:"마지막 관측: 판정 시작 09:02:05 · 종료 미기록"},
+    {name:"judge entered before a start boundary was recorded",parent:waiting,stage:{...judging,progress:progressEvents.slice(0,7)},ongoing:false,expected:"마지막 관측: 수집 종료 09:02:00"},
+    {name:"judge end recorded before its result",parent:waiting,stage:{...judging,progress:progressEvents.slice(0,9)},ongoing:false,expected:"마지막 관측: 판정 종료 09:02:10"},
+    {name:"cleanup after judgment without its end boundary",parent:waiting,stage:cleaning,ongoing:false,expected:"마지막 관측: 판정 시작 09:02:05 · 종료 미기록"},
+    {name:"cleanup complete before parent observes it",parent:waiting,stage:completed,ongoing:false,expected:"마지막 관측: 판정 시작 09:02:05 · 종료 미기록"},
+    {name:"parent-required interruption preserves an open procedure",parent:waiting,stage:{...judging,finishedAt:"2026-11-03T00:02:25Z"},ongoing:false,expected:"마지막 관측: 판정 시작 09:02:05 · 종료 미기록"},
+    {name:"parent finish after child cleanup",parent:{...waiting,phase:"Finishing",currentProcedure:"finish"},stage:completed,ongoing:false,expected:"마지막 관측: 판정 시작 09:02:05 · 종료 미기록"},
+    {name:"parent publication after finish",parent:{...waiting,phase:"Done",currentProcedure:"publish"},stage:completed,ongoing:false,expected:undefined},
+    {name:"active-query snapshot still names the previous completed child",parent:{...waiting,currentStage:"next"},stage:completed,ongoing:false,expected:"마지막 관측: 판정 시작 09:02:05 · 종료 미기록"},
   ]
-  const boundaries=[
-    {count:1,step:"stage",start:true,label:"부하 시작",time:"09:00:10",ongoing:"부하 진행 중"},
-    {count:2,step:"stage",start:false,label:"부하 종료",time:"09:01:00",ongoing:""},
-    {count:3,step:"stage",start:true,label:"drain 시작",time:"09:01:00",ongoing:"drain 진행 중"},
-    {count:4,step:"stage",start:false,label:"drain 종료",time:"09:01:20",ongoing:""},
-    {count:5,step:"stage",start:true,label:"flush 시작",time:"09:01:20",ongoing:"flush 진행 중"},
-    {count:6,step:"stage",start:true,label:"수집 시작",time:"09:01:25",ongoing:"수집 진행 중"},
-    {count:7,step:"stage",start:false,label:"수집 종료",time:"09:02:00",ongoing:""},
-    {count:8,step:"judge",start:true,label:"판정 시작",time:"09:02:05",ongoing:"판정 진행 중"},
-    {count:9,step:"judge",start:false,label:"판정 종료",time:"09:02:10",ongoing:""},
-  ]
-  const parents=[
-    {phase:"Running",currentProcedure:"",currentStage:"trial"},
-    {phase:"Running",currentStage:"trial"},
-    {phase:"Running",currentStage:"next"},
-    {phase:"Finishing",currentProcedure:"finish",currentStage:"trial"},
-    {phase:"Done",currentProcedure:"publish",currentStage:"trial"},
-    {phase:"Running",currentProcedure:"prepare",currentStage:undefined},
-  ]
-  for(const parent of parents) {
-    // run.go:149-164 waits with an empty procedure; finish/publish follows child cleanup.
-    const children=parent.currentProcedure==="prepare"?[undefined]:parent.currentProcedure?childStates.filter(child=>child.finishedAt):childStates
-    for(const child of children)for(const boundary of boundaries) {
-      const stage=child?{id:"trial",currentProcedure:child.currentProcedure,finishedAt:child.finishedAt,procedures:child.procedures,progress:progressEvents.slice(0,boundary.count)}:undefined
-      const html=renderRun({...baseRun,...parent,finishedAt:parent.phase==="Done"?baseRun.finishedAt:undefined,stages:stage?[stage]:[]},undefined,[scenario],[progressEntry])
-      const summary=text(activeDetails(html).match(/<summary>[\s\S]*?<\/summary>/)?.[0]??"")
-      const expected=!!child&&parent.phase==="Running"&&!parent.currentProcedure&&parent.currentStage==="trial"&&child.ongoingStep===boundary.step&&boundary.start
-      const context=`${parent.currentProcedure??"omitted"}/${child?.name??"no child"}/${boundary.label}`
-      if(parent.phase==="Done"||!child)assert.doesNotMatch(summary,/현재 구간|진행 중/,context)
-      else assert.equal(summary,expected?`현재 구간: ${boundary.ongoing}`:`마지막 관측: ${boundary.label} ${boundary.time}${boundary.start?" · 종료 미기록":""}`,context)
-      assert.equal(active.evaluationProgressOngoing(stage as active.EvaluationStageProgress|undefined,parent),expected,context)
-    }
+  for(const {name,parent,stage,ongoing,expected} of cases) {
+    const html=renderRun({...baseRun,...parent,finishedAt:parent.phase==="Done"?"2026-11-03T00:02:27Z":undefined,stages:stage?[stage]:[]},undefined,[scenario],[progressEntry])
+    const summary=text(activeDetails(html).match(/<summary>[\s\S]*?<\/summary>/)?.[0]??"")
+    if(expected===undefined)assert.doesNotMatch(summary,/현재 구간|진행 중/,name)
+    else assert.equal(summary,expected,name)
+    assert.equal(active.evaluationProgressOngoing(stage as active.EvaluationStageProgress|undefined,parent),ongoing,name)
   }
 })
