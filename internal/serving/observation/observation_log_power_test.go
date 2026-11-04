@@ -83,18 +83,13 @@ func TestOperatingPowerSameIntervalAndActualMembership(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := observationLog.Close(context.Background()); err != nil {
-					t.Error(err)
-				}
-			})
-			from := time.Now().UTC().Add(time.Second)
+			started := observationTestHour.Add(time.Hour - 8*time.Second)
+			observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, started)
+			from := started.Add(time.Second)
 			to := from.Add(10 * time.Second)
 			meters := seedOperatingPower(t, observationLog, from, scenario)
+			// Query after the synthetic interval, including its next-hour coverage.
+			clock.set(to)
 			limit := 20
 			if scenario.boundedQuery {
 				limit = 1
@@ -266,16 +261,9 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 	}
 	for _, scenario := range scenarios {
 		t.Run(scenario.name, func(t *testing.T) {
-			observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := observationLog.Close(context.Background()); err != nil {
-					t.Error(err)
-				}
-			})
-			base := time.Now().UTC().Add(time.Second)
+			started := observationTestHour.Add(time.Hour - 8*time.Second)
+			observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, started)
+			base := started.Add(time.Second)
 			node := serving.NodeReference{Name: "ramp", UID: "ramp-uid"}
 			snapshot := serving.SchedulerSnapshot{At: base, Instances: []serving.SchedulerInstance{{ID: "ready", Node: node, Ready: true, WorkloadUID: "workload"}}}
 			if err := observationLog.SchedulerRecord(SchedulerObservation{At: base, Snapshot: &snapshot}); err != nil {
@@ -316,6 +304,8 @@ func TestOperatingPowerInterpolatesRealBoundarySupport(t *testing.T) {
 				}
 			}
 			from, to := base.Add(scenario.from), base.Add(scenario.to)
+			// The final raw support point must no longer be in the future.
+			clock.set(base.Add(10 * time.Second))
 			got, err := observationLog.OperatingPower(context.Background(), from, to, []OperatingPowerMeter{{Node: node, Meter: "ramp-wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}, 10)
 			if err != nil {
 				t.Fatal(err)
@@ -433,18 +423,13 @@ func appendClosedPowerSeries(
 }
 
 func TestOperatingPowerProjectsLargeUnrelatedPayload(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := observationLog.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
-	from := time.Now().UTC().Add(time.Second)
+	started := observationTestHour.Add(time.Hour - 8*time.Second)
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, started)
+	from := started.Add(time.Second)
 	to := from.Add(10 * time.Second)
 	meters := seedOperatingPower(t, observationLog, from, operatingPowerScenario{})
+	// Query after the synthetic interval, including its next-hour coverage.
+	clock.set(to)
 	want, err := observationLog.OperatingPower(context.Background(), from, to, meters, 20)
 	if err != nil {
 		t.Fatal(err)
