@@ -65,6 +65,9 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 			target.Nodes[n].PowerMode = plan.mode
 		}
 		for _, i := range plan.instances {
+			if reason := schedulerPhysicalChangeReason(p.snapshot, i.Node); reason != "" {
+				decision.Reasons = appendUnique(decision.Reasons, fmt.Sprintf("%s:%s:%s", reason, i.Node.Name, i.Node.UID))
+			}
 			if best.bridge == nil && p.idleRemovable(i, best, target.Routing) {
 				idleRemoved[i.ID] = true
 				reason, reserves := p.idleTransition(best, idleRemoved)
@@ -124,7 +127,7 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 // removal is for measurability and the lowest mode of an emptied Node, not
 // energy.
 func (p *capacityPlanner) idleRemovable(i SchedulerInstance, best capacityResult, routing map[string]map[string]int32) bool {
-	if !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
+	if schedulerPhysicalChangeReason(p.snapshot, i.Node) != "" || !p.idle(i) || schedulerInstanceRouted(routing, i.ID) {
 		return false
 	}
 	// Measurement and excluded Nodes keep their instances.

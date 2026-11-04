@@ -678,7 +678,8 @@ func TestResetSkipsFixedOnlyNodeWhileNotReady(t *testing.T) {
 }
 
 func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
-	for _, exclude := range []string{"workload", "node UID", "excluded", "measurement", "foreign Pod"} {
+	const nodeUIDChanged = "node UID"
+	for _, exclude := range []string{"workload", nodeUIDChanged, "excluded", "measurement", "foreign Pod"} {
 		t.Run(exclude, func(t *testing.T) {
 			h := newResetHarness(t)
 			h.powerReturnCandidate(t)
@@ -698,7 +699,7 @@ func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
 				profiles := h.controller.observer.Profiles()
 				profiles[0].Condition.LogicalModel = "outside-scope"
 				h.controller.observer.SetProfiles(profiles)
-			case "node UID":
+			case nodeUIDChanged:
 				node.UID = "reset-replacement"
 			case "excluded":
 				h.controller.mu.Lock()
@@ -717,6 +718,12 @@ func TestResetPendingPowerTargetsRespectCurrentScopeAndOwnership(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan, err := h.controller.planManualResetLocked(ctx, servingstate.Operation{WorkloadUIDs: []string{h.selectedUID}})
+			if exclude == nodeUIDChanged {
+				if err == nil || len(plan.nodes) != 0 || len(h.controller.reservedNodes()) == 0 {
+					t.Fatalf("replaced Node inherited or released unknown old responsibility: %+v err=%v", plan, err)
+				}
+				return
+			}
 			if err != nil || len(plan.nodes) != 0 {
 				t.Fatalf("pending power return crossed %s boundary: %+v err=%v", exclude, plan, err)
 			}
