@@ -104,9 +104,9 @@ test("operating range table edits accumulate a precise draft before review",()=>
   tree=elements(runner.render(SchedulerSettingsPage))
   const updated=tree.find(element=>element.type==="table")!
   const value=(updated.props.columns as {key:string;value:(field:unknown)=>unknown}[]).find(column=>column.key==="value")!.value(field)
-  assert.equal(value,"9007199254.740993ms")
+  assert.ok(JSON.stringify(value).includes("9007199254.740993ms"))
   const action=(tree.find(element=>element.type==="main")!.props.action as Tree)
-  assert.equal(action.props.children,"변경 1건 검토")
+  assert.ok(JSON.stringify(action.props.children).includes("1"))
 })
 
 test("operating sections and numeric, boolean and node Sheets follow URL history and reload",()=>{
@@ -254,6 +254,61 @@ test("manual ready instances with no active route remain selectable in the routi
   ;(add.props.onClick as ()=>void)()
   tree=elements(runner.render(Component,editor.props))
   assert.deepEqual(tree.find(node=>node.type==="table")!.props.data,[["physical",1]])
+})
+
+test("automation Sheet submission renders unapplied changes and their pending count without saving",()=>{
+  const runner=hooks(),settings={controls:{},autonomousWorkloads:[]},sent:unknown[]=[]
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>sent.push(input)}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:"manual",name:"Manual service"}}}]:undefined})}})
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  const editor=tree.find(node=>node.props.editKey==="autonomousWorkloads")!,Component=editor.type as (props:Record<string,unknown>)=>unknown
+  let form=elements(runner.render(Component,editor.props))
+  ;(form.find(node=>node.type==="input"&&node.props.type==="checkbox")!.props.onChange as (event:unknown)=>void)({target:{checked:true}})
+  form=elements(runner.render(Component,editor.props))
+  ;(form.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  tree=elements(runner.render(SchedulerSettingsPage))
+  const action=tree.find(node=>node.type==="main")!.props.action as Tree
+  const pending=elements(action).find(node=>node.props.role==="status"&&/1/.test(JSON.stringify(node.props.children)))
+  assert.ok(pending,"staged changes have a visible pending count")
+  assert.ok(tree.some(node=>node.type==="span"&&/적용 전/.test(String(node.props.children))),"the edited table value is distinguished from saved state")
+  assert.equal(action.props.disabled,false)
+  assert.equal(tree.find(node=>node.type==="main")!.props.actionPlacement,"sticky")
+  assert.deepEqual(sent,[])
+})
+
+test("rendered pending settings warn before unload and route exit, but not same-page editing",()=>{
+  const runner=hooks(),settings={controls:{},autonomousWorkloads:[]},browser=new EventTarget(),navigation=new EventTarget(),document=new EventTarget()
+  const previousWindow=globalThis.window,previousDocument=globalThis.document
+  const effectState:{cleanup?:()=>void}={}
+  let confirmed=0
+  Object.assign(browser,{navigation,location:new URL("https://dashboard.test/settings"),history:{state:null},confirm:()=>{confirmed++;return false}})
+  Object.defineProperty(globalThis,"window",{value:browser,configurable:true,writable:true})
+  Object.defineProperty(globalThis,"document",{value:document,configurable:true,writable:true})
+  const react={...runner.react,useEffect:(effect:()=>void|(()=>void))=>{effectState.cleanup?.();effectState.cleanup=effect()??undefined}}
+  try {
+    const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined})}})
+    let tree=elements(runner.render(SchedulerSettingsPage))
+    const editor=tree.find(node=>node.props.editKey==="autonomousWorkloads")!
+    ;(editor.props.save as (value:string[],source:unknown,version:null)=>void)(["manual"],settings,null)
+    tree=elements(runner.render(SchedulerSettingsPage))
+    assert.ok(elements(tree.find(node=>node.type==="main")!.props.action).some(node=>node.props.role==="status"))
+    const unload=new Event("beforeunload",{cancelable:true});browser.dispatchEvent(unload)
+    assert.equal(unload.defaultPrevented,true)
+    for(const [url,blocked] of [["/settings?section=cycle",false],["/settings?edit=autonomousWorkloads",false],["/settings?tab=models",true],["/",true]] as const){
+      const event=new Event("navigate",{cancelable:true})
+      Object.assign(event,{destination:{url:`https://dashboard.test${url}`,sameDocument:true}})
+      navigation.dispatchEvent(event)
+      assert.equal(event.defaultPrevented,blocked)
+    }
+    assert.equal(confirmed,2)
+    ;(tree.find(node=>node.props.editKey==="autonomousWorkloads")!.props.save as (value:string[],source:unknown,version:null)=>void)([],settings,null)
+    runner.render(SchedulerSettingsPage)
+    const clean=new Event("beforeunload",{cancelable:true});browser.dispatchEvent(clean)
+    assert.equal(clean.defaultPrevented,false)
+  } finally {
+    effectState.cleanup?.()
+    Object.defineProperty(globalThis,"window",{value:previousWindow,configurable:true,writable:true})
+    Object.defineProperty(globalThis,"document",{value:previousDocument,configurable:true,writable:true})
+  }
 })
 
 test("excluded node selection retains unknown names and saves selected known names without UIDs",()=>{
@@ -405,7 +460,8 @@ test("bootstrap wait editor preserves nanoseconds and enforces the server zero-t
   for(const [text,expected] of [["0","0ms"],["0.000001","0.000001ms"],["3600000","60분"]]){
     save(text)
     const updated=elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
-    assert.equal((updated.props.columns as {key:string;value:(row:unknown)=>string}[]).find(column=>column.key==="value")!.value(field),expected)
+    const value=(updated.props.columns as {key:string;value:(row:unknown)=>Tree}[]).find(column=>column.key==="value")!.value(field)
+    assert.equal((value.props.children as unknown[])[0],expected)
   }
 })
 

@@ -120,7 +120,7 @@ function ServiceSettingsEdit({editKey,label,help,initial,version=null,services,l
       {!uids.length&&<p>설정된 서비스 없음</p>}
       {editKey==="minimumDemand"&&<label className="grid gap-2">최소 수요 서비스 추가<select className="min-h-11 w-full rounded-md border bg-background px-2" value="" onChange={event=>{if(event.target.value)update({demand:{...demand,[event.target.value]:""}})}}><option value="">서비스 선택</option>{services.filter(service=>!Object.hasOwn(demand,service.uid)).map(service=><option key={service.uid} value={service.uid}>{service.name}</option>)}</select></label>}
       {error&&<p role="alert">{error}</p>}
-      <Button type="submit" disabled={disabled}>바꾸기</Button>
+      <Button type="submit" disabled={disabled}>변경 목록에 담기</Button>
     </form>
   </SheetContent></Sheet>
 }
@@ -141,7 +141,7 @@ function EditRow({editKey,label,help,changed,initial,unit,range,save,disabled,no
         ?<label className="switch"><input type="checkbox" role="switch" checked={next} onChange={event=>setNext(event.target.checked)}/>{onOff(next)}</label>
         :<div className="grid gap-2"><label htmlFor={id}>{unit?`값 (${unit})`:"값"}</label><Input id={id} autoFocus required inputMode={unit==="ms"?"decimal":"text"} value={next} onChange={event=>{setNext(event.target.value);setError("")}} aria-invalid={!!error} aria-describedby={`${id}-help`}/><span id={`${id}-help`} className="text-sm text-muted-foreground">{range}{unit==="bytes"&&/^\d+$/.test(next)?` · ${mib(next)}`:""}</span></div>}
       {error&&<p role="alert">{error}</p>}
-      <Button type="submit" disabled={disabled}>바꾸기</Button>
+      <Button type="submit" disabled={disabled}>변경 목록에 담기</Button>
     </form>
   </div></SheetContent></Sheet>
 }
@@ -254,6 +254,45 @@ export function SchedulerSettingsPage() {
   const serverError=mutation.error?.data&&typeof mutation.error.data==="object"?mutation.error.data as {field?:string;message?:string;code?:string}:undefined
   const count=baseline&&draft?changedRows(baseline.settings,draft).length:0
   const shown=count?draft:currentSettings
+  React.useEffect(()=>{
+    if(!count)return
+    const message="적용하지 않은 설정 변경이 있어요. 변경 목록을 버리고 이동할까요?"
+    const leaves=(href:string)=>{
+      const url=new URL(href,window.location.href)
+      return url.pathname!=="/settings"||["models","preprocessors","datasets"].includes(url.searchParams.get("tab")??"")
+    }
+    const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue=""}
+    const navigation=(window as Window&{navigation?:EventTarget}).navigation
+    let approved:string|null=null
+    const navigate=(event:Event)=>{
+      const next=event as Event&{destination:{url:string;sameDocument:boolean}}
+      if(!next.cancelable||!next.destination.sameDocument||!leaves(next.destination.url))return
+      if(approved===next.destination.url)return
+      if(window.confirm(message))approved=next.destination.url
+      else next.preventDefault()
+    }
+    const click=(event:MouseEvent)=>{
+      const anchor=event.target instanceof Element?event.target.closest("a"):null
+      if(!anchor||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||(anchor.target&&anchor.target!=="_self")||anchor.hasAttribute("download"))return
+      const url=new URL(anchor.href,window.location.href)
+      if(url.origin!==window.location.origin||!leaves(url.href))return
+      if(window.confirm(message))approved=url.href
+      else {event.preventDefault();event.stopPropagation()}
+    }
+    const current={url:window.location.href,state:window.history.state}
+    const back=(event:PopStateEvent)=>{
+      if(!leaves(window.location.href)||approved===window.location.href)return
+      if(!window.confirm(message)){event.stopImmediatePropagation();window.history.pushState(current.state,"",current.url)}
+    }
+    window.addEventListener("beforeunload",warn)
+    if(navigation)navigation.addEventListener("navigate",navigate)
+    document.addEventListener("click",click,true);window.addEventListener("popstate",back,true)
+    return ()=>{
+      window.removeEventListener("beforeunload",warn)
+      if(navigation)navigation.removeEventListener("navigate",navigate)
+      document.removeEventListener("click",click,true);window.removeEventListener("popstate",back,true)
+    }
+  },[count,params])
   // Explicit routing operations open in the same detail view as the transitions list.
   const routing=state.data?.results?.filter(item=>["route","unroute","release"].includes(item.operation.kind)).reduce<OperationResult|undefined>((latest,item)=>!latest||Date.parse(item.startedAt)>Date.parse(latest.startedAt)?item:latest,undefined)
   const back:[string,string]=["/settings","설정"]
@@ -388,23 +427,23 @@ export function SchedulerSettingsPage() {
   const routingFailure=state.error?.data
   const routingFailureCode=routingFailure&&typeof routingFailure==="object"&&"code" in routingFailure&&typeof routingFailure.code==="string"?routingFailure.code:"오류 코드 미제공"
   const routingFailureReason=routingFailure&&typeof routingFailure==="object"&&"message" in routingFailure&&typeof routingFailure.message==="string"?routingFailure.message:"상세 사유 미제공"
-  return <Screen title="설정" width="data" actionPlacement="header"
-    action={count>0&&<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}>{reviewing?"현재값 조회 중":`변경 ${count}건 검토`}</Button>}>
+  return <Screen title="설정" width="data" actionPlacement="sticky"
+    action={count>0?<Button ref={reviewLauncher} onClick={()=>void inspect()} disabled={blocked}><span role="status">변경 {count}건 적용 대기</span> · {reviewing?"현재값 조회 중":"설정 적용하기"}</Button>:<span role="status" className="text-sm text-muted-foreground">적용 대기 변경 없음</span>}>
     <SettingsNavigation active="configuration"/>
     {!precise&&<strong role="alert">큰 정수 처리 미지원 · 설정 변경 차단</strong>}
     <label className="grid max-w-sm gap-2 text-sm">운영 설정 범위<select className="min-h-11 rounded-md border bg-background px-3" value={category} onChange={event=>{const query=new URLSearchParams(params.toString());query.set("section",event.target.value);query.delete("edit");router.push(`/settings?${query}`,{scroll:false})}}>{([["targets","서비스·장비"],["cycle","판단 주기와 범위"],["limit","자원 한도"],["controls","자동 조정 항목"],["capacity","용량 설정"],["advanced","고급"]] as const).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
     <QueryGate query={settings}>{shown&&<>
-      <section aria-label="현재값·정의 표">{category==="targets"?<table className="w-full text-left text-sm"><thead><tr><th className="p-3">항목</th><th className="p-3">{count?"작성값":"현재값"}</th><th className="p-3">작업</th></tr></thead><tbody>{settingTargets.map(target=><tr key={target.key} className="border-t">
-        <th scope="row" className="p-3 font-normal">{target.label}</th>
+      <section aria-label="현재값·정의 표">{category==="targets"?<table className="w-full text-left text-sm"><thead><tr><th className="p-3">항목</th><th className="p-3">현재값 / 적용 전</th><th className="p-3">작업</th></tr></thead><tbody>{settingTargets.map(target=><tr key={target.key} className={count&&stringifySchedulerJSON(baseline!.settings[target.key])!==stringifySchedulerJSON(shown[target.key])?"border-t bg-accent":"border-t"}>
+        <th scope="row" className="p-3 font-normal">{target.label}{!!count&&stringifySchedulerJSON(baseline!.settings[target.key])!==stringifySchedulerJSON(shown[target.key])&&<span className="ml-2 inline-block rounded border px-2 py-1 text-xs font-medium">적용 전</span>}</th>
         <td className="p-3">{target.key==="autonomousWorkloads"?(shown.autonomousWorkloads?.map(uid=>serviceNames[uid]??uid).join(", ")||"없음"):target.key==="excludedNodes"?excludedNodes(shown):services.length||Object.keys(shown.minimumDemand??{}).length?<table aria-label="서비스별 최소 수요" className="text-left text-sm"><thead><tr><th className="pr-4 font-normal">서비스</th><th className="text-right font-normal">req/s</th></tr></thead><tbody>{[...new Set([...services.map(service=>service.uid),...Object.keys(shown.minimumDemand??{})])].map(uid=><tr key={uid}><th scope="row" className="pr-4 font-normal">{serviceNames[uid]??uid}</th><td className="text-right tabular-nums">{shown.minimumDemand?.[uid]??"미설정"}</td></tr>)}</tbody></table>:"미설정"}</td>
         <td className="p-3">{target.key==="excludedNodes"?<EditRow editKey={target.key} label={target.label} help={target.help} changed={!!count&&String(baseline!.settings.excludedNodes??[])!==String(shown.excludedNodes??[])} initial={shown.excludedNodes??[]} nodeNames={knownNodeNames} save={value=>edit(base=>({...base,excludedNodes:value as string[]}))} disabled={blocked}/>:<ServiceSettingsEdit editKey={target.key} label={target.label} help={target.help} initial={shown} version={count?baseline!.etag:snapshot!.etag} services={services} loadError={workloads.error?"서비스 목록 조회 실패":!workloads.data?"서비스 목록 조회 중":undefined} changed={!!count&&stringifySchedulerJSON(baseline!.settings[target.key])!==stringifySchedulerJSON(shown[target.key])} disabled={blocked} save={(value,source,version)=>edit(base=>({...base,[target.key]:value}),source,version)}/>}</td>
       </tr>)}</tbody></table>:category==="controls"?<DataTable data={controls} columns={[
         {key:"name",label:"항목",value:control=>control.label},
-        {key:"value",label:"현재값",value:control=>onOff(shown.controls[control.key])},
+        {key:"value",label:"현재값 / 적용 전",value:control=><>{onOff(shown.controls[control.key])}{!!count&&baseline!.settings.controls[control.key]!==shown.controls[control.key]&&<span className="ml-2 inline-block rounded border bg-accent px-2 py-1 text-xs">적용 전</span>}</>},
         {key:"edit",label:"작업",value:control=><EditRow editKey={`controls.${control.key}`} label={control.label} help={`운영 판단에서 ${control.label}도 함께 조정해요.`} changed={!!count&&baseline!.settings.controls[control.key]!==shown.controls[control.key]} initial={shown.controls[control.key]} save={value=>edit(base=>({...base,controls:{...base.controls,[control.key]:value as boolean}}))} disabled={blocked}/>},
       ]}/>:<DataTable data={fields.filter(field=>field.group===category)} columns={[
         {key:"name",label:"항목",value:field=>field.label},
-        {key:"value",label:count?"작성값":"현재값",value:field=>plain(field,shown[field.key])},
+        {key:"value",label:"현재값 / 적용 전",value:field=><>{plain(field,shown[field.key])}{!!count&&String(baseline!.settings[field.key])!==String(shown[field.key])&&<span className="ml-2 inline-block rounded border bg-accent px-2 py-1 text-xs">적용 전</span>}</>},
         {key:"edit",label:"작업",value:editField},
       ]}/>}</section>
       <details><summary className="min-h-11 cursor-pointer py-2">근거·분배 작업</summary><Rows>
