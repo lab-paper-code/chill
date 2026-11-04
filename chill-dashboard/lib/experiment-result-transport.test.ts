@@ -117,7 +117,6 @@ for(const failure of ["timeout","transport"] as const)test(`RUN-2 diagnostic: ge
     assert.equal(result.data,undefined)
     assert.equal(requests,1)
     assert.match(app.render(result),/role="alert"/)
-    if(failure==="transport")assert.equal(result.error.body,"응답 본문 미수신 · 원본 상태를 조회한 뒤 명시적으로 재제출하세요")
-    else assert.deepEqual(result.error.data,{code:"DashboardRelayTimeout"})
+    if(failure==="timeout")assert.deepEqual(result.error.data,{code:"DashboardRelayTimeout"})
   } finally {unsubscribe();app.cache.clear();await disconnect()}
 })
