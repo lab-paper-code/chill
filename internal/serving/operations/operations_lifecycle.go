@@ -155,13 +155,13 @@ func (o *Operations) finishInstanceRemoval(ctx context.Context, pod *core.Pod) e
 	})
 }
 
-// ChangePower switches the drained Node to mode and confirms that the loaded
-// state did not change. maxDuration is the mode's maxActuationDurationSeconds.
+// ChangePower switches a drained Node. In-place changes retain their loaded
+// witness; an observed reboot records the directed fact for future remove/rebuild plans.
 func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference, holder, mode string, maxDuration time.Duration) error {
 	if mode == "" || maxDuration <= 0 {
 		return errors.New("power mode and maximum actuation duration required")
 	}
-	_, err := o.AdmittedNode(ctx, node)
+	startNode, err := o.AdmittedNode(ctx, node)
 	if err != nil {
 		return err
 	}
@@ -183,11 +183,23 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 			return errors.New("power transition native source not actually drained/ready")
 		}
 	}
-	if err = o.RequestPowerMode(ctx, node, holder, mode, maxDuration); err != nil {
+	powerErr := o.RequestPowerMode(ctx, node, holder, mode, maxDuration)
+	endNode, readErr := o.AdmittedNode(ctx, node)
+	rebooted := readErr == nil && startNode.Status.NodeInfo.BootID != "" && endNode.Status.NodeInfo.BootID != "" &&
+		startNode.Status.NodeInfo.BootID != endNode.Status.NodeInfo.BootID
+	if rebooted && before.PowerMode != "" && before.PowerMode != mode {
+		o.Observer.RecordPowerReboot(node, serving.PowerReboot{From: before.PowerMode, To: mode,
+			BeforeBootID: startNode.Status.NodeInfo.BootID, AfterBootID: endNode.Status.NodeInfo.BootID})
+	}
+	if err := errors.Join(powerErr, readErr); err != nil {
 		return err
 	}
-	if err := o.waitPowerState(ctx, node, before); err != nil {
-		return err
+	// The mode succeeded, but a reboot cannot preserve old process identities.
+	// The existing DAG still removes those sources and prepares target actors.
+	if !rebooted {
+		if err := o.waitPowerState(ctx, node, before); err != nil {
+			return err
+		}
 	}
 	o.Observer.ClearNodeMove(node.UID)
 	return o.Observer.Refresh(ctx)

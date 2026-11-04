@@ -32,6 +32,7 @@ type sourceObserver interface {
 	RetireRemovedSource(types.UID, *serving.Runtime) error
 	BeginNodeMove(context.Context, string) error
 	ClearNodeMove(string)
+	RecordPowerReboot(serving.NodeReference, serving.PowerReboot)
 	PublishPreparedSource(*core.Pod, serving.NodeReference) error
 }
 

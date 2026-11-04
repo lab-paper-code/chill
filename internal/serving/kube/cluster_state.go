@@ -47,6 +47,7 @@ type reservationState struct {
 type observerState struct {
 	mu                sync.Mutex
 	removingInstances map[string]bool
+	powerReboots      map[serving.NodeReference][]serving.PowerReboot
 }
 
 type actionRun struct {

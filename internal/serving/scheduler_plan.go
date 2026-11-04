@@ -544,6 +544,9 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 				p.reasons = appendUnique(p.reasons, schedulerScaleDownStabilizing)
 				continue
 			}
+			reboot := slices.ContainsFunc(oldNode.Reboots, func(fact PowerReboot) bool {
+				return fact.From == from && fact.To == n.PowerMode
+			})
 			deps := []string{}
 			drains := map[string]string{}
 			for _, i := range p.snap.Instances {
@@ -555,23 +558,32 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 					deps = append(deps, dr)
 				}
 			}
-			// Directed power trials retain their loaded process witness. Immutable native
-			// bundles are removed only after actual mode/readiness proof, then rebuilt.
+			// Observed reboot pairs remove first; unknown/in-place transitions
+			// retain the loaded witness until mode/readiness proof.
+			if reboot {
+				p.removeNodeInstances(n.Node, deps)
+			}
 			if n.PowerMode != from {
 				dep := p.add(schedulerActionPower, n.Node, "", from, n.PowerMode, deps)
 				p.actions[len(p.actions)-1].Fixed = emptySaving
 				deps = []string{dep}
 			}
-			for _, i := range p.snap.Instances {
-				if i.Node == n.Node {
-					p.add(schedulerActionRemove, n.Node, i.ID, schedulerState(i), "unloaded", deps)
-				}
+			if !reboot {
+				p.removeNodeInstances(n.Node, deps)
 			}
 			// Authorized empty lowering runs independently of the target's route.
 			needed := slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node })
 			if tail := p.nodeTail[n.Node.UID]; tail != "" && (needed || len(drains) != 0 || !p.actions[len(p.actions)-1].Fixed) {
 				p.prepares = append(p.prepares, tail)
 			}
+		}
+	}
+}
+
+func (p *schedulerPlanState) removeNodeInstances(node NodeReference, deps []string) {
+	for _, i := range p.snap.Instances {
+		if i.Node == node {
+			p.add(schedulerActionRemove, node, i.ID, schedulerState(i), "unloaded", deps)
 		}
 	}
 }

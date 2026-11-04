@@ -48,6 +48,37 @@ func requireTransitionAction(t *testing.T, actions []Action, kind string) Action
 	return actions[index]
 }
 
+func TestObservedPowerRebootPlansRemovalBeforePower(t *testing.T) {
+	for _, known := range []bool{false, true} {
+		t.Run(fmt.Sprintf("known=%v", known), func(t *testing.T) {
+			settings, snapshot, target := overlappingResourceFixture(t)
+			node := &snapshot.Nodes[0]
+			from := node.PowerMode
+			if known {
+				node.Reboots = []PowerReboot{{From: from, To: "next"}}
+			} else {
+				node.Reboots = []PowerReboot{{From: "next", To: from}}
+			}
+			target.Nodes = slices.Clone(snapshot.Nodes)
+			target.Nodes[0].PowerMode = "next"
+			target.Actions = schedulerPlan(settings, snapshot, target)
+			remove := requireTransitionAction(t, target.Actions, schedulerActionRemove)
+			power := requireTransitionAction(t, target.Actions, schedulerActionPower)
+			prepare := requireTransitionAction(t, target.Actions, schedulerActionPrepare)
+			if known {
+				if !slices.Contains(power.DependsOn, remove.ID) || slices.Contains(remove.DependsOn, power.ID) || !slices.Contains(prepare.DependsOn, power.ID) {
+					t.Fatalf("known reboot did not remove/power/rebuild: %+v", target.Actions)
+				}
+			} else if !slices.Contains(remove.DependsOn, power.ID) {
+				t.Fatalf("unknown transition changed in-place ordering: %+v", target.Actions)
+			}
+			if result := schedulerReplayForTest(settings, snapshot, target); len(result.reasons) != 0 {
+				t.Fatalf("power lifecycle replay failed: %+v", result.reasons)
+			}
+		})
+	}
+}
+
 // The planner serves w1 from the ready prepared slot instead of preparing it again.
 func TestPlacementReusesReadyUnboundPhysicalSlotWithoutDuplicatePreparation(t *testing.T) {
 	settings, snapshot, n2 := placementFixture()

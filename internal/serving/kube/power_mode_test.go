@@ -16,6 +16,7 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	core "k8s.io/api/core/v1"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -159,6 +160,81 @@ func TestMeasurementIsolationJudgesPowerModeGeneration(t *testing.T) {
 			record := servingops.OperationMeasurement{Verdict: servingstate.MeasurementAccepted, WallJoules: &joules, Request: servingops.MeasurementRequest{Operation: servingstate.Operation{Node: testNode}}}
 			if applied := record.ApplyIsolation(witness, err); !errors.Is(applied, err) || test.changed != (record.Verdict == servingops.MeasurementInsufficient && strings.Contains(record.Reason, servingstate.PowerChangedReason) && record.WallJoules == nil) {
 				t.Fatalf("record %+v", record)
+			}
+		})
+	}
+}
+
+func TestPowerRebootOutcomeRecordsDirectedFact(t *testing.T) {
+	const failedReboot = "failed-reboot"
+	const rebootScenario = "reboot"
+	const inPlace = "in-place"
+	for _, scenario := range []string{rebootScenario, inPlace, "lost-without-reboot", failedReboot} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			c, snapshot, outstanding, _ := pendingPowerController(t, ctx)
+			outstanding.Store(false)
+			ref := snapshot.Nodes[0].Node
+			for _, instance := range snapshot.Instances {
+				if err := c.operations.StopInstance(ctx, instance.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			api := c.store.client.(*nodeAPI)
+			node, err := api.kube.CoreV1().Nodes().Get(ctx, ref.Name, meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			node.Status.NodeInfo.BootID = "before"
+			if _, err = api.kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			agent := api.agent
+			api.agent = func(node *core.Node) {
+				agent(node)
+				if scenario == rebootScenario || scenario == failedReboot {
+					node.Status.NodeInfo.BootID = "after"
+				}
+				if scenario == failedReboot {
+					chillmeta.SetPowerModeTransition(node, chillmeta.PowerModeFailed, 1, chillmeta.PowerModeTransitionRecord{
+						PowerMode: lowMode, RequestedAt: node.Annotations[chillmeta.PowerModeRequestedAt], Failure: "actuator failed"})
+				}
+				if scenario != inPlace {
+					pods, e := api.kube.CoreV1().Pods("chill-system").List(ctx, meta.ListOptions{})
+					if e != nil {
+						t.Fatal(e)
+					}
+					for _, pod := range pods.Items {
+						pod.Status.Phase = core.PodFailed
+						for index := range pod.Status.ContainerStatuses {
+							pod.Status.ContainerStatuses[index].State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 255, Reason: "Unknown"}}
+						}
+						if _, e = api.kube.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, &pod, meta.UpdateOptions{}); e != nil {
+							t.Fatal(e)
+						}
+					}
+				}
+			}
+			result, err := c.operations.Execute(ctx, servingstate.Operation{ID: "power", Kind: servingstate.OperationPower, Node: ref, PowerMode: lowMode, MaxActuationDuration: time.Second})
+			wantSuccess := scenario == rebootScenario || scenario == inPlace
+			if (err == nil) != wantSuccess || wantSuccess && result.Status != servingstate.NativeOperationComplete {
+				t.Fatalf("mode outcome: status=%s err=%v", result.Status, err)
+			}
+			facts := c.observer.powerRebootFacts()[ref]
+			reboot := scenario == rebootScenario || scenario == failedReboot
+			if reboot && (len(facts) != 1 || facts[0].From != snapshot.Nodes[0].PowerMode || facts[0].To != lowMode || facts[0].BeforeBootID != "before" || facts[0].AfterBootID != "after") || !reboot && len(facts) != 0 {
+				t.Fatalf("observed directed facts: %+v", facts)
+			}
+			if facts := c.observer.powerRebootFacts()[serving.NodeReference{Name: ref.Name, UID: "replacement"}]; len(facts) != 0 {
+				t.Fatalf("reboot fact leaked to replacement node: %+v", facts)
+			}
+			next, err := c.capture(ctx, time.Now(), c.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(next.Nodes[0].Reboots) != len(facts) {
+				t.Fatalf("next planner snapshot lost observed facts: %+v", next.Nodes)
 			}
 		})
 	}
