@@ -499,7 +499,7 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 // m4 r5 04:28:18: the first decision of the 40 req/s phase saw λ 42.5 with 161
 // queued. With the r5 κ (rasp5 q1 25.29, q1-lut 25.69, genesis3 q2 70.94) it
 // expands whatever the comparison period: the SLO judgment orders plans before
-// energy. Each decision records its actual chain plus the configured period.
+// energy. Each decision records the same configured horizon from decision time.
 func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	s, snap, _, genesis3 := capacityE1Fixture()
 	s.ObservationWindow = time.Minute
@@ -515,7 +515,7 @@ func TestCapacityComparisonPeriodKeepsExpansionOnLoadRise(t *testing.T) {
 	for _, period := range []time.Duration{time.Minute, 10 * time.Minute} {
 		s.ComparisonPeriod = period
 		got := capacityDecideForTest(t, s, snap, rows)
-		if got.Target == nil || got.Target.Keep || !poolsOn(*got.Target, genesis3) || got.Capacity == nil || got.Capacity.Period < period+got.Capacity.Route {
+		if got.Target == nil || got.Target.Keep || !poolsOn(*got.Target, genesis3) || got.Capacity == nil || got.Capacity.Period != period {
 			t.Fatalf("T %v: no expansion on the first decision: %s %+v", period, got.Status, got.Capacity)
 		}
 		if chosen != "" && got.Target.ID != chosen {
@@ -2157,10 +2157,10 @@ func TestCapacityEmptyFixedUsesCommonEnergyAdmission(t *testing.T) {
 		gain        float64
 		admitted    bool
 	}{
-		{name: "negative", joules: 964.2, gain: -696.2},
-		{name: "positive", joules: 100, gain: 168, admitted: true},
-		{name: "positive-below-minimumGain", joules: 100, uncertainty: 200, gain: 168},
-		{name: "zero-gain", joules: 268},
+		{name: "negative", joules: 964.2, gain: -699},
+		{name: "positive", joules: 100, gain: 165.2, admitted: true},
+		{name: "positive-below-minimumGain", joules: 100, uncertainty: 200, gain: 165.2},
+		{name: "zero-gain", joules: 265.2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, snap, node := capacityEmptyFixedFixture()

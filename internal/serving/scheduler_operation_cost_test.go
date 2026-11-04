@@ -172,12 +172,35 @@ func TestOperationCostHorizonIsScoredOverCommonWindow(t *testing.T) {
 	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
 	choice := capacityChoiceForTest(t, p, map[string]string{n.UID: planKey([]SchedulerInstance{wanted})})
 	res := p.evaluate(choice, p.routeOf(choice))
-	if res.exclusion == schedulerTransitionHorizon || res.period != 2+s.ComparisonPeriod.Seconds() {
+	if res.exclusion == schedulerTransitionHorizon || res.period != s.ComparisonPeriod.Seconds() {
 		t.Fatalf("horizon veto/window: %+v", res)
 	}
 	keep := p.evaluateAtWindow(make([]int, len(choice)), 0, nil, res.period)
 	if res.keepJoules != keep.joules || res.joules <= 30 {
 		t.Fatalf("transition or same-window keep energy omitted: plan %g keep %g/%g", res.joules, res.keepJoules, keep.joules)
+	}
+}
+
+func TestOperationCostCandidatesShareDecisionHorizon(t *testing.T) {
+	p := &capacityPlanner{period: 600, keepWatts: 10, compared: []bool{true}}
+	p.snapshot.Nodes = []SchedulerNode{{Node: NodeReference{UID: "node"}}}
+	p.plans = [][]*capacityPlan{{
+		{keep: true, before: 10},
+		{preMax: 10, preMean: 10, preJ: 100, after: 5},
+		{preMax: 100, preMean: 100, preJ: 1000, after: 5},
+		{preMax: 700, preMean: 700, preJ: 7000, postJ: 50, after: 5},
+	}}
+	keep := p.evaluate([]int{0}, 0)
+	for _, j := range []int{1, 2, 3} {
+		res := p.evaluate([]int{j}, p.routeOf([]int{j}))
+		if res.period != 600 || res.keepJoules != keep.joules {
+			t.Fatalf("candidate %d: H=%g keep=%g, want H=600 keep=%g", j, res.period, res.keepJoules, keep.joules)
+		}
+		plan := p.plans[0][j]
+		want := plan.preJ + plan.postJ + 5*max(0, 600-res.route)
+		if res.joules != want {
+			t.Fatalf("candidate %d: joules=%g want %g", j, res.joules, want)
+		}
 	}
 }
 

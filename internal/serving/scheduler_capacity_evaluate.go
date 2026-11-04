@@ -278,15 +278,8 @@ func (p *capacityPlanner) evaluate(choice []int, r float64) capacityResult {
 }
 
 func (p *capacityPlanner) evaluateAtRoute(choice []int, r float64, bridge *schedulerBridgeSchedule) capacityResult {
-	post := 0.0
-	for n, j := range choice {
-		if plan := p.plans[n][j]; !plan.keep {
-			post = max(post, plan.postMax)
-		}
-	}
-	window := r + post + p.period
-	res := p.evaluateAtWindow(choice, r, bridge, window)
-	res.keepJoules = p.keepWatts * window
+	res := p.evaluateAtWindow(choice, r, bridge, p.period)
+	res.keepJoules = p.keepWatts * p.period
 	if res.keep {
 		res.keepJoules = res.joules
 	}
@@ -377,7 +370,8 @@ func (p *capacityPlanner) evaluateAtWindow(choice []int, r float64, bridge *sche
 		if bridge != nil {
 			res.joules += p.bridgeRequestJoules(bridge, ws, mean, r, t)
 		} else {
-			res.joules += initial*r + max(0, ws.rate-kret)*r*mean + (served*mean+max(0, ws.rate-served)*mean)*(t-r)
+			before := min(r, t)
+			res.joules += initial*before + max(0, ws.rate-kret)*before*mean + (served*mean+max(0, ws.rate-served)*mean)*max(0, t-r)
 		}
 		res.judgments = append(res.judgments, j)
 		res.weights = append(res.weights, routes)
