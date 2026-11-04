@@ -17,7 +17,7 @@ func (opts options) storeConfig() stores3.Config {
 		LogicalStore: opts.storeName, Endpoint: opts.storeEndpoint,
 		Bucket: opts.storeBucket, Region: opts.storeRegion,
 		AccessKeyID: os.Getenv("AWS_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-		SessionToken: os.Getenv("AWS_SESSION_TOKEN"),
+		SessionToken: os.Getenv("AWS_SESSION_TOKEN"), RequestTimeout: opts.requestTimeout,
 	}
 }
 

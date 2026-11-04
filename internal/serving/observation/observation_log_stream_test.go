@@ -52,3 +52,37 @@ func TestObservationStreamingFailureRetainsHour(t *testing.T) {
 		})
 	}
 }
+
+func TestObservationCanceledCloseRetainsHourForNextProcess(t *testing.T) {
+	directory := t.TempDir()
+	archive := &observationArchive{directory: t.TempDir()}
+	config := ObservationLogConfig{Directory: directory, Store: "evidence", Writer: archive, Retention: 2 * time.Hour}
+	log, clock := clockedObservationLog(t, config, observationTestHour)
+	seedObservationMinutes(t, log, clock, observationTestHour.Add(time.Second))
+	clock.set(observationTestHour.Add(3 * time.Hour))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := log.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("close did not propagate shutdown cancellation: %v", err)
+	}
+	hourDir := filepath.Join(log.root, observationHour(observationTestHour))
+	if log.archived[observationTestHour] {
+		t.Fatal("shutdown marked an uncommitted hour archived")
+	}
+	if files, err := os.ReadDir(hourDir); err != nil || len(files) == 0 {
+		t.Fatalf("shutdown removed raw hour: files=%v error=%v", files, err)
+	}
+	if len(archive.outcomes) != 0 {
+		t.Fatal("shutdown published an archive")
+	}
+	restarted, _ := clockedObservationLog(t, config, observationTestHour.Add(3*time.Hour))
+	if err := restarted.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !restarted.archived[observationTestHour] || len(archive.outcomes) == 0 {
+		t.Fatal("next process first Flush did not commit the retained hour")
+	}
+	if _, err := os.Stat(hourDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("committed expired hour not removed: %v", err)
+	}
+}

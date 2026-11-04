@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
@@ -34,6 +35,9 @@ type Config struct {
 	SessionToken    string
 	TempDir         string
 	HTTPClient      aws.HTTPClient
+	// RequestTimeout bounds each multipart SDK call including its retries.
+	// Zero preserves the caller context without an additional deadline.
+	RequestTimeout time.Duration
 }
 
 func New(config Config) (*Store, error) {
@@ -65,7 +69,7 @@ func New(config Config) (*Store, error) {
 	})
 	return &Store{
 		client: client, region: config.Region, logicalStore: config.LogicalStore,
-		bucket: config.Bucket, tempDir: config.TempDir,
+		bucket: config.Bucket, tempDir: config.TempDir, requestTimeout: config.RequestTimeout,
 	}, nil
 }
 
