@@ -367,6 +367,7 @@ SRS DB-FR-50~52·56·65는 변경, DB-FR-67은 폐기 이력, DB-FR-68~70은 공
 실험 전역·단계 `settingsPatch`는 공개 운영 설정 항목을 선택해서 작성하는 불투명 JSON 객체다. 운영 설정 화면과 같은 항목 정의를 사용하며 최종 값 검증은 서버가 한다. 단계의 생략·null은 Run patch 상속, `{}`는 빈 전체 대체다. 부하 발생기의 `nodeName`을 명시하고 image/source는 서버 템플릿·보존 정의에서 읽으며 대상 이미지 대조 입력으로 쓰지 않는다.
 요청 시각 입력 조회는 `kind=trace`만 사용하고 `set`은 해당 부하 시나리오 이름이다. seed·payload를 evidence 종류로 조회하지 않는다.
 사전점검의 `liveTarget[]`는 `{component,resource,liveImageIDs,ready}` 관측 표다. digest 채택·`specImage`·`match`는 없고 변경된 live image ID는 사용자 입력을 바꾸지 않는다. 접수 서버가 `edge.dacs.io/evaluation-live-target` annotation에 관측을 기록한다. 실행 상세의 `평가 대상 CHILL` 표는 EvaluationView.liveTarget의 기록만 표시하고, 없거나 손상된 annotation의 null은 `미기록`이다.
+External-target readiness and observed image IDs cover only non-deleting, non-terminal Pods selected by the target resource; Succeeded/Failed replicas retained from earlier rollouts are excluded. At least one eligible Pod must remain, and every eligible Pod must be Ready. Evaluation preflight and creation share this rule; HTTP 200 from preflight returns advisory checks and does not imply every check passed.
 게시 목록의 `comparisons`, 단건 `definition.spec.comparisons`만 비교 관계로 사용하며 단계는 ID로 연결한다.
 suffix·요청률 유사성 fallback은 사용하지 않는다. 정책은 기록 정의, SLO는 기록 정의·실행 결과에서만 읽고 현재 Workload로 소급하지 않는다.
 과거 대상은 publicationID·stageID, 서비스는 workloadUID로 연결한다. 정의 없는 과거 게시의 비교는 미기록이다.
