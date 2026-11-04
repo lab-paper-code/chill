@@ -47,7 +47,7 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 |---|---|---|
 | B1 | D1 지연을 client 측정으로 바꾼다. 기준은 MLPerf LoadGen 방식으로, 요청을 보내기로 예정된 시각부터 응답을 받은 시각까지다([MLPerf inference rules](https://github.com/mlcommons/inference_policies/blob/master/inference_rules.adoc)). 늦게 보낸 요청의 발행 지연도 지연에 들어간다. gateway HTTP final `elapsedNanos`는 진단 참고값으로만 남긴다. 현재 구현은 `request_analysis.py` `request_timing`이 gateway 값을 SLO 지연으로 쓴다. | 판정 규칙 변경이다. 회차 3 이후 Run부터 적용하고 judgment 계약 버전을 한 번 올린다(ADR 0019). 회차 1·2 결과는 이전 규칙으로 보존하며 다시 판정하지 않는다. 구현 보류 |
 | B2 | 평가자가 전력계 게이트웨이를 직접 읽는 독립 경로를 추가한다. CHILL observation API를 거치지 않는다. | 구현 보류 |
-| B3 | executor gate를 허용한다. 조건은 정확 일치나 전체 거절 유형이 아닐 것이다. 현재 응답만 보고, CHILL 동작을 바꾸지 않으며, 실패하면 다시 확인한 뒤 시작하고, 제외한 인스턴스는 사유를 기록한다. 점검 대상은 CHILL이 공개한 Ready·routed 인스턴스로 고른다(§2 예외). Node NotReady 검사는 실험 참여 노드로만 좁힌다. 점검 대상 executor가 실패하면 시작을 보류한다. | refactor-reviewer 감사(2026-11-04 exact-match audit §6) 결과 반영. gate는 저장소 밖 운영 도구라 참여 노드 범위 축소는 main이 적용한다 |
+| B3 | executor gate를 허용한다. 조건은 정확 일치 유형이 아니고, 실험과 무관한 실패로 시작 전체를 막지 않는 것이다. 현재 응답만 보고, CHILL 동작을 바꾸지 않으며, 제외한 인스턴스는 사유를 기록한다. 점검 대상은 CHILL이 공개한 Ready·routed 인스턴스로 고른다(§2 예외, 공개 `GET /api/v1/scheduler`). Node NotReady는 참여 노드(`loadGenerator.nodeName` ∪ 선언된 전력계 노드 ∪ Run의 대상 워크로드 인스턴스가 있는 노드)만 시작을 막고, 그 밖의 NotReady 노드는 기록만 한다. 점검 대상 executor가 실패하면 시작만 보류하고, 다시 새로 확인한 뒤 시작한다. | refactor-reviewer 감사(2026-11-04 exact-match audit §6) 결과 반영. gate는 저장소 밖 운영 도구(`submit.py`, `gate.json`의 `participatingNodes`·`notReady`·`notReadyNonParticipating`·`excludedExecutors`)이며 main이 적용했다 |
 
 ## 3. 소유 계약
 
