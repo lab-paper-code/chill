@@ -258,10 +258,17 @@ export function experimentHeatmap(run:Experiment,runs:Experiment[]=[run]):Experi
   })
 }
 
+export function publishedEnergy(power:Published,legacy?:unknown) {
+  const partial=power.energyStatus==="PARTIAL"
+  const joules=power.energyStatus==="UNAVAILABLE"?null:partial?finite(power.observedJoules):finite(power.wholePoolJoules??legacy)
+  return {joules,partial}
+}
+
 export function experimentChartData(run:Experiment,service:string,runs:Experiment[]=[run]) {
   return experimentHeatmap(run,runs).map(row=>{
     const own=service?experimentRows(row.stage).filter(item=>item.name===service):[],other=service&&row.other?experimentRows(row.other).filter(item=>item.name===service):[]
     const parts=stageLoadParts(row.stage,row.leftRun),rightParts=row.other?stageLoadParts(row.other,row.rightRun):[]
+    const left=publishedEnergy(object(row.stage.kpis.power),row.stage.kpis.wholePoolJoules),right=row.other?publishedEnergy(object(row.other.kpis.power),row.other.kpis.wholePoolJoules):null
     const plans=(parts:EvaluationDefinition["loadScenarios"][number]["spec"]["parts"])=>{
       let offset=0
       return parts.map(part=>{
@@ -273,7 +280,8 @@ export function experimentChartData(run:Experiment,service:string,runs:Experimen
       observedRate:observedStageRate(row.stage,service),rightObservedRate:row.other?observedStageRate(row.other,service):null,
       leftLabel:stageLabel(row.stage,row.leftRun),rightLabel:row.other?stageLabel(row.other,row.rightRun):null,
       from:row.stage.from,to:row.stage.to,rightFrom:row.other?.from,rightTo:row.other?.to,plans:plans(parts),rightPlans:plans(rightParts),
-      leftEnergy:finite(row.stage.kpis.wholePoolJoules),rightEnergy:row.other?finite(row.other.kpis.wholePoolJoules):null,
+      leftEnergy:left.partial?null:left.joules,rightEnergy:right&&!right.partial?right.joules:null,
+      leftObservedEnergy:left.partial?left.joules:null,rightObservedEnergy:right?.partial?right.joules:null,
       leftP95:own.length===1?finite(resultMetric(own[0],"p95").value):null,
       rightP95:other.length===1?finite(resultMetric(other[0],"p95").value):null,
       leftSLO:own.length===1?frozenP95SLO(own[0],row.leftRun):null,

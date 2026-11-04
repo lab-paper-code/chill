@@ -77,9 +77,9 @@ function ExperimentCharts({run,runs,service,rows,selected,onSelect}:{run:Experim
   const lanes=[
     {label:"요청률",unit:"req/s",keys:["observedRate","rightObservedRate","rate","rightRate"]},
     {label:"성공 응답 p95",unit:"ms",keys:["leftP95","rightP95","leftSLO","rightSLO"]},
-    {label:"풀 전체 에너지",unit:"J",keys:["leftEnergy","rightEnergy"]},
+    {label:"에너지",unit:"J",keys:["leftEnergy","rightEnergy","leftObservedEnergy","rightObservedEnergy"]},
   ] as const
-  const labels={observedRate:paired?"후보 발행":"발행",rightObservedRate:"기준 발행",rate:paired?"후보 계획 평균":"계획 평균",rightRate:"기준 계획 평균",leftP95:paired?"후보 p95":"p95",rightP95:"기준 p95",leftSLO:paired?"후보 적용 SLO":"적용 SLO",rightSLO:"기준 적용 SLO",leftEnergy:paired?"후보 풀 전체":"풀 전체",rightEnergy:"기준 풀 전체"}
+  const labels={observedRate:paired?"후보 발행":"발행",rightObservedRate:"기준 발행",rate:paired?"후보 계획 평균":"계획 평균",rightRate:"기준 계획 평균",leftP95:paired?"후보 p95":"p95",rightP95:"기준 p95",leftSLO:paired?"후보 적용 SLO":"적용 SLO",rightSLO:"기준 적용 SLO",leftEnergy:paired?"후보 풀 전체":"풀 전체",rightEnergy:"기준 풀 전체",leftObservedEnergy:paired?"후보 관측 (일부 노드 coverage 미달)":"관측 (일부 노드 coverage 미달)",rightObservedEnergy:"기준 관측 (일부 노드 coverage 미달)"}
   const maxPlanRate=Math.max(1,...data.flatMap(item=>[...item.plans,...item.rightPlans].map(part=>part.rate??0)))
   const columns={gridTemplateColumns:`repeat(${Math.max(1,rows.length)},minmax(0,1fr))`}
   const hasSubstages=rows.some(row=>[row.stage,...(row.other?[row.other]:[])].some(stage=>experimentRows(stage).some(item=>(!service||item.name===service)&&!!item.substages?.length)))
@@ -87,7 +87,7 @@ function ExperimentCharts({run,runs,service,rows,selected,onSelect}:{run:Experim
     <div className="space-y-1" style={{minWidth:rows.length>4?rows.length*160:undefined}}>
       {lanes.map((lane,laneIndex)=>{
         const keys=lane.keys.filter(key=>data.some(item=>item[key]!==null))
-        const measured=laneIndex===0?data.some(item=>item.observedRate!==null||item.rightObservedRate!==null):laneIndex===1?data.some(item=>item.leftP95!==null||item.rightP95!==null):data.some(item=>item.leftEnergy!==null||item.rightEnergy!==null)
+        const measured=laneIndex===0?data.some(item=>item.observedRate!==null||item.rightObservedRate!==null):laneIndex===1?data.some(item=>item.leftP95!==null||item.rightP95!==null):keys.length>0
         return <div key={lane.label} className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 px-2 text-xs"><h2 className="font-semibold">{lane.label} ({lane.unit})</h2>{keys.map(key=><span key={key} className={key.startsWith("right")?"text-muted-foreground":"text-primary"}>{labels[key]}{key.includes("SLO")?" ┄":key==="rate"||key==="rightRate"?" ▱":key.startsWith("right")?" □":" ■"}</span>)}{!measured&&keys.length>0&&<span className="text-muted-foreground">실측 미제공</span>}</div>
           {laneIndex===1&&!service?<div className="flex h-[82px] items-center justify-center text-sm text-muted-foreground">서비스 선택</div>:!keys.length||laneIndex===1&&!measured?<div className="flex h-[82px] items-center justify-center text-sm text-muted-foreground">실측 미제공</div>:

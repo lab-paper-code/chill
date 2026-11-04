@@ -206,6 +206,33 @@ test("pool mean power never substitutes a plan or zero for missing or invalid me
   }
 })
 
+test("published energy distinguishes measured pool, partial observations and unavailable evidence",()=>{
+  const live=experiments.decodeExperiment(readFileSync(new URL("./fixtures/experiment-partial-energy.json",import.meta.url),"utf8"))
+  for(const status of ["MEASURED","PARTIAL","UNAVAILABLE"]) {
+    const original=live.stages[0],power=experiments.object(original.kpis.power)
+    const measured={...original,kpis:{...original.kpis,wholePoolJoules:123456,power:{...power,energyStatus:status,wholePoolJoules:status==="MEASURED"?6000:null,observedJoules:89921.90265615864,reasons:["coverage evidence"]}}}
+    const publication={...live,stages:[measured]}
+    const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:publication,stage:measured}))
+    const chart=comparisonHelpers.experimentChartData(publication,"")[0]
+    if(status==="PARTIAL") {
+      assert.match(html,/89,921\.9 J 관측 \(일부 노드 coverage 미달\)/)
+      assert.match(html,/관측 평균 전력/)
+      assert.doesNotMatch(html,/풀 평균 전력/)
+      assert.equal(chart.leftObservedEnergy,89921.90265615864)
+      assert.equal(chart.leftEnergy,null)
+    } else if(status==="MEASURED") {
+      assert.match(html,/6,000 J 풀 전체/)
+      assert.match(html,/풀 평균 전력/)
+      assert.equal(chart.leftEnergy,6000)
+      assert.equal(chart.leftObservedEnergy,null)
+    } else {
+      assert.match(html,/에너지 UNAVAILABLE.*미기록.*coverage evidence/)
+      assert.equal(chart.leftEnergy,null)
+      assert.equal(chart.leftObservedEnergy,null)
+    }
+  }
+})
+
 test("final and provisional SLOs preserve fractional percentiles and large wire nanoseconds",()=>{
   const Component=components.ExperimentStageResults as ComponentType<Record<string,unknown>>
   for(const targetLatencyNanos of [400000,9007199254740993n,undefined]) {

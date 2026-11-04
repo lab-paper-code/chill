@@ -27,6 +27,8 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
 
+게시 에너지는 MEASURED의 `power.wholePoolJoules`만 풀 전체로, PARTIAL의 `power.observedJoules`는 관측 J(일부 노드 coverage 미달)로 표시한다. 평균 전력도 같은 범위를 따르며 차트는 풀 전체·관측을 별도 계열로 구분한다. UNAVAILABLE은 수치 대신 미기록과 게시 사유를 보여준다. 상태 없는 과거 게시만 기존 최상위 wholePoolJoules를 사용한다. 회귀 원자료 `lib/fixtures/experiment-partial-energy.json`은 control-330의 7-7 r2 게시(`72234778-e8b5-44a2-94c4-5125bad5c69d`) 원문이다.
+
 측정 요청의 계획·기본값·manifest 조립은 `lib/measurement-request.ts`, 프로파일 요청의 검사·제출·접수 결과 미확인 재조회 상태는 `hooks/use-measurement-submission.ts`가 소유한다. `features/measurement-request.tsx`는 폼·표시와 실제 조회 자료를 연결한다. d 요청은 단일 dry-run 응답의 서버 지정 이름·동결 본문과 별도 접수 기록 조회 계약을 사용하므로 프로파일 제출 hook으로 합치지 않는다.
 
 커버리지·inventory·모델 호환성·BEO 전체 페이지·커버리지 상세 프로파일/회차 조회는 `hooks/use-measurement-data.ts`, 공통 URL 필터 UI는 `components/measurement-filters.tsx`가 소유한다. 각 화면은 소유 모듈을 직접 import한다. query key·페이지 전진/취소·권한 오류 처리·UID 비교·summary 정밀 디코딩과 필터 URL 갱신 규칙은 기존 계약을 유지한다.
