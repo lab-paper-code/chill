@@ -203,9 +203,11 @@ class ProducerResources:
 
 class ProducerLog:
     """Spool stdout independently of telemetry and provisional reduction."""
-    def __init__(self, source, path):
+    def __init__(self, source, path, *, before_write=None, write_lock=None):
         self.output = path.open('wb')
         self.reader = path.open('rb')
+        self.before_write = before_write
+        self.write_lock = write_lock or threading.Lock()
         self.written = 0
         self.error = None
         self.done = threading.Event()
@@ -216,9 +218,12 @@ class ProducerLog:
         try:
             with io.BufferedReader(source) as stream, self.output:
                 for line in stream:
-                    self.output.write(line)
-                    self.output.flush()
-                    self.written += len(line)
+                    with self.write_lock:
+                        if self.before_write is not None:
+                            self.before_write(len(line))
+                        self.output.write(line)
+                        self.output.flush()
+                        self.written += len(line)
         except Exception as error:
             self.error = error
         finally:
@@ -332,9 +337,9 @@ class CPO:
         if self.progress_publish_callback:
             self.progress_publish_callback()
 
-    def disk_boundary(self, *args):
+    def disk_boundary(self, incoming_bytes=0):
         usage = os.statvfs(self.out)
-        if usage.f_bavail * usage.f_frsize < self.c['evaluation']['minimumFreeBytes']:
+        if usage.f_bavail * usage.f_frsize - incoming_bytes < self.c['evaluation']['minimumFreeBytes']:
             raise RuntimeError('EvidenceCapacityInsufficient: workspace free bytes')
 
     def factor(self):
@@ -461,7 +466,6 @@ class CPO:
             return []
 
     def monitor(self, offset, folder):
-        self.disk_boundary()
         return offset
 
     def run(self):
@@ -477,6 +481,7 @@ class CPO:
         auth = evidence_io.module('evaluation_auth', HERE / 'auth.py')
         budget = auth.lifetime_budget([stage], self.tb, self.c.get('tokenSafetyMarginSeconds', 60))
         evidence_io.save(self.out / 'token-preflight.json', auth.check(self.c['tokenFile'], budget, endpoint=self.c['endpoint'], ca_file=self.c['caFile']))
+        self.disk_boundary()
         folder.mkdir(parents=True)
         phase = {'failurePolicy': 'v2', 'stage': stage, 'status': 'RUNNING', 'starts': {}, 'startUTC': None, 'endUTC': None,
                  'sourceObservations': {'declared': self.b['sources'], 'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')},
@@ -484,6 +489,8 @@ class CPO:
         self.observe_generators(folder)
         jobs, pods, streams, captures, ready, drained = {}, {}, [], {}, {}, set()
         window_ends = {}
+        capture_write_lock = threading.Lock()
+        captures_finalized = False
         judgment = evidence_io.module('evaluation_capture_judgment', HERE / 'judgment.py')
         phase['producerCapture'] = {name: {'plannedRequests': stage['traces'][name]['offered'], 'receivedRequestRows': 0,
                                          'drained': False, 'collectionLoss': 0}
@@ -531,6 +538,35 @@ class CPO:
                 metadata = phase['producerCapture'][name]
                 metadata['collectionLoss'] = judgment.collection_loss(metadata['plannedRequests'], metadata['receivedRequestRows'], metadata['drained'])
 
+        def finalize_captures():
+            nonlocal captures_finalized
+            if captures_finalized:
+                return
+            captures_finalized = True
+            capture_errors = {}
+            for name, process, capture, stderr in streams:
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=self.tb['apiSeconds'])
+                try:
+                    capture.join()
+                except Exception as error:
+                    capture_errors[name] = str(error)
+                try:
+                    read_capture(name, capture)
+                except Exception as error:
+                    capture_errors[name] = str(error)
+                try:
+                    capture.close()
+                except Exception as error:
+                    capture_errors[name] = str(error)
+                stderr.close()
+            if capture_errors:
+                phase.setdefault('captureErrors', {}).update(capture_errors)
+            evidence_io.save(folder / 'phase.json', phase)
+            if capture_errors:
+                raise RuntimeError('; '.join(capture_errors.values()))
+
         deadline = time.monotonic() + self.tb['setupSeconds'] + self.tb['barrierSeconds']
         try:
             for name in self.ws:
@@ -561,7 +597,8 @@ class CPO:
                     time.sleep(.2)
                 error = (folder / (name + '-log.stderr')).open('w')
                 process = subprocess.Popen(['/usr/bin/kubectl', '-n', self.c['namespace'], 'logs', '-f', pod['metadata']['name'], '-c', 'load'], stdout=subprocess.PIPE, stderr=error, bufsize=0)
-                capture = ProducerLog(process.stdout, folder / (name + '-client.jsonl'))
+                capture = ProducerLog(process.stdout, folder / (name + '-client.jsonl'),
+                                      before_write=self.disk_boundary, write_lock=capture_write_lock)
                 streams.append((name, process, capture, error))
                 captures[name] = capture
             telemetry = ProducerResources(self.io, pods, self.tb['apiSeconds'], folder / 'producer-resources.json') if pods else None
@@ -584,7 +621,8 @@ class CPO:
                             evidence_io.save(folder / ('terminal-' + name + '.json'), current)
                             raise RuntimeError('ProducerFailed: ' + job['metadata']['name'] + ' (' + name + ')')
                     last_producer_poll = time.monotonic()
-                    self.publish_progress()
+                    if released:
+                        self.publish_progress()
                 time.sleep(.2)
                 for name, capture in captures.items():
                     read_capture(name, capture)
@@ -655,23 +693,7 @@ class CPO:
                     self._cleanup_jobs()
                 except Exception as error:
                     phase.setdefault('cleanupErrors', []).append(str(error))
-                for _, process, _, _ in streams:
-                    if process.poll() is None:
-                        process.terminate()
-                    process.wait(timeout=self.tb['apiSeconds'])
-            capture_errors = {}
-            for name, capture in captures.items():
-                try:
-                    capture.join()
-                except Exception as error:
-                    capture_errors[name] = str(error)
-                try:
-                    read_capture(name, capture)
-                except Exception as error:
-                    capture_errors[name] = str(error)
-            if capture_errors:
-                phase['captureErrors'] = capture_errors
-                raise RuntimeError('; '.join(capture_errors.values()))
+            finalize_captures()
             phase['drain']['complete'] = not phase['drain']['reasons'] and drained == set(jobs)
             phase.update(drainedUTC=evidence_io.now(), status='DRAINED_NOT_EVALUATED' if phase['drain']['complete'] else 'PARTIAL_DRAIN_NOT_EVALUATED',
                          drainScope='Drain completion is independent of diagnostic CPU/throttle counters')
@@ -699,23 +721,13 @@ class CPO:
             raise
         finally:
             primary_error = sys.exc_info()[0] is not None
-            capture_errors = {}
-            for name, process, capture, error in streams:
-                if process.poll() is None:
-                    process.terminate()
-                process.wait(timeout=self.tb['apiSeconds'])
-                try:
-                    capture.close()
-                except Exception as failure:
-                    capture_errors[name] = str(failure)
-                error.close()
-            if capture_errors:
-                phase.setdefault('captureErrors', {}).update(capture_errors)
+            try:
+                finalize_captures()
+            except Exception as error:
                 if not primary_error:
-                    phase.update(status='STOP', error='; '.join(capture_errors.values()), failureUTC=evidence_io.now())
-                evidence_io.save(folder / 'phase.json', phase)
-                if not primary_error:
-                    raise RuntimeError(phase['error'])
+                    phase.update(status='STOP', error=str(error), failureUTC=evidence_io.now())
+                    evidence_io.save(folder / 'phase.json', phase)
+                    raise
 
     def record_go(self, folder, jobs, pods, at):
         value = {'goUTC': at, 'producerRefs': [{'workloadUID': self.ws[name]['uid'], 'shard': 0,

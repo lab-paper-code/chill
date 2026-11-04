@@ -199,6 +199,10 @@ write/flush는 없다. 최종 판정은 기존 전체 동결 분모·입력 의�
 producer별 전용 수집 thread는 `kubectl logs -f`의 바이트를 해석 없이 기존
 `*-client.jsonl`에 즉시 append/flush한다. 이벤트 해석·자원 폴링·잠정 D1은
 별도 main thread에서 수행하므로 느린 reducer가 log pipe 수집을 막지 않는다.
+연속 쓰기 경로가 기존 free reserve 검사를 소유한다. producer writer들은 공유 lock
+아래 다음 행의 바이트 수까지 반영해 여유를 확인하고 append/flush하므로 main
+reducer가 멈춰 있어도 reserve를 소비하는 행은 쓰지 않는다. 위반은
+`EvidenceCapacityInsufficient` capture 오류와 collectionLoss로 남기며 조용히 버리지 않는다.
 잠정 판정은 디스크의 완전한 줄만 읽고 매 poll 종료 시 full-population raw cache를
 해제한다. 전체 이력 index와 resource 목록의 peak memory는 아직 별도 개선 대상이다.
 `phase.producerCapture[workload]`는 `plannedRequests`, `receivedRequestRows`,
@@ -207,8 +211,10 @@ client 행이 적으면 그 차이를 `collectionLoss`로 분리한다. drained�
 최종·잠정 공용 request reducer와 게시 `kpis.requests[workload]`도 같은 이름을 사용한다.
 수집 손실은 `unfinishedOrUnsent`나 성공으로 세지 않으며 frozen 분모·D1 판정식은
 바꾸지 않는다. CHILL 관측으로 없어진 client 행을 보정하거나 재구성하지 않는다.
-phase 확정 전에는 수집 writer를 종료·join하고 남은 디스크 행을 같은 parser로 읽어
-행 수·drained·collectionLoss를 확정한다. join 이후 reader 오류도 capture 실패로 기록한다.
+정상·STOP·예외 종료는 같은 종료 함수에서 writer join → 남은 디스크 행 처리 →
+phase 저장 순서를 따른다. 행 수·drained·collectionLoss를 확정하고 join 이후 reader
+오류도 capture 실패로 기록한다. 종료 중 추가 오류는 원래 `ProducerFailed` 등 primary
+실패 사유를 덮어쓰지 않는다.
 남은 공백: follow 연결 끊김의 재연결·`--since-time`·dedup은 구현하지 않으며, 발생 시 누락 행은 collectionLoss로 드러낸다.
 
 ### 5.1 하네스 Job 계약

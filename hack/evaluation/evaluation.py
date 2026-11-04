@@ -116,7 +116,6 @@ class Harness:
         input_snapshot.check_fleet(self, self.spec)
         last = [0]
         def monitor(instance, offset, folder):
-            instance.disk_boundary()
             if time.monotonic() - last[0] >= 30:
                 targets = input_snapshot.check_target(self, self.spec['target'])
                 path = folder / 'target-observations.json'

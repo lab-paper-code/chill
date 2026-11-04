@@ -993,8 +993,91 @@ class EvaluationTests(unittest.TestCase):
         expected_missing = (0 if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status') else 3 if mode == 'late-watchdog-rows' else 1)
         self.assertEqual(boundaries[3]['producerRowsMissing'], {NAME: expected_missing})
         self.assertEqual(boundaries[-1]['bytes'], 42)
-        self.assertEqual(len(publications) - 4, len(job_polls) - (1 if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status') else 0))
+        self.assertEqual(len(publications) - 4, len(job_polls) - (2 if mode in ('normal', 'hot-log', 'slow-reducer', 'slow-status') else 1))
         self.assertEqual(publications[-4:], [4, 5, 6, 7], 'post-ingestion boundaries publish once each')
+
+    def test_stop_cleanup_tail_is_in_final_phase_without_replacing_primary_error(self):
+        def check(controller, mode, process, root, go, jobs, job_polls, signals, publications):
+            original = controller.io.k
+            def failed_after_go(args, *a, **kw):
+                result = original(args, *a, **kw)
+                if args[:2] == ['get', 'job'] and go:
+                    result['status'] = {'conditions': [{'type': 'Failed', 'status': 'True'}]}
+                return result
+            controller.io.k = failed_after_go
+            controller.io.delete_job = lambda *args: controller._cleanup_jobs()
+            try:
+                with self.assertRaisesRegex(RuntimeError, 'ProducerFailed:'):
+                    controller.run()
+            finally:
+                if process[0]:
+                    process[0].stdin.close()
+            phase = evidence_io.load(root / 'measured/phase.json')
+            disk = [json.loads(line) for line in (root / 'measured' / (NAME + '-client.jsonl')).read_bytes().splitlines()]
+            self.assertEqual(sum('scheduledOffsetNs' in row for row in disk), 1)
+            self.assertEqual(phase['producerCapture'][NAME]['receivedRequestRows'], 1)
+            self.assertEqual(phase['producerCapture'][NAME]['collectionLoss'], 2)
+            self.assertEqual(phase['status'], 'STOP')
+            self.assertTrue(phase['error'].startswith('ProducerFailed:'))
+            print(json.dumps({'scenario': 'STOP cleanup tail', 'diskRows': 1,
+                              'phaseCapture': phase['producerCapture'][NAME], 'primaryError': phase['error']}))
+        with patch.object(self, 'finish_stage_policy', side_effect=check):
+            self.exercise_stage_policy('late-watchdog-rows')
+
+    def test_capture_writer_preserves_disk_reserve_during_slow_reducer(self):
+        def check(controller, mode, process, root, go, jobs, job_polls, signals, publications):
+            path = root / 'measured' / (NAME + '-client.jsonl')
+            headroom = 1024 * 1024
+            minimum = controller.c['evaluation']['minimumFreeBytes']
+            def available(_):
+                size = path.stat().st_size if path.exists() else 0
+                return SimpleNamespace(f_bavail=max(0, minimum + headroom - size), f_frsize=1)
+            controller.monitor = conductor.CPO.monitor.__get__(controller)
+            try:
+                with patch.object(conductor.os, 'statvfs', side_effect=available), patch.object(conductor.ProvisionalD1, 'poll', side_effect=lambda _: time.sleep(.2)):
+                    with self.assertRaisesRegex(RuntimeError, 'EvidenceCapacityInsufficient'):
+                        controller.run()
+            finally:
+                if process[0]:
+                    process[0].stdin.close()
+            self.assertLessEqual(path.stat().st_size, headroom)
+            phase = evidence_io.load(root / 'measured/phase.json')
+            disk = [json.loads(line) for line in path.read_bytes().splitlines()]
+            rows = sum('scheduledOffsetNs' in row for row in disk)
+            capture = phase['producerCapture'][NAME]
+            self.assertEqual(capture['receivedRequestRows'], rows)
+            self.assertEqual(capture['collectionLoss'], 134156 - rows)
+            self.assertGreater(capture['collectionLoss'], 0)
+            self.assertIn('EvidenceCapacityInsufficient', str(phase['captureErrors']))
+            print(json.dumps({'scenario': 'writer reserve', 'headroom': headroom,
+                              'spooledBytes': path.stat().st_size, 'phaseCapture': capture,
+                              'captureErrors': phase['captureErrors']}))
+        with patch.object(self, 'finish_stage_policy', side_effect=check):
+            self.exercise_stage_policy('slow-reducer')
+
+    def test_optional_pre_go_publisher_does_not_consume_ready_barrier(self):
+        def check(controller, mode, process, root, go, jobs, job_polls, signals, publications):
+            once = []
+            def delayed_status():
+                if not once:
+                    once.append(True)
+                    time.sleep(1.1)
+            controller.progress_publish_callback = delayed_status
+            try:
+                controller.run()
+            finally:
+                if process[0]:
+                    process[0].stdin.close()
+            self.assertTrue(go)
+            print(json.dumps({'scenario': 'pre-GO progress', 'barrierSeconds': .8,
+                              'publisherDelaySeconds': 1.1, 'goEvents': len(go)}))
+        original = json.dumps
+        def finite_ready(value, *args, **kwargs):
+            if isinstance(value, dict) and value.get('evaluationEvent') == 'ready':
+                value = dict(value, at=evidence_io.now(), barrierSeconds=.8)
+            return original(value, *args, **kwargs)
+        with patch.object(self, 'finish_stage_policy', side_effect=check), patch.object(json, 'dumps', side_effect=finite_ready):
+            self.exercise_stage_policy('normal')
 
     def test_status_publish_blocked_60_seconds_does_not_block_producer_capture(self):
         self.exercise_stage_policy('slow-status')

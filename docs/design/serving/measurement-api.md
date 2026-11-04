@@ -197,6 +197,8 @@ producer poll publishes the entire progress list and `lastProgressAt` together
 through the same UID-tested status patch path as `provisionalD1`. Re-publication
 replaces the full array (RFC 6902 object-member `add`), so the first write needs
 no initial array and a failed write cannot lose or duplicate pending records.
+No progress status publication runs before GO. The first heartbeat publication
+occurs after release, so optional status IO cannot consume a producer Ready barrier.
 The publication also saves `stage-progress.json` in the shared stage workspace
 so the separate judge process retains prior boundaries. After ingestion ends,
 drain/flush/collect/judge boundaries each publish once.
