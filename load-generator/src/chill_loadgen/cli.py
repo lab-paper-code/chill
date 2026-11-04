@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
+from queue import Empty, SimpleQueue
 from typing import Callable, Dict, List, Optional, TextIO, Tuple
 
 from chill_loadgen import __version__
@@ -84,8 +85,9 @@ def replay_open_loop(
 ) -> None:
     """Dispatch every planned arrival independently, without an in-flight cap."""
     lock = threading.Lock()
-    threads: List[threading.Thread] = []
-    failures: List[BaseException] = []
+    completed = SimpleQueue()
+    active = 0
+    failure: Optional[BaseException] = None
 
     def base_row(request: ScheduledRequest) -> Dict[str, object]:
         index = int(request.request_id)
@@ -103,6 +105,7 @@ def replay_open_loop(
             out.flush()
 
     def send(request: ScheduledRequest) -> None:
+        nonlocal failure
         client = None
         try:
             index = int(request.request_id)
@@ -128,12 +131,24 @@ def replay_open_loop(
             emit(row)
         except BaseException as error:
             with lock:
-                failures.append(error)
+                if failure is None:
+                    failure = error
         finally:
-            if client is not None:
-                client.close()
+            try:
+                if client is not None:
+                    client.close()
+            finally:
+                completed.put(threading.current_thread())
 
     def submit(request: ScheduledRequest, delayed: bool) -> None:
+        nonlocal active
+        # Join retired threads promptly, including their interpreter shutdown locks.
+        while active:
+            try:
+                completed.get_nowait().join()
+            except Empty:
+                break
+            active -= 1
         thread = threading.Thread(target=send, args=(request,))
         try:
             thread.start()
@@ -146,7 +161,7 @@ def replay_open_loop(
                        finishedMonotonicNS=now)
             emit(row)
             return
-        threads.append(thread)
+        active += 1
 
     try:
         run_schedule(
@@ -155,10 +170,10 @@ def replay_open_loop(
             clock_ns=clock_ns, sleep=sleep,
         )
     finally:
-        for thread in threads:
-            thread.join()
-    if failures:
-        raise RuntimeError("Open-loop request failed") from failures[0]
+        for _ in range(active):
+            completed.get().join()
+    if failure is not None:
+        raise RuntimeError("Open-loop request failed") from failure
 
 
 def replay(

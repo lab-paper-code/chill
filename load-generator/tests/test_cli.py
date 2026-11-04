@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 import threading
+import weakref
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
@@ -106,6 +107,25 @@ class FakeClient:
 
 
 class ReplayTest(unittest.TestCase):
+    def test_evaluation_releases_completed_requests_before_end_of_run(self):
+        completed = []
+        original_start = threading.Thread.start
+
+        def start(thread):
+            original_start(thread)
+            thread.join()
+            completed.append(weakref.ref(thread))
+            self.assertLessEqual(sum(ref() is not None for ref in completed), 1)
+
+        output = io.StringIO()
+        with patch.object(threading.Thread, "start", start):
+            replay_open_loop(
+                [("q1", {"image": b"a"})], workload="vqa", offsets=[0] * 100,
+                new_client=FakeClient, out=output, start_ns=0, clock_ns=lambda: 0,
+            )
+        self.assertEqual(len(output.getvalue().splitlines()), 100)
+        self.assertTrue(all(ref() is None for ref in completed))
+
     def test_shards_partition_frozen_global_indexes_without_overlap(self):
         offsets = [2, 2, 7, 11, 15, 20, 22]
         parts = [shard_schedule(offsets, shard, 3) for shard in range(3)]
