@@ -15,18 +15,10 @@ func SelectConditionProfiles(profiles []Profile, replaced map[string]bool) ([]Pr
 	result := make([]Profile, 0, len(profiles))
 	indices := make(map[string]int, len(profiles))
 	for _, profile := range profiles {
-		condition := profile.Condition
-		condition.Name = ""
-		condition.PlannedBatchSizes = nil
-		condition.RuntimeImage = ""
-		payload, err := json.Marshal(struct {
-			Condition    profilederivation.CurvePlanSpec `json:"condition"`
-			MetricSource metricobserver.SourceIdentity   `json:"metricSource"`
-		}{condition, profile.MetricSource})
+		key, err := profileConditionKey(profile)
 		if err != nil {
-			return nil, fmt.Errorf("encode frozen profile condition: %w", err)
+			return nil, err
 		}
-		key := string(payload)
 		if index, found := indices[key]; found {
 			old := result[index]
 			if profile.MeasuredAt.After(old.MeasuredAt) || (profile.MeasuredAt.Equal(old.MeasuredAt) && profile.ID < old.ID) {
@@ -44,4 +36,60 @@ func SelectConditionProfiles(profiles []Profile, replaced map[string]bool) ([]Pr
 		}
 	}
 	return selected, nil
+}
+
+// ExcludeReplacedConditionProfiles retires only explicit targets and their older
+// lineage. It preserves every other row, including reuse confirmations which must
+// be separated from direct sources before latest-per-condition selection.
+func ExcludeReplacedConditionProfiles(profiles []Profile, replaced map[string]bool) ([]Profile, error) {
+	if len(replaced) == 0 {
+		return profiles, nil
+	}
+	cutoffs := make(map[string]Profile, len(replaced))
+	for _, profile := range profiles {
+		if !replaced[profile.ID] {
+			continue
+		}
+		key, err := profileConditionKey(profile)
+		if err != nil {
+			return nil, err
+		}
+		old, found := cutoffs[key]
+		if !found || profile.MeasuredAt.After(old.MeasuredAt) ||
+			(profile.MeasuredAt.Equal(old.MeasuredAt) && profile.ID < old.ID) {
+			cutoffs[key] = profile
+		}
+	}
+	result := make([]Profile, 0, len(profiles))
+	for _, profile := range profiles {
+		if replaced[profile.ID] {
+			continue
+		}
+		key, err := profileConditionKey(profile)
+		if err != nil {
+			return nil, err
+		}
+		target, found := cutoffs[key]
+		if found && (profile.MeasuredAt.Before(target.MeasuredAt) ||
+			(profile.MeasuredAt.Equal(target.MeasuredAt) && profile.ID > target.ID)) {
+			continue
+		}
+		result = append(result, profile)
+	}
+	return result, nil
+}
+
+func profileConditionKey(profile Profile) (string, error) {
+	condition := profile.Condition
+	condition.Name = ""
+	condition.PlannedBatchSizes = nil
+	condition.RuntimeImage = ""
+	payload, err := json.Marshal(struct {
+		Condition    profilederivation.CurvePlanSpec `json:"condition"`
+		MetricSource metricobserver.SourceIdentity   `json:"metricSource"`
+	}{condition, profile.MetricSource})
+	if err != nil {
+		return "", fmt.Errorf("encode frozen profile condition: %w", err)
+	}
+	return string(payload), nil
 }

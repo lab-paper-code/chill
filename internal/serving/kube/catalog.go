@@ -200,7 +200,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 			delete(c.current, source)
 		}
 	}
-	view.Profiles, err = serving.SelectConditionProfiles(append(view.Profiles, replacedProfiles...), profilederivation.ReplacedMeasurements(replacements, names))
+	view.Profiles, err = serving.ExcludeReplacedConditionProfiles(append(view.Profiles, replacedProfiles...), profilederivation.ReplacedMeasurements(replacements, names))
 	if err != nil {
 		return CatalogView{}, err
 	}

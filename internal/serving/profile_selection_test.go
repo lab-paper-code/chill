@@ -25,11 +25,15 @@ func TestSelectConditionProfilesReplacementLineage(t *testing.T) {
 	}{
 		{"replacement retires target lineage across keys", []Profile{q2, replacement, q1, q3}, map[string]bool{"q3": true}, []string{replacementID}},
 		{"without replacement latest per key", []Profile{q2, replacement, q1, q3}, nil, []string{"q3", replacementID}},
-		{"newer same key survives replacement", []Profile{q2, replacement, q1, q3, newer}, map[string]bool{"q3": true}, []string{"newer", replacementID}},
+		{"newer same key survives replacement", []Profile{q2, replacement, q1, q3, newer}, map[string]bool{"q3": true}, []string{replacementID, "newer"}},
 		{"newer same key without replacement", []Profile{q2, q1, q3, newer}, nil, []string{"newer"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := SelectConditionProfiles(tc.profiles, tc.replaced)
+			eligible, err := ExcludeReplacedConditionProfiles(tc.profiles, tc.replaced)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := SelectConditionProfiles(eligible, nil)
 			if err != nil || len(got) != len(tc.want) {
 				t.Fatalf("selection=%+v error=%v, want %v", got, err, tc.want)
 			}
