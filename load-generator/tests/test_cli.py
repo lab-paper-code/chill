@@ -9,8 +9,8 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from chill_loadgen.cli import arrival_offsets_ns, load_records, main, replay, replay_open_loop, shard_schedule
-from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient
+from chill_loadgen.cli import arrival_offsets_ns, load_records, main, prepare_records, replay, replay_open_loop, shard_schedule
+from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, encode_inputs
 
 
 class CLITest(unittest.TestCase):
@@ -90,6 +90,17 @@ class LoadRecordsTest(unittest.TestCase):
 
         self.assertEqual([("q1", {"image": b"q1-jpeg"}), ("q2", {"image": b"q2-jpeg"})], records)
 
+    def test_preparation_releases_raw_payload_ownership_before_fork(self):
+        class Inputs(dict):
+            pass
+        inputs = Inputs(image=b"sample")
+        reference = weakref.ref(inputs)
+        records = [("q1", inputs)]
+        del inputs
+        prepared = prepare_records(records)
+        self.assertIsNone(reference())
+        self.assertEqual([("q1", encode_inputs({"image": b"sample"}))], prepared)
+
 
 class FakeClient:
     def __init__(self) -> None:
@@ -98,7 +109,7 @@ class FakeClient:
 
     def infer(self, workload_id, inputs):
         self.sent.append((workload_id, inputs))
-        if inputs["image"] == b"bad":
+        if inputs == encode_inputs({"image": b"bad"}):
             raise TimeoutError()
         return InferenceResponse(200, b"{}", request_id="r%d" % len(self.sent), workload_uid="uid")
 
@@ -107,6 +118,21 @@ class FakeClient:
 
 
 class ReplayTest(unittest.TestCase):
+    def test_invalid_sample_fails_before_any_arrival_or_connection(self):
+        for arrivals in ("fixed", "closed-loop"):
+            with self.subTest(arrivals=arrivals), \
+                 patch("chill_loadgen.cli.run_schedule") as schedule:
+                def connect():
+                    self.fail("invalid sample opened a connection")
+                with self.assertRaisesRegex(ValueError, "nonempty bytes"):
+                    replay(
+                        [("q1", {"image": b""})], workload="vqa",
+                        rate=1 if arrivals == "fixed" else None, duration=1,
+                        workers=1, new_client=connect, out=io.StringIO(),
+                        arrivals=arrivals, open_loop=True,
+                    )
+                schedule.assert_not_called()
+
     def test_evaluation_releases_completed_requests_before_end_of_run(self):
         completed = []
         original_start = threading.Thread.start
@@ -120,7 +146,7 @@ class ReplayTest(unittest.TestCase):
         output = io.StringIO()
         with patch.object(threading.Thread, "start", start):
             replay_open_loop(
-                [("q1", {"image": b"a"})], workload="vqa", offsets=[0] * 100,
+                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0] * 100,
                 new_client=FakeClient, out=output, start_ns=0, clock_ns=lambda: 0,
             )
         self.assertEqual(len(output.getvalue().splitlines()), 100)
@@ -153,7 +179,7 @@ class ReplayTest(unittest.TestCase):
         output = Output()
         with patch("chill_loadgen.cli.run_schedule", side_effect=schedule):
             replay_open_loop(
-                [("q1", {"image": b"a"})], workload="vqa", offsets=[0] * 3,
+                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0] * 3,
                 new_client=Client, out=output, start_ns=0, clock_ns=lambda: 0,
             )
         self.assertEqual(len(output.getvalue().splitlines()), 3)
@@ -176,7 +202,7 @@ class ReplayTest(unittest.TestCase):
         def run():
             try:
                 replay_open_loop(
-                    [("q1", {"image": b"a"})], workload="vqa", offsets=[0],
+                    prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0],
                     new_client=SlowClient, out=io.StringIO(), start_ns=0,
                 )
             except ValueError as error:
@@ -252,7 +278,7 @@ class ReplayTest(unittest.TestCase):
                 response.getheader.return_value = None
                 output = io.StringIO()
                 replay_open_loop(
-                    [("q1", {"image": b"a"})], workload="vqa", offsets=[0],
+                    prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0],
                     new_client=lambda: WorkloadHTTPClient(
                         "https://chill.example", bearer_token="token",
                         timeout_seconds=2, request_lifetime_seconds=1),
@@ -277,7 +303,7 @@ class ReplayTest(unittest.TestCase):
         output = io.StringIO()
         with patch.object(threading.Thread, "start", start):
             replay_open_loop(
-                [("q1", {"image": b"a"})], workload="vqa", offsets=[0, 0, 0],
+                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0, 0, 0],
                 new_client=FakeClient, out=output, start_ns=0, clock_ns=lambda: 0,
             )
         rows = [json.loads(line) for line in output.getvalue().splitlines()]

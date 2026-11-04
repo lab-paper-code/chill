@@ -226,11 +226,19 @@ is one raw sample: a mapping from every input field name of the Workload's
 preprocessor to that field's bytes (a JPEG file or UTF-8 text). The client sends
 each field as `BYTES` with base64 data. Routing and batching remain server-side.
 
+Call `encode_inputs` once when loading each record, then reuse its immutable body
+with `infer`. Replay consumes the raw record list during preparation before its
+start clock; evaluation retains field sizes/hashes, drops raw bytes, and prepares
+all bodies before fork so children share the bytes copy-on-write. No base64 or
+JSON serialization of sample payloads runs in request threads (which would retain
+large glibc malloc arenas under overload). Input fields are validated once during
+preparation; JSON field order, spacing and base64 wire bytes are unchanged.
+
 ```python
 import os
 from pathlib import Path
 
-from chill_loadgen.http_client import WorkloadHTTPClient
+from chill_loadgen.http_client import WorkloadHTTPClient, encode_inputs
 
 client = WorkloadHTTPClient(
     "https://chill.example:8443",
@@ -240,10 +248,11 @@ client = WorkloadHTTPClient(
 )
 try:
     # Replace these fields with the registered Workload's preprocessor input contract.
-    result = client.infer("vqa-service", {
+    body = encode_inputs({
         "image": Path("cat.jpg").read_bytes(),
         "question": "What is in the picture?".encode("utf-8"),
     })
+    result = client.infer("vqa-service", body)
     print(result.status_code, result.request_id, result.workload_uid)
 finally:
     client.close()

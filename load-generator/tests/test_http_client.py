@@ -3,7 +3,7 @@ import ssl
 import unittest
 from unittest.mock import Mock, patch
 
-from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient
+from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, encode_inputs
 
 
 class WorkloadHTTPClientTest(unittest.TestCase):
@@ -22,6 +22,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
             "X-Chill-Workload-UID": "uid-1",
         }.get(name)
         inputs = {"image": b"\xff\xd8\xff\xe0", "question": "무엇?".encode("utf-8")}
+        request_body = encode_inputs(inputs)
         client = WorkloadHTTPClient(
             "https://chill.example:8443/",
             bearer_token="token",
@@ -36,12 +37,17 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         for status in (200, 302, 401, 403, 429, 502, 503, 504):
             with self.subTest(status=status):
                 response.status = status
-                result = client.infer("image-service", inputs)
+                result = client.infer("image-service", request_body)
                 self.assertEqual(
                     InferenceResponse(status, body, "request-1", "uid-1"), result
                 )
                 args, kwargs = connection.request.call_args
                 self.assertEqual(("POST", "/api/v1/workloads/image-service/infer"), args)
+                self.assertEqual(
+                    b'{"inputs": [{"name": "image", "datatype": "BYTES", "data": "/9j/4A=="}, '
+                    b'{"name": "question", "datatype": "BYTES", "data": "66y07JeHPw=="}]}',
+                    kwargs["body"],
+                )
                 self.assertEqual(
                     {"inputs": [
                         {"name": "image", "datatype": "BYTES", "data": "/9j/4A=="},
@@ -110,7 +116,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
             "https://chill.example", bearer_token="token",
             timeout_seconds=129.01, request_lifetime_seconds=129,
         )
-        client.infer("smol", {"question": b"what?"})
+        client.infer("smol", encode_inputs({"question": b"what?"}))
         self.assertEqual(
             "129.000000000s",
             connection.request.call_args.kwargs["headers"]["X-Chill-Request-Timeout"],
@@ -130,7 +136,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         client = WorkloadHTTPClient(
             "https://chill.example", bearer_token="token", timeout_seconds=5
         )
-        sample = {"image": b"\xff\xd8\xff"}
+        sample = encode_inputs({"image": b"\xff\xd8\xff"})
         for workload_id in ("", "../model", "a/b", "a%2fb", "a?next=other", "a#b", "a\r\n", "a..b", "A", "a" * 64):
             with self.subTest(workload_id=workload_id), self.assertRaisesRegex(ValueError, "workload_id"):
                 client.infer(workload_id, sample)
@@ -139,7 +145,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
             {"image": ""}, {"image": b""}, {"image": "text"}, {"image": bytearray(b"x")},
         ):
             with self.subTest(inputs=inputs), self.assertRaises(ValueError):
-                client.infer("image-service", inputs)
+                encode_inputs(inputs)
         connection_type.return_value.request.assert_not_called()
 
     @patch("chill_loadgen.http_client.HTTPSConnection")
@@ -152,7 +158,7 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         connection_type.return_value.sock = None
         connection_type.return_value.request.side_effect = TimeoutError()
         with self.assertRaises(TimeoutError):
-            client.infer("image-service", {"value": b"1"})
+            client.infer("image-service", encode_inputs({"value": b"1"}))
         connection_type.return_value.request.assert_called_once()
 
 
@@ -175,11 +181,11 @@ class StaleConnectionTest(unittest.TestCase):
         connection.getresponse.return_value.status = 200
         client = WorkloadHTTPClient("https://chill.example", bearer_token="t", timeout_seconds=1)
 
-        client.infer("vqa", {"image": b"a"})
+        client.infer("vqa", encode_inputs({"image": b"a"}))
         self.assertEqual(["close", "request"], events)
 
         connection.sock = None  # fresh connection: nothing to check
         events.clear()
-        client.infer("vqa", {"image": b"a"})
+        client.infer("vqa", encode_inputs({"image": b"a"}))
         self.assertEqual(["request"], events)
         local.close()

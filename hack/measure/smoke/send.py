@@ -5,7 +5,7 @@ from pathlib import Path
 CONFIG = json.loads(Path(os.environ["CHILL_EXPERIMENT_CONFIG"]).read_text())
 ENV = CONFIG["measure"]
 sys.path.insert(0, str(Path(CONFIG["paths"]["repository"]) / "load-generator/src"))
-from chill_loadgen.http_client import WorkloadHTTPClient
+from chill_loadgen.http_client import WorkloadHTTPClient, encode_inputs
 S = ENV["serverURL"]; CA = ENV["caFile"]
 wl, ds, n, out = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
 repository = Path(CONFIG["paths"]["repository"]).resolve()
@@ -19,7 +19,7 @@ with open(out, 'w') as f:
         inputs = {name: open(os.path.join(ds, r, name), 'rb').read() for name in fields}
         t = time.time()
         try:
-            resp = client.infer(wl, inputs); body = resp.body.decode('utf-8', 'replace')
+            resp = client.infer(wl, encode_inputs(inputs)); body = resp.body.decode('utf-8', 'replace')
             line = dict(record=r, inputs={k: len(v) for k, v in inputs.items()}, status=resp.status_code, requestID=resp.request_id,
                         latencyMs=round((time.time() - t) * 1000, 1), body=json.loads(body) if body.startswith('{') else body)
         except Exception as e:

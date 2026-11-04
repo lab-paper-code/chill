@@ -49,6 +49,7 @@ def replay_shards(records, offsets, duration_ns, binding, kw):
     count = binding['shards']
     if type(count) is not int or count < 1:
         raise ValueError('Positive frozen producer shard count required')
+    records = cli.prepare_records(records)
     context = multiprocessing.get_context('fork')
     ready = context.Barrier(count + 1)
     release = context.Event()
