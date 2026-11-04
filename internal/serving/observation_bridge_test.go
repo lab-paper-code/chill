@@ -21,7 +21,7 @@ func TestCapacityBridgeCatalogProjectionDoesNotMutateLiveProfiles(t *testing.T) 
 		t.Fatal("bridge fixture lost its staged handoff")
 	}
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: config.Directory, Store: config.Store, Writer: config.Writer, Retention: config.Retention,
+		Directory: config.Directory, Store: config.Store, Retention: config.Retention,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -171,6 +171,49 @@ assert any(d["kind"] == "ClusterRoleBinding" and
            {"kind": "ServiceAccount", "name": "chill-query", "namespace": "chill-system"} in d.get("subjects", [])
            for d in documents), "query SA lacks occupancy GET binding"
 
+owner = next(d for d in documents if d["kind"] == "Deployment" and
+             d["metadata"]["name"] == "chill-serving-entrypoint")
+worker = next(d for d in documents if d["kind"] == "Deployment" and
+              d["metadata"]["name"] == "chill-observation-archiver")
+assert owner["spec"]["strategy"]["type"] == worker["spec"]["strategy"]["type"] == "Recreate"
+assert owner["spec"]["replicas"] == worker["spec"]["replicas"] == 1
+owner_pod = owner["spec"]["template"]["spec"]
+worker_pod = worker["spec"]["template"]["spec"]
+assert "nodeName" not in owner_pod and "nodeName" not in worker_pod
+assert worker_pod["nodeSelector"] == owner_pod["nodeSelector"]
+assert worker_pod["securityContext"] == owner_pod["securityContext"]
+container = worker_pod["containers"][0]
+assert container["image"] == owner_pod["containers"][0]["image"]
+assert container["command"] == ["/observation-archiver"]
+assert container["securityContext"] == owner_pod["containers"][0]["securityContext"]
+assert not container["resources"] and not worker_pod["automountServiceAccountToken"]
+assert effective(worker_pod["serviceAccountName"]) == (set(), set())
+mounts = {m["mountPath"]: m for m in container["volumeMounts"]}
+assert mounts["/observations"]["readOnly"]
+assert mounts["/archive-control"]["subPath"] == "pools-owner/archive-control"
+assert not mounts["/archive-control"].get("readOnly", False)
+assert len(container["volumeMounts"]) == 3
+assert worker_pod["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"][0][
+    "labelSelector"]["matchLabels"]["app.kubernetes.io/component"] == "serving-entrypoint"
+owner_volumes = {v["name"]: v for v in owner_pod["volumes"]}
+worker_volumes = {v["name"]: v for v in worker_pod["volumes"]}
+assert worker_volumes["temporary"]["emptyDir"] == owner_volumes["temporary"]["emptyDir"] == {"sizeLimit": "512Mi"}
+assert worker_volumes["observations"]["persistentVolumeClaim"] == owner_volumes["observations"]["persistentVolumeClaim"]
+assert not worker_volumes["observations"]["persistentVolumeClaim"].get("readOnly", False)
+claim = next(d for d in documents if d["kind"] == "PersistentVolumeClaim" and d["metadata"]["name"] == "test-observations")
+volume = next(d for d in documents if d["kind"] == "PersistentVolume" and d["metadata"]["name"] == claim["spec"]["volumeName"])
+storage_class = next(d for d in documents if d["kind"] == "StorageClass" and d["metadata"]["name"] == volume["spec"]["storageClassName"])
+assert claim["spec"]["storageClassName"] == storage_class["metadata"]["name"]
+assert volume["spec"]["claimRef"] == {"name": claim["metadata"]["name"], "namespace": "chill-system"}
+assert volume["spec"]["persistentVolumeReclaimPolicy"] == "Retain"
+assert volume["spec"]["local"] == {"path": "/var/lib/chill/observations", "fsType": "ext4"}
+assert volume["spec"]["nodeAffinity"]["required"]["nodeSelectorTerms"][0]["matchExpressions"] == [
+    {"key": "kubernetes.io/hostname", "operator": "In", "values": ["test-node"]}]
+assert storage_class["provisioner"] == "kubernetes.io/no-provisioner"
+assert storage_class["volumeBindingMode"] == "WaitForFirstConsumer"
+for resource in (claim, volume, storage_class):
+    assert resource["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+
 serving = [r for r in roles if r["metadata"]["name"] == "chill-serving-entrypoint"]
 if not serving or not grants(serving[0], "services", "list"):
     sys.exit("serving namespace Role lacks services list")
@@ -236,7 +279,13 @@ PY
 # ChillServer is opt-in; render it in both profiles with the scheduler configured.
 serving=(--set servingEntrypoint.enabled=true --set query.enabled=true --set servingEntrypoint.tls.secretName=chill-tls
 	--set evidenceStore.connection.bucket=chill --set evidenceStore.connection.region=local
-	--set servingEntrypoint.scheduler.configMap=chill-scheduler)
+	--set servingEntrypoint.scheduler.configMap=chill-scheduler
+	--set servingEntrypoint.observationStorage.directory=/data/pools-owner
+	--set servingEntrypoint.observationStorage.storageClassName=test-observations-local
+	--set servingEntrypoint.observationStorage.claimName=test-observations
+	--set servingEntrypoint.observationStorage.volumeName=test-observations
+	--set servingEntrypoint.observationStorage.localPath=/var/lib/chill/observations
+	--set servingEntrypoint.observationStorage.nodeHostname=test-node)
 check "" ""
 check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml"
 check "" "" -f "${repo_root}/charts/chill/values-profiler.yaml" --set evaluation.enabled=true
@@ -265,6 +314,12 @@ reject_dashboard() {
 	fi
 	[[ "$(<"${rendered}")" == *"${key}"* ]]
 }
+for field in storageClassName claimName volumeName localPath nodeHostname; do
+	reject_dashboard "observationStorage.${field}" "${serving[@]}" --set-string "servingEntrypoint.observationStorage.${field}="
+done
+reject_dashboard observationStorage.localPath "${serving[@]}" --set servingEntrypoint.observationStorage.localPath=relative
+reject_dashboard observationStorage.directory "${serving[@]}" --set servingEntrypoint.observationStorage.directory=/data/../other
+reject_dashboard observationArchiver.resources "${serving[@]}" --set servingEntrypoint.observationArchiver.resources.requests.memory=64Mi
 reject_dashboard dashboard.reader.enabled --set dashboard.reader.enabled=true
 reject_dashboard dashboard.reader.enabled "${serving[@]}" --set-string dashboard.reader.enabled=true
 reject_dashboard dashboard.callerServiceAccount --set dashboard.callerServiceAccount=chill-dashboard-user

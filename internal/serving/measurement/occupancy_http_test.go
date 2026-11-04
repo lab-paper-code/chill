@@ -3,18 +3,13 @@ package measurement_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving/measurement"
 
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -42,7 +37,6 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 	})
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: time.Hour,
-		Writer: testArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -109,30 +103,4 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 			t.Fatal("real POST changed the frozen dry-run object")
 		}
 	}
-}
-
-type testArchive struct{ directory string }
-
-func (a testArchive) StreamImmutable(
-	_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error,
-) (evidencestore.Receipt, error) {
-	output := filepath.Join(a.directory, location.Key)
-	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	err = produce(file)
-	info, statErr := file.Stat()
-	err = errors.Join(err, statErr, file.Sync(), file.Close())
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	identity := evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: info.Size()}
-	return evidencestore.Receipt{
-		SchemaVersion: evidencestore.ReceiptSchemaVersion,
-		Object:        identity, Outcome: evidencestore.CreateOutcomeCreated,
-	}, nil
 }

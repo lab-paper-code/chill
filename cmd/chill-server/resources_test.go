@@ -44,7 +44,6 @@ func TestResourcesHandshakeReplacementAndRestart(t *testing.T) {
 	directory := t.TempDir()
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: directory, Store: "evidence", Retention: 2 * time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +118,6 @@ func TestProcessResourcesDirectorySamplingAndIdentity(t *testing.T) {
 	ctx := context.Background()
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: directory, Store: "evidence", Retention: 2 * time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

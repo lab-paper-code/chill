@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
 // The external-test constructor hook avoids a serving -> observation -> serving test import cycle without production exports.
@@ -18,7 +16,6 @@ var RuntimeObservationConstructor func(RuntimeTestObservationConfig) (RuntimeTes
 type RuntimeTestObservationConfig struct {
 	Directory   string
 	Store       string
-	Writer      evidencestore.StreamingImmutableWriter
 	Retention   time.Duration
 	Diagnostics *Diagnostics
 }
@@ -96,6 +93,5 @@ func CapacityBridgeObservationFixture(t *testing.T) (SchedulerCandidate, Runtime
 	}
 	return *decision.Target, RuntimeTestObservationConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
-		Writer: &observationArchive{directory: t.TempDir()},
 	}
 }

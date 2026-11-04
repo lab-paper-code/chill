@@ -20,7 +20,6 @@ func TestRecordedActionUsesSameDurableAndLiveTimestamp(t *testing.T) {
 	publisher := newLivePublisher(ctx)
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

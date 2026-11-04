@@ -120,7 +120,7 @@ func (l *ObservationLog) closeRowLocked(id string) error {
 
 // appendRowLocked returns the hour that holds the row.
 func (l *ObservationLog) appendRowLocked(row *serving.RequestRow) (time.Time, error) {
-	now := l.now()
+	now := l.appendTimeLocked()
 	if d := l.retained[row.DefinitionID]; d != nil {
 		if err := l.referenceLocked("definition", row.DefinitionID, now, now, d); err != nil {
 			return now, err

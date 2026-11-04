@@ -260,7 +260,6 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	ctx := context.Background()
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -480,7 +479,6 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 	ctx := context.Background()
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

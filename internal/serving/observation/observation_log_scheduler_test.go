@@ -22,7 +22,7 @@ import (
 )
 
 func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}, Definitions: []string{"unrelated"}, Outcomes: []string{"completed"}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Archive: &observationArchive{directory: t.TempDir()}, Definitions: []string{"unrelated"}, Outcomes: []string{"completed"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,7 +829,7 @@ func BenchmarkSchedulerFilteredSummaryArchive(b *testing.B) {
 	if err := file.Close(); err != nil {
 		b.Fatal(err)
 	}
-	log, err := NewObservationLog(ObservationLogConfig{Directory: b.TempDir(), Store: archiveTestStore, Writer: archive, Retention: 2 * time.Hour})
+	log, err := NewObservationLog(ObservationLogConfig{Directory: b.TempDir(), Store: archiveTestStore, Archive: archive, Retention: 2 * time.Hour})
 	if err != nil {
 		b.Fatal(err)
 	}

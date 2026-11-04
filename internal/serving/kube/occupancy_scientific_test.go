@@ -133,7 +133,7 @@ func TestBurstFrozenProfileIdentity(t *testing.T) {
 func TestBurstWarmupOriginJoinsLateNativeReceiptCohort(t *testing.T) {
 	ctx := context.Background()
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()},
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)

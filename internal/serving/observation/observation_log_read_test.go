@@ -287,7 +287,7 @@ const localSource = "local"
 func TestObservationReadCoverageIgnoresBoundLocations(t *testing.T) {
 	ctx := context.Background()
 	archive := newReadableObservationArchive(t)
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	from, to := observationTestHour.Add(time.Second), observationTestHour.Add(time.Minute)
 	clock.set(from)
 	appendAssignedRequest(t, log, "location", from)
@@ -303,7 +303,7 @@ func TestObservationReadCoverageIgnoresBoundLocations(t *testing.T) {
 			} else {
 				archive.listError = nil
 				clock.set(observationTestHour.Add(3 * time.Hour))
-				if err := log.Flush(ctx); err != nil {
+				if err := flushObservationArchive(log, ctx); err != nil {
 					t.Fatal(err)
 				}
 			}

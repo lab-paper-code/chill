@@ -20,7 +20,7 @@ func TestSchedulerCaptureReusesImmutableProfileReferences(t *testing.T) {
 	diagnostics := serving.NewDiagnostics()
 	directory := t.TempDir()
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: directory, Diagnostics: diagnostics,
-		Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}})
+		Store: "evidence", Retention: 2 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}

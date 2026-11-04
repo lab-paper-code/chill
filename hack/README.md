@@ -386,6 +386,33 @@ list and validate the render with
 `make helm-lint helm-template HELM_VALUES=charts/chill/values-profiler.yaml`.
 `hack/runtime-declarations.py --self-check` checks the payload builder offline.
 
+## Retained observation storage
+
+Serving requires explicit `servingEntrypoint.observationStorage` values:
+`storageClassName`, `claimName`, `volumeName`, `localPath`, and `nodeHostname`.
+The chart creates a no-provisioner WaitForFirstConsumer StorageClass, an ext4
+local PV with required hostname affinity and Retain policy, and a kept PVC
+prebound through both `volumeName` and `claimRef`. Pod replacement reuses that
+same claim; there is no dynamic or empty-directory fallback.
+
+Before cutover, preprovision the selected local ext4 directory with UID 65532
+access. Stop admission, drain/Close the old sole owner, and copy its **complete**
+quiescent owner tree, including retained definitions and unresolved assigned
+requests, without changing the `v1alpha5` layout or configured observation path.
+Keep the old Ceph claim untouched. The operating values declare
+`/var/lib/chill/observations` on `genesis1`; they do not create or migrate that
+directory. An unavailable original node leaves replacement Pods unavailable;
+disk loss is loss of local-only ownership/evidence, not archive-based recovery.
+
+The separate observation-archiver Deployment uses the exact serving image and
+UID/security settings. It mounts the owner root read-only, and only its
+`archive-control` subdirectory read-write, with independent unchanged 512Mi
+scratch. Serving creates that control directory; the worker has no Kubernetes
+API grants or token. Required same-node pod affinity supplements PV affinity.
+Only serving retires receipt-complete hours under retention/unresolved barriers.
+`hack/serving-entrypoint-rbac-test.sh` covers storage binding, worker mounts and
+RBAC in default and Profiler renders; the owner runs it with the Helm gates.
+
 ## Offline observation tables
 
 `hack/observations/` builds measurement tables from the hourly S3 observation segments: `fetch.sh <from-hour> <to-hour> <dir>` downloads them plus one hour on each side, `duckdb < hack/observations/e1.sql` in `<dir>` gives the E1 request and Tick tables, and `go run ./hack/observations/power --dir <dir>/obs --scheduler-config <scheduler ConfigMap value> --from --to` gives whole and active POOL energy with the ChillServer reducer.

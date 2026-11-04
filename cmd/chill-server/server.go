@@ -72,7 +72,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, observationOwner.Close()) }()
-	removeStagedObservationArchives()
+	removeStagedEvidence()
 	diagnostics, err := newDiagnosticSession(ctx, opts)
 	if err != nil {
 		return fmt.Errorf("initialize finite diagnostics: %w", err)
@@ -85,7 +85,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	publisher := newLivePublisher(ctx)
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
-		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
+		Archive: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
 		OccupancyTail:    httpapi.MaximumInferenceRequestTimeout + opts.drainTimeout,
 		Diagnostics:      recorder,
 		Retention:        opts.observationRetention,
@@ -96,9 +96,11 @@ func run(ctx context.Context, opts options) (retErr error) {
 		return err
 	}
 	defer func() {
-		// Shutdown closes local files but leaves unfinished hours for next startup.
+		// Local finalization gets the process shutdown budget, not an SDK-call timeout.
 		cancelRun()
-		if err := observationLog.Close(ctx); err != nil {
+		closeCtx, cancelClose := context.WithTimeout(context.Background(), opts.drainTimeout)
+		defer cancelClose()
+		if err := observationLog.Close(closeCtx); err != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("close serving observations: %w", err))
 		}
 	}()
@@ -255,13 +257,11 @@ func (h *initializingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func removeStagedObservationArchives() {
-	// An upload interrupted by a restart leaves its staging files on scratch space.
-	for _, pattern := range []string{".archive-*", "chill-evidence-*"} {
-		staged, _ := filepath.Glob(filepath.Join(os.TempDir(), pattern))
-		for _, name := range staged {
-			_ = os.Remove(name)
-		}
+func removeStagedEvidence() {
+	// Non-observation evidence uploads can leave staging files after a restart.
+	staged, _ := filepath.Glob(filepath.Join(os.TempDir(), "chill-evidence-*"))
+	for _, name := range staged {
+		_ = os.Remove(name)
 	}
 }
 
@@ -318,8 +318,8 @@ func serve(ctx context.Context, opts options, chillServer *initializingHandler, 
 	observationLog *observation.ObservationLog, scheduler *application.SchedulerService, diagnostics *diagnosticSession,
 	initialize func(context.Context) (http.Handler, error),
 ) error {
-	ctx, cancelArchive := context.WithCancel(ctx)
-	defer cancelArchive()
+	ctx, cancelMaintenance := context.WithCancel(ctx)
+	defer cancelMaintenance()
 	certificate, err := tls.LoadX509KeyPair(opts.tlsCert, opts.tlsKey)
 	if err != nil {
 		return err
@@ -358,9 +358,9 @@ func serve(ctx context.Context, opts options, chillServer *initializingHandler, 
 	defer sourceTicker.Stop()
 	profileTicker := time.NewTicker(opts.profileInterval)
 	defer profileTicker.Stop()
-	archiveTicker := time.NewTicker(time.Minute)
-	defer archiveTicker.Stop()
-	archiving := make(chan struct{}, 1)
+	maintenanceTicker := time.NewTicker(time.Minute)
+	defer maintenanceTicker.Stop()
+	maintaining := make(chan struct{}, 1)
 	var serveError error
 loop:
 	for {
@@ -404,16 +404,16 @@ loop:
 				}
 			}
 			cancel()
-		case <-archiveTicker.C:
-			archiveInBackground(ctx, archiving, observationLog.Flush)
+		case <-maintenanceTicker.C:
+			maintainInBackground(ctx, maintaining, observationLog.Flush)
 		}
 	}
-	cancelArchive() // Every exit, including listener/initialization errors, stops Flush.
+	cancelMaintenance() // Every exit stops local Flush before joining it.
 	cancelInitialize()
 	if initializePending {
 		serveError = errors.Join(serveError, <-initialized)
 	}
-	archiving <- struct{}{} // The running Flush ends before Close archives.
+	maintaining <- struct{}{} // Local maintenance ends before drain and final Close.
 	scheduler.Close()
 	// Keep native source watches alive until accepted backend work really drains.
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), opts.drainTimeout)
@@ -425,9 +425,9 @@ loop:
 	return errors.Join(serveError, shutdownError)
 }
 
-// archiveInBackground starts one Flush unless one still runs, so source
-// refresh and Advance keep their ticks while an hour uploads.
-func archiveInBackground(
+// maintainInBackground starts one local flush/seal/retirement pass unless one
+// still runs, keeping filesystem maintenance off the source-refresh loop.
+func maintainInBackground(
 	ctx context.Context, running chan struct{}, flush func(context.Context) error,
 ) {
 	select {
@@ -438,7 +438,7 @@ func archiveInBackground(
 	go func() {
 		defer func() { <-running }()
 		if err := flush(ctx); err != nil {
-			ctrl.Log.Error(err, "archive serving observation hours")
+			ctrl.Log.Error(err, "maintain local serving observation hours")
 		}
 	}()
 }

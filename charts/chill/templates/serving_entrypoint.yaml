@@ -16,10 +16,48 @@ metadata:
     {{- $labels | nindent 4 }}
 automountServiceAccountToken: true
 ---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.servingEntrypoint.observationStorage.storageClassName | quote }}
+  annotations:
+    helm.sh/resource-policy: keep
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Values.servingEntrypoint.observationStorage.volumeName | quote }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  capacity:
+    storage: {{ .Values.servingEntrypoint.observationStorage.size | quote }}
+  volumeMode: Filesystem
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ .Values.servingEntrypoint.observationStorage.storageClassName | quote }}
+  claimRef:
+    namespace: {{ .Release.Namespace }}
+    name: {{ .Values.servingEntrypoint.observationStorage.claimName | quote }}
+  local:
+    path: {{ .Values.servingEntrypoint.observationStorage.localPath | quote }}
+    fsType: ext4
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - {{ .Values.servingEntrypoint.observationStorage.nodeHostname | quote }}
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ $name }}
+  name: {{ .Values.servingEntrypoint.observationStorage.claimName | quote }}
   namespace: {{ .Release.Namespace }}
   annotations:
     helm.sh/resource-policy: keep
@@ -28,9 +66,9 @@ metadata:
     {{- $labels | nindent 4 }}
 spec:
   accessModes: [ReadWriteOnce]
-  {{- if ne .Values.servingEntrypoint.observationStorage.storageClassName nil }}
+  volumeMode: Filesystem
+  volumeName: {{ .Values.servingEntrypoint.observationStorage.volumeName | quote }}
   storageClassName: {{ .Values.servingEntrypoint.observationStorage.storageClassName | quote }}
-  {{- end }}
   resources:
     requests:
       storage: {{ .Values.servingEntrypoint.observationStorage.size | quote }}
@@ -239,7 +277,7 @@ spec:
             secretName: {{ .Values.servingEntrypoint.tls.secretName | quote }}
         - name: observations
           persistentVolumeClaim:
-            claimName: {{ $name }}
+            claimName: {{ .Values.servingEntrypoint.observationStorage.claimName | quote }}
         - name: temporary
           emptyDir:
             sizeLimit: 512Mi

@@ -106,7 +106,7 @@ func (a rawTestArchive) List(ctx context.Context, prefix string) ([]evidencestor
 
 func TestRawObservationArchiveLocalPriorityAndOldStreams(t *testing.T) {
 	archive := rawTestArchive{newReadableObservationArchive(t)}
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	hour := observationHour(observationTestHour)
 	key := writeArchivedObservation(t, archive.readableObservationArchive, observationTestHour, []byte("{\"original\": true}\n"))
 	stored, err := os.ReadFile(filepath.Join(archive.directory, key))
@@ -161,7 +161,7 @@ func TestRawObservationArchiveLocalPriorityAndOldStreams(t *testing.T) {
 
 func TestRawObservationArchiveFailuresAndCancellation(t *testing.T) {
 	archive := rawTestArchive{newReadableObservationArchive(t)}
-	log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(time.Hour))
+	log, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour.Add(time.Hour))
 	hour := observationHour(observationTestHour)
 	writeArchivedObservation(t, archive.readableObservationArchive, observationTestHour, []byte("{}\n"))
 	failure := errors.New("store read failed")

@@ -3,19 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	stores3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/application"
@@ -28,32 +23,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
-
-type schedulerPowerArchive struct{ directory string }
-
-func (a schedulerPowerArchive) StreamImmutable(
-	_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error,
-) (evidencestore.Receipt, error) {
-	output := filepath.Join(a.directory, location.Key)
-	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	err = produce(file)
-	info, statErr := file.Stat()
-	err = errors.Join(err, statErr, file.Sync(), file.Close())
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	identity := evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: info.Size()}
-	return evidencestore.Receipt{
-		SchemaVersion: evidencestore.ReceiptSchemaVersion,
-		Object:        identity, Outcome: evidencestore.CreateOutcomeCreated,
-	}, nil
-}
 
 func schedulerTestConfiguration() application.SchedulerConfiguration {
 	return application.SchedulerConfiguration{
@@ -79,7 +48,6 @@ func schedulerTestDependencies(t *testing.T, config application.SchedulerConfigu
 	ctx := context.Background()
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

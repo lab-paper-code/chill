@@ -62,5 +62,5 @@ func (l *ObservationLog) ResourcesRecord(row ResourceObservation) error {
 	defer l.writerMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.appendLocked(observationResourcesStream, l.now(), row)
+	return l.appendLocked(observationResourcesStream, l.appendTimeLocked(), row)
 }

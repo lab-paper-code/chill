@@ -33,7 +33,7 @@ func TestUnreadyDrainingInstanceUpdatesRuntimeImageFacts(t *testing.T) {
 func TestShutdownCannotReopenAdmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := newRuntimeTestLog(RuntimeTestObservationConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}

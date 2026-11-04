@@ -517,16 +517,30 @@ servingEntrypoint:
     # Required only when enabled; existing kubernetes.io/tls Secret in release namespace.
     secretName: ""
   observationStorage:
-    # ObservationLog path inside the retained PVC; select a fresh path for a stored-contract cutover.
+    # Preserve the complete v1alpha5 owner directory during the quiescent storage cutover.
     directory: /data
     # Positive Go duration, measured from the start of each hourly segment.
     retention: 2h
     # One append hour per at= call; hourly archive prefixes avoid the whole-store List.
     # Continue nextCursor for delayed appends; keep calls below the 10s relay budget.
     eventLookupHours: 1
-    size: 1Gi
-    # null uses the cluster default; "" explicitly requests no StorageClass.
-    storageClassName: null
+    size: 32Gi
+    # Explicit retained static binding. Required when serving is enabled; no dynamic fallback.
+    storageClassName: ""
+    claimName: ""
+    volumeName: ""
+    # Preprovision on local ext4; never create an empty replacement after node/disk loss.
+    # Copy the complete quiescent owner directory with UID 65532 access before startup.
+    localPath: ""
+    nodeHostname: ""
+  observationArchiver:
+    scanInterval: 1m
+    requestTimeout: 129s
+    shutdownTimeout: 194s
+    terminationGracePeriodSeconds: 194
+    goMemLimit: 3GiB
+    # Independent BestEffort process; no CPU or memory reservations/quotas.
+    resources: {}
   queueLimit: 1024
   # Approved all-profile lifetime/drain maxima; 30s remains for HTTP shutdown.
   requestTimeout: 129s

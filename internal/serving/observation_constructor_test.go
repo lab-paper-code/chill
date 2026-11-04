@@ -12,7 +12,7 @@ import (
 func init() {
 	serving.RuntimeObservationConstructor = func(config serving.RuntimeTestObservationConfig) (serving.RuntimeTestObservation, error) {
 		log, err := observation.NewObservationLog(observation.ObservationLogConfig{
-			Directory: config.Directory, Store: config.Store, Writer: config.Writer,
+			Directory: config.Directory, Store: config.Store,
 			Retention: config.Retention, Diagnostics: config.Diagnostics,
 		})
 		if err != nil {

@@ -30,7 +30,7 @@ func TestObservationConfiguredRetention(t *testing.T) {
 	hour := filepath.Join(log.root, observationHour(observationTestHour))
 	for _, elapsed := range []time.Duration{retention - time.Nanosecond, retention + time.Nanosecond} {
 		clock.set(observationTestHour.Add(elapsed))
-		if err := log.Flush(context.Background()); err != nil {
+		if err := flushObservationArchive(log, context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		_, err := os.Stat(hour)
@@ -66,7 +66,7 @@ func TestRequestClosedKeepsRowUntilFinalIsStored(t *testing.T) {
 	if err := os.Remove(blocked); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.Flush(context.Background()); err != nil {
+	if err := flushObservationArchive(observationLog, context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	finals := 0
@@ -87,7 +87,7 @@ func TestArchiveKeepsHourOfUnsettledAssignment(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	assignObservationRequest(t, observationLog, "outstanding", observationTestHour.Add(time.Second))
 	clock.set(observationTestHour.Add(3*time.Hour + time.Minute))
-	if err := observationLog.Flush(ctx); err != nil {
+	if err := flushObservationArchive(observationLog, ctx); err != nil {
 		t.Fatal(err)
 	}
 	hour := filepath.Join(observationLog.root, "20261020T10")
@@ -107,7 +107,7 @@ func TestArchiveKeepsHourOfUnsettledAssignment(t *testing.T) {
 	if err := observationLog.RequestClosed("outstanding"); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.Flush(ctx); err != nil {
+	if err := flushObservationArchive(observationLog, ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(hour); !errors.Is(err, os.ErrNotExist) {
@@ -120,7 +120,7 @@ func TestArchiveDeletionReportsGap(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(time.Second))
 	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
-	if err := observationLog.Flush(context.Background()); err != nil {
+	if err := flushObservationArchive(observationLog, context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	from, floor := observationTestHour, observationTestHour.Add(2*time.Hour)
@@ -151,7 +151,7 @@ func TestCaptureSeesWholeHourOrGap(t *testing.T) {
 	seedObservationMinutes(t, observationLog, clock, minutes...)
 	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
 	done := make(chan error, 1)
-	go func() { done <- observationLog.Flush(context.Background()) }()
+	go func() { done <- flushObservationArchive(observationLog, context.Background()) }()
 	for range 200 {
 		result, err := observationLog.Query(context.Background(), "uid", observationTestHour, time.Time{}, nil, nil, 0, "")
 		if err != nil {

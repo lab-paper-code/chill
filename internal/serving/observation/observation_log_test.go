@@ -128,13 +128,16 @@ func clockedObservationLog(t *testing.T, config ObservationLogConfig, started ti
 	if config.Store == "" {
 		config.Store = "evidence"
 	}
-	if config.Writer == nil {
-		config.Writer = &observationArchive{directory: t.TempDir()}
+	writer, _ := config.Archive.(evidencestore.StreamingImmutableWriter)
+	if writer == nil {
+		writer = &observationArchive{directory: t.TempDir()}
 	}
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
+	observationTestWriters.Store(observationLog, writer)
+	t.Cleanup(func() { observationTestWriters.Delete(observationLog) })
 	clock := &observationClock{at: started}
 	observationLog.now, observationLog.started, observationLog.floor = clock.now, started, started
 	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
@@ -159,7 +162,7 @@ func TestObservationLogUploadAllowsRuntimeIngressAndConcurrentClose(t *testing.T
 		observationArchive: &observationArchive{directory: t.TempDir()},
 		entered:            make(chan struct{}), resume: make(chan struct{}),
 	}
-	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(59*time.Minute))
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour.Add(59*time.Minute))
 	var release sync.Once
 	resume := func() { release.Do(func() { close(archive.resume) }) }
 	t.Cleanup(resume)
@@ -186,7 +189,7 @@ func TestObservationLogUploadAllowsRuntimeIngressAndConcurrentClose(t *testing.T
 	appendRequest()
 	clock.set(observationTestHour.Add(time.Hour + 30*time.Second))
 	flushDone := make(chan error, 1)
-	go func() { flushDone <- observationLog.Flush(ctx) }()
+	go func() { flushDone <- flushObservationArchive(observationLog, ctx) }()
 	select {
 	case <-archive.entered:
 	case <-time.After(5 * time.Second):
@@ -286,25 +289,24 @@ func seedObservationMinutes(t *testing.T, observationLog *ObservationLog, clock 
 	}
 }
 
-// A past hour no longer changes, so an hour is stored once per process and
-// only a failed hour is sent again. Re-sending stored hours every minute drew
-// S3 connection resets (D-R6-7).
+// A durable worker receipt suppresses repeat uploads across worker restarts;
+// partial failure leaves no receipt and retries the hour's immutable streams.
 func TestObservationArchiveRetriesFailedHour(t *testing.T) {
 	ctx := context.Background()
 	archive := &observationArchive{directory: t.TempDir(), failKey: "scheduler"}
-	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Second), observationTestHour.Add(time.Minute+10*time.Second))
 	hour := filepath.Join(observationLog.root, "20261020T10")
 	clock.set(observationTestHour.Add(time.Hour + 5*time.Minute))
 	if err := observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: clock.now()}); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.Flush(ctx); err == nil {
+	if err := flushObservationArchive(observationLog, ctx); err == nil {
 		t.Fatal("failed stream upload was hidden")
 	}
 	archive.failKey = ""
 	clock.set(observationTestHour.Add(time.Hour + 6*time.Minute))
-	if err := observationLog.Flush(ctx); err != nil {
+	if err := flushObservationArchive(observationLog, ctx); err != nil {
 		t.Fatal(err)
 	}
 	// Hours written before resources/cluster were introduced remain archivable.
@@ -327,7 +329,7 @@ func TestObservationArchiveRetriesFailedHour(t *testing.T) {
 		t.Fatalf("the previous hour was deleted: %v", err)
 	}
 	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
-	if err := observationLog.Flush(ctx); err != nil {
+	if err := flushObservationArchive(observationLog, ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(hour); !errors.Is(err, os.ErrNotExist) {
@@ -338,8 +340,12 @@ func TestObservationArchiveRetriesFailedHour(t *testing.T) {
 	}
 	for _, stream := range writtenStreams {
 		key := observationArchivePrefix + "20261020T10/" + stream + ".jsonl.gz"
-		if archive.puts[key] != 2 {
-			t.Fatalf("%s sent %d times, want 2", stream, archive.puts[key])
+		wantPuts := 1
+		if stream == observationCatalogStream || stream == observationSchedulerStream {
+			wantPuts = 2 // Catalog precedes the failed scheduler; later streams wait.
+		}
+		if archive.puts[key] != wantPuts {
+			t.Fatalf("%s sent %d times, want %d", stream, archive.puts[key], wantPuts)
 		}
 	}
 	for _, stream := range []string{observationResourcesStream, observationClusterStream} {
@@ -456,7 +462,7 @@ func TestObservationQueryDuringDeletionKeepsResult(t *testing.T) {
 	}
 	defer read.close()
 	clock.set(observationTestHour.Add(3 * time.Hour))
-	if err := observationLog.Flush(ctx); err != nil {
+	if err := flushObservationArchive(observationLog, ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(observationLog.root, "20261020T10")); !errors.Is(err, os.ErrNotExist) {
@@ -470,7 +476,7 @@ func TestObservationQueryDuringDeletionKeepsResult(t *testing.T) {
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(3*time.Hour))
 	clock.set(observationTestHour.Add(6 * time.Hour))
 	done := make(chan error, 1)
-	go func() { done <- observationLog.Flush(ctx) }()
+	go func() { done <- flushObservationArchive(observationLog, ctx) }()
 	for range 20 {
 		if _, err := observationLog.Query(context.Background(), "uid", time.Time{}, time.Time{}, nil, nil, 0, ""); err != nil {
 			t.Fatal(err)
@@ -602,7 +608,7 @@ func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
 
 func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	ctx := context.Background()
-	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
+	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Archive: &observationArchive{directory: t.TempDir()}}
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
@@ -854,7 +860,7 @@ func TestObservationStartupIgnoresOtherHistory(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}})
+	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour, Archive: &observationArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -865,8 +871,12 @@ func TestObservationStartupIgnoresOtherHistory(t *testing.T) {
 
 type discardObservationArchive struct{ bytes int64 }
 
-func (a *discardObservationArchive) StreamImmutable(_ context.Context, _ evidencestore.ObjectLocation, produce func(io.Writer) error) (evidencestore.Receipt, error) {
-	return evidencestore.Receipt{}, produce(a)
+func (a *discardObservationArchive) StreamImmutable(_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error) (evidencestore.Receipt, error) {
+	before := a.bytes
+	err := produce(a)
+	return evidencestore.Receipt{SchemaVersion: evidencestore.ReceiptSchemaVersion,
+		Object:  evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: a.bytes - before},
+		Outcome: evidencestore.CreateOutcomeCreated}, err
 }
 
 func (a *discardObservationArchive) Write(data []byte) (int, error) {
@@ -880,18 +890,27 @@ func TestObservationArchiveStreamsLargeHour(t *testing.T) {
 	scratch := t.TempDir()
 	t.Setenv("TMPDIR", scratch)
 	archive := &discardObservationArchive{}
-	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(3*time.Hour))
+	observationLog, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour.Add(3*time.Hour))
 	data := make([]byte, 8<<20)
 	rand.New(rand.NewSource(1)).Read(data)
+	data[len(data)-1] = '\n'
 	if err := os.MkdirAll(filepath.Join(observationLog.root, "20261020T10"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(observationLog.root, "20261020T10", "requests.00.jsonl"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := observationLog.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := NewArchiveWorker(ArchiveWorkerConfig{Directory: observationLog.config.Directory,
+		ControlDirectory: filepath.Join(observationLog.config.Directory, "archive-control"), Store: observationLog.config.Store, Writer: archive})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	if err := observationLog.upload(context.Background(), observationTestHour, "requests"); err != nil {
+	if err := worker.Scan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	runtime.ReadMemStats(&after)
@@ -911,11 +930,11 @@ func TestObservationArchiveWithoutScratch(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
 	archive := &observationArchive{directory: t.TempDir()}
-	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	seedObservationMinutes(t, observationLog, clock, observationTestHour.Add(10*time.Second), observationTestHour.Add(time.Minute+10*time.Second))
 	hour := filepath.Join(observationLog.root, "20261020T10")
 	clock.set(observationTestHour.Add(2*time.Hour + time.Minute))
-	if err := observationLog.Flush(ctx); err != nil {
+	if err := flushObservationArchive(observationLog, ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(hour); !errors.Is(err, os.ErrNotExist) {

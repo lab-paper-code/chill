@@ -87,7 +87,7 @@ func (l *ObservationLog) ClusterRecord(row ClusterObservation) error {
 	defer l.writerMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.appendLocked(observationClusterStream, l.now(), row)
+	return l.appendLocked(observationClusterStream, l.appendTimeLocked(), row)
 }
 
 // RecordedEvent is the durable source for an event-lane recovery read. It never

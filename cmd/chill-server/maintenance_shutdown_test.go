@@ -3,36 +3,20 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
-type shutdownArchive struct {
-	entered chan struct{}
-	once    sync.Once
-}
-
-func (a *shutdownArchive) StreamImmutable(
-	ctx context.Context, _ evidencestore.ObjectLocation, _ func(io.Writer) error,
-) (evidencestore.Receipt, error) {
-	a.once.Do(func() { close(a.entered) })
-	<-ctx.Done()
-	return evidencestore.Receipt{}, ctx.Err()
-}
-
-// Uses the actual one-minute serve ticker and closes the HTTP server from a
-// request, so serverErrors fires while its parent/signal context is still live.
-func TestServeListenerErrorCancelsArchiveBeforeJoin(t *testing.T) {
+// A listener failure must stop local maintenance without publishing or deleting
+// raw hours, even while the parent/signal context is still live.
+func TestServeListenerErrorRetainsUnuploadedHours(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	directory := t.TempDir()
@@ -44,14 +28,16 @@ func TestServeListenerErrorCancelsArchiveBeforeJoin(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(hourDir, "scheduler.00.jsonl"), []byte("{}\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	archive := &shutdownArchive{entered: make(chan struct{})}
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: directory, Store: "evidence", Writer: archive, Retention: 2 * time.Hour,
+		Directory: directory, Store: "evidence", Retention: 2 * time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { cancel(); _ = log.Close(ctx) }()
+	defer func() { _ = log.Close(context.Background()) }()
+	if err := log.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
 	execution, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 1, ObservationLog: log})
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +55,7 @@ func TestServeListenerErrorCancelsArchiveBeforeJoin(t *testing.T) {
 		server := r.Context().Value(http.ServerContextKey).(*http.Server)
 		_ = server.Close()
 	})
+	initialized := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
 		done <- serve(ctx, options{
@@ -77,42 +64,47 @@ func TestServeListenerErrorCancelsArchiveBeforeJoin(t *testing.T) {
 			sourceInterval: time.Hour, profileInterval: time.Hour,
 		}, &initializingHandler{initial: handler, ready: make(chan struct{})},
 			execution, nil, nil, log, nil, nil,
-			func(context.Context) (http.Handler, error) { return handler, nil })
+			func(context.Context) (http.Handler, error) {
+				close(initialized)
+				return handler, nil
+			})
 	}()
 	select {
-	case <-archive.entered:
-	case <-time.After(70 * time.Second):
-		t.Fatal("actual serve archive ticker did not start Flush")
+	case <-initialized:
+	case err := <-done:
+		t.Fatalf("serve exited before initialization: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("serve did not initialize")
 	}
 	// Server.Close deliberately drops this request; that transport error is expected.
 	response, _ := client.Get("https://" + address + "/close-listener")
 	if response != nil {
 		_ = response.Body.Close()
 	}
-	started := time.Now()
 	select {
 	case err := <-done:
 		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("serverErrors exit waited forever for Flush before canceling it")
+		t.Fatal("serverErrors exit did not stop local maintenance and drain")
 	}
 	if ctx.Err() != nil {
 		t.Fatal("test canceled the signal parent instead of exercising serverErrors")
 	}
-	if _, err := os.Stat(hourDir); err != nil {
-		t.Fatalf("shutdown lost raw hour: %v", err)
+	if _, err := os.Stat(filepath.Join(hourDir, "seal.json")); err != nil {
+		t.Fatalf("local maintenance did not seal the completed hour: %v", err)
 	}
-	t.Logf("serverErrors -> archive cancel -> Flush join -> drain: %s; parent live; raw retained",
-		time.Since(started))
+	if _, err := os.Stat(filepath.Join(hourDir, "scheduler.00.jsonl")); err != nil {
+		t.Fatalf("shutdown lost unuploaded raw hour: %v", err)
+	}
 }
 
-func TestArchiveSignalCancellationUnblocksJoin(t *testing.T) {
+func TestMaintenanceSignalCancellationUnblocksJoin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	running := make(chan struct{}, 1)
 	entered := make(chan struct{})
-	archiveInBackground(ctx, running, func(ctx context.Context) error { close(entered); <-ctx.Done(); return ctx.Err() })
+	maintainInBackground(ctx, running, func(ctx context.Context) error { close(entered); <-ctx.Done(); return ctx.Err() })
 	<-entered
 	cancel()
 	joined := make(chan struct{})
@@ -120,6 +112,6 @@ func TestArchiveSignalCancellationUnblocksJoin(t *testing.T) {
 	select {
 	case <-joined:
 	case <-time.After(time.Second):
-		t.Fatal("signal cancellation did not unblock archive join")
+		t.Fatal("signal cancellation did not unblock maintenance join")
 	}
 }

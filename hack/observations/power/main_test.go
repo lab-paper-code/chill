@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,25 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
-type nopWriter struct{}
-
-func (nopWriter) StreamImmutable(
-	_ context.Context, _ evidencestore.ObjectLocation, produce func(io.Writer) error,
-) (evidencestore.Receipt, error) {
-	return evidencestore.Receipt{}, produce(io.Discard)
-}
-
 // The tool and the ChillServer integrate the same records to the same joules.
 func TestPowerMatchesServerOperatingPower(t *testing.T) {
 	directory := t.TempDir()
-	config := observation.ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour, Writer: nopWriter{}}
+	config := observation.ObservationLogConfig{Directory: directory, Store: "evidence", Retention: 2 * time.Hour}
 	log, err := observation.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)

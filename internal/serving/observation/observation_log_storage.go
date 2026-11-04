@@ -175,6 +175,9 @@ func (l *ObservationLog) indexSegments(hours []time.Time) error {
 				}
 				segment.stream, segment.size = stream, info.Size()
 				l.segments[segment.path] = segment
+				if segment.at.After(l.lastAppend) {
+					l.lastAppend = segment.at
+				}
 			}
 		}
 	}
@@ -198,6 +201,9 @@ func (l *ObservationLog) appendLocked(stream string, now time.Time, value any) e
 }
 
 func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) error {
+	if now.Before(l.appendFloor) {
+		now = l.appendFloor
+	}
 	name := l.segment(stream, now)
 	file := l.files[stream]
 	if file == nil || file.Name() != name {

@@ -32,7 +32,7 @@ func (a *requestQueryArchive) Open(ctx context.Context, object evidencestore.Obj
 func TestHistoricalRequestQueryReadsOnlyRequiredEvidenceAndKeepsLateFinalStatistics(t *testing.T) {
 	ctx := context.Background()
 	archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	at := observationTestHour.Add(time.Second)
 	definition := &serving.Definition{Name: "deleted-service", UID: archiveTestUID, Generation: 1, SLO: serving.SLO{Percentile: 90, TargetLatency: time.Second}}
 	clock.set(at)
@@ -60,7 +60,7 @@ func TestHistoricalRequestQueryReadsOnlyRequiredEvidenceAndKeepsLateFinalStatist
 		}
 	}
 	clock.set(at.Add(6 * time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
 	archive.rejectCatalog = true

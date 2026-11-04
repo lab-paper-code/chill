@@ -185,7 +185,7 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 	defer l.writerMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := l.now()
+	now := l.appendTimeLocked()
 	for _, ref := range refs.rows {
 		if err := l.referenceLocked(ref.kind, ref.key, event.At, now, ref.body); err != nil {
 			return err

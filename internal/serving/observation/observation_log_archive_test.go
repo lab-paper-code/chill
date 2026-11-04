@@ -110,7 +110,7 @@ func writeArchivedObservation(t *testing.T, archive *readableObservationArchive,
 func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 	ctx := context.Background()
 	archive := newReadableObservationArchive(t)
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	from, to := observationTestHour, observationTestHour.Add(2*time.Minute)
 	seedObservationMinutes(t, log, clock, from.Add(time.Second), from.Add(time.Minute+time.Second))
 	want, err := log.Query(ctx, archiveTestUID, from, to, nil, nil, 0, "")
@@ -123,17 +123,17 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 	}
 	// Upload without removing the local hour: source selection must not add it twice.
 	clock.set(from.Add(time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
 	checkArchiveLocalOverlap(t, log, ctx, from, to, want, wantLoad)
 	clock.set(from.Add(3 * time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
 	// An empty new root has no retained definitions: only the archive catalog can
 	// interpret the deleted UID, even with a current replacement of the same name.
-	restarted, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, from.Add(3*time.Hour))
+	restarted, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, from.Add(3*time.Hour))
 	if err := restarted.DefinitionRecord(&serving.Definition{Name: "workload", UID: "replacement", Generation: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func checkArchiveLocalOverlap(t *testing.T, log *ObservationLog, ctx context.Con
 func TestObservationArchiveLateFinalAndLocalFastPath(t *testing.T) {
 	ctx := context.Background()
 	archive := newReadableObservationArchive(t)
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	at := observationTestHour.Add(time.Second)
 	clock.set(at)
 	assignObservationRequest(t, log, "late", at)
@@ -203,7 +203,7 @@ func TestObservationArchiveLateFinalAndLocalFastPath(t *testing.T) {
 		t.Fatalf("recent local arrivals touched archive: %v lists=%d opens=%d", err, archive.lists, archive.opens)
 	}
 	clock.set(observationTestHour.Add(time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := log.RequestEvent(serving.RequestEvent{RequestID: "late", WorkloadUID: archiveTestUID, Kind: "response_finished", At: at.Add(time.Second), Outcome: "completed"}); err != nil {
@@ -232,7 +232,7 @@ func TestObservationArchiveCoverageGapsAndErrors(t *testing.T) {
 	for _, hour := range []time.Time{from, from.Add(2 * time.Hour)} {
 		writeArchivedObservation(t, archive, hour, []byte("{\"at\":\""+hour.Add(time.Second).Format(time.RFC3339Nano)+"\"}\n"))
 	}
-	log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, from.Add(4*time.Hour))
+	log, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, from.Add(4*time.Hour))
 	page, _, gap, coverage, err := log.SchedulerObservationPage(ctx, from, from.Add(3*time.Hour), 10, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 2 || gap != nil || len(coverage.Gaps) != 1 || !coverage.Gaps[0].From.Equal(from.Add(time.Hour)) || !coverage.Gaps[0].To.Equal(from.Add(2*time.Hour)) || coverage.Gaps[0].Reason != "StreamUnavailable" {
 		t.Fatalf("internal gap/provenance: %+v %+v %v", page, coverage, err)
@@ -302,7 +302,7 @@ func TestObservationArchivePageStopsAcrossSources(t *testing.T) {
 	from := observationTestHour
 	writeArchivedObservation(t, archive, from, []byte("{\"at\":\""+from.Add(time.Second).Format(time.RFC3339Nano)+"\"}\n{\"at\":\""+from.Add(2*time.Second).Format(time.RFC3339Nano)+"\"}\n{broken}\n"))
 	writeArchivedObservation(t, archive, from.Add(time.Hour), []byte("{broken}\n"))
-	log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, from.Add(3*time.Hour))
+	log, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, from.Add(3*time.Hour))
 	page, next, _, _, err := log.SchedulerObservationPage(context.Background(), from, from.Add(2*time.Hour), 1, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || next != 1 || archive.opens != 1 {
 		t.Fatalf("archive page scanned past lookahead: %+v next=%d opens=%d err=%v", page, next, archive.opens, err)
@@ -311,11 +311,11 @@ func TestObservationArchivePageStopsAcrossSources(t *testing.T) {
 
 func TestObservationArchiveCaptureSurvivesDeletion(t *testing.T) {
 	archive := newReadableObservationArchive(t)
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	seedObservationMinutes(t, log, clock, observationTestHour.Add(time.Second))
 	clock.set(observationTestHour.Add(3 * time.Hour))
 	archive.beforeList = func() {
-		if err := log.Flush(context.Background()); err != nil {
+		if err := flushObservationArchive(log, context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -334,7 +334,7 @@ func TestObservationArchiveMissingCatalogAndInvalidJSON(t *testing.T) {
 	for _, raw := range []string{"{broken}\n", "{\"at\":\"2026-10-20T10:00:01Z\",\"snapshot\":{\"workloadIDs\":[\"missing\"]}}\n"} {
 		archive := newReadableObservationArchive(t)
 		writeArchivedObservation(t, archive, observationTestHour, []byte(raw))
-		log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour.Add(3*time.Hour))
+		log, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour.Add(3*time.Hour))
 		if _, _, _, _, err := log.SchedulerObservationPage(context.Background(), observationTestHour, observationTestHour.Add(time.Minute), 10, 0, SchedulerObservationSelection{}); err == nil {
 			t.Fatalf("invalid archive hidden: %s", raw)
 		}
@@ -344,7 +344,7 @@ func TestObservationArchiveMissingCatalogAndInvalidJSON(t *testing.T) {
 func TestObservationArchivePowerNeighborsAndOlderMembership(t *testing.T) {
 	ctx := context.Background()
 	archive := newReadableObservationArchive(t)
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive, Retention: 5 * time.Hour}, observationTestHour.Add(-2*time.Hour))
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive, Retention: 5 * time.Hour}, observationTestHour.Add(-2*time.Hour))
 	from := observationTestHour.Add(10 * time.Minute)
 	to := from.Add(10 * time.Second)
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
@@ -374,7 +374,7 @@ func TestObservationArchivePowerNeighborsAndOlderMembership(t *testing.T) {
 		t.Fatalf("local older baseline/neighbors: %+v %v", want, err)
 	}
 	clock.set(observationTestHour.Add(time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
 	overlap, err := log.OperatingPower(ctx, from, to, meters, 20)
@@ -382,7 +382,7 @@ func TestObservationArchivePowerNeighborsAndOlderMembership(t *testing.T) {
 		t.Fatalf("power overlap duplicated: %+v %v", overlap, err)
 	}
 	clock.set(observationTestHour.Add(6 * time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
 	got, err := log.OperatingPower(ctx, from, to, meters, 20)

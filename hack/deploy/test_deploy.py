@@ -115,6 +115,29 @@ sys.exit(89)
 '''
 
 
+class SharedServerImageReadiness(unittest.TestCase):
+    def test_serving_alone_does_not_prove_worker_ready(self):
+        import main
+        expected = {'image': 'server:reviewed', 'digest': 'sha256:reviewed', 'platformDigests': []}
+        def pod(component):
+            return {
+                'metadata': {'labels': {'app.kubernetes.io/component': component}},
+                'spec': {'containers': [{'name': component, 'image': expected['image']}]},
+                'status': {
+                    'containerStatuses': [{'name': component, 'ready': True, 'restartCount': 0,
+                                           'imageID': expected['digest']}],
+                    'conditions': [{'type': 'Ready', 'status': 'True'}],
+                },
+            }
+        pods = {'items': [pod('serving-entrypoint')]}
+        required = ('serving-entrypoint', 'observation-archiver')
+        self.assertFalse(main.image_ready(pods, expected, required))
+        pods['items'].append(pod('observation-archiver'))
+        self.assertTrue(main.image_ready(pods, expected, required))
+        pods['items'][1]['status']['containerStatuses'][0]['ready'] = False
+        self.assertFalse(main.image_ready(pods, expected, required))
+
+
 class DeploymentCLI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -3,12 +3,8 @@ package application
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,7 +12,6 @@ import (
 
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/profiling/powerwindow"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -154,36 +149,9 @@ func TestStaticRoutingRemainsReadableWithoutPhysicalApplication(t *testing.T) {
 	}
 }
 
-type schedulerPowerArchive struct{ directory string }
-
-func (a schedulerPowerArchive) StreamImmutable(
-	_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error,
-) (evidencestore.Receipt, error) {
-	output := filepath.Join(a.directory, location.Key)
-	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	err = produce(file)
-	info, statErr := file.Stat()
-	err = errors.Join(err, statErr, file.Sync(), file.Close())
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	identity := evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: info.Size()}
-	return evidencestore.Receipt{
-		SchemaVersion: evidencestore.ReceiptSchemaVersion,
-		Object:        identity, Outcome: evidencestore.CreateOutcomeCreated,
-	}, nil
-}
-
 func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T) {
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
-		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +252,7 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 			_, _ = w.Write([]byte("# TYPE wall_watts gauge\nwall_watts{hostname=\"node\",device_type=\"fixture\"} 5\n"))
 		}))
 		log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence",
-			Retention: time.Hour, Writer: schedulerPowerArchive{directory: t.TempDir()}})
+			Retention: time.Hour})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -54,31 +52,6 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 		ScaleDownStabilization: 120 * time.Second, TransitionReserveFraction: .25,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1}
-}
-
-type settingsArchive struct{ directory string }
-
-func (a settingsArchive) StreamImmutable(
-	_ context.Context, location evidencestore.ObjectLocation, produce func(io.Writer) error,
-) (evidencestore.Receipt, error) {
-	output := filepath.Join(a.directory, location.Key)
-	if err := os.MkdirAll(filepath.Dir(output), 0700); err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	err = produce(file)
-	info, statErr := file.Stat()
-	err = errors.Join(err, statErr, file.Sync(), file.Close())
-	if err != nil {
-		return evidencestore.Receipt{}, err
-	}
-	identity := evidencestore.ObjectIdentity{Store: location.Store, Key: location.Key, Size: info.Size()}
-	return evidencestore.Receipt{
-		SchemaVersion: evidencestore.ReceiptSchemaVersion, Object: identity, Outcome: evidencestore.CreateOutcomeCreated,
-	}, nil
 }
 
 func settingsServiceForTest(
@@ -273,7 +246,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				}
 				return false, nil, nil
 			})
-			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -489,7 +462,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		updates++
 		return false, nil, nil
 	})
-	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +566,7 @@ func TestSchedulerCompactQueryRejectsAmbiguousViews(t *testing.T) {
 }
 
 func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
-	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +648,7 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 		return true, updated, nil
 	})
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()},
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)

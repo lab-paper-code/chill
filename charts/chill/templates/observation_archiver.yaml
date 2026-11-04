@@ -1,0 +1,117 @@
+{{- if .Values.servingEntrypoint.enabled }}
+{{- $name := printf "%s-observation-archiver" (include "chill.fullname" .) -}}
+{{- $storage := .Values.servingEntrypoint.observationStorage -}}
+{{- $worker := .Values.servingEntrypoint.observationArchiver -}}
+{{- $ownerPath := trimPrefix "/data" $storage.directory | trimAll "/" -}}
+{{- $controlPath := ternary "archive-control" (printf "%s/archive-control" $ownerPath) (empty $ownerPath) -}}
+{{- $credentialsSecret := default (printf "%s-evidence-store-credentials" (include "chill.systemName" .)) .Values.evidenceStore.credentialsSecret.name -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: observation-archiver
+    {{- include "chill.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: observation-archiver
+    {{- include "chill.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "chill.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: observation-archiver
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "chill.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: observation-archiver
+        edge.dacs.io/workload-role: system
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $worker.terminationGracePeriodSeconds }}
+      securityContext:
+{{- toYaml .Values.servingEntrypoint.podSecurityContext | nindent 8 }}
+      containers:
+        - name: observation-archiver
+          image: {{ include "chill.servingEntrypointImage" . | quote }}
+          imagePullPolicy: {{ .Values.servingEntrypoint.image.pullPolicy }}
+          command: ["/observation-archiver"]
+          args:
+            - "--observation-directory=/observations"
+            - "--archive-control-directory=/archive-control"
+            - {{ printf "--scan-interval=%s" $worker.scanInterval | quote }}
+            - {{ printf "--request-timeout=%s" $worker.requestTimeout | quote }}
+            - {{ printf "--shutdown-timeout=%s" $worker.shutdownTimeout | quote }}
+            - {{ printf "--store-name=%s" (default (printf "%s-evidence-store" (include "chill.systemName" .)) .Values.evidenceStore.connection.name) | quote }}
+            - {{ printf "--store-endpoint=%s" (default (printf "http://%s-evidence-store.%s.svc.cluster.local:9000" (include "chill.systemName" .) .Release.Namespace) .Values.evidenceStore.connection.endpoint) | quote }}
+            - {{ printf "--store-bucket=%s" .Values.evidenceStore.connection.bucket | quote }}
+            - {{ printf "--store-region=%s" .Values.evidenceStore.connection.region | quote }}
+          env:
+            - name: GOMEMLIMIT
+              value: {{ $worker.goMemLimit | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: {{ .Values.evidenceStore.credentialsSecret.accessKeyKey | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: {{ .Values.evidenceStore.credentialsSecret.secretKeyKey | quote }}
+            {{- with .Values.evidenceStore.credentialsSecret.sessionTokenKey }}
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialsSecret }}
+                  key: {{ . | quote }}
+            {{- end }}
+          resources: {}
+          securityContext:
+{{- toYaml .Values.servingEntrypoint.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: observations
+              mountPath: /observations
+              {{- if $ownerPath }}
+              subPath: {{ $ownerPath | quote }}
+              {{- end }}
+              readOnly: true
+            - name: observations
+              mountPath: /archive-control
+              subPath: {{ $controlPath | quote }}
+            - name: temporary
+              mountPath: /tmp
+      volumes:
+        - name: observations
+          persistentVolumeClaim:
+            claimName: {{ $storage.claimName | quote }}
+        - name: temporary
+          emptyDir:
+            sizeLimit: 512Mi
+      nodeSelector:
+{{- toYaml .Values.servingEntrypoint.nodeSelector | nindent 8 }}
+      {{- $affinity := deepCopy .Values.servingEntrypoint.affinity -}}
+      {{- $podAffinity := default dict $affinity.podAffinity -}}
+      {{- $required := default list $podAffinity.requiredDuringSchedulingIgnoredDuringExecution -}}
+      {{- $sameNode := dict "labelSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" (include "chill.name" .) "app.kubernetes.io/instance" .Release.Name "app.kubernetes.io/component" "serving-entrypoint")) "topologyKey" "kubernetes.io/hostname" -}}
+      {{- $_ := set $podAffinity "requiredDuringSchedulingIgnoredDuringExecution" (append $required $sameNode) -}}
+      {{- $_ := set $affinity "podAffinity" $podAffinity }}
+      affinity:
+{{- toYaml $affinity | nindent 8 }}
+      tolerations:
+{{- toYaml .Values.servingEntrypoint.tolerations | nindent 8 }}
+{{- end }}

@@ -58,6 +58,26 @@
 {{- if empty .Values.servingEntrypoint.observationStorage.size -}}
 {{- fail "servingEntrypoint.observationStorage.size must not be empty when servingEntrypoint.enabled=true" -}}
 {{- end -}}
+{{- $storage := .Values.servingEntrypoint.observationStorage -}}
+{{- range $field := list "storageClassName" "claimName" "volumeName" "localPath" "nodeHostname" -}}
+{{- if empty (index $storage $field) -}}
+{{- fail (printf "servingEntrypoint.observationStorage.%s is required for retained static local storage" $field) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (hasPrefix "/" $storage.localPath) -}}
+{{- fail "servingEntrypoint.observationStorage.localPath must be an absolute preprovisioned ext4 path" -}}
+{{- end -}}
+{{- if not (or (eq $storage.directory "/data") (hasPrefix "/data/" $storage.directory)) -}}
+{{- fail "servingEntrypoint.observationStorage.directory must be /data or its child" -}}
+{{- end -}}
+{{- range $part := splitList "/" $storage.directory -}}
+{{- if or (eq $part "..") (eq $part ".") -}}
+{{- fail "servingEntrypoint.observationStorage.directory must not contain dot path components" -}}
+{{- end -}}
+{{- end -}}
+{{- if not (empty .Values.servingEntrypoint.observationArchiver.resources) -}}
+{{- fail "servingEntrypoint.observationArchiver.resources must remain empty (BestEffort)" -}}
+{{- end -}}
 {{- end -}}
 {{- if not (kindIs "string" .Values.dashboard.callerServiceAccount) -}}
 {{- fail "dashboard.callerServiceAccount must be a string" -}}

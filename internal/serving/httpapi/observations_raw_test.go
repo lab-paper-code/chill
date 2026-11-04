@@ -26,7 +26,6 @@ import (
 )
 
 type rawHTTPArchive struct {
-	settingsArchive
 	objects   []evidencestore.ObjectIdentity
 	body      []byte
 	list      func(context.Context) error
@@ -52,8 +51,7 @@ func (a *rawHTTPArchive) Open(context.Context, evidencestore.ObjectIdentity) (io
 
 func rawHTTPHandler(t *testing.T, archive *rawHTTPArchive, allowed bool) *Handler {
 	t.Helper()
-	archive.settingsArchive.directory = t.TempDir()
-	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: archive})
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Archive: archive})
 	if err != nil {
 		t.Fatal(err)
 	}

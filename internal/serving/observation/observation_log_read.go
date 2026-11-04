@@ -59,7 +59,7 @@ func observationHourWanted(hour time.Time, bounds [2]time.Time) bool {
 
 func (l *ObservationLog) selectSources(read *observationRead, ranges map[string][2]time.Time) error {
 	read.sources = map[string][]observationSource{}
-	read.archive, _ = l.config.Writer.(ObservationArchive)
+	read.archive = l.config.Archive
 	objects, err := l.archiveSources(read, ranges)
 	if err != nil {
 		return err

@@ -10,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/serving"
 )
+
+const restoredOwnershipReason = "RestartDrain"
 
 // Requests still synchronously append their own assigned/final rows. Neither
 // operation may inherit a maintenance wait, including sync of the same inode.
@@ -31,6 +34,17 @@ func TestRequestsDoNotWaitForMaintenanceIO(t *testing.T) {
 				}
 			} else {
 				clock.set(observationTestHour.Add(3 * time.Hour))
+				if err := log.Flush(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				writer, _ := observationTestWriters.Load(log)
+				worker, err := observationTestWorker(log, writer.(evidencestore.StreamingImmutableWriter))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := worker.Scan(context.Background()); err != nil {
+					t.Fatal(err)
+				}
 				log.removeAll = func(path string) error {
 					once.Do(func() { close(entered); <-release })
 					return os.RemoveAll(path)
@@ -222,7 +236,6 @@ func TestAssignmentPrecedesExecuteAndRestartOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := restored.State(definition.Name)
-	const restoredOwnershipReason = "RestartDrain"
 	if err != nil || state.Reason != restoredOwnershipReason || state.Assigned != 1 {
 		t.Fatalf("restart failed to restore physical ownership: %+v %v", state, err)
 	}

@@ -105,7 +105,7 @@ func (l *ObservationLog) captureRaw(ctx context.Context, hour time.Time, streams
 }
 
 func (l *ObservationLog) rawObjects(read *observationRead, hour time.Time) (map[string]map[time.Time]evidencestore.ObjectIdentity, error) {
-	read.archive, _ = l.config.Writer.(ObservationArchive)
+	read.archive = l.config.Archive
 	objects, err := l.archiveSources(read, map[string][2]time.Time{observationRequestStream: {hour, hour}})
 	if err == nil {
 		err = read.ctx.Err()

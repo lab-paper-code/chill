@@ -139,7 +139,7 @@ func TestNativeSupplementsPreserveRestartDrainAssignment(t *testing.T) {
 	}
 	state, stateErr := runtime.State(d.Name)
 	instances := runtime.Instances()
-	if stateErr != nil || state.Reason != "RestartDrain" || state.Assigned != 1 ||
+	if stateErr != nil || state.Reason != restoredOwnershipReason || state.Assigned != 1 ||
 		len(instances) != 1 || instances[0].ID != instance || runtime.Drained(d.UID) {
 		t.Fatalf("native supplements lost restart ownership: state=%+v instances=%+v err=%v", state, instances, stateErr)
 	}

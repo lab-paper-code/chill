@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -31,7 +30,7 @@ var observationStreams = []string{observationRequestStream, observationScheduler
 type ObservationLogConfig struct {
 	Directory   string
 	Store       string
-	Writer      evidencestore.StreamingImmutableWriter
+	Archive     ObservationArchive
 	Definitions []string
 	Outcomes    []string
 	Retention   time.Duration
@@ -84,12 +83,12 @@ type ObservationLog struct {
 	// captureMu excludes retention only until a reader has opened its paths.
 	// It is always acquired before mu; appends never acquire it.
 	captureMu sync.RWMutex
-	publishMu sync.Mutex
-	// archived holds the past hours whose streams this process stored, under publishMu.
-	archived map[time.Time]bool
-	config   ObservationLogConfig
-	root     string
-	started  time.Time
+	// appendFloor fences completed hours before maintenance releases append locks.
+	appendFloor time.Time
+	lastAppend  time.Time
+	config      ObservationLogConfig
+	root        string
+	started     time.Time
 	// floor is the start of complete local observation; deleting an hour advances it.
 	floor time.Time
 	now   func() time.Time
@@ -112,8 +111,8 @@ type ObservationLog struct {
 }
 
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
-	if config.Directory == "" || config.Store == "" || config.Writer == nil {
-		return nil, errors.New("observation directory, store and immutable writer are required")
+	if config.Directory == "" || config.Store == "" {
+		return nil, errors.New("observation directory and store are required")
 	}
 	if config.Retention <= 0 {
 		return nil, errors.New("observation retention must be positive")
@@ -128,7 +127,6 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
 		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{}, offsets: map[*os.File]int64{},
 		retained: map[string]*serving.Definition{}, open: map[string]*serving.RequestRow{}, catalog: map[string]observationCatalogEntry{},
-		archived: map[time.Time]bool{},
 		syncFile: (*os.File).Sync, removeAll: os.RemoveAll,
 		writeFile: (*os.File).Write,
 	}
@@ -136,13 +134,36 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	if err := os.MkdirAll(l.root, 0700); err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(filepath.Join(config.Directory, "archive-control"), 0700); err != nil {
+		return nil, err
+	}
 	hours, err := l.hours()
 	if err != nil {
 		return nil, err
 	}
+	sealed := map[time.Time]bool{}
+	for _, hour := range hours {
+		seal, err := readObservationSeal(l.root, hour)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := checkSealedInputs(l.root, seal, false); err != nil {
+			return nil, err
+		}
+		sealed[hour] = true
+		if end := hour.Add(time.Hour); end.After(l.appendFloor) {
+			l.appendFloor = end
+		}
+	}
 	// A crash can leave one torn line at the end of each stream's last file.
 	for _, stream := range observationStreams {
 		for index := len(hours) - 1; index >= 0; index-- {
+			if sealed[hours[index]] {
+				continue
+			}
 			files, err := l.hourFiles(hours[index], stream)
 			if err != nil {
 				return nil, err
@@ -224,11 +245,12 @@ func (l *ObservationLog) ManagementEvent(event serving.ManagementEvent) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	// Management codes are classified at the single registry boundary.
-	return l.appendLocked(observationManagementStream, l.now(), event)
+	return l.appendLocked(observationManagementStream, l.appendTimeLocked(), event)
 }
 
 func (l *ObservationLog) Flush(ctx context.Context) error {
 	l.flushMu.Lock()
+	defer l.flushMu.Unlock()
 	l.writerMu.Lock()
 	l.mu.Lock()
 	var result error
@@ -251,12 +273,12 @@ func (l *ObservationLog) Flush(ctx context.Context) error {
 		result = errors.Join(result, l.syncFileOutsideLock(file), file.Close())
 	}
 	l.recordError(result)
-	l.flushMu.Unlock()
-	return errors.Join(result, l.archive(ctx))
+	return errors.Join(result, l.maintain(ctx))
 }
 
 func (l *ObservationLog) Close(ctx context.Context) error {
 	l.flushMu.Lock()
+	defer l.flushMu.Unlock()
 	l.writerMu.Lock()
 	l.mu.Lock()
 	var files []*os.File
@@ -279,8 +301,7 @@ func (l *ObservationLog) Close(ctx context.Context) error {
 		result = errors.Join(result, l.syncFileOutsideLock(file), file.Close())
 	}
 	l.recordError(result)
-	l.flushMu.Unlock()
-	return errors.Join(result, l.archive(ctx))
+	return errors.Join(result, l.maintain(ctx))
 }
 
 func (l *ObservationLog) recordError(err error) {

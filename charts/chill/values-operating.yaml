@@ -582,7 +582,15 @@ servingEntrypoint:
     # SCH-42 archive 조회와 evaluation S3 fallback 사용; 로컬 버퍼는 기본 2h로 복원.
     retention: 2h
     size: 128Gi
-    storageClassName: rook-cephfs
+    # Deployment prerequisite, not directory creation: preprovision this ext4 path
+    # and quiescent-copy the COMPLETE old owner tree (including pools-61c6eb8,
+    # definitions, pending ownership and lock) as UID 65532 before enabling.
+    # Keep the old Ceph PVC untouched. Never initialize an empty replacement.
+    storageClassName: chill-observations-local
+    claimName: chill-observations-local
+    volumeName: chill-observations-genesis1
+    localPath: /var/lib/chill/observations
+    nodeHostname: genesis1
   scheduler:
     configMap: serving-scheduler
   service:

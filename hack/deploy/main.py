@@ -227,8 +227,9 @@ def archive(run, sha, destination):
     run.run(['tar', '-xpf', tar, '-C', destination], 'extract.log', read_output=False)
 
 
-def image_ready(pods, expected):
+def image_ready(pods, expected, required_components=()):
     matches = []
+    components = set()
     for pod in pods['items']:
         if pod['metadata'].get('deletionTimestamp'):
             continue
@@ -236,12 +237,13 @@ def image_ready(pods, expected):
         for container in pod['spec'].get('containers', []):
             if container['image'] != expected['image']:
                 continue
+            components.add(pod['metadata'].get('labels', {}).get('app.kubernetes.io/component'))
             status = statuses.get(container['name'], {})
             digests = [expected['digest'], *expected['platformDigests']]
             matches.append(status.get('ready') and status.get('restartCount') == 0 and
                            any(status.get('imageID', '').endswith('@' + d) or status.get('imageID') == d for d in digests) and
                            any(x['type'] == 'Ready' and x['status'] == 'True' for x in pod.get('status', {}).get('conditions', [])))
-    return bool(matches) and all(matches)
+    return bool(matches) and all(matches) and set(required_components) <= components
 
 
 def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
@@ -477,7 +479,13 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, '--wait', '--timeout', str(recipe['upgradeSeconds']) + 's'], 'upgrade.log', timeout=upgrade_process_seconds, read_output=False)
         stage('readiness')
         deadline = time.monotonic() + recipe['readinessSeconds']
-        for resource in recipe['waitFor']:
+        worker_deployments = [
+            'deployment/' + doc['metadata']['name']
+            for doc in yaml.safe_load_all(after)
+            if doc and doc.get('kind') == 'Deployment' and
+            doc.get('metadata', {}).get('labels', {}).get('app.kubernetes.io/component') == 'observation-archiver'
+        ]
+        for resource in dict.fromkeys([*recipe['waitFor'], *worker_deployments]):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise RuntimeError('controller rollout readiness deadline exceeded')
@@ -488,7 +496,11 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                 raise RuntimeError('Pod Ready/restarts/digest readiness deadline exceeded')
             pods = json.loads(run.run(kube + ['get', 'pods', '-o', 'json'], 'pods.json', timeout=min(120, remaining)))
             deployed = {r: e for r, e in publication['roles'].items() if r in ('server', 'operator', 'profiler', 'dashboard', 'query', 'node-agent')}
-            checks = {role: image_ready(pods, expected) for role, expected in deployed.items()}
+            checks = {
+                role: image_ready(pods, expected, ('serving-entrypoint', 'observation-archiver')
+                                  if role == 'server' and worker_deployments else ())
+                for role, expected in deployed.items()
+            }
             dump(out / 'readiness.json', checks)
             if all(checks.values()):
                 break
@@ -528,7 +540,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         if observed_cluster:
             collectors = [(helm + ['history', recipe['release'], '-o', 'json'], 'failure-history.json'),
                           (kube + ['get', 'pods,deployments,daemonsets', '-o', 'json'], 'failure-resources.json')]
-            for component in ('operator', 'profiler', 'query', 'serving-entrypoint', 'dashboard'):
+            for component in ('operator', 'profiler', 'query', 'serving-entrypoint', 'observation-archiver', 'dashboard'):
                 for previous in (False, True):
                     collectors.append((kube + ['logs', 'deployment/' + recipe['release'] + '-' + component, '--all-containers', '--tail=100', '--timestamps', *(['--previous'] if previous else [])], 'failure-' + component + ('-previous' if previous else '') + '.log'))
             for argv, name in collectors:

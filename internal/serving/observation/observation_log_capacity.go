@@ -14,7 +14,7 @@ import (
 	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
-// ObservationArchive reads the hourly archive objects the log uploads.
+// ObservationArchive reads hourly objects published by the separate worker.
 type ObservationArchive interface {
 	evidencestore.Reader
 	evidencestore.Lister
@@ -50,7 +50,7 @@ func (l *ObservationLog) CapacityRecords(ctx context.Context, keys []string) (ma
 	read.ctx = ctx
 	err = l.scanStream(read, observationManagementStream, visit(found))
 	read.close()
-	archive, reads := l.config.Writer.(ObservationArchive)
+	archive, reads := l.config.Archive, l.config.Archive != nil
 	if err != nil || !reads || len(found) == len(keys) {
 		return found, err
 	}

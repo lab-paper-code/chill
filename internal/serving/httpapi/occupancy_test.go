@@ -34,7 +34,6 @@ func occupancyHandler(t *testing.T, deny string) (*Handler, *[]authorization.Res
 			Directory: t.TempDir(),
 			Store:     "evidence",
 			Retention: time.Hour,
-			Writer:    settingsArchive{directory: t.TempDir()},
 		},
 	)
 	if err != nil {

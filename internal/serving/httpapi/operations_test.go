@@ -37,7 +37,7 @@ func TestManualOperationsRejectKindFieldsBeforeExecution(t *testing.T) {
 		return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: true}}, nil
 	})
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()},
+		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)

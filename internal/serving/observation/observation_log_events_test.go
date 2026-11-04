@@ -16,7 +16,7 @@ func TestEventRecoveryPreservesUTCIdentity(t *testing.T) {
 				requested := observationTestHour.Add(time.Second).UTC()
 				stored := requested.In(time.FixedZone("stored-offset", 3600))
 				archive := newReadableObservationArchive(t)
-				log, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, requested)
+				log, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, requested)
 				var err error
 				if scheduler {
 					err = log.SchedulerRecord(SchedulerObservation{At: stored, Action: &SchedulerActionObservation{ID: "action", Kind: "power", Phase: "failed"}})
@@ -58,7 +58,7 @@ func TestArchivedEventRecoverySkipsCatalogHydration(t *testing.T) {
 	const timedOut = "timeout"
 	ctx := context.Background()
 	archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	at := observationTestHour.Add(time.Second)
 	clock.set(at)
 	if err := log.SchedulerRecord(SchedulerObservation{At: at, Action: &SchedulerActionObservation{ID: "action", Kind: "power", Phase: "failed", Error: timedOut}}); err != nil {
@@ -68,10 +68,10 @@ func TestArchivedEventRecoverySkipsCatalogHydration(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock.set(at.Add(3 * time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
-	restarted, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, at.Add(3*time.Hour))
+	restarted, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, at.Add(3*time.Hour))
 	archive.rejectCatalog = true
 	events, _, coverage, err := restarted.EventObservations(ctx, at, 10, "")
 	if err != nil || len(events) != 2 || events[0].Action == nil || events[0].Action.Error != timedOut || events[1].Cluster == nil || events[1].Cluster.Reason != "not-ready" {
@@ -95,7 +95,7 @@ func TestEventRecoveryFindsLateAppendsAcrossSegments(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
-			log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+			log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 			at := observationTestHour.Add(time.Second)
 			// Event timestamps predate the segment selected by the append clock.
 			clock.set(at.Add(3 * time.Hour))
@@ -113,10 +113,10 @@ func TestEventRecoveryFindsLateAppendsAcrossSegments(t *testing.T) {
 			}
 			if archived {
 				clock.set(at.Add(6 * time.Hour))
-				if err := log.Flush(ctx); err != nil {
+				if err := flushObservationArchive(log, ctx); err != nil {
 					t.Fatal(err)
 				}
-				log, _ = clockedObservationLog(t, ObservationLogConfig{Writer: archive}, at.Add(6*time.Hour))
+				log, _ = clockedObservationLog(t, ObservationLogConfig{Archive: archive}, at.Add(6*time.Hour))
 			}
 			archive.rejectCatalog = true
 			cursor := ""
@@ -154,17 +154,17 @@ func TestEventRecoveryFindsLateAppendsAcrossSegments(t *testing.T) {
 func TestEventRecoveryTwoHourContinuationAndArchiveGaps(t *testing.T) {
 	ctx := context.Background()
 	archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
-	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 	at := observationTestHour.Add(time.Second)
 	clock.set(at.Add(2 * time.Hour))
 	if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: at, Event: "raised", Source: "observer", Reason: "late"}); err != nil {
 		t.Fatal(err)
 	}
 	clock.set(at.Add(5 * time.Hour))
-	if err := log.Flush(ctx); err != nil {
+	if err := flushObservationArchive(log, ctx); err != nil {
 		t.Fatal(err)
 	}
-	restarted, _ := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, clock.now())
+	restarted, _ := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, clock.now())
 	cursor := ""
 	for page := range 3 {
 		events, next, coverage, err := restarted.EventObservations(ctx, at, 10, cursor)
@@ -235,7 +235,7 @@ func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
 	for _, archived := range []bool{false, true} {
 		t.Run(fmt.Sprintf("archived=%t", archived), func(t *testing.T) {
 			archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
-			log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+			log, clock := clockedObservationLog(t, ObservationLogConfig{Archive: archive}, observationTestHour)
 			from := observationTestHour.Add(time.Minute)
 			boundary := observationTestHour.Add(time.Hour)
 			clock.set(boundary.Add(-time.Nanosecond))
@@ -252,10 +252,10 @@ func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
 			clock.set(boundary.Add(time.Hour + time.Second))
 			if archived {
 				clock.set(boundary.Add(4 * time.Hour))
-				if err := log.Flush(context.Background()); err != nil {
+				if err := flushObservationArchive(log, context.Background()); err != nil {
 					t.Fatal(err)
 				}
-				log, _ = clockedObservationLog(t, ObservationLogConfig{Writer: archive}, clock.now())
+				log, _ = clockedObservationLog(t, ObservationLogConfig{Archive: archive}, clock.now())
 			}
 			archive.rejectCatalog = true
 			cursor := ""
