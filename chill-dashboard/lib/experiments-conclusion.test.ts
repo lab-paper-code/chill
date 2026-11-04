@@ -10,10 +10,11 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as experiments from "./experiments.ts"
 import * as measurements from "./measurements.ts"
 import type { Experiment, ExperimentStage } from "./experiments.ts"
+import { parseSchedulerJSON } from "./scheduler.ts"
 
 const require=createRequire(import.meta.url)
 const compiled=transpileModule(readFileSync(new URL("../features/experiments-conclusion.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-const components:Record<string,ComponentType<{run:Experiment;runs?:Experiment[];pending?:boolean;error?:boolean;stage?:ExperimentStage}>>={}
+const components:Record<string,ComponentType<{run?:Experiment;runs?:Experiment[];pending?:boolean;error?:boolean;stage?:ExperimentStage;provisional?:experiments.Published}>>={}
 const modules:Record<string,unknown>={"@/lib/client":{},"@/components/ui/button":{},"@/lib/experiment-comparison":comparisonHelpers,"@/lib/dashboard-routes":routeHelpers,"@/lib/experiments":experiments,"@/lib/measurements":measurements,"lucide-react":{TriangleAlert:()=>null}}
 new Function("require","exports",compiled)((name:string)=>modules[name]??require(name),components)
 const r2b=experiments.decodeExperiment(readFileSync(new URL("./fixtures/experiment-r2b-results.json",import.meta.url),"utf8"))
@@ -24,6 +25,23 @@ test("saved r2b client evidence gap is not asserted to be unsent traffic",()=>{
   assert.match(html,/gateway 관측 미기록/)
   assert.doesNotMatch(html,/미발행 4,125|부분 발행/)
   assert.match(html,/발행 증거 부족 4,125/)
+})
+test("only positive numeric identity mismatch counts render in decoded final and provisional service rows",()=>{
+  for(const provisional of [false,true]) {
+    const render=(identityMismatchClientRows?:unknown)=>{
+      const requests={camera:{offered:100,deadlineSuccess:90,clientRows:100,identityMismatchClientRows}}
+      const props=provisional
+        ?{provisional:parseSchedulerJSON(JSON.stringify({workloads:requests})) as experiments.Published}
+        :(()=>{const run=experiments.decodeExperiment(JSON.stringify({...r2b,stages:[{...r2b.stages[0],kpis:{requests}}]}));return {run,stage:run.stages[0]}})()
+      return renderToStaticMarkup(createElement(components.ExperimentStageResults,props)).replace(/<[^>]+>/g,"")
+    }
+    const absent=render()
+    assert.doesNotMatch(absent,/신원.*불일치/)
+    assert.ok(render(987654321).includes("987,654,321"))
+    assert.equal(render(0),absent)
+    assert.equal(render("987654321"),absent)
+    assert.ok(!absent.includes("987,654,321"))
+  }
 })
 test("saved partial energy exposes each node coverage independently",()=>{
   const html=renderToStaticMarkup(createElement(components.ExperimentStageResults,{run:r2b,stage:r2b.stages[0]}))
