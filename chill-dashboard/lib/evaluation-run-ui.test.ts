@@ -358,13 +358,13 @@ const progressEvents=[
   {phase:"judgeEnded",at:"2026-11-03T00:02:10Z"},
 ]
 function renderProgress(stage:Record<string,unknown>) {
-  return renderRun({...baseRun,phase:"Running",currentProcedure:"stage",finishedAt:undefined,stages:[{id:"trial",...stage}]},undefined,[scenario],[progressEntry])
+  return renderRun({...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",currentProcedure:"stage",...stage}]},undefined,[scenario],[progressEntry])
 }
 const activeDetails=(html:string)=>html.match(/<details\b[^>]*class="live-evaluation"[^>]*>[\s\S]*?<\/details>/)?.[0]??""
 
 test("actual run detail follows recorded drain, flush, collection and judgment instead of the GO plan",()=>{
   for(const [count,label] of [[1,"부하 진행 중"],[3,"drain 진행 중"],[4,"flush · 시작 미기록"],[5,"flush 진행 중"],[6,"수집 진행 중"],[7,"판정 · 시작 미기록"],[8,"판정 진행 중"],[9,"판정 종료 기록"]] as const) {
-    const html=renderProgress({progress:progressEvents.slice(0,count),lastProgressAt:"2026-11-03T00:02:20Z"}),details=activeDetails(html)
+    const html=renderProgress({currentProcedure:count>=8?"judge":"stage",progress:progressEvents.slice(0,count),lastProgressAt:"2026-11-03T00:02:20Z"}),details=activeDetails(html)
     assert.ok(text(details).includes(label),label)
     assert.match(details,/기록된 구간 경계/)
     assert.match(text(details),/부하 시작.*09:00:10/)
@@ -379,7 +379,7 @@ test("actual run detail follows recorded drain, flush, collection and judgment i
 })
 
 test("recorded progress preserves missing boundaries and observation order without filling from other evidence",()=>{
-  const html=renderProgress({progress:[
+  const html=renderProgress({currentProcedure:"judge",progress:[
     {phase:"loadEnded",at:"2026-11-03T00:01:00Z"},
     {phase:"collectStarted",at:"2026-11-03T00:00:40Z"},
     {phase:"judgeEnded",at:"2026-11-03T00:02:10Z"},
@@ -433,19 +433,36 @@ test("run detail reads load Jobs including failure reasons, distinguishes empty 
 
 test("ended stages and parents leaving the stage retain a start observation without claiming ongoing work",()=>{
   for(const owner of [
-    {phase:"Running",currentProcedure:"stage",stageFinishedAt:"2026-11-03T00:02:20Z"},
+    {phase:"Running",currentProcedure:"",stageFinishedAt:"2026-11-03T00:02:20Z"},
     {phase:"Finishing",currentProcedure:"finish",stageFinishedAt:"2026-11-03T00:02:20Z"},
     {phase:"Finishing",currentProcedure:"finish",stageFinishedAt:null},
     {phase:"Running",currentProcedure:"finish",stageFinishedAt:null},
-    {phase:"Running",currentProcedure:undefined,stageFinishedAt:null},
-    {phase:"Running",currentProcedure:"stage",currentStage:"next",stageFinishedAt:null},
+    {phase:"Running",currentProcedure:"publish",stageFinishedAt:null},
+    {phase:"Running",currentProcedure:"",currentStage:"next",stageFinishedAt:null},
   ]) {
-    const html=renderRun({...baseRun,...owner,finishedAt:undefined,stages:[{id:"trial",finishedAt:owner.stageFinishedAt,progress:progressEvents.slice(0,8)}]},undefined,[scenario],[progressEntry])
+    const html=renderRun({...baseRun,...owner,finishedAt:undefined,stages:[{id:"trial",currentProcedure:"judge",finishedAt:owner.stageFinishedAt,progress:progressEvents.slice(0,8)}]},undefined,[scenario],[progressEntry])
     const details=activeDetails(html),summary=text(details.match(/<summary>[\s\S]*?<\/summary>/)?.[0]??"")
     assert.match(summary,/마지막 관측: 판정 시작 09:02:05 · 종료 미기록/)
     assert.doesNotMatch(summary,/현재 구간|진행 중/)
     assert.doesNotMatch(details,/판정 종료/)
     assert.match(details,/기록된 구간 경계/)
   }
-  assert.match(text(activeDetails(renderProgress({finishedAt:null,progress:progressEvents.slice(0,8)}))),/현재 구간: 판정 진행 중/)
+  assert.match(text(activeDetails(renderProgress({currentProcedure:"judge",finishedAt:null,progress:progressEvents.slice(0,8)}))),/현재 구간: 판정 진행 중/)
+})
+
+test("real parent wire omits its procedure during child stage and judge work while child cleanup cannot keep an old interval active",()=>{
+  for(const currentProcedure of ["",undefined]) {
+    for(const child of [
+      {currentProcedure:"stage",progress:progressEvents.slice(0,3),expected:"현재 구간: drain 진행 중"},
+      {currentProcedure:"judge",progress:progressEvents.slice(0,8),expected:"현재 구간: 판정 진행 중"},
+      {currentProcedure:"judge",progress:progressEvents.slice(0,7),expected:"현재 구간: 판정 · 시작 미기록"},
+      {currentProcedure:"judge",progress:progressEvents.slice(0,3),expected:"마지막 관측: drain 시작 09:01:00 · 종료 미기록"},
+      {currentProcedure:"cleanup-jobs",progress:progressEvents.slice(0,8),expected:"마지막 관측: 판정 시작 09:02:05 · 종료 미기록"},
+    ]) {
+      const html=renderRun({...baseRun,phase:"Running",currentProcedure,finishedAt:undefined,stages:[{id:"trial",finishedAt:null,currentProcedure:child.currentProcedure,progress:child.progress}]},undefined,[scenario],[progressEntry])
+      const summary=text(activeDetails(html).match(/<summary>[\s\S]*?<\/summary>/)?.[0]??"")
+      assert.equal(summary,child.expected)
+      assert.doesNotMatch(activeDetails(html),/판정 종료/)
+    }
+  }
 })

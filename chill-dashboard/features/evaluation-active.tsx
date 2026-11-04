@@ -44,8 +44,9 @@ export function EvaluationActiveDetails({active,now,name,uid,stageProgress,stage
       const stage=stageProgress?.id===run.stage?.id?stageProgress:undefined
       const progress=stage?.progress
       const lastBoundary=progress?.[progress.length-1]
+      const boundaryActive=stageActive&&!stage?.finishedAt&&(lastBoundary?.phase.startsWith("judge")?stage?.currentProcedure==="judge":stage?.currentProcedure==="stage"||lastBoundary?.phase==="collectEnded"&&stage?.currentProcedure==="judge")
       const progressLabel=lastBoundary
-        ?stageActive&&!stage?.finishedAt?`현재 구간: ${progressLabels[lastBoundary.phase].current}`:`마지막 관측: ${progressLabels[lastBoundary.phase].boundary} ${progressTime(lastBoundary.at)}${lastBoundary.phase.endsWith("Started")?" · 종료 미기록":""}`
+        ?boundaryActive?`현재 구간: ${progressLabels[lastBoundary.phase].current}`:`마지막 관측: ${progressLabels[lastBoundary.phase].boundary} ${progressTime(lastBoundary.at)}${lastBoundary.phase.endsWith("Started")?" · 종료 미기록":""}`
         :"구간 경계 미기록"
       const lastProgressAt=evaluationLastProgressAt(stage,procedures)
       const stageProcedures=stage?.procedures
