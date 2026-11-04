@@ -121,6 +121,7 @@ Run 목록·단건의 `liveTarget`은 생성 시 저장한 `edge.dacs.io/evaluat
 생성기를 만든 conductor는 로그 EOF와 무관하게 기존 `flushSeconds` 간격으로 정확한 Job UID의 `Failed` 상태를 확인하고, 해당 Job 이름을 담은 `ProducerFailed` 실행 실패로 즉시 정리 단계에 넘긴다.
 실행 실패(`ExecutionLost` 포함)는 정리 실패가 아니다. run 전체의 마지막 `finish`가 evaluator-owned Job/Pod 정리와 settings 원복을 재관측한 결과로 `CleanupComplete`와 pool 반환을 결정한다. 단, 결과를 모르는 injection(`Unknown`/`Requested`)은 영향을 받은 Node/Pod를 `RemoteEffectUnknown` 잔여물로 남기고 pool을 계속 잡는다.
 옛 harness writer는 기록한 Job/Pod UID와 실제 owner UID로 확인한다(stage ID가 `run`이어도 finish 자신의 run-owned Job/Pod는 제외). Pod가 터미널 phase이거나 API에서 사라졌다는 사실만으로 정리됨을 추정하지 않는다. 해당 Pod의 container 종료 상태와 배치 노드의 현재 Ready를 모두 관측해야 반환할 수 있고, 기록한 Pod가 사라졌거나 노드/종료 상태를 확인하지 못하면 관측 불가 잔여물로 유지한다. 게시 `outcome.cleanup.residuals[]`는 이 마지막 정리에서 관측한 잔여물·미확인 효과를 담는다.
+Go 실행 문맥의 nullable `childRefs[].injectionRecords`·`procedures`는 Python 소비 경계에서 빈 목록으로 취급한다. injection이나 기록된 procedure가 없는 단계도 실제 정리 경로를 반드시 실행한다.
 
 ## 4. 대시보드가 읽을 것 — 추측 대신
 

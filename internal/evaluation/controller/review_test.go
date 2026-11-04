@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -508,6 +509,45 @@ func TestFinishContextRetainsLostWriterIdentityAndUnknownInjection(t *testing.T)
 	if !children[0].Uncertain || len(children[0].Procedures) != 1 || children[0].Procedures[0].PodRef.UID != "pod-uid" ||
 		len(children[0].InjectionRecords) != 1 || children[0].InjectionRecords[0].NodeRef.Name != "cordoned-node" {
 		t.Fatalf("finish lost safety evidence: %+v", children[0])
+	}
+}
+
+func TestFinishConsumesNullableGoChildArrays(t *testing.T) {
+	parent := fixtureRun("nullable-arrays")
+	startRun(parent)
+	r, _ := fixtureRuntime(t, parent)
+	child := fixtureStage(t, &r, parent)
+	parent.Status.ChildRefs = []api.EvaluationChildReference{{StageID: child.Spec.StageID, EvaluationObjectReference: *ref(child)}}
+	job, err := r.job(context.Background(), parent, parent, nil, api.EvaluationStepFinish, &api.EvaluationProcedure{Step: api.EvaluationStepFinish})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := &corev1.ConfigMap{}
+	if err := r.APIReader.Get(context.Background(), client.ObjectKey{Namespace: parent.Namespace, Name: job.Spec.Template.Spec.Volumes[1].ConfigMap.Name}, cm); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("python3", "-c", `
+import json, sys
+from types import SimpleNamespace
+sys.path.insert(0, "../../../hack/evaluation")
+import conductor
+execution = json.load(sys.stdin)
+child = execution["childRefs"][0]
+assert child["injectionRecords"] is None
+assert child["procedures"] is None
+controller = object.__new__(conductor.CPO)
+controller.c = {"evaluation": {"execution": execution}}
+controller.tb, controller.residuals = {"drainSeconds": 0}, []
+cleaned = []
+controller.cleanup_jobs = lambda: cleaned.append(True)
+controller.io = SimpleNamespace(k=lambda args: {"items": []})
+controller.finish()
+assert cleaned == [True], "nullable metadata must not bypass cleanup"
+assert controller.residuals == []
+`)
+	command.Stdin = strings.NewReader(cm.Data["execution.json"])
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Go execution.json -> Python finish failed: %v\n%s", err, output)
 	}
 }
 

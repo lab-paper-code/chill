@@ -693,7 +693,7 @@ class CPO:
         children = self.c['evaluation']['execution'].get('childRefs', [])
         uncertain = any(child.get('uncertain') for child in children)
         for child in children:
-            for record in child.get('injectionRecords', []):
+            for record in child.get('injectionRecords') or []:
                 if record['outcome'] in ('Unknown', 'Requested'):
                     for key, kind in (('nodeRef', 'Node'), ('podRef', 'Pod')):
                         if record.get(key):
@@ -709,7 +709,7 @@ class CPO:
 
     def observe_stage_writers(self):
         execution = self.c['evaluation']['execution']
-        procedures = [p for child in execution.get('childRefs', []) for p in child.get('procedures', [])]
+        procedures = [p for child in execution.get('childRefs', []) for p in child.get('procedures') or []]
         recorded_jobs = {p['jobRef']['uid']: p['jobRef'] for p in procedures if p.get('jobRef')}
         recorded_pods = {p['podRef']['uid']: p['podRef'] for p in procedures if p.get('podRef')}
         selector = 'edge.dacs.io/workload-role=system,edge.dacs.io/evaluation-run-uid=' + execution['runUID']
