@@ -93,7 +93,7 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 	if stageID == "" {
 		labels[api.EvaluationLabelStage] = scopeRun
 	}
-	env := []corev1.EnvVar{{Name: "HOME", Value: "/tmp"}, {Name: "PYTHONDONTWRITEBYTECODE", Value: "1"}, {Name: "CHILL_API_URL", Value: v["chillAPIURL"]}, {Name: "CHILL_EVIDENCE_STORE", Value: run.Spec.EvidenceStore}, {Name: "CHILL_EVIDENCE_ENDPOINT", Value: v["evidenceEndpoint"]}, {Name: "CHILL_EVIDENCE_BUCKET", Value: v["evidenceBucket"]}, {Name: "CHILL_EVIDENCE_REGION", Value: v["evidenceRegion"]}}
+	env := []corev1.EnvVar{{Name: "HOME", Value: "/private"}, {Name: "PYTHONDONTWRITEBYTECODE", Value: "1"}, {Name: "CHILL_API_URL", Value: v["chillAPIURL"]}, {Name: "CHILL_EVIDENCE_STORE", Value: run.Spec.EvidenceStore}, {Name: "CHILL_EVIDENCE_ENDPOINT", Value: v["evidenceEndpoint"]}, {Name: "CHILL_EVIDENCE_BUCKET", Value: v["evidenceBucket"]}, {Name: "CHILL_EVIDENCE_REGION", Value: v["evidenceRegion"]}}
 	for _, item := range []struct{ name, key string }{{"AWS_ACCESS_KEY_ID", "access-key"}, {"AWS_SECRET_ACCESS_KEY", "secret-key"}} {
 		env = append(env, corev1.EnvVar{Name: item.name, ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: v["evidenceCredentialsSecret"]}, Key: item.key}}})
 	}
@@ -102,6 +102,8 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 	pod.SecurityContext = &corev1.PodSecurityContext{FSGroup: ptr(int64(65532))}
 	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "private", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}})
 	pod.Containers[0].VolumeMounts = append(pod.Containers[0].VolumeMounts, corev1.VolumeMount{Name: "private", MountPath: "/private"})
+	// Only /work (uploaded to the store) and /private (memory, gone with the Pod) are writable.
+	pod.Containers[0].SecurityContext = &corev1.SecurityContext{ReadOnlyRootFilesystem: ptr(true), RunAsNonRoot: ptr(true), AllowPrivilegeEscalation: ptr(false), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
 	if token {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: "api-access", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{DefaultMode: ptr(int32(0644)), Sources: []corev1.VolumeProjection{
 			{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token", ExpirationSeconds: ptr(deadline + 60)}},
