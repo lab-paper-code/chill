@@ -569,3 +569,20 @@ func assertPublishedWorkspaceDeleted(ctx context.Context, t *testing.T, r Runtim
 		t.Fatalf("published run workspace must be deleted, got %v", err)
 	}
 }
+
+func TestPublishedResidualRunKeepsWorkspace(t *testing.T) {
+	ctx := context.Background()
+	parent := fixtureRun("residual")
+	startRun(parent)
+	workspace := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "residual-work", Namespace: parent.Namespace, UID: "work-uid"}}
+	parent.Status.Workspace = ref(workspace)
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonResidualState, "")
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPublished, metav1.ConditionTrue, complete, "")
+	r, _ := fixtureRuntime(t, parent, workspace)
+	if _, err := (&RunReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(workspace), &corev1.PersistentVolumeClaim{}); err != nil {
+		t.Fatalf("residual run must keep its workspace for the release path: %v", err)
+	}
+}
