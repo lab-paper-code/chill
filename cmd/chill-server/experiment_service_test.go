@@ -712,6 +712,53 @@ func TestSummaryStoreFailuresStayFatal(t *testing.T) {
 	}
 }
 
+// The last read of an over-limit body fails (transport) or the request is cancelled:
+// the byte-limit verdict must not hide that store failure as an unreadable summary.
+func TestSummaryByteLimitKeepsStreamFailuresFatal(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "transport", true: "cancel"}[cancelled], func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			store := &experimentMemoryStore{}
+			store.add(t, experimentFixture("run", time.Now().UTC()))
+			want, failure, onLast := evidencestore.ErrTransport, evidencestore.ErrTransport, context.CancelFunc(nil)
+			if cancelled {
+				want, failure, onLast = context.Canceled, nil, cancel
+			}
+			reader := experimentReader{store: store, wrap: func(body string) io.Reader {
+				return &lastReadFails{data: []byte(body + " "), err: failure, onLast: onLast}
+			}}
+			service := &experimentService{reader: reader, lister: store, store: "evidence", maxBytes: store.objects[0].Size}
+			if list, err := service.list(ctx); !errors.Is(err, want) {
+				t.Fatalf("store failure became an unreadable summary: err=%v unreadable=%+v", err, list.Unreadable)
+			}
+		})
+	}
+}
+
+// lastReadFails returns the final bytes together with err (and runs onLast), like a stream
+// that breaks on its last chunk.
+type lastReadFails struct {
+	data   []byte
+	err    error
+	onLast context.CancelFunc
+}
+
+func (r *lastReadFails) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	if len(r.data) != 0 {
+		return n, nil
+	}
+	if r.onLast != nil {
+		r.onLast()
+	}
+	return n, r.err
+}
+
 type errorReader struct{ err error }
 
 func (r errorReader) Read([]byte) (int, error) { return 0, r.err }

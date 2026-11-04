@@ -205,7 +205,7 @@ func (s *experimentService) read(
 			fmt.Errorf("experiment summary must contain one bounded JSON object: %v", err))
 	}
 	if limited.N == 0 {
-		return summary, fmt.Errorf("%w: experiment summary exceeds configured byte limit", errUnreadableSummary)
+		return summary, contentDefect(stream, ctx, errors.New("experiment summary exceeds configured byte limit"))
 	}
 	if err := ctx.Err(); err != nil {
 		return summary, err
