@@ -29,7 +29,7 @@ const progressLabels:Record<EvaluationProgressEvent["phase"],{boundary:string;cu
 }
 const progressTime=(value:string)=>new Date(value).toLocaleTimeString("ko-KR",{timeZone:"Asia/Seoul",hour12:false,hour:"2-digit",minute:"2-digit",second:"2-digit"})
 
-export function EvaluationActiveDetails({active,now,name,uid,stageProgress,procedures}:{active:Pick<UseQueryResult<ActiveEvaluations,ApiError>,"data"|"error"|"isPending"|"refetch">;now:number;name?:string;uid?:string;stageProgress?:EvaluationStageProgress;procedures?:EvaluationProgressProcedure[]|null}) {
+export function EvaluationActiveDetails({active,now,name,uid,stageProgress,stageActive=false,procedures}:{active:Pick<UseQueryResult<ActiveEvaluations,ApiError>,"data"|"error"|"isPending"|"refetch">;now:number;name?:string;uid?:string;stageProgress?:EvaluationStageProgress;stageActive?:boolean;procedures?:EvaluationProgressProcedure[]|null}) {
   const runs=active.data?.items.filter(run=>(!name||run.name===name)&&(!uid||run.uid===uid))??[]
   return <div className="live-evaluations" aria-label="진행 중 실험">
     {active.isPending&&<span role="status">실험 조회 중</span>}
@@ -44,6 +44,9 @@ export function EvaluationActiveDetails({active,now,name,uid,stageProgress,proce
       const stage=stageProgress?.id===run.stage?.id?stageProgress:undefined
       const progress=stage?.progress
       const lastBoundary=progress?.[progress.length-1]
+      const progressLabel=lastBoundary
+        ?stageActive&&!stage?.finishedAt?`현재 구간: ${progressLabels[lastBoundary.phase].current}`:`마지막 관측: ${progressLabels[lastBoundary.phase].boundary} ${progressTime(lastBoundary.at)}${lastBoundary.phase.endsWith("Started")?" · 종료 미기록":""}`
+        :"구간 경계 미기록"
       const lastProgressAt=evaluationLastProgressAt(stage,procedures)
       const stageProcedures=stage?.procedures
       const loadIndex=stageProcedures?.findIndex(procedure=>procedure.step==="stage")??-1
@@ -53,7 +56,7 @@ export function EvaluationActiveDetails({active,now,name,uid,stageProgress,proce
       const postLoadLabel=postLoad?`종료 처리: ${procedureLabels[postLoad.step]??postLoad.step} ${postLoad.finishedAt?"종료 기록":"중"} (${postLoadTimes})`:stageProcedures==null?"종료 처리 단계 미기록":"종료 처리 신호 미수신"
       const silentSeconds=now&&lastProgressAt!==null?Math.max(0,Math.floor((now-lastProgressAt)/1000)):null
       return <details key={run.uid} className="live-evaluation" open>
-        <summary>{progress?lastBoundary?`현재 구간: ${progressLabels[lastBoundary.phase].current}`:"구간 경계 미기록":afterLoad?`계획 시간 경과 · ${postLoadLabel}`:"부하 계획 시간"}</summary>
+        <summary>{progress?progressLabel:afterLoad?`계획 시간 경과 · ${postLoadLabel}`:"부하 계획 시간"}</summary>
         <div className="live-evaluation-details space-y-3">
           <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm tabular-nums">
             <div><dt className="text-muted-foreground">현재 단계</dt><dd>{run.stage?.id??"미기록"} <span className="text-muted-foreground">({run.stageIndex}/{run.stagesTotal})</span></dd></div>

@@ -358,7 +358,7 @@ const progressEvents=[
   {phase:"judgeEnded",at:"2026-11-03T00:02:10Z"},
 ]
 function renderProgress(stage:Record<string,unknown>) {
-  return renderRun({...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",...stage}]},undefined,[scenario],[progressEntry])
+  return renderRun({...baseRun,phase:"Running",currentProcedure:"stage",finishedAt:undefined,stages:[{id:"trial",...stage}]},undefined,[scenario],[progressEntry])
 }
 const activeDetails=(html:string)=>html.match(/<details\b[^>]*class="live-evaluation"[^>]*>[\s\S]*?<\/details>/)?.[0]??""
 
@@ -429,4 +429,23 @@ test("run detail reads load Jobs including failure reasons, distinguishes empty 
   assert.match(text(renderProgress({loadJobs:[]})),/부하 Job 없음/)
   assert.doesNotMatch(renderProgress({}),/aria-label="부하 Job"/)
   assert.doesNotMatch(renderProgress({loadJobs:null}),/aria-label="부하 Job"/)
+})
+
+test("ended stages and parents leaving the stage retain a start observation without claiming ongoing work",()=>{
+  for(const owner of [
+    {phase:"Running",currentProcedure:"stage",stageFinishedAt:"2026-11-03T00:02:20Z"},
+    {phase:"Finishing",currentProcedure:"finish",stageFinishedAt:"2026-11-03T00:02:20Z"},
+    {phase:"Finishing",currentProcedure:"finish",stageFinishedAt:null},
+    {phase:"Running",currentProcedure:"finish",stageFinishedAt:null},
+    {phase:"Running",currentProcedure:undefined,stageFinishedAt:null},
+    {phase:"Running",currentProcedure:"stage",currentStage:"next",stageFinishedAt:null},
+  ]) {
+    const html=renderRun({...baseRun,...owner,finishedAt:undefined,stages:[{id:"trial",finishedAt:owner.stageFinishedAt,progress:progressEvents.slice(0,8)}]},undefined,[scenario],[progressEntry])
+    const details=activeDetails(html),summary=text(details.match(/<summary>[\s\S]*?<\/summary>/)?.[0]??"")
+    assert.match(summary,/마지막 관측: 판정 시작 09:02:05 · 종료 미기록/)
+    assert.doesNotMatch(summary,/현재 구간|진행 중/)
+    assert.doesNotMatch(details,/판정 종료/)
+    assert.match(details,/기록된 구간 경계/)
+  }
+  assert.match(text(activeDetails(renderProgress({finishedAt:null,progress:progressEvents.slice(0,8)}))),/현재 구간: 판정 진행 중/)
 })
