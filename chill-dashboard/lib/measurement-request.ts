@@ -1,5 +1,5 @@
 import type { DatasetResource, DatasetSpec, PreprocessorResource, PreprocessorSpec, ModelResource, WorkloadSummary, ExecutionPath } from "./domain.ts"
-import type { Condition, MeasurementCoverageCell, MeasurementPlan, MeasurementPlanSpec, ProfilesView, InventoryClass, InventoryNode } from "./read-types.ts"
+import type { ActiveProtocol, Condition, MeasurementCoverageCell, MeasurementPlan, MeasurementPlanSpec, ProfilesView, InventoryClass, InventoryNode } from "./read-types.ts"
 import { safeMeasurementReturn, measurementRequestName } from "./measurements.ts"
 import { staticCompatibility } from "./measurement-coverage.ts"
 
@@ -51,13 +51,13 @@ export function requestDefaults(condition:RequestCondition, plans:MeasurementPla
   const same=(model:string,deviceClass:string,node:string,path:string,powerMode:string)=>!!condition.model&&!!condition.deviceClass&&!!condition.path&&!!condition.powerMode&&model===condition.model&&deviceClass===condition.deviceClass&&(!condition.node||node===condition.node)&&path===condition.path&&powerMode===condition.powerMode
   const newest=[...plans].sort((a,b)=>b.metadata.creationTimestamp.localeCompare(a.metadata.creationTimestamp)||a.metadata.name.localeCompare(b.metadata.name))
   const plan=newest.find(plan=>{const s=plan.spec;return same(s.state.candidate.modelSpec,s.state.candidate.deviceClass,s.state.targetNode,s.state.candidate.executionPath,s.state.candidate.powerMode)})
-  if(plan)return {spec:plan.spec,source:`기존 요청 ${plan.metadata.name} (${plan.spec.state.candidate.deviceClass}, 동일 조건)`,exact:true}
+  if(plan)return {spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,workload:undefined}},source:`기존 요청 ${plan.metadata.name} (${plan.spec.state.candidate.deviceClass}, 동일 조건)`,exact:true}
   const profile=profiles?.filter(profile=>{const c=profile.condition;return same(c.logicalModel,c.deviceClass,profile.nodeName,c.artifact.executionPath,c.powerMode)}).sort((a,b)=>b.measuredAt.localeCompare(a.measuredAt)||a.id.localeCompare(b.id))[0]
   if(!profile) {
     const source=newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.model&&plan.spec.state.candidate.modelSpec===condition.model)??newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.path&&plan.spec.state.candidate.executionPath===condition.path)
     if(!source)return null
     const spec=source.spec
-    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},batchSizes:undefined,trialsPerBatch:3}}
+    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,workload:undefined,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},batchSizes:undefined,trialsPerBatch:3}}
   }
   const c=profile.condition,active=c.activeProtocol,idle=c.idleProtocol
   return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 반복 3회는 화면 기본값, 재시도는 직접 지정)`,spec:{
@@ -209,7 +209,7 @@ function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
 }
 export function fillDefaults(draft:Draft,context:Context,inherited=false):Draft {
   const artifact=context.models.find(model=>model.metadata.name===draft.model)?.spec.executionPaths.find(path=>path.name===draft.path)?.artifact??""
-  const inputs=requestInputs(draft.model,artifact,draft.preprocessor,draft.dataset,context,{preprocessor:inherited||!draft.explicitPreprocessor,dataset:inherited||!draft.explicitDataset})
+  const inputs=draft.workload?{preprocessor:draft.preprocessor,dataset:draft.dataset}:requestInputs(draft.model,artifact,draft.preprocessor,draft.dataset,context,{preprocessor:inherited||!draft.explicitPreprocessor,dataset:inherited||!draft.explicitDataset})
   const filled={...draft,preprocessor:inputs.preprocessor,dataset:inputs.dataset}
   const target=JSON.stringify([filled.model,filled.deviceClass,filled.node,filled.path,filled.powerMode])
   if(filled.protocol&&(filled.protocol.copied||filled.protocol.from===null||filled.protocol.target===target))return filled
@@ -217,6 +217,12 @@ export function fillDefaults(draft:Draft,context:Context,inherited=false):Draft 
   if(!defaults)return filled
   const spec=defaults.spec
   return {...filled,node:filled.node||spec.state.targetNode,trials:filled.trials??spec.trialsPerBatch,protocol:{values:copyAdvanced(spec),from:defaults.source,spec,target:JSON.stringify([filled.model,filled.deviceClass,filled.node||spec.state.targetNode,filled.path,filled.powerMode])}}
+}
+// Only an explicit Workload choice can bind a changed input tuple.
+export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,inherited=false):Draft {
+  const next=fillDefaults({...current,...patch,...(patch.preprocessor!==undefined?{explicitPreprocessor:!!patch.preprocessor}:{}),...(patch.dataset!==undefined?{explicitDataset:!!patch.dataset}:{})},context,inherited)
+  if(next.model===current.model&&next.preprocessor===current.preprocessor&&next.dataset===current.dataset)return next
+  return {...next,workload:patch.workload||"",protocol:next.protocol?.spec?{...next.protocol,spec:{...next.protocol.spec,activeProtocol:{...next.protocol.spec.activeProtocol,workload:undefined}}}:next.protocol}
 }
 function advancedProblem(values: Advanced) {
   const bad = advancedFields.find(([key, , min]) => !Number.isInteger(values[key]) || values[key] < min || values[key] > 2147483647)
@@ -250,7 +256,7 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
   const name = d.name ?? (model && node && path ? measurementRequestName({...d,powerMode}, taken) : "")
   function problem(step: Step): string {
     switch (step) {
-      case "workload": return !model?"모델을 선택하세요.":!preprocessor?"전처리기를 선택하세요.":!dataset?"데이터셋을 선택하세요.":datasetGap(dataset.spec,preprocessor.spec)
+      case "workload": return !d.workload?"측정할 Workload를 선택하세요. 등록된 Workload가 없으면 먼저 등록하세요.":!model?"모델을 선택하세요.":!preprocessor?"전처리기를 선택하세요.":!dataset?"데이터셋을 선택하세요.":datasetGap(dataset.spec,preprocessor.spec)
       case "device":
         if (!cls || !node) return "잴 장비를 골라 주세요."
         if (nodeReason(node)) return `${node.name}는 ${nodeReason(node)}. 다른 장비를 골라 주세요.`
@@ -261,7 +267,7 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
         return cls.powerModes.some(m => m.name === powerMode) ? "" : "전력 모드를 골라 주세요."
       case "size":
         if (!declared && (!d.batchSizes.length || (max && d.batchSizes.some(b => b > max)))) return max ? `한 번에 처리할 건수를 ${max}건 이하로 하나 이상 골라 주세요.` : "한 번에 처리할 건수를 하나 이상 골라 주세요."
-        if (!Number.isInteger(trials) || trials < 3 || trials > 2147483647) return "반복 횟수는 3번 이상이어야 해요."
+        if (trials !== 3) return "반복 횟수는 정확히 3번이어야 해요."
         return ""
       case "advanced": return advancedProblem(protocol.values)
       case "name":
@@ -276,9 +282,9 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
 export function manifest(d: Draft, context: Context, namespace: string) {
   const v = view(d, context)
   const p = v.protocol.values
-  const spec: MeasurementPlanSpec = {
+  const spec: MeasurementPlanSpec & {activeProtocol:ActiveProtocol} = {
     state: { candidate: { modelSpec: d.model, preprocessor: d.preprocessor, deviceClass: d.deviceClass, executionPath: d.path, powerMode: v.powerMode }, targetNode: d.node },
-    activeProtocol: { ...v.protocol.spec?.activeProtocol, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
+    activeProtocol: { ...v.protocol.spec?.activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     trialsPerBatch: v.trials,
     // The CRD forbids batchSizes when the artifact declares its own set.
@@ -294,7 +300,9 @@ export function begin(from: string | null, context: Context) {
   const source = from ? context.plans.find(p => p.metadata.name === from) : undefined
   if (!source) return { draft: emptyDraft, index: 0, error: from ? "복사할 측정을 찾지 못해서 처음부터 골라요." : "", copied: false }
   const s = source.spec
-  const draft: Draft = { workload: "", model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
+  // A copied name is a selection only while that Workload is still one of the choices.
+  const workload = context.workloads.some(item => item.desired.metadata.name === s.activeProtocol.workload) ? s.activeProtocol.workload! : ""
+  const draft: Draft = { workload, model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
   const v = view(draft, context)
   const open = steps.findIndex(step => step !== "name" && step !== "review" && v.problem(step))
   return { draft, index: open < 0 ? steps.indexOf("name") : open, error: open < 0 ? "" : v.problem(steps[open]), copied: true }

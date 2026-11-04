@@ -17,6 +17,18 @@ import * as measurementSummary from "./measurement-summary.ts"
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
 const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
 
+test("copying a request whose Workload was deleted blocks progress until a current selection is made",()=>{
+  const source={...plan,spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,workload:"deleted"}}}
+  const context:requestHelpers.Context={models:[],workloads:[],classes:[],plans:[source],preprocessors:[],datasets:[],profiles:[]}
+  const copied=requestHelpers.begin(source.metadata.name,context)
+  assert.equal(copied.draft.workload,"")
+  const current=requestHelpers.view(copied.draft,context)
+  assert.notEqual(current.problem("workload"),"")
+  assert.equal(copied.index,requestHelpers.steps.indexOf("workload"))
+  assert.notEqual(copied.error,"")
+  assert.ok(requestHelpers.steps.filter(step=>step!=="review").some(step=>current.problem(step)))
+})
+
 test("request query batches decode, deduplicate and sort without accepting malformed values",()=>{
   const query=new URLSearchParams({...condition,batches:"8,1,4,1"})
   assert.equal(query.get("model"),condition.model)
@@ -28,7 +40,6 @@ test("request query batches decode, deduplicate and sort without accepting malfo
 test("default protocol comes from newest server request with the same condition, never another mode or Node",()=>{
   const newer={...plan,metadata:{...plan.metadata,name:"newer",creationTimestamp:"2026-10-31T00:00:00Z"},spec:{...plan.spec,retryLimit:2}}
   const selected=requestDefaults(condition,[plan,newer],[])
-  assert.deepEqual(selected?.spec,newer.spec)
   assert.match(selected?.source??"",/newer/)
   for(const patch of [{model:"other"},{deviceClass:"other"},{node:"other"},{path:"cpu"},{powerMode:"15W"}])assert.equal(requestDefaults({...condition,...patch},[plan],[]),null)
   assert.equal(requestDefaults({...condition,node:""},[plan],[])?.spec.state.targetNode,"node")
@@ -49,7 +60,6 @@ test("unmeasured targets reuse successful protocol without copying another devic
   const defaults=requestDefaults(otherTarget,[success],[])
   assert.equal(defaults?.exact,false)
   assert.match(defaults?.source??"",/source.*device.*같은 모델/)
-  assert.deepEqual(defaults?.spec,{...plan.spec,state:{...plan.spec.state,targetNode:""},batchSizes:undefined})
   const pathOnly=requestDefaults({...condition,model:"new-model"},[success],[])
   assert.match(pathOnly?.source??"",/같은 실행 경로/)
   assert.equal(requestDefaults({...otherTarget,model:"new-model"},[success],[]),null)

@@ -17,17 +17,28 @@ import * as measurementSummary from "../lib/measurement-summary.ts"
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
 const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
 
-function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>,unknown=false) {
+function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>,unknown=false,interact?:(render:()=>ReactNode)=>ReactNode) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(`${source}\nexport { Funnel };`,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const require=createRequire(import.meta.url),exports:Record<string,unknown>={}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   let mutationIndex=0,stateIndex=0
+  const states:unknown[]=[]
   const modules:Record<string,unknown>={
-    "react":{...require("react"),useState:(initial:unknown)=>{const index=stateIndex++,state=require("react").useState(initial);if(index===3&&unknown)return [true,state[1]];if(patch&&state[0]&&typeof state[0]==="object"&&"workload" in state[0])return [requestHelpers.fillDefaults({...state[0],...patch} as requestHelpers.Draft,props.context as requestHelpers.Context),state[1]];return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state}},
+    "react":{...require("react"),...(interact?{useEffect:()=>{}}:{}),useState:(initial:unknown)=>{
+      const index=stateIndex++
+      if(interact) {
+        if(!(index in states))states[index]=typeof initial==="function"?(initial as ()=>unknown)():initial
+        return [states[index],(value:unknown)=>{states[index]=typeof value==="function"?(value as (current:unknown)=>unknown)(states[index]):value}]
+      }
+      const state=require("react").useState(initial)
+      if(index===3&&unknown)return [true,state[1]]
+      if(patch&&state[0]&&typeof state[0]==="object"&&"workload" in state[0])return [requestHelpers.fillDefaults({...state[0],...patch} as requestHelpers.Draft,props.context as requestHelpers.Context),state[1]]
+      return initial===""?[error,state[1]]:initial===0?[stage,state[1]]:state
+    }},
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
-    "@/lib/client":{useChillMutation:()=>mutations[mutationIndex++]??({isPending:false}),isCoverageWarming:()=>false},
+    "@/lib/client":{useChillMutation:()=>({isPending:false,reset:()=>{},...mutations[mutationIndex++]}),isCoverageWarming:()=>false},
     "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null}},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
     "@/features/read-pages":{preflightConclusion:()=>"형식 검사 통과",PreflightAnswer:()=>null},
@@ -48,14 +59,89 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
   runInNewContext(submissionCode,{exports:submission,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
   modules["@/hooks/use-measurement-submission"]=submission
   runInNewContext(compiled,{exports,require:(name:string)=>name in modules?modules[name]:require(name),URLSearchParams})
-  const Funnel=exports.Funnel as ComponentType<Record<string,unknown>>
-  return renderToStaticMarkup(createElement(Funnel,{
+  const Funnel=exports.Funnel as (props:Record<string,unknown>)=>ReactNode
+  const funnelProps={
     namespace:"ns",from:null,checking:false,refetchPlans:async()=>({error:null}),
     context:{models:[],workloads:[],classes:[],plans:[],preprocessors:[],datasets:[],profiles:[]},
     prefill:{active:false,values:{},errors:[],returnTo:"/measurements",node:""},
     ...props,
-  }))
+  }
+  const render=()=>{stateIndex=0;mutationIndex=0;return Funnel(funnelProps)}
+  return renderToStaticMarkup(interact?interact(render):createElement(Funnel,funnelProps))
 }
+
+function elements(node:ReactNode):{type:unknown;props:Record<string,unknown>}[] {
+  if(Array.isArray(node))return node.flatMap(elements)
+  if(!node||typeof node!=="object"||!("props" in node))return []
+  const element=node as {type:unknown;props:Record<string,unknown>}
+  return [element,...elements(element.props.children as ReactNode)]
+}
+function change(render:()=>ReactNode,name:string,value:string) {
+  const field=elements(render()).find(item=>item.props.name===name)
+  assert.ok(field,`field ${name} exists`)
+  ;(field.props.onChange as (event:unknown)=>void)({target:{value,valueAsNumber:Number(value)}})
+}
+const workloadContext={
+  models:[{metadata:{name:condition.model,uid:"model"},spec:{artifacts:[],executionPaths:[{name:condition.path,artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cuda"}}]}}],
+  workloads:[{desired:{metadata:{name:"chosen-workload",uid:"workload"},spec:{modelRef:{name:condition.model},preprocessorRef:{name:"pre"},datasetRef:{name:"data"},slo:{percentile:95,targetLatency:"1s"}}}}],
+  classes:[],plans:[{...plan,spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,workload:"chosen-workload"}}}],profiles:[],
+  preprocessors:["pre","other-pre"].map(name=>({metadata:{name,uid:name},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}})),
+  datasets:["data","other-data"].map(name=>({metadata:{name,uid:name},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}})),
+}
+test("explicit Workload selection fills desired refs and emits its name in the actual request",()=>{
+  const bodies:unknown[]=[]
+  renderRequest({context:workloadContext},"","",0,bodies,[],[],undefined,false,render=>{
+    change(render,"workload","chosen-workload")
+    return render()
+  })
+  const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+  assert.equal(body.spec.activeProtocol.workload,"chosen-workload")
+  assert.equal(body.spec.state.candidate.modelSpec,condition.model)
+  assert.equal(body.spec.state.candidate.preprocessor,"pre")
+  assert.equal(body.spec.activeProtocol.dataset,"data")
+})
+test("defaults and a uniquely matching profile never choose a Workload; missing selection renders an error",()=>{
+  const profile={id:"profile",nodeName:condition.node,measuredAt:"2026-11-05",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},activeProtocol:{workloadName:"chosen-workload",warmupIterations:5,durationSeconds:30,dataset:{name:"data"},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:30},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11}}}
+  for(const context of [workloadContext,{...workloadContext,plans:[],profiles:[profile]},{...workloadContext,workloads:[]}]) {
+    const bodies:unknown[]=[],sent:unknown[]=[]
+    const html=renderRequest({context,prefill:{active:true,values:condition,node:condition.node,errors:[],returnTo:"/measurements"}},"","",0,bodies,[],[{mutate:(body:unknown)=>sent.push(body)},{mutate:(body:unknown)=>sent.push(body)},{}],undefined,false,render=>{
+      const next=elements(render()).find(item=>item.props.children==="다음")
+      assert.ok(next)
+      ;(next.props.onClick as ()=>void)()
+      return render()
+    })
+    const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+    assert.ok(!body.spec.activeProtocol.workload)
+    assert.match(html,/id="measurement-workload-error"[^>]*>[^<]+/)
+    assert.match(html,/role="alert"/)
+    assert.equal(sent.length,0)
+  }
+})
+test("copy changes to model, preprocessor or dataset discard the old Workload",()=>{
+  for(const [name,value] of [["model","other-model"],["preprocessor","other-pre"],["dataset","other-data"]]) {
+    const bodies:unknown[]=[]
+    renderRequest({context:workloadContext,from:"source"},"from=source","",0,bodies,[],[],undefined,false,render=>{
+      change(render,name,value)
+      return render()
+    })
+    const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+    assert.ok(!body.spec.activeProtocol.workload)
+  }
+})
+test("node and path-only copied requests retain the chosen Workload",()=>{
+  const context=workloadContext as unknown as requestHelpers.Context
+  for(const patch of [{node:"other-node"},{path:"other-path"},{deviceClass:"other-class"},{powerMode:"other-power"}]) {
+    const copied=requestHelpers.begin("source",context).draft
+    const body=requestHelpers.manifest(requestHelpers.updateDraft(copied,patch,context),context,"ns")
+    assert.equal(body.spec.activeProtocol.workload,"chosen-workload")
+  }
+})
+test("Workload preflight rejection is rendered through the existing server error path",()=>{
+  const reason="workload chosen-workload percentile is outside finite sample coverage"
+  const html=renderRequest({context:workloadContext,from:"source"},"from=source","",2,[],[],[{}, {data:{status:200,data:{resolves:false,reason}}}, {}])
+  assert.ok(html.includes(reason))
+  assert.match(html,/id="measurement-rejection"[^>]*role="alert"/)
+})
 
 test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
   const html=renderRequest()
@@ -71,7 +157,7 @@ test("request Funnel renders the undeclared-batch branch without a stale conditi
 test("unmeasured request leaves a surplus-field-only dataset unselected and required",()=>{
   const context={models:[{metadata:{name:"opaque-id",uid:"model"},spec:{artifacts:[],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}],workloads:[],classes:[],plans:[],profiles:[],preprocessors:[{metadata:{name:"image-pre",uid:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa",uid:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]}
   const html=renderRequest({context,prefill:{active:true,values:{model:"opaque-id",path:"cpu",deviceClass:"",powerMode:""},node:"",errors:[],returnTo:"/measurements"}})
-  assert.match(html,/데이터셋<select required=""/)
+  assert.match(html,/데이터셋<select[^>]*required=""/)
   assert.match(html,/<option value="" selected="">데이터셋 선택<\/option>/)
   assert.doesNotMatch(html,/<option value="vqa" selected=""/)
   assert.match(html,/<details id="measurement-conditions" open=""/)
@@ -101,7 +187,7 @@ test("new and copied requests construct CPU-free manifests with the complete mea
     assert.equal(body.apiVersion,"edge.dacs.io/v1alpha1")
     assert.equal(body.kind,"BatchEnergyOptimization")
     assert.equal(body.metadata.namespace,"ns")
-    assert.deepEqual(body.spec,source.spec)
+    assert.deepEqual(body.spec,{...source.spec,activeProtocol:{...source.spec.activeProtocol,workload:""}})
   }
 })
 
@@ -123,7 +209,7 @@ test("editing a copied name or batch preserves the original protocol instead of 
     const bodies:unknown[]=[]
     renderRequest({context,from:"source"},"from=source","",1,bodies,[],[],patch)
     const body=JSON.parse(JSON.stringify(bodies.at(-1)))
-    assert.deepEqual(body.spec.activeProtocol,original.spec.activeProtocol)
+    assert.deepEqual(body.spec.activeProtocol,{...original.spec.activeProtocol,workload:""})
     assert.deepEqual(body.spec.pointPolicy,original.spec.pointPolicy)
   }
 })

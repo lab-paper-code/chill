@@ -33,7 +33,7 @@ function render(kind:"list"|"detail") {
   "@/components/measurement-filters":{MeasurementFilters:()=>null},"@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[plan]}}),useMeasurementCoverage:()=>({data:{cells:[]}})},
   "@/features/measurement-runs":{MeasurementChildRuns:()=>null},
   "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
-  "@/components/screen":{Screen:container,Facts:()=>null,Rows:container},"@/components/ui/button":{Button:container},
+  "@/components/screen":{Screen:container,Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([label,value])=>createElement("div",{key:label},createElement("dt",null,label),createElement("dd",null,value)))),Rows:container},"@/components/ui/button":{Button:container},
   "@/components/measurement-navigation":{MeasurementStatus:()=>null,MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
   "@/components/status-cell":{StatusCell:()=>null},
   "@/components/data-table":{DataTable:({columns,data}:{columns:{value:(row:unknown)=>ReactNode}[];data:unknown[]})=>createElement("div",null,data.map((row,index)=>createElement("div",{key:index},columns.map((column,index)=>createElement("div",{key:index},column.value(row))))))},
