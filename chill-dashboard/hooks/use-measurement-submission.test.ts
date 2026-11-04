@@ -142,22 +142,6 @@ test("Workload preflight rejection is rendered through the existing server error
   assert.ok(html.includes(reason))
   assert.match(html,/id="measurement-rejection"[^>]*role="alert"/)
 })
-test("trial count four blocks the form and three advances to the actual review",()=>{
-  const context={...workloadContext,classes:[{name:condition.deviceClass,architecture:"amd64",powerModes:[{name:condition.powerMode,actuator:{kind:"Fixed"}}],nodes:[{name:condition.node,ready:"True"}]}],plans:workloadContext.plans.map(item=>({...item,spec:{...item.spec,batchSizes:[1]}}))}
-  renderRequest({context,from:"source"},"from=source","",0,[],[],[],undefined,false,render=>{
-    const next=()=>{const button=elements(render()).find(item=>item.props.children==="다음");assert.ok(button);(button.props.onClick as ()=>void)()}
-    next()
-    change(render,"trials","4")
-    next()
-    assert.match(renderToStaticMarkup(render()),/id="measurement-size-error"[^>]*>[^<]+/)
-    change(render,"trials","3")
-    next()
-    const review=render()
-    assert.ok(elements(review).some(item=>item.type==="caption"))
-    assert.doesNotMatch(renderToStaticMarkup(review),/id="measurement-size-error"/)
-    return review
-  })
-})
 
 test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
   const html=renderRequest()

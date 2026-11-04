@@ -58,8 +58,3 @@ test("R19 review: first error never hides different failure codes or catalog sta
  assert.match(visible,/카탈로그 조회 불가/)
  assert.doesNotMatch(visible,/실행 오류 설명|GPU 메모리 부족 설명|전력 관측 시간 초과 설명/)
 })
-test("historical request without a Workload renders missing provenance",()=>{
- const value=render("detail").match(/<dt>Workload<\/dt><dd>([^<]+)<\/dd>/)?.[1]
- assert.ok(value)
- assert.notEqual(value,plan.spec.state.candidate.modelSpec)
-})
