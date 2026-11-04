@@ -13,7 +13,7 @@ import { evaluationReplacement, object, records, type LoadScenario } from "@/lib
 import { formatMeasurementTime } from "@/lib/measurements"
 import { EvaluationActiveDetails } from "@/features/evaluation-active"
 import { ExperimentStageResults } from "@/features/experiments-conclusion"
-import type { ActiveEvaluations } from "@/lib/evaluation-active"
+import type { ActiveEvaluations, EvaluationStageProgress } from "@/lib/evaluation-active"
 import { settingFields, settingControls, settingTargets } from "@/lib/scheduler-settings"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -24,7 +24,7 @@ import { Screen } from "@/components/screen"
 
 type RunCondition = {type:string;status:string;reason?:string;message?:string;lastTransitionTime?:string}
 type RunProcedure = {step:string;startedAt:string|null;finishedAt:string|null;reason?:string;measurementVerdict?:string}
-type RunStage = {id:string;name:string;uid:string;currentProcedure?:string;conditions:RunCondition[]|null;measurementVerdict?:string;procedures:RunProcedure[]|null;startedAt:string|null;finishedAt:string|null;goAt:string|null;provisionalD1?:Published|null}
+type RunStage = EvaluationStageProgress & {name:string;uid:string;currentProcedure?:string;conditions:RunCondition[]|null;measurementVerdict?:string;procedures:RunProcedure[]|null;startedAt:string|null;finishedAt:string|null;goAt:string|null;provisionalD1?:Published|null}
 type Run = {name:string;uid:string;spec:EvaluationSpec;liveTarget?:EvaluationLiveTarget[]|null;phase:string;conditions?:RunCondition[];currentStage?:unknown;currentProcedure?:string;procedures?:RunProcedure[]|null;stages?:RunStage[]|null;startedAt?:string;finishedAt?:string;publicationID?:string}
 type Created = {name:string;uid:string}
 const encode=(value:unknown)=>stringifySchedulerJSON(value)
@@ -33,6 +33,7 @@ const conditionLabels:Record<string,string>={PoolAcquired:"풀 확보",Execution
 const conditionReasons:Record<string,string>={Returned:"반환 완료",IdentityMismatch:"실행 대상 식별자 불일치",NOT_EVALUATED:"미평가",NoControlEffects:"복구할 제어 변경 없음",PublicationFailed:"결과 게시 실패",SLOFailed:"SLO 미충족"}
 const arrivalLabels:Record<string,string>={poisson:"푸아송 분포",constant:"일정 간격",uniform:"균등 분포",trace:"기록 재생"}
 const procedureLabels:Record<string,string>={prepare:"준비",factor:"조건 적용",stage:"부하 실행",judge:"측정 판정","cleanup-jobs":"작업 정리",finish:"정리",publish:"게시"}
+const loadJobStatuses={Active:"진행 중",Succeeded:"완료",Failed:"실패"}
 
 function ProcedureTimeline({title,procedures,current,finished,publishing=false,now}:{title:string;procedures:RunProcedure[]|null|undefined;current?:string;finished:boolean;publishing?:boolean;now:number}) {
   return <div className="overflow-x-auto"><table className="w-full text-left text-sm tabular-nums"><caption className="py-2 text-left font-medium">{title}</caption><thead><tr>{["절차","시작 (KST)","종료 (KST)","소요","사유","측정 판정"].map(label=><th key={label} className="whitespace-nowrap p-2">{label}</th>)}</tr></thead><tbody>{procedures?.map((procedure,index)=>{
@@ -202,6 +203,7 @@ export function EvaluationRunPage({name}:{name:string}) {
   const loads=useChillQuery<{items:LoadScenario[]}>("v1/evaluations/load-scenarios",{enabled:!!run&&!replaced&&!run.publicationID,decoder:parseSchedulerJSON})
   const active=useChillQuery<ActiveEvaluations>("v1/evaluations/active",{enabled:!!run&&!replaced&&!run.finishedAt&&run.phase!=="Done",poll:true})
   const activeStage=!active.error&&!replaced&&!run?.finishedAt&&run?.phase!=="Done"?active.data?.items?.find(item=>item.name===name&&item.uid===run?.uid)?.stage:undefined
+  const activeStageProgress=run?.stages?.find(stage=>stage.id===activeStage?.id)
   const goAt=activeStage?.goAt?Date.parse(activeStage.goAt):NaN
   const loadElapsed=now&&Number.isFinite(goAt)&&now>=goAt&&typeof activeStage?.plannedSeconds==="number"&&Number.isFinite(activeStage.plannedSeconds)&&activeStage.plannedSeconds>0?(now-goAt)/1000:null
   const stages=records(planSpec?.stages)
@@ -216,7 +218,7 @@ export function EvaluationRunPage({name}:{name:string}) {
     const currentPart=parts.findIndex(part=>{
       const duration=finite(part.durationSeconds),start=offset
       offset=duration!==null&&duration>=0?offset+duration:NaN
-      return activeStage?.id===stage.id&&loadElapsed!==null&&loadElapsed<(activeStage?.plannedSeconds??0)&&loadElapsed>=start&&loadElapsed<offset
+      return activeStageProgress?.progress==null&&activeStage?.id===stage.id&&loadElapsed!==null&&loadElapsed<(activeStage?.plannedSeconds??0)&&loadElapsed>=start&&loadElapsed<offset
     })
     const notice=loadNotice??(!scenario||!Array.isArray(scenario.spec.parts)?"미기록":undefined)
     return {stage,scenario,parts,currentPart,notice}
@@ -244,11 +246,11 @@ export function EvaluationRunPage({name}:{name:string}) {
       <section aria-label="실험 요약" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className={`text-lg font-semibold ${verdict==="FAIL"?"text-destructive":""}`}>{phases[run.phase]??"미확인"} · {resultLabel}{failedServices.length>0&&` · 실패 서비스 ${failedServices.join(", ")}`}</h2>
-          <div className="flex items-center gap-2">{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과 보기</Link></Button>:<span className="text-sm text-muted-foreground">게시 후 결과 제공</span>}<TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">등록 질문은 작성자의 설명이며 부하 표가 실제 참조 계획입니다. 실행 단계와 부하 구간은 다릅니다. 조건은 각 항목의 최신 상태로 전체 이력이 아니며 시각은 마지막 변경입니다. 풀 반환 시각으로 확보 시각을 알 수 없습니다. 부하 진행률·남은 시간은 GO 시각 기준 계획값이고 판정·정리 시간은 포함하지 않습니다. 실행 중 요청 집계는 잠정이며 결과 대기 요청은 이후 성공으로 바뀔 수 있습니다. 최종 판정은 요청 배출 후 게시됩니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
+          <div className="flex items-center gap-2">{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과 보기</Link></Button>:<span className="text-sm text-muted-foreground">게시 후 결과 제공</span>}<TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">등록 질문은 작성자의 설명이며 부하 표가 실제 참조 계획입니다. 실행 단계와 부하 구간은 다릅니다. 조건은 각 항목의 최신 상태로 전체 이력이 아니며 시각은 마지막 변경입니다. 풀 반환 시각으로 확보 시각을 알 수 없습니다. 구간 경계는 서버가 기록한 시각이며 빠진 경계를 추정하지 않습니다. flush·수집 중에는 주기 신호가 없을 수 있고 신호 없는 경과만으로 멈춤을 판단할 수 없습니다. 구간 기록이 없는 구 서버의 진행률·남은 시간은 GO 기준 계획값이며 판정·정리 시간은 포함하지 않습니다. 실행 중 요청 집계는 잠정이며 결과 대기 요청은 이후 성공으로 바뀔 수 있습니다. 최종 판정은 요청 배출 후 게시됩니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
         </div>
         <p className="break-words text-sm"><span className="text-muted-foreground">등록 질문 </span>{definitionNotice??(typeof planSpec?.question==="string"?planSpec.question:"미기록")}</p>
         <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm tabular-nums"><strong>워크로드 {completePlan?`${workloads.length}개`:stagesNotice??loadNotice??"미기록"}</strong><span>실행 단계 {stagesNotice??`${stages.length}개`}</span><span>부하 구간 {completePlan?`${parts.length}개`:stagesNotice??loadNotice??"미기록"}</span><span>부하 계획 {plannedSeconds===null?stagesNotice??loadNotice??"미기록":`${plannedSeconds.toLocaleString("ko-KR")}초`}</span><span>{finished?"전체 실행":"실행 경과"} {elapsed!==null&&Number.isFinite(elapsed)?`${elapsed.toLocaleString("ko-KR")}초`:"미기록"}</span></p>
-        {!run.finishedAt&&run.phase!=="Done"&&<EvaluationActiveDetails key={run.uid} active={active} name={name} uid={uid||run.uid} now={now} stageProgress={run.stages?.find(stage=>stage.id===activeStage?.id)} procedures={run.procedures}/>}
+        {!run.finishedAt&&run.phase!=="Done"&&<EvaluationActiveDetails key={run.uid} active={active} name={name} uid={uid||run.uid} now={now} stageProgress={activeStageProgress} procedures={run.procedures}/>}
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">{[["시작 (KST)",run.startedAt],["종료 (KST)",run.finishedAt]].map(([label,value])=><div key={label} className="flex gap-2"><dt>{label}</dt><dd>{value?formatMeasurementTime(value):"미기록"}</dd></div>)}</dl>
       </section>
       {provisional&&<section aria-label="실행 중 잠정 서비스 결과"><ExperimentStageResults provisional={provisional}/></section>}
@@ -258,6 +260,7 @@ export function EvaluationRunPage({name}:{name:string}) {
           {Array.isArray(run.procedures)&&<ProcedureTimeline title="실행 절차" procedures={run.procedures} current={run.currentProcedure} finished={!!run.finishedAt||run.phase==="Done"} publishing={!run.publicationID} now={now}/>}
           {run.stages?.map(stage=><section key={stage.uid} className="space-y-1 rounded border p-3">
             <ProcedureTimeline title={`실행 단계 ${stage.id}`} procedures={stage.procedures} current={stage.currentProcedure} finished={!!stage.finishedAt||!!run.finishedAt||run.phase==="Done"} now={now}/>
+            {stage.loadJobs!=null&&<div className="overflow-x-auto"><table className="w-full text-left text-sm tabular-nums" aria-label="부하 Job"><caption className="py-2 text-left">부하 Job</caption><thead><tr>{["이름","상태","시작 (KST)","완료 (KST)","실패 사유"].map(label=><th key={label} className="whitespace-nowrap p-2">{label}</th>)}</tr></thead><tbody>{stage.loadJobs.map(job=><tr key={job.uid} className="border-t"><th scope="row" className="break-all p-2 font-normal">{job.name}</th><td className="whitespace-nowrap p-2">{loadJobStatuses[job.status]}</td><td className="whitespace-nowrap p-2">{job.startedAt?formatMeasurementTime(job.startedAt):"미기록"}</td><td className="whitespace-nowrap p-2">{job.completedAt?formatMeasurementTime(job.completedAt):"미기록"}</td><td className="break-words p-2">{job.reason??"미기록"}</td></tr>)}{!stage.loadJobs.length&&<tr><td colSpan={5} className="p-2">부하 Job 없음</td></tr>}</tbody></table></div>}
             <LatestConditions conditions={stage.conditions}/>
             {stage.measurementVerdict&&<p className="text-sm">단계 측정 판정 {stage.measurementVerdict}</p>}
           </section>)}

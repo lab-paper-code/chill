@@ -344,3 +344,89 @@ test("partial provisional records keep unreported values missing rather than mak
   assert.doesNotMatch(renderRun({...run,finishedAt:baseRun.finishedAt}),/실행 중 · 잠정/)
   assert.doesNotMatch(renderRun({...run,phase:"Done"}),/실행 중 · 잠정/)
 })
+
+const progressEntry:active.ActiveEvaluation={name:baseRun.name,uid:baseRun.uid,stageIndex:1,stagesTotal:1,stage:{id:"trial",goAt:baseRun.startedAt,plannedSeconds:300,injections:[]}}
+const progressEvents=[
+  {phase:"loadStarted",at:"2026-11-03T00:00:10Z"},
+  {phase:"loadEnded",at:"2026-11-03T00:01:00Z"},
+  {phase:"drainStarted",at:"2026-11-03T00:01:00Z"},
+  {phase:"drainEnded",at:"2026-11-03T00:01:20Z",producerRowsMissing:{camera:2,sensor:0}},
+  {phase:"flushStarted",at:"2026-11-03T00:01:20Z"},
+  {phase:"collectStarted",at:"2026-11-03T00:01:25Z"},
+  {phase:"collectEnded",at:"2026-11-03T00:02:00Z",bytes:4096},
+  {phase:"judgeStarted",at:"2026-11-03T00:02:05Z"},
+  {phase:"judgeEnded",at:"2026-11-03T00:02:10Z"},
+]
+function renderProgress(stage:Record<string,unknown>) {
+  return renderRun({...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",...stage}]},undefined,[scenario],[progressEntry])
+}
+const activeDetails=(html:string)=>html.match(/<details\b[^>]*class="live-evaluation"[^>]*>[\s\S]*?<\/details>/)?.[0]??""
+
+test("actual run detail follows recorded drain, flush, collection and judgment instead of the GO plan",()=>{
+  for(const [count,label] of [[1,"부하 진행 중"],[3,"drain 진행 중"],[4,"flush · 시작 미기록"],[5,"flush 진행 중"],[6,"수집 진행 중"],[7,"판정 · 시작 미기록"],[8,"판정 진행 중"],[9,"판정 종료 기록"]] as const) {
+    const html=renderProgress({progress:progressEvents.slice(0,count),lastProgressAt:"2026-11-03T00:02:20Z"}),details=activeDetails(html)
+    assert.ok(text(details).includes(label),label)
+    assert.match(details,/기록된 구간 경계/)
+    assert.match(text(details),/부하 시작.*09:00:10/)
+    assert.match(text(details),/진행 신호 없음 10초/)
+    assert.doesNotMatch(html,/계획상 구간|계획 시간 경과|계획상 남은 시간|계획 종료 후 경과|<progress/)
+    if(count>=4) {
+      assert.match(text(details),/drain 종료 시 생성기 결과 행 부족.*camera: 2.*sensor: 0/)
+      assert.doesNotMatch(details.match(/<tr[^>]*>[^]*?camera: 2[^]*?<\/tr>/)?.[0]??"",/text-destructive|text-warning/)
+    }
+    if(count>=7)assert.match(text(details),/저장된 원시 자료.*4,096 bytes/)
+  }
+})
+
+test("recorded progress preserves missing boundaries and observation order without filling from other evidence",()=>{
+  const html=renderProgress({progress:[
+    {phase:"loadEnded",at:"2026-11-03T00:01:00Z"},
+    {phase:"collectStarted",at:"2026-11-03T00:00:40Z"},
+    {phase:"judgeEnded",at:"2026-11-03T00:02:10Z"},
+  ],procedures:[{step:"judge",startedAt:"2026-11-03T00:02:00Z",finishedAt:null}],loadJobs:[{name:"completed-job",uid:"completed",status:"Succeeded",startedAt:baseRun.startedAt,completedAt:"2026-11-03T00:01:10Z"}]})
+  const details=activeDetails(html),rows=[...details.matchAll(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)].map(match=>text(match[0]))
+  assert.match(text(details),/판정 종료 기록/)
+  assert.deepEqual(rows.slice(1).map(row=>row.split("09:")[0]),["부하 종료","수집 시작","판정 종료"])
+  assert.doesNotMatch(details,/부하 시작|drain 시작|drain 종료|flush 시작|수집 종료|판정 시작|진행 중/)
+  assert.ok(details.indexOf("09:01:00")<details.indexOf("09:00:40"),"observation order is not producer-clock order")
+  assert.match(text(activeDetails(renderProgress({progress:[progressEvents[1]]}))),/drain · 시작 미기록/)
+  assert.match(text(activeDetails(renderProgress({progress:[]}))),/구간 경계 미기록/)
+  assert.doesNotMatch(renderProgress({progress:[]}),/계획상 구간|<progress/)
+  const old=text(renderProgress({}))
+  assert.match(old,/계획상 남은 시간/)
+  assert.match(old,/계획상 구간 peak/)
+  assert.doesNotMatch(old,/기록된 구간 경계|부하 Job/)
+})
+
+test("last progress uses the newest independent server signal and never classifies silence as stalled",()=>{
+  const stage={id:"trial",lastProgressAt:"2026-11-03T00:02:20Z",provisionalD1:{asOf:"2026-11-03T00:02:10Z"},procedures:[{step:"stage",startedAt:baseRun.startedAt,finishedAt:null}]}
+  assert.equal(active.evaluationLastProgressAt(stage,[]),Date.parse(stage.lastProgressAt))
+  assert.equal(active.evaluationLastProgressAt({...stage,lastProgressAt:"invalid"},[]),Date.parse(stage.provisionalD1.asOf))
+  assert.equal(active.evaluationLastProgressAt(stage,[{step:"finish",startedAt:"2026-11-03T00:02:25Z",finishedAt:null}]),Date.parse("2026-11-03T00:02:25Z"))
+  assert.equal(active.evaluationLastProgressAt({...stage,lastProgressAt:baseRun.startedAt},[]),Date.parse(stage.provisionalD1.asOf))
+  const details=activeDetails(renderProgress({progress:[progressEvents[0]],lastProgressAt:"2026-11-02T00:00:00Z"}))
+  assert.match(text(details),/진행 신호 없음 86550초/)
+  assert.doesNotMatch(details,/멈춤|정체|정상|실패|text-destructive|text-warning/)
+})
+
+test("run detail reads load Jobs including failure reasons, distinguishes empty and omitted projections",()=>{
+  const jobs=[
+    {name:"generator-active",uid:"job-active",status:"Active",startedAt:"2026-11-03T00:00:00Z"},
+    {name:"generator-done",uid:"job-done",status:"Succeeded",startedAt:"2026-11-03T00:00:05Z",completedAt:"2026-11-03T00:01:30Z"},
+    {name:"generator-failed",uid:"job-failed",status:"Failed",startedAt:"2026-11-03T00:00:10Z",reason:"BackoffLimitExceeded"},
+  ]
+  for(const run of [
+    {...baseRun,phase:"Running",finishedAt:undefined,stages:[{id:"trial",loadJobs:jobs}]},
+    {...baseRun,stages:[{id:"trial",loadJobs:jobs}]},
+  ]) {
+    const html=renderRun(run),table=html.match(/<table\b[^>]*aria-label="부하 Job"[\s\S]*?<\/table>/)?.[0]??"",screen=text(table)
+    assert.match(screen,/이름.*상태.*시작.*완료.*실패 사유/)
+    assert.match(screen,/generator-active.*진행 중.*9:00:00.*미기록/)
+    assert.match(screen,/generator-done.*완료.*9:00:05.*9:01:30/)
+    assert.match(screen,/generator-failed.*실패.*9:00:10.*미기록.*BackoffLimitExceeded/)
+    assert.doesNotMatch(screen,/workload|shard|undefined/)
+  }
+  assert.match(text(renderProgress({loadJobs:[]})),/부하 Job 없음/)
+  assert.doesNotMatch(renderProgress({}),/aria-label="부하 Job"/)
+  assert.doesNotMatch(renderProgress({loadJobs:null}),/aria-label="부하 Job"/)
+})
