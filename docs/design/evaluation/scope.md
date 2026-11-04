@@ -14,7 +14,7 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 |---|---|
 | 같은 입력이면 같은 판정 | 판정은 동결된 binding·client 행·원시 증거만의 순수 함수다(`hack/evaluation/judgment.py` `reduce_requests`). 같은 증거로 다시 판정하면 같은 verdict·수치가 나온다. |
 | client 행 = 계획 행 | 요청마다 평가자 client 행이 하나 있다. 수집이 계획보다 적으면 `collectionLoss`로 따로 세고 `unfinishedOrUnsent`에 섞지 않는다. 분모(frozen offered)와 D1 식은 바뀌지 않는다. |
-| 사람 개입 없는 종결 | prepare → stage → finish → publish가 끝나면 Run이 `CleanupComplete=True`, `PoolAcquired=False/Returned`가 된다. 실제로 남은 자원이 없는데 pool을 잡는 것은 결함이다. 수동 `POST .../release`는 실제 잔여가 있을 때만 쓴다. |
+| 사람 개입 없는 종결 | 정리가 확인되면 Run이 `CleanupComplete=True`, `PoolAcquired=False/Returned`가 된다. 실제 잔여가 없는데 pool을 잡는 것은 결함이다. 실제 잔여가 있거나 정리 완료를 확인하지 못하면 pool을 유지한다. 수동 `POST .../release`는 종료된 Blocked Run에서 운영자가 원복·잔여 정리를 확인한 뒤 쓰는 복구 경로이며, cleanup 실패 기록은 남는다. |
 | 재현 가능 | 게시물(`serving-experiment.v1alpha1`)에 정의·LoadScenario·seed·harness 이미지·sourceSHA·동결 설정·증거 참조가 있어 같은 Run을 다시 제출할 수 있다. 단일 seed 묶음은 반복 독립성을 주장하지 않는다(binding `limitations`). |
 
 ## 2. 블랙박스 경계
@@ -31,7 +31,7 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 | 공개 운영 설정 | `GET/PUT /api/v1/scheduler/settings`(If-Match) | 단계 조건 patch와 종료 시 원복 |
 | 요청 HTTP final | `GET /api/v1/observations/raw` | 현재 D1 지연 출처. B1 적용 뒤에는 진단 참고값 |
 | 선언된 전력계 | 현재 `GET /api/v1/observations/power`(`powerMeasurement.meters[].sourceIdentity`). B2 적용 뒤에는 평가자가 전력계 게이트웨이를 직접 읽음 | 에너지 적분, 공백 기록 |
-| Kubernetes API(평가자 소유분) | 자기 Job/Pod(UID 기록), 대상 Pod readiness·imageID, 장애 주입 대상 | 실행·정리·preflight·주입 |
+| Kubernetes API(선언·실행·환경 확인) | Dataset·Workload·Preprocessor 정의, 참여 Node 신원·readiness, 참여 Node의 Pod 환경, 자기 Job/Pod(UID 기록), 대상 Pod readiness·imageID, 장애 주입 대상 | 입력 검증·preflight·환경 확인·실행·정리·주입. 판정 보정에는 쓰지 않음 |
 
 ### 쓰지 않는 입력
 
@@ -53,7 +53,7 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 | 계약 | 식별자 | 위치 |
 |---|---|---|
 | 선언 CR | `edge.dacs.io/v1alpha1` EvaluationRun·LoadScenario·EvaluationStage(spec 불변) | `api/v1alpha1/evaluationrun_types.go`, `loadscenario_types.go`, `evaluationstage_types.go` |
-| HTTP | `/api/v1/evaluations`(목록·상세·생성·삭제, `preflight`, `{name}/release`, `active`, `template`, `inputs`, `load-scenarios`(+`preflight`)), stage 읽기 projection | `internal/serving/httpapi/handler.go:162-170`, `evaluation_load.go`, `internal/evaluation/service` |
+| HTTP | `/api/v1/evaluations`(목록·상세·생성·Pending 교체(PUT)·삭제, `preflight`, `{name}/release`, `active`, `template`, `inputs`, `load-scenarios`(+`preflight`)), stage 읽기 projection | `internal/serving/httpapi/handler.go:162-170`, `evaluation_load.go`, `internal/evaluation/service` |
 | 단계 결과 | `evaluation-step.v1alpha1` | `hack/evaluation/evaluation.py` `result_record`; controller `jobs.go` `validateResult` |
 | 입력 동결 | `evaluation-snapshot.v2alpha1` / `evaluation-inputs.v2alpha1` | `hack/evaluation/input_snapshot.py` |
 | binding | `e5-binding.v4` | `hack/evaluation/conductor.py` `bind`, `evidence_io.load_binding` |
@@ -62,11 +62,8 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 | 실패 정책 | `failurePolicy: v2`(부분 관측 보존, 하나 이상하면 전체 폐기 금지) | binding·phase·archive·judgment 공통 |
 | 게시 | `serving-experiment.v1alpha1`(정의 `evaluation-definition.v1alpha1`) | `hack/evaluation/publication.py` |
 
-변경 절차는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)를 따른다.
-- reader는 단일 버전이다. 옛 형식은 변환하지 않고 지운다.
-- 저장 계약은 한 작업 단위에 한 번만 바꾸고, 캠페인이 의존하는 동안에는 바꾸지 않는다.
-- additive optional 필드(예: stage `progress`·`lastProgressAt`·`loadJobs`, `collectionLoss`)는 버전을 올리지 않는다.
-- 게시된 결과는 다시 해석하지 않는다(EXP-14). 정정은 새 ID로 게시한다.
+저장 계약 변경과 작업용 객체 정리는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md), 과거 과학 기록 보존은 [ADR 0032 Consequences](../../adr/0032-experiment-execution-boundary.md#consequences), 게시 정정은 [실험 SRS EXP-14](../../spec/experiments/SRS.md#3-요구사항)를 따른다.
+additive optional 필드(예: stage `progress`·`lastProgressAt`·`loadJobs`, `collectionLoss`)는 버전을 올리지 않는다.
 
 ## 4. 확장 방향
 
