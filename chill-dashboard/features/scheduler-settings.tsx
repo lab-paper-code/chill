@@ -180,7 +180,8 @@ function RoutingEdit({initial,snapshot,disabled,apply}:{initial?:Routing;snapsho
       apply(before,parsed as Routing,reason.trim());setOpen(false)
     } catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       {Object.entries(routing).map(([uid,weights],index)=>{
-        const candidates=instances.filter(item=>routeCandidate(item,services.find(service=>service.uid===uid))&&!Object.entries(routing).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0)&&!Object.entries(snapshot?.routing??{}).some(([other,targets])=>other!==uid&&!Object.hasOwn(routing,other)&&(targets[item.id]??0)>0))
+        const definition=services.find(service=>service.uid===uid)
+        const candidates=instances.filter(item=>routeCandidate(item,definition)&&!Object.entries(routing).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0)&&!Object.entries(snapshot?.routing??{}).some(([other,targets])=>other!==uid&&(targets[item.id]??0)>0))
         const rows:[string,number|undefined][]=[...Object.entries(weights),...candidates.filter(item=>!Object.hasOwn(weights,item.id)).map(item=>[item.id,undefined] as [string,undefined])]
         return <fieldset key={index} className="grid min-w-0 gap-3 rounded-md border p-3">
         <legend className="px-1">서비스 {index+1}</legend>

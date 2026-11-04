@@ -254,6 +254,11 @@ test("manual ready instances with no active route remain selectable in the routi
   ;(add.props.onClick as ()=>void)()
   tree=elements(runner.render(Component,editor.props))
   assert.deepEqual(tree.find(node=>node.type==="table")!.props.data,[["physical",1]])
+  const withdrawing={...editor.props,initial:{manual:{},other:{}},snapshot:{...snapshot,instances:[...snapshot.instances,{...instance,id:"foreign",ownerWorkloadUID:""}],routing:{other:{foreign:1}}}}
+  tree=elements(runner.render(Component,withdrawing))
+  ;(tree.find(node=>node.type==="row-dialog")!.props.onOpenChange as (open:boolean)=>void)(true)
+  tree=elements(runner.render(Component,withdrawing))
+  assert.deepEqual((tree.find(node=>node.type==="table")!.props.data as [string,unknown][]).map(([id])=>id),["physical"],"a draft withdrawal does not release another service's live destination")
 })
 
 test("automation Sheet submission renders unapplied changes and their pending count without saving",()=>{
