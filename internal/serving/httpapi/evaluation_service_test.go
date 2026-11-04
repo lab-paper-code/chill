@@ -112,7 +112,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 				AsOf: "2026-11-04T01:00:59.123456789Z", ClosedThrough: "2026-11-04T01:00:00Z", Provisional: true,
 				Workloads: map[string]api.EvaluationProvisionalRequests{
 					"workload": {Offered: 2, DeadlineSuccess: 1, RequiredSuccessfulRank: 2, Outcomes: map[string]int64{"completed": 1},
-						UnfinishedOrUnsent: 1, SLO: api.EvaluationRequestSLO{Percentile: 95, TargetLatencyNanos: 1},
+						UnfinishedOrUnsent: 1, CollectionLoss: 2, SLO: api.EvaluationRequestSLO{Percentile: 95, TargetLatencyNanos: 1},
 						Reachable: true, Substages: []api.EvaluationProvisionalSubstage{}},
 				},
 				GeneratorQuality: map[string]api.EvaluationIssuanceFidelity{},
@@ -160,7 +160,7 @@ func TestEvaluationViewRecordsProcedureHistory(t *testing.T) {
 				 "measurementVerdict":"PASS",
 				 "provisionalD1":{"asOf":"2026-11-04T01:00:59.123456789Z","closedThrough":"2026-11-04T01:00:00Z","provisional":true,
 					"workloads":{"workload":{"offered":2,"deadlineSuccess":1,"requiredSuccessfulRank":2,"outcomes":{"completed":1},
-						"unfinishedOrUnsent":1,"slo":{"percentile":95,"targetLatencyNanos":1},"reachable":true,"substages":[]}},"generatorQuality":{}},
+						"unfinishedOrUnsent":1,"collectionLoss":2,"slo":{"percentile":95,"targetLatencyNanos":1},"reachable":true,"substages":[]}},"generatorQuality":{}},
 				 "procedures":[
 					{"step":"factor","startedAt":"2026-11-04T01:00:00Z","finishedAt":"2026-11-04T01:01:00Z","reason":"RecordedReason","measurementVerdict":"PASS"},
 					{"step":"stage","startedAt":"2026-11-04T01:01:00Z","finishedAt":null}

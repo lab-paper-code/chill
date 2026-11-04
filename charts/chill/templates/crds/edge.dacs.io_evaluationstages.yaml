@@ -1203,6 +1203,11 @@ spec:
                   workloads:
                     additionalProperties:
                       properties:
+                        collectionLoss:
+                          description: CollectionLoss counts missing client rows when
+                            the producer drained marker is absent.
+                          format: int64
+                          type: integer
                         deadlineSuccess:
                           format: int64
                           type: integer
@@ -1290,8 +1295,8 @@ spec:
                           type: array
                         unfinishedOrUnsent:
                           description: |-
-                            UnfinishedOrUnsent counts requests without a suitable completed HTTP final as of the snapshot,
-                            including requests still in flight or without a client result. It is not a settled loss count.
+                            UnfinishedOrUnsent excludes collection loss; in-flight requests with client rows
+                            but without a suitable completed HTTP final remain unfinished at the snapshot.
                           format: int64
                           type: integer
                       required:

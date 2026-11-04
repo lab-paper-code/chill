@@ -13,7 +13,7 @@ def sections(path):
 
 
 def publication_requests(judgment):
-    fields = ('offered', 'clientRows', 'unfinishedOrUnsent', 'outcomes', 'completedLatencyNS',
+    fields = ('offered', 'clientRows', 'unfinishedOrUnsent', 'collectionLoss', 'outcomes', 'completedLatencyNS',
               'gatewayCompletedLatencyNS', 'latencyScope', 'scheduledLatencyNS', 'actualLatencyNS',
               'deadlineSuccess', 'deadlineSuccessFraction', 'requiredSuccessfulRank', 'D1', 'slo', 'workload',
               'workloadUID', 'definitionID', 'actualGatewayIdentities', 'substages', 'identityMissingReason',

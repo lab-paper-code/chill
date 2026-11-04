@@ -10,6 +10,11 @@ import evidence_io
 HERE = Path(__file__).resolve().parent
 
 
+def collection_loss(planned, received, drained):
+    """Missing evaluator client rows are not proof of unissued requests."""
+    return 0 if drained else max(0, planned - received)
+
+
 def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
     """Pure request judgment shared by provisional and drained publication."""
     stage = phase['stage']
@@ -18,7 +23,10 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
     for workload in config['workloads']:
         name = workload['name']
         trace = stage['traces'][name]
-        rows = clients[name]
+        stream = clients[name]
+        drained = (phase.get('producerCapture', {}).get(name, {}).get('drained', False) or
+                   any(row.get('evaluationEvent') == 'drained' for row in stream))
+        rows = [row for row in stream if 'scheduledOffsetNs' in row]
         if closed_through is not None:
             count = 0
             if trace['offsetsNS']:
@@ -48,6 +56,7 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
             actual.append(timing['actualLatencyNS'])
             scheduled.append(timing['scheduledLatencyNS'])
         offered = trace['offered']
+        loss = collection_loss(offered, len(rows), drained)
         hits = sum(value <= workload['slo']['targetLatencyNanos'] for value in completed)
         required = math.ceil(offered * workload['slo']['percentile'] / 100)
         qstatus = quality['generatorQuality']['status']
@@ -79,7 +88,7 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
                          'gatewayCompletedLatencyNS': analysis.stats(completed), 'actualLatencyNS': analysis.stats(actual), 'scheduledLatencyNS': analysis.stats(scheduled),
                          'latencyScope': 'CHILL HTTP receipt to final elapsedNanos; client RTT and scheduled latency are references only',
                          'deadlineSuccess': hits, 'deadlineSuccessFraction': hits / offered if offered else None, 'requiredSuccessfulRank': required,
-                         'unfinishedOrUnsent': max(0, offered - len(completed)), 'issuanceFidelity': quality,
+                         'unfinishedOrUnsent': max(0, offered - len(completed) - loss), 'collectionLoss': loss, 'issuanceFidelity': quality,
                          'reachable': hits + max(0, offered - sum(row.get('requestID') in indexed['finals'] for row in usable)) >= required,
                          'D1': 'NOT_OFFERED' if not offered else 'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
                                'NOT_EVALUATED' if not supported else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',
@@ -98,7 +107,7 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
 def provisional_requests(config, phase, clients, indexes, as_of, closed_through):
     """Bounded projection of the same request reducer; never publish a verdict."""
     results = reduce_requests(config, phase, clients, indexes, closed_through=closed_through)
-    keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'slo', 'reachable')
+    keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'collectionLoss', 'slo', 'reachable')
     return {'asOf': as_of, 'closedThrough': closed_through, 'provisional': True,
             'workloads': {name: {**{key: row[key] for key in keys},
                                 'substages': [{key: value for key, value in part.items() if key != 'D1'} for part in row['substages']]}
@@ -121,7 +130,7 @@ def judge(binding, folder):
             for index, line in enumerate(path.read_text().splitlines(), 1):
                 try:
                     row = json.loads(line)
-                    if 'scheduledOffsetNs' in row:
+                    if isinstance(row, dict):
                         rows.append(row)
                 except (ValueError, TypeError):
                     unknown.append(name + ': malformed client JSONL line ' + str(index))

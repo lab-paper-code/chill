@@ -23,6 +23,11 @@ _REQUEST_CACHE = None
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
+def release_request_cache():
+    global _REQUEST_CACHE
+    _REQUEST_CACHE = None
+
+
 def _root(folder, approved_root=None):
     root = Path(folder).resolve()
     paths = json.loads(Path(os.environ['CHILL_EXPERIMENT_CONFIG']).read_text())['paths'] if approved_root is None else {}

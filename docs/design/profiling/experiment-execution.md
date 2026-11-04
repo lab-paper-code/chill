@@ -183,8 +183,8 @@ conductor는 기존 `timeboxes.flushSeconds` 간격으로 새 닫힌 분을 확�
 시각 + 동결 scheduledOffset이 `closedThrough` 이하인 요청만 포함한다.
 최종 D1의 deadline은 scheduled offset이 아니라 HTTP receipt부터 final까지의
 `elapsedNanos`를 사용하므로 예정 시각이나 socket timeout으로 완료 상한을 만들지 않는다.
-`unfinishedOrUnsent`는 `asOf` 시점 기준이며, result/final이 아직 없는 진행 중 요청도
-포함한다. 뒤늦은 result와 raw final로 같은 요청의 deadlineSuccess가 증가할 수 있다.
+`unfinishedOrUnsent`는 `asOf` 시점의 미완료·미전송 집계이며, 아래 `collectionLoss`를
+제외한다. 뒤늦은 result와 raw final로 같은 요청의 deadlineSuccess가 증가할 수 있다.
 `asOf`는 계산 시각, `closedThrough`는 서버의 닫힌 분 cutoff이며 요청 완료 보장이 아니다.
 분 경계가 바뀌거나 부분 수집이면 이전 성공 스냅샷을 유지하고 오류를 기록한다.
 workloads/substages는 최종 KPI와 같은 이름을 쓰되 drain 전 `D1` 판정은 싣지 않는다.
@@ -195,6 +195,18 @@ Stage UID JSON-patch test 후 이 필드만 status patch한다(action SA의 추�
 로컬 latest JSON은 원자 교체하고 최종 raw evidence와 불변 publication은 덮어쓰지 않는다.
 producer JSONL은 기존 result 전용 형식 그대로이며 send 이벤트나 infer 앞의 추가
 write/flush는 없다. 최종 판정은 기존 전체 동결 분모·입력 의미를 유지한다.
+
+producer별 전용 수집 thread는 `kubectl logs -f`의 바이트를 해석 없이 기존
+`*-client.jsonl`에 즉시 append/flush한다. 이벤트 해석·자원 폴링·잠정 D1은
+별도 main thread에서 수행하므로 느린 reducer가 log pipe 수집을 막지 않는다.
+잠정 판정은 디스크의 완전한 줄만 읽고 매 poll 종료 시 full-population raw cache를
+해제한다. 전체 이력 index와 resource 목록의 peak memory는 아직 별도 개선 대상이다.
+`phase.producerCapture[workload]`는 `plannedRequests`, `receivedRequestRows`,
+`drained`, `collectionLoss`를 기록한다. producer의 drained 표시가 없고 planned보다
+client 행이 적으면 그 차이를 `collectionLoss`로 분리한다. drained가 있으면 0이다.
+최종·잠정 공용 request reducer와 게시 `kpis.requests[workload]`도 같은 이름을 사용한다.
+수집 손실은 `unfinishedOrUnsent`나 성공으로 세지 않으며 frozen 분모·D1 판정식은
+바꾸지 않는다. CHILL 관측으로 없어진 client 행을 보정하거나 재구성하지 않는다.
 
 ### 5.1 하네스 Job 계약
 
