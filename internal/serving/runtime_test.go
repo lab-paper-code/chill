@@ -7,6 +7,29 @@ import (
 	"time"
 )
 
+func TestUnreadyDrainingInstanceUpdatesRuntimeImageFacts(t *testing.T) {
+	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	r.mu.Lock()
+	held := r.instances[instance.ID]
+	held.outstanding = 1
+	latest := held.ReadyInstance
+	r.mu.Unlock()
+	latest.State.Ready = false
+	latest.State.Stopped = true
+	latest.State.Reason = "native probe failed"
+	latest.State.ActualImageID = "containerd://observed-runtime"
+	latest.State.DesiredRuntimeImage = "registry/native@sha256:new-declaration"
+	latest.State.ReplacementReason = "RunningOlderRuntimeImage"
+	if err := r.InstallInstances([]ReadyInstance{latest}); err != nil {
+		t.Fatal(err)
+	}
+	actual := r.Instances()[0]
+	if actual.Ready || !actual.Stopped || actual.ActualImageID != latest.State.ActualImageID ||
+		actual.DesiredRuntimeImage != latest.State.DesiredRuntimeImage || actual.ReplacementReason != latest.State.ReplacementReason {
+		t.Fatalf("draining executor lost current image facts after probe failure: %+v", actual)
+	}
+}
+
 func TestShutdownCannotReopenAdmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

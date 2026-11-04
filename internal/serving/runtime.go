@@ -904,6 +904,9 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
 			i.State.AttemptedAt = candidate.State.AttemptedAt
 			i.State.ObservedAt, i.State.Native = candidate.State.ObservedAt, candidate.State.Native
 			i.State.Allocation = candidate.State.Allocation
+			i.State.ActualImageID = candidate.State.ActualImageID
+			i.State.DesiredRuntimeImage = candidate.State.DesiredRuntimeImage
+			i.State.ReplacementReason = candidate.State.ReplacementReason
 			continue
 		}
 		if i.outstanding > 0 && candidate.Profile != nil && (i.State.Profile != candidate.Profile.ID || i.State.Node != candidate.State.Node) {
