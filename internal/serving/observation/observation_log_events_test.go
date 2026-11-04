@@ -2,6 +2,9 @@ package observation
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -88,8 +91,13 @@ func TestEventRecoveryFindsLateAppendsAcrossSegments(t *testing.T) {
 				events[1].Cluster == nil || !events[1].Cluster.At.Equal(at) {
 				t.Fatalf("exact event recovery returned different facts: %+v", events)
 			}
-			if _, _, _, err := log.EventObservations(ctx, at, 1, cursor); rawErrorCode(err) != "IncompleteObservation" {
-				t.Fatalf("late simultaneous event bypassed the bound: %v", err)
+			page, next, _, err := log.EventObservations(ctx, at, 1, cursor)
+			if err != nil || len(page) != 1 || page[0].Action == nil || next == "" {
+				t.Fatalf("bounded exact first page: %+v next=%q err=%v", page, next, err)
+			}
+			page, _, _, err = log.EventObservations(ctx, at, 1, next)
+			if err != nil || len(page) != 1 || page[0].Cluster == nil {
+				t.Fatalf("bounded exact continuation lost simultaneous fact: %+v err=%v", page, err)
 			}
 			if archive.catalogReads != 0 {
 				t.Fatalf("event recovery opened %d catalogs", archive.catalogReads)
@@ -175,5 +183,121 @@ func TestEventRecoveryAtAppendHourBoundary(t *testing.T) {
 	events, next, _, err = log.EventObservations(context.Background(), at, 10, next)
 	if err != nil || len(events) != 1 || events[0].Cluster.Reason != "boundary" || next != "" {
 		t.Fatalf("append-boundary event lost: events=%+v next=%q err=%v", events, next, err)
+	}
+}
+
+func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		t.Run(fmt.Sprintf("archived=%t", archived), func(t *testing.T) {
+			archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
+			log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
+			from := observationTestHour.Add(time.Minute)
+			boundary := observationTestHour.Add(time.Hour)
+			clock.set(boundary.Add(-time.Nanosecond))
+			if err := log.SchedulerRecord(SchedulerObservation{At: from.Add(2 * time.Second), Action: &SchedulerActionObservation{ID: "before", Kind: "power"}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: from.Add(time.Second), Event: "raised", Source: "observer", Reason: "same-hour"}); err != nil {
+				t.Fatal(err)
+			}
+			clock.set(boundary)
+			if err := log.SchedulerRecord(SchedulerObservation{At: from, Action: &SchedulerActionObservation{ID: "boundary-late", Kind: "power"}}); err != nil {
+				t.Fatal(err)
+			}
+			clock.set(boundary.Add(time.Hour + time.Second))
+			if archived {
+				clock.set(boundary.Add(4 * time.Hour))
+				if err := log.Flush(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				log, _ = clockedObservationLog(t, ObservationLogConfig{Writer: archive}, clock.now())
+			}
+			archive.rejectCatalog = true
+			cursor := ""
+			var got []string
+			for i := range 3 {
+				events, next, coverage, err := log.EventObservationPage(context.Background(), from, from.Add(3*time.Second), 1, cursor)
+				if err != nil || len(events) != 1 || coverage.From == nil || coverage.To == nil {
+					t.Fatalf("page %d: %+v next=%q coverage=%+v err=%v", i, events, next, coverage, err)
+				}
+				start := observationTestHour
+				if i == 2 {
+					start = boundary
+				}
+				if !coverage.From.Equal(start) || !coverage.To.Equal(start.Add(time.Hour)) {
+					t.Fatalf("page %d searched beyond its append hour: %+v", i, coverage)
+				}
+				if events[0].Action != nil {
+					got = append(got, events[0].Action.ID)
+				} else {
+					got = append(got, events[0].Cluster.Reason)
+				}
+				wantNext := boundary.Format(time.RFC3339Nano)
+				if i == 0 {
+					wantNext = observationTestHour.Format(time.RFC3339Nano) + "/1"
+				} else if i == 2 {
+					wantNext = boundary.Add(time.Hour).Format(time.RFC3339Nano)
+				}
+				if next != wantNext {
+					t.Fatalf("page %d continuation %q want %q", i, next, wantNext)
+				}
+				cursor = next
+			}
+			if !reflect.DeepEqual(got, []string{"before", "same-hour", "boundary-late"}) || archive.catalogReads != 0 {
+				t.Fatalf("append-hour continuation lost/duplicated facts or hydrated catalog: %v reads=%d", got, archive.catalogReads)
+			}
+			hour := observationTestHour.Format(time.RFC3339Nano)
+			for _, bad := range []string{hour + "/", hour + "/-1", hour + "/+1", hour + "/1/2", hour + "/999999999999999999999", hour + "/3", boundary.Add(24 * time.Hour).Format(time.RFC3339Nano)} {
+				if _, _, _, err := log.EventObservationPage(context.Background(), from, from.Add(3*time.Second), 1, bad); rawErrorCode(err) != powerSeriesInvalidQuery {
+					t.Fatalf("invalid cursor accepted %q: %v", bad, err)
+				}
+			}
+		})
+	}
+}
+
+func TestEventRangeRecoversAppendAfterFirstPage(t *testing.T) {
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	from := observationTestHour.Add(time.Minute)
+	clock.set(from)
+	if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: from, Event: "raised", Source: "observer", Reason: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	boundary := observationTestHour.Add(time.Hour)
+	clock.set(boundary.Add(time.Second))
+	page, next, _, err := log.EventObservationPage(context.Background(), from, from.Add(time.Second), 1, "")
+	if err != nil || len(page) != 1 || page[0].Cluster.Reason != "first" || next != boundary.Format(time.RFC3339Nano) {
+		t.Fatalf("first page: %+v next=%q err=%v", page, next, err)
+	}
+	if err := log.ClusterRecord(ClusterObservation{Kind: "issue", At: from, Event: "raised", Source: "observer", Reason: "late"}); err != nil {
+		t.Fatal(err)
+	}
+	page, next, _, err = log.EventObservationPage(context.Background(), from, from.Add(time.Second), 1, next)
+	if err != nil || len(page) != 1 || page[0].Cluster.Reason != "late" || next != "" {
+		t.Fatalf("late append: %+v next=%q err=%v", page, next, err)
+	}
+}
+
+func TestObservationTimestampMatchesFullDecode(t *testing.T) {
+	for _, raw := range []string{
+		`{"at":"2026-11-02T03:25:22.100721506Z","action":{"id":"a"}}`,
+		`{"action":{"id":"a"},"at":"2026-11-02T03:25:22.100721506Z"}`,
+		`{"at":"2026-11-02T12:25:22.100721506+09:00"}`,
+		`{"kind":"issue","at":"2026-11-02T03:25:22Z"}`,
+		`{"at":null}`,
+	} {
+		var full struct{ At time.Time }
+		if err := json.Unmarshal([]byte(raw), &full); err != nil {
+			t.Fatal(err)
+		}
+		at, err := observationTimestamp([]byte(raw))
+		if err != nil || !at.Equal(full.At) {
+			t.Fatalf("prefilter changed timestamp: %s -> %s want %s err=%v", raw, at, full.At, err)
+		}
+	}
+	for _, raw := range []string{`{"at":`, `{"at":"bad"}`, `{"other":{}`} {
+		if _, err := observationTimestamp([]byte(raw)); err == nil {
+			t.Fatalf("malformed timestamp accepted: %s", raw)
+		}
 	}
 }

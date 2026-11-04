@@ -77,13 +77,18 @@ keeps `events` and adds the range query's `ObservationCoverage`. An empty exact
 page preserves the existing array shape: `{"events":[],"nextCursor":"2026-11-03T20:00:00Z","coverage":{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","sources":[],"gaps":[{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"cluster","reason":"StreamUnavailable"},{"from":"2026-11-03T19:00:00Z","to":"2026-11-03T20:00:00Z","stream":"scheduler","reason":"StreamUnavailable"}]}}`.
 Coverage bounds describe the append-time interval attempted, including absent
 archive hours; `to` is exclusive and clamped to the captured append head.
-`nextCursor` is the next append-hour RFC3339Nano timestamp, accepted only by
-`at` queries; range queries retain their opaque event-order cursors. Malformed,
-pre-`at` and future append cursors return `400 InvalidQuery`.
+Exact and range event reads share `nextCursor`: a next append-hour RFC3339Nano
+timestamp, or `<append-hour>/<matching-row-offset>` when the event limit is
+reached within an hour. A legacy hour-only cursor means offset zero. Rereads
+skip that many matching scheduler/cluster rows in the hour instead of rejecting
+busy hours. Malformed, pre-window, future, or out-of-range row offsets return
+`400 InvalidQuery`. Range queries sort events only within each response page;
+continuations follow append hours and rows, not global event-time order.
 Clients must follow continuations, including pages containing matches: both
 scheduler and cluster streams are scanned through the selected hours so
 simultaneous facts and events appended three hours late remain recoverable.
-No continuation means this captured append head was reached, not that no
+Each call captures its current committed prefix, not a cross-page snapshot.
+No continuation means this call's append head was reached, not that no
 matching event can ever be appended later.
 
 `servingEntrypoint.observationStorage.eventLookupHours` →
@@ -106,6 +111,15 @@ fixture (live CPU contention is not isolated by these measurements).
 The existing `serving/observations.v1alpha5/<UTC-hour>/<stream>.jsonl.gz`
 layout permits finite append ranges to List only requested nonlocal hours;
 unbounded queries still List the full prefix. No cache or index is added.
+
+Scheduler history summaries and event range scans reuse the exact lookup's leading-At
+prefilter before decoding unrelated large JSON bodies; other field orders
+fall back to full JSON decoding. Compact scheduler responses omit
+`decision.capacity.plans` and `snapshot.dispatchOccupancy/options/arrivals`;
+selected workload capacity, candidates and operation evidence remain.
+Stored journals/catalogs and history reads without `view=compact` retain the
+full record. Compact JSON/export consumers must identify it as a projection,
+not the complete stored evidence.
 
 #### Direct dispatch occupancy
 `GET /api/v1/observations/occupancy?from=<RFC3339Nano>&to=<RFC3339Nano>`

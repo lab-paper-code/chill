@@ -85,7 +85,7 @@ func (o *options) bindFlags(f *flag.FlagSet) {
 	f.DurationVar(&o.observationRetention, "observation-retention", 2*time.Hour,
 		"Positive local observation retention measured from each hour's start.")
 	f.IntVar(&o.eventLookupHours, "observation-event-lookup-hours", 1,
-		"Append-time hours per exact event lookup; continue with nextCursor to recover late appends.")
+		"Append-time hours per event lookup page; continue with nextCursor to recover late appends.")
 	f.StringVar(&o.diagnosticDirectory, "diagnostic-directory", "",
 		"Fresh absolute private directory for one finite control-only capture; empty disables.")
 	f.DurationVar(&o.diagnosticStartDelay, "diagnostic-start-delay", 0,

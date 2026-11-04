@@ -67,12 +67,12 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 	if response := rawHTTPRequest(denied, "/api/v1/observations/events?at="+url.QueryEscape(at.Format(time.RFC3339Nano))); response.Code != http.StatusForbidden {
 		t.Fatalf("event read bypassed authorization: %d", response.Code)
 	}
-	if _, _, _, err := h.observationLog.EventObservations(context.Background(), at, 1, ""); err == nil {
-		t.Fatal("event bound silently dropped simultaneous facts")
+	if events, next, _, err := h.observationLog.EventObservations(context.Background(), at, 1, ""); err != nil || len(events) != 1 || next == "" {
+		t.Fatalf("event bound lost continuation for simultaneous facts: %+v next=%q err=%v", events, next, err)
 	}
 }
 
-func TestObservationEventRangePagesAreStableCommittedPrefixes(t *testing.T) {
+func TestObservationEventRangeSortsWithinAppendPage(t *testing.T) {
 	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
 	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
 	from := time.Now().UTC().Add(-time.Minute)
@@ -90,49 +90,24 @@ func TestObservationEventRangePagesAreStableCommittedPrefixes(t *testing.T) {
 	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from, Action: &observation.SchedulerActionObservation{ID: "power-operation", Kind: "power", StartedAt: from}}); err != nil {
 		t.Fatal(err)
 	}
-	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}, "limit": {"1"}}
-	var got []string
-	for pageNumber := range 3 {
-		response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode())
-		var page struct {
-			Events     []observationEvent `json:"events"`
-			NextCursor string             `json:"nextCursor"`
-			Coverage   *serving.ObservationCoverage
-		}
-		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 1 || page.Coverage == nil {
-			t.Fatalf("range page: %d %s %v", response.Code, response.Body, err)
-		}
-		event := page.Events[0]
-		if event.Cluster != nil {
-			got = append(got, event.Cluster.Source)
-		} else {
-			got = append(got, event.Action.ID)
-		}
-		if pageNumber == 0 {
-			// Later appends cannot move cursor positions or enter this read.
-			if err := h.observationLog.ClusterRecord(observation.ClusterObservation{Kind: "issue", At: from.Add(500 * time.Millisecond), Event: "raised", Source: "later-commit", Reason: "fact"}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if (pageNumber < 2) != (page.NextCursor != "") {
-			t.Fatalf("page boundary %d: %s", pageNumber, response.Body)
-		}
-		query.Set("cursor", page.NextCursor)
-	}
-	if len(got) != 3 || got[0] != "first" || got[1] != "power-operation" || got[2] != "second" {
-		t.Fatalf("events duplicated, omitted or reordered: %v", got)
-	}
-	query.Del("cursor")
-	query.Set("limit", "2")
+	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}, "limit": {"3"}}
 	response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode())
-	var page struct{ NextCursor string }
-	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
-		t.Fatal(err)
+	var page struct {
+		Events     []observationEvent `json:"events"`
+		NextCursor string             `json:"nextCursor"`
+		Coverage   *serving.ObservationCoverage
 	}
-	query.Set("cursor", page.NextCursor)
-	query.Set("to", to.Add(time.Second).Format(time.RFC3339Nano))
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 3 || page.Coverage == nil {
+		t.Fatalf("range page: %d %s %v", response.Code, response.Body, err)
+	}
+	if page.Events[0].Cluster == nil || page.Events[0].Cluster.Source != "first" ||
+		page.Events[1].Action == nil || page.Events[1].Action.ID != "power-operation" ||
+		page.Events[2].Cluster == nil || page.Events[2].Cluster.Source != "second" {
+		t.Fatalf("events omitted or not event-time sorted within page: %+v", page.Events)
+	}
+	query.Set("cursor", "e30")
 	if response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode()); response.Code != http.StatusBadRequest {
-		t.Fatalf("cursor reused with another interval: %d", response.Code)
+		t.Fatalf("invalid range cursor accepted: %d %s", response.Code, response.Body)
 	}
 }
 
@@ -188,9 +163,9 @@ func TestObservationEventsEmptyPageContinuesAppendHours(t *testing.T) {
 		}
 		query.Set("cursor", result.Next)
 	}
-	// Range event cursors cannot be interpreted as append-hour continuations.
+	// Exact and range queries share append-hour cursor rules.
 	rangeQuery := url.Values{"from": {at.Format(time.RFC3339Nano)}, "to": {at.Add(time.Minute).Format(time.RFC3339Nano)}, "cursor": {query.Get("cursor")}}
-	if response := rawHTTPRequest(h, "/api/v1/observations/events?"+rangeQuery.Encode()); response.Code != http.StatusBadRequest {
-		t.Fatalf("exact cursor accepted by range query: %d %s", response.Code, response.Body)
+	if response := rawHTTPRequest(h, "/api/v1/observations/events?"+rangeQuery.Encode()); response.Code != http.StatusOK {
+		t.Fatalf("exact append cursor rejected by range query: %d %s", response.Code, response.Body)
 	}
 }

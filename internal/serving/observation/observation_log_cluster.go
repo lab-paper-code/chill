@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	serving "github.com/lab-paper-code/chill/internal/serving"
@@ -94,22 +96,22 @@ type RecordedEvent struct {
 	Cluster *ClusterObservation         `json:"cluster,omitempty"`
 }
 
-// EventObservations reads a bounded append-time page, preserving all simultaneous
-// facts in that page. A continuation is returned even when a match was found:
-// later hours may contain additional facts with the same event timestamp.
+// EventObservations reads a bounded append-time/event-count page. Continuations
+// recover additional simultaneous facts and events appended in later hours.
 func (l *ObservationLog) EventObservations(ctx context.Context, at time.Time, limit int, cursor string) ([]RecordedEvent, string, serving.ObservationCoverage, error) {
+	return l.eventObservationPage(ctx, at, at.Add(time.Nanosecond), limit, cursor)
+}
+
+func (l *ObservationLog) eventObservationPage(ctx context.Context, eventFrom, eventTo time.Time, limit int, cursor string) ([]RecordedEvent, string, serving.ObservationCoverage, error) {
 	coverage := serving.ObservationCoverage{Sources: []serving.ObservationSource{}, Gaps: []serving.ObservationGap{}}
-	from := at.UTC().Truncate(time.Hour)
+	from := eventFrom.UTC().Truncate(time.Hour)
 	now := l.now().UTC()
-	if at.IsZero() || limit <= 0 {
+	if eventFrom.IsZero() || limit <= 0 {
 		return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "an event timestamp and positive event bound are required"}
 	}
-	if cursor != "" {
-		next, err := time.Parse(time.RFC3339Nano, cursor)
-		if err != nil || next.Before(from) || next.After(now) || !next.Equal(next.Truncate(time.Hour)) {
-			return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "an append-hour event cursor is required"}
-		}
-		from = next.UTC()
+	from, offset, err := eventAppendCursor(from, now, cursor)
+	if err != nil {
+		return nil, "", coverage, err
 	}
 	coverage.From, coverage.To = &from, &from
 	if from.After(now) {
@@ -129,58 +131,109 @@ func (l *ObservationLog) EventObservations(ctx context.Context, at time.Time, li
 	if !to.After(read.now) {
 		next = to.Format(time.RFC3339Nano)
 	}
+	scanTo := to
 	to = minTime(to, read.now)
-	for _, stream := range []string{observationSchedulerStream, observationClusterStream} {
-		err := l.scanStream(read, stream, func(raw []byte) error {
-			var header struct {
-				At time.Time `json:"at"`
-			}
-			// schedulerLine writes at first. Decode only that small field before
-			// touching multi-megabyte snapshots or action evidence bodies.
-			if stream == observationSchedulerStream && bytes.HasPrefix(raw, []byte(`{"at":`)) {
-				end := bytes.IndexByte(raw, ',')
-				if end < 0 {
-					end = len(raw) - 1
+	var scanner observationScanner
+	for hour := from; hour.Before(scanTo); hour = hour.Add(time.Hour) {
+		matched := 0
+		for _, stream := range []string{observationSchedulerStream, observationClusterStream} {
+			for _, source := range read.sources[stream] {
+				if !source.hour.Equal(hour) {
+					continue
 				}
-				if err := header.At.UnmarshalJSON(raw[len(`{"at":`):end]); err != nil {
-					return err
-				}
-			} else if err := json.Unmarshal(raw, &header); err != nil {
-				return err
-			}
-			if !header.At.Equal(at) {
-				return nil
-			}
-			event := RecordedEvent{At: at}
-			if stream == observationSchedulerStream {
-				var row struct {
-					Action *SchedulerActionObservation `json:"action"`
-				}
-				if err := json.Unmarshal(raw, &row); err != nil {
-					return err
-				}
-				if row.Action == nil {
+				err := read.scanSource(stream, source, &scanner, func(raw []byte) error {
+					at, match, err := eventHeader(raw, stream, eventFrom, eventTo)
+					if err != nil || !match {
+						return err
+					}
+					if matched < offset {
+						matched++
+						return nil
+					}
+					if len(events) == limit {
+						next = hour.Format(time.RFC3339Nano) + "/" + strconv.Itoa(matched)
+						return errObservationStop
+					}
+					matched++
+					event := RecordedEvent{At: at}
+					if stream == observationSchedulerStream {
+						err = json.Unmarshal(raw, &event)
+					} else {
+						err = json.Unmarshal(raw, &event.Cluster)
+					}
+					if err != nil {
+						return err
+					}
+					events = append(events, event)
 					return nil
+				})
+				if errors.Is(err, errObservationStop) {
+					to = minTime(hour.Add(time.Hour), to)
+					goto complete
 				}
-				event.Action = row.Action
-			} else {
-				if err := json.Unmarshal(raw, &event.Cluster); err != nil {
-					return err
+				if err != nil {
+					return nil, "", coverage, err
 				}
 			}
-			if len(events) == limit {
-				return &serving.Error{Code: "IncompleteObservation", Message: "simultaneous events exceed the configured event bound"}
-			}
-			events = append(events, event)
-			return nil
-		})
-		if err != nil {
-			return nil, "", coverage, err
 		}
+		if offset > matched {
+			return nil, "", coverage, &serving.Error{Code: "InvalidQuery", Message: "event cursor exceeds matching rows in its append hour"}
+		}
+		offset = 0
 	}
+complete:
 	coverage = read.coverage(map[string][2]time.Time{observationSchedulerStream: {from, to}, observationClusterStream: {from, to}})
 	// Unlike source extents, these bounds describe the attempted append scan,
 	// including missing archive hours.
 	coverage.From, coverage.To = &from, &to
 	return events, next, coverage, ctx.Err()
+}
+
+// Stored scheduler rows lead with at. Avoid traversing large unrelated bodies;
+// other field orders (including cluster rows) retain normal JSON decoding.
+func observationTimestamp(raw []byte) (time.Time, error) {
+	var header struct {
+		At time.Time `json:"at"`
+	}
+	if bytes.HasPrefix(raw, []byte(`{"at":`)) {
+		end := bytes.IndexByte(raw, ',')
+		if end < 0 {
+			end = len(raw) - 1
+		}
+		err := header.At.UnmarshalJSON(raw[len(`{"at":`):max(len(`{"at":`), end)])
+		return header.At, err
+	}
+	err := json.Unmarshal(raw, &header)
+	return header.At, err
+}
+
+func eventAppendCursor(from, now time.Time, cursor string) (time.Time, int, error) {
+	if cursor == "" {
+		return from, 0, nil
+	}
+	hour, rows, hasRows := strings.Cut(cursor, "/")
+	next, err := time.Parse(time.RFC3339Nano, hour)
+	offset := 0
+	valid := err == nil && !next.Before(from) && !next.After(now) && next.Equal(next.Truncate(time.Hour))
+	if hasRows {
+		offset, err = strconv.Atoi(rows)
+		valid = valid && err == nil && offset >= 0 && rows == strconv.Itoa(offset)
+	}
+	if !valid {
+		return from, 0, &serving.Error{Code: "InvalidQuery", Message: "an append-hour event cursor with an optional matching-row offset is required"}
+	}
+	return next.UTC(), offset, nil
+}
+
+func eventHeader(raw []byte, stream string, from, to time.Time) (time.Time, bool, error) {
+	at, err := observationTimestamp(raw)
+	if err != nil || !serving.ObservationInInterval(at, from, to) {
+		return at, false, err
+	}
+	if stream == observationSchedulerStream {
+		var header struct{ Action *struct{} }
+		err := json.Unmarshal(raw, &header)
+		return at, header.Action != nil, err
+	}
+	return at, true, nil
 }

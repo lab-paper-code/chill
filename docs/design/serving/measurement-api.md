@@ -251,24 +251,26 @@ identitySource `{store,key}`가 모두 있어야 단계 적용 SLO를 연결한�
 `GET /api/v1/observations/events?from=<RFC3339Nano>&to=<RFC3339Nano>&limit=100`
 는 `[from,to)`의 보존 사건을 `{events,from,to,coverage,nextCursor?}`로 반환한다.
 기존 정확 시점 `?at=<RFC3339Nano>`는 유지하며 범위 인자와 혼용하지 않는다.
-정확 시점 조회도 `coverage={from,to,sources,gaps}`와 `nextCursor?`를 반환한다.
-이 coverage는 event-time이 아닌 이번 호출이 읽은 append-time 구간이다.
-빈 정확 시점 페이지는 기존 배열 계약대로 `events:[]`이며 오류가 아니다. `nextCursor`가 있으면
-동일 `at`와 `cursor=<nextCursor>`로 계속 읽는다. 찾은 페이지에도 continuation을
-유지하므로 같은 시점의 다른 사실·3시간 지연 append를 복구할 수 있다.
-정확 시점 cursor는 다음 append-hour RFC3339Nano이며 아래 범위 cursor와 혼용할 수 없다.
-기본 1시간의 호출 예산은 `servingEntrypoint.observationStorage.eventLookupHours`
-(`--observation-event-lookup-hours`)로 정한다. [비용 근거와 상세 계약](observability-split.md#exact-event-recovery).
+정확 시점과 범위 조회는 같은 append-hour continuation 규칙을 쓴다.
+`coverage={from,to,sources,gaps}`는 event-time이 아니라 이번 호출이 시도한 append-time
+구간이며 누락 archive 시간도 포함한다. 빈 페이지는 `events:[]`이며 오류가 아니다.
+`nextCursor`는 다음 append-hour RFC3339Nano 또는 `<append-hour>/<matching-row-offset>`다.
+hour만 있는 기존 형식은 offset 0이다. 같은 hour의 사건이 limit를 넘으면 그 hour를 다시
+읽고 이미 반환한 matching 행 수만큼 건너뛰므로 오류·누락 없이 이어 읽는다.
+다음 요청에는 동일 `at` 또는 동일 `from/to`와 `cursor=<nextCursor>`를 전달한다.
+호출당 append-hour 예산은 기존 `servingEntrypoint.observationStorage.eventLookupHours`
+(기본 1, `--observation-event-lookup-hours`)로 정한다. [비용 근거와 상세 계약](observability-split.md#exact-event-recovery).
 범위는 양수·최대 24시간, `limit`은 기본 100·최대 500이며 서버 `MaxQueryEvents`가
 더 작으면 그 값이 상한이다. 잘못된 인자·범위·cursor는 `400 InvalidQuery`다.
 `coverage={from,to,sources,gaps}`의 출처·공백과 원래 timestamp를 보존한다.
 
-사건은 시각·stream·append 위치 순이다. `nextCursor`는 불투명 base64url 값이며
-다음 요청에 동일 `from/to`와 함께 전달한다. 첫 조회의 committed prefix를 고정하므로
-페이지 사이 새 append가 기존 페이지에 끼어들지 않는다. 새 사실을 포함하려면 새 조회를
-시작한다. 대시보드 seed는 유한 페이지 상한을 두며 상한에 도달한 응답을 전체 기록으로
-표시하지 않는다. archive 사건에 WebSocket `seq`가 없으므로 가짜 sequence를 부여하지
-않고, 실제 사건 identity로 실시간 사건과 중복 제거한다.
+continuation은 append-hour, hour 안에서는 scheduler·cluster stream의 저장 행 순서다.
+범위 결과는 **한 응답 페이지 안에서만 사건 시각순**이며 전체 페이지 정렬은 보장하지 않는다.
+다음 hour에 늦게 append된 과거 사건도 반환된다. 호출마다 현재 committed prefix를 읽으며
+새 append까지 전역 snapshot으로 동결하지 않는다. 찾은 페이지·빈 페이지 모두
+nextCursor가 있으면 계속 읽는다. 대시보드 seed는 유한 페이지 상한을 두며 상한에 도달한
+응답을 전체 기록으로 표시하지 않는다. archive 사건에 WebSocket `seq`가 없으므로 가짜
+sequence를 부여하지 않고 실제 사건 identity로 실시간 사건과 중복 제거한다.
 
 `chill-live/1`의 snapshot은 선택적 `history`를 제공한다:
 `{reason,replayed:false,requested:{afterSeq,throughSeq,at?},retained:{events,power},gaps}`.

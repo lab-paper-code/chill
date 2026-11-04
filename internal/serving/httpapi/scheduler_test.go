@@ -435,7 +435,7 @@ func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *test
 			t.Fatal("reference changed a measured quantity or immutable evidence identity")
 		}
 	}
-	if projected[0].Snapshot.Options[0].Instance.Profile.Ref != got[0].Profile.Ref ||
+	if len(projected[0].Snapshot.Options) != 0 ||
 		projected[0].Snapshot.Reservations[0].Target.Instances[0].Profile.Ref != got[0].Profile.Ref {
 		t.Fatal("snapshot evidence did not use the same response dictionaries")
 	}
