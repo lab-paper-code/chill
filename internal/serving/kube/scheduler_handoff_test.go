@@ -86,6 +86,7 @@ func handoffController(t *testing.T) *SchedulerController {
 	// fixture; population-heavy statistical precision is tested in serving.
 	settings.CapacityTailSamples = 1
 	settings.ObservationWindow = 100 * time.Millisecond
+	settings.ControlInterval = time.Millisecond
 	uid := settings.AutonomousWorkloads[0]
 	settings.MinimumDemand = map[string]float64{uid: 2500}
 	c.config.Preparations = map[string]servingstate.PrepareSpec{}
