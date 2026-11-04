@@ -775,6 +775,11 @@ spec:
                 - name
                 - uid
                 type: object
+              lastProgressAt:
+                description: LastProgressAt is the latest harness signal, independent
+                  of provisionalD1.asOf.
+                format: date-time
+                type: string
               measurementVerdict:
                 enum:
                 - PASS
@@ -990,6 +995,46 @@ spec:
                   - workloadUID
                   type: object
                 type: array
+              progress:
+                description: Progress preserves harness observation order; absent
+                  boundaries are not inferred.
+                items:
+                  description: EvaluationStageProgress records an observed harness
+                    boundary, not a verdict.
+                  properties:
+                    at:
+                      format: date-time
+                      type: string
+                    bytes:
+                      description: Bytes is the number of collected raw artifact bytes
+                        written, not wire bytes.
+                      format: int64
+                      type: integer
+                    phase:
+                      enum:
+                      - loadStarted
+                      - loadEnded
+                      - drainStarted
+                      - drainEnded
+                      - flushStarted
+                      - collectStarted
+                      - collectEnded
+                      - judgeStarted
+                      - judgeEnded
+                      type: string
+                    producerRowsMissing:
+                      additionalProperties:
+                        format: int64
+                        type: integer
+                      description: ProducerRowsMissing counts planned requests without
+                        producer final rows at drain end.
+                      type: object
+                  required:
+                  - at
+                  - phase
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               provisionalD1:
                 description: EvaluationProvisionalD1 is the latest closed-minute request
                   projection, not a verdict.

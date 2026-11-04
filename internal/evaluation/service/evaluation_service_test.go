@@ -7,6 +7,8 @@ import (
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -90,9 +92,13 @@ func TestEvaluationListBatchesStageReads(t *testing.T) {
 			if err := api.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}
+			if err := batchv1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
 			var objects []client.Object
 			for i := range count {
 				run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("run-%02d", i), Namespace: "ns"}}
+				run.UID = types.UID(run.Name)
 				for _, id := range []string{"z", "a"} {
 					stage := &api.EvaluationStage{
 						ObjectMeta: metav1.ObjectMeta{Name: run.Name + "-" + id, Namespace: "ns"},
@@ -103,14 +109,40 @@ func TestEvaluationListBatchesStageReads(t *testing.T) {
 						StageID: id, EvaluationObjectReference: api.EvaluationObjectReference{Name: stage.Name, UID: stage.UID},
 					})
 					objects = append(objects, stage)
+					now := metav1.Date(2026, 11, 4, 1, 0, 0, 0, time.UTC)
+					for _, status := range []string{loadJobActive, loadJobSucceeded, loadJobFailed} {
+						job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+							Name: stage.Name + "-" + status, Namespace: "ns", UID: types.UID(stage.Name + status),
+							Labels: map[string]string{
+								"edge.dacs.io/workload-role": "load-generator",
+								api.EvaluationLabelRunUID:    string(run.UID), api.EvaluationLabelStage: id,
+							},
+							OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(stage, api.GroupVersion.WithKind("EvaluationStage"))},
+						}, Status: batchv1.JobStatus{StartTime: &now}}
+						switch status {
+						case loadJobSucceeded:
+							job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, Reason: "Completed"}}
+							job.Status.CompletionTime = &now
+						case loadJobFailed:
+							job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded"}}
+						default:
+							// Failed Pods are not a failed Job until its terminal condition says so.
+							job.Status.Failed = 1
+							job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionFalse}}
+						}
+						objects = append(objects, job)
+					}
 				}
 				objects = append(objects, run)
 			}
-			stageLists, stageGets := 0, 0
+			stageLists, stageGets, jobLists := 0, 0, 0
 			native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
 				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 					if _, ok := list.(*api.EvaluationStageList); ok {
 						stageLists++
+					}
+					if _, ok := list.(*batchv1.JobList); ok {
+						jobLists++
 					}
 					return c.List(ctx, list, opts...)
 				},
@@ -126,15 +158,51 @@ func TestEvaluationListBatchesStageReads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(result) != count || stageLists != 1 || stageGets != 0 {
-				t.Fatalf("runs=%d stageLists=%d stageGets=%d", len(result), stageLists, stageGets)
+			if len(result) != count || stageLists != 1 || stageGets != 0 || jobLists != 1 {
+				t.Fatalf("runs=%d stageLists=%d stageGets=%d jobLists=%d", len(result), stageLists, stageGets, jobLists)
 			}
 			for _, run := range result {
 				if len(run.Stages) != 2 || run.Stages[0].ID != "z" || run.Stages[1].ID != "a" ||
 					run.Stages[0].UID != run.Name+"-z" || run.Stages[1].UID != run.Name+"-a" {
 					t.Fatalf("run %s stages=%+v", run.Name, run.Stages)
 				}
+				for _, stage := range run.Stages {
+					assertLoadJobs(t, stage)
+				}
+			}
+			detail, err := service.Get(context.Background(), result[0].Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if jobLists != 2 {
+				t.Fatalf("detail must list its load Jobs once, calls=%d", jobLists-1)
+			}
+			for _, stage := range detail.Stages {
+				assertLoadJobs(t, stage)
 			}
 		})
+	}
+}
+
+func assertLoadJobs(t *testing.T, stage EvaluationStage) {
+	t.Helper()
+	if len(stage.LoadJobs) != 3 {
+		t.Fatalf("stage %s jobs=%+v", stage.Name, stage.LoadJobs)
+	}
+	statuses := make(map[string]bool)
+	for _, job := range stage.LoadJobs {
+		statuses[job.Status] = true
+		if job.Name != stage.Name+"-"+job.Status || job.UID != stage.Name+job.Status || job.StartedAt == nil {
+			t.Fatalf("Job identity/timing lost: %+v", job)
+		}
+		if job.Status == loadJobSucceeded && (job.CompletedAt == nil || job.Reason != "Completed") {
+			t.Fatalf("success facts lost: %+v", job)
+		}
+		if job.Status == loadJobFailed && (job.CompletedAt != nil || job.Reason != "BackoffLimitExceeded") {
+			t.Fatalf("failure facts changed: %+v", job)
+		}
+	}
+	if !statuses[loadJobActive] || !statuses[loadJobSucceeded] || !statuses[loadJobFailed] {
+		t.Fatalf("Job conditions not projected: %+v", stage.LoadJobs)
 	}
 }

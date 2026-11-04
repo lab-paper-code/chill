@@ -8,6 +8,8 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,6 +42,7 @@ func evaluationPhase(run *api.EvaluationRun) string {
 }
 func (s *Service) evaluationView(
 	ctx context.Context, run *api.EvaluationRun, stages map[client.ObjectKey]*api.EvaluationStage,
+	loadJobs map[evaluationLoadJobKey][]EvaluationLoadJob,
 ) (EvaluationView, error) {
 	value := EvaluationView{
 		Name: run.Name, UID: string(run.UID), Spec: run.Spec, Phase: evaluationPhase(run),
@@ -75,6 +78,8 @@ func (s *Service) evaluationView(
 			CurrentProcedure: stage.Status.CurrentProcedure, Procedures: evaluationProcedures(stage.Status.Procedures),
 			StartedAt: stage.Status.StartedAt, FinishedAt: stage.Status.FinishedAt, GoAt: stage.Status.GoAt,
 			ProvisionalD1: stage.Status.ProvisionalD1,
+			Progress:      stage.Status.Progress, LastProgressAt: stage.Status.LastProgressAt,
+			LoadJobs: loadJobs[evaluationLoadJobKey{run.UID, stage.UID, stage.Spec.StageID}],
 		})
 	}
 	return value, nil
@@ -106,9 +111,13 @@ func (s *Service) List(ctx context.Context) ([]EvaluationView, error) {
 		stage := &children.Items[i]
 		stages[client.ObjectKeyFromObject(stage)] = stage
 	}
+	loadJobs, err := s.evaluationLoadJobs(ctx, "")
+	if err != nil {
+		return nil, err
+	}
 	result := make([]EvaluationView, 0, len(runs.Items))
 	for i := range runs.Items {
-		value, err := s.evaluationView(ctx, &runs.Items[i], stages)
+		value, err := s.evaluationView(ctx, &runs.Items[i], stages, loadJobs)
 		if err != nil {
 			return nil, err
 		}
@@ -121,7 +130,55 @@ func (s *Service) Get(ctx context.Context, name string) (EvaluationView, error) 
 	if err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: name}, &run); err != nil {
 		return EvaluationView{}, err
 	}
-	return s.evaluationView(ctx, &run, nil)
+	loadJobs, err := s.evaluationLoadJobs(ctx, run.UID)
+	if err != nil {
+		return EvaluationView{}, err
+	}
+	return s.evaluationView(ctx, &run, nil, loadJobs)
+}
+
+type evaluationLoadJobKey struct {
+	runUID   types.UID
+	stageUID types.UID
+	stageID  string
+}
+
+// evaluationLoadJobs batches authoritative producer Job facts for a whole read.
+func (s *Service) evaluationLoadJobs(ctx context.Context, runUID types.UID) (map[evaluationLoadJobKey][]EvaluationLoadJob, error) {
+	labels := client.MatchingLabels{"edge.dacs.io/workload-role": "load-generator"}
+	if runUID != "" {
+		labels[api.EvaluationLabelRunUID] = string(runUID)
+	}
+	var jobs batchv1.JobList
+	if err := s.reader.List(ctx, &jobs, client.InNamespace(s.namespace), labels); err != nil {
+		return nil, err
+	}
+	result := make(map[evaluationLoadJobKey][]EvaluationLoadJob)
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		owner := metav1.GetControllerOf(job)
+		if owner == nil || owner.Kind != "EvaluationStage" || owner.APIVersion != api.GroupVersion.String() {
+			continue
+		}
+		value := EvaluationLoadJob{
+			Name: job.Name, UID: string(job.UID), Status: loadJobActive,
+			StartedAt: job.Status.StartTime, CompletedAt: job.Status.CompletionTime,
+		}
+		for _, condition := range job.Status.Conditions {
+			if condition.Status != corev1.ConditionTrue {
+				continue
+			}
+			switch condition.Type {
+			case batchv1.JobComplete:
+				value.Status, value.Reason = loadJobSucceeded, condition.Reason
+			case batchv1.JobFailed:
+				value.Status, value.Reason = loadJobFailed, condition.Reason
+			}
+		}
+		key := evaluationLoadJobKey{types.UID(job.Labels[api.EvaluationLabelRunUID]), owner.UID, job.Labels[api.EvaluationLabelStage]}
+		result[key] = append(result[key], value)
+	}
+	return result, nil
 }
 func (s *Service) Create(
 	ctx context.Context, request EvaluationRequest, actor string,
