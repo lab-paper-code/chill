@@ -1,6 +1,6 @@
 # Evaluation 범위·원칙·소유 계약
 
-상태: 초안(검토 전). `[사용자 결정]` 표시는 사용자가 정할 항목이다.
+상태: 기준 문서. §2 B1~B3과 §4 순서는 2026-11-04 사용자 결정이며, 결정된 구현은 모두 보류 중이다.
 정본 요구사항은 [실험 SRS](../../spec/experiments/SRS.md) EXP-01~15이고, 실행 구조는
 [EvaluationRun 실행](../profiling/experiment-execution.md)과 [ADR 0032](../../adr/0032-experiment-execution-boundary.md)가 정한다.
 이 문서는 둘을 반복하지 않고 evaluation 영역이 무엇을 보장하고 무엇을 쓰지 않는지만 정한다.
@@ -29,8 +29,8 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 | 평가자가 낸 부하와 그 응답 | load generator client JSONL(`requestIndex`, 송신·수신 시각, `requestID`, outcome) | 발행 품질, 요청 존재, 응답 결합 |
 | 공개 워크로드 정의 | `GET /api/v1/workloads/<name>` | 신원(name·uid·generation)과 적용 SLO |
 | 공개 운영 설정 | `GET/PUT /api/v1/scheduler/settings`(If-Match) | 단계 조건 patch와 종료 시 원복 |
-| 요청 HTTP final | `GET /api/v1/observations/raw` | 아래 열린 항목 B1 참고 |
-| 선언된 전력계 | `GET /api/v1/observations/power`(`powerMeasurement.meters[].sourceIdentity`) | 에너지 적분, 공백 기록 |
+| 요청 HTTP final | `GET /api/v1/observations/raw` | 현재 D1 지연 출처. B1 적용 뒤에는 진단 참고값 |
+| 선언된 전력계 | 현재 `GET /api/v1/observations/power`(`powerMeasurement.meters[].sourceIdentity`). B2 적용 뒤에는 평가자가 전력계 게이트웨이를 직접 읽음 | 에너지 적분, 공백 기록 |
 | Kubernetes API(평가자 소유분) | 자기 Job/Pod(UID 기록), 대상 Pod readiness·imageID, 장애 주입 대상 | 실행·정리·preflight·주입 |
 
 ### 쓰지 않는 입력
@@ -40,13 +40,13 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 - gateway·observer 관측으로 평가자 증거를 보충·보정하는 것.
   - 사례(2026-11-04): 한 단계에서 IC producer stdout 꼬리가 수집 중 끊겼다. 같은 요청 전체가 gateway raw에는 있었다. 결정은 gateway 행으로 client 행을 복원하지 않는 것이다. 손실은 `collectionLoss`로 드러내고, 분모와 판정식은 그대로 둔다. 원인은 conductor 수집 경로에서 고친다.
 
-### 열린 항목
+### 결정 (2026-11-04 사용자)
 
-| # | 현재 사실 | 질문 |
+| # | 결정 | 적용 |
 |---|---|---|
-| B1 `[사용자 결정]` | D1의 지연은 gateway HTTP final `elapsedNanos`(CHILL 수신 → final)다. client RTT는 참고값이다(`request_analysis.py` `request_timing`, judgment `latencyScope`). 즉 판정이 CHILL gateway 관측을 쓴다. | 이것을 시험 대상의 공개 응답 기록으로 허용할지, D1을 client 관측 지연으로 바꿀지(판정 규칙 변경) |
-| B2 `[사용자 결정]` | 전력은 외부 계측기 값이지만 읽는 경로는 CHILL observation API다. | 판정용 독립 경로(계측기 직접 수집)가 필요한지 |
-| B3 `[사용자 결정]` | 단계 시작 전 executor gate는 CHILL이 Ready·routed로 보는 인스턴스만 검사한다(운영 규칙, 판정 밖). | 시작 조건에 CHILL 판단을 쓰는 것을 허용 범위로 명시할지 |
+| B1 | D1 지연을 client 측정으로 바꾼다. 기준은 MLPerf LoadGen 방식으로, 요청을 보내기로 예정된 시각부터 응답을 받은 시각까지다([MLPerf inference rules](https://github.com/mlcommons/inference_policies/blob/master/inference_rules.adoc)). 늦게 보낸 요청의 발행 지연도 지연에 들어간다. gateway HTTP final `elapsedNanos`는 진단 참고값으로만 남긴다. 현재 구현은 `request_analysis.py` `request_timing`이 gateway 값을 SLO 지연으로 쓴다. | 판정 규칙 변경이다. 회차 3 이후 Run부터 적용하고 judgment 계약 버전을 한 번 올린다(ADR 0019). 회차 1·2 결과는 이전 규칙으로 보존하며 다시 판정하지 않는다. 구현 보류 |
+| B2 | 평가자가 전력계 게이트웨이를 직접 읽는 독립 경로를 추가한다. CHILL observation API를 거치지 않는다. | 구현 보류 |
+| B3 | executor gate를 허용한다. 조건은 정확 일치나 전체 거절 유형이 아닐 것이다. 현재 응답만 보고, CHILL 동작을 바꾸지 않으며, 실패하면 다시 확인한 뒤 시작하고, 제외한 인스턴스는 사유를 기록한다. | refactor-reviewer 감사로 현재 gate가 조건을 만족하는지 확인 중 |
 
 ## 3. 소유 계약
 
@@ -68,9 +68,9 @@ evaluation은 CHILL을 외부 평가자처럼 실행·판정·게시해 `docs/sp
 - additive optional 필드(예: stage `progress`·`lastProgressAt`·`loadJobs`, `collectionLoss`)는 버전을 올리지 않는다.
 - 게시된 결과는 다시 해석하지 않는다(EXP-14). 정정은 새 ID로 게시한다.
 
-## 4. 확장 방향 `[사용자 결정]`
+## 4. 확장 방향
 
-권장 순서는 c → a → b → d다. 각 항목은 측정 표 하나를 채울 때만 착수한다.
+순서는 c → a → b → d로 확정했다(사용자 결정). 상태는 보류이며, E5 회차 결과가 안정된 뒤 사용자가 착수를 지시한다. 각 항목은 측정 표 하나를 채울 때만 진행한다.
 
 | 순서 | 후보 | 현재 사실 | 필요한 것 |
 |---|---|---|---|
