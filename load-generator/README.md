@@ -32,9 +32,10 @@ sent and drained, not silently dropped at the issue-window boundary.
 Endpoint/token validation and TLS context/CA loading occur once before replay
 or the E5 release barrier. Independent per-request HTTPS connections reuse this
 immutable context; TLS preparation is not repeated on arrival threads.
-E5 producer Jobs use frozen `producerResources` with equal CPU/memory requests
-and limits (defaults `{"cpu":"2","memory":"1Gi"}`). `producerShards` defaults
-to `{"mobilenet":3,"plc":1,"smolvlm2":1}`: each existing workload Pod runs
+EvaluationRun and EvaluationStage freeze the load Job's memory requests and limits
+in `spec.loadGenerator.resources` (for example, `requests.memory: 1Gi` and
+`limits.memory: 1Gi`); change those quantities in the Run input, not the Job template.
+`spec.loadGenerator.shards` maps each workload name to its count of
 independent process shards, initialized before its ready event. The parent
 releases every shard against one shared start clock. Each shard sends only
 global indexes `index % shardCount == shardIndex` from the already-frozen
@@ -42,6 +43,17 @@ trace; offsets, record assignment and offered denominator never change.
 Shard JSONL rows are merged under one process-shared output lock, retaining
 `requestIndex`, `shardIndex` and `shardCount`. Rebuild the load-generator image
 for the shared shard dispatcher; runtime images are unchanged.
+Results are written and flushed as JSONL on completion, without retaining rows
+or completed request threads. A condition counter tracks active requests and
+drains them even when scheduling raises; the arrival path never joins a thread.
+The counter has its own lock, so blocked output does not block later arrivals.
+Workers are daemon threads to avoid Python 3.8 interpreter shutdown-lock
+retention, but replay always waits for their output and connection cleanup.
+Memory after schedule preparation depends on concurrent requests, not completed
+arrivals. The frozen offset trace, per-shard schedule and dataset remain resident.
+A failed process shard prevents a complete `drained` event: its missing planned
+requests cannot be silently removed from the SLO denominator; already streamed
+rows from every shard remain evidence.
 `scheduledMonotonicNS` anchors the request; `latenessNs` is actual send minus
 scheduled time, a generator-quality metric rather than SLO time.
 `latencyMs` and `serviceLatencyMs` retain actual-send HTTP duration;
