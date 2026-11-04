@@ -6,16 +6,17 @@ import copy
 import datetime as dt
 import gzip
 import hashlib
+import io
 import json
 import math
 import os
 from pathlib import Path
-import selectors
 import ssl
 import shutil
 import subprocess
 import sys
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -200,6 +201,53 @@ class ProducerResources:
 
 
 
+class ProducerLog:
+    """Spool stdout independently of telemetry and provisional reduction."""
+    def __init__(self, source, path):
+        self.output = path.open('wb')
+        self.reader = path.open('rb')
+        self.written = 0
+        self.error = None
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self.capture, args=(source,))
+        self.thread.start()
+
+    def capture(self, source):
+        try:
+            with io.BufferedReader(source) as stream, self.output:
+                for line in stream:
+                    self.output.write(line)
+                    self.output.flush()
+                    self.written += len(line)
+        except Exception as error:
+            self.error = error
+        finally:
+            self.done.set()
+
+    def lines(self):
+        stop = self.written
+        while self.reader.tell() < stop:
+            yield self.reader.readline(stop - self.reader.tell())
+        self.check_error()
+
+    def check_error(self):
+        if self.error is not None:
+            raise RuntimeError('ProducerCaptureFailed: ' + self.reader.name + ': ' + str(self.error)) from self.error
+
+    def eof(self):
+        return self.error is None and self.done.is_set() and self.reader.tell() == self.written
+
+    def join(self):
+        self.thread.join()
+        self.check_error()
+
+    def close(self):
+        try:
+            self.join()
+        finally:
+            self.reader.close()
+
+
 class ProvisionalD1:
     """Own only the latest successful closed-minute input and projection."""
     def __init__(self, io, config, folder, publish):
@@ -226,8 +274,15 @@ class ProvisionalD1:
             clients = {}
             for workload in self.config['workloads']:
                 path = self.folder / (workload['name'] + '-client.jsonl')
-                rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-                clients[workload['name']] = [row for row in rows if 'scheduledOffsetNs' in row]
+                clients[workload['name']] = []
+                if path.exists():
+                    with path.open('rb') as source:
+                        for line in source:
+                            # A live writer may have an incomplete last write.
+                            if not line.endswith(b'\n'):
+                                break
+                            row = json.loads(line)
+                            clients[workload['name']].append(row)
             ids = {w['uid']: [r['requestID'] for r in clients[w['name']] if isinstance(r.get('requestID'), str) and r['requestID']]
                    for w in self.config['workloads']}
             indexes = self.raw.iter_request_indexes(target, list(ids), phase['startUTC'], cutoff, actual_response_ids=ids)
@@ -242,6 +297,8 @@ class ProvisionalD1:
             if target.exists():
                 shutil.rmtree(target)
             return
+        finally:
+            self.raw.release_request_cache()
         if self.inputs:
             shutil.rmtree(self.inputs)
         self.inputs, self.minute = target, minute
@@ -411,8 +468,46 @@ class CPO:
                  'sourceObservations': {'declared': self.b['sources'], 'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')},
                  'drain': {'complete': False, 'reasons': []}}
         self.observe_generators(folder)
-        jobs, pods, streams, buffers, ready, drained = {}, {}, [], {}, {}, set()
-        selector = selectors.DefaultSelector()
+        jobs, pods, streams, captures, ready, drained = {}, {}, [], {}, {}, set()
+        judgment = evidence_io.module('evaluation_capture_judgment', HERE / 'judgment.py')
+        phase['producerCapture'] = {name: {'plannedRequests': stage['traces'][name]['offered'], 'receivedRequestRows': 0,
+                                         'drained': False, 'collectionLoss': 0}
+                                    for name in self.ws if stage['traces'][name]['offered']}
+        def read_capture(name, capture):
+            try:
+                for line in capture.lines():
+                    if not line.endswith(b'\n'):
+                        phase.setdefault('truncatedLogBytes', {})[name] = base64.b64encode(line).decode()
+                        phase['drain']['reasons'].append('TruncatedLogEOF:' + name)
+                        continue
+                    text = line.decode('utf-8')
+                    try:
+                        row = json.loads(text)
+                        if not isinstance(row, dict):
+                            raise ValueError('client JSON row is not an object')
+                    except ValueError as error:
+                        phase.setdefault('clientLogErrors', []).append({'producer': name, 'error': str(error)})
+                        continue
+                    if 'scheduledOffsetNs' in row:
+                        phase['producerCapture'][name]['receivedRequestRows'] += 1
+                    event = row.get('evaluationEvent')
+                    if event == 'ready':
+                        trace = stage['traces'][name]
+                        if name in ready or row['offered'] != trace['offered'] or row['arrivalSHA256'] != trace['arrivalSHA256'] or not row['payload']:
+                            raise RuntimeError('IdentityMismatch: producer Ready input identity')
+                        ready[name] = row
+                        evidence_io.save(folder / ('payload-' + name + '.json'), row)
+                    elif event == 'start':
+                        if not released or name in phase['starts']:
+                            raise RuntimeError('IdentityMismatch: producer start protocol')
+                        phase['starts'][name] = row
+                    elif event == 'drained':
+                        drained.add(name)
+                        phase['producerCapture'][name]['drained'] = True
+            finally:
+                metadata = phase['producerCapture'][name]
+                metadata['collectionLoss'] = judgment.collection_loss(metadata['plannedRequests'], metadata['receivedRequestRows'], metadata['drained'])
+
         deadline = time.monotonic() + self.tb['setupSeconds'] + self.tb['barrierSeconds']
         try:
             for name in self.ws:
@@ -441,13 +536,11 @@ class CPO:
                     if time.monotonic() >= deadline:
                         raise RuntimeError('BarrierTimeout: generator setup')
                     time.sleep(.2)
-                output = (folder / (name + '-client.jsonl')).open('w')
                 error = (folder / (name + '-log.stderr')).open('w')
                 process = subprocess.Popen(['/usr/bin/kubectl', '-n', self.c['namespace'], 'logs', '-f', pod['metadata']['name'], '-c', 'load'], stdout=subprocess.PIPE, stderr=error, bufsize=0)
-                os.set_blocking(process.stdout.fileno(), False)
-                streams.append((process, output, error))
-                buffers[name] = b''
-                selector.register(process.stdout, selectors.EVENT_READ, (name, output))
+                capture = ProducerLog(process.stdout, folder / (name + '-client.jsonl'))
+                streams.append((name, process, capture, error))
+                captures[name] = capture
             telemetry = ProducerResources(self.io, pods, self.tb['apiSeconds'], folder / 'producer-resources.json') if pods else None
             provisional = ProvisionalD1(self.io, self.c, folder, self.provisional_callback)
             released = not jobs
@@ -468,44 +561,9 @@ class CPO:
                             evidence_io.save(folder / ('terminal-' + name + '.json'), current)
                             raise RuntimeError('ProducerFailed: ' + job['metadata']['name'] + ' (' + name + ')')
                     last_producer_poll = time.monotonic()
-                for key, _ in selector.select(.2):
-                    name, output = key.data
-                    try:
-                        chunk = os.read(key.fileobj.fileno(), 65536)
-                    except BlockingIOError:
-                        continue
-                    buffers[name] += chunk
-                    while b'\n' in buffers[name]:
-                        line, buffers[name] = buffers[name].split(b'\n', 1)
-                        text = line.decode('utf-8')
-                        output.write(text + '\n')
-                        output.flush()
-                        try:
-                            row = json.loads(text)
-                            if not isinstance(row, dict):
-                                raise ValueError('client JSON row is not an object')
-                        except ValueError as error:
-                            phase.setdefault('clientLogErrors', []).append({'producer': name, 'error': str(error)})
-                            continue
-                        event = row.get('evaluationEvent')
-                        if event == 'ready':
-                            trace = stage['traces'][name]
-                            if name in ready or row['offered'] != trace['offered'] or row['arrivalSHA256'] != trace['arrivalSHA256'] or not row['payload']:
-                                raise RuntimeError('IdentityMismatch: producer Ready input identity')
-                            ready[name] = row
-                            evidence_io.save(folder / ('payload-' + name + '.json'), row)
-                        elif event == 'start':
-                            if not released or name in phase['starts']:
-                                raise RuntimeError('IdentityMismatch: producer start protocol')
-                            phase['starts'][name] = row
-                        elif event == 'drained':
-                            drained.add(name)
-                    if not chunk:
-                        if buffers[name]:
-                            phase.setdefault('truncatedLogBytes', {})[name] = base64.b64encode(buffers[name]).decode()
-                            phase['drain']['reasons'].append('TruncatedLogEOF:' + name)
-                            buffers[name] = b''
-                        selector.unregister(key.fileobj)
+                time.sleep(.2)
+                for name, capture in captures.items():
+                    read_capture(name, capture)
                 if not released and len(ready) == len(jobs):
                     for name, pod in pods.items():
                         current = self.io.k(['get', 'pod', pod['metadata']['name'], '-o', 'json'])
@@ -536,10 +594,10 @@ class CPO:
                     provisional.poll(phase)
                 if released and not jobs and time.monotonic() >= deadline:
                     break
-                if jobs and not selector.get_map() and all(p.poll() is not None for p, _, _ in streams):
+                if jobs and all(capture.eof() for capture in captures.values()) and all(p.poll() is not None for _, p, _, _ in streams):
                     if not released:
                         raise RuntimeError('NoLoad: producer EOF before GO')
-                    if drained != set(jobs) or any(p.returncode for p, _, _ in streams):
+                    if drained != set(jobs) or any(p.returncode for _, p, _, _ in streams):
                         phase['drain']['reasons'].append('ProducerEOFWithoutCompleteDrain')
                     break
                 if time.monotonic() >= deadline:
@@ -568,10 +626,24 @@ class CPO:
                     self._cleanup_jobs()
                 except Exception as error:
                     phase.setdefault('cleanupErrors', []).append(str(error))
-                for process, _, _ in streams:
+                for _, process, _, _ in streams:
                     if process.poll() is None:
                         process.terminate()
                     process.wait(timeout=self.tb['apiSeconds'])
+            capture_errors = {}
+            for name, capture in captures.items():
+                try:
+                    capture.join()
+                except Exception as error:
+                    capture_errors[name] = str(error)
+                try:
+                    read_capture(name, capture)
+                except Exception as error:
+                    capture_errors[name] = str(error)
+            if capture_errors:
+                phase['captureErrors'] = capture_errors
+                raise RuntimeError('; '.join(capture_errors.values()))
+            phase['drain']['complete'] = not phase['drain']['reasons'] and drained == set(jobs)
             phase.update(drainedUTC=evidence_io.now(), status='DRAINED_NOT_EVALUATED' if phase['drain']['complete'] else 'PARTIAL_DRAIN_NOT_EVALUATED',
                          drainScope='Drain completion is independent of diagnostic CPU/throttle counters')
             evidence_io.save(folder / 'phase.json', phase)
@@ -592,14 +664,24 @@ class CPO:
             evidence_io.save(folder / 'phase.json', phase)
             raise
         finally:
-            selector.close()
-            for process, output, error in streams:
+            primary_error = sys.exc_info()[0] is not None
+            capture_errors = {}
+            for name, process, capture, error in streams:
                 if process.poll() is None:
                     process.terminate()
                 process.wait(timeout=self.tb['apiSeconds'])
-                process.stdout.close()
-                output.close()
+                try:
+                    capture.close()
+                except Exception as failure:
+                    capture_errors[name] = str(failure)
                 error.close()
+            if capture_errors:
+                phase.setdefault('captureErrors', {}).update(capture_errors)
+                if not primary_error:
+                    phase.update(status='STOP', error='; '.join(capture_errors.values()), failureUTC=evidence_io.now())
+                evidence_io.save(folder / 'phase.json', phase)
+                if not primary_error:
+                    raise RuntimeError(phase['error'])
 
     def record_go(self, folder, jobs, pods, at):
         value = {'goUTC': at, 'producerRefs': [{'workloadUID': self.ws[name]['uid'], 'shard': 0,
