@@ -47,6 +47,20 @@ function harness(query="",responses:Record<string,unknown>={}){
   return {load,calls,urls,modules}
 }
 
+test("selected decision capacity renders recorded diagnostics without inventing missing values",()=>{
+  const screen=harness().load("../features/scheduler-history.tsx")
+  const capacity={workloads:[{uid:"ic",rate:97.65,kappaNew:128.16703347622592,kappaRetained:110.28686611755043,scaleDown:{windowMax:102.13333333333333}},{uid:"missing"}]}
+  const tree=screen.DecisionCapacity({capacity,headroom:.25,names:new Map([["ic","IC"]])})
+  const cells=nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children)
+  assert.deepEqual(cells.slice(0,7),["IC","128.1670","110.2869","127.6667","97.6500","102.1333","0.5004"])
+  assert.deepEqual(cells.slice(7),["missing",...Array(6).fill("미기록")])
+  const missing=screen.DecisionCapacity({capacity,headroom:undefined,names:new Map()})
+  const absent=nodes(missing).filter(node=>node.type==="td").map(node=>node.props.children)
+  assert.equal(absent[3],"미기록")
+  assert.equal(absent[6],"미기록")
+  assert.equal(nodes(tree).some(node=>node.type==="badge"),false)
+})
+
 test("judgment history defaults to decision/action on the server, not mixed power records",()=>{
   const h=harness(),screen=h.load("../features/scheduler-history.tsx")
   screen.SchedulerHistoryPage({})
