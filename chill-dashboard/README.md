@@ -25,6 +25,8 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
+운영 예약 상세의 장치 목록·장치 수는 `nodes[].uid`의 고유 장치를 표시하며, 원본 정보 펼침은 중복 참조를 포함한 서버 응답 그대로 보존한다. 회귀 원자료 `lib/fixtures/live-r3-reservation.json`은 회차 3의 예약 원문(참조 12개·고유 장치 4대)이다.
+
 결정 상세의 선택 계획 용량 근거는 저장된 `decision.capacity.workloads`의 `kappaNew`, `kappaRetained`, `rate`, `scaleDown.windowMax`를 req/s로 표시한다. `rate`는 관측 유입이 아닌 계획 수요이며, 서버가 최근·창 평균 중 큰 값에 대기분을 더하고 `MinimumDemand` 하한을 적용해 기록한 유효 수요다. 보호 수요는 같은 결정의 `settings.scaleDownHeadroomFraction`으로 `max(rate, windowMax) × (1 + fraction)`, 여유는 목표 κ와 보호 수요의 차이만 표시하며 입력 부재는 미기록이다. 판정·평가 입력을 새로 만들지 않는다. 인스턴스의 `capacity`는 `internal/serving/application/profiles.go` 및 `kube/observer.go`에서 `MaxQueueSize`로 공급되는 요청 수용 한도(개)이며 κ(req/s)나 최대 배치가 아니다.
 
 

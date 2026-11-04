@@ -147,3 +147,18 @@ test("R19 new contracts: committed measurement WS frames reach neutral, success 
   Object.assign(view.state,live.applyLiveMessage(view.state,success,now))
   assert.match(view.board(),/data-label="결과">완료<\/td>/)
 })
+
+test("reservation details count and list devices by UID while retaining the captured source",()=>{
+  const reservation=JSON.parse(readFileSync(new URL("./fixtures/live-r3-reservation.json",import.meta.url),"utf8"))
+  const view=harness()
+  view.state.snapshot!.reservations=[reservation]
+  view.select(new URLSearchParams({open:"reservations"}))
+  const html=view.board(),section=html.match(/<section class="live-reservation-detail">([\s\S]*?)<\/section>/)?.[1]??""
+  assert.match(section,/<h3>rasp5, genesis3, jetsonx, orangepi<\/h3>/)
+  assert.match(section,/<th scope="row">장치 수<\/th><td>4<\/td>/)
+  const source=section.match(/<pre>([\s\S]*?)<\/pre>/)?.[1]??""
+  const decoded=source.replaceAll("&quot;",'"').replaceAll("&#x27;","'").replaceAll("&lt;","<").replaceAll("&gt;",">").replaceAll("&amp;","&")
+  assert.deepEqual(JSON.parse(decoded),reservation,"raw expansion retains all twelve recorded node references")
+  view.state.snapshot!.reservations=[{...reservation,nodes:[{uid:"a",name:"동명 장치"},{uid:"b",name:"동명 장치"},{uid:"a",name:"동명 장치"}]}]
+  assert.match(view.board(),/<th scope="row">장치 수<\/th><td>2<\/td>/,"names do not define device identity")
+})
