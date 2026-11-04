@@ -251,6 +251,13 @@ const (
 	NodeExcluded = "ExcludedNode"
 )
 
+// PowerReboot is an observed directed transition, not a device mode policy.
+// Facts live only for this process and physical Node UID.
+type PowerReboot struct {
+	From, To                  string
+	BeforeBootID, AfterBootID string
+}
+
 // SchedulerNode is one Node of the entire POOL. Measurement marks the
 // measurement POOL; Reasons name configuration the Node lacks.
 type SchedulerNode struct {
@@ -264,6 +271,8 @@ type SchedulerNode struct {
 	NonServing  []SchedulerAllocation `json:"nonServing"`
 	ObservedAt  time.Time             `json:"observedAt"`
 	Reasons     []string              `json:"reasons,omitempty"`
+	// Reboots selects lifecycle ordering only; it is not a stored cost contract.
+	Reboots []PowerReboot `json:"-"`
 }
 
 type SchedulerInstance struct {

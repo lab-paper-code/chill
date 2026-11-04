@@ -32,6 +32,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	// Observer state is read before the Node list: another refresh holding the
 	// observer lock would otherwise age every Node.
 	profiles, profileByID := c.observer.schedulerProfiles()
+	reboots := c.observer.powerRebootFacts()
 	// Request start is a conservative lower bound; slow live I/O still ages it.
 	nodesObservedAt := time.Now().UTC()
 	nodes, err := c.kube.CoreV1().Nodes().List(ctx, meta.ListOptions{})
@@ -63,6 +64,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			continue
 		}
 		sn := serving.SchedulerNode{Node: serving.NodeReference{Name: n.Name, UID: string(n.UID)}, Measurement: profilingrun.InMeasurement(n), Reserved: config.Reserved[n.Name], MemoryBytes: uint64(n.Status.Allocatable.Memory().Value()), ObservedAt: nodesObservedAt}
+		sn.Reboots = reboots[sn.Node]
 		for _, condition := range n.Status.Conditions {
 			if condition.Type == core.NodeReady {
 				sn.Ready = condition.Status == core.ConditionTrue

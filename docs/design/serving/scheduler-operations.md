@@ -38,6 +38,25 @@ and transition-reserve safety checks are unchanged.
 Executed-action duration updates are deferred: attach them to ingestion of the
 completed native operation receipt, retaining its actual start/end and cost cell.
 
+### Observed reboot transitions
+
+Power operations compare the admitted physical Node's nonempty boot IDs across
+actuation. A changed boot ID records `(Node name/UID, from mode, to mode, boot IDs)`
+in the existing observer's process-local facts, even if actuation later fails.
+Only that observed direction selects stop/drain → remove every co-located CHILL
+actor → power/settling → prepare → route. Unknown and in-place pairs retain
+stop/drain → power with the loaded-process witness → remove → prepare → route.
+There is no device mode table, allowlist, dwell, new stored schema, or extra
+downtime/energy term; the existing DAG cost and retained-capacity accounting apply.
+
+An unexpected reboot with a successful mode outcome completes the power step and
+leaves cleanup/rebuild to the existing DAG, rather than failing because old actor
+identities disappeared. Actuator/readiness, capture, refresh and non-reboot
+loaded-state integrity failures still fail. Facts are not persisted across a
+server restart or transferred to a replacement Node UID; refresh discards facts
+for absent Node UIDs. Unknown is not “no reboot”.
+
+
 ## Why concealment forces routing
 
 Power mode applies to a whole node; on a memory-constrained device the old model must leave before a new one fits. The [transition specification](../../spec/05_transition_control.md) therefore requires planning request handling during state changes and routing to other ready nodes when the changing node cannot serve.

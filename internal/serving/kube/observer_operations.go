@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"errors"
+	"slices"
 
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
@@ -62,6 +63,30 @@ func (o *Observer) ClearNodeMove(uid string) {
 	o.mu.Lock()
 	delete(o.movingNodes, uid)
 	o.mu.Unlock()
+}
+
+func (o *Observer) RecordPowerReboot(node serving.NodeReference, fact serving.PowerReboot) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.powerReboots == nil {
+		o.powerReboots = map[serving.NodeReference][]serving.PowerReboot{}
+	}
+	facts := o.powerReboots[node]
+	if index := slices.IndexFunc(facts, func(old serving.PowerReboot) bool { return old.From == fact.From && old.To == fact.To }); index >= 0 {
+		facts[index] = fact
+	} else {
+		o.powerReboots[node] = append(facts, fact)
+	}
+}
+
+func (o *Observer) powerRebootFacts() map[serving.NodeReference][]serving.PowerReboot {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	facts := make(map[serving.NodeReference][]serving.PowerReboot, len(o.powerReboots))
+	for node, reboots := range o.powerReboots {
+		facts[node] = slices.Clone(reboots)
+	}
+	return facts
 }
 
 func (o *Observer) PublishPreparedSource(pod *core.Pod, node serving.NodeReference) error {
