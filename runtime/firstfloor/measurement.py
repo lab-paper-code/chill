@@ -42,6 +42,19 @@ def record_stage(stage: str, failure_reason: str = "") -> None:
         Path(path).write_text(json.dumps(record, separators=(",", ":")), encoding="utf-8")
 
 
+def record_failure(error: Exception) -> None:
+    cause = error
+    while cause.__cause__ is not None and not isinstance(cause, ExecutionError):
+        cause = cause.__cause__
+    path = os.environ.get("CHILL_TERMINATION_MESSAGE_PATH")
+    if path:
+        stage = json.loads(Path(path).read_text(encoding="utf-8"))["stage"]
+        if isinstance(cause, ExecutionError):
+            record_stage(stage, "ExecutionFailed")
+        else:
+            record_stage("ResultValidation" if stage == "Execution" else stage, "IntegrityError")
+
+
 def deadline_policy(settings: dict[str, Any]) -> str:
     value = settings.get("deadlinePolicy", "keep")
     if value not in ("drop", "keep", "defer"):
@@ -436,6 +449,11 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
                 selected = session.samples[0]["batchSize"] if executions else measurement["batch"]
                 result["rknn"] = dict(facts, selectedBatch=selected)
             return result
+        except Exception as error:
+            # Preserve the actual cause before shutdown can consume the attempt
+            # deadline; a runtime crash must not turn into a measurement budget.
+            record_failure(error)
+            raise
         finally:
             session.connection.close()
             # The worker owns runner shutdown; kill the group only after its grace period.
@@ -458,18 +476,7 @@ def main() -> None:
         result = execute(request, arguments.result_file.parent)
         common.publish_immutable(arguments.result_file, common.encode_result(result, request["maxResultBytes"]))
     except (common.ContractError, OSError, ValueError, http.client.HTTPException, ExecutionError) as error:
-        cause = error
-        while cause.__cause__ is not None and not isinstance(cause, ExecutionError):
-            cause = cause.__cause__
-        path = os.environ.get("CHILL_TERMINATION_MESSAGE_PATH")
-        if path:
-            stage = json.loads(Path(path).read_text(encoding="utf-8"))["stage"]
-            if isinstance(cause, ExecutionError):
-                # Keep the persisted phase: only an actual post-start execution
-                # can become an expected discovery boundary in the controller.
-                record_stage(stage, "ExecutionFailed")
-            else:
-                record_stage("ResultValidation" if stage == "Execution" else stage, "IntegrityError")
+        record_failure(error)
         common.fail(str(error))
 
 

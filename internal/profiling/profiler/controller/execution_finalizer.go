@@ -14,6 +14,7 @@ import (
 	evidencekube "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence/kube"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -165,7 +166,7 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 	run *edgev1alpha1.ProfilingRun,
 	job *batchv1.Job,
 ) (*edgev1alpha1.ProfilingRunRuntimeTermination, error) {
-	termination := &edgev1alpha1.ProfilingRunRuntimeTermination{}
+	termination := &edgev1alpha1.ProfilingRunRuntimeTermination{Class: profilerevidence.FailureClassUnknownFailure}
 	for _, condition := range job.Status.Conditions {
 		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
 			termination.JobReason, termination.JobMessage = condition.Reason, condition.Message
@@ -182,6 +183,7 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 		}
 		return nil, nil
 	}
+	termination.PodReason, termination.PodMessage = pod.Status.Reason, pod.Status.Message
 	var selected *corev1.ContainerStatus
 	// A separate container's OOM is infrastructure failure, even when the
 	// runtime subsequently exits while waiting for its observer.
@@ -207,7 +209,14 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 		}
 	}
 	if selected == nil {
-		if termination.JobReason != "" || termination.JobMessage != "" {
+		if err := f.classifyRuntimeFailure(ctx, pod, termination); err != nil {
+			return nil, err
+		}
+		if termination.Class != profilerevidence.FailureClassUnknownFailure {
+			return termination, nil
+		}
+		if termination.JobReason != "" || termination.JobMessage != "" ||
+			termination.PodReason != "" || termination.PodMessage != "" || termination.FailureReason != "" {
 			return termination, nil
 		}
 		return nil, nil
@@ -234,7 +243,86 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 			termination.LogTail += "\n" + native.Message
 		}
 	}
+	if err := f.classifyRuntimeFailure(ctx, pod, termination); err != nil {
+		return nil, err
+	}
 	return termination, nil
+}
+
+// classifyRuntimeFailure uses native disruption facts before phase attribution.
+// Execution is a persisted shared-container phase, not proof of a kernel victim PID.
+func (f *KubernetesExecutionFinalizer) classifyRuntimeFailure(
+	ctx context.Context,
+	pod *corev1.Pod,
+	termination *edgev1alpha1.ProfilingRunRuntimeTermination,
+) error {
+	if termination.FailureReason == profilerevidence.FailureIntegrity {
+		termination.Class = profilerevidence.FailureClassFatalFailure
+		return nil
+	}
+	switch pod.Status.Reason {
+	case "Evicted", "NodeLost":
+		termination.Class = profilerevidence.FailureClassRetryableFailure
+		termination.FailureReason = pod.Status.Reason
+		return nil
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.DisruptionTarget && condition.Status == corev1.ConditionTrue {
+			termination.PodReason, termination.PodMessage = condition.Reason, condition.Message
+			switch condition.Reason {
+			case "PreemptionByScheduler", "DeletionByTaintManager", "EvictionByEvictionAPI", "TerminationByKubelet":
+				termination.Class = profilerevidence.FailureClassRetryableFailure
+			}
+			termination.FailureReason = condition.Reason
+			return nil
+		}
+	}
+	if !pod.DeletionTimestamp.IsZero() {
+		termination.FailureReason = "PodDeleting"
+		return nil
+	}
+	if pod.Spec.NodeName != "" {
+		node := &corev1.Node{}
+		if err := f.reader.Get(ctx, types.NamespacedName{Name: pod.Spec.NodeName}, node); apierrors.IsNotFound(err) {
+			termination.Class = profilerevidence.FailureClassRetryableFailure
+			termination.FailureReason = "NodeLost"
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("read failure attribution Node %q: %w", pod.Spec.NodeName, err)
+		}
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady &&
+				(condition.Status == corev1.ConditionFalse || condition.Status == corev1.ConditionUnknown) {
+				termination.Class = profilerevidence.FailureClassRetryableFailure
+				termination.FailureReason = condition.Reason
+				if termination.FailureReason == "" {
+					termination.FailureReason = "NodeNotReady"
+				}
+				return nil
+			}
+		}
+	}
+	if termination.Container != runtimeContainerName {
+		if termination.Container != "" {
+			termination.Class = profilerevidence.FailureClassFatalFailure
+		}
+		return nil
+	}
+	if termination.Stage == profilerevidence.StageExecution &&
+		(termination.Reason == "OOMKilled" ||
+			termination.FailureReason == profilerevidence.FailureMeasurementBudget ||
+			(termination.JobReason == "DeadlineExceeded" && termination.FailureReason == "")) {
+		termination.Class = profilerevidence.FailureClassExpectedStop
+		return nil
+	}
+	if termination.FailureReason == profilerevidence.FailureExecution ||
+		(termination.Reason == "Error" && termination.ExitCode != 0) ||
+		termination.Stage == profilerevidence.StageObserver ||
+		termination.Stage == profilerevidence.StageResultValidation ||
+		termination.Stage == profilerevidence.StageEvidenceCommit {
+		termination.Class = profilerevidence.FailureClassFatalFailure
+	}
+	return nil
 }
 
 // jobPod returns the one Pod owned by the measurement Job, or nil when none remains.

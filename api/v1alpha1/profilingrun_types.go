@@ -245,6 +245,12 @@ type ProfilingRunObservedExecutionStatus struct {
 type ProfilingRunRuntimeTermination struct {
 	ExitCode int32 `json:"exitCode"`
 
+	// Class separates expected discovery stops, known transient disruption,
+	// terminal failures, and failures whose attribution remains unknown.
+	// +kubebuilder:validation:Enum=ExpectedStop;RetryableFailure;FatalFailure;UnknownFailure
+	// +optional
+	Class string `json:"class,omitempty"`
+
 	// Container and Reason retain the native container identity and termination reason.
 	// +optional
 	Container string `json:"container,omitempty"`
@@ -253,7 +259,7 @@ type ProfilingRunRuntimeTermination struct {
 	// Stage is proven by the versioned worker termination message, never by log text.
 	// +optional
 	Stage string `json:"stage,omitempty"`
-	// FailureReason is the worker's typed execution, budget, or integrity failure.
+	// FailureReason retains a typed worker failure or an explicit native disruption reason.
 	// +optional
 	FailureReason string `json:"failureReason,omitempty"`
 	// JobReason and JobMessage retain the native failed Job condition.
@@ -261,6 +267,12 @@ type ProfilingRunRuntimeTermination struct {
 	JobReason string `json:"jobReason,omitempty"`
 	// +optional
 	JobMessage string `json:"jobMessage,omitempty"`
+	// PodReason and PodMessage retain the native failed Pod reason or its
+	// explicit disruption condition, independently of the container reason.
+	// +optional
+	PodReason string `json:"podReason,omitempty"`
+	// +optional
+	PodMessage string `json:"podMessage,omitempty"`
 
 	// LogTail is the runtime termination message, which Kubernetes fills
 	// with the last 80 lines or 2 KiB of the container log on failure.

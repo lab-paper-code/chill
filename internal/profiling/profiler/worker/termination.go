@@ -45,6 +45,9 @@ func RecordTerminationFailure(ctx context.Context, failure error) error {
 	if !ok {
 		return nil // A success receipt must never become a failure phase record.
 	}
+	if record.FailureReason != "" {
+		return nil // Preserve an execution/integrity failure recorded before cleanup.
+	}
 	switch {
 	case errors.Is(failure, ErrExecutionContract):
 		record.FailureReason = evidence.FailureIntegrity

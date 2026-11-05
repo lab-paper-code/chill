@@ -12,6 +12,10 @@ const (
 	FailureExecution        = "ExecutionFailed"
 	FailureMeasurementBudget = "MeasurementBudgetExceeded"
 	FailureIntegrity        = "IntegrityError"
+	FailureClassExpectedStop = "ExpectedStop"
+	FailureClassRetryableFailure = "RetryableFailure"
+	FailureClassFatalFailure = "FatalFailure"
+	FailureClassUnknownFailure = "UnknownFailure"
 )
 
 // TerminationMessage records the current phase before work that can kill the

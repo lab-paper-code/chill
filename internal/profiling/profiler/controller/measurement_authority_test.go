@@ -113,7 +113,7 @@ func authorityRoot(config profilingrun.RunConfig) (*edge.BatchEnergyOptimization
 		ObjectMeta: metav1.ObjectMeta{Namespace: selected.Namespace, Name: "frozen-plan", UID: "plan-uid",
 			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}},
 		Spec: edge.BatchEnergyOptimizationSpec{
-			State: selected.Spec.MeasurementStateSpec, TrialsPerBatch: 3,
+			State: selected.Spec.MeasurementStateSpec, TrialsPerBatch: 3, RetryLimit: 1,
 			ActiveProtocol: edge.ActiveProtocolSpec{Workload: config.Measurement.WorkloadName,
 				Dataset: config.Measurement.Dataset.Name, WarmupIterations: 20, DurationSeconds: 30,
 				MetricObservation: selected.Spec.MetricObservation},
