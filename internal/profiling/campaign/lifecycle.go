@@ -80,7 +80,7 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 	}
 	if retry != nil && observed.Boundary == nil {
 		if retryFailures[*retry] > snapshot.RetryLimit {
-			return Decision{Action: ActionFail, Reason: "RetryLimitExhausted"}, nil
+			return Decision{Action: ActionFail, Run: retry, Reason: "RetryLimitExhausted"}, nil
 		}
 		return Decision{Action: ActionCreateRun, Run: retry, Reason: "RetryAfterFailure"}, nil
 	}

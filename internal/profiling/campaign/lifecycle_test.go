@@ -24,7 +24,7 @@ func idle(batch int) Measurement { return Measurement{WorkloadMode: WorkloadMode
 
 func directSnapshot() Snapshot {
 	return Snapshot{
-		RequiredState: State{TargetNode: "orangepi5", DeviceClass: "orangepi-5-plus-16g", PowerMode: "fixed"},
+		RequiredState:     State{TargetNode: "orangepi5", DeviceClass: "orangepi-5-plus-16g", PowerMode: "fixed"},
 		PlannedBatchSizes: []int{1},
 	}
 }
@@ -306,8 +306,9 @@ func TestDecideRetriesOnlyClassifiedInfrastructureFailures(t *testing.T) {
 			if decision.Action != test.wantAction || decision.Reason != test.wantReason {
 				t.Fatalf("decision=%+v, want %s/%s", decision, test.wantAction, test.wantReason)
 			}
-			if decision.Action == ActionCreateRun && (decision.Run == nil || *decision.Run != measurement) {
-				t.Fatalf("retry changed K: %+v", decision)
+			if (decision.Action == ActionCreateRun || decision.Reason == "RetryLimitExhausted") &&
+				(decision.Run == nil || *decision.Run != measurement) {
+				t.Fatalf("retry decision lost its K: %+v", decision)
 			}
 		})
 	}
