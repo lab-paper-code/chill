@@ -16,6 +16,7 @@ import (
 // stops; the best plan set found so far stays and p.searched records the cut.
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 	start := time.Now()
+	p.searched.StartedAt = start.UTC()
 	keep, empty := make([]int, len(p.plans)), make([]int, len(p.plans))
 	for n, plans := range p.plans {
 		empty[n] = max(0, slices.IndexFunc(plans, func(plan *capacityPlan) bool { return plan.record.Eligible && len(plan.instances) == 0 }))
@@ -81,7 +82,9 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 		p.searched.TerminationReason = "budgetCut"
 		p.searched.Steps[len(p.searched.Steps)-1].BudgetCut = true
 	}
-	p.searched.Duration = time.Since(start)
+	finished := time.Now()
+	p.searched.FinishedAt = finished.UTC()
+	p.searched.Duration = finished.Sub(start)
 	return best, nil
 }
 

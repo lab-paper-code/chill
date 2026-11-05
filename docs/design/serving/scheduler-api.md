@@ -176,6 +176,7 @@ Query owns public progress and per-cell coverage projection.
 측정이다. decision은 `keep`, `target`, `workloads[]`, `capacity`, snapshot Node의 `measurement`와 `reasons`,
 `search.examined`, `search.comparedNodes`를 담는다. `capacity`는 비교 기간, 고른 route 시각, Workload별 κ 합과 판정,
 가중치, 사용한 용량표 행, 모든 노드 계획과 제외 사유다([스케줄러 구현 설계 5.3절](scheduler-implementation.md#53-전환에너지선택)).
+탐색이 실행된 decision의 `capacity.search.startedAt`/`finishedAt`은 실제 탐색 진입/결과 반환에서 직접 캡처한 UTC 시각이며 `durationNanos`는 같은 구간의 monotonic 경과다. `search.examined`(만든 node-plan 수)와 `capacity.search.evaluated`(초기 keep/empty 원점을 제외한 sweep의 plan-set 후보 평가 수)는 서로 다른 값이다. 관측 이력 full/compact와 replay decoder는 이 구간을 그대로 전달한다. 탐색하지 않은 decision에 구간을 합성하지 않으며 summary는 기존대로 search를 생략한다. 기존 v3 저장 계약·관측 prefix/version은 유지하고, 과거 원시 기록을 수정하거나 시각을 소급 생성하지 않는다.
 `GET /api/v1/scheduler/state?view=summary`와 `/api/v1/observations/scheduler?view=summary`의 decision도 원본 순서의 `workloads[]`(`uid`, `state`, 선택적 `reason`)를 그대로 제공한다.
 이력 summary는 catalog를 복원하지 않고 저장된 decision의 `workloads[]`를 직접 읽으므로 과거 상태·사유와 순서를 유지한다.
 `comparedNodes`는 keep 밖의 적격 노드 계획이 있는 Node이며 `expectedJoules`는 이 Node만 합산한다.

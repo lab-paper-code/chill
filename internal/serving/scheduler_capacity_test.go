@@ -1269,12 +1269,27 @@ func TestCapacitySearchBudgetCutRetainsAcceptedSteps(t *testing.T) {
 // §9 6 search: the decision records the search scope with the capacity judgment.
 func TestCapacityDecisionRecordsSearch(t *testing.T) {
 	s, snap, rows, _ := capacityE1Fixture()
+	before := time.Now()
 	d := capacityDecideForTest(t, s, snap, rows)
+	after := time.Now()
 	if d.Capacity == nil || d.Capacity.Search == nil || d.Capacity.Search.Neighborhood != 3 || d.Capacity.Search.Evaluated == 0 || d.Capacity.Search.BudgetCut {
 		t.Fatalf("decision search record: %+v", d.Capacity)
 	}
 	if len(d.Capacity.Search.Steps) == 0 {
 		t.Fatal("decision lost live search steps")
+	}
+	search := d.Capacity.Search
+	if search.StartedAt.Before(before) || search.FinishedAt.After(after) || search.FinishedAt.Before(search.StartedAt) {
+		t.Fatalf("search capture escaped actual evaluation: before=%s search=[%s,%s] after=%s", before, search.StartedAt, search.FinishedAt, after)
+	}
+	// The recorded interval must enclose the real work, not two timestamps
+	// taken together before or after the sweep.
+	var swept time.Duration
+	for _, step := range search.Steps {
+		swept += step.Duration
+	}
+	if swept <= 0 || search.FinishedAt.Sub(search.StartedAt) < swept {
+		t.Fatalf("search interval does not enclose measured sweep work: search=%+v work=%s", search, swept)
 	}
 }
 
@@ -1817,6 +1832,8 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 	poolsAddNode(&snap, "idle", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	want := capacityDecideForTest(t, s, snap, rows)
 	want.Capacity.Search.Duration = 0 // the search time is measured, not decided
+	want.Capacity.Search.StartedAt = time.Time{}
+	want.Capacity.Search.FinishedAt = time.Time{}
 	for i := range want.Capacity.Search.Steps {
 		want.Capacity.Search.Steps[i].Duration = 0
 	}
@@ -1838,6 +1855,8 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 		rng.Shuffle(len(shuffledRows), func(i, j int) { shuffledRows[i], shuffledRows[j] = shuffledRows[j], shuffledRows[i] })
 		got := capacityDecideForTest(t, s, shuffled, shuffledRows)
 		got.Capacity.Search.Duration = 0
+		got.Capacity.Search.StartedAt = time.Time{}
+		got.Capacity.Search.FinishedAt = time.Time{}
 		for i := range got.Capacity.Search.Steps {
 			got.Capacity.Search.Steps[i].Duration = 0
 		}

@@ -515,7 +515,8 @@ type SchedulerCandidate struct {
 	ConditionalService *ConditionalServiceEvidence `json:"conditionalService,omitempty"`
 }
 type SchedulerSearch struct {
-	// Examined counts the node plans built for the decision.
+	// Examined counts node plans built, not plan-set candidates evaluated by
+	// the sweep (Capacity.Search.Evaluated).
 	Examined          int               `json:"examined"`
 	Bounds            SchedulerSettings `json:"bounds"`
 	WindowStart       time.Time         `json:"windowStart"`

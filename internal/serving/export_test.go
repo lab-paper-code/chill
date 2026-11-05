@@ -87,14 +87,14 @@ func blockRuntimeObservationWrites(t *testing.T, log *runtimeTestLog) {
 	})
 }
 
-func CapacityBridgeObservationFixture(t *testing.T) (SchedulerCandidate, RuntimeTestObservationConfig) {
+func CapacityBridgeObservationFixture(t *testing.T) (SchedulerDecision, RuntimeTestObservationConfig) {
 	t.Helper()
 	settings, snapshot, rows, _, _ := capacityBridgeFixture(t)
 	decision := capacityDecideForTest(t, settings, snapshot, rows)
 	if decision.Target == nil {
 		t.Fatal("bridge fixture lost its target")
 	}
-	return *decision.Target, RuntimeTestObservationConfig{
+	return decision, RuntimeTestObservationConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: &observationArchive{directory: t.TempDir()},
 	}

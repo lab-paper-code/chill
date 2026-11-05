@@ -19,7 +19,10 @@ import (
 )
 
 func TestCapacityBridgeCatalogProjectionDoesNotMutateLiveProfiles(t *testing.T) {
-	candidate, config := serving.CapacityBridgeObservationFixture(t)
+	before := time.Now()
+	decision, config := serving.CapacityBridgeObservationFixture(t)
+	after := time.Now()
+	candidate := *decision.Target
 	stage := slices.IndexFunc(candidate.Actions, func(action serving.Action) bool { return action.RouteTarget != nil })
 	if stage < 0 {
 		t.Fatal("bridge fixture lost its staged handoff")
@@ -36,7 +39,7 @@ func TestCapacityBridgeCatalogProjectionDoesNotMutateLiveProfiles(t *testing.T) 
 		}
 	}()
 	at := time.Now().UTC()
-	if err = log.SchedulerRecord(observation.SchedulerObservation{At: at, Decision: &serving.SchedulerDecision{At: at, Target: &candidate}}); err != nil {
+	if err = log.SchedulerRecord(observation.SchedulerObservation{At: at, Decision: &decision}); err != nil {
 		t.Fatal(err)
 	}
 	paths, err := filepath.Glob(filepath.Join(config.Directory, "v1alpha5", "*", "scheduler.*.jsonl"))
@@ -58,6 +61,20 @@ func TestCapacityBridgeCatalogProjectionDoesNotMutateLiveProfiles(t *testing.T) 
 	}
 	if stored.Decision.Target.Actions[stage].RouteTarget.Instances[0].Profile != nil || candidate.Actions[stage].RouteTarget.Instances[0].Profile == nil {
 		t.Fatal("nested bridge catalog projection leaked or mutated live profiles")
+	}
+	if stored.Decision.Capacity == nil || stored.Decision.Capacity.Search == nil {
+		t.Fatal("recorded decision lost its actual sweep")
+	}
+	search := stored.Decision.Capacity.Search
+	if search.StartedAt.Before(before) || search.FinishedAt.After(after) || search.FinishedAt.Before(search.StartedAt) {
+		t.Fatalf("stored search does not describe the actual sweep: before=%s search=[%s,%s] after=%s", before, search.StartedAt, search.FinishedAt, after)
+	}
+	var swept time.Duration
+	for _, step := range search.Steps {
+		swept += step.Duration
+	}
+	if swept <= 0 || search.FinishedAt.Sub(search.StartedAt) < swept {
+		t.Fatalf("stored interval does not enclose sweep work: search=%+v work=%s", search, swept)
 	}
 }
 

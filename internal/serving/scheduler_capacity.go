@@ -69,9 +69,15 @@ type SchedulerCapacity struct {
 // evaluated, its time, and whether the time budget (half the control
 // interval) ended it before its last step.
 type SchedulerPlanSearch struct {
-	Neighborhood      int                                   `json:"neighborhood"`
-	Evaluated         int                                   `json:"evaluated"`
-	Duration          time.Duration                         `json:"durationNanos"`
+	Neighborhood int `json:"neighborhood"`
+	// Evaluated counts plan-set candidates in neighborhood sweeps, excluding
+	// initial keep/empty origins; it is not Search.Examined's node-plan count.
+	Evaluated int           `json:"evaluated"`
+	Duration  time.Duration `json:"durationNanos"`
+	// StartedAt and FinishedAt are direct wall-clock boundaries of search,
+	// excluding node-plan construction and final decision projection.
+	StartedAt         time.Time                             `json:"startedAt"`
+	FinishedAt        time.Time                             `json:"finishedAt"`
 	BudgetCut         bool                                  `json:"budgetCut,omitempty"`
 	Excluded          map[string]int                        `json:"excluded,omitempty"`
 	ReserveRejections map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
