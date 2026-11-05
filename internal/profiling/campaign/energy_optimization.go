@@ -3,8 +3,6 @@ package batchenergyoptimization
 import (
 	"errors"
 	"fmt"
-
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 )
 
 // CurveSource derives the energy-objective decision over all completed planned
@@ -42,98 +40,45 @@ func NewQuickEnergyMinimization(config QuickEnergyConfig, curve CurveSource) (Me
 }
 
 func (s *quickEnergyMinimization) Plan(observed Observed) (Plan, error) {
-	if len(observed.PlannedBatchSizes) == 0 {
-		return Plan{}, errors.New("a non-empty planned batch size set is required")
-	}
 	counts := make(map[Measurement]int, len(observed.Completed))
-	highestActive := 0
 	for _, measurement := range observed.Completed {
 		counts[measurement]++
-		if measurement.WorkloadMode == WorkloadModeActive && measurement.Batch > highestActive {
-			highestActive = measurement.Batch
-		}
 	}
-	for _, measurement := range observed.Completed {
-		if counts[measurement] > s.config.TrialsPerBatch {
-			return Plan{}, fmt.Errorf(
-				"%w: %s/b%d: expected batch=%d, expected=%d, completed=%d",
-				profilederivation.ErrEnergyObjectivePolicyMismatch, measurement.WorkloadMode,
-				measurement.Batch, measurement.Batch, s.config.TrialsPerBatch, counts[measurement],
-			)
-		}
+	batches, err := discoveryPrefix(observed.PlannedBatchSizes, counts)
+	if err != nil {
+		return Plan{}, err
 	}
-
+	if observed.Boundary != nil {
+		if err := validateDiscoveryBoundary(*observed.Boundary, observed.PlannedBatchSizes, batches, counts); err != nil {
+			return Plan{}, err
+		}
+		return s.finish(batches, *observed.Boundary)
+	}
 	baseline := Measurement{WorkloadMode: WorkloadModeIdle, Batch: observed.PlannedBatchSizes[0]}
 	if counts[baseline] < s.config.TrialsPerBatch {
 		return Plan{Next: &baseline}, nil
 	}
-
-	for _, batch := range observed.PlannedBatchSizes {
-		if batch > highestActive {
-			break
-		}
-		point := Measurement{WorkloadMode: WorkloadModeActive, Batch: batch}
-		if counts[point] < s.config.TrialsPerBatch {
-			return Plan{Next: &point}, nil
-		}
+	if len(batches) < len(observed.PlannedBatchSizes) {
+		next := Measurement{WorkloadMode: WorkloadModeActive, Batch: observed.PlannedBatchSizes[len(batches)]}
+		return Plan{Next: &next}, nil
 	}
-	if highestActive == 0 {
-		first := Measurement{WorkloadMode: WorkloadModeActive, Batch: observed.PlannedBatchSizes[0]}
-		return Plan{Next: &first}, nil
-	}
+	return s.finish(batches, DiscoveryStop{Reason: DiscoveryStopDomainExhausted})
+}
 
-	// Only verified current-condition batch-one service evidence may shorten a
-	// sweep. A slow percentile or a non-improving energy neighbor cannot.
-	if highestActive == 1 && observed.PlannedBatchSizes[0] == 1 && s.curve != nil {
-		result, err := s.curve([]int{1})
+func (s *quickEnergyMinimization) finish(batches []int, stop DiscoveryStop) (Plan, error) {
+	detail := DiscoveryResult{MeasuredBatchSizes: batches, Stop: stop}
+	if len(batches) != 0 {
+		if s.curve == nil {
+			return Plan{}, errors.New("a curve source is required once a batch is complete")
+		}
+		derived, err := s.curve(batches)
 		if err != nil {
-			return Plan{}, fmt.Errorf("derive batch-one feasibility: %w", err)
+			return Plan{}, fmt.Errorf("derive minimum-energy decision: %w", err)
 		}
-		if result.Outcome == ServiceImpossibleOutcome {
-			return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
+		if stop.Reason == DiscoveryStopDomainExhausted && derived.Continue {
+			return Plan{}, errors.New("energy derivation continued after exhausting the planned search space")
 		}
-		if len(observed.PlannedBatchSizes) == 1 {
-			if result.Continue {
-				return Plan{}, errors.New("energy derivation continued after exhausting the planned search space")
-			}
-			return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
-		}
+		detail.Energy = derived.Detail
 	}
-	if next, found := nextPlannedBatchSize(observed.PlannedBatchSizes, highestActive); found {
-		measurement := Measurement{WorkloadMode: WorkloadModeActive, Batch: next}
-		return Plan{Next: &measurement}, nil
-	}
-
-	batches := measuredBatchPrefix(observed.PlannedBatchSizes, highestActive)
-	if s.curve == nil {
-		return Plan{}, errors.New("a curve source is required once a batch is complete")
-	}
-	result, err := s.curve(batches)
-	if err != nil {
-		return Plan{}, fmt.Errorf("derive minimum-energy decision: %w", err)
-	}
-	if !result.Continue {
-		return Plan{Result: &Result{Outcome: result.Outcome, Detail: result.Detail}}, nil
-	}
-	return Plan{}, errors.New("energy derivation continued after exhausting the planned search space")
-}
-
-func measuredBatchPrefix(plannedBatchSizes []int, highest int) []int {
-	batches := make([]int, 0, len(plannedBatchSizes))
-	for _, batch := range plannedBatchSizes {
-		if batch > highest {
-			break
-		}
-		batches = append(batches, batch)
-	}
-	return batches
-}
-
-func nextPlannedBatchSize(plannedBatchSizes []int, highest int) (int, bool) {
-	for _, plannedBatchSize := range plannedBatchSizes {
-		if plannedBatchSize > highest {
-			return plannedBatchSize, true
-		}
-	}
-	return 0, false
+	return Plan{Result: &Result{Outcome: BatchDiscoveryComplete, Detail: detail}}, nil
 }

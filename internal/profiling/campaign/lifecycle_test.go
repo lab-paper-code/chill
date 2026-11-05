@@ -56,7 +56,7 @@ func TestDecide(t *testing.T) {
 			want: ActionWait,
 		},
 		{
-			name: "retry a failed attempt within the limit",
+			name: "fail an unclassified attempt without retrying",
 			snapshot: func() Snapshot {
 				s := directSnapshot()
 				s.Trials = []Trial{
@@ -64,10 +64,10 @@ func TestDecide(t *testing.T) {
 				}
 				return s
 			}(),
-			want: ActionCreateRun, wantRun: &first,
+			want: ActionFail,
 		},
 		{
-			name: "fail once the retry limit is exhausted",
+			name: "failed trials remain failures regardless of the retry limit",
 			snapshot: func() Snapshot {
 				s := directSnapshot()
 				s.RetryLimit = 1
@@ -107,20 +107,66 @@ func TestDecide(t *testing.T) {
 	}
 }
 
-func TestDecideHidesFailedTrialsFromTheMethod(t *testing.T) {
+func TestDecideDoesNotHideAFailedTrialBehindALaterCompletion(t *testing.T) {
 	method := &stubMethod{plan: Plan{Next: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 1}}}
 	snapshot := directSnapshot()
 	snapshot.Trials = []Trial{
 		{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
 		{Measurement: idle(1), Attempt: 2, Verdict: VerdictCompleted},
-		{Measurement: active(1), Attempt: 1, Verdict: VerdictCompleted},
 	}
-	_, err := Decide(snapshot, method)
+	decision, err := Decide(snapshot, method)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-	if len(method.seen.Completed) != 2 {
-		t.Fatalf("method saw %d measurements, want only the completed 2", len(method.seen.Completed))
+	if decision.Action != ActionFail || decision.Reason != "TrialFailed" || len(method.seen.Completed) != 0 {
+		t.Fatalf("failed attempt was hidden: decision=%+v observed=%+v", decision, method.seen)
+	}
+}
+
+func TestDecidePassesTheObservedBoundaryWithoutRetry(t *testing.T) {
+	for _, reason := range []string{DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded, DiscoveryStopExecutionFailed} {
+		t.Run(reason, func(t *testing.T) {
+			measurement := active(2)
+			run := &RunReference{Namespace: "chill-system", Name: "observed-trial", UID: "actual-run"}
+			boundary := &DiscoveryStop{Reason: reason, Run: run, Diagnostic: "original failure"}
+			snapshot := directSnapshot()
+			snapshot.RetryLimit = 10
+			snapshot.PlannedBatchSizes = []int{1, 2, 4}
+			for index, completed := range completedForBatches([]int{1}, 3) {
+				snapshot.Trials = append(snapshot.Trials, Trial{Measurement: completed, Attempt: index + 1, Verdict: VerdictCompleted})
+			}
+			snapshot.Trials = append(snapshot.Trials, Trial{Measurement: measurement, Attempt: 2, Verdict: VerdictFailed, Boundary: boundary})
+			method := &stubMethod{plan: Plan{Result: &Result{Outcome: BatchDiscoveryComplete}}}
+			decision, err := Decide(snapshot, method)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stop := method.seen.Boundary
+			if decision.Action != ActionFinish || stop == nil || stop.Reason != reason || stop.Attempt != 2 ||
+				stop.FailedMeasurement == nil || *stop.FailedMeasurement != measurement || stop.Run != run ||
+				stop.Diagnostic != "original failure" || len(method.seen.Completed) != 6 {
+				t.Fatalf("boundary projection: decision=%+v observed=%+v", decision, method.seen)
+			}
+			if boundary.FailedMeasurement != nil || boundary.Attempt != 0 {
+				t.Fatal("decision mutated the observed failure")
+			}
+		})
+	}
+}
+
+func TestDecideWaitsForALiveTrialBeforeConsumingABoundary(t *testing.T) {
+	snapshot := directSnapshot()
+	snapshot.Trials = []Trial{
+		{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed, Boundary: &DiscoveryStop{Reason: DiscoveryStopOOM}},
+		{Measurement: idle(1), Attempt: 2, Verdict: VerdictPending},
+	}
+	method := &stubMethod{}
+	decision, err := Decide(snapshot, method)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionWait || method.seen.Boundary != nil {
+		t.Fatalf("live trial was bypassed: %+v", decision)
 	}
 }
 

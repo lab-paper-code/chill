@@ -56,8 +56,8 @@ type Transition struct {
 // Measurement names one trial to run. Batch is meaningful for both modes: the
 // idle baseline is measured at the batch whose state it belongs to.
 type Measurement struct {
-	WorkloadMode WorkloadMode
-	Batch        int
+	WorkloadMode WorkloadMode `json:"workloadMode"`
+	Batch        int          `json:"batch"`
 }
 
 // Trial is one owned ProfilingRun projected into the progress rules. A trial
@@ -66,6 +66,9 @@ type Trial struct {
 	Measurement Measurement
 	Attempt     int
 	Verdict     Verdict
+	// Boundary is present only for a classified execution limit. A failed trial
+	// without it is an infrastructure or evidence-integrity failure.
+	Boundary *DiscoveryStop
 }
 
 // Snapshot is built from the immutable spec, the owned Runs, and the Node's
@@ -90,8 +93,8 @@ type Decision struct {
 	Reason string
 }
 
-// Observed is everything a method may see. Failed, pending, and retried
-// attempts are absent by construction.
+// Observed contains completed trial identities and the first classified
+// execution boundary. Pending trials never reach the method.
 type Observed struct {
 	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
@@ -99,6 +102,7 @@ type Observed struct {
 	// precondition of this type.
 	PlannedBatchSizes []int
 	Completed         []Measurement
+	Boundary          *DiscoveryStop
 }
 
 type Plan struct {
@@ -111,6 +115,41 @@ type Plan struct {
 type Result struct {
 	Outcome string
 	Detail  any
+}
+
+const (
+	BatchDiscoveryComplete                 = "BatchDiscoveryComplete"
+	DiscoveryStopOOM                       = "OOM"
+	DiscoveryStopMeasurementBudgetExceeded = "MeasurementBudgetExceeded"
+	DiscoveryStopExecutionFailed           = "ExecutionFailed"
+	DiscoveryStopDomainExhausted            = "DomainExhausted"
+)
+
+// DiscoveryStop retains the observed reason and trial identity without
+// interpreting Kubernetes failures or inventing missing evidence.
+type DiscoveryStop struct {
+	Reason            string        `json:"reason"`
+	FailedMeasurement *Measurement  `json:"failedMeasurement,omitempty"`
+	Attempt           int           `json:"attempt,omitempty"`
+	Run               *RunReference `json:"run,omitempty"`
+	Diagnostic        string        `json:"diagnostic,omitempty"`
+}
+
+// DiscoveryResult distinguishes the completed measurement prefix from the
+// original candidate domain and the attempt that stopped exploration.
+type DiscoveryResult struct {
+	MeasuredBatchSizes []int         `json:"measuredBatchSizes"`
+	Stop               DiscoveryStop `json:"stop"`
+	Energy             any           `json:"energy,omitempty"`
+}
+
+func (s DiscoveryStop) isExecutionBoundary() bool {
+	switch s.Reason {
+	case DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded, DiscoveryStopExecutionFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 type Method interface {

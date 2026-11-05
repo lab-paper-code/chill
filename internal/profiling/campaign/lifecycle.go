@@ -28,19 +28,12 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 		}
 	}
 	observed := Observed{PlannedBatchSizes: append([]int(nil), snapshot.PlannedBatchSizes...)}
-	attempts := make(map[Measurement]int)
-	completed := make(map[Measurement]struct{})
+	// A live trial must settle before a boundary can terminate the campaign.
 	for _, trial := range snapshot.Trials {
 		if trial.Verdict == VerdictPending {
 			return Decision{Action: ActionWait, Reason: "TrialInFlight"}, nil
 		}
-		if trial.Attempt > attempts[trial.Measurement] {
-			attempts[trial.Measurement] = trial.Attempt
-		}
 		if trial.Verdict == VerdictCompleted {
-			if _, exists := completed[trial.Measurement]; !exists {
-				completed[trial.Measurement] = struct{}{}
-			}
 			observed.Completed = append(observed.Completed, trial.Measurement)
 		}
 	}
@@ -49,15 +42,19 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 		if trial.Verdict != VerdictFailed {
 			continue
 		}
-		if _, completed := completed[trial.Measurement]; completed {
-			continue
+		if trial.Boundary == nil || !trial.Boundary.isExecutionBoundary() {
+			return Decision{Action: ActionFail, Reason: "TrialFailed"}, nil
 		}
-		next := attempts[trial.Measurement] + 1
-		if next > snapshot.RetryLimit+1 {
-			return Decision{Action: ActionFail, Reason: "RetryLimitExhausted"}, nil
+		if observed.Boundary == nil ||
+			trial.Measurement.Batch < observed.Boundary.FailedMeasurement.Batch ||
+			(trial.Measurement.Batch == observed.Boundary.FailedMeasurement.Batch &&
+				trial.Attempt < observed.Boundary.Attempt) {
+			boundary := *trial.Boundary
+			measurement := trial.Measurement
+			boundary.FailedMeasurement = &measurement
+			boundary.Attempt = trial.Attempt
+			observed.Boundary = &boundary
 		}
-		measurement := trial.Measurement
-		return Decision{Action: ActionCreateRun, Run: &measurement, Reason: "RetryAfterFailure"}, nil
 	}
 
 	plan, err := method.Plan(observed)

@@ -19,35 +19,11 @@ func TestQuickEnergyRequestsIdleBaselineFirst(t *testing.T) {
 	}
 }
 
-func TestQuickEnergyStartsAtTheFirstPlannedBatchSize(t *testing.T) {
+func TestQuickEnergyRejectsAPlanThatDoesNotStartAtOne(t *testing.T) {
 	method := newTestQuickEnergyMethod(t, nil)
-
-	t.Run("idle baseline", func(t *testing.T) {
-		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{2, 4}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		want := Measurement{WorkloadMode: WorkloadModeIdle, Batch: 2}
-		if plan.Next == nil || *plan.Next != want {
-			t.Fatalf("first measurement = %+v, want %+v", plan.Next, want)
-		}
-	})
-
-	t.Run("first active point", func(t *testing.T) {
-		completed := []Measurement{
-			{WorkloadMode: WorkloadModeIdle, Batch: 2},
-			{WorkloadMode: WorkloadModeIdle, Batch: 2},
-			{WorkloadMode: WorkloadModeIdle, Batch: 2},
-		}
-		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{2, 4}, Completed: completed})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		want := Measurement{WorkloadMode: WorkloadModeActive, Batch: 2}
-		if plan.Next == nil || *plan.Next != want {
-			t.Fatalf("next measurement = %+v, want %+v", plan.Next, want)
-		}
-	})
+	if _, err := method.Plan(Observed{PlannedBatchSizes: []int{2, 4}}); err == nil {
+		t.Fatal("accepted discovery without batch one")
+	}
 }
 
 func TestQuickEnergyFillsEachBatchBeforeAdvancing(t *testing.T) {
@@ -73,8 +49,8 @@ func TestQuickEnergyStepsOverAGapInThePlannedBatchSizeSet(t *testing.T) {
 	})
 
 	plan, err := method.Plan(Observed{
-		PlannedBatchSizes: []int{1, 2, 4},
-		Completed:         completedThrough(2, 3),
+		PlannedBatchSizes: []int{1, 4, 8},
+		Completed:         completedForBatches([]int{1}, 3),
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -102,7 +78,7 @@ func TestQuickEnergySweepsEveryPlannedBatchBeforeSelectingMinimum(t *testing.T) 
 			t.Fatal(err)
 		}
 		want := Measurement{WorkloadMode: WorkloadModeActive, Batch: planned[index]}
-		if plan.Next == nil || *plan.Next != want || plan.Result != nil || curveCalls != 1 {
+		if plan.Next == nil || *plan.Next != want || plan.Result != nil || curveCalls != 0 {
 			t.Fatalf("prefix %v: plan=%+v, curve calls=%d; want %+v without heuristic truncation",
 				planned[:index], plan, curveCalls, want)
 		}
@@ -117,25 +93,21 @@ func TestQuickEnergyRequiresThreeIndependentTrials(t *testing.T) {
 	}
 }
 
-func TestQuickEnergyOnlyStopsEarlyForCurrentBatchOneServiceImpossibility(t *testing.T) {
-	for _, outcome := range []string{ServiceImpossibleOutcome, "MinimumFound/LocalMinimum", ""} {
-		method := newTestQuickEnergyMethod(t, func(batches []int) (CurveResult, error) {
-			if !reflect.DeepEqual(batches, []int{1}) {
-				t.Fatalf("feasibility batches=%v", batches)
-			}
-			return CurveResult{Continue: outcome == "", Outcome: outcome, Detail: "current verified trials"}, nil
-		})
-		plan, err := method.Plan(Observed{PlannedBatchSizes: []int{1, 2, 4}, Completed: completedForBatches([]int{1}, 3)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if outcome == ServiceImpossibleOutcome {
-			if plan.Result == nil || plan.Result.Outcome != outcome || plan.Next != nil {
-				t.Fatalf("impossible cell did not end at batch one: %+v", plan)
-			}
-		} else if plan.Next == nil || plan.Next.Batch != 2 || plan.Result != nil {
-			t.Fatalf("heuristic outcome %q truncated the planned sweep: %+v", outcome, plan)
-		}
+func TestQuickEnergyDoesNotDeriveBatchOneFeasibilityBeforeIncreasing(t *testing.T) {
+	curveCalls := 0
+	method := newTestQuickEnergyMethod(t, func([]int) (CurveResult, error) {
+		curveCalls++
+		return CurveResult{Outcome: ServiceImpossibleOutcome}, nil
+	})
+	plan, err := method.Plan(Observed{
+		PlannedBatchSizes: []int{1, 2, 4},
+		Completed:         completedForBatches([]int{1}, 3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Next == nil || plan.Next.Batch != 2 || plan.Result != nil || curveCalls != 0 {
+		t.Fatalf("batch-one SLO shortened discovery: plan=%+v calls=%d", plan, curveCalls)
 	}
 }
 
@@ -156,9 +128,13 @@ func TestQuickEnergyPassesTheMeasuredPrefixToTheObjective(t *testing.T) {
 	if want := []int{1, 2, 4}; !reflect.DeepEqual(curveBatches, want) {
 		t.Fatalf("curve batches = %v, want %v", curveBatches, want)
 	}
-	if plan.Result == nil || plan.Result.Outcome != "MinimumFound/SearchSpaceExhausted" ||
-		plan.Result.Detail != "curve detail" {
+	if plan.Result == nil || plan.Result.Outcome != BatchDiscoveryComplete {
 		t.Fatalf("result = %+v", plan.Result)
+	}
+	detail := plan.Result.Detail.(DiscoveryResult)
+	if detail.Energy != "curve detail" || detail.Stop.Reason != DiscoveryStopDomainExhausted ||
+		!reflect.DeepEqual(detail.MeasuredBatchSizes, []int{1, 2, 4}) {
+		t.Fatalf("discovery detail = %+v", detail)
 	}
 }
 
@@ -205,6 +181,83 @@ func TestQuickEnergyRequiresTheDerivationToCloseAnExhaustedSearchSpace(t *testin
 	})
 	if err == nil || err.Error() != "energy derivation continued after exhausting the planned search space" {
 		t.Fatalf("error = %v, want exhausted-search invariant rejection", err)
+	}
+}
+
+func TestQuickEnergyStopsWithOnlyTheFullyCompletedPrefix(t *testing.T) {
+	for _, reason := range []string{DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded, DiscoveryStopExecutionFailed} {
+		t.Run(reason, func(t *testing.T) {
+			curveCalls := 0
+			energy := &profilederivation.EnergyOptimizationResult{Status: profilederivation.EnergySearchContinue}
+			method := newTestQuickEnergyMethod(t, func(batches []int) (CurveResult, error) {
+				curveCalls++
+				if !reflect.DeepEqual(batches, []int{1, 2}) {
+					t.Fatalf("derived incomplete prefix %v", batches)
+				}
+				return CurveResult{Continue: true, Detail: energy}, nil
+			})
+			completed := append(completedForBatches([]int{1, 2}, 3), active(4), active(4))
+			failed := active(4)
+			plan, err := method.Plan(Observed{
+				PlannedBatchSizes: []int{1, 2, 4, 8}, Completed: completed,
+				Boundary: &DiscoveryStop{Reason: reason, FailedMeasurement: &failed, Attempt: 3},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Next != nil || plan.Result == nil || plan.Result.Outcome != BatchDiscoveryComplete || curveCalls != 1 {
+				t.Fatalf("boundary plan=%+v curve calls=%d", plan, curveCalls)
+			}
+			detail := plan.Result.Detail.(DiscoveryResult)
+			if !reflect.DeepEqual(detail.MeasuredBatchSizes, []int{1, 2}) || detail.Stop.Reason != reason ||
+				detail.Energy != energy || detail.Stop.FailedMeasurement.Batch != 4 {
+				t.Fatalf("boundary detail=%+v", detail)
+			}
+		})
+	}
+}
+
+func TestQuickEnergyBatchOneBoundaryHasNoUsablePrefix(t *testing.T) {
+	for _, measurement := range []Measurement{idle(1), active(1)} {
+		t.Run(string(measurement.WorkloadMode), func(t *testing.T) {
+			completed := []Measurement{idle(1)}
+			if measurement.WorkloadMode == WorkloadModeActive {
+				completed = append(completedForBatches([]int{1}, 0), idle(1), idle(1), idle(1), active(1))
+			}
+			method := newTestQuickEnergyMethod(t, func([]int) (CurveResult, error) {
+				t.Fatal("derived a profile without a completed batch")
+				return CurveResult{}, nil
+			})
+			plan, err := method.Plan(Observed{
+				PlannedBatchSizes: []int{1, 2}, Completed: completed,
+				Boundary: &DiscoveryStop{Reason: DiscoveryStopOOM, FailedMeasurement: &measurement, Attempt: 2},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Result == nil || plan.Next != nil || plan.Result.Outcome != BatchDiscoveryComplete {
+				t.Fatalf("batch-one boundary=%+v", plan)
+			}
+			detail := plan.Result.Detail.(DiscoveryResult)
+			if detail.MeasuredBatchSizes == nil || len(detail.MeasuredBatchSizes) != 0 || detail.Energy != nil {
+				t.Fatalf("unusable result=%+v", detail)
+			}
+		})
+	}
+}
+
+func TestQuickEnergyRejectsAnUnclassifiedOrMismatchedBoundary(t *testing.T) {
+	for _, stop := range []DiscoveryStop{
+		{Reason: "InfrastructureFailure", FailedMeasurement: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 2}, Attempt: 1},
+		{Reason: DiscoveryStopOOM, FailedMeasurement: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 4}, Attempt: 1},
+		{Reason: DiscoveryStopOOM, FailedMeasurement: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 2}},
+	} {
+		method := newTestQuickEnergyMethod(t, nil)
+		if _, err := method.Plan(Observed{
+			PlannedBatchSizes: []int{1, 2, 4}, Completed: completedForBatches([]int{1}, 3), Boundary: &stop,
+		}); err == nil {
+			t.Fatalf("accepted boundary %+v", stop)
+		}
 	}
 }
 
