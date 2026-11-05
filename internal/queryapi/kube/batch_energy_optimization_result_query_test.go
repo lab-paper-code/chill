@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"strings"
@@ -84,6 +85,133 @@ func TestCampaignWithoutResultStillExposesFailureAndDoesNotReadStore(t *testing.
 		view.Campaign.Phase != "Failed" || len(view.Campaign.Conditions) != 1 ||
 		view.Campaign.Conditions[0].Reason != "CurvePlanResolutionFailed" {
 		t.Fatalf("missing result hid the actual campaign failure: %#v", view)
+	}
+}
+
+func TestBatchEnergyOptimizationResultQueryRetainsExpectedStopChildren(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		phase       string
+		discovery   bool
+		prefix      int
+		wantFailure bool
+	}{
+		{name: "completed discovery", phase: "Complete", discovery: true, prefix: 1, wantFailure: true},
+		{name: "completed empty discovery", phase: "Complete", discovery: true, wantFailure: true},
+		{name: "ordinary failure", phase: "Failed", wantFailure: true},
+		{name: "legacy terminal result", phase: "Complete"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			campaign, _, record, payload := campaignResultFixture(t)
+			campaign.Generation, campaign.Status.ObservedGeneration = 1, 1
+			campaign.Status.Phase = test.phase
+			controller := true
+			run := &edgev1alpha1.ProfilingRun{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: campaign.Namespace, Name: "expected-stop", UID: "expected-stop-uid", Generation: 1,
+					OwnerReferences: []metav1.OwnerReference{{
+						APIVersion: edgev1alpha1.GroupVersion.String(), Kind: "BatchEnergyOptimization",
+						Name: campaign.Name, UID: campaign.UID, Controller: &controller,
+					}},
+				},
+				Status: edgev1alpha1.ProfilingRunStatus{
+					ObservedGeneration: 1,
+					Conditions: []metav1.Condition{{
+						Type: edgev1alpha1.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
+						Reason: "JobFailed", ObservedGeneration: 1,
+					}},
+					RuntimeTermination: &edgev1alpha1.ProfilingRunRuntimeTermination{
+						Class: "ExpectedStop", Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
+					},
+				},
+			}
+			if test.discovery {
+				spec := record.Spec()
+				spec.Outcome = batchenergyoptimization.BatchDiscoveryComplete
+				template := spec.CompletedTrials[0]
+				spec.CompletedTrials = nil
+				measurements := []batchenergyoptimization.Measurement{{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1}}
+				prefix := []int{}
+				if test.prefix == 1 {
+					measurements = append(measurements, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1})
+					prefix = append(prefix, 1)
+				}
+				for _, measurement := range measurements {
+					for attempt := 1; attempt <= 3; attempt++ {
+						trial := template
+						trial.Measurement = batchenergyoptimization.ResultMeasurement(measurement)
+						trial.Run.Name = fmt.Sprintf("campaign-%s-b1-a%d", measurement.WorkloadMode, attempt)
+						trial.Run.UID = trial.Run.Name + "-uid"
+						trial.Evidence.Key = "profiling-runs/" + trial.Run.UID + "/execution.json"
+						spec.CompletedTrials = append(spec.CompletedTrials, trial)
+					}
+				}
+				stop := &spec.ExcludedTrials[0]
+				stop.Run = batchenergyoptimization.RunReference{Namespace: run.Namespace, Name: run.Name, UID: string(run.UID)}
+				stop.Measurement = batchenergyoptimization.ResultMeasurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1 << test.prefix}
+				stop.Attempt, stop.Reasons = 1, []string{"OOM"}
+				var err error
+				spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
+					MeasuredBatchSizes: prefix,
+					Stop: batchenergyoptimization.DiscoveryStop{
+						Reason: batchenergyoptimization.DiscoveryStopOOM, Attempt: stop.Attempt, Run: &stop.Run,
+						FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: stop.Measurement.WorkloadMode, Batch: stop.Measurement.Batch},
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				record, err = batchenergyoptimization.NewResultRecord(spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, discovery, err := batchenergyoptimization.DecodeDiscoveryResult(record, []int{1, 2}); err != nil || !discovery {
+					t.Fatalf("invalid stored discovery: discovery=%t err=%v", discovery, err)
+				}
+				payload, err = record.CanonicalJSON()
+				if err != nil {
+					t.Fatal(err)
+				}
+				campaign.Status.Outcome = batchenergyoptimization.BatchDiscoveryComplete
+				campaign.Status.Result.Size = int64(len(payload))
+			}
+			foreignUID := run.DeepCopy()
+			foreignUID.Name, foreignUID.UID = "foreign-uid", "foreign-run-uid"
+			foreignUID.OwnerReferences[0].UID = "other-campaign-uid"
+			foreignNamespace := run.DeepCopy()
+			foreignNamespace.Namespace = "other-namespace"
+			query, err := NewKubernetesBatchEnergyOptimizationResultQuery(
+				fake.NewClientBuilder().WithScheme(inventoryScheme(t)).WithObjects(campaign, run, foreignUID, foreignNamespace).Build(),
+				&recordingObjectReader{payload: payload},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := query.Read(context.Background(), campaign.Namespace, campaign.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			view, err := queryapi.BuildBatchEnergyOptimizationResult(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.Campaign.Phase != test.phase || view.Campaign.Outcome != campaign.Status.Outcome ||
+				view.Result == nil || !reflect.DeepEqual(view.Result.Detail, record.Spec().Detail) {
+				t.Fatalf("reader changed terminal result: %+v", view)
+			}
+			if test.phase == "Complete" && (view.Assessment.Status == queryapi.MeasurementFailed ||
+				view.Assessment.Execution == nil || view.Assessment.Execution.Phase != "Complete" || !view.Assessment.Evidence.Accepted) {
+				t.Fatalf("expected-stop child changed completed parent: %+v", view.Assessment)
+			}
+			failures := view.Assessment.FailureSummary
+			if !test.wantFailure {
+				if len(failures) != 0 {
+					t.Fatalf("legacy terminal result gained child failures: %+v", failures)
+				}
+			} else if len(failures) != 1 || failures[0].Code != "HostOOM" || failures[0].RunID != string(run.UID) {
+				t.Fatalf("owned expected-stop cause missing or foreign Run included: %+v", failures)
+			}
+		})
 	}
 }
 

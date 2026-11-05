@@ -61,7 +61,10 @@ func (q *KubernetesBatchEnergyOptimizationResultQuery) Read(
 	}
 	snapshot := queryapi.BatchEnergyOptimizationResultSnapshot{ReadAt: q.now().UTC(), Campaign: *campaign.DeepCopy()}
 	var failedRuns edgev1alpha1.ProfilingRunList
-	if campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseFailed) {
+	// A completed discovery can retain an expected-stop child without failing the request.
+	if campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseFailed) ||
+		(campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseComplete) &&
+			campaign.Status.Outcome == batchenergyoptimization.BatchDiscoveryComplete) {
 		if err := q.reader.List(ctx, &failedRuns, client.InNamespace(namespace)); err != nil {
 			return snapshot, fmt.Errorf("list failed request Runs: %w", err)
 		}
