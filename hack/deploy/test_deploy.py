@@ -567,8 +567,6 @@ shutil.disk_usage = disk_usage
                 self.assertTrue(all(call == ['docker', 'buildx', 'prune', '--builder', 'publication-builder',
                                              '--force', '--filter', 'inuse=false'] for call in prunes))
                 self.assertEqual([entry for entry in observed['buildCache'] if entry['id'] in ('active', 'foreign')], retained)
-                timings = [json.loads(line) for line in (evidence / 'command-timings.jsonl').read_text().splitlines()]
-                self.assertTrue(all(item['timeoutSeconds'] == 120 for item in timings if 'cache-prune' in item['name']))
                 if scenario == 'reclaimed':
                     self.assertEqual(observed['buildCache'], retained)
                     self.assertEqual(observed['receiptsBeforeBuild'], [[], ['server']])

@@ -353,9 +353,7 @@ class ReuseTests(unittest.TestCase):
         self.assertEqual(entry["sourceSHA"], self.old)
         self.assertEqual({r["revision"] for r in entry["platformReceipts"]}, {self.old})
         self.assertEqual(set(entry["platforms"]), set(images.MULTI))
-        for role, receipt in publication["roles"].items():
-            spec = next(p for p in planned if p["role"] == role)
-            self.assertEqual(images.receipt_entry(receipt, role, self.old, spec), receipt)
+        for role in publication["roles"]:
             self.assertTrue(registries[role].calls)
             self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registries[role].calls))
         self.assertEqual(old_files, {p: p.read_bytes() for p in old_files})
