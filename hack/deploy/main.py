@@ -35,7 +35,8 @@ FIELDS = {'source', 'context', 'kubeconfig', 'namespace', 'release', 'registry',
           'helm', 'kubectl', 'lock', 'generatedValues', 'maxDiskUsedPercent',
           'queryService', 'dashboardCheck', 'runtimeDeclarations', 'runtimeInspectionSeconds', 'publicationOnly',
           'baselineDirectory', 'expectedProfileCount', 'stagedDiffApproved', 'checkConfiguration', 'schedulerConfigMapFile', 'waitFor',
-          'inspectionCells', 'inspectionRequests', 'reusePublication', 'reusePendingBuilds', 'pruneCompletedBuildCache'}
+          'inspectionCells', 'inspectionRequests', 'reusePublication', 'reusePendingBuilds', 'pruneCompletedBuildCache',
+          'retirementRepairOnly'}
 
 
 def dump(path, value):
@@ -48,6 +49,19 @@ def positive(value, name):
     return value
 
 
+def retirement_scope(recipe):
+    roles = [item if isinstance(item, str) else item.get('role', '') if isinstance(item, dict) else ''
+             for item in recipe['images']]
+    if sorted(roles) != ['profiler', 'server']:
+        raise ValueError('retirementRepairOnly requires exactly server and profiler image roles')
+    if (recipe.get('replaceValues') or recipe.get('values')
+            or any(recipe.get(field) for field in
+                   ('commands', 'toolSources', 'generatedValues', 'runtimeDeclarations',
+                    'publicationOnly', 'schedulerConfigMapFile', 'allowedLostProfileIDs',
+                    'inspectionCells', 'inspectionRequests'))):
+        raise ValueError('retirementRepairOnly requires retained live values and no commands, tool sources, generated/runtime declarations, publication-only roles or measurement policy overrides')
+
+
 def load(path, source):
     recipe = json.loads(path.read_text())
     if not isinstance(recipe, dict) or set(recipe) - FIELDS:
@@ -58,7 +72,8 @@ def load(path, source):
     for field in ('namespace', 'release'):
         if not re.fullmatch(r'[a-z0-9][a-z0-9.-]*', recipe[field]):
             raise ValueError('invalid ' + field)
-    for field in ('replaceValues', 'dashboardCheck', 'runtimeDeclarations', 'checkConfiguration', 'pruneCompletedBuildCache'):
+    recipe.setdefault('retirementRepairOnly', False)
+    for field in ('replaceValues', 'dashboardCheck', 'runtimeDeclarations', 'checkConfiguration', 'pruneCompletedBuildCache', 'retirementRepairOnly'):
         if field in recipe and type(recipe[field]) is not bool:
             raise ValueError(field + ' must be boolean')
     positive(recipe.get('expectedRevision'), 'expectedRevision')
@@ -146,6 +161,8 @@ def load(path, source):
         raise ValueError('waitFor must list named deployment/daemonset resources')
     if 'schedulerConfigMapFile' in recipe and (not isinstance(recipe['schedulerConfigMapFile'], str) or not recipe['schedulerConfigMapFile']):
         raise ValueError('schedulerConfigMapFile must name the explicitly staged ConfigMap')
+    if recipe['retirementRepairOnly']:
+        retirement_scope(recipe)
     sha = subprocess.check_output(['git', 'rev-parse', '--verify', (source or recipe.get('source', '')) + '^{commit}'], cwd=ROOT, text=True).strip()
     tools = {k: subprocess.check_output(['git', 'rev-parse', '--verify', v + '^{commit}'], cwd=ROOT, text=True).strip() for k, v in tools.items()}
     recipe['source'], recipe['toolSources'] = sha, tools
@@ -230,29 +247,31 @@ def difference(live, desired):
                                      (json.dumps(objects(desired), sort_keys=True, indent=2) + '\n').splitlines(True), fromfile='live', tofile='source-chart'))
 
 
-def dashboard_only(live, desired, namespace, release):
-    """Prove the sole permitted change is the dashboard container image."""
-    def equal(left, right):
-        if type(left) is not type(right):
-            return False
-        if isinstance(left, dict):
-            return ({(type(key), key) for key in left} == {(type(key), key) for key in right}
-                    and all(equal(left[key], right[key]) for key in left))
-        if isinstance(left, list):
-            return len(left) == len(right) and all(equal(a, b) for a, b in zip(left, right))
-        return left == right
+def semantic_equal(left, right):
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return ({(type(key), key) for key in left} == {(type(key), key) for key in right}
+                and all(semantic_equal(left[key], right[key]) for key in left))
+    if isinstance(left, list):
+        return len(left) == len(right) and all(semantic_equal(a, b) for a, b in zip(left, right))
+    return left == right
 
+
+def image_only(live, desired, namespace, release, retirement=False):
+    """Prove all fields except the explicitly selected image slots are unchanged."""
     try:
         old, new = objects(live), objects(desired)
         def identity(obj):
             return (obj['apiVersion'], obj['kind'], obj['metadata'].get('namespace', ''), obj['metadata']['name'])
         old_keys, new_keys = [identity(obj) for obj in old], [identity(obj) for obj in new]
-        target = ('apps/v1', 'Deployment', namespace, release + '-dashboard')
+        component = 'serving-entrypoint' if retirement else 'dashboard'
+        deployment_key = ('apps/v1', 'Deployment', namespace, release + '-' + component)
+        profiler_key = ('v1', 'ConfigMap', namespace, release + '-profiler-config')
         if (old_keys != new_keys or len(set(old_keys)) != len(old_keys)
-                or target not in old_keys):
+                or deployment_key not in old_keys or (retirement and profiler_key not in old_keys)):
             return False
-        target_index = old_keys.index(target)
-        # The chart's container name is fixed; do not infer a target from labels.
+        target_index = old_keys.index(deployment_key)
         for resources in (old, new):
             # Break YAML aliases before removing the permitted field.
             deployment = json.loads(json.dumps(resources[target_index]))
@@ -262,16 +281,42 @@ def dashboard_only(live, desired, namespace, release):
                     or any(not isinstance(item, dict) or not isinstance(item.get('name'), str) for item in containers)
                     or len({item['name'] for item in containers}) != len(containers)):
                 return False
-            selected = [item for item in containers if item['name'] == 'dashboard']
+            selected = [item for item in containers if item['name'] == component]
             if len(selected) != 1:
                 return False
             image = selected[0].get('image')
             if not isinstance(image, str) or not image:
                 return False
             del selected[0]['image']
-        return equal(old, new)
+            if retirement:
+                profiler_index = old_keys.index(profiler_key)
+                profiler = json.loads(json.dumps(resources[profiler_index]))
+                resources[profiler_index] = profiler
+                raw = profiler['data']['config.yaml']
+                if not isinstance(raw, str):
+                    return False
+                configs = list(yaml.load_all(raw, Loader=ManifestLoader))
+                if len(configs) != 1 or not isinstance(configs[0], dict):
+                    return False
+                config = configs[0]
+                image = config.get('image')
+                if not isinstance(image, str) or not image:
+                    return False
+                # Break inner aliases too: an image alias elsewhere must remain unchanged.
+                config = json.loads(json.dumps(config))
+                del config['image']
+                profiler['data']['config.yaml'] = config
+        return semantic_equal(old, new)
     except (KeyError, TypeError, ValueError, AttributeError, RecursionError, yaml.YAMLError):
         return False
+
+
+def dashboard_only(live, desired, namespace, release):
+    return image_only(live, desired, namespace, release)
+
+
+def retirement_only(live, desired, namespace, release):
+    return image_only(live, desired, namespace, release, retirement=True)
 
 
 def crd_retention(original, desired, kube, run, out):
@@ -325,7 +370,10 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
     run = Runner(out, ROOT, env)
     kube = [recipe.get('kubectl', 'kubectl'), '--kubeconfig', recipe['kubeconfig'], '--context', recipe['context'], '-n', recipe['namespace']]
     helm = [recipe.get('helm', 'helm'), '--kubeconfig', recipe['kubeconfig'], '--kube-context', recipe['context'], '-n', recipe['namespace']]
-    state = {'sourceSHA': recipe['source'], 'stage': 'archive', 'ready': False, 'mode': 'inspect' if inspect else 'execute'}
+    state = {'sourceSHA': recipe['source'], 'stage': 'archive', 'ready': False, 'mode': 'inspect' if inspect else 'execute',
+             'retirementRepairOnlyRequested': recipe.get('retirementRepairOnly', False),
+             'retirementRepairOnlyEligible': False, 'retirementRepairOnlyStaticInputs': False,
+             'retirementRepairOnlyBefore': False, 'retirementRepairOnlyFinal': False}
     dump(out / 'state.json', state)
     lock = None
     observed_cluster = False
@@ -389,6 +437,11 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             raise RuntimeError('live release/revision/status changed; review before roll-forward')
 
     try:
+        if state['retirementRepairOnlyRequested']:
+            if type(recipe['retirementRepairOnly']) is not bool:
+                raise ValueError('retirementRepairOnly must be boolean')
+            retirement_scope(recipe)
+            state['retirementRepairOnlyEligible'] = True
         if not inspect:
             lock = open(recipe.get('lock', '/tmp/chill-heavy.lock'), 'a')
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -401,6 +454,8 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         run.cwd = src
         stage('plan-images')
         planned = plan_images(recipe, src, out)
+        if state['retirementRepairOnlyEligible'] and sorted(item['role'] for item in planned) != ['profiler', 'server']:
+            raise ValueError('retirementRepairOnly image plan exceeds server and profiler scope')
         dump(out / 'image-plan.json', planned)
         state['images'] = [{'role': item['role'], 'action': item['action'], 'reason': item['reason']}
                            for item in planned]
@@ -416,7 +471,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                         ('generatedValues', 'toolSources', 'runtimeDeclarations',
                          'schedulerConfigMapFile', 'allowedLostProfileIDs', 'publicationOnly')))
         state['inflightPreflight'] = inflight.collect(kube, run.run, out, 'inflight-preflight')
-        if not state['dashboardOnlyEligible']:
+        if not state['dashboardOnlyEligible'] and not state['retirementRepairOnlyEligible']:
             inflight.require_clear(state['inflightPreflight'])
         if recipe.get('runtimeDeclarations'):
             import runtime
@@ -428,6 +483,11 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         budget += 360 if recipe.get('checkConfiguration') else 0
         if recipe.get('pruneCompletedBuildCache', False):
             budget += 120 * sum(item['action'] == 'build' for item in planned)
+        proof_check_seconds = 0
+        if state['retirementRepairOnlyRequested']:
+            import retirement
+            proof_check_seconds = retirement.CHECK_SECONDS
+            budget += retirement.BUILD_SECONDS + 2 * proof_check_seconds
         if not inspect:
             api_checks.preflight(config, budget, out)
             commands('preflight')
@@ -436,15 +496,17 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         live_values = run.run(helm + ['get', 'values', recipe['release'], '-o', 'json'], 'live-values.json')
         (out / 'live-values.json').write_bytes(live_values)
         state['dashboardOnlyStaticInputs'] = False
-        if state['dashboardOnlyEligible']:
+        if state['dashboardOnlyEligible'] or state['retirementRepairOnlyEligible']:
             settings = json.loads(live_values) or {}
             clients = (settings.get('nodeAgent', {}).get('kubernetesClient', {}),
                        settings.get('profiler', {}).get('workloadObserver', {}).get('kubernetesClient', {}))
-            state['dashboardOnlyStaticInputs'] = all(
+            static_inputs = all(
                 isinstance(client, dict) and (
                     isinstance(client.get('apiServer'), str) and bool(client['apiServer'])
                     or client.get('discoverFromDefaultEndpoint') is False)
                 for client in clients)
+            state['dashboardOnlyStaticInputs'] = state['dashboardOnlyEligible'] and static_inputs
+            state['retirementRepairOnlyStaticInputs'] = state['retirementRepairOnlyEligible'] and static_inputs
         live = run.run(helm + ['get', 'manifest', recipe['release']], 'live-manifest.yaml')
         hooks = run.run(helm + ['get', 'hooks', recipe['release']], 'live-hooks.yaml')
         if not inspect:
@@ -464,11 +526,22 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         (out / 'render-before.yaml').write_bytes(before)
         state['dashboardOnlyBefore'] = state['dashboardOnlyStaticInputs'] and dashboard_only(
             live + b'\n---\n' + hooks, before, recipe['namespace'], recipe['release'])
+        state['retirementRepairOnlyBefore'] = state['retirementRepairOnlyStaticInputs'] and retirement_only(
+            live + b'\n---\n' + hooks, before, recipe['namespace'], recipe['release'])
+        state['boundaryMode'] = ('retirement-repair-only' if state['retirementRepairOnlyBefore'] else
+                                 'dashboard-image-only' if state['dashboardOnlyBefore'] else 'full-deployment')
         dump(out / 'state.json', state)
-        print('BOUNDARY: ' + ('dashboard-image-only; retained measurements remain read-only'
-                              if state['dashboardOnlyBefore'] else 'full deployment; ADR 0019 measurement gate applies'),
-              flush=True)
-        if not state['dashboardOnlyBefore']:
+        print('BOUNDARY: ' + state['boundaryMode'], flush=True)
+        if state['retirementRepairOnlyRequested']:
+            if not state['retirementRepairOnlyBefore']:
+                raise RuntimeError('retirementRepairOnly requires static retained Kubernetes endpoints and an image-only server/profiler render boundary')
+            import retirement
+            proof = retirement.check(src, out, kube, run.run, config, 'retirement-preflight', state['inflightPreflight'])
+            state['retirementProofPreflight'] = proof
+            dump(out / 'state.json', state)
+            if not isinstance(proof, dict) or proof.get('eligible') is not True:
+                raise RuntimeError('retirementRepairOnly preflight proof did not establish eligibility')
+        elif not state['dashboardOnlyBefore']:
             inflight.require_clear(state['inflightPreflight'])
         chart_diff = difference(live + b'\n---\n' + hooks, before)
         (out / 'chart-diff.txt').write_text(chart_diff)
@@ -561,10 +634,16 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         (out / 'render-final.yaml').write_bytes(after)
         state['dashboardOnlyFinal'] = state['dashboardOnlyBefore'] and dashboard_only(
             live + b'\n---\n' + hooks, after, recipe['namespace'], recipe['release'])
-        state['hooksSkipped'] = state['dashboardOnlyFinal']
-        if state['hooksSkipped']:
+        state['retirementRepairOnlyFinal'] = state['retirementRepairOnlyBefore'] and retirement_only(
+            live + b'\n---\n' + hooks, after, recipe['namespace'], recipe['release'])
+        state['hooksSkipped'] = state['dashboardOnlyFinal'] or state['retirementRepairOnlyFinal']
+        if state['retirementRepairOnlyFinal']:
+            state['hooksSkipReason'] = 'retirement-repair-only boundary excludes all hook execution'
+        elif state['dashboardOnlyFinal']:
             state['hooksSkipReason'] = 'dashboard-image-only boundary excludes all hook execution'
         dump(out / 'state.json', state)
+        if state['retirementRepairOnlyRequested'] and not state['retirementRepairOnlyFinal']:
+            raise RuntimeError('final render exceeds the reviewed retirement-repair-only boundary')
         if state['dashboardOnlyBefore'] and not state['dashboardOnlyFinal']:
             inflight.require_clear(state['inflightPreflight'])
             raise RuntimeError('final render exceeds the reviewed dashboard-image-only boundary')
@@ -589,10 +668,17 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
                              if (obj['apiVersion'], obj['kind'], obj['metadata'].get('namespace'), obj['metadata']['name'])
                              == ('apps/v1', 'Deployment', recipe['namespace'], recipe['release'] + '-dashboard'))
             validation_manifest.write_text(yaml.safe_dump(dashboard, sort_keys=False))
+        elif state['retirementRepairOnlyFinal']:
+            validation_manifest = out / 'repair-image-objects.yaml'
+            targets = {('apps/v1', 'Deployment', recipe['namespace'], recipe['release'] + '-serving-entrypoint'),
+                       ('v1', 'ConfigMap', recipe['namespace'], recipe['release'] + '-profiler-config')}
+            selected = [obj for obj in objects(after)
+                        if (obj['apiVersion'], obj['kind'], obj['metadata'].get('namespace'), obj['metadata']['name']) in targets]
+            validation_manifest.write_text(yaml.safe_dump_all(selected, sort_keys=False))
         run.run(kube + ['apply', '--dry-run=server', '-f', validation_manifest], 'server-dry-run.log', read_output=False)
         revision()
-        api_checks.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
-        if not state['dashboardOnlyFinal']:
+        api_checks.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + proof_check_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
+        if not state['hooksSkipped']:
             for phase in ('quiesce', 'migrate'):
                 stage(phase)
                 commands(phase)
@@ -600,10 +686,16 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             commands('configure')
         revision()
         state['inflightPreUpgrade'] = inflight.collect(kube, run.run, out, 'inflight-pre-upgrade')
-        if not state['dashboardOnlyFinal']:
+        if state['retirementRepairOnlyFinal']:
+            proof = retirement.check(src, out, kube, run.run, config, 'retirement-pre-upgrade', state['inflightPreUpgrade'])
+            state['retirementProofPreUpgrade'] = proof
+            dump(out / 'state.json', state)
+            if not isinstance(proof, dict) or proof.get('eligible') is not True:
+                raise RuntimeError('retirementRepairOnly fresh pre-upgrade proof did not establish eligibility')
+        elif not state['dashboardOnlyFinal']:
             inflight.require_clear(state['inflightPreUpgrade'])
         stage('upgrade')
-        hook_flags = ['--no-hooks'] if state['dashboardOnlyFinal'] else []
+        hook_flags = ['--no-hooks'] if state['hooksSkipped'] else []
         run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, *hook_flags, '--wait', '--timeout', str(recipe['upgradeSeconds']) + 's'], 'upgrade.log', timeout=upgrade_process_seconds, read_output=False)
         stage('readiness')
         deadline = time.monotonic() + recipe['readinessSeconds']

@@ -208,13 +208,54 @@ from rerunning. This has no recipe switch; full deployments retain hook executio
 
 Both all-namespace in-flight reads still retain full objects, owned Jobs and
 `blockers.json`; nonterminal campaigns remain visible diagnostic evidence.
-Only the proven dashboard-only path may proceed with those blockers, without
+The proven dashboard-only path may proceed with those blockers, without
 GPU probes, scheduler quiescence or measurement-state mutation. Server, CRD,
-measurement configuration, hook and mixed changes retain the ADR 0019 STOP, including
-when chart differences have approval. Noneligible recipes stop before custom
+measurement configuration, hook and mixed changes retain the ADR 0019 STOP,
+except for the separately proven retirement repair scope below. Chart approval
+does not widen either scope. Noneligible recipes stop before custom
 commands. Disk, authentication, revision, chart-review, backups, server dry-run,
 registry provenance, readiness and acceptance gates remain active. There is no
 force/ignore switch, object-UID exception, manual Helm bypass or guard removal.
+
+### Old-contract retirement repair installation
+
+`retirementRepairOnly: true` selects a narrowly scoped installation of exactly
+the `server` and `profiler` image roles. The default is `false`. Retain live user
+values with `values: []` and `replaceValues: false`; omit custom commands,
+`toolSources`, generated values, runtime declarations, publication-only roles
+and measurement-policy overrides. Both Kubernetes client endpoints must pass
+the same static live-values guard described above.
+
+Before publication and again after the verified-image overlay, every resource
+identity and field must match the captured live manifest and hooks. The only
+allowed differences are the `serving-entrypoint` container image in Deployment
+`<release>-serving-entrypoint`, and the root `image` inside ConfigMap
+`<release>-profiler-config`'s `data["config.yaml"]`. The profiler is
+operator-managed; this scope does not introduce a profiler Deployment. Inner
+YAML uses the same unique-string-key parser and typed structural comparison.
+CRDs, backend settings, policy, metadata, other images and profiler config
+fields retain the old deployed contract. Chart approval cannot widen this scope.
+Helm hooks remain unchanged and are not rerun. Server-side dry-run covers only
+these two rendered objects; it does not apply CRDs or measurement resources.
+
+The source-reviewed diagnostic helper must directly prove every original
+in-flight blocker is an eligible pre-execution metadata-decision failure.
+Evidence must establish no owned run, explicit plan-not-found, no published
+result and exact current Node grant/measurement-taint ownership. Existing
+plans, runs, results, other in-flight work, foreign or unknown ownership and
+API/store errors stop installation. The runner retains original all-namespace
+objects and blocker reports, and obtains fresh proof immediately before upgrade.
+Changed final rendering or proof stops before Helm upgrade. Operator-supplied
+proof files, force/ignore flags and UID exceptions are not accepted.
+
+Installation preserves the nonterminal BEO and owned Node taint while updating
+the two repair images. It authorizes neither measurement execution nor direct
+deletion. After installation, the repaired existing path must return through
+normal handback, power readback and taint return before public DELETE can
+succeed. Do not patch status, finalizers or taints manually, bypass the runner
+with direct Helm, or replace the old schema, runtime, policy or stored contract.
+No runtime probes, scheduler quiescence, migration or configuration phases run
+for this installation. Ordinary deployment retains its in-flight STOP.
 
 `images` explicitly selects roles to deploy; selected roles may reuse unchanged
 image inputs as described below. The source role catalog has all 16 roles:

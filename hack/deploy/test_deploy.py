@@ -28,6 +28,29 @@ with (root/'calls.jsonl').open('a') as f:f.write(json.dumps([name,*args])+'\n')
 state=json.loads((root/'state.json').read_text())
 def save(): (root/'state.json').write_text(json.dumps(state))
 def argument(flag):return args[args.index(flag)+1]
+if name=='go' and args[:1]==['build'] and args[-1]=='./hack/pretrial-retirement-check':
+ target=pathlib.Path(argument('-o'));target.write_text(pathlib.Path(__file__).read_text());target.chmod(0o700);sys.exit(0)
+if name=='go':
+ import shutil
+ search=os.pathsep.join(part for part in os.environ['PATH'].split(os.pathsep) if pathlib.Path(part).resolve()!=pathlib.Path(__file__).resolve().parent)
+ real=shutil.which('go',path=search)
+ if real:os.execv(real,[real,*args])
+ sys.exit(127)
+if name=='pretrial-retirement-check':
+ state['repairProofChecks']=state.get('repairProofChecks',0)+1
+ failure=state.get('repairProofFailure')
+ if state['repairProofChecks']>1:failure=state.get('repairProofFailureAtFinal',failure)
+ parent=state['inflightObjects'][0];meta=parent['metadata'];node=state['repairNode']
+ proof={'eligible':failure is None,'request':{key:meta[key] for key in ('namespace','name','uid','resourceVersion','generation')},'reason':'InvalidRunSpec','ownedRunCount':0,'planNotFound':True,'publishedResultAbsent':True,'admission':{'granted':True,'at':'2026-11-05T00:00:00Z'},'node':{'name':node['metadata']['name'],'uid':node['metadata']['uid'],'resourceVersion':node['metadata']['resourceVersion'],'holder':node['spec']['taints'][0]['value']},'checkedAt':'2026-11-06T00:00:00Z'}
+ if failure=='owned-run':proof['ownedRunCount']=1
+ elif failure=='plan':proof['planNotFound']=False
+ elif failure=='result':proof['publishedResultAbsent']=False
+ elif failure=='foreign-node':proof['node']['holder']='foreign-uid'
+ elif failure=='unknown-node':proof['node']['holder']=''
+ elif failure=='changed-identity':proof['request']['generation']=2
+ if failure in ('api-error','store-error'):proof['reason']=failure
+ state.setdefault('repairProofs',[]).append(proof);save()
+ print(json.dumps(proof));sys.exit(1 if failure else 0)
 def document(image):
  return {'apiVersion':'apps/v1','kind':'Deployment','metadata':{'name':'chill-serving-entrypoint','namespace':'review'},'spec':{'template':{'spec':{'containers':[{'name':'server','image':image}]}}}}
 def dashboard_hook(changed=False):
@@ -47,6 +70,29 @@ def dashboard_documents(image,desired=False):
  if desired and state.get('dashboardChange')=='duplicate':result.append(dashboard)
  if desired and state.get('dashboardChange')=='missing-dashboard':result.remove(dashboard)
  if desired:result.append(dashboard_hook(change=='hook'))
+ return result
+def retirement_documents(server='old:source',profiler='profiler:retained',desired=False):
+ result=dashboard_documents('dashboard:retained')
+ backend=result[0];backend['spec']['template']['spec']['containers'][0].update(name='serving-entrypoint',image=server)
+ backend['spec']['template']['spec']['containers'].append({'name':'sidecar','image':'sidecar:retained'})
+ config={'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'chill-profiler-config','namespace':'review','labels':{'contract':'retained'}},'data':{'config.yaml':json.dumps({'image':profiler,'workloadObserver':{'kubernetesClient':{'apiServer':'https://kubernetes.review:6443','discoverFromDefaultEndpoint':False}},'measurement':{'policy':'retained','windowSeconds':60}}),'other':'retained'}}
+ result.append(config)
+ result.append({'apiVersion':'chill.dacs.io/v1alpha1','kind':'ChillSystem','metadata':{'name':'chill'},'spec':{'managementNamespace':'review','evidenceStore':{'endpoint':'http://retained-store:9000','bucket':'measurements'}}})
+ change=state.get('repairChange')
+ if desired and server!='old:source':change=state.get('repairChangeAtFinal',change)
+ if desired:
+  if change=='other-image':backend['spec']['template']['spec']['containers'][1]['image']='sidecar:changed'
+  elif change=='crd':result[2]['spec']['versions'][0]['schema']['openAPIV3Schema']['description']='changed'
+  elif change=='backend-config':result[3]['data']['measurementWindowSeconds']='120'
+  elif change=='profiler-config':
+   inner=json.loads(config['data']['config.yaml']);inner['measurement']['windowSeconds']=120;config['data']['config.yaml']=json.dumps(inner)
+  elif change=='policy':
+   inner=json.loads(config['data']['config.yaml']);inner['measurement']['policy']='changed';config['data']['config.yaml']=json.dumps(inner)
+  elif change=='duplicate-inner':config['data']['config.yaml']='image: profiler:retained\nimage: profiler:changed\n'
+  elif change=='non-string-inner':config['data']['config.yaml']='image: profiler:retained\ntrue: hidden\n'
+  elif change=='typed-inner':
+   inner=json.loads(config['data']['config.yaml']);inner['measurement']['windowSeconds']=60.0;config['data']['config.yaml']=json.dumps(inner)
+ if desired:result.append(dashboard_hook())
  return result
 def emit(documents,desired=False):
  raw_documents=[]
@@ -98,23 +144,26 @@ if name=='helm':
   if what=='values':
    client={'apiServer':'https://kubernetes.review:6443','discoverFromDefaultEndpoint':False}
    values={'nodeAgent':{'kubernetesClient':client},'profiler':{'workloadObserver':{'kubernetesClient':client}}}
-   print(json.dumps(state.get('dashboardValues',values) if state.get('dashboardFixture') else {}))
+   print(json.dumps(state.get('dashboardValues',values) if state.get('dashboardFixture') or state.get('repairFixture') else {}))
   elif what=='manifest':
-   if state.get('dashboardFixture'):emit(dashboard_documents('dashboard:retained'))
+   if state.get('repairFixture'):emit(retirement_documents())
+   elif state.get('dashboardFixture'):emit(dashboard_documents('dashboard:retained'))
    else:print(json.dumps(document('old:source')))
-  elif what=='hooks' and state.get('dashboardFixture'):emit([dashboard_hook()])
+  elif what=='hooks' and (state.get('dashboardFixture') or state.get('repairFixture')):emit([dashboard_hook()])
   else:print('')
  elif verb=='template':
-  image='old:source';dashboard_image='dashboard:retained';replicas=None;published=False
+  image='old:source';dashboard_image='dashboard:retained';profiler_image='profiler:retained';replicas=None;published=False
   for i,arg in enumerate(args):
    if arg=='-f':
     path=pathlib.Path(args[i+1])
     if path.name=='image-overlay.json':
      value=json.loads(path.read_text());item=value.get('servingEntrypoint',{}).get('image');image=item['repository']+':'+item['tag'] if item else image
      item=value.get('dashboard',{}).get('image');dashboard_image=item['repository']+':'+item['tag'] if item else dashboard_image;published=True
+     item=value.get('profiler',{}).get('image');profiler_image=item['repository']+':'+item['tag'] if item else profiler_image
     elif path.name.startswith('staged-values-'):
      replicas=json.loads(path.read_text()).get('operator',{}).get('replicaCount')
-  if state.get('dashboardFixture'):
+  if state.get('repairFixture'):emit(retirement_documents(image,profiler_image,True),True)
+  elif state.get('dashboardFixture'):
    malformed=state.get('malformedDashboardRender')
    if malformed=='before' or malformed=='final' and published:print('{invalid render')
    else:emit(dashboard_documents(dashboard_image,True),True)
@@ -128,7 +177,7 @@ if name=='helm':
   duration=argument('--timeout');wait_seconds=int(duration[:-1])*{'s':1,'m':60}[duration[-1]]
   if state.get('serverReadySeconds',0)>wait_seconds:
    print('timed out waiting for server listener',file=sys.stderr);sys.exit(20)
-  if state.get('dashboardFixture') and '--no-hooks' not in args:
+  if (state.get('dashboardFixture') or state.get('repairFixture')) and '--no-hooks' not in args:
    state['hookExecutions']=state.get('hookExecutions',0)+1
    state.setdefault('ensuredBuckets',[]).append('measurements')
   overlay=pathlib.Path(args[args.index('-f')+1])
@@ -140,7 +189,10 @@ if name=='helm':
    print('---\n# Source: chill/templates/evaluation_rbac.yaml\n'+json.dumps(item))
  sys.exit(0)
 if name=='kubectl':
- if state.get('dashboardFixture') and 'get' in args and args[args.index('get')+1]=='crd':
+ if state.get('repairFixture') and 'get' in args and args[args.index('get')+1] in ('node','nodes'):
+  if state.get('repairNodeAPIError'):print('Node API unavailable',file=sys.stderr);sys.exit(31)
+  print(json.dumps(state['repairNode'] if args[args.index('get')+1]=='node' else {'items':[state['repairNode']]}));sys.exit(0)
+ if (state.get('dashboardFixture') or state.get('repairFixture')) and 'get' in args and args[args.index('get')+1]=='crd':
   emit([dashboard_documents('dashboard:retained')[2]]);sys.exit(0)
  if state.get('runtimeFixture'):
   if 'get' in args and args[args.index('get')+1]=='nodes':
@@ -332,7 +384,7 @@ class DeploymentCLI(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start(); cls.threads.append(thread)
         cls.bin = cls.directory / 'bin'; cls.bin.mkdir()
         script = cls.bin / 'fake'; script.write_text(FAKE); script.chmod(0o700)
-        for name in ('helm', 'kubectl', 'docker'):
+        for name in ('helm', 'kubectl', 'docker', 'go'):
             (cls.bin / name).symlink_to(script)
         # Only local disk accounting is synthetic; the official CLI and registry proof still run.
         (cls.bin / 'sitecustomize.py').write_text('''
@@ -845,6 +897,197 @@ shutil.disk_usage = disk_usage
             self.assertEqual(any(call[0] == 'docker' and 'build' in call for call in self.calls()), expected_build)
             self.assertFalse(any(call[0] == 'helm' and 'upgrade' in call for call in self.calls()))
             (self.directory / 'calls.jsonl').write_text('')
+
+    def retirement_rollout(self, **changes):
+        self.recipe.update(images=['server', 'profiler'], retirementRepairOnly=True)
+        uid = 'retained-repair-campaign-uid'
+        node_uid = 'retained-repair-node-uid'
+        retained = {'apiVersion': 'chill.dacs.io/v1alpha1', 'kind': 'BatchEnergyOptimization',
+                    'metadata': {'name': 'retained-preexecution-campaign-' + 'long-name-' * 12,
+                                 'namespace': 'review', 'uid': uid, 'resourceVersion': '452',
+                                 'generation': 1, 'annotations': {
+                                     'chill.dacs.io/admission': 'Granted 2026-11-05T00:00:00Z'}},
+                    'spec': {'state': {'targetNode': 'repair-node', 'candidate': {
+                        'modelSpec': 'mobilenet-v2-050', 'deviceClass': 'jetson-agx-orin-64g',
+                        'executionPath': 'ort-cpu', 'powerMode': 'MODE_50W',
+                        'preprocessor': 'mobilenet-imagenet'}},
+                        'activeProtocol': {'workload': 'mobilenet', 'dataset': 'vqav2-val-subset',
+                            'warmupIterations': 20, 'durationSeconds': 75,
+                            'metricObservation': {'intervalMilliseconds': 2500,
+                                'timeoutMilliseconds': 2400, 'durationSeconds': 78}},
+                        'idleProtocol': {'settlingDurationSeconds': 60, 'durationSeconds': 30,
+                            'metricObservation': {'intervalMilliseconds': 1000,
+                                'timeoutMilliseconds': 900, 'durationSeconds': 31}},
+                        'trialsPerBatch': 3, 'retryLimit': 2},
+                    'status': {'phase': 'Pending', 'conditions': [
+                        {'type': 'Ready', 'status': 'False', 'reason': 'InvalidRunSpec',
+                         'message': 'immutable metadata decision cannot construct requested run'}]}}
+        node = {'apiVersion': 'v1', 'kind': 'Node',
+                'metadata': {'name': 'repair-node', 'uid': node_uid, 'resourceVersion': '73'},
+                'spec': {'taints': [{'key': 'chill.dacs.io/measurement', 'value': uid,
+                                     'effect': 'NoSchedule'}]}}
+        self.state(repairFixture=True, inflightObjects=[retained], repairNode=node, **changes)
+        return retained, node
+
+    def test_repair_install_requires_fresh_proof_and_preserves_old_contract(self):
+        import yaml
+        retained, node = self.retirement_rollout()
+        self.cli('--execute', '--evidence', str(self.out))
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        state = json.loads((self.out / 'state.json').read_text())
+        self.assertTrue(state['ready'])
+        self.assertTrue(cluster['upgraded'])
+        self.assertEqual(cluster['repairProofChecks'], 2)
+        self.assertEqual(cluster['inflightObjects'], [retained])
+        self.assertEqual(cluster['repairNode'], node)
+        for field in ('apiMutations', 'probeCount', 'hookExecutions', 'ensuredBuckets'):
+            self.assertFalse(cluster.get(field))
+        for label in ('Preflight', 'PreUpgrade'):
+            self.assertTrue(state['retirementProof' + label]['eligible'])
+            report = state['inflight' + label]
+            self.assertEqual(report['blockers'], [{
+                'kind': 'BatchEnergyOptimization', 'namespace': 'review',
+                'name': retained['metadata']['name'], 'reasons': ['campaign nonterminal/unfrozen']}])
+            evidence = Path(report['evidenceDirectory'])
+            self.assertEqual(json.loads((evidence / 'objects.json').read_text())['items'], [retained])
+            self.assertEqual(json.loads((evidence / 'blockers.json').read_text()), report['blockers'])
+        publication = json.loads((self.out / 'publication.json').read_text())
+        self.assertEqual(set(publication['roles']), {'server', 'profiler'})
+        live = list(yaml.safe_load_all(next(self.out.glob('*-live-manifest.yaml')).read_text()))
+        live += list(yaml.safe_load_all(next(self.out.glob('*-live-hooks.yaml')).read_text()))
+        final = list(yaml.safe_load_all((self.out / 'render-final.yaml').read_text()))
+        selected = list(yaml.safe_load_all((self.out / 'repair-image-objects.yaml').read_text()))
+        self.assertEqual({(item['kind'], item['metadata']['name']) for item in selected},
+                         {('Deployment', 'chill-serving-entrypoint'), ('ConfigMap', 'chill-profiler-config')})
+        for item in final:
+            name = item['metadata']['name']
+            if name == 'chill-serving-entrypoint':
+                container = item['spec']['template']['spec']['containers'][0]
+                self.assertEqual(container['image'], publication['roles']['server']['image'])
+                container['image'] = 'old:source'
+            elif name == 'chill-profiler-config':
+                config = yaml.safe_load(item['data']['config.yaml'])
+                self.assertEqual(config['image'], publication['roles']['profiler']['image'])
+                config['image'] = 'profiler:retained'
+                item['data']['config.yaml'] = json.dumps(config)
+        self.assertEqual(final, live)
+
+    def test_repair_ineligible_or_failed_authoritative_proof_stops(self):
+        for failure in ('owned-run', 'plan', 'result', 'foreign-node', 'unknown-node',
+                        'api-error', 'store-error', 'changed-identity'):
+            for final in (False, True):
+                with self.subTest(failure=failure, final=final):
+                    key = 'repairProofFailureAtFinal' if final else 'repairProofFailure'
+                    retained, node = self.retirement_rollout(**{key: failure})
+                    evidence = self.out / (failure + ('-final' if final else '-preflight'))
+                    self.cli('--execute', '--evidence', str(evidence), expected=1)
+                    cluster = json.loads((self.directory / 'state.json').read_text())
+                    self.assertEqual(cluster['inflightObjects'], [retained])
+                    self.assertEqual(cluster['repairNode'], node)
+                    for field in ('upgraded', 'apiMutations', 'probeCount'):
+                        self.assertFalse(cluster.get(field))
+                    self.assertEqual((evidence / 'publication.json').exists(), final)
+                    self.assertEqual(cluster['repairProofChecks'], 2 if final else 1)
+                    (self.directory / 'calls.jsonl').write_text('')
+
+    def test_repair_final_mixed_render_stops_before_upgrade(self):
+        for change in ('other-image', 'crd', 'backend-config', 'profiler-config', 'policy'):
+            with self.subTest(change=change):
+                retained, node = self.retirement_rollout(repairChangeAtFinal=change)
+                evidence = self.out / change
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                cluster = json.loads((self.directory / 'state.json').read_text())
+                self.assertEqual(cluster['inflightObjects'], [retained])
+                self.assertEqual(cluster['repairNode'], node)
+                self.assertFalse(cluster.get('upgraded'))
+                self.assertEqual(cluster['repairProofChecks'], 1)
+                self.assertEqual(set(json.loads((evidence / 'publication.json').read_text())['roles']),
+                                 {'server', 'profiler'})
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_repair_other_inflight_work_stops_before_publication(self):
+        retained, node = self.retirement_rollout()
+        fixture = json.loads((self.directory / 'state.json').read_text())
+        other = {'apiVersion': 'chill.dacs.io/v1alpha1', 'kind': 'ProfilingRun',
+                 'metadata': {'name': 'other-active-run', 'namespace': 'other-namespace',
+                              'uid': 'other-run-uid'}, 'status': {'phase': 'Running'}}
+        fixture['inflightObjects'].append(other)
+        self.state(**fixture)
+        self.cli('--execute', '--evidence', str(self.out), expected=1)
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['inflightObjects'], [retained, other])
+        self.assertEqual(cluster['repairNode'], node)
+        self.assertFalse(cluster.get('upgraded'))
+        self.assertFalse((self.out / 'publication.json').exists())
+
+    def test_repair_new_inflight_work_at_final_gate_stops_upgrade(self):
+        retained, node = self.retirement_rollout(inflightAt=2)
+        self.cli('--execute', '--evidence', str(self.out), expected=1)
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['inflightObjects'], [retained])
+        self.assertEqual(cluster['repairNode'], node)
+        self.assertFalse(cluster.get('upgraded'))
+        self.assertEqual(cluster['repairProofChecks'], 1)
+        self.assertEqual(set(json.loads((self.out / 'publication.json').read_text())['roles']),
+                         {'server', 'profiler'})
+
+    def test_normal_install_stops_with_taint_held_preexecution_campaign(self):
+        retained, node = self.retirement_rollout()
+        self.recipe['retirementRepairOnly'] = False
+        self.cli('--execute', '--evidence', str(self.out), expected=1)
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['inflightObjects'], [retained])
+        self.assertEqual(cluster['repairNode'], node)
+        self.assertFalse(cluster.get('upgraded'))
+        self.assertFalse((self.out / 'publication.json').exists())
+
+    def test_repair_mixed_render_stops_without_mutating_ownership(self):
+        for change in ('other-image', 'crd', 'backend-config', 'profiler-config', 'policy',
+                       'duplicate-inner', 'non-string-inner', 'typed-inner'):
+            with self.subTest(change=change):
+                retained, node = self.retirement_rollout(repairChange=change)
+                evidence = self.out / change
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                cluster = json.loads((self.directory / 'state.json').read_text())
+                self.assertEqual(cluster['inflightObjects'], [retained])
+                self.assertEqual(cluster['repairNode'], node)
+                self.assertFalse(cluster.get('upgraded'))
+                self.assertFalse((evidence / 'publication.json').exists())
+                reports = list(evidence.glob('inflight-preflight-*/blockers.json'))
+                self.assertEqual(len(reports), 1)
+                self.assertEqual(json.loads(reports[0].read_text()), [{
+                    'kind': 'BatchEnergyOptimization', 'namespace': 'review',
+                    'name': retained['metadata']['name'], 'reasons': ['campaign nonterminal/unfrozen']}])
+                self.assertFalse(cluster.get('apiMutations'))
+                self.assertFalse(cluster.get('probeCount'))
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_repair_scope_rejects_mutating_inputs_before_cluster_access(self):
+        self.retirement_rollout()
+        original = copy.deepcopy(self.recipe)
+        invalid = (
+            {'retirementRepairOnly': 1}, {'images': ['server']},
+            {'images': ['server', 'profiler', 'dashboard']},
+            {'values': ['unread-values.yaml']}, {'replaceValues': True},
+            {'generatedValues': ['uncreated.yaml']}, {'runtimeDeclarations': True},
+            {'publicationOnly': ['server']}, {'toolSources': {'other': self.sha}},
+            {'commands': {'stage': [{'argv': ['true'], 'seconds': 1}]}},
+        )
+        for index, overrides in enumerate(invalid):
+            with self.subTest(overrides=overrides):
+                self.recipe = dict(original, **overrides)
+                self.cli('--execute', '--evidence', str(self.out / str(index)), expected=1)
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.requests, [])
+
+    def test_repair_dynamic_endpoint_inputs_stop_before_publication(self):
+        retained, node = self.retirement_rollout(dashboardValues={})
+        self.cli('--execute', '--evidence', str(self.out), expected=1)
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['inflightObjects'], [retained])
+        self.assertEqual(cluster['repairNode'], node)
+        self.assertFalse(cluster.get('upgraded'))
+        self.assertFalse((self.out / 'publication.json').exists())
 
     def dashboard_rollout(self, **changes):
         self.recipe.update(images=['dashboard'], dashboardCheck=True)
