@@ -65,6 +65,14 @@ limit. Fatal or retry-exhausted failures remain `Failed`. Idle-baseline attempt
 limits/publication remain a separate parent policy. This does not
 replace the Profiler's current-generation pre-Job failure check.
 
+Shared preparation admits the full observer `AttemptTimeout` against the selected
+result and memory budgets before public preflight succeeds or a new Job is built.
+Capacity rejection records current-generation `ExecutionPolicyInvalid`; an owned
+BEO child then produces parent `FatalFailure`, preserves completed trials, and
+uses normal Node handback. Transient dependency read errors remain reconciliation
+errors. Root `Failed/ExecutionPolicyInvalid` supports existing guarded public
+retirement. Recorded Job recovery retains its original executable contract.
+
 `internal/profiling/campaign/evidence` reconstructs retained campaign results,
 frozen plans and completed active/model-loaded-idle trials. It owns campaign
 state/result/plan consistency and Run ownership, protocol, current-generation
