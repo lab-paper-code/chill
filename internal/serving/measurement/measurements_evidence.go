@@ -42,6 +42,7 @@ func measurementTerminal(task *api.BatchEnergyOptimization) bool {
 		condition.Reason == task.Status.Outcome &&
 		(condition.Reason == "TransitionFailed" || condition.Reason == "RetryLimitExhausted" ||
 			condition.Reason == "EnergyObjectivePolicyMismatch" ||
+			condition.Reason == profiler.ResolutionReasonExecutionPolicyInvalid ||
 			condition.Reason == string(campaign.FailureClassFatalFailure) ||
 			condition.Reason == string(campaign.FailureClassUnknownFailure))
 }

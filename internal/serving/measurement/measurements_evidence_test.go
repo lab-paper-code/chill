@@ -449,8 +449,8 @@ func TestForeignMetadataAndDiagnosticsCannotVetoMeasurementDeletion(t *testing.T
 
 func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 	cases := []struct {
-		name, execution, reason string
-		stale                   bool
+		name, execution, reason, root string
+		stale                         bool
 	}{
 		{name: "permanent actuation-policy failure"},
 		{name: "unconfirmed required state", reason: measurementRequiredStateNotConfirmed},
@@ -458,6 +458,19 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 		{name: "unrecorded producer Job", execution: "producer"},
 		{name: "controller-owned Job", execution: "owned"},
 		{name: "active orphan Pod", execution: "orphan"},
+		{name: "execution-policy root failure", root: "current"},
+		{name: "stale root status generation", root: "stale status"},
+		{name: "stale root condition generation", root: "stale condition"},
+		{name: "unversioned root", root: "unversioned"},
+		{name: "mismatched root outcome", root: "different outcome"},
+		{name: "true root condition", root: "true condition"},
+		{name: "missing root condition", root: "missing condition"},
+		{name: "active root phase", root: "active phase"},
+		{name: "unsupported root reason", root: "unsupported reason"},
+		{name: "execution-policy root with stale Run", root: "current", stale: true},
+		{name: "execution-policy root with producer Job", root: "current", execution: "producer"},
+		{name: "execution-policy root with owned Job", root: "current", execution: "owned"},
+		{name: "execution-policy root with active orphan Pod", root: "current", execution: "orphan"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -468,6 +481,31 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 			task.Status.Result = nil
 			task.Status.Conditions[0].Status = meta.ConditionFalse
 			task.Status.Conditions[0].Reason = task.Status.Outcome
+			if tc.root != "" {
+				task.Status.Outcome = profiler.ResolutionReasonExecutionPolicyInvalid
+				task.Status.Conditions[0].Reason = task.Status.Outcome
+				switch tc.root {
+				case "stale status":
+					task.Status.ObservedGeneration = 0
+				case "stale condition":
+					task.Status.Conditions[0].ObservedGeneration = 0
+				case "unversioned":
+					task.Generation = 0
+					task.Status.ObservedGeneration = 0
+					task.Status.Conditions[0].ObservedGeneration = 0
+				case "different outcome":
+					task.Status.Outcome = "DifferentOutcome"
+				case "true condition":
+					task.Status.Conditions[0].Status = meta.ConditionTrue
+				case "missing condition":
+					task.Status.Conditions = nil
+				case "active phase":
+					task.Status.Phase = "Pending"
+				case "unsupported reason":
+					task.Status.Outcome = "CurvePlanResolutionFailed"
+					task.Status.Conditions[0].Reason = task.Status.Outcome
+				}
+			}
 			run, _ := ownedDeletionRun(task)
 			run.Generation = 1
 			reason := profiler.ResolutionReasonActuationPolicyInvalid
@@ -475,6 +513,9 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 			if tc.reason != "" {
 				reason = tc.reason
 				observed = 0
+			}
+			if tc.root != "" {
+				reason = profiler.ResolutionReasonExecutionPolicyInvalid
 			}
 			run.Status = api.ProfilingRunStatus{
 				ObservedGeneration: observed,
@@ -503,7 +544,8 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 				nativeObjects = append(nativeObjects, job)
 			}
 			native := fake.NewClientBuilder().WithScheme(measurementScheme(t)).WithObjects(nativeObjects...).Build()
-			storage := deletionStore(t, nil)
+			curveKey := "batch-energy-optimizations/native-uid/curve-plan.json"
+			storage := deletionStore(t, map[string][]byte{curveKey: []byte("owned frozen curve")})
 			service := deletionService(native, storage)
 			if tc.execution == "orphan" {
 				service.kube = kubefake.NewSimpleClientset(&core.Pod{
@@ -517,14 +559,20 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 				})
 			}
 			result, err := service.Delete(ctx, task.Namespace, task.Name, string(task.UID), task.ResourceVersion)
-			if tc.stale || tc.execution != "" {
-				if err == nil || storage.deleteCalls() != 0 {
-					t.Fatal("unsafe pre-Job cleanup mutated evidence")
+			accepted := !tc.stale && tc.execution == "" && (tc.root == "" || tc.root == "current")
+			getErr := native.Get(ctx, client.ObjectKeyFromObject(task), &api.BatchEnergyOptimization{})
+			if !accepted {
+				var domain *serving.Error
+				if !errors.As(err, &domain) || domain.Code != "MeasurementInUse" ||
+					storage.deleteCalls() != 0 || !storage.contains(curveKey) || getErr != nil {
+					t.Fatalf("unsafe pre-Job cleanup: err=%v native=%v", err, getErr)
 				}
 				return
 			}
-			if err != nil || !result.EvidenceDeleted || len(result.DeletedEvidence) != 5 {
-				t.Fatalf("permanent pre-Job failed campaign is undeletable: %+v %v", result, err)
+			if err != nil || !result.EvidenceDeleted || len(result.DeletedEvidence) != 5 ||
+				result.Request != measurementRequestDeletionRequested || storage.contains(curveKey) ||
+				!apierrors.IsNotFound(getErr) {
+				t.Fatalf("permanent pre-Job failed campaign is undeletable: %+v %v native=%v", result, err, getErr)
 			}
 		})
 	}
