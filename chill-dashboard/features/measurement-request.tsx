@@ -109,7 +109,7 @@ function GuidedMeasurementRequestPage() {
   if(copy?.error)prefill.errors.push(copy.error)
   const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], preprocessors:preprocessors.data?.items??[], datasets:datasets.data?.items??[], profiles:profiles.data?.profiles??[], prefill:prefill.active }
   const selected=coverage.data?.cells.flatMap(cell=>cell.variants).find(variant=>variant.id===params.get("variantId"))
-  return <Funnel key={params.toString()} namespace={namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} plansError={plans.error}/>
+  return <Funnel key={copy?.source?requestCopyQuery(new URLSearchParams(params),copy.source):params.toString()} namespace={namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} plansError={plans.error}/>
 }
 
 function Funnel({ namespace, from, context, prefill, selected, refetchPlans, checking, plansError }: { namespace: string; from: string | null; context: Context; prefill:MeasurementPrefill; selected?:MeasurementVariant; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean; plansError?:ApiError|null }) {
