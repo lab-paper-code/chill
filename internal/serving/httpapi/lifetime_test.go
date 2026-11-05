@@ -12,7 +12,7 @@ import (
 )
 
 func TestAppliedRequestLifetime(t *testing.T) {
-	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}

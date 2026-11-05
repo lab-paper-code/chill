@@ -137,7 +137,7 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 		recorded.Workloads, recorded.WorkloadIDs = nil, make([]string, len(s.Workloads))
 		for i, d := range s.Workloads {
 			recorded.WorkloadIDs[i] = d.Identity()
-			refs.add("definition", d.Identity(), d)
+			refs.add(observationDefinitionCatalog, d.Identity(), d)
 		}
 		recorded.Costs, recorded.CostRefs = nil, make([]string, len(s.Costs))
 		for i, c := range s.Costs {
@@ -152,7 +152,7 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 		recorded.Outstanding = slices.Clone(s.Outstanding)
 		for i, r := range recorded.Outstanding {
 			if r.Definition != nil {
-				refs.add("definition", r.Definition.Identity(), r.Definition)
+				refs.add(observationDefinitionCatalog, r.Definition.Identity(), r.Definition)
 				recorded.Outstanding[i].DefinitionID, recorded.Outstanding[i].Definition = r.Definition.Identity(), nil
 			}
 		}
@@ -181,17 +181,7 @@ func (l *ObservationLog) SchedulerRecord(event SchedulerObservation) error {
 			Sampling: event.PowerSampling, Coverage: event.PowerCoverage,
 		})
 	}
-	l.writerMu.Lock()
-	defer l.writerMu.Unlock()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := l.now()
-	for _, ref := range refs.rows {
-		if err := l.referenceLocked(ref.kind, ref.key, event.At, now, ref.body); err != nil {
-			return err
-		}
-	}
-	return l.appendLocked(observationSchedulerStream, now, line)
+	return l.submitRecord(observationSchedulerStream, line, refs.rows, event.At)
 }
 
 // Stored records keep profile IDs; the catalog holds profile bodies.
@@ -226,7 +216,7 @@ func (o *observationReferences) instances(instances []serving.SchedulerInstance)
 
 func (o *observationReferences) instance(instance serving.SchedulerInstance) serving.SchedulerInstance {
 	if instance.Profile != nil {
-		o.add("profile", instance.Profile.ID, instance.Profile)
+		o.add(observationProfileCatalog, instance.Profile.ID, instance.Profile)
 		instance.ProfileID, instance.Profile = instance.Profile.ID, nil
 	}
 	return instance
@@ -284,7 +274,7 @@ func DecodeSchedulerLine(raw []byte, catalog *ObservationCatalog) (SchedulerObse
 			s.Workloads = make([]*serving.Definition, len(s.WorkloadIDs))
 		}
 		for i, id := range s.WorkloadIDs {
-			if err := catalog.body("definition", id, line.At, &s.Workloads[i]); err != nil {
+			if err := catalog.body(observationDefinitionCatalog, id, line.At, &s.Workloads[i]); err != nil {
 				return event, err
 			}
 		}

@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"sort"
@@ -189,6 +190,9 @@ func (r *Runtime) applySchedulerTargetLocked(candidate SchedulerCandidate, valid
 
 // Resolve logical slots once for both validation and actual application.
 func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, uids []string, unroute bool) (map[string]map[string]int32, error) {
+	if !unroute && r.observationErrLocked() != nil {
+		return nil, failure(ObservationUnavailableCode, "request observation log is unavailable")
+	}
 	if err := r.validateSchedulerRoutingLocked(candidate, uids, unroute); err != nil {
 		return nil, err
 	}
@@ -216,12 +220,8 @@ func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, ui
 			targets[uid][actual.State.ID] = weight
 			continue
 		}
-		if actual == nil || !actual.State.Ready || actual.State.Terminated || wanted.Terminated || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
-			return nil, failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
-		}
-		workload := r.workloads[uid]
-		if workload == nil || workload.detached || profilePath(workload.definition, actual.Profile) == nil || (actual.OwnerWorkloadUID != "" && actual.OwnerWorkloadUID != uid) {
-			return nil, failure("DefinitionChanged", "target %q does not match current workload %q", wanted.ID, uid)
+		if err := r.validateSchedulerDestinationLocked(actual, wanted, uid); err != nil {
+			return nil, err
 		}
 		if targets[uid] == nil {
 			targets[uid] = map[string]int32{}
@@ -240,6 +240,17 @@ func (r *Runtime) resolveSchedulerRoutingLocked(candidate SchedulerCandidate, ui
 		}
 	}
 	return targets, nil
+}
+
+func (r *Runtime) validateSchedulerDestinationLocked(actual *runtimeInstance, wanted SchedulerInstance, uid string) error {
+	if actual == nil || !actual.State.Ready || actual.State.RecoveryUnknown || actual.State.Terminated || wanted.Terminated || actual.Profile == nil || wanted.Profile == nil || actual.Profile.ID != wanted.Profile.ID || actual.State.Node != wanted.Node {
+		return failure("TargetNotReady", "target %q lacks matching actual readiness", wanted.ID)
+	}
+	workload := r.workloads[uid]
+	if workload == nil || workload.detached || profilePath(workload.definition, actual.Profile) == nil || (actual.OwnerWorkloadUID != "" && actual.OwnerWorkloadUID != uid) {
+		return failure("DefinitionChanged", "target %q does not match current workload %q", wanted.ID, uid)
+	}
+	return nil
 }
 
 // Validate logical route declarations before resolving their physical runners.
@@ -349,7 +360,7 @@ func (r *Runtime) retainAcceptedRoutesLocked(targets map[string]map[string]int32
 }
 
 func (r *Runtime) instanceServesCallLocked(instance *runtimeInstance, call *Call) bool {
-	if instance == nil || !instance.State.Ready || instance.State.Stopped || instance.State.Terminated || (instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != call.receipt.UID) {
+	if instance == nil || !instance.State.Ready || instance.State.RecoveryUnknown || instance.State.Stopped || instance.State.Terminated || (instance.OwnerWorkloadUID != "" && instance.OwnerWorkloadUID != call.receipt.UID) {
 		return false
 	}
 	return profilePath(call.definition, instance.Profile) != nil
@@ -363,6 +374,9 @@ func (r *Runtime) StopSchedulerInstance(id string) (bool, error) {
 	retiring := r.instances[id]
 	if retiring == nil {
 		return true, nil
+	}
+	if retiring.State.RecoveryUnknown {
+		return false, nil
 	}
 	for _, workload := range r.workloads {
 		for _, call := range workload.queue {
@@ -398,11 +412,22 @@ func (r *Runtime) StopSchedulerInstance(id string) (bool, error) {
 // proof. A failed probe or HTTP exchange alone cannot free physical ownership.
 func (r *Runtime) DetachInstance(id string) (bool, error) {
 	r.mu.Lock()
+	if !r.instanceDrainedLocked(id) {
+		r.mu.Unlock()
+		return false, nil
+	}
+	if instance := r.instances[id]; instance != nil {
+		instance.State.Ready = false
+	}
+	r.rebuildLocked()
+	r.mu.Unlock()
+	if err := r.drainObservation(context.Background()); err != nil {
+		return false, err
+	}
+	r.mu.Lock()
 	defer r.mu.Unlock()
-	for _, call := range r.calls {
-		if call.assignment != nil && call.assignment.Instance == id && (!call.backendDone || !call.transportDone || !call.responseRecorded) {
-			return false, nil
-		}
+	if !r.instanceDrainedLocked(id) {
+		return false, nil
 	}
 	if instance := r.instances[id]; instance != nil {
 		instance.State.Ready = false
@@ -417,6 +442,22 @@ func (r *Runtime) DetachInstance(id string) (bool, error) {
 	r.dispatchLocked()
 	r.signal()
 	return true, nil
+}
+
+func (r *Runtime) instanceDrainedLocked(id string) bool {
+	if instance := r.instances[id]; instance != nil {
+		if instance.State.RecoveryUnknown || instance.finalizing != 0 {
+			return false
+		}
+	} else if r.recovery.Unknown {
+		return false
+	}
+	for _, call := range r.calls {
+		if call.assignment != nil && call.assignment.Instance == id && (!call.backendDone || !call.transportDone || !call.responseRecorded) {
+			return false
+		}
+	}
+	return true
 }
 
 // SchedulerInputs captures only coupled in-process request and routing state.

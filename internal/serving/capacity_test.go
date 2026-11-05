@@ -499,17 +499,25 @@ func TestCapacityTableCancelsUnwantedQueuedAndRunning(t *testing.T) {
 		recorded.Add(1)
 		return nil
 	}, nil)
-	table.parallel <- struct{}{}
-	table.Ensure(context.Background(), s, snap)
 	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0]).Key()
 	queuedKey := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[1], snap.Workloads[0]).Key()
-	table.mu.Lock()
-	running, queued := table.running[key], table.running[queuedKey]
-	original := running.ctx
+	original, cancel := context.WithCancel(context.Background())
 	blocked := &capacityBlockedContext{Context: original, started: make(chan struct{}), release: make(chan struct{})}
-	running.ctx = blocked
+	// Publish the complete task before either build or Ensure can read its
+	// context. Replacing a live task's context races the admission goroutine.
+	running := &capacityTask{option: snap.Options[0], workload: snap.Workloads[0], key: key, ctx: blocked, cancel: cancel}
+	table.running[key] = running
+	table.wg.Add(1)
+	table.parallel <- struct{}{}
+	runningDone := make(chan struct{})
+	go func() {
+		table.build(s, snap.DispatchOccupancy, running, snap.At)
+		close(runningDone)
+	}()
+	table.Ensure(context.Background(), s, snap)
+	table.mu.Lock()
+	queued := table.running[queuedKey]
 	table.mu.Unlock()
-	<-table.parallel
 	select {
 	case <-blocked.started:
 	case <-time.After(5 * time.Second):
@@ -525,13 +533,14 @@ func TestCapacityTableCancelsUnwantedQueuedAndRunning(t *testing.T) {
 	// delete the replacement task or publish its canceled result.
 	table.Ensure(context.Background(), s, snap)
 	close(blocked.release)
-	done := make(chan struct{})
-	go func() { table.Wait(); close(done) }()
 	select {
-	case <-done:
+	case <-runningDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("canceled tasks retained the only replay slot")
 	}
+	// Bound cancellation itself, not the replacement's measured replay work.
+	// The package watchdog still bounds the complete build/cleanup assertion.
+	table.Wait()
 	if rows := table.Rows(); len(rows) != 2 || rows[0].Status != CapacityBuilt || rows[1].Status != CapacityBuilt || recorded.Load() != 2 {
 		t.Fatalf("only replacement rows should be recorded: %+v, records %d", rows, recorded.Load())
 	}

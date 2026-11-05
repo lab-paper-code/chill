@@ -64,13 +64,56 @@ rev93 실제 로그는147.043s `456→459→456MiB`,153.159s `880→880→15MiB`
 GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft/hard 차2,192/3,216MiB는 복원 기동 여유이지 RSS/charged peak·전체 E5 메모리 인증이 아니다. target-limit1,024MiB는 runtime/stack/cache/scratch 보장이 아니며 요청 body/queue·ID map·미완료 payload·catalog·긴 조회는 별도다. 150MB/h·κ로 요청 수/heap 상한을 환산하지 않는다. 증설 없이2h로 줄이고 CampaignOps 직렬 적용/E5-0의 cgroup/GC·Ready/restart·archive 출처/공백을 보존한다.
 근거: `O=~/.cache/chill-assets/ops/pools-deploy`, `O/intent/observation-retention-20261027.json`, `O/campaign/v2/d-20261027/control-192/{startup.log,gc-heap.json}`, `O/deployB/control-195-20261027/pods-ready.stdout`. 라이브 적용은 CampaignOps 소유이며 이 조사에서 부하·빌드·측정 중 재시작을 하지 않았고 설정 커밋은 적용/검증 완료가 아니다.
 
-### 5.2 v3 관측 maintenance 잠금 분리 (D34/D37)
-요청 assigned/final/native 행은 여전히 동기 Write이며 assignment 기록 성공 뒤에만 native를 실행한다. RequestClosed도 final Write 뒤 반환한다. 비동기 append·새 거절·큐·설정 숫자는 추가하지 않는다. 배정 전 메모리 사실의 process-crash 손실과 Flush/Close 전 host power-loss 노출 범위는 기존과 같으며, assignment 없는 native 실행을 허용하지 않는다.
+### 5.2 v3 asynchronous CephFS observation admission (D44)
 
-`writerMu`는 동기 append/회전 순서를 유지하고 기존 diagnostic lock2를 맡는다. `mu`는 committed 경로·크기·catalog·오류를 보호하며 회전의 mkdir/open/close 중에는 풀린다. Flush는 잠금 안에서 현재 파일 descriptor를 복제한 뒤 두 append 잠금 밖에서 Sync/Close한다. 복제는 회전/Close와 겹쳐도 Flush 시작 전에 저장된 파일을 유지한다. Flush/Close의 로컬 durability barrier는 직렬화되므로 동시에 유지하는 복제는 기존 stream 수+루트 definitions 한 개로 한정된다. Close는 closed를 먼저 게시하고 파일들을 떼어 낸 뒤 잠금 밖에서 sync/close한다. archive는 이전 시간의 진행 중 append/회전을 frontier에서 끝내고, upload/RemoveAll은 append 잠금 밖에서 수행한다. captureMu는 fd open과 시간 삭제만 조정하며 전체 stream 성공 표시는 publishMu가 그대로 보호한다.
-보존 주장은 완료된 Write·복제 FD·현재 handle의 로컬 barrier 범위다. 과거 accepted state 전체의 완전한 fsync나 전원 손실을 새로 보장하지 않는다. 이미 회전돼 닫힌 파일의 명시적 Sync가 없고 Close가 이전에 실패한 final을 재시도하지 않는 점은 ef16a969부터의 기존 한계다.
+All six streams and root definitions submit frozen bytes to one unbounded FIFO
+and one disk worker. RequestEvent/RequestClosed return after admission, never
+after Write/Sync; B invariant 8 (Write before Execute) intentionally changes.
+No producer-visible lock covers filesystem work. Sustained CephFS stalls can
+exhaust process memory and OOM loses the unwritten tail; there is no new cap,
+drop policy, deadline, spool, timer, or overload response.
 
-이 수정은 다른 요청·scheduler의 동기 Write나 같은 inode의 커널 writeback 대기를 없애지 않는다. A2에서 관측된 RequestClosed 180/189ms와 RequestEvent 172ms는 각 goroutine의 단발 file_write이며 같은 로그의 sync/회전과 겹치지 않았다. 진단을 끈 회차 3에서도 약10초 주기의 Xr 스파이크가 재현됐으므로 진단 capture의 아티팩트로 보지 않는다. 출처는 미확정이며, 유지되는 동기 기록을 새 버퍼/큐/timeout으로 숨기지 않는다.
+FIFO ordering includes catalogs before references and exact-version final
+acknowledgement. Append receipt time is captured at enqueue and clamped only
+against the append frontier; scientific event/native/stage timestamps remain
+unchanged. Read barriers expose a written prefix plus current live rows, not
+an MVCC snapshot; stored final still wins over a newer retained open version.
+Archive and raw closed-minute selection cross the same sealed frontier.
+Drain Syncs a finite prefix, including files synced before rotation.
+
+Under the existing flock, `async-run.json` is durably made active before
+repair/restore and execution. An unclean, missing, or malformed predecessor
+means boot-wide unknown; an empty directory alone is not proof of a fresh
+physical installation. Surviving assignments restore normally, never replay.
+Each exact executor remains Unconfirmed until this boot's verified fresh
+actor-empty observation or exact termination. Pending/unrouted/unreadable Pods
+retain occupancy. Healthy siblings can serve; inference CLEAR does not settle
+independent power/prepare/route/cleanup effects or erase historical evidence.
+Recovery provenance survives clean boots in coverage and raw indexes without
+changing original JSONL/gzip bytes.
+An exact successful Pod Create (not AlreadyExists) records its API-assigned
+Pod UID before prepared-source publication. The owner-run file retains which
+already-existing crash roots predate that creation proof, so unrelated new
+executors do not inherit old influence after clean boots. Discovery racing
+the notification may leave provisional provenance, but exported coverage
+resolves it against the committed creation proof. A new unclean boot still
+adds an applicable root; neither creation nor log-clean bypasses normal fresh
+native-read/readiness, ownership, or independent control-effect checks.
+
+A complete old buffered HTTP request can admit inference before disconnect
+cancellation even after actor-empty CLEAR. This path cannot mutate control
+state. The accepted residual can delay new inference: E5 influence extends
+through every observed late completion, or stays UNKNOWN/open if no endpoint
+is established. CLEAR alone is never a finite scientific endpoint.
+
+Writer failure retains the failed head and later FIFO bytes, immediately
+wakes Runtime and keeps the existing ObservationUnavailable/503 path sticky.
+Explicit Flush/Close retries the ordered prefix; failed rollback cannot retry
+an unproved boundary. Already dispatched physical ownership is not released
+because storage failed. Graceful recording requires producer join → pending
+final drain → Sync/Close → durable log-clean marker → flock release. Log-clean
+only means no memory-only admitted tail; HTTP/runtime/control errors remain
+errors. Failed Close leaves active evidence and withholds graceful flock handoff.
 
 ## 6. 조회
 ### 6.1 범위와 기존 reducer
@@ -299,10 +342,11 @@ S3 `serving/observations.v1alpha5/20261026T19/requests.jsonl.gz`를 read-only `.
 CLI replay/주입evaluation producer는 JSON직렬화만 stdout공유lock 밖으로 옮기고 완전한 한줄 write+flush는lock으로 보호한다. worker는flush뒤 다음요청, writer thread/queue는추가하지 않는다. 이는 불필요critical-section축소이지 공백원인/해결증명이 아니다. CLI의 sentMonotonicNS/finishedMonotonicNS는 infer직전/응답·transport오류처리직후 같은프로세스 단조시각이며 stdout/패킷/gateway수신이 아니다.
 issuanceFidelity는 실제producer start/send로 발행순 정렬하여 시작/끝포함gap p50/p95/p99/max·>50ms개수/비율/구간offset/안의planned수, frozen trace planned-gap분포·send lateness분포/>50ms수를 judgment/e5-summary/출판KPI에 보존한다. Poisson/0부하 자연공백을 자동실패로 하지 않고 timestamp없음UNKNOWN/NotReady·offered0 NOT_OFFERED, 미발행/결손0대체금지다. 기존10ms delayed와50ms보고는 별개다. demo E5-0~7도 `hack/evaluation/request_analysis.py` 공통계산을 judge/demo summarize·단계/전체summary.json/md·publish workload KPI에 쓰고 결손은UNKNOWN/이유다.
 다음 측정은15절 load로그, evaluation는producer start/monotonic anchor·client/server/edgemesh cgroup·GC를 보존한다. CLI적용은 load-generator새이미지/digest/receipt가 필요하며 주입파일 변경만으로 CLI배포를 주장하지 않는다. U6는runtime7재빌드가 불필요하다.
-### 16.3 별도 writer 개선의 설계 경계(미구현)
-위 근거로 U6에서 observation_log.go는 바꾸지 않는다. 별도 배정 시 immutable snapshot/closing을 requestMu아래 확보→밖에서marshal→writer mutex아래 closed/현재row·참조재확인→catalog/request를같은commit-time hour에 append한다. JSON완료순 아닌기존append순, assigned성공전 native시작금지다. final실패는closing유지/Flush재시도, phase갱신시pointer비교로최신row삭제금지다. Runtime/Flush경쟁·close/hour/catalog-first를보존하며 Flush의기존mutex경로를helper임시unlock만으로고치지 않는다. 모든caller와diagnostic mark를함께이행하고 약50줄초과/순서변경은별도설계·회귀검사다. 비동기장부/generic queue는없다.
-
-Scheduler capture는 Observer가 catalog publication 때 `cloneCatalogProfile`로 깊은 복사하여 동결한 immutable Profile 포인터를 재사용한다. `Profiles()` 결과의 nested 필드를 수정해도 기존 canonical body는 바뀌지 않는다. 동일 ID·동일 body의 재publication도 포인터를 유지하고 실제 profile 변경은 새 포인터를 발행한다. `referenceLocked`의 기존 same-pointer fast path만 활용하며 persisted JSON, catalog-first/append 순서, durability와 writer lock 범위는 바꾸지 않는다.
+### 16.3 Writer improvement ownership
+The earlier synchronous proposal is superseded by D44 (§5.2). U6 itself did
+not change observation storage; the separate D44 cutover deliberately changes
+assignment admission to FIFO acceptance while preserving row ordering,
+catalog dependencies, immutable profile/definition reuse, and event values.
 
 <a id="17-e5-증거-api-2026-10-30"></a>
 
@@ -553,15 +597,38 @@ and lifetime: the server retains the owner file until shutdown. The existing
 append, request, capture, and publication locks moved with the concrete log;
 there is no second lock, ledger, or writer.
 
-Runtime now depends on the inward `serving.RuntimeObservation` contract:
-`RuntimeFacts`, `DefinitionRecord`, `RequestEvent`, `RequestClosed`, and
-`RecordNativeSupplement`. Each call remains synchronous at the original call
-site; restoration still consumes the same pending rows once. The interface is
-required for the dependency direction: observation storage consumes serving's
-domain records, while runtime must not import that storage implementation.
-`observation.ObservationLog` implements that contract directly. All concrete
-constructors and storage consumers import observation; serving does not import
-observation, and no compatibility aliases or forwarding implementation remain.
+Runtime depends on the inward `serving.RuntimeObservation` contract:
+`RuntimeFacts`, `DefinitionRecord`, `RequestEvent`, `RequestClosed`,
+`RecordNativeSupplement`, `Drain`, `Err`, `Failure`, `Recovery`, and
+`RecordRecovery`. Record calls admit immutable FIFO commands, not durable
+acknowledgements. Lifecycle success crosses a finite locally synced prefix
+outside `Runtime.mu`, then rechecks physical drain. Storage failure is sticky
+and wakes runtime consumers without waiting for another request; synchronous
+status checks also fence admission before the notification goroutine runs.
+Already dispatched work retains its physical owner until actual completion.
+The interface keeps the dependency direction: observation storage consumes
+serving's domain records, while runtime does not import storage.
+`observation.ObservationLog` implements it directly; no compatibility aliases
+or forwarding implementation remain.
+
+An unclean or unproved predecessor adds executor-local inference uncertainty,
+separate from restored known calls and independent control proofs. Discovery
+installs each executor's fence before routing publication, including pending
+Pods. Only this boot's fresh successful exact-identity, measured-metadata
+verified actor-empty probe (`NativeVerified`) or exact confirmed termination
+can clear it; a failed probe's preserved Native state cannot. Healthy exact
+executors can resume serving while peers remain unavailable. Registration-wide
+drain/detach/forget still retains every affected unknown executor. Historical
+observation gaps are not current recorder errors and do not veto healthy
+admission; actor-empty CLEAR does not claim a finite scientific late-tail end.
+Exact container termination is still recorded after physical CLEAR and across
+later clean boots: it can close that executor's historical influence interval,
+without changing any separate control-effect proof.
+Exact terminal-Pod identity remains a release proof after its Node disappears;
+the surviving Node UID requirement applies to running native probes, not to
+confirmed termination.
+`BeginShutdown` stops admission before producer joins; `JoinExecutions` joins
+local execution/finalization producers without inventing remote completion.
 
 The inward domain retains `Definition`, `RequestEvent`, `RequestRow`,
 `ObservationCoverage`/source/gap, and the scheduler records already consumed
@@ -585,12 +652,12 @@ adapters may consume it. Serving-core no longer depends on power-window.
 
 Runtime whitebox tests use a constructor hook declared only in `_test.go`;
 external `serving_test` registers the real filesystem-backed observation log.
-An absent hook fails explicitly. A test-owned synchronous gate checks that
-runtime state and reservations remain available while persistence is blocked,
-and the storage-owned concurrency test independently blocks the actual writer
-lock and checks that folded assignments do not hold the request lock.
-Both checks retain assignment-before-native-execution and final-row ordering.
-Filesystem fault tests create real minute-path conflicts, not a fake recorder.
+An absent hook fails explicitly. Consumer regressions block actual worker
+Write/Sync while Runtime execution and other producers continue, retain final
+version ordering, and distinguish surviving assignment restoration from a
+missing crash tail. Failed storage uses the existing unavailable path.
+Test fixtures unrelated to recovery explicitly establish a clean predecessor;
+crash regressions copy written bytes and active run evidence without Close.
 Cross-owner restart checks use public runtime state/inventory; capture lock
 checks decode the public diagnostic event stream instead of private buffers.
 Historical-hour capacity/readback checks moved with storage and keep their

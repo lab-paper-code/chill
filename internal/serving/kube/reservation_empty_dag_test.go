@@ -16,7 +16,8 @@ import (
 func TestEmptyRouteAdmissionAC38(t *testing.T) {
 	for _, kind := range []string{"", servingstate.OperationPrepare, servingstate.OperationPower, servingstate.OperationResize, servingstate.OperationStop} {
 		t.Run(kind, func(t *testing.T) {
-			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
+			manager, _ := newManagerHarness(t)
+			c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: manager.runtime}
 			route := serving.Action{ID: "empty-route", Kind: servingstate.OperationRoute}
 			target := serving.SchedulerCandidate{ID: "raw-empty", Actions: []serving.Action{route}}
 			if kind != "" {
@@ -41,7 +42,8 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 
 func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 	target := serving.SchedulerCandidate{ID: "empty-replan", Actions: []serving.Action{{ID: "empty-route", Kind: servingstate.OperationRoute}}}
-	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
+	manager, _ := newManagerHarness(t)
+	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: manager.runtime}
 	for range 2 {
 		c.launch(target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
@@ -100,7 +102,8 @@ func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
 
 func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 	for _, ready := range []int{0, 1, 2} {
-		c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: &serving.Runtime{}}
+		manager, _ := newManagerHarness(t)
+		c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: manager.runtime}
 		instances := []serving.SchedulerInstance{{ID: "a", WorkloadUID: "w", Ready: ready > 0}, {ID: "b", WorkloadUID: "w", Ready: ready > 1}}
 		routing := map[string]map[string]int32{"w": {"a": 500, "b": 500}}
 		c.state.Snapshot = serving.SchedulerSnapshot{Instances: instances, Routing: routing}

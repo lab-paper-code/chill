@@ -92,6 +92,9 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			Node: state.Node, Profile: profileByID[state.Profile], Allocation: state.Allocation, Ready: state.Ready && !state.Terminated,
 			Stopped: state.Stopped, Terminated: state.Terminated, ObservedAt: state.ObservedAt, Routable: state.Routable, Weight: 1}
 		instance.PodUID = state.PodUID
+		if instance.ID == "" {
+			instance.ID = uid
+		}
 		instance.StartupFailure = state.StartupFailure
 		instance.ActualImageID = state.ActualImageID
 		instance.DesiredRuntimeImage = state.DesiredRuntimeImage
@@ -99,7 +102,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 		if state.Reason != "" {
 			instance.Reasons = []string{state.Reason}
 		}
-		if !state.Terminated && (state.Native == nil || !state.Ready) {
+		if !state.Terminated && (state.RecoveryUnknown || state.Native == nil || !state.Ready) {
 			sn.Reasons = appendReason(sn.Reasons, serving.NodeInstanceUnavailable)
 			instance.Ready = false
 		}
@@ -202,7 +205,7 @@ func schedulerTargetReady(wanted serving.SchedulerInstance, snapshot serving.Sch
 		return false
 	}
 	state := schedulerPhysicalState(wanted.ID, physical)
-	if state == nil || !state.Ready || state.Stopped || state.Terminated || state.Native == nil || !state.Native.Ready {
+	if state == nil || state.RecoveryUnknown || !state.Ready || state.Stopped || state.Terminated || state.Native == nil || !state.Native.Ready {
 		return false
 	}
 	captured := slices.ContainsFunc(snapshot.Instances, func(actual serving.SchedulerInstance) bool {

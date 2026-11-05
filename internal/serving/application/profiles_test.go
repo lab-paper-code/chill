@@ -259,7 +259,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 	const acceptedVersion = "accepted-config"
 	ctx := context.Background()
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
+		Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
@@ -479,7 +479,7 @@ func schedulerTestService(t *testing.T, config SchedulerConfiguration) *Schedule
 	t.Helper()
 	ctx := context.Background()
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
+		Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {

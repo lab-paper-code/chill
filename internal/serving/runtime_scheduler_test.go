@@ -389,7 +389,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	started := make(chan Dispatch, 2)
 	exchanged := make(chan struct{}, 2)
 	actualAt := time.Now().Add(-time.Second)
-	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, Native: &native.State{}}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
+	instance := ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: actualAt, NativeVerified: true, Native: &native.State{}}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 1, Execute: func(ctx context.Context, dispatch Dispatch) (BackendResult, error) {
 		started <- dispatch
 		<-ctx.Done()
 		exchanged <- struct{}{}
@@ -507,7 +507,7 @@ func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
 		for _, id := range held {
 			state.Requests = append(state.Requests, native.RequestState{Context: native.RequestContext{RequestID: id}, Phase: "queued"})
 		}
-		return ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: state}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 4,
+		return ReadyInstance{State: InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), NativeVerified: true, Native: state}, Profile: p, Routing: map[string]int32{d.UID: 1}, Capacity: 4,
 			Execute: func(context.Context, Dispatch) (BackendResult, error) {
 				return BackendResult{StatusCode: 502}, failure("BackendUnavailable", "native backend did not complete a valid exchange")
 			}}
@@ -615,7 +615,7 @@ func TestSchedulerOffRestoresNewlyDiscoveredStaticCapacity(t *testing.T) {
 		t.Fatalf("preparation autojoined controlled route: %+v %v", state, err)
 	}
 	r.DisableSchedulerRouting()
-	if state, err := r.State(d.Name); err != nil || state.Reason != "Ready" || !state.Admission {
+	if state, err := r.State(d.Name); err != nil || state.Reason != reasonReady || !state.Admission {
 		t.Fatalf("off mode stranded new static capacity: %+v %v", state, err)
 	}
 }

@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	outcomeCompleted  = "completed"
-	outcomeIncomplete = "incomplete"
+	outcomeCompleted      = "completed"
+	outcomeIncomplete     = "incomplete"
+	outcomeCanceled       = "canceled"
+	outcomeDeliveryFailed = "delivery_failed"
 )
 
 func observationIncludes(filter []string, value string) bool {
@@ -71,7 +73,7 @@ func (result *ObservationResult) aggregate(ctx context.Context, definitions map[
 		cohort.Total++
 		cohort.Outcomes[outcome]++
 		switch outcome {
-		case "delivery_failed", outcomeIncomplete, "canceled":
+		case outcomeDeliveryFailed, outcomeIncomplete, outcomeCanceled:
 			continue
 		}
 		if row.ElapsedNanos != nil && *row.ElapsedNanos > 0 {

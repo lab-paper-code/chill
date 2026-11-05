@@ -97,6 +97,9 @@ func TestResourcesHandshakeReplacementAndRestart(t *testing.T) {
 	if _, err := receiver.receive(ctx, batch); err == nil {
 		t.Fatal("restart accepted unconfirmed targets")
 	}
+	if err := log.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
 	files, err := filepath.Glob(filepath.Join(directory, "v1alpha5", "*", "resources.*.jsonl"))
 	if err != nil || len(files) != 1 {
 		t.Fatalf("node batch files=%v err=%v", files, err)
@@ -138,6 +141,9 @@ func TestProcessResourcesDirectorySamplingAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := producer.record(at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
 	files, err := filepath.Glob(filepath.Join(directory, "v1alpha5", "*", "resources.*.jsonl"))

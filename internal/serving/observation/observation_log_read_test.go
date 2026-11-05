@@ -32,7 +32,7 @@ func TestObservationReadAllowsIngressAndSchedulerAppendWhilePaused(t *testing.T)
 	if err := observationLog.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
 		t.Fatal(err)
 	}
-	read, err := observationLog.capture(map[string][2]time.Time{observationRequestStream: {}, observationSchedulerStream: {}})
+	read, err := observationLog.capture(context.Background(), map[string][2]time.Time{observationRequestStream: {}, observationSchedulerStream: {}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,8 +94,11 @@ func TestObservationCaptureOpensOutsideWriterLock(t *testing.T) {
 	if err := log.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := log.writeBarrier(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
 	recorder.Start()
-	read, err := log.capture(map[string][2]time.Time{observationSchedulerStream: {}})
+	read, err := log.capture(context.Background(), map[string][2]time.Time{observationSchedulerStream: {}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +159,9 @@ func TestObservationCaptureFreezesPathsAndOffsetsBeforeOpening(t *testing.T) {
 	if err := log.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := log.writeBarrier(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
 	// Pause exactly after the in-memory snapshot, before any read handle opens.
 	read, segments := log.captureSnapshot(map[string][2]time.Time{observationSchedulerStream: {}}, nil)
 	defer read.close()
@@ -192,7 +198,7 @@ func TestObservationCaptureFreezesPathsAndOffsetsBeforeOpening(t *testing.T) {
 // also count allocations the runtime makes on other goroutines.
 func scanLargeLines(t *testing.T, observationLog *ObservationLog, bounds [2]time.Time) int {
 	t.Helper()
-	read, err := observationLog.capture(map[string][2]time.Time{observationSchedulerStream: bounds})
+	read, err := observationLog.capture(context.Background(), map[string][2]time.Time{observationSchedulerStream: bounds})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,6 +257,9 @@ func TestObservationReadIgnoresUnterminatedLastLine(t *testing.T) {
 	at := observationTestHour.Add(time.Second)
 	clock.set(at)
 	if err := observationLog.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observationLog.writeBarrier(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	unterminated, err := json.Marshal(schedulerLine{At: at.Add(time.Nanosecond)})

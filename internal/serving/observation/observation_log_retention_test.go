@@ -60,8 +60,11 @@ func TestRequestClosedKeepsRowUntilFinalIsStored(t *testing.T) {
 	if err := os.WriteFile(blocked, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.RequestClosed("closing"); err == nil || observationLog.open["closing"] == nil {
-		t.Fatalf("failed final append dropped the open row: %v", err)
+	if err := observationLog.RequestClosed("closing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observationLog.writeBarrier(context.Background(), false); err == nil {
+		t.Fatal("failed final write was reported as a complete prefix")
 	}
 	if err := os.Remove(blocked); err != nil {
 		t.Fatal(err)
@@ -209,6 +212,9 @@ func TestDefinitionRecordAppendsEachBodyOnce(t *testing.T) {
 		if err := restarted.DefinitionRecord(d); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := restarted.writeBarrier(context.Background(), false); err != nil {
+		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(restarted.root, observationDefinitionsFile))
 	if err != nil {

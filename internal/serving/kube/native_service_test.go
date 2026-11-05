@@ -431,7 +431,8 @@ func TestCUDAPreparationReproducesMeasuredSupplementalGroups(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	observer := newTestObserver(t)
+	operations := &servingops.Operations{Store: store, Kube: kube, Runtime: observer.runtime, Observer: observer, Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := servingstate.PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
@@ -479,7 +480,8 @@ func TestPreparationSeedsRoutingBeforeRoute(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	observer := newTestObserver(t)
+	operations := &servingops.Operations{Store: store, Kube: kube, Runtime: observer.runtime, Observer: observer, Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	for _, owner := range []*serving.WorkloadReference{nil, {Name: "owner", UID: "owner-uid"}} {
 		name, want := "scheduler-prepared", `{}`
 		if owner != nil {
@@ -537,7 +539,8 @@ func TestRKNNPreparationProjectsMeasuredHostAccess(t *testing.T) {
 		return true, nil, errors.New("stop after Pod creation")
 	})
 	store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-	operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
+	observer := newTestObserver(t)
+	operations := &servingops.Operations{Store: store, Kube: kube, Runtime: observer.runtime, Observer: observer, Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond}}
 	spec := servingstate.PrepareSpec{
 		Name: "measured-rknn",
 		Instance: serving.SchedulerInstance{
@@ -643,7 +646,8 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 				return true, nil, errors.New("stop after Pod creation")
 			})
 			store := &Store{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(node.DeepCopy()).Build()}
-			operations := &servingops.Operations{Store: store, Kube: kube, Observer: newTestObserver(t), Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
+			observer := newTestObserver(t)
+			operations := &servingops.Operations{Store: store, Kube: kube, Runtime: observer.runtime, Observer: observer, Config: servingops.OperationConfig{Namespace: "chill-system", PollInterval: time.Millisecond, Measurement: tc.measurement}}
 			spec := measuredCPUPreparationFixture()
 			evidence, err := operations.PrepareInstance(ctx, spec)
 			pod := &core.Pod{}
@@ -654,7 +658,7 @@ func TestMeasurementPoolAdmitsOnlyMatchingOperations(t *testing.T) {
 				}
 				if !tc.measurement {
 					// observer nil: reaching any effect past admission panics.
-					if err = (&servingops.Operations{Store: store}).ChangePower(ctx, spec.Instance.Node, "", lowMode, time.Minute); !errors.Is(err, servingops.ErrNodeInMeasurement) {
+					if err = (&servingops.Operations{Store: store, Runtime: observer.runtime}).ChangePower(ctx, spec.Instance.Node, "", lowMode, time.Minute); !errors.Is(err, servingops.ErrNodeInMeasurement) {
 						t.Fatalf("power change on measurement Node: %v", err)
 					}
 				}
@@ -719,5 +723,88 @@ func assertCurrentPolicyObservation(t *testing.T, instances []serving.InstanceSt
 	if instance.ID != id || !instance.Ready || instance.Reason != reason || instance.Native == nil ||
 		instance.Native.Metadata.DecisionID != policy.DecisionID || !reflect.DeepEqual(instance.Native.Metadata.Policy, policy) {
 		t.Fatalf("annotation discarded readiness or fabricated native ACK: %+v", instance)
+	}
+}
+
+type createdPodFailureObservation struct {
+	serving.RuntimeObservation
+	err error
+}
+
+func (o createdPodFailureObservation) RecordRecovery(state serving.InstanceState, clear bool) error {
+	if state.CreatedThisRun {
+		return o.err
+	}
+	return o.RuntimeObservation.RecordRecovery(state, clear)
+}
+
+func TestPreparationCreationEvidencePrecedesSourcePublication(t *testing.T) {
+	for _, alreadyExists := range []bool{false, true} {
+		name := "successful create"
+		if alreadyExists {
+			name = "AlreadyExists race"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			manager, _ := newManagerHarness(t)
+			creationFailure := errors.New("cannot admit new Pod provenance")
+			rt, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 8,
+				ObservationLog: createdPodFailureObservation{RuntimeObservation: manager.observationLog, err: creationFailure}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture, node, _, _ := observerSourceFixture()
+			kube := kubefake.NewSimpleClientset(node)
+			serviceBoundary := errors.New("stop after source publication")
+			kube.PrependReactor("create", "services", func(ktesting.Action) (bool, runtime.Object, error) {
+				return true, nil, serviceBoundary
+			})
+			store := &Store{client: fake.NewClientBuilder().WithScheme(manager.store.client.Scheme()).WithObjects(node.DeepCopy()).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(ctx context.Context, cl client.WithWatch, object client.Object, opts ...client.CreateOption) error {
+						pod, isPod := object.(*core.Pod)
+						if isPod {
+							pod.UID = fixture.UID
+							pod.Status = fixture.Status
+						}
+						if err := cl.Create(ctx, object, opts...); err != nil {
+							return err
+						}
+						if !isPod {
+							return nil
+						}
+						if err := kube.Tracker().Create(core.SchemeGroupVersion.WithResource("pods"), pod.DeepCopy(), pod.Namespace); err != nil {
+							return err
+						}
+						if alreadyExists {
+							// Model another creator winning before our API response.
+							return apierrors.NewAlreadyExists(core.Resource("pods"), pod.Name)
+						}
+						return nil
+					},
+				}).Build()}
+			observer := newTestObserver(t)
+			observer.runtime = rt
+			operations := &servingops.Operations{Store: store, Kube: kube, Runtime: rt, Observer: observer,
+				Config: servingops.OperationConfig{Namespace: fixture.Namespace, PollInterval: time.Millisecond}}
+			spec := measuredCPUPreparationFixture()
+			evidence, err := operations.PrepareInstance(ctx, spec)
+			pod := &core.Pod{}
+			if getErr := store.client.Get(ctx, types.NamespacedName{Namespace: fixture.Namespace, Name: spec.Name}, pod); getErr != nil {
+				t.Fatal("preparation lost the created remote effect", getErr)
+			}
+			if evidence == nil || evidence.PodUID != string(pod.UID) || evidence.Created == alreadyExists {
+				t.Fatalf("preparation lost actual creation ownership: %+v", evidence)
+			}
+			published := slices.ContainsFunc(rt.Instances(), func(state serving.InstanceState) bool { return state.PodUID == string(pod.UID) })
+			if alreadyExists {
+				if !errors.Is(err, serviceBoundary) || !published {
+					t.Fatalf("existing Pod was incorrectly treated as newly created: err=%v published=%t", err, published)
+				}
+			} else if !errors.Is(err, creationFailure) || published {
+				t.Fatalf("failed provenance admission published the new source: err=%v published=%t", err, published)
+			}
+		})
 	}
 }

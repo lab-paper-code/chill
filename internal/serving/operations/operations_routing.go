@@ -173,10 +173,12 @@ func (o *Operations) PersistRouting(ctx context.Context, only string, uids []str
 	return nil
 }
 
-func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *servingstate.OperationResult) error {
+// policyPod resolves one current executor (or an unambiguous logical slot)
+// before admitting a native policy mutation.
+func (o *Operations) policyPod(ctx context.Context, instanceID string) (*core.Pod, error) {
 	pods, err := o.Kube.CoreV1().Pods(o.Config.Namespace).List(ctx, meta.ListOptions{})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var selected *core.Pod
 	for i := range pods.Items {
@@ -194,13 +196,25 @@ func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy 
 				continue
 			}
 			if selected != nil {
-				return errors.New("policy target slot has multiple physical instances")
+				return nil, errors.New("policy target slot has multiple physical instances")
 			}
 			selected = p
 		}
 	}
 	if selected == nil {
-		return errors.New("actual policy target unavailable")
+		return nil, errors.New("actual policy target unavailable")
+	}
+	status := servingstate.FirstfloorStatus(selected)
+	if o.Runtime.Recovery().Unknown && (status == nil || o.Runtime.InstanceRecoveryUnknown(servingstate.PhysicalID(selected.UID, status.ContainerID))) {
+		return nil, errors.New("UnconfirmedInstance: policy target recovery unknown")
+	}
+	return selected, nil
+}
+
+func (o *Operations) ApplyPolicy(ctx context.Context, instanceID string, policy native.Policy, result *servingstate.OperationResult) error {
+	selected, err := o.policyPod(ctx, instanceID)
+	if err != nil {
+		return err
 	}
 	cm := &core.ConfigMap{}
 	if err = o.Store.Client().Get(ctx, types.NamespacedName{Namespace: selected.Namespace, Name: selected.Name}, cm); err != nil {

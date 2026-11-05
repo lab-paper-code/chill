@@ -27,6 +27,17 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+// cleanObservationDirectory models an explicitly clean predecessor, not crash recovery.
+func cleanObservationDirectory(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "async-run.json"),
+		[]byte(`{"started":"2026-11-05T00:00:00Z","clean":true,"gaps":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return directory
+}
+
 func withSchedulerEstimateFixture(settings serving.SchedulerSettings) serving.SchedulerSettings {
 	settings.DefaultOperationCost = map[string]serving.OperationCostValue{
 		"prepare": {Seconds: 852, Joules: 36371},
@@ -182,7 +193,7 @@ func (a schedulerPowerArchive) StreamImmutable(
 
 func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T) {
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
+		Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
 	})
 	if err != nil {
@@ -283,7 +294,7 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 			}
 			_, _ = w.Write([]byte("# TYPE wall_watts gauge\nwall_watts{hostname=\"node\",device_type=\"fixture\"} 5\n"))
 		}))
-		log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence",
+		log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence",
 			Retention: time.Hour, Writer: schedulerPowerArchive{directory: t.TempDir()}})
 		if err != nil {
 			t.Fatal(err)

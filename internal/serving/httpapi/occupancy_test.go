@@ -31,7 +31,7 @@ func occupancyHandler(t *testing.T, deny string) (*Handler, *[]authorization.Res
 	t.Helper()
 	log, err := observation.NewObservationLog(
 		observation.ObservationLogConfig{
-			Directory: t.TempDir(),
+			Directory: cleanObservationDirectory(t),
 			Store:     "evidence",
 			Retention: time.Hour,
 			Writer:    settingsArchive{directory: t.TempDir()},

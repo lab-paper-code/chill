@@ -28,11 +28,10 @@ func (l *ObservationLog) prepare(ctx context.Context, ranges map[string][2]time.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	read, err := l.capture(ranges)
+	read, err := l.capture(ctx, ranges)
 	if err != nil {
 		return nil, err
 	}
-	read.ctx = ctx
 	if err := l.selectSources(read, ranges); err != nil {
 		read.close()
 		return nil, err
@@ -196,6 +195,11 @@ func (r *observationRead) streamCoverage(coverage *serving.ObservationCoverage, 
 				from = source.hour
 			}
 		}
+		for _, gap := range r.recoveryGaps {
+			if !gap.From.IsZero() && gap.From.Before(from) {
+				from = gap.From
+			}
+		}
 	}
 	available := map[time.Time]observationSource{}
 	for _, source := range r.sources[stream] {
@@ -210,6 +214,17 @@ func (r *observationRead) streamCoverage(coverage *serving.ObservationCoverage, 
 			end = to
 		}
 		r.hourCoverage(coverage, stream, hour, start, end, available)
+	}
+	for _, gap := range r.recoveryGaps {
+		if !gap.From.Before(to) || !gap.To.After(from) {
+			continue
+		}
+		if gap.From.Before(from) {
+			gap.From = from
+		}
+		gap.To = minTime(gap.To, to)
+		gap.Stream = stream
+		coverage.Gaps = append(coverage.Gaps, gap)
 	}
 }
 
@@ -297,7 +312,7 @@ func (l *ObservationLog) readCatalog(read *observationRead, hour time.Time) erro
 			if err := json.Unmarshal(raw, &header); err != nil {
 				return err
 			}
-			if header.Kind != "definition" {
+			if header.Kind != observationDefinitionCatalog {
 				return nil
 			}
 		}
@@ -306,7 +321,7 @@ func (l *ObservationLog) readCatalog(read *observationRead, hour time.Time) erro
 			return err
 		}
 		catalog.Add(row)
-		if row.Kind == "definition" {
+		if row.Kind == observationDefinitionCatalog {
 			var definition serving.Definition
 			if err := json.Unmarshal(row.Body, &definition); err != nil {
 				return err
@@ -366,6 +381,7 @@ type observationRead struct {
 	catalogs        map[time.Time]*ObservationCatalog
 	scanningHour    time.Time
 	definitionsOnly bool
+	recoveryGaps    []serving.ObservationGap
 }
 
 type observationOpenFile struct {
@@ -382,11 +398,14 @@ func (r *observationRead) close() {
 	}
 }
 
-// capture snapshots stream paths and complete lengths under the writer lock;
-// directory listing and file opens run outside it. A zero to reads the latest
-// captured file. captureMu excludes retention until selected paths are open,
-// without waiting for archive uploads or delaying appends.
-func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRead, error) {
+// capture crosses the finite written prefix before copying metadata and live
+// open rows. This deliberately retains B's mixed visibility, not an MVCC cutoff.
+// captureMu excludes retention until selected paths are open; no producer lock
+// is held while waiting for storage or opening files.
+func (l *ObservationLog) capture(ctx context.Context, ranges map[string][2]time.Time) (*observationRead, error) {
+	if _, err := l.writeBarrier(ctx, false); err != nil {
+		return nil, err
+	}
 	l.captureMu.RLock()
 	defer l.captureMu.RUnlock()
 	hours, err := l.hours()
@@ -394,6 +413,14 @@ func (l *ObservationLog) capture(ranges map[string][2]time.Time) (*observationRe
 		return nil, err
 	}
 	read, segments := l.captureSnapshot(ranges, hours)
+	read.ctx = ctx
+	until := read.now
+	for _, bounds := range ranges {
+		if bounds[1].After(until) {
+			until = bounds[1]
+		}
+	}
+	read.recoveryGaps = l.recoveryGaps(time.Time{}, until)
 	for stream, files := range segments {
 		sort.Slice(files, func(a, b int) bool { return files[a].at.Before(files[b].at) })
 		for _, segment := range files {
@@ -488,14 +515,14 @@ func (l *ObservationLog) scanStream(read *observationRead, stream string, visit 
 	return read.ctx.Err()
 }
 
-func scanObservationFile(name string, size int64, visit func([]byte) error) (result error) {
+func scanObservationFile(name string, visit func([]byte) error) (result error) {
 	file, err := os.Open(name)
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, file.Close()) }()
 	var scanner observationScanner
-	return scanner.scan(file, size, visit)
+	return scanner.scan(file, -1, visit)
 }
 
 // observationScanner keeps its read and long-line buffers across files.

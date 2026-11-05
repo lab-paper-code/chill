@@ -1,74 +1,57 @@
 package observation
 
 import (
-	stdruntime "runtime"
+	"context"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// Together with serving's blocked-recorder tests this retains the original
-// cross-owner invariant: neither Runtime.mu nor requestMu spans storage waits.
-func TestAssignmentStorageWaitDoesNotHoldRequestState(t *testing.T) {
+// The consumer boundary is real blocked storage, not a manually held memory lock.
+func TestBlockedAppendDoesNotBlockRequestAdmission(t *testing.T) {
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
-	log.mu.Lock()
-	locked := true
-	defer func() {
-		if locked {
-			log.mu.Unlock()
-		}
-	}()
-	stored := make(chan error, 1)
-	go func() {
-		stored <- log.RequestEvent(serving.RequestEvent{
-			RequestID: "assignment", WorkloadUID: "w", Kind: "assigned", At: observationTestHour,
-			Assignment: &serving.Assignment{Instance: "physical", DispatchedAt: observationTestHour},
-		})
-	}()
-	folded := make(chan struct{})
-	go func() {
-		for {
-			log.requestMu.Lock()
-			row := log.open["assignment"]
-			reflected := row != nil && row.Instance == "physical"
-			log.requestMu.Unlock()
-			if reflected {
-				close(folded)
-				return
-			}
-			stdruntime.Gosched()
-		}
-	}()
-	select {
-	case <-folded:
-	case <-time.After(time.Second):
-		t.Fatal("assignment storage wait held requestMu")
+	entered, release := make(chan struct{}), make(chan struct{})
+	resume := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(resume)
+	var once sync.Once
+	log.writeFile = func(file *os.File, data []byte) (int, error) {
+		once.Do(func() { close(entered); <-release })
+		return file.Write(data)
 	}
-	received := make(chan error, 1)
+	if err := log.RequestEvent(serving.RequestEvent{RequestID: "assignment", Kind: "assigned", At: observationTestHour,
+		Assignment: &serving.Assignment{Instance: "physical", DispatchedAt: observationTestHour}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not reach storage")
+	}
+	admitted := make(chan error, 1)
 	go func() {
-		received <- log.RequestEvent(serving.RequestEvent{RequestID: "other", Kind: "received", At: observationTestHour})
+		err := log.RequestEvent(serving.RequestEvent{RequestID: "other", Kind: "received", At: observationTestHour})
+		if err == nil {
+			err = log.RequestClosed("assignment")
+		}
+		admitted <- err
 	}()
 	select {
-	case err := <-received:
+	case err := <-admitted:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("assignment storage wait blocked unrelated request memory")
+		t.Fatal("request admission waited for blocked Write")
 	}
-	select {
-	case err := <-stored:
-		t.Fatalf("assignment returned before storage lock release: %v", err)
-	default:
-	}
-	log.mu.Unlock()
-	locked = false
-	if err := <-stored; err != nil {
+	resume()
+	if err := log.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	rows := readRequestRows(t, log.config.Directory)
-	if len(rows) != 1 || rows[0].RequestID != "assignment" || rows[0].Kind != serving.RequestRowAssigned {
-		t.Fatalf("assignment durability changed: %+v", rows)
+	if len(rows) != 2 || rows[0].Kind != serving.RequestRowAssigned || rows[1].Kind != serving.RequestRowFinal {
+		t.Fatalf("ordered assignment/final lost: %+v", rows)
 	}
 }

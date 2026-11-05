@@ -53,7 +53,7 @@ func TestObservationStreamingFailureRetainsHour(t *testing.T) {
 	}
 }
 
-func TestObservationCanceledCloseRetainsHourForNextProcess(t *testing.T) {
+func TestObservationCanceledCloseDrainsLocallyAndRetainsHour(t *testing.T) {
 	directory := t.TempDir()
 	archive := &observationArchive{directory: t.TempDir()}
 	config := ObservationLogConfig{Directory: directory, Store: "evidence", Writer: archive, Retention: 2 * time.Hour}
@@ -62,8 +62,8 @@ func TestObservationCanceledCloseRetainsHourForNextProcess(t *testing.T) {
 	clock.set(observationTestHour.Add(3 * time.Hour))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := log.Close(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("close did not propagate shutdown cancellation: %v", err)
+	if err := log.Close(ctx); err != nil {
+		t.Fatalf("archive cancellation interrupted local graceful recording: %v", err)
 	}
 	hourDir := filepath.Join(log.root, observationHour(observationTestHour))
 	if log.archived[observationTestHour] {

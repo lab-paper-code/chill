@@ -20,6 +20,9 @@ func TestCapacityBridgeCatalogProjectionDoesNotMutateLiveProfiles(t *testing.T) 
 	if stage < 0 {
 		t.Fatal("bridge fixture lost its staged handoff")
 	}
+	if err := cleanObservationPredecessor(config.Directory); err != nil {
+		t.Fatal(err)
+	}
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: config.Directory, Store: config.Store, Writer: config.Writer, Retention: config.Retention,
 	})
@@ -33,6 +36,9 @@ func TestCapacityBridgeCatalogProjectionDoesNotMutateLiveProfiles(t *testing.T) 
 	}()
 	at := time.Now().UTC()
 	if err = log.SchedulerRecord(observation.SchedulerObservation{At: at, Decision: &serving.SchedulerDecision{At: at, Target: &candidate}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	paths, err := filepath.Glob(filepath.Join(config.Directory, "v1alpha5", "*", "scheduler.*.jsonl"))

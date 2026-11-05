@@ -1567,7 +1567,9 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 			t.Fatalf("executorless Pod %s disappeared from snapshot: %+v", name, snapshot.Instances)
 		}
 		instance := snapshot.Instances[index]
-		if instance.ID != "" || instance.PodName != name || instance.TargetID != name+"-slot" || instance.OwnerWorkloadUID == "" ||
+		// The scheduler key represents pending allocation, not a native
+		// Pod/container executor identity.
+		if instance.ID == "" || strings.Contains(instance.ID, "/") || instance.PodName != name || instance.TargetID != name+"-slot" || instance.OwnerWorkloadUID == "" ||
 			instance.Node.Name != "a" || instance.Allocation.MemoryBytes == 0 || instance.Ready {
 			t.Fatalf("executorless physical facts changed: %+v", instance)
 		}

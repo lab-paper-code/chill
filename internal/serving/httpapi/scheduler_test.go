@@ -43,6 +43,17 @@ import (
 
 const actorUsername = "operator"
 
+// cleanObservationDirectory models an explicitly clean predecessor, not crash recovery.
+func cleanObservationDirectory(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "async-run.json"),
+		[]byte(`{"started":"2026-11-05T00:00:00Z","clean":true,"gaps":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return directory
+}
+
 func schedulerSettingsForTest() serving.SchedulerSettings {
 	return serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
 		DefaultOperationCost: map[string]serving.OperationCostValue{
@@ -273,7 +284,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 				}
 				return false, nil, nil
 			})
-			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -489,7 +500,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 		updates++
 		return false, nil, nil
 	})
-	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +604,7 @@ func TestSchedulerCompactQueryRejectsAmbiguousViews(t *testing.T) {
 }
 
 func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
-	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -675,7 +686,7 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 		return true, updated, nil
 	})
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()},
+		Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatal(err)

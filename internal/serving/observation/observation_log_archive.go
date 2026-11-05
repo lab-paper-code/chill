@@ -25,13 +25,12 @@ const observationArchivePrefix = "serving/observations." + observationVersion + 
 func (l *ObservationLog) archive(ctx context.Context) error {
 	l.publishMu.Lock()
 	defer l.publishMu.Unlock()
-	// Finish any append that chose the previous hour before rotation released
-	// mu. Future appends choose this frontier or a later append hour.
-	l.writerMu.Lock()
-	l.mu.Lock()
-	now := l.now() // Later appends choose this hour or a later one.
-	l.mu.Unlock()
-	l.writerMu.Unlock()
+	// Seal the captured append frontier only after its entire FIFO prefix is
+	// written. A stalled old-hour batch must not be uploaded or retained away.
+	now, err := l.barrier(ctx, true, false, true)
+	if err != nil {
+		return err
+	}
 	deleting := true
 	hours, err := l.hours()
 	if err != nil {

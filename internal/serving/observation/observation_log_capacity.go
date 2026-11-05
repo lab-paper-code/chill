@@ -43,11 +43,10 @@ func (l *ObservationLog) CapacityRecords(ctx context.Context, keys []string) (ma
 			return nil
 		}
 	}
-	read, err := l.capture(map[string][2]time.Time{observationManagementStream: {}})
+	read, err := l.capture(ctx, map[string][2]time.Time{observationManagementStream: {}})
 	if err != nil {
 		return nil, err
 	}
-	read.ctx = ctx
 	err = l.scanStream(read, observationManagementStream, visit(found))
 	read.close()
 	archive, reads := l.config.Writer.(ObservationArchive)

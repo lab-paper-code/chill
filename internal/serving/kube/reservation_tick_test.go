@@ -39,7 +39,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 					state.Ready = false
 				}
 			})
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			ctx, cancel := context.WithCancel(context.Background())
 			c.ctx = ctx
 			t.Cleanup(func() { cancel(); c.wg.Wait() })
 			w1 := c.runtime.SchedulerInputs(time.Now).Workloads[0]
@@ -159,6 +159,11 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			}
 			c.capacity.Ensure(ctx, warm, first)
 			c.capacity.Wait()
+			// Capacity replay is deterministic fixture setup, not part of the
+			// live expansion/power ownership window guarded below.
+			actionCtx, stopActions := context.WithTimeout(ctx, 15*time.Second)
+			t.Cleanup(stopActions)
+			ctx, c.ctx = actionCtx, actionCtx
 			if !slices.ContainsFunc(c.capacity.Rows(), func(row serving.CapacityRow) bool { return row.Input.WorkloadUID == w2.UID && row.Kappa != nil }) {
 				t.Fatalf("W2 capacity fixture rejected: %+v", c.capacity.Rows())
 			}
@@ -312,7 +317,7 @@ func waitReservationTest(t *testing.T, ctx context.Context, ready func() bool) {
 func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T) {
 	c, prepared := tickReadySubsetController(t, nil)
 	prepared.Store(true)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	c.ctx = ctx
 	release := make(chan struct{})
 	t.Cleanup(func() { cancel(); close(release); c.wg.Wait() })
@@ -367,6 +372,11 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	}
 	c.capacity.Ensure(ctx, *settings, warm)
 	c.capacity.Wait()
+	// Start the existing execution watchdog after catalog/capacity setup;
+	// race instrumentation must not consume the live removal/reserve window.
+	actionCtx, stopActions := context.WithTimeout(ctx, 15*time.Second)
+	t.Cleanup(stopActions)
+	ctx, c.ctx = actionCtx, actionCtx
 	removing := make(chan servingstate.OperationResult, 1)
 	c.config.OnAction = func(result servingstate.OperationResult) error {
 		if result.Status == starting && result.Operation.Kind == servingstate.OperationStop {
