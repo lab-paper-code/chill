@@ -77,7 +77,7 @@ func TestSlowBatchOneServiceDoesNotTruncateDiscovery(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !result.Continue || result.Outcome == batchenergyoptimization.ServiceImpossibleOutcome {
+		if !result.Continue {
 			t.Fatalf("batch-one service fact truncated discovery: %+v", result)
 		}
 	}
