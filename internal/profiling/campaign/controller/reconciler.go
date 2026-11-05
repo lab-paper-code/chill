@@ -189,6 +189,9 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 					!(decision.Reason == terminalReasonRetryLimitExhausted && trial.FailureClass == batchenergyoptimization.FailureClassRetryableFailure)) {
 				continue
 			}
+			if decision.Run != nil && trial.Measurement != *decision.Run {
+				continue
+			}
 			if failedIndex < 0 || trial.Attempt > snapshot.Trials[failedIndex].Attempt {
 				failedIndex = index
 			}
