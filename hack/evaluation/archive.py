@@ -146,6 +146,10 @@ def _collect_streams(folder, io, hours, streams, index, deadline):
             inventory = json.load(response)
         if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
             raise ValueError('Invalid exact-hour raw API inventory')
+        # Keep recovery facts even when the hour has no streams to download.
+        for gap in inventory.get('gaps', []):
+            index['gaps'].append({**gap, 'hour': value, 'origin': 'api',
+                                  'endpoint': RAW_PATH + '?hour=' + value})
         kinds = {entry['kind']: entry for entry in inventory['kinds']}
         for stream in streams:
             entry = kinds[stream]
@@ -175,7 +179,7 @@ def collect(folder, phase, collection, io, timeout_seconds):
     first, end, drained = (evidence_io.timestamp_ns(phase[key]) for key in ('startUTC', 'endUTC', 'drainedUTC'))
     if not first < end <= drained:
         raise ValueError('Actual start < end <= drained interval required')
-    index = {'visibility': PRIVATE, 'complete': False, 'sources': [], 'errors': [], 'absentStreams': [],
+    index = {'visibility': PRIVATE, 'complete': False, 'sources': [], 'errors': [], 'absentStreams': [], 'gaps': [],
              'requestPopulation': {key: phase[key] for key in ('startUTC', 'endUTC', 'drainedUTC')}, 'supportingHours': []}
     manifest = {'visibility': PRIVATE, 'status': 'NOT_READY', 'errors': []}
     try:
@@ -230,7 +234,7 @@ def collect_requests_snapshot(folder, phase, io, timeout_seconds):
         raise ValueError('No closed stage minute available')
     hour = lambda stamp: dt.datetime.fromtimestamp(stamp / 1e9, dt.timezone.utc).replace(minute=0, second=0, microsecond=0)
     hours = _hours(hour(evidence_io.timestamp_ns(phase['startUTC'])), hour(closed))
-    index = {'visibility': PRIVATE, 'complete': True, 'sources': [], 'errors': [], 'absentStreams': [],
+    index = {'visibility': PRIVATE, 'complete': True, 'sources': [], 'errors': [], 'absentStreams': [], 'gaps': [],
              'requestPopulation': {'startUTC': phase['startUTC'], 'endUTC': cutoff, 'drainedUTC': cutoff},
              'requestedHours': hours, 'supportingHours': []}
     _collect_streams(folder, io, hours, ('requests',), index, deadline)

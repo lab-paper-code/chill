@@ -50,6 +50,14 @@ def _error(errors, message, ref=None):
     errors.append({'error': message, **(ref or {})})
 
 
+def overlapping_gaps(gaps, start, end):
+    """Half-open observation intervals; CLEAR is provenance, never the end of Open influence."""
+    if start >= end:
+        return []
+    return [gap for gap in gaps if evidence_io.timestamp_ns(gap['from']) < end and
+            (gap.get('open') is True or evidence_io.timestamp_ns(gap['to']) > start)]
+
+
 def _observed_absences(root, index, streams, available, errors):
     """Read API collector absence facts, without host/S3 collection receipts."""
     observed = {}
@@ -92,10 +100,8 @@ def _manifest(root, streams):
         return {}, sources, errors
     if index.get('complete') is not True:
         _error(errors, 'raw source index does not declare complete collection', {'path': str(path)})
-    for key in ('errors', 'gaps'):
-        values = index.get(key, [])
-        if values:
-            _error(errors, 'raw source index reports ' + key, {'path': str(path), 'details': values})
+    if index.get('errors'):
+        _error(errors, 'raw source index reports errors', {'path': str(path), 'details': index['errors']})
     entries = index.get('sources')
     if not isinstance(entries, list):
         _error(errors, 'raw source index sources is not a list', {'path': str(path)})
@@ -224,11 +230,13 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
         raise ValueError('Actual returned workload/request IDs must be nonempty strings')
     key = (_signature(root), start, end, frozenset(additions.items()))
     if _REQUEST_CACHE is not None:
-        previous, scope, results, _, _, _ = _REQUEST_CACHE
+        previous, scope, results, _, _, _, _ = _REQUEST_CACHE
         if previous == key and (scope is None or wanted is not None and wanted <= scope):
             return results
     index, sources, errors = _manifest(root, {'requests'})
     _population(index, start, end, errors)
+    gaps = index.get('gaps', [])
+    affected = overlapping_gaps(gaps, start, end)
     groups = defaultdict(dict)
     seen, totals = set(), Counter()
     unkeyed, uid_errors = defaultdict(list), defaultdict(list)
@@ -368,17 +376,18 @@ def _request_indexes(folder, uids, startUTC, endUTC, actual_response_ids=None, *
                    'nativeSupplementRows': native_rows, 'nativeOutcomes': dict(native_outcomes),
                    'nativeOutcomeRequestIDs': {k: sorted(v) for k, v in native_ids.items()},
                    'observedAbsences': index.get('_observedAbsences', []),
+                   'observationGaps': gaps,
                    'population': {'workloadUID': uid, 'startUTC': startUTC, 'endUTC': endUTC,
                                   'predicate': 'receivedAt >= startUTC and receivedAt < endUTC' if actual_response_ids is None else 'Exact actual responseIDs returned for originally offered tasks; separate from the unchanged half-open receivedAt cohort',
                                   'actualResponseIDBoundaryMatches': list(boundary_matches[uid].values()),
                                   'nativeOnlyMeaning': 'HTTP receipt unknown; separately unfinished, not promoted by native completion'},
-                   'complete': not own_errors,
-                   'completenessMeaning': 'complete covers archive provenance and parsing; withoutUnambiguousHTTPFinal/unfinished and unresolvedNativeOnly separately expose unsettled HTTP/unknown-receipt identities.',
+                   'complete': not own_errors and not affected,
+                   'completenessMeaning': 'complete covers archive provenance, parsing and absence of overlapping observation gaps; missing HTTP finals remain separate unsettled evidence.',
                    'timingMeaning': 'HTTP final fields are unmodified; native supplements are separate physical facts, never replacements.'}
         results[uid] = {'finals': finals, 'finalRefs': final_refs, 'summary': summary,
                         'identities': [{'workloadUID': uid, 'definitionID': value} for value in sorted(identities[uid], key=lambda value: value or '')],
                         'receivedAtNS': received_at_ns, 'sources': sources, 'errors': own_errors}
-    _REQUEST_CACHE = key, wanted, results, sources, errors, index.get('_observedAbsences', [])
+    _REQUEST_CACHE = key, wanted, results, sources, errors, index.get('_observedAbsences', []), gaps
     return results
 
 
@@ -400,14 +409,16 @@ def index_requests(folder, uid, startUTC, endUTC, actual_response_ids=None, *, a
     results = _request_indexes(folder, None if actual_response_ids is None else (uid,), startUTC, endUTC, None if actual_response_ids is None else {uid: actual_response_ids}, approved_root=approved_root)
     if uid not in results:
         # An empty UID still inherits provenance/parse errors, not empty-success.
-        _, _, _, sources, errors, absences = _REQUEST_CACHE
+        _, _, _, sources, errors, absences, gaps = _REQUEST_CACHE
         return {'finals': {}, 'finalRefs': {}, 'receivedAtNS': {}, 'sources': sources, 'errors': errors,
                 'summary': {'classification': _PRIVATE, 'rawRows': 0, 'kinds': {},
                             'uniqueRequests': 0, 'uniqueFinalRows': 0, 'outcomes': {},
                             'finalConflicts': [], 'unkeyedRows': [], 'unfinished': [],
                             'unresolvedNativeOnly': [], 'withoutUnambiguousHTTPFinal': 0,
                             'observedAbsences': absences,
-                            'complete': not errors}}
+                            'observationGaps': gaps,
+                            'complete': not errors and not overlapping_gaps(
+                                gaps, evidence_io.timestamp_ns(startUTC), evidence_io.timestamp_ns(endUTC))}}
     return results[uid]
 
 
@@ -418,10 +429,11 @@ def stream_events(folder, kind, *, approved_root=None):
     root = _root(folder, approved_root)
     index, sources, errors = _manifest(root, {kind})
     rows = [{'row': row, 'sourceRef': ref} for _, row, ref in _rows(sources, errors)]
-    return rows, {'classification': _PRIVATE, 'complete': not errors,
+    return rows, {'classification': _PRIVATE, 'complete': not errors and not index.get('gaps'),
                   'sources': sources, 'errors': errors, 'rawRows': {kind: len(rows)},
                   'requestPopulation': index.get('requestPopulation'),
-                  'observedAbsences': index.get('_observedAbsences', [])}
+                  'observedAbsences': index.get('_observedAbsences', []),
+                  'observationGaps': index.get('gaps', [])}
 
 
 

@@ -155,6 +155,7 @@ test-deploy: ## Exercise the deployment CLI offline with process-backed tools an
 	python3 -B -m unittest discover -s hack/deploy -p 'test_*.py'
 	python3 -B hack/evaluation/test_evaluation.py
 	python3 -B hack/evaluation/test_producer_capture.py
+	python3 -B hack/evaluation/test_recovery_gaps.py
 
 .PHONY: test
 test: manifests generate fmt vet envtest test-runtime test-artifact-tools test-loadgen test-helm-release-flow test-serving-entrypoint-rbac test-deployment-config test-deploy ## Run tests.
