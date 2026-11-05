@@ -22,7 +22,6 @@ import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"
 import { failure, useMeasurementSubmission } from "@/hooks/use-measurement-submission"
 
 const back: [string, string] = ["/measurements/requests", "측정 요청"]
-const batchChoices = [1, 2, 4, 8, 16]
 
 
 type Option = { value: string; label: ReactNode; hint?: ReactNode; disabled?: string }
@@ -124,7 +123,9 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     if(rejectedReason)document.getElementById("measurement-rejection")?.focus()
   },[rejectedReason,error,showAdvanced])
   const changes=selected&&answer?requestConditionChanges(selected.condition,answer.plan?.shared as unknown as Record<string,unknown>|undefined):[]
-  const chips=[...new Set([...batchChoices.filter(batch=>!v.max||batch<=v.max),...d.batchSizes])].sort((a,b)=>a-b)
+  const batchChoices:number[]=[]
+  for(let batch=1;batch<=(v.max??16);batch*=2)batchChoices.push(batch)
+  const chips=[...new Set([...batchChoices,...d.batchSizes])].sort((a,b)=>a-b)
   const blocked=prefill.errors.length>0||!!copyError
   const remaining=steps.filter(step=>step!=="review").map(step=>({step,issue:v.problem(step)})).filter(item=>item.issue)
   const invalidStep=error?steps.find(step=>v.problem(step)===error):undefined

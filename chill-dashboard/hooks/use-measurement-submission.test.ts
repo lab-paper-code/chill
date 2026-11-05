@@ -100,6 +100,19 @@ test("explicit Workload selection fills desired refs and emits its name in the a
   assert.equal(body.spec.state.candidate.preprocessor,"pre")
   assert.equal(body.spec.activeProtocol.dataset,"data")
 })
+test("the request form offers batch 32 from the selected runtime and includes the checked batch in its body",()=>{
+  const context={...workloadContext,models:[{...workloadContext.models[0],spec:{...workloadContext.models[0].spec,executionPaths:[{...workloadContext.models[0].spec.executionPaths[0],runtime:{family:"firstfloor",backend:"ort-cuda",settings:{firstfloor:{maxBatchSize:32}}}}]}}]}
+  const bodies:unknown[]=[]
+  renderRequest({context,from:"source"},"from=source","",1,bodies,[],[],undefined,false,render=>{
+    const batch=elements(render()).find(item=>item.props.name==="batchSizes"&&item.props.value===32)
+    assert.ok(batch,"runtime batch 32 must be selectable")
+    assert.ok(!batch.props.disabled)
+    ;(batch.props.onChange as (event:unknown)=>void)({target:{checked:true}})
+    return render()
+  })
+  const body=JSON.parse(JSON.stringify(bodies.at(-1)))
+  assert.ok(body.spec.batchSizes.includes(32))
+})
 test("defaults and a uniquely matching profile never choose a Workload; missing selection renders an error",()=>{
   const profile={id:"profile",nodeName:condition.node,measuredAt:"2026-11-05",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},activeProtocol:{workloadName:"chosen-workload",warmupIterations:5,durationSeconds:30,dataset:{name:"data"},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:30},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11}}}
   for(const context of [workloadContext,{...workloadContext,plans:[],profiles:[profile]},{...workloadContext,workloads:[]}]) {
