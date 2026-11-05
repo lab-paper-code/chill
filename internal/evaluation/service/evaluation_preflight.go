@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -63,14 +64,12 @@ func (s *Service) Preflight(
 	}
 	add("pool", free, "another EvaluationRun occupies the pool")
 	var jobs batchv1.JobList
-	if err := s.reader.List(ctx, &jobs, client.InNamespace(s.namespace)); err != nil {
+	if err := s.reader.List(ctx, &jobs, client.InNamespace(s.namespace),
+		client.MatchingLabels{"edge.dacs.io/workload-role": "load-generator"}); err != nil {
 		return result, err
 	}
 	idle := true
 	for _, job := range jobs.Items {
-		if job.Labels["edge.dacs.io/workload-role"] != "load-generator" {
-			continue
-		}
 		terminal := false
 		for _, condition := range job.Status.Conditions {
 			if (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) &&
@@ -83,28 +82,53 @@ func (s *Service) Preflight(
 		}
 	}
 	add("load-generator", idle, "load-generator Job is active")
-	var profiles api.ProfilingRunList
-	if err := s.reader.List(ctx, &profiles); err != nil {
+	idle, err = s.profilingIdle(ctx)
+	if err != nil {
 		return result, err
-	}
-	idle = true
-	for _, run := range profiles.Items {
-		condition := meta.FindStatusCondition(run.Status.Conditions, api.ProfilingRunConditionExecutionComplete)
-		if condition == nil || condition.Status == metav1.ConditionUnknown {
-			idle = false
-		}
-	}
-	var measurements api.BatchEnergyOptimizationList
-	if err := s.reader.List(ctx, &measurements); err != nil {
-		return result, err
-	}
-	for _, measurement := range measurements.Items {
-		if measurement.Status.Phase == "" || measurement.Status.Phase == string(api.MeasurementPhaseMeasuring) {
-			idle = false
-		}
 	}
 	add("profiling", idle, "profiling measurement is active")
 	return result, nil
+}
+
+// profilingIdle reports no profiling measurement in progress. Campaign and baseline runs
+// are judged through their parent, which stays Measuring while it will launch more runs;
+// only standalone runs are read one by one, so preflight never decodes every run.
+func (s *Service) profilingIdle(ctx context.Context) (bool, error) {
+	var runs api.ProfilingRunList
+	standalone, err := labels.Parse("!edge.dacs.io/batch-energy-optimization,!edge.dacs.io/model-loaded-idle-baseline-uid")
+	if err != nil {
+		return false, err
+	}
+	if err := s.reader.List(ctx, &runs, client.MatchingLabelsSelector{Selector: standalone}); err != nil {
+		return false, err
+	}
+	for _, run := range runs.Items {
+		condition := meta.FindStatusCondition(run.Status.Conditions, api.ProfilingRunConditionExecutionComplete)
+		if condition == nil || condition.Status == metav1.ConditionUnknown {
+			return false, nil
+		}
+	}
+	var campaigns api.BatchEnergyOptimizationList
+	if err := s.reader.List(ctx, &campaigns); err != nil {
+		return false, err
+	}
+	phases := make([]string, 0, len(campaigns.Items))
+	for _, campaign := range campaigns.Items {
+		phases = append(phases, campaign.Status.Phase)
+	}
+	var baselines api.ModelLoadedIdleBaselineList
+	if err := s.reader.List(ctx, &baselines); err != nil {
+		return false, err
+	}
+	for _, baseline := range baselines.Items {
+		phases = append(phases, baseline.Status.Phase)
+	}
+	for _, phase := range phases {
+		if phase == "" || phase == string(api.MeasurementPhaseMeasuring) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func errorReason(err error) string {

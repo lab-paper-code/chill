@@ -129,6 +129,10 @@ LoadScenario 워크로드 이름과 정확히 같아야 한다(`api.EvaluationWo
 controller가 입력을 동결하는 획득 시점에 이 규칙으로 판정해 pool을 잡기 전에
 `FrozenInputInvalid`로 끝낸다. preflight는 같은 함수를 `coverage/<stageID>` check로 보고하고
 POST 생성은 그 실패를 거절하지만, 획득 전 설정 변경까지 보증하지는 않는다.
+preflight의 `profiling` check는 BatchEnergyOptimization과 ModelLoadedIdleBaseline을 같은 규칙(phase
+`""`·`Measuring`이면 활성)으로 판정하고, 부모가 없는 ProfilingRun만 개별 조건으로 본다. 그래서
+지금 실행 중인 run이 없어도 Measuring인 baseline은 평가 시작을 막는다. `load-generator` check는
+`edge.dacs.io/workload-role=load-generator` Job만 서버에서 골라 읽는다.
 
 삭제(중지) 요청이 접수된 Run의 EvaluationView는 `stopRequested:{at,by}`를 싣는다. `at`은
 Run의 deletionTimestamp이고 `by`는 `edge.dacs.io/stop-requested-by` annotation(없으면 `""`)이다.
