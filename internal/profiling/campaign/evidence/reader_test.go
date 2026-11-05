@@ -211,7 +211,7 @@ func TestRunProtocolUsesFrozenStartupAndCollectionWarmup(t *testing.T) {
 	shared.ActiveProtocol = derivation.CurveProtocolContract{
 		WorkloadMode: profilingrun.EmpiricalCadenceFixedBatchWorkloadMode, WorkloadName: "workload",
 		StartupWarmupIterations: 20, DurationSeconds: 30, DurationToleranceSeconds: .5,
-		Dataset: &derivation.CurveDatasetContract{Name: "dataset"},
+		Dataset:                    &derivation.CurveDatasetContract{Name: "dataset"},
 		MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 500, MetricDurationSeconds: 31,
 	}
 	if err := validateRun(cr, run, ref, shared); err != nil {

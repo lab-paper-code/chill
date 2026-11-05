@@ -327,13 +327,17 @@ func TestResultWriterRetainsTypedInfrastructureFailureDiagnostics(t *testing.T) 
 		t.Fatal(err)
 	}
 	record, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	excluded := record.Spec().ExcludedTrials
 	if len(excluded) != 1 || excluded[0].Run.UID != string(run.UID) || excluded[0].Attempt != 3 {
 		t.Fatalf("failed execution identity lost: %+v", excluded)
 	}
 	reasons := strings.Join(excluded[0].Reasons, "; ")
 	for _, fact := range []string{"JobFailed", "FailureClass=RetryableFailure", "stage=Execution", "reason=OOMKilled", "podReason=Evicted", "podMessage=node memory pressure", "jobMessage=failed Pod was evicted"} {
-		if !strings.Contains(reasons, fact) { t.Fatalf("immutable exclusion lost %q: %v", fact, excluded[0].Reasons) }
+		if !strings.Contains(reasons, fact) {
+			t.Fatalf("immutable exclusion lost %q: %v", fact, excluded[0].Reasons)
+		}
 	}
 }

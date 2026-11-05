@@ -139,9 +139,9 @@ func (terminalTrialMethod) Plan(batchenergyoptimization.Observed) (batchenergyop
 
 func TestTrialBoundaryUsesTypedActualRuntimeTermination(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		termination edgev1alpha1.ProfilingRunRuntimeTermination
-		want string
+		name            string
+		termination     edgev1alpha1.ProfilingRunRuntimeTermination
+		want            string
 		evidenceInvalid bool
 	}{
 		{name: "runtime OOM", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", Reason: "OOMKilled"}, want: batchenergyoptimization.DiscoveryStopOOM},
@@ -160,7 +160,9 @@ func TestTrialBoundaryUsesTypedActualRuntimeTermination(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			parent := testParent()
 			run, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 4}, 2, "ort-cpu")
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			run.UID = "actual-run-uid"
 			run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
 			if test.evidenceInvalid {
@@ -173,10 +175,16 @@ func TestTrialBoundaryUsesTypedActualRuntimeTermination(t *testing.T) {
 			}
 			run.Status.RuntimeTermination = &test.termination
 			trial, err := projectTrial(parent.Name, run)
-			if err != nil { t.Fatal(err) }
-			if trial.Verdict != batchenergyoptimization.VerdictFailed { t.Fatalf("trial=%+v", trial) }
+			if err != nil {
+				t.Fatal(err)
+			}
+			if trial.Verdict != batchenergyoptimization.VerdictFailed {
+				t.Fatalf("trial=%+v", trial)
+			}
 			if test.want == "" {
-				if trial.Boundary != nil { t.Fatalf("genuine failure became boundary: %+v", trial.Boundary) }
+				if trial.Boundary != nil {
+					t.Fatalf("genuine failure became boundary: %+v", trial.Boundary)
+				}
 				if test.evidenceInvalid && trial.FailureClass != batchenergyoptimization.FailureClassFatalFailure {
 					t.Fatalf("integrity failure lost fatal precedence: %+v", trial)
 				}
@@ -201,7 +209,9 @@ func TestInfrastructureRetriesSameBatchWithinFailureBudget(t *testing.T) {
 			appendRun := func(mode batchenergyoptimization.WorkloadMode, attempt int, completed bool) {
 				t.Helper()
 				run, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: mode, Batch: 1}, attempt, "ort-cpu")
-				if err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
 				if completed {
 					run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{Store: "evidence", Key: run.Name, Size: 1}
 				} else {
@@ -213,15 +223,27 @@ func TestInfrastructureRetriesSameBatchWithinFailureBudget(t *testing.T) {
 				}
 				runs = append(runs, *run)
 			}
-			for attempt := 1; attempt <= 3; attempt++ { appendRun(batchenergyoptimization.WorkloadModeIdle, attempt, true) }
-			for attempt := 1; attempt <= 2; attempt++ { appendRun(batchenergyoptimization.WorkloadModeActive, attempt, true) }
-			for failure := range failures { appendRun(batchenergyoptimization.WorkloadModeActive, 3+failure, false) }
+			for attempt := 1; attempt <= 3; attempt++ {
+				appendRun(batchenergyoptimization.WorkloadModeIdle, attempt, true)
+			}
+			for attempt := 1; attempt <= 2; attempt++ {
+				appendRun(batchenergyoptimization.WorkloadModeActive, attempt, true)
+			}
+			for failure := range failures {
+				appendRun(batchenergyoptimization.WorkloadModeActive, 3+failure, false)
+			}
 			snapshot, err := ProjectSnapshot(parent, runs, nil, []int{1, 2}, false)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			method, err := batchenergyoptimization.NewQuickEnergyMinimization(batchenergyoptimization.QuickEnergyConfig{TrialsPerBatch: 3}, nil)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			decision, err := batchenergyoptimization.Decide(snapshot, method)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			if failures > 1 {
 				if decision.Action != batchenergyoptimization.ActionFail || decision.Reason != "RetryLimitExhausted" {
 					t.Fatalf("infra failures escaped retry budget: %+v", decision)
@@ -238,9 +260,13 @@ func TestInfrastructureRetriesSameBatchWithinFailureBudget(t *testing.T) {
 			}
 			appendRun(batchenergyoptimization.WorkloadModeActive, 4, true)
 			resumed, err := ProjectSnapshot(parent, runs, nil, []int{1, 2}, false)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			decision, err = batchenergyoptimization.Decide(resumed, method)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			if decision.Action != batchenergyoptimization.ActionCreateRun || decision.Run == nil || decision.Run.Batch != 2 {
 				t.Fatalf("successful retry did not advance after three actual successes: %+v", decision)
 			}

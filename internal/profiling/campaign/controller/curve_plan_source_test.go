@@ -613,7 +613,7 @@ func curvePlanCandidateReport(
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "cpu", DeclaredBatchSizes: []int32{4, 1, 2},
 		},
-		Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 32, MaxQueueSize: 64},
+		Firstfloor:          &modelcompat.FirstfloorSettings{MaxBatchSize: 32, MaxQueueSize: 64},
 		MetricObserverImage: "metric@sha256:cccccccc",
 		Verdict:             "Compatible",
 		Reasons:             []profilingrun.CandidateReportReason{},

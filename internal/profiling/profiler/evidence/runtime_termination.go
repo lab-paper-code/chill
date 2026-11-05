@@ -3,19 +3,19 @@ package evidence
 import "encoding/json"
 
 const (
-	TerminationSchemaVersion = "chill.dacs.io/measurement-worker-termination.v1alpha1"
-	StageStartup            = "Startup"
-	StageObserver           = "Observer"
-	StageExecution          = "Execution"
-	StageResultValidation   = "ResultValidation"
-	StageEvidenceCommit     = "EvidenceCommit"
-	FailureExecution        = "ExecutionFailed"
-	FailureMeasurementBudget = "MeasurementBudgetExceeded"
-	FailureIntegrity        = "IntegrityError"
-	FailureClassExpectedStop = "ExpectedStop"
+	TerminationSchemaVersion     = "chill.dacs.io/measurement-worker-termination.v1alpha1"
+	StageStartup                 = "Startup"
+	StageObserver                = "Observer"
+	StageExecution               = "Execution"
+	StageResultValidation        = "ResultValidation"
+	StageEvidenceCommit          = "EvidenceCommit"
+	FailureExecution             = "ExecutionFailed"
+	FailureMeasurementBudget     = "MeasurementBudgetExceeded"
+	FailureIntegrity             = "IntegrityError"
+	FailureClassExpectedStop     = "ExpectedStop"
 	FailureClassRetryableFailure = "RetryableFailure"
-	FailureClassFatalFailure = "FatalFailure"
-	FailureClassUnknownFailure = "UnknownFailure"
+	FailureClassFatalFailure     = "FatalFailure"
+	FailureClassUnknownFailure   = "UnknownFailure"
 )
 
 // TerminationMessage records the current phase before work that can kill the

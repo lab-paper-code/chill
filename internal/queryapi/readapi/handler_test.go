@@ -215,12 +215,12 @@ func TestHandlerRejectsInvalidBatchEnergyOptimizationPreflightRequests(t *testin
 		t.Fatal(err)
 	}
 	tests := map[string]string{
-		"undecodable body":   `{`,
-		"unknown field":      `{"metadata":{"name":"campaign"},"unexpected":true}`,
+		"undecodable body":        `{`,
+		"unknown field":           `{"metadata":{"name":"campaign"},"unexpected":true}`,
 		"removed batch selection": `{"metadata":{"name":"campaign"},"spec":{"batchSizes":[1,2]}}`,
-		"wrong kind":         `{"kind":"ProfilingRun","metadata":{"name":"campaign"}}`,
-		"wrong API version":  `{"apiVersion":"edge.dacs.io/v2","metadata":{"name":"campaign"}}`,
-		"namespace mismatch": `{"metadata":{"namespace":"another-namespace","name":"campaign"}}`,
+		"wrong kind":              `{"kind":"ProfilingRun","metadata":{"name":"campaign"}}`,
+		"wrong API version":       `{"apiVersion":"edge.dacs.io/v2","metadata":{"name":"campaign"}}`,
+		"namespace mismatch":      `{"metadata":{"namespace":"another-namespace","name":"campaign"}}`,
 	}
 	for name, body := range tests {
 		name, body := name, body

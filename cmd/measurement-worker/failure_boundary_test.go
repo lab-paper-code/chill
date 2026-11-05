@@ -26,12 +26,18 @@ func TestExecuteClassifiesOnlyFrozenBudgetDuringActualExecution(t *testing.T) {
 				return deadlinePhaseCoordinator{stage: phase}, nil
 			}
 			err := execute(context.Background(), opts, io.Discard, io.Discard, deps)
-			if !errors.Is(err, context.DeadlineExceeded) || exitCode(err) != 3 { t.Fatalf("deadline error=%v exit=%d", err, exitCode(err)) }
+			if !errors.Is(err, context.DeadlineExceeded) || exitCode(err) != 3 {
+				t.Fatalf("deadline error=%v exit=%d", err, exitCode(err))
+			}
 			payload, err := os.ReadFile(opts.terminationMessagePath)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			record, ok := evidence.DecodeTerminationMessage(string(payload))
 			wantFailure := ""
-			if phase == evidence.StageExecution { wantFailure = evidence.FailureMeasurementBudget }
+			if phase == evidence.StageExecution {
+				wantFailure = evidence.FailureMeasurementBudget
+			}
 			if !ok || record.Stage != phase || record.FailureReason != wantFailure {
 				t.Fatalf("deadline phase=%s record=%#v", phase, record)
 			}
@@ -46,18 +52,26 @@ func TestExecuteClassifiesOnlyFrozenBudgetDuringActualExecution(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 		defer cancel()
-		if err := execute(ctx, opts, io.Discard, io.Discard, deps); !errors.Is(err, context.DeadlineExceeded) { t.Fatalf("parent deadline=%v", err) }
+		if err := execute(ctx, opts, io.Discard, io.Discard, deps); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("parent deadline=%v", err)
+		}
 		payload, err := os.ReadFile(opts.terminationMessagePath)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		record, ok := evidence.DecodeTerminationMessage(string(payload))
-		if !ok || record.FailureReason != "" { t.Fatalf("parent deadline became measurement budget: %#v", record) }
+		if !ok || record.FailureReason != "" {
+			t.Fatalf("parent deadline became measurement budget: %#v", record)
+		}
 	})
 }
 
 type deadlinePhaseCoordinator struct{ stage string }
 
 func (c deadlinePhaseCoordinator) Execute(ctx context.Context, _ worker.Request) (evidencestore.Receipt, error) {
-	if err := worker.RecordTerminationStage(ctx, c.stage); err != nil { return evidencestore.Receipt{}, err }
+	if err := worker.RecordTerminationStage(ctx, c.stage); err != nil {
+		return evidencestore.Receipt{}, err
+	}
 	<-ctx.Done()
 	return evidencestore.Receipt{}, errors.Join(worker.ErrRuntimeMeasurement, ctx.Err())
 }

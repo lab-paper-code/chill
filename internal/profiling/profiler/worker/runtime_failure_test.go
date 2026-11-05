@@ -18,7 +18,9 @@ func TestCoordinatorRejectsMalformedNativeResultAsIntegrityFailure(t *testing.T)
 	directory := t.TempDir()
 	path := filepath.Join(directory, "termination-log")
 	ctx := WithTerminationMessagePath(context.Background(), path)
-	if err := RecordTerminationStage(ctx, evidence.StageExecution); err != nil { t.Fatal(err) }
+	if err := RecordTerminationStage(ctx, evidence.StageExecution); err != nil {
+		t.Fatal(err)
+	}
 	metricCalls := 0
 	store := &fakeStore{}
 	coordinator := mustCoordinator(t,
@@ -33,9 +35,13 @@ func TestCoordinatorRejectsMalformedNativeResultAsIntegrityFailure(t *testing.T)
 	if !errors.Is(err, ErrExecutionContract) || errors.Is(err, ErrRuntimeMeasurement) || metricCalls != 0 || store.calls != 0 {
 		t.Fatalf("malformed result err=%v metrics=%d commits=%d", err, metricCalls, store.calls)
 	}
-	if err := RecordTerminationFailure(ctx, err); err != nil { t.Fatal(err) }
+	if err := RecordTerminationFailure(ctx, err); err != nil {
+		t.Fatal(err)
+	}
 	payload, err := os.ReadFile(path)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	record, ok := evidence.DecodeTerminationMessage(string(payload))
 	if !ok || record.Stage != evidence.StageResultValidation || record.FailureReason != evidence.FailureIntegrity {
 		t.Fatalf("malformed runtime evidence retained an execution boundary: %#v", record)

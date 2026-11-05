@@ -149,10 +149,10 @@ func TestMeasurementStatisticsDiscoveryExcludesIncompleteNextBatch(t *testing.T)
 	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
 		MeasuredBatchSizes: []int{1},
 		Stop: campaign.DiscoveryStop{
-			Reason: campaign.DiscoveryStopOOM,
+			Reason:            campaign.DiscoveryStopOOM,
 			FailedMeasurement: &campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 2},
-			Attempt: 2,
-			Run: &failed,
+			Attempt:           2,
+			Run:               &failed,
 		},
 	})
 	if err != nil {
@@ -197,10 +197,10 @@ func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
 	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
 		MeasuredBatchSizes: []int{},
 		Stop: campaign.DiscoveryStop{
-			Reason: campaign.DiscoveryStopOOM,
+			Reason:            campaign.DiscoveryStopOOM,
 			FailedMeasurement: &campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1},
-			Attempt: 1,
-			Run: &failed,
+			Attempt:           1,
+			Run:               &failed,
 		},
 	})
 	if err != nil {

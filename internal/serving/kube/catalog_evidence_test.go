@@ -268,10 +268,10 @@ func TestCatalogDiscoveryRejectsUnfinishedClaimAndPreservesEmptyCompletion(t *te
 			spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
 				MeasuredBatchSizes: measured,
 				Stop: batchenergyoptimization.DiscoveryStop{
-					Reason: batchenergyoptimization.DiscoveryStopOOM,
+					Reason:            batchenergyoptimization.DiscoveryStopOOM,
 					FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1},
-					Attempt: 1,
-					Run: &failed,
+					Attempt:           1,
+					Run:               &failed,
 				},
 			})
 			if err != nil {

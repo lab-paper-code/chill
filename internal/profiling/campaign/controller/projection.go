@@ -157,7 +157,7 @@ func projectDiscoveryBoundary(run *edgev1alpha1.ProfilingRun, measurement batche
 	}
 	return &batchenergyoptimization.DiscoveryStop{
 		Reason: reason, FailedMeasurement: &measurement, Attempt: attempt,
-		Run: &batchenergyoptimization.RunReference{Namespace: run.Namespace, Name: run.Name, UID: string(run.UID)},
+		Run:        &batchenergyoptimization.RunReference{Namespace: run.Namespace, Name: run.Name, UID: string(run.UID)},
 		Diagnostic: runtimeTerminationDiagnostic(termination),
 	}
 }

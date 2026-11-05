@@ -69,9 +69,9 @@ type Measurement struct {
 // Trial is one owned ProfilingRun projected into the progress rules. A trial
 // carries no measured value; the method receives values separately.
 type Trial struct {
-	Measurement Measurement
-	Attempt     int
-	Verdict     Verdict
+	Measurement  Measurement
+	Attempt      int
+	Verdict      Verdict
 	FailureClass FailureClass
 	// Boundary is present only for a classified execution limit. A failed trial
 	// without it is an infrastructure or evidence-integrity failure.
@@ -130,7 +130,7 @@ const (
 	BatchDiscoveryComplete                 = "BatchDiscoveryComplete"
 	DiscoveryStopOOM                       = "OOM"
 	DiscoveryStopMeasurementBudgetExceeded = "MeasurementBudgetExceeded"
-	DiscoveryStopDomainExhausted            = "DomainExhausted"
+	DiscoveryStopDomainExhausted           = "DomainExhausted"
 )
 
 // DiscoveryStop retains the observed reason and trial identity without

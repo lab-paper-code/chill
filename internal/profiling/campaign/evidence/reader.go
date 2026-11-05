@@ -33,7 +33,7 @@ var (
 	ErrUnsupportedWorkloadMode = errors.New("active Run protocol contradicts campaign")
 	// ErrActiveProtocolMismatch identifies an active Run whose protocol differs.
 	ErrActiveProtocolMismatch = errors.New("active Run protocol contradicts campaign")
-	errIdleProtocolMismatch = errors.New("idle Run protocol contradicts campaign")
+	errIdleProtocolMismatch   = errors.New("idle Run protocol contradicts campaign")
 )
 
 // Reader reconstructs retained campaign inputs without selecting measurements,

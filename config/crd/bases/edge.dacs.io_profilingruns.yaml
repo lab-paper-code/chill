@@ -421,17 +421,54 @@ spec:
                 type: integer
               runtimeTermination:
                 description: |-
-                  RuntimeTermination keeps the failed runtime container's exit code and
-                  log tail, so the cause of a failed Job outlives its Pod.
+                  RuntimeTermination keeps the actual failed container, native Job cause,
+                  proven worker phase, exit code and log tail after its Pod is deleted.
                 properties:
+                  class:
+                    description: |-
+                      Class separates expected discovery stops, known transient disruption,
+                      terminal failures, and failures whose attribution remains unknown.
+                    enum:
+                    - ExpectedStop
+                    - RetryableFailure
+                    - FatalFailure
+                    - UnknownFailure
+                    type: string
+                  container:
+                    description: Container and Reason retain the native container
+                      identity and termination reason.
+                    type: string
                   exitCode:
                     format: int32
                     type: integer
+                  failureReason:
+                    description: FailureReason retains a typed worker failure or an
+                      explicit native disruption reason.
+                    type: string
+                  jobMessage:
+                    type: string
+                  jobReason:
+                    description: JobReason and JobMessage retain the native failed
+                      Job condition.
+                    type: string
                   logTail:
                     description: |-
                       LogTail is the runtime termination message, which Kubernetes fills
                       with the last 80 lines or 2 KiB of the container log on failure.
                     maxLength: 4096
+                    type: string
+                  podMessage:
+                    type: string
+                  podReason:
+                    description: |-
+                      PodReason and PodMessage retain the native failed Pod reason or its
+                      explicit disruption condition, independently of the container reason.
+                    type: string
+                  reason:
+                    type: string
+                  stage:
+                    description: Stage is proven by the versioned worker termination
+                      message, never by log text.
                     type: string
                 required:
                 - exitCode

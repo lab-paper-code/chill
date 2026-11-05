@@ -43,7 +43,7 @@ func TestDecodeDiscoveryResultValidatesTheRetainedPrefix(t *testing.T) {
 	failed := active(2)
 	base := DiscoveryResult{
 		MeasuredBatchSizes: []int{1},
-		Stop: DiscoveryStop{Reason: DiscoveryStopOOM, FailedMeasurement: &failed, Attempt: 2},
+		Stop:               DiscoveryStop{Reason: DiscoveryStopOOM, FailedMeasurement: &failed, Attempt: 2},
 	}
 	for _, test := range []struct {
 		name      string
@@ -127,7 +127,7 @@ func TestDecodeDiscoveryResultRequiresAnAnchoredBoundary(t *testing.T) {
 			failed := active(2)
 			record := discoveryTestRecord(t, DiscoveryResult{
 				MeasuredBatchSizes: []int{1},
-				Stop: DiscoveryStop{Reason: DiscoveryStopOOM, FailedMeasurement: &failed, Attempt: 1},
+				Stop:               DiscoveryStop{Reason: DiscoveryStopOOM, FailedMeasurement: &failed, Attempt: 1},
 			}, completedForBatches([]int{1}, 3))
 			spec := record.Spec()
 			var detail DiscoveryResult

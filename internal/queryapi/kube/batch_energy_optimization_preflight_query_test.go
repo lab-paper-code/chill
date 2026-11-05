@@ -177,7 +177,7 @@ func batchEnergyOptimizationPreflightQueryCampaign() *edgev1alpha1.BatchEnergyOp
 	return &edgev1alpha1.BatchEnergyOptimization{
 		ObjectMeta: metav1.ObjectMeta{Namespace: queryTestNamespace, Name: "campaign"},
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
-			State:      edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"},
+			State: edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"},
 		},
 	}
 }

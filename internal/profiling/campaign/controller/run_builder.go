@@ -132,7 +132,7 @@ func applyFrozenRunProtocol(run *edgev1alpha1.ProfilingRun, plan profilederivati
 	}
 	run.Spec.MetricObservation = edgev1alpha1.ProfilingRunMetricObservationSpec{
 		IntervalMilliseconds: int32(protocol.MetricIntervalMilliseconds),
-		TimeoutMilliseconds: int32(protocol.MetricTimeoutMilliseconds),
-		DurationSeconds: int32(protocol.MetricDurationSeconds),
+		TimeoutMilliseconds:  int32(protocol.MetricTimeoutMilliseconds),
+		DurationSeconds:      int32(protocol.MetricDurationSeconds),
 	}
 }

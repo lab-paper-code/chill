@@ -193,19 +193,27 @@ func TestCampaignAuthorizationRetainsFrozenStartupInsteadOfPlannedDomain(t *test
 		t.Run(string(mode), func(t *testing.T) {
 			config := currentPreparedRun(t).RunConfig
 			plan, err := derivation.DecodeCurvePlan(authorityPlan(t, config))
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			spec := plan.Shared()
 			spec.PlannedBatchSizes = []int{1, 2}
 			plan, err = derivation.NewCurvePlan(spec)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			body, err := plan.CanonicalJSON()
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			root, node := authorityRoot(config)
 			root.Spec.ActiveProtocol.WarmupIterations = 999
 			kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithObjects(root, node).Build()
 			resolver := authorityResolver(t, kube, config, map[types.UID][]byte{root.UID: body})
 			resolved, err := resolver.Resolve(context.Background(), authorityChild(root, mode, 1))
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			actor := resolved.Prepared.RunConfig.Actor
 			if !slices.Equal(actor.WarmupBatchSizes, spec.Actor.WarmupBatchSizes) ||
 				actor.WarmupIterations != spec.Actor.WarmupIterations {
