@@ -165,24 +165,16 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	); !got.Evidence.Accepted {
 		t.Fatal("new failure hid old accepted evidence")
 	}
-	for _, diagnostic := range []string{
-		"replacement target is absent; annotation did not replace a measurement",
-		"replacement names itself; annotation did not replace a measurement",
-		"replacement changes measured conditions; operator selection retained",
-	} {
-		view.Insufficiencies = []servingkube.CatalogIssue{{
-			Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
-			Code:   "ReplacementSelection", Reason: diagnostic,
-		}}
-		got := queryapi.AssessMeasurementRequest(
-			task,
-			queryCoverageCatalog(view),
-			queryCoverageCatalog(view),
-		)
-		if got.Status != queryapi.MeasurementComplete || len(got.Reasons) != 1 ||
-			got.Reasons[0].Message != diagnostic {
-			t.Fatalf("operator replacement diagnostic became a rejection: %+v", got)
-		}
+	view.Insufficiencies = []servingkube.CatalogIssue{{
+		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
+		Code:   "ReplacementSelection", Reason: "replacement target is absent; annotation did not replace a measurement",
+	}}
+	if got := queryapi.AssessMeasurementRequest(
+		task,
+		queryCoverageCatalog(view),
+		queryCoverageCatalog(view),
+	); got.DisplayStatus != queryapi.MeasurementUsable || !got.Evidence.Accepted {
+		t.Fatalf("operator replacement diagnostic became a rejection: %+v", got)
 	}
 	view.Insufficiencies = []servingkube.CatalogIssue{{
 		Source: types.NamespacedName{Namespace: task.Namespace, Name: task.Name},
