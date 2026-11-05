@@ -52,8 +52,13 @@ func (a *rawHTTPArchive) Open(context.Context, evidencestore.ObjectIdentity) (io
 
 func rawHTTPHandler(t *testing.T, archive *rawHTTPArchive, allowed bool) *Handler {
 	t.Helper()
+	return rawHTTPHandlerWithClock(t, archive, allowed, nil)
+}
+
+func rawHTTPHandlerWithClock(t *testing.T, archive *rawHTTPArchive, allowed bool, now func() time.Time) *Handler {
+	t.Helper()
 	archive.settingsArchive.directory = t.TempDir()
-	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: archive})
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: archive, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}

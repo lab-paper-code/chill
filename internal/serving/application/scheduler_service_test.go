@@ -181,9 +181,13 @@ func (a schedulerPowerArchive) StreamImmutable(
 }
 
 func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T) {
+	from := time.Date(2026, 11, 5, 2, 59, 59, 432000000, time.UTC)
+	to := from.Add(time.Second)
+	now := from
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
+		Now:    func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -193,8 +197,6 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 			t.Error(err)
 		}
 	})
-	from := time.Now().UTC()
-	to := from.Add(time.Second)
 	if err = observationLog.SchedulerRecord(observation.SchedulerObservation{
 		At: from, Snapshot: &serving.SchedulerSnapshot{At: from},
 	}); err != nil {
@@ -219,6 +221,7 @@ func TestOperatingPowerReadsAcceptedConfigurationWhileServiceIsBusy(t *testing.T
 		}
 		configurations = append(configurations, &SchedulerConfiguration{Meters: []servingops.MeterDeclaration{meter}})
 	}
+	now = to
 	service := &SchedulerService{observationLog: observationLog}
 	// Model a refresh or control Tick holding the owner lock throughout this read.
 	service.Lock.Lock()

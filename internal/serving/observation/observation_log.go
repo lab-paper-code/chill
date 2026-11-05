@@ -35,6 +35,8 @@ type ObservationLogConfig struct {
 	Definitions []string
 	Outcomes    []string
 	Retention   time.Duration
+	// Now supplies append and capture time; nil uses the wall clock.
+	Now func() time.Time
 	// EventLookupHours bounds append-time hours read by each event query page.
 	EventLookupHours int
 	// OccupancyTail bounds receipt lookback and late native supplement delivery.
@@ -116,9 +118,13 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	if config.EventLookupHours <= 0 {
 		config.EventLookupHours = 1
 	}
+	now := config.Now
+	if now == nil {
+		now = time.Now
+	}
 	l := &ObservationLog{
-		config: config, root: filepath.Join(config.Directory, observationVersion), started: time.Now().UTC(),
-		now: func() time.Time { return time.Now().UTC() }, files: map[string]*os.File{}, offsets: map[*os.File]int64{},
+		config: config, root: filepath.Join(config.Directory, observationVersion), started: now().UTC(),
+		now: func() time.Time { return now().UTC() }, files: map[string]*os.File{}, offsets: map[*os.File]int64{},
 		retained: map[string]*serving.Definition{}, open: map[string]*serving.RequestRow{}, catalog: map[string]observationCatalogEntry{},
 		archived: map[time.Time]bool{},
 	}

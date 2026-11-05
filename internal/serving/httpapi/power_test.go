@@ -54,7 +54,10 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 				}
 				return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: scenario.name != "denied"}}, nil
 			})
-			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
+			from := time.Date(2026, 11, 5, 2, 59, 59, 432000000, time.UTC)
+			to := from.Add(time.Second)
+			now := from.Add(-time.Second)
+			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}, Now: func() time.Time { return now }})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,8 +66,6 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			from := time.Now().UTC().Add(time.Second)
-			to := from.Add(time.Second)
 			node := serving.NodeReference{Name: "metered", UID: "physical-node"}
 			source := metricobserver.SourceIdentity{Kind: "edge-metrics", Endpoint: "http://meter/metrics", Metric: "wall_watts"}
 			power := metricobserver.Result{Source: source, StartedAt: from, EndedAt: to, Samples: []metricobserver.Sample{{ObservedAt: from, Watts: 0}, {ObservedAt: to, Watts: 0}}}
@@ -76,6 +77,7 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 			if err := observationLog.SchedulerRecord(observation.SchedulerObservation{At: from, Snapshot: &snapshot}); err != nil {
 				t.Fatal(err)
 			}
+			now = to
 			calls := 0
 			meters := []observation.OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: source}}
 			handler := &Handler{authorizer: &servingkube.Authorizer{Client: client}, config: HandlerConfig{

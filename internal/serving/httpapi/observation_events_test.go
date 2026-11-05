@@ -73,10 +73,11 @@ func TestObservationEventsRecoverSimultaneousCommittedFacts(t *testing.T) {
 }
 
 func TestObservationEventRangeSortsWithinAppendPage(t *testing.T) {
-	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
-	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
-	from := time.Now().UTC().Add(-time.Minute)
+	from := time.Date(2026, 11, 5, 2, 59, 30, 0, time.UTC)
 	to := from.Add(time.Minute)
+	now := from
+	h := rawHTTPHandlerWithClock(t, &rawHTTPArchive{}, true, func() time.Time { return now })
+	h.mux.HandleFunc("GET /api/v1/observations/events", h.observationEvents)
 	// Commit in a different order from event time, including identical times.
 	for _, row := range []observation.ClusterObservation{
 		{Kind: "issue", At: from.Add(time.Second), Event: "raised", Source: "second", Reason: "fact"},
@@ -90,6 +91,7 @@ func TestObservationEventRangeSortsWithinAppendPage(t *testing.T) {
 	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: from, Action: &observation.SchedulerActionObservation{ID: "power-operation", Kind: "power", StartedAt: from}}); err != nil {
 		t.Fatal(err)
 	}
+	now = to
 	query := url.Values{"from": {from.Format(time.RFC3339Nano)}, "to": {to.Format(time.RFC3339Nano)}, "limit": {"3"}}
 	response := rawHTTPRequest(h, "/api/v1/observations/events?"+query.Encode())
 	var page struct {

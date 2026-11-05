@@ -117,6 +117,56 @@ func TestOperatingPowerSameIntervalAndActualMembership(t *testing.T) {
 	}
 }
 
+func TestOperatingPowerCoverageStopsAtCapturedTime(t *testing.T) {
+	from := observationTestHour.Add(time.Hour - 7*time.Second)
+	started := from.Add(-time.Minute)
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, started)
+	to := from.Add(10 * time.Second)
+	node := serving.NodeReference{Name: "node", UID: "node-uid"}
+	meters := []OperatingPowerMeter{{Node: node, Meter: "wall", Scope: "node-exclusive-wall", Source: operatingTestSource}}
+	policy := powerwindow.Policy{MaximumBoundaryDistance: time.Second, MaximumGap: 10 * time.Second, MinimumCoverage: 1}
+	if err := log.SchedulerRecord(SchedulerObservation{At: started, Snapshot: &serving.SchedulerSnapshot{At: started}}); err != nil {
+		t.Fatal(err)
+	}
+	appendPower := func(end time.Time) {
+		t.Helper()
+		clock.set(end)
+		power := metricobserver.Result{Source: operatingTestSource, StartedAt: from, EndedAt: end,
+			Samples: []metricobserver.Sample{{ObservedAt: from, Watts: 10}, {ObservedAt: end, Watts: 10}}}
+		if err := log.SchedulerRecord(SchedulerObservation{At: end, Node: &node, Meter: "wall", PowerScope: "node-exclusive-wall", Power: &power, PowerCoverage: &policy}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func(now time.Time, complete bool) {
+		t.Helper()
+		clock.set(now)
+		result, err := log.OperatingPower(context.Background(), from, to, meters, 20)
+		if err != nil || result.Complete != complete || !result.From.Equal(from) || !result.To.Equal(to) {
+			t.Fatalf("requested interval/meter verdict changed: %+v %v", result, err)
+		}
+		if strings.Contains(strings.Join(result.Reasons, " "), "stream unavailable") ||
+			len(result.Coverage.Gaps) != 0 ||
+			result.Coverage.To == nil || !result.Coverage.To.Equal(now) {
+			t.Fatalf("coverage exceeded captured append time %s: %+v", now, result)
+		}
+		if complete {
+			if result.WholePoolJoules == nil || *result.WholePoolJoules != 100 || result.ActivePoolJoules == nil || *result.ActivePoolJoules != 0 {
+				t.Fatalf("covered interval lost measured energy: %+v", result)
+			}
+		} else if result.Nodes[0].MeterComplete || result.WholePoolJoules != nil {
+			t.Fatalf("future without boundary samples became measured: %+v", result)
+		}
+	}
+	// Future time is not a lost stream, but absent future samples are not energy.
+	appendPower(from.Add(time.Second))
+	check(from.Add(time.Second), false)
+	// The new hour is local before its first record exists.
+	check(observationTestHour.Add(time.Hour), false)
+	// Complete is asserted only after actual samples cover the entire request.
+	appendPower(to)
+	check(to, true)
+}
+
 func TestOperatingPowerLocalBoundarySearchGapDoesNotInvalidateMeasuredInterval(t *testing.T) {
 	started := observationTestHour.Add(30 * time.Minute)
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, started)

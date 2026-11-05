@@ -186,7 +186,7 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) serving.Obser
 
 func (r *observationRead) streamCoverage(coverage *serving.ObservationCoverage, stream string, bounds [2]time.Time) {
 	from, to := bounds[0].UTC(), bounds[1].UTC()
-	if to.IsZero() {
+	if to.IsZero() || to.After(r.now) {
 		to = r.now
 	}
 	if from.IsZero() {
