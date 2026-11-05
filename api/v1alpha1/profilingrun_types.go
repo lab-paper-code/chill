@@ -181,8 +181,8 @@ type ProfilingRunStatus struct {
 	// +kubebuilder:validation:Enum=Pending;Done
 	JobCleanup string `json:"jobCleanup,omitempty"`
 
-	// RuntimeTermination keeps the failed runtime container's exit code and
-	// log tail, so the cause of a failed Job outlives its Pod.
+	// RuntimeTermination keeps the actual failed container, native Job cause,
+	// proven worker phase, exit code and log tail after its Pod is deleted.
 	// +optional
 	RuntimeTermination *ProfilingRunRuntimeTermination `json:"runtimeTermination,omitempty"`
 }
@@ -244,6 +244,23 @@ type ProfilingRunObservedExecutionStatus struct {
 
 type ProfilingRunRuntimeTermination struct {
 	ExitCode int32 `json:"exitCode"`
+
+	// Container and Reason retain the native container identity and termination reason.
+	// +optional
+	Container string `json:"container,omitempty"`
+	// +optional
+	Reason string `json:"reason,omitempty"`
+	// Stage is proven by the versioned worker termination message, never by log text.
+	// +optional
+	Stage string `json:"stage,omitempty"`
+	// FailureReason is the worker's typed execution, budget, or integrity failure.
+	// +optional
+	FailureReason string `json:"failureReason,omitempty"`
+	// JobReason and JobMessage retain the native failed Job condition.
+	// +optional
+	JobReason string `json:"jobReason,omitempty"`
+	// +optional
+	JobMessage string `json:"jobMessage,omitempty"`
 
 	// LogTail is the runtime termination message, which Kubernetes fills
 	// with the last 80 lines or 2 KiB of the container log on failure.

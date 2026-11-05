@@ -158,47 +158,83 @@ func (f *KubernetesExecutionFinalizer) observe(
 	}, nil
 }
 
-// RuntimeTermination retains runtime failures and any measurement-container OOM.
-// OOM diagnostics use the existing status log tail, without changing evidence.
+// RuntimeTermination retains the actual failing container and native Job reason.
+// Only a versioned runtime message can prove which execution phase failed.
 func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 	ctx context.Context,
 	run *edgev1alpha1.ProfilingRun,
 	job *batchv1.Job,
 ) (*edgev1alpha1.ProfilingRunRuntimeTermination, error) {
+	termination := &edgev1alpha1.ProfilingRunRuntimeTermination{}
+	for _, condition := range job.Status.Conditions {
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			termination.JobReason, termination.JobMessage = condition.Reason, condition.Message
+			break
+		}
+	}
 	pod, err := f.jobPod(ctx, run, job)
-	if err != nil || pod == nil {
+	if err != nil {
 		return nil, err
 	}
+	if pod == nil {
+		if termination.JobReason != "" || termination.JobMessage != "" {
+			return termination, nil
+		}
+		return nil, nil
+	}
+	var selected *corev1.ContainerStatus
+	// A separate container's OOM is infrastructure failure, even when the
+	// runtime subsequently exits while waiting for its observer.
 	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
-		for _, status := range statuses {
-			terminated := status.State.Terminated
-			if terminated == nil || terminated.Reason != "OOMKilled" {
-				continue
-			}
-			message := status.Name + ": OOMKilled"
-			for _, containers := range [][]corev1.Container{pod.Spec.InitContainers, pod.Spec.Containers} {
-				for _, container := range containers {
-					if container.Name == status.Name {
-						limit := container.Resources.Limits.Memory()
-						message += fmt.Sprintf("; memory limit=%s (%d bytes)", limit.String(), limit.Value())
-					}
+		for i := range statuses {
+			status := &statuses[i]
+			if status.State.Terminated != nil && status.State.Terminated.Reason == "OOMKilled" {
+				if selected == nil || status.Name != runtimeContainerName {
+					selected = status
 				}
 			}
-			if terminated.Message != "" {
-				message += "\n" + terminated.Message
+		}
+	}
+	if selected == nil {
+		for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+			for i := range statuses {
+				status := &statuses[i]
+				if status.State.Terminated != nil && status.State.Terminated.ExitCode != 0 &&
+					(selected == nil || status.Name == runtimeContainerName) {
+					selected = status
+				}
 			}
-			return &edgev1alpha1.ProfilingRunRuntimeTermination{ExitCode: terminated.ExitCode, LogTail: message}, nil
 		}
 	}
-	for _, status := range pod.Status.ContainerStatuses {
-		if terminated := status.State.Terminated; status.Name == runtimeContainerName &&
-			terminated != nil && terminated.ExitCode != 0 {
-			return &edgev1alpha1.ProfilingRunRuntimeTermination{
-				ExitCode: terminated.ExitCode, LogTail: terminated.Message,
-			}, nil
+	if selected == nil {
+		if termination.JobReason != "" || termination.JobMessage != "" {
+			return termination, nil
+		}
+		return nil, nil
+	}
+	native := selected.State.Terminated
+	termination.Container, termination.Reason = selected.Name, native.Reason
+	termination.ExitCode, termination.LogTail = native.ExitCode, native.Message
+	if selected.Name == runtimeContainerName {
+		if record, ok := profilerevidence.DecodeTerminationMessage(native.Message); ok {
+			termination.Stage, termination.FailureReason = record.Stage, record.FailureReason
 		}
 	}
-	return nil, nil
+	if native.Reason == "OOMKilled" {
+		termination.LogTail = selected.Name + ": OOMKilled"
+		for _, containers := range [][]corev1.Container{pod.Spec.InitContainers, pod.Spec.Containers} {
+			for _, container := range containers {
+				if container.Name == selected.Name {
+					limit := container.Resources.Limits.Memory()
+					termination.LogTail += fmt.Sprintf("; memory limit=%s (%d bytes)", limit.String(), limit.Value())
+				}
+			}
+		}
+		if native.Message != "" {
+			termination.LogTail += "\n" + native.Message
+		}
+	}
+	return termination, nil
 }
 
 // jobPod returns the one Pod owned by the measurement Job, or nil when none remains.

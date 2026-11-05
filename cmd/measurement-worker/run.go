@@ -10,6 +10,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
@@ -47,17 +48,24 @@ func execute(
 ) (err error) {
 	// Establish the frozen attempt deadline once, before preparation/runtime.
 	// Coordinator, both result readers and evidence commit inherit its remainder.
-	ctx, cancel := context.WithTimeout(ctx, opts.attemptTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, opts.attemptTimeout, worker.ErrMeasurementBudgetExceeded)
 	defer cancel()
+	ctx = worker.WithTerminationMessagePath(ctx, opts.terminationMessagePath)
 	defer func() {
 		if err == nil {
 			return
+		}
+		if reportErr := worker.RecordTerminationFailure(ctx, err); reportErr != nil {
+			_, _ = fmt.Fprintf(stderr, "retain worker failure phase: %v\n", reportErr)
 		}
 		// Observers stop waiting for a measurement that can no longer happen.
 		if signalErr := worker.PublishSignal(opts.runtimeFailedPath); signalErr != nil {
 			_, _ = fmt.Fprintf(stderr, "publish runtime-failed: %v\n", signalErr)
 		}
 	}()
+	if err := worker.RecordTerminationStage(ctx, evidence.StageStartup); err != nil {
+		return err
+	}
 	runConfig, err := deps.parseRunConfig(opts.runConfig)
 	if err != nil {
 		return fmt.Errorf("%w: load RunConfig: %w", worker.ErrExecutionContract, err)
@@ -76,6 +84,9 @@ func execute(
 		},
 	})
 	if err != nil {
+		return err
+	}
+	if err := worker.RecordTerminationStage(ctx, evidence.StageEvidenceCommit); err != nil {
 		return err
 	}
 	if err := deps.writeReceipt(opts.terminationMessagePath, receipt); err != nil {

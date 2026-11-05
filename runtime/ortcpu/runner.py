@@ -743,9 +743,12 @@ def execute_idle(
     model_load_completed_at: str,
     expected_provider: str,
     memory_sampler: MemorySampler | None = None,
+    phase: Any = None,
 ) -> dict[str, Any]:
     run_config = request["runConfig"]
     state, measurement = run_config["state"], run_config["measurement"]
+    if phase is not None:
+        phase("Observer")
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
             Path(ready_path), request["observerReadyTimeoutMilliseconds"] / 1000.0
@@ -768,6 +771,8 @@ def execute_idle(
     settling_completed_at = now()
 
     publish_immutable(Path(request["measurementStartPath"]), b"signal\n")
+    if phase is not None:
+        phase("Execution")
     stat_before = cpu_stat()
     process_before = time.process_time()
     measurement_started_at = now()
@@ -781,6 +786,8 @@ def execute_idle(
             break
         time.sleep(min(remaining, 0.1))
     measurement_elapsed = time.monotonic() - monotonic_started
+    if phase is not None:
+        phase("ResultValidation")
     memory = memory_sampler.stop() if memory_sampler is not None else {}
     measurement_ended_at = now()
     providers_at_end = session.get_providers()
@@ -844,10 +851,13 @@ def execute_loaded(
     before_measurement: Any,
     result_provider: str,
     memory_sampler: MemorySampler | None = None,
+    phase: Any = None,
 ) -> dict[str, Any]:
     """Measure a loaded session whose startup and warm-up completed before the window."""
     run_config = request["runConfig"]
     state, measurement = run_config["state"], run_config["measurement"]
+    if phase is not None:
+        phase("Observer")
 
     for ready_path in request["observerReadyPaths"]:
         wait_for_signal(
@@ -872,6 +882,8 @@ def execute_loaded(
     samples: list[float] = []
     known_gap_count = 0
     try:
+        if phase is not None:
+            phase("Execution")
         while True:
             session.prepare_next()
             inference_started = time.perf_counter_ns()
@@ -891,6 +903,8 @@ def execute_loaded(
     except Exception as error:
         raise ContractError(f"execute {state['runtimeFamily']} measurement: {error}") from error
     measurement_elapsed = time.monotonic() - monotonic_started
+    if phase is not None:
+        phase("ResultValidation")
     memory = memory_sampler.stop() if memory_sampler is not None else {}
     repetition_ended_at = now()
     measurement_ended_at = repetition_ended_at

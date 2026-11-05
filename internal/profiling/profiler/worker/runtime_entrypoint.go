@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 )
 
 func runRuntimeEntrypoint(
@@ -29,7 +31,18 @@ func runRuntimeEntrypoint(
 	entrypoint.Stdin = bytes.NewReader(payload)
 	entrypoint.Stdout = stdout
 	entrypoint.Stderr = stderr
+	if path := terminationMessagePath(ctx); path != "" {
+		entrypoint.Env = append(os.Environ(), terminationPathEnvironment+"="+path)
+	}
 	if err := entrypoint.Run(); err != nil {
+		if message, readErr := os.ReadFile(terminationMessagePath(ctx)); readErr == nil {
+			if record, ok := evidence.DecodeTerminationMessage(string(message)); ok && record.FailureReason == evidence.FailureIntegrity {
+				return fmt.Errorf("%w: run %s entrypoint: %w", ErrExecutionContract, runtimeName, err)
+			}
+		}
+		if ctx.Err() != nil {
+			err = errors.Join(err, ctx.Err())
+		}
 		return fmt.Errorf("run %s entrypoint: %w", runtimeName, err)
 	}
 	return nil

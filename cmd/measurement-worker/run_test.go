@@ -171,7 +171,7 @@ func validOptions(t *testing.T) options {
 		workloadWindowStartPath: defaultWorkloadWindowStartPath, measurementStartPath: defaultMeasurementStartPath,
 		workloadWindowReadyPath: defaultWorkloadWindowReadyPath, measurementEndPath: defaultMeasurementEndPath,
 		metricResultPath: defaultMetricResultPath, workloadResultPath: defaultWorkloadResultPath,
-		terminationMessagePath: defaultTerminationMessagePath, runtimeFailedPath: defaultRuntimeFailedPath,
+		terminationMessagePath: filepath.Join(t.TempDir(), "termination-log"), runtimeFailedPath: defaultRuntimeFailedPath,
 		firstfloorRuntimeCommand: []string{"python3", "/opt/chill/runtime/firstfloor/measurement.py"},
 		attemptTimeout:           10 * time.Minute, observerReadyTimeout: time.Minute,
 		metricResultTimeout: time.Minute, workloadResultTimeout: time.Minute,

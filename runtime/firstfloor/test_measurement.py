@@ -288,6 +288,55 @@ class MeasurementBoundaryTest(unittest.TestCase):
                 measurement.validate_rknn_facts(dict(facts, **{key: None}), delivery)
 
 
+class RuntimeFailureTest(unittest.TestCase):
+    def test_native_http_failure_and_malformed_result_keep_distinct_terminal_causes(self):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(500 if self.path == "/execute-failure" else 200)
+                self.end_headers()
+                self.wfile.write(b"native execution failed" if self.path == "/execute-failure" else b"{malformed")
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        for path, expected_stage, expected_cause in (
+                ("/execute-failure", "Execution", "ExecutionFailed"),
+                ("/malformed-result", "ResultValidation", "IntegrityError")):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as directory:
+                termination = Path(directory) / "termination-log"
+                session = measurement.FirstfloorSession(server.server_address[1], {
+                    "runConfig": {"state": {"model": "m"},
+                                  "measurement": {"workloadMode": measurement.common.IDLE_WORKLOAD}}})
+                self.addCleanup(session.connection.close)
+
+                def execute(request, workspace):
+                    measurement.record_stage("Execution")
+                    try:
+                        return session.json_call("GET", path)
+                    except Exception as error:
+                        # The common measurement loop wraps native exceptions.
+                        raise measurement.common.ContractError("measurement failed") from error
+
+                with mock.patch.dict(os.environ, {"CHILL_TERMINATION_MESSAGE_PATH": str(termination)}), \
+                        mock.patch.object(measurement.common, "parse_args",
+                                          return_value=SimpleNamespace(result_file=Path(directory) / "result.json")), \
+                        mock.patch.object(measurement.common, "decode_request", return_value={}), \
+                        mock.patch.object(measurement, "validate_request"), \
+                        mock.patch.object(measurement, "execute", side_effect=execute), \
+                        self.assertRaises(SystemExit):
+                    measurement.main()
+                report = json.loads(termination.read_text())
+                self.assertEqual((report["stage"], report["failureReason"]), (expected_stage, expected_cause))
+                self.assertFalse((Path(directory) / "result.json").exists())
+
+
 class WaitReadyTest(unittest.TestCase):
     def test_readiness_probe_timeout_does_not_stay_on_kept_alive_socket(self):
         import http.server

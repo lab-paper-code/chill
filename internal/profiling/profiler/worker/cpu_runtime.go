@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -136,24 +137,27 @@ func (r *CPURuntime) Measure(
 	); err != nil {
 		return RuntimeMeasurement{}, err
 	}
+	if err := RecordTerminationStage(ctx, evidence.StageResultValidation); err != nil {
+		return RuntimeMeasurement{}, err
+	}
 	if runConfig.Measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
 		var result profilingrun.IdleRuntimeResult
 		if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
-			return RuntimeMeasurement{}, fmt.Errorf("read %s idle result: %w", r.name, err)
+			return RuntimeMeasurement{}, fmt.Errorf("%w: read %s idle result: %w", ErrExecutionContract, r.name, err)
 		}
 		verified, err := profilingrun.VerifyIdleRuntimeResult(request.RunConfig, request.PodUID, result)
 		if err != nil {
-			return RuntimeMeasurement{}, fmt.Errorf("validate %s idle result: %w", r.name, err)
+			return RuntimeMeasurement{}, fmt.Errorf("%w: validate %s idle result: %w", ErrExecutionContract, r.name, err)
 		}
 		return idleRuntimeMeasurement(verified), nil
 	}
 	var result profilingrun.RuntimeResult
 	if err := decodeJSONFile(r.config.ResultPath, r.config.MaxResultBytes, &result); err != nil {
-		return RuntimeMeasurement{}, fmt.Errorf("read %s result: %w", r.name, err)
+		return RuntimeMeasurement{}, fmt.Errorf("%w: read %s result: %w", ErrExecutionContract, r.name, err)
 	}
 	verified, err := profilingrun.VerifyRuntimeResult(request.RunConfig, request.PodUID, result)
 	if err != nil {
-		return RuntimeMeasurement{}, fmt.Errorf("validate %s result: %w", r.name, err)
+		return RuntimeMeasurement{}, fmt.Errorf("%w: validate %s result: %w", ErrExecutionContract, r.name, err)
 	}
 	return activeRuntimeMeasurement(verified), nil
 }

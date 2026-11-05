@@ -12,6 +12,7 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 )
@@ -108,7 +109,13 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 		ScheduledNodeName: request.ScheduledNodeName,
 	})
 	if err != nil {
+		if errors.Is(err, ErrExecutionContract) {
+			return evidencestore.Receipt{}, err
+		}
 		return evidencestore.Receipt{}, fmt.Errorf("%w: execute runtime measurement: %w", ErrRuntimeMeasurement, err)
+	}
+	if err := RecordTerminationStage(ctx, evidence.StageObserver); err != nil {
+		return evidencestore.Receipt{}, err
 	}
 	metricResult, err := c.metrics.Read(ctx)
 	if err != nil {
@@ -129,6 +136,9 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 		return evidencestore.Receipt{}, fmt.Errorf("%w: construct raw measurement: %w", ErrMetricObservation, err)
 	}
 
+	if err := RecordTerminationStage(ctx, evidence.StageEvidenceCommit); err != nil {
+		return evidencestore.Receipt{}, err
+	}
 	identity := identityFor(request.RawLocation, payload)
 	receipt, err := c.store.PutImmutable(ctx, identity, bytes.NewReader(payload))
 	if err != nil {

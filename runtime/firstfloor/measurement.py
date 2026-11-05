@@ -26,6 +26,20 @@ FRAME_BYTES = 64 << 20
 PROVIDERS = {"ort-cpu": "CPUExecutionProvider", "ort-cuda": "CUDAExecutionProvider", "rknnlite": ""}
 # Dataset sampling is independent of observed native exchange gaps.
 SAMPLE_SEED = 0
+TERMINATION_SCHEMA = "chill.dacs.io/measurement-worker-termination.v1alpha1"
+
+
+class ExecutionError(Exception):
+    """The native runtime failed to execute, rather than producing invalid evidence."""
+
+
+def record_stage(stage: str, failure_reason: str = "") -> None:
+    path = os.environ.get("CHILL_TERMINATION_MESSAGE_PATH")
+    if path:
+        record = {"schemaVersion": TERMINATION_SCHEMA, "stage": stage}
+        if failure_reason:
+            record["failureReason"] = failure_reason
+        Path(path).write_text(json.dumps(record, separators=(",", ":")), encoding="utf-8")
 
 
 def deadline_policy(settings: dict[str, Any]) -> str:
@@ -245,13 +259,16 @@ class FirstfloorSession:
                 raise common.ContractError("dataset has fewer profiling records than the fixed batch")
 
     def json_call(self, method: str, path: str, payload: bytes | None = None) -> dict[str, Any]:
-        self.connection.request(method, path, payload, {"Content-Type": "application/json"})
-        response = self.connection.getresponse()
-        data = response.read(FRAME_BYTES + 1)
+        try:
+            self.connection.request(method, path, payload, {"Content-Type": "application/json"})
+            response = self.connection.getresponse()
+            data = response.read(FRAME_BYTES + 1)
+        except (OSError, http.client.HTTPException) as error:
+            raise ExecutionError("native actor connection failed") from error
         if len(data) > FRAME_BYTES:
             raise common.ContractError("native response exceeds IPC frame budget")
         if response.status != 200:
-            raise common.ContractError(f"native actor {path} HTTP {response.status}: {data[:1024]!r}")
+            raise ExecutionError(f"native actor {path} HTTP {response.status}: {data[:1024]!r}")
         return common.require_object(json.loads(data, object_pairs_hook=common.no_duplicate_object), "actor response")
 
     def metadata(self) -> dict[str, Any]:
@@ -313,7 +330,7 @@ def wait_ready(process: subprocess.Popen, session: FirstfloorSession, timeout: f
             session.connection.close()  # the probe socket keeps its 1 s connect-time timeout
             session.connection.timeout = None
             return
-        except (OSError, http.client.HTTPException, common.ContractError):
+        except (OSError, http.client.HTTPException, common.ContractError, ExecutionError):
             session.connection.close()
         if time.monotonic() >= deadline:
             raise common.ContractError("serving-worker model readiness timed out")
@@ -382,13 +399,13 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
                 session.connection.close()
                 result = common.execute_idle(request, actual["runtimeVersion"], session, actual.get("availableProviders", []),
                                              architecture, cpu_max, affinity, cpuset, loaded_at, PROVIDERS[run["state"]["backend"]],
-                                             memory_sampler=sampler)
+                                             memory_sampler=sampler, phase=record_stage)
                 executions = 0
             else:
                 result = common.execute_loaded(request, session, actual["runtimeVersion"], actual.get("availableProviders", []),
                                                architecture, cpu_max, affinity, cpuset,
                                                session.begin_measurement, PROVIDERS[run["state"]["backend"]],
-                                               memory_sampler=sampler)
+                                               memory_sampler=sampler, phase=record_stage)
                 executions = result["inferenceCount"]
                 if len(session.samples) != executions or len(result["repetitionResults"][0]["latencyMs"]) != executions:
                     raise common.ContractError("native/client timing samples are not aligned")
@@ -435,11 +452,24 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
 def main() -> None:
     arguments = common.parse_args()
     try:
+        record_stage("Startup")
         request = common.decode_request(sys.stdin.buffer)
         validate_request(request)
         result = execute(request, arguments.result_file.parent)
         common.publish_immutable(arguments.result_file, common.encode_result(result, request["maxResultBytes"]))
-    except (common.ContractError, OSError, ValueError, http.client.HTTPException) as error:
+    except (common.ContractError, OSError, ValueError, http.client.HTTPException, ExecutionError) as error:
+        cause = error
+        while cause.__cause__ is not None and not isinstance(cause, ExecutionError):
+            cause = cause.__cause__
+        path = os.environ.get("CHILL_TERMINATION_MESSAGE_PATH")
+        if path:
+            stage = json.loads(Path(path).read_text(encoding="utf-8"))["stage"]
+            if isinstance(cause, ExecutionError):
+                # Keep the persisted phase: only an actual post-start execution
+                # can become an expected discovery boundary in the controller.
+                record_stage(stage, "ExecutionFailed")
+            else:
+                record_stage("ResultValidation" if stage == "Execution" else stage, "IntegrityError")
         common.fail(str(error))
 
 
