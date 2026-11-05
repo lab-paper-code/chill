@@ -31,7 +31,7 @@ def _allocations(document, nodes):
 def _matched(allocations, state, namespace):
     matched = []
     for pod in allocations:
-        instances = [instance for instance in (state.get('instances') or [])
+        instances = [instance for instance in (state['snapshot'].get('instances') or [])
                      if instance.get('podUID') == pod['podUID']
                      and instance.get('podName') == pod['podName']
                      and instance.get('node', {}).get('name') == pod['node']]
