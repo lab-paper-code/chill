@@ -80,9 +80,9 @@ type ObservationLog struct {
 	flushMu  sync.Mutex
 	submitMu sync.Mutex
 	wake     *sync.Cond
-	// ponytail: unbounded observation backlog; sustained CephFS stalls can exhaust
-	// process memory (OOM loses the unwritten tail). Add a durable spool or an
-	// explicitly approved admission/backpressure limit if this ceiling is reached.
+	// ponytail: unbounded backlog; slow storage grows memory until the Pod memory
+	// limit OOM-kills the server, taking the crash path (boot-wide unknown).
+	// Add a bound only if D41/v3 E5 measured max queue length/latency requires it.
 	queue             []*observationBatch
 	frontier          time.Time
 	failure           error
