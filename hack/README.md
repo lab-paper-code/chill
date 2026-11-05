@@ -129,7 +129,7 @@ kubeconfig content.
 
 `stage` creates explicitly listed `generatedValues` files relative to the
 new evidence directory. The runner freezes those inputs before final rendering
-and **before quiesce**; later phases must not rewrite frozen inputs or records.
+and **before custom quiesce**; later phases must not rewrite frozen inputs or records.
 Use these inputs for new runtime declarations and harness new-input values.
 Runtime/harness activation requires explicit stage/generatedValues and accept
 scripts, or the fixed `runtimeDeclarations: true` implementation for all six
@@ -139,6 +139,23 @@ declaration activation (`runtimeInspectionSeconds`, default 3600). It does not
 guess probes or treat publication as readiness. Retain partial runtime,
 profile and measurement diagnostics without falling back to an older successful
 result; do not invent a profile-specific deployment blocker.
+
+Before these GPU probes, the runner derives GPU nodes from the selected source
+inspector, temporarily excludes them and disables autonomy only for Workloads
+owning their observed GPU allocations. **Only idle/retained CHILL allocations
+are removed automatically**, through the normal public remove operation and a
+subsequent Kubernetes allocation-release observation. Active routing, accepted
+requests, conflicting ownership/reservations and external GPU consumers stop
+deployment; there is no automatic unroute, forced Pod deletion or probe bypass.
+Raw state, Pods, operation responses and settings receipts remain under
+`runtime-quiescence/` in the new deployment evidence directory.
+
+Temporary settings are restored after probing, on success or failure, using the
+existing path-scoped settings receipt and fresh ETag/If-Match. Unrelated user
+edits survive; externally changed tracked paths are skipped and recorded rather
+than overwritten. Ambiguous writes and restoration conflicts remain explicit
+STOPs. Preparation and restoration each use the existing `readinessSeconds`
+budget; this is not deployment rollback. Inspect/dry-run never quiesce serving.
 For future deliberately unactivated builds, `publicationOnly` must explicitly
 list those selected roles. It is not allowed to replace the required activation
 in this first live use. State-changing quiesce/migrate/configure commands
@@ -162,7 +179,7 @@ An old SHA, old revision, or a different diff is not approval.
 Generated-values changes have a separate gate: compare the final render against
 the trusted verified-image overlay plus validated built-in runtime-probe output.
 Any other configuration change requires an exact separate
-`--staged-diff-approved FILE` (or recipe `stagedDiffApproved`) before quiesce.
+`--staged-diff-approved FILE` (or recipe `stagedDiffApproved`) before custom quiesce.
 Base source-chart approval does not approve staged configuration changes;
 dynamic probe output is validated by the built-in path, not an arbitrary
 override.

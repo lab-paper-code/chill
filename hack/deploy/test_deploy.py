@@ -83,6 +83,52 @@ if name=='helm':
    print('---\n# Source: chill/templates/evaluation_rbac.yaml\n'+json.dumps(item))
  sys.exit(0)
 if name=='kubectl':
+ if state.get('runtimeFixture'):
+  if 'get' in args and args[args.index('get')+1]=='nodes':
+   print(json.dumps(state['nodes']));sys.exit(0)
+  if 'get' in args and args[args.index('get')+1]=='pods':
+   items=[]
+   if not state.get('released'):
+    pod=state['servingPod']
+    if state.get('removed'):
+     state['releaseLists']=state.get('releaseLists',0)+1
+     if state['releaseLists']>=2:
+      state['released']=True
+     else:pod['metadata']['deletionTimestamp']='2026-11-05T00:00:00Z'
+    if not state.get('released'):items.append(pod)
+    save()
+   if not state.get('publication'):
+    print(json.dumps({'items':items}));sys.exit(0)
+  if 'create' in args:
+   pod=json.load(sys.stdin);container=pod['spec']['containers'][0]
+   gpu=container.get('resources',{}).get('limits',{}).get('nvidia.com/gpu')
+   if gpu:
+    state['gpuAttempts']=state.get('gpuAttempts',0)+1
+    if not state.get('removed') or not state.get('released'):
+     state['prematureProbe']=True;save()
+     print('requested 1 nvidia.com/gpu, available 0: serving allocation not released',file=sys.stderr);sys.exit(23)
+    settings=state['settings']
+    if not set(state['gpuNodes']).issubset(settings['excludedNodes']) or state['owner'] in settings['autonomousWorkloads']:
+     print('GPU probe admitted without scheduler exclusion',file=sys.stderr);sys.exit(24)
+   state['probeCount']=state.get('probeCount',0)+1;name=pod['metadata']['name']
+   state.setdefault('probes',{})[name]=pod
+   if state.get('concurrentEdit') and container['command'][-1]=='rknnlite':
+    state['settings']['minimumDemand']['external']=99
+    if state['concurrentEdit']=='tracked':state['settings']['excludedNodes']=['external-choice']
+    state['settingsVersion']+=1
+    state.pop('concurrentEdit')
+   save();print('pod/'+name);sys.exit(0)
+  if 'get' in args and args[args.index('get')+1].startswith('pod/'):
+   pod=state['probes'][args[args.index('get')+1].split('/',1)[1]]
+   container=pod['spec']['containers'][0];backend=container['command'][-1]
+   facts={'machine':state['machines'][pod['spec']['nodeName']],'ortVersion':'1.24.0','providers':['CPUExecutionProvider','CUDAExecutionProvider'],'packages':{'onnxruntime':'1.24.0','onnxruntime-gpu':'1.24.0','numpy':'1.26.4','rknn-toolkit-lite2':'2.3.0'},'gpuUUIDs':['GPU-observed-'+pod['spec']['nodeName']],'driverVersion':'fixture-driver','compatible':['rockchip,rk3588']}
+   failed=state.get('failProbe') and backend=='ort-cuda'
+   print(json.dumps({'status':{'phase':'Failed' if failed else 'Succeeded','containerStatuses':[{'state':{'terminated':{'exitCode':1 if failed else 0,'message':json.dumps(facts)}}}]}}));sys.exit(0)
+  if 'delete' in args:
+   names=args[args.index('delete')+1:]
+   if any('serving' in item for item in names):
+    print('serving Pod deletion forbidden',file=sys.stderr);sys.exit(25)
+   sys.exit(0)
  if 'auth' in args and 'can-i' in args:
   denied=state.get('denyEvaluationPermission') and '/chill/api/v1/workloads' in args and '--as=system:serviceaccount:review:custom-action' in args
   print('no' if denied else 'yes');sys.exit(1 if denied else 0)
@@ -127,12 +173,68 @@ class DeploymentCLI(unittest.TestCase):
         cls.cert, cls.key = cls.directory / 'cert.pem', cls.directory / 'key.pem'
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(cls.key), '-out', str(cls.cert), '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'], check=True, capture_output=True)
         class API(http.server.BaseHTTPRequestHandler):
+            def reply(self, body, status=200, etag=None):
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                if etag:
+                    self.send_header('ETag', etag)
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode())
+
+            def mutation(self, method):
+                cls.requests.append((self.path, self.headers.get('Authorization')))
+                if self.headers.get('Authorization') != 'Bearer ' + cls.token:
+                    self.reply({}, 401); return
+                state_path = cls.directory / 'state.json'
+                state = json.loads(state_path.read_text())
+                body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', '0'))))
+                state.setdefault('apiMutations', []).append({'method': method, 'path': self.path, 'body': body, 'ifMatch': self.headers.get('If-Match')})
+                if method == 'PUT' and self.path == '/api/v1/scheduler/settings':
+                    if self.headers.get('If-Match') != '"%d"' % state['settingsVersion']:
+                        self.reply({'error': 'conflict'}, 409); return
+                    state['settings'] = body
+                    state['settingsVersion'] += 1
+                    if state.get('eligibilityRace') and state['settingsVersion'] == 2:
+                        state['routing'] = {state['owner']: {state['instance']['id']: 1}}
+                    state_path.write_text(json.dumps(state))
+                    self.reply({'after': body, 'appliedAt': '2026-11-05T00:00:00Z'}, etag='"%d"' % state['settingsVersion'])
+                elif method == 'POST' and self.path == '/api/v1/scheduler/operations':
+                    expected = {'kind': 'remove', 'workloadUID': state['owner'], 'node': state['instance']['node'], 'instance': state['instance']['id'], 'reason': body.get('reason')}
+                    admitted = body == expected and bool(body.get('reason')) and state['owner'] not in state['settings']['autonomousWorkloads'] and set(state['gpuNodes']).issubset(state['settings']['excludedNodes'])
+                    routed = any(weights.get(state['instance']['id'], 0) > 0 for weights in state.get('routing', {}).values())
+                    accepted = bool(state.get('outstanding'))
+                    failed = routed or accepted or not admitted
+                    if state.get('removeFailed'):
+                        state_path.write_text(json.dumps(state))
+                        self.reply({'status': 'failed', 'error': 'native drain did not complete'}); return
+                    if not failed:
+                        state['removed'] = True
+                    state_path.write_text(json.dumps(state))
+                    message = 'the instance still owns accepted requests' if accepted else 'the instance still receives routing; unroute it first'
+                    self.reply({'code': 'OperationConflict', 'message': message} if failed else {'status': 'complete'}, 409 if failed else 200)
+                else:
+                    self.reply({}, 404)
+
+            def do_PUT(self):
+                self.mutation('PUT')
+
+            def do_POST(self):
+                self.mutation('POST')
+
             def log_message(self, *args):
                 pass
             def do_GET(self):
                 cls.requests.append((self.path, self.headers.get('Authorization')))
                 if self.headers.get('Authorization') != 'Bearer ' + cls.token:
                     self.send_response(401); self.end_headers(); return
+                if self.path in ('/api/v1/scheduler/settings', '/api/v1/scheduler/state'):
+                    state = json.loads((cls.directory / 'state.json').read_text())
+                    if state.get('runtimeFixture'):
+                        if self.path.endswith('/settings'):
+                            self.reply(state['settings'], etag='"%d"' % state['settingsVersion'])
+                        else:
+                            self.reply({'instances': [] if state.get('removed') else [state['instance']]})
+                        return
                 if self.path == '/':
                     self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(b'<!doctype html><html><body>CHILL</body></html>'); return
                 if self.path.endswith('measurement-coverage'):
@@ -205,6 +307,98 @@ class DeploymentCLI(unittest.TestCase):
 
     def state(self, **kwargs):
         (self.directory / 'state.json').write_text(json.dumps(kwargs))
+
+    def test_runtime_gpu_quiescence_restores_settings(self):
+        import runtime
+        from test_runtime import nodes_fixture
+        _, inspector = runtime._inspector(ROOT)
+        gpu_nodes = sorted({node for _, _, variable, nodes, _ in inspector.CLASSES if variable for node in nodes})
+        machines = {node: 'x86_64' if architecture == 'amd64' else 'aarch64'
+                    for _, architecture, _, nodes, _ in inspector.CLASSES for node in nodes}
+        machines.update({node: 'x86_64' if architecture == 'amd64' else 'aarch64'
+                         for architecture, (_, node) in inspector.CPU.items()})
+        machines[inspector.RKNN_NODE] = 'aarch64'
+        owner = 'observed-owner-uid'
+        instance = {'id': 'serving-fixture/server', 'node': {'name': gpu_nodes[0], 'uid': 'observed-node-uid'},
+                    'ownerWorkloadUID': owner, 'workloadUID': '', 'podName': 'serving-fixture', 'podUID': 'observed-pod-uid'}
+        settings = {'excludedNodes': ['preexisting-exclusion'], 'autonomousWorkloads': [owner, 'unrelated-workload'],
+                    'minimumDemand': {'unchanged': 7}}
+        pod = {'metadata': {'name': instance['podName'], 'namespace': 'review', 'uid': instance['podUID']},
+               'spec': {'nodeName': gpu_nodes[0], 'containers': [{'name': 'server', 'resources': {'requests': {'nvidia.com/gpu': '1'}}}]},
+               'status': {'phase': 'Running'}}
+        self.recipe.update(images=['server', *sorted({role for role, _ in runtime.RUNTIME_IMAGES.values()})],
+                           runtimeDeclarations=True, readinessSeconds=10)
+        for scenario in ('success', 'probe-fail', 'remove-failed', 'remove-conflict', 'accepted-request', 'eligibility-race',
+                         'foreign-consumer', 'concurrent-unrelated', 'concurrent-tracked'):
+            with self.subTest(scenario=scenario):
+                fixture = {'runtimeFixture': True, 'nodes': nodes_fixture(ROOT), 'gpuNodes': gpu_nodes, 'machines': machines,
+                           'owner': owner, 'instance': copy.deepcopy(instance), 'servingPod': copy.deepcopy(pod),
+                           'settings': copy.deepcopy(settings), 'settingsVersion': 1}
+                if scenario == 'probe-fail':
+                    fixture['failProbe'] = True
+                elif scenario == 'remove-failed':
+                    fixture['removeFailed'] = True
+                elif scenario == 'remove-conflict':
+                    fixture['routing'] = {owner: {instance['id']: 1}}
+                elif scenario == 'accepted-request':
+                    fixture['outstanding'] = [{'id': 'accepted-fixture', 'instance': instance['id']}]
+                elif scenario == 'eligibility-race':
+                    fixture['eligibilityRace'] = True
+                elif scenario == 'foreign-consumer':
+                    fixture['servingPod']['metadata']['uid'] = 'foreign-pod-uid'
+                elif scenario.startswith('concurrent-'):
+                    fixture['concurrentEdit'] = scenario[len('concurrent-'):]
+                self.state(**fixture)
+                (self.directory / 'calls.jsonl').write_text('')
+                evidence = self.out / scenario
+                failed = scenario in ('probe-fail', 'remove-failed', 'remove-conflict', 'accepted-request', 'eligibility-race', 'foreign-consumer')
+                self.cli('--execute', '--evidence', str(evidence), expected=int(failed))
+                observed = json.loads((self.directory / 'state.json').read_text())
+                restored = copy.deepcopy(settings)
+                if scenario.startswith('concurrent-'):
+                    restored['minimumDemand']['external'] = 99
+                if scenario == 'concurrent-tracked':
+                    restored['excludedNodes'] = ['external-choice']
+                self.assertEqual(observed['settings'], restored)
+                self.assertFalse(observed.get('prematureProbe'), observed)
+                operations = [item for item in observed.get('apiMutations', []) if item['method'] == 'POST']
+                if scenario == 'foreign-consumer':
+                    self.assertEqual(operations, [])
+                else:
+                    self.assertEqual(len(operations), 1, operations)
+                    self.assertEqual(operations[0]['body']['kind'], 'remove')
+                if scenario in ('remove-failed', 'remove-conflict', 'accepted-request', 'eligibility-race', 'foreign-consumer'):
+                    self.assertEqual(observed.get('probeCount', 0), 0)
+                    self.assertFalse(observed.get('removed'))
+                else:
+                    self.assertTrue(observed['removed'])
+                    self.assertTrue(observed['released'])
+                    self.assertEqual(observed['releaseLists'], 2)
+                    self.assertGreater(observed['gpuAttempts'], 0)
+                if failed:
+                    self.assertTrue((evidence / 'failure.json').exists())
+                    self.assertFalse(any('upgrade' in call for call in self.calls()))
+                    if scenario in ('remove-conflict', 'accepted-request', 'eligibility-race'):
+                        raw_evidence = '\n'.join(path.read_text() for path in (evidence / 'runtime-quiescence').glob('*.json'))
+                        self.assertIn('OperationConflict', raw_evidence)
+                        self.assertIn('still owns accepted requests' if scenario == 'accepted-request' else 'still receives routing', raw_evidence)
+                        self.assertIn(instance['id'], raw_evidence)
+                else:
+                    self.assertTrue(json.loads((evidence / 'state.json').read_text())['ready'])
+                    self.assertTrue((evidence / 'runtime-values.yaml').exists())
+                    publication = json.loads((evidence / 'publication.json').read_text())
+                    self.assertTrue(set(role for role, _ in runtime.RUNTIME_IMAGES.values()).issubset(publication['roles']))
+                receipts = [json.loads(path.read_text()) for path in (evidence / 'runtime-quiescence').glob('*.json')]
+                if scenario != 'foreign-consumer':
+                    self.assertTrue(any(receipt.get('revertedAt') for receipt in receipts), receipts)
+                if scenario == 'concurrent-tracked':
+                    self.assertTrue(any(any(item.get('path') == ['excludedNodes'] and item.get('reason') == 'external-change-revert-skipped'
+                                                for item in receipt.get('revertSkipped', [])) for receipt in receipts), receipts)
+                for call in self.calls():
+                    self.assertNotIn('uninstall', call)
+                    self.assertNotIn('rollback', call)
+                    if 'delete' in call:
+                        self.assertFalse(any('serving-fixture' in item or 'workload' in item for item in call))
 
     def test_local_plan_never_contacts_cluster_or_api(self):
         result = self.cli('--dry-run', '--evidence', str(self.out))

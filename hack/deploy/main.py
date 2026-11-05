@@ -345,7 +345,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         config = api_checks.load_config(recipe['apiEnvironment'])
         upgrade_process_seconds = recipe['upgradeSeconds'] + 30
         budget = 120 + recipe['readinessSeconds'] + upgrade_process_seconds + len(recipe['images']) * recipe['buildSeconds'] + sum(x['seconds'] for steps in recipe['commands'].values() for x in steps)
-        budget += (recipe.get('runtimeInspectionSeconds', 3600) if recipe.get('runtimeDeclarations') else 0) + 60 * (len(recipe['apiChecks']) + 2)
+        budget += (recipe.get('runtimeInspectionSeconds', 3600) + 2 * recipe['readinessSeconds'] if recipe.get('runtimeDeclarations') else 0) + 60 * (len(recipe['apiChecks']) + 2)
         budget += 360 if recipe.get('checkConfiguration') else 0
         if not inspect:
             api_checks.preflight(config, budget, out)
@@ -438,7 +438,10 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         trusted_flags = [*flags, '-f', str(out / 'image-overlay.json')]
         if recipe.get('runtimeDeclarations'):
             import runtime
-            declaration_values = runtime.stage(publication, src, out, kube, run.run, timeout=recipe.get('runtimeInspectionSeconds', 3600))
+            import quiescence
+            with quiescence.gpu_probes(config, state['probeNodesPreflight']['nodes'],
+                                       out, kube, run.run, recipe['readinessSeconds']):
+                declaration_values = runtime.stage(publication, src, out, kube, run.run, timeout=recipe.get('runtimeInspectionSeconds', 3600))
             trusted_flags += ['-f', str(declaration_values)]
         dump(out / 'image-overlay.json', overlay)
         final_flags = list(trusted_flags)
@@ -521,7 +524,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         print('DEPLOY COMPLETE elapsed=%.1fs' % (time.monotonic() - started), flush=True)
         print('READY: ' + str(out), flush=True)
     except BaseException as error:
-        state.update(error=str(error), ready=False, disposition='STOP; retain evidence, fix and deploy a reviewed roll-forward; no automatic retry/restore/rollback')
+        state.update(error=str(error), ready=False, disposition='STOP; retain evidence, fix and deploy a reviewed roll-forward; no automatic deployment retry/rollback; temporary probe settings restoration recorded separately')
         dump(out / 'failure.json', state)
         print('DEPLOY STOP phase=%s elapsed=%.1fs type=%s evidence=%s' %
               (state['stage'], time.monotonic() - started, type(error).__name__, out), flush=True)
