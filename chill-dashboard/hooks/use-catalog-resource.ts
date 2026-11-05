@@ -42,7 +42,7 @@ export function useResource(kind: Kind, name?: string, pinnedUID?:string): Resou
   const wrongUID = !!expectedUID && !!current && expectedUID !== current.metadata.uid
   const missing = detail.error?.status === 404
   const denied = !!name && [401, 403].includes(detail.error?.status ?? 0)
-  const blocked = wrongUID || identityChanged || missing || !!deletedUID || denied || mutation.isPending
+  const blocked = wrongUID || identityChanged || missing || !!deletedUID || denied || mutation.isPending || !!mutation.error?.unknownOutcome
   const affected = workloads.error || kind === "workloads" ? undefined : connected(workloads.data, kind, name ?? "", source?.metadata.uid)
   async function submit(method: "POST" | "PUT" | "DELETE", body?: unknown) {
     if (blocked || conflict) return

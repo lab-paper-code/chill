@@ -156,7 +156,7 @@ test("operating sections and numeric, boolean and node Sheets follow URL history
   }
 })
 
-test("catalog lists prioritize fields, models and numeric counts while retaining complete collapsed definitions",()=>{
+test("catalog lists keep technical source out of semantic summaries while retaining complete definitions",()=>{
   const secret="registry.example/very-long-address@sha256:"+"a".repeat(64)
   const specs={
     models:{artifacts:[{name:"internal-file-a",format:"ONNX"},{name:"internal-file-b",format:"ONNX"}],executionPaths:[{name:"internal-path-a",runtime:{backend:"cpu"}},{name:"internal-path-b",runtime:{backend:"cpu"}}]},
@@ -173,9 +173,6 @@ test("catalog lists prioritize fields, models and numeric counts while retaining
     assert.ok(!rendered.includes(secret))
     assert.ok(!rendered.includes("internal-file"))
     assert.ok(!rendered.includes("internal-path"))
-    const count=columns.find(column=>column.key==="count")!
-    assert.equal(count.numeric,true)
-    assert.equal(count.value(item),kind==="models"?2:1)
     assert.equal(columns.find(column=>column.key==="services")!.value(item),0)
     const source=columns.find(column=>column.key==="source")!.value(item) as Tree
     assert.equal(source.type,"details")
@@ -348,15 +345,6 @@ test("model details use human titles and independent execution limits while reta
   assert.ok(tree.some(node=>node.props.value===spec))
 })
 
-test("preprocessor summary groups exact image references without losing target architecture or path",()=>{
-  const runner=hooks(),image="registry@sha256:shared",spec={input:{fields:[]},output:{fields:[]},artifacts:[{target:{model:"model",artifact:"a"},source:{image,architecture:"arm64",path:"/arm"}},{target:{model:"model",artifact:"b"},source:{image,architecture:"amd64",path:"/x86"}},{target:{model:"model",artifact:"c"},source:{image:"registry@sha256:other",architecture:"arm64",path:"/other"}}]}
-  const {CatalogPage}=load("../features/management.tsx",{...base,react:runner.react,"@/lib/client":{useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/preprocessors/prep"?{metadata:{name:"prep",uid:"uid"},spec}:path==="v1/workloads?view=summary"?[]:{items:[]}})}})
-  const summary=elements(runner.render(CatalogPage,{kind:"preprocessors",name:"prep"})).find(node=>typeof node.type==="function"&&node.props.spec===spec)!
-  const table=elements((summary.type as (props:Record<string,unknown>)=>unknown)(summary.props)).find(node=>node.type==="table")!
-  const rows=table.props.data as [string,string][]
-  assert.equal(rows.filter(([,value])=>value===image).length,1)
-  for(const value of ["arm64","amd64","/arm","/x86","/other"])assert.ok(rows.some(row=>row.includes(value)))
-})
 
 test("model connected services separate names, observed devices and admission without repeating model",()=>{
   const runner=hooks(),view={desired:{metadata:{name:"service",uid:"service-uid"},spec:{modelRef:{name:"model"},preprocessorRef:{name:"prep"},slo:{}}},admission:true}

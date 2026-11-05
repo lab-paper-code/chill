@@ -94,7 +94,7 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
   async function send() {
     setValidation("")
     try {
-      if (!preprocessor) throw new Error("적용된 전처리기가 아직 없어요.")
+      if (!preprocessor) throw new Error("적용된 모델 입출력 처리가 아직 없어요.")
       if (!view.admission || wrongUID) throw new Error("지금 이 서비스가 요청을 받을 수 없어요. 준비 상태를 확인해 주세요.")
       if (!timeout.trim()) throw new Error("응답을 기다릴 시간과 단위를 적어 주세요.")
       const body = checkInputs()
@@ -168,7 +168,7 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
 
   if (stage === "confirm") return <Screen back={back} status={<span className="text-sm text-muted-foreground">2 / 2</span>} title="단일 요청 · 전송 점검"
     action={<div className="flex gap-3"><Button type="button" variant="outline" className="flex-1" disabled={mutation.isPending} onClick={() => { setValidation(""); setStage("fill") }}>이전</Button><Button className="flex-[2]" disabled={mutation.isPending || !view.admission || wrongUID || !!previewError} onClick={() => void send()}>추론 보내기</Button></div>}>
-    <Facts items={[["서비스", name], ["전처리기", preprocessor!.name], ...fields.map((field): [ReactNode, ReactNode] => [fieldLabel(field), sentValue(field)]), ["응답 대기 시간", duration(waitMs)], ["요청 크기", size(encoder.encode(preview).byteLength)]]} />
+    <Facts items={[["서비스", name], ["모델 입출력 처리", preprocessor!.name], ...fields.map((field): [ReactNode, ReactNode] => [fieldLabel(field), sentValue(field)]), ["응답 대기 시간", duration(waitMs)], ["요청 크기", size(encoder.encode(preview).byteLength)]]} />
     <Rows><RowDialog label="보낼 데이터 확인" title="실제 요청 데이터"><SourceJSON inline title="전송 설정" value={sent} /></RowDialog></Rows>
     {!view.admission && <p role="alert">지금은 이 서비스가 새 요청을 받을 수 없어요.</p>}
     {problem}
@@ -206,7 +206,7 @@ function InferenceFlow({ name, view, wrongUID }: { name: string; view: WorkloadV
         <label className="grid gap-2 text-sm">응답 대기 제한 시간<Input aria-label="응답 대기 제한 시간" required value={timeout} onChange={event => setTimeout(event.target.value)} /></label>
         <Facts items={[["입력 예시", "500ms / 1.5s / 20s"], ["최대 대기", duration(config.inferTimeoutMs)], ["현재 대기", duration(waitMs)], ["응답 목표 기준", view.appliedDefinition ? "적용 정의" : "등록 설정"], ["응답 목표 비율 (%)", view.appliedDefinition?.slo.percentile ?? view.desired.spec.slo.percentile], ["응답 목표 지연", sloMs === undefined ? view.desired.spec.slo.targetLatency : duration(sloMs)], ["요청 크기 한도", size(config.maxRequestBytes)], ["대기 제한 · 응답 목표", "별도"]]} />
       </RowDialog>
-      <RowDialog label="입력 계약과 측정 근거" title={`${name} 입력 계약과 측정 근거`}><ServiceAppliedFacts view={view} /><SourceJSON inline title="적용된 전처리기와 측정된 실행 경로" value={{ preprocessor, supportedInputs: view.supportedInputs }} /><Link href={`${service}#definition`}>측정 입력</Link></RowDialog>
+      <RowDialog label="입력 계약과 측정 근거" title={`${name} 입력 계약과 측정 근거`}><ServiceAppliedFacts view={view} /><SourceJSON inline title="적용된 모델 입출력 처리와 측정된 실행 경로" value={{ preprocessor, supportedInputs: view.supportedInputs }} /><Link href={`${service}#definition`}>측정 입력</Link></RowDialog>
       <RowDialog label="모델과 준비 상태" title={`${name} 모델과 준비 상태`}><WorkloadState view={view} /></RowDialog>
     </Rows>
     {problem}

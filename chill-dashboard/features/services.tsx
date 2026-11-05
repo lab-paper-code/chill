@@ -21,7 +21,7 @@ export function WorkloadState({ view }: { view: WorkloadView }) {
   const { name, uid } = view.desired.metadata
   return <>
     <Facts items={[
-      ["모델", view.desired.spec.modelRef.name], ["입력 처리", view.desired.spec.preprocessorRef.name], ["데이터", view.desired.spec.datasetRef?.name ?? "미설정"], ["목표 비율 (%)", view.desired.spec.slo.percentile], ["목표 지연", view.desired.spec.slo.targetLatency],
+      ["모델", view.desired.spec.modelRef.name], ["모델 입출력 처리", view.desired.spec.preprocessorRef.name], ["데이터", view.desired.spec.datasetRef?.name ?? "미설정"], ["목표 비율 (%)", view.desired.spec.slo.percentile], ["목표 지연", view.desired.spec.slo.targetLatency],
       ["적용된 모델", view.appliedDefinition?.model.name ?? "미적용"],
       ["준비", statusLabel(view.readiness)], ...(view.reason && statusLabel(view.reason) !== statusLabel(view.readiness) ? [["사유", statusLabel(view.reason)] as [string, string]] : []), ["접수 허용", view.admission ? "허용" : "차단"],
       ["배정 대기", `${view.pending}건`], ["배정됨", `${view.assigned}건`], ["측정 입력", `${view.supportedInputs.length}개`],

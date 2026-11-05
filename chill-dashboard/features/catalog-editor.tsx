@@ -14,8 +14,9 @@ import { ServiceAdmission } from "@/features/service-hub"
 import { DataTable } from "@/components/data-table"
 import { datasetGap } from "@/lib/measurement-request"
 import { connected, unwrap, useResource, type Kind, type Referenced, type Resource, type ResourceState, type Spec } from "@/hooks/use-catalog-resource"
+import { CatalogRegistration } from "@/components/catalog-registration"
 
-export const kindLabel = (kind: Kind) => ({ models: "모델", workloads: "서비스", preprocessors: "입력 처리", datasets: "데이터셋" })[kind]
+export const kindLabel = (kind: Kind) => ({ models: "모델", workloads: "서비스", preprocessors: "모델 입출력 처리", datasets: "데이터셋" })[kind]
 const emptyField = (): RawField => ({ name: "", format: "JPEG", maxBytes: 1048576 })
 const emptyTarget = (): PreprocessorArtifact => ({ target: { model: "", artifact: "" }, source: { image: "", architecture: "", path: "" } })
 const subsets = (path: string) => [`${path.replace(/\/+$/, "")}/profiling`, `${path.replace(/\/+$/, "")}/evaluation`]
@@ -176,33 +177,31 @@ function brief(spec: Spec): [string, string][] {
   return "modelRef" in spec ? [["모델", spec.modelRef.name], ["전처리기", spec.preprocessorRef.name], ["데이터셋", spec.datasetRef?.name ?? "정하지 않음"], ["응답 목표", target(spec)]] : [["모델 파일", spec.artifacts.map(a => a.name).join(", ") || "없음"], ["실행 방식", spec.executionPaths.map(p => p.name).join(", ") || "없음"]]
 }
 export function DefinitionSummary({ spec }: { spec: Spec }) {
-  const images="input" in spec?[...new Set(spec.artifacts.map(a=>a.source.image))]:[]
-  const items:[string,string][]="input" in spec ? [
-    ...spec.input.fields.map((f): [string, string] => [`입력 ${f.name}`, `${f.format} · 최대 ${size(f.maxBytes)}`]),
-    ...spec.output.fields.map((f): [string, string] => [`출력 ${f.name}`, f.format]),
+  const items: [string, string][] = "input" in spec ? [
+    ...spec.input.fields.map((f): [string, string] => [`입력 ${f.name}`, `${formatText(f.format)} · 최대 ${size(f.maxBytes)}`]),
+    ...spec.output.fields.map((f): [string, string] => [`출력 ${f.name}`, formatText(f.format)]),
     ["최대 생성 토큰", spec.maxNewTokens ? `${spec.maxNewTokens}개` : "정하지 않음"],
-    ...images.flatMap((image,imageIndex):[string,string][]=>[
-      [`공통 이미지 ${imageIndex+1}`,image],
-      ...spec.artifacts.flatMap((a,index):[string,string][]=>a.source.image===image?[
-        [`대상 ${index+1} 모델`,a.target.model],[`대상 ${index+1} 아키텍처`,a.source.architecture],[`대상 ${index+1} 파일 위치`,a.source.path],
-      ]:[]),
-    ]),
+    ...spec.artifacts.map((a, i): [string, string] => [`대상 ${i + 1}`, `${a.target.model} · ${a.target.artifact} · ${a.source.architecture}`]),
   ] : "source" in spec ? [
-    ["보관 주소", spec.source.image], ["데이터 위치", spec.source.path], ["측정용 묶음", subsets(spec.source.path)[0]], ["평가용 묶음", subsets(spec.source.path)[1]],
-    ...spec.fields.map((f): [string, string] => [`필드 ${f.name}`, `${f.format} · 최대 ${size(f.maxBytes)}`]),
+    ...spec.fields.map((f): [string, string] => [`필드 ${f.name}`, `${formatText(f.format)} · 최대 ${size(f.maxBytes)}`]),
+    ["용도", "측정용 profiling · 평가용 evaluation"],
   ] : "modelRef" in spec ? brief(spec) : [
-    ...spec.artifacts.map((a, i): [string, string] => [`모델 파일 ${i+1}`, `${a.format.toUpperCase()} · ${a.source.architecture}`]),
-    ...spec.executionPaths.map((p, i): [string, string] => {
-      const artifactIndex=spec.artifacts.findIndex(a=>a.name===p.artifact)
-      return [`실행 방식 ${i+1}`, `${explain(p.runtime.backend)[0]} · ${artifactIndex<0?"연결 파일 미확인":`모델 파일 ${artifactIndex+1}`}`]
-    }),
+    ...spec.artifacts.map((a): [string, string] => [`모델 파일 ${a.name}`, `${a.format.toUpperCase()} · ${a.source.architecture}`]),
+    ...spec.executionPaths.map((p): [string, string] => [`실행 방식 ${p.name}`, `${explain(p.runtime.backend)[0]} · ${p.artifact}`]),
   ]
-  return <DataTable searchable={false} data={items} columns={[{key:"name",label:"항목",value:row=>row[0]},{key:"value",label:"정의",value:row=>row[1]}]}/>
+  const sources: [string, string][] = "input" in spec ? spec.artifacts.flatMap((a, i): [string, string][] => [
+    [`대상 ${i + 1} 보관 이미지`, a.source.image], [`대상 ${i + 1} 파일 위치`, a.source.path],
+  ]) : "source" in spec ? [
+    ["보관 이미지", spec.source.image], ["데이터 위치", spec.source.path], ["측정용 묶음", subsets(spec.source.path)[0]], ["평가용 묶음", subsets(spec.source.path)[1]],
+  ] : "modelRef" in spec ? [] : spec.artifacts.flatMap((a): [string, string][] => [
+    [`${a.name} 보관 이미지`, a.source.image], [`${a.name} 파일 위치`, a.source.files.join(", ")],
+  ])
+  return <div className="grid gap-4"><DataTable searchable={false} data={items} columns={[{key:"name",label:"항목",value:row=>row[0]},{key:"value",label:"정의",value:row=>row[1]}]}/>{sources.length > 0 && <details><summary className="min-h-11 cursor-pointer py-2">보관 이미지와 파일 위치</summary><Facts items={sources} /></details>}</div>
 }
 const impactNotes: Record<Referenced, string> = {
-  models: "모델을 바꾸면 연결된 서비스는 새 요청을 잠시 멈추고 기존 요청을 마무리해요. 쓰는 서비스가 있는 모델은 삭제할 수 없어요. 전처리기가 대상으로 삼은 모델은 삭제할 수 없고, 대상이 된 모델 파일도 뺄 수 없어요.",
-  preprocessors: "전처리기를 바꾸면 연결된 서비스는 새 요청을 잠시 멈추고 기존 요청을 마무리한 뒤 새 전처리기를 적용해요. 연결된 서비스의 데이터셋과 필드가 맞지 않게 되는 변경과 쓰는 서비스가 있는 전처리기의 삭제는 거절돼요.",
-  datasets: "데이터셋을 바꿔도 서비스는 멈추지 않고, 이후 측정부터 새 내용을 써요. 연결된 서비스의 전처리기와 필드가 맞지 않게 되는 변경과 쓰는 서비스가 있는 데이터셋의 삭제는 거절돼요.",
+  models: "모델을 바꾸면 연결된 서비스는 새 요청을 잠시 멈추고 기존 요청을 마무리해요. 쓰는 서비스가 있는 모델은 삭제할 수 없어요. 모델 입출력 처리가 대상으로 삼은 모델은 삭제할 수 없고, 대상이 된 모델 파일도 뺄 수 없어요.",
+  preprocessors: "모델 입출력 처리를 바꾸면 연결된 서비스는 새 요청을 잠시 멈추고 기존 요청을 마무리한 뒤 새 설정을 적용해요. 연결된 서비스의 데이터셋과 필드가 맞지 않게 되는 변경과 쓰는 서비스가 있는 모델 입출력 처리의 삭제는 거절돼요.",
+  datasets: "데이터셋을 바꿔도 서비스는 멈추지 않고, 이후 측정부터 새 내용을 써요. 연결된 서비스의 모델 입출력 처리와 필드가 맞지 않게 되는 변경과 쓰는 서비스가 있는 데이터셋의 삭제는 거절돼요.",
 }
 export function Impact({ kind, affected }: { kind: Referenced; affected: WorkloadSummary[] | undefined }) {
   return <>
@@ -318,6 +317,7 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
   const [reuse, setReuse] = useState("")
   const [index, setIndex] = useState(0)
   const [validation, setValidation] = useState("")
+  const [manual, setManual] = useState(!!original || kind === "workloads")
   const selected = available.find(m => m.metadata.name === model)
   const savedPreprocessor = original && "preprocessorRef" in original.spec ? original.spec.preprocessorRef.name : ""
   const chosenPreprocessor = preprocessors.data?.items.find(p => p.metadata.name === preprocessorRef)
@@ -372,11 +372,12 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
       </Rows>
     </Screen>
   }
+  if (!manual && kind !== "workloads") return <CatalogRegistration kind={kind} label={kindLabel(kind)} r={r} problem={<Problem r={r} kind={kind} />} manual={() => setManual(true)} />
 
   let reviewed: Spec | undefined
   try { if (step === "review") reviewed = draft() } catch { reviewed = undefined }
   const titles: Record<Step, string> = {
-    name: `${kindLabel(kind)} 이름`, model: "모델 선택", preprocessor: "입력 처리 선택", datasetRef: "데이터셋 선택", slo: "응답 목표",
+    name: `${kindLabel(kind)} 이름`, model: "모델 선택", preprocessor: "모델 입출력 처리 선택", datasetRef: "데이터셋 선택", slo: "응답 목표",
     artifacts: "모델 파일", inputs: "모델 입력", paths: "실행 방식",
     fields: "입출력 필드", targets: "대상 모델 파일", dataset: "데이터 위치·필드",
     review: original ? "변경 검토" : "등록 검토",

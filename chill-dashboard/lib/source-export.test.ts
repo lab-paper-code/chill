@@ -14,3 +14,9 @@ test("redacted scheduler export preserves exact integers and null versus zero", 
   const exported = stringifySchedulerJSON(safeSource({seed:-9223372036854775808n,memoryBytes:18446744073709551615n,powerJoules:null,watts:0,token:"private"}))
   assert.deepEqual(parseSchedulerJSON(exported),{seed:-9223372036854775808n,memoryBytes:18446744073709551615n,powerJoules:null,watts:0,token:"[비밀정보 제거]"})
 })
+
+test("registration exports preserve generation limits while withholding credentials", () => {
+  const exported = safeSource({spec:{maxNewTokens:16,token:"private",artifacts:[{source:{image:"registry.invalid/processor@sha256:abc",path:"/processor"}}]}}) as {spec:{maxNewTokens:number;token:string}}
+  assert.equal(exported.spec.maxNewTokens,16)
+  assert.doesNotMatch(JSON.stringify(exported),/"private"/)
+})

@@ -4,6 +4,7 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
 import { useChillQuery } from "@/lib/client"
+import { buildCatalogManifest } from "@/lib/catalog-manifest"
 import { QueryGate, SourceJSON, SourceExport } from "@/components/read-region"
 import { Empty, Facts, Row, RowDialog, Rows, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
@@ -16,6 +17,11 @@ import { SettingsNavigation } from "@/components/settings-navigation"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { connected, unwrap, useResource, type Catalog, type Referenced } from "@/hooks/use-catalog-resource"
 import { Deleted, DeleteConfirm, DeleteRow, DefinitionSummary, Impact, Mismatch, Problem, fieldList, kindLabel, usersOf } from "@/features/catalog-editor"
+
+function RegistrationExport({kind,name,spec}:{kind:Referenced;name:string;spec:unknown}) {
+  const manifest=buildCatalogManifest(kind,name,spec)
+  return <RowDialog label="등록 명세 내보내기" hint="다른 등록에 재사용할 이름과 정의" title={`${kindLabel(kind)} 등록 명세`} description="이름과 정의만 담은 CHILL 등록 문서예요. UID·상태·리소스 버전은 포함하지 않아요. 인증 정보는 가려지므로 다시 등록하기 전에 확인해 주세요."><SourceJSON inline value={manifest}/><SourceExport value={manifest} filename={`${kind.slice(0,-1)}-${name}-registration.json`}/></RowDialog>
+}
 
 export function ModelPage({ name,expectedUID,embedded=false }: { name: string;expectedUID?:string;embedded?:boolean }) {
   const r = useResource("models", name,expectedUID)
@@ -35,7 +41,8 @@ export function ModelPage({ name,expectedUID,embedded=false }: { name: string;ex
         <Row href={href("models", name, uid, "edit")} label="설정 수정" hint="파일과 실행 방식 바꾸기" />
         <Row href={href("models",name,uid,"files")} label="파일·실행 방식 상세"/>
         <DeleteRow kind="models" r={r} users={usersOf(r.affected, preprocessors.data?.items.filter(p => p.spec.artifacts.some(a => a.target.model === name)))} open={() => setDeleting(true)} />
-        <RowDialog label="원본 자료 보기" title="모델 전체 원본"><SourceJSON inline value={model} /><SourceExport value={model} filename={`model-${name}.json`} /></RowDialog>
+        <RegistrationExport kind="models" name={name} spec={model.spec}/>
+        <RowDialog label="진단용 원본 자료 보기" title="모델 전체 원본"><SourceJSON inline value={model} /><SourceExport value={model} filename={`model-${name}.json`} /></RowDialog>
       </Rows>
       {deleting && <DeleteConfirm kind="models" name={name} r={r} close={() => setDeleting(false)} />}
     </>}</QueryGate>
@@ -73,7 +80,7 @@ export function ModelSectionPage({ name, section }: { name: string; section: "fi
         <Facts items={[
           ["형식", a.format.toUpperCase()], ["대상 장비", a.source.architecture],
           ...(a.input?.tensors ?? []).map((t): [string, string] => [`RKNN 입력 ${t.name}`, `${t.datatype} · 크기 ${t.sampleShape.join(" × ")}`]),
-          ["전처리기", targeting === undefined ? preprocessors.error ? "확인 불가" : "확인 중" : targeting.map(p => p.metadata.name).join(", ") || "이 파일을 대상으로 하는 전처리기가 없어요"],
+          ["모델 입출력 처리", targeting === undefined ? preprocessors.error ? "확인 불가" : "확인 중" : targeting.map(p => p.metadata.name).join(", ") || "이 파일을 대상으로 하는 모델 입출력 처리가 없어요"],
           ["변환", a.derivation ? `${a.derivation.conversion.tool} ${a.derivation.conversion.version} · ${a.derivation.targetPlatform}` : "원본 파일"],
         ]} />
         <details><summary className="min-h-11 cursor-pointer py-2">파일 식별자·보관 위치 원문</summary><SourceJSON inline value={a}/></details>
@@ -98,9 +105,17 @@ export function CatalogSettingsPage({kind}:{kind:Referenced}) {
   const workloads=useChillQuery<WorkloadSummary[]>("v1/workloads?view=summary")
   const params=useSearchParams(),router=useRouter()
   const selected=params.get("name")?{name:params.get("name")!,uid:params.get("uid")??""}:null
-  const label=kind==="preprocessors"?"입력 처리":kindLabel(kind)
+  const label=kind==="preprocessors"?"모델 입출력 처리":kindLabel(kind)
+  const purpose=kind==="models"?"모델 파일과 실행 방식을 등록해요. 모델 입출력 처리가 이 모델의 파일을 대상으로 연결돼요."
+    :kind==="preprocessors"?"전처리·모델 호출 연결·후처리를 정의해요. 대상 모델 파일과 요청·응답 필드를 함께 확인하세요."
+    :"측정·평가에 사용할 데이터 위치와 기록 필드를 등록해요. 모델 입출력 처리의 입력 필드와 맞춰 사용해요."
   return <Screen title="설정" width="data" actionPlacement="header" action={<Button asChild><Link href={`/${kind}/new`}>{label} 등록</Link></Button>}>
     <SettingsNavigation active={kind}/>
+    <section aria-label="카탈로그 안내" className="space-y-2 border-b pb-5">
+      <h2 className="text-lg font-semibold">{label}</h2>
+      <p className="max-w-3xl text-sm leading-relaxed">{purpose}</p>
+      <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground">모델·모델 입출력 처리·데이터셋은 각각 등록하고 서비스에서 연결해요. 등록된 정의만으로 실행 준비나 측정 완료를 뜻하지는 않아요.</p>
+    </section>
     <section aria-label={`${label} 목록`}><QueryGate query={list}><DataTable urlState data={list.data?.items??[]} columns={[
       {key:"name",label:"이름",sortValue:item=>item.metadata.name,value:item=><Link className="underline" href={`/settings?${new URLSearchParams({...Object.fromEntries(params),tab:kind,name:item.metadata.name,uid:item.metadata.uid})}`} scroll={false}>{item.metadata.name}</Link>},
       {key:"definition",label:"정의",value:item=>{
@@ -110,8 +125,6 @@ export function CatalogSettingsPage({kind}:{kind:Referenced}) {
           :[["파일 형식",[...new Set(spec.artifacts.map(a=>a.format))].join(", ")||"없음"],["실행 유형",[...new Set(spec.executionPaths.map(p=>explain(p.runtime.backend)[0]))].join(", ")||"없음"]]
         return rows.map(([name,value])=><div key={name}><span className="text-muted-foreground">{name}: </span>{value}</div>)
       }},
-      {key:"count",label:kind==="models"?"모델 파일":kind==="datasets"?"기록 필드":"대상 모델",unit:"개",numeric:true,value:item=>"input" in item.spec?new Set(item.spec.artifacts.map(a=>a.target.model)).size:"source" in item.spec?item.spec.fields.length:item.spec.artifacts.length},
-      ...(kind==="models"?[{key:"paths",label:"실행 방식",unit:"개",numeric:true,value:(item:ModelResource|Catalog)=>"executionPaths" in item.spec?item.spec.executionPaths.length:0}]:[]),
       {key:"services",label:"연결 서비스",unit:"개",numeric:true,value:item=>workloads.error?"조회 실패":workloads.data?connected(workloads.data,kind,item.metadata.name,item.metadata.uid)?.length:"조회 중"},
       {key:"actions",label:"작업",value:item=><Link className="underline" href={href(kind,item.metadata.name,item.metadata.uid,"edit")}>수정</Link>},
       {key:"source",label:"원문",value:item=><details><summary className="min-h-11 cursor-pointer py-2">정의 원문</summary><SourceJSON inline value={item.spec}/></details>},
@@ -130,7 +143,7 @@ export function CatalogPage({ kind, name,expectedUID,embedded=false }: { kind: "
   const uid = item?.metadata.uid ?? ""
   const count = r.affected?.length
   const spec = item?.spec
-  return <Screen embedded={embedded} back={embedded?undefined:[`/settings?tab=${kind}`, kindLabel(kind)]} title={name}>
+  return <Screen embedded={embedded} back={embedded?undefined:[`/settings?tab=${kind}`, kind==="preprocessors"?"모델 입출력 처리":kindLabel(kind)]} title={name}>
     <QueryGate query={r.detail}>{item && spec && <>
       <Problem r={r} kind={kind} />
       <Facts items={[["연결 서비스",count===undefined?r.workloads.error?"조회 실패":"조회 중":`${count}개`]]}/>
@@ -139,7 +152,8 @@ export function CatalogPage({ kind, name,expectedUID,embedded=false }: { kind: "
       <Rows label="관리">
         <Row href={href(kind, name, uid, "edit")} label="설정 수정" hint={kind === "datasets" ? "데이터 위치와 기록 필드 바꾸기" : "필드와 대상 모델 파일 바꾸기"} />
         <DeleteRow kind={kind} r={r} users={usersOf(r.affected)} open={() => setDeleting(true)} />
-        <RowDialog label="원본 자료 보기" title={`${kindLabel(kind)} 전체 원본`}><SourceJSON inline value={item} /><SourceExport value={item} filename={`${kind.slice(0, -1)}-${name}.json`} /></RowDialog>
+        <RegistrationExport kind={kind} name={name} spec={spec}/>
+        <RowDialog label="진단용 원본 자료 보기" title={`${kind==="preprocessors"?"모델 입출력 처리":kindLabel(kind)} 전체 원본`}><SourceJSON inline value={item} /><SourceExport value={item} filename={`${kind.slice(0, -1)}-${name}.json`} /></RowDialog>
       </Rows>
       {deleting && <DeleteConfirm kind={kind} name={name} r={r} close={() => setDeleting(false)} />}
     </>}</QueryGate>
