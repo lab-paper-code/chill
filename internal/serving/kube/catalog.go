@@ -142,11 +142,18 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 			if campaign.DeletionTimestamp != nil {
 				continue
 			}
+			var completedAt time.Time
+			for _, condition := range campaign.Status.Conditions {
+				if condition.Type == "MeasurementComplete" {
+					completedAt = condition.LastTransitionTime.Time
+					break
+				}
+			}
 			state := campaign.Spec.State.Candidate
 			candidateIndex := len(candidates)
 			candidates = append(candidates, profilederivation.MeasurementSelection{
 				ID: id, Model: state.ModelSpec, DeviceClass: state.DeviceClass, ExecutionPath: state.ExecutionPath, PowerMode: state.PowerMode,
-				MeasuredAt: profilederivation.MeasurementTime(time.Time{}, campaign.Status.Conditions),
+				MeasuredAt: profilederivation.MeasurementTime(time.Time{}, completedAt),
 			})
 			source := types.NamespacedName{Namespace: campaign.Namespace, Name: campaign.Name}
 			if reason := replacementDiagnostics[campaign.Name]; reason != "" {
@@ -185,7 +192,7 @@ func (c *Catalog) Refresh(ctx context.Context, namespaces []string) (view Catalo
 				continue
 			}
 			view.Insufficiencies = append(view.Insufficiencies, issues...)
-			candidates[candidateIndex].MeasuredAt = profilederivation.MeasurementTime(profile.MeasuredAt, campaign.Status.Conditions)
+			candidates[candidateIndex].MeasuredAt = profilederivation.MeasurementTime(profile.MeasuredAt, completedAt)
 			if len(profile.Batches) > 0 {
 				view.Profiles = append(view.Profiles, profile)
 				view.MeasurementFacts[profile.ID] = cloneMeasurementFacts(c.current[source].facts)

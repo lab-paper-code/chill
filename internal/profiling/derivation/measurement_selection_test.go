@@ -4,8 +4,6 @@ import (
 	"reflect"
 	"testing"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestCurrentMeasurementsPreservesLatestFailureAndOperatorReplacement(t *testing.T) {
@@ -37,16 +35,17 @@ func TestCurrentMeasurementsPreservesLatestFailureAndOperatorReplacement(t *test
 
 func TestMeasurementTimeUsesSuccessfulProfileThenMeasurementComplete(t *testing.T) {
 	profileAt, completeAt := time.Unix(1, 0), time.Unix(2, 0)
-	conditions := []metav1.Condition{{Type: "Other", LastTransitionTime: metav1.NewTime(time.Unix(9, 0))},
-		{Type: "MeasurementComplete", LastTransitionTime: metav1.NewTime(completeAt)}}
-	if got := MeasurementTime(profileAt, conditions); !got.Equal(profileAt) {
+	if got := MeasurementTime(profileAt, completeAt); !got.Equal(profileAt) {
 		t.Fatal("successful profile completion replaced", got)
 	}
-	if got := MeasurementTime(time.Time{}, conditions); !got.Equal(completeAt) {
+	if got := MeasurementTime(profileAt, time.Time{}); !got.Equal(profileAt) {
+		t.Fatal("missing completion discarded successful profile time", got)
+	}
+	if got := MeasurementTime(time.Time{}, completeAt); !got.Equal(completeAt) {
 		t.Fatal("failed/partial completion time missing", got)
 	}
-	if got := MeasurementTime(time.Time{}, conditions[:1]); !got.IsZero() {
-		t.Fatal("unrelated transition substituted for measurement time", got)
+	if got := MeasurementTime(time.Time{}, time.Time{}); !got.IsZero() {
+		t.Fatal("missing completion invented a measurement time", got)
 	}
 }
 

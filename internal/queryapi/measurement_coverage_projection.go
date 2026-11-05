@@ -85,13 +85,13 @@ func CoverageMeasurementTime(task api.BatchEnergyOptimization, measuredAt time.T
 	if (task.Status.Phase == string(api.MeasurementPhaseComplete) ||
 		task.Status.Phase == string(api.MeasurementPhaseFailed)) &&
 		task.Status.ObservedGeneration == task.Generation {
-		for i, condition := range task.Status.Conditions {
+		for _, condition := range task.Status.Conditions {
 			if condition.Type == "MeasurementComplete" && condition.ObservedGeneration == task.Generation {
-				return profilederivation.MeasurementTime(measuredAt, task.Status.Conditions[i:i+1])
+				return profilederivation.MeasurementTime(measuredAt, condition.LastTransitionTime.Time)
 			}
 		}
 	}
-	return profilederivation.MeasurementTime(measuredAt, nil)
+	return profilederivation.MeasurementTime(measuredAt, time.Time{})
 }
 
 // Keep repeat measurements separate until current selection. The public variant

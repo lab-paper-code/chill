@@ -13,12 +13,12 @@ measured energy and transition costs rather than static assumptions.
 
 | Component | Role |
 |---|---|
-| Operator (`cmd/chill`) | Reconciles the CRDs below, runs profiling campaigns, owns node-agent DaemonSets |
+| Operator (`cmd/main.go`) | Reconciles the CRDs below, runs profiling campaigns, owns node-agent DaemonSets |
 | Profiler (`cmd/profiler`, `measurement-worker`, observers) | Executes `ProfilingRun`s and writes immutable evidence (Evidence Store, S3-compatible) |
 | ChillServer (`cmd/chill-server`) | Single HTTPS entry point: Model/Workload registration, inference, measured-profile scheduler, observation and evidence APIs |
 | Node agent (`cmd/node-agent`) | Publishes hardware facts per Node and applies requested power modes |
 | Dashboard (`chill-dashboard/`) | Operator web UI over the native ChillServer APIs |
-| CLI (`kubectl-chill`) | Read-only inventory, system, and run inspection |
+| CLI (`cmd/chill`, binary `kubectl-chill`) | Read-only inventory, system, and run inspection |
 
 API group: `edge.dacs.io/v1alpha1`. Key CRDs: `ChillSystem`, `DeviceClass`,
 `ModelSpec`, `Workload`, `ProfilingRun`, `BatchEnergyOptimization`, `PowerModeTransitionCost`.

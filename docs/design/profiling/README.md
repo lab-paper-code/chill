@@ -135,7 +135,7 @@ Profiling may depend inward on derivation's existing semantic-condition
 normalization; Kubernetes/evidence acquisition stays in the adapter.
 
 ## Dependency rule
-Ownership: DeviceClass stable hardware; ModelSpec immutable artifact/path requirements; Kubernetes placement/allocation/lifecycle; Helm install identity/RBAC; CHILL frozen decisions/evidence/derivation. Pure leaves import no Kubernetes/CHILL API/controller-runtime; adapters depend inward. No generic ExecutionContract/plugin framework, compatibility status controller or implicit scheduler authorization.
+Ownership: DeviceClass stable hardware; ModelSpec immutable artifact/path requirements; Kubernetes placement/allocation/lifecycle; Helm install identity/RBAC; CHILL frozen decisions/evidence/derivation. `modelcompat` and the `evidencestore` root have no Kubernetes imports; derivation has no direct Kubernetes imports. Its firstfloor dependency includes `RuntimeContainer`, a Kubernetes value projection, so derivation is not transitively Kubernetes-free. Firstfloor is a CHILL-leaf; `profiling/run` includes Kubernetes projections and a Node grant reader. Adapters depend inward. No generic ExecutionContract/plugin framework, compatibility status controller or implicit scheduler authorization.
 
 Profiler execution-plan admission depends inward on the plain MetricObserver
 core for schedule-derived retained/serialized byte requirements. The observer

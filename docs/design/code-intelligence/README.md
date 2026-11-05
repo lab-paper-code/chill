@@ -59,6 +59,12 @@ The current six regression answers and their mandatory evidence are in
 | `make deployment-graph-check` | validated default and Profiler-enabled deployment graphs |
 | `make code-intelligence-review` | required checks plus optional deployment-graph review |
 
+These are local targets. The `AGENTS.md` change workflow requires `make gopls-check`
+for semantic paths covered by the golden queries; `.github/workflows/ci.yaml`
+does not run it. That CI workflow checks generated-artifact drift, architecture,
+lint, tests, and Helm (default and Profiler-enabled renders). This describes
+configured checks, not branch-protection requirements.
+
 Normal build, test, generated-artifact, Helm, and live-environment validation
 remain separate from code-intelligence checks.
 
@@ -66,8 +72,10 @@ remain separate from code-intelligence checks.
 
 - Every in-scope production package maps to exactly one reviewed component.
 - Repository-local `bin/` tool outputs and nested deployment worktrees stay outside the architecture scan; `api/`, `cmd/` and `internal/` retain full production mapping and the negative fixture remains enforced.
-- Plain domain packages remain independent of APIs, Kubernetes clients,
-  controller-runtime, and higher-level runtime packages.
+- `modelcompat` and the `evidencestore` root have no Kubernetes imports.
+  `profiling/derivation` has no direct Kubernetes imports; its firstfloor
+  dependency carries Kubernetes value types, so this is not a transitive claim.
+  A CHILL-leaf package need not be Kubernetes-free or side-effect-free.
 - Adapter packages may import their core contracts; core contracts may not
   import adapters.
 - `cmd/**` packages are composition roots. Their wiring permissions do not
@@ -96,12 +104,12 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 | `modelcompat` / `model-compat` | None; stdlib-only pure compatibility and tensor/native-setting contracts |
 | `modelcatalog` / `model-catalog` | `api/v1alpha1`, `modelcompat` |
 | `serving` / `serving-core` | `evidencestore`, `firstfloor`, `metricobserver`, `modelcompat`, `profiling/derivation` |
-| `serving/httpapi` / `serving-httpapi` | `api/v1alpha1`, `serving`, `serving/kube`, `serving/live` |
-| `firstfloor` / `firstfloor` | No CHILL package imports; bounded native executor leaf |
+| `serving/httpapi` / `serving-httpapi` | `api/v1alpha1`, `evaluation/service`, `firstfloor`, `serving` and its `application`, `kube`, `live`, `management`, `measurement`, `observation`, `operations`, `state` subpackages |
+| `firstfloor` / `firstfloor` | No CHILL package imports; native executor and `RuntimeContainer` Kubernetes value projection |
 | `serving/firstfloor` / `serving-firstfloor` | `firstfloor`, `serving` |
 | `serving/live` / `serving-live` | No CHILL imports; bounded DTO/hub/metrics and WebSocket transport |
-| `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata types shared with the measured executor |
-| `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, admitted profiling contracts, power-window integration, transition-cost leaf, node actuation policy contract, serving core and native adapter |
+| `profiling/run` / `profiling-run` | `modelcompat`, native `firstfloor` metadata; also Kubernetes runtime projection and a controller-runtime Node grant reader |
+| `serving/kube` / `serving-kube` | API, platform component helpers, device/model/evidence adapters, metric observation, profiling execution/evidence contracts, power-window integration, transition-cost leaf, node actuation policy contract, serving core and native adapter |
 | `evaluation/service` / `evaluation-service` | `api/v1alpha1`, `evidencestore`, `serving`; evaluation and LoadScenario application operations, advisory preflight, phase/active projections and template assembly |
 
 Evaluation application services do not depend on `evaluation/controller` or HTTP
@@ -125,11 +133,13 @@ The unused G2 `serving-gateway`, tagged `chill-control`, and standalone
 `chill-router` were removed on 2026-10-30; T5 live and its chart RBAC remain.
 The deferred split design is preserved in ADR 0029, not as an executable path.
 
-The native executor leaf never imports Serving, profiling or Kubernetes. Serving
-reuses its batching policy directly for scheduler replay; the SDK adapter joins
-actual native readiness/state to admitted profiles. The Kubernetes adapter owns
-Pod preparation and removal, immutable bundle materialization and Node-label
-power-mode requests (`internal/serving/kube/operations.go`, `requestPowerMode`).
+The native executor is a CHILL-leaf: it imports neither Serving nor profiling.
+Its `RuntimeContainer` helper projects a frozen Config into a Kubernetes
+Container value without creating resources. Serving reuses its batching policy
+directly for scheduler replay; the SDK adapter joins actual native
+readiness/state to measured profiles. `serving/operations` owns preparation and
+removal orchestration and power-mode requests (`operations_lifecycle.go`,
+`RequestPowerMode`); `serving/kube` supplies Kubernetes readers and writers.
 The transition-cost core may consume firstfloor
 metadata and plain metric observations, not Serving or its Kubernetes adapter.
 Composition roots assemble these owners. No architecture-gate pass is implied

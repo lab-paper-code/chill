@@ -8,7 +8,7 @@ treating every directory under `internal/` as an equal entry point.
 
 | Capability | Start here | Boundary |
 |---|---|---|
-| Profiling | [`profiling/`](profiling/) | Immutable Runs, batch campaigns, derivation, evidence admission, and Job execution |
+| Profiling | [`profiling/`](profiling/) | Immutable Runs, batch campaigns, numeric derivation, evidence verification, and Job execution |
 | System operator | [`operator/`](operator/) | `ChillSystem` reconciliation and operand desired state |
 | Node actuation | [`nodeactuator/`](nodeactuator/) | One verified Node power-state transition |
 | Operator query | [`queryapi/`](queryapi/) | Read models, Kubernetes queries, and the read-only HTTP API |
@@ -28,15 +28,23 @@ configuration, and `nodeprobe` owns bounded host discovery.
 ```text
 profiling/
 ├── campaign/              BatchEnergyOptimization state machine
-│   └── controller/        campaign reconciliation and owned child resources
-├── run/                   immutable Run and execution-evidence contracts
-├── derivation/            pure curve, stopping, and statistical derivation
+│   ├── controller/        campaign reconciliation and owned child resources
+│   └── evidence/          retained campaign result, plan and trial reconstruction
+├── run/                   immutable Run contracts, Node grant reader and Kubernetes projection
+├── derivation/            numeric curve, stopping, and statistical derivation
+├── idlebaseline/
+│   └── controller/        idle-baseline attempts and publication
+├── transitioncost/        measured power-mode transition contracts
+│   ├── controller/        transition-cost reconciliation
+│   ├── kube/              Kubernetes transition adapters
+│   └── worker/            transition measurement execution
+├── powerwindow/           power-window contracts and integration
 └── profiler/
-    ├── admission/         verified evidence to scientific verdict
     ├── controller/        ProfilingRun reconciliation, status, and owned writes
     ├── evidence/          retained evidence validation and sealed records
     │   └── kube/          Kubernetes evidence projection and loading
     ├── kube/              trusted Kubernetes fact and policy readers
+    ├── projection/        model/input and execution projections
     └── worker/            one-Job runtime execution plane
 ```
 
@@ -49,36 +57,44 @@ the other.
 ```text
 modelcompat/              pure tensor and runtime compatibility contracts
 modelcatalog/             shared ModelSpec projection and validation
-firstfloor/               leaf single-runner actor, SLO batching and framed IPC
-serving/                  admission, snapshots, routes, drain, JSONL/S3 windows
+firstfloor/               CHILL-leaf native actor, batching, IPC and Container value projection
+serving/                  scheduler, admission, queues and runtime contracts
+├── application/          scheduler configuration, profiles and observation orchestration
+├── state/                operation state, scopes and native-service contracts
+├── operations/           preparation, routing, lifecycle and measurement operations
+├── management/           model/workload registration and management views
+├── measurement/          retained measurement evidence and occupancy services
+├── observation/          private ObservationLog, JSONL/S3 storage and queries
+├── live/                 live DTOs, hub, metrics and WebSocket transport
 ├── httpapi/              authenticated HTTPS query, management and inference
-├── kube/                 private uncached writer, TokenReview/SAR, measured
+├── kube/                 Kubernetes readers/writers, authorization, measured
 │                         catalog and current Node/Pod/native observations
 └── firstfloor/           typed native HTTP client and correlated progress facts
 ```
 
 [`../cmd/chill-server/`](../cmd/chill-server/) assembles concrete
-adapters. Serving does not import Profiler controllers or candidate resolvers.
+adapters. The `serving` root imports profiling derivation, not Profiler
+controllers or candidate resolvers. Subpackages such as `application` and
+`kube` also consume Profiler execution and evidence adapters.
 The native runtime is firstfloor with explicit ORT CPU/CUDA or RKNN execution,
 per-UID/definition batch isolation and shared actor/replay batching decisions.
 Reviewed allowed directions and current `go list` edges are recorded in the
 [architecture contract](../docs/design/code-intelligence/README.md#package-architecture-contract).
 
-Serving source files mark responsibility boundaries for later package moves,
-not line-count quotas. `scheduler_capacity_*` owns pure capacity judgments,
-`scheduler_capacity_search.go` owns search, and `scheduler_capacity_cost.go` and
-`scheduler_cost_baseline.go` own shared cost calculations. `scheduler_replay_*`
-owns replay simulation, with shared snapshot checks in `scheduler_validate.go`.
+The serving root keeps capacity judgments in `scheduler_capacity_*`, search in
+`scheduler_capacity_search.go`, and shared costs in `scheduler_capacity_cost.go`
+and `scheduler_cost_baseline.go`. `scheduler_replay_*` owns replay simulation,
+with shared snapshot checks in `scheduler_validate.go`.
 In `serving/kube`, `scheduler_application_capture.go` assembles live sources,
-`scheduler_state_*` owns state projection, history and effect proofs, and
-`scheduler_operations_*` owns operation planning and launch. Preparation
-contracts are separate from execution in `operations_prepare_contract.go`;
-`scheduler_capacity_admission.go` owns the physical budget judgment.
-`observation_log_*` separates request records and events, query reduction,
-durable storage, archiving and queries; local capture and scanning extend the existing
-`observation_log_read.go` reader. Packages, contracts, declarations, locks and
-test ownership are unchanged; legacy DOM evidence and operation-cost
-measurement paths remain supported.
+`scheduler_state_*` projects and reconciles Kubernetes state and effect proofs,
+`scheduler_operations_launch.go` launches operations, and
+`scheduler_capacity_admission.go` judges the physical budget.
+`serving/state` owns operation state and scopes; `serving/operations` owns
+planning and lifecycle, with preparation contracts in
+`operations_prepare_contract.go`. In `serving/observation`, `observation_log_*`
+separates records, query reduction, durable storage and archiving; local capture
+and scanning use `observation_log_read.go`. Legacy DOM evidence and
+operation-cost measurement paths remain supported.
 
 Capacity decisions retain the live search trajectory at
 `schedulerLine.decision.capacity.search.steps` in the existing ObservationLog
@@ -114,8 +130,9 @@ ObservationLog lock at every decision (normally every 10 seconds).
 
 ## Layer vocabulary
 
-- A capability root such as `profiling/run` or `nodeactuator` contains plain
-  contracts and decisions when the code can remain independent of Kubernetes.
+- Capability contracts and decisions remain independent of Kubernetes where
+  practical. `profiling/run` also contains a Node grant reader and Kubernetes
+  value projections; a capability-root location alone does not imply purity.
 - `controller` contains controller-runtime reconciliation and durable writes.
 - `kube` contains Kubernetes-backed readers, repositories, or projections that
   implement a consumer-owned contract.

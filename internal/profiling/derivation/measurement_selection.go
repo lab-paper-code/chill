@@ -4,8 +4,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const ReplacesMeasurementAnnotation = "chill.dacs.io/replaces-batch-energy-optimization"
@@ -49,19 +47,13 @@ func CurrentMeasurements(candidates []MeasurementSelection, replaced map[string]
 	return out
 }
 
-// MeasurementTime maps the same stored timestamps for Serving and Query without
-// adding fields to BEO or changing evidence. A failed/partial measurement passes
-// zero profileMeasuredAt; only its MeasurementComplete condition supplies time.
-func MeasurementTime(profileMeasuredAt time.Time, conditions []metav1.Condition) time.Time {
+// MeasurementTime prefers the verified profile timestamp over the completion
+// timestamp projected by the caller. Missing timestamps remain zero.
+func MeasurementTime(profileMeasuredAt, completedAt time.Time) time.Time {
 	if !profileMeasuredAt.IsZero() {
 		return profileMeasuredAt
 	}
-	for _, condition := range conditions {
-		if condition.Type == "MeasurementComplete" {
-			return condition.LastTransitionTime.Time
-		}
-	}
-	return time.Time{}
+	return completedAt
 }
 
 // ReplacedMeasurements resolves operator annotations before recency.

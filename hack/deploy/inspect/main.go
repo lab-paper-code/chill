@@ -71,13 +71,13 @@ func measurementTime(task measurementTask, profileTime time.Time) time.Time {
 	if task.Status.Phase != string(api.MeasurementPhaseComplete) {
 		profileTime = time.Time{}
 	}
-	result := profilederivation.MeasurementTime(profileTime, nil)
+	result := profilederivation.MeasurementTime(profileTime, time.Time{})
 	if task.Status.ObservedGeneration != task.Generation || (task.Status.Phase != string(api.MeasurementPhaseComplete) && task.Status.Phase != string(api.MeasurementPhaseFailed)) {
 		return result
 	}
-	for i, condition := range task.Status.Conditions {
+	for _, condition := range task.Status.Conditions {
 		if condition.Type == "MeasurementComplete" && condition.ObservedGeneration == task.Generation {
-			return profilederivation.MeasurementTime(profileTime, task.Status.Conditions[i:i+1])
+			return profilederivation.MeasurementTime(profileTime, condition.LastTransitionTime.Time)
 		}
 	}
 	return result

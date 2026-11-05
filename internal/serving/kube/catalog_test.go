@@ -224,14 +224,21 @@ func TestCatalogLatestFailureDoesNotHideHistoryOrReviveSuccess(t *testing.T) {
 	}
 	failed := original.DeepCopy()
 	failed.Name, failed.UID, failed.ResourceVersion = "newer-failure", "failed-uid", ""
+	completedAt := before.Profiles[0].MeasuredAt.Add(time.Hour)
 	failed.Status = edgev1alpha1.BatchEnergyOptimizationStatus{Phase: "Failed", ObservedGeneration: failed.Generation,
-		Conditions: []metav1.Condition{{Type: "MeasurementComplete", LastTransitionTime: metav1.NewTime(before.Profiles[0].MeasuredAt.Add(time.Hour))}}}
+		Conditions: []metav1.Condition{
+			{Type: "Other", LastTransitionTime: metav1.NewTime(completedAt.Add(time.Hour))},
+			// Catalog recency uses the first completion even without a current generation.
+			{Type: "MeasurementComplete", ObservedGeneration: 0, LastTransitionTime: metav1.NewTime(completedAt)},
+			{Type: "MeasurementComplete", ObservedGeneration: failed.Generation, LastTransitionTime: metav1.NewTime(completedAt.Add(-2 * time.Hour))},
+		}}
 	if err := catalog.store.client.Create(ctx, failed); err != nil {
 		t.Fatal(err)
 	}
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
 	if err != nil || len(view.Profiles) != 1 || len(view.CurrentProfiles()) != 0 || len(view.CurrentMeasurements) != 1 ||
-		view.CurrentMeasurements[0].ID != failed.Namespace+"/"+failed.Name+"/"+string(failed.UID) {
+		view.CurrentMeasurements[0].ID != failed.Namespace+"/"+failed.Name+"/"+string(failed.UID) ||
+		!view.CurrentMeasurements[0].MeasuredAt.Equal(completedAt) {
 		t.Fatalf("latest failure fell back or erased history: %+v %v", view, err)
 	}
 }
