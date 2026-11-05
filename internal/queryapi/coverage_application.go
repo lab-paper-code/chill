@@ -285,9 +285,8 @@ func (p *coverageProjection) addProfile(
 	variant.MeasuredAt = CoverageMeasurementTime(task, profile.MeasuredAt)
 	variant.RequestIDs = append(variant.RequestIDs, CoverageRequestID(task))
 	variant.ProfileIDs = append(variant.ProfileIDs, profile.ID)
-	variant.BatchProgress.Target = CoverageBatches(append(
-		variant.BatchProgress.Target, facts.Condition.PlannedBatchSizes...,
-	))
+	targets := measurementProfileTargets(&task, &facts, &profile)
+	variant.BatchProgress.Target = CoverageBatches(append(variant.BatchProgress.Target, targets...))
 	for _, run := range p.owners[string(task.UID)] {
 		variant.RunIDs = append(variant.RunIDs, string(run.UID))
 	}

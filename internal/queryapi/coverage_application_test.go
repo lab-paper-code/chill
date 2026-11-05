@@ -110,6 +110,69 @@ func TestCoverageLatestCellNeverUnionsHistoricalBatches(t *testing.T) {
 	}
 }
 
+func TestCoverageUsesCompletedDiscoveryPrefixWithoutHidingQualityOrExplicitGoals(t *testing.T) {
+	base := coverageSizeBase()
+	task := coverageSizeRequest(0)
+	task.Status.Outcome = "BatchDiscoveryComplete"
+	base.Requests.Items = []api.BatchEnergyOptimization{task}
+	base.Runs.Items = nil
+	base.Catalog.Profiles = nil
+	base.Catalog.MeasurementFacts = map[string]profilederivation.MeasurementFacts{}
+	coverageSizeAddProfile(base, task, 0)
+	id := CoverageRequestID(task)
+	facts := base.Catalog.MeasurementFacts[id]
+	facts.Condition.PlannedBatchSizes = []int{1, 2, 4}
+	facts.Batches = []profilederivation.MeasurementBatchFacts{
+		coverageSizeBatch(task, facts.Condition, 1), coverageSizeBatch(task, facts.Condition, 2),
+	}
+	base.Catalog.MeasurementFacts[id] = facts
+	base.Catalog.Profiles[0].Condition = facts.Condition
+	base.Catalog.Profiles[0].Batches = []int{1, 2}
+	cellID := CoverageCellID(task.Spec.State.Candidate.ModelSpec, task.Spec.State.Candidate.DeviceClass,
+		task.Spec.State.Candidate.ExecutionPath, task.Spec.State.Candidate.PowerMode)
+	read := func(query CoverageQuery) MeasurementCoverageCell {
+		response := BuildMeasurementCoverage(base, task.Namespace, query)
+		for _, cell := range response.Cells {
+			if cell.ID == cellID {
+				return cell
+			}
+		}
+		t.Fatal("measured cell is absent")
+		return MeasurementCoverageCell{}
+	}
+	cell := read(CoverageQuery{})
+	if cell.Assessment.DisplayStatus != MeasurementUsable || cell.BatchProgress == nil ||
+		len(cell.BatchProgress.Target) != 2 || cell.BatchProgress.Target[0] != 1 || cell.BatchProgress.Target[1] != 2 ||
+		len(cell.BatchProgress.Missing) != 0 || len(cell.Variants) != 1 || len(cell.Variants[0].ResultRows) != 2 {
+		t.Fatalf("completed discovery prefix became an incomplete full-domain sweep: %+v", cell)
+	}
+	assertFullGoalMissing := func(query CoverageQuery) {
+		t.Helper()
+		cell := read(query)
+		if cell.Assessment.DisplayStatus != MeasurementInsufficient || cell.BatchProgress == nil ||
+			len(cell.BatchProgress.Target) != 3 || len(cell.BatchProgress.Missing) != 1 {
+			t.Fatalf("unconfirmed prefix or explicit goal bypassed missing-batch checks: %+v", cell)
+		}
+	}
+	assertFullGoalMissing(CoverageQuery{Batches: []int{1, 2, 4}})
+	facts.Batches[0].ActiveTrialCount = 2
+	base.Catalog.MeasurementFacts[id] = facts
+	if cell := read(CoverageQuery{}); cell.Assessment.DisplayStatus == MeasurementUsable {
+		t.Fatalf("prefix completion hid incomplete trial quality: %+v", cell)
+	}
+	facts.Batches[0].ActiveTrialCount = 3
+	base.Catalog.MeasurementFacts[id] = facts
+	base.Catalog.Profiles[0].Condition.RuntimeImage = "different-runtime"
+	assertFullGoalMissing(CoverageQuery{})
+	base.Catalog.Profiles[0].Condition = facts.Condition
+	base.Requests.Items[0].Status.Outcome = "MinimumFound/LocalMinimum"
+	assertFullGoalMissing(CoverageQuery{})
+	base.Requests.Items[0].Status.Outcome = "BatchDiscoveryComplete"
+	facts.ResultReference.Key = ""
+	base.Catalog.MeasurementFacts[id] = facts
+	assertFullGoalMissing(CoverageQuery{})
+}
+
 type assertCoverageError struct{}
 
 func (assertCoverageError) Error() string { return "source unavailable" }

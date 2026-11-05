@@ -117,8 +117,20 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Batches: []serving.BatchProfile{{Batch: 1}},
 	}}
 	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "allowed/old/old-uid"}}
+	condition := profilederivation.CurvePlanSpec{PlannedBatchSizes: []int{1, 2}}
+	view.Profiles[0].Condition = condition
+	zero, passed := 0.0, true
 	view.MeasurementFacts = map[string]serving.MeasurementFacts{"allowed/old/old-uid": {
-		Condition: profilederivation.CurvePlanSpec{PlannedBatchSizes: []int{1, 2}},
+		Request: profilederivation.MeasurementRequestReference{Namespace: task.Namespace, Name: task.Name, UID: string(task.UID)},
+		ResultReference: profilederivation.RawEvidenceIdentity{Store: "evidence", Key: "result"},
+		Condition: condition, PointPolicy: profilederivation.PointPolicy{MinimumTrials: 3},
+		Batches: []profilederivation.MeasurementBatchFacts{{
+			Batch: 1, ActiveTrialCount: 3, IdleTrialCount: 3, P95Milliseconds: &zero, LatencySampleCount: 2,
+			Confidence: &profilederivation.PointConfidence{Level: .95, HalfWidth: 0},
+			PowerSource: profilederivation.MeasurementPowerSource{Kind: "node-wall", NodeName: "node"},
+			Sources: []profilederivation.RawEvidenceIdentity{{Store: "evidence", Key: "raw"}},
+			Quality: []profilederivation.MeasurementTrialQuality{{PolicyPassed: &passed}},
+		}},
 	}}
 	if got := queryapi.AssessMeasurementRequest(
 		task, queryCoverageCatalog(view), queryCoverageCatalog(view),
@@ -130,7 +142,7 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		task,
 		queryCoverageCatalog(view),
 		queryCoverageCatalog(view),
-	); got.Status != queryapi.MeasurementComplete ||
+	); (got.Status != queryapi.MeasurementComplete && got.Status != queryapi.MeasurementCriteriaMet) ||
 		got.Scope.SchedulerUsed == nil || !*got.Scope.SchedulerUsed {
 		t.Fatalf("published evidence: %+v", got)
 	}

@@ -48,13 +48,10 @@ type MeasurementBatchPlanReason struct {
 type MeasurementBatchPlan struct {
 	VariantID          *string                      `json:"variantId"`
 	ConditionMatch     string                       `json:"conditionMatch"`
-	RequestedBatches   []int                        `json:"requestedBatches"`
-	RequestableBatches []int                        `json:"requestableBatches"`
 	PlannedBatches     []int                        `json:"plannedBatches"`
 	MeasuredBatches    []int                        `json:"measuredBatches"`
 	InProgressBatches  []int                        `json:"inProgressBatches"`
 	MissingBatches     []int                        `json:"missingBatches"`
-	SubsetAllowed      bool                         `json:"subsetAllowed"`
 	SearchMayStopEarly bool                         `json:"searchMayStopEarly"`
 	Reasons            []MeasurementBatchPlanReason `json:"reasons"`
 }
@@ -124,7 +121,7 @@ func BuildBatchEnergyOptimizationPreflight(
 // BuildMeasurementBatchPlan never treats a projected request as immutable evidence.
 func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot) MeasurementBatchPlan {
 	result := MeasurementBatchPlan{
-		ConditionMatch: "unknown", RequestedBatches: []int{}, RequestableBatches: []int{},
+		ConditionMatch: "unknown",
 		PlannedBatches: []int{}, MeasuredBatches: []int{}, InProgressBatches: []int{},
 		MissingBatches: []int{}, Reasons: append([]MeasurementBatchPlanReason{}, snapshot.BatchPlanReasons...),
 	}
@@ -136,7 +133,7 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 	result.PlannedBatches = snapshot.Plan.PlannedBatchSizes()
 	result.SearchMayStopEarly = true
 	result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-		Code: "AutomaticBatchDiscovery",
+		Code:    "AutomaticBatchDiscovery",
 		Message: "The plan bounds automatic batch discovery; completed measurements may cover only a prefix.",
 	})
 	condition := snapshot.Plan.Shared()

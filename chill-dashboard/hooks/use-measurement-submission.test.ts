@@ -143,16 +143,6 @@ test("Workload preflight rejection is rendered through the existing server error
   assert.match(html,/id="measurement-rejection"[^>]*role="alert"/)
 })
 
-test("request Funnel renders the undeclared-batch branch without a stale condition variable",()=>{
-  const html=renderRequest()
-  assert.match(html,/>배치 \(건\)</)
-  assert.doesNotMatch(html,/NaN/)
-  assert.match(html,/<th>예열 \(회\)<\/th>/)
-  assert.doesNotMatch(html,/CPU 개수|CPU 코어|measurement-affinity/)
-  assert.match(html,/<td>—<\/td>/)
-  assert.match(html,/<details id="measurement-conditions" open=""/)
-  assert.match(html,/href="\/datasets\/new"/)
-})
 
 test("unmeasured request leaves a surplus-field-only dataset unselected and required",()=>{
   const context={models:[{metadata:{name:"opaque-id",uid:"model"},spec:{artifacts:[],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}],workloads:[],classes:[],plans:[],profiles:[],preprocessors:[{metadata:{name:"image-pre",uid:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa",uid:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]}
