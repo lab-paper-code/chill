@@ -149,6 +149,9 @@ requests, conflicting ownership/reservations and external GPU consumers stop
 deployment; there is no automatic unroute, forced Pod deletion or probe bypass.
 Raw state, Pods, operation responses and settings receipts remain under
 `runtime-quiescence/` in the new deployment evidence directory.
+The allocation matcher uses the existing compact scheduler-state view, which
+retains Pod, instance, Node and Workload identity without unused search populations.
+The authenticated response byte limit remains unchanged.
 
 Temporary settings are restored after probing, on success or failure, using the
 existing path-scoped settings receipt and fresh ETag/If-Match. Unrelated user

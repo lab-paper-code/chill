@@ -287,13 +287,17 @@ class DeploymentCLI(unittest.TestCase):
                 cls.requests.append((self.path, self.headers.get('Authorization')))
                 if self.headers.get('Authorization') != 'Bearer ' + cls.token:
                     self.send_response(401); self.end_headers(); return
-                if self.path in ('/api/v1/scheduler/settings', '/api/v1/scheduler/state'):
+                if self.path in ('/api/v1/scheduler/settings', '/api/v1/scheduler/state',
+                                 '/api/v1/scheduler/state?view=compact'):
                     state = json.loads((cls.directory / 'state.json').read_text())
                     if state.get('runtimeFixture'):
                         if self.path.endswith('/settings'):
                             self.reply(state['settings'], etag='"%d"' % state['settingsVersion'])
                         else:
-                            self.reply({'snapshot': {'instances': [] if state.get('removed') else [state['instance']]}})
+                            snapshot = {'instances': [] if state.get('removed') else [state['instance']]}
+                            if state.get('oversizedState') and self.path == '/api/v1/scheduler/state':
+                                snapshot['options'] = [{'profile': {'batches': [{'serviceSamplesSeconds': [0.001] * 1400000}]}}]
+                            self.reply({'snapshot': snapshot})
                         return
                 if self.path == '/':
                     self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(b'<!doctype html><html><body>CHILL</body></html>'); return
@@ -402,12 +406,14 @@ shutil.disk_usage = disk_usage
                'status': {'phase': 'Running'}}
         self.recipe.update(images=['server', *sorted({role for role, _ in runtime.RUNTIME_IMAGES.values()})],
                            runtimeDeclarations=True, readinessSeconds=10)
-        for scenario in ('success', 'probe-fail', 'remove-failed', 'remove-conflict', 'accepted-request', 'eligibility-race',
+        for scenario in ('success', 'oversized-state', 'probe-fail', 'remove-failed', 'remove-conflict', 'accepted-request', 'eligibility-race',
                          'foreign-consumer', 'concurrent-unrelated', 'concurrent-tracked'):
             with self.subTest(scenario=scenario):
                 fixture = {'runtimeFixture': True, 'nodes': nodes_fixture(ROOT), 'gpuNodes': gpu_nodes, 'machines': machines,
                            'owner': owner, 'instance': copy.deepcopy(instance), 'servingPod': copy.deepcopy(pod),
                            'settings': copy.deepcopy(settings), 'settingsVersion': 1}
+                if scenario == 'oversized-state':
+                    fixture['oversizedState'] = True
                 if scenario == 'probe-fail':
                     fixture['failProbe'] = True
                 elif scenario == 'remove-failed':

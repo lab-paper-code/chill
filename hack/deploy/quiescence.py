@@ -125,7 +125,7 @@ def gpu_probes(config, nodes, out, kube, run, timeout):
     receipt = out / 'settings-patch.json'
     failure = None
     try:
-        state = api('GET', '/api/v1/scheduler/state')
+        state = api('GET', '/api/v1/scheduler/state?view=compact')
         initial = _matched(pods(), state, namespace)
         owners = {match['workloadUID'] for match in initial}
         api_checks._report(out / 'consumers-before.json', initial)
@@ -143,7 +143,7 @@ def gpu_probes(config, nodes, out, kube, run, timeout):
             return value
 
         settings_patch.factor_apply(apply_api, declared, receipt)
-        state = api('GET', '/api/v1/scheduler/state')
+        state = api('GET', '/api/v1/scheduler/state?view=compact')
         current = _matched(pods(), state, namespace)
         api_checks._report(out / 'consumers-after-settings.json', current)
         if any(match['workloadUID'] not in owners for match in current):
