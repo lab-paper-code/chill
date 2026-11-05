@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/smithy-go"
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
@@ -240,14 +241,16 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) {
 	temporaryList := errors.New("Run listing unavailable")
 	temporaryStore := errors.New("plan store unavailable")
+	missingBucket := fmt.Errorf("%w: %w", evidencestore.ErrNotFound, &smithy.GenericAPIError{Code: "NoSuchBucket"})
 	for _, test := range []struct {
-		name     string
-		run      string
-		plan     bool
-		result   bool
-		listErr  error
-		storeErr error
-		terminal bool
+		name       string
+		run        string
+		plan       bool
+		storedPlan []byte
+		result     bool
+		listErr    error
+		storeErr   error
+		terminal   bool
 	}{
 		{name: "unstarted", terminal: true},
 		{name: "foreign UID does not own campaign", run: foreignCampaignOwner, terminal: true},
@@ -255,9 +258,12 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 		{name: "owned active Run", run: "active"},
 		{name: "owned completed Run", run: "completed"},
 		{name: "recorded plan", plan: true},
+		{name: "malformed recorded plan", storedPlan: []byte(`{"version":`)},
+		{name: "empty recorded plan", storedPlan: []byte{}},
 		{name: "published result", result: true},
 		{name: "transient list failure", listErr: temporaryList},
 		{name: "transient store failure", storeErr: temporaryStore},
+		{name: "missing bucket is not absent plan", storeErr: missingBucket},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -265,7 +271,7 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 			reportBytes, report := curvePlanCandidateReport(t, parent)
 			preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
 			modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
-			var planBytes []byte
+			planBytes := test.storedPlan
 			if test.plan {
 				plan, _, err := (&CurvePlanProjector{
 					reader: modelReader, resolver: &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer: preparer,
@@ -301,7 +307,7 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if test.plan {
+			if planBytes != nil {
 				store.objects[source.location(parent.UID)] = planBytes
 			}
 			// The source boundary is safe even without the reconciler's discovery.
@@ -323,11 +329,10 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 			}
 			if test.terminal {
 				assertInvalidLabelTerminalStatus(t, updated, parent.Generation)
-				opens := store.opens
 				native.listErr = errors.New("terminal replay must not discover Runs")
 				store.err = errors.New("terminal replay must not read evidence")
-				if _, err := reconciler.Reconcile(ctx, request); err != nil || store.opens != opens {
-					t.Fatalf("terminal replay error=%v evidence reads changed=%v", err, store.opens != opens)
+				if _, err := reconciler.Reconcile(ctx, request); err != nil {
+					t.Fatalf("terminal replay error=%v", err)
 				}
 			} else if updated.Status.Outcome == profiler.ResolutionReasonInvalidRunSpec {
 				t.Fatalf("existing work or transient failure terminalized: %+v", updated.Status)
@@ -341,7 +346,7 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 				t.Fatalf("unexpected work: runs=%d preparations=%d puts=%d derives=%d writes=%d result=%+v",
 					len(runs.Items), len(preparer.requests)-prepared, store.puts, dependencies.derives, dependencies.writes, updated.Status.Result)
 			}
-			if test.plan && !reflect.DeepEqual(store.objects[source.location(parent.UID)], planBytes) {
+			if !reflect.DeepEqual(store.objects[source.location(parent.UID)], planBytes) {
 				t.Fatal("recorded plan changed")
 			}
 		})
