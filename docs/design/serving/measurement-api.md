@@ -1095,24 +1095,26 @@ coverage 집계는 측정 근거가 있는 조합만 품질 분모에 넣고 정
 정상 superseded의 이미 검증한 메모리 facts는 현재 스케줄러 미사용으로 보존하며,
 읽기 전 replacement 제외에는 확인하지 않은 과거 facts를 만들어 넣지 않는다.
 
-기존 preflight 응답에 표시용 `batchPlan`을 추가한다:
-`{variantId,conditionMatch,requestedBatches,requestableBatches,plannedBatches,measuredBatches,inProgressBatches,
-missingBatches,subsetAllowed,searchMayStopEarly,reasons}`.
+preflight의 표시용 `batchPlan`은 다음 필드를 제공한다:
+`{variantId,conditionMatch,plannedBatches,measuredBatches,inProgressBatches,
+missingBatches,searchMayStopEarly,reasons}`.
+서버가 실제 firstfloor 상한과 artifact declaration 안에서 `1, 2, 4, …` 도메인을 자동 결정한다.
+편집 가능한 batch 목록은 없으며 missing은 표시용 사실이지 별도 요청 부분집합이 아니다.
 conditionMatch는 exact/planned-only/unknown이다. 이미지 외 측정 조건 미확정은 exact로 승격하지 않는다.
-셀에서 variantId를 전달하고 입력을 그대로 유지할 때만 그 missing을 초깃값으로 쓴다.
-CPU/dataset/protocol 등 변경·선언 UID 변경은 이전 자동 제외/검사를 무효화한다.
-검사에서 서버가 최신 요청 spec/정확 profile을 대조하고 planned-only 중복은 별도 사실로 보인다.
+셀의 variantId와 입력 조건으로 서버가 최신 요청 spec/정확 profile을 대조하고,
+planned-only 중복은 별도 사실로 보인다. dataset/protocol 등 조건이나 선언 UID가 바뀌면 다시 검사한다.
 전달은 `POST .../preflight?variantId=<id>`의 선택 query이며 native CR 본문에 새 필드를 넣지 않는다.
 preflight exact는 보존 CurvePlanSpec의 이미지 이외 실제 identity와 현재 요청
-spec(배치 선택 제외)이 모두 일치할 때 제공한다. 이미지 tag/digest 차이나 불변 digest 부재로
+spec이 모두 일치할 때 제공한다. 이미지 tag/digest 차이나 불변 digest 부재로
 측정 배치를 무효화하지 않는다. 이 저장 계약에 없는
 ModelSpec/DeviceClass/preprocessor 선언 UID를 과거 값으로 추정하지 않으며,
 해당 lineage는 확인되지 않은 한계로 reasons에 명시한다.
 진행 batch는 UID-bound 동결 curve-plan까지 일치한 현재 실행에서만 세며,
-spec만 같은 요청은 planned-only 사유로 분리한다. missing은 측정·정확 진행 집합을 제외한 목표다.
-`declaredBatchSizes` 경로는 부분집합 지정 불가: UI batch 칩 읽기 전용, 기존 batchSizes 생략 계약 유지,
-‘요청 가능 범위’와 ‘실제 실행 예정 범위’, 중복 가능성·조기 종료 가능성을 펼쳐 확인받는다.
-subsetAllowed인 경로에만 **‘부족 배치만 요청’**을 쓴다. 모든 batch 실제 실행을 보장하지 않는다.
+spec만 같은 요청은 planned-only 사유로 분리한다. missing은 자동 도메인에서 측정·정확 진행 집합을 제외한다.
+`BatchDiscoveryComplete`의 완료 prefix는 current-generation profile과 조회 조건이 정확히 일치할 때만
+정상 coverage에 반영한다. prefix의 기존 품질·가용성 판정은 유지한다.
+자동 discovery가 Query API의 명시적 조회 대상 요구를 대신하지 않는다.
+화면에는 planned/measured/in-progress/missing과 조기 종료 사유를 표시하며 모든 K의 성공을 보장하지 않는다.
 지원 Unknown은 이유 코드별 담당 행동(선언 누락이면 관리자 설정 확인)을 제공한다.
 이름 suffix는 검사 통과 때 고정하고 응답 미확인 후 자동 재생성/재제출하지 않는다.
 
