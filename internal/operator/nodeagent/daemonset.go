@@ -93,11 +93,17 @@ func buildActuationDaemonSet(
 		env = append(env, corev1.EnvVar{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"},
 			corev1.EnvVar{Name: "NVIDIA_DRIVER_CAPABILITIES", Value: "utility"})
 		if len(nv.NodeNames) != 0 {
-			for i := range affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
-				term := &affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[i]
-				term.MatchFields = append(term.MatchFields, corev1.NodeSelectorRequirement{
-					Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: slices.Clone(nv.NodeNames)})
+			selector := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+			terms := make([]corev1.NodeSelectorTerm, 0, len(selector.NodeSelectorTerms)*len(nv.NodeNames))
+			// Terms are ORed; each name remains ANDed with its DeviceClass.
+			for _, term := range selector.NodeSelectorTerms {
+				for _, nodeName := range nv.NodeNames {
+					term.MatchFields = []corev1.NodeSelectorRequirement{{
+						Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{nodeName}}}
+					terms = append(terms, term)
+				}
 			}
+			selector.NodeSelectorTerms = terms
 		}
 	} else {
 		hostPaths = actuation.JetsonNVPModel.HostPaths

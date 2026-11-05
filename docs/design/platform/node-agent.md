@@ -11,6 +11,11 @@
 - meter 연결은 노드가 발견할 수 없는 사실이므로 Profiler facts에 한 번 선언한다. meter ID를 노드 이름으로 바꾸면 기존 operation 측정이 `MeterUndeclared`가 되어 비용을 다시 재야 한다.
 - 전력 요청은 DeviceClass와 policy에서 도출하고 요청 시각에 기록한다. 고정 이름·deadline의 요청 template은 반복 전환을 적용 없이 성공시키거나 기한 뒤 모든 전환을 실패시킨다.
 - DaemonSet은 권한 경계로 둘이다. 하나로 합치면 control-plane과 서버에도 `SYS_BOOT`·쓰기 `/sys`가 생기고, Jetson 전용 nvpmodel mount는 다른 노드의 Pod 생성을 막는다.
+- NVIDIA `nvidiaLockedGPUClock.nodeNames`는 DeviceClass selector와 AND로 결합한다.
+  복수 이름은 각 `metadata.name In [이름 하나]` term을 OR로 늘린다. Kubernetes
+  field selector는 `In` 값 하나만 허용하므로 여러 이름을 한 `matchFields.values`에
+  넣지 않는다. 빈 목록은 기존 DeviceClass 범위를 유지하며, 이 생성 규칙은 실제
+  DaemonSet rollout이나 GPU actuation 성공의 증거가 아니다.
 - Node label 요청과 generation은 [NVIDIA mig-manager](https://github.com/NVIDIA/mig-parted)의 방식이다(D2). 전환마다 CRD object를 만들지 않는다. M5 근거 snapshot의 NodeActuation 69개 중 57개는 owner가 없었고, object의 적용 시각 비교는 수동 변경·재부팅을 놓쳤다.
 - agent는 유일한 노드 전력 mutator([ADR 0015](../../adr/0015-node-power-actuation-boundary.md))이며, 도달 판정은 독립 read-back이다([ADR 0017](../../adr/0017-power-mode-reachability-boundary.md)). 시각 순서는 [ADR 0020](../../adr/0020-transition-duration-measurement-boundary.md)을 따른다.
 

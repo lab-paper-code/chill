@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -94,5 +95,63 @@ func TestStoppingRemovesBothAdapterOperands(t *testing.T) {
 	list := &appsv1.DaemonSetList{}
 	if err := c.List(context.Background(), list, client.InNamespace(opts.Namespace)); err != nil || len(list.Items) != 0 {
 		t.Fatalf("operands remain: %v error=%v", list.Items, err)
+	}
+}
+
+func TestNvidiaNamedNodesPreserveDeviceClassIntersection(t *testing.T) {
+	config := nvidiaConfig()
+	actuation := config.Actuation.forKind(actuatorcore.ActuatorKindNvidiaLockedGPUClock)
+	config.Actuation = &actuation
+	config.Actuation.NvidiaLockedGPUClock.NodeNames = []string{"gpu-a", "gpu-b"}
+	second := config.Actuation.Policies[0]
+	second.Name, second.DeviceClass = "second-gpu", "second-class"
+	config.Actuation.Policies = append(config.Actuation.Policies, second)
+	classes := []edgev1alpha1.DeviceClass{
+		{ObjectMeta: metav1.ObjectMeta{Name: config.Actuation.Policies[0].DeviceClass},
+			Spec: edgev1alpha1.DeviceClassSpec{NodeSelector: map[string]string{"device": "first", "arch": "amd64"}}},
+		{ObjectMeta: metav1.ObjectMeta{Name: second.DeviceClass},
+			Spec: edgev1alpha1.DeviceClassSpec{NodeSelector: map[string]string{"device": "second", "arch": "amd64"}}},
+	}
+	ds, err := buildActuationDaemonSet(validOptions(), config, classes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terms := ds.Spec.Template.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	for _, test := range []struct {
+		name, device, arch string
+		want               bool
+	}{
+		{"gpu-a", "first", "amd64", true},
+		{"gpu-b", "first", "amd64", true},
+		{"gpu-a", "second", "amd64", true},
+		{"gpu-b", "second", "amd64", true},
+		{"other", "first", "amd64", false},
+		{"gpu-a", "other", "amd64", false},
+		{"gpu-b", "first", "arm64", false},
+	} {
+		matched := false
+		for _, term := range terms {
+			selector := &metav1.LabelSelector{}
+			for _, requirement := range term.MatchExpressions {
+				selector.MatchExpressions = append(selector.MatchExpressions, metav1.LabelSelectorRequirement{
+					Key: requirement.Key, Operator: metav1.LabelSelectorOperator(requirement.Operator), Values: requirement.Values})
+			}
+			labelSelector, err := metav1.LabelSelectorAsSelector(selector)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fieldMatches := true
+			for _, requirement := range term.MatchFields {
+				// Unlike label selectors, Kubernetes field selectors require one value.
+				if requirement.Key != "metadata.name" || requirement.Operator != corev1.NodeSelectorOpIn || len(requirement.Values) != 1 {
+					t.Fatalf("invalid node-name field selector: %+v", requirement)
+				}
+				fieldMatches = fieldMatches && requirement.Values[0] == test.name
+			}
+			matched = matched || fieldMatches && labelSelector.Matches(labels.Set{"device": test.device, "arch": test.arch})
+		}
+		if matched != test.want {
+			t.Errorf("selection for %s/%s/%s = %t, want %t", test.name, test.device, test.arch, matched, test.want)
+		}
 	}
 }
