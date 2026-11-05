@@ -127,6 +127,20 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 		}
 	}
 	accepted := result != nil && campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseComplete)
+	// Discovery can seal an expected stop without completing any active batch.
+	// Only retained measurement facts establish a usable discovery prefix.
+	unmeasuredDiscovery := result != nil && result.Outcome == batchenergyoptimization.BatchDiscoveryComplete &&
+		(facts == nil || len(facts.Batches) == 0)
+	var assessmentReasons []MeasurementReason
+	if unmeasuredDiscovery {
+		accepted = false
+		if factsReason != nil {
+			assessmentReasons = append(assessmentReasons, MeasurementReason{
+				Code: *factsReason, Message: "No completed active batch measurement facts are available",
+				SourceIDs: []string{storedResult.Store + "/" + storedResult.Key},
+			})
+		}
+	}
 	reused := campaign.Annotations["chill.dacs.io/profile-reuse"] != ""
 	rows := []ResultRow{}
 	var children []MeasurementAssessment
@@ -181,7 +195,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			Execution: &MeasurementExecution{Phase: campaign.Status.Phase, Generation: campaign.Generation, ObservedGeneration: campaign.Status.ObservedGeneration},
 			Available: result != nil, Accepted: accepted,
 			Reused: reused, SchedulerUsed: snapshot.SchedulerUsed,
-			Attempted: true, SourcesComplete: true, Children: children,
+			Attempted: true, SourcesComplete: true, Children: children, Reasons: assessmentReasons,
 		}),
 	}
 	view.Assessment.FailureSummary = MeasurementRequestFailures(*campaign, snapshot.FailedRuns, view.Assessment)

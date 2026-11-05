@@ -108,6 +108,8 @@ func readMeasurementStatistics(
 		return nil, statisticsCampaignError(err)
 	}
 	if sequential && len(discovery.MeasuredBatchSizes) == 0 {
+		// Preserve this absence reason through Query's assessment: a sealed
+		// discovery result alone does not establish a usable active batch.
 		return nil, errStatisticsNotRecorded
 	}
 	plan, shared := retained.Plan, retained.Plan.Shared()

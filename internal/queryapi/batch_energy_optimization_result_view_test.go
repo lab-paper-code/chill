@@ -2,6 +2,7 @@ package queryapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,100 @@ func TestBuildBatchEnergyOptimizationResultDoesNotAliasTheCampaign(t *testing.T)
 	view.Campaign.Spec.State.TargetNode = "aliased-node"
 	if campaign.Spec.State.TargetNode == "aliased-node" {
 		t.Fatal("view aliases the campaign spec")
+	}
+}
+
+func TestBuildBatchEnergyOptimizationResultEmptyDiscoveryIsNotAccepted(t *testing.T) {
+	for activeTrials := range 3 {
+		t.Run(fmt.Sprintf("active-trials-%d", activeTrials), func(t *testing.T) {
+			campaign, _, original := campaignResultFixture(t)
+			spec := original.Spec()
+			spec.Outcome = batchenergyoptimization.BatchDiscoveryComplete
+			completed := spec.CompletedTrials[0]
+			spec.CompletedTrials = nil
+			for _, mode := range []batchenergyoptimization.WorkloadMode{
+				batchenergyoptimization.WorkloadModeIdle, batchenergyoptimization.WorkloadModeActive,
+			} {
+				count := 3
+				if mode == batchenergyoptimization.WorkloadModeActive {
+					count = activeTrials
+				}
+				for attempt := 1; attempt <= count; attempt++ {
+					trial := completed
+					trial.Measurement.WorkloadMode = mode
+					trial.Run.Name = fmt.Sprintf("campaign-%s-b1-a%d", mode, attempt)
+					trial.Run.UID = trial.Run.Name + "-uid"
+					trial.Evidence.Key = "profiling-runs/" + trial.Run.UID + "/execution.json"
+					spec.CompletedTrials = append(spec.CompletedTrials, trial)
+				}
+			}
+			failed := completed.Run
+			failed.Name = fmt.Sprintf("campaign-active-b1-a%d", activeTrials+1)
+			failed.UID = failed.Name + "-uid"
+			spec.ExcludedTrials = []batchenergyoptimization.ExcludedTrialReference{{
+				Run: failed, Measurement: completed.Measurement, Attempt: activeTrials + 1,
+				Reasons: []string{batchenergyoptimization.DiscoveryStopOOM},
+			}}
+			var err error
+			spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
+				MeasuredBatchSizes: []int{},
+				Stop: batchenergyoptimization.DiscoveryStop{
+					Reason: batchenergyoptimization.DiscoveryStopOOM, Run: &failed, Attempt: activeTrials + 1,
+					FailedMeasurement: &batchenergyoptimization.Measurement{
+						WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err := batchenergyoptimization.NewResultRecord(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			discovery, sequential, err := batchenergyoptimization.DecodeDiscoveryResult(record, []int{1, 2})
+			if err != nil || !sequential || len(discovery.MeasuredBatchSizes) != 0 {
+				t.Fatalf("invalid empty-prefix boundary: %+v sequential=%v err=%v", discovery, sequential, err)
+			}
+			campaign.Generation, campaign.Status.ObservedGeneration = 1, 1
+			campaign.Status.Outcome = string(spec.Outcome)
+			missing := "StatisticsNotRecorded"
+			view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{
+				Campaign: *campaign, Result: record, StatisticsReason: &missing,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if view.Assessment.Evidence.Accepted || !view.Assessment.Evidence.Available ||
+				view.Assessment.DisplayStatus == MeasurementUsable || view.Assessment.DisplayStatus == MeasurementProblem ||
+				len(view.ResultRows) != 0 || len(view.Assessment.FailureSummary) != 0 {
+				t.Fatalf("empty prefix became usable or failed: %+v", view)
+			}
+			if view.Campaign.Phase != "Complete" || view.Campaign.StoredResult == nil || view.Result == nil ||
+				string(view.Result.Detail) != string(spec.Detail) || len(view.Result.CompletedTrials) != 3+activeTrials {
+				t.Fatalf("sealed expected stop was lost: %+v", view)
+			}
+			if len(view.Assessment.Reasons) != 1 || view.Assessment.Reasons[0].Code != missing {
+				t.Fatalf("absence reason was lost: %+v", view.Assessment)
+			}
+		})
+	}
+}
+
+func TestBuildBatchEnergyOptimizationResultPreservesPublishedLegacyAcceptance(t *testing.T) {
+	for _, reason := range []string{"StatisticsNotRecorded", "RetainedEvidenceMissing"} {
+		t.Run(reason, func(t *testing.T) {
+			campaign, _, record := campaignResultFixture(t)
+			view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{
+				Campaign: *campaign, Result: record, StatisticsReason: &reason,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !view.Assessment.Evidence.Accepted || view.Assessment.DisplayStatus != MeasurementUsable {
+				t.Fatalf("published legacy acceptance changed: %+v", view.Assessment)
+			}
+		})
 	}
 }
 

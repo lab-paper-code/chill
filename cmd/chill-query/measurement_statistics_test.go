@@ -179,6 +179,16 @@ func TestMeasurementStatisticsDiscoveryExcludesIncompleteNextBatch(t *testing.T)
 	if !reflect.DeepEqual(record.Spec(), before) {
 		t.Fatal("filtering mutated retained trial lineage")
 	}
+	view, err := queryapi.BuildBatchEnergyOptimizationResult(queryapi.BatchEnergyOptimizationResultSnapshot{
+		Campaign: *cr, Result: record, Statistics: statistics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Assessment.DisplayStatus != queryapi.MeasurementUsable || !view.Assessment.Evidence.Accepted ||
+		len(view.ResultRows) != 1 || view.ResultRows[0].Batch != 1 {
+		t.Fatalf("completed prefix was not usable: %+v", view)
+	}
 }
 
 func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
@@ -216,9 +226,34 @@ func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	discovery, sequential, err := campaign.DecodeDiscoveryResult(record, []int{1, 2})
+	if err != nil || !sequential || len(discovery.MeasuredBatchSizes) != 0 {
+		t.Fatalf("invalid empty discovery boundary: %+v sequential=%v err=%v", discovery, sequential, err)
+	}
+	cr.Generation, cr.Status.ObservedGeneration = 1, 1
+	cr.Status.Outcome = string(spec.Outcome)
+	before := record.Spec()
 	statistics, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record)
 	if err != nil || statistics != nil || reason == nil || *reason != statisticsNotRecordedReason {
 		t.Fatalf("unmeasured batch one became statistics: %+v %v %v", statistics, reason, err)
+	}
+	view, err := queryapi.BuildBatchEnergyOptimizationResult(queryapi.BatchEnergyOptimizationResultSnapshot{
+		Campaign: *cr, Result: record, Statistics: statistics, StatisticsReason: reason,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Assessment.DisplayStatus == queryapi.MeasurementUsable || view.Assessment.DisplayStatus == queryapi.MeasurementProblem ||
+		view.Assessment.Evidence.Accepted || !view.Assessment.Evidence.Available ||
+		view.Campaign.Phase != string(api.MeasurementPhaseComplete) || view.Campaign.StoredResult == nil ||
+		view.Result == nil || len(view.ResultRows) != 0 || len(view.Assessment.FailureSummary) != 0 {
+		t.Fatalf("empty discovery became usable or failed: %+v", view)
+	}
+	if len(view.Assessment.Reasons) == 0 || view.Assessment.Reasons[0].Code != *reason {
+		t.Fatalf("statistics absence did not reach assessment: %+v", view.Assessment)
+	}
+	if !reflect.DeepEqual(view.Result.ResultRecordSpec, before) || !reflect.DeepEqual(record.Spec(), before) {
+		t.Fatal("empty discovery lost its sealed stop or trial lineage")
 	}
 }
 
