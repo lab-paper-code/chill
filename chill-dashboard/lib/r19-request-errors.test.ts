@@ -33,6 +33,7 @@ function render(kind:"list"|"detail") {
   "@/components/measurement-filters":{MeasurementFilters:()=>null},"@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[plan]}}),useMeasurementCoverage:()=>({data:{cells:[]}})},
   "@/features/measurement-runs":{MeasurementChildRuns:()=>null},
   "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
+  "@/components/measurement-request-source":{MeasurementRequestSource:()=>null},
   "@/components/screen":{Screen:container,Facts:({items}:{items:[string,ReactNode][]})=>createElement("dl",null,items.map(([label,value])=>createElement("div",{key:label},createElement("dt",null,label),createElement("dd",null,value)))),Rows:container},"@/components/ui/button":{Button:container},
   "@/components/measurement-navigation":{MeasurementStatus:()=>null,MeasurementNavigation:()=>null,MeasurementEvidenceChecks:()=>null},
   "@/components/status-cell":{StatusCell:()=>null},

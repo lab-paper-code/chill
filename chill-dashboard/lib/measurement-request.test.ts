@@ -298,6 +298,7 @@ test("failed request detail renders failure evidence, current results, checks an
     "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data}),useMeasurementCoverage:()=>({data:{cells:[{...retainedCell,assessment}]}})},
     "@/features/measurement-runs":{MeasurementChildRuns:()=>createElement("p",null,"child-rounds")},
     "@/components/read-region":{QueryGate:container,SourceJSON:()=>null,SourceExport:()=>null},
+    "@/components/measurement-request-source":{MeasurementRequestSource:()=>null},
     "@/components/screen":{Screen:container,Rows:container,Facts:()=>null},
     "@/components/ui/button":{Button:container},
     "@/components/ui/dialog":Object.fromEntries(["Dialog","DialogContent","DialogDescription","DialogHeader","DialogTitle"].map(key=>[key,container])),

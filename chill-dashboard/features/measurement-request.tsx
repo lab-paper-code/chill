@@ -6,7 +6,8 @@ import { useEffect, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay, isCoverageWarming, useChillQuery, useSession } from "@/lib/client"
 import { QueryGate, SourceJSON } from "@/components/read-region"
-import { Screen } from "@/components/screen"
+import { MeasurementRequestSource } from "@/components/measurement-request-source"
+import { Screen, Row, Rows } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -20,6 +21,8 @@ import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { executionPathLabel } from "@/lib/measurements"
 import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"
 import { failure, useMeasurementSubmission } from "@/hooks/use-measurement-submission"
+import { MeasurementDocumentRequestPage } from "@/features/measurement-document-request"
+import { MeasurementPreparationGuide } from "@/components/measurement-preparation-guide"
 
 const back: [string, string] = ["/measurements/requests", "측정 요청"]
 
@@ -51,6 +54,25 @@ function AdvancedFields({ value, set, showErrors, rejection }: { value: Advanced
 }
 
 export function MeasurementRequestPage() {
+  const {config}=useSession(),params=useSearchParams()
+  const namespace=params.get("namespace")??config.namespace
+  const method=params.get("input")
+  if(method==="document")return <MeasurementDocumentRequestPage key={namespace} namespace={namespace}/>
+  if(method==="form"||params.has("from")||params.has("model")||params.has("variantId"))return <GuidedMeasurementRequestPage/>
+  return <Screen title="측정 요청" back={back}>
+    <MeasurementNavigation active="requests" namespace={namespace}/>
+    <MeasurementKindSelector kind="profile"/>
+    <p className="max-w-prose text-muted-foreground">등록된 서비스와 장비를 고르거나, 담당자가 준비한 측정 문서를 가져오세요.</p>
+    <Rows label="요청 작성 방법">
+      <Row href={`/measurements/requests/new?${new URLSearchParams({namespace,input:"form"})}`} label="서비스와 장비를 골라 작성" hint="등록된 자산을 선택하고 측정 조건을 확인해요."/>
+      <Row href={`/measurements/requests/new?${new URLSearchParams({namespace,input:"document"})}`} label="준비된 YAML/JSON 가져오기" hint="파일이나 붙여넣기로 전체 조건을 읽고, 검토·검사 후 제출해요."/>
+      <Row href={`/measurements/requests?${new URLSearchParams({namespace})}`} label="기존 측정 요청에서 복사" hint="요청 상세의 복사에서 기존 조건을 재사용해요."/>
+    </Rows>
+    <MeasurementPreparationGuide/>
+  </Screen>
+}
+
+function GuidedMeasurementRequestPage() {
   const { config, token } = useSession(), params = useSearchParams(),router=useRouter()
   const from = params.get("from"),namespace=params.get("namespace")??config.namespace
   const plans = useMeasurementPlans(namespace)
@@ -87,7 +109,7 @@ export function MeasurementRequestPage() {
   if(copy?.error)prefill.errors.push(copy.error)
   const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], preprocessors:preprocessors.data?.items??[], datasets:datasets.data?.items??[], profiles:profiles.data?.profiles??[], prefill:prefill.active }
   const selected=coverage.data?.cells.flatMap(cell=>cell.variants).find(variant=>variant.id===params.get("variantId"))
-  return <Funnel key={params.toString()} namespace={namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} plansError={plans.error}/>
+  return <Funnel key={copy?.source?requestCopyQuery(new URLSearchParams(params),copy.source):params.toString()} namespace={namespace} from={from} context={context} prefill={prefill} selected={selected} refetchPlans={plans.refetch} checking={plans.isFetching} plansError={plans.error}/>
 }
 
 function Funnel({ namespace, from, context, prefill, selected, refetchPlans, checking, plansError }: { namespace: string; from: string | null; context: Context; prefill:MeasurementPrefill; selected?:MeasurementVariant; refetchPlans: () => Promise<{ error: ApiError | null }>; checking: boolean; plansError?:ApiError|null }) {
@@ -132,6 +154,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     {plansError&&<p role="alert">측정 요청 목록 갱신 실패 (HTTP {plansError.status}) · 직전 성공 자료</p>}
     <nav aria-label="요청 단계"><ol className="flex flex-wrap gap-3">{["대상","조건","검사·제출"].map((label,index)=><li key={label}><Button variant={stage===index?"default":"outline"} aria-current={stage===index?"step":undefined} disabled={index>stage||unknown||pending||send.isPending} onClick={()=>setStage(index)}>{label}</Button></li>)}</ol></nav>
     {unknown&&<section role="alert" className="notice space-y-3"><h2>접수 결과 미확인</h2><p>{v.name}: 자동 재제출·이름 변경 차단</p><Button disabled={checking} onClick={lookup}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={requestHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p>목록 미확인 · 자동 재제출 차단</p>}</section>}
+    {stage===0&&<p className="max-w-prose text-sm text-muted-foreground">Workload를 선택하면 연결된 모델·입출력 처리·데이터셋을 가져와요. 등록된 서비스가 없으면 <Link className="underline" href="/workloads/new">서비스 등록</Link>에서 준비하세요.</p>}
     {variantId&&!selected&&<p role="status" className="notice">조건 미확인 · 부족 배치 자동 제외 안 됨</p>}
     {stage===0&&prefill.active&&<div aria-label="선택 조건 요약" className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 border-y py-2 text-sm"><span>장치 <strong>{deviceLabel(d.deviceClass)}</strong></span><span>Node <strong>{d.node||"미선택"}</strong></span><span>전력모드 <strong>{v.powerMode||"미선택"}</strong></span><span>경로 <strong>{d.path?executionPathLabel(d.path):"미선택"}</strong></span><Button variant="outline" disabled={unknown||pending||send.isPending} onClick={()=>{setStage(1);requestAnimationFrame(()=>{const conditions=document.getElementById("measurement-conditions") as HTMLDetailsElement|null;if(conditions)conditions.open=true})}}>조건 변경</Button></div>}
     <fieldset disabled={unknown||pending||send.isPending} className="space-y-8 disabled:opacity-60">
@@ -185,6 +208,6 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     {pre.error&&<table className="w-full text-left text-sm"><thead><tr><th>서빙 영향 · 서비스 (개)</th><th>예상 점유 (s)</th></tr></thead><tbody><tr><td>미확인</td><td>미확인</td></tr></tbody></table>}
     {stage===2&&<section aria-label="검사·제출" className="space-y-3"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">제출 전 검토</caption><tbody>{[["요청",v.name],["Workload",d.workload],["모델",d.model],["장치 종류",d.deviceClass],["Node",d.node],["전력모드",v.powerMode],["실행 경로",d.path?executionPathLabel(d.path):"미제공"],["모델 입출력 처리",d.preprocessor],["데이터셋",d.dataset],["측정 방식 출처",v.protocol.from??"직접 입력"],["원본 요청",copiedIdentity?.name??source?.metadata.name??from??"복사 안 함"],["원본 저장 영역",copiedIdentity?.namespace??source?.metadata.namespace??(from?"미확인":"해당 없음")],["원본 UID",copiedIdentity?.uid??source?.metadata.uid??(from?"미확인":"해당 없음")]].map(([label,value])=><tr key={label}><th className="py-2 font-medium">{label}</th><td className="break-all">{value||"미제공"}</td></tr>)}</tbody></table><p role="status" className="text-sm font-semibold">미제출</p></section>}
     <div className="flex flex-wrap gap-2">{stage>0&&<Button variant="outline" disabled={unknown||pending||send.isPending} onClick={()=>setStage(stage-1)}>이전</Button>}{stage<2?<Button disabled={blocked||unknown||pending||send.isPending} onClick={next}>다음</Button>:<><Button variant="outline" disabled={blocked||pending||unknown||send.isPending} onClick={verify}>{pending?"검사 중":"요청 범위 검사"}</Button><Button disabled={!passed||blocked||send.isPending||unknown} onClick={submit}>측정 요청</Button></>}</div>
-    <details><summary className="min-h-11 cursor-pointer py-2">보낼 요청 원본</summary><SourceJSON inline value={manifest(d,context,namespace)}/></details>{(answer||pre.error||dry.error)&&<details><summary className="min-h-11 cursor-pointer py-2">검사 원본</summary><SourceJSON inline value={{접수검사:dry.data??dry.error,실행계획검사:answer??pre.error}}/></details>}
+    <MeasurementRequestSource value={manifest(d,context,namespace)} title="보낼 요청 원본"/>{(answer||pre.error||dry.error)&&<details><summary className="min-h-11 cursor-pointer py-2">검사 원본</summary><SourceJSON inline value={{접수검사:dry.data??dry.error,실행계획검사:answer??pre.error}}/></details>}
   </Screen>
 }

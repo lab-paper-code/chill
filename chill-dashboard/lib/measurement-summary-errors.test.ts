@@ -92,7 +92,7 @@ test("paged request defaults and coverage timestamps render second-page summary 
     let state:Record<string,unknown>={isPending:true,error:null,data:undefined,isFetching:false,dataUpdatedAt:0,refetch:()=>{}}
     const modules={
       react:{...React,useEffect:()=>{}},
-      "next/navigation":{useSearchParams:()=>new URLSearchParams(),useRouter:()=>({replace:()=>{}})},
+      "next/navigation":{useSearchParams:()=>new URLSearchParams(kind==="request"?"input=form":""),useRouter:()=>({replace:()=>{}})},
       "next/link":{__esModule:true,default:container},
       "@tanstack/react-query":{useQuery:({queryFn:fn}:{queryFn:typeof queryFn})=>{queryFn=fn;return state}},
       "@/lib/client":{...pagedClient,useSession:()=>({token:"test",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]},error:null}),useChillMutation:()=>({isPending:false})},

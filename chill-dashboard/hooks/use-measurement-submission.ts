@@ -6,6 +6,7 @@ import { ApiError, useChillMutation } from "@/lib/client"
 import type { MeasurementMutation, MeasurementPreflight } from "@/lib/read-types"
 import { updateDraft, manifest, requestCheckCurrent, requestHref, steps, view, type Context, type Draft } from "@/lib/measurement-request"
 import type { Compatibility } from "@/lib/measurement-coverage"
+import type { MeasurementRequestDocument } from "@/lib/measurement-document"
 
 export function failure(error: ApiError) {
   const data = (error.data && typeof error.data === "object" ? error.data : {}) as { code?: string }
@@ -17,49 +18,68 @@ export function useMeasurementSubmission({ d, setD, context, namespace, source, 
   copiedIdentity?:Context["plans"][number]["metadata"]; variantId:string;
   verdict?:Compatibility; refetchPlans:()=>Promise<{error:ApiError|null}>;
 }) {
+  const v=view(d,context)
+  const identities={source,copiedIdentity,model:v.model?.metadata,device:v.cls&&{uid:v.cls.uid,resourceVersion:v.cls.resourceVersion},node:v.cls?.nodes.find(node=>node.name===d.node),preprocessor:context.preprocessors.find(item=>item.metadata.name===d.preprocessor)?.metadata,dataset:context.datasets.find(item=>item.metadata.name===d.dataset)?.metadata}
+  const submission=useMeasurementDocumentSubmission({
+    body:manifest(d,context,namespace),namespace,source,plans:context.plans,refetchPlans,variantId,identities,verdict,
+    validate:()=>steps.filter(step=>step!=="review").map(step=>v.problem(step)).find(Boolean)||"",
+    onInvalid:():void=>{submission.setStage(v.problem("workload")?0:1)},
+    onVerify:()=>setD({...d,name:v.name}),
+  })
+  const update=(patch:Partial<Draft>)=>{
+    if(submission.unknown||submission.pending||submission.send.isPending)return
+    setD(current=>updateDraft(current,patch,context))
+    submission.invalidate()
+  }
+  function next() {
+    const issue=submission.stage===0?v.problem("workload"):steps.filter(step=>step!=="workload"&&step!=="review").map(step=>v.problem(step)).find(Boolean)
+    if(issue){submission.setError(issue);return}
+    submission.setError("");submission.setStage(submission.stage+1)
+  }
+  return {...submission,update,next}
+}
+
+export function useMeasurementDocumentSubmission({body,namespace,source,plans,refetchPlans,variantId="",identities={},verdict,validate,onInvalid,onVerify}:{
+  body:MeasurementRequestDocument|null;namespace:string;source:string;plans:Context["plans"];
+  refetchPlans:()=>Promise<{error:ApiError|null}>;variantId?:string;identities?:Record<string,unknown>;
+  verdict?:Compatibility;validate?:()=>string;onInvalid?:()=>void;onVerify?:()=>void;
+}) {
   const router=useRouter()
-  const dry = useChillMutation(), pre = useChillMutation(), send = useChillMutation()
+  const dry=useChillMutation(),pre=useChillMutation(),send=useChillMutation()
   const [error,setError]=useState(""),[unknown,setUnknown]=useState(false),[checked,setChecked]=useState(false)
   const [showUnknown,setShowUnknown]=useState(false)
   const [stage,setStage]=useState(0),[checkedInput,setCheckedInput]=useState<string|null>(null)
-  const v=view(d,context), listPath=`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
+  const listPath=`v1/namespaces/${encodeURIComponent(namespace)}/batch-energy-optimizations`
+  const name=body?.metadata.name??""
   const answer=pre.data?.data as MeasurementPreflight|undefined
   const admitted=dry.isSuccess&&(dry.data?.data as MeasurementMutation|null)?.request==="NOT_SUBMITTED"
-  const identities={source,copiedIdentity,model:v.model?.metadata,device:v.cls&&{uid:v.cls.uid,resourceVersion:v.cls.resourceVersion},node:v.cls?.nodes.find(node=>node.name===d.node),preprocessor:context.preprocessors.find(item=>item.metadata.name===d.preprocessor)?.metadata,dataset:context.datasets.find(item=>item.metadata.name===d.dataset)?.metadata,showUnknown}
-  const inputKey=JSON.stringify({body:manifest(d,context,namespace),...identities})
-  const passed=requestCheckCurrent(checkedInput,inputKey,admitted,answer?.resolves)
+  const inputKey=JSON.stringify({body,namespace,source,variantId,...identities,showUnknown})
+  const passed=!!body&&body.metadata.namespace===namespace&&requestCheckCurrent(checkedInput,inputKey,admitted,answer?.resolves)
   const pending=dry.isPending||pre.isPending
-  const update=(patch:Partial<Draft>)=>{
-    setD(current=>updateDraft(current,patch,context))
+  function invalidate() {
+    if(unknown||pending||send.isPending)return
     setError("");setCheckedInput(null);dry.reset();pre.reset();send.reset()
   }
   function verify() {
-    const issue=steps.filter(step=>step!=="review").map(step=>v.problem(step)).find(Boolean)
-    if(issue){setError(issue);setStage(v.problem("workload")?0:1);requestAnimationFrame(()=>document.getElementById("measurement-errors")?.focus());return}
+    if(unknown||pending||send.isPending)return
+    const issue=!body?"먼저 요청 문서를 검토하세요.":body.metadata.namespace!==namespace?"선택한 네임스페이스에서 문서를 다시 검토하세요.":validate?.()
+    if(issue){setError(issue);onInvalid?.();requestAnimationFrame(()=>document.getElementById("measurement-errors")?.focus());return}
     if(verdict?.state==="unsupported"){setError(verdict.reason);return}
     if(verdict?.state==="unknown"&&!showUnknown){setError("지원 미확인 조합을 검사하려면 명시 검사 항목을 선택하세요.");return}
-    // Keep the checked identity through success, transport uncertainty and manual identity lookup.
-    const pinned={...d,name:v.name};setD(pinned);setError("")
-    const body=manifest(pinned,context,namespace)
-    setCheckedInput(JSON.stringify({body,...identities}))
+    onVerify?.();setError("");setCheckedInput(inputKey)
     dry.mutate({path:`${listPath}?dryRun=All`,method:"POST",body})
     pre.mutate({path:`${listPath}/preflight${variantId?`?${new URLSearchParams({variantId})}`:""}`,method:"POST",body})
   }
   function submit() {
-    if(!passed||unknown)return
-    send.mutate({path:listPath,method:"POST",body:manifest(d,context,namespace)},{
-      onSuccess:response=>{const task=(response.data as MeasurementMutation|null)?.task;router.replace(requestHref(task?.metadata.namespace??namespace,task?.metadata.name??v.name,task?.metadata.uid))},
+    if(!passed||unknown||pending||send.isPending)return
+    send.mutate({path:listPath,method:"POST",body},{
+      onSuccess:response=>{const task=(response.data as MeasurementMutation|null)?.task;router.replace(requestHref(task?.metadata.namespace??namespace,task?.metadata.name??name,task?.metadata.uid))},
       onError:e=>{if(e.unknownOutcome||e.status===0||failure(e).code==="MeasurementAuditIncomplete")setUnknown(true)},
     })
   }
-  const found=checked?context.plans.find(plan=>plan.metadata.name===v.name):undefined
+  const found=checked?plans.find(plan=>plan.metadata.namespace===namespace&&plan.metadata.name===name):undefined
   function lookup() {
     void refetchPlans().then(result=>{setChecked(!result.error);if(result.error)setError("목록 조회 실패: 다시 확인하세요.")})
   }
-  function next() {
-    const issue=stage===0?v.problem("workload"):steps.filter(step=>step!=="workload"&&step!=="review").map(step=>v.problem(step)).find(Boolean)
-    if(issue){setError(issue);return}
-    setError("");setStage(stage+1)
-  }
-  return {dry,pre,send,error,unknown,checked,showUnknown,setShowUnknown,stage,setStage,setCheckedInput,answer,admitted,passed,pending,update,verify,submit,found,lookup,next}
+  return {dry,pre,send,error,setError,unknown,checked,showUnknown,setShowUnknown,stage,setStage,setCheckedInput,answer,admitted,passed,pending,invalidate,verify,submit,found,lookup}
 }

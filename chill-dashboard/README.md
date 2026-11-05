@@ -33,6 +33,41 @@ CHILL-internal Next App Router module, built independently and deployed within t
 HF/KServe/BentoML/MLflow에서 참고한 분리 원칙과 지원하지 않는 원격 입력은
 [고정 소스 링크와 CHILL 경계](../config/samples/catalog/README.md#참고한-외부-패턴과-chill-경계)에 모았다.
 
+### 프로파일 측정 요청 준비
+
+`/measurements/requests/new`에서 **직접 작성**, **YAML/JSON 가져오기**, **기존 요청 복사**를 선택한다.
+모델·입출력 처리·데이터셋은 `/settings?tab=models|preprocessors|datasets`,
+이들을 연결한 Workload는 `/workloads`, 이전 측정 조건은 `/measurements/requests`에서 확인한다.
+관리자는 DeviceClass·Node·실행 경로·전력 모드와 장비 가용성·실행 권한을 준비한다.
+
+- 직접 작성은 등록된 선택지와 이전 측정 방식을 사용한다. 첫 측정 조건은 측정 담당자에게 받는다.
+- 가져오기는 단일 `edge.dacs.io/v1alpha1` / `BatchEnergyOptimization` 문서를 파일 또는 붙여넣기로 읽는다.
+  namespace를 화면 선택과 맞추고 예시의 `<...>`를 실제 등록값으로 바꾼다.
+  숫자 자리표시자는 따옴표까지 지워 숫자로 적는다. 예시는 빈 입력란에만 삽입한다.
+- 배치는 K=1,2,4…로 자동 탐색한다. 공개 요청에는 `batchSizes`가 없으므로 과거 고정 배치 문서의
+  `spec.batchSizes`를 지운다. 모델 artifact·runtime capability가 상한을 정하며, 실제 OOM·측정 예산 경계에서
+  완료된 낮은 K의 결과를 보관한다. `retryLimit`은 일시적 인프라 장애의 재시도 한도다.
+- 문서 검토는 로컬 구조 확인이다. 서버 수명주기 metadata·status를 제외하고 제공된 spec을 보존한다.
+  연결·권한·실행 가능성은 기존 `POST /api/v1/namespaces/{ns}/batch-energy-optimizations?dryRun=All`과
+  `/preflight`의 응답으로 확인한다. 두 검사 후 최종 제출에서 실제 요청을 생성한다.
+  편집하면 검토·검사를 다시 한다. 응답 유실은 `결과 미확인`으로 두고 같은 이름의 접수 기록을 조회한다.
+
+요청 상세·작성 폼·문서 검토의 **요청 문서 다운로드**는 재사용할 metadata·spec을 보존한다.
+과거 요청의 원문도 보존되므로 새 API에서 제거된 필드는 제출 전에 정리한다.
+토큰·비밀번호·Secret 내용은 입력하지 않는다. 원문에 민감정보가 있으면 다운로드 파일에도 포함된다.
+일반 근거의 `SourceExport`·`SourceJSON`은 기존 credential 제거를 유지한다.
+복사는 원본 namespace·UID를 고정하며 URL 정규화 중에도 편집 초안을 유지한다.
+
+`activeProtocol.durationSeconds`와 `idleProtocol.durationSeconds`는 각각 실행·유휴 측정 시간,
+`settlingDurationSeconds`는 유휴 전 안정 대기다. `metricObservation.durationSeconds`는 해당 구간을 포함할
+전력 기록 시간, `intervalMilliseconds`는 수집 간격, `timeoutMilliseconds`는 수집 요청 대기 한도다.
+`warmupIterations`는 예열 횟수다. 계획의 탐색 상한과 실제 완료 K·회차는 구분해서 읽는다.
+
+구조는 [네이티브 BEO 예제](../config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml)와
+[BEO 타입](../api/v1alpha1/batchenergyoptimization_types.go)을 따른다.
+파일·직접 입력 분리는 [BentoML의 config-file·config-dict 옵션](https://github.com/bentoml/BentoML/blob/1ddd7e782f1ce74a0a37f51c70a44474eb58d5e1/src/bentoml_cli/deployment.py#L125-L136)을 참고했다.
+자산 제작·게시 경계는 [카탈로그 안내](../config/samples/catalog/README.md#참고한-외부-패턴과-chill-경계)에 있다.
+
 
 ## Fixed upstream source and license
 

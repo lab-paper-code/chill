@@ -12,6 +12,7 @@ import { requestExecutionStatus, requestFailureFacts, requestHref, requestRunHre
 import { useMeasurementCoverage, useMeasurementPlans } from "@/hooks/use-measurement-data"
 import { parseSchedulerJSON } from "@/lib/scheduler"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
+import { MeasurementRequestSource } from "@/components/measurement-request-source"
 import { Facts, Rows } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -134,6 +135,7 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
       <section id="request-child-runs" className="space-y-3"><h2 className="font-semibold">자식 회차</h2><MeasurementChildRuns namespace={namespace} parent={{name,uid:campaign.uid}}/></section>
       <AssessmentDetails assessment={data?.assessment} rows={data?.resultRows}/>
       <Button variant="outline" asChild><Link href={`/measurements/requests/new?${new URLSearchParams({namespace,from:name,fromNamespace:namespace,fromUID:campaign.uid})}`}>동일 조건 요청</Link></Button>
+      <MeasurementRequestSource value={{apiVersion:"edge.dacs.io/v1alpha1",kind:"BatchEnergyOptimization",metadata:{name,namespace},spec}} title="재사용할 측정 요청 문서"/>
       <details><summary className="min-h-11 cursor-pointer py-2">관리</summary><Rows label="위험 영역"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials??0} blocked={campaign.phase==="Measuring"?"진행 중인 측정은 삭제할 수 없어요.":undefined} onDeleted={setDeleted}/></Rows></details>
       <section aria-label="원본"><SourceExport value={{namespace,name,expectedUID,source:data}} filename={`chill-measurement-${name}.json`}/><SourceJSON value={data} title="요청 원본"/></section>
     </>}
