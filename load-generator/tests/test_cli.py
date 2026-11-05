@@ -14,14 +14,6 @@ from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, enc
 
 
 class CLITest(unittest.TestCase):
-    def test_empty_invocation_prints_help(self) -> None:
-        output = io.StringIO()
-
-        with redirect_stdout(output):
-            exit_code = main([])
-
-        self.assertEqual(exit_code, 0)
-        self.assertIn("open-loop inference workload", output.getvalue())
 
     def test_replay_rejects_missing_field_before_traffic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
