@@ -160,86 +160,86 @@ func ExercisePretrialFailureReturn(t *testing.T, deleteMeasurement func(context.
 
 func pretrialFailureFixture(t *testing.T) (*admissionHarness, *edge.DeviceClass, *edge.BatchEnergyOptimization) {
 	t.Helper()
-			h := newAdmissionHarness(t)
-			// The admission harness normally has no campaign status writer.
-			// Register that real API subresource for the campaign reconciler.
-			h.nodes.Client = &managerAPI{Client: fake.NewClientBuilder().WithScheme(h.nodes.Scheme()).WithObjects(testExecutionFacts()).
-				WithStatusSubresource(&edge.BatchEnergyOptimization{}, &edge.Workload{}, &core.Pod{}, &edge.OperationCostMeasurement{}, &edge.DispatchOccupancyMeasurement{}).Build()}
-			class := cpuClass()
-			h.create(class)
-			h.controller.mu.Lock()
-			h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "low", DeviceClass: "cpu", PowerMode: "low", ActuatorKind: string(edge.PowerModeActuatorJetsonNVPModel), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
-			h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: h.node.Name, UID: string(h.node.UID)}, PowerMode: "low", Watts: 5, Meter: "wall", Scope: servingstate.MeasurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
-			h.controller.mu.Unlock()
-			root := beoRoot("pretrial-"+strings.Repeat("campaign-", 8)+"end", h.node.Name, "")
-			root.Spec.State.Candidate = edge.ProfilingRunCandidateSpec{ModelSpec: "model", DeviceClass: "cpu", ExecutionPath: "ort-cpu", PowerMode: "max", Preprocessor: "preprocessor"}
-			root.Spec.ActiveProtocol = edge.ActiveProtocolSpec{Workload: "workload", Dataset: "dataset", DurationSeconds: 30, MetricObservation: edge.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31}}
-			root.Spec.IdleProtocol = edge.IdleProtocolSpec{SettlingDurationSeconds: 1, DurationSeconds: 30, MetricObservation: root.Spec.ActiveProtocol.MetricObservation}
-			root.Spec.TrialsPerBatch, root.Spec.RetryLimit = 3, 2
-			root.Spec.BatchSizes = []int32{1, 2, 4, 8, 16, 32}
-			if len(validation.IsDNS1123Subdomain(root.Name)) != 0 || len(root.Name) > 200 || len(validation.IsValidLabelValue(root.Name)) == 0 {
-				t.Fatal("fixture must have an API-valid name outside the legacy campaign-label contract")
-			}
-			h.create(root)
+	h := newAdmissionHarness(t)
+	// The admission harness normally has no campaign status writer.
+	// Register that real API subresource for the campaign reconciler.
+	h.nodes.Client = &managerAPI{Client: fake.NewClientBuilder().WithScheme(h.nodes.Scheme()).WithObjects(testExecutionFacts()).
+		WithStatusSubresource(&edge.BatchEnergyOptimization{}, &edge.Workload{}, &core.Pod{}, &edge.OperationCostMeasurement{}, &edge.DispatchOccupancyMeasurement{}).Build()}
+	class := cpuClass()
+	h.create(class)
+	h.controller.mu.Lock()
+	h.controller.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "low", DeviceClass: "cpu", PowerMode: "low", ActuatorKind: string(edge.PowerModeActuatorJetsonNVPModel), SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 60}}
+	h.controller.config.Baselines = []serving.NodeBaseline{{ID: "idle", Node: serving.NodeReference{Name: h.node.Name, UID: string(h.node.UID)}, PowerMode: "low", Watts: 5, Meter: "wall", Scope: servingstate.MeasurementWallScope, Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "idle", Size: 1}}}
+	h.controller.mu.Unlock()
+	root := beoRoot("pretrial-"+strings.Repeat("campaign-", 8)+"end", h.node.Name, "")
+	root.Spec.State.Candidate = edge.ProfilingRunCandidateSpec{ModelSpec: "model", DeviceClass: "cpu", ExecutionPath: "ort-cpu", PowerMode: "max", Preprocessor: "preprocessor"}
+	root.Spec.ActiveProtocol = edge.ActiveProtocolSpec{Workload: "workload", Dataset: "dataset", DurationSeconds: 30, MetricObservation: edge.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 900, DurationSeconds: 31}}
+	root.Spec.IdleProtocol = edge.IdleProtocolSpec{SettlingDurationSeconds: 1, DurationSeconds: 30, MetricObservation: root.Spec.ActiveProtocol.MetricObservation}
+	root.Spec.TrialsPerBatch, root.Spec.RetryLimit = 3, 2
+	root.Spec.BatchSizes = []int32{1, 2, 4, 8, 16, 32}
+	if len(validation.IsDNS1123Subdomain(root.Name)) != 0 || len(root.Name) > 200 || len(validation.IsValidLabelValue(root.Name)) == 0 {
+		t.Fatal("fixture must have an API-valid name outside the legacy campaign-label contract")
+	}
+	h.create(root)
 	return h, class, root
 }
 
 func exercisePretrialHandback(t *testing.T, ctx context.Context, h *admissionHarness, root *edge.BatchEnergyOptimization, class *edge.DeviceClass, failReturn bool) {
 	t.Helper()
-			settle := settleAgent(class)
-			holderAtReadback := ""
-			h.nodes.agent = func(n *core.Node) {
-				holderAtReadback, _ = profilingrun.MeasurementHolder(n)
-				settle(n)
+	settle := settleAgent(class)
+	holderAtReadback := ""
+	h.nodes.agent = func(n *core.Node) {
+		holderAtReadback, _ = profilingrun.MeasurementHolder(n)
+		settle(n)
+	}
+	if failReturn {
+		h.kube.PrependReactor("patch", "nodes", func(action ktesting.Action) (bool, runtime.Object, error) {
+			if failReturn && strings.Contains(string(action.(ktesting.PatchAction).GetPatch()), chillmeta.PowerMode) {
+				return true, nil, errors.New("injected lowest-mode request failure")
 			}
-			if failReturn {
-				h.kube.PrependReactor("patch", "nodes", func(action ktesting.Action) (bool, runtime.Object, error) {
-					if failReturn && strings.Contains(string(action.(ktesting.PatchAction).GetPatch()), chillmeta.PowerMode) {
-						return true, nil, errors.New("injected lowest-mode request failure")
-					}
-					return false, nil, nil
-				})
-				h.admit()
-				if h.holder() != string(root.UID) || holderAtReadback != "" {
-					t.Fatal("failed return released taint or fabricated readback")
-				}
-				results := h.controller.State().Results
-				if len(results) == 0 || results[len(results)-1].Status != servingstate.NativeOperationFailed {
-					t.Fatalf("return failure not visible: %+v", results)
-				}
-				failReturn = false
-			}
-			h.admit()
-			node, err := h.kube.CoreV1().Nodes().Get(ctx, h.node.Name, meta.GetOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if holderAtReadback != string(root.UID) || h.holder() != "" || node.Labels[chillmeta.PowerMode] != "low" || node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModeSuccess {
-				t.Fatalf("handback lacked held lowest-mode readback: %+v", node)
-			}
+			return false, nil, nil
+		})
+		h.admit()
+		if h.holder() != string(root.UID) || holderAtReadback != "" {
+			t.Fatal("failed return released taint or fabricated readback")
+		}
+		results := h.controller.State().Results
+		if len(results) == 0 || results[len(results)-1].Status != servingstate.NativeOperationFailed {
+			t.Fatalf("return failure not visible: %+v", results)
+		}
+		failReturn = false
+	}
+	h.admit()
+	node, err := h.kube.CoreV1().Nodes().Get(ctx, h.node.Name, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if holderAtReadback != string(root.UID) || h.holder() != "" || node.Labels[chillmeta.PowerMode] != "low" || node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModeSuccess {
+		t.Fatalf("handback lacked held lowest-mode readback: %+v", node)
+	}
 }
 
 func assertPretrialNoWork(t *testing.T, ctx context.Context, h *admissionHarness, ports *pretrialFailurePorts, native *pretrialFailureClient) {
 	t.Helper()
 	var err error
-			for _, list := range []client.ObjectList{&edge.ProfilingRunList{}, &edge.ModelLoadedIdleBaselineList{}, &batch.JobList{}, &core.PodList{}} {
-				if err = h.controller.store.client.List(ctx, list); err != nil {
-					t.Fatal(err)
-				}
-				items, err := apimeta.ExtractList(list)
-				if err != nil || len(items) != 0 {
-					t.Fatalf("pre-trial child objects: %T count=%d err=%v", list, len(items), err)
-				}
-			}
-			for _, action := range h.kube.Actions() {
-				if action.GetVerb() == pretrialCreateVerb && (action.GetResource().Resource == "pods" || action.GetResource().Resource == "jobs") {
-					t.Fatalf("unexpected measurement actuation: %v", action)
-				}
-			}
-			if ports.writes != 0 || ports.results != 0 || ports.resolutions != 0 || ports.preparations != 0 {
-				t.Fatalf("pre-trial work crossed boundary: %+v", ports)
-			}
-			if native.creates != 0 {
-				t.Fatalf("pre-trial native creates = %d", native.creates)
-			}
+	for _, list := range []client.ObjectList{&edge.ProfilingRunList{}, &edge.ModelLoadedIdleBaselineList{}, &batch.JobList{}, &core.PodList{}} {
+		if err = h.controller.store.client.List(ctx, list); err != nil {
+			t.Fatal(err)
+		}
+		items, err := apimeta.ExtractList(list)
+		if err != nil || len(items) != 0 {
+			t.Fatalf("pre-trial child objects: %T count=%d err=%v", list, len(items), err)
+		}
+	}
+	for _, action := range h.kube.Actions() {
+		if action.GetVerb() == pretrialCreateVerb && (action.GetResource().Resource == "pods" || action.GetResource().Resource == "jobs") {
+			t.Fatalf("unexpected measurement actuation: %v", action)
+		}
+	}
+	if ports.writes != 0 || ports.results != 0 || ports.resolutions != 0 || ports.preparations != 0 {
+		t.Fatalf("pre-trial work crossed boundary: %+v", ports)
+	}
+	if native.creates != 0 {
+		t.Fatalf("pre-trial native creates = %d", native.creates)
+	}
 }

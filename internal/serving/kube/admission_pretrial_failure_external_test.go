@@ -32,7 +32,9 @@ func TestAdmissionPretrialFailureReturnsNodeAndAllowsPublicDelete(t *testing.T) 
 			}
 			return nil
 		}
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		if !result.EvidenceDeleted || result.Task == nil || result.Task.UID != root.UID || len(result.DeletedEvidence) != 3 {
 			return fmt.Errorf("public DELETE did not finish source-owned cleanup: %+v", result)
 		}

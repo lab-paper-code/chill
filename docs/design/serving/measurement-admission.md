@@ -71,6 +71,29 @@ terminal/삭제 루트, 살아 있는 루트·run이 아닌 taint(운영자=true
 
 BEO/MLIB/독립ProfilingRun/PMTC reconciler는 Granted 전 child/Job을 만들지 않고 5초 requeue한다. Refused는 BEO Failed, MLIB Insufficient, ProfilingRun ExecutionComplete=False, PMTC Failed이며 annotation 첫단어가 사유다. 필요한 ChillServer 측정kind patch/list·Node patch·serving Service create/delete 권한을 사용하며 Profiler에 새 서빙 writer를 만들지 않는다.
 
+### 2.7 실행 전 입력 오류의 정상 반환
+
+옛 BEO 이름을 label 값으로 쓰는 계약에서 이름이 label 제약을 벗어나면 namespace 조회로
+controller UID가 같은 Run을 확인한다. 저장 plan이 명시적으로 없고 owned Run과
+게시 result도 없을 때만 `Failed/InvalidRunSpec`으로 종료한다. 원 spec·UID를
+보존하며 plan 생성, runtime 준비, 새 trial 없이 2.3의 정상 반환으로 이어진다.
+기존 plan·owned Run·result 또는 조회 오류는 이 종료 판정에서 제외한다.
+반환 뒤 기존 public DELETE의 UID/resourceVersion·terminal·소유 증거 검사를 적용한다.
+
+repair 배포의 읽기 전용 검사는 같은 저장 위치·Evidence Store resolver를 사용한다.
+
+```sh
+go build -buildvcs=false -o /tmp/pretrial-retirement-check ./hack/pretrial-retirement-check
+/tmp/pretrial-retirement-check --kubeconfig <path> --context <context> \
+  --namespace <namespace> --system-name <ChillSystem> --name <BEO> --uid <UID>
+```
+
+종료 코드 0과 `eligible=true`는 현재 generation의 미시작 요청, 위 부재 조건,
+Granted 시각, 실제 Node UID와 정확 요청 UID의 taint holder를 함께 확인한 결과다.
+`NoSuchBucket`·권한 오류·조회 실패는 부재 증거로 인정하지 않는다. JSON에는
+request/Node identity와 resourceVersion, 부재 판정, 검사 시각을 남긴다.
+이 검사는 상태를 바꾸지 않는다. 배포 전 재검사와 실제 반환·삭제 확인은 실행자가 맡는다.
+
 ## 3. 저장 계약 (ADR 0019)
 
 Node taint/admission/runner annotation은 stored science evidence가 아니다. PMTC runnerProfileID 도입의 result v1alpha4와 당시 Failed PMTC5개 정리는 역사적 cutover이며 현재 PMTC raw/선택필드 버전은 [node-agent 저장표](../platform/node-agent.md#4-저장-계약-adr-0019)를 따른다. operation v1alpha2·occupancy v1alpha1의 generation 선택필드와 미완료 sequence 원형을 유지하고 단일버전 reader를 쓴다.

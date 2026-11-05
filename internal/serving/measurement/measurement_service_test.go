@@ -31,9 +31,9 @@ import (
 )
 
 const (
-	measurementAcceptedTest  = "accepted"
-	measurementDryRunTest    = "dry run"
-	measurementFinalizerTest = "finalizer lifecycle"
+	measurementAcceptedTest       = "accepted"
+	measurementDryRunTest         = "dry run"
+	measurementFinalizerTest      = "finalizer lifecycle"
 	measurementInvalidRunSpecTest = "invalid Run spec"
 )
 

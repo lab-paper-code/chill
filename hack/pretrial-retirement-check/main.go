@@ -48,8 +48,8 @@ func run(ctx context.Context, args []string, out io.Writer) int {
 		Error string `json:"error,omitempty"`
 	}{PretrialFailureInspection: campaign.PretrialFailureInspection{
 		APIVersion: "chill.dacs.io/pretrial-retirement.v1",
-		Reason: "InspectionFailed",
-		CheckedAt: time.Now().UTC(),
+		Reason:     "InspectionFailed",
+		CheckedAt:  time.Now().UTC(),
 	}}
 	finish := func(detail string) int {
 		if detail != "" {
