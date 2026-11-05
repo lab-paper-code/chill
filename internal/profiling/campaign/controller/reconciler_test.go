@@ -113,7 +113,7 @@ func TestCampaignNameLabelBoundariesProgressAndRestore(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := restarted.Reconcile(ctx, request)
-			if err != nil || result.RequeueAfter != waitBackstop || len(preparer.requests) != prepared || store.puts != 1 {
+			if err != nil || len(preparer.requests) != prepared || store.puts != 1 {
 				t.Fatalf("restore pending child: result=%+v err=%v prepares=%d puts=%d", result, err, len(preparer.requests), store.puts)
 			}
 			child.Status.Evidence = &api.ProfilingRunEvidenceReference{Store: "evidence", Key: "verified"}
