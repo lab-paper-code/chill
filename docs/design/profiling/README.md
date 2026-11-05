@@ -4,18 +4,21 @@ Current boundary: execution → immutable raw/finalized evidence → numeric der
 
 Batch discovery freezes `1, 2, 4, …` through the selected firstfloor's actual
 `MaxBatchSize`, intersected with finite artifact-declared batches when present;
-batch 1 is required. Public BEO inputs expose neither a batch list nor a retry
-limit. Each trial retains its own existing ProfilingRun and Kubernetes Job.
+batch 1 is required. Public BEO inputs expose no batch list; the existing
+`retryLimit` (0–10) remains for known transient infrastructure failures at the same
+K. Each trial retains its own existing ProfilingRun and Kubernetes Job.
 The common actor startup warms only batch 1; the first higher-K execution remains
 inside that K's measured window. Three completed loaded-idle trials precede three
 completed active trials per K. Active trials meet both elapsed-time and known-G
 sample floors.
 
-Discovery ends on domain exhaustion or the first expected execution boundary.
-`Complete/BatchDiscoveryComplete` records the completed batch prefix, exact stop
-and optional prefix energy; it does not assert that every candidate succeeded or
-that a usable profile exists. Infrastructure or invalid evidence remains `Failed`.
-Neither a local energy minimum nor SLO impossibility stops discovery.
+Discovery ends on domain exhaustion, expected runtime-execution OOM or the
+existing execution measurement-budget boundary. `Complete/BatchDiscoveryComplete`
+records the completed batch prefix, exact stop and optional prefix energy; it does
+not assert that every candidate succeeded or that a usable profile exists.
+Generic runtime/model errors, integrity failures and unknown failures are fatal.
+Known infrastructure disruptions use bounded same-K retries; exhaustion is
+`Failed`. Neither a local energy minimum nor SLO impossibility stops discovery.
 [Plan 7](plans/07-batch-energy-optimization-control-path.md) owns the result contract.
 After approved source deployment, start new campaign identities; do not resume
 old campaigns under this contract or rewrite completed raw/finalized evidence,
@@ -56,9 +59,10 @@ Evidence v1alpha17 binds actual execution/transition facts; active raw v1alpha10
 
 Parent controllers share the `ProfilingRunStatus` terminal-failure interpreter for
 execution/evidence interpretation. Verified evidence takes precedence; pending
-Runs remain pending. BEO expected execution boundaries complete discovery without
-retry; genuine infrastructure/evidence failures remain failures. Idle-baseline
-attempt limits/publication remain a separate parent policy. This does not
+Runs remain pending. Expected BEO OOM/budget boundaries complete discovery without
+retry; known transient infrastructure disruptions alone use its existing retry
+limit. Fatal or retry-exhausted failures remain `Failed`. Idle-baseline attempt
+limits/publication remain a separate parent policy. This does not
 replace the Profiler's current-generation pre-Job failure check.
 
 `internal/profiling/campaign/evidence` reconstructs retained campaign results,

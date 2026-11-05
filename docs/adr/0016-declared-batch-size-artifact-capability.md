@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, updated for automatic batch discovery. [0021 Raw-Sample Preprocessing Boundary](0021-raw-sample-preprocessing-boundary.md) narrows the input-tensor declaration requirement to RKNN artifacts. The current decision below replaces the original campaign-selected batch list and retry/local-minimum behavior; retained measurements and historical results remain unchanged.
+Accepted, updated for automatic batch discovery. [0021 Raw-Sample Preprocessing Boundary](0021-raw-sample-preprocessing-boundary.md) narrows the input-tensor declaration requirement to RKNN artifacts. The current decision replaces the original campaign-selected batch list and local-minimum behavior while retaining bounded infrastructure retries; retained measurements and historical results remain unchanged.
 
 ## Context
 
@@ -20,7 +20,7 @@ RKNN artifacts declare their batch-invariant input tensor contract as `ModelArti
 
 Derived artifacts declare the finite batch set fixed by conversion as `ModelArtifact.derivation.declaredBatchSizes`. One artifact identity and runtime path serve that declaration. A canonical artifact has no derivation or finite artifact batch-size set.
 
-BEO automatically selects powers of two `1, 2, 4, …` no greater than the selected firstfloor's actual `MaxBatchSize`. When finite `DeclaredBatchSizes` exist, the candidate domain is their intersection with those powers of two. Batch 1 is required. Public BEO `spec.batchSizes` and `retryLimit` are removed; users do not supply a second batch domain or retry policy.
+BEO automatically selects powers of two `1, 2, 4, …` no greater than the selected firstfloor's actual `MaxBatchSize`. When finite `DeclaredBatchSizes` exist, the candidate domain is their intersection with those powers of two. Batch 1 is required. Public BEO `spec.batchSizes` is removed. The existing `retryLimit` (0–10) remains for known transient infrastructure failures at the same K.
 
 The immutable curve plan records that ordered domain as `PlannedBatchSizes` and preserves the selected input contract. Its conversion contract records the artifact source, or remains all-empty for canonical artifacts. Once recorded, the plan is authoritative; mutable current facts do not reproject it.
 
@@ -30,14 +30,16 @@ The sweep advances through the recorded domain in ascending order. Each existing
 
 One artifact defines one execution-state key and one common actor startup recipe for serving, active and idle: warm only `[1]`. The full actor batch list is a capability declaration, not eager execution. The first higher-K cold execution occurs inside its measurement window.
 
-Domain exhaustion or the first expected OOM, runtime execution failure or existing measurement-budget boundary ends discovery without retry. The BEO becomes `Complete` with outcome `BatchDiscoveryComplete`, preserving the contiguous prefix of K values with all three active trials and the three-trial idle baseline. Genuine infrastructure, observer and invalid-evidence failures remain `Failed`. Budget exhaustion describes the frozen measurement budget; it does not declare permanent runtime non-support.
+Domain exhaustion, expected runtime-execution OOM or the existing execution measurement-budget boundary ends discovery without retry. Expected OOM requires actual runtime execution with no explicit infrastructure disruption; typed stage separates it from shared-worker preparation and evidence commit. Exit 137 alone is insufficient. The BEO becomes `Complete` with outcome `BatchDiscoveryComplete`, preserving the contiguous prefix of K values with all three active trials and the three-trial idle baseline. Budget exhaustion describes the frozen measurement budget, not permanent runtime non-support.
 
-`DiscoveryResult` carries `MeasuredBatchSizes`, `Stop` and optional `Energy`. A boundary stop records its exact failed K/mode, reason, attempt, Run and diagnostic; exhaustion records `DomainExhausted`. Any one or two completed trials at the interrupted K remain retained evidence but contribute neither profile nor capacity. A batch-one boundary produces an empty prefix and no usable profile. `Complete` does not imply all candidates succeeded or that usable energy/profile exists.
+Known Node/Pod eviction and transient infrastructure failures use bounded same-K retries; exhaustion is `Failed`. Generic runtime crashes, model errors, integrity failures and unknown failures are fatal. Previously completed trial raw remains retained on failure; a `Failed` campaign does not publish a completed-prefix profile.
+
+`DiscoveryResult` carries `MeasuredBatchSizes`, `Stop` and optional `Energy`. Stop reasons are `OOM`, `MeasurementBudgetExceeded` and `DomainExhausted`. A boundary stop records its exact failed K/mode, attempt, Run and diagnostic. Any one or two completed trials at the interrupted K remain retained evidence but contribute neither profile nor capacity. A batch-one boundary produces an empty prefix and no usable profile. `Complete` does not imply all candidates succeeded or that usable energy/profile exists.
 
 ## Consequences
 
 A runtime that enumerates one batch per artifact requires a per-batch execution path supported by its own conversion, device, state-identity, and baseline evidence.
 
-A declared batch may still fail on the selected runtime. Discovery records that execution boundary and derives energy only from the completed prefix. It does not stop at a local energy minimum, non-improving neighbor or SLO-impossible batch one. SLO supplies the sample floor, not a discovery early-stop rule.
+A declared batch may still fail on the selected runtime. Expected OOM/budget boundaries preserve the completed prefix; generic execution errors remain fatal under [Plan 7](../design/profiling/plans/07-batch-energy-optimization-control-path.md). Discovery does not stop at a local energy minimum, non-improving neighbor or SLO-impossible batch one. SLO supplies the sample floor, not a discovery early-stop rule.
 
 After approved source deployment, use new campaign identities. Existing trial state, completed raw/finalized evidence, stored plans and results remain immutable. Historical local-stop and full-sweep records retain their original interpretation and measurement numbers. This decision does not claim integration or live gates have passed.

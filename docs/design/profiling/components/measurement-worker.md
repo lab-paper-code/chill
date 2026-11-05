@@ -119,11 +119,17 @@ Each of the three independently restarted active trials for every planned batch
 runs until **both** elapsed time is at least 30 seconds (or the longer requested
 minimum) and its derived known-G service-call count is complete. Budget exhaustion
 and the immutable safety timeout fail the trial; neither completes its evidence.
-For BEO, an expected execution-budget boundary terminates discovery as
-`Complete/BatchDiscoveryComplete`, preserving only the completed three-trial batch
-prefix for derivation. This records a budget limit under the frozen conditions,
-not permanent runtime non-support. Infrastructure/observer/evidence failures remain
-`Failed`; see [Plan 7](../plans/07-batch-energy-optimization-control-path.md).
+For BEO, an expected runtime-execution OOM or execution measurement-budget boundary
+terminates discovery as `Complete/BatchDiscoveryComplete`, preserving the completed
+three-trial batch prefix. Budget exhaustion is not permanent runtime non-support.
+Typed execution stage distinguishes actual runtime execution from shared-worker
+preparation, observer and evidence-commit failures. Exit 137 alone does not establish
+OOM; an explicit infrastructure disruption excludes the normal OOM boundary.
+Known Node/Pod eviction or transient infrastructure failures use bounded same-K
+retries under the existing `retryLimit`. Generic runtime crashes, model errors,
+integrity failures and unknown failures are fatal. All previously completed raw
+evidence remains retained even when the campaign is `Failed`; that failure does
+not publish a completed-prefix profile. See [Plan 7](../plans/07-batch-energy-optimization-control-path.md).
 Native/client sample alignment and actual counts/windows remain retained evidence.
 Metric observation follows the runtime end fence, including sample-limited windows.
 
