@@ -104,7 +104,7 @@ func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 		shared.Conversion.TargetPlatform != "cpu" {
 		t.Fatalf("recorded curve plan = %+v", shared)
 	}
-	assertFrozenWorkloadStartup(t, shared, parent, wantBatches)
+	assertFrozenWorkloadStartup(t, shared, parent)
 	wantKey := "batch-energy-optimizations/parent-uid/curve-plan.json"
 	if store.puts != 1 || store.opens != 1 || store.lastIdentity.Key != wantKey {
 		t.Fatalf("first record calls = puts %d, opens %d, identity %+v", store.puts, store.opens, store.lastIdentity)
@@ -260,10 +260,7 @@ func (p *recordingCurvePlanPreparer) Prepare(ctx context.Context, request profil
 	return prepared, err
 }
 
-func assertFrozenWorkloadStartup(
-	t *testing.T, shared profilederivation.CurvePlanSpec,
-	parent *edgev1alpha1.BatchEnergyOptimization, batches []int,
-) {
+func assertFrozenWorkloadStartup(t *testing.T, shared profilederivation.CurvePlanSpec, parent *edgev1alpha1.BatchEnergyOptimization) {
 	t.Helper()
 	if shared.ActiveProtocol.SLOPercentile != 95 || shared.ActiveProtocol.MinServiceSamples != 59 ||
 		shared.ActiveProtocol.SLOTargetLatencyNanos != 1_000_000_000 ||

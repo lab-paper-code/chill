@@ -216,10 +216,10 @@ func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRet
 		terminal            bool
 	}{
 		{"complete", "Complete", "ResultWritten", metav1.ConditionTrue, true},
-		{"exhausted attempts", "Failed", terminalReasonRetryLimitExhausted, metav1.ConditionFalse, true},
-		{"failed transition", "Failed", terminalReasonTransitionFailed, metav1.ConditionFalse, true},
-		{"energy objective policy mismatch", "Failed", terminalReasonEnergyObjectivePolicyMismatch, metav1.ConditionFalse, true},
-		{"recoverable resolver failure", "Failed", "CurvePlanResolutionFailed", metav1.ConditionFalse, false},
+		{"exhausted attempts", batchEnergyOptimizationPhaseFailed, terminalReasonRetryLimitExhausted, metav1.ConditionFalse, true},
+		{"failed transition", batchEnergyOptimizationPhaseFailed, terminalReasonTransitionFailed, metav1.ConditionFalse, true},
+		{"energy objective policy mismatch", batchEnergyOptimizationPhaseFailed, terminalReasonEnergyObjectivePolicyMismatch, metav1.ConditionFalse, true},
+		{"recoverable resolver failure", batchEnergyOptimizationPhaseFailed, "CurvePlanResolutionFailed", metav1.ConditionFalse, false},
 		{"in progress", "Measuring", "TrialInFlight", metav1.ConditionUnknown, false},
 		{"stale terminal generation", "Complete", "ResultWritten", metav1.ConditionTrue, false},
 	} {
@@ -514,7 +514,7 @@ func newPolicyMismatchCampaignFixture(t *testing.T, excess bool) (*api.BatchEner
 func assertCampaignPolicyMismatchStatus(t *testing.T, parent *api.BatchEnergyOptimization) {
 	t.Helper()
 	status := parent.Status
-	if status.Phase != "Failed" || status.Outcome != terminalReasonEnergyObjectivePolicyMismatch ||
+	if status.Phase != batchEnergyOptimizationPhaseFailed || status.Outcome != terminalReasonEnergyObjectivePolicyMismatch ||
 		status.CompletedTrials != 16 || status.ObservedGeneration != parent.Generation ||
 		status.Result != nil || len(status.Conditions) != 1 {
 		t.Fatalf("status=%+v", status)
@@ -596,7 +596,7 @@ func TestCampaignEnergyObjectivePolicyMismatchIsTerminal(t *testing.T) {
 					t.Fatalf("replay result=%+v err=%v patches=%d resolves=%d loads=%d/%d writes=%d", result, err, native.patches, dependencies.resolves, evidence.calls, loads, dependencies.writes)
 				}
 			case temporaryFailure:
-				if !errors.Is(err, temporaryErr) || native.patches != 0 || updated.Status.Phase == "Failed" {
+				if !errors.Is(err, temporaryErr) || native.patches != 0 || updated.Status.Phase == batchEnergyOptimizationPhaseFailed {
 					t.Fatalf("temporary error=%v status=%+v patches=%d", err, updated.Status, native.patches)
 				}
 				_, err = reconciler.Reconcile(ctx, request)
@@ -613,24 +613,26 @@ func TestCampaignEnergyObjectivePolicyMismatchIsTerminal(t *testing.T) {
 	}
 }
 
+type campaignBoundaryScenario struct {
+	name         string
+	failedBatch  int
+	stage        string
+	failedIdle   bool
+	runtimeError bool
+	unclassified bool
+	wantFailure  string
+	wantPrefix   []int
+}
+
 func TestCampaignPublishesOnlyCompletePrefixAtActualExecutionBoundary(t *testing.T) {
-	for _, test := range []struct {
-		name         string
-		failedBatch  int
-		stage        string
-		failedIdle   bool
-		runtimeError bool
-		unclassified bool
-		wantFailure  string
-		wantPrefix   []int
-	}{
+	for _, test := range []campaignBoundaryScenario{
 		{name: "partial batch four", failedBatch: 4, stage: "Execution", wantPrefix: []int{1, 2}},
 		{name: "empty batch one", failedBatch: 1, stage: "Execution", wantPrefix: []int{}},
 		{name: "idle runtime boundary", failedBatch: 1, failedIdle: true, stage: "Execution", wantPrefix: []int{}},
-		{name: "genuine evidence failure", failedBatch: 1, stage: "ResultValidation", wantFailure: "FatalFailure"},
-		{name: "generic runtime crash is fatal", failedBatch: 1, stage: "Execution", runtimeError: true, wantFailure: "FatalFailure"},
-		{name: "startup OOM is unknown", failedBatch: 1, stage: "Startup", wantFailure: "UnknownFailure"},
-		{name: "unclassified OOM is unknown", failedBatch: 1, stage: "Execution", unclassified: true, wantFailure: "UnknownFailure"},
+		{name: "genuine evidence failure", failedBatch: 1, stage: "ResultValidation", wantFailure: string(batchenergyoptimization.FailureClassFatalFailure)},
+		{name: "generic runtime crash is fatal", failedBatch: 1, stage: "Execution", runtimeError: true, wantFailure: string(batchenergyoptimization.FailureClassFatalFailure)},
+		{name: "startup OOM is unknown", failedBatch: 1, stage: "Startup", wantFailure: string(batchenergyoptimization.FailureClassUnknownFailure)},
+		{name: "unclassified OOM is unknown", failedBatch: 1, stage: "Execution", unclassified: true, wantFailure: string(batchenergyoptimization.FailureClassUnknownFailure)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -673,44 +675,8 @@ func TestCampaignPublishesOnlyCompletePrefixAtActualExecutionBoundary(t *testing
 				if err := native.Get(ctx, request.NamespacedName, current); err != nil {
 					t.Fatal(err)
 				}
-				if current.Status.Phase == "Complete" || current.Status.Phase == "Failed" {
-					if test.wantPrefix == nil {
-						if current.Status.Phase != "Failed" || current.Status.Result != nil || store.puts != 0 {
-							t.Fatalf("genuine failure published discovery: %+v", current.Status)
-						}
-						message := current.Status.Conditions[0].Message
-						failedRun := batchenergyoptimization.RunName(parent.Name, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1}, 1)
-						if current.Status.Outcome != test.wantFailure ||
-							!strings.Contains(message, "class="+test.wantFailure) ||
-							!strings.Contains(message, "failedK=1") || !strings.Contains(message, "run="+parent.Namespace+"/"+failedRun) {
-							t.Fatalf("failed parent lost actual failure identity: %+v", current.Status)
-						}
-					} else {
-						if current.Status.Phase != "Complete" || current.Status.Result == nil {
-							t.Fatalf("expected boundary not complete: %+v", current.Status)
-						}
-						record, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
-						if err != nil {
-							t.Fatal(err)
-						}
-						detail, ok, err := batchenergyoptimization.DecodeDiscoveryResult(record, dependencies.plan.PlannedBatchSizes())
-						if err != nil || !ok || !reflect.DeepEqual(detail.MeasuredBatchSizes, test.wantPrefix) {
-							t.Fatalf("published prefix=%+v ok=%v error=%v", detail, ok, err)
-						}
-						if detail.Stop.Run == nil || detail.Stop.Run.UID == "" || detail.Stop.Diagnostic == "" {
-							t.Fatalf("actual termination reference missing: %+v", detail.Stop)
-						}
-						wantCompleted := 3 + len(test.wantPrefix)*3
-						if test.failedIdle {
-							wantCompleted = 0
-						}
-						if test.failedBatch == 4 {
-							wantCompleted += 2
-						}
-						if len(record.Spec().CompletedTrials) != wantCompleted || len(record.Spec().ExcludedTrials) != 1 {
-							t.Fatalf("retained evidence lost: %+v", record.Spec())
-						}
-					}
+				if current.Status.Phase == "Complete" || current.Status.Phase == batchEnergyOptimizationPhaseFailed {
+					assertCampaignBoundaryResult(t, test, current, store, parent, dependencies.plan.PlannedBatchSizes())
 					if test.failedBatch == 1 && (curveCalls != 0 || evidence.calls != 0) {
 						t.Fatal("empty prefix loaded a curve")
 					}
@@ -723,74 +689,127 @@ func TestCampaignPublishesOnlyCompletePrefixAtActualExecutionBoundary(t *testing
 					}
 					return
 				}
-				runs, err := reconciler.listRuns(ctx, parent)
-				if err != nil {
-					t.Fatal(err)
-				}
-				pending := 0
-				for index := range runs {
-					run := &runs[index]
-					if run.Status.Evidence != nil || run.Status.HasTerminalFailure() {
-						continue
-					}
-					pending++
-					created++
-					batch, attempt := int(run.Spec.CampaignTrial.Batch), int(run.Spec.CampaignTrial.Attempt)
-					if batch > test.failedBatch || attempt > 3 {
-						t.Fatalf("executed beyond boundary: %+v", run.Spec.CampaignTrial)
-					}
-					for _, object := range templates[1:] {
-						template := object.(*api.ProfilingRun)
-						if template.Name == run.Name {
-							run.UID = template.UID
-							run.Status = template.Status
-						}
-					}
-					failedMode := activeWorkloadMode
-					if test.failedIdle {
-						failedMode = idleWorkloadMode
-					}
-					if run.Spec.Measurement.WorkloadMode == failedMode && batch == test.failedBatch &&
-						(test.failedBatch == 1 || attempt == 3) {
-						run.Status.Evidence = nil
-						run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
-						run.Status.RuntimeTermination = &api.ProfilingRunRuntimeTermination{
-							Container: "runtime", Stage: test.stage, Reason: "OOMKilled", ExitCode: 137,
-							Class:     "ExpectedStop",
-							JobReason: "BackoffLimitExceeded", JobMessage: "runtime execution failed",
-						}
-						if test.runtimeError {
-							run.Status.RuntimeTermination.Reason = "Error"
-							run.Status.RuntimeTermination.FailureReason = "ExecutionFailed"
-							run.Status.RuntimeTermination.ExitCode = 3
-							run.Status.RuntimeTermination.Class = "FatalFailure"
-						}
-						if test.stage == "ResultValidation" {
-							run.Status.Conditions = append(run.Status.Conditions, metav1.Condition{
-								Type: api.ProfilingRunConditionEvidenceVerified, Status: metav1.ConditionFalse, Reason: "EvidenceInvalid",
-							})
-							run.Status.RuntimeTermination.Class = "FatalFailure"
-						}
-						if test.unclassified {
-							run.Status.RuntimeTermination.Class = ""
-						}
-					}
-					status := run.Status
-					if err := native.Update(ctx, run); err != nil {
-						t.Fatal(err)
-					}
-					run.Status = status
-					if err := native.Status().Update(ctx, run); err != nil {
-						t.Fatal(err)
-					}
-				}
-				if pending != 1 {
-					t.Fatalf("pending children=%d", pending)
-				}
+				created += executeCampaignBoundaryRun(t, ctx, reconciler, parent, test, templates, native)
 			}
 			t.Fatal("campaign did not stop")
 		})
 	}
+}
+
+func assertCampaignBoundaryResult(
+	t *testing.T, test campaignBoundaryScenario, current *api.BatchEnergyOptimization,
+	store *fakeCurvePlanStore, parent *api.BatchEnergyOptimization, plannedBatches []int,
+) {
+	t.Helper()
+	if test.wantPrefix == nil {
+		if current.Status.Phase != batchEnergyOptimizationPhaseFailed || current.Status.Result != nil || store.puts != 0 {
+			t.Fatalf("genuine failure published discovery: %+v", current.Status)
+		}
+		message := current.Status.Conditions[0].Message
+		failedRun := batchenergyoptimization.RunName(parent.Name, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1}, 1)
+		if current.Status.Outcome != test.wantFailure ||
+			!strings.Contains(message, "class="+test.wantFailure) ||
+			!strings.Contains(message, "failedK=1") || !strings.Contains(message, "run="+parent.Namespace+"/"+failedRun) {
+			t.Fatalf("failed parent lost actual failure identity: %+v", current.Status)
+		}
+	} else {
+		if current.Status.Phase != "Complete" || current.Status.Result == nil {
+			t.Fatalf("expected boundary not complete: %+v", current.Status)
+		}
+		record, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
+		if err != nil {
+			t.Fatal(err)
+		}
+		detail, ok, err := batchenergyoptimization.DecodeDiscoveryResult(record, plannedBatches)
+		if err != nil || !ok || !reflect.DeepEqual(detail.MeasuredBatchSizes, test.wantPrefix) {
+			t.Fatalf("published prefix=%+v ok=%v error=%v", detail, ok, err)
+		}
+		if detail.Stop.Run == nil || detail.Stop.Run.UID == "" || detail.Stop.Diagnostic == "" {
+			t.Fatalf("actual termination reference missing: %+v", detail.Stop)
+		}
+		wantCompleted := 3 + len(test.wantPrefix)*3
+		if test.failedIdle {
+			wantCompleted = 0
+		}
+		if test.failedBatch == 4 {
+			wantCompleted += 2
+		}
+		if len(record.Spec().CompletedTrials) != wantCompleted || len(record.Spec().ExcludedTrials) != 1 {
+			t.Fatalf("retained evidence lost: %+v", record.Spec())
+		}
+	}
+}
+
+func executeCampaignBoundaryRun(
+	t *testing.T, ctx context.Context, reconciler *BatchEnergyOptimizationReconciler,
+	parent *api.BatchEnergyOptimization, test campaignBoundaryScenario,
+	templates []client.Object, native client.Client,
+) int {
+	t.Helper()
+	runs, err := reconciler.listRuns(ctx, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := 0
+	for index := range runs {
+		run := &runs[index]
+		if run.Status.Evidence != nil || run.Status.HasTerminalFailure() {
+			continue
+		}
+		pending++
+		batch, attempt := int(run.Spec.CampaignTrial.Batch), int(run.Spec.CampaignTrial.Attempt)
+		if batch > test.failedBatch || attempt > 3 {
+			t.Fatalf("executed beyond boundary: %+v", run.Spec.CampaignTrial)
+		}
+		for _, object := range templates[1:] {
+			template := object.(*api.ProfilingRun)
+			if template.Name == run.Name {
+				run.UID = template.UID
+				run.Status = template.Status
+			}
+		}
+		failedMode := activeWorkloadMode
+		if test.failedIdle {
+			failedMode = idleWorkloadMode
+		}
+		if run.Spec.Measurement.WorkloadMode == failedMode && batch == test.failedBatch &&
+			(test.failedBatch == 1 || attempt == 3) {
+			run.Status.Evidence = nil
+			run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
+			run.Status.RuntimeTermination = &api.ProfilingRunRuntimeTermination{
+				Container: "runtime", Stage: test.stage, Reason: "OOMKilled", ExitCode: 137,
+				Class:     "ExpectedStop",
+				JobReason: "BackoffLimitExceeded", JobMessage: "runtime execution failed",
+			}
+			if test.runtimeError {
+				run.Status.RuntimeTermination.Reason = "Error"
+				run.Status.RuntimeTermination.FailureReason = "ExecutionFailed"
+				run.Status.RuntimeTermination.ExitCode = 3
+				run.Status.RuntimeTermination.Class = string(batchenergyoptimization.FailureClassFatalFailure)
+			}
+			if test.stage == "ResultValidation" {
+				run.Status.Conditions = append(run.Status.Conditions, metav1.Condition{
+					Type: api.ProfilingRunConditionEvidenceVerified, Status: metav1.ConditionFalse, Reason: "EvidenceInvalid",
+				})
+				run.Status.RuntimeTermination.Class = string(batchenergyoptimization.FailureClassFatalFailure)
+			}
+			if test.unclassified {
+				run.Status.RuntimeTermination.Class = ""
+			}
+		}
+		status := run.Status
+		if err := native.Update(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+		run.Status = status
+		if err := native.Status().Update(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if pending != 1 {
+		t.Fatalf("pending children=%d", pending)
+	}
+	return pending
 }
 
 func TestRetryExhaustionStatusIdentifiesCurrentBatchAfterEarlierRecovery(t *testing.T) {
@@ -843,7 +862,7 @@ func TestRetryExhaustionStatusIdentifiesCurrentBatchAfterEarlierRecovery(t *test
 	if err := native.Get(ctx, request.NamespacedName, current); err != nil {
 		t.Fatal(err)
 	}
-	if current.Status.Phase != "Failed" || current.Status.Outcome != terminalReasonRetryLimitExhausted ||
+	if current.Status.Phase != batchEnergyOptimizationPhaseFailed || current.Status.Outcome != terminalReasonRetryLimitExhausted ||
 		current.Status.Result != nil || unused.derives != 0 || unused.writes != 0 {
 		t.Fatalf("retry exhaustion published or derived a result: status=%+v calls=%+v", current.Status, unused)
 	}

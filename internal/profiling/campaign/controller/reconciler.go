@@ -181,6 +181,20 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	}
 
 	status := deriveStatus(parent.Generation, snapshot, decision, resultReference, parent.Status.Conditions)
+	appendFailureDiagnostic(decision, snapshot, runs, &status)
+	if err := r.patchStatus(ctx, parent, status); err != nil {
+		return ctrl.Result{}, err
+	}
+	if alreadyExists {
+		return ctrl.Result{Requeue: true}, nil
+	}
+	return requeueFor(decision, transition), nil
+}
+
+func appendFailureDiagnostic(
+	decision batchenergyoptimization.Decision, snapshot batchenergyoptimization.Snapshot,
+	runs []edgev1alpha1.ProfilingRun, status *edgev1alpha1.BatchEnergyOptimizationStatus,
+) {
 	if decision.Action == batchenergyoptimization.ActionFail {
 		failedIndex := -1
 		for index, trial := range snapshot.Trials {
@@ -207,13 +221,6 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 			}
 		}
 	}
-	if err := r.patchStatus(ctx, parent, status); err != nil {
-		return ctrl.Result{}, err
-	}
-	if alreadyExists {
-		return ctrl.Result{Requeue: true}, nil
-	}
-	return requeueFor(decision, transition), nil
 }
 
 func (r *BatchEnergyOptimizationReconciler) createMeasurementRun(
@@ -495,8 +502,8 @@ func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization)
 		if parent.Status.Phase == batchEnergyOptimizationPhaseFailed && condition.Status == metav1.ConditionFalse && condition.Reason == parent.Status.Outcome {
 			return condition.Reason == terminalReasonTransitionFailed ||
 				condition.Reason == terminalReasonRetryLimitExhausted ||
-				condition.Reason == "FatalFailure" ||
-				condition.Reason == "UnknownFailure" ||
+				condition.Reason == string(batchenergyoptimization.FailureClassFatalFailure) ||
+				condition.Reason == string(batchenergyoptimization.FailureClassUnknownFailure) ||
 				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch ||
 				condition.Reason == terminalReasonInvalidCampaignRun ||
 				condition.Reason == profiler.ResolutionReasonInvalidRunSpec ||
