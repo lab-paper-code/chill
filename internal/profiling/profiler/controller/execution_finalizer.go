@@ -256,10 +256,6 @@ func (f *KubernetesExecutionFinalizer) classifyRuntimeFailure(
 	pod *corev1.Pod,
 	termination *edgev1alpha1.ProfilingRunRuntimeTermination,
 ) error {
-	if termination.FailureReason == profilerevidence.FailureIntegrity {
-		termination.Class = profilerevidence.FailureClassFatalFailure
-		return nil
-	}
 	switch pod.Status.Reason {
 	case "Evicted", "NodeLost":
 		termination.Class = profilerevidence.FailureClassRetryableFailure
@@ -301,6 +297,10 @@ func (f *KubernetesExecutionFinalizer) classifyRuntimeFailure(
 				return nil
 			}
 		}
+	}
+	if termination.FailureReason == profilerevidence.FailureIntegrity {
+		termination.Class = profilerevidence.FailureClassFatalFailure
+		return nil
 	}
 	if termination.Container != runtimeContainerName {
 		if termination.Container != "" {
