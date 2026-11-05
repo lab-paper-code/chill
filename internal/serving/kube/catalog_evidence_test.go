@@ -212,16 +212,7 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 			if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
 				t.Fatalf("stopped discovery lost completed prefix: %+v %v", view, err)
 			}
-			profile := view.Profiles[0]
-			if len(profile.Batches) != 1 || profile.Batches[0].Batch != 1 ||
-				!slices.Equal(profile.Condition.PlannedBatchSizes, []int{1, 2}) ||
-				!slices.Equal(profile.RuntimeMetadata.InitializedBatches, []int{1, 2}) ||
-				profile.Batches[0].MemoryBytes != 4096 || profile.IdleBaselineWatts != 4 ||
-				len(profile.Batches[0].ServiceSamples) != 180 || math.Abs(profile.Batches[0].EnergyPerInputJoules-1) > 1e-9 ||
-				profile.Condition.ActiveProtocol.WarmupIterations != 0 || profile.Condition.Actor.WarmupIterations != 20 ||
-				profile.RuntimeMetadata.WarmupIterations != 20 {
-				t.Fatalf("candidate domain or measured service/J/idle/memory changed: %+v", profile)
-			}
+			assertCatalogDiscoveryCompletedPrefix(t, view.Profiles[0])
 			run := &edgev1alpha1.ProfilingRun{}
 			if err := catalog.store.client.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: "trial-0"}, run); err != nil {
 				t.Fatal(err)
@@ -239,6 +230,19 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 				t.Fatalf("unrecorded collection warmup admitted: %+v %v", view, err)
 			}
 		})
+	}
+}
+
+func assertCatalogDiscoveryCompletedPrefix(t *testing.T, profile serving.Profile) {
+	t.Helper()
+	if len(profile.Batches) != 1 || profile.Batches[0].Batch != 1 ||
+		!slices.Equal(profile.Condition.PlannedBatchSizes, []int{1, 2}) ||
+		!slices.Equal(profile.RuntimeMetadata.InitializedBatches, []int{1, 2}) ||
+		profile.Batches[0].MemoryBytes != 4096 || profile.IdleBaselineWatts != 4 ||
+		len(profile.Batches[0].ServiceSamples) != 180 || math.Abs(profile.Batches[0].EnergyPerInputJoules-1) > 1e-9 ||
+		profile.Condition.ActiveProtocol.WarmupIterations != 0 || profile.Condition.Actor.WarmupIterations != 20 ||
+		profile.RuntimeMetadata.WarmupIterations != 20 {
+		t.Fatalf("candidate domain or measured service/J/idle/memory changed: %+v", profile)
 	}
 }
 

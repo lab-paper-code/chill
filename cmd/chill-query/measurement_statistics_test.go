@@ -143,7 +143,10 @@ func TestMeasurementStatisticsDiscoveryExcludesIncompleteNextBatch(t *testing.T)
 	spec.Outcome = campaign.BatchDiscoveryComplete
 	failed := campaign.RunReference{Namespace: cr.Namespace, Name: "failed-b2", UID: "failed-b2-uid"}
 	spec.ExcludedTrials = append(spec.ExcludedTrials, campaign.ExcludedTrialReference{
-		Run: failed, Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 2}, Attempt: 2, Reasons: []string{campaign.DiscoveryStopOOM},
+		Run:         failed,
+		Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 2},
+		Attempt:     2,
+		Reasons:     []string{campaign.DiscoveryStopOOM},
 	})
 	var err error
 	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
@@ -191,7 +194,10 @@ func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
 	spec.Outcome = campaign.BatchDiscoveryComplete
 	failed := campaign.RunReference{Namespace: cr.Namespace, Name: "failed-b1", UID: "failed-b1-uid"}
 	spec.ExcludedTrials = append(spec.ExcludedTrials, campaign.ExcludedTrialReference{
-		Run: failed, Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1}, Attempt: 1, Reasons: []string{campaign.DiscoveryStopOOM},
+		Run:         failed,
+		Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1},
+		Attempt:     1,
+		Reasons:     []string{campaign.DiscoveryStopOOM},
 	})
 	var err error
 	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
@@ -807,7 +813,8 @@ func statisticsFixture(
 					PowerMode:     base.State.PowerMode,
 				},
 			},
-			TrialsPerBatch: int32(trialsPerBatch), PointPolicy: api.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: "0.8"},
+			TrialsPerBatch: int32(trialsPerBatch),
+			PointPolicy:    api.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: "0.8"},
 			ActiveProtocol: api.ActiveProtocolSpec{
 				Workload:                 base.Measurement.WorkloadName,
 				WarmupIterations:         int32(base.Measurement.WarmupIterations),
