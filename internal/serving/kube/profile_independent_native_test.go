@@ -189,8 +189,51 @@ func TestProfileIndependentNativeCommitCatalogCapacity(t *testing.T) {
 	if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
 		t.Fatalf("strict catalog did not admit real committed trials: %+v %v", view.Insufficiencies, err)
 	}
+	writeNativeCatalogWitness(t, ctx, catalog, campaign, objects)
 	assertNativeCatalogConsumer(t, ctx, &view.Profiles[0], retained.Plan,
 		planIdentity, samples, firstMetadata, memory, energy)
+}
+
+// Optional verification output retains the exact immutable bytes and the same
+// controlled Kubernetes identities, so a downstream fixture failure needs no
+// mechanical remeasurement. It is not a production store or an alternate reader.
+func writeNativeCatalogWitness(
+	t *testing.T, ctx context.Context, catalog *Catalog,
+	campaign *edgev1alpha1.BatchEnergyOptimization, objects catalogEvidenceObjects,
+) {
+	t.Helper()
+	directory := os.Getenv("CHILL_FIRST_PROFILE_FIXTURE_OUTPUT")
+	if directory == "" {
+		return
+	}
+	runs := &edgev1alpha1.ProfilingRunList{}
+	if err := catalog.store.client.List(ctx, runs); err != nil {
+		t.Fatal(err)
+	}
+	type object struct {
+		Location evidencestore.ObjectLocation `json:"location"`
+		Payload  json.RawMessage              `json:"payload"`
+	}
+	snapshot := struct {
+		Campaign *edgev1alpha1.BatchEnergyOptimization `json:"campaign"`
+		Runs     []edgev1alpha1.ProfilingRun           `json:"runs"`
+		Objects  []object                              `json:"objects"`
+	}{Campaign: campaign, Runs: runs.Items}
+	for location, payload := range objects {
+		snapshot.Objects = append(snapshot.Objects, object{Location: location, Payload: payload})
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(directory, 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "native-catalog-evidence.json")
+	if err := os.WriteFile(path, payload, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("retained exact native immutable evidence: %s (%d bytes)", path, len(payload))
 }
 
 func commitNativeCatalogTrial(
@@ -354,13 +397,39 @@ func assertNativeCatalogConsumer(
 		math.Abs(batch.EnergyPerInputJoules-energy/3) > 1e-9 || batch.MemoryBytes != memory || memory == 0 {
 		t.Fatal("catalog changed native service pairs, recipe, runtime observations or J/idle-W/memory")
 	}
+	assertNativeCatalogCapacity(t, ctx, profile, plan)
+}
+
+func assertNativeCatalogCapacity(t *testing.T, ctx context.Context, profile *serving.Profile, plan profilederivation.CurvePlan) {
+	t.Helper()
+	frozen := plan.Shared()
+	batch := profile.Batches[0]
 	settings := serving.SchedulerSettings{CapacityWindow: time.Millisecond, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityMinimumRequests: 100, CapacityGridSteps: 4, CapacityBisectionWidth: .1, CapacityTailSamples: 5}
-	workload := &serving.Definition{Name: nativeIdentityModel, UID: "workload-uid", Generation: 1,
-		SLO: serving.SLO{Percentile: frozen.ActiveProtocol.SLOPercentile, TargetLatency: time.Duration(frozen.ActiveProtocol.SLOTargetLatencyNanos)}}
+	// Replay applies the same full model/input/dataset predicate as serving.
+	// A UID-only Definition is not a compatible workload, regardless of route flags.
+	c := profile.Condition
+	workload := &serving.Definition{Name: frozen.ActiveProtocol.WorkloadName,
+		UID: frozen.ActiveProtocol.WorkloadUID, Generation: 1,
+		Model: serving.Model{Name: c.LogicalModel, Paths: []serving.ModelPath{{
+			Name: c.Artifact.ExecutionPath, Artifact: c.Artifact.Name, Files: c.Artifact.Files, Image: c.Artifact.Image,
+			RuntimeFamily: c.RuntimeFamily, Backend: c.Backend, Firstfloor: c.Firstfloor,
+			Preprocessor: serving.PreprocessorArtifact{Image: c.Preprocessor.Image,
+				Architecture: c.Preprocessor.Architecture, Path: c.Preprocessor.Path},
+		}}},
+		Preprocessor: serving.Preprocessor{Name: c.Preprocessor.Name, MaxNewTokens: int32(c.Preprocessor.MaxNewTokens)},
+		Dataset:      &serving.DatasetReference{Name: c.ActiveProtocol.Dataset.Name, UID: c.ActiveProtocol.Dataset.UID},
+		SLO: serving.SLO{Percentile: frozen.ActiveProtocol.SLOPercentile,
+			TargetLatency: time.Duration(frozen.ActiveProtocol.SLOTargetLatencyNanos)}}
+	for _, name := range c.Preprocessor.Inputs {
+		workload.Preprocessor.Input = append(workload.Preprocessor.Input, serving.RawField{Name: name})
+	}
+	for _, name := range c.Preprocessor.Outputs {
+		workload.Preprocessor.Output = append(workload.Preprocessor.Output, serving.RawField{Name: name})
+	}
 	option := serving.SchedulerOption{Instance: serving.SchedulerInstance{ID: "native-catalog-option", Profile: profile,
 		Node: serving.NodeReference{Name: profile.NodeName, UID: frozen.NodeUID}, MaxBatch: 1,
-		Routable:   map[string]bool{workload.UID: true},
+		Routable: map[string]bool{workload.UID: true}, Capacity: int(c.Firstfloor.MaxQueueSize),
 		Allocation: serving.SchedulerAllocation{MemoryBytes: batch.MemoryBytes}},
 		CompatibleUIDs: []string{workload.UID}}
 	row, err := serving.BuildCapacityRow(ctx, settings, nil, option, workload, time.Now().UTC())
@@ -369,6 +438,26 @@ func assertNativeCatalogConsumer(
 		row.ConditionalService.Queries == 0 || row.ConditionalService.StartupQueries == 0 || row.ConditionalService.MinimumTrialCount != 3 {
 		t.Fatalf("kappa did not consume the catalog's physical native populations: %+v %v", row, err)
 	}
+}
+
+// This is a fast controlled-fixture qualification test, not native measurement.
+// It catches downstream option/definition omissions without rerunning six trials.
+func TestProfileIndependentCapacityFixtureQualification(t *testing.T) {
+	ctx := context.Background()
+	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
+	campaign := &edgev1alpha1.BatchEnergyOptimization{}
+	if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := catalog.evidence.Read(ctx, campaign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := catalog.Refresh(ctx, []string{source.Namespace})
+	if err != nil || len(view.Profiles) != 1 {
+		t.Fatalf("controlled qualification fixture: %v %+v", err, view.Insufficiencies)
+	}
+	assertNativeCatalogCapacity(t, ctx, &view.Profiles[0], retained.Plan)
 }
 
 type nativeCatalogMetricReader func(context.Context) (metricobserver.VerifiedResult, error)
