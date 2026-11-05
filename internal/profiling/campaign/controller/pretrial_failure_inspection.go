@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/smithy-go"
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -100,8 +99,8 @@ func InspectPretrialFailure(ctx context.Context, reader client.Reader, objects e
 	if proof.OwnedRunCount != 0 {
 		return stop("controller-owned ProfilingRun exists")
 	}
-	if reason := pretrialPlanAbsenceFailure(ctx, objects, curvePlanLocation(logicalStore, parent.UID)); reason != "" {
-		return stop(reason)
+	if err := requirePlanAbsent(ctx, objects, curvePlanLocation(logicalStore, parent.UID)); err != nil {
+		return stop("recorded plan absence could not be verified")
 	}
 	proof.PlanNotFound = true
 	granted, at, _ := profilingrun.Admission(parent.Annotations)
@@ -133,33 +132,6 @@ func pretrialRequestUnstarted(parent *edgev1alpha1.BatchEnergyOptimization) bool
 	return parent.DeletionTimestamp.IsZero() && parent.Generation >= 1 && parent.Status.Phase == "" &&
 		parent.Status.CompletedTrials == 0 && parent.Status.Outcome == "" && len(parent.Status.Conditions) == 0 &&
 		parent.Status.ObservedGeneration == 0
-}
-
-func pretrialPlanAbsenceFailure(ctx context.Context, objects evidencestore.LocationReader, location evidencestore.ObjectLocation) string {
-	if err := location.Validate(); err != nil {
-		return "recorded plan location is invalid"
-	}
-	body, err := objects.OpenLocation(ctx, location)
-	if body != nil {
-		closeErr := body.Close()
-		if closeErr != nil {
-			return "cannot close recorded plan read"
-		}
-		if err != nil {
-			return "recorded plan read returned contradictory evidence"
-		}
-	}
-	if err == nil {
-		return "recorded plan exists or absence is unproven"
-	}
-	var apiError smithy.APIError
-	if errors.As(err, &apiError) && apiError.ErrorCode() == "NoSuchBucket" {
-		return "recorded plan bucket is missing"
-	}
-	if !errors.Is(err, evidencestore.ErrNotFound) {
-		return "cannot read recorded plan"
-	}
-	return ""
 }
 
 func pretrialNodeFailure(parent *edgev1alpha1.BatchEnergyOptimization, node *corev1.Node, holder string, held bool) string {

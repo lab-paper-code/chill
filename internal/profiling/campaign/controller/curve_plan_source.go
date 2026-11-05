@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/aws/smithy-go"
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
@@ -203,8 +204,8 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 // Resolve returns the plan recorded for the campaign. The stored plan is read
 // and decoded once and is never compared with current facts. Only when no plan
 // is stored yet is the plan projected once and recorded immutably.
-// Invalid campaign label metadata is terminal only before a recorded plan,
-// published result, or exact controller-owned Run exists.
+// Invalid campaign label metadata is terminal only after explicit plan absence
+// is verified and no published result or exact controller-owned Run exists.
 //
 // The curve plan carries no actuation policy, so transition material is the
 // current projection of the one power mode the campaign establishes before
@@ -220,20 +221,23 @@ func (s *CurvePlanSource) Resolve(
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, errors.New("BatchEnergyOptimization UID is required")
 	}
 	location := s.location(parent.UID)
+	if problems := validation.IsValidLabelValue(parent.Name); len(problems) > 0 {
+		if err := requirePlanAbsent(ctx, s.store, location); err != nil {
+			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, err
+		}
+		if parent.Status.Result != nil {
+			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil,
+				errors.New("invalid campaign label metadata with a published result")
+		}
+		if _, err := listCampaignRuns(ctx, s.projector.reader, parent); err != nil {
+			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, err
+		}
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil,
+			profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec,
+				fmt.Errorf("BatchEnergyOptimization name cannot be used as campaign label: %s", strings.Join(problems, "; ")))
+	}
 	stored, reference, err := s.readStored(ctx, location)
 	if errors.Is(err, evidencestore.ErrNotFound) {
-		if problems := validation.IsValidLabelValue(parent.Name); len(problems) > 0 {
-			if parent.Status.Result != nil {
-				return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil,
-					errors.New("invalid campaign label metadata with a published result")
-			}
-			if _, listErr := listCampaignRuns(ctx, s.projector.reader, parent); listErr != nil {
-				return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, listErr
-			}
-			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil,
-				profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec,
-					fmt.Errorf("BatchEnergyOptimization name cannot be used as campaign label: %s", strings.Join(problems, "; ")))
-		}
 		plan, transition, projectErr := s.projector.Project(ctx, parent)
 		if projectErr != nil {
 			return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, projectErr
@@ -251,10 +255,6 @@ func (s *CurvePlanSource) Resolve(
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, err
 	}
-	if len(validation.IsValidLabelValue(parent.Name)) > 0 {
-		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil,
-			errors.New("invalid campaign label metadata with an existing curve plan")
-	}
 	transition, err := s.recoverTransition(ctx, parent, stored)
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, nil, err
@@ -271,6 +271,35 @@ func curvePlanLocation(store string, parentUID types.UID) evidencestore.ObjectLo
 		Store: store,
 		Key:   fmt.Sprintf("batch-energy-optimizations/%s/curve-plan.json", parentUID),
 	}
+}
+
+// requirePlanAbsent accepts only an explicit missing object without a returned body.
+func requirePlanAbsent(ctx context.Context, objects evidencestore.LocationReader, location evidencestore.ObjectLocation) error {
+	if err := location.Validate(); err != nil {
+		return fmt.Errorf("recorded plan location is invalid: %w", err)
+	}
+	body, err := objects.OpenLocation(ctx, location)
+	if body != nil {
+		closeErr := body.Close()
+		if closeErr != nil {
+			return fmt.Errorf("cannot close recorded plan read: %w", errors.Join(err, closeErr))
+		}
+		if err != nil {
+			return fmt.Errorf("recorded plan read returned contradictory evidence: %w", err)
+		}
+		return errors.New("recorded plan exists")
+	}
+	if err == nil {
+		return errors.New("recorded plan absence is unproven")
+	}
+	var apiError smithy.APIError
+	if errors.As(err, &apiError) && apiError.ErrorCode() == "NoSuchBucket" {
+		return fmt.Errorf("recorded plan bucket is missing: %w", err)
+	}
+	if !errors.Is(err, evidencestore.ErrNotFound) {
+		return fmt.Errorf("cannot read recorded plan: %w", err)
+	}
+	return nil
 }
 
 // ReadRecorded reads the existing immutable plan without projection, creation or
