@@ -87,6 +87,15 @@ EdgeMesh is a DaemonSet proxy: the client's node iptables intercepts and chooses
 | fence | GET으로 owner/selector/proxy label/port, namespace Pod LIST로 현재 Pod/container1개만 선택함을 확인한다. observer probe 뒤 LIST는 actual UID label selector로 제한하되 terminal도 포함해 중복/교체를 잡고 다른 UID label은 제외한다(SCH-50). |
 | readiness | `RestartPolicyNever` 필수. 같은 UID 뒤 container 재시작으로 executor를 바꾸지 않는다. native model/state·immutable profile/runtime evidence를 검증하며 Pod Ready/Service 생성만으로 추론 준비 완료 아님. prepare는 현재 저장 policy를 유지하고 stale annotation을 고치되 annotation write는 native ACK가 아니다. |
 
+현재 catalog가 옛 profile을 거절해도 기존 실행기의 **물리 관측**은 중단하지 않는다.
+Observer는 실제 startup Config의 model, Pod UID/container/Node UID와 단일 Service를
+같은 read 전후에 확인하고 fresh native Ready/model/mode/profile annotation을 관측한다.
+이 exact 관측의 빈 request 목록만 executor-local recovery UNKNOWN을 해제할 수 있다.
+현재 profile이 없으면 Ready/Execute/새 routing 권한은 여전히 없으며 옛 reader를 쓰지 않는다.
+정상 remove의 routing/outstanding 거절·native drain·UID finalizer/actual 종료·404 증명은
+그대로다. 현재 빈 실행기 관측은 과거 `UnknownExecutorInfluence`를 닫지 않으며,
+그 영향 구간은 exact physical termination 뒤에만 경계가 생긴다.
+
 ### 정책 반영 대기 표시 — SCH-48, AC-34~35
 
 desired/native DecisionID만 다르면 probe는 오류 대신 `PolicyAckPending`을 반환하되 실제 physical ID/Node/profile/allocation/owner/slot/native Ready/policy/요청과 동일 UID/container·단일 executor 검증을 유지한다. scheduler 원본/compact/summary/기록은 instance `reasons`, POOL은 `InstanceState.reason` **반영 대기**로 표시하고 owned/bound/active POOL에 유지한다. ACK 일치 다음 probe에 지운다. desired로 actual을 덮거나 pending을 완료 proof로 쓰지 않는다.

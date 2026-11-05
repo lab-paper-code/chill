@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -9,13 +10,16 @@ import (
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type recoveryBootObservation struct {
@@ -251,5 +255,209 @@ func TestRecoveryPhysicalReleaseRequiresExactTerminatedContainer(t *testing.T) {
 	}
 	if err := c.operations.ValidateOperationBinding(ctx, operation); err != nil {
 		t.Fatal("exact terminated executor retained its inference recovery hold", err)
+	}
+}
+
+type recoveryRemovalAPI struct {
+	*resetAPI
+	deleted      chan struct{}
+	precondition *meta.Preconditions
+}
+
+func (a *recoveryRemovalAPI) Delete(ctx context.Context, object client.Object, opts ...client.DeleteOption) error {
+	if _, ok := object.(*core.Pod); ok {
+		options := &client.DeleteOptions{}
+		for _, option := range opts {
+			option.ApplyToDelete(options)
+		}
+		a.precondition = options.Preconditions
+	}
+	if err := a.resetAPI.Delete(ctx, object, opts...); err != nil {
+		return err
+	}
+	if _, ok := object.(*core.Pod); ok {
+		close(a.deleted)
+	}
+	return nil
+}
+
+func TestRecoveryMissingCatalogProfileAllowsOnlyExactPhysicalRetirement(t *testing.T) {
+	for _, phase := range []string{"missing at boot", "removed after hydration"} {
+		t.Run(phase, func(t *testing.T) {
+			c, prepared := tickReadySubsetController(t, nil)
+			prepared.Store(true)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			t.Cleanup(func() { cancel(); c.wg.Wait() })
+			var profile serving.Profile
+			for _, candidate := range c.observer.Profiles() {
+				if candidate.NodeName == "b" {
+					profile = candidate
+				}
+			}
+			if profile.ID == "" {
+				t.Fatal("fixture lacks original physical profile")
+			}
+			pod, err := c.kube.CoreV1().Pods("chill-system").Get(ctx, "b", meta.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cm := &core.ConfigMap{}
+			if err := c.store.client.Get(ctx, client.ObjectKeyFromObject(pod), cm); err != nil {
+				t.Fatal(err)
+			}
+			var config native.Config
+			if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
+				t.Fatal(err)
+			}
+			if config.Model != profile.Condition.Actor.Model {
+				t.Fatalf("startup model %q differs from observed actor %q", config.Model, profile.Condition.Actor.Model)
+			}
+			config.Mode = servingstate.NativeServingMode
+			config.Policy.DecisionID = "retire-catalog-rejected-source"
+			config.Policy.ProfileID = profile.ID
+			// The original mounted model/policy and production native actor remain
+			// unchanged when the current catalog ceases admitting this source.
+			c.observer.native.HTTPClient, _ = preparationNativeHTTPClient(t, ctx, config, profile)
+			log, err := observation.NewObservationLog(observation.ObservationLogConfig{
+				Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = log.Close(context.Background()) })
+			c.observationLog = log
+			recoveryBootRuntime(t, c)
+			id := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
+			if phase == "removed after hydration" {
+				if err := c.observer.Refresh(ctx); err != nil {
+					t.Fatal(err)
+				}
+				hydrated := schedulerPhysicalState(id, c.runtime.Instances())
+				if hydrated == nil || !hydrated.Ready || hydrated.RecoveryUnknown || c.observer.sources[string(pod.UID)].instance.Execute == nil {
+					t.Fatalf("original source never hydrated: %+v issues=%+v", hydrated, c.observer.Issues())
+				}
+			}
+			c.observer.SetProfiles(nil)
+			if err := c.observer.Refresh(ctx); err != nil {
+				t.Fatal(err)
+			}
+			physical := schedulerPhysicalState(id, c.runtime.Instances())
+			if physical == nil || physical.RecoveryUnknown || !physical.NativeVerified || physical.Native == nil ||
+				!physical.Native.Ready || len(physical.Native.Requests) != 0 || physical.Ready || physical.Terminated {
+				t.Fatalf("fresh exact empty physical source was not recovered independently of admission: %+v issues=%+v", physical, c.observer.Issues())
+			}
+			for uid, routable := range physical.Routable {
+				if routable {
+					t.Fatalf("catalog-rejected source remained routable for %s", uid)
+				}
+			}
+			instance := c.observer.sources[string(pod.UID)].instance
+			if instance.Profile != nil || instance.Execute != nil || instance.Capacity != 0 || len(instance.Routing) != 0 {
+				t.Fatalf("catalog withdrawal retained execution capability: %+v", instance)
+			}
+			if !c.runtime.InstanceRecoveryUnknown("a-pod/containerd://running") {
+				t.Fatal("B's exact empty observation cleared A's mismatching physical identity")
+			}
+			readGap := func() serving.ObservationGap {
+				t.Helper()
+				if err := log.Drain(ctx); err != nil {
+					t.Fatal(err)
+				}
+				index, err := log.RawHour(ctx, physical.ObservedAt.UTC().Format("20060102T15"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, gap := range index.Gaps {
+					if gap.Instance == id && gap.Reason == "UnknownExecutorInfluence" {
+						return gap
+					}
+				}
+				t.Fatal("physical recovery erased historical unknown influence")
+				return serving.ObservationGap{}
+			}
+			gap := readGap()
+			if gap.ClearAt == nil || !gap.Open {
+				t.Fatalf("empty native state closed historical physical influence: %+v", gap)
+			}
+			kube := c.kube.(*kubefake.Clientset)
+			api := &recoveryRemovalAPI{resetAPI: &resetAPI{Client: c.store.client, kube: kube}, deleted: make(chan struct{})}
+			c.store.client = api
+			c.config.Settings.AutonomousWorkloads = nil
+			uid := c.runtime.SchedulerInputs(time.Now).Workloads[0].UID
+			type outcome struct {
+				result servingstate.OperationResult
+				err    error
+			}
+			finished := make(chan outcome, 1)
+			go func() {
+				result, err := c.ExecuteManual(ctx, servingstate.ManualOperation{
+					Kind: servingstate.OperationRemove, WorkloadUID: uid, Node: physical.Node, Instance: id, Reason: "retire original catalog-rejected executor",
+				})
+				finished <- outcome{result: result, err: err}
+			}()
+			select {
+			case <-api.deleted:
+			case result := <-finished:
+				t.Fatalf("normal remove failed before retained deletion: %+v err=%v", result.result, result.err)
+			case <-ctx.Done():
+				t.Fatal("normal remove did not reach retained deletion", ctx.Err())
+			}
+			retained, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
+			if err != nil || retained.UID != pod.UID || retained.DeletionTimestamp == nil ||
+				!slices.Contains(retained.Finalizers, servingstate.SourceFinalizer) || servingstate.PodTerminated(retained) ||
+				api.precondition == nil || api.precondition.UID == nil || *api.precondition.UID != pod.UID {
+				t.Fatalf("normal remove did not retain running exact UID/termination proof: %+v preconditions=%+v err=%v", retained, api.precondition, err)
+			}
+			stopped := schedulerPhysicalState(id, c.runtime.Instances())
+			if stopped == nil || !stopped.Stopped || stopped.Terminated {
+				t.Fatalf("stop/drain bypassed retained physical ownership: %+v", stopped)
+			}
+			if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, observerServiceFixture(pod).Name, meta.GetOptions{}); err != nil {
+				t.Fatal("Service disappeared before exact termination", err)
+			}
+			if current := readGap(); !current.Open || current.ClearAt == nil || !current.ClearAt.Equal(*gap.ClearAt) {
+				t.Fatalf("logical stop/drain closed historical unknown: %+v", current)
+			}
+			// Supply kubelet's exact termination only after inspecting retention.
+			current := &core.Pod{}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(pod), current); err != nil {
+				t.Fatal(err)
+			}
+			status := servingstate.FirstfloorStatus(current)
+			status.Ready = false
+			status.State = core.ContainerState{Terminated: &core.ContainerStateTerminated{ContainerID: status.ContainerID}}
+			current.Status.Phase = core.PodSucceeded
+			if err := api.Status().Update(ctx, current); err != nil {
+				t.Fatal(err)
+			}
+			if err := api.syncPod(ctx, current); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case result := <-finished:
+				proof, observed := result.result.DrainNative[id]
+				if result.err != nil || result.result.Status != servingstate.NativeOperationComplete || result.result.Error != "" ||
+					!observed || !proof.Ready || len(proof.Requests) != 0 || proof.Metadata.Model != config.Model || proof.Metadata.ProfileID != profile.ID {
+					t.Fatalf("normal remove did not retain actual native drain proof: %+v err=%v", result.result, result.err)
+				}
+			case <-ctx.Done():
+				t.Fatal("normal remove did not finish exact termination/404 retirement", ctx.Err())
+			}
+			if _, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("retired Pod was not 404: %v", err)
+			}
+			if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, observerServiceFixture(pod).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("retired Service survived exact termination: %v", err)
+			}
+			if err := api.Get(ctx, client.ObjectKeyFromObject(pod), &core.ConfigMap{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("original mounted ConfigMap survived retirement: %v", err)
+			}
+			if schedulerPhysicalState(id, c.runtime.Instances()) != nil {
+				t.Fatal("404 source retained retired physical executor")
+			}
+			if current := readGap(); current.Open || current.To.IsZero() || current.ClearAt == nil || !current.ClearAt.Equal(*gap.ClearAt) {
+				t.Fatalf("exact termination failed to bound retained historical unknown: %+v", current)
+			}
+		})
 	}
 }

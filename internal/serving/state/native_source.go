@@ -1,10 +1,16 @@
 package state
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -38,6 +44,22 @@ const (
 
 func PhysicalID(podUID types.UID, containerID string) string {
 	return string(podUID) + "/" + containerID
+}
+
+// NativeModel reads the startup Config mounted by the physical executor.
+func NativeModel(ctx context.Context, reader client.Reader, pod *corev1.Pod) (string, error) {
+	cm := &corev1.ConfigMap{}
+	if err := reader.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, cm); err != nil {
+		return "", err
+	}
+	var config native.Config
+	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
+		return "", err
+	}
+	if config.Model == "" {
+		return "", errors.New("native startup Config model required")
+	}
+	return config.Model, nil
 }
 
 func FirstfloorStatus(pod *corev1.Pod) *corev1.ContainerStatus {

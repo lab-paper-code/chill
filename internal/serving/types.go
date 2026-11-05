@@ -274,7 +274,8 @@ type InstanceState struct {
 	ObservedAt      time.Time         `json:"observedAt"`
 	Native          *firstfloor.State `json:"native,omitempty"`
 	// NativeVerified belongs to this publication's successful exact-identity
-	// probe; retained Native after a failed read is not fresh drain evidence.
+	// physical probe, independently of catalog admission for dispatch.
+	// Retained Native after a failed read is not fresh drain evidence.
 	NativeVerified  bool `json:"-"`
 	RecoveryUnknown bool `json:"recoveryUnknown,omitempty"`
 	// CreatedThisRun is the gateway's exact successful Pod-create proof,

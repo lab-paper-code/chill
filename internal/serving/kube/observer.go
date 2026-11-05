@@ -469,6 +469,7 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 		if instance.State.Node.UID == "" {
 			instance.State.Node.Name = pod.Spec.NodeName
 		}
+		instance.Profile = nil
 		for i := range o.profiles {
 			profile := &o.profiles[i]
 			if profile.ID != instance.State.Profile {
@@ -479,6 +480,12 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 				m := profile.RuntimeMetadata
 				instance.State.Allocation.GPUUUID = m.GPUUUID
 			}
+		}
+		if instance.Profile == nil {
+			instance.State.Ready = false
+			instance.Execute = nil
+			instance.Routing = nil
+			instance.Capacity = 0
 		}
 		for _, container := range pod.Spec.Containers {
 			if container.Name == servingstate.FirstfloorContainerName {
@@ -494,6 +501,12 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 			previous.State.PodUID = string(source.uid)
 			previous.State.Ready = false
 			previous.State.NativeVerified = false
+			if o.profileByID[previous.State.Profile] == nil {
+				previous.Profile = nil
+				previous.Execute = nil
+				previous.Routing = nil
+				previous.Capacity = 0
+			}
 			previous.State.Stopped = source.terminated[containerID]
 			previous.State.Terminated = source.terminated[containerID]
 			instances = append(instances, previous)
@@ -525,12 +538,24 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		return instance, publish, nil
 	}
 	o.recordRuntimeDeclaration(ctx, pod, profile)
-	spec, err := sourceSpec(pod, node, profile, classes, "")
+	spec, admissionErr := sourceSpec(pod, node, profile, classes, "")
+	var err error
+	if admissionErr != nil {
+		err = validatePhysicalSource(pod, node)
+	}
 	if err == nil {
 		err = ownershipErr
 	}
 	if node != nil && o.movingNodes[string(node.UID)] {
 		err = errors.New("NodePowerTransition")
+	}
+	if err == nil && admissionErr != nil {
+		model, modelErr := servingstate.NativeModel(ctx, o.store.client, pod)
+		err = modelErr
+		if err == nil {
+			status := servingstate.FirstfloorStatus(pod)
+			spec = firstfloor.Spec{ModelName: model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
+		}
 	}
 	var service *corev1.Service
 	if err == nil {
@@ -542,6 +567,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		probeCtx, cancel := context.WithTimeout(ctx, nativeProbeTimeout)
 		o.mu.Unlock()
 		instance, probeErr := o.native.Probe(probeCtx, spec)
+		readSucceeded := probeCtx.Err() == nil && instance.State.Native != nil
 		if err := probeCtx.Err(); err != nil {
 			probeErr = err
 		}
@@ -552,9 +578,17 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			return serving.ReadyInstance{}, false, nil
 		}
 		if probeErr == nil || instance.State.Native != nil {
-			instance.State.NativeVerified = probeErr == nil
+			observed := instance.State.Native
+			instance.State.NativeVerified = readSucceeded && observed.Ready && observed.Metadata.Model == spec.ModelName && observed.Metadata.Mode == "serving" && pod.Annotations[servingstate.ServingProfileAnnotation] != "" && observed.Metadata.ProfileID == pod.Annotations[servingstate.ServingProfileAnnotation]
 			if probeErr != nil {
 				instance.State.Reason = probeErr.Error()
+			}
+			if admissionErr != nil {
+				instance.State.Reason = admissionErr.Error()
+				instance.State.Ready = false
+				instance.Execute = nil
+				instance.Routing = nil
+				instance.Capacity = 0
 			}
 			if !instance.State.Ready || probeErr != nil {
 				instance.State.Ready = false
@@ -707,8 +741,8 @@ func sourceSpec(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, cl
 	return firstfloor.Spec{Endpoint: endpoint, ModelName: condition.Actor.Model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}, Profile: profile, Weight: int32(weight), Routing: routing, Capacity: int(condition.Firstfloor.MaxQueueSize), ExpectedRuntime: &expected, DecisionID: pod.Annotations[servingstate.ServingPolicyAnnotation]}, nil
 }
 
-func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass) error {
-	if pod.UID == "" || node == nil || node.UID == "" || node.DeletionTimestamp != nil {
+func validatePhysicalSource(pod *corev1.Pod, node *corev1.Node) error {
+	if pod.UID == "" || node == nil || node.UID == "" || node.DeletionTimestamp != nil || pod.Spec.NodeName != node.Name {
 		return errors.New("current Node UID unavailable")
 	}
 	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || !servingstate.PodReady(pod) {
@@ -722,6 +756,17 @@ func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *servin
 	}
 	if !nodeReady {
 		return errors.New("Node readiness unconfirmed")
+	}
+	status := servingstate.FirstfloorStatus(pod)
+	if status == nil || status.State.Running == nil || !status.Ready || status.ContainerID == "" || status.ImageID == "" {
+		return errors.New("actual immutable native runtime image/container unavailable")
+	}
+	return nil
+}
+
+func validateSourcePlacement(pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass) error {
+	if err := validatePhysicalSource(pod, node); err != nil {
+		return err
 	}
 	if profile == nil {
 		return errors.New("selected catalog profile unavailable")

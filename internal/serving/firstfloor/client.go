@@ -157,7 +157,10 @@ func (c *Client) Probe(ctx context.Context, spec Spec) (serving.ReadyInstance, e
 	if err != nil {
 		return serving.ReadyInstance{}, err
 	}
-	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, Profile: spec.Profile.ID, ObservedAt: observedAt, Native: &state}, Profile: spec.Profile, Routing: spec.Routing, Capacity: spec.Capacity}
+	result := serving.ReadyInstance{State: serving.InstanceState{ID: spec.InstanceID, Node: spec.Node, ObservedAt: observedAt, Native: &state}, Profile: spec.Profile, Routing: spec.Routing, Capacity: spec.Capacity}
+	if spec.Profile != nil {
+		result.State.Profile = spec.Profile.ID
+	}
 	if !state.Ready {
 		return result, errors.New("native runner is not ready")
 	}

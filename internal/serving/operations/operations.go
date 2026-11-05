@@ -2,7 +2,6 @@ package operations
 
 import (
 	context "context"
-	json "encoding/json"
 	errors "errors"
 	fmt "fmt"
 	reflect "reflect"
@@ -21,7 +20,6 @@ import (
 	workloadkube "github.com/lab-paper-code/chill/internal/workloadobserver/kube"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
-	types "k8s.io/apimachinery/pkg/types"
 	kubernetes "k8s.io/client-go/kubernetes"
 )
 
@@ -127,7 +125,7 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue
 		}
-		model, e := o.nativeModel(ctx, p)
+		model, e := servingstate.NativeModel(ctx, o.Store.Client(), p)
 		if e != nil {
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
 			continue
@@ -144,22 +142,6 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 	slices.SortFunc(s.Pods, func(a, b workloadobserver.Pod) int { return strings.Compare(a.UID, b.UID) })
 	slices.Sort(s.States)
 	return s, nil
-}
-
-// nativeModel reads the same startup Config mounted by the physical executor.
-func (o *Operations) nativeModel(ctx context.Context, pod *core.Pod) (string, error) {
-	cm := &core.ConfigMap{}
-	if err := o.Store.Client().Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, cm); err != nil {
-		return "", err
-	}
-	var config native.Config
-	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
-		return "", err
-	}
-	if config.Model == "" {
-		return "", errors.New("native startup Config model required")
-	}
-	return config.Model, nil
 }
 
 func (o *Operations) Execute(ctx context.Context, operation servingstate.Operation) (servingstate.OperationResult, error) {
