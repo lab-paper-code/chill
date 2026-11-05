@@ -78,10 +78,10 @@ func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRet
 		terminal            bool
 	}{
 		{"complete", "Complete", "ResultWritten", metav1.ConditionTrue, true},
-		{"exhausted attempts", "Failed", terminalReasonRetryLimitExhausted, metav1.ConditionFalse, true},
-		{"failed transition", "Failed", terminalReasonTransitionFailed, metav1.ConditionFalse, true},
-		{"energy objective policy mismatch", "Failed", terminalReasonEnergyObjectivePolicyMismatch, metav1.ConditionFalse, true},
-		{"recoverable resolver failure", "Failed", "CurvePlanResolutionFailed", metav1.ConditionFalse, false},
+		{"exhausted attempts", batchEnergyOptimizationPhaseFailed, terminalReasonRetryLimitExhausted, metav1.ConditionFalse, true},
+		{"failed transition", batchEnergyOptimizationPhaseFailed, terminalReasonTransitionFailed, metav1.ConditionFalse, true},
+		{"energy objective policy mismatch", batchEnergyOptimizationPhaseFailed, terminalReasonEnergyObjectivePolicyMismatch, metav1.ConditionFalse, true},
+		{"recoverable resolver failure", batchEnergyOptimizationPhaseFailed, "CurvePlanResolutionFailed", metav1.ConditionFalse, false},
 		{"in progress", "Measuring", "TrialInFlight", metav1.ConditionUnknown, false},
 		{"stale terminal generation", "Complete", "ResultWritten", metav1.ConditionTrue, false},
 	} {
@@ -241,16 +241,16 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 	temporaryList := errors.New("Run listing unavailable")
 	temporaryStore := errors.New("plan store unavailable")
 	for _, test := range []struct {
-		name       string
-		run        string
-		plan       bool
-		result     bool
-		listErr    error
-		storeErr   error
-		terminal   bool
+		name     string
+		run      string
+		plan     bool
+		result   bool
+		listErr  error
+		storeErr error
+		terminal bool
 	}{
 		{name: "unstarted", terminal: true},
-		{name: "foreign UID does not own campaign", run: "foreign", terminal: true},
+		{name: "foreign UID does not own campaign", run: foreignCampaignOwner, terminal: true},
 		{name: "owned pending Run", run: "pending"},
 		{name: "owned active Run", run: "active"},
 		{name: "owned completed Run", run: "completed"},
@@ -291,22 +291,7 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 			}
 			objects := []client.Object{parent}
 			if test.run != "" {
-				run := &api.ProfilingRun{ObjectMeta: ownedByCampaign(parent)}
-				run.Name = "existing-trial"
-				run.Namespace = parent.Namespace
-				// Discovery must use exact controller UID even with no campaign label.
-				run.Labels = nil
-				if test.run == "foreign" {
-					run.OwnerReferences[0].UID = "predecessor-uid"
-				}
-				if test.run == "active" || test.run == "completed" {
-					status := metav1.ConditionUnknown
-					if test.run == "completed" {
-						status = metav1.ConditionTrue
-					}
-					run.Status.Conditions = []metav1.Condition{{Type: "Complete", Status: status, Reason: "Observed"}}
-				}
-				objects = append(objects, run)
+				objects = append(objects, invalidLabelCampaignRun(parent, test.run))
 			}
 			base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).WithObjects(objects...).Build()
 			native := &invalidLabelCampaignClient{Client: base, listErr: test.listErr}
@@ -321,16 +306,7 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 			}
 			// The source boundary is safe even without the reconciler's discovery.
 			_, _, _, resolveErr := source.Resolve(ctx, parent)
-			reason, terminal := profiler.TerminalResolutionReason(resolveErr)
-			if resolveErr == nil || terminal != test.terminal || (terminal && reason != profiler.ResolutionReasonInvalidRunSpec) {
-				t.Fatalf("Resolve() error=%v terminal=%v reason=%q", resolveErr, terminal, reason)
-			}
-			if test.listErr != nil && !errors.Is(resolveErr, test.listErr) {
-				t.Fatalf("Resolve() lost list error: %v", resolveErr)
-			}
-			if test.storeErr != nil && !errors.Is(resolveErr, test.storeErr) {
-				t.Fatalf("Resolve() lost store error: %v", resolveErr)
-			}
+			assertInvalidLabelResolution(t, resolveErr, test.terminal, test.listErr, test.storeErr)
 			dependencies := &terminalReplayDependencies{}
 			reconciler, err := NewBatchEnergyOptimizationReconciler(native, source.Resolve, dependencies.Derive, dependencies.Write)
 			if err != nil {
@@ -346,15 +322,7 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 				t.Fatal(err)
 			}
 			if test.terminal {
-				if updated.Status.Phase != "Failed" || updated.Status.Outcome != profiler.ResolutionReasonInvalidRunSpec ||
-					updated.Status.ObservedGeneration != parent.Generation || len(updated.Status.Conditions) != 1 {
-					t.Fatalf("terminal status=%+v", updated.Status)
-				}
-				condition := updated.Status.Conditions[0]
-				if condition.Type != batchEnergyOptimizationConditionDone || condition.Status != metav1.ConditionFalse ||
-					condition.ObservedGeneration != parent.Generation || condition.Reason != updated.Status.Outcome {
-					t.Fatalf("terminal condition=%+v", condition)
-				}
+				assertInvalidLabelTerminalStatus(t, updated, parent.Generation)
 				opens := store.opens
 				native.listErr = errors.New("terminal replay must not discover Runs")
 				store.err = errors.New("terminal replay must not read evidence")
@@ -377,6 +345,52 @@ func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) 
 				t.Fatal("recorded plan changed")
 			}
 		})
+	}
+}
+
+func invalidLabelCampaignRun(parent *api.BatchEnergyOptimization, state string) *api.ProfilingRun {
+	run := &api.ProfilingRun{ObjectMeta: ownedByCampaign(parent)}
+	run.Name = "existing-trial"
+	run.Namespace = parent.Namespace
+	// Discovery must use exact controller UID even with no campaign label.
+	run.Labels = nil
+	if state == foreignCampaignOwner {
+		run.OwnerReferences[0].UID = "predecessor-uid"
+	}
+	if state == "active" || state == "completed" {
+		status := metav1.ConditionUnknown
+		if state == "completed" {
+			status = metav1.ConditionTrue
+		}
+		run.Status.Conditions = []metav1.Condition{{Type: "Complete", Status: status, Reason: "Observed"}}
+	}
+	return run
+}
+
+func assertInvalidLabelResolution(t *testing.T, resolveErr error, wantTerminal bool, listErr, storeErr error) {
+	t.Helper()
+	reason, terminal := profiler.TerminalResolutionReason(resolveErr)
+	if resolveErr == nil || terminal != wantTerminal || (terminal && reason != profiler.ResolutionReasonInvalidRunSpec) {
+		t.Fatalf("Resolve() error=%v terminal=%v reason=%q", resolveErr, terminal, reason)
+	}
+	if listErr != nil && !errors.Is(resolveErr, listErr) {
+		t.Fatalf("Resolve() lost list error: %v", resolveErr)
+	}
+	if storeErr != nil && !errors.Is(resolveErr, storeErr) {
+		t.Fatalf("Resolve() lost store error: %v", resolveErr)
+	}
+}
+
+func assertInvalidLabelTerminalStatus(t *testing.T, parent *api.BatchEnergyOptimization, generation int64) {
+	t.Helper()
+	if parent.Status.Phase != batchEnergyOptimizationPhaseFailed || parent.Status.Outcome != profiler.ResolutionReasonInvalidRunSpec ||
+		parent.Status.ObservedGeneration != generation || len(parent.Status.Conditions) != 1 {
+		t.Fatalf("terminal status=%+v", parent.Status)
+	}
+	condition := parent.Status.Conditions[0]
+	if condition.Type != batchEnergyOptimizationConditionDone || condition.Status != metav1.ConditionFalse ||
+		condition.ObservedGeneration != generation || condition.Reason != parent.Status.Outcome {
+		t.Fatalf("terminal condition=%+v", condition)
 	}
 }
 
@@ -551,7 +565,7 @@ func newPolicyMismatchCampaignFixture(t *testing.T, excess bool) (*api.BatchEner
 func assertCampaignPolicyMismatchStatus(t *testing.T, parent *api.BatchEnergyOptimization) {
 	t.Helper()
 	status := parent.Status
-	if status.Phase != "Failed" || status.Outcome != terminalReasonEnergyObjectivePolicyMismatch ||
+	if status.Phase != batchEnergyOptimizationPhaseFailed || status.Outcome != terminalReasonEnergyObjectivePolicyMismatch ||
 		status.CompletedTrials != 16 || status.ObservedGeneration != parent.Generation ||
 		status.Result != nil || len(status.Conditions) != 1 {
 		t.Fatalf("status=%+v", status)
@@ -633,7 +647,7 @@ func TestCampaignEnergyObjectivePolicyMismatchIsTerminal(t *testing.T) {
 					t.Fatalf("replay result=%+v err=%v patches=%d resolves=%d loads=%d/%d writes=%d", result, err, native.patches, dependencies.resolves, evidence.calls, loads, dependencies.writes)
 				}
 			case temporaryFailure:
-				if !errors.Is(err, temporaryErr) || native.patches != 0 || updated.Status.Phase == "Failed" {
+				if !errors.Is(err, temporaryErr) || native.patches != 0 || updated.Status.Phase == batchEnergyOptimizationPhaseFailed {
 					t.Fatalf("temporary error=%v status=%+v patches=%d", err, updated.Status, native.patches)
 				}
 				_, err = reconciler.Reconcile(ctx, request)

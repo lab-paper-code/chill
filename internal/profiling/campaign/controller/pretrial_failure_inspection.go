@@ -19,16 +19,16 @@ import (
 
 // PretrialFailureInspection records observations only. It grants no mutation authority.
 type PretrialFailureInspection struct {
-	APIVersion            string                     `json:"apiVersion"`
-	Eligible              bool                       `json:"eligible"`
-	Request               PretrialInspectionRequest  `json:"request"`
-	Reason                string                     `json:"reason"`
-	OwnedRunCount         int                        `json:"ownedRunCount"`
-	PlanNotFound          bool                       `json:"planNotFound"`
-	PublishedResultAbsent bool                       `json:"publishedResultAbsent"`
+	APIVersion            string                      `json:"apiVersion"`
+	Eligible              bool                        `json:"eligible"`
+	Request               PretrialInspectionRequest   `json:"request"`
+	Reason                string                      `json:"reason"`
+	OwnedRunCount         int                         `json:"ownedRunCount"`
+	PlanNotFound          bool                        `json:"planNotFound"`
+	PublishedResultAbsent bool                        `json:"publishedResultAbsent"`
 	Admission             PretrialInspectionAdmission `json:"admission"`
-	Node                  PretrialInspectionNode     `json:"node"`
-	CheckedAt             time.Time                  `json:"checkedAt"`
+	Node                  PretrialInspectionNode      `json:"node"`
+	CheckedAt             time.Time                   `json:"checkedAt"`
 }
 
 type PretrialInspectionRequest struct {
@@ -57,8 +57,8 @@ type PretrialInspectionNode struct {
 func InspectPretrialFailure(ctx context.Context, reader client.Reader, objects evidencestore.LocationReader, logicalStore string, key types.NamespacedName, uid types.UID) (PretrialFailureInspection, error) {
 	proof := PretrialFailureInspection{
 		APIVersion: "chill.dacs.io/pretrial-retirement.v1",
-		Request: PretrialInspectionRequest{Namespace: key.Namespace, Name: key.Name, UID: uid},
-		CheckedAt: time.Now().UTC(),
+		Request:    PretrialInspectionRequest{Namespace: key.Namespace, Name: key.Name, UID: uid},
+		CheckedAt:  time.Now().UTC(),
 	}
 	stop := func(reason string) (PretrialFailureInspection, error) {
 		proof.Reason = reason
@@ -82,7 +82,7 @@ func InspectPretrialFailure(ctx context.Context, reader client.Reader, objects e
 	if !proof.PublishedResultAbsent {
 		return stop("published result exists")
 	}
-	if !parent.DeletionTimestamp.IsZero() || parent.Generation < 1 || parent.Status.Phase != "" || parent.Status.CompletedTrials != 0 || parent.Status.Outcome != "" || len(parent.Status.Conditions) != 0 || parent.Status.ObservedGeneration != 0 {
+	if !pretrialRequestUnstarted(parent) {
 		return stop("request is not unstarted")
 	}
 	if len(validation.IsValidLabelValue(parent.Name)) == 0 {
@@ -100,29 +100,8 @@ func InspectPretrialFailure(ctx context.Context, reader client.Reader, objects e
 	if proof.OwnedRunCount != 0 {
 		return stop("controller-owned ProfilingRun exists")
 	}
-	location := curvePlanLocation(logicalStore, parent.UID)
-	if err := location.Validate(); err != nil {
-		return stop("recorded plan location is invalid")
-	}
-	body, err := objects.OpenLocation(ctx, location)
-	if body != nil {
-		closeErr := body.Close()
-		if closeErr != nil {
-			return stop("cannot close recorded plan read")
-		}
-		if err != nil {
-			return stop("recorded plan read returned contradictory evidence")
-		}
-	}
-	if err == nil {
-		return stop("recorded plan exists or absence is unproven")
-	}
-	var apiError smithy.APIError
-	if errors.As(err, &apiError) && apiError.ErrorCode() == "NoSuchBucket" {
-		return stop("recorded plan bucket is missing")
-	}
-	if !errors.Is(err, evidencestore.ErrNotFound) {
-		return stop("cannot read recorded plan")
+	if reason := pretrialPlanAbsenceFailure(ctx, objects, curvePlanLocation(logicalStore, parent.UID)); reason != "" {
+		return stop(reason)
 	}
 	proof.PlanNotFound = true
 	granted, at, _ := profilingrun.Admission(parent.Annotations)
@@ -139,8 +118,53 @@ func InspectPretrialFailure(ctx context.Context, reader client.Reader, objects e
 	}
 	holder, held := profilingrun.MeasurementHolder(node)
 	proof.Node = PretrialInspectionNode{Name: node.Name, UID: node.UID, ResourceVersion: node.ResourceVersion, Holder: holder}
+	if reason := pretrialNodeFailure(parent, node, holder, held); reason != "" {
+		return stop(reason)
+	}
+	if ctx.Err() != nil {
+		return stop("inspection canceled")
+	}
+	proof.Eligible = true
+	proof.Reason = profiler.ResolutionReasonInvalidRunSpec
+	return proof, nil
+}
+
+func pretrialRequestUnstarted(parent *edgev1alpha1.BatchEnergyOptimization) bool {
+	return parent.DeletionTimestamp.IsZero() && parent.Generation >= 1 && parent.Status.Phase == "" &&
+		parent.Status.CompletedTrials == 0 && parent.Status.Outcome == "" && len(parent.Status.Conditions) == 0 &&
+		parent.Status.ObservedGeneration == 0
+}
+
+func pretrialPlanAbsenceFailure(ctx context.Context, objects evidencestore.LocationReader, location evidencestore.ObjectLocation) string {
+	if err := location.Validate(); err != nil {
+		return "recorded plan location is invalid"
+	}
+	body, err := objects.OpenLocation(ctx, location)
+	if body != nil {
+		closeErr := body.Close()
+		if closeErr != nil {
+			return "cannot close recorded plan read"
+		}
+		if err != nil {
+			return "recorded plan read returned contradictory evidence"
+		}
+	}
+	if err == nil {
+		return "recorded plan exists or absence is unproven"
+	}
+	var apiError smithy.APIError
+	if errors.As(err, &apiError) && apiError.ErrorCode() == "NoSuchBucket" {
+		return "recorded plan bucket is missing"
+	}
+	if !errors.Is(err, evidencestore.ErrNotFound) {
+		return "cannot read recorded plan"
+	}
+	return ""
+}
+
+func pretrialNodeFailure(parent *edgev1alpha1.BatchEnergyOptimization, node *corev1.Node, holder string, held bool) string {
 	if node.Name != parent.Spec.State.TargetNode || node.UID == "" || !node.DeletionTimestamp.IsZero() || !held || holder != string(parent.UID) {
-		return stop("target Node identity or measurement holder does not match")
+		return "target Node identity or measurement holder does not match"
 	}
 	// Duplicate measurement taints are ambiguous even if the first one matches.
 	holders := 0
@@ -150,12 +174,7 @@ func InspectPretrialFailure(ctx context.Context, reader client.Reader, objects e
 		}
 	}
 	if holders != 1 {
-		return stop("target Node measurement holder is ambiguous")
+		return "target Node measurement holder is ambiguous"
 	}
-	if ctx.Err() != nil {
-		return stop("inspection canceled")
-	}
-	proof.Eligible = true
-	proof.Reason = profiler.ResolutionReasonInvalidRunSpec
-	return proof, nil
+	return ""
 }
