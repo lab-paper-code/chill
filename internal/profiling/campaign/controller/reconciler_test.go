@@ -619,12 +619,18 @@ func TestCampaignPublishesOnlyCompletePrefixAtActualExecutionBoundary(t *testing
 		failedBatch int
 		stage string
 		failedIdle bool
+		runtimeError bool
+		unclassified bool
+		wantFailure string
 		wantPrefix []int
 	}{
 		{name: "partial batch four", failedBatch: 4, stage: "Execution", wantPrefix: []int{1, 2}},
 		{name: "empty batch one", failedBatch: 1, stage: "Execution", wantPrefix: []int{}},
 		{name: "idle runtime boundary", failedBatch: 1, failedIdle: true, stage: "Execution", wantPrefix: []int{}},
-		{name: "genuine evidence failure", failedBatch: 1, stage: "ResultValidation"},
+		{name: "genuine evidence failure", failedBatch: 1, stage: "ResultValidation", wantFailure: "FatalFailure"},
+		{name: "generic runtime crash is fatal", failedBatch: 1, stage: "Execution", runtimeError: true, wantFailure: "FatalFailure"},
+		{name: "startup OOM is unknown", failedBatch: 1, stage: "Startup", wantFailure: "UnknownFailure"},
+		{name: "unclassified OOM is unknown", failedBatch: 1, stage: "Execution", unclassified: true, wantFailure: "UnknownFailure"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -663,6 +669,13 @@ func TestCampaignPublishesOnlyCompletePrefixAtActualExecutionBoundary(t *testing
 					if test.wantPrefix == nil {
 						if current.Status.Phase != "Failed" || current.Status.Result != nil || store.puts != 0 {
 							t.Fatalf("genuine failure published discovery: %+v", current.Status)
+						}
+						message := current.Status.Conditions[0].Message
+						failedRun := batchenergyoptimization.RunName(parent.Name, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1}, 1)
+						if current.Status.Outcome != test.wantFailure ||
+							!strings.Contains(message, "class="+test.wantFailure) ||
+							!strings.Contains(message, "failedK=1") || !strings.Contains(message, "run="+parent.Namespace+"/"+failedRun) {
+							t.Fatalf("failed parent lost actual failure identity: %+v", current.Status)
 						}
 					} else {
 						if current.Status.Phase != "Complete" || current.Status.Result == nil {
@@ -713,9 +726,23 @@ func TestCampaignPublishesOnlyCompletePrefixAtActualExecutionBoundary(t *testing
 						run.Status.Evidence = nil
 						run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
 						run.Status.RuntimeTermination = &api.ProfilingRunRuntimeTermination{
-							Container: "runtime", Stage: test.stage, FailureReason: "ExecutionFailed", ExitCode: 3,
+							Container: "runtime", Stage: test.stage, Reason: "OOMKilled", ExitCode: 137,
+							Class: "ExpectedStop",
 							JobReason: "BackoffLimitExceeded", JobMessage: "runtime execution failed",
 						}
+						if test.runtimeError {
+							run.Status.RuntimeTermination.Reason = "Error"
+							run.Status.RuntimeTermination.FailureReason = "ExecutionFailed"
+							run.Status.RuntimeTermination.ExitCode = 3
+							run.Status.RuntimeTermination.Class = "FatalFailure"
+						}
+						if test.stage == "ResultValidation" {
+							run.Status.Conditions = append(run.Status.Conditions, metav1.Condition{
+								Type: api.ProfilingRunConditionEvidenceVerified, Status: metav1.ConditionFalse, Reason: "EvidenceInvalid",
+							})
+							run.Status.RuntimeTermination.Class = "FatalFailure"
+						}
+						if test.unclassified { run.Status.RuntimeTermination.Class = "" }
 					}
 					status := run.Status
 					if err := native.Update(ctx, run); err != nil { t.Fatal(err) }

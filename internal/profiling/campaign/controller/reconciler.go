@@ -181,6 +181,29 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	}
 
 	status := deriveStatus(parent.Generation, snapshot, decision, resultReference, parent.Status.Conditions)
+	if decision.Action == batchenergyoptimization.ActionFail {
+		failedIndex := -1
+		for index, trial := range snapshot.Trials {
+			if trial.Verdict != batchenergyoptimization.VerdictFailed ||
+				(string(trial.FailureClass) != decision.Reason &&
+					!(decision.Reason == terminalReasonRetryLimitExhausted && trial.FailureClass == batchenergyoptimization.FailureClassRetryableFailure)) {
+				continue
+			}
+			if failedIndex < 0 || trial.Attempt > snapshot.Trials[failedIndex].Attempt {
+				failedIndex = index
+			}
+		}
+		if failedIndex >= 0 {
+			trial := snapshot.Trials[failedIndex]
+			run := &runs[failedIndex]
+			status.Conditions[0].Message += fmt.Sprintf("; class=%s workloadMode=%s failedK=%d attempt=%d run=%s/%s uid=%s conditions=%v",
+				trial.FailureClass, trial.Measurement.WorkloadMode, trial.Measurement.Batch, trial.Attempt,
+				run.Namespace, run.Name, run.UID, run.Status.TerminalFailureReasons())
+			if run.Status.RuntimeTermination != nil {
+				status.Conditions[0].Message += "; " + runtimeTerminationDiagnostic(run.Status.RuntimeTermination)
+			}
+		}
+	}
 	if err := r.patchStatus(ctx, parent, status); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -469,7 +492,8 @@ func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization)
 		if parent.Status.Phase == batchEnergyOptimizationPhaseFailed && condition.Status == metav1.ConditionFalse && condition.Reason == parent.Status.Outcome {
 			return condition.Reason == terminalReasonTransitionFailed ||
 				condition.Reason == terminalReasonRetryLimitExhausted ||
-				condition.Reason == "TrialFailed" ||
+				condition.Reason == "FatalFailure" ||
+				condition.Reason == "UnknownFailure" ||
 				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch ||
 				condition.Reason == terminalReasonInvalidCampaignRun ||
 				condition.Reason == profiler.ResolutionReasonInvalidRunSpec ||

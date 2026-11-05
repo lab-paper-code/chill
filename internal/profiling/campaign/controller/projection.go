@@ -33,6 +33,7 @@ func ProjectSnapshot(
 		},
 		Transition:         transition,
 		TransitionRequired: transitionRequired,
+		RetryLimit:         int(parent.Spec.RetryLimit),
 		PlannedBatchSizes:  append([]int(nil), plannedBatchSizes...),
 	}
 	for index := range runs {
@@ -105,32 +106,64 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 	}
 	if run.Status.HasTerminalFailure() {
 		trial.Verdict = batchenergyoptimization.VerdictFailed
-		trial.Boundary = projectDiscoveryBoundary(run, measurement, attempt)
+		trial.FailureClass = projectFailureClass(run)
+		if trial.FailureClass == batchenergyoptimization.FailureClassExpectedStop {
+			trial.Boundary = projectDiscoveryBoundary(run, measurement, attempt)
+			if trial.Boundary == nil {
+				trial.FailureClass = batchenergyoptimization.FailureClassUnknownFailure
+			}
+		}
 	}
 	return trial, nil
 }
 
+func projectFailureClass(run *edgev1alpha1.ProfilingRun) batchenergyoptimization.FailureClass {
+	for _, condition := range run.Status.Conditions {
+		if condition.Status != metav1.ConditionFalse ||
+			(condition.Type != edgev1alpha1.ProfilingRunConditionExecutionComplete &&
+				condition.Type != edgev1alpha1.ProfilingRunConditionEvidenceVerified) {
+			continue
+		}
+		switch condition.Reason {
+		case "EvidenceInvalid", "InvalidRunSpec", "ExecutionPolicyInvalid", "ActuationPolicyInvalid", "RequiredStateNotConfirmed":
+			return batchenergyoptimization.FailureClassFatalFailure
+		}
+	}
+	if termination := run.Status.RuntimeTermination; termination != nil {
+		switch class := batchenergyoptimization.FailureClass(termination.Class); class {
+		case batchenergyoptimization.FailureClassExpectedStop,
+			batchenergyoptimization.FailureClassRetryableFailure,
+			batchenergyoptimization.FailureClassFatalFailure,
+			batchenergyoptimization.FailureClassUnknownFailure:
+			return class
+		}
+	}
+	return batchenergyoptimization.FailureClassUnknownFailure
+}
+
 func projectDiscoveryBoundary(run *edgev1alpha1.ProfilingRun, measurement batchenergyoptimization.Measurement, attempt int) *batchenergyoptimization.DiscoveryStop {
 	termination := run.Status.RuntimeTermination
-	if termination == nil || termination.Container != "runtime" {
+	if termination == nil || termination.Class != profilerevidence.FailureClassExpectedStop || termination.Container != "runtime" {
 		return nil
 	}
 	var reason string
 	switch {
-	case termination.Reason == "OOMKilled":
+	case termination.Stage == profilerevidence.StageExecution && termination.Reason == "OOMKilled":
 		reason = batchenergyoptimization.DiscoveryStopOOM
 	case termination.Stage == profilerevidence.StageExecution && (termination.FailureReason == profilerevidence.FailureMeasurementBudget || termination.JobReason == "DeadlineExceeded"):
 		reason = batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded
-	case termination.Stage == profilerevidence.StageExecution && termination.FailureReason == profilerevidence.FailureExecution && termination.ExitCode == 3:
-		reason = batchenergyoptimization.DiscoveryStopExecutionFailed
 	default:
 		return nil
 	}
 	return &batchenergyoptimization.DiscoveryStop{
 		Reason: reason, FailedMeasurement: &measurement, Attempt: attempt,
 		Run: &batchenergyoptimization.RunReference{Namespace: run.Namespace, Name: run.Name, UID: string(run.UID)},
-		Diagnostic: fmt.Sprintf("container=%s stage=%s reason=%s failureReason=%s exitCode=%d jobReason=%s jobMessage=%s",
-			termination.Container, termination.Stage, termination.Reason, termination.FailureReason,
-			termination.ExitCode, termination.JobReason, termination.JobMessage),
+		Diagnostic: runtimeTerminationDiagnostic(termination),
 	}
+}
+
+func runtimeTerminationDiagnostic(termination *edgev1alpha1.ProfilingRunRuntimeTermination) string {
+	return fmt.Sprintf("class=%s container=%s stage=%s reason=%s failureReason=%s exitCode=%d podReason=%s podMessage=%s jobReason=%s jobMessage=%s",
+		termination.Class, termination.Container, termination.Stage, termination.Reason, termination.FailureReason,
+		termination.ExitCode, termination.PodReason, termination.PodMessage, termination.JobReason, termination.JobMessage)
 }

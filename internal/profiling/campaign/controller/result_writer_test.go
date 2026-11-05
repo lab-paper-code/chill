@@ -311,3 +311,29 @@ func resultWriterResult() batchenergyoptimization.Result {
 		Detail:  json.RawMessage(`{"selectedBatch":2}`),
 	}
 }
+
+func TestResultWriterRetainsTypedInfrastructureFailureDiagnostics(t *testing.T) {
+	parent := testParent()
+	run := resultWriterRun(t, parent, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}, 3, "evicted-run-uid")
+	run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
+	run.Status.RuntimeTermination = &edgev1alpha1.ProfilingRunRuntimeTermination{
+		Class: "RetryableFailure", Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
+		FailureReason: "Evicted", PodReason: "Evicted", PodMessage: "node memory pressure",
+		JobReason: "PodFailurePolicy", JobMessage: "failed Pod was evicted",
+	}
+	store := newFakeCurvePlanStore()
+	writer := newResultWriter(t, store, 1<<20)
+	if _, err := writer.Write(context.Background(), parent, resultWriterCurvePlanReference(), []edgev1alpha1.ProfilingRun{*run}, resultWriterResult()); err != nil {
+		t.Fatal(err)
+	}
+	record, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
+	if err != nil { t.Fatal(err) }
+	excluded := record.Spec().ExcludedTrials
+	if len(excluded) != 1 || excluded[0].Run.UID != string(run.UID) || excluded[0].Attempt != 3 {
+		t.Fatalf("failed execution identity lost: %+v", excluded)
+	}
+	reasons := strings.Join(excluded[0].Reasons, "; ")
+	for _, fact := range []string{"JobFailed", "FailureClass=RetryableFailure", "stage=Execution", "reason=OOMKilled", "podReason=Evicted", "podMessage=node memory pressure", "jobMessage=failed Pod was evicted"} {
+		if !strings.Contains(reasons, fact) { t.Fatalf("immutable exclusion lost %q: %v", fact, excluded[0].Reasons) }
+	}
+}

@@ -139,6 +139,9 @@ func exclusionReasons(run *edgev1alpha1.ProfilingRun) ([]string, error) {
 			"failed ProfilingRun %q violates the terminal-reason projection invariant", run.Name,
 		)
 	}
+	if termination := run.Status.RuntimeTermination; termination != nil && termination.Class != "" {
+		reasons = append(reasons, "FailureClass="+termination.Class, runtimeTerminationDiagnostic(termination))
+	}
 	return reasons, nil
 }
 

@@ -152,6 +152,7 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 				},
 			},
 			TrialsPerBatch: 3,
+			RetryLimit: 2,
 		},
 	}
 }
