@@ -12,11 +12,10 @@ import (
 
 func evaluationSettings(scheduler *application.SchedulerService) func() (serving.SchedulerSettings, error) {
 	return func() (serving.SchedulerSettings, error) {
+		// Preflight must not wait behind refresh or Tick, which hold scheduler.Lock.
 		if scheduler != nil {
-			scheduler.Lock.Lock()
-			defer scheduler.Lock.Unlock()
-			if scheduler.Controller != nil {
-				return scheduler.Controller.Settings(), nil
+			if settings, ok := scheduler.AcceptedSettings(); ok {
+				return settings, nil
 			}
 		}
 		return serving.SchedulerSettings{}, &serving.Error{
