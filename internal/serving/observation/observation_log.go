@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -42,6 +43,9 @@ type ObservationLogConfig struct {
 	// OccupancyTail bounds receipt lookback and late native supplement delivery.
 	OccupancyTail time.Duration
 	Diagnostics   *serving.Diagnostics
+	// Queue gauges are published under submission ordering; readers only load.
+	QueueLength         *atomic.Int64
+	QueueOldestEnqueued *atomic.Int64
 	// OnRequestEvent runs after successful event reflection and FIFO admission.
 	// It must return promptly and must not reenter the log.
 	OnRequestEvent func(serving.RequestEvent)
@@ -345,14 +349,15 @@ type observationAppend struct {
 }
 
 type observationBatch struct {
-	appends   []observationAppend
-	next      int
-	final     *serving.RequestRow
-	requestID string
-	run       *observationRunState
-	sync      bool
-	terminal  bool
-	done      chan error
+	appends    []observationAppend
+	next       int
+	final      *serving.RequestRow
+	requestID  string
+	run        *observationRunState
+	sync       bool
+	terminal   bool
+	done       chan error
+	enqueuedAt int64
 }
 
 func (l *ObservationLog) submissionErrorLocked() error {
@@ -383,8 +388,25 @@ func (l *ObservationLog) enqueueLocked(batch *observationBatch) {
 			l.references[row.catalogID] = *row.catalog
 		}
 	}
+	if l.config.QueueLength != nil || l.config.QueueOldestEnqueued != nil {
+		batch.enqueuedAt = l.now().UnixNano()
+	}
 	l.queue = append(l.queue, batch)
+	l.publishQueueMetricsLocked()
 	l.wake.Signal()
+}
+
+func (l *ObservationLog) publishQueueMetricsLocked() {
+	if l.config.QueueOldestEnqueued != nil {
+		var oldest int64
+		if len(l.queue) != 0 {
+			oldest = l.queue[0].enqueuedAt
+		}
+		l.config.QueueOldestEnqueued.Store(oldest)
+	}
+	if l.config.QueueLength != nil {
+		l.config.QueueLength.Store(int64(len(l.queue)))
+	}
 }
 
 func (l *ObservationLog) freezeBatchLocked(stream string, at time.Time, value any, refs []observationReference, eventAt time.Time) (*observationBatch, error) {
@@ -551,6 +573,7 @@ func (l *ObservationLog) writeLoop() {
 		if len(l.queue) == 0 {
 			l.queue = nil
 		}
+		l.publishQueueMetricsLocked()
 		if batch.done != nil {
 			batch.done <- nil
 		}

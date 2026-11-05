@@ -234,7 +234,7 @@ test("latency uses the exact SLO percentile",()=>{
 
 test("minute summary includes exactly sixty completed second buckets at aligned and fractional clocks",()=>{
   const end=Date.parse("2026-10-30T12:01:00Z")
-  const rows:LiveMetrics[]=Array.from({length:62},(_,i)=>({type:"metrics",seq:i+1,at:new Date(end-61000+i*1000).toISOString(),bucketAt:new Date(end-61000+i*1000).toISOString(),workloads:{a:metric},nodes:{},pool:{wholeWatts:null,activeWatts:null}}))
+  const rows:LiveMetrics[]=Array.from({length:62},(_,i)=>({type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:i+1,at:new Date(end-61000+i*1000).toISOString(),bucketAt:new Date(end-61000+i*1000).toISOString(),workloads:{a:metric},nodes:{},pool:{wholeWatts:null,activeWatts:null}}))
   for(const clock of [end,end+750]) {
     const selected=minuteMetrics(rows,"a",clock)
     assert.equal(selected.length,60)
@@ -280,7 +280,7 @@ test("contiguous device gaps form one incident rather than one incident per seco
 test("only recovered short gaps leave the flow; completeness keeps the original intervals",()=>{
   const time=(seconds:number)=>new Date(now+seconds*1000).toISOString()
   const gaps=[{from:time(0),to:time(1),scope:"node:n",reason:"power sample unavailable"},{from:time(1),to:time(3),scope:"node:n",reason:"power sample unavailable"},{from:time(0),to:time(6),scope:"node:other",reason:"power sample unavailable"}]
-  const metrics:LiveMetrics[]=[{type:"metrics",seq:1,at:time(6),bucketAt:time(6),workloads:{},nodes:{n:{watts:0,observedAt:time(6)},other:{watts:10,observedAt:time(6)}},pool:{wholeWatts:10,activeWatts:0}}]
+  const metrics:LiveMetrics[]=[{type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:1,at:time(6),bucketAt:time(6),workloads:{},nodes:{n:{watts:0,observedAt:time(6)},other:{watts:10,observedAt:time(6)}},pool:{wholeWatts:10,activeWatts:0}}]
   const episodes=gapEpisodes(gaps,now+7000,metrics)
   assert.deepEqual(episodes.map(row=>[row.scope,row.seconds,row.recovered]),[["node:n",3,true],["node:other",6,true]])
   assert.equal(incidentFlow([],gaps,now+7000,false,metrics).length,1)
@@ -303,14 +303,14 @@ test("zero arrivals cannot claim an SLO result and product reasons use Korean la
 })
 test("event history loss cannot recover from metrics or disappear as a short gap",()=>{
   const gap={from:new Date(now-1000).toISOString(),to:at,scope:"events",reason:"event history limit"}
-  const metrics:LiveMetrics[]=[{type:"metrics",seq:1,at,bucketAt:at,workloads:{a:metric},nodes:{},pool:{wholeWatts:10,activeWatts:0}}]
+  const metrics:LiveMetrics[]=[{type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:1,at,bucketAt:at,workloads:{a:metric},nodes:{},pool:{wholeWatts:10,activeWatts:0}}]
   assert.equal(gapEpisodes([gap],now,metrics)[0].recovered,false)
   assert.equal(incidentFlow([],[gap],now,false,metrics).length,1)
 })
 test("operations board keeps service SLO and scoped autonomy visible before device and incident details",async context=>{
   const pool={...workload,pending:0},zero={...metric,received:0,completed:0,failed:0,withinSLO:0,latencySamples:0}
   const snapshot:LiveSnapshot={workloads:Array.from({length:29},(_,i)=>({...pool,uid:`service-${i}`,name:`서비스-${i}`})),nodes:[{uid:"n",name:"장치",powerMode:"고정",ready:true,measurement:false,observedAt:at}],instances:[],routing:{},decision:{at,state:"Keep",reason:"",explanation:""},actions:[],reservations:[]}
-  const sample:LiveMetrics={type:"metrics",seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at}},pool:{wholeWatts:40,activeWatts:0}}
+  const sample:LiveMetrics={type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:1,at,bucketAt:"2026-10-30T12:00:00Z",workloads:Object.fromEntries(snapshot.workloads.map(row=>[row.uid,zero])),nodes:{n:{watts:40,observedAt:at}},pool:{wholeWatts:40,activeWatts:0}}
   const state:LiveState={...initialLiveState(),snapshot,metrics:[sample],lastReceivedAt:now,lastObservedAt:at,status:"fixture"}
   const require=createRequire(import.meta.url)
   let query=new URLSearchParams(),experiment="활성 없음"

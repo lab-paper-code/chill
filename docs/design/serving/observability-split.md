@@ -72,6 +72,12 @@ after Write/Sync; B invariant 8 (Write before Execute) intentionally changes.
 No producer-visible lock covers filesystem work. Sustained CephFS stalls can
 exhaust process memory and OOM loses the unwritten tail; there is no new cap,
 drop policy, deadline, spool, timer, or overload response.
+Existing live metrics frames expose `chill_obslog_queue_length` (unfinished FIFO
+items, including the in-flight head) and `chill_obslog_oldest_wait_seconds`
+(oldest unfinished enqueue age, not a historical high-water mark; zero when
+empty). Enqueue/removal publishes shared atomic state under existing queue
+ordering; live metrics only load it, never acquire the recorder lock. These
+gauges reuse the live timer/endpoint and do not change admission or storage.
 
 FIFO ordering includes catalogs before references and exact-version final
 acknowledgement. Append receipt time is captured at enqueue and clamped only

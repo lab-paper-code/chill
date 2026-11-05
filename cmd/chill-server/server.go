@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving/application"
@@ -87,7 +88,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if diagnostics != nil {
 		recorder = diagnostics.recorder
 	}
-	publisher := newLivePublisher(ctx)
+	var queueLength, queueOldestEnqueued atomic.Int64
+	publisher := newLivePublisher(ctx, &queueLength, &queueOldestEnqueued)
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
@@ -96,6 +98,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 		Retention:        opts.observationRetention,
 		EventLookupHours: opts.eventLookupHours,
 		OnRequestEvent:   publisher.request,
+		QueueLength:      &queueLength, QueueOldestEnqueued: &queueOldestEnqueued,
 	})
 	if err != nil {
 		cancelRun()

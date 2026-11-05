@@ -25,7 +25,7 @@ const (
 func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	p := newLivePublisher(ctx)
+	p := newLivePublisher(ctx, nil, nil)
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},
@@ -91,7 +91,7 @@ func TestLiveOnlyPublishesRecordedDecisionAndActionIdentity(t *testing.T) {
 func projectionPublisher(at time.Time) *livePublisher {
 	h := live.New(at)
 	return &livePublisher{
-		hub: h, metrics: live.NewMetrics(h, at),
+		hub: h, metrics: live.NewMetrics(h, at, nil, nil),
 		registered: map[string]live.Workload{}, instances: map[string]bool{},
 	}
 }

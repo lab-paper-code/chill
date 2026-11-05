@@ -240,4 +240,8 @@ type MetricsFrame struct {
 	Nodes     map[string]NodeMetric `json:"nodes"`
 	Pool      PoolMetric            `json:"pool"`
 	Gaps      []Gap                 `json:"gaps,omitempty"`
+
+	// Queue gauges describe publication time, including on corrected old buckets.
+	ObslogQueueLength       int64   `json:"chill_obslog_queue_length"`
+	ObslogOldestWaitSeconds float64 `json:"chill_obslog_oldest_wait_seconds"`
 }

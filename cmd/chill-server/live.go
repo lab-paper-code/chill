@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
@@ -35,11 +36,11 @@ type livePublisher struct {
 	wg              sync.WaitGroup
 }
 
-func newLivePublisher(ctx context.Context) *livePublisher {
+func newLivePublisher(ctx context.Context, queueLength, queueOldestEnqueued *atomic.Int64) *livePublisher {
 	now := time.Now().UTC()
 	h := live.New(now)
 	p := &livePublisher{
-		hub: h, metrics: live.NewMetrics(h, now), registered: map[string]live.Workload{},
+		hub: h, metrics: live.NewMetrics(h, now, queueLength, queueOldestEnqueued), registered: map[string]live.Workload{},
 		instances: map[string]bool{}, changed: make(chan struct{}, 1),
 	}
 	p.wg.Add(1)

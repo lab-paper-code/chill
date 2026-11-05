@@ -8,7 +8,7 @@ import { stringifySchedulerJSON } from "./scheduler.ts"
 
 const at=(seconds:number)=>new Date(Date.parse("2026-11-01T00:00:00Z")+seconds*1000).toISOString()
 const series={from:at(0),to:at(20),bucketNanos:5000000000,buckets:[0,5,10,15].map((second,index)=>({from:at(second),to:at(second+5),wholePoolMeanWatts:index===1?null:index===0?0:20,activePoolMeanWatts:0,nodes:[{node:{uid:"n",name:"노드"},meanWatts:index===1?null:0}]}))} as OperatingPowerSeries
-const live=(second:number,watts:number|null):LiveMetrics=>({type:"metrics",seq:second,at:at(second+1),bucketAt:at(second),workloads:{},nodes:{n:{watts,observedAt:at(second)}},pool:{wholeWatts:watts,activeWatts:0}})
+const live=(second:number,watts:number|null):LiveMetrics=>({type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:second,at:at(second+1),bucketAt:at(second),workloads:{},nodes:{n:{watts,observedAt:at(second)}},pool:{wholeWatts:watts,activeWatts:0}})
 
 test("power seed keeps actual five-second intervals, appends live, preserves null breaks and measured zero",()=>{
   const points=mergePowerSeries(series,[live(15,0),live(16,null),live(18,30)],Date.parse(at(19)))

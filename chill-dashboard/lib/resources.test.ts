@@ -6,7 +6,7 @@ import { deviceRows, devicePowerPercent, devicePowerScale } from "../features/re
 
 const at="2026-11-01T00:00:00Z"
 const node=(uid:string,name:string):LiveNode=>({uid,name,ready:true,measurement:false,powerMode:"fixed",observedAt:at})
-const metric:LiveMetrics={type:"metrics",seq:1,at,bucketAt:at,workloads:{},nodes:{a:{watts:20,observedAt:at},b:{watts:80,observedAt:at},outside:{watts:null,observedAt:null}},pool:{wholeWatts:null,activeWatts:null}}
+const metric:LiveMetrics={type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:1,at,bucketAt:at,workloads:{},nodes:{a:{watts:20,observedAt:at},b:{watts:80,observedAt:at},outside:{watts:null,observedAt:null}},pool:{wholeWatts:null,activeWatts:null}}
 const pools:PoolsView={observedAt:at,workloads:[],measurement:[],available:[],other:[],issues:[]}
 
 test("device rows preserve observations outside board configuration and keep UID-only observations",()=>{

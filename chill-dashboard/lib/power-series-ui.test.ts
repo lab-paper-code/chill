@@ -94,7 +94,7 @@ test("live power distinguishes a pending history from a received empty response"
   const pending=render()
   assert.match(pending,/전력 이력 조회 중/)
   assert.doesNotMatch(pending,/전력 관측 없음/)
-  state.metrics=[{type:"metrics",seq:1,at:stamp,bucketAt:stamp,workloads:{},nodes:{},pool:{wholeWatts:null,activeWatts:null}}]
+  state.metrics=[{type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:1,at:stamp,bucketAt:stamp,workloads:{},nodes:{},pool:{wholeWatts:null,activeWatts:null}}]
   assert.match(render(),/전력 이력 조회 중/,"a null live sample cannot establish empty history")
   state.metrics=[{...state.metrics[0],pool:{wholeWatts:0,activeWatts:0}}]
   assert.match(render(),/0 W/,"measured zero remains an observed value")
@@ -121,7 +121,7 @@ test("power hook seeds bounded recent history on reentry then retains appended l
   assert.equal(request.searchParams.get("format"),"columns")
   assert.equal(Date.parse(request.searchParams.get("to")!)-Date.parse(request.searchParams.get("from")!),900000)
   assert.equal(value.points[0].wholeWatts,0)
-  const metric:LiveMetrics={type:"metrics",seq:1,at:stamp(1),bucketAt:stamp(0),workloads:{},nodes:{},pool:{wholeWatts:0,activeWatts:0}}
+  const metric:LiveMetrics={type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq:1,at:stamp(1),bucketAt:stamp(0),workloads:{},nodes:{},pool:{wholeWatts:0,activeWatts:0}}
   state={...state,metrics:[metric]};cursor=0;hook(state);effects.splice(0).forEach(effect=>effect())
   cursor=0;value=hook({...state,metrics:[]})
   assert.equal(value.points.at(-1)!.from,Date.parse(metric.bucketAt))

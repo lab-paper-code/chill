@@ -19,7 +19,7 @@ export type LiveReservation = {owner:string;nodes:{uid:string;name:string}[];wor
 export type LiveMetric = {received:number;completed:number;failed:number;withinSLO:number;latencySamples:number;p50ms:number|null;p90ms:number|null;p95ms:number|null;p99ms:number|null}
 export type LiveGap = {from:string;to:string;scope:string;reason:string}
 type Envelope = {seq:number;at:string}
-export type LiveMetrics = Envelope & {type:"metrics";bucketAt:string;workloads:Record<string,LiveMetric>;nodes:Record<string,{watts:number|null;observedAt:string|null}>;pool:{wholeWatts:number|null;activeWatts:number|null};gaps?:LiveGap[]}
+export type LiveMetrics = Envelope & {type:"metrics";bucketAt:string;chill_obslog_queue_length:number;chill_obslog_oldest_wait_seconds:number;workloads:Record<string,LiveMetric>;nodes:Record<string,{watts:number|null;observedAt:string|null}>;pool:{wholeWatts:number|null;activeWatts:number|null};gaps?:LiveGap[]}
 export type LiveCluster = {kind:"pod"|"issue";at:string;event:string;pod?:{uid:string;namespace?:string;name?:string;node?:string;phase?:string;ready?:string};source?:string;reason?:string;previousReason?:string}
 export type LiveActionEvent = LiveAction & {phase:"started"|"completed"|"failed";result?:{status:string;error?:string}}
 export type LiveEvent = {at:string;seq?:number} & ({type:"event";kind:"decision";decision:LiveDecision;action?:never;cluster?:never}|{type:"event";kind:"action";action:LiveActionEvent;decision?:never;cluster?:never}|{type:"event";kind:"cluster";cluster:LiveCluster;decision?:never;action?:never})
@@ -236,10 +236,10 @@ export function parseLiveMessage(input:string|unknown):LiveMessage|null {
         return {...base,type:"delta",...result}
       }
       case "metrics": {
-        keys(row,[...allowed,"bucketAt","workloads","nodes","pool","gaps"])
+        keys(row,[...allowed,"bucketAt","chill_obslog_queue_length","chill_obslog_oldest_wait_seconds","workloads","nodes","pool","gaps"])
         const bucketAt=timestamp(row.bucketAt),pool=object(row.pool);keys(pool,["wholeWatts","activeWatts"])
         if (new Date(bucketAt).getTime()%1000 || /\.[0-9]*[1-9][0-9]*Z$/.test(bucketAt)) return null
-        return {...base,type:"metrics",bucketAt,workloads:map(row.workloads,metric),nodes:map(row.nodes,value=>{const node=object(value);keys(node,["watts","observedAt"]);return {watts:nullable(node.watts,number),observedAt:nullable(node.observedAt,timestamp)}}),pool:{wholeWatts:nullable(pool.wholeWatts,number),activeWatts:nullable(pool.activeWatts,number)},...(row.gaps === undefined ? {} : {gaps:array(row.gaps,gap)})}
+        return {...base,type:"metrics",bucketAt,chill_obslog_queue_length:count(row.chill_obslog_queue_length),chill_obslog_oldest_wait_seconds:number(row.chill_obslog_oldest_wait_seconds),workloads:map(row.workloads,metric),nodes:map(row.nodes,value=>{const node=object(value);keys(node,["watts","observedAt"]);return {watts:nullable(node.watts,number),observedAt:nullable(node.observedAt,timestamp)}}),pool:{wholeWatts:nullable(pool.wholeWatts,number),activeWatts:nullable(pool.activeWatts,number)},...(row.gaps === undefined ? {} : {gaps:array(row.gaps,gap)})}
       }
       case "event": {
         keys(row,[...allowed,"kind","decision","action","cluster"])
