@@ -47,17 +47,13 @@ type capacityPlan struct {
 	// replaces marks a plan that changes the batch policy of a current instance,
 	// or removes one while adding another.
 	replaces bool
+	// retires removes occupancy without preparing replacement capacity.
+	retires bool
 }
 
 // held reports an instance prepared under Overload still inside its hold.
 func (p *capacityPlanner) held(i SchedulerInstance) bool {
 	return !i.Terminated && i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
-}
-
-// idle reports an instance unrouted for at least one observation window once
-// a whole window is observed.
-func (p *capacityPlanner) idle(i SchedulerInstance) bool {
-	return !p.partial && i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
 }
 
 // kappa looks up the row of option variant o for Workload w.
@@ -112,7 +108,8 @@ func (p *capacityPlanner) build() error {
 		}
 		p.examined += len(p.plans[n])
 	}
-	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
+	keep := p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1)
+	p.keepWatts, p.keepFeasible = keep.joules, keep.feasible
 	return nil
 }
 
@@ -354,6 +351,9 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	plan.record.Key = planKey(plan.instances)
 	removed := slices.ContainsFunc(current, func(old SchedulerInstance) bool { return !used[old.ID] })
 	plan.replaces = removed && added
+	plan.retires = !added && slices.ContainsFunc(current, func(old SchedulerInstance) bool {
+		return !old.Terminated && !used[old.ID]
+	})
 	for _, batch := range changed {
 		plan.replaces = plan.replaces || batch
 	}

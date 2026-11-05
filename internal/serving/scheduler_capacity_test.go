@@ -1779,7 +1779,7 @@ func TestCapacityModeChangePlansNeedNoCPUInventory(t *testing.T) {
 	}
 }
 
-func TestCapacityTargetAndIdleDAGProjectOnlyPowerMode(t *testing.T) {
+func TestCapacityTargetDAGProjectsOnlyPowerMode(t *testing.T) {
 	const currentMode, targetMode = "two", "fixed"
 	settings, snapshot, rows, expanded := capacityE1Fixture()
 	n := slices.IndexFunc(snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
@@ -1800,14 +1800,6 @@ func TestCapacityTargetAndIdleDAGProjectOnlyPowerMode(t *testing.T) {
 	target := decision.Target.Nodes[slices.IndexFunc(decision.Target.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })]
 	if target.PowerMode != targetMode || source.PowerMode != currentMode {
 		t.Fatalf("target mode missing or source mutated: %+v", target)
-	}
-	planner := capacityPlannerForTest(t, settings, snapshot, rows)
-	n = slices.IndexFunc(planner.snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == expanded })
-	choice := capacityChoiceForTest(t, planner, map[string]string{"genesis3": "profile@genesis3-fixed/b1/w1"})
-	best := planner.evaluate(choice, 0)
-	planner.chain(n, planner.plans[n][choice[n]])
-	if reason, _ := planner.idleTransition(best, nil); reason != "" {
-		t.Fatalf("idle DAG failed without CPU inventory: %s", reason)
 	}
 }
 
@@ -1950,10 +1942,8 @@ func capacityR5Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, N
 	return s, snap, capacityRowsForTest(s, snap, nil), genesis3, orangepi
 }
 
-// m4 r5 D-R5-2: genesis3 q2 and orangepi q1 stayed at weight 0 after P2; their
-// measured idle power is below the empty Node's, so energy never removes them.
-// Unrouted for one observation window, they are removed; not before.
-func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
+// Idle time does not make a negative-H-gain retirement admissible.
+func TestCapacityIdleInstancesWithNegativeGainStay(t *testing.T) {
 	s, snap, rows, genesis3, orangepi := capacityR5Fixture()
 	// Routing-on now assigns these destinations positive κ shares. Leave routing
 	// fixed here to exercise cleanup of instances that genuinely remain unrouted.
@@ -1962,7 +1952,7 @@ func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
 	for k := 1; k < 3; k++ {
 		snap.Instances[k].UnroutedSince = &since
 	}
-	if d := capacityDecideForTest(t, s, snap, rows); d.Status != schedulerStatusKeep || slices.ContainsFunc(d.Reasons, func(r string) bool { return strings.HasPrefix(r, schedulerIdleInstanceRemoved) }) {
+	if d := capacityDecideForTest(t, s, snap, rows); d.Status != schedulerStatusKeep {
 		t.Fatalf("unrouted for 30 s removed: %s %v", d.Status, d.Reasons)
 	}
 	since = snap.At.Add(-time.Minute)
@@ -1970,14 +1960,13 @@ func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
 	removes := func(node NodeReference) bool {
 		return slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == node })
 	}
-	if d.Target == nil || poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, orangepi) || !removes(genesis3) || !removes(orangepi) ||
-		!slices.Contains(d.Reasons, schedulerIdleInstanceRemoved+":g3") || !slices.Contains(d.Reasons, schedulerIdleInstanceRemoved+":opi") {
-		t.Fatalf("idle instances kept: %+v %v", d.Target, d.Reasons)
+	if d.Target == nil || !poolsOn(*d.Target, genesis3) || !poolsOn(*d.Target, orangepi) || removes(genesis3) || removes(orangepi) {
+		t.Fatalf("negative-gain idle retirement chosen: %+v %v", d.Target, d.Reasons)
 	}
 	until := snap.At.Add(time.Minute)
 	snap.Instances[1].HeldUntil = &until
-	if d = capacityDecideForTest(t, s, snap, rows); d.Target == nil || !poolsOn(*d.Target, genesis3) || poolsOn(*d.Target, orangepi) {
-		t.Fatalf("a held instance was removed as idle: %+v", d.Target)
+	if d = capacityDecideForTest(t, s, snap, rows); d.Target == nil || !poolsOn(*d.Target, genesis3) || !poolsOn(*d.Target, orangepi) {
+		t.Fatalf("held or negative-gain instance removed: %+v", d.Target)
 	}
 }
 
@@ -1988,6 +1977,10 @@ func TestCapacityIdleInstancesAreRemovedAfterOneWindow(t *testing.T) {
 // after one unrouted window. One a disabled Workload routes to stays.
 func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	s, snap, rows, genesis3, orangepi := capacityR5Fixture()
+	profitable := *snap.Instances[1].Profile
+	profitable.IdleBaselineWatts = 60
+	snap.Instances[1].Profile = &profitable
+	snap.Options[1].Instance.Profile = &profitable
 	// Otherwise routing may legitimately bind the Ready owned slot to w1,
 	// making it active rather than an unrouted cleanup candidate.
 	s.Controls.Routing = false
