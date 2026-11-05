@@ -993,7 +993,7 @@ spec:
         values.write_text(json.dumps({'nodeAgent': {'kubernetesClient': {
             'apiServer': '', 'discoverFromDefaultEndpoint': True}}}))
         for label, overrides in (('override', {'values': [str(values)]}),
-                                 ('replace', {'values': [], 'replaceValues': True})):
+                                 ('replace', {'values': [str(values)], 'replaceValues': True})):
             with self.subTest(label=label):
                 self.recipe.update(overrides)
                 evidence = self.out / label
