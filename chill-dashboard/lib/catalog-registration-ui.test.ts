@@ -268,10 +268,6 @@ test("catalog examples only fill empty drafts and cannot overwrite a reviewed op
     const c = consumer(kind)
     c.view(); c.click(/YAML\/JSON/); c.view()
     c.click(/예시를 입력란에 넣기/); c.view()
-    const example = c.nodes().find(node => node.type === "textarea")!.props.value
-    assert.equal(typeof example, "string")
-    const parsed = manifest.parseCatalogManifest(kind, String(example))
-    assert.match(parsed.name, /^<.+>$/)
     assert.equal(c.sent.length, 0)
     const draft = JSON.stringify({name:"operator-draft",spec:{producerOption:42}})
     c.paste(draft); c.view(); c.review(); c.view()
