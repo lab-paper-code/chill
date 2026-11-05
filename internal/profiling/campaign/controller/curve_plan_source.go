@@ -263,8 +263,12 @@ func (s *CurvePlanSource) Resolve(
 }
 
 func (s *CurvePlanSource) location(parentUID types.UID) evidencestore.ObjectLocation {
+	return curvePlanLocation(s.options.Store, parentUID)
+}
+
+func curvePlanLocation(store string, parentUID types.UID) evidencestore.ObjectLocation {
 	return evidencestore.ObjectLocation{
-		Store: s.options.Store,
+		Store: store,
 		Key:   fmt.Sprintf("batch-energy-optimizations/%s/curve-plan.json", parentUID),
 	}
 }
