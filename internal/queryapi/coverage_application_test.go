@@ -54,7 +54,7 @@ func TestCoverageLatestCellNeverUnionsHistoricalBatches(t *testing.T) {
 					Candidate: api.ProfilingRunCandidateSpec{
 						ModelSpec: "model", DeviceClass: "class", ExecutionPath: "cpu", PowerMode: "fixed",
 					}, TargetNode: "node",
-				}, BatchSizes: []int32{1, 2},
+				},
 			},
 			Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 		}
@@ -357,7 +357,7 @@ func TestCoverageConditionIdentitySurvivesSameConditionPreflight(t *testing.T) {
 	}
 	view, err := BuildBatchEnergyOptimizationPreflight(BatchEnergyOptimizationPreflightSnapshot{
 		Plan: plan, VariantID: variant.ID, RequestsComplete: true,
-		Campaign:      api.BatchEnergyOptimization{Spec: api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2}}},
+		Campaign:      api.BatchEnergyOptimization{},
 		ExactEvidence: []MeasurementPreflightEvidence{{Condition: plan.Shared(), Batches: []int{1}}},
 	})
 	if err != nil {

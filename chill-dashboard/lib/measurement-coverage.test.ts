@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { coverageQuality, coverageQualityReasons, coverageMeasurementStatus, coverageFailureHref, coverageProfileQuery, coverageFilterVisible, measurementAge, conditionLabel, deviceLabel, coverageSelection, coveragePathVisible, coverageModes, coverageVariant, coverageRepresentative, coverageProgress, coverageBatchState, coverageRequestHref, powerModeLabel, resolveMeasurementPrefill, runAttempt, runGroupKey, serverCompatibility, staticCompatibility } from "./measurement-coverage.ts"
 import { safeMeasurementReturn } from "./measurements.ts"
-import { requestBatches, requestTargetBatches } from "./measurement-request.ts"
 import type { CoverageModel } from "./measurement-coverage.ts"
 import type { InventoryClass, InventoryView, MeasurementCoverageCell, MeasurementPlan, ModelCompatibility, ProfilingRun, ResultRow } from "./read-types.ts"
 import { readFileSync } from "node:fs"
@@ -26,7 +25,7 @@ test("power mode labels identify measured watts rather than inventing a declared
 const model:CoverageModel={name:"model & one",uid:"model-uid",resourceVersion:"1",spec:{artifacts:[{name:"onnx",format:"onnx",source:{image:"image",architecture:"arm64",files:["model.onnx"]}}],executionPaths:[{name:"cpu",artifact:"onnx",runtime:{family:"firstfloor",backend:"ort-cpu"}}]}}
 const cls:InventoryClass={name:"class",uid:"class-uid",resourceVersion:"1",nodeSelector:{},architecture:"arm64",memory:"8Gi",accelerator:"none",powerModes:[{name:"MAXN",actuator:{kind:"Fixed"}},{name:"15W",actuator:{kind:"Fixed"}}],nodes:[{name:"node",uid:"node-uid",resourceVersion:"1",ready:"True",schedulingDisabled:false}]}
 const inventory:InventoryView={readAt:"2026-10-30T00:00:00Z",deviceClassesResourceVersion:"1",nodesResourceVersion:"1",modelSpecsResourceVersion:"1",classes:[cls],models:[model]}
-const plan:MeasurementPlan={metadata:{namespace:"ns",name:"195",uid:"plan-uid",resourceVersion:"1",creationTimestamp:"2026-10-29T00:00:00Z"},spec:{state:{candidate:{modelSpec:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",preprocessor:"pre"},targetNode:"node"},activeProtocol:{dataset:"data",durationSeconds:10},idleProtocol:{durationSeconds:10},trialsPerBatch:3,retryLimit:1,batchSizes:[1]},status:{phase:"Complete",result:{store:"s",key:"result"}}}
+const plan:MeasurementPlan={metadata:{namespace:"ns",name:"195",uid:"plan-uid",resourceVersion:"1",creationTimestamp:"2026-10-29T00:00:00Z"},spec:{state:{candidate:{modelSpec:model.name,deviceClass:cls.name,executionPath:"cpu",powerMode:"MAXN",preprocessor:"pre"},targetNode:"node"},activeProtocol:{dataset:"data",durationSeconds:10},idleProtocol:{durationSeconds:10},trialsPerBatch:3},status:{phase:"Complete",result:{store:"s",key:"result"}}}
 const run:ProfilingRun={namespace:"ns",name:"195b-active",uid:"run-uid",resourceVersion:"1",generation:2,creationTimestamp:"2026-10-30T00:00:00Z",spec:{candidate:plan.spec.state.candidate,targetNode:"node",measurement:{batch:1,dataset:"data",workloadMode:"active",durationSeconds:10},metricObservation:{durationSeconds:10}},status:{conditions:[{type:"ExecutionComplete",status:"True",observedGeneration:2},{type:"EvidenceVerified",status:"True",observedGeneration:2}],evidence:{store:"s",key:"run"}}}
 
 test("static declarations prove mismatches but never promise runtime support",()=>{
@@ -126,11 +125,10 @@ test("coverage requests work for unmeasured cells without exact variants and pre
   const href=new URL(coverageRequestHref(cell,"ns","/measurements?cell=cell&status=unmeasured"),"http://local")
   assert.equal(href.searchParams.get("model"),model.name)
   assert.equal(href.searchParams.get("node"),"node")
-  assert.equal(href.searchParams.get("batches"),"4,8")
+  assert.equal(href.searchParams.has("batches"),false)
   assert.equal(href.searchParams.has("variantId"),false)
   assert.equal(href.searchParams.get("returnTo"),"/measurements?cell=cell&status=unmeasured")
   assert.equal(new URL(coverageRequestHref({...cell,support:{...cell.support,node:null}},"ns","/measurements"),"http://local").searchParams.has("node"),false)
-  assert.equal(new URL(coverageRequestHref({...cell,batchProgress:null},"ns","/measurements",undefined,[2,8]),"http://local").searchParams.get("batches"),"2,8")
   const variant={id:"variant",condition:{state:{targetNode:"actual-node"}},assessment:cell.assessment,batchProgress:cell.batchProgress!,resultRows:[],requestIds:[],runIds:[],profileIds:[]}
   assert.equal(new URL(coverageRequestHref({...cell,variants:[variant]},"ns","/measurements","variant"),"http://local").searchParams.get("node"),"actual-node")
 })
@@ -151,15 +149,6 @@ test("RKNN on Jetson is statically unsupported, not an unknown runtime declarati
   assert.equal(coveragePathVisible({...cell,executionPath:"rknn"}, {...inventory,models:[rknn],classes:[{...cls,accelerator:"nvidia-jetson-agx-orin"}]}),false)
 })
 
-test("coverage link leaves unspecified batches for the request's path-bounded initializer",()=>{
-  const query=new URL(coverageRequestHref({...cell,batchProgress:null},"ns","/measurements"),"http://local").searchParams
-  assert.equal(query.has("batches"),false)
-  const decoded=requestBatches(query)
-  assert.equal(decoded.error,"")
-  assert.deepEqual(decoded.values,[])
-  assert.deepEqual(requestTargetBatches(query,[2,4],8),[2,4])
-  assert.deepEqual(requestTargetBatches(query,undefined,2),[1,2])
-})
 
 test("measurement age is based on recorded timestamp and never invents missing or future dates",()=>{
   const now=Date.parse("2026-10-31T12:00:00Z")

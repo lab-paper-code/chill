@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { datasetGap, requestNumber, requestBatches, requestDefaults, requestInputs, requestInitialBatches, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts, requestCheckCurrent, requestHref, requestRunHref, requestUsedResults, requestCopySource, requestCopyQuery, requestExecutionStatus } from "./measurement-request.ts"
+import { datasetGap, requestNumber, requestDefaults, requestInputs, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts, requestCheckCurrent, requestHref, requestRunHref, requestUsedResults, requestCopySource, requestCopyQuery, requestExecutionStatus } from "./measurement-request.ts"
 import type { MeasurementAssessment, MeasurementCoverageCell, MeasurementPlan, ProfilesView, ResultRow } from "./read-types.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -15,7 +15,7 @@ import * as measurementHelpers from "./measurements.ts"
 import * as measurementSummary from "./measurement-summary.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
-const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
+const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3}}
 
 
 test("copying a request whose Workload was deleted blocks progress until a current selection is made",()=>{
@@ -30,16 +30,9 @@ test("copying a request whose Workload was deleted blocks progress until a curre
   assert.ok(requestHelpers.steps.filter(step=>step!=="review").some(step=>current.problem(step)))
 })
 
-test("request query batches decode, deduplicate and sort without accepting malformed values",()=>{
-  const query=new URLSearchParams({...condition,batches:"8,1,4,1"})
-  assert.equal(query.get("model"),condition.model)
-  assert.deepEqual(requestBatches(query),{values:[1,4,8],error:""})
-  for(const raw of ["0", "-1", "1.5", "1e2", "1,", "2147483648", "1&batches=2"]){const result=requestBatches(new URLSearchParams(`batches=${raw}`));assert.notEqual(result.error,"");assert.deepEqual(result.values,[])}
-  assert.deepEqual(requestBatches(new URLSearchParams()),{values:[],error:""})
-})
 
 test("default protocol comes from newest server request with the same condition, never another mode or Node",()=>{
-  const newer={...plan,metadata:{...plan.metadata,name:"newer",creationTimestamp:"2026-10-31T00:00:00Z"},spec:{...plan.spec,retryLimit:2}}
+  const newer={...plan,metadata:{...plan.metadata,name:"newer",creationTimestamp:"2026-10-31T00:00:00Z"},spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,warmupIterations:7}}}
   const selected=requestDefaults(condition,[plan,newer],[])
   assert.match(selected?.source??"",/newer/)
   for(const patch of [{model:"other"},{deviceClass:"other"},{node:"other"},{path:"cpu"},{powerMode:"15W"}])assert.equal(requestDefaults({...condition,...patch},[plan],[]),null)
@@ -47,16 +40,16 @@ test("default protocol comes from newest server request with the same condition,
   assert.equal(plan.spec.activeProtocol.dataset,"data")
 })
 
-test("CPU-free catalog fallback retains measured protocol and identifies unprovided retry policy",()=>{
+test("CPU-free catalog fallback retains the measured protocol",()=>{
   const profiles=[{id:"profile",nodeName:"node",measuredAt:"2026-10-30T00:00:00Z",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:{name:"data"},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11}}}] as unknown as ProfilesView["profiles"]
   const selected=requestDefaults(condition,[],profiles)
-  assert.deepEqual(selected?.spec,{...plan.spec,retryLimit:NaN})
+  assert.deepEqual(selected?.spec,plan.spec)
   assert.match(selected?.source??"",/profile/)
   assert.equal(requestDefaults({...condition,path:"cpu"},[],profiles),null)
 })
 
-test("unmeasured targets reuse successful protocol without copying another device's batches or Node",()=>{
-  const success={...plan,status:{phase:"Complete"},spec:{...plan.spec,batchSizes:[16]}}
+test("unmeasured targets reuse successful protocol without copying another device's Node",()=>{
+  const success={...plan,status:{phase:"Complete"}}
   const otherTarget={...condition,deviceClass:"arm-board",node:"arm-node",path:"arm-cpu",powerMode:"15W"}
   const defaults=requestDefaults(otherTarget,[success],[])
   assert.equal(defaults?.exact,false)
@@ -67,12 +60,6 @@ test("unmeasured targets reuse successful protocol without copying another devic
   assert.equal(requestDefaults(otherTarget,[{...success,status:{phase:"Failed"}}],[]),null)
 })
 
-test("empty coverage batch query is a missing selection, not a permanent URL error",()=>{
-  assert.deepEqual(requestBatches(new URLSearchParams("batches=")),{values:[],error:""})
-  assert.deepEqual(requestInitialBatches([],16),[1,2,4])
-  assert.deepEqual(requestInitialBatches([],2),[1,2])
-  assert.deepEqual(requestInitialBatches([8,1],16),[1,8])
-})
 
 test("unmeasured model inputs prefer same-model history and never infer an image task from VQA surplus fields",()=>{
   const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"opaque-id",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512},{name:"question",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
@@ -128,13 +115,6 @@ test("frozen condition explanation lists only observed changed fields, not missi
   assert.equal(requestPreflightReason({code:"FutureReason",message:"서버 상세"}),"서버 상세")
 })
 
-test("request batch selection preserves explicit URL scope and previous target without inventing batches",()=>{
-  assert.deepEqual(requestTargetBatches(new URLSearchParams("batches=8,2"),[1,2,4,8],4),[2,8])
-  assert.deepEqual(requestTargetBatches(new URLSearchParams("batches="),[1]),[])
-  assert.deepEqual(requestTargetBatches(new URLSearchParams(),[1]),[1])
-  assert.deepEqual(requestTargetBatches(new URLSearchParams(),[]),[])
-  assert.deepEqual(requestTargetBatches(new URLSearchParams(),undefined,2),[1,2])
-})
 
 test("changing a preprocessor clears only inherited datasets, preserving deliberate mismatched selections",()=>{
   const context={preprocessors:[{metadata:{name:"image-pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:"model",artifact:"onnx"}}]}}],datasets:[{metadata:{name:"vqa"},spec:{fields:[{name:"image",format:"UTF8",maxBytes:512}]}}]} as Parameters<typeof requestInputs>[4]
@@ -154,12 +134,8 @@ test("rejected preflight points to exact repair fields instead of generic permis
   assert.equal(requestRejectionGuidance("future unknown rejection"),null)
   assert.deepEqual(requestOperationalSummary(undefined),{servingImpact:null,estimatedDurationSeconds:null})
   const answer={resolves:true,campaign:{spec:plan.spec},batchPlan:{plannedBatches:[1,2]}}
-  assert.deepEqual(requestOperationalSummary(answer),{servingImpact:null,estimatedDurationSeconds:96})
-  assert.equal(requestOperationalSummary({...answer,campaign:{spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,warmupIterations:500}}}}).estimatedDurationSeconds,96)
-  assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[1]}}).estimatedDurationSeconds,66)
-  assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[1,2,4]}}).estimatedDurationSeconds,126)
-  assert.equal(requestOperationalSummary({...answer,campaign:{spec:{...plan.spec,idleProtocol:{durationSeconds:10}}}}).estimatedDurationSeconds,null)
-  assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[]}}).estimatedDurationSeconds,0)
+  assert.deepEqual(requestOperationalSummary(answer),{servingImpact:null,estimatedDurationSeconds:null})
+  assert.equal(requestOperationalSummary({...answer,batchPlan:{plannedBatches:[1,2,4]}}).estimatedDurationSeconds,null)
   assert.equal(requestOperationalSummary({...answer,resolves:false}).estimatedDurationSeconds,null)
   const pools={workloads:[{workload:{uid:"service"},instances:[{node:{name:"node"},stopped:false}]},{workload:{uid:"service"},instances:[{node:{name:"node"},stopped:false}]},{workload:{uid:"other"},instances:[{node:{name:"elsewhere"},stopped:false}]}],issues:[]}
   assert.equal(requestOperationalSummary(answer,pools).servingImpact,1)

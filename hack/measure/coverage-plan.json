@@ -1,10 +1,9 @@
 {
   "schemaVersion": "coverage-plan.v2",
-  "source": "Sample-driven planning: every batch and restarted trial meets elapsed and Workload-derived native service sample minima",
+  "source": "Automatic discovery uses the server-preflight candidate domain; allowed cells retain their approved scope and each completed trial meets elapsed and Workload-derived native service sample minima",
   "precisionMeaning": "Sample-maximum quantile coverage is not precise p95 estimation or proof of kappa safety",
   "windowSeconds": 30,
   "idleSeconds": 10,
-  "undeclaredBatchSizes": [1, 2, 4, 8, 16, 32],
   "cellAnnotation": "chill.dacs.io/coverage-cell",
   "requestNamePrefix": "coverage-",
   "runtimeValues": "charts/chill/values-operating.yaml",

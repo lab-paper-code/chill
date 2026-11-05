@@ -25,7 +25,6 @@ func TestBuildBatchEnergyOptimizationPreflightProjectsAResolvedPlan(t *testing.T
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "campaign"},
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State:      edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"},
-			BatchSizes: []int32{1, 2, 4},
 		},
 	}
 
@@ -138,7 +137,7 @@ func TestPreflightBatchPlanPreservesDeclaredBatchOmissionAndAlwaysSerializes(t *
 		if len(fields["batchPlan"]) == 0 || bytes.Equal(fields["batchPlan"], []byte("null")) ||
 			view.BatchPlan.RequestedBatches == nil || view.BatchPlan.MeasuredBatches == nil ||
 			view.BatchPlan.InProgressBatches == nil || view.BatchPlan.MissingBatches == nil ||
-			view.BatchPlan.SubsetAllowed || view.Campaign.Spec.BatchSizes != nil {
+			view.BatchPlan.SubsetAllowed || len(view.BatchPlan.RequestedBatches) != 0 || len(view.BatchPlan.RequestableBatches) != 0 {
 			t.Fatalf("ambiguous batch plan: %s", encoded)
 		}
 		if resolved && (!view.BatchPlan.SearchMayStopEarly ||
@@ -183,7 +182,6 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 			view, err := BuildBatchEnergyOptimizationPreflight(BatchEnergyOptimizationPreflightSnapshot{
 				Plan: plan, VariantID: id, RequestsComplete: true,
 				Campaign: edgev1alpha1.BatchEnergyOptimization{
-					Spec: edgev1alpha1.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}},
 				},
 				ExactEvidence: []MeasurementPreflightEvidence{{Condition: original.Shared(), Batches: []int{1, 1}}},
 			})
@@ -191,7 +189,7 @@ func TestPreflightBatchPlanExactEvidenceAndChangedConditions(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := view.BatchPlan
-			if !got.SubsetAllowed || !got.SearchMayStopEarly {
+			if got.SubsetAllowed || !got.SearchMayStopEarly {
 				t.Fatalf("batch selection flags = %#v", got)
 			}
 			if name == "exact" || name == "protocol" || name == "metric source" || name == "mutable image" {

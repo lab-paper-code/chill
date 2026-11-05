@@ -131,7 +131,7 @@ func coverageSizeRequest(index int) api.BatchEnergyOptimization {
 					DeviceClass: coverageSizeClass, ExecutionPath: coverageSizePath,
 					PowerMode: []string{"performance", "powersave"}[(index/4)%2],
 				}, TargetNode: coverageSizeNode,
-			}, BatchSizes: []int32{1, 4, 8},
+			},
 		},
 		Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}

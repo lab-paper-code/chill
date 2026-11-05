@@ -26,7 +26,6 @@ func TestPreflightEnrichmentUsesExactCatalogAndCurrentSourceSpec(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			request := &api.BatchEnergyOptimization{
 				ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "source", UID: "uid"},
-				Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2, 4}},
 			}
 			proposed := *request.DeepCopy()
 			proposed.Name = "new-request"

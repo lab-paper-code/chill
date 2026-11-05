@@ -215,10 +215,10 @@ test("measurement timestamps retain the explicit timezone",()=>{
   assert.match(formatMeasurementTime("2026-10-30T00:00:00Z"),/9:00:00.*KST/)
 })
 
-test("CPU-free retry condition diff includes batch and protocol changes while summaries retain original reasons separately",()=>{
-  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n"},trialsPerBatch:3,batchSizes:[1,2],retryLimit:1,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
+test("CPU-free retry condition diff includes protocol changes while summaries retain original reasons separately",()=>{
+  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n"},trialsPerBatch:3,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
   assert.deepEqual(measurementConditionDiff(spec,spec),[])
-  assert.deepEqual(measurementConditionDiff(spec,{...spec,batchSizes:[1,2,4],activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["배치: [1,2] → [1,2,4]","부하 durationSeconds: 10 → 20"])
+  assert.deepEqual(measurementConditionDiff(spec,{...spec,activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["부하 durationSeconds: 10 → 20"])
   assert.match(measurementReasonSummary("context deadline exceeded"),/시간.*초과/)
   assert.match(measurementReasonSummary("cost requires exactly one proven primitive state effect"),/단일 상태 변경/)
 })

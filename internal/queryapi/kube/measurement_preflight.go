@@ -55,7 +55,6 @@ func (o *MeasurementPreflightService) Complete(
 }
 
 func samePreflightSpec(current, proposed api.BatchEnergyOptimizationSpec) bool {
-	current.BatchSizes, proposed.BatchSizes = nil, nil
 	return apiequality.Semantic.DeepEqual(current, proposed)
 }
 

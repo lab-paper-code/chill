@@ -21,6 +21,8 @@ func TestBatchEnergyOptimizationPreflightQueryReturnsResolvedPlan(t *testing.T) 
 	t.Parallel()
 	plan := batchEnergyOptimizationPreflightQueryPlan(t)
 	campaign := batchEnergyOptimizationPreflightQueryCampaign()
+	tolerance := 0.5
+	campaign.Spec.ActiveProtocol.DurationToleranceSeconds = &tolerance
 	projector := &recordingCurvePlanProjector{plan: plan}
 	query, err := NewKubernetesBatchEnergyOptimizationPreflightQuery(
 		fake.NewClientBuilder().WithScheme(inventoryScheme(t)).Build(), projector.Project,
@@ -44,8 +46,8 @@ func TestBatchEnergyOptimizationPreflightQueryReturnsResolvedPlan(t *testing.T) 
 		t.Fatalf("snapshot = %#v", got)
 	}
 
-	got.Campaign.Spec.BatchSizes[0] = 128
-	if campaign.Spec.BatchSizes[0] == 128 {
+	*got.Campaign.Spec.ActiveProtocol.DurationToleranceSeconds = 1
+	if *campaign.Spec.ActiveProtocol.DurationToleranceSeconds == 1 {
 		t.Fatal("query returned a mutable alias of the submitted campaign")
 	}
 }
@@ -176,7 +178,6 @@ func batchEnergyOptimizationPreflightQueryCampaign() *edgev1alpha1.BatchEnergyOp
 		ObjectMeta: metav1.ObjectMeta{Namespace: queryTestNamespace, Name: "campaign"},
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
 			State:      edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"},
-			BatchSizes: []int32{1, 2, 4},
 		},
 	}
 }

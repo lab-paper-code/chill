@@ -30,7 +30,8 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                   variant=True, allocatable='20Gi', memory_fraction=0.8, policy_limit=17179869184,
                   model='mobilenet-v2-050', device='raspberry-pi-5-8g', runtime_image='new-runtime',
                   node_uid='node-uid', timing_seconds=None, power_mode='fixed', timing_power_mode=None,
-                  selection_available=True, current_id=None, display_status=None, workload_percentile=99):
+                  selection_available=True, current_id=None, display_status=None, workload_percentile=99,
+                  planned_batches=(1, 2), declared_batches=()):
     """Exercise generate_coverage, not just its independent selection helpers."""
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -100,6 +101,8 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
             'workloads': [{'desired': {'metadata': {'name': 'actual-workload'}, 'spec': {
                 'modelRef': {'name': model}, 'preprocessorRef': {'name': 'pre'},
                 'datasetRef': {'name': 'dataset'}, 'slo': {'percentile': workload_percentile, 'targetLatency': '1s'}}}}]}
+        if declared_batches:
+            inputs["models"]["items"][0]["spec"]["artifacts"][0]["derivation"] = {"declaredBatchSizes": list(declared_batches)}
         values = root / 'runtime.json'
         values.write_text(json.dumps({'profiling': {'executionDeclarations': [{'deviceClass': device,
             'runtime': {'payload': json.dumps({'image': runtime_image, 'architecture': 'arm64',
@@ -129,7 +132,10 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
             return json.dumps(facts).encode()
 
         def api(url, body=None):
-            assert body is None, 'generation must not submit or preflight requests'
+            if url.endswith("/preflight"):
+                assert body is not None and "batchSizes" not in body["spec"] and "retryLimit" not in body["spec"]
+                return {"resolves": True, "batchPlan": {"plannedBatches": list(planned_batches)}}
+            assert body is None, "generation must not submit requests"
             return copy.deepcopy(result if url.endswith('/result') else inputs[url.rsplit('/', 1)[-1]])
 
         output = root / 'out'
@@ -177,9 +183,10 @@ def generation_self_check(gen):
                 'executionPath': 'firstfloor-ort-cpu-arm64', 'memoryLimitBytes': 17179869184},
             'basis': 'observed-failure', 'observations': [{'kind': 'OOMKilled', 'batch': 2}]}
     same = generate_case(gen, phase='Failed', memory_policy=[rule])
-    assert same['cells'][0]['batches'] == [1]
-    assert same['excluded-batches'][0]['reason'] == gen.load(gen.HERE / 'coverage-plan.json')['memoryExcludedBatchReason']
-    assert same['excluded-batches'][0]['memoryPolicy']['status'] == 'applied'
+    assert same['cells'][0]['batches'] == [1, 2] and not same['excluded-batches']
+    assert same['cells'][0]['batchEstimates'][0]['memoryPolicy']['status'] == 'applied'
+    conflict = generate_case(gen, phase='Failed', memory_policy=[rule], declared_batches=[1, 2])
+    assert conflict['summary']['manifestCellCount'] == 0 and conflict['excluded-cells']
     for key, value in (('runtimeImage', 'old-runtime'), ('memoryLimitBytes', 1024),
                        ('executionPath', 'other-path'), ('runtimeImage', None)):
         changed_rule = copy.deepcopy(rule)
@@ -211,7 +218,7 @@ def generation_self_check(gen):
     lower_policy = copy.deepcopy(rule)
     lower_policy['conditions']['memoryLimitBytes'] = 1024
     lower = generate_case(gen, phase='Failed', memory_policy=[lower_policy], policy_limit=1024)
-    assert lower['excluded-batches'][0]['memoryPolicy']['status'] == 'applied'
+    assert lower['cells'][0]['batchEstimates'][0]['memoryPolicy']['status'] == 'applied'
     timing_generation_self_check(gen)
 
 
@@ -311,7 +318,8 @@ def coverage_self_check(gen):
     assert "cpuAffinity" not in spec
     spec, source = gen.coverage_defaults(cell, "different-node", [plan, newer], [])
     assert source == "request:new" and "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
-    assert "batchSizes" not in spec and spec["activeProtocol"]["dataset"] == "dataset"
+    assert "batchSizes" not in spec and "retryLimit" not in spec and spec["activeProtocol"]["dataset"] == "dataset"
+    assert plan["spec"]["batchSizes"] == [1] and plan["spec"]["retryLimit"] == 1
     assert "cpuAffinity" in plan["spec"]  # inheritance never mutates retained requests
     profile = {"id": "profile", "nodeName": "node", "measuredAt": "2026-03-01", "condition": {
         "logicalModel": model, "deviceClass": "device", "artifact": {"executionPath": "path"},
@@ -324,17 +332,9 @@ def coverage_self_check(gen):
     different = copy.deepcopy(plan)
     different["spec"]["state"]["targetNode"] = "other"
     spec, source = gen.coverage_defaults(cell, "node", [different], [profile])
-    assert source == "profile:profile" and spec["retryLimit"] == 1
+    assert source == "profile:profile" and "retryLimit" not in spec
     assert "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
     assert "settlingDurationSeconds" not in spec["activeProtocol"]
-    catalog = {"spec": {"executionPaths": [{"name": "path", "artifact": "artifact", "runtime": {
-        "settings": {"firstfloor": {"maxBatchSize": 4}}}}],
-        "artifacts": [{"name": "artifact", "derivation": {"declaredBatchSizes": [4, 1, 2]}}]}}
-    assert gen.coverage_batches(catalog, "path", policy) == ([1, 2, 4], True, "artifact")
-    catalog["spec"]["artifacts"][0].pop("derivation")
-    assert gen.coverage_batches(catalog, "path", policy) == ([1, 2, 4], False, "artifact")
-    catalog["spec"]["executionPaths"][0]["runtime"]["settings"]["firstfloor"]["maxBatchSize"] = 3
-    assert gen.coverage_batches(catalog, "path", policy) == ([1, 2], False, "artifact")
     execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": gen.SHARED_CURVE_SCHEMA,
                             "evidenceSchema": gen.SHARED_EVIDENCE_SCHEMA}
     historical_conditions = dict(execution_conditions, runtimeImage="historical-runtime")
@@ -363,8 +363,6 @@ def coverage_self_check(gen):
     mixed = [fast, dict(fast, batch=2, secondsPerCall=61), dict(fast, batch=4, secondsPerCall=.1)]
     included, estimates, reason = gen.coverage_batch_plan(cell, [4, 1, 2], mixed, policy, execution_conditions=execution_conditions)
     assert included == [1, 2, 4] and reason is None
-    assert gen.coverage_batch_plan(cell, [1, 2, 4], mixed, policy, declared=True,
-                                  execution_conditions=execution_conditions)[0] == [1, 2, 4]
     active = {"durationSeconds": 60, "durationToleranceSeconds": 0,
               "metricObservation": {"durationSeconds": 62}}
     gen.coverage_active_protocol(active, policy)
@@ -423,6 +421,15 @@ def coverage_self_check(gen):
 
 
 class CoverageGenerationTest(unittest.TestCase):
+    def test_server_preflight_owns_candidate_domain(self):
+        gen = load_coverage_plan()
+        for candidates in ([1], [1, 4]):
+            planned = generate_case(gen, phase='Failed', planned_batches=candidates)
+            self.assertEqual(planned['cells'][0]['candidateBatches'], candidates)
+            self.assertEqual(planned['cells'][0]['batches'], candidates)
+            self.assertNotIn('batchSizes', planned['manifests'][0]['spec'])
+            self.assertNotIn('retryLimit', planned['manifests'][0]['spec'])
+
     def test_actual_workload_percentile_and_unambiguous_source(self):
         gen = load_coverage_plan()
         planned = generate_case(gen, phase='Failed', workload_percentile=95)

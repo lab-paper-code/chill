@@ -133,12 +133,10 @@ export function coverageFailureHref(failure:MeasurementFailure,namespace:string,
   const [requestNamespace,requestName,uid]=failure.requestId.split("/")
   return `/measurements/requests/${encodeURIComponent(requestName)}?${new URLSearchParams({namespace:requestNamespace||namespace,uid:uid??"",returnTo})}`
 }
-export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string,targetBatches:number[]=[]) {
+export function coverageRequestHref(cell:MeasurementCoverageCell,namespace:string,returnTo:string,variantId?:string) {
   const variant=cell.variants.find(variant=>variant.id===variantId),condition=variant?.condition
-  const progress=variant?.batchProgress??coverageProgress(cell)
-  const batches=progress?.missing.length?progress.missing:progress?.target.length?progress.target:targetBatches
   const node=(condition?.metricSource as {nodeName?:string}|undefined)?.nodeName??(condition?.state as {targetNode?:string}|undefined)?.targetNode??cell.support.node?.name
-  return `/measurements/requests/new?${new URLSearchParams({namespace,model:cell.model.name,modelUID:cell.model.uid,deviceClass:cell.deviceClass.name,deviceClassUID:cell.deviceClass.uid,path:cell.executionPath,powerMode:cell.powerMode,...(batches.length?{batches:batches.join(",")}:{}),returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node,...(cell.support.node?.name===node?{nodeUID:cell.support.node.uid}:{})}:{})})}`
+  return `/measurements/requests/new?${new URLSearchParams({namespace,model:cell.model.name,modelUID:cell.model.uid,deviceClass:cell.deviceClass.name,deviceClassUID:cell.deviceClass.uid,path:cell.executionPath,powerMode:cell.powerMode,returnTo,...(variant?{variantId:variant.id}:{}),...(node?{node,...(cell.support.node?.name===node?{nodeUID:cell.support.node.uid}:{})}:{})})}`
 }
 export type Compatibility = {state:"candidate"|"unsupported"|"unknown";reason:string}
 export function staticCompatibility(model:Pick<CoverageModel,"spec">, path:ExecutionPath, cls:InventoryClass):Compatibility {

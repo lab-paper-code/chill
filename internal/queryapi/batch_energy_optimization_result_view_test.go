@@ -24,7 +24,6 @@ func TestBuildBatchEnergyOptimizationResultJoinsDeclaredStateWithTheSealedRecord
 				ModelSpec: "mobilenet-v2-050", PowerMode: "MAXN",
 			},
 		},
-		BatchSizes: []int32{1, 2, 4, 8, 16, 32, 64, 96},
 	}
 	readAt := time.Date(2026, 8, 19, 6, 0, 0, 0, time.FixedZone("KST", 9*60*60))
 
@@ -42,8 +41,7 @@ func TestBuildBatchEnergyOptimizationResultJoinsDeclaredStateWithTheSealedRecord
 	// The state a campaign measured in lives only on the campaign object; a
 	// caller must not need a second read to learn it.
 	if view.Campaign.Spec.State.Candidate.PowerMode != "MAXN" ||
-		view.Campaign.Spec.State.TargetNode != "jetsono" ||
-		len(view.Campaign.Spec.BatchSizes) != 8 {
+		view.Campaign.Spec.State.TargetNode != "jetsono" {
 		t.Fatalf("declared state = %#v", view.Campaign.Spec)
 	}
 	if view.Campaign.Outcome != campaign.Status.Outcome ||

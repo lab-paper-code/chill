@@ -272,11 +272,6 @@ func (p *coverageProjection) addPlannedVariant(
 	variant.Assessment.Reasons = append(variant.Assessment.Reasons, CoverageReason(
 		"PlannedConditionUnconfirmed", "요청 spec만 확인했으며 동결 실행 조건의 중복 여부는 검사에서 확인해야 합니다",
 	))
-	targets := make([]int, 0, len(task.Spec.BatchSizes))
-	for _, batch := range task.Spec.BatchSizes {
-		targets = append(targets, int(batch))
-	}
-	variant.BatchProgress.Target = CoverageBatches(append(variant.BatchProgress.Target, targets...))
 	for _, run := range p.owners[string(task.UID)] {
 		variant.RunIDs = append(variant.RunIDs, string(run.UID))
 	}

@@ -2,6 +2,7 @@ package queryapi
 
 import (
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 )
 
 // Each request retains its own execution state. A newer failed request never
@@ -18,10 +19,7 @@ func AssessMeasurementRequest(
 	}
 	id := task.Namespace + "/" + task.Name + "/" + string(task.UID)
 	measured := map[int]bool{}
-	planned := make([]int, 0, len(task.Spec.BatchSizes))
-	for _, batch := range task.Spec.BatchSizes {
-		planned = append(planned, int(batch))
-	}
+	var planned []int
 	for _, profile := range view.Profiles {
 		reused := profile.Reuse != nil && profile.Reuse.ConfirmationProfileID == id &&
 			profile.Reuse.Outcome == MeasurementVerdictAccepted
@@ -39,9 +37,7 @@ func AssessMeasurementRequest(
 			measured[batch] = true
 		}
 		if facts, found := view.MeasurementFacts[profile.ID]; found {
-			if len(planned) == 0 {
-				planned = facts.Condition.PlannedBatchSizes
-			}
+			planned = facts.Condition.PlannedBatchSizes
 			for _, batch := range facts.Batches {
 				assessment := AssessMeasurementBatch(batch, facts.PointPolicy.MinimumTrials, reused, used)
 				input.Checks = append(input.Checks, assessment.Checklist.Checks...)
@@ -65,9 +61,7 @@ func AssessMeasurementRequest(
 				"Verified retained result: "+facts.ResultReference.Store+"/"+facts.ResultReference.Key,
 				"Retained result is not in the current scheduler profile selection",
 			)
-			if len(planned) == 0 {
-				planned = facts.Condition.PlannedBatchSizes
-			}
+			planned = facts.Condition.PlannedBatchSizes
 			for _, batch := range facts.Batches {
 				measured[batch.Batch] = true
 				assessment := AssessMeasurementBatch(
@@ -82,9 +76,11 @@ func AssessMeasurementRequest(
 			break
 		}
 	}
-	for _, batch := range planned {
-		if !measured[batch] {
-			input.MissingBatches = append(input.MissingBatches, batch)
+	if task.Status.Outcome != string(batchenergyoptimization.BatchDiscoveryComplete) {
+		for _, batch := range planned {
+			if !measured[batch] {
+				input.MissingBatches = append(input.MissingBatches, batch)
+			}
 		}
 	}
 	for _, issue := range view.Insufficiencies {

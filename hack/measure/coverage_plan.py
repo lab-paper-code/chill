@@ -172,8 +172,8 @@ def coverage_defaults(cell, node, plans, profiles):
     for plan in newest:
         if exact(plan["spec"]["state"]["candidate"], plan["spec"]["state"]["targetNode"]):
             spec = copy.deepcopy(plan["spec"])
-            spec.pop("cpuAffinity", None)
-            spec.pop("cpuQuota", None)
+            for field in ("cpuAffinity", "cpuQuota", "batchSizes", "retryLimit"):
+                spec.pop(field, None)
             spec["state"].pop("cpuRequest", None)
             return spec, "request:" + plan["metadata"]["name"]
     matches = [p for p in profiles if
@@ -202,14 +202,11 @@ def coverage_defaults(cell, node, plans, profiles):
                 "intervalMilliseconds": protocol["metricIntervalMilliseconds"],
                 "timeoutMilliseconds": protocol["metricTimeoutMilliseconds"],
                 "durationSeconds": protocol["metricDurationSeconds"]}
-        if source is None:
-            raise ValueError("no inherited retryLimit for " + cell["id"])
-        spec["retryLimit"] = source["spec"]["retryLimit"]
         return spec, "profile:" + profile["id"]
     if source is None:
         raise ValueError("no inherited protocol for " + cell["id"])
     spec = copy.deepcopy(source["spec"])
-    for field in ("cpuQuota", "cpuAffinity", "batchSizes"):
+    for field in ("cpuQuota", "cpuAffinity", "batchSizes", "retryLimit"):
         spec.pop(field, None)
     spec["state"].pop("cpuRequest", None)
     if source["spec"]["state"]["candidate"]["modelSpec"] != model:
@@ -218,15 +215,6 @@ def coverage_defaults(cell, node, plans, profiles):
     return spec, "request:" + source["metadata"]["name"]
 
 
-def coverage_batches(model, path, policy):
-    execution = next(p for p in model["spec"]["executionPaths"] if p["name"] == path)
-    artifact = next(a for a in model["spec"]["artifacts"] if a["name"] == execution["artifact"])
-    declared = artifact.get("derivation", {}).get("declaredBatchSizes", [])
-    maximum = execution["runtime"]["settings"]["firstfloor"]["maxBatchSize"]
-    batches = sorted(declared) if declared else sorted(b for b in policy["undeclaredBatchSizes"] if b <= maximum)
-    if not batches or any(type(b) is not int or b < 1 for b in batches) or len(set(batches)) != len(batches):
-        raise ValueError("invalid artifact batch set")
-    return batches, bool(declared), artifact["name"]
 
 
 def coverage_inputs(spec, model, artifact, preprocessors, datasets):
@@ -461,11 +449,17 @@ def coverage_memory_limit(cell, policies, node, memory_fraction):
     return min(limit, node_limit) if node_limit > 0 else None
 
 
-def coverage_batch_plan(cell, batches, timings, policy, declared=False, execution_conditions=None):
+def coverage_batch_plan(cell, batches, timings, policy, declared_batches=(), execution_conditions=None):
     model, device = cell["model"]["name"], cell["deviceClass"]["name"]
     rule, memory_status = coverage_memory_rule(cell, execution_conditions, policy)
     memory_max = rule["maxBatch"] if memory_status == "applied" else None
     review = rule is not None and memory_status != "applied"
+    # Preserve approved cell exclusions; an allowed cell always explores the server domain.
+    reason = policy["memoryReviewReason"] if review else (
+        policy["memoryExcludedBatchReason"] if memory_max == 0 else None)
+    if reason is None and declared_batches and memory_max is not None and any(
+            batch > memory_max for batch in declared_batches):
+        reason = policy["declaredBatchConflictReason"]
     estimates = []
     # Native sample coverage extends the window; slow historical calls never remove K.
     for batch in sorted(batches):
@@ -476,22 +470,12 @@ def coverage_batch_plan(cell, batches, timings, policy, declared=False, executio
                     coverage_condition_matches(r.get("executionConditions"), execution_conditions)]
         source = max(measured, key=lambda r: r["secondsPerCall"]) if measured else None
         calls = math.floor(policy["windowSeconds"] / source["secondsPerCall"]) if source else None
-        over_memory = memory_max is not None and batch > memory_max
-        included = not over_memory and not review
         estimates.append({"batch": batch, "secondsPerCall": source["secondsPerCall"] if source else None,
-                          "estimatedCallsInWindow": calls, "timingSource": source, "included": included,
-                          "reason": None if included else (
-                              policy["memoryReviewReason"] if review else
-                              policy["memoryExcludedBatchReason"]),
-                          "memoryPolicy": None if rule is None else {
+                          "estimatedCallsInWindow": calls, "timingSource": source, "included": reason is None,
+                          "reason": reason, "memoryPolicy": None if rule is None else {
                               "status": memory_status, "rule": rule, "currentConditions": dict(
                                   execution_conditions or {}, executionPath=cell["executionPath"])}})
-    included = [r["batch"] for r in estimates if r["included"]]
-    reason = None if included else (
-        policy["memoryReviewReason"] if review else policy["memoryExcludedBatchReason"])
-    if declared and included and included != sorted(batches):
-        included, reason = [], policy["declaredBatchConflictReason"]
-    return included, estimates, reason
+    return sorted(batches) if reason is None else [], estimates, reason
 
 
 def coverage_active_protocol(active, policy):
@@ -633,29 +617,28 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
             existing.append({"cellId": cell["id"], "name": previous["metadata"]["name"],
                              "status": previous.get("status", {}).get("phase")})
             continue
-        candidate_batches, declared, artifact = coverage_batches(models[model], cell["executionPath"], policy)
+        execution = next(p for p in models[model]["spec"]["executionPaths"] if p["name"] == cell["executionPath"])
+        artifact = execution["artifact"]
+        selected_artifact = next(a for a in models[model]["spec"]["artifacts"] if a["name"] == artifact)
+        declared_batches = selected_artifact.get("derivation", {}).get("declaredBatchSizes", [])
         node_memory = nodes.get(node, {})
         inventory_node = next(n for n in classes[device]["nodes"] if n["name"] == node)
         if not inventory_node.get("uid") or node_memory.get("metadata", {}).get("uid") != inventory_node["uid"]:
             node_memory = {}
         memory_limit = coverage_memory_limit(cell, policies, node_memory, memory_fraction)
-        batches, estimates, reason = coverage_batch_plan(
-            cell, candidate_batches, timings, policy, declared,
-            dict(required, memoryLimitBytes=memory_limit,
-                 memoryLimitStatus="confirmed" if memory_limit is not None else "unconfirmed"))
-        excluded_batches.extend(dict(r, cellId=cell["id"], model=model, node=node)
-                                for r in estimates if not r["included"])
+        execution_conditions = dict(required, memoryLimitBytes=memory_limit,
+            memoryLimitStatus="confirmed" if memory_limit is not None else "unconfirmed")
+        _, gate_estimates, reason = coverage_batch_plan(
+            cell, declared_batches or [1], timings, policy, declared_batches, execution_conditions)
         if reason:
+            excluded_batches.extend(dict(r, cellId=cell["id"], model=model, node=node) for r in gate_estimates)
             excluded_cells.append({"cellId": cell["id"], "model": model, "node": node,
-                                   "reason": reason, "batchEstimates": estimates})
+                                   "reason": reason, "batchEstimates": gate_estimates})
             continue
         spec, inherited = coverage_defaults(cell, node, inputs["plans"]["items"], inputs["profiles"]["profiles"])
         spec["state"]["targetNode"] = node
         spec["state"]["candidate"].update(modelSpec=model, deviceClass=device,
                                          executionPath=cell["executionPath"], powerMode=cell["powerMode"])
-        spec.pop("batchSizes", None)
-        if not declared:
-            spec["batchSizes"] = batches
         coverage_inputs(spec, model, artifact, inputs["preprocessors"]["items"], inputs["datasets"]["items"])
         minimum_samples = coverage_workload(spec, inputs["workloads"])
         seconds = policy["windowSeconds"]
@@ -670,6 +653,12 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                "metadata": {"name": name, "namespace": NS, "annotations": {
                    policy["cellAnnotation"]: cell["id"],
                    EXECUTION_CONDITIONS_ANNOTATION: json.dumps(required, separators=(",", ":"))}}, "spec": spec}
+        answer = coverage_api(namespace + "/batch-energy-optimizations/preflight", doc)
+        if not answer["resolves"]:
+            raise ValueError("automatic batch discovery plan unresolved for " + cell["id"] + ": " + answer.get("reason", ""))
+        candidate_batches = answer["batchPlan"]["plannedBatches"]
+        batches, estimates, _ = coverage_batch_plan(
+            cell, candidate_batches, timings, policy, declared_batches, execution_conditions)
         priority = policy["models"][model]["priority"]
         row = {"cellId": cell["id"], "name": name, "model": model, "node": node, "priority": priority,
                "deviceClass": device,
@@ -705,7 +694,7 @@ def generate_coverage(output, policy_path, preflight=False, pilot=False):
                "excludedBatchesByModel": dict(Counter(r["model"] for r in excluded_batches)),
                "excludedCellsByModel": dict(Counter(r["model"] for r in excluded_cells)),
                "unknownTimingBatchCount": sum(r["secondsPerCall"] is None for cell in rows for r in cell["batchEstimates"]),
-               "estimateMeaning": f"sample/time work estimate + shared idle + {policy['runOverheadSeconds']}s/run; unknown rates use only the elapsed lower bound, not a completion estimate; excludes variable load/warmup and feeder polling",
+               "estimateMeaning": f"full candidate-domain work estimate + shared idle + {policy['runOverheadSeconds']}s/run; automatic discovery may stop at an execution boundary; not a promised completed count or duration; excludes variable load/warmup and feeder polling",
                "lanes": {node: {"cellCount": len(lane),
                                   "activeSeconds": sum(r["activeSeconds"] for r, _ in lane),
                                   "idleSeconds": sum(r["idleSeconds"] for r, _ in lane),

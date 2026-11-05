@@ -28,7 +28,7 @@ var _ = Describe("BatchEnergyOptimization API", func() {
 		Expect(k8sClient.Create(ctx, campaign)).To(Succeed())
 		DeferCleanup(func() { _ = k8sClient.Delete(ctx, campaign) })
 
-		campaign.Spec.RetryLimit++
+		campaign.Spec.ActiveProtocol.WarmupIterations++
 		err := k8sClient.Update(ctx, campaign)
 		Expect(err).To(HaveOccurred())
 		Expect(apierrors.IsInvalid(err)).To(BeTrue())
@@ -74,7 +74,6 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 				},
 			},
 			TrialsPerBatch: 3,
-			RetryLimit:     2,
 		},
 	}
 }

@@ -68,7 +68,7 @@ func firstProfileInputs(t *testing.T) ([]client.Object, *api.BatchEnergyOptimiza
 			ActiveProtocol: api.ActiveProtocolSpec{Workload: workload.Name, Dataset: workload.Spec.DatasetRef.Name,
 				WarmupIterations: 1, DurationSeconds: 30, MetricObservation: observation},
 			IdleProtocol:   api.IdleProtocolSpec{SettlingDurationSeconds: 1, DurationSeconds: 30, MetricObservation: observation},
-			TrialsPerBatch: 3, BatchSizes: []int32{1},
+			TrialsPerBatch: 3,
 		},
 	}
 	return objects, intent

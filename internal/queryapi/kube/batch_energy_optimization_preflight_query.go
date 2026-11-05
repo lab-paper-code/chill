@@ -65,7 +65,6 @@ func (q *KubernetesBatchEnergyOptimizationPreflightQuery) Read(
 	for i := range requests.Items {
 		request := &requests.Items[i]
 		current, proposed := request.Spec, campaign.Spec
-		current.BatchSizes, proposed.BatchSizes = nil, nil
 		if !apiequality.Semantic.DeepEqual(current, proposed) {
 			continue
 		}

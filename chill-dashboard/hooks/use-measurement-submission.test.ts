@@ -15,7 +15,7 @@ import * as measurementHelpers from "../lib/measurements.ts"
 import * as measurementSummary from "../lib/measurement-summary.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
-const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
+const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3}}
 
 function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>,unknown=false,interact?:(render:()=>ReactNode)=>ReactNode) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
@@ -177,7 +177,7 @@ test("copied request and selected variant keep their dataset instead of the newe
 })
 
 test("new and copied requests construct CPU-free manifests with the complete measured protocol",()=>{
-  const source={...plan,spec:{...plan.spec,batchSizes:[1,4],pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5},idleProtocol:{...plan.spec.idleProtocol,durationToleranceSeconds:0.25}}}
+  const source={...plan,spec:{...plan.spec,batchSizes:[1,4],retryLimit:2,pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5},idleProtocol:{...plan.spec.idleProtocol,durationToleranceSeconds:0.25}}}
   const context={models:[],workloads:[],classes:[],profiles:[],plans:[source],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
   const prefill={active:true,values:condition,node:condition.node,errors:[],returnTo:"/measurements"}
   for(const props of [{context,prefill},{context,from:"source"}]) {
@@ -187,7 +187,10 @@ test("new and copied requests construct CPU-free manifests with the complete mea
     assert.equal(body.apiVersion,"edge.dacs.io/v1alpha1")
     assert.equal(body.kind,"BatchEnergyOptimization")
     assert.equal(body.metadata.namespace,"ns")
-    assert.deepEqual(body.spec,{...source.spec,activeProtocol:{...source.spec.activeProtocol,workload:""}})
+    const {batchSizes: _batches,retryLimit: _retry,...spec}=source.spec
+    assert.deepEqual(body.spec,{...spec,activeProtocol:{...source.spec.activeProtocol,workload:""}})
+    assert.deepEqual(source.spec.batchSizes,[1,4])
+    assert.equal(source.spec.retryLimit,2)
   }
 })
 
@@ -201,11 +204,11 @@ test("preflight success and admission transport failure identify their own check
   assert.doesNotMatch(html,/HTTP 0|연결 상태를 확인/)
 })
 
-test("editing a copied name or batch preserves the original protocol instead of a newer same-target request",()=>{
+test("editing a copied name or trial count preserves the original protocol instead of a newer same-target request",()=>{
   const original={...plan,spec:{...plan.spec,pointPolicy:{confidenceLevel:"0.9"},activeProtocol:{...plan.spec.activeProtocol,durationToleranceSeconds:0.5}}}
   const newer={...original,metadata:{...original.metadata,name:"newer",uid:"newer",creationTimestamp:"2026-11-02"},spec:{...original.spec,pointPolicy:{confidenceLevel:"0.99"},activeProtocol:{...original.spec.activeProtocol,durationSeconds:99,durationToleranceSeconds:1}}}
   const context={models:[],workloads:[],classes:[],profiles:[],plans:[original,newer],preprocessors:[{metadata:{name:"pre"},spec:{input:{fields:[{name:"image",format:"JPEG",maxBytes:1024}]},artifacts:[{target:{model:condition.model,artifact:"onnx"}}]}}],datasets:[{metadata:{name:"data"},spec:{fields:[{name:"image",format:"JPEG",maxBytes:512}]}}]}
-  for(const patch of [{name:"copy-edited"},{batchSizes:[4]},{trials:5}]) {
+  for(const patch of [{name:"copy-edited"},{trials:5}]) {
     const bodies:unknown[]=[]
     renderRequest({context,from:"source"},"from=source","",1,bodies,[],[],patch)
     const body=JSON.parse(JSON.stringify(bodies.at(-1)))
@@ -214,31 +217,6 @@ test("editing a copied name or batch preserves the original protocol instead of 
   }
 })
 
-test("required batches stay outside collapsed conditions and validation appears once",()=>{
-  const issue="한 번에 처리할 건수를 하나 이상 골라 주세요."
-  const html=renderRequest({},"",issue)
-  const beforeBatches=html.slice(0,html.indexOf('id="measurement-batches"'))
-  const detailTags=beforeBatches.match(/<\/?details\b[^>]*>/g)??[]
-  const collapsed=detailTags.reduce((count,tag)=>count+(tag.startsWith("</")?-1:1),0)
-  assert.equal(collapsed,0)
-  assert.equal(html.split(issue).length-1,1)
-  assert.match(html,/href="#measurement-size-error"/)
-  assert.doesNotMatch(html,/>2147483647</)
-  assert.match(html,/>제한 없음</)
-})
-
-test("variant prefill chooses missing batches while explicit URL batches, including empty, win",()=>{
-  const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
-  const selected={requestIds:["ns/source/uid"],batchProgress:{target:[1,2,4,8],measured:[1,2],missing:[4,8]}}
-  const props={context,selected}
-  const checked=(html:string)=>[...html.matchAll(/<input\b[^>]*>/g)].map(match=>match[0]).filter(input=>input.includes('checked=""')&&input.includes('name="batchSizes"')).map(input=>Number(input.match(/\bvalue="(\d+)"/)?.[1]))
-  for(const draft of [props,{...props,context:{...context,plans:[]},prefill:{active:true,values:condition,errors:[],returnTo:"/measurements",node:condition.node}}]) {
-    assert.deepEqual(checked(renderRequest(draft)),[4,8])
-    assert.deepEqual(checked(renderRequest(draft,"batches=2")),[2])
-    assert.deepEqual(checked(renderRequest(draft,"batches=")),[])
-    assert.deepEqual(checked(renderRequest({...draft,selected:{...selected,batchProgress:{...selected.batchProgress,missing:[]}}})),[])
-  }
-})
 test("creation stages keep target, conditions and check submission distinct",()=>{
   const target=renderRequest()
   assert.match(target,/aria-label="요청 단계"/)

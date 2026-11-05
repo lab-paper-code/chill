@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { DatasetResource, PreprocessorResource, ModelList, WorkloadSummary } from "@/lib/domain"
 import type { MeasurementVariant, ProfilesView } from "@/lib/read-types"
-import { advancedFields, begin, emptyDraft, updateDraft, manifest, nodeReason, pathReason, steps, view, type Advanced, type Context, type Draft, datasetGap, requestNumber, requestBatches, requestInputs, requestTargetBatches, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestCopySource, requestCopyQuery, requestHref, type RequestRejectionGuidance } from "@/lib/measurement-request"
+import { advancedFields, begin, emptyDraft, updateDraft, manifest, nodeReason, pathReason, steps, view, type Advanced, type Context, type Draft, datasetGap, requestNumber, requestInputs, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestCopySource, requestCopyQuery, requestHref, type RequestRejectionGuidance } from "@/lib/measurement-request"
 import { parseMeasurementJSON } from "@/lib/measurement-summary"
 import { deviceLabel, resolveMeasurementPrefill, serverCompatibility, staticCompatibility, type MeasurementPrefill } from "@/lib/measurement-coverage"
 import { useCoverageInventory, useModelCompatibility, useMeasurementCoverage, useMeasurementPlans } from "@/hooks/use-measurement-data"
@@ -22,7 +22,6 @@ import { MeasurementKindSelector } from "@/features/dispatch-occupancy-request"
 import { failure, useMeasurementSubmission } from "@/hooks/use-measurement-submission"
 
 const back: [string, string] = ["/measurements/requests", "측정 요청"]
-const batchChoices = [1, 2, 4, 8, 16]
 
 
 type Option = { value: string; label: ReactNode; hint?: ReactNode; disabled?: string }
@@ -43,11 +42,11 @@ function AdvancedFields({ value, set, showErrors, rejection }: { value: Advanced
       {timings.map(row=>{const max=Math.max(row.duration,row.window);return Number.isFinite(max)&&max>0&&row.duration>=0&&row.window>=0?<div key={row.label} className="space-y-1 text-xs" aria-label={`${row.label} 상대 길이`}><span>{row.label} · 측정 시간</span><div className="h-2 rounded bg-primary" style={{width:`${row.duration/max*100}%`}}/><span>전력 기록 창</span><div className="h-2 rounded bg-muted-foreground" style={{width:`${row.window/max*100}%`}}/></div>:null})}
     </section>
     {advancedFields.map(([key, label, min]) => {
-      const issue=!Number.isInteger(value[key])||value[key]<min||value[key]>(key==="retryLimit"?10:2147483647)?"정수 범위 확인":key==="activeTimeout"&&value.activeTimeout>=value.activeInterval||key==="idleTimeout"&&value.idleTimeout>=value.idleInterval?"기록 간격 초과":key==="activeWindow"&&value.activeWindow<value.activeDuration||key==="idleWindow"&&value.idleWindow<value.idleDuration?"측정 시간 미달":""
+      const issue=!Number.isInteger(value[key])||value[key]<min||value[key]>2147483647?"정수 범위 확인":key==="activeTimeout"&&value.activeTimeout>=value.activeInterval||key==="idleTimeout"&&value.idleTimeout>=value.idleInterval?"기록 간격 초과":key==="activeWindow"&&value.activeWindow<value.activeDuration||key==="idleWindow"&&value.idleWindow<value.idleDuration?"측정 시간 미달":""
       const serverIssue=rejection?.fields.includes(key)?"조건 재확인":"",message=showErrors&&issue?issue:serverIssue
-      return <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} aria-invalid={!!message} aria-describedby={message?`measurement-${key}-error`:undefined} type="number" inputMode="numeric" min={min} max={key === "retryLimit" ? 10 : 2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} />{message&&<span id={`measurement-${key}-error`} className="text-destructive">{message}</span>}</label>
+      return <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} aria-invalid={!!message} aria-describedby={message?`measurement-${key}-error`:undefined} type="number" inputMode="numeric" min={min} max={2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} />{message&&<span id={`measurement-${key}-error`} className="text-destructive">{message}</span>}</label>
     })}
-    <table aria-label="수치 제약" className="w-full text-left text-xs tabular-nums sm:col-span-2"><thead><tr><th>항목</th><th>최소</th><th>최대</th></tr></thead><tbody>{advancedFields.map(([key,label,min])=><tr key={key}><th className="font-normal">{label}</th><td>{min}</td><td>{key==="retryLimit"?10:"제한 없음"}</td></tr>)}</tbody></table>
+    <table aria-label="수치 제약" className="w-full text-left text-xs tabular-nums sm:col-span-2"><thead><tr><th>항목</th><th>최소</th><th>최대</th></tr></thead><tbody>{advancedFields.map(([key,label,min])=><tr key={key}><th className="font-normal">{label}</th><td>{min}</td><td>제한 없음</td></tr>)}</tbody></table>
   </div>
 }
 
@@ -85,7 +84,6 @@ export function MeasurementRequestPage() {
     <QueryGate query={plans}><QueryGate query={models}><QueryGate query={workloads}><QueryGate query={inventory}><QueryGate query={preprocessors}><QueryGate query={datasets}><QueryGate query={profiles}>{null}</QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate></QueryGate>
   </Screen>
   const prefill = resolveMeasurementPrefill(new URLSearchParams(params), namespace, inventory.data)
-  const batches=requestBatches(new URLSearchParams(params));if(batches.error)prefill.errors.push(batches.error)
   if(copy?.error)prefill.errors.push(copy.error)
   const context: Context = { models: models.data.items, workloads: workloads.data, classes: inventory.data.classes, plans: plans.data.items ?? [], preprocessors:preprocessors.data?.items??[], datasets:datasets.data?.items??[], profiles:profiles.data?.profiles??[], prefill:prefill.active }
   const selected=coverage.data?.cells.flatMap(cell=>cell.variants).find(variant=>variant.id===params.get("variantId"))
@@ -103,11 +101,9 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
   const [d, setD] = useState<Draft>(() => {
     if(source) {
       const copied=begin(source.metadata.name,context).draft
-      const max=context.models.find(model=>model.metadata.name===copied.model)?.spec.executionPaths.find(path=>path.name===copied.path)?.runtime.settings?.firstfloor?.maxBatchSize
-      return updateDraft(copied,{...(prefill.active?{model:prefill.values.model,deviceClass:prefill.values.deviceClass,node:prefill.node,path:prefill.values.path,powerMode:prefill.values.powerMode}:{}),batchSizes:requestTargetBatches(new URLSearchParams(params),selected?.batchProgress.missing??copied.batchSizes,max),name:null},context,true)
+      return updateDraft(copied,{...(prefill.active?{model:prefill.values.model,deviceClass:prefill.values.deviceClass,node:prefill.node,path:prefill.values.path,powerMode:prefill.values.powerMode}:{}),name:null},context,true)
     }
-    const max=context.models.find(model=>model.metadata.name===prefill.values.model)?.spec.executionPaths.find(path=>path.name===prefill.values.path)?.runtime.settings?.firstfloor?.maxBatchSize
-    const draft=prefill.active ? {...emptyDraft,model:prefill.values.model,deviceClass:prefill.values.deviceClass,node:prefill.node,path:prefill.values.path,powerMode:prefill.values.powerMode,batchSizes:requestTargetBatches(new URLSearchParams(params),selected?.batchProgress.missing,max)} : {...begin(copy?.source?from:null,context).draft,...(!from&&params.has("batches")?{batchSizes:requestTargetBatches(new URLSearchParams(params))}:{})}
+    const draft=prefill.active ? {...emptyDraft,model:prefill.values.model,deviceClass:prefill.values.deviceClass,node:prefill.node,path:prefill.values.path,powerMode:prefill.values.powerMode} : begin(copy?.source?from:null,context).draft
     return updateDraft(draft,{},context,true)
   })
   const v=view(d,context)
@@ -124,7 +120,6 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     if(rejectedReason)document.getElementById("measurement-rejection")?.focus()
   },[rejectedReason,error,showAdvanced])
   const changes=selected&&answer?requestConditionChanges(selected.condition,answer.plan?.shared as unknown as Record<string,unknown>|undefined):[]
-  const chips=[...new Set([...batchChoices.filter(batch=>!v.max||batch<=v.max),...d.batchSizes])].sort((a,b)=>a-b)
   const blocked=prefill.errors.length>0||!!copyError
   const remaining=steps.filter(step=>step!=="review").map(step=>({step,issue:v.problem(step)})).filter(item=>item.issue)
   const invalidStep=error?steps.find(step=>v.problem(step)===error):undefined
@@ -155,7 +150,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
       </section>
       <div hidden={stage!==1} className="space-y-5">
       <section id="measurement-batches" className="grid gap-4 border-t pt-5 md:grid-cols-2" aria-label="목표 배치와 반복">
-        <fieldset className="space-y-3"><legend className="font-semibold">배치 (건)</legend><div className="flex flex-wrap gap-2">{(v.declared??chips).map(batch=><label key={batch} className="inline-flex min-h-11 items-center gap-2 rounded border px-4"><input type="checkbox" name="batchSizes" value={batch} disabled={!!v.declared} checked={!!v.declared||d.batchSizes.includes(batch)} onChange={event=>update({batchSizes:event.target.checked?[...d.batchSizes,batch].sort((a,b)=>a-b):d.batchSizes.filter(item=>item!==batch)})}/>{batch}</label>)}</div>{v.declared&&<p className="text-sm text-muted-foreground">모델 선언 범위</p>}</fieldset>
+        <div className="space-y-2"><h2 className="font-semibold">배치 자동 탐색</h2><p className="text-sm text-muted-foreground">1건부터 배치를 늘려 탐색해요. 모델 파일과 실행 경로의 지원 범위가 탐색 상한이에요. 실행 경계에 도달하면 완료된 낮은 배치의 측정 결과를 보관해요.</p></div>
         <label className="grid gap-2 text-sm">배치별 반복 횟수<Input name="trials" aria-invalid={!!error&&v.trials!==3} aria-describedby={error&&v.problem("size")?"measurement-size-error":undefined} type="number" min={3} max={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/></label>
         {error&&v.problem("size")&&<p id="measurement-size-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("size")}</p>}
       </section>
@@ -185,9 +180,9 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     {rejectedReason&&<section id="measurement-rejection" tabIndex={-1} role="alert" className="notice space-y-2 text-sm"><h2 className="font-semibold">사전검사 거부</h2>{rejection?<><a className="underline" href={`#${rejection.target}`}>{rejection.message}</a><table aria-label="거부 조건" className="w-full text-left tabular-nums"><thead><tr><th>항목</th><th>제약</th></tr></thead><tbody>{rejection.constraints.map(([label,value])=><tr key={label}><th className="font-normal">{label}</th><td>{value}</td></tr>)}</tbody></table></>:<span>수정 필드 미제공</span>}<details><summary className="min-h-11 cursor-pointer py-2">서버 거부 사유 원문</summary><pre className="whitespace-pre-wrap break-words">{rejectedReason}</pre></details></section>}
     {verdict?.state==="unknown"&&!showUnknown&&<p className="text-sm text-muted-foreground">지원 미확인 · 명시 검사 동의 필요</p>}
     {!error&&remaining.length>0&&<details className="rounded border p-3 text-sm"><summary>검사 전 미입력 조건</summary><ul className="list-inside list-disc">{remaining.map(({step,issue})=><li key={step}>{issue}</li>)}</ul></details>}
-    {selected&&<details className="space-y-3 rounded border p-4 text-sm"><summary>이전 결과·재사용 조건</summary><table className="w-full text-left tabular-nums"><thead><tr><th>이전 목표 배치 (건)</th><th>기측정 배치 (건)</th><th>이번 선택 배치 (건)</th></tr></thead><tbody><tr><td>{selected.batchProgress.target.join(", ")||"미기록"}</td><td>{selected.batchProgress.measured.join(", ")||"없음"}</td><td>{d.batchSizes.join(", ")||"미지정"}</td></tr></tbody></table><p>{!answer?"재사용 미검사":answer.batchPlan?.conditionMatch==="exact"?"동결 실행 조건 일치":"기존 결과 유지 · 재사용 미확인"}</p>{changes.length>0&&<table className="w-full text-left"><thead><tr><th>변경 필드</th><th>이전</th><th>현재</th></tr></thead><tbody>{changes.map(change=><tr key={change.field}><th className="font-normal">{change.label}</th><td>{change.before}</td><td>{change.after}</td></tr>)}</tbody></table>}</details>}
+    {selected&&<details className="space-y-3 rounded border p-4 text-sm"><summary>이전 결과·재사용 조건</summary><table className="w-full text-left tabular-nums"><thead><tr><th>이전 탐색 범위 (건)</th><th>기측정 배치 (건)</th><th>이번 탐색 상한 (건)</th></tr></thead><tbody><tr><td>{selected.batchProgress.target.join(", ")||"미기록"}</td><td>{selected.batchProgress.measured.join(", ")||"없음"}</td><td>{answer?.batchPlan?.plannedBatches.join(", ")||"검사 전"}</td></tr></tbody></table><p>{!answer?"재사용 미검사":answer.batchPlan?.conditionMatch==="exact"?"동결 실행 조건 일치":"기존 결과 유지 · 재사용 미확인"}</p>{changes.length>0&&<table className="w-full text-left"><thead><tr><th>변경 필드</th><th>이전</th><th>현재</th></tr></thead><tbody>{changes.map(change=><tr key={change.field}><th className="font-normal">{change.label}</th><td>{change.before}</td><td>{change.after}</td></tr>)}</tbody></table>}</details>}
     {explanation&&<section className="space-y-4 border-t pt-5"><h2 className="font-semibold">{preflightConclusion(explanation)}</h2><PreflightAnswer answer={explanation}/></section>}
-    {pre.error&&<table className="w-full text-left text-sm"><thead><tr><th>서빙 영향 · 서비스 (개)</th><th>예상 점유 · 최소 (s)</th></tr></thead><tbody><tr><td>미확인</td><td>미확인</td></tr></tbody></table>}
+    {pre.error&&<table className="w-full text-left text-sm"><thead><tr><th>서빙 영향 · 서비스 (개)</th><th>예상 점유 (s)</th></tr></thead><tbody><tr><td>미확인</td><td>미확인</td></tr></tbody></table>}
     {stage===2&&<section aria-label="검사·제출" className="space-y-3"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">제출 전 검토</caption><tbody>{[["요청",v.name],["Workload",d.workload],["모델",d.model],["장치 종류",d.deviceClass],["Node",d.node],["전력모드",v.powerMode],["실행 경로",d.path?executionPathLabel(d.path):"미제공"],["모델 입출력 처리",d.preprocessor],["데이터셋",d.dataset],["측정 방식 출처",v.protocol.from??"직접 입력"],["원본 요청",copiedIdentity?.name??source?.metadata.name??from??"복사 안 함"],["원본 저장 영역",copiedIdentity?.namespace??source?.metadata.namespace??(from?"미확인":"해당 없음")],["원본 UID",copiedIdentity?.uid??source?.metadata.uid??(from?"미확인":"해당 없음")]].map(([label,value])=><tr key={label}><th className="py-2 font-medium">{label}</th><td className="break-all">{value||"미제공"}</td></tr>)}</tbody></table><p role="status" className="text-sm font-semibold">미제출</p></section>}
     <div className="flex flex-wrap gap-2">{stage>0&&<Button variant="outline" disabled={unknown||pending||send.isPending} onClick={()=>setStage(stage-1)}>이전</Button>}{stage<2?<Button disabled={blocked||unknown||pending||send.isPending} onClick={next}>다음</Button>:<><Button variant="outline" disabled={blocked||pending||unknown||send.isPending} onClick={verify}>{pending?"검사 중":"요청 범위 검사"}</Button><Button disabled={!passed||blocked||send.isPending||unknown} onClick={submit}>측정 요청</Button></>}</div>
     <details><summary className="min-h-11 cursor-pointer py-2">보낼 요청 원본</summary><SourceJSON inline value={manifest(d,context,namespace)}/></details>{(answer||pre.error||dry.error)&&<details><summary className="min-h-11 cursor-pointer py-2">검사 원본</summary><SourceJSON inline value={{접수검사:dry.data??dry.error,실행계획검사:answer??pre.error}}/></details>}

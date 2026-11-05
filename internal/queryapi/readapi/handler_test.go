@@ -217,6 +217,8 @@ func TestHandlerRejectsInvalidBatchEnergyOptimizationPreflightRequests(t *testin
 	tests := map[string]string{
 		"undecodable body":   `{`,
 		"unknown field":      `{"metadata":{"name":"campaign"},"unexpected":true}`,
+		"removed batch selection": `{"metadata":{"name":"campaign"},"spec":{"batchSizes":[1,2]}}`,
+		"removed retry policy": `{"metadata":{"name":"campaign"},"spec":{"retryLimit":1}}`,
 		"wrong kind":         `{"kind":"ProfilingRun","metadata":{"name":"campaign"}}`,
 		"wrong API version":  `{"apiVersion":"edge.dacs.io/v2","metadata":{"name":"campaign"}}`,
 		"namespace mismatch": `{"metadata":{"namespace":"another-namespace","name":"campaign"}}`,
@@ -498,7 +500,7 @@ func preflightCampaign(namespace string) edgev1alpha1.BatchEnergyOptimization {
 		},
 		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: "campaign"},
 		Spec: edgev1alpha1.BatchEnergyOptimizationSpec{
-			State: edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"}, BatchSizes: []int32{1, 2, 4},
+			State: edgev1alpha1.MeasurementStateSpec{TargetNode: "orangepi"},
 		},
 	}
 }

@@ -128,25 +128,17 @@ func BuildMeasurementBatchPlan(snapshot BatchEnergyOptimizationPreflightSnapshot
 		PlannedBatches: []int{}, MeasuredBatches: []int{}, InProgressBatches: []int{},
 		MissingBatches: []int{}, Reasons: append([]MeasurementBatchPlanReason{}, snapshot.BatchPlanReasons...),
 	}
-	for _, batch := range snapshot.Campaign.Spec.BatchSizes {
-		result.RequestedBatches = append(result.RequestedBatches, int(batch))
-	}
 	if snapshot.Plan.SchemaVersion() == "" {
 		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{"PlanUnresolved", snapshot.Reason})
 		return result
 	}
 	result.ConditionMatch = "planned-only"
 	result.PlannedBatches = snapshot.Plan.PlannedBatchSizes()
-	result.RequestableBatches = slices.Clone(result.PlannedBatches)
-	result.SubsetAllowed = len(snapshot.Campaign.Spec.BatchSizes) != 0
-	result.SearchMayStopEarly = len(result.PlannedBatches) > 1
-	if !result.SubsetAllowed {
-		result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
-			Code: "DeclaredBatchSizes",
-			Message: "The artifact declares the batch set; " +
-				"batchSizes must remain omitted and subsets cannot be requested.",
-		})
-	}
+	result.SearchMayStopEarly = true
+	result.Reasons = append(result.Reasons, MeasurementBatchPlanReason{
+		Code: "AutomaticBatchDiscovery",
+		Message: "The plan bounds automatic batch discovery; completed measurements may cover only a prefix.",
+	})
 	condition := snapshot.Plan.Shared()
 	id := MeasurementVariantID(condition)
 	for _, evidence := range snapshot.ExactEvidence {

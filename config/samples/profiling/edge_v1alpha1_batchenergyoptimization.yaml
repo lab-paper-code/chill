@@ -29,5 +29,3 @@ spec:
       timeoutMilliseconds: 500
       durationSeconds: 31
   trialsPerBatch: 3
-  batchSizes: [1, 2, 4, 8, 16]
-  retryLimit: 2

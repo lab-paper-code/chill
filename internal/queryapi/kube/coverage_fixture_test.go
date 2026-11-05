@@ -56,7 +56,6 @@ func coverageSizeBase() *queryapi.CoverageBase {
 					PowerMode:     "fixed",
 				},
 			},
-			BatchSizes: []int32{1},
 		},
 		Status: api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}

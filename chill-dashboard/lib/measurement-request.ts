@@ -57,32 +57,17 @@ export function requestDefaults(condition:RequestCondition, plans:MeasurementPla
     const source=newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.model&&plan.spec.state.candidate.modelSpec===condition.model)??newest.find(plan=>plan.status?.phase==="Complete"&&!!condition.path&&plan.spec.state.candidate.executionPath===condition.path)
     if(!source)return null
     const spec=source.spec
-    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,workload:undefined,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},batchSizes:undefined,trialsPerBatch:3}}
+    return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,workload:undefined,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},trialsPerBatch:3}}
   }
   const c=profile.condition,active=c.activeProtocol,idle=c.idleProtocol
-  return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 반복 3회는 화면 기본값, 재시도는 직접 지정)`,spec:{
+  return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 반복 3회)`,spec:{
     state:{candidate:{modelSpec:c.logicalModel,deviceClass:c.deviceClass,executionPath:c.artifact.executionPath,powerMode:c.powerMode,preprocessor:c.preprocessor.name},targetNode:profile.nodeName},
     activeProtocol:{warmupIterations:active.warmupIterations,durationSeconds:active.durationSeconds,dataset:active.dataset?.name,metricObservation:{intervalMilliseconds:active.metricIntervalMilliseconds,timeoutMilliseconds:active.metricTimeoutMilliseconds,durationSeconds:active.metricDurationSeconds}},
     idleProtocol:{settlingDurationSeconds:idle.settlingDurationSeconds,durationSeconds:idle.durationSeconds,metricObservation:{intervalMilliseconds:idle.metricIntervalMilliseconds,timeoutMilliseconds:idle.metricTimeoutMilliseconds,durationSeconds:idle.metricDurationSeconds}},
-    trialsPerBatch:3,retryLimit:NaN,
+    trialsPerBatch:3,
   }}
 }
 
-export function requestBatches(params:URLSearchParams) {
-  if(!params.has("batches"))return {values:[] as number[],error:""}
-  const raw=params.get("batches")??"",parts=raw.split(",")
-  if(params.getAll("batches").length!==1||raw&&parts.some(part=>!/^\d+$/.test(part)||!Number.isSafeInteger(Number(part))||Number(part)<1||Number(part)>2147483647))return {values:[] as number[],error:"처리 건수를 읽을 수 없어요. 커버리지에서 조건을 다시 선택하세요."}
-  if(!raw)return {values:[] as number[],error:""}
-  return {values:[...new Set(parts.map(Number))].sort((a,b)=>a-b),error:""}
-}
-
-export function requestInitialBatches(batches:number[],max?:number) {
-  return [...new Set(batches.length?batches:[1,2,4].filter(batch=>!max||batch<=max))].sort((a,b)=>a-b)
-}
-
-export function requestTargetBatches(params:URLSearchParams,previousTarget?:number[],max?:number) {
-  return params.has("batches")?requestBatches(params).values:previousTarget!==undefined?[...previousTarget]:requestInitialBatches([],max)
-}
 
 // Mirror modelcatalog.Compatible: the preprocessor's inputs may be a subset of the dataset fields.
 export function datasetGap(dataset:DatasetSpec,preprocessor:PreprocessorSpec|undefined) {
@@ -136,7 +121,7 @@ export function requestPreflightReason(reason:{code:string;message:string}) {
   const messages:Record<string,string>={
     VariantConditionChanged:"기존 결과와 현재 동결 실행 조건의 일치를 확인하지 못해 기존 배치 제외를 적용하지 않았어요. 기존 결과가 삭제되거나 미측정으로 바뀐 것은 아니며, 이 요청에서의 재사용만 확인되지 않았어요.",
     DeclarationUIDsNotRetained:"보관된 동결 식별자는 일치하지만 당시 모델·장치 종류·전처리기 선언 UID가 남아 있지 않아요.",
-    DeclaredBatchSizes:"모델 파일에 처리 건수 집합이 지정되어 있어 일부 건수만 선택할 수 없어요.",
+    AutomaticBatchDiscovery:"배치는 1건부터 자동 탐색해요. 계획은 탐색 상한이며 완료 측정 범위는 더 작을 수 있어요.",
     PlannedRequestOverlap:"같은 요청 조건으로 계획된 기존 요청이 있어요. 계획의 중복만으로 실제 실행이나 측정 완료를 확인할 수는 없어요.",
     RequestListUnconfirmed:"진행 중인 요청 목록을 확인하지 못했어요. 측정 중 배치가 비어 있어도 겹치는 대기 요청이 없다고 확정할 수는 없어요.",
     PlanUnresolved:"실행 계획을 확정하지 못해 기존 결과의 재사용과 추가 측정 범위를 확인할 수 없어요.",
@@ -156,17 +141,12 @@ export function requestRejectionGuidance(reason:string):RequestRejectionGuidance
 }
 
 export function requestOperationalSummary(answer?:unknown,pools?:unknown) {
-  const value=answer as {resolves?:boolean;campaign?:{spec?:MeasurementPlanSpec};batchPlan?:{plannedBatches:number[]}}|undefined
-  const spec=value?.campaign?.spec,batches=value?.batchPlan?.plannedBatches??spec?.batchSizes
-  const active=spec?.activeProtocol.durationSeconds,idle=spec?.idleProtocol.durationSeconds,settling=spec?.idleProtocol.settlingDurationSeconds
-  // Warmup is an iteration count, not seconds. Only timed request intervals form this lower bound.
-  const intervals=[active,idle,settling],trials=spec?.trialsPerBatch
-  const known=value?.resolves===true&&batches&&trials!==undefined&&Number.isSafeInteger(trials)&&trials>0&&intervals.every(seconds=>typeof seconds==="number"&&Number.isFinite(seconds)&&seconds>=0)
-  const seconds=known?(batches.length?trials*(batches.length*active!+settling!+idle!):0):null
+  const value=answer as {resolves?:boolean;campaign?:{spec?:MeasurementPlanSpec}}|undefined
+  const spec=value?.campaign?.spec
   const view=pools as {workloads?:{workload:{uid:string};instances?:{node:{name:string};stopped:boolean}[]|null}[]|null;issues?:unknown[]|null}|undefined
   const servingImpact=value?.resolves===true&&spec?.state.targetNode&&view&&Array.isArray(view.workloads)&&!view.issues?.length&&view.workloads.every(pool=>Array.isArray(pool.instances))
     ?new Set(view.workloads.filter(pool=>pool.instances!.some(instance=>!instance.stopped&&instance.node.name===spec.state.targetNode)).map(pool=>pool.workload.uid)).size:null
-  return {servingImpact,estimatedDurationSeconds:seconds!==null&&Number.isFinite(seconds)?seconds:null}
+  return {servingImpact,estimatedDurationSeconds:null}
 }
 
 export function requestFailureFacts(conditions:Condition[]=[]):[string,string][] {
@@ -176,7 +156,7 @@ export const steps = ["workload", "device", "run", "size", "advanced", "name", "
 export type Step = typeof steps[number]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
-export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number }
+export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number }
 export const advancedFields: [key: keyof Advanced, label: string, min: number][] = [
   ["warmup", "측정 전 예열 횟수", 0],
   ["activeDuration", "측정 시간 · 초", 1],
@@ -188,15 +168,14 @@ export const advancedFields: [key: keyof Advanced, label: string, min: number][]
   ["idleWindow", "쉬는 상태 전력 기록 시간 · 초", 1],
   ["idleInterval", "쉬는 상태 전력 기록 간격 · 밀리초", 1],
   ["idleTimeout", "쉬는 상태 전력 기록 대기 한도 · 밀리초", 1],
-  ["retryLimit", "실패하면 다시 시도할 횟수", 0],
 ]
 export type Protocol = { values: Advanced; from: string | null; spec?:MeasurementPlanSpec; target?:string; copied?:boolean }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
-export type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; batchSizes: number[]; trials: number | null; protocol: Protocol | null; name: string | null }
+export type Draft = { workload: string; model: string; preprocessor: string; dataset: string; explicitPreprocessor?:boolean; explicitDataset?:boolean; deviceClass: string; node: string; path: string; powerMode: string; trials: number | null; protocol: Protocol | null; name: string | null }
 export type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
 
-export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", batchSizes: [], trials: null, protocol: null, name: null }
-const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN }
+export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", trials: null, protocol: null, name: null }
+const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN }
 function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
   const active = spec.activeProtocol, idle = spec.idleProtocol
   return {
@@ -204,7 +183,6 @@ function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
     activeInterval: active.metricObservation?.intervalMilliseconds ?? NaN, activeTimeout: active.metricObservation?.timeoutMilliseconds ?? NaN,
     settling: idle.settlingDurationSeconds ?? NaN, idleDuration: idle.durationSeconds ?? NaN, idleWindow: idle.metricObservation?.durationSeconds ?? NaN,
     idleInterval: idle.metricObservation?.intervalMilliseconds ?? NaN, idleTimeout: idle.metricObservation?.timeoutMilliseconds ?? NaN,
-    retryLimit: spec.retryLimit,
   }
 }
 export function fillDefaults(draft:Draft,context:Context,inherited=false):Draft {
@@ -227,7 +205,6 @@ export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,i
 function advancedProblem(values: Advanced) {
   const bad = advancedFields.find(([key, , min]) => !Number.isInteger(values[key]) || values[key] < min || values[key] > 2147483647)
   if (bad) return `"${bad[1]}"에 ${bad[2]} 이상의 정수를 적어 주세요.`
-  if (values.retryLimit > 10) return "다시 시도할 횟수는 10번까지 정할 수 있어요."
   if (values.activeTimeout >= values.activeInterval || values.idleTimeout >= values.idleInterval) return "전력 기록 대기 한도는 기록 간격보다 짧아야 해요."
   if (values.activeWindow < values.activeDuration || values.idleWindow < values.idleDuration) return "전력 기록 시간은 측정 시간보다 짧을 수 없어요."
   return ""
@@ -244,14 +221,11 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
   const cls = classes.find(c => c.name === d.deviceClass)
   const node = cls?.nodes.find(n => n.name === d.node)
   const path = model?.spec.executionPaths.find(p => p.name === d.path)
-  const artifact = path && model?.spec.artifacts.find(a => a.name === path.artifact)
   const preprocessor=preprocessors.find(item=>item.metadata.name===d.preprocessor)
   const dataset=datasets.find(item=>item.metadata.name===d.dataset)
   const protocol: Protocol = d.protocol ?? { values: blankAdvanced, from: null }
   const trials = d.trials ?? 3
   const powerMode = cls?.powerModes.length === 1 ? cls.powerModes[0].name : d.powerMode
-  const declared = artifact?.derivation?.declaredBatchSizes?.length ? artifact.derivation.declaredBatchSizes : null
-  const max = path?.runtime.settings?.firstfloor?.maxBatchSize
   const taken = new Set(plans.map(p => p.metadata.name))
   const name = d.name ?? (model && node && path ? measurementRequestName({...d,powerMode}, taken) : "")
   function problem(step: Step): string {
@@ -266,7 +240,6 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
         if (!cls.powerModes.length) return "이 장비에 등록된 전력 모드가 없어서 잴 수 없어요."
         return cls.powerModes.some(m => m.name === powerMode) ? "" : "전력 모드를 골라 주세요."
       case "size":
-        if (!declared && (!d.batchSizes.length || (max && d.batchSizes.some(b => b > max)))) return max ? `한 번에 처리할 건수를 ${max}건 이하로 하나 이상 골라 주세요.` : "한 번에 처리할 건수를 하나 이상 골라 주세요."
         if (trials !== 3) return "반복 횟수는 정확히 3번이어야 해요."
         return ""
       case "advanced": return advancedProblem(protocol.values)
@@ -277,7 +250,7 @@ export function view(d: Draft, { models, classes, plans, preprocessors, datasets
       case "review": return ""
     }
   }
-  return { model, cls, path, protocol, trials, powerMode, declared, max, taken, name, problem }
+  return { model, cls, path, protocol, trials, powerMode, taken, name, problem }
 }
 export function manifest(d: Draft, context: Context, namespace: string) {
   const v = view(d, context)
@@ -288,9 +261,6 @@ export function manifest(d: Draft, context: Context, namespace: string) {
     activeProtocol: { ...activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     trialsPerBatch: v.trials,
-    // The CRD forbids batchSizes when the artifact declares its own set.
-    ...(v.declared ? {} : { batchSizes: [...d.batchSizes].sort((a, b) => a - b) }),
-    retryLimit: p.retryLimit,
     ...(v.protocol.spec?.pointPolicy?{pointPolicy:v.protocol.spec.pointPolicy}:{}),
   }
   return { apiVersion: "edge.dacs.io/v1alpha1", kind: "BatchEnergyOptimization", metadata: { name: v.name, namespace }, spec }
@@ -303,7 +273,7 @@ export function begin(from: string | null, context: Context) {
   const s = source.spec
   // A copied name is a selection only while that Workload is still one of the choices.
   const workload = context.workloads.some(item => item.desired.metadata.name === s.activeProtocol.workload) ? s.activeProtocol.workload! : ""
-  const draft: Draft = { workload, model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, batchSizes: s.batchSizes ?? [], trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
+  const draft: Draft = { workload, model: s.state.candidate.modelSpec, preprocessor: s.state.candidate.preprocessor, dataset: s.activeProtocol.dataset ?? "", deviceClass: s.state.candidate.deviceClass, node: s.state.targetNode, path: s.state.candidate.executionPath, powerMode: s.state.candidate.powerMode, trials: s.trialsPerBatch, protocol: { values: copyAdvanced(s), from: source.metadata.name, spec:s, copied:true }, name: null }
   const v = view(draft, context)
   const open = steps.findIndex(step => step !== "name" && step !== "review" && v.problem(step))
   return { draft, index: open < 0 ? steps.indexOf("name") : open, error: open < 0 ? "" : v.problem(steps[open]), copied: true }

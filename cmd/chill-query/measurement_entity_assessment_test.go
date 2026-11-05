@@ -101,7 +101,6 @@ func TestR18SnapshotProfilesEndpointRetainsCurrentSelection(t *testing.T) {
 func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	task := api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1},
-		Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 2}},
 		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}
 	view := httpapi.ProfilesView{}
@@ -118,15 +117,15 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 		Batches: []serving.BatchProfile{{Batch: 1}},
 	}}
 	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "allowed/old/old-uid"}}
+	view.MeasurementFacts = map[string]serving.MeasurementFacts{"allowed/old/old-uid": {
+		Condition: profilederivation.CurvePlanSpec{PlannedBatchSizes: []int{1, 2}},
+	}}
 	if got := queryapi.AssessMeasurementRequest(
-		task,
-		queryCoverageCatalog(view),
-		queryCoverageCatalog(view),
-	); got.Status != queryapi.MeasurementPartial ||
-		!got.Evidence.Accepted {
-		t.Fatalf("partial accepted profile: %+v", got)
+		task, queryCoverageCatalog(view), queryCoverageCatalog(view),
+	); got.Status != queryapi.MeasurementPartial || !got.Evidence.Accepted {
+		t.Fatalf("retained fixed-sweep plan lost: %+v", got)
 	}
-	task.Spec.BatchSizes = []int32{1}
+	task.Status.Outcome = "BatchDiscoveryComplete"
 	if got := queryapi.AssessMeasurementRequest(
 		task,
 		queryCoverageCatalog(view),
@@ -444,7 +443,6 @@ func TestNativeRequestListSurvivesUnavailableCatalog(t *testing.T) {
 						Namespace: "native-list", Name: "request", UID: "native-uid",
 						Generation: 2, ResourceVersion: "native-version",
 					},
-					Spec: api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1, 4}},
 					Status: api.BatchEnergyOptimizationStatus{
 						Phase: phase, ObservedGeneration: 2, CompletedTrials: 3,
 						Conditions: []meta.Condition{
@@ -514,7 +512,6 @@ func TestNativeRequestListSurvivesUnavailableCatalog(t *testing.T) {
 func TestUnadoptedAcceptedFactsNeverRepairCurrentRequestAssessment(t *testing.T) {
 	task := api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "allowed", Name: "old", UID: "old-uid", Generation: 1},
-		Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
 		Status:     api.BatchEnergyOptimizationStatus{Phase: "Complete", ObservedGeneration: 1},
 	}
 	accepted := httpapi.ProfilesView{CatalogView: servingkube.CatalogView{
@@ -554,7 +551,6 @@ func TestR19RequestAssessmentUsesCurrentMeasurementIdentity(t *testing.T) {
 	for _, name := range []string{"old", "current", "other"} {
 		task := api.BatchEnergyOptimization{
 			ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: name, UID: "uid"},
-			Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
 		}
 		got := queryapi.AssessMeasurementRequest(
 			task,
@@ -568,7 +564,6 @@ func TestR19RequestAssessmentUsesCurrentMeasurementIdentity(t *testing.T) {
 	view.CurrentMeasurements = []profilederivation.MeasurementSelection{{ID: "ns/latest-failed/uid"}}
 	task := api.BatchEnergyOptimization{
 		ObjectMeta: meta.ObjectMeta{Namespace: "ns", Name: "current", UID: "uid"},
-		Spec:       api.BatchEnergyOptimizationSpec{BatchSizes: []int32{1}},
 	}
 	if got := queryapi.AssessMeasurementRequest(
 		task,

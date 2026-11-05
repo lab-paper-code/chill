@@ -24,22 +24,6 @@ type BatchEnergyOptimizationSpec struct {
 	// +optional
 	// +kubebuilder:default={}
 	PointPolicy BatchEnergyOptimizationPointPolicySpec `json:"pointPolicy,omitempty"`
-
-	// BatchSizes is the measurement-selected sweep for an artifact that does
-	// not declare a finite batch-size set. It must be absent when the selected
-	// artifact declares its own set. Kubernetes forbids uniqueItems on an array
-	// schema, so ascending order is checked here and strict increase is enforced
-	// where the sweep is resolved.
-	// +optional
-	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:items:Minimum=1
-	// +kubebuilder:validation:XValidation:rule="self.isSorted()",message="batchSizes must be in ascending order"
-	BatchSizes []int32 `json:"batchSizes,omitempty"`
-
-	// RetryLimit bounds attempts per batch that did not reach a completed execution. It does not bound completed trials.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=10
-	RetryLimit int32 `json:"retryLimit"`
 }
 
 // BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and
