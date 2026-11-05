@@ -76,8 +76,12 @@ preparation are not caller-selected. Campaign children instead carry the plan's
 frozen Workload UID, percentile, target and native sample count, so those selected
 facts are retained and checked without rereading the Workload. ResourceVersion
 is raw provenance only and never an admission/identity gate. A standalone Run
-warms its one selected batch by default; campaign children carry the full frozen
-measured warmup domain.
+warms its one selected batch by default. BEO children share the serving/idle/active
+actor recipe: startup warmup domain `[1]`, with the original active warmup count
+in `StartupWarmupIterations` and `Measurement.WarmupIterations=0`.
+The actor's full `BatchSizes` declares capability; it does not eagerly execute
+higher K. The first current-K execution above 1 is cold and belongs to the active
+measurement window, not an unrecorded current-K warmup.
 
 `profilingrun.ExecutionState.ArtifactPath` comes from the trusted artifact
 declaration and is recorded in RunConfig. Adapter owns destination: `model.onnx`
@@ -113,8 +117,13 @@ is rejected for this measurement contract.
 
 Each of the three independently restarted active trials for every planned batch
 runs until **both** elapsed time is at least 30 seconds (or the longer requested
-minimum) and its derived service-call count is complete. Budget exhaustion and
-the immutable safety timeout fail the trial; neither is successful completion.
+minimum) and its derived known-G service-call count is complete. Budget exhaustion
+and the immutable safety timeout fail the trial; neither completes its evidence.
+For BEO, an expected execution-budget boundary terminates discovery as
+`Complete/BatchDiscoveryComplete`, preserving only the completed three-trial batch
+prefix for derivation. This records a budget limit under the frozen conditions,
+not permanent runtime non-support. Infrastructure/observer/evidence failures remain
+`Failed`; see [Plan 7](../plans/07-batch-energy-optimization-control-path.md).
 Native/client sample alignment and actual counts/windows remain retained evidence.
 Metric observation follows the runtime end fence, including sample-limited windows.
 
@@ -131,12 +140,9 @@ same bound, including its final real power read. Interval/per-read timeout and
 the producer's actual elapsed windows remain unchanged. Runtime failure still
 interrupts both observers immediately; reaching a safety bound is never success.
 
-The sweep does not stop at a local energy minimum or a slow p95. Only batch-one
-evidence from all three current-condition, same-device trials whose fastest
-observed native service call already exceeds the frozen SLO target can end the
-cell at batch one. Its terminal `BatchServiceExceedsSLO` records negative capacity,
-not a usable batch or invented positive κ. Old-regime evidence cannot select this
-branch. The original planned warmup domain remains unchanged.
+The sweep does not stop at a local energy minimum, slow p95 or SLO-impossible
+batch-one result. SLO sets the sample floor; it does not supply an early-stop
+branch or weaken evidence requirements.
 
 For iid continuous service samples, the pooled sample maximum covers population
 q95 with probability `1-.95^59 ≈ .9515` at 59 samples. This minimal coverage is not
@@ -195,22 +201,21 @@ cross-container protocol or retained store.
 
 Runtime: strict config validation; verify Pod UID, Node, artifact, runtime/
 provider/output-validation capability and observe actual CPU environment; bounded wait for both preflight readiness
-signals; active warm-up or loaded-model idle settling; request/await retained
-workload window; emit start; one duration-based measurement; emit end; bounded
+signals; actor startup warmup and, for loaded-idle, settling; request/await retained
+workload window; emit start; measure until elapsed and sample floors (idle: duration); emit end; bounded
 wait for both results; check new source/identity/summary/timestamp/coverage
 relationships; encode mode-specific raw object and bounded size; one immutable
 create; write validated receipt to `/dev/termination-log`; exit zero.
 
-Idle start requires exact load/full observer-independent settling without
-inference; end requires monotonic duration, zero inference and verified residency.
-Non-RKNN idle measurement batch is always one; RKNN retains its first planned
-capability batch. Campaign trial names retain the planned batch independently
-of the measurement batch so retries and completed-trial accounting stay stable.
-ORT model sessions load artifact files without a batch argument, but firstfloor
-request validation still requires the selected batch in `initialized_batches`:
-an ORT artifact declaring only `[4]` therefore cannot execute batch-one idle
-without a separate runtime contract change. Runtime emits signals without
-reading observer results; observers cannot choose a window from observed values.
+Idle start requires exact load/common startup warmup and full observer-independent
+settling; its measured window requires monotonic duration, zero inference and
+verified residency. BEO requires batch 1 in its domain, so idle executes at batch
+1 for both ORT and RKNN. Trial identity retains its planned logical batch and
+attempt independently of the measurement batch. Runtime validates declared
+capability before execution and initializes higher-K inputs lazily; an artifact
+declaration does not prove that a future K will execute. Runtime emits signals
+without reading observer results; observers cannot choose a window from observed
+values.
 
 Metric helper validates config, constructs frozen edge source, emits readiness,
 bounded-waits start, observes until runtime end within the producer attempt

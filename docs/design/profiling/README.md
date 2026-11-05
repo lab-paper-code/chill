@@ -2,16 +2,25 @@
 
 Current boundary: execution → immutable raw/finalized evidence → numeric derivation. Scientific admission removed @`788bcf93`: thermal/workload observations remain, without automatic scientific accept/reject. Read only the relevant contract; source and retained evidence, not historical plans, establish implementation facts.
 
-Quick-energy policy `quick-energy-v2` measures every batch in the frozen ordered
-plan before deriving the minimum measured mean incremental work per item.
-Intermediate local minima no longer stop measurement; completion is
-`MinimumFound/SearchSpaceExhausted`, not a saturation or unmeasured-optimality
-claim. The policy label is recorded in result detail; CRD, RunConfig, raw and
-evidence schemas are unchanged. Terminal current-generation v1 campaigns and
-their immutable results remain untouched/readable. Nonterminal campaigns use
-the current controller policy on resume (the policy version is not frozen in
-the BEO spec); an already stored incompatible result is rejected, never
-overwritten. Use a new campaign identity for a new v2 sweep.
+Batch discovery freezes `1, 2, 4, …` through the selected firstfloor's actual
+`MaxBatchSize`, intersected with finite artifact-declared batches when present;
+batch 1 is required. Public BEO inputs expose neither a batch list nor a retry
+limit. Each trial retains its own existing ProfilingRun and Kubernetes Job.
+The common actor startup warms only batch 1; the first higher-K execution remains
+inside that K's measured window. Three completed loaded-idle trials precede three
+completed active trials per K. Active trials meet both elapsed-time and known-G
+sample floors.
+
+Discovery ends on domain exhaustion or the first expected execution boundary.
+`Complete/BatchDiscoveryComplete` records the completed batch prefix, exact stop
+and optional prefix energy; it does not assert that every candidate succeeded or
+that a usable profile exists. Infrastructure or invalid evidence remains `Failed`.
+Neither a local energy minimum nor SLO impossibility stops discovery.
+[Plan 7](plans/07-batch-energy-optimization-control-path.md) owns the result contract.
+After approved source deployment, start new campaign identities; do not resume
+old campaigns under this contract or rewrite completed raw/finalized evidence,
+stored plans or results. Historical full-sweep counts remain provenance, not new
+campaign completion targets.
 
 ## Plans
 
@@ -22,8 +31,8 @@ overwritten. Use a new campaign identity for a new v2 sweep.
 | [3](plans/03-profile-admission-derivation.md) | Numeric derivation and serving below-resolution energy | completed |
 | [4](plans/04-minimal-profiler-control-path.md) | Operator-managed Profiler and durable control | completed |
 | [6](plans/06-execution-support-expansion.md) | Exact support matrix and outstanding device/live gates | active |
-| [7](plans/07-batch-energy-optimization-control-path.md) | Minimum-energy objective; v2 full sweep supersedes historical local-stop scheduling | completed |
-| [8](plans/08-declared-batch-size-artifacts.md) | Artifact versus campaign batch-set ownership | completed |
+| [7](plans/07-batch-energy-optimization-control-path.md) | Automatic batch discovery and completed-prefix energy result | current contract; integration/live proof separate |
+| [8](plans/08-declared-batch-size-artifacts.md) | Artifact declaration bounds automatic batch domain | current contract; retained artifact probe below |
 | [10](plans/10-transition-cost-measurement.md) | Exact directed tau/eta measurement; new estimator live gate open | completed / live gate active |
 | 5 / 5a | Saturation / sequential early-stop designs | removed @`dd520844`; Plan 7 owns current objective |
 | 9 | Owned NodeActuation transition extraction | removed @`f4b0b685`; [Node request/generation](../platform/node-agent.md#3-노드-전력모드-node-label과-generation) owns current protocol |
@@ -47,8 +56,9 @@ Evidence v1alpha17 binds actual execution/transition facts; active raw v1alpha10
 
 Parent controllers share the `ProfilingRunStatus` terminal-failure interpreter for
 execution/evidence interpretation. Verified evidence takes precedence; pending
-Runs remain pending. Campaign retries/result publication and idle-baseline
-attempt limits/publication remain separate parent policies. This does not
+Runs remain pending. BEO expected execution boundaries complete discovery without
+retry; genuine infrastructure/evidence failures remain failures. Idle-baseline
+attempt limits/publication remain a separate parent policy. This does not
 replace the Profiler's current-generation pre-Job failure check.
 
 `internal/profiling/campaign/evidence` reconstructs retained campaign results,
