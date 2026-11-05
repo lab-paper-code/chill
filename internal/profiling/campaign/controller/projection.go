@@ -6,6 +6,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -118,9 +119,9 @@ func projectDiscoveryBoundary(run *edgev1alpha1.ProfilingRun, measurement batche
 	switch {
 	case termination.Reason == "OOMKilled":
 		reason = batchenergyoptimization.DiscoveryStopOOM
-	case termination.Stage == "Execution" && (termination.FailureReason == "MeasurementBudgetExceeded" || termination.JobReason == "DeadlineExceeded"):
+	case termination.Stage == profilerevidence.StageExecution && (termination.FailureReason == profilerevidence.FailureMeasurementBudget || termination.JobReason == "DeadlineExceeded"):
 		reason = batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded
-	case termination.Stage == "Execution" && termination.FailureReason == "ExecutionFailed" && termination.ExitCode == 3:
+	case termination.Stage == profilerevidence.StageExecution && termination.FailureReason == profilerevidence.FailureExecution && termination.ExitCode == 3:
 		reason = batchenergyoptimization.DiscoveryStopExecutionFailed
 	default:
 		return nil
