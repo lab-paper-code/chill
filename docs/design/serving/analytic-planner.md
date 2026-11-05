@@ -51,6 +51,7 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 - 빠진 행은 Workload마다 다음 행 하나씩 round-robin으로 공용 semaphore에 투입하여, 행이 많은 Workload 뒤에서 다른 Workload가 굶지 않게 한다.
 - 계산한 행도 기록된 이전 행(계산 시간 문단)도 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
+- 각 Tick의 planner는 병렬 탐색 전에 option/Workload별 행 키·κ·사유와 현재 인스턴스별 κ·행을 한 번 해석한다. 누락·거절 결과도 포함한 이 읽기 전용 표는 그 planner에서만 살며, 후보 평가는 디스패치 점유 조회나 행 키 직렬화·해시를 반복하지 않는다. 다음 Tick은 새 snapshot과 행으로 다시 만든다.
 
 **계산 시간과 이전 행.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. worker는 동일키 마지막 capacity-row-built를 로컬 management→archive 최신순으로 찾아 previous로 쓰고 계산 후 교체하며 없으면 CapacityPending이다.
 

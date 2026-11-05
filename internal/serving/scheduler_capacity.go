@@ -350,6 +350,9 @@ type capacityPlanner struct {
 	examined     int
 	searched     SchedulerPlanSearch
 	variants     map[string]SchedulerOption // capacity variants by profile ID and batch limit
+	// Resolved once during construction; every plan and sweep worker only reads.
+	optionCapacity  map[int][]capacityChoice
+	currentCapacity map[capacityInstanceKey]capacityItem
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.
@@ -419,6 +422,7 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 			}
 		}
 	}
+	p.resolveCapacity()
 	return p
 }
 
