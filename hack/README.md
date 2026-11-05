@@ -184,6 +184,32 @@ Base source-chart approval does not approve staged configuration changes;
 dynamic probe output is validated by the built-in path, not an arbitrary
 override.
 
+Strict dashboard-only execution preserves existing nonterminal measurements.
+It requires exactly the `dashboard` image role, no custom phase commands,
+`generatedValues`, `toolSources`, runtime declarations, or measurement-affecting
+options. Eligibility is provisional: the captured live manifest plus Helm hooks
+and source render
+must contain identical resource identities and structurally identical objects,
+except for the `image` of container `dashboard` in the single `apps/v1`
+Deployment named `<release>-dashboard` in the selected namespace. An unchanged
+image is allowed in the pre-publication render. The final verified-image render
+must pass the same boundary before mutation. Missing, duplicate, malformed, or
+undecidable resources stop execution.
+Hook identities and bodies must also remain unchanged. Proven dashboard-only
+execution automatically uses Helm `--no-hooks` and records the reason in
+deployment state, preventing unchanged post-upgrade jobs such as bucket setup
+from rerunning. This has no recipe switch; full deployments retain hook execution.
+
+Both all-namespace in-flight reads still retain full objects, owned Jobs and
+`blockers.json`; nonterminal campaigns remain visible diagnostic evidence.
+Only the proven dashboard-only path may proceed with those blockers, without
+GPU probes, scheduler quiescence or measurement-state mutation. Server, CRD,
+measurement configuration, hook and mixed changes retain the ADR 0019 STOP, including
+when chart differences have approval. Noneligible recipes stop before custom
+commands. Disk, authentication, revision, chart-review, backups, server dry-run,
+registry provenance, readiness and acceptance gates remain active. There is no
+force/ignore switch, object-UID exception, manual Helm bypass or guard removal.
+
 `images` explicitly selects roles to deploy; selected roles may reuse unchanged
 image inputs as described below. The source role catalog has all 16 roles:
 `server`, `profiler`, `dashboard`, `node-agent`, `operator`, `query`,
