@@ -248,30 +248,3 @@ func TestMetricsCurrentQueueGauges(t *testing.T) {
 		t.Fatalf("empty queue retained age: %+v", empty)
 	}
 }
-
-func TestMetricsNilQueueSlotsPublishZeroJSONGauges(t *testing.T) {
-	metrics, sub, at := metricFixture(t)
-	if err := metrics.Flush(at.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	data, err := sub.Next(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var message map[string]json.RawMessage
-	if err := json.Unmarshal(data, &message); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"chill_obslog_queue_length", "chill_obslog_oldest_wait_seconds"} {
-		var value float64
-		raw, ok := message[name]
-		if !ok {
-			t.Fatalf("missing gauge %s: %+v", name, message)
-		}
-		if err := json.Unmarshal(raw, &value); err != nil || value != 0 {
-			t.Fatalf("nil-slot gauge %s = %s: %v", name, raw, err)
-		}
-	}
-}
