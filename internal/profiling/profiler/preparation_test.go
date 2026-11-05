@@ -42,6 +42,67 @@ func TestPreparerFirstMeasurementWithoutArchive(t *testing.T) {
 	}
 }
 
+func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		duration int
+		idle     bool
+		rejected bool
+	}{
+		{name: "active request", duration: 31},
+		{name: "idle schedule", duration: 1172, idle: true},
+		{name: "oversized active schedule", duration: 2027, rejected: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config, report := preparationFixture(t)
+			config.Metrics.DurationSeconds = test.duration
+			if test.idle {
+				config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+				config.Measurement.WarmupIterations = 0
+				config.Measurement.MinServiceSamples = 0
+				config.Measurement.SLOPercentile = 0
+				config.Measurement.SettlingDurationSeconds = 2
+				config.Measurement.Dataset = nil
+			}
+			resolvers := fixtureResolvers(config, report)
+			policy := testExecutionPolicySpec(config.Measurement.WorkloadMode)
+			policy.AttemptTimeoutOverheadSeconds = 1235
+			policy.ActiveDeadlineOverheadSeconds = 1265
+			policy.ObserverReadyTimeoutSeconds = 1160
+			policy.ObserverStartOverheadSeconds = 1160
+			resolvers.executionPolicy = &policy
+			prepared, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), fixtureRequest(config))
+			if test.rejected {
+				if reason, terminal := TerminalResolutionReason(err); !terminal || reason != ResolutionReasonExecutionPolicyInvalid {
+					t.Fatalf("oversized schedule classification = %q, terminal=%t, error=%v", reason, terminal, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared.RunConfig.Metrics.DurationSeconds != test.duration ||
+				prepared.RunConfig.Measurement.WorkloadMode != config.Measurement.WorkloadMode {
+				t.Fatal("admission changed the selected observation schedule")
+			}
+		})
+	}
+}
+
+func TestPreparerKeepsExecutionPolicyReadFailureNonterminal(t *testing.T) {
+	config, report := preparationFixture(t)
+	resolvers := fixtureResolvers(config, report)
+	readErr := errors.New("execution-policy store unavailable")
+	resolvers.executionError = readErr
+	_, err := newFixturePreparer(t, resolvers).Prepare(context.Background(), fixtureRequest(config))
+	if !errors.Is(err, readErr) {
+		t.Fatalf("policy read failure lost cause: %v", err)
+	}
+	if reason, terminal := TerminalResolutionReason(err); terminal {
+		t.Fatalf("policy read failure became terminal: %q", reason)
+	}
+}
+
 func TestPreparerFreezesRKNNArtifactInputs(t *testing.T) {
 	expected, candidateBytes := rknnPreparationFixture(t)
 	prepared, err := newFixturePreparer(t, fixtureResolvers(expected, candidateBytes)).Prepare(
@@ -660,11 +721,13 @@ func rknnPreparationFixture(t *testing.T) (profilingrun.RunConfig, []byte) {
 }
 
 type fakePreparationResolvers struct {
-	candidate *fakeCandidateResolver
-	node      *fakeNodeResolver
-	metrics   *fakeMetricResolver
-	workloads *fakeWorkloadObservationResolver
-	actuation *fakeActuationPolicyResolver
+	candidate       *fakeCandidateResolver
+	node            *fakeNodeResolver
+	metrics         *fakeMetricResolver
+	workloads       *fakeWorkloadObservationResolver
+	actuation       *fakeActuationPolicyResolver
+	executionPolicy *ExecutionPolicySpec
+	executionError  error
 }
 
 func fixtureResolvers(config profilingrun.RunConfig, report []byte) *fakePreparationResolvers {
@@ -700,6 +763,13 @@ func fixtureResolvers(config profilingrun.RunConfig, report []byte) *fakePrepara
 
 func (r *fakePreparationResolvers) Resolve(_ context.Context, config profilingrun.RunConfig) (FrozenExecutionPolicy, error) {
 	policy := testExecutionPolicySpec(config.Measurement.WorkloadMode)
+	policy.ExecutionPath = config.Candidate.ExecutionPath
+	if r.executionPolicy != nil {
+		policy = *r.executionPolicy
+	}
+	if r.executionError != nil {
+		return FrozenExecutionPolicy{}, r.executionError
+	}
 	return FrozenExecutionPolicy{SchemaVersion: FrozenExecutionPolicySchemaVersion, Source: validExecutionPolicySource(),
 		Policy: ExecutionPolicy{SchemaVersion: ExecutionPolicySchemaVersion, ExecutionPolicySpec: policy}}, nil
 }

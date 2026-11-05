@@ -90,7 +90,7 @@ func DeriveExecutionPlan(
 		MemoryBudgetBytes: policy.ObserverMemoryLimitBytes,
 	}, true)
 	if err != nil {
-		return ExecutionPlan{}, fmt.Errorf("admit metric observation: %w", err)
+		return ExecutionPlan{}, InvalidExecutionPolicy("admit metric observation: %w", err)
 	}
 
 	plan := ExecutionPlan{

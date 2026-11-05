@@ -236,6 +236,9 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err := runConfig.Validate(); err != nil {
 		return PreparedRun{}, fmt.Errorf("validate RunConfig: %w", err)
 	}
+	if _, err := DeriveExecutionPlan(runConfig, executionPolicy); err != nil {
+		return PreparedRun{}, err
+	}
 	if err := profilingrun.ValidateCandidateReport(candidate.ReportBytes, runConfig); err != nil {
 		return PreparedRun{}, fmt.Errorf("validate resolved candidate report: %w", err)
 	}
