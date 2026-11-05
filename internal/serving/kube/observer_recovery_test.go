@@ -341,39 +341,9 @@ func TestRecoveryMissingCatalogProfileAllowsOnlyExactPhysicalRetirement(t *testi
 			if err := c.observer.Refresh(ctx); err != nil {
 				t.Fatal(err)
 			}
-			physical := schedulerPhysicalState(id, c.runtime.Instances())
-			if physical == nil || physical.RecoveryUnknown || !physical.NativeVerified || physical.Native == nil ||
-				!physical.Native.Ready || len(physical.Native.Requests) != 0 || physical.Ready || physical.Terminated {
-				t.Fatalf("fresh exact empty physical source was not recovered independently of admission: %+v issues=%+v", physical, c.observer.Issues())
-			}
-			for uid, routable := range physical.Routable {
-				if routable {
-					t.Fatalf("catalog-rejected source remained routable for %s", uid)
-				}
-			}
-			instance := c.observer.sources[string(pod.UID)].instance
-			if instance.Profile != nil || instance.Execute != nil || instance.Capacity != 0 || len(instance.Routing) != 0 {
-				t.Fatalf("catalog withdrawal retained execution capability: %+v", instance)
-			}
-			if !c.runtime.InstanceRecoveryUnknown("a-pod/containerd://running") {
-				t.Fatal("B's exact empty observation cleared A's mismatching physical identity")
-			}
+			physical := assertRejectedSourceRecovered(t, c, id)
 			readGap := func() serving.ObservationGap {
-				t.Helper()
-				if err := log.Drain(ctx); err != nil {
-					t.Fatal(err)
-				}
-				index, err := log.RawHour(ctx, physical.ObservedAt.UTC().Format("20060102T15"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, gap := range index.Gaps {
-					if gap.Instance == id && gap.Reason == "UnknownExecutorInfluence" {
-						return gap
-					}
-				}
-				t.Fatal("physical recovery erased historical unknown influence")
-				return serving.ObservationGap{}
+				return recoveryInfluenceGap(t, ctx, log, id, physical.ObservedAt)
 			}
 			gap := readGap()
 			if gap.ClearAt == nil || !gap.Open {
@@ -402,19 +372,7 @@ func TestRecoveryMissingCatalogProfileAllowsOnlyExactPhysicalRetirement(t *testi
 			case <-ctx.Done():
 				t.Fatal("normal remove did not reach retained deletion", ctx.Err())
 			}
-			retained, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
-			if err != nil || retained.UID != pod.UID || retained.DeletionTimestamp == nil ||
-				!slices.Contains(retained.Finalizers, servingstate.SourceFinalizer) || servingstate.PodTerminated(retained) ||
-				api.precondition == nil || api.precondition.UID == nil || *api.precondition.UID != pod.UID {
-				t.Fatalf("normal remove did not retain running exact UID/termination proof: %+v preconditions=%+v err=%v", retained, api.precondition, err)
-			}
-			stopped := schedulerPhysicalState(id, c.runtime.Instances())
-			if stopped == nil || !stopped.Stopped || stopped.Terminated {
-				t.Fatalf("stop/drain bypassed retained physical ownership: %+v", stopped)
-			}
-			if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, observerServiceFixture(pod).Name, meta.GetOptions{}); err != nil {
-				t.Fatal("Service disappeared before exact termination", err)
-			}
+			assertRecoveryRemovalRetained(t, ctx, c, api, pod, id)
 			if current := readGap(); !current.Open || current.ClearAt == nil || !current.ClearAt.Equal(*gap.ClearAt) {
 				t.Fatalf("logical stop/drain closed historical unknown: %+v", current)
 			}
@@ -435,29 +393,96 @@ func TestRecoveryMissingCatalogProfileAllowsOnlyExactPhysicalRetirement(t *testi
 			}
 			select {
 			case result := <-finished:
-				proof, observed := result.result.DrainNative[id]
-				if result.err != nil || result.result.Status != servingstate.NativeOperationComplete || result.result.Error != "" ||
-					!observed || !proof.Ready || len(proof.Requests) != 0 || proof.Metadata.Model != config.Model || proof.Metadata.ProfileID != profile.ID {
-					t.Fatalf("normal remove did not retain actual native drain proof: %+v err=%v", result.result, result.err)
-				}
+				assertRecoveryRemovalComplete(t, result.result, result.err, id, config.Model, profile.ID)
 			case <-ctx.Done():
 				t.Fatal("normal remove did not finish exact termination/404 retirement", ctx.Err())
 			}
-			if _, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
-				t.Fatalf("retired Pod was not 404: %v", err)
-			}
-			if _, err := kube.CoreV1().Services(pod.Namespace).Get(ctx, observerServiceFixture(pod).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
-				t.Fatalf("retired Service survived exact termination: %v", err)
-			}
-			if err := api.Get(ctx, client.ObjectKeyFromObject(pod), &core.ConfigMap{}); !apierrors.IsNotFound(err) {
-				t.Fatalf("original mounted ConfigMap survived retirement: %v", err)
-			}
-			if schedulerPhysicalState(id, c.runtime.Instances()) != nil {
-				t.Fatal("404 source retained retired physical executor")
-			}
-			if current := readGap(); current.Open || current.To.IsZero() || current.ClearAt == nil || !current.ClearAt.Equal(*gap.ClearAt) {
-				t.Fatalf("exact termination failed to bound retained historical unknown: %+v", current)
-			}
+			assertRecoverySourceRetired(t, ctx, c, pod, gap, readGap)
 		})
+	}
+}
+
+func assertRejectedSourceRecovered(t *testing.T, c *SchedulerController, id string) *serving.InstanceState {
+	t.Helper()
+	physical := schedulerPhysicalState(id, c.runtime.Instances())
+	if physical == nil || physical.RecoveryUnknown || !physical.NativeVerified || physical.Native == nil ||
+		!physical.Native.Ready || len(physical.Native.Requests) != 0 || physical.Ready || physical.Terminated {
+		t.Fatalf("fresh exact empty physical source was not recovered independently of admission: %+v issues=%+v", physical, c.observer.Issues())
+	}
+	for uid, routable := range physical.Routable {
+		if routable {
+			t.Fatalf("catalog-rejected source remained routable for %s", uid)
+		}
+	}
+	instance := c.observer.sources[physical.PodUID].instance
+	if instance.Profile != nil || instance.Execute != nil || instance.Capacity != 0 || len(instance.Routing) != 0 {
+		t.Fatalf("catalog withdrawal retained execution capability: %+v", instance)
+	}
+	if !c.runtime.InstanceRecoveryUnknown("a-pod/containerd://running") {
+		t.Fatal("B's exact empty observation cleared A's mismatching physical identity")
+	}
+	return physical
+}
+
+func recoveryInfluenceGap(t *testing.T, ctx context.Context, log *observation.ObservationLog, id string, at time.Time) serving.ObservationGap {
+	t.Helper()
+	if err := log.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	index, err := log.RawHour(ctx, at.UTC().Format("20060102T15"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gap := range index.Gaps {
+		if gap.Instance == id && gap.Reason == "UnknownExecutorInfluence" {
+			return gap
+		}
+	}
+	t.Fatal("physical recovery erased historical unknown influence")
+	return serving.ObservationGap{}
+}
+
+func assertRecoveryRemovalRetained(t *testing.T, ctx context.Context, c *SchedulerController, api *recoveryRemovalAPI, pod *core.Pod, id string) {
+	t.Helper()
+	retained, err := c.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{})
+	if err != nil || retained.UID != pod.UID || retained.DeletionTimestamp == nil ||
+		!slices.Contains(retained.Finalizers, servingstate.SourceFinalizer) || servingstate.PodTerminated(retained) ||
+		api.precondition == nil || api.precondition.UID == nil || *api.precondition.UID != pod.UID {
+		t.Fatalf("normal remove did not retain running exact UID/termination proof: %+v preconditions=%+v err=%v", retained, api.precondition, err)
+	}
+	stopped := schedulerPhysicalState(id, c.runtime.Instances())
+	if stopped == nil || !stopped.Stopped || stopped.Terminated {
+		t.Fatalf("stop/drain bypassed retained physical ownership: %+v", stopped)
+	}
+	if _, err := c.kube.CoreV1().Services(pod.Namespace).Get(ctx, observerServiceFixture(pod).Name, meta.GetOptions{}); err != nil {
+		t.Fatal("Service disappeared before exact termination", err)
+	}
+}
+
+func assertRecoveryRemovalComplete(t *testing.T, result servingstate.OperationResult, err error, id, model, profileID string) {
+	t.Helper()
+	proof, observed := result.DrainNative[id]
+	if err != nil || result.Status != servingstate.NativeOperationComplete || result.Error != "" ||
+		!observed || !proof.Ready || len(proof.Requests) != 0 || proof.Metadata.Model != model || proof.Metadata.ProfileID != profileID {
+		t.Fatalf("normal remove did not retain actual native drain proof: %+v err=%v", result, err)
+	}
+}
+
+func assertRecoverySourceRetired(t *testing.T, ctx context.Context, c *SchedulerController, pod *core.Pod, gap serving.ObservationGap, readGap func() serving.ObservationGap) {
+	t.Helper()
+	if _, err := c.kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("retired Pod was not 404: %v", err)
+	}
+	if _, err := c.kube.CoreV1().Services(pod.Namespace).Get(ctx, observerServiceFixture(pod).Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("retired Service survived exact termination: %v", err)
+	}
+	if err := c.store.client.Get(ctx, client.ObjectKeyFromObject(pod), &core.ConfigMap{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("original mounted ConfigMap survived retirement: %v", err)
+	}
+	if schedulerPhysicalState(gap.Instance, c.runtime.Instances()) != nil {
+		t.Fatal("404 source retained retired physical executor")
+	}
+	if current := readGap(); current.Open || current.To.IsZero() || current.ClearAt == nil || !current.ClearAt.Equal(*gap.ClearAt) {
+		t.Fatalf("exact termination failed to bound retained historical unknown: %+v", current)
 	}
 }

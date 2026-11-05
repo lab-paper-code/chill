@@ -519,6 +519,27 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 // not hold the source lock for the whole refresh.
 const nativeProbeTimeout = 2 * time.Second
 
+func (o *Observer) physicalSourceSpec(ctx context.Context, pod *corev1.Pod, node *corev1.Node) (firstfloor.Spec, error) {
+	if err := validatePhysicalSource(pod, node); err != nil {
+		return firstfloor.Spec{}, err
+	}
+	model, err := servingstate.NativeModel(ctx, o.store.client, pod)
+	if err != nil {
+		return firstfloor.Spec{}, err
+	}
+	status := servingstate.FirstfloorStatus(pod)
+	return firstfloor.Spec{ModelName: model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID),
+		Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}, nil
+}
+
+func matchesNativeSource(pod *corev1.Pod, model string, instance *serving.InstanceState) bool {
+	observed := instance.Native
+	profileID := pod.Annotations[servingstate.ServingProfileAnnotation]
+	return observed != nil && observed.Ready && observed.Metadata.Model == model &&
+		observed.Metadata.Mode == servingstate.NativeServingMode &&
+		profileID != "" && observed.Metadata.ProfileID == profileID
+}
+
 func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev1.Node, profile *serving.Profile, classes []edgev1alpha1.DeviceClass, resources map[types.UID]client.Object, services map[string]*corev1.Service, servicesErr error) (serving.ReadyInstance, bool, *probedSource) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -539,23 +560,12 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 	}
 	o.recordRuntimeDeclaration(ctx, pod, profile)
 	spec, admissionErr := sourceSpec(pod, node, profile, classes, "")
-	var err error
-	if admissionErr != nil {
-		err = validatePhysicalSource(pod, node)
-	}
-	if err == nil {
-		err = ownershipErr
-	}
+	err := ownershipErr
 	if node != nil && o.movingNodes[string(node.UID)] {
 		err = errors.New("NodePowerTransition")
 	}
 	if err == nil && admissionErr != nil {
-		model, modelErr := servingstate.NativeModel(ctx, o.store.client, pod)
-		err = modelErr
-		if err == nil {
-			status := servingstate.FirstfloorStatus(pod)
-			spec = firstfloor.Spec{ModelName: model, InstanceID: servingstate.PhysicalID(pod.UID, status.ContainerID), Node: serving.NodeReference{Name: node.Name, UID: string(node.UID)}}
-		}
+		spec, err = o.physicalSourceSpec(ctx, pod, node)
 	}
 	var service *corev1.Service
 	if err == nil {
@@ -567,7 +577,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		probeCtx, cancel := context.WithTimeout(ctx, nativeProbeTimeout)
 		o.mu.Unlock()
 		instance, probeErr := o.native.Probe(probeCtx, spec)
-		readSucceeded := probeCtx.Err() == nil && instance.State.Native != nil
+		readSucceeded := probeCtx.Err() == nil
 		if err := probeCtx.Err(); err != nil {
 			probeErr = err
 		}
@@ -578,8 +588,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			return serving.ReadyInstance{}, false, nil
 		}
 		if probeErr == nil || instance.State.Native != nil {
-			observed := instance.State.Native
-			instance.State.NativeVerified = readSucceeded && observed.Ready && observed.Metadata.Model == spec.ModelName && observed.Metadata.Mode == "serving" && pod.Annotations[servingstate.ServingProfileAnnotation] != "" && observed.Metadata.ProfileID == pod.Annotations[servingstate.ServingProfileAnnotation]
+			instance.State.NativeVerified = readSucceeded && matchesNativeSource(pod, spec.ModelName, &instance.State)
 			if probeErr != nil {
 				instance.State.Reason = probeErr.Error()
 			}
