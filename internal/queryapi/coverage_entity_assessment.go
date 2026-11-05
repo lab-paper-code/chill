@@ -112,7 +112,7 @@ func AssessMeasurementRequest(
 // verified facts and profile share the same retained condition and batch prefix.
 func measurementProfileTargets(task *api.BatchEnergyOptimization, facts *profilederivation.MeasurementFacts, profile *CoverageProfile) []int {
 	planned := facts.Condition.PlannedBatchSizes
-	if task.Status.Phase != "Complete" || task.Status.ObservedGeneration != task.Generation ||
+	if task.Status.Phase != string(api.MeasurementPhaseComplete) || task.Status.ObservedGeneration != task.Generation ||
 		task.Status.Outcome != string(batchenergyoptimization.BatchDiscoveryComplete) || profile.Reuse != nil ||
 		facts.Request.Namespace != task.Namespace || facts.Request.Name != task.Name || facts.Request.UID != string(task.UID) ||
 		facts.ResultReference.Key == "" || len(facts.Batches) == 0 || len(facts.Batches) > len(planned) ||
