@@ -101,6 +101,9 @@ changing original JSONL/gzip bytes.
 All-history coverage includes recovery metadata independently of source-hour
 scanning, retaining an unknown (`From=0`) start and its provenance even when
 the old interval precedes every retained source. Finite windows remain clipped.
+The captured-clock upper bound also applies to all-history queries: preserving
+unknown-start recovery metadata does not extend stream availability into the
+future or move the source-hour scan floor back to an unknown start.
 An exact successful Pod Create (not AlreadyExists) records its API-assigned
 Pod UID before prepared-source publication. The owner-run file retains which
 already-existing crash roots predate that creation proof, so unrelated new

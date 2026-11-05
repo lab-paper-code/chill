@@ -26,11 +26,11 @@ import (
 
 func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.PrepareSpec) (evidence *servingstate.PreparationEvidence, err error) {
 	node := spec.Instance.Node
-	if err := o.checkRecovery(ctx, node, ""); err != nil {
-		return nil, err
-	}
 	pod, delivery, err := o.PreparationPod(spec)
 	if err != nil {
+		return nil, err
+	}
+	if err := o.checkRecovery(ctx, node, ""); err != nil {
 		return nil, err
 	}
 	decisionID, err := o.EnsurePreparationConfig(ctx, spec, delivery)

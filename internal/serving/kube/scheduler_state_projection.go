@@ -106,20 +106,7 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 			sn.Reasons = appendReason(sn.Reasons, serving.NodeInstanceUnavailable)
 			instance.Ready = false
 		}
-		if state.Native != nil {
-			m := state.Native.Metadata
-			if state.Native.LastServiceEndAgeNanos != nil {
-				age := *state.Native.LastServiceEndAgeNanos
-				instance.LastServiceEndAgeNanos = &age
-			}
-			instance.Allocation.GPUUUID = m.Runtime.GPUUUID
-			instance.Ready = instance.Ready && state.Native.Ready
-			instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, m.MaxBatchSize, m.Policy.FixedBatchSize
-			instance.MaxWait = time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))
-			if m.Policy.MaxBatchSize > 0 {
-				instance.MaxBatch = m.Policy.MaxBatchSize
-			}
-		}
+		captureNativeState(&instance, state.Native)
 		for _, pod := range pods.Items {
 			if string(pod.UID) != uid {
 				continue
@@ -158,6 +145,24 @@ func captureNodePods(s *serving.SchedulerSnapshot, sn *serving.SchedulerNode, n 
 	}
 	if nonServingMemory > 0 {
 		sn.NonServing = append(sn.NonServing, serving.SchedulerAllocation{MemoryBytes: nonServingMemory})
+	}
+}
+
+func captureNativeState(instance *serving.SchedulerInstance, state *native.State) {
+	if state == nil {
+		return
+	}
+	m := state.Metadata
+	if state.LastServiceEndAgeNanos != nil {
+		age := *state.LastServiceEndAgeNanos
+		instance.LastServiceEndAgeNanos = &age
+	}
+	instance.Allocation.GPUUUID = m.Runtime.GPUUUID
+	instance.Ready = instance.Ready && state.Ready
+	instance.Capacity, instance.MaxBatch, instance.FixedBatchSize = m.MaxQueueRequests, m.MaxBatchSize, m.Policy.FixedBatchSize
+	instance.MaxWait = time.Duration(m.Policy.MaxBatchWaitMS * float64(time.Millisecond))
+	if m.Policy.MaxBatchSize > 0 {
+		instance.MaxBatch = m.Policy.MaxBatchSize
 	}
 }
 
