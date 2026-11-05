@@ -28,6 +28,7 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 		}
 	}
 	observed := Observed{PlannedBatchSizes: append([]int(nil), snapshot.PlannedBatchSizes...)}
+	completedAttempts := make(map[Measurement]int)
 	// A live trial must settle before a boundary can terminate the campaign.
 	for _, trial := range snapshot.Trials {
 		if trial.Verdict == VerdictPending {
@@ -35,26 +36,53 @@ func Decide(snapshot Snapshot, method Method) (Decision, error) {
 		}
 		if trial.Verdict == VerdictCompleted {
 			observed.Completed = append(observed.Completed, trial.Measurement)
+			if trial.Attempt > completedAttempts[trial.Measurement] {
+				completedAttempts[trial.Measurement] = trial.Attempt
+			}
 		}
 	}
 
+	var retry *Measurement
+	var retryFailures map[Measurement]int
 	for _, trial := range snapshot.Trials {
 		if trial.Verdict != VerdictFailed {
 			continue
 		}
-		if trial.Boundary == nil || !trial.Boundary.isExecutionBoundary() {
-			return Decision{Action: ActionFail, Reason: "TrialFailed"}, nil
+		switch trial.FailureClass {
+		case FailureClassRetryableFailure:
+			if retryFailures == nil {
+				retryFailures = make(map[Measurement]int)
+			}
+			retryFailures[trial.Measurement]++
+			if trial.Attempt > completedAttempts[trial.Measurement] && retry == nil {
+				measurement := trial.Measurement
+				retry = &measurement
+			}
+		case FailureClassFatalFailure:
+			return Decision{Action: ActionFail, Reason: string(FailureClassFatalFailure)}, nil
+		case FailureClassExpectedStop:
+			if trial.Boundary == nil || !trial.Boundary.isExecutionBoundary() {
+				return Decision{Action: ActionFail, Reason: string(FailureClassUnknownFailure)}, nil
+			}
+			if observed.Boundary == nil ||
+				trial.Measurement.Batch < observed.Boundary.FailedMeasurement.Batch ||
+				(trial.Measurement.Batch == observed.Boundary.FailedMeasurement.Batch &&
+					trial.Attempt < observed.Boundary.Attempt) {
+				boundary := *trial.Boundary
+				measurement := trial.Measurement
+				boundary.FailedMeasurement = &measurement
+				boundary.Attempt = trial.Attempt
+				observed.Boundary = &boundary
+			}
+		default:
+			return Decision{Action: ActionFail, Reason: string(FailureClassUnknownFailure)}, nil
 		}
-		if observed.Boundary == nil ||
-			trial.Measurement.Batch < observed.Boundary.FailedMeasurement.Batch ||
-			(trial.Measurement.Batch == observed.Boundary.FailedMeasurement.Batch &&
-				trial.Attempt < observed.Boundary.Attempt) {
-			boundary := *trial.Boundary
-			measurement := trial.Measurement
-			boundary.FailedMeasurement = &measurement
-			boundary.Attempt = trial.Attempt
-			observed.Boundary = &boundary
+	}
+	if retry != nil && observed.Boundary == nil {
+		if retryFailures[*retry] > snapshot.RetryLimit {
+			return Decision{Action: ActionFail, Reason: "RetryLimitExhausted"}, nil
 		}
+		return Decision{Action: ActionCreateRun, Run: retry, Reason: "RetryAfterFailure"}, nil
 	}
 
 	plan, err := method.Plan(observed)

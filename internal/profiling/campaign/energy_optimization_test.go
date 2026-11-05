@@ -185,7 +185,7 @@ func TestQuickEnergyRequiresTheDerivationToCloseAnExhaustedSearchSpace(t *testin
 }
 
 func TestQuickEnergyStopsWithOnlyTheFullyCompletedPrefix(t *testing.T) {
-	for _, reason := range []string{DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded, DiscoveryStopExecutionFailed} {
+	for _, reason := range []string{DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded} {
 		t.Run(reason, func(t *testing.T) {
 			curveCalls := 0
 			energy := &profilederivation.EnergyOptimizationResult{Status: profilederivation.EnergySearchContinue}
@@ -249,6 +249,7 @@ func TestQuickEnergyBatchOneBoundaryHasNoUsablePrefix(t *testing.T) {
 func TestQuickEnergyRejectsAnUnclassifiedOrMismatchedBoundary(t *testing.T) {
 	for _, stop := range []DiscoveryStop{
 		{Reason: "InfrastructureFailure", FailedMeasurement: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 2}, Attempt: 1},
+		{Reason: "ExecutionFailed", FailedMeasurement: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 2}, Attempt: 1},
 		{Reason: DiscoveryStopOOM, FailedMeasurement: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 4}, Attempt: 1},
 		{Reason: DiscoveryStopOOM, FailedMeasurement: &Measurement{WorkloadMode: WorkloadModeActive, Batch: 2}},
 	} {

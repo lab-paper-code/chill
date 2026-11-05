@@ -117,23 +117,27 @@ func TestDecideDoesNotHideAFailedTrialBehindALaterCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != ActionFail || decision.Reason != "TrialFailed" || len(method.seen.Completed) != 0 {
+	if decision.Action != ActionFail || decision.Reason != string(FailureClassUnknownFailure) || len(method.seen.Completed) != 0 {
 		t.Fatalf("failed attempt was hidden: decision=%+v observed=%+v", decision, method.seen)
 	}
 }
 
 func TestDecidePassesTheObservedBoundaryWithoutRetry(t *testing.T) {
-	for _, reason := range []string{DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded, DiscoveryStopExecutionFailed} {
+	for _, reason := range []string{DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded} {
 		t.Run(reason, func(t *testing.T) {
 			measurement := active(2)
 			run := &RunReference{Namespace: "chill-system", Name: "observed-trial", UID: "actual-run"}
 			boundary := &DiscoveryStop{Reason: reason, Run: run, Diagnostic: "original failure"}
 			snapshot := directSnapshot()
+			snapshot.RetryLimit = 10
 			snapshot.PlannedBatchSizes = []int{1, 2, 4}
 			for index, completed := range completedForBatches([]int{1}, 3) {
 				snapshot.Trials = append(snapshot.Trials, Trial{Measurement: completed, Attempt: index + 1, Verdict: VerdictCompleted})
 			}
-			snapshot.Trials = append(snapshot.Trials, Trial{Measurement: measurement, Attempt: 2, Verdict: VerdictFailed, Boundary: boundary})
+			snapshot.Trials = append(snapshot.Trials, Trial{
+				Measurement: measurement, Attempt: 2, Verdict: VerdictFailed,
+				FailureClass: FailureClassExpectedStop, Boundary: boundary,
+			})
 			method := &stubMethod{plan: Plan{Result: &Result{Outcome: BatchDiscoveryComplete}}}
 			decision, err := Decide(snapshot, method)
 			if err != nil {
@@ -155,7 +159,7 @@ func TestDecidePassesTheObservedBoundaryWithoutRetry(t *testing.T) {
 func TestDecideWaitsForALiveTrialBeforeConsumingABoundary(t *testing.T) {
 	snapshot := directSnapshot()
 	snapshot.Trials = []Trial{
-		{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed, Boundary: &DiscoveryStop{Reason: DiscoveryStopOOM}},
+		{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed, FailureClass: FailureClassExpectedStop, Boundary: &DiscoveryStop{Reason: DiscoveryStopOOM}},
 		{Measurement: idle(1), Attempt: 2, Verdict: VerdictPending},
 	}
 	method := &stubMethod{}
@@ -269,4 +273,105 @@ func (m *sweepMethod) Plan(observed Observed) (Plan, error) {
 	}
 	next := m.measurements[len(observed.Completed)]
 	return Plan{Next: &next}, nil
+}
+
+func TestDecideRetriesOnlyClassifiedInfrastructureFailures(t *testing.T) {
+	measurement := active(1)
+	for _, test := range []struct {
+		name       string
+		class      FailureClass
+		limit      int
+		wantAction Action
+		wantReason string
+	}{
+		{"retry infrastructure", FailureClassRetryableFailure, 1, ActionCreateRun, "RetryAfterFailure"},
+		{"infrastructure limit", FailureClassRetryableFailure, 0, ActionFail, "RetryLimitExhausted"},
+		{"fatal runtime crash", FailureClassFatalFailure, 10, ActionFail, string(FailureClassFatalFailure)},
+		{"unknown runtime failure", FailureClassUnknownFailure, 10, ActionFail, string(FailureClassUnknownFailure)},
+		{"unclassified failure", "", 10, ActionFail, string(FailureClassUnknownFailure)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := directSnapshot()
+			snapshot.RetryLimit = test.limit
+			snapshot.Trials = []Trial{
+				{Measurement: measurement, Attempt: 1, Verdict: VerdictCompleted},
+				{Measurement: measurement, Attempt: 2, Verdict: VerdictCompleted},
+				{Measurement: measurement, Attempt: 3, Verdict: VerdictFailed, FailureClass: test.class},
+			}
+			method := &stubMethod{}
+			decision, err := Decide(snapshot, method)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Action != test.wantAction || decision.Reason != test.wantReason {
+				t.Fatalf("decision=%+v, want %s/%s", decision, test.wantAction, test.wantReason)
+			}
+			if decision.Action == ActionCreateRun && (decision.Run == nil || *decision.Run != measurement) {
+				t.Fatalf("retry changed K: %+v", decision)
+			}
+		})
+	}
+}
+
+func TestDecideCountsRetryableFailuresRatherThanSuccessfulTrialOrdinals(t *testing.T) {
+	measurement := active(1)
+	snapshot := directSnapshot()
+	snapshot.RetryLimit = 1
+	snapshot.Trials = []Trial{
+		{Measurement: measurement, Attempt: 1, Verdict: VerdictCompleted},
+		{Measurement: measurement, Attempt: 2, Verdict: VerdictCompleted},
+		{Measurement: measurement, Attempt: 3, Verdict: VerdictFailed, FailureClass: FailureClassRetryableFailure},
+		{Measurement: measurement, Attempt: 4, Verdict: VerdictCompleted},
+	}
+	method := &stubMethod{plan: Plan{Result: &Result{Outcome: BatchDiscoveryComplete}}}
+	decision, err := Decide(snapshot, method)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionFinish || len(method.seen.Completed) != 3 {
+		t.Fatalf("resolved retry consumed a successful trial: decision=%+v observed=%+v", decision, method.seen)
+	}
+	snapshot.Trials = append(snapshot.Trials,
+		Trial{Measurement: measurement, Attempt: 5, Verdict: VerdictFailed, FailureClass: FailureClassRetryableFailure})
+	decision, err = Decide(snapshot, method)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionFail || decision.Reason != "RetryLimitExhausted" {
+		t.Fatalf("cumulative retryable failures were not bounded: %+v", decision)
+	}
+}
+
+func TestDecideRetryAllowanceBelongsToEachMeasurement(t *testing.T) {
+	snapshot := directSnapshot()
+	snapshot.RetryLimit = 1
+	snapshot.PlannedBatchSizes = []int{1, 2}
+	snapshot.Trials = []Trial{
+		{Measurement: active(1), Attempt: 1, Verdict: VerdictFailed, FailureClass: FailureClassRetryableFailure},
+		{Measurement: active(1), Attempt: 2, Verdict: VerdictCompleted},
+		{Measurement: active(2), Attempt: 1, Verdict: VerdictFailed, FailureClass: FailureClassRetryableFailure},
+	}
+	decision, err := Decide(snapshot, &stubMethod{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionCreateRun || decision.Run == nil || *decision.Run != active(2) {
+		t.Fatalf("another K consumed the retry allowance: %+v", decision)
+	}
+}
+
+func TestDecideDoesNotAcceptGenericExecutionFailureAsAnExpectedStop(t *testing.T) {
+	snapshot := directSnapshot()
+	snapshot.RetryLimit = 10
+	snapshot.Trials = []Trial{{
+		Measurement: active(1), Attempt: 1, Verdict: VerdictFailed,
+		FailureClass: FailureClassExpectedStop, Boundary: &DiscoveryStop{Reason: "ExecutionFailed"},
+	}}
+	decision, err := Decide(snapshot, &stubMethod{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionFail || decision.Reason != string(FailureClassUnknownFailure) {
+		t.Fatalf("generic failure became a completed boundary: %+v", decision)
+	}
 }

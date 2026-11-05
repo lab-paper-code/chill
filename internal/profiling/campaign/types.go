@@ -20,6 +20,11 @@ const (
 	VerdictCompleted Verdict = "Completed"
 	VerdictFailed    Verdict = "Failed"
 
+	FailureClassExpectedStop     FailureClass = "ExpectedStop"
+	FailureClassRetryableFailure FailureClass = "RetryableFailure"
+	FailureClassFatalFailure     FailureClass = "FatalFailure"
+	FailureClassUnknownFailure   FailureClass = "UnknownFailure"
+
 	TransitionInFlight    TransitionOutcome = "InFlight"
 	TransitionEstablished TransitionOutcome = "Established"
 	TransitionFailed      TransitionOutcome = "Failed"
@@ -36,6 +41,7 @@ type (
 	Verdict           string
 	TransitionOutcome string
 	Action            string
+	FailureClass      string
 )
 
 // State is the smallest immutable campaign state needed to decide whether its
@@ -66,6 +72,7 @@ type Trial struct {
 	Measurement Measurement
 	Attempt     int
 	Verdict     Verdict
+	FailureClass FailureClass
 	// Boundary is present only for a classified execution limit. A failed trial
 	// without it is an infrastructure or evidence-integrity failure.
 	Boundary *DiscoveryStop
@@ -78,6 +85,9 @@ type Snapshot struct {
 	RequiredState      State
 	TransitionRequired bool
 	Transition         *Transition
+	// RetryLimit bounds classified retryable failures per measurement; completed
+	// independent trials do not consume this allowance.
+	RetryLimit int
 	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary.
@@ -120,7 +130,6 @@ const (
 	BatchDiscoveryComplete                 = "BatchDiscoveryComplete"
 	DiscoveryStopOOM                       = "OOM"
 	DiscoveryStopMeasurementBudgetExceeded = "MeasurementBudgetExceeded"
-	DiscoveryStopExecutionFailed           = "ExecutionFailed"
 	DiscoveryStopDomainExhausted            = "DomainExhausted"
 )
 
@@ -144,7 +153,7 @@ type DiscoveryResult struct {
 
 func (s DiscoveryStop) isExecutionBoundary() bool {
 	switch s.Reason {
-	case DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded, DiscoveryStopExecutionFailed:
+	case DiscoveryStopOOM, DiscoveryStopMeasurementBudgetExceeded:
 		return true
 	default:
 		return false
@@ -179,6 +188,9 @@ func (s State) Validate() error {
 }
 
 func (s Snapshot) Validate() error {
+	if s.RetryLimit < 0 {
+		return errors.New("retry limit must not be negative")
+	}
 	if len(s.PlannedBatchSizes) == 0 {
 		return errors.New("a non-empty planned batch size set is required")
 	}
