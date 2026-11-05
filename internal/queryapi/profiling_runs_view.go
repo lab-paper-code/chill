@@ -97,7 +97,7 @@ func AssessProfilingRun(run edgev1alpha1.ProfilingRun) MeasurementAssessment {
 			execution.Phase = condition.Reason
 			switch {
 			case condition.Status == metav1.ConditionTrue:
-				execution.Phase = "Complete"
+				execution.Phase = string(edgev1alpha1.MeasurementPhaseComplete)
 			case condition.Reason == "JobRunning":
 				execution.Phase = "Running"
 			case condition.Reason == "JobPending":
