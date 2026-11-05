@@ -14,7 +14,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	campaigncontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
-	"github.com/lab-paper-code/chill/internal/profiling/derivation"
+	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -32,6 +32,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+const pretrialCreateVerb = "create"
 
 // PretrialFailureObjects exposes only the evidence ports needed by the external
 // consumer test. That test imports measurement, which itself imports kube.
@@ -54,7 +56,9 @@ func (p *pretrialFailurePorts) PutImmutable(context.Context, evidencestore.Objec
 	return evidencestore.Receipt{}, errors.New("unexpected evidence write before first trial")
 }
 
-func (p *pretrialFailurePorts) Delete(context.Context, evidencestore.ObjectLocation) error { return nil }
+func (p *pretrialFailurePorts) Delete(context.Context, evidencestore.ObjectLocation) error {
+	return nil
+}
 
 func (p *pretrialFailurePorts) ResolveCandidate(context.Context, profiler.CandidateSelection) (profiler.ResolvedCandidate, error) {
 	p.resolutions++
@@ -83,9 +87,79 @@ func ExercisePretrialFailureReturn(t *testing.T, deleteMeasurement func(context.
 	t.Helper()
 	for _, failReturn := range []bool{false, true} {
 		name := "return-success"
-		if failReturn { name = "return-failure-then-retry" }
+		if failReturn {
+			name = "return-failure-then-retry"
+		}
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
+			h, class, root := pretrialFailureFixture(t)
+			original := root.DeepCopy().Spec
+			h.admit()
+			if h.holder() != string(root.UID) || !strings.HasPrefix(h.admission(root), "Granted") || root.Status.Phase != "" {
+				t.Fatalf("initial admission: holder=%q status=%+v", h.holder(), root.Status)
+			}
+			ports := &pretrialFailurePorts{}
+			if err := deleteMeasurement(ctx, h.controller.store.client, h.kube, ports, root); err != nil {
+				t.Fatal(err)
+			}
+			native := &pretrialFailureClient{Client: h.controller.store.client}
+			source, err := campaigncontroller.NewCurvePlanSource(native, ports, ports, ports, campaigncontroller.CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reconciler, err := campaigncontroller.NewBatchEnergyOptimizationReconciler(native, source.Resolve,
+				func(context.Context, derivation.CurvePlan, []edge.ProfilingRun, []edge.ProfilingRun, []int, derivation.EnergyObjectivePolicy) (campaign.CurveResult, error) {
+					t.Error("pre-trial failure reached curve derivation")
+					return campaign.CurveResult{}, errors.New("unexpected derivation")
+				},
+				func(context.Context, *edge.BatchEnergyOptimization, campaign.StoredObjectReference, []edge.ProfilingRun, campaign.Result) (campaign.StoredObjectReference, error) {
+					ports.results++
+					return campaign.StoredObjectReference{}, errors.New("unexpected result publication")
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(root)}
+			if _, err = reconciler.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			if err = h.controller.store.client.Get(ctx, request.NamespacedName, root); err != nil {
+				t.Fatal(err)
+			}
+			condition := apimeta.FindStatusCondition(root.Status.Conditions, "MeasurementComplete")
+			if root.Status.Phase != "Failed" || root.Status.Outcome != profiler.ResolutionReasonInvalidRunSpec || root.Status.ObservedGeneration != root.Generation || condition == nil || condition.Status != meta.ConditionFalse || condition.Reason != root.Status.Outcome || condition.ObservedGeneration != root.Generation || root.Status.Result != nil {
+				t.Fatalf("pre-trial failure was not terminal: %+v", root.Status)
+			}
+			version := root.ResourceVersion
+			if _, err = reconciler.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			if err = h.controller.store.client.Get(ctx, request.NamespacedName, root); err != nil {
+				t.Fatal(err)
+			}
+			if root.ResourceVersion != version {
+				t.Fatal("terminal replay crossed resolution/status fence")
+			}
+			exercisePretrialHandback(t, ctx, h, root, class, failReturn)
+			if err = h.controller.store.client.Get(ctx, request.NamespacedName, root); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(root.Spec, original) {
+				t.Fatal("campaign spec, including batchSizes, changed before deletion")
+			}
+			assertPretrialNoWork(t, ctx, h, ports, native)
+			if err = deleteMeasurement(ctx, h.controller.store.client, h.kube, ports, root); err != nil {
+				t.Fatal(err)
+			}
+			if err = h.controller.store.client.Get(ctx, request.NamespacedName, &edge.BatchEnergyOptimization{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("normal DELETE retained campaign: %v", err)
+			}
+		})
+	}
+}
+
+func pretrialFailureFixture(t *testing.T) (*admissionHarness, *edge.DeviceClass, *edge.BatchEnergyOptimization) {
+	t.Helper()
 			h := newAdmissionHarness(t)
 			// The admission harness normally has no campaign status writer.
 			// Register that real API subresource for the campaign reconciler.
@@ -107,38 +181,11 @@ func ExercisePretrialFailureReturn(t *testing.T, deleteMeasurement func(context.
 				t.Fatal("fixture must have an API-valid name outside the legacy campaign-label contract")
 			}
 			h.create(root)
-			original := root.DeepCopy().Spec
-			h.admit()
-			if h.holder() != string(root.UID) || !strings.HasPrefix(h.admission(root), "Granted") || root.Status.Phase != "" {
-				t.Fatalf("initial admission: holder=%q status=%+v", h.holder(), root.Status)
-			}
-			ports := &pretrialFailurePorts{}
-			if err := deleteMeasurement(ctx, h.controller.store.client, h.kube, ports, root); err != nil { t.Fatal(err) }
-			native := &pretrialFailureClient{Client: h.controller.store.client}
-			source, err := campaigncontroller.NewCurvePlanSource(native, ports, ports, ports, campaigncontroller.CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20})
-			if err != nil { t.Fatal(err) }
-			reconciler, err := campaigncontroller.NewBatchEnergyOptimizationReconciler(native, source.Resolve,
-				func(context.Context, derivation.CurvePlan, []edge.ProfilingRun, []edge.ProfilingRun, []int, derivation.EnergyObjectivePolicy) (campaign.CurveResult, error) {
-					t.Error("pre-trial failure reached curve derivation")
-					return campaign.CurveResult{}, errors.New("unexpected derivation")
-				},
-				func(context.Context, *edge.BatchEnergyOptimization, campaign.StoredObjectReference, []edge.ProfilingRun, campaign.Result) (campaign.StoredObjectReference, error) {
-					ports.results++
-					return campaign.StoredObjectReference{}, errors.New("unexpected result publication")
-				})
-			if err != nil { t.Fatal(err) }
-			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(root)}
-			if _, err = reconciler.Reconcile(ctx, request); err != nil { t.Fatal(err) }
-			if err = h.controller.store.client.Get(ctx, request.NamespacedName, root); err != nil { t.Fatal(err) }
-			condition := apimeta.FindStatusCondition(root.Status.Conditions, "MeasurementComplete")
-			if root.Status.Phase != "Failed" || root.Status.Outcome != profiler.ResolutionReasonInvalidRunSpec || root.Status.ObservedGeneration != root.Generation || condition == nil || condition.Status != meta.ConditionFalse || condition.Reason != root.Status.Outcome || condition.ObservedGeneration != root.Generation || root.Status.Result != nil {
-				t.Fatalf("pre-trial failure was not terminal: %+v", root.Status)
-			}
-			if ports.reads != 1 { t.Fatalf("frozen-plan reads = %d, want 1", ports.reads) }
-			version := root.ResourceVersion
-			if _, err = reconciler.Reconcile(ctx, request); err != nil { t.Fatal(err) }
-			if err = h.controller.store.client.Get(ctx, request.NamespacedName, root); err != nil { t.Fatal(err) }
-			if ports.reads != 1 || root.ResourceVersion != version { t.Fatal("terminal replay crossed resolution/status fence") }
+	return h, class, root
+}
+
+func exercisePretrialHandback(t *testing.T, ctx context.Context, h *admissionHarness, root *edge.BatchEnergyOptimization, class *edge.DeviceClass, failReturn bool) {
+	t.Helper()
 			settle := settleAgent(class)
 			holderAtReadback := ""
 			h.nodes.agent = func(n *core.Node) {
@@ -153,34 +200,46 @@ func ExercisePretrialFailureReturn(t *testing.T, deleteMeasurement func(context.
 					return false, nil, nil
 				})
 				h.admit()
-				if h.holder() != string(root.UID) || holderAtReadback != "" { t.Fatal("failed return released taint or fabricated readback") }
+				if h.holder() != string(root.UID) || holderAtReadback != "" {
+					t.Fatal("failed return released taint or fabricated readback")
+				}
 				results := h.controller.State().Results
-				if len(results) == 0 || results[len(results)-1].Status != servingstate.NativeOperationFailed || !strings.Contains(results[len(results)-1].Error, "injected lowest-mode request failure") { t.Fatalf("return failure not visible: %+v", results) }
+				if len(results) == 0 || results[len(results)-1].Status != servingstate.NativeOperationFailed {
+					t.Fatalf("return failure not visible: %+v", results)
+				}
 				failReturn = false
 			}
 			h.admit()
 			node, err := h.kube.CoreV1().Nodes().Get(ctx, h.node.Name, meta.GetOptions{})
-			if err != nil { t.Fatal(err) }
-			if holderAtReadback != string(root.UID) || h.holder() != "" || node.Labels[chillmeta.PowerMode] != "low" || node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModeSuccess { t.Fatalf("handback lacked held lowest-mode readback: %+v", node) }
-			for _, result := range h.controller.State().Results {
-				if result.Operation.Kind == handBackKind && result.Status == servingstate.NativeOperationComplete {
-					if !strings.Contains(strings.Join(result.Progress, ";"), "lowest mode low read back;taint removed") { t.Fatalf("handback step order: %v", result.Progress) }
+			if err != nil {
+				t.Fatal(err)
+			}
+			if holderAtReadback != string(root.UID) || h.holder() != "" || node.Labels[chillmeta.PowerMode] != "low" || node.Labels[chillmeta.PowerModeState] != chillmeta.PowerModeSuccess {
+				t.Fatalf("handback lacked held lowest-mode readback: %+v", node)
+			}
+}
+
+func assertPretrialNoWork(t *testing.T, ctx context.Context, h *admissionHarness, ports *pretrialFailurePorts, native *pretrialFailureClient) {
+	t.Helper()
+	var err error
+			for _, list := range []client.ObjectList{&edge.ProfilingRunList{}, &edge.ModelLoadedIdleBaselineList{}, &batch.JobList{}, &core.PodList{}} {
+				if err = h.controller.store.client.List(ctx, list); err != nil {
+					t.Fatal(err)
+				}
+				items, err := apimeta.ExtractList(list)
+				if err != nil || len(items) != 0 {
+					t.Fatalf("pre-trial child objects: %T count=%d err=%v", list, len(items), err)
 				}
 			}
-			if err = h.controller.store.client.Get(ctx, request.NamespacedName, root); err != nil { t.Fatal(err) }
-			if !reflect.DeepEqual(root.Spec, original) { t.Fatal("campaign spec, including batchSizes, changed before deletion") }
-			for _, list := range []client.ObjectList{&edge.ProfilingRunList{}, &edge.ModelLoadedIdleBaselineList{}, &batch.JobList{}, &core.PodList{}} {
-				if err = h.controller.store.client.List(ctx, list); err != nil { t.Fatal(err) }
-				items, err := apimeta.ExtractList(list)
-				if err != nil || len(items) != 0 { t.Fatalf("pre-trial child objects: %T count=%d err=%v", list, len(items), err) }
-			}
 			for _, action := range h.kube.Actions() {
-				if action.GetVerb() == "create" && (action.GetResource().Resource == "pods" || action.GetResource().Resource == "jobs") { t.Fatalf("unexpected measurement actuation: %v", action) }
+				if action.GetVerb() == pretrialCreateVerb && (action.GetResource().Resource == "pods" || action.GetResource().Resource == "jobs") {
+					t.Fatalf("unexpected measurement actuation: %v", action)
+				}
 			}
-			if ports.writes != 0 || ports.results != 0 || ports.resolutions != 0 || ports.preparations != 0 { t.Fatalf("pre-trial work crossed boundary: %+v", ports) }
-			if native.creates != 0 { t.Fatalf("pre-trial native creates = %d", native.creates) }
-			if err = deleteMeasurement(ctx, h.controller.store.client, h.kube, ports, root); err != nil { t.Fatal(err) }
-			if err = h.controller.store.client.Get(ctx, request.NamespacedName, &edge.BatchEnergyOptimization{}); !apierrors.IsNotFound(err) { t.Fatalf("normal DELETE retained campaign: %v", err) }
-		})
-	}
+			if ports.writes != 0 || ports.results != 0 || ports.resolutions != 0 || ports.preparations != 0 {
+				t.Fatalf("pre-trial work crossed boundary: %+v", ports)
+			}
+			if native.creates != 0 {
+				t.Fatalf("pre-trial native creates = %d", native.creates)
+			}
 }

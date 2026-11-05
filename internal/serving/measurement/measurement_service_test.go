@@ -34,6 +34,7 @@ const (
 	measurementAcceptedTest  = "accepted"
 	measurementDryRunTest    = "dry run"
 	measurementFinalizerTest = "finalizer lifecycle"
+	measurementInvalidRunSpecTest = "invalid Run spec"
 )
 
 func measurementScheme(t *testing.T) *runtime.Scheme {
@@ -161,13 +162,13 @@ func assertNativeMeasurementDeleteOptions(t *testing.T, task *api.BatchEnergyOpt
 func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T) {
 	modes := []string{
 		"stale version", "replaced UID", "physical source",
-		"active measurement", measurementFinalizerTest, "deleted", "invalid Run spec",
+		"active measurement", measurementFinalizerTest, "deleted", measurementInvalidRunSpecTest,
 	}
 	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			task := terminalDeletionTask()
-			if mode == "invalid Run spec" {
+			if mode == measurementInvalidRunSpecTest {
 				task.Status.Phase = measurementPhaseFailed
 				task.Status.Outcome = profiler.ResolutionReasonInvalidRunSpec
 				task.Status.Result = nil
@@ -220,13 +221,13 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 				uid = "old-uid"
 			}
 			result, err := service.Delete(ctx, "allowed", "task", uid, version)
-			accepted := mode == "deleted" || mode == measurementFinalizerTest || mode == "invalid Run spec"
+			accepted := mode == "deleted" || mode == measurementFinalizerTest || mode == measurementInvalidRunSpecTest
 			if (err == nil) != accepted || (deletes == 1) != accepted {
 				t.Fatalf("result=%+v err=%v deletes=%d", result, err, deletes)
 			}
 			current := &api.BatchEnergyOptimization{}
 			getErr := native.Get(ctx, types.NamespacedName{Namespace: "allowed", Name: "task"}, current)
-			if mode == "deleted" || mode == "invalid Run spec" {
+			if mode == "deleted" || mode == measurementInvalidRunSpecTest {
 				if !apierrors.IsNotFound(getErr) {
 					t.Fatal("native object survived accepted deletion")
 				}
