@@ -58,6 +58,7 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 			config.Metrics.DurationSeconds = test.duration
 			if test.idle {
 				config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
+				config.Measurement.WorkloadName = ""
 				config.Measurement.WarmupIterations = 0
 				config.Measurement.MinServiceSamples = 0
 				config.Measurement.SLOPercentile = 0

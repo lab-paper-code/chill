@@ -245,10 +245,33 @@ func (p *frozenWorkloadPreparationPorts) ResolveActuationPolicy(context.Context,
 	return profiler.FrozenActuationPolicy{}, nil
 }
 
-func (p *frozenWorkloadPreparationPorts) Resolve(_ context.Context, _ run.RunConfig) (profiler.FrozenExecutionPolicy, error) {
-	return profiler.FrozenExecutionPolicy{Policy: profiler.ExecutionPolicy{ExecutionPolicySpec: profiler.ExecutionPolicySpec{
-		RuntimeMemoryRequestBytes: p.config.Actor.MemoryRequestBytes, RuntimeMemoryLimitBytes: p.config.Actor.MemoryLimitBytes,
-	}}}, nil
+func (p *frozenWorkloadPreparationPorts) Resolve(_ context.Context, config run.RunConfig) (profiler.FrozenExecutionPolicy, error) {
+	return profiler.FrozenExecutionPolicy{
+		SchemaVersion: profiler.FrozenExecutionPolicySchemaVersion,
+		Source: profiler.ExecutionPolicySource{
+			Kind: profiler.ConfigMapExecutionPolicySourceKind, Namespace: "chill-system",
+			Name: "facts", UID: "facts-uid", ResourceVersion: "1", Key: "execution-policies.yaml",
+		},
+		Policy: profiler.ExecutionPolicy{
+			SchemaVersion: profiler.ExecutionPolicySchemaVersion,
+			ExecutionPolicySpec: profiler.ExecutionPolicySpec{
+				Name: "test-policy", DeviceClass: "*", ExecutionPath: config.Candidate.ExecutionPath,
+				WorkloadMode:                  config.Measurement.WorkloadMode,
+				ActiveDeadlineOverheadSeconds: 180, AttemptTimeoutOverheadSeconds: 150,
+				ObserverReadyTimeoutSeconds: 30, ObserverStartOverheadSeconds: 120,
+				MetricResultOverheadSeconds: 30, WorkloadEndFenceTimeoutSeconds: 15,
+				WorkloadResultTimeoutSeconds: 30,
+				MaxLatencySamples:            1_000_000, MaxInputBytes: 64 << 20,
+				MaxRuntimeResultBytes: 32 << 20, MaxMetricResultBytes: 8 << 20,
+				MaxWorkloadEvents: 10_000, MaxWorkloadResultBytes: 8 << 20,
+				RuntimeMemoryRequestBytes:  p.config.Actor.MemoryRequestBytes,
+				RuntimeMemoryLimitBytes:    p.config.Actor.MemoryLimitBytes,
+				ObserverMemoryRequestBytes: 16 << 20, ObserverMemoryLimitBytes: 64 << 20,
+				WorkloadObserverMemoryRequestBytes: 32 << 20, WorkloadObserverMemoryLimitBytes: 128 << 20,
+				CoordinationReserveBytes: 1 << 20, WorkspaceBytes: 128 << 20,
+			},
+		},
+	}, nil
 }
 
 func prepareFrozenWorkloadChild(
