@@ -81,6 +81,16 @@ There is no name/label fallback, migration, or dual reader. Historical
 raw/finalized evidence and publications are not rewritten;
 RunConfig/evidence numeric execution contracts are unchanged by this change.
 
+Campaign child discovery uses `edge.dacs.io/batch-energy-optimization` only as a
+candidate filter. Parent names of at most 63 bytes retain their existing label
+value; longer admitted names use `beo-` plus the first 56 hexadecimal SHA-256
+characters of the full name (60 bytes total). Child creation, progress listing
+and frozen-plan recovery use the same projection. The exact parent name stays
+in the controller owner reference, and its UID remains the ownership authority;
+a same-name foreign UID still fails reconciliation. Existing child names,
+short-name labels, admission's 200-character name limit and stored evidence
+contracts are unchanged. No existing objects are rewritten or campaigns restarted.
+
 Serving configurations must be measured, not inferred. Profiling and serving share CPU without requests, limits, explicit pinning or quota-derived thread overrides. Runtime-default applied session settings, actual affinity/cpuset/quota (including unlimited), usage and throttling are observations, not allocation identities or active/idle matching gates. Memory is placement-feasibility evidence, not a limit sweep. On cgroup v2 without `memory.peak`, timestamped `memory.current` samples cover active/idle windows at a scheduling target interval; retained maxima can miss spikes and are not kernel high-water/absolute bounds. GPU UUID/RKNN ABI and actual backend remain execution observations.
 
 Before a CurvePlan or RunConfig is recorded, the shared preparer freezes runtime memory at `min(executionPolicyDefaults.runtimeMemoryLimitBytes, floor(Node.status.allocatable.memory × profiler.measurementMemoryFraction))` in `Actor.MemoryLimitBytes`, with the selected runtime request in `Actor.MemoryRequestBytes`. The Node UID must match the resolved Run. The chart defaults remain fraction **0.8**, **16 GiB** upper limit and **128 MiB** request. Query preflight receives the same execution-policy key and memory fraction. Actual serving Pods and measurement Jobs both call `firstfloor.RuntimeContainer` with that frozen Config for image, CPU/memory/accelerator resources, performance environment and artifact/preprocessor mounts; launching does not reselect memory or image. Copy-init containers share its memory envelope; metric/workload observers retain their separate configured limits. File-copy page cache belongs to the init cgroup, not the metric observer. Serving therefore uses the measured pressure envelope rather than substituting peak-observed bytes plus overhead. Near-limit reclaim is not claimed to be measurement-neutral; an OOM fails the existing Job rather than publishing a measurement.

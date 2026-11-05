@@ -297,7 +297,7 @@ func (s *CurvePlanSource) recoverTransition(
 	runs := &edgev1alpha1.ProfilingRunList{}
 	if err := s.projector.reader.List(ctx, runs,
 		client.InNamespace(parent.Namespace),
-		client.MatchingLabels{labelBatchEnergyOptimization: parent.Name},
+		client.MatchingLabels{labelBatchEnergyOptimization: campaignNameLabelValue(parent.Name)},
 	); err != nil {
 		return nil, fmt.Errorf("list BatchEnergyOptimization ProfilingRuns: %w", err)
 	}

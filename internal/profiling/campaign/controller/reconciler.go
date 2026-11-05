@@ -255,7 +255,7 @@ func (r *BatchEnergyOptimizationReconciler) listRuns(
 		ctx,
 		list,
 		client.InNamespace(parent.Namespace),
-		client.MatchingLabels{labelBatchEnergyOptimization: parent.Name},
+		client.MatchingLabels{labelBatchEnergyOptimization: campaignNameLabelValue(parent.Name)},
 	); err != nil {
 		return nil, fmt.Errorf("list BatchEnergyOptimization ProfilingRuns: %w", err)
 	}

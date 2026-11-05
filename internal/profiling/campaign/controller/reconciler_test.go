@@ -16,13 +16,144 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+func TestCampaignNameLabelBoundariesProgressAndRestore(t *testing.T) {
+	for _, name := range []string{
+		"jetsono-ortcpu-m50",
+		strings.Repeat("a", 63),
+		strings.Repeat("a", 64),
+		"mobilenet-v2-050-genesis3-gpu-1500-firstfloor-ort-cuda-amd64-20261105",
+		strings.Repeat("a", 200), // The BEO admission CEL limit preserves room for trial suffixes.
+	} {
+		t.Run(fmt.Sprintf("name-%d", len(name)), func(t *testing.T) {
+			ctx := context.Background()
+			parent := testParent()
+			parent.Name, parent.Generation = name, 1
+			parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
+			parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
+			reportBytes, report := curvePlanCandidateReport(t, parent)
+			preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
+			scheme := runtime.NewScheme()
+			if err := api.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			// Fake clients accept invalid metadata and selector values. Apply the
+			// Kubernetes boundary validators before delegating to fake storage.
+			native := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(parent, &api.ProfilingRun{}).
+				WithObjects(parent, curvePlanModel(report)).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
+						if errs := apivalidation.ValidateObjectMetaAccessor(object, true, apivalidation.NameIsDNSSubdomain, field.NewPath("metadata")); len(errs) != 0 {
+							return errs.ToAggregate()
+						}
+						return c.Create(ctx, object, opts...)
+					},
+					List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+						options := (&client.ListOptions{}).ApplyOptions(opts)
+						if options.LabelSelector != nil {
+							if _, err := metav1.ParseToLabelSelector(options.LabelSelector.String()); err != nil {
+								return err
+							}
+						}
+						return c.List(ctx, list, opts...)
+					},
+				}).Build()
+			store := newFakeCurvePlanStore()
+			options := CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20}
+			resolver := &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}
+			source, err := NewCurvePlanSource(native, resolver, preparer, store, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dependencies := &terminalReplayDependencies{}
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, source.Resolve, dependencies.Derive, dependencies.Write)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+			if _, err := reconciler.Reconcile(ctx, request); err != nil {
+				t.Fatalf("initial campaign progress: %v", err)
+			}
+			idle := batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1}
+			child := &api.ProfilingRun{}
+			if err := native.Get(ctx, client.ObjectKey{Namespace: parent.Namespace, Name: batchenergyoptimization.RunName(name, idle, 1)}, child); err != nil {
+				t.Fatal(err)
+			}
+			if !controlledByParent(parent, child) || child.OwnerReferences[0].Name != name ||
+				(len(name) <= 63 && child.Labels[labelBatchEnergyOptimization] != name) {
+				t.Fatalf("child identity changed: %+v", child.ObjectMeta)
+			}
+			// The active child uses the same bounded metadata contract.
+			active, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1}, 1, "ort-cpu")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if errs := apivalidation.ValidateObjectMeta(&active.ObjectMeta, true, apivalidation.NameIsDNSSubdomain, field.NewPath("metadata")); len(errs) != 0 {
+				t.Fatal(errs.ToAggregate())
+			}
+			prepared := len(preparer.requests)
+			preparer.err = errors.New("restart must recover the frozen plan without preparing it again")
+			recovered, err := NewCurvePlanSource(native, resolver, preparer, store, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restarted, err := NewBatchEnergyOptimizationReconciler(native, recovered.Resolve, dependencies.Derive, dependencies.Write)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := restarted.Reconcile(ctx, request)
+			if err != nil || result.RequeueAfter != waitBackstop || len(preparer.requests) != prepared || store.puts != 1 {
+				t.Fatalf("restore pending child: result=%+v err=%v prepares=%d puts=%d", result, err, len(preparer.requests), store.puts)
+			}
+			child.Status.Evidence = &api.ProfilingRunEvidenceReference{Store: "evidence", Key: "verified"}
+			if err := native.Status().Update(ctx, child); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := restarted.Reconcile(ctx, request); err != nil {
+				t.Fatalf("progress from recovered evidence: %v", err)
+			}
+			updated := &api.BatchEnergyOptimization{}
+			if err := native.Get(ctx, request.NamespacedName, updated); err != nil {
+				t.Fatal(err)
+			}
+			runs, err := restarted.listRuns(ctx, parent)
+			if err != nil || len(runs) != 2 || updated.Status.Phase != batchEnergyOptimizationPhaseMeasuring || updated.Status.CompletedTrials != 1 {
+				t.Fatalf("recovered progress: runs=%d status=%+v err=%v", len(runs), updated.Status, err)
+			}
+			// A matching candidate label never authorizes a recreated same-name
+			// parent's child, including a deliberate candidate-token collision.
+			foreign, err := BuildRun(parent, idle, 99, "ort-cpu")
+			if err != nil {
+				t.Fatal(err)
+			}
+			foreign.OwnerReferences[0].UID = "stale-parent-uid"
+			if err := native.Create(ctx, foreign); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := recovered.Resolve(ctx, parent); err == nil || !strings.Contains(err.Error(), "not controller-owned") {
+				t.Fatalf("curve-plan recovery adopted foreign UID: %v", err)
+			}
+			runs, err = restarted.listRuns(ctx, parent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ProjectSnapshot(parent, runs, nil, []int{1}, false); err == nil || !strings.Contains(err.Error(), "not controller-owned") {
+				t.Fatalf("snapshot adopted foreign UID: %v", err)
+			}
+		})
+	}
+}
 
 func TestDeriveStatusPreservesConditionTimeUntilStatusTransitions(t *testing.T) {
 	transition := metav1.NewTime(time.Date(2026, time.August, 11, 1, 2, 3, 0, time.UTC))

@@ -653,6 +653,8 @@ labels는 기존 `edge.dacs.io/batch-energy-optimization`, `edge.dacs.io/workloa
 `edge.dacs.io/batch`, `edge.dacs.io/attempt` 네 key만 투영한다.
 없는 값은 만들어 넣지 않는다. ownerReferences가 없으면 빈 배열이다.
 추가 저장·CRD·owner 재작성은 없다.
+63자를 넘는 BEO 이름의 campaign label 값은 Kubernetes 길이 제한 안의 후보 토큰이다.
+원래 BEO 이름은 `ownerReferences[].name`에 그대로 남으며 label을 전체 이름으로 해석하지 않는다.
 
 소유 판정은 같은 namespace에서 `controller=true`, `apiVersion=edge.dacs.io/v1alpha1`,
 `kind=BatchEnergyOptimization`, **BEO UID가 정확히 일치**할 때만 한다. 이름/label만으로

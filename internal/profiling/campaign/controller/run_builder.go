@@ -3,6 +3,8 @@
 package controller
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 
@@ -21,6 +23,16 @@ const (
 	labelBatch                   = "edge.dacs.io/batch"
 	labelAttempt                 = "edge.dacs.io/attempt"
 )
+
+// campaignNameLabelValue preserves existing short-name selectors. Long names
+// use a bounded candidate token; the controller owner UID remains authority.
+func campaignNameLabelValue(name string) string {
+	if len(name) <= 63 {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	return "beo-" + hex.EncodeToString(sum[:28])
+}
 
 func BuildRun(
 	parent *edgev1alpha1.BatchEnergyOptimization,
@@ -78,7 +90,7 @@ func BuildRun(
 			Name:      batchenergyoptimization.RunName(parent.Name, measurement, attempt),
 			Namespace: parent.Namespace,
 			Labels: map[string]string{
-				labelBatchEnergyOptimization: parent.Name,
+				labelBatchEnergyOptimization: campaignNameLabelValue(parent.Name),
 				labelWorkloadMode:            string(measurement.WorkloadMode),
 				labelBatch:                   fmt.Sprintf("%d", measurement.Batch),
 				labelAttempt:                 fmt.Sprintf("%d", attempt),
