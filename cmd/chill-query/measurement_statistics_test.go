@@ -141,6 +141,10 @@ func TestMeasurementStatisticsDiscoveryExcludesIncompleteNextBatch(t *testing.T)
 	cr, record, objects, reader, loader := statisticsFixture(t, 1, 1, 1, 2)
 	spec := record.Spec()
 	spec.Outcome = campaign.BatchDiscoveryComplete
+	failed := campaign.RunReference{Namespace: cr.Namespace, Name: "failed-b2", UID: "failed-b2-uid"}
+	spec.ExcludedTrials = append(spec.ExcludedTrials, campaign.ExcludedTrialReference{
+		Run: failed, Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 2}, Attempt: 2, Reasons: []string{campaign.DiscoveryStopOOM},
+	})
 	var err error
 	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
 		MeasuredBatchSizes: []int{1},
@@ -148,6 +152,7 @@ func TestMeasurementStatisticsDiscoveryExcludesIncompleteNextBatch(t *testing.T)
 			Reason: campaign.DiscoveryStopOOM,
 			FailedMeasurement: &campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 2},
 			Attempt: 2,
+			Run: &failed,
 		},
 	})
 	if err != nil {
@@ -184,6 +189,10 @@ func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
 	}
 	spec.CompletedTrials = completed
 	spec.Outcome = campaign.BatchDiscoveryComplete
+	failed := campaign.RunReference{Namespace: cr.Namespace, Name: "failed-b1", UID: "failed-b1-uid"}
+	spec.ExcludedTrials = append(spec.ExcludedTrials, campaign.ExcludedTrialReference{
+		Run: failed, Measurement: campaign.ResultMeasurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1}, Attempt: 1, Reasons: []string{campaign.DiscoveryStopOOM},
+	})
 	var err error
 	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
 		MeasuredBatchSizes: []int{},
@@ -191,6 +200,7 @@ func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
 			Reason: campaign.DiscoveryStopOOM,
 			FailedMeasurement: &campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1},
 			Attempt: 1,
+			Run: &failed,
 		},
 	})
 	if err != nil {

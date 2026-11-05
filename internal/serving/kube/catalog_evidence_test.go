@@ -21,6 +21,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	campaigncontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
@@ -142,6 +143,12 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 				config.State.Firstfloor.MaxBatchSize = 2
 				config.Actor.BatchSizes = []int{1, 2}
 				config.Actor.MaxBatchSize = 2
+				config.Measurement.WarmupIterations = 0
+				config.Measurement.StartupWarmupIterations = 20
+				config.Measurement.WarmupBatchSizes = []int{1}
+				config.Actor.WarmupIterations = 20
+				config.Actor.WarmupBatchSizes = []int{1}
+				config.Actor.BuildRunnerCommand()
 			}, nil, 1, 2)
 			campaign := &edgev1alpha1.BatchEnergyOptimization{}
 			ctx := context.Background()
@@ -152,12 +159,36 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			campaign.Spec.ActiveProtocol.WarmupIterations = 20
+			campaign.Spec.ActiveProtocol.Workload = retained.Plan.Shared().ActiveProtocol.WorkloadName
+			if err := catalog.store.client.Update(ctx, campaign); err != nil {
+				t.Fatal(err)
+			}
+			for index, reference := range retained.Result.Spec().CompletedTrials {
+				built, err := campaigncontroller.BuildRun(campaign, batchenergyoptimization.Measurement(reference.Measurement), index%3+1, "ort-cpu")
+				if err != nil {
+					t.Fatal(err)
+				}
+				run := &edgev1alpha1.ProfilingRun{}
+				if err := catalog.store.client.Get(ctx, types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}, run); err != nil {
+					t.Fatal(err)
+				}
+				run.Spec = built.Spec
+				if err := catalog.store.client.Update(ctx, run); err != nil {
+					t.Fatal(err)
+				}
+			}
 			spec := retained.Result.Spec()
 			spec.Outcome = batchenergyoptimization.BatchDiscoveryComplete
+			failed := batchenergyoptimization.RunReference{Namespace: source.Namespace, Name: "failed-b2", UID: "failed-b2-uid"}
+			spec.ExcludedTrials = append(spec.ExcludedTrials, batchenergyoptimization.ExcludedTrialReference{
+				Run: failed, Measurement: batchenergyoptimization.ResultMeasurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}, Attempt: 1, Reasons: []string{stop},
+			})
 			spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
 				MeasuredBatchSizes: []int{1},
 				Stop: batchenergyoptimization.DiscoveryStop{
 					Reason: stop, FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}, Attempt: 1,
+					Run: &failed,
 				},
 			})
 			if err != nil {
@@ -186,8 +217,26 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 				!slices.Equal(profile.Condition.PlannedBatchSizes, []int{1, 2}) ||
 				!slices.Equal(profile.RuntimeMetadata.InitializedBatches, []int{1, 2}) ||
 				profile.Batches[0].MemoryBytes != 4096 || profile.IdleBaselineWatts != 4 ||
-				len(profile.Batches[0].ServiceSamples) != 180 || math.Abs(profile.Batches[0].EnergyPerInputJoules-1) > 1e-9 {
+				len(profile.Batches[0].ServiceSamples) != 180 || math.Abs(profile.Batches[0].EnergyPerInputJoules-1) > 1e-9 ||
+				profile.Condition.ActiveProtocol.WarmupIterations != 0 || profile.Condition.Actor.WarmupIterations != 20 ||
+				profile.RuntimeMetadata.WarmupIterations != 20 {
 				t.Fatalf("candidate domain or measured service/J/idle/memory changed: %+v", profile)
+			}
+			run := &edgev1alpha1.ProfilingRun{}
+			if err := catalog.store.client.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: "trial-0"}, run); err != nil {
+				t.Fatal(err)
+			}
+			run.Spec.Measurement.WarmupIterations = 1
+			if err := catalog.store.client.Update(ctx, run); err != nil {
+				t.Fatal(err)
+			}
+			campaign.Annotations = map[string]string{"catalog-test-revision": "protocol-drift"}
+			if err := catalog.store.client.Update(ctx, campaign); err != nil {
+				t.Fatal(err)
+			}
+			view, err = catalog.Refresh(ctx, []string{source.Namespace})
+			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
+				t.Fatalf("unrecorded collection warmup admitted: %+v %v", view, err)
 			}
 		})
 	}
@@ -212,12 +261,17 @@ func TestCatalogDiscoveryRejectsUnfinishedClaimAndPreservesEmptyCompletion(t *te
 			}
 			spec := retained.Result.Spec()
 			spec.Outcome = batchenergyoptimization.BatchDiscoveryComplete
+			failed := batchenergyoptimization.RunReference{Namespace: source.Namespace, Name: "failed-idle-b1", UID: "failed-idle-b1-uid"}
+			spec.ExcludedTrials = append(spec.ExcludedTrials, batchenergyoptimization.ExcludedTrialReference{
+				Run: failed, Measurement: batchenergyoptimization.ResultMeasurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1}, Attempt: 1, Reasons: []string{batchenergyoptimization.DiscoveryStopOOM},
+			})
 			spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
 				MeasuredBatchSizes: measured,
 				Stop: batchenergyoptimization.DiscoveryStop{
 					Reason: batchenergyoptimization.DiscoveryStopOOM,
 					FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1},
 					Attempt: 1,
+					Run: &failed,
 				},
 			})
 			if err != nil {
@@ -563,6 +617,11 @@ func catalogEvidenceFixtureConfigPolicy(t *testing.T, memory uint64, trialWatts 
 		settling := int32(config.Measurement.SettlingDurationSeconds)
 		measurement := edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 1, WarmupIterations: int32(config.Measurement.WarmupIterations), DurationSeconds: 30,
 			WorkloadMode: config.Measurement.WorkloadMode}
+		measurement.StartupWarmupIterations = int32(config.Measurement.StartupWarmupIterations)
+		measurement.Workload = config.Measurement.WorkloadName
+		for _, batch := range config.Measurement.WarmupBatchSizes {
+			measurement.WarmupBatchSizes = append(measurement.WarmupBatchSizes, int32(batch))
+		}
 		if config.Measurement.Dataset != nil {
 			measurement.Dataset = config.Measurement.Dataset.Name
 		}
@@ -667,6 +726,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 		Runtime: firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelFiles: modelFiles, Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs,
 			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: initialized,
 			CgroupCPUMax: measuredTwoCoreCPUMax, CPUSet: "0-3"}}
+	native.Runtime.WarmupIterations = config.Actor.WarmupIterations
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		activeNative := native
 		activeNative.ExecutionCount, activeNative.InferenceCount = 60, 60
