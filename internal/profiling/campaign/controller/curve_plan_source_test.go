@@ -29,19 +29,17 @@ import (
 
 const curvePlanWorkloadUID = "workload-uid"
 
-func TestCurvePlanSourcePlansBatchFourWithBatchOneIdle(t *testing.T) {
+func TestCurvePlanSourcePlansAutomaticDomainWithBatchOneIdle(t *testing.T) {
 	for _, declared := range []bool{false, true} {
 		t.Run(fmt.Sprintf("declared=%t", declared), func(t *testing.T) {
 			parent := testParent()
-			parent.Spec.BatchSizes = nil
 			parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
 			_, report := curvePlanCandidateReport(t, parent)
 			model := curvePlanModel(report)
 			if declared {
-				report.ArtifactCapability.DeclaredBatchSizes = []int32{4}
-				model.Spec.Artifacts[0].Derivation.DeclaredBatchSizes = []int32{4}
+				report.ArtifactCapability.DeclaredBatchSizes = []int32{1, 4}
+				model.Spec.Artifacts[0].Derivation.DeclaredBatchSizes = []int32{1, 4}
 			} else {
-				parent.Spec.BatchSizes = []int32{4}
 				report.ArtifactCapability = &profilingrun.CandidateArtifactCapability{}
 				model.Spec.Artifacts[0].Derivation = nil
 			}
@@ -59,8 +57,12 @@ func TestCurvePlanSourcePlansBatchFourWithBatchOneIdle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(plan.Shared().PlannedBatchSizes, []int{4}) ||
-				len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 4 ||
+			want := []int{1, 2, 4, 8, 16, 32}
+			if declared {
+				want = []int{1, 4}
+			}
+			if !slices.Equal(plan.Shared().PlannedBatchSizes, want) ||
+				len(preparer.requests) != 2 || preparer.requests[0].Measurement.Batch != 1 ||
 				preparer.requests[1].Measurement.Batch != 1 {
 				t.Fatalf("plan batches=%v, preparation requests=%+v", plan.Shared().PlannedBatchSizes, preparer.requests)
 			}
@@ -161,7 +163,6 @@ func TestCurvePlanSourceFreezesWithoutArchiveAndRecoversWorkloadBeforeChildren(t
 					Preprocessor: config.State.Preprocessor.Name,
 				},
 			}
-			parent.Spec.BatchSizes = []int32{1}
 			parent.Spec.ActiveProtocol.DurationSeconds = 30
 			parent.Spec.ActiveProtocol.Dataset = config.Measurement.Dataset.Name
 			metric := edgev1alpha1.ProfilingRunMetricObservationSpec{
@@ -273,7 +274,7 @@ func assertFrozenWorkloadStartup(
 	if shared.Actor.WarmupIterations != int(parent.Spec.ActiveProtocol.WarmupIterations) ||
 		shared.ActiveProtocol.StartupWarmupIterations != shared.Actor.WarmupIterations ||
 		shared.IdleProtocol.StartupWarmupIterations != shared.Actor.WarmupIterations ||
-		!slices.Equal(shared.Actor.WarmupBatchSizes, batches) {
+		!slices.Equal(shared.Actor.WarmupBatchSizes, []int{1}) {
 		t.Fatalf("recorded common startup = %+v, active=%+v, idle=%+v",
 			shared.Actor, shared.ActiveProtocol, shared.IdleProtocol)
 	}
@@ -398,10 +399,9 @@ func TestCurvePlanSourceRejectsInvalidStoredPlanWithoutProjecting(t *testing.T) 
 	}
 }
 
-func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(t *testing.T) {
+func TestCurvePlanSourceUsesCanonicalArtifactAndAutomaticBatchDomain(t *testing.T) {
 	parent := testParent()
 	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
-	parent.Spec.BatchSizes = []int32{1, 2, 4, 8, 16, 32}
 	_, report := curvePlanCandidateReport(t, parent)
 	report.Selection.Artifact = "canonical-onnx"
 	report.ArtifactSupply.Files = []string{"/artifact/canonical.onnx"}
@@ -444,11 +444,12 @@ func TestCurvePlanSourceUsesCanonicalArtifactDeclaredInputAndCampaignBatchSizes(
 	}
 }
 
-func TestCurvePlanSourceRejectsCampaignBatchSizesForDerivedArtifact(t *testing.T) {
+func TestCurvePlanSourceRejectsArtifactWithoutBatchOne(t *testing.T) {
 	parent := testParent()
 	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
-	parent.Spec.BatchSizes = []int32{1, 2, 4}
-	reportBytes, report := curvePlanCandidateReport(t, parent)
+	_, report := curvePlanCandidateReport(t, parent)
+	report.ArtifactCapability.DeclaredBatchSizes = []int32{2, 4}
+	reportBytes := encodeCurvePlanCandidateReport(t, report)
 	preparer := &fakeCurvePlanPreparer{
 		report: report, reportBytes: reportBytes, nodeUID: "node-uid",
 	}
@@ -464,7 +465,7 @@ func TestCurvePlanSourceRejectsCampaignBatchSizesForDerivedArtifact(t *testing.T
 	}
 
 	if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
-		!strings.Contains(err.Error(), "must be absent when the selected artifact declares batch sizes") {
+		!strings.Contains(err.Error(), "requires artifact capability at batch one") {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 	if len(preparer.requests) != 0 {
@@ -612,6 +613,7 @@ func curvePlanCandidateReport(
 		ArtifactCapability: &profilingrun.CandidateArtifactCapability{
 			TargetPlatform: "cpu", DeclaredBatchSizes: []int32{4, 1, 2},
 		},
+		Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 32, MaxQueueSize: 64},
 		MetricObserverImage: "metric@sha256:cccccccc",
 		Verdict:             "Compatible",
 		Reasons:             []profilingrun.CandidateReportReason{},
@@ -740,7 +742,7 @@ func (p *fakeCurvePlanPreparer) Prepare(
 			DeviceClass: request.Candidate.DeviceClass, Model: request.Candidate.ModelSpec,
 			Artifact: artifact, ArtifactFiles: p.report.ArtifactSupply.Files,
 			RuntimeFamily: "firstfloor", Backend: "ort-cpu", PowerMode: request.Candidate.PowerMode,
-			Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: 32, MaxQueueSize: 64},
+			Firstfloor: p.report.Firstfloor,
 			Preprocessor: profilingrun.PreprocessorState{
 				Name: request.Candidate.Preprocessor, UID: "preprocessor-uid", Image: "preprocessor@sha256:eeeeeeee",
 				Architecture: p.report.DeviceClassFacts.Architecture, Path: "/artifact/mobilenet-nchw",

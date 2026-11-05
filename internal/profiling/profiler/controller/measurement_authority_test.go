@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -112,7 +113,7 @@ func authorityRoot(config profilingrun.RunConfig) (*edge.BatchEnergyOptimization
 		ObjectMeta: metav1.ObjectMeta{Namespace: selected.Namespace, Name: "frozen-plan", UID: "plan-uid",
 			Annotations: map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}},
 		Spec: edge.BatchEnergyOptimizationSpec{
-			State: selected.Spec.MeasurementStateSpec, TrialsPerBatch: 3, BatchSizes: []int32{1}, RetryLimit: 1,
+			State: selected.Spec.MeasurementStateSpec, TrialsPerBatch: 3,
 			ActiveProtocol: edge.ActiveProtocolSpec{Workload: config.Measurement.WorkloadName,
 				Dataset: config.Measurement.Dataset.Name, WarmupIterations: 20, DurationSeconds: 30,
 				MetricObservation: selected.Spec.MetricObservation},
@@ -182,6 +183,33 @@ func TestRealAdmittedRootPlanSuppliesChildrenWithoutArchive(t *testing.T) {
 					actual.SLOPercentile != frozen.SLOPercentile || actual.SLOTargetLatencyNanos != frozen.SLOTargetLatencyNanos ||
 					actual.MinServiceSamples != frozen.MinServiceSamples) {
 				t.Fatal("active child lost the recorded plan's actual Workload/SLO/sample stop")
+			}
+		})
+	}
+}
+
+func TestCampaignAuthorizationRetainsFrozenStartupInsteadOfPlannedDomain(t *testing.T) {
+	for _, mode := range []campaign.WorkloadMode{campaign.WorkloadModeActive, campaign.WorkloadModeIdle} {
+		t.Run(string(mode), func(t *testing.T) {
+			config := currentPreparedRun(t).RunConfig
+			plan, err := derivation.DecodeCurvePlan(authorityPlan(t, config))
+			if err != nil { t.Fatal(err) }
+			spec := plan.Shared()
+			spec.PlannedBatchSizes = []int{1, 2}
+			plan, err = derivation.NewCurvePlan(spec)
+			if err != nil { t.Fatal(err) }
+			body, err := plan.CanonicalJSON()
+			if err != nil { t.Fatal(err) }
+			root, node := authorityRoot(config)
+			root.Spec.ActiveProtocol.WarmupIterations = 999
+			kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithObjects(root, node).Build()
+			resolver := authorityResolver(t, kube, config, map[types.UID][]byte{root.UID: body})
+			resolved, err := resolver.Resolve(context.Background(), authorityChild(root, mode, 1))
+			if err != nil { t.Fatal(err) }
+			actor := resolved.Prepared.RunConfig.Actor
+			if !slices.Equal(actor.WarmupBatchSizes, spec.Actor.WarmupBatchSizes) ||
+				actor.WarmupIterations != spec.Actor.WarmupIterations {
+				t.Fatalf("frozen startup changed: actual=%+v frozen=%+v", actor, spec.Actor)
 			}
 		})
 	}

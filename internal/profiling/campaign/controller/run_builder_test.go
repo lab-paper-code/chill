@@ -118,7 +118,8 @@ func TestBuildRunUsesTheActiveProtocol(t *testing.T) {
 	measurement := run.Spec.Measurement
 	if measurement.WorkloadMode != "empirical-cadence-fixed-batch" || measurement.Batch != 2 ||
 		measurement.SettlingDurationSeconds != nil ||
-		measurement.WarmupIterations != parent.Spec.ActiveProtocol.WarmupIterations {
+		measurement.WarmupIterations != 0 ||
+		measurement.StartupWarmupIterations != parent.Spec.ActiveProtocol.WarmupIterations {
 		t.Fatalf("active Run does not match the active protocol: %+v", measurement)
 	}
 }
@@ -151,7 +152,6 @@ func testParent() *edgev1alpha1.BatchEnergyOptimization {
 				},
 			},
 			TrialsPerBatch: 3,
-			RetryLimit:     2,
 		},
 	}
 }

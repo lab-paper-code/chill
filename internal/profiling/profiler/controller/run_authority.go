@@ -134,7 +134,7 @@ func (r *RunConfigResolver) authorizedCampaignRequest(ctx context.Context, run *
 	if protocol.Dataset != nil {
 		spec.Measurement.Dataset = protocol.Dataset.Name
 	}
-	for _, k := range plan.PlannedBatchSizes() {
+	for _, k := range shared.Actor.WarmupBatchSizes {
 		spec.Measurement.WarmupBatchSizes = append(spec.Measurement.WarmupBatchSizes, int32(k))
 	}
 	request, err := ProjectRequest(spec)

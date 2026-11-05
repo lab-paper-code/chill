@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"time"
 
@@ -118,7 +119,19 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		return ctrl.Result{}, err
 	}
 	curveSource := func(batches []int) (batchenergyoptimization.CurveResult, error) {
-		return r.curves(ctx, curvePlan, activeRuns, idleRuns, batches, policy)
+		prefixRuns := make([]edgev1alpha1.ProfilingRun, 0, len(activeRuns))
+		for index := range activeRuns {
+			if slices.Contains(batches, int(activeRuns[index].Spec.CampaignTrial.Batch)) {
+				prefixRuns = append(prefixRuns, activeRuns[index])
+			}
+		}
+		baselineRuns := make([]edgev1alpha1.ProfilingRun, 0, len(idleRuns))
+		for index := range idleRuns {
+			if int(idleRuns[index].Spec.CampaignTrial.Batch) == batches[0] {
+				baselineRuns = append(baselineRuns, idleRuns[index])
+			}
+		}
+		return r.curves(ctx, curvePlan, prefixRuns, baselineRuns, batches, policy)
 	}
 	method, err := batchenergyoptimization.NewQuickEnergyMinimization(config, curveSource)
 	if err != nil {
@@ -185,11 +198,7 @@ func (r *BatchEnergyOptimizationReconciler) createMeasurementRun(
 	if err != nil {
 		return false, fmt.Errorf("build ProfilingRun: %w", err)
 	}
-	batches := plan.PlannedBatchSizes()
-	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(batches))
-	for index, batch := range batches {
-		run.Spec.Measurement.WarmupBatchSizes[index] = int32(batch)
-	}
+	applyFrozenRunProtocol(run, plan, measurement.WorkloadMode)
 	if err := r.client.Create(ctx, run); err != nil {
 		if !apierrors.IsAlreadyExists(err) {
 			return false, fmt.Errorf("create ProfilingRun %q: %w", run.Name, err)
@@ -460,6 +469,7 @@ func terminalCampaignStatusCurrent(parent *edgev1alpha1.BatchEnergyOptimization)
 		if parent.Status.Phase == batchEnergyOptimizationPhaseFailed && condition.Status == metav1.ConditionFalse && condition.Reason == parent.Status.Outcome {
 			return condition.Reason == terminalReasonTransitionFailed ||
 				condition.Reason == terminalReasonRetryLimitExhausted ||
+				condition.Reason == "TrialFailed" ||
 				condition.Reason == terminalReasonEnergyObjectivePolicyMismatch ||
 				condition.Reason == terminalReasonInvalidCampaignRun ||
 				condition.Reason == profiler.ResolutionReasonInvalidRunSpec ||

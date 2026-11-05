@@ -46,9 +46,8 @@ func TestProjectSnapshotRejectsAForeignRun(t *testing.T) {
 	}
 }
 
-func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
+func TestTerminallyInvalidRunsFailWithoutRetry(t *testing.T) {
 	parent := testParent()
-	parent.Spec.RetryLimit = 1
 	measurement := batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1,
 	}
@@ -73,12 +72,12 @@ func TestTerminallyInvalidRunsExhaustTheExistingRetryPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != batchenergyoptimization.ActionFail || decision.Reason != "RetryLimitExhausted" {
-		t.Fatalf("decision = %#v, want Fail/RetryLimitExhausted", decision)
+	if decision.Action != batchenergyoptimization.ActionFail || decision.Reason != "TrialFailed" {
+		t.Fatalf("decision = %#v, want Fail/TrialFailed", decision)
 	}
 	status := deriveStatus(parent.Generation, snapshot, decision, nil, nil)
-	if status.Phase != batchEnergyOptimizationPhaseFailed || status.Outcome != "RetryLimitExhausted" {
-		t.Fatalf("campaign status = %#v, want Failed/RetryLimitExhausted", status)
+	if status.Phase != batchEnergyOptimizationPhaseFailed || status.Outcome != "TrialFailed" {
+		t.Fatalf("campaign status = %#v, want Failed/TrialFailed", status)
 	}
 }
 
@@ -124,8 +123,8 @@ func TestRunOutcomeDrivesCampaignTransition(t *testing.T) {
 			if test.verdict == batchenergyoptimization.VerdictPending && decision.Action != batchenergyoptimization.ActionWait {
 				t.Fatalf("pending Run advanced campaign: %+v", decision)
 			}
-			if test.verdict == batchenergyoptimization.VerdictFailed && decision.Action != batchenergyoptimization.ActionCreateRun {
-				t.Fatalf("failed attempt did not retry: %+v", decision)
+			if test.verdict == batchenergyoptimization.VerdictFailed && decision.Action != batchenergyoptimization.ActionFail {
+				t.Fatalf("failed attempt did not fail campaign: %+v", decision)
 			}
 		})
 	}
@@ -135,4 +134,43 @@ type terminalTrialMethod struct{}
 
 func (terminalTrialMethod) Plan(batchenergyoptimization.Observed) (batchenergyoptimization.Plan, error) {
 	return batchenergyoptimization.Plan{Result: &batchenergyoptimization.Result{Outcome: "unused"}}, nil
+}
+
+func TestTrialBoundaryUsesTypedActualRuntimeTermination(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		termination edgev1alpha1.ProfilingRunRuntimeTermination
+		want string
+	}{
+		{name: "runtime OOM", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", Reason: "OOMKilled"}, want: batchenergyoptimization.DiscoveryStopOOM},
+		{name: "startup runtime OOM", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Startup", Reason: "OOMKilled"}, want: batchenergyoptimization.DiscoveryStopOOM},
+		{name: "runtime error", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", FailureReason: "ExecutionFailed", ExitCode: 3}, want: batchenergyoptimization.DiscoveryStopExecutionFailed},
+		{name: "runtime budget", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", FailureReason: "MeasurementBudgetExceeded"}, want: batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded},
+		{name: "native deadline", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", JobReason: "DeadlineExceeded"}, want: batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded},
+		{name: "observer OOM", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "metric-observer", Stage: "Execution", Reason: "OOMKilled"}},
+		{name: "integrity failure", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "ResultValidation", FailureReason: "ExecutionFailed", ExitCode: 3}},
+		{name: "untyped legacy logs", termination: edgev1alpha1.ProfilingRunRuntimeTermination{ExitCode: 3, LogTail: "OOMKilled MeasurementBudgetExceeded ExecutionFailed"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parent := testParent()
+			run, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 4}, 2, "ort-cpu")
+			if err != nil { t.Fatal(err) }
+			run.UID = "actual-run-uid"
+			run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
+			run.Status.RuntimeTermination = &test.termination
+			trial, err := projectTrial(parent.Name, run)
+			if err != nil { t.Fatal(err) }
+			if trial.Verdict != batchenergyoptimization.VerdictFailed { t.Fatalf("trial=%+v", trial) }
+			if test.want == "" {
+				if trial.Boundary != nil { t.Fatalf("genuine failure became boundary: %+v", trial.Boundary) }
+				return
+			}
+			if trial.Boundary == nil || trial.Boundary.Reason != test.want ||
+				trial.Boundary.Run == nil || trial.Boundary.Run.UID != string(run.UID) ||
+				trial.Boundary.Attempt != 2 || trial.Boundary.FailedMeasurement.Batch != 4 ||
+				trial.Boundary.Diagnostic == "" {
+				t.Fatalf("actual termination lost: %+v", trial.Boundary)
+			}
+		})
+	}
 }

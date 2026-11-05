@@ -10,6 +10,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -60,14 +61,14 @@ func BuildRun(
 		protocol := parent.Spec.ActiveProtocol
 		spec.Measurement = edgev1alpha1.ProfilingRunMeasurementSpec{
 			Batch:                    int32(measurement.Batch),
-			WarmupIterations:         protocol.WarmupIterations,
+			WarmupIterations:         0,
 			StartupWarmupIterations:  parent.Spec.ActiveProtocol.WarmupIterations,
 			DurationSeconds:          protocol.DurationSeconds,
 			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
 			WorkloadMode:             activeWorkloadMode,
 			Dataset:                  protocol.Dataset,
 			Workload:                 protocol.Workload,
-			WarmupBatchSizes:         append([]int32(nil), parent.Spec.BatchSizes...),
+			WarmupBatchSizes:         []int32{1},
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	case batchenergyoptimization.WorkloadModeIdle:
@@ -81,7 +82,7 @@ func BuildRun(
 			DurationSeconds:          protocol.DurationSeconds,
 			DurationToleranceSeconds: protocol.DurationToleranceSeconds,
 			WorkloadMode:             idleWorkloadMode,
-			WarmupBatchSizes:         append([]int32(nil), parent.Spec.BatchSizes...),
+			WarmupBatchSizes:         []int32{1},
 		}
 		spec.MetricObservation = protocol.MetricObservation
 	}
@@ -101,4 +102,37 @@ func BuildRun(
 		},
 		Spec: spec,
 	}, nil
+}
+
+// applyFrozenRunProtocol preserves the actual recorded startup and measurement
+// contract, including plans written before automatic discovery.
+func applyFrozenRunProtocol(run *edgev1alpha1.ProfilingRun, plan profilederivation.CurvePlan, mode batchenergyoptimization.WorkloadMode) {
+	shared := plan.Shared()
+	protocol := shared.ActiveProtocol
+	if mode == batchenergyoptimization.WorkloadModeIdle {
+		protocol = shared.IdleProtocol
+	}
+	measurement := &run.Spec.Measurement
+	measurement.WarmupIterations = int32(protocol.WarmupIterations)
+	measurement.StartupWarmupIterations = int32(protocol.StartupWarmupIterations)
+	measurement.WarmupBatchSizes = make([]int32, len(shared.Actor.WarmupBatchSizes))
+	for index, batch := range shared.Actor.WarmupBatchSizes {
+		measurement.WarmupBatchSizes[index] = int32(batch)
+	}
+	measurement.DurationSeconds = int32(protocol.DurationSeconds)
+	tolerance := protocol.DurationToleranceSeconds
+	measurement.DurationToleranceSeconds = &tolerance
+	measurement.Workload = protocol.WorkloadName
+	if protocol.Dataset != nil {
+		measurement.Dataset = protocol.Dataset.Name
+	}
+	if mode == batchenergyoptimization.WorkloadModeIdle {
+		settling := int32(protocol.SettlingDurationSeconds)
+		measurement.SettlingDurationSeconds = &settling
+	}
+	run.Spec.MetricObservation = edgev1alpha1.ProfilingRunMetricObservationSpec{
+		IntervalMilliseconds: int32(protocol.MetricIntervalMilliseconds),
+		TimeoutMilliseconds: int32(protocol.MetricTimeoutMilliseconds),
+		DurationSeconds: int32(protocol.MetricDurationSeconds),
+	}
 }

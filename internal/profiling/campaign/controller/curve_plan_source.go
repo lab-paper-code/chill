@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -161,7 +161,7 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 	if err != nil {
 		return profilingrun.CandidateReport{}, nil, fmt.Errorf("decode curve-plan candidate report: %w", err)
 	}
-	plannedBatchSizes, err := resolvePlannedBatchSizes(parent.Spec.BatchSizes, report.ArtifactCapability)
+	plannedBatchSizes, err := resolvePlannedBatchSizes(report)
 	if err != nil {
 		return profilingrun.CandidateReport{}, nil, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
@@ -177,7 +177,7 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	active, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
 		Batch:        plannedBatchSizes[0],
-	}, "", plannedBatchSizes, nil)
+	}, "", nil)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
 	}
@@ -192,7 +192,7 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	idle, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeIdle,
 		Batch:        plannedBatchSizes[0],
-	}, active.RunConfig.State.Backend, plannedBatchSizes, nil)
+	}, active.RunConfig.State.Backend, nil)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare idle curve-plan RunConfig: %w", err)
 	}
@@ -318,11 +318,10 @@ func (s *CurvePlanSource) recoverTransition(
 	if len(batches) == 0 {
 		return nil, errors.New("frozen curve plan has no planned batch sizes")
 	}
-	protocol := plan.Shared().ActiveProtocol
 	active, err := s.projector.prepare(ctx, parent, batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive,
 		Batch:        batches[0],
-	}, "", batches, &protocol)
+	}, "", &plan)
 	if err != nil {
 		return nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
 	}
@@ -345,33 +344,27 @@ func bindTransitionToPlan(
 	return material, nil
 }
 
-func resolvePlannedBatchSizes(
-	campaign []int32,
-	capability *profilingrun.CandidateArtifactCapability,
-) ([]int, error) {
-	if capability != nil && len(capability.DeclaredBatchSizes) != 0 {
-		if len(campaign) != 0 {
-			return nil, errors.New("BatchEnergyOptimization batchSizes must be absent when the selected artifact declares batch sizes")
-		}
-		planned := make([]int, len(capability.DeclaredBatchSizes))
-		for index, batchSize := range capability.DeclaredBatchSizes {
-			planned[index] = int(batchSize)
-		}
-		sort.Ints(planned)
-		return planned, nil
+func resolvePlannedBatchSizes(report profilingrun.CandidateReport) ([]int, error) {
+	if report.Firstfloor == nil || report.Firstfloor.MaxBatchSize < 1 {
+		return nil, errors.New("BatchEnergyOptimization requires a positive resolved firstfloor maxBatchSize")
 	}
-	if len(campaign) == 0 {
-		return nil, errors.New("BatchEnergyOptimization batchSizes are required when the selected artifact declares no batch sizes")
+	cap := int(report.Firstfloor.MaxBatchSize)
+	var declared []int32
+	if report.ArtifactCapability != nil {
+		declared = report.ArtifactCapability.DeclaredBatchSizes
 	}
-	planned := make([]int, len(campaign))
-	for index, batchSize := range campaign {
-		if batchSize < 1 {
-			return nil, errors.New("BatchEnergyOptimization batchSizes must be positive")
+	if len(declared) != 0 && !slices.Contains(declared, int32(1)) {
+		return nil, errors.New("BatchEnergyOptimization requires artifact capability at batch one")
+	}
+	var planned []int
+	for batch := 1; batch <= cap; {
+		if len(declared) == 0 || slices.Contains(declared, int32(batch)) {
+			planned = append(planned, batch)
 		}
-		if index > 0 && batchSize <= campaign[index-1] {
-			return nil, errors.New("BatchEnergyOptimization batchSizes must be strictly increasing")
+		if batch > cap/2 {
+			break
 		}
-		planned[index] = int(batchSize)
+		batch *= 2
 	}
 	return planned, nil
 }
@@ -381,23 +374,21 @@ func (p *CurvePlanProjector) prepare(
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	measurement batchenergyoptimization.Measurement,
 	backend string,
-	plannedBatchSizes []int,
-	frozenWorkload *profilederivation.CurveProtocolContract,
+	frozenPlan *profilederivation.CurvePlan,
 ) (profiler.PreparedRun, error) {
 	run, err := BuildRun(parent, measurement, 1, backend)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
-	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(plannedBatchSizes))
-	for index, batch := range plannedBatchSizes {
-		run.Spec.Measurement.WarmupBatchSizes[index] = int32(batch)
+	if frozenPlan != nil {
+		applyFrozenRunProtocol(run, *frozenPlan, measurement.WorkloadMode)
 	}
 	requested, err := profilercontroller.ProjectRequest(run.Spec)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
-	if frozenWorkload != nil {
-		projection.ApplyFrozenActiveProtocol(&requested.Preparation.Measurement, *frozenWorkload)
+	if frozenPlan != nil {
+		projection.ApplyFrozenActiveProtocol(&requested.Preparation.Measurement, frozenPlan.Shared().ActiveProtocol)
 		requested.Preparation.Workload = requested.Preparation.Measurement.WorkloadName
 	}
 	return p.preparer.Prepare(ctx, requested.Preparation)

@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestBatchOneInfeasibilityUsesFastestCurrentServiceNotSlowPercentile(t *testing.T) {
+func TestSlowBatchOneServiceDoesNotTruncateDiscovery(t *testing.T) {
 	for _, test := range []struct{ oneFeasibleCall, wrongCondition, grayBelowServicePlus29MS bool }{
 		{false, false, false}, {true, false, false}, {false, true, false}, {false, false, true},
 	} {
@@ -77,12 +77,8 @@ func TestBatchOneInfeasibilityUsesFastestCurrentServiceNotSlowPercentile(t *test
 		if err != nil {
 			t.Fatal(err)
 		}
-		if test.oneFeasibleCall || test.grayBelowServicePlus29MS {
-			if !result.Continue || result.Outcome == batchenergyoptimization.ServiceImpossibleOutcome {
-				t.Fatalf("slow percentile alone truncated sweep: %+v", result)
-			}
-		} else if result.Outcome != batchenergyoptimization.ServiceImpossibleOutcome || result.Continue {
-			t.Fatalf("same-condition impossible batch one did not terminate: %+v", result)
+		if !result.Continue || result.Outcome == batchenergyoptimization.ServiceImpossibleOutcome {
+			t.Fatalf("batch-one service fact truncated discovery: %+v", result)
 		}
 	}
 }

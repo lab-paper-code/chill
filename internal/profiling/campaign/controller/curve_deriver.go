@@ -113,36 +113,6 @@ func (d *CurveDeriver) Derive(
 	if err != nil {
 		return batchenergyoptimization.CurveResult{}, fmt.Errorf("derive energy-search curve: %w", err)
 	}
-	if len(batches) == 1 && batches[0] == 1 && len(activeEvidence) == policy.TrialsPerBatch {
-		minimumService := 0.0
-		for _, active := range activeEvidence {
-			execution, raw, err := active.Records()
-			if err != nil {
-				return batchenergyoptimization.CurveResult{}, err
-			}
-			target := execution.RunConfig.Measurement.SLOTargetLatencyNanos
-			if target <= 0 {
-				return batchenergyoptimization.CurveResult{}, errors.New("batch-one feasibility requires the frozen Workload SLO")
-			}
-			for _, repetition := range raw.Runtime.RepetitionResults {
-				for _, sample := range repetition.NativeSamples {
-					service := float64(sample.ServiceDurationNanos)
-					if minimumService == 0 || service < minimumService {
-						minimumService = service
-					}
-					if service <= float64(target) {
-						return deriveEnergyResult(curve, policy)
-					}
-				}
-			}
-		}
-		if minimumService > 0 {
-			return batchenergyoptimization.CurveResult{
-				Outcome: batchenergyoptimization.ServiceImpossibleOutcome,
-				Detail:  map[string]any{"batch": 1, "minimumServiceNanos": minimumService, "capacity": 0},
-			}, nil
-		}
-	}
 	return deriveEnergyResult(curve, policy)
 }
 

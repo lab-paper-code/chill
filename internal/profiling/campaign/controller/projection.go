@@ -32,7 +32,6 @@ func ProjectSnapshot(
 		},
 		Transition:         transition,
 		TransitionRequired: transitionRequired,
-		RetryLimit:         int(parent.Spec.RetryLimit),
 		PlannedBatchSizes:  append([]int(nil), plannedBatchSizes...),
 	}
 	for index := range runs {
@@ -105,6 +104,32 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 	}
 	if run.Status.HasTerminalFailure() {
 		trial.Verdict = batchenergyoptimization.VerdictFailed
+		trial.Boundary = projectDiscoveryBoundary(run, measurement, attempt)
 	}
 	return trial, nil
+}
+
+func projectDiscoveryBoundary(run *edgev1alpha1.ProfilingRun, measurement batchenergyoptimization.Measurement, attempt int) *batchenergyoptimization.DiscoveryStop {
+	termination := run.Status.RuntimeTermination
+	if termination == nil || termination.Container != "runtime" {
+		return nil
+	}
+	var reason string
+	switch {
+	case termination.Reason == "OOMKilled":
+		reason = batchenergyoptimization.DiscoveryStopOOM
+	case termination.Stage == "Execution" && (termination.FailureReason == "MeasurementBudgetExceeded" || termination.JobReason == "DeadlineExceeded"):
+		reason = batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded
+	case termination.Stage == "Execution" && termination.FailureReason == "ExecutionFailed" && termination.ExitCode == 3:
+		reason = batchenergyoptimization.DiscoveryStopExecutionFailed
+	default:
+		return nil
+	}
+	return &batchenergyoptimization.DiscoveryStop{
+		Reason: reason, FailedMeasurement: &measurement, Attempt: attempt,
+		Run: &batchenergyoptimization.RunReference{Namespace: run.Namespace, Name: run.Name, UID: string(run.UID)},
+		Diagnostic: fmt.Sprintf("container=%s stage=%s reason=%s failureReason=%s exitCode=%d jobReason=%s jobMessage=%s",
+			termination.Container, termination.Stage, termination.Reason, termination.FailureReason,
+			termination.ExitCode, termination.JobReason, termination.JobMessage),
+	}
 }

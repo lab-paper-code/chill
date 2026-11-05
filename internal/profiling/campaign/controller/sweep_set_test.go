@@ -1,56 +1,37 @@
 package controller
 
 import (
-	"strings"
+	"slices"
 	"testing"
 
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
-// Kubernetes forbids uniqueItems on an array schema, so the CRD checks ascending
-// order only. Strict increase is enforced here, and a duplicate batch would
-// otherwise measure the same point twice and corrupt the recorded sweep.
-func TestResolvePlannedBatchSizesRejectsARepeatedBatch(t *testing.T) {
-	for _, testCase := range []struct {
-		name     string
-		campaign []int32
-		want     string
+func TestResolvePlannedBatchSizesUsesResolvedCapability(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cap int32
+		declared []int32
+		want []int
 	}{
-		{name: "repeated", campaign: []int32{1, 2, 2, 4}, want: "strictly increasing"},
-		{name: "descending", campaign: []int32{4, 2}, want: "strictly increasing"},
-		{name: "absent for a canonical artifact", campaign: nil, want: "are required"},
+		{name: "non power cap", cap: 13, want: []int{1, 2, 4, 8}},
+		{name: "sparse finite capability", cap: 16, declared: []int32{16, 1, 3, 4, 32}, want: []int{1, 4, 16}},
+		{name: "one", cap: 1, want: []int{1}},
+		{name: "requires one", cap: 16, declared: []int32{2, 4}},
+		{name: "requires positive cap"},
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			if _, err := resolvePlannedBatchSizes(testCase.campaign, nil); err == nil ||
-				!strings.Contains(err.Error(), testCase.want) {
-				t.Fatalf("error = %v, want one containing %q", err, testCase.want)
+		t.Run(test.name, func(t *testing.T) {
+			report := profilingrun.CandidateReport{Firstfloor: &modelcompat.FirstfloorSettings{MaxBatchSize: test.cap},
+				ArtifactCapability: &profilingrun.CandidateArtifactCapability{DeclaredBatchSizes: test.declared}}
+			got, err := resolvePlannedBatchSizes(report)
+			if test.want == nil {
+				if err == nil { t.Fatal("unsupported capability accepted") }
+				return
+			}
+			if err != nil || !slices.Equal(got, test.want) {
+				t.Fatalf("batches=%v error=%v, want %v", got, err, test.want)
 			}
 		})
-	}
-}
-
-func TestResolvePlannedBatchSizesKeepsADeclaredSweep(t *testing.T) {
-	planned, err := resolvePlannedBatchSizes([]int32{1, 2, 4, 8, 16}, &profilingrun.CandidateArtifactCapability{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(planned) != 5 || planned[0] != 1 || planned[4] != 16 {
-		t.Fatalf("planned = %v, want the declared sweep unchanged", planned)
-	}
-}
-
-// A derived artifact already constrains its own set, so exactly one source
-// applies and the two are never merged.
-func TestResolvePlannedBatchSizesRefusesTwoSources(t *testing.T) {
-	capability := &profilingrun.CandidateArtifactCapability{DeclaredBatchSizes: []int32{1, 2}}
-	if _, err := resolvePlannedBatchSizes([]int32{1, 2, 4}, capability); err == nil {
-		t.Fatal("a campaign-declared sweep was completed against a declaring artifact")
-	}
-	planned, err := resolvePlannedBatchSizes(nil, capability)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(planned) != 2 {
-		t.Fatalf("planned = %v, want the artifact's declared set", planned)
 	}
 }

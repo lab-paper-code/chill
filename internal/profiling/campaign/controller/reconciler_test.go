@@ -303,7 +303,6 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 		preparedArtifact string
 		terminal         bool
 	}{
-		{name: "conflicting batch inputs", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.BatchSizes = []int32{1, 2} }, terminal: true},
 		{name: "invalid protocol", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.ActiveProtocol.DurationSeconds = 0 }, terminal: true},
 		{name: "temporary resolver failure", failure: errors.New("resolver temporarily unavailable")},
 		{name: "mutable artifact mismatch", preparedArtifact: "different-artifact"},
@@ -523,7 +522,7 @@ func assertCampaignPolicyMismatchStatus(t *testing.T, parent *api.BatchEnergyOpt
 	condition := status.Conditions[0]
 	if condition.Status != metav1.ConditionFalse || condition.Reason != terminalReasonEnergyObjectivePolicyMismatch ||
 		condition.ObservedGeneration != parent.Generation ||
-		!strings.Contains(condition.Message, "active/b8: expected batch=8, expected=3, completed=4") {
+		!strings.Contains(condition.Message, "active/b8: expected=3, completed=4") {
 		t.Fatalf("condition=%+v", condition)
 	}
 }
@@ -610,6 +609,122 @@ func TestCampaignEnergyObjectivePolicyMismatchIsTerminal(t *testing.T) {
 				}
 			}
 			assertCampaignRunsRetained(t, native, objects)
+		})
+	}
+}
+
+func TestCampaignPublishesOnlyCompletePrefixAtActualExecutionBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		failedBatch int
+		stage string
+		failedIdle bool
+		wantPrefix []int
+	}{
+		{name: "partial batch four", failedBatch: 4, stage: "Execution", wantPrefix: []int{1, 2}},
+		{name: "empty batch one", failedBatch: 1, stage: "Execution", wantPrefix: []int{}},
+		{name: "idle runtime boundary", failedBatch: 1, failedIdle: true, stage: "Execution", wantPrefix: []int{}},
+		{name: "genuine evidence failure", failedBatch: 1, stage: "ResultValidation"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			parent, templates, evidence, dependencies := newPolicyMismatchCampaignFixture(t, false)
+			scheme := runtime.NewScheme()
+			if err := api.AddToScheme(scheme); err != nil { t.Fatal(err) }
+			native := fake.NewClientBuilder().WithScheme(scheme).
+				WithStatusSubresource(parent, &api.ProfilingRun{}).WithObjects(parent).Build()
+			store := newFakeCurvePlanStore()
+			writer := newResultWriter(t, store, 1<<20)
+			curveCalls := 0
+			derive := func(ctx context.Context, plan profilederivation.CurvePlan, active, idle []api.ProfilingRun, batches []int, policy profilederivation.EnergyObjectivePolicy) (batchenergyoptimization.CurveResult, error) {
+				curveCalls++
+				for _, run := range active {
+					if int(run.Spec.CampaignTrial.Batch) >= test.failedBatch {
+						t.Fatalf("partial failed batch entered curve: %s", run.Name)
+					}
+				}
+				if len(active) != len(batches)*3 || len(idle) != 3 {
+					t.Fatalf("curve evidence active=%d idle=%d batches=%v", len(active), len(idle), batches)
+				}
+				return dependencies.CurveDeriver.Derive(ctx, plan, active, idle, batches, policy)
+			}
+			resolve := func(context.Context, *api.BatchEnergyOptimization) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error) {
+				return dependencies.plan, resultWriterCurvePlanReference(), nil, nil
+			}
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, resolve, derive, writer.Write)
+			if err != nil { t.Fatal(err) }
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+			created := 0
+			for range 20 {
+				if _, err := reconciler.Reconcile(ctx, request); err != nil { t.Fatal(err) }
+				current := &api.BatchEnergyOptimization{}
+				if err := native.Get(ctx, request.NamespacedName, current); err != nil { t.Fatal(err) }
+				if current.Status.Phase == "Complete" || current.Status.Phase == "Failed" {
+					if test.wantPrefix == nil {
+						if current.Status.Phase != "Failed" || current.Status.Result != nil || store.puts != 0 {
+							t.Fatalf("genuine failure published discovery: %+v", current.Status)
+						}
+					} else {
+						if current.Status.Phase != "Complete" || current.Status.Result == nil {
+							t.Fatalf("expected boundary not complete: %+v", current.Status)
+						}
+						record, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
+						if err != nil { t.Fatal(err) }
+						detail, ok, err := batchenergyoptimization.DecodeDiscoveryResult(record, dependencies.plan.PlannedBatchSizes())
+						if err != nil || !ok || !reflect.DeepEqual(detail.MeasuredBatchSizes, test.wantPrefix) {
+							t.Fatalf("published prefix=%+v ok=%v error=%v", detail, ok, err)
+						}
+						if detail.Stop.Run == nil || detail.Stop.Run.UID == "" || detail.Stop.Diagnostic == "" {
+							t.Fatalf("actual termination reference missing: %+v", detail.Stop)
+						}
+						wantCompleted := 3 + len(test.wantPrefix)*3
+						if test.failedIdle { wantCompleted = 0 }
+						if test.failedBatch == 4 { wantCompleted += 2 }
+						if len(record.Spec().CompletedTrials) != wantCompleted || len(record.Spec().ExcludedTrials) != 1 {
+							t.Fatalf("retained evidence lost: %+v", record.Spec())
+						}
+					}
+					if test.failedBatch == 1 && (curveCalls != 0 || evidence.calls != 0) {
+						t.Fatal("empty prefix loaded a curve")
+					}
+					if _, err := reconciler.Reconcile(ctx, request); err != nil { t.Fatal(err) }
+					retained, err := reconciler.listRuns(ctx, parent)
+					if err != nil || len(retained) != created { t.Fatalf("terminal replay created a retry: %d %v", len(retained), err) }
+					return
+				}
+				runs, err := reconciler.listRuns(ctx, parent)
+				if err != nil { t.Fatal(err) }
+				pending := 0
+				for index := range runs {
+					run := &runs[index]
+					if run.Status.Evidence != nil || run.Status.HasTerminalFailure() { continue }
+					pending++
+					created++
+					batch, attempt := int(run.Spec.CampaignTrial.Batch), int(run.Spec.CampaignTrial.Attempt)
+					if batch > test.failedBatch || attempt > 3 { t.Fatalf("executed beyond boundary: %+v", run.Spec.CampaignTrial) }
+					for _, object := range templates[1:] {
+						template := object.(*api.ProfilingRun)
+						if template.Name == run.Name { run.UID = template.UID; run.Status = template.Status }
+					}
+					failedMode := activeWorkloadMode
+					if test.failedIdle { failedMode = idleWorkloadMode }
+					if run.Spec.Measurement.WorkloadMode == failedMode && batch == test.failedBatch &&
+						(test.failedBatch == 1 || attempt == 3) {
+						run.Status.Evidence = nil
+						run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
+						run.Status.RuntimeTermination = &api.ProfilingRunRuntimeTermination{
+							Container: "runtime", Stage: test.stage, FailureReason: "ExecutionFailed", ExitCode: 3,
+							JobReason: "BackoffLimitExceeded", JobMessage: "runtime execution failed",
+						}
+					}
+					status := run.Status
+					if err := native.Update(ctx, run); err != nil { t.Fatal(err) }
+					run.Status = status
+					if err := native.Status().Update(ctx, run); err != nil { t.Fatal(err) }
+				}
+				if pending != 1 { t.Fatalf("pending children=%d", pending) }
+			}
+			t.Fatal("campaign did not stop")
 		})
 	}
 }
