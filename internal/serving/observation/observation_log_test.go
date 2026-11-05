@@ -131,12 +131,12 @@ func clockedObservationLog(t *testing.T, config ObservationLogConfig, started ti
 	if config.Writer == nil {
 		config.Writer = &observationArchive{directory: t.TempDir()}
 	}
+	clock := &observationClock{at: started}
+	config.Now = clock.now
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock := &observationClock{at: started}
-	observationLog.now, observationLog.started, observationLog.floor = clock.now, started, started
 	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
 	return observationLog, clock
 }
