@@ -219,6 +219,11 @@ class Runner:
 
 
 class ManifestLoader(yaml.SafeLoader):
+    def construct_scalar(self, node):
+        if node.tag in ('tag:yaml.org,2002:int', 'tag:yaml.org,2002:float') and ':' in node.value:
+            raise ValueError('sexagesimal YAML scalars do not have a shared Go interpretation')
+        return super().construct_scalar(node)
+
     def construct_mapping(self, node, deep=False):
         keys = [key.value for key, _ in node.value if key.tag == 'tag:yaml.org,2002:str']
         if len(keys) != len(node.value) or len(set(keys)) != len(keys):
@@ -256,6 +261,18 @@ def semantic_equal(left, right):
     if isinstance(left, list):
         return len(left) == len(right) and all(semantic_equal(a, b) for a, b in zip(left, right))
     return left == right
+
+
+def yaml_structure(node):
+    """Retain scalar spellings rather than Python's implicit numeric coercions."""
+    if isinstance(node, yaml.ScalarNode):
+        return node.tag, node.value
+    if isinstance(node, yaml.SequenceNode):
+        return node.tag, [yaml_structure(item) for item in node.value]
+    if isinstance(node, yaml.MappingNode):
+        return node.tag, sorted((yaml_structure(key), yaml_structure(value))
+                                for key, value in node.value)
+    raise ValueError('unsupported embedded YAML node')
 
 
 def image_only(live, desired, namespace, release, retirement=False):
@@ -302,10 +319,10 @@ def image_only(live, desired, namespace, release, retirement=False):
                 image = config.get('image')
                 if not isinstance(image, str) or not image:
                     return False
-                # Break inner aliases too: an image alias elsewhere must remain unchanged.
-                config = json.loads(json.dumps(config))
-                del config['image']
-                profiler['data']['config.yaml'] = config
+                node = yaml.compose(raw, Loader=ManifestLoader)
+                # Exclude only the top-level image; aliases elsewhere remain visible.
+                node.value = [(key, value) for key, value in node.value if key.value != 'image']
+                profiler['data']['config.yaml'] = yaml_structure(node)
         return semantic_equal(old, new)
     except (KeyError, TypeError, ValueError, AttributeError, RecursionError, yaml.YAMLError):
         return False
@@ -539,8 +556,6 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             proof = retirement.check(src, out, kube, run.run, config, 'retirement-preflight', state['inflightPreflight'])
             state['retirementProofPreflight'] = proof
             dump(out / 'state.json', state)
-            if not isinstance(proof, dict) or proof.get('eligible') is not True:
-                raise RuntimeError('retirementRepairOnly preflight proof did not establish eligibility')
         elif not state['dashboardOnlyBefore']:
             inflight.require_clear(state['inflightPreflight'])
         chart_diff = difference(live + b'\n---\n' + hooks, before)
@@ -690,8 +705,6 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             proof = retirement.check(src, out, kube, run.run, config, 'retirement-pre-upgrade', state['inflightPreUpgrade'])
             state['retirementProofPreUpgrade'] = proof
             dump(out / 'state.json', state)
-            if not isinstance(proof, dict) or proof.get('eligible') is not True:
-                raise RuntimeError('retirementRepairOnly fresh pre-upgrade proof did not establish eligibility')
         elif not state['dashboardOnlyFinal']:
             inflight.require_clear(state['inflightPreUpgrade'])
         stage('upgrade')

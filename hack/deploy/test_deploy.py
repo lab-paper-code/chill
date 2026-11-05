@@ -76,6 +76,7 @@ def retirement_documents(server='old:source',profiler='profiler:retained',desire
  backend=result[0];backend['spec']['template']['spec']['containers'][0].update(name='serving-entrypoint',image=server)
  backend['spec']['template']['spec']['containers'].append({'name':'sidecar','image':'sidecar:retained'})
  config={'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'chill-profiler-config','namespace':'review','labels':{'contract':'retained'}},'data':{'config.yaml':json.dumps({'image':profiler,'workloadObserver':{'kubernetesClient':{'apiServer':'https://kubernetes.review:6443','discoverFromDefaultEndpoint':False}},'measurement':{'policy':'retained','windowSeconds':60}}),'other':'retained'}}
+ inner=json.loads(config['data']['config.yaml']);inner.update(healthProbePort=8081,measurementMemoryFraction=0.8);config['data']['config.yaml']=json.dumps(inner)
  result.append(config)
  result.append({'apiVersion':'chill.dacs.io/v1alpha1','kind':'ChillSystem','metadata':{'name':'chill'},'spec':{'managementNamespace':'review','evidenceStore':{'endpoint':'http://retained-store:9000','bucket':'measurements'}}})
  change=state.get('repairChange')
@@ -92,6 +93,8 @@ def retirement_documents(server='old:source',profiler='profiler:retained',desire
   elif change=='non-string-inner':config['data']['config.yaml']='image: profiler:retained\ntrue: hidden\n'
   elif change=='typed-inner':
    inner=json.loads(config['data']['config.yaml']);inner['measurement']['windowSeconds']=60.0;config['data']['config.yaml']=json.dumps(inner)
+  elif change=='sexagesimal-int':config['data']['config.yaml']=config['data']['config.yaml'].replace('"healthProbePort": 8081','"healthProbePort": 2:14:41')
+  elif change=='sexagesimal-float':config['data']['config.yaml']=config['data']['config.yaml'].replace('"measurementMemoryFraction": 0.8','"measurementMemoryFraction": 0:0.8')
  if desired:result.append(dashboard_hook())
  return result
 def emit(documents,desired=False):
@@ -991,7 +994,8 @@ shutil.disk_usage = disk_usage
                     (self.directory / 'calls.jsonl').write_text('')
 
     def test_repair_final_mixed_render_stops_before_upgrade(self):
-        for change in ('other-image', 'crd', 'backend-config', 'profiler-config', 'policy'):
+        for change in ('other-image', 'crd', 'backend-config', 'profiler-config', 'policy',
+                       'sexagesimal-int', 'sexagesimal-float'):
             with self.subTest(change=change):
                 retained, node = self.retirement_rollout(repairChangeAtFinal=change)
                 evidence = self.out / change
@@ -1043,7 +1047,8 @@ shutil.disk_usage = disk_usage
 
     def test_repair_mixed_render_stops_without_mutating_ownership(self):
         for change in ('other-image', 'crd', 'backend-config', 'profiler-config', 'policy',
-                       'duplicate-inner', 'non-string-inner', 'typed-inner'):
+                       'duplicate-inner', 'non-string-inner', 'typed-inner',
+                       'sexagesimal-int', 'sexagesimal-float'):
             with self.subTest(change=change):
                 retained, node = self.retirement_rollout(repairChange=change)
                 evidence = self.out / change

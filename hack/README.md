@@ -232,7 +232,10 @@ allowed differences are the `serving-entrypoint` container image in Deployment
 `<release>-serving-entrypoint`, and the root `image` inside ConfigMap
 `<release>-profiler-config`'s `data["config.yaml"]`. The profiler is
 operator-managed; this scope does not introduce a profiler Deployment. Inner
-YAML uses the same unique-string-key parser and typed structural comparison.
+YAML requires unique string mapping keys. Comparison retains YAML scalar tags
+and spellings without Python numeric coercion, excluding only the root image.
+Equivalent-looking non-image numeric rewrites are conservatively rejected,
+including sexagesimal forms that the actual Go config reader treats as strings.
 CRDs, backend settings, policy, metadata, other images and profiler config
 fields retain the old deployed contract. Chart approval cannot widen this scope.
 Helm hooks remain unchanged and are not rerun. Server-side dry-run covers only
