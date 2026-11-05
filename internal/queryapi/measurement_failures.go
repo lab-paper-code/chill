@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -61,9 +62,31 @@ func MeasurementRequestFailures(task api.BatchEnergyOptimization, runs []api.Pro
 	return failures
 }
 
-// classifyMeasurementFailure applies ordered evidence rules, never returning raw
-// condition messages or logs. Specific causes win over generic runtime exits.
+// classifyMeasurementFailure prefers the typed terminal cause. Legacy log
+// categories are diagnostic only and never establish a discovery stop.
 func classifyMeasurementFailure(termination *api.ProfilingRunRuntimeTermination, conditions []metav1.Condition, generation int64, executionPath string) MeasurementReason {
+	if termination != nil && termination.Class != "" {
+		switch {
+		case termination.Class == string(batchenergyoptimization.FailureClassUnknownFailure):
+			return MeasurementReason{Code: "UnknownFailure", Label: "종료 원인 미확인", Message: "실행 종료 원인을 확인하지 못했습니다. 원본 상태와 로그를 확인해 주세요."}
+		case termination.Reason == "OOMKilled" && termination.Container == "runtime":
+			if termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Stage == "Execution" {
+				return MeasurementReason{Code: "HostOOM", Label: "런타임 OOM", Message: "실행 중 런타임 컨테이너의 OOM 종료가 확인되었습니다."}
+			}
+			return MeasurementReason{Code: "RuntimeFailed", Label: "런타임 OOM", Message: "런타임 컨테이너가 OOM으로 종료되었습니다. 배치 탐색의 정상 종료로 판정하지 않습니다."}
+		case termination.Reason == "OOMKilled" && termination.Container != "":
+			return MeasurementReason{Code: "MeasurementContainerOOM", Label: "측정 컨테이너 OOM", Message: "런타임 외 측정 컨테이너가 OOM으로 종료되었습니다. 모델 배치의 메모리 한계로 판정하지 않습니다."}
+		case termination.Class == string(batchenergyoptimization.FailureClassRetryableFailure):
+			return MeasurementReason{Code: "RetryableInfrastructureFailure", Label: "일시적 인프라 중단", Message: "일시적 인프라 중단이 확인되었습니다. 요청의 재시도 한도와 현재 상태를 확인해 주세요."}
+		case termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Container == "runtime" &&
+			termination.Stage == "Execution" && termination.FailureReason == "MeasurementBudgetExceeded":
+			return MeasurementReason{Code: "MeasurementBudgetExceeded", Label: "측정 예산 초과", Message: "실행 중 기존 측정 예산에 도달해 해당 배치의 측정이 종료되었습니다."}
+		case termination.FailureReason == "IntegrityError":
+			return MeasurementReason{Code: "EvidenceInvalid", Label: "증거 검증 실패", Message: "측정 증거의 무결성을 확인하지 못했습니다."}
+		default:
+			return MeasurementReason{Code: "RuntimeFailed", Label: "실행 오류", Message: "실행 오류로 측정을 완료하지 못했습니다."}
+		}
+	}
 	var evidence strings.Builder
 	if termination != nil {
 		evidence.WriteString(termination.LogTail)
@@ -81,10 +104,9 @@ func classifyMeasurementFailure(termination *api.ProfilingRunRuntimeTermination,
 	arenaAllocationFailed := strings.Contains(detail, "bfcarena") && strings.Contains(detail, "failed to allocate memory for requested buffer")
 	switch {
 	case gpuMemoryFailure.MatchString(detail) || arenaAllocationFailed && strings.HasPrefix(executionPath, "firstfloor-ort-cuda-"):
-		return MeasurementReason{Code: "GPUMemoryExhausted", Label: "GPU 메모리 부족", Message: "GPU 메모리가 부족해 측정을 완료하지 못했습니다."}
-	case termination != nil && termination.ExitCode == 137 || strings.Contains(detail, "oomkilled") ||
-		arenaAllocationFailed && strings.HasPrefix(executionPath, "firstfloor-ort-cpu-"):
-		return MeasurementReason{Code: "HostOOM", Label: "호스트 메모리 부족", Message: "호스트 메모리 부족으로 측정 실행이 종료되었습니다."}
+		return MeasurementReason{Code: "GPUMemoryExhausted", Label: "GPU 메모리 오류 로그", Message: "로그에 GPU 메모리 할당 오류가 기록되었습니다. 런타임 OOM 종료는 확인되지 않았습니다."}
+	case arenaAllocationFailed && strings.HasPrefix(executionPath, "firstfloor-ort-cpu-"):
+		return MeasurementReason{Code: "MemoryAllocationFailed", Label: "메모리 할당 오류 로그", Message: "로그에 메모리 할당 오류가 기록되었습니다. 런타임 OOM 종료는 확인되지 않았습니다."}
 	case powerObservationTimeout.MatchString(detail):
 		return MeasurementReason{Code: "PowerObservationTimeout", Label: "전력 관측 시간 초과", Message: "제한 시간 안에 전력 관측을 완료하지 못했습니다."}
 	case imagePullFailure.MatchString(detail):

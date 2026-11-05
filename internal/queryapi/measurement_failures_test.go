@@ -10,15 +10,42 @@ import (
 	"k8s.io/utils/ptr"
 )
 
-func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
-	categories := map[string][2]string{
-		"GPUMemoryExhausted":      {"GPU 메모리 부족", "GPU 메모리가 부족해 측정을 완료하지 못했습니다."},
-		"HostOOM":                 {"호스트 메모리 부족", "호스트 메모리 부족으로 측정 실행이 종료되었습니다."},
-		"PowerObservationTimeout": {"전력 관측 시간 초과", "제한 시간 안에 전력 관측을 완료하지 못했습니다."},
-		"ImagePullFailed":         {"이미지 가져오기 실패", "실행 이미지를 가져오지 못해 측정을 시작하지 못했습니다."},
-		"RuntimeFailed":           {"실행 오류", "실행 오류로 측정을 완료하지 못했습니다."},
-		"Other":                   {"기타 오류", "측정을 완료하지 못했습니다. 실행 상세에서 상태를 확인해 주세요."},
+func TestExpectedStopChildDoesNotFailCompletedCampaignProjection(t *testing.T) {
+	task, _, record := campaignResultFixture(t)
+	run := api.ProfilingRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: task.Namespace, Name: "oom-child", UID: "oom-run-uid", Generation: 1,
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: api.GroupVersion.String(), Kind: "BatchEnergyOptimization",
+				Name: task.Name, UID: task.UID, Controller: ptr.To(true),
+			}},
+		},
+		Status: api.ProfilingRunStatus{
+			ObservedGeneration: 1,
+			Conditions: []metav1.Condition{{
+				Type: api.ProfilingRunConditionExecutionComplete, Status: metav1.ConditionFalse,
+				Reason: "JobFailed", ObservedGeneration: 1,
+			}},
+			RuntimeTermination: &api.ProfilingRunRuntimeTermination{
+				Class: "ExpectedStop", Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
+			},
+		},
 	}
+	view, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{
+		Campaign: *task, Result: record, FailedRuns: []api.ProfilingRun{run},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Campaign.Phase != "Complete" || view.Assessment.Status == MeasurementFailed ||
+		view.Assessment.Execution == nil || view.Assessment.Execution.Phase != "Complete" || !view.Assessment.Evidence.Accepted ||
+		len(view.Assessment.FailureSummary) != 1 || view.Assessment.FailureSummary[0].Code != "HostOOM" ||
+		view.Assessment.FailureSummary[0].RunID != string(run.UID) {
+		t.Fatalf("expected-stop child changed campaign verdict: %+v", view.Assessment)
+	}
+}
+
+func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		exit          *int32
@@ -26,7 +53,18 @@ func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 		message       string
 		code          string
 		executionPath string
+		native        *api.ProfilingRunRuntimeTermination
 	}{
+		{name: "typed runtime OOM wins over legacy GPU log", exit: ptr.To(int32(137)), log: "CUDA out of memory", native: &api.ProfilingRunRuntimeTermination{Class: "ExpectedStop", Container: "runtime", Stage: "Execution", Reason: "OOMKilled"}, code: "HostOOM"},
+		{name: "worker OOM is not a runtime capacity limit", exit: ptr.To(int32(137)), native: &api.ProfilingRunRuntimeTermination{Class: "FatalFailure", Container: "measurement-worker", Stage: "Execution", Reason: "OOMKilled"}, code: "MeasurementContainerOOM"},
+		{name: "observer OOM is not a runtime capacity limit", exit: ptr.To(int32(137)), native: &api.ProfilingRunRuntimeTermination{Class: "FatalFailure", Container: "metric-observer", Stage: "Execution", Reason: "OOMKilled"}, code: "MeasurementContainerOOM"},
+		{name: "runtime OOM outside execution is not an expected stop", exit: ptr.To(int32(137)), native: &api.ProfilingRunRuntimeTermination{Class: "FatalFailure", Container: "runtime", Stage: "Preparation", Reason: "OOMKilled"}, code: "RuntimeFailed"},
+		{name: "typed fatal execution wins over legacy memory log", exit: ptr.To(int32(3)), log: "CUDA out of memory", native: &api.ProfilingRunRuntimeTermination{Class: "FatalFailure", Container: "runtime", Stage: "Execution", FailureReason: "ExecutionFailed"}, code: "RuntimeFailed"},
+		{name: "typed unknown exit remains unknown despite legacy OOM log", exit: ptr.To(int32(137)), log: "OOMKilled CUDA out of memory", native: &api.ProfilingRunRuntimeTermination{Class: "UnknownFailure"}, code: "UnknownFailure"},
+		{name: "typed eviction remains retryable despite memory log", exit: ptr.To(int32(137)), log: "CUDA out of memory", native: &api.ProfilingRunRuntimeTermination{Class: "RetryableFailure", PodReason: "Evicted"}, code: "RetryableInfrastructureFailure"},
+		{name: "typed runtime measurement budget", exit: ptr.To(int32(4)), native: &api.ProfilingRunRuntimeTermination{Class: "ExpectedStop", Container: "runtime", Stage: "Execution", FailureReason: "MeasurementBudgetExceeded"}, code: "MeasurementBudgetExceeded"},
+		{name: "typed integrity failure wins over legacy memory log", exit: ptr.To(int32(3)), log: "CUDA out of memory", native: &api.ProfilingRunRuntimeTermination{Class: "FatalFailure", Container: "runtime", Stage: "Execution", FailureReason: "IntegrityError"}, code: "EvidenceInvalid"},
+		{name: "exit 137 alone does not prove OOM", exit: ptr.To(int32(137)), code: "RuntimeFailed"},
 		{name: "CUDA OOM beats host exit", exit: ptr.To(int32(137)), log: "\x1b[31mCUDA out of memory\x1b[0m", code: "GPUMemoryExhausted"},
 		{name: "CUDA allocation error", exit: ptr.To(int32(1)), log: "CUDA_ERROR_OUT_OF_MEMORY", code: "GPUMemoryExhausted"},
 		{name: "cuBLAS allocation", message: "CUBLAS_STATUS_ALLOC_FAILED", code: "GPUMemoryExhausted"},
@@ -34,12 +72,12 @@ func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 		{name: "GPU memory", message: "GPU out of memory", code: "GPUMemoryExhausted"},
 		{name: "ONNX CUDA arena allocation", executionPath: "firstfloor-ort-cuda-amd64", exit: ptr.To(int32(3)), log: "onnxruntime::BFCArena::AllocateRawInternal Failed to allocate memory for requested buffer of size 8589934592", code: "GPUMemoryExhausted"},
 		{name: "ONNX CUDA arena beats host exit", executionPath: "firstfloor-ort-cuda-arm64", exit: ptr.To(int32(137)), log: "Failed to allocate memory for requested buffer of size 8589934592 BFCArena", code: "GPUMemoryExhausted"},
-		{name: "ONNX CPU arena is host memory", executionPath: "firstfloor-ort-cpu-amd64", exit: ptr.To(int32(3)), log: "onnxruntime::BFCArena::AllocateRawInternal Failed to allocate memory for requested buffer of size 8589934592", code: "HostOOM"},
-		{name: "ONNX CPU arena beats observation", executionPath: "firstfloor-ort-cpu-arm64", message: "BFCArena Failed to allocate memory for requested buffer of size 8589934592\npower observation timed out", code: "HostOOM"},
+		{name: "ONNX CPU arena records allocation diagnostic", executionPath: "firstfloor-ort-cpu-amd64", exit: ptr.To(int32(3)), log: "onnxruntime::BFCArena::AllocateRawInternal Failed to allocate memory for requested buffer of size 8589934592", code: "MemoryAllocationFailed"},
+		{name: "ONNX CPU arena diagnostic beats observation", executionPath: "firstfloor-ort-cpu-arm64", message: "BFCArena Failed to allocate memory for requested buffer of size 8589934592\npower observation timed out", code: "MemoryAllocationFailed"},
 		{name: "ONNX arena without backend context", message: "BFCArena Failed to allocate memory for requested buffer of size 8589934592", code: "Other"},
 		{name: "CUDA path alone is not memory evidence", executionPath: "firstfloor-ort-cuda-amd64", message: "unrecognized failure", code: "Other"},
-		{name: "host exit beats observation", exit: ptr.To(int32(137)), log: "power observation timed out", code: "HostOOM"},
-		{name: "host reason beats image", message: "ErrImagePull\nOOMKilled", code: "HostOOM"},
+		{name: "exit 137 does not override observation diagnostic", exit: ptr.To(int32(137)), log: "power observation timed out", code: "PowerObservationTimeout"},
+		{name: "unattributed OOM token does not override image diagnostic", message: "ErrImagePull\nOOMKilled", code: "ImagePullFailed"},
 		{name: "metric result deadline beats image", exit: ptr.To(int32(4)), log: "ErrImagePull\nmetric observation failed: wait for metric result file: context deadline exceeded", code: "PowerObservationTimeout"},
 		{name: "power timeout", message: "power observation timeout", code: "PowerObservationTimeout"},
 		{name: "observer timeout", message: "metric-observer timed out", code: "PowerObservationTimeout"},
@@ -76,15 +114,19 @@ func TestMeasurementFailureClassificationIsSharedAndSafe(t *testing.T) {
 			run.Spec.Candidate.ExecutionPath = test.executionPath
 			if test.exit != nil {
 				run.Status.RuntimeTermination = &api.ProfilingRunRuntimeTermination{ExitCode: *test.exit, LogTail: test.log + " private-token"}
+				if test.native != nil {
+					*run.Status.RuntimeTermination = *test.native
+					run.Status.RuntimeTermination.ExitCode = *test.exit
+					run.Status.RuntimeTermination.LogTail = test.log + " private-token"
+				}
 			}
 			assessment := AssessProfilingRun(run)
-			want := categories[test.code]
 			if assessment.Status != MeasurementFailed || len(assessment.Reasons) != 1 {
 				t.Fatalf("failed assessment = %+v", assessment)
 			}
 			reason := assessment.Reasons[0]
-			if reason.Code != test.code || reason.Label != want[0] || reason.Message != want[1] {
-				t.Fatalf("classification = %+v; want %s %v", reason, test.code, want)
+			if reason.Code != test.code || reason.Label == "" || reason.Message == "" {
+				t.Fatalf("classification = %+v; want %s", reason, test.code)
 			}
 			detail, err := BuildBatchEnergyOptimizationResult(BatchEnergyOptimizationResultSnapshot{Campaign: task, FailedRuns: []api.ProfilingRun{run}})
 			if err != nil {
