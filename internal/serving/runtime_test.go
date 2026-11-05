@@ -60,7 +60,7 @@ func TestShutdownCannotReopenAdmission(t *testing.T) {
 	}
 }
 
-func TestAssignmentPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
+func TestAssignmentAdmissionDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
 	log := r.config.ObservationLog.(*runtimeTestLog)
 	_, snapshot := schedulerFixture()
@@ -68,10 +68,6 @@ func TestAssignmentPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	executed := make(chan Dispatch, 1)
 	r.mu.Lock()
 	r.instances[instance.ID].Execute = func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
-		rows := readRequestRows(t, log.config.Directory)
-		if len(rows) != 1 || rows[0].Kind != RequestRowAssigned || rows[0].RequestID != dispatch.RequestID {
-			t.Errorf("native execution lacks its durable assignment: %+v", rows)
-		}
 		executed <- dispatch
 		return BackendResult{Finished: true}, nil
 	}
@@ -107,24 +103,25 @@ func TestAssignmentPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("observation writer blocked unrelated request-state transitions")
 	}
-	owned := make(chan int, 1)
+	owned := make(chan error, 1)
 	go func() {
-		r.mu.Lock()
-		count := r.instances[instance.ID].outstanding
-		r.mu.Unlock()
-		owned <- count
+		detached, err := r.DetachInstance(instance.ID)
+		if detached {
+			err = errors.New("pending assignment admission freed physical ownership")
+		}
+		owned <- err
 	}()
 	select {
-	case count := <-owned:
-		if count != 1 {
-			t.Fatalf("pending durable assignment lost physical ownership: %d", count)
+	case err := <-owned:
+		if err != nil {
+			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("assignment persistence held Runtime.mu")
 	}
 	select {
 	case <-executed:
-		t.Fatal("native execution preceded durable assignment")
+		t.Fatal("native execution preceded assignment admission")
 	default:
 	}
 	unblockedAt := time.Now()
@@ -142,13 +139,16 @@ func TestAssignmentPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	if err := r.Response(current.receipt, outcomeCompleted, ""); err != nil {
 		t.Fatal(err)
 	}
+	if err := log.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
 	rows := readRequestRows(t, log.config.Directory)
 	if len(rows) != 2 || rows[0].Kind != RequestRowAssigned || rows[1].Kind != RequestRowFinal {
 		t.Fatalf("assignment/final durability changed: %+v", rows)
 	}
 }
 
-func TestFinalPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
+func TestFinalAdmissionDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
 	log := r.config.ObservationLog.(*runtimeTestLog)
 	_, snapshot := schedulerFixture()
@@ -206,6 +206,9 @@ func TestFinalPersistenceDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	log.mu.Unlock()
 	locked = false
 	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
 	rows := readRequestRows(t, log.config.Directory)

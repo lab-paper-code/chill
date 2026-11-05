@@ -93,7 +93,7 @@ func testMeasurementMutationEventsMatchHistoryAndReplay(t *testing.T, occupancy 
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	publisher := newLivePublisher(ctx)
+	publisher := newLivePublisher(ctx, nil, nil)
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour,
 		Writer: schedulerPowerArchive{directory: t.TempDir()},

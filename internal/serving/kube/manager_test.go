@@ -3,6 +3,7 @@ package kube
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -131,6 +132,15 @@ func newManagerHarness(t *testing.T) (*managerHarness, observation.ObservationLo
 	}
 	store := &Store{client: &managerAPI{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(testExecutionFacts()).WithStatusSubresource(&api.Workload{}, &corev1.Pod{}, &api.OperationCostMeasurement{}, &api.DispatchOccupancyMeasurement{}).Build()}}
 	config := observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: managerArchive{t.TempDir()}}
+	// These lifecycle fixtures begin after a successful, physically empty
+	// predecessor handoff. Crash recovery is exercised separately.
+	clean, err := json.Marshal(map[string]any{"started": time.Now().UTC(), "clean": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config.Directory, "async-run.json"), clean, 0600); err != nil {
+		t.Fatal(err)
+	}
 	observationLog, err := observation.NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)

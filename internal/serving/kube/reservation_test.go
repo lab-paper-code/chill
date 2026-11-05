@@ -251,7 +251,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					pod.Status.ContainerStatuses[0].ContainerID += restartedContainerSuffix
 				case unknownPodEvidence:
 					pod.UID = unknownPodUID
-				case "profile":
+				case profileInitContainerName:
 					state.Native.Metadata.ProfileID = "other-profile"
 				case "slot":
 					state.TargetID = "other-slot"
@@ -449,7 +449,7 @@ func mutateTerminalPreparationEvidence(evidence string, nodes []core.Node, pods 
 		physical[1].Node.UID = testReplacementUID
 	case "slot":
 		physical[1].TargetID = "unknown-slot"
-	case "profile":
+	case profileInitContainerName:
 		physical[1].Native.Metadata.ProfileID = "unknown-profile"
 	case policyEvidence:
 		physical[1].Native.Metadata.Policy.MaxBatchSize++

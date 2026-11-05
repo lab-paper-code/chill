@@ -493,6 +493,7 @@ func (o *Observer) publishLedger(probed []serving.ReadyInstance) error {
 			}
 			previous.State.PodUID = string(source.uid)
 			previous.State.Ready = false
+			previous.State.NativeVerified = false
 			previous.State.Stopped = source.terminated[containerID]
 			previous.State.Terminated = source.terminated[containerID]
 			instances = append(instances, previous)
@@ -551,6 +552,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 			return serving.ReadyInstance{}, false, nil
 		}
 		if probeErr == nil || instance.State.Native != nil {
+			instance.State.NativeVerified = probeErr == nil
 			if probeErr != nil {
 				instance.State.Reason = probeErr.Error()
 			}
@@ -562,6 +564,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 				}
 				if source := o.sources[string(pod.UID)]; source != nil {
 					source.instance.State.Ready = false
+					source.instance.State.NativeVerified = false
 					source.instance.State.Reason = reason
 					source.instance.State.AttemptedAt = time.Now().UTC()
 					o.runtime.DisableInstance(servingstate.PhysicalID(source.uid, source.containerID), reason)
@@ -623,6 +626,7 @@ func (o *Observer) sourceUnavailable(pod *corev1.Pod, err error) (serving.ReadyI
 	o.issue(pod.Namespace+"/"+pod.Name, err)
 	if source := o.sources[string(pod.UID)]; source != nil {
 		source.instance.State.Ready = false
+		source.instance.State.NativeVerified = false
 		source.instance.State.Reason = err.Error()
 		source.instance.State.AttemptedAt = time.Now().UTC()
 	}
@@ -633,6 +637,7 @@ func (o *Observer) refreshFailure(err error) error {
 	o.issue("refresh", err)
 	for _, source := range o.sources {
 		source.instance.State.Ready = false
+		source.instance.State.NativeVerified = false
 		source.instance.State.Reason = err.Error()
 		source.instance.State.AttemptedAt = time.Now().UTC()
 	}
@@ -924,6 +929,7 @@ func (o *Observer) watchPods(w watch.Interface) {
 					changed := event.Type == watch.Deleted || status == nil || status.ContainerID != source.containerID || status.State.Running == nil
 					if changed || pod.DeletionTimestamp != nil || !status.Ready || !servingstate.PodReady(pod) {
 						source.instance.State.Ready = false
+						source.instance.State.NativeVerified = false
 						o.runtime.DisableInstance(servingstate.PhysicalID(source.uid, source.containerID), "native Pod readiness/identity unavailable")
 					}
 					if changed {

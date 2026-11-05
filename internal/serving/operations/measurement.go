@@ -99,6 +99,9 @@ func (o *Operations) Measure(ctx context.Context, request MeasurementRequest, so
 	if err := validateMeasurementRequest(request, source, writer); err != nil {
 		return record, evidencestore.Receipt{}, err
 	}
+	if err := o.checkRecovery(ctx, request.Operation.Node, ""); err != nil {
+		return record, evidencestore.Receipt{}, err
+	}
 	if _, err := metricobserver.RequiredCapacity(request.Sampling, source.Identity(), o.Config.MetricLimits, true); err != nil {
 		return record, evidencestore.Receipt{}, fmt.Errorf("admit operation power observation: %w", err)
 	}

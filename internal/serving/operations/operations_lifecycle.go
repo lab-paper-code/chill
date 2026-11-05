@@ -27,6 +27,9 @@ func (o *Operations) RemoveInstance(ctx context.Context, node serving.NodeRefere
 }
 
 func (o *Operations) StopInstance(ctx context.Context, id string) error {
+	if o.Runtime.InstanceRecoveryUnknown(id) {
+		return errors.New("UnconfirmedInstance: executor recovery unknown")
+	}
 	if err := o.Wait(ctx, func() (bool, error) { return o.Runtime.StopSchedulerInstance(id) }); err != nil {
 		return err
 	}
@@ -36,6 +39,9 @@ func (o *Operations) StopInstance(ctx context.Context, id string) error {
 
 // detachInstance waits for the drain proof and records the withdrawn routes.
 func (o *Operations) detachInstance(ctx context.Context, id string) error {
+	if o.Runtime.InstanceRecoveryUnknown(id) {
+		return errors.New("UnconfirmedInstance: executor recovery unknown")
+	}
 	if err := o.Wait(ctx, func() (bool, error) { return o.Runtime.DetachInstance(id) }); err != nil {
 		return err
 	}
@@ -165,6 +171,9 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 	if mode == "" || maxDuration <= 0 {
 		return errors.New("power mode and maximum actuation duration required")
 	}
+	if err := o.checkRecovery(ctx, node, ""); err != nil {
+		return err
+	}
 	startNode, err := o.AdmittedNode(ctx, node)
 	if err != nil {
 		return err
@@ -214,6 +223,9 @@ func (o *Operations) ChangePower(ctx context.Context, node serving.NodeReference
 // waits until the actuation agent settles mode within maxDuration of the write.
 // A measurement operation writes only on the Node its holder was granted.
 func (o *Operations) RequestPowerMode(ctx context.Context, ref serving.NodeReference, holder, mode string, maxDuration time.Duration) error {
+	if err := o.checkRecovery(ctx, ref, ""); err != nil {
+		return err
+	}
 	node, err := o.AdmittedNode(ctx, ref)
 	if err != nil {
 		return err

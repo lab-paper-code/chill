@@ -91,6 +91,9 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 	for _, i := range o.Runtime.Instances() {
 		if i.Node.UID == node.UID {
 			s.Instances = append(s.Instances, i)
+			if i.RecoveryUnknown && !i.Terminated {
+				s.Reasons = append(s.Reasons, "UnconfirmedInstance: executor recovery unknown")
+			}
 		}
 	}
 	pods, err := o.Kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: "spec.nodeName=" + node.Name})
@@ -116,6 +119,9 @@ func (o *Operations) Capture(ctx context.Context, node serving.NodeReference) (s
 			continue
 		}
 		id := servingstate.PhysicalID(p.UID, status.ContainerID)
+		if o.Runtime.InstanceRecoveryUnknown(id) {
+			s.Reasons = append(s.Reasons, p.Name+": executor recovery unknown")
+		}
 		endpoint, e := servingstate.NativeInstanceEndpoint(ctx, o.Kube, p)
 		if e != nil {
 			s.Reasons = append(s.Reasons, p.Name+": "+e.Error())
@@ -263,6 +269,16 @@ func (o *Operations) executeOperation(ctx context.Context, operation servingstat
 func (o *Operations) ValidateOperationBinding(ctx context.Context, operation servingstate.Operation) error {
 	if servingstate.IsRoutingOperation(operation.Kind) {
 		return nil
+	}
+	podUID := ""
+	if operation.Kind == servingstate.OperationRemove || operation.Kind == servingstate.OperationStop || operation.Kind == servingstate.OperationDrain {
+		podUID = operation.PodUID
+		if podUID == "" {
+			podUID, _, _ = strings.Cut(operation.Instance, "/")
+		}
+	}
+	if err := o.checkRecovery(ctx, operation.Node, podUID); err != nil {
+		return err
 	}
 	if operation.Kind == servingstate.OperationRemove && operation.WorkloadUID != "" {
 		current := o.Runtime.SchedulerInputs(time.Now)

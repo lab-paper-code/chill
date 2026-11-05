@@ -46,7 +46,7 @@ func newRuntimeTestLog(config RuntimeTestObservationConfig) (*runtimeTestLog, er
 	return &runtimeTestLog{RuntimeTestObservation: log, config: config}, nil
 }
 
-// The gate stops at the synchronous persistence boundary, before forwarding to the real filesystem-backed log.
+// The gate stops recorder admission, before forwarding to the real async log.
 func (l *runtimeTestLog) RequestEvent(event RequestEvent) error {
 	if event.Kind == phaseAssigned {
 		l.mu.Lock()

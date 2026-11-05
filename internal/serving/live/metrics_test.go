@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"encoding/json"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -32,7 +33,7 @@ func metricFixture(t *testing.T) (*Metrics, *Subscription, time.Time) {
 	t.Helper()
 	at := testAt.Truncate(time.Second)
 	hub := New(at)
-	metrics := NewMetrics(hub, at)
+	metrics := NewMetrics(hub, at, nil, nil)
 	sub, err := hub.Subscribe(0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -196,5 +197,81 @@ func TestMembershipChangesWithinBucketDoNotInventCompletePool(t *testing.T) {
 	message := nextMetrics(t, sub)
 	if message.Pool.WholeWatts != nil || message.Pool.ActiveWatts != nil {
 		t.Fatalf("mid-bucket membership treated as known: %+v", message)
+	}
+}
+
+func TestMetricsCurrentQueueGauges(t *testing.T) {
+	at := testAt.Truncate(time.Second)
+	hub := New(at)
+	var length, oldest atomic.Int64
+	metrics := NewMetrics(hub, at, &length, &oldest)
+	sub, err := hub.Subscribe(0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sub.Close(); hub.Close() })
+	_ = nextEnvelope(t, sub)
+	length.Store(3)
+	oldest.Store(at.Add(-500 * time.Millisecond).UnixNano())
+	if err := metrics.Flush(at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	first := nextMetrics(t, sub)
+	if first.ObslogQueueLength != 3 || first.ObslogOldestWaitSeconds != 1.5 {
+		t.Fatalf("current queue sample: %+v", first)
+	}
+	length.Store(1)
+	oldest.Store(at.Add(750 * time.Millisecond).UnixNano())
+	metrics.Received("one", at)
+	if err := metrics.Flush(at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	correction := nextMetrics(t, sub)
+	if correction.BucketAt != first.BucketAt || correction.ObslogQueueLength != 1 || correction.ObslogOldestWaitSeconds != .25 {
+		t.Fatalf("corrected bucket used stale queue gauges: %+v", correction)
+	}
+	oldest.Store(at.Add(3 * time.Second).UnixNano())
+	if err := metrics.Flush(at.Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	backward := nextMetrics(t, sub)
+	if backward.ObslogQueueLength != 1 || backward.ObslogOldestWaitSeconds != 0 {
+		t.Fatalf("backward clock produced negative age: %+v", backward)
+	}
+	length.Store(0)
+	oldest.Store(at.UnixNano())
+	if err := metrics.Flush(at.Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	empty := nextMetrics(t, sub)
+	if empty.ObslogQueueLength != 0 || empty.ObslogOldestWaitSeconds != 0 {
+		t.Fatalf("empty queue retained age: %+v", empty)
+	}
+}
+
+func TestMetricsNilQueueSlotsPublishZeroJSONGauges(t *testing.T) {
+	metrics, sub, at := metricFixture(t)
+	if err := metrics.Flush(at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	data, err := sub.Next(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message map[string]json.RawMessage
+	if err := json.Unmarshal(data, &message); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"chill_obslog_queue_length", "chill_obslog_oldest_wait_seconds"} {
+		var value float64
+		raw, ok := message[name]
+		if !ok {
+			t.Fatalf("missing gauge %s: %+v", name, message)
+		}
+		if err := json.Unmarshal(raw, &value); err != nil || value != 0 {
+			t.Fatalf("nil-slot gauge %s = %s: %v", name, raw, err)
+		}
 	}
 }

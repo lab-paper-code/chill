@@ -454,10 +454,8 @@ func (m *Manager) restoreWorkload(ctx context.Context, w *api.Workload, sharedIn
 		if err := m.persist(ctx, w, status); err != nil {
 			return err
 		}
-		if m.runtime.Drained(string(w.UID)) {
-			if err := m.runtime.OpenAdmission(string(w.UID)); err != nil {
-				return err
-			}
+		if _, err := m.runtime.ResumeAfterRestart(ctx, string(w.UID)); err != nil {
+			return err
 		}
 	}
 	return m.persist(ctx, w, status)
@@ -641,8 +639,10 @@ func (m *Manager) phase(ctx context.Context, w *api.Workload, phase string) erro
 	return m.record(ctx, w, phase, nil, nil, m.applied(w), time.Now().UTC(), nil)
 }
 
-func (m *Manager) drain(w *api.Workload) (bool, error) {
-	if m.runtime.Drained(string(w.UID)) {
+func (m *Manager) drain(ctx context.Context, w *api.Workload) (bool, error) {
+	if done, err := m.runtime.Drain(ctx, string(w.UID)); err != nil {
+		return false, err
+	} else if done {
 		return true, nil
 	}
 	op := m.status(w).Operation
@@ -698,7 +698,7 @@ func (m *Manager) advanceWorkload(ctx context.Context, w *api.Workload) error {
 		}
 	}
 	if op.Phase == "Stopping" || op.Phase == "Draining" {
-		done, err := m.drain(w)
+		done, err := m.drain(ctx, w)
 		if err != nil || !done {
 			return err
 		}
@@ -776,7 +776,7 @@ func (m *Manager) advanceGroup(ctx context.Context, group []*api.Workload) error
 		if op.Phase == operationFailed {
 			return managementError("SharedUpdateFailed", "another member of the shared update barrier failed", "operation")
 		}
-		done, err := m.drain(w)
+		done, err := m.drain(ctx, w)
 		if err != nil || !done {
 			return err
 		}
@@ -881,8 +881,8 @@ func (m *Manager) Advance(ctx context.Context) error {
 		if !active(status.Operation) {
 			if status.Operation == nil || status.Operation.Phase == operationCompleted {
 				state, stateErr := m.runtime.State(w.Name)
-				if stateErr == nil && state.Applied.UID == string(w.UID) && state.Reason == "RestartDrain" && m.runtime.Drained(string(w.UID)) {
-					stateErr = m.runtime.OpenAdmission(string(w.UID))
+				if stateErr == nil && state.Applied.UID == string(w.UID) && state.Reason == "RestartDrain" {
+					_, stateErr = m.runtime.ResumeAfterRestart(ctx, string(w.UID))
 				}
 				if stateErr == nil {
 					stateErr = m.persist(ctx, w, status)

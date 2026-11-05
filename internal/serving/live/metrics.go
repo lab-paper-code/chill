@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gonum.org/v1/gonum/stat"
@@ -45,11 +46,14 @@ type Metrics struct {
 	workloads, meters, active map[string]struct{}
 	membershipKnown           bool
 	pendingGaps               []Gap
+	queueLength               *atomic.Int64
+	queueOldestEnqueued       *atomic.Int64
 }
 
-func NewMetrics(hub *Hub, now time.Time) *Metrics {
+func NewMetrics(hub *Hub, now time.Time, queueLength, queueOldestEnqueued *atomic.Int64) *Metrics {
 	return &Metrics{hub: hub, next: now.UTC().Truncate(time.Second), buckets: make(map[int64]*metricBucket),
-		workloads: make(map[string]struct{}), meters: make(map[string]struct{}), active: make(map[string]struct{})}
+		workloads: make(map[string]struct{}), meters: make(map[string]struct{}), active: make(map[string]struct{}),
+		queueLength: queueLength, queueOldestEnqueued: queueOldestEnqueued}
 }
 
 func uidSet(uids []string) map[string]struct{} {
@@ -288,6 +292,21 @@ func sumPower(nodes map[string]NodeMetric, uids map[string]struct{}) *float64 {
 func (m *Metrics) Flush(now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var queueLength int64
+	var oldestEnqueued int64
+	if m.queueLength != nil {
+		queueLength = m.queueLength.Load()
+	}
+	if m.queueOldestEnqueued != nil {
+		oldestEnqueued = m.queueOldestEnqueued.Load()
+	}
+	var oldestWait float64
+	if queueLength != 0 && oldestEnqueued != 0 {
+		oldestWait = now.Sub(time.Unix(0, oldestEnqueued)).Seconds()
+		if oldestWait < 0 {
+			oldestWait = 0
+		}
+	}
 	boundary := now.UTC().Truncate(time.Second)
 	for at := m.next; at.Before(boundary); at = at.Add(time.Second) {
 		m.bucketLocked(at, "all")
@@ -302,6 +321,8 @@ func (m *Metrics) Flush(now time.Time) error {
 	for _, key := range keys {
 		bucket := m.buckets[key]
 		message := bucket.frame()
+		message.ObslogQueueLength = queueLength
+		message.ObslogOldestWaitSeconds = oldestWait
 		message.Gaps = append(message.Gaps, m.pendingGaps...)
 		if err := m.hub.PublishMetrics(now, message); err != nil {
 			return err

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,7 +38,7 @@ func (l *ObservationLog) restore(hours []time.Time) error {
 			return err
 		}
 		for _, file := range files {
-			if err := scanObservationFile(file.path, -1, func(raw []byte) error {
+			if err := scanObservationFile(file.path, func(raw []byte) error {
 				var row serving.RequestRow
 				if err := json.Unmarshal(raw, &row); err != nil {
 					return err
@@ -180,42 +181,22 @@ func (l *ObservationLog) indexSegments(hours []time.Time) error {
 	return nil
 }
 
-func (l *ObservationLog) appendLocked(stream string, now time.Time, value any) error {
-	if l.closed {
-		return errors.New("observation log is closed")
-	}
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
-	data, err := json.Marshal(value)
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
-	if err == nil {
-		err = l.writeLocked(stream, now, append(data, '\n'))
-	}
-	if err != nil {
-		l.lastError = err
-	}
-	return err
-}
-
 func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) error {
 	name := l.segment(stream, now)
 	file := l.files[stream]
 	if file == nil || file.Name() != name {
-		if file != nil {
-			delete(l.files, stream)
-			if err := l.closeFileLocked(file); err != nil {
-				return err
-			}
-		}
-		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
-			return err
-		}
-		var err error
-		l.mu.Mark(serving.DiagnosticFileOpen, serving.DiagnosticBegin)
-		file, err = os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		l.mu.Mark(serving.DiagnosticFileOpen, serving.DiagnosticEnd)
+		// writerMu keeps append/rotation order while mu remains available to
+		// request folding and committed-prefix capture.
+		l.mu.Unlock()
+		next, err := l.rotateFile(file, name)
+		l.mu.Lock()
 		if err != nil {
 			return err
 		}
+		if file != nil {
+			delete(l.offsets, file)
+		}
+		file = next
 		l.files[stream] = file
 	}
 	err := l.appendWholeLocked(file, data)
@@ -229,73 +210,73 @@ func (l *ObservationLog) writeLocked(stream string, now time.Time, data []byte) 
 // ENOSPC while S3 is down, is cut back so the next line starts on a boundary.
 func (l *ObservationLog) appendWholeLocked(file *os.File, data []byte) error {
 	size, known := l.offsets[file]
+	l.mu.Unlock()
 	if !known {
-		l.mu.Mark(serving.DiagnosticFileStat, serving.DiagnosticBegin)
+		l.writerMu.Mark(serving.DiagnosticFileStat, serving.DiagnosticBegin)
 		info, err := file.Stat()
-		l.mu.Mark(serving.DiagnosticFileStat, serving.DiagnosticEnd)
+		l.writerMu.Mark(serving.DiagnosticFileStat, serving.DiagnosticEnd)
 		if err != nil {
+			l.mu.Lock()
 			return err
 		}
 		size = info.Size()
-		l.offsets[file] = size
 	}
-	l.mu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticBegin)
-	n, err := file.Write(data)
-	l.mu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticEnd)
+	l.writerMu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticBegin)
+	n, err := l.writeFile(file, data)
+	l.writerMu.Mark(serving.DiagnosticFileWrite, serving.DiagnosticEnd)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	var truncateErr error
 	if err != nil {
-		l.mu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticBegin)
-		truncateErr := file.Truncate(size)
-		l.mu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticEnd)
+		l.writerMu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticBegin)
+		truncateErr = file.Truncate(size)
+		l.writerMu.Mark(serving.DiagnosticFileTruncate, serving.DiagnosticEnd)
+	}
+	l.mu.Lock()
+	l.offsets[file] = size
+	if truncateErr != nil {
+		l.fatalBoundary = true
+	}
+	if err != nil {
 		return errors.Join(err, truncateErr)
 	}
 	l.offsets[file] = size + int64(n)
 	return nil
 }
 
-// referenceLocked writes a catalog row when the hour first references key, or
-// when its body differs from the last body this process wrote for it.
-// Published Profiles and Definitions are immutable, so the same pointer
-// within the hour skips the marshal.
-func (l *ObservationLog) referenceLocked(kind, key string, at, now time.Time, body any) error {
-	var source any
-	switch body.(type) {
-	case *serving.Profile, *serving.Definition:
-		source = body
+func (l *ObservationLog) syncFileOutsideLock(file *os.File) error {
+	l.config.Diagnostics.Mark(serving.DiagnosticFileSync, serving.DiagnosticBegin, "", 0)
+	err := l.syncFile(file)
+	l.config.Diagnostics.Mark(serving.DiagnosticFileSync, serving.DiagnosticEnd, "", 0)
+	return err
+}
+
+// rotateFile runs under writerMu only. Readers retain committed segment sizes
+// until the first append publishes the replacement file.
+func (l *ObservationLog) rotateFile(previous *os.File, name string) (*os.File, error) {
+	if previous != nil {
+		if err := l.syncFileOutsideLock(previous); err != nil {
+			return nil, err
+		}
 	}
-	id, hour := kind+"/"+key, observationHour(now)
-	entry, ok := l.catalog[id]
-	if ok && entry.hour == hour && source != nil && entry.source == source {
-		return nil
+	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+		return nil, err
 	}
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
-	data, err := json.Marshal(body)
-	l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
+	l.config.Diagnostics.Mark(serving.DiagnosticFileOpen, serving.DiagnosticBegin, "", 0)
+	file, err := os.OpenFile(name, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	l.config.Diagnostics.Mark(serving.DiagnosticFileOpen, serving.DiagnosticEnd, "", 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if ok && entry.hour == hour && bytes.Equal(entry.body, data) {
-		entry.source = source
-		l.catalog[id] = entry
-		return nil
+	if previous != nil {
+		l.config.Diagnostics.Mark(serving.DiagnosticFileClose, serving.DiagnosticBegin, "", 0)
+		err = previous.Close()
+		l.config.Diagnostics.Mark(serving.DiagnosticFileClose, serving.DiagnosticEnd, "", 0)
+		if err != nil {
+			l.fatalBoundary = true
+			return nil, errors.Join(err, file.Close())
+		}
 	}
-	if err := l.appendLocked(observationCatalogStream, now, CatalogRow{Kind: kind, Key: key, At: at, Body: data}); err != nil {
-		return err
-	}
-	l.catalog[id] = observationCatalogEntry{hour: hour, body: data, source: source}
-	return nil
-}
-
-func (l *ObservationLog) syncFileLocked(file *os.File) error {
-	l.mu.Mark(serving.DiagnosticFileSync, serving.DiagnosticBegin)
-	err := file.Sync()
-	l.mu.Mark(serving.DiagnosticFileSync, serving.DiagnosticEnd)
-	return err
-}
-
-func (l *ObservationLog) closeFileLocked(file *os.File) error {
-	l.mu.Mark(serving.DiagnosticFileClose, serving.DiagnosticBegin)
-	err := file.Close()
-	l.mu.Mark(serving.DiagnosticFileClose, serving.DiagnosticEnd)
-	delete(l.offsets, file)
-	return err
+	return file, nil
 }

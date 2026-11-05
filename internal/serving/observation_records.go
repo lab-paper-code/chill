@@ -175,7 +175,8 @@ func (r *RequestRow) FoldNative(p *BackendProgress) {
 	if p.Phase == phaseFinished {
 		r.NativeExecutionComplete = p.ExecutionComplete
 		r.NativeOutcome, r.NativeError = p.Outcome, p.Error
-		r.finished = p
+		finished := *p
+		r.finished = &finished
 	}
 }
 
@@ -222,10 +223,17 @@ type ObservationSource struct {
 }
 
 type ObservationGap struct {
-	From   time.Time `json:"from"`
-	To     time.Time `json:"to"`
-	Stream string    `json:"stream"`
-	Reason string    `json:"reason"`
+	From        time.Time      `json:"from"`
+	To          time.Time      `json:"to"`
+	Stream      string         `json:"stream"`
+	Reason      string         `json:"reason"`
+	Boot        string         `json:"boot,omitempty"`
+	Instance    string         `json:"instance,omitempty"`
+	PodUID      string         `json:"podUID,omitempty"`
+	ContainerID string         `json:"containerID,omitempty"`
+	Node        *NodeReference `json:"node,omitempty"`
+	ClearAt     *time.Time     `json:"clearAt,omitempty"`
+	Open        bool           `json:"open,omitempty"`
 }
 
 func (c ObservationCoverage) GapUntil(from time.Time) *time.Time {

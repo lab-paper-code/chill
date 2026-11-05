@@ -1,7 +1,6 @@
 package observation
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -38,10 +37,11 @@ type RawKind struct {
 }
 
 type RawHourIndex struct {
-	Hour   string    `json:"hour"`
-	At     time.Time `json:"at"`
-	Status string    `json:"status"`
-	Kinds  []RawKind `json:"kinds"`
+	Hour   string                   `json:"hour"`
+	At     time.Time                `json:"at"`
+	Status string                   `json:"status"`
+	Kinds  []RawKind                `json:"kinds"`
+	Gaps   []serving.ObservationGap `json:"gaps"`
 }
 
 // RawObservation owns a fixed byte range. The caller must close Reader.
@@ -59,10 +59,11 @@ func rawHour(hour string) (time.Time, error) {
 	return at, nil
 }
 
-// captureRaw freezes committed closed-minute metadata under the writer lock;
-// directory checks, sorting and opens run outside it, protected from retention.
+// captureRaw advances the FIFO append frontier before selecting closed minutes.
+// Directory checks and opens run without producer locks, protected from retention.
 func (l *ObservationLog) captureRaw(ctx context.Context, hour time.Time, streams []string) (*observationRead, error) {
-	if err := ctx.Err(); err != nil {
+	frontier, err := l.writeBarrier(ctx, true)
+	if err != nil {
 		return nil, err
 	}
 	l.captureMu.RLock()
@@ -73,7 +74,7 @@ func (l *ObservationLog) captureRaw(ctx context.Context, hour time.Time, streams
 	}
 	l.mu.Lock()
 	read := &observationRead{
-		ctx: ctx, now: l.now().UTC(), files: map[string][]observationOpenFile{}, localHours: map[time.Time]bool{},
+		ctx: ctx, now: frontier.UTC(), files: map[string][]observationOpenFile{}, localHours: map[time.Time]bool{},
 	}
 	if hour.Equal(read.now.Truncate(time.Hour)) || err == nil && info.IsDir() {
 		read.localHours[hour] = true
@@ -86,6 +87,7 @@ func (l *ObservationLog) captureRaw(ctx context.Context, hour time.Time, streams
 		}
 	}
 	l.mu.Unlock()
+	read.recoveryGaps = l.recoveryGaps(hour, hour.Add(time.Hour))
 	slices.SortFunc(segments, func(a, b observationSegment) int { return a.at.Compare(b.at) })
 	for _, segment := range segments {
 		if err := ctx.Err(); err != nil {
@@ -126,7 +128,7 @@ func (l *ObservationLog) RawHour(ctx context.Context, hour string) (RawHourIndex
 		return RawHourIndex{}, err
 	}
 	defer read.close()
-	result := RawHourIndex{Hour: hour, At: read.now, Status: "archived", Kinds: make([]RawKind, 0, len(streams))}
+	result := RawHourIndex{Hour: hour, At: read.now, Status: "archived", Kinds: make([]RawKind, 0, len(streams)), Gaps: read.recoveryGaps}
 	var objects map[string]map[time.Time]evidencestore.ObjectIdentity
 	local := read.localHours[at]
 	if local {
@@ -154,7 +156,7 @@ func (l *ObservationLog) RawHour(ctx context.Context, hour string) (RawHourIndex
 		available = available || kind.Available
 		result.Kinds = append(result.Kinds, kind)
 	}
-	if !local && !available {
+	if !local && !available && len(result.Gaps) == 0 {
 		return RawHourIndex{}, &serving.Error{Code: serving.ObservationUnavailableCode, Message: "observation hour is unavailable"}
 	}
 	if err := ctx.Err(); err != nil {
@@ -210,37 +212,17 @@ func (l *ObservationLog) OpenRaw(ctx context.Context, hour, kind string) (RawObs
 	return newRawObservation(ctx, io.LimitReader(body, object.Size), []io.Closer{body}, "application/gzip", object.Size), nil
 }
 
-// OpenRawDefinitions freezes the last complete line while append is excluded.
+// OpenRawDefinitions freezes the committed complete size, then opens outside mu.
 func (l *ObservationLog) OpenRawDefinitions(ctx context.Context) (RawObservation, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if _, err := l.writeBarrier(ctx, false); err != nil {
 		return RawObservation{}, err
 	}
+	l.mu.Lock()
+	end := l.definitionsSize
+	l.mu.Unlock()
 	file, err := os.Open(filepath.Join(l.root, observationDefinitionsFile))
 	if err != nil {
 		return RawObservation{}, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return RawObservation{}, errors.Join(err, file.Close())
-	}
-	end := info.Size()
-	var buffer [4096]byte
-	for end > 0 {
-		if err := ctx.Err(); err != nil {
-			return RawObservation{}, errors.Join(err, file.Close())
-		}
-		start := max(int64(0), end-int64(len(buffer)))
-		n, err := file.ReadAt(buffer[:end-start], start)
-		if err != nil {
-			return RawObservation{}, errors.Join(err, file.Close())
-		}
-		if last := bytes.LastIndexByte(buffer[:n], '\n'); last >= 0 {
-			end = start + int64(last) + 1
-			break
-		}
-		end = start
 	}
 	return newRawObservation(ctx, io.NewSectionReader(file, 0, end), []io.Closer{file}, "application/x-ndjson", end), nil
 }

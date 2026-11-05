@@ -58,7 +58,7 @@ func rawHTTPHandler(t *testing.T, archive *rawHTTPArchive, allowed bool) *Handle
 func rawHTTPHandlerWithClock(t *testing.T, archive *rawHTTPArchive, allowed bool, now func() time.Time) *Handler {
 	t.Helper()
 	archive.settingsArchive.directory = t.TempDir()
-	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: archive, Now: now})
+	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: archive, Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}

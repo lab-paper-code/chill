@@ -9,13 +9,14 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
-// RuntimeObservation is the synchronous persistence boundary used by Runtime.
+// RuntimeObservation admits immutable records without waiting for storage.
 // Storage depends on serving's domain records, so Runtime must not depend on
 // the concrete storage package.
 type RuntimeObservation interface {
@@ -24,6 +25,18 @@ type RuntimeObservation interface {
 	RequestEvent(RequestEvent) error
 	RequestClosed(string) error
 	RecordNativeSupplement(RequestEvent) error
+	Drain(context.Context) error
+	Err() error
+	Failure() <-chan struct{}
+	Recovery() ObservationRecovery
+	RecordRecovery(InstanceState, bool) error
+}
+
+// ObservationRecovery describes this boot's conservative missing-tail fence.
+// Historical evidence gaps survive independently of physical executor recovery.
+type ObservationRecovery struct {
+	Unknown bool
+	Started time.Time
 }
 
 type RuntimeConfig struct {
@@ -66,9 +79,11 @@ type Call struct {
 
 type runtimeInstance struct {
 	ReadyInstance
-	podRouting  map[string]int32
-	outstanding int
-	bindings    map[string]bool
+	podRouting       map[string]int32
+	outstanding      int
+	finalizing       int
+	bindings         map[string]bool
+	recoveryRecorded bool
 }
 type routeEntry struct {
 	instance *runtimeInstance
@@ -93,10 +108,11 @@ type runtimeWorkload struct {
 	route      inputRoute
 	queue      []*Call
 	calls      map[string]*Call
+	finalizing int
 }
 
 // The owner lock protects routing and physical ownership, never observation
-// filesystem work. An assigned call reserves capacity while its row is stored.
+// filesystem work. An assigned call reserves capacity before FIFO admission.
 type Runtime struct {
 	mu                DiagnosticLock
 	config            RuntimeConfig
@@ -114,9 +130,12 @@ type Runtime struct {
 	definitions       map[string]*Definition
 	changed           chan struct{}
 	observationError  error
+	recovery          ObservationRecovery
 	closing           *Call
 	finalizing        int
 	shuttingDown      bool
+	executionsStopped bool
+	executions        sync.WaitGroup
 	overloaded        atomic.Bool
 }
 
@@ -128,6 +147,11 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 	backendCtx, cancel := context.WithCancel(ctx)
 	r := &Runtime{config: config, ctx: backendCtx, cancel: cancel, workloads: map[string]*runtimeWorkload{}, names: map[string]string{}, instances: map[string]*runtimeInstance{}, calls: map[string]*Call{}, definitions: map[string]*Definition{}, changed: make(chan struct{}, 1)}
 	r.mu.Recorder, r.mu.ID = config.Diagnostics, 1
+	r.recovery = config.ObservationLog.Recovery()
+	if err := config.ObservationLog.Err(); err != nil {
+		cancel()
+		return nil, err
+	}
 	definitions, pending := config.ObservationLog.RuntimeFacts()
 	r.definitions = definitions
 	// Assigned rows without a final row are observed to completion, never
@@ -151,7 +175,7 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		}
 		instance := r.instances[c.assignment.Instance]
 		if instance == nil {
-			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed"}}, bindings: map[string]bool{}}
+			instance = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{ID: c.assignment.Instance, Node: c.assignment.Node, Profile: c.assignment.Profile, Reason: "RestartUnconfirmed", RecoveryUnknown: r.recovery.Unknown}}, bindings: map[string]bool{}}
 			r.instances[c.assignment.Instance] = instance
 		}
 		instance.bindings[d.UID] = true
@@ -166,6 +190,7 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		w.calls[c.receipt.ID] = c
 	}
 	go r.watchHeap()
+	go r.watchObservation()
 	return r, nil
 }
 
@@ -179,6 +204,46 @@ func (r *Runtime) signal() {
 	}
 }
 func (r *Runtime) Changed() <-chan struct{} { return r.changed }
+
+func (r *Runtime) watchObservation() {
+	select {
+	case <-r.config.ObservationLog.Failure():
+		r.mu.Lock()
+		if r.observationErrLocked() != nil {
+			r.signal()
+		}
+		r.mu.Unlock()
+	case <-r.ctx.Done():
+	}
+}
+
+// Check the latch synchronously as well as listening: a failure notification
+// need not have been scheduled before an admission/publication guard runs.
+func (r *Runtime) observationErrLocked() error {
+	if err := r.config.ObservationLog.Err(); err != nil && r.observationError == nil {
+		r.observationError = err
+	}
+	return r.observationError
+}
+
+func (r *Runtime) Recovery() ObservationRecovery { return r.recovery }
+
+// RecordCreatedPod records an exact create receipt without bypassing normal
+// executor recovery, native verification, or readiness publication.
+func (r *Runtime) RecordCreatedPod(uid string, node NodeReference) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.recordRecoveryLocked(InstanceState{PodUID: uid, Node: node, CreatedThisRun: true}, false)
+}
+
+func (r *Runtime) InstanceRecoveryUnknown(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if instance := r.instances[id]; instance != nil {
+		return instance.State.RecoveryUnknown
+	}
+	return r.recovery.Unknown
+}
 
 // RetainedDefinition serves only the persisted applied snapshot needed at
 // startup. It does not choose among versions or reconstruct it from new spec.
@@ -227,6 +292,9 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 			receipt.RequestLifetime = *workload.definition.RequestLifetime
 		}
 	}
+	if r.observationErrLocked() != nil {
+		return receipt, failure(ObservationUnavailableCode, "cannot persist request receipt")
+	}
 	c := &Call{receipt: receipt}
 	if err := r.event(c, phaseReceived, "", ""); err != nil {
 		return receipt, failure(ObservationUnavailableCode, "cannot persist request receipt")
@@ -239,6 +307,10 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 
 func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) {
 	r.mu.LockRequest(receipt.ID)
+	if r.observationErrLocked() != nil {
+		r.mu.Unlock()
+		return nil, failure(ObservationUnavailableCode, "request observation log is unavailable")
+	}
 	if !receipt.Deadline.IsZero() && !time.Now().Before(receipt.Deadline) {
 		r.mu.Unlock()
 		return nil, failure("RequestTimeout", "request lifetime expired before acceptance")
@@ -277,7 +349,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if w.stopped {
 		return nil, failure(w.reason, "new requests are stopped: %s", w.reason)
 	}
-	if r.observationError != nil {
+	if r.observationErrLocked() != nil {
 		return nil, failure(ObservationUnavailableCode, "request observation log is unavailable")
 	}
 	if w.definition.Identity() != d.Identity() {
@@ -366,6 +438,14 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) (err error) {
 
 func (r *Runtime) closeLocked(c *Call) {
 	r.finalizing++
+	if w := r.workloads[c.receipt.UID]; w != nil {
+		w.finalizing++
+	}
+	if c.assignment != nil {
+		if i := r.instances[c.assignment.Instance]; i != nil {
+			i.finalizing++
+		}
+	}
 	c.closeNext = r.closing
 	r.closing = c
 }
@@ -383,6 +463,14 @@ func (r *Runtime) unlock() error {
 		err := r.config.ObservationLog.RequestClosed(c.receipt.ID)
 		r.mu.Lock()
 		r.finalizing--
+		if w := r.workloads[c.receipt.UID]; w != nil {
+			w.finalizing--
+		}
+		if c.assignment != nil {
+			if i := r.instances[c.assignment.Instance]; i != nil {
+				i.finalizing--
+			}
+		}
 		if err != nil {
 			r.observationError = err
 			result = errors.Join(result, err)
@@ -424,6 +512,9 @@ func (r *Runtime) dispatchLocked() {
 		r.mu.Mark(DiagnosticDispatch, DiagnosticBegin)
 		defer r.mu.Mark(DiagnosticDispatch, DiagnosticEnd)
 	}
+	if r.executionsStopped || r.observationErrLocked() != nil {
+		return
+	}
 	// The ingress owner promptly distributes accepted samples to ready capacity.
 	// The firstfloor actor owns actual compatible batching and additional wait.
 	for _, w := range r.workloads {
@@ -445,8 +536,8 @@ func (r *Runtime) dispatchLocked() {
 			i := entry.instance
 			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
 			c.assignment.ProfileBody = i.Profile
-			// Reserve the physical owner before releasing the lock; the executor
-			// stores its assignment before it can contact this native instance.
+			// Reserve physical ownership before FIFO admission; native execution
+			// starts after enqueue, not after the assignment's disk Write.
 			r.removeQueuedLocked(c)
 			c.instance = i
 			c.phase = phaseAssigned
@@ -455,7 +546,12 @@ func (r *Runtime) dispatchLocked() {
 			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
 			c.input = nil // Only this Dispatch reads the sample, and no path requeues the call.
 			assigned := requestEvent(c, phaseAssigned, "", "", c.assignment.DispatchedAt)
-			go r.execute(c, i.Execute, dispatch, assigned)
+			r.executions.Add(1)
+			execute := i.Execute
+			go func() {
+				defer r.executions.Done()
+				r.execute(c, execute, dispatch, assigned)
+			}()
 		}
 	}
 }
@@ -583,6 +679,10 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) (err
 		r.mu.Unlock()
 		err := r.config.ObservationLog.RecordNativeSupplement(e)
 		r.mu.Lock()
+		if err != nil {
+			r.observationError = err
+			r.signal()
+		}
 		return err
 	}
 	if d := r.definitions[progress.Definition]; d != nil {
@@ -627,13 +727,21 @@ func (r *Runtime) ConfirmInstanceStopped(instance string) (err error) {
 		i.State.Stopped = true
 		i.State.Terminated = true
 		i.State.Reason = "InstanceStopped"
+		if i.State.PodUID != "" {
+			proof := i.State
+			proof.ObservedAt = time.Now().UTC()
+			err = r.recordRecoveryLocked(proof, true)
+			if err == nil {
+				i.State.RecoveryUnknown = false
+			}
+		}
 	}
 	for _, c := range r.calls {
 		if c.assignment != nil && c.assignment.Instance == instance && !c.backendDone {
 			c.backendDone = true
 			c.phase = phaseFinished
-			if err := r.event(c, "backend_finished", "error", "InstanceStopped"); err != nil {
-				return err
+			if recordErr := r.event(c, "backend_finished", "error", "InstanceStopped"); recordErr != nil {
+				err = errors.Join(err, recordErr)
 			}
 			r.releaseLocked(c)
 		}
@@ -641,7 +749,7 @@ func (r *Runtime) ConfirmInstanceStopped(instance string) (err error) {
 	r.rebuildLocked()
 	r.dispatchLocked()
 	r.signal()
-	return nil
+	return err
 }
 
 func (r *Runtime) DisableInstance(id, reason string) {
@@ -658,11 +766,24 @@ func (r *Runtime) DisableInstance(id, reason string) {
 
 func (r *Runtime) DetachNode(uid string) (bool, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, c := range r.calls {
-		if c.assignment != nil && c.assignment.Node.UID == uid && (!c.backendDone || !c.transportDone || !c.responseRecorded) {
-			return false, nil
+	if !r.nodeDrainedLocked(uid) {
+		r.mu.Unlock()
+		return false, nil
+	}
+	for _, i := range r.instances {
+		if i.State.Node.UID == uid {
+			i.State.Ready = false
 		}
+	}
+	r.rebuildLocked()
+	r.mu.Unlock()
+	if err := r.drainObservation(context.Background()); err != nil {
+		return false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.nodeDrainedLocked(uid) {
+		return false, nil
 	}
 	for _, i := range r.instances {
 		if i.State.Node.UID == uid {
@@ -675,6 +796,20 @@ func (r *Runtime) DetachNode(uid string) (bool, error) {
 	r.dispatchLocked()
 	r.signal()
 	return true, nil
+}
+
+func (r *Runtime) nodeDrainedLocked(uid string) bool {
+	for _, c := range r.calls {
+		if c.assignment != nil && c.assignment.Node.UID == uid && (!c.backendDone || !c.transportDone || !c.responseRecorded) {
+			return false
+		}
+	}
+	for _, i := range r.instances {
+		if i.State.Node.UID == uid && (i.State.RecoveryUnknown || i.finalizing != 0) {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Runtime) Publish(d *Definition) error { return r.publish(d, false, "") }
@@ -717,6 +852,9 @@ func (r *Runtime) publish(d *Definition, stopped bool, reason string) (err error
 }
 
 func (r *Runtime) validatePublicationLocked(d *Definition) error {
+	if r.observationErrLocked() != nil {
+		return failure(ObservationUnavailableCode, "request observation log is unavailable")
+	}
 	if r.shuttingDown {
 		return failure(reasonShuttingDown, "entry point is shutting down")
 	}
@@ -730,6 +868,9 @@ func (r *Runtime) validatePublicationLocked(d *Definition) error {
 }
 
 func (r *Runtime) OpenAdmission(uid string) error {
+	if err := r.drainObservation(context.Background()); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.shuttingDown {
@@ -739,13 +880,47 @@ func (r *Runtime) OpenAdmission(uid string) error {
 	if w == nil {
 		return failure("WorkloadNotFound", "registration is not applied")
 	}
-	if r.observationError != nil {
+	if w.reason == "RestartDrain" && !r.requestsDrainedLocked(w) {
+		return failure("DrainIncomplete", "restart requests have not actually drained")
+	}
+	if r.observationErrLocked() != nil {
 		return failure(ObservationUnavailableCode, "request observation log is unavailable")
 	}
 	w.stopped = false
 	w.reason = ""
 	r.signal()
 	return nil
+}
+
+// ResumeAfterRestart waits for the known calls' final prefix, not for unrelated
+// executors' unknown occupancy. Routing still excludes every fenced executor.
+func (r *Runtime) ResumeAfterRestart(ctx context.Context, uid string) (bool, error) {
+	r.mu.Lock()
+	w := r.workloads[uid]
+	done := w != nil && r.requestsDrainedLocked(w)
+	r.mu.Unlock()
+	if !done {
+		return false, nil
+	}
+	if err := r.drainObservation(ctx); err != nil {
+		return false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w = r.workloads[uid]
+	if w == nil || !r.requestsDrainedLocked(w) {
+		return false, nil
+	}
+	if r.shuttingDown {
+		return false, failure(reasonShuttingDown, "entry point is shutting down")
+	}
+	if r.observationErrLocked() != nil {
+		return false, failure(ObservationUnavailableCode, "request observation log is unavailable")
+	}
+	w.stopped = false
+	w.reason = ""
+	r.signal()
+	return true, nil
 }
 
 func MatchesProfile(d *Definition, p *Profile) bool { return profilePath(d, p) != nil }
@@ -762,21 +937,71 @@ func (r *Runtime) StopAdmission(uid, reason string) error {
 	r.signal()
 	return nil
 }
-func (r *Runtime) drainedLocked(w *runtimeWorkload) bool {
+func (r *Runtime) requestsDrainedLocked(w *runtimeWorkload) bool {
 	for _, c := range w.calls {
 		if !c.backendDone || !c.transportDone || !c.responseRecorded {
 			return false
 		}
 	}
-	return len(w.queue) == 0
+	return len(w.queue) == 0 && w.finalizing == 0
 }
-func (r *Runtime) Drained(uid string) bool {
+
+func (r *Runtime) drainedLocked(w *runtimeWorkload) bool {
+	if !r.requestsDrainedLocked(w) {
+		return false
+	}
+	for _, instance := range r.instances {
+		if instance.State.RecoveryUnknown && (instance.bindings[w.definition.UID] ||
+			instance.OwnerWorkloadUID == w.definition.UID || instance.Routing[w.definition.UID] > 0 ||
+			!w.detached && (instance.OwnerWorkloadUID == "" || instance.OwnerWorkloadUID == w.definition.UID) &&
+				profilePath(w.definition, instance.Profile) != nil) {
+			return false
+		}
+	}
+	return true
+}
+
+// drainObservation captures a finite durable prefix without Runtime.mu held.
+func (r *Runtime) drainObservation(ctx context.Context) error {
+	err := r.config.ObservationLog.Drain(ctx)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err != nil && r.config.ObservationLog.Err() != nil {
+		r.observationError = r.config.ObservationLog.Err()
+		r.signal()
+	}
+	if err != nil {
+		return err
+	}
+	return r.observationErrLocked()
+}
+
+func (r *Runtime) Drain(ctx context.Context, uid string) (bool, error) {
+	r.mu.Lock()
 	w := r.workloads[uid]
-	return w == nil || r.drainedLocked(w)
+	done := w == nil || r.drainedLocked(w)
+	r.mu.Unlock()
+	if !done {
+		return false, nil
+	}
+	if err := r.drainObservation(ctx); err != nil {
+		return false, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	w = r.workloads[uid]
+	return w == nil || r.drainedLocked(w), nil
+}
+func (r *Runtime) Drained(uid string) bool {
+	done, err := r.Drain(context.Background(), uid)
+	return done && err == nil
 }
 func (r *Runtime) Detach(uid string) error {
+	if done, err := r.Drain(context.Background(), uid); err != nil {
+		return err
+	} else if !done {
+		return failure("DrainIncomplete", "stop admission and finish accepted requests before detaching")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	w := r.workloads[uid]
@@ -795,6 +1020,11 @@ func (r *Runtime) Detach(uid string) error {
 	return nil
 }
 func (r *Runtime) Forget(uid string) error {
+	if done, err := r.Drain(context.Background(), uid); err != nil {
+		return err
+	} else if !done {
+		return failure("DrainIncomplete", "registration still owns requests")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	w := r.workloads[uid]
@@ -849,11 +1079,11 @@ func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {
 	if err := validateReadyInstances(instances); err != nil {
 		return err
 	}
-	r.installInstancesLocked(instances)
+	err = r.installInstancesLocked(instances)
 	r.rebuildLocked()
 	r.dispatchLocked()
 	r.signal()
-	return nil
+	return err
 }
 
 func validateReadyInstances(instances []ReadyInstance) error {
@@ -877,9 +1107,10 @@ func validateReadyInstances(instances []ReadyInstance) error {
 	return nil
 }
 
-func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
+func (r *Runtime) installInstancesLocked(instances []ReadyInstance) (result error) {
 	for _, i := range r.instances {
 		i.State.Ready = false
+		i.State.NativeVerified = false
 		i.State.Reason = "NoCurrentReadiness"
 	}
 	for _, candidate := range instances {
@@ -889,8 +1120,11 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
 		}
 		i := r.instances[key]
 		if i == nil {
-			i = &runtimeInstance{bindings: map[string]bool{}}
+			i = &runtimeInstance{ReadyInstance: ReadyInstance{State: InstanceState{RecoveryUnknown: r.recovery.Unknown}}, bindings: map[string]bool{}}
 			r.instances[key] = i
+		}
+		if err := r.updateInstanceRecoveryLocked(i, &candidate); err != nil {
+			result = errors.Join(result, err)
 		}
 		// Exact termination is irreversible for a physical ID, including late
 		// successful probes and the outstanding-call merge paths below.
@@ -902,11 +1136,15 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
 			i.State.Ready = false
 			i.State.Reason = candidate.State.Reason
 			i.State.AttemptedAt = candidate.State.AttemptedAt
+			i.State.PodUID = candidate.State.PodUID
+			i.OwnerWorkloadUID = candidate.OwnerWorkloadUID
 			i.State.ObservedAt, i.State.Native = candidate.State.ObservedAt, candidate.State.Native
+			i.State.NativeVerified = candidate.State.NativeVerified
 			i.State.Allocation = candidate.State.Allocation
 			i.State.ActualImageID = candidate.State.ActualImageID
 			i.State.DesiredRuntimeImage = candidate.State.DesiredRuntimeImage
 			i.State.ReplacementReason = candidate.State.ReplacementReason
+			r.finishAbsentLocked(candidate.State)
 			continue
 		}
 		if i.outstanding > 0 && candidate.Profile != nil && (i.State.Profile != candidate.Profile.ID || i.State.Node != candidate.State.Node) {
@@ -926,6 +1164,53 @@ func (r *Runtime) installInstancesLocked(instances []ReadyInstance) {
 		}
 		r.finishAbsentLocked(candidate.State)
 	}
+	return result
+}
+
+func (r *Runtime) updateInstanceRecoveryLocked(i *runtimeInstance, candidate *ReadyInstance) (result error) {
+	if r.recovery.Unknown && !i.recoveryRecorded {
+		if err := r.recordRecoveryLocked(candidate.State, false); err != nil {
+			result = errors.Join(result, err)
+		} else {
+			i.recoveryRecorded = candidate.State.PodUID != ""
+			i.State.RecoveryUnknown = true
+		}
+	}
+	candidate.State.RecoveryUnknown = i.State.RecoveryUnknown
+	terminated := candidate.State.Terminated || i.State.Terminated
+	verifiedEmpty := candidate.State.ID != "" && candidate.State.Node.UID != "" && candidate.State.NativeVerified &&
+		!candidate.State.ObservedAt.Before(r.recovery.Started) && candidate.Profile != nil &&
+		candidate.State.Native != nil && len(candidate.State.Native.Requests) == 0
+	// Exact termination also closes a historical late-inference influence
+	// interval after physical CLEAR or a later clean boot.
+	if candidate.State.PodUID != "" &&
+		(terminated || candidate.State.RecoveryUnknown && verifiedEmpty) {
+		proof := candidate.State
+		if terminated {
+			proof.Terminated = true
+			proof.ObservedAt = time.Now().UTC()
+		}
+		if err := r.recordRecoveryLocked(proof, true); err != nil {
+			result = errors.Join(result, err)
+		} else {
+			candidate.State.RecoveryUnknown = false
+		}
+	}
+	i.State.RecoveryUnknown = candidate.State.RecoveryUnknown
+	if candidate.State.RecoveryUnknown {
+		candidate.State.Ready = false
+		candidate.State.Reason = "RecoveryUnconfirmed"
+	}
+	return result
+}
+
+func (r *Runtime) recordRecoveryLocked(state InstanceState, clear bool) error {
+	if err := r.config.ObservationLog.RecordRecovery(state, clear); err != nil {
+		r.observationError = err
+		r.signal()
+		return err
+	}
+	return nil
 }
 
 func instanceInventoryKey(state InstanceState) string {
@@ -938,10 +1223,13 @@ func instanceInventoryKey(state InstanceState) string {
 // RetirePod removes only a terminated, drained Pod after the observer has
 // confirmed its API deletion and completed its finalizer cleanup.
 func (r *Runtime) RetirePod(uid string) error {
+	if err := r.drainObservation(context.Background()); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, instance := range r.instances {
-		if instance.State.PodUID == uid && (!instance.State.Terminated || instance.outstanding != 0) {
+		if instance.State.PodUID == uid && (!instance.State.Terminated || instance.State.RecoveryUnknown || instance.outstanding != 0 || instance.finalizing != 0) {
 			return failure("TerminationUnconfirmed", "Pod executor is not terminated and drained")
 		}
 	}
@@ -964,7 +1252,7 @@ func (r *Runtime) finishAbsentLocked(state InstanceState) {
 		r.mu.Mark(DiagnosticAbsent, DiagnosticBegin)
 		defer r.mu.Mark(DiagnosticAbsent, DiagnosticEnd)
 	}
-	if state.Native == nil {
+	if state.Native == nil || !state.NativeVerified {
 		return
 	}
 	held := map[string]bool{}
@@ -1032,7 +1320,7 @@ func (r *Runtime) pruneInstanceBindingsLocked() {
 					}
 				}
 			}
-			if !live && (w == nil || w.detached || profilePath(w.definition, i.Profile) == nil || (r.routingControlled && r.routeWeightLocked(uid, i) == 0)) {
+			if !live && !i.State.RecoveryUnknown && (w == nil || w.detached || profilePath(w.definition, i.Profile) == nil || (r.routingControlled && r.routeWeightLocked(uid, i) == 0)) {
 				delete(i.bindings, uid)
 			}
 		}
@@ -1060,7 +1348,7 @@ func (r *Runtime) rebuildWorkloadRoutesLocked() {
 		for _, i := range r.instances {
 			actual := profilePath(w.definition, i.Profile)
 			weight := r.routeWeightLocked(uid, i)
-			if !i.State.Ready || i.State.Stopped || i.State.Terminated || weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) {
+			if !i.State.Ready || i.State.RecoveryUnknown || i.State.Stopped || i.State.Terminated || weight == 0 || actual == nil || (i.OwnerWorkloadUID != "" && i.OwnerWorkloadUID != uid) {
 				continue
 			}
 			i.bindings[uid] = true
@@ -1100,10 +1388,10 @@ func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 		}
 	}
 	evidence, ready := w.route.evidence, len(w.route.entries) > 0
-	state.Admission = !w.stopped && w.definition.Dataset != nil && evidence && r.observationError == nil
+	state.Admission = !w.stopped && w.definition.Dataset != nil && evidence && r.observationErrLocked() == nil
 	if !w.stopped {
 		switch {
-		case r.observationError != nil:
+		case r.observationErrLocked() != nil:
 			state.Reason = ObservationUnavailableCode
 		case w.definition.Dataset == nil:
 			state.Reason = "MissingDataset"
@@ -1112,7 +1400,7 @@ func (r *Runtime) workloadStateLocked(w *runtimeWorkload) WorkloadState {
 		case !ready:
 			state.Reason = "Preparing"
 		default:
-			state.Reason = "Ready"
+			state.Reason = reasonReady
 		}
 	}
 	return state
@@ -1141,6 +1429,7 @@ func (r *Runtime) OccupancyPolicies() map[string]firstfloor.Metadata {
 
 func (r *Runtime) instancesLocked() []InstanceState {
 	result := make([]InstanceState, 0, len(r.instances))
+	recording := r.observationErrLocked() == nil
 	for _, i := range r.instances {
 		state := i.State
 		state.OwnerWorkloadUID = i.OwnerWorkloadUID
@@ -1153,7 +1442,7 @@ func (r *Runtime) instancesLocked() []InstanceState {
 			if workload.detached {
 				continue
 			}
-			state.Routable[uid] = i.Capacity > 0 && state.Ready && !state.Stopped && i.Routing[uid] > 0 && r.routeWeightLocked(uid, i) > 0 &&
+			state.Routable[uid] = recording && !state.RecoveryUnknown && i.Capacity > 0 && state.Ready && !state.Stopped && i.Routing[uid] > 0 && r.routeWeightLocked(uid, i) > 0 &&
 				(i.OwnerWorkloadUID == "" || i.OwnerWorkloadUID == uid) &&
 				profilePath(workload.definition, i.Profile) != nil
 		}
@@ -1255,7 +1544,8 @@ func BuildPools(instances []InstanceState, measurement []NodeReference, nodes []
 	return result
 }
 
-func (r *Runtime) Shutdown(ctx context.Context) error {
+// BeginShutdown closes admission synchronously before producer joins begin.
+func (r *Runtime) BeginShutdown() {
 	r.mu.Lock()
 	r.shuttingDown = true
 	for _, w := range r.workloads {
@@ -1263,6 +1553,20 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 		w.reason = reasonShuttingDown
 	}
 	r.mu.Unlock()
+}
+
+// JoinExecutions joins local observation producers, not remote computation.
+// Cancellation never substitutes for exact physical completion evidence.
+func (r *Runtime) JoinExecutions() {
+	r.mu.Lock()
+	r.executionsStopped = true
+	r.cancel()
+	r.mu.Unlock()
+	r.executions.Wait()
+}
+
+func (r *Runtime) Shutdown(ctx context.Context) error {
+	r.BeginShutdown()
 	for {
 		r.mu.Lock()
 		done := r.finalizing == 0
@@ -1271,8 +1575,19 @@ func (r *Runtime) Shutdown(ctx context.Context) error {
 		}
 		r.mu.Unlock()
 		if done {
-			r.cancel()
-			return nil
+			if err := r.drainObservation(ctx); err != nil {
+				return err
+			}
+			r.mu.Lock()
+			done = r.finalizing == 0
+			for _, w := range r.workloads {
+				done = done && r.drainedLocked(w)
+			}
+			r.mu.Unlock()
+			if done {
+				r.cancel()
+				return nil
+			}
 		}
 		select {
 		case <-r.changed:

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -15,15 +16,17 @@ import (
 )
 
 const (
-	observationVersion          = "v1alpha5"
-	observationRequestStream    = "requests"
-	observationSchedulerStream  = "scheduler"
-	observationManagementStream = "management"
-	observationCatalogStream    = "catalog"
-	observationResourcesStream  = "resources"
-	observationClusterStream    = "cluster"
-	observationDefinitionsFile  = "definitions.jsonl"
-	observationHourLayout       = "20060102T15"
+	observationVersion           = "v1alpha5"
+	observationRequestStream     = "requests"
+	observationSchedulerStream   = "scheduler"
+	observationManagementStream  = "management"
+	observationCatalogStream     = "catalog"
+	observationResourcesStream   = "resources"
+	observationClusterStream     = "cluster"
+	observationDefinitionsFile   = "definitions.jsonl"
+	observationHourLayout        = "20060102T15"
+	observationDefinitionCatalog = "definition"
+	observationProfileCatalog    = "profile"
 )
 
 var observationStreams = []string{observationRequestStream, observationSchedulerStream, observationManagementStream, observationCatalogStream, observationResourcesStream, observationClusterStream}
@@ -42,7 +45,10 @@ type ObservationLogConfig struct {
 	// OccupancyTail bounds receipt lookback and late native supplement delivery.
 	OccupancyTail time.Duration
 	Diagnostics   *serving.Diagnostics
-	// OnRequestEvent runs after successful event reflection and assignment storage.
+	// Queue gauges are published under submission ordering; readers only load.
+	QueueLength         *atomic.Int64
+	QueueOldestEnqueued *atomic.Int64
+	// OnRequestEvent runs after successful event reflection and FIFO admission.
 	// It must return promptly and must not reenter the log.
 	OnRequestEvent func(serving.RequestEvent)
 }
@@ -71,10 +77,34 @@ type observationCatalogEntry struct {
 	source any // the published *Profile or *Definition that body encodes
 }
 
-// ObservationLog appends minute files under hourly segment directories and
-// keeps only the open request rows and the definitions in memory.
+// ObservationLog admits immutable rows to one FIFO disk writer. Committed
+// metadata and current open request rows support mixed read captures.
 type ObservationLog struct {
-	mu serving.DiagnosticLock
+	mu sync.Mutex
+	// writerMu belongs only to the disk worker; producers never acquire it.
+	writerMu serving.DiagnosticLock
+	flushMu  sync.Mutex
+	submitMu sync.Mutex
+	wake     *sync.Cond
+	// ponytail: unbounded backlog; slow storage grows memory until the Pod memory
+	// limit OOM-kills the server, taking the crash path (boot-wide unknown).
+	// Add a bound only if D41/v3 E5 measured max queue length/latency requires it.
+	queue             []*observationBatch
+	frontier          time.Time
+	failure           error
+	failed            bool
+	retry             bool
+	fatalBoundary     bool
+	failureSignal     chan struct{}
+	workerDone        chan struct{}
+	terminal          *observationBatch
+	definitionsClosed bool
+	finalQueued       map[string]*serving.RequestRow
+	// references tracks FIFO-admitted dependencies, never committed reader metadata.
+	references map[string]observationCatalogEntry
+	// run is submission-owned; runCommitted is published under mu after I/O.
+	run          observationRunState
+	runCommitted observationRunState
 	// requestMu protects open rows; it never covers filesystem work.
 	// The disk writer may take requestMu while holding mu, never the reverse.
 	requestMu sync.Mutex
@@ -95,14 +125,18 @@ type ObservationLog struct {
 	offsets map[*os.File]int64
 	// segments retain local paths and complete sizes, including rotated files.
 	// Capture copies this metadata under mu and opens files outside it.
-	segments    map[string]observationSegment
-	definitions *os.File
-	retained    map[string]*serving.Definition
-	open        map[string]*serving.RequestRow
-	restored    []serving.RequestRow
-	catalog     map[string]observationCatalogEntry
-	closed      bool
-	lastError   error
+	segments        map[string]observationSegment
+	definitions     *os.File
+	definitionsSize int64
+	retained        map[string]*serving.Definition
+	open            map[string]*serving.RequestRow
+	restored        []serving.RequestRow
+	catalog         map[string]observationCatalogEntry
+	closed          bool
+	lastError       error
+	syncFile        func(*os.File) error
+	writeFile       func(*os.File, []byte) (int, error)
+	removeAll       func(string) error
 }
 
 func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
@@ -127,8 +161,15 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		now: func() time.Time { return now().UTC() }, files: map[string]*os.File{}, offsets: map[*os.File]int64{},
 		retained: map[string]*serving.Definition{}, open: map[string]*serving.RequestRow{}, catalog: map[string]observationCatalogEntry{},
 		archived: map[time.Time]bool{},
+		syncFile: (*os.File).Sync, removeAll: os.RemoveAll,
+		writeFile: (*os.File).Write,
 	}
-	l.mu.Recorder, l.mu.ID = config.Diagnostics, 2
+	l.writerMu.Recorder, l.writerMu.ID = config.Diagnostics, 2
+	l.failureSignal, l.workerDone = make(chan struct{}), make(chan struct{})
+	l.wake = sync.NewCond(&l.submitMu)
+	if err := l.startRun(); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(l.root, 0700); err != nil {
 		return nil, err
 	}
@@ -155,7 +196,7 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	if err := truncateTornLine(definitions); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if err := scanObservationFile(definitions, -1, func(raw []byte) error {
+	if err := scanObservationFile(definitions, func(raw []byte) error {
 		var d DefinitionObservation
 		if err := json.Unmarshal(raw, &d); err != nil {
 			return err
@@ -174,6 +215,13 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 	if err := l.indexSegments(hours); err != nil {
 		return nil, errors.Join(err, l.definitions.Close())
 	}
+	info, err := l.definitions.Stat()
+	if err != nil {
+		return nil, errors.Join(err, l.definitions.Close())
+	}
+	l.definitionsSize = info.Size()
+	l.offsets[l.definitions] = info.Size()
+	go l.writeLoop()
 	return l, nil
 }
 
@@ -187,25 +235,24 @@ func (l *ObservationLog) DefinitionRecord(definition *serving.Definition) error 
 	if err != nil {
 		return err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
-		return errors.New("observation log is closed")
+	l.submitMu.Lock()
+	defer l.submitMu.Unlock()
+	if err := l.submissionErrorLocked(); err != nil {
+		return err
 	}
-	// A restart publishes every Workload again; the root file keeps each body once.
-	if retained := l.retained[definition.Identity()]; retained != nil {
-		l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin)
-		stored, err := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: retained})
-		l.mu.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd)
-		if err == nil && bytes.Equal(stored, data) {
+	l.mu.Lock()
+	retained := l.retained[definition.Identity()]
+	l.mu.Unlock()
+	if retained != nil {
+		stored, marshalErr := json.Marshal(DefinitionObservation{Identity: definition.Identity(), Definition: retained})
+		if marshalErr == nil && bytes.Equal(stored, data) {
 			return nil
 		}
 	}
-	if err := l.appendWholeLocked(l.definitions, append(data, '\n')); err != nil {
-		l.lastError = err
-		return err
-	}
+	l.enqueueLocked(&observationBatch{appends: []observationAppend{{data: append(data, '\n')}}})
+	l.mu.Lock()
 	l.retained[definition.Identity()] = definition
+	l.mu.Unlock()
 	return nil
 }
 
@@ -213,57 +260,58 @@ func (l *ObservationLog) ManagementEvent(event serving.ManagementEvent) error {
 	if event.WorkloadUID == "" || event.At.IsZero() {
 		return errors.New("management UID and event time are required")
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	// Management codes are classified at the single registry boundary.
-	return l.appendLocked(observationManagementStream, l.now(), event)
+	return l.submitRecord(observationManagementStream, event, nil, event.At)
 }
 
 func (l *ObservationLog) Flush(ctx context.Context) error {
-	l.mu.Lock()
-	var result error
-	l.requestMu.Lock()
-	var closing []string
-	for id, row := range l.open {
-		if row.Closing && !l.closed {
-			closing = append(closing, id)
-		}
+	l.flushMu.Lock()
+	err := l.retryDrain(context.WithoutCancel(ctx))
+	l.flushMu.Unlock()
+	if err != nil {
+		return err
 	}
-	l.requestMu.Unlock()
-	for _, id := range closing {
-		result = errors.Join(result, l.closeRowLocked(id))
-	}
-	for _, file := range l.files {
-		result = errors.Join(result, l.syncFileLocked(file))
-	}
-	if !l.closed {
-		result = errors.Join(result, l.syncFileLocked(l.definitions))
-	}
-	if result != nil {
-		l.lastError = result
-	}
-	l.mu.Unlock()
-	return errors.Join(result, l.archive(ctx))
+	return l.archive(ctx)
 }
 
-func (l *ObservationLog) Close(ctx context.Context) error {
-	l.mu.Lock()
-	var result error
-	if !l.closed {
-		for stream, file := range l.files {
-			result = errors.Join(result, l.syncFileLocked(file), l.closeFileLocked(file))
-			delete(l.files, stream)
+func (l *ObservationLog) Close(_ context.Context) error {
+	l.flushMu.Lock()
+	defer l.flushMu.Unlock()
+	l.submitMu.Lock()
+	done := make(chan error, 1)
+	if l.closed {
+		select {
+		case <-l.workerDone:
+			l.submitMu.Unlock()
+			return nil
+		default:
 		}
-		result = errors.Join(result, l.syncFileLocked(l.definitions), l.closeFileLocked(l.definitions))
-		l.requestMu.Lock()
+		l.terminal.done = done
+	} else {
+		if err := l.enqueueClosingLocked(); err != nil {
+			l.submitMu.Unlock()
+			return err
+		}
 		l.closed = true
-		l.requestMu.Unlock()
+		l.terminal = &observationBatch{sync: true, terminal: true, done: done}
+		l.enqueueLocked(l.terminal)
 	}
-	if result != nil {
-		l.lastError = result
+	l.retry = true
+	l.wake.Signal()
+	l.submitMu.Unlock()
+	if err := <-done; err != nil {
+		return err
 	}
-	l.mu.Unlock()
-	return errors.Join(result, l.archive(ctx))
+	<-l.workerDone
+	return nil
+}
+
+func (l *ObservationLog) recordError(err error) {
+	if err != nil {
+		l.mu.Lock()
+		l.lastError = err
+		l.mu.Unlock()
+	}
 }
 
 // Started is when this process began observing arrivals; earlier ones may be
@@ -271,11 +319,15 @@ func (l *ObservationLog) Close(ctx context.Context) error {
 func (l *ObservationLog) Started() time.Time { return l.started }
 
 func (l *ObservationLog) Health() ObservationLogHealth {
+	err := l.Err()
 	l.mu.Lock()
-	defer l.mu.Unlock()
-	h := ObservationLogHealth{Healthy: l.lastError == nil}
-	if l.lastError != nil {
-		h.Error = l.lastError.Error()
+	if err == nil {
+		err = l.lastError
+	}
+	l.mu.Unlock()
+	h := ObservationLogHealth{Healthy: err == nil}
+	if err != nil {
+		h.Error = err.Error()
 	}
 	return h
 }
@@ -292,4 +344,337 @@ func (l *ObservationLog) RuntimeFacts() (map[string]*serving.Definition, []servi
 	restored := l.restored
 	l.restored = nil
 	return definitions, restored
+}
+
+type observationAppend struct {
+	stream    string
+	at        time.Time
+	data      []byte
+	catalogID string
+	catalog   *observationCatalogEntry
+}
+
+type observationBatch struct {
+	appends    []observationAppend
+	next       int
+	final      *serving.RequestRow
+	requestID  string
+	run        *observationRunState
+	sync       bool
+	terminal   bool
+	done       chan error
+	enqueuedAt int64
+}
+
+func (l *ObservationLog) submissionErrorLocked() error {
+	if l.failure != nil {
+		return l.failure
+	}
+	if l.closed {
+		return errors.New("observation log is closed")
+	}
+	return nil
+}
+
+func (l *ObservationLog) receiptLocked() time.Time {
+	at := l.now().UTC()
+	if at.Before(l.frontier) {
+		return l.frontier
+	}
+	l.frontier = at
+	return at
+}
+
+func (l *ObservationLog) enqueueLocked(batch *observationBatch) {
+	for _, row := range batch.appends {
+		if row.catalog != nil {
+			if l.references == nil {
+				l.references = make(map[string]observationCatalogEntry)
+			}
+			l.references[row.catalogID] = *row.catalog
+		}
+	}
+	if l.config.QueueLength != nil || l.config.QueueOldestEnqueued != nil {
+		batch.enqueuedAt = l.now().UnixNano()
+	}
+	l.queue = append(l.queue, batch)
+	l.publishQueueMetricsLocked()
+	l.wake.Signal()
+}
+
+func (l *ObservationLog) publishQueueMetricsLocked() {
+	if l.config.QueueOldestEnqueued != nil {
+		var oldest int64
+		if len(l.queue) != 0 {
+			oldest = l.queue[0].enqueuedAt
+		}
+		l.config.QueueOldestEnqueued.Store(oldest)
+	}
+	if l.config.QueueLength != nil {
+		l.config.QueueLength.Store(int64(len(l.queue)))
+	}
+}
+
+func (l *ObservationLog) freezeBatchLocked(stream string, at time.Time, value any, refs []observationReference, eventAt time.Time) (*observationBatch, error) {
+	l.config.Diagnostics.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin, "", 0)
+	defer l.config.Diagnostics.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd, "", 0)
+	batch := &observationBatch{}
+	for _, ref := range refs {
+		id := ref.kind + "/" + ref.key
+		entry, known := l.references[id]
+		if known && entry.hour == observationHour(at) && entry.source != nil && entry.source == ref.body {
+			continue
+		}
+		var body []byte
+		if known && entry.source != nil && entry.source == ref.body {
+			body = entry.body
+		} else {
+			var err error
+			body, err = json.Marshal(ref.body)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if known && entry.hour == observationHour(at) && bytes.Equal(entry.body, body) {
+			continue
+		}
+		data, err := json.Marshal(CatalogRow{Kind: ref.kind, Key: ref.key, At: eventAt, Body: body})
+		if err != nil {
+			return nil, err
+		}
+		var source any
+		switch ref.body.(type) {
+		case *serving.Profile, *serving.Definition:
+			source = ref.body
+		}
+		entry = observationCatalogEntry{hour: observationHour(at), body: body, source: source}
+		batch.appends = append(batch.appends, observationAppend{stream: observationCatalogStream, at: at,
+			data: append(data, '\n'), catalogID: id, catalog: &entry})
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	batch.appends = append(batch.appends, observationAppend{stream: stream, at: at, data: append(data, '\n')})
+	return batch, nil
+}
+
+func (l *ObservationLog) submitRecord(stream string, value any, refs []observationReference, eventAt time.Time) error {
+	l.submitMu.Lock()
+	defer l.submitMu.Unlock()
+	if err := l.submissionErrorLocked(); err != nil {
+		return err
+	}
+	batch, err := l.freezeBatchLocked(stream, l.receiptLocked(), value, refs, eventAt)
+	if err == nil {
+		l.enqueueLocked(batch)
+	}
+	return err
+}
+
+// Err reports the sticky first disk-worker failure without waiting for I/O.
+func (l *ObservationLog) Err() error {
+	l.submitMu.Lock()
+	defer l.submitMu.Unlock()
+	return l.failure
+}
+
+// Failure closes once when the worker publishes its first failure.
+func (l *ObservationLog) Failure() <-chan struct{} { return l.failureSignal }
+
+func (l *ObservationLog) writeBarrier(ctx context.Context, frontier bool) (time.Time, error) {
+	return l.barrier(ctx, frontier, false, false)
+}
+
+// Drain waits for a finite admitted prefix to be written and locally synced.
+// Canceling the wait never removes or cancels its FIFO commands.
+func (l *ObservationLog) Drain(ctx context.Context) error {
+	_, err := l.barrier(ctx, false, true, false)
+	return err
+}
+
+func (l *ObservationLog) retryDrain(ctx context.Context) error {
+	_, err := l.barrier(ctx, true, true, true)
+	return err
+}
+
+func (l *ObservationLog) barrier(ctx context.Context, frontier, sync, retry bool) (time.Time, error) {
+	l.submitMu.Lock()
+	if l.closed {
+		at := l.frontier
+		l.submitMu.Unlock()
+		select {
+		case <-l.workerDone:
+			return at, nil
+		case <-l.failureSignal:
+			return at, l.Err()
+		case <-ctx.Done():
+			return at, ctx.Err()
+		}
+	}
+	if l.failure != nil && !retry {
+		err := l.failure
+		l.submitMu.Unlock()
+		return time.Time{}, err
+	}
+	at := l.frontier
+	if frontier {
+		at = l.receiptLocked()
+	}
+	if retry {
+		if err := l.enqueueClosingLocked(); err != nil {
+			l.submitMu.Unlock()
+			return at, err
+		}
+		l.retry = true
+	}
+	done := make(chan error, 1)
+	l.enqueueLocked(&observationBatch{sync: sync, done: done})
+	l.submitMu.Unlock()
+	select {
+	case err := <-done:
+		return at, err
+	case <-ctx.Done():
+		return at, ctx.Err()
+	}
+}
+
+func (l *ObservationLog) writeLoop() {
+	defer close(l.workerDone)
+	for {
+		l.submitMu.Lock()
+		for len(l.queue) == 0 || l.failed && !l.retry {
+			l.wake.Wait()
+		}
+		if l.failed {
+			l.failed = false
+			l.retry = false
+		}
+		batch := l.queue[0]
+		l.submitMu.Unlock()
+		err := l.writeBatch(batch)
+		l.submitMu.Lock()
+		if err != nil {
+			if l.failure == nil {
+				l.failure = err
+				close(l.failureSignal)
+			}
+			l.failed = true
+			l.retry = false
+			for _, pending := range l.queue {
+				if pending.done != nil {
+					pending.done <- err
+					pending.done = nil
+				}
+			}
+			l.submitMu.Unlock()
+			l.recordError(err)
+			continue
+		}
+		if batch.final != nil && l.finalQueued[batch.requestID] == batch.final {
+			delete(l.finalQueued, batch.requestID)
+		}
+		l.queue[0] = nil
+		l.queue = l.queue[1:]
+		if len(l.queue) == 0 {
+			l.queue = nil
+		}
+		l.publishQueueMetricsLocked()
+		if batch.done != nil {
+			batch.done <- nil
+		}
+		terminal := batch.terminal
+		l.submitMu.Unlock()
+		if terminal {
+			return
+		}
+	}
+}
+
+func (l *ObservationLog) writeBatch(batch *observationBatch) error {
+	l.writerMu.LockRequest(batch.requestID)
+	defer l.writerMu.Unlock()
+	if l.fatalBoundary {
+		return errors.New("observation append boundary is unproved")
+	}
+	for batch.next < len(batch.appends) {
+		row := &batch.appends[batch.next]
+		l.mu.Lock()
+		if row.catalog != nil {
+			old, known := l.catalog[row.catalogID]
+			if known && old.hour == row.catalog.hour && bytes.Equal(old.body, row.catalog.body) {
+				l.mu.Unlock()
+				batch.next++
+				continue
+			}
+		}
+		var err error
+		if row.stream == "" {
+			err = l.appendWholeLocked(l.definitions, row.data)
+			if err == nil {
+				l.definitionsSize = l.offsets[l.definitions]
+			}
+		} else {
+			err = l.writeLocked(row.stream, row.at, row.data)
+		}
+		if err == nil && row.catalog != nil {
+			l.catalog[row.catalogID] = *row.catalog
+		}
+		l.mu.Unlock()
+		if err != nil {
+			return err
+		}
+		row.data = nil
+		batch.next++
+	}
+	if batch.run != nil {
+		if err := l.writeRun(*batch.run); err != nil {
+			return err
+		}
+		l.mu.Lock()
+		l.runCommitted = *batch.run
+		l.mu.Unlock()
+	}
+	if batch.final != nil {
+		l.requestMu.Lock()
+		if l.open[batch.requestID] == batch.final {
+			delete(l.open, batch.requestID)
+		}
+		l.requestMu.Unlock()
+	}
+	if batch.sync {
+		for _, file := range l.files {
+			if err := l.syncFileOutsideLock(file); err != nil {
+				return err
+			}
+		}
+		if err := l.syncFileOutsideLock(l.definitions); err != nil {
+			return err
+		}
+		batch.sync = false
+	}
+	if batch.terminal {
+		for stream, file := range l.files {
+			if err := file.Close(); err != nil {
+				return err
+			}
+			delete(l.files, stream)
+			delete(l.offsets, file)
+		}
+		if !l.definitionsClosed {
+			if err := l.definitions.Close(); err != nil {
+				return err
+			}
+			l.definitionsClosed = true
+		}
+		clean := l.run
+		clean.Clean = true
+		if err := l.writeRun(clean); err != nil {
+			return err
+		}
+		l.mu.Lock()
+		l.runCommitted = clean
+		l.mu.Unlock()
+	}
+	return nil
 }

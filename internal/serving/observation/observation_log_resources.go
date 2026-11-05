@@ -58,7 +58,5 @@ type ResourceObservation struct {
 
 // ResourcesRecord uses receipt/write time, never a remote sample's clock.
 func (l *ObservationLog) ResourcesRecord(row ResourceObservation) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.appendLocked(observationResourcesStream, l.now(), row)
+	return l.submitRecord(observationResourcesStream, row, nil, time.Time{})
 }

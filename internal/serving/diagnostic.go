@@ -265,7 +265,7 @@ func (d *Diagnostics) WriteEvents(w io.Writer) (DiagnosticMetadata, error) {
 			"client_decode", "choose", "absent_completion", "prune_bindings", "write_header", "response_encode_envelope",
 			"file_truncate", "compress", "upload", "capture", "trace_anchor"},
 		Phases: []string{"", "attempt", "acquired", "released", "begin", "end", "received", "canceled"},
-		Locks:  map[uint8]string{1: "Runtime.mu", 2: "ObservationLog.mu"},
+		Locks:  map[uint8]string{1: "Runtime.mu", 2: "ObservationLog.writerMu"},
 	}
 	var raw [diagnosticEventBytes]byte
 	for i := d.written - retained; i < d.written; i++ {

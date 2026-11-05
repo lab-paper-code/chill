@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
@@ -18,8 +19,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// livePublisher projects committed callback arguments. It never polls REST or
-// rereads the controller from a decision/action callback.
+// livePublisher projects admitted callback arguments, not durable-write receipts.
+// It never polls REST or rereads the controller from a decision/action callback.
 type livePublisher struct {
 	hub             *live.Hub
 	metrics         *live.Metrics
@@ -32,16 +33,19 @@ type livePublisher struct {
 	powerKnown      bool
 	changed         chan struct{}
 	recordResources func(time.Time) error
+	wg              sync.WaitGroup
 }
 
-func newLivePublisher(ctx context.Context) *livePublisher {
+func newLivePublisher(ctx context.Context, queueLength, queueOldestEnqueued *atomic.Int64) *livePublisher {
 	now := time.Now().UTC()
 	h := live.New(now)
 	p := &livePublisher{
-		hub: h, metrics: live.NewMetrics(h, now), registered: map[string]live.Workload{},
+		hub: h, metrics: live.NewMetrics(h, now, queueLength, queueOldestEnqueued), registered: map[string]live.Workload{},
 		instances: map[string]bool{}, changed: make(chan struct{}, 1),
 	}
+	p.wg.Add(1)
 	go func() {
+		defer p.wg.Done()
 		if err := h.Run(ctx, p.metrics); err != nil && ctx.Err() == nil {
 			ctrl.Log.Error(err, "run live channel")
 		}
@@ -62,9 +66,13 @@ func (p *livePublisher) changedRuntime() {
 	default:
 	}
 }
+func (p *livePublisher) wait() { p.wg.Wait() }
+
 func (p *livePublisher) startRuntime(ctx context.Context, runtime *serving.Runtime) {
 	p.runtime(runtime)
+	p.wg.Add(1)
 	go func() {
+		defer p.wg.Done()
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		dirty := false

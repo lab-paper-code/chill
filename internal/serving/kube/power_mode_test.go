@@ -48,7 +48,8 @@ func powerWriter(t *testing.T, node *core.Node, measurement bool, beforePatch, a
 			return nil
 		},
 	}).Build()
-	return &servingops.Operations{Store: &Store{client: c}, Config: servingops.OperationConfig{PollInterval: time.Millisecond, Measurement: measurement}}, &patches
+	manager, _ := newManagerHarness(t)
+	return &servingops.Operations{Store: &Store{client: c}, Runtime: manager.runtime, Config: servingops.OperationConfig{PollInterval: time.Millisecond, Measurement: measurement}}, &patches
 }
 
 // changeNode applies change to the stored Node.
@@ -146,7 +147,8 @@ func TestMeasurementIsolationJudgesPowerModeGeneration(t *testing.T) {
 			if err := edge.AddToScheme(scheme); err != nil {
 				t.Fatal(err)
 			}
-			operations := &servingops.Operations{Kube: kubefake.NewSimpleClientset(node), Store: &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}}
+			manager, _ := newManagerHarness(t)
+			operations := &servingops.Operations{Kube: kubefake.NewSimpleClientset(node), Store: &Store{client: fake.NewClientBuilder().WithScheme(scheme).Build()}, Runtime: manager.runtime}
 			changes := expectedPowerModeChanges(test.operation, test.current)
 			witness, err := operations.MeasurementIsolation(context.Background(), testNode, nil, test.start, changes)
 			if changed := err != nil && strings.HasPrefix(err.Error(), servingstate.PowerChangedReason); changed != test.changed || !changed && err != nil {

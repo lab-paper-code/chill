@@ -28,6 +28,7 @@ const (
 	eventBackendExchangeFinished = "backend_exchange_finished"
 	outcomeCompleted             = "completed"
 	outcomeIncomplete            = "incomplete"
+	reasonReady                  = "Ready"
 	reasonShuttingDown           = "ShuttingDown"
 	reasonGatewayOverloaded      = "GatewayOverloaded"
 )
@@ -272,6 +273,13 @@ type InstanceState struct {
 	AssignedUnknown map[string]int    `json:"assignedUnknown"`
 	ObservedAt      time.Time         `json:"observedAt"`
 	Native          *firstfloor.State `json:"native,omitempty"`
+	// NativeVerified belongs to this publication's successful exact-identity
+	// probe; retained Native after a failed read is not fresh drain evidence.
+	NativeVerified  bool `json:"-"`
+	RecoveryUnknown bool `json:"recoveryUnknown,omitempty"`
+	// CreatedThisRun is the gateway's exact successful Pod-create proof,
+	// never a conclusion drawn from native status or readiness.
+	CreatedThisRun bool `json:"-"`
 }
 
 // PoolsState derives POOL membership from actual instances. A Workload's

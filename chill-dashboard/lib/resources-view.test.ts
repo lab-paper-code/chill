@@ -62,7 +62,7 @@ test("device detail presents serving observations before power history and keeps
 test("device power observations keep identical element slots across freshness and missing-power changes",()=>{
   const first=state(),second=state()
   second.lastPower={watts:20,bucketAt:"2020-01-01T00:00:00Z"}
-  second.metrics=[{type:"metrics",at,seq:1,bucketAt:at,nodes:{"node-private-uid":{watts:20,observedAt:at}},workloads:{},pool:{wholeWatts:20,activeWatts:20}}]
+  second.metrics=[{type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,at,seq:1,bucketAt:at,nodes:{"node-private-uid":{watts:20,observedAt:at}},workloads:{},pool:{wholeWatts:20,activeWatts:20}}]
   const structure=(html:string)=>(html.match(/<\/?[a-z][^>]*>/g)??[]).map(tag=>tag.match(/^<\/?[a-z]+/)?.[0])
   assert.deepEqual(structure(render(first)),structure(render(second)))
 })
@@ -95,7 +95,7 @@ test("unready REST instance with retained routing weight leaves actual distribut
 
 test("device header and aggregate power retain shared connection and age slots",()=>{
   const live=state()
-  live.metrics=[{type:"metrics",at,seq:1,bucketAt:at,nodes:{},workloads:{},pool:{wholeWatts:20,activeWatts:20}}]
+  live.metrics=[{type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,at,seq:1,bucketAt:at,nodes:{},workloads:{},pool:{wholeWatts:20,activeWatts:20}}]
   const html=render(live)
   const heading=html.slice(html.indexOf('class="devices-heading-status"'),html.indexOf('<section'))
   assert.ok(heading.includes('class="live-observation"'))

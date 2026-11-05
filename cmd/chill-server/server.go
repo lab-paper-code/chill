@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving/application"
@@ -22,6 +24,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	"github.com/lab-paper-code/chill/internal/serving/live"
 	"github.com/lab-paper-code/chill/internal/serving/management"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	corev1 "k8s.io/api/core/v1"
@@ -71,7 +74,10 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	defer func() { retErr = errors.Join(retErr, observationOwner.Close()) }()
+	releaseObservationOwner := true
+	defer func() {
+		retErr = errors.Join(retErr, closeObservationOwner(observationOwner, releaseObservationOwner))
+	}()
 	removeStagedObservationArchives()
 	diagnostics, err := newDiagnosticSession(ctx, opts)
 	if err != nil {
@@ -82,7 +88,8 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if diagnostics != nil {
 		recorder = diagnostics.recorder
 	}
-	publisher := newLivePublisher(ctx)
+	var queueLength, queueOldestEnqueued atomic.Int64
+	publisher := newLivePublisher(ctx, &queueLength, &queueOldestEnqueued)
 	observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{
 		Directory: opts.observationDirectory, Store: opts.storeName,
 		Writer: objects, Definitions: opts.definitions, Outcomes: opts.outcomes,
@@ -91,14 +98,21 @@ func run(ctx context.Context, opts options) (retErr error) {
 		Retention:        opts.observationRetention,
 		EventLookupHours: opts.eventLookupHours,
 		OnRequestEvent:   publisher.request,
+		QueueLength:      &queueLength, QueueOldestEnqueued: &queueOldestEnqueued,
 	})
 	if err != nil {
+		cancelRun()
+		publisher.wait()
 		return err
 	}
 	defer func() {
 		// Shutdown closes local files but leaves unfinished hours for next startup.
 		cancelRun()
-		if err := observationLog.Close(ctx); err != nil {
+		publisher.wait()
+		if err := observationLog.Close(context.Background()); err != nil {
+			// A failed recording close is not a graceful ownership handoff.
+			// Forced process exit leaves the active marker for crash recovery.
+			releaseObservationOwner = false
 			retErr = errors.Join(retErr, fmt.Errorf("close serving observations: %w", err))
 		}
 	}()
@@ -219,7 +233,7 @@ func run(ctx context.Context, opts options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	warming := &initializingHandler{initial: chillServer, ready: make(chan struct{})}
+	warming := &initializingHandler{initial: chillServer, ready: make(chan struct{}), live: publisher.hub}
 	initialize := func(initializeCtx context.Context) (http.Handler, error) {
 		if err := initializeServing(initializeCtx, &opts, observer, manager, execution,
 			publisher, scheduler, &handlerConfig); err != nil {
@@ -234,11 +248,21 @@ func run(ctx context.Context, opts options) (retErr error) {
 	return serve(ctx, opts, warming, execution, observer, manager, observationLog, scheduler, diagnostics, initialize)
 }
 
+// closeObservationOwner releases the directory only after a completed local
+// recording close; a failed close must not hand its unwritten tail to a successor.
+func closeObservationOwner(owner *os.File, release bool) error {
+	if !release {
+		return nil
+	}
+	return owner.Close()
+}
+
 // Health and the dashboard remain reachable while state-dependent APIs warm.
 // Closing ready publishes initialized to requests without a mutable HandlerConfig.
 type initializingHandler struct {
 	initial, initialized http.Handler
 	ready                chan struct{}
+	live                 *live.Hub
 }
 
 func (h *initializingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -324,8 +348,9 @@ func serve(ctx context.Context, opts options, chillServer *initializingHandler, 
 	if err != nil {
 		return err
 	}
+	handlers := &joiningHandler{next: chillServer}
 	server := &http.Server{
-		Addr: opts.bindAddress, Handler: chillServer,
+		Addr: opts.bindAddress, Handler: handlers,
 		ReadHeaderTimeout: opts.requestTimeout, IdleTimeout: opts.requestTimeout,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12},
 	}
@@ -408,6 +433,9 @@ loop:
 			archiveInBackground(ctx, archiving, observationLog.Flush)
 		}
 	}
+	// Reject new public work before joining control and archive producers.
+	handlers.stop()
+	execution.BeginShutdown()
 	cancelArchive() // Every exit, including listener/initialization errors, stops Flush.
 	cancelInitialize()
 	if initializePending {
@@ -415,10 +443,17 @@ loop:
 	}
 	archiving <- struct{}{} // The running Flush ends before Close archives.
 	scheduler.Close()
-	// Keep native source watches alive until accepted backend work really drains.
+	// Native watches remain alive through the accepted-work drain or its error boundary.
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), opts.drainTimeout)
 	defer cancelShutdown()
 	shutdownError := shutdown(shutdownCtx, server, execution)
+	// HTTP Shutdown does not close hijacked live sockets. Release their owner
+	// before joining handlers, including listener-error exits with a live parent.
+	if chillServer.live != nil {
+		chillServer.live.Close()
+	}
+	handlers.wait()
+	execution.JoinExecutions()
 	if errors.Is(serveError, http.ErrServerClosed) {
 		serveError = nil
 	}
@@ -442,6 +477,36 @@ func archiveInBackground(
 		}
 	}()
 }
+
+// joiningHandler owns the public producer boundary, including handlers still
+// unwinding after Server.Close cancels their connections on a failed drain.
+type joiningHandler struct {
+	next    http.Handler
+	mu      sync.Mutex
+	stopped bool
+	wg      sync.WaitGroup
+}
+
+func (h *joiningHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	if h.stopped {
+		h.mu.Unlock()
+		http.Error(w, "server shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	h.wg.Add(1)
+	h.mu.Unlock()
+	defer h.wg.Done()
+	h.next.ServeHTTP(w, r)
+}
+
+func (h *joiningHandler) stop() {
+	h.mu.Lock()
+	h.stopped = true
+	h.mu.Unlock()
+}
+
+func (h *joiningHandler) wait() { h.wg.Wait() }
 
 func shutdown(ctx context.Context, server *http.Server, execution *serving.Runtime) error {
 	drainErrors := make(chan error, 1)

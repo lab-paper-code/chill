@@ -3,6 +3,7 @@ package observation
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -24,6 +25,9 @@ func TestRawObservationClosedMinutesAndDefinitions(t *testing.T) {
 	hour := observationHour(observationTestHour)
 	clock.set(observationTestHour.Add(time.Second))
 	if err := log.SchedulerRecord(SchedulerObservation{At: clock.now()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := log.writeBarrier(ctx, false); err != nil {
 		t.Fatal(err)
 	}
 	first, err := os.ReadFile(filepath.Join(log.root, hour, "scheduler.00.jsonl"))
@@ -65,7 +69,22 @@ func TestRawObservationClosedMinutesAndDefinitions(t *testing.T) {
 	if closeErr := raw.Reader.Close(); err != nil || closeErr != nil || !bytes.Equal(body, first) || raw.Bytes != int64(len(first)) || raw.ContentType != "application/x-ndjson" {
 		t.Fatalf("local bytes changed: %q %v %v", body, err, closeErr)
 	}
-	if _, err := log.definitions.WriteString("{}\n{\"torn\":"); err != nil {
+	checkRawDefinitionsCommittedPrefix(t, log, ctx)
+}
+
+func checkRawDefinitionsCommittedPrefix(t *testing.T, log *ObservationLog, ctx context.Context) {
+	t.Helper()
+	if err := log.DefinitionRecord(&serving.Definition{Name: "first", UID: "first", Generation: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := log.writeBarrier(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	wantDefinitions, err := os.ReadFile(filepath.Join(log.root, observationDefinitionsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := log.definitions.WriteString("{\"torn\":"); err != nil {
 		t.Fatal(err)
 	}
 	definitions, err := log.OpenRawDefinitions(ctx)
@@ -75,9 +94,9 @@ func TestRawObservationClosedMinutesAndDefinitions(t *testing.T) {
 	if _, err := log.definitions.WriteString("true}\n"); err != nil {
 		t.Fatal(err)
 	}
-	body, err = io.ReadAll(definitions.Reader)
-	if closeErr := definitions.Reader.Close(); err != nil || closeErr != nil || string(body) != "{}\n" || definitions.Bytes != 3 {
-		t.Fatalf("definitions snapshot: %q %v %v", body, err, closeErr)
+	body, err := io.ReadAll(definitions.Reader)
+	if closeErr := definitions.Reader.Close(); err != nil || closeErr != nil || !bytes.Equal(body, wantDefinitions) || definitions.Bytes != int64(len(wantDefinitions)) {
+		t.Fatalf("definitions snapshot included bytes outside its committed prefix: %q %v %v", body, err, closeErr)
 	}
 }
 
@@ -216,4 +235,91 @@ func TestRawObservationCancellationClosesBlockedReader(t *testing.T) {
 	if err := raw.Reader.Close(); err != nil && !strings.Contains(err.Error(), "closed") {
 		t.Fatal(err)
 	}
+}
+
+func TestRecoveryUnknownSurvivesClearCleanBootAndRawSources(t *testing.T) {
+	ctx := context.Background()
+	at := observationTestHour.Add(time.Second)
+	directory := t.TempDir()
+	// A valid active predecessor is crash provenance, not an invented request.
+	active, err := json.Marshal(observationRunState{Started: at})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "async-run.json"), active, 0600); err != nil {
+		t.Fatal(err)
+	}
+	archive := rawTestArchive{newReadableObservationArchive(t)}
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Directory: directory, Writer: archive}, observationTestHour)
+	if err := log.SchedulerRecord(SchedulerObservation{At: at}); err != nil {
+		t.Fatal(err)
+	}
+	clearAt := at.Add(time.Second)
+	state := serving.InstanceState{
+		ID: "pod/container", PodUID: "pod", Node: serving.NodeReference{Name: "node", UID: "node-uid"}, ObservedAt: clearAt,
+	}
+	if err := log.RecordRecovery(state, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.RecordRecovery(state, true); err != nil {
+		t.Fatal(err)
+	}
+	clock.set(observationTestHour.Add(time.Minute))
+	from, to := clearAt.Add(time.Second), clearAt.Add(2*time.Second)
+	check := func(log *ObservationLog, source string) {
+		t.Helper()
+		result, err := log.Query(ctx, "w", from, to, nil, nil, 0, "")
+		if err != nil || !log.Health().Healthy {
+			t.Fatalf("historical gap became a current recording failure: %+v %v", result, err)
+		}
+		influence := func(gaps []serving.ObservationGap, clipped bool) {
+			t.Helper()
+			for _, gap := range gaps {
+				if gap.Instance != state.ID {
+					continue
+				}
+				if gap.Boot != at.Format(time.RFC3339Nano) || gap.PodUID != state.PodUID || gap.ContainerID != "container" ||
+					gap.Node == nil || *gap.Node != state.Node || gap.ClearAt == nil || !gap.ClearAt.Equal(clearAt) || !gap.Open {
+					t.Fatalf("recovery provenance lost after %s: %+v", source, gap)
+				}
+				if clipped && (!gap.From.Equal(from) || !gap.To.Equal(to)) {
+					t.Fatalf("post-CLEAR window falsely closed or failed to clip: %+v", gap)
+				}
+				return
+			}
+			t.Fatalf("persistent executor influence absent after %s: %+v", source, gaps)
+		}
+		influence(result.Coverage.Gaps, true)
+		index, err := log.RawHour(ctx, observationHour(observationTestHour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		influence(index.Gaps, false)
+		available := false
+		for _, kind := range index.Kinds {
+			if kind.Kind == observationSchedulerStream {
+				available = kind.Available
+			}
+		}
+		if available != (source != "missing") {
+			t.Fatalf("raw metadata confused evidence gaps with file availability: %+v", index)
+		}
+	}
+	check(log, "local")
+	clock.set(observationTestHour.Add(3 * time.Hour))
+	if err := log.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	check(log, "archive")
+	if err := log.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	restarted, restartedClock := clockedObservationLog(t, log.config, observationTestHour.Add(3*time.Hour))
+	check(restarted, "archive")
+	key := observationArchivePrefix + observationHour(observationTestHour) + "/" + observationSchedulerStream + ".jsonl.gz"
+	if err := os.Remove(filepath.Join(archive.directory, key)); err != nil {
+		t.Fatal(err)
+	}
+	restartedClock.set(observationTestHour.Add(4 * time.Hour))
+	check(restarted, "missing")
 }

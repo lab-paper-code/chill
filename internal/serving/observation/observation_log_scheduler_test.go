@@ -100,6 +100,11 @@ func repeated[T any](items []T, n int) []T {
 // appendObservationLine writes a raw scheduler line at clock time.
 func appendObservationLine(t *testing.T, observationLog *ObservationLog, clock *observationClock, line string) {
 	t.Helper()
+	if err := observationLog.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	observationLog.writerMu.Lock()
+	defer observationLog.writerMu.Unlock()
 	observationLog.mu.Lock()
 	defer observationLog.mu.Unlock()
 	if err := observationLog.writeLocked(observationSchedulerStream, clock.now(), []byte(line+"\n")); err != nil {
@@ -387,6 +392,9 @@ func TestWorkloadObservationReadsOnlyRequestedRange(t *testing.T) {
 	if err := observationLog.RequestClosed("late"); err != nil {
 		t.Fatal(err)
 	}
+	if err := observationLog.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	// Request files before from are unreadable: any read fails the query.
 	names, err := filepath.Glob(filepath.Join(observationLog.root, "*", "requests.*.jsonl"))
 	if err != nil {
@@ -480,6 +488,9 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	decision := serving.SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Capacity: capacity, EvaluationElapsed: 3 * time.Millisecond}
 	event := SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
 	if err := observationLog.SchedulerRecord(event); err != nil {
+		t.Fatal(err)
+	}
+	if err := observationLog.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	info, err := observationLog.files[observationSchedulerStream].Stat()
@@ -587,6 +598,9 @@ func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
 	}
 	// Each hour directory's catalog alone resolves that hour's references.
 	record(restored, observationTestHour.Add(time.Hour+time.Minute), 2*time.Second)
+	if err := restored.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	keys := map[string]bool{}
 	names, err := filepath.Glob(filepath.Join(restored.root, "20261020T11", "catalog.*.jsonl"))
 	if err != nil {
@@ -603,7 +617,7 @@ func TestSchedulerCatalogFollowsMeterChangeRestartAndHour(t *testing.T) {
 				t.Fatal(err)
 			}
 			keys[row.Kind+"/"+row.Key] = true
-			if row.Kind == "profile" {
+			if row.Kind == observationProfileCatalog {
 				var profile serving.Profile
 				if err := json.Unmarshal(row.Body, &profile); err != nil {
 					t.Fatal(err)

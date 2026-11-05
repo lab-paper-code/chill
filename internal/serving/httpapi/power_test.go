@@ -57,7 +57,7 @@ func TestOperatingPowerRequiresReviewedReadAndExplicitInterval(t *testing.T) {
 			from := time.Date(2026, 11, 5, 2, 59, 59, 432000000, time.UTC)
 			to := from.Add(time.Second)
 			now := from.Add(-time.Second)
-			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}, Now: func() time.Time { return now }})
+			observationLog, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}, Now: func() time.Time { return now }})
 			if err != nil {
 				t.Fatal(err)
 			}

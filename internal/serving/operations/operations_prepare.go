@@ -26,6 +26,9 @@ import (
 
 func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.PrepareSpec) (evidence *servingstate.PreparationEvidence, err error) {
 	node := spec.Instance.Node
+	if err := o.checkRecovery(ctx, node, ""); err != nil {
+		return nil, err
+	}
 	pod, delivery, err := o.PreparationPod(spec)
 	if err != nil {
 		return nil, err
@@ -74,6 +77,11 @@ func (o *Operations) PrepareInstance(ctx context.Context, spec servingstate.Prep
 			evidence.Failure = &failure
 		}
 	}()
+	if created && pod.UID != "" {
+		if err = o.Runtime.RecordCreatedPod(string(pod.UID), node); err != nil {
+			return evidence, err
+		}
+	}
 	err = o.Observer.PublishPreparedSource(pod, spec.Instance.Node)
 	if err != nil {
 		return evidence, err

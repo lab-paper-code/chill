@@ -212,6 +212,9 @@ func TestObservationArchiveLateFinalAndLocalFastPath(t *testing.T) {
 	if err := log.RequestClosed("late"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := log.writeBarrier(ctx, false); err != nil {
+		t.Fatal(err)
+	}
 	if removed, err := log.removeHour(at.Truncate(time.Hour)); err != nil || !removed {
 		t.Fatalf("remove retained hour: removed=%v err=%v", removed, err)
 	}

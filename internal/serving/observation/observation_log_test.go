@@ -133,6 +133,18 @@ func clockedObservationLog(t *testing.T, config ObservationLogConfig, started ti
 	}
 	clock := &observationClock{at: started}
 	config.Now = clock.now
+	// This fixture explicitly starts after a quiescent clean predecessor;
+	// an empty directory by itself is not production recovery evidence.
+	marker := filepath.Join(config.Directory, "async-run.json")
+	if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+		data, err := json.Marshal(observationRunState{Started: started, Clean: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	observationLog, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
@@ -251,6 +263,9 @@ func TestObservationSegmentsFollowWriteMinute(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := observationLog.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range []string{"20261020T10/management.03.jsonl", "20261020T10/management.04.jsonl", "20261020T11/management.00.jsonl"} {
 		data, err := os.ReadFile(filepath.Join(observationLog.root, name))
 		if err != nil || bytes.Count(data, []byte{'\n'}) != 1 {
@@ -269,7 +284,7 @@ func seedObservationMinutes(t *testing.T, observationLog *ObservationLog, clock 
 			t.Fatal(err)
 		}
 		for _, kind := range []string{"received", "accepted", "response_finished"} {
-			if err := observationLog.RequestEvent(serving.RequestEvent{RequestID: id, WorkloadUID: "uid", Definition: d.Identity(), Kind: kind, At: at, ReceivedAt: at, Outcome: map[string]string{"response_finished": "completed"}[kind]}); err != nil {
+			if err := observationLog.RequestEvent(serving.RequestEvent{RequestID: id, WorkloadUID: "uid", Definition: d.Identity(), Kind: kind, At: at, ReceivedAt: at, Outcome: map[string]string{"response_finished": outcomeCompleted}[kind]}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -283,6 +298,10 @@ func seedObservationMinutes(t *testing.T, observationLog *ObservationLog, clock 
 		if err := observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: "uid", Kind: "apply", At: at}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Seeded historical fixtures are complete before corruption/retention setup.
+	if err := observationLog.Drain(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -494,12 +513,12 @@ func TestRequestFinalRowMatchesEventCohort(t *testing.T) {
 		{Kind: "received", At: received},
 		{Kind: "validated", At: at(5), ElapsedNanos: int64(5 * time.Millisecond)},
 		{Kind: "accepted", At: at(10), ElapsedNanos: int64(10 * time.Millisecond)},
-		{Kind: "assigned", At: at(20), ElapsedNanos: int64(20 * time.Millisecond), Assignment: assignment},
+		{Kind: serving.RequestRowAssigned, At: at(20), ElapsedNanos: int64(20 * time.Millisecond), Assignment: assignment},
 		{Kind: "backend_queued", At: at(30)},
 		{Kind: "backend_running", At: at(40)},
 		{Kind: "backend_finished", At: at(90), NativeProgress: native, ExecutionComplete: true},
-		{Kind: "backend_exchange_finished", At: at(95), ElapsedNanos: int64(95 * time.Millisecond), Outcome: "completed", ClientSpanNanos: 7},
-		{Kind: "response_finished", At: at(100), ElapsedNanos: int64(100 * time.Millisecond), Outcome: "completed"},
+		{Kind: "backend_exchange_finished", At: at(95), ElapsedNanos: int64(95 * time.Millisecond), Outcome: outcomeCompleted, ClientSpanNanos: 7},
+		{Kind: "response_finished", At: at(100), ElapsedNanos: int64(100 * time.Millisecond), Outcome: outcomeCompleted},
 	} {
 		e.RequestID, e.WorkloadUID, e.Definition, e.ReceivedAt = restoredRequest, d.UID, d.Identity(), received
 		if err := observationLog.RequestEvent(e); err != nil {
@@ -568,7 +587,7 @@ func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
 		"unrun":     {unrun},
 	}
 	for id, events := range runs {
-		send(id, serving.RequestEvent{Kind: "received", At: received}, serving.RequestEvent{Kind: "assigned", At: received, Assignment: assignment})
+		send(id, serving.RequestEvent{Kind: "received", At: received}, serving.RequestEvent{Kind: serving.RequestRowAssigned, At: received, Assignment: assignment})
 		send(id, events...)
 		if err := observationLog.RequestClosed(id); err != nil {
 			t.Fatal(err)
@@ -624,20 +643,20 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	}
 	appendEvent("finished", first, "received", "", 0)
 	appendEvent("finished", first, "accepted", "", 0)
-	appendEvent("finished", first, "response_finished", "completed", 100)
+	appendEvent("finished", first, "response_finished", outcomeCompleted, 100)
 	appendEvent("finished", first, "backend_finished", "error", 200)
 	appendEvent("unfinished", changed, "received", "", 0)
 	appendEvent("unfinished", changed, "accepted", "", 0)
-	appendEvent("unfinished", changed, "backend_finished", "completed", 300)
+	appendEvent("unfinished", changed, "backend_finished", outcomeCompleted, 300)
 	appendEvent("unfinished", changed, "response_finished", "incomplete", 350)
 	appendEvent("delivery", first, "received", "", 0)
-	appendEvent("delivery", first, "response_finished", "delivery_failed", 250)
-	appendEvent("canceled", first, "received", "", 0)
-	appendEvent("canceled", first, "accepted", "", 0)
-	appendEvent("canceled", first, "response_finished", "canceled", 500)
+	appendEvent("delivery", first, "response_finished", outcomeDeliveryFailed, 250)
+	appendEvent(outcomeCanceled, first, "received", "", 0)
+	appendEvent(outcomeCanceled, first, "accepted", "", 0)
+	appendEvent(outcomeCanceled, first, "response_finished", outcomeCanceled, 500)
 	appendEvent("new", replacement, "received", "", 0)
-	appendEvent("new", replacement, "response_finished", "completed", 999)
-	for _, id := range []string{"finished", "unfinished", "delivery", "canceled", "new"} {
+	appendEvent("new", replacement, "response_finished", outcomeCompleted, 999)
+	for _, id := range []string{"finished", "unfinished", "delivery", outcomeCanceled, "new"} {
 		if err := observationLog.RequestClosed(id); err != nil {
 			t.Fatal(err)
 		}
@@ -669,7 +688,7 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.Definitions = []string{first.Identity()}
-	config.Outcomes = []string{"completed"}
+	config.Outcomes = []string{outcomeCompleted}
 	configured, err := NewObservationLog(config)
 	if err != nil {
 		t.Fatal(err)
@@ -690,8 +709,8 @@ func checkObservationLogCohortPopulation(t *testing.T, observationLog *Observati
 		t.Fatal(err)
 	}
 	if before.Total != 4 || before.Selected != 4 ||
-		before.Outcomes["incomplete"] != 1 || before.Outcomes["completed"] != 1 ||
-		before.Outcomes["delivery_failed"] != 1 || before.Outcomes["canceled"] != 1 ||
+		before.Outcomes["incomplete"] != 1 || before.Outcomes[outcomeCompleted] != 1 ||
+		before.Outcomes[outcomeDeliveryFailed] != 1 || before.Outcomes[outcomeCanceled] != 1 ||
 		len(before.Requests) != 1 || before.NextCursor == "" || len(before.Cohorts) != 2 {
 		t.Fatalf("unexpected accounting: %+v", before)
 	}
@@ -713,20 +732,20 @@ func TestRequestFinalAfterTwoMinutesIsFoundByQuery(t *testing.T) {
 	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	received := observationTestHour.Add(time.Second)
 	assignment := &serving.Assignment{Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Instance: "i1", Profile: "p1", DispatchedAt: received}
-	for _, kind := range []string{"received", "accepted", "assigned"} {
+	for _, kind := range []string{"received", "accepted", serving.RequestRowAssigned} {
 		if err := observationLog.RequestEvent(serving.RequestEvent{RequestID: "late", WorkloadUID: "uid", Kind: kind, At: received, ReceivedAt: received, Assignment: assignment}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	clock.set(received.Add(2 * time.Minute))
-	if err := observationLog.RequestEvent(serving.RequestEvent{RequestID: "late", Kind: "response_finished", At: clock.now(), ReceivedAt: received, ElapsedNanos: int64(2 * time.Minute), Outcome: "completed"}); err != nil {
+	if err := observationLog.RequestEvent(serving.RequestEvent{RequestID: "late", Kind: "response_finished", At: clock.now(), ReceivedAt: received, ElapsedNanos: int64(2 * time.Minute), Outcome: outcomeCompleted}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observationLog.RequestClosed("late"); err != nil {
 		t.Fatal(err)
 	}
 	result, err := observationLog.Query(context.Background(), "uid", received, received.Add(time.Second), nil, nil, 0, "")
-	if err != nil || len(result.Requests) != 1 || result.Requests[0].Kind != serving.RequestRowFinal || result.Outcomes["completed"] != 1 {
+	if err != nil || len(result.Requests) != 1 || result.Requests[0].Kind != serving.RequestRowFinal || result.Outcomes[outcomeCompleted] != 1 {
 		t.Fatalf("late final row missed: %+v %v", result, err)
 	}
 }
@@ -739,8 +758,8 @@ func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
 		{Kind: "received", At: received},
 		{Kind: "validated", At: received},
 		{Kind: "accepted", At: received},
-		{Kind: "assigned", At: received.Add(time.Millisecond), Assignment: assignment},
-		{Kind: "response_finished", At: received.Add(2 * time.Millisecond), ElapsedNanos: int64(2 * time.Millisecond), Outcome: "completed"},
+		{Kind: serving.RequestRowAssigned, At: received.Add(time.Millisecond), Assignment: assignment},
+		{Kind: "response_finished", At: received.Add(2 * time.Millisecond), ElapsedNanos: int64(2 * time.Millisecond), Outcome: outcomeCompleted},
 	} {
 		e.RequestID, e.WorkloadUID, e.ReceivedAt = restoredRequest, "uid", received
 		if err := observationLog.RequestEvent(e); err != nil {
@@ -748,6 +767,9 @@ func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
 		}
 	}
 	if err := observationLog.RequestClosed(restoredRequest); err != nil {
+		t.Fatal(err)
+	}
+	if err := observationLog.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if rows := readRequestRows(t, observationLog.config.Directory); len(rows) != 2 {
@@ -759,7 +781,7 @@ func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
 		t.Fatalf("load counted a request twice: %+v %v", load, err)
 	}
 	arrivals := load.Arrivals
-	if err != nil || len(arrivals) != 1 || !arrivals[0].Accepted || !arrivals[0].Compute || arrivals[0].Outcome != "completed" {
+	if err != nil || len(arrivals) != 1 || !arrivals[0].Accepted || !arrivals[0].Compute || arrivals[0].Outcome != outcomeCompleted {
 		t.Fatalf("arrivals: %+v %v", arrivals, err)
 	}
 }
@@ -775,6 +797,9 @@ func TestBackendProgressForUnknownRequestWritesNothing(t *testing.T) {
 	if err := observationLog.RequestClosed("settled"); err != nil {
 		t.Fatal(err)
 	}
+	if err := observationLog.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	for _, kind := range []string{"backend_queued", "backend_running", "backend_finished"} {
 		if err := observationLog.RequestEvent(serving.RequestEvent{RequestID: "settled", WorkloadUID: "uid", Kind: kind, At: observationTestHour}); err != nil {
 			t.Fatal(err)
@@ -783,7 +808,10 @@ func TestBackendProgressForUnknownRequestWritesNothing(t *testing.T) {
 	if err := observationLog.RequestClosed("settled"); err != nil {
 		t.Fatal(err)
 	}
-	if rows := readRequestRows(t, observationLog.config.Directory); len(rows) != 1 || rows[0].QueuedNanos != nil || len(observationLog.open) != 0 {
+	if err := observationLog.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rows := readRequestRows(t, observationLog.config.Directory); len(rows) != 1 || rows[0].QueuedNanos != nil {
 		t.Fatalf("unknown request progress wrote rows: %+v", rows)
 	}
 }
@@ -809,12 +837,12 @@ func TestRequestRowsStayUnderBudgetWithNineteenEvidenceReferences(t *testing.T) 
 		{Kind: "received", At: received},
 		{Kind: "validated", At: at(1)},
 		{Kind: "accepted", At: at(1)},
-		{Kind: "assigned", At: at(2), Assignment: assignment},
+		{Kind: serving.RequestRowAssigned, At: at(2), Assignment: assignment},
 		{Kind: "backend_queued", At: at(3), NativeProgress: native},
 		{Kind: "backend_running", At: at(20), NativeProgress: native},
 		{Kind: "backend_finished", At: at(70), NativeProgress: native, ExecutionComplete: true},
-		{Kind: "backend_exchange_finished", At: at(75), Outcome: "completed", ClientSpanNanos: 74123456},
-		{Kind: "response_finished", At: at(76), Outcome: "completed"},
+		{Kind: "backend_exchange_finished", At: at(75), Outcome: outcomeCompleted, ClientSpanNanos: 74123456},
+		{Kind: "response_finished", At: at(76), Outcome: outcomeCompleted},
 	} {
 		e.RequestID, e.WorkloadUID, e.Definition, e.ReceivedAt, e.LifetimeNanos = "0123456789abcdef0123456789abcdef", d.UID, d.Identity(), received, int64(time.Second)
 		e.Assignment = assignment
@@ -823,6 +851,9 @@ func TestRequestRowsStayUnderBudgetWithNineteenEvidenceReferences(t *testing.T) 
 		}
 	}
 	if err := observationLog.RequestClosed("0123456789abcdef0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	if err := observationLog.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	sizes := map[string]int{}
@@ -926,47 +957,47 @@ func TestObservationArchiveWithoutScratch(t *testing.T) {
 	}
 }
 
-func TestCatalogReferenceSkipsSamePublishedPointerWithinHour(t *testing.T) {
-	observationLog, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+func TestCatalogRetainsReferencedBodiesWithinHour(t *testing.T) {
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	clock.set(observationTestHour.Add(time.Minute))
-	profile := &serving.Profile{ID: "p", NodeName: "node"}
-	catalog := func() []byte {
-		t.Helper()
-		names, err := filepath.Glob(filepath.Join(observationLog.root, "20261020T10", "catalog.*.jsonl"))
-		if err != nil {
+	profiles := []*serving.Profile{
+		{ID: "p", NodeName: "node"},
+		{ID: "p", NodeName: "node"},
+		{ID: "p", NodeName: "updated-node"},
+	}
+	for index, profile := range profiles {
+		if err := log.RequestEvent(serving.RequestEvent{RequestID: string(rune('a' + index)), Kind: serving.RequestRowAssigned, At: clock.now(),
+			Assignment: &serving.Assignment{Instance: "physical", Profile: profile.ID, ProfileBody: profile, DispatchedAt: clock.now()}}); err != nil {
 			t.Fatal(err)
 		}
-		var data []byte
-		for _, name := range names {
-			part, err := os.ReadFile(name)
-			if err != nil {
-				t.Fatal(err)
+	}
+	if err := log.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	names, err := filepath.Glob(filepath.Join(log.root, "20261020T10", "catalog.*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bodies []serving.Profile
+	for _, name := range names {
+		if err := scanObservationFile(name, func(raw []byte) error {
+			var row CatalogRow
+			if err := json.Unmarshal(raw, &row); err != nil {
+				return err
 			}
-			data = append(data, part...)
-		}
-		return data
-	}
-	reference := func(body any) {
-		t.Helper()
-		observationLog.mu.Lock()
-		defer observationLog.mu.Unlock()
-		if err := observationLog.referenceLocked("profile", "p", clock.now(), clock.now(), body); err != nil {
+			if row.Kind == observationProfileCatalog {
+				var profile serving.Profile
+				if err := json.Unmarshal(row.Body, &profile); err != nil {
+					return err
+				}
+				bodies = append(bodies, profile)
+			}
+			return nil
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	reference(profile)
-	want := catalog()
-	if bytes.Count(want, []byte{'\n'}) != 1 {
-		t.Fatalf("first reference rows: %q", want)
-	}
-	// The same pointer and an equal new pointer write no row.
-	reference(profile)
-	reference(&serving.Profile{ID: "p", NodeName: "node"})
-	if got := catalog(); !bytes.Equal(got, want) {
-		t.Fatalf("catalog bytes changed:\n%s\nwant\n%s", got, want)
-	}
-	reference(&serving.Profile{ID: "p", NodeName: "changed"})
-	if got := catalog(); bytes.Count(got, []byte{'\n'}) != 2 {
-		t.Fatalf("changed body not written: %q", got)
+	if len(bodies) != 2 || bodies[0].NodeName != "node" || bodies[1].NodeName != "updated-node" {
+		t.Fatalf("referenced catalog bodies: %+v", bodies)
 	}
 }

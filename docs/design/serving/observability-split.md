@@ -51,8 +51,8 @@ target.id==keep.id이면 `{id,keep:true}`(7.7KB 절약). 전력은 `{at,startedA
 Flush 전체에는 requestTimeout deadline을 두지 않고, 기존 `opts.requestTimeout`을 Store 생성 시 전달하여 CreateMultipartUpload·각 UploadPart·CompleteMultipartUpload SDK 호출마다 재시도/backoff를 포함한 상한으로 적용한다(HTTP 시도마다 리셋하지 않음). 다른 Store 호출자가 값을 지정하지 않으면 0이며 추가 요청 deadline은 없다. 종료 신호뿐 아니라 listener/초기화 오류로 serve를 빠져나갈 때도 archive 소유 context를 먼저 취소한 뒤 진행 Flush를 기다린다. 종료 Close는 취소된 context로 로컬 파일만 sync/close하고 업로드하지 않으며, 미완료·미표시 raw hour는 다음 프로세스 첫 Flush tick에서 게시 후 기존 retention에 따라 삭제한다.
 17b 경계 재현(2026-11-05): server `archiveInBackground → Flush → archive → gzip → StreamImmutable`로 T04 원본 scheduler gzip 511,073,995B(98 parts)와 catalog 47B(1 part)를 보냈다. 동일 테스트 `requestTimeout=1s`에서 수정 전은 2회 연속 abort/완료0(전체2.01s), 수정 후는 전체113.257s·최장 part44.225ms·abort0·두 stream 완료 후 retention 삭제였다. 작은 재현은 첫 `UploadPart` deadline과 뒤 stream `CreateMultipartUpload`의 이미 만료된 context를 분리해 보였다. 이전 T04 검증은 Store를 직접 호출해 server의 전체 Flush deadline을 지나지 않은 탓에 이 회귀를 놓쳤다. 실크기 재현은 `CHILL_ARCHIVE_HOUR=<기존 hour.jsonl.gz> go test ./cmd/chill-server -run TestArchiveTickRealT04Hour -v -count=1`; 실제 listener 오류 종료는 1분 tick 후 in-flight Flush를 취소/join하고 raw를 보존하는 별도 회귀로 검사한다.
 일회성 T04 원본 replay(2026-11-04): gzip 511,073,995B/98 parts를 실제 SDK→로컬 HTTP 수신기로 전송했고, old gzip 설정의 출력·다운로드한 원본·전송 SHA-256 모두 `67948a126c0705505844655a6ffc3352c7f4e1b77bc132f15d7517a76c3ed4cc`였다. scratch payload 0B, 전송 후 heap 증가 5,657,088B, part 수신 시 표본 peak heap 증가 12,596,616B(로컬 수신기/SDK 포함), 총 할당 35,930,392B였다. archive 메모리 합은 5MiB payload + 약0.8MiB gzip + 단일 SDK/HTTP 요청 버퍼 + 완료 metadata(최대10,000 ETag/part와 그 XML)이며 이 측정값은 전체 serving RSS 보증이나 10,000-part 최대 metadata 측정이 아니다. 로컬 재현: `CHILL_ARCHIVE_HOUR=<기존 hour.jsonl.gz> go test ./internal/evidencestore/s3 -run TestMultipartRealHourScale -v -count=1`; 일반 test gate에서는 이 대형 replay를 생략한다.
-시간의 모든 stream이 Created/Existing이고 디렉터리 시작부터 retention 경과 때만 삭제한다. `servingEntrypoint.observationStorage.retention`→`--observation-retention`→`ObservationLogConfig.Retention`은 양수 Go duration, 기본2h(현재/직전 시간), 업로드1분이다. 하나라도 실패하면 해당/이후 시간 유지·다음 pass 처음부터 재업로드; 미완료 assigned 시간/이후도 pin한다. mu 아래 삭제하므로 조회는 시간 전체를 열거나 삭제된 것으로 본다. S3 중단은 PVC 누적→append 실패→readyz503이다.
-append 실패는 쓰기 전 크기로 rollback(루트 정의 포함)하고 final은 열린 행에 남겨 다음 Flush 재시도한다. 기동은 stream 마지막 분과 루트 정의를 마지막 개행까지 자르고 루트 정의/로컬 requests만 읽는다. 완료 row는 nil tombstone으로 payload를 버리되 늦은 assigned를 막고 native는 무시·마지막 assigned만 복원한다. ID map은 전체 요청 수, payload는 미완료 수; torn-tail은 끝에서4KiB씩 읽는다. 읽기는 mu 아래 fd 확보 뒤 잠금 밖에서 진행하며 삭제는 열린 fd에 영향 없고 미완결 마지막 줄은 무시한다.
+시간의 모든 stream이 Created/Existing이고 디렉터리 시작부터 retention 경과 때만 삭제한다. `servingEntrypoint.observationStorage.retention`→`--observation-retention`→`ObservationLogConfig.Retention`은 양수 Go duration, 기본2h(현재/직전 시간), 업로드1분이다. 하나라도 실패하면 해당/이후 시간 유지·다음 pass 처음부터 재업로드; 미완료 assigned 시간/이후도 pin한다. 삭제 중에는 retention 전용 captureMu만 유지하므로 요청 append는 기다리지 않고 조회는 시간 전체를 열거나 삭제된 floor를 본다. S3 중단은 PVC 누적→append 실패→readyz503이다.
+append 실패는 쓰기 전 크기로 rollback(루트 정의 포함)하고 final은 열린 행에 남겨 다음 Flush 재시도한다. 기동은 stream 마지막 분과 루트 정의를 마지막 개행까지 자르고 루트 정의/로컬 requests만 읽는다. 완료 row는 nil tombstone으로 payload를 버리되 늦은 assigned를 막고 native는 무시·마지막 assigned만 복원한다. ID map은 전체 요청 수, payload는 미완료 수; torn-tail은 끝에서4KiB씩 읽는다. 읽기는 mu 아래 committed 경로/크기를 확보하고 fd open/읽기는 잠금 밖에서 진행하며 삭제는 이미 열린 fd에 영향 없고 미완결 마지막 줄은 무시한다.
 D2(`SCH-42`): 재생 가능한 동안 evidence store 보존, 로컬 삭제는 영구 삭제가 아니다. `7ad977d1` retention(기본2h/시연24h)은 임시 버퍼 조절이지 과거 조회 해결이 아니며 기간 연장만으로 T4 완료가 아니다.
 ### 5.1 E5 전 운영 보존·기동 예산 결정 (2026-10-27)
 values-operating.yaml의 임시24h(`e659ccb1`, 시연2회차)를 기본2h로 복원한다. 공통 prepare/selectSources는 없는 로컬 시간을 S3로 읽고 UTC hour 수정 `81ea4c59`,`6b2755ec` 반영; `TestObservationArchiveTransparentReadsAndCatalog`는 로컬 삭제 뒤 Query/LoadWindow/scheduler 동일 원자료·정의를 검사한다(이번 조사 재실행 없음).
@@ -64,6 +64,66 @@ rev93 실제 로그는147.043s `456→459→456MiB`,153.159s `880→880→15MiB`
 모두 requests12.673배라면24h45.624GB로32Gi PVC 초과다. 현재24h13.27GiB/gzip3.6GB는 안전 인증이 아니다. 최대 stream-시간 gzip150MB라면 scratch두벌300MB=286.1MiB지만268.4MB 초과면512Mi 초과다.
 GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft/hard 차2,192/3,216MiB는 복원 기동 여유이지 RSS/charged peak·전체 E5 메모리 인증이 아니다. target-limit1,024MiB는 runtime/stack/cache/scratch 보장이 아니며 요청 body/queue·ID map·미완료 payload·catalog·긴 조회는 별도다. 150MB/h·κ로 요청 수/heap 상한을 환산하지 않는다. 증설 없이2h로 줄이고 CampaignOps 직렬 적용/E5-0의 cgroup/GC·Ready/restart·archive 출처/공백을 보존한다.
 근거: `O=~/.cache/chill-assets/ops/pools-deploy`, `O/intent/observation-retention-20261027.json`, `O/campaign/v2/d-20261027/control-192/{startup.log,gc-heap.json}`, `O/deployB/control-195-20261027/pods-ready.stdout`. 라이브 적용은 CampaignOps 소유이며 이 조사에서 부하·빌드·측정 중 재시작을 하지 않았고 설정 커밋은 적용/검증 완료가 아니다.
+
+### 5.2 v3 asynchronous CephFS observation admission (D44)
+
+All six streams and root definitions submit frozen bytes to one unbounded FIFO
+and one disk worker. RequestEvent/RequestClosed return after admission, never
+after Write/Sync; B invariant 8 (Write before Execute) intentionally changes.
+No producer-visible lock covers filesystem work. Sustained CephFS stalls can
+exhaust process memory and OOM loses the unwritten tail; there is no new cap,
+drop policy, deadline, spool, timer, or overload response.
+Existing live metrics frames expose `chill_obslog_queue_length` (unfinished FIFO
+items, including the in-flight head) and `chill_obslog_oldest_wait_seconds`
+(oldest unfinished enqueue age, not a historical high-water mark; zero when
+empty). Enqueue/removal publishes shared atomic state under existing queue
+ordering; live metrics only load it, never acquire the recorder lock. These
+gauges reuse the live timer/endpoint and do not change admission or storage.
+
+FIFO ordering includes catalogs before references and exact-version final
+acknowledgement. Append receipt time is captured at enqueue and clamped only
+against the append frontier; scientific event/native/stage timestamps remain
+unchanged. Read barriers expose a written prefix plus current live rows, not
+an MVCC snapshot; stored final still wins over a newer retained open version.
+Archive and raw closed-minute selection cross the same sealed frontier.
+Drain Syncs a finite prefix, including files synced before rotation.
+
+Under the existing flock, `async-run.json` is durably made active before
+repair/restore and execution. An unclean, missing, or malformed predecessor
+means boot-wide unknown; an empty directory alone is not proof of a fresh
+physical installation. Surviving assignments restore normally, never replay.
+Each exact executor remains Unconfirmed until this boot's verified fresh
+actor-empty observation or exact termination. Pending/unrouted/unreadable Pods
+retain occupancy. Healthy siblings can serve; inference CLEAR does not settle
+independent power/prepare/route/cleanup effects or erase historical evidence.
+Recovery provenance survives clean boots in coverage and raw indexes without
+changing original JSONL/gzip bytes.
+All-history coverage includes recovery metadata independently of source-hour
+scanning, retaining an unknown (`From=0`) start and its provenance even when
+the old interval precedes every retained source. Finite windows remain clipped.
+An exact successful Pod Create (not AlreadyExists) records its API-assigned
+Pod UID before prepared-source publication. The owner-run file retains which
+already-existing crash roots predate that creation proof, so unrelated new
+executors do not inherit old influence after clean boots. Discovery racing
+the notification may leave provisional provenance, but exported coverage
+resolves it against the committed creation proof. A new unclean boot still
+adds an applicable root; neither creation nor log-clean bypasses normal fresh
+native-read/readiness, ownership, or independent control-effect checks.
+
+A complete old buffered HTTP request can admit inference before disconnect
+cancellation even after actor-empty CLEAR. This path cannot mutate control
+state. The accepted residual can delay new inference: E5 influence extends
+through every observed late completion, or stays UNKNOWN/open if no endpoint
+is established. CLEAR alone is never a finite scientific endpoint.
+
+Writer failure retains the failed head and later FIFO bytes, immediately
+wakes Runtime and keeps the existing ObservationUnavailable/503 path sticky.
+Explicit Flush/Close retries the ordered prefix; failed rollback cannot retry
+an unproved boundary. Already dispatched physical ownership is not released
+because storage failed. Graceful recording requires producer join → pending
+final drain → Sync/Close → durable log-clean marker → flock release. Log-clean
+only means no memory-only admitted tail; HTTP/runtime/control errors remain
+errors. Failed Close leaves active evidence and withholds graceful flock handoff.
 
 ## 6. 조회
 ### 6.1 범위와 기존 reducer
@@ -296,10 +356,11 @@ S3 `serving/observations.v1alpha5/20261026T19/requests.jsonl.gz`를 read-only `.
 CLI replay/주입evaluation producer는 JSON직렬화만 stdout공유lock 밖으로 옮기고 완전한 한줄 write+flush는lock으로 보호한다. worker는flush뒤 다음요청, writer thread/queue는추가하지 않는다. 이는 불필요critical-section축소이지 공백원인/해결증명이 아니다. CLI의 sentMonotonicNS/finishedMonotonicNS는 infer직전/응답·transport오류처리직후 같은프로세스 단조시각이며 stdout/패킷/gateway수신이 아니다.
 issuanceFidelity는 실제producer start/send로 발행순 정렬하여 시작/끝포함gap p50/p95/p99/max·>50ms개수/비율/구간offset/안의planned수, frozen trace planned-gap분포·send lateness분포/>50ms수를 judgment/e5-summary/출판KPI에 보존한다. Poisson/0부하 자연공백을 자동실패로 하지 않고 timestamp없음UNKNOWN/NotReady·offered0 NOT_OFFERED, 미발행/결손0대체금지다. 기존10ms delayed와50ms보고는 별개다. demo E5-0~7도 `hack/evaluation/request_analysis.py` 공통계산을 judge/demo summarize·단계/전체summary.json/md·publish workload KPI에 쓰고 결손은UNKNOWN/이유다.
 다음 측정은15절 load로그, evaluation는producer start/monotonic anchor·client/server/edgemesh cgroup·GC를 보존한다. CLI적용은 load-generator새이미지/digest/receipt가 필요하며 주입파일 변경만으로 CLI배포를 주장하지 않는다. U6는runtime7재빌드가 불필요하다.
-### 16.3 별도 writer 개선의 설계 경계(미구현)
-위 근거로 U6에서 observation_log.go는 바꾸지 않는다. 별도 배정 시 immutable snapshot/closing을 requestMu아래 확보→밖에서marshal→writer mutex아래 closed/현재row·참조재확인→catalog/request를같은commit-time hour에 append한다. JSON완료순 아닌기존append순, assigned성공전 native시작금지다. final실패는closing유지/Flush재시도, phase갱신시pointer비교로최신row삭제금지다. Runtime/Flush경쟁·close/hour/catalog-first를보존하며 Flush의기존mutex경로를helper임시unlock만으로고치지 않는다. 모든caller와diagnostic mark를함께이행하고 약50줄초과/순서변경은별도설계·회귀검사다. 비동기장부/generic queue는없다.
-
-Scheduler capture는 Observer가 catalog publication 때 `cloneCatalogProfile`로 깊은 복사하여 동결한 immutable Profile 포인터를 재사용한다. `Profiles()` 결과의 nested 필드를 수정해도 기존 canonical body는 바뀌지 않는다. 동일 ID·동일 body의 재publication도 포인터를 유지하고 실제 profile 변경은 새 포인터를 발행한다. `referenceLocked`의 기존 same-pointer fast path만 활용하며 persisted JSON, catalog-first/append 순서, durability와 writer lock 범위는 바꾸지 않는다.
+### 16.3 Writer improvement ownership
+The earlier synchronous proposal is superseded by D44 (§5.2). U6 itself did
+not change observation storage; the separate D44 cutover deliberately changes
+assignment admission to FIFO acceptance while preserving row ordering,
+catalog dependencies, immutable profile/definition reuse, and event values.
 
 <a id="17-e5-증거-api-2026-10-30"></a>
 
@@ -550,15 +611,38 @@ and lifetime: the server retains the owner file until shutdown. The existing
 append, request, capture, and publication locks moved with the concrete log;
 there is no second lock, ledger, or writer.
 
-Runtime now depends on the inward `serving.RuntimeObservation` contract:
-`RuntimeFacts`, `DefinitionRecord`, `RequestEvent`, `RequestClosed`, and
-`RecordNativeSupplement`. Each call remains synchronous at the original call
-site; restoration still consumes the same pending rows once. The interface is
-required for the dependency direction: observation storage consumes serving's
-domain records, while runtime must not import that storage implementation.
-`observation.ObservationLog` implements that contract directly. All concrete
-constructors and storage consumers import observation; serving does not import
-observation, and no compatibility aliases or forwarding implementation remain.
+Runtime depends on the inward `serving.RuntimeObservation` contract:
+`RuntimeFacts`, `DefinitionRecord`, `RequestEvent`, `RequestClosed`,
+`RecordNativeSupplement`, `Drain`, `Err`, `Failure`, `Recovery`, and
+`RecordRecovery`. Record calls admit immutable FIFO commands, not durable
+acknowledgements. Lifecycle success crosses a finite locally synced prefix
+outside `Runtime.mu`, then rechecks physical drain. Storage failure is sticky
+and wakes runtime consumers without waiting for another request; synchronous
+status checks also fence admission before the notification goroutine runs.
+Already dispatched work retains its physical owner until actual completion.
+The interface keeps the dependency direction: observation storage consumes
+serving's domain records, while runtime does not import storage.
+`observation.ObservationLog` implements it directly; no compatibility aliases
+or forwarding implementation remain.
+
+An unclean or unproved predecessor adds executor-local inference uncertainty,
+separate from restored known calls and independent control proofs. Discovery
+installs each executor's fence before routing publication, including pending
+Pods. Only this boot's fresh successful exact-identity, measured-metadata
+verified actor-empty probe (`NativeVerified`) or exact confirmed termination
+can clear it; a failed probe's preserved Native state cannot. Healthy exact
+executors can resume serving while peers remain unavailable. Registration-wide
+drain/detach/forget still retains every affected unknown executor. Historical
+observation gaps are not current recorder errors and do not veto healthy
+admission; actor-empty CLEAR does not claim a finite scientific late-tail end.
+Exact container termination is still recorded after physical CLEAR and across
+later clean boots: it can close that executor's historical influence interval,
+without changing any separate control-effect proof.
+Exact terminal-Pod identity remains a release proof after its Node disappears;
+the surviving Node UID requirement applies to running native probes, not to
+confirmed termination.
+`BeginShutdown` stops admission before producer joins; `JoinExecutions` joins
+local execution/finalization producers without inventing remote completion.
 
 The inward domain retains `Definition`, `RequestEvent`, `RequestRow`,
 `ObservationCoverage`/source/gap, and the scheduler records already consumed
@@ -582,12 +666,12 @@ adapters may consume it. Serving-core no longer depends on power-window.
 
 Runtime whitebox tests use a constructor hook declared only in `_test.go`;
 external `serving_test` registers the real filesystem-backed observation log.
-An absent hook fails explicitly. A test-owned synchronous gate checks that
-runtime state and reservations remain available while persistence is blocked,
-and the storage-owned concurrency test independently blocks the actual writer
-lock and checks that folded assignments do not hold the request lock.
-Both checks retain assignment-before-native-execution and final-row ordering.
-Filesystem fault tests create real minute-path conflicts, not a fake recorder.
+An absent hook fails explicitly. Consumer regressions block actual worker
+Write/Sync while Runtime execution and other producers continue, retain final
+version ordering, and distinguish surviving assignment restoration from a
+missing crash tail. Failed storage uses the existing unavailable path.
+Test fixtures unrelated to recovery explicitly establish a clean predecessor;
+crash regressions copy written bytes and active run evidence without Close.
 Cross-owner restart checks use public runtime state/inventory; capture lock
 checks decode the public diagnostic event stream instead of private buffers.
 Historical-hour capacity/readback checks moved with storage. Storage, HTTP event/power,

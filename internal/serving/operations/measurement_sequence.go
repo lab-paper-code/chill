@@ -35,6 +35,9 @@ func (o *Operations) PowerModeStart(ctx context.Context, ref serving.NodeReferen
 // measurement made itself since the window's start generation.
 func (o *Operations) MeasurementIsolation(ctx context.Context, expected serving.NodeReference, models map[string]bool, generation *PowerModeGeneration, changes int64) (MeasurementIsolation, error) {
 	witness := MeasurementIsolation{Workloads: []serving.WorkloadReference{}}
+	if err := o.checkRecovery(ctx, expected, ""); err != nil {
+		return witness, err
+	}
 	node, err := o.Kube.CoreV1().Nodes().Get(ctx, expected.Name, meta.GetOptions{})
 	if err != nil {
 		return witness, err

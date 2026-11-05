@@ -40,8 +40,14 @@ func TestOccupancyLocalHTTPSDryRunThenCreate(t *testing.T) {
 			Status: authorization.SubjectAccessReviewStatus{Allowed: true},
 		}, nil
 	})
+	// This mutation test starts after an explicitly clean predecessor.
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "async-run.json"),
+		[]byte(`{"started":"2026-11-05T00:00:00Z","clean":true,"gaps":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{
-		Directory: t.TempDir(), Store: "evidence", Retention: time.Hour,
+		Directory: directory, Store: "evidence", Retention: time.Hour,
 		Writer: testArchive{directory: t.TempDir()},
 	})
 	if err != nil {

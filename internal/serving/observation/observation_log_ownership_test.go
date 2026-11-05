@@ -15,17 +15,15 @@ import (
 
 const restoredRequest = "request"
 
-// An assigned row without a final row survives a crash: the restart restores
-// it under RestartDrain and writes one incomplete final row after completion.
+// A log-clean handoff can retain a physical assignment: recording success does
+// not prove execution complete. RestartDrain still requires exact completion.
 func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 	ctx := context.Background()
 	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
-	observationLog, err := NewObservationLog(config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	observationLog, _ := clockedObservationLog(t, config, time.Now().UTC())
+	config = observationLog.config
 	d := &serving.Definition{Name: "workload", UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}, SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
-	if err = observationLog.DefinitionRecord(d); err != nil {
+	if err := observationLog.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -36,11 +34,11 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_finished", At: now, NativeProgress: &serving.BackendProgress{Phase: "finished", ExecutionComplete: false}},
 		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "response_finished", At: now, Outcome: "canceled"},
 	} {
-		if err = observationLog.RequestEvent(event); err != nil {
+		if err := observationLog.RequestEvent(event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err = observationLog.Close(ctx); err != nil { // Crash: the open row is lost.
+	if err := observationLog.Close(ctx); err != nil { // Graceful log handoff, not a crash.
 		t.Fatal(err)
 	}
 	restartedLog, err := NewObservationLog(config)
@@ -98,13 +96,11 @@ func TestRestartRequiresExplicitPhysicalCompletionProof(t *testing.T) {
 func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
 	ctx := context.Background()
 	config := ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}}
-	observationLog, err := NewObservationLog(config)
-	if err != nil {
-		t.Fatal(err)
-	}
+	observationLog, _ := clockedObservationLog(t, config, time.Now().UTC())
+	config = observationLog.config
 	_, snapshot := schedulerFixture()
 	d, p := snapshot.Workloads[0], snapshot.Instances[0].Profile
-	if err = observationLog.DefinitionRecord(d); err != nil {
+	if err := observationLog.DefinitionRecord(d); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -113,11 +109,11 @@ func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
 		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "received", At: now, ReceivedAt: now},
 		{RequestID: restoredRequest, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "assigned", At: now, ReceivedAt: now, Assignment: assignment},
 	} {
-		if err = observationLog.RequestEvent(event); err != nil {
+		if err := observationLog.RequestEvent(event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err = observationLog.Close(ctx); err != nil {
+	if err := observationLog.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	restartedLog, err := NewObservationLog(config)
@@ -130,7 +126,7 @@ func TestRestoredCallTheNativeDoesNotHoldFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored.SetProfiles([]serving.Profile{*p})
-	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), Native: &native.State{Ready: true}},
+	instance := serving.ReadyInstance{State: serving.InstanceState{ID: "i1", Node: snapshot.Nodes[0].Node, Profile: p.ID, Ready: true, ObservedAt: time.Now(), NativeVerified: true, Native: &native.State{Ready: true}},
 		Profile: p, Capacity: 1, Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 			return serving.BackendResult{}, nil
 		}}

@@ -239,6 +239,11 @@ type admissionInputs struct {
 // and detail, none to grant it, or wait while its catalog evidence lags.
 // start, when set, runs a granted measurement ChillServer executes itself.
 func (c *SchedulerController) rootRefusal(ctx context.Context, root measurementRoot, node *core.Node, in admissionInputs) (reason, detail string, wait bool, start func()) {
+	for _, instance := range c.runtime.Instances() {
+		if instance.RecoveryUnknown && !instance.Terminated && (instance.Node.UID == string(node.UID) || instance.Node.Name == node.Name) {
+			return refusedNodeServing, "executor recovery unknown", false, nil
+		}
+	}
 	if serving := servingPodsOn(in.pods, node.Name); len(serving) > 0 {
 		return refusedNodeServing, strings.Join(serving, ","), false, nil
 	}

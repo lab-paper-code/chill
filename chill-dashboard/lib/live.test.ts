@@ -16,8 +16,22 @@ function snapshot(seq=0,changes:Partial<LiveSnapshot>={},stamp=at) {
   return {type:"snapshot",seq,at:stamp,workloads:[workload],nodes:[{...node,powerMode:"default",ready:false,measurement:true,reasons:["MeasurementInProgress"],observedAt:at}],instances:[instance],routing:{"pool-a":{"instance-a":1},"pool-b":{"instance-a":1}},decision:{at,state:"TransitionInProgress",reason:"prepare",explanation:"인스턴스를 준비하고 있어요."},actions:[action],reservations:[reservation],...changes}
 }
 function metrics(seq:number,second:number,changes:Record<string,unknown>={}) {
-  return {type:"metrics",seq,at:time(second+1),bucketAt:time(second),workloads:{"pool-a":metric},nodes:{"node-a":{watts:null,observedAt:null}},pool:{wholeWatts:null,activeWatts:null},...changes}
+  return {type:"metrics",chill_obslog_queue_length:0,chill_obslog_oldest_wait_seconds:0,seq,at:time(second+1),bucketAt:time(second),workloads:{"pool-a":metric},nodes:{"node-a":{watts:null,observedAt:null}},pool:{wholeWatts:null,activeWatts:null},...changes}
 }
+test("metrics JSON preserves current observation-log queue gauges",()=>{
+  for(const [length,wait] of [[3,1.5],[0,0]]) {
+    const message=parseLiveMessage(JSON.stringify(metrics(1,0,{chill_obslog_queue_length:length,chill_obslog_oldest_wait_seconds:wait})))
+    assert.equal(message?.type,"metrics")
+    if(message?.type!=="metrics")throw new Error("metrics rejected")
+    assert.equal(message.chill_obslog_queue_length,length)
+    assert.equal(message.chill_obslog_oldest_wait_seconds,wait)
+    assert.deepEqual(message.workloads,{"pool-a":metric})
+    assert.deepEqual(message.pool,{wholeWatts:null,activeWatts:null})
+  }
+  for(const changes of [{chill_obslog_queue_length:undefined},{chill_obslog_oldest_wait_seconds:undefined},{chill_obslog_queue_length:-1},{chill_obslog_queue_length:.5},{chill_obslog_oldest_wait_seconds:-1}]) {
+    assert.equal(parseLiveMessage(metrics(1,0,changes)),null)
+  }
+})
 function apply(state:LiveState,input:unknown,receivedAt=1234) {
   const message=parseLiveMessage(input)
   assert.ok(message,"test frame must satisfy the live DTO")
