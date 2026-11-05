@@ -6,6 +6,7 @@ import { transpileModule, ModuleKind, JsxEmit, ScriptTarget } from "typescript"
 import * as domain from "./domain.ts"
 import * as manifest from "./catalog-manifest.ts"
 import * as labels from "./labels.ts"
+import * as guidance from "./catalog-guidance.ts"
 
 type Tree = { type: unknown; props: Record<string, unknown> }
 type Component = (props: Record<string, unknown>) => unknown
@@ -45,6 +46,7 @@ function consumer(kind: manifest.CatalogKind, editing = false) {
     "@tanstack/react-query": { useQueryClient: () => ({ invalidateQueries: async () => {} }) },
     "lucide-react": { ChevronLeft: "svg", ChevronRight: "svg" },
     "@/lib/domain": domain, "@/lib/catalog-manifest": manifest, "@/lib/labels": labels,
+    "@/lib/catalog-guidance": guidance,
     "@/lib/client": { ApiError: Error, useChillMutation: () => mutation, useChillQuery: (path: string) => ({ data: editing && path === `v1/${kind}/registered` ? current : path.includes("workloads") ? [] : { items: [] }, refetch: async () => { refetches++; return { data: current } } }) },
     "@/components/ui/button": { Button: "button" }, "@/components/ui/input": { Input: "input" }, "@/components/ui/dialog": {},
     "@/components/data-table": { DataTable: () => null }, "@/features/service-hub": {}, "@/lib/measurement-request": {},
@@ -257,6 +259,27 @@ test("manual registration remains available at the original name step", () => {
     c.view(); c.click(/직접 작성/); c.view()
     assert.ok(c.nodes().some(node => node.type === "input" && node.props.required))
     assert.ok(c.nodes().some(node => node.type === "form"))
+    assert.equal(c.sent.length, 0)
+  }
+})
+
+test("catalog examples only fill empty drafts and cannot overwrite a reviewed operator document", () => {
+  for (const kind of ["models", "preprocessors", "datasets"] as const) {
+    const c = consumer(kind)
+    c.view(); c.click(/YAML\/JSON/); c.view()
+    c.click(/예시를 입력란에 넣기/); c.view()
+    const example = c.nodes().find(node => node.type === "textarea")!.props.value
+    assert.equal(typeof example, "string")
+    const parsed = manifest.parseCatalogManifest(kind, String(example))
+    assert.match(parsed.name, /^<.+>$/)
+    assert.equal(c.sent.length, 0)
+    const draft = JSON.stringify({name:"operator-draft",spec:{producerOption:42}})
+    c.paste(draft); c.view(); c.review(); c.view()
+    const insert = c.nodes().find(node => node.type === "button" && /예시를 입력란에 넣기/.test(text(node)))!
+    assert.equal(insert.props.disabled, true)
+    ;(insert.props.onClick as () => void)()
+    c.view()
+    assert.equal(c.nodes().find(node => node.type === "textarea")!.props.value, draft)
     assert.equal(c.sent.length, 0)
   }
 })

@@ -2,6 +2,38 @@
 
 CHILL-internal Next App Router module, built independently and deployed within the `chill` Helm release. ChillServer remains authoritative for identity, authorization, declarations, operations, statistics and evidence. This is the approved current core, not completion of every Dashboard SRS producer.
 
+## 카탈로그 등록 시작
+
+처음에는 [카탈로그 준비 안내](../config/samples/catalog/README.md#처음-등록하는-운영자)에서
+담당자별 준비물·실제 파일 배치·OCI 게시·입출력 계약을 확인한다.
+외부 작성자가 파일/코드를 만들고 이미지를 게시하며, 플랫폼 관리자가 기존 API 권한과
+사설 image pull 환경을 준비한다. 대시보드는 준비된 선언을 등록할 뿐 업로드·변환·빌드하지 않는다.
+이 안내는 해당 변경을 포함한 **ChillServer와 대시보드 배포 후** 적용된다.
+`main`에 병합된 사실은 운영 배포·실제 실행 검증을 뜻하지 않는다.
+
+1. `/settings?tab=models|preprocessors|datasets`에서 종류를 고른 뒤 신규 등록으로 들어간다.
+   세 종류의 기존 [ModelSpec](../config/samples/catalog/edge_v1alpha1_modelspec.yaml)·
+   [Preprocessor](../config/samples/catalog/edge_v1alpha1_preprocessor_smolvlm2-vqa.yaml)·
+   [Dataset](../config/samples/catalog/edge_v1alpha1_dataset.yaml) 예제는 구조 참고용이다.
+   예제의 registry 주소·digest는 실행 가능한 자산이 아니다.
+2. 준비된 단일 YAML/JSON을 **파일 선택 또는 붙여넣기**로 읽는다. 화면의 예제 불러오기도
+   같은 초안 입력이다. `<...>` 자리표시자를 실제 게시된 OCI digest, 아키텍처, 이미지 내부
+   경로와 계약으로 바꾼다. 파일 선택은 서버에 모델 파일을 보내는 업로드가 아니다.
+3. **문서 검토하기**에서 이름·종류·spec을 확인한다. 읽기와 검토는 저장이 아니며
+   변경하면 다시 검토한다. Bearer/registry/HF token·비밀번호·Secret 내용은 문서에 넣지 않는다.
+4. 명시적인 **등록하기**에서만 기존 `POST /api/v1/{models|preprocessors|datasets}`
+   `{name,spec}`를 보낸다. 의존 순서는 ModelSpec → 대상 Preprocessor → Dataset → Workload다.
+   문서는 `edge.dacs.io/v1alpha1`의 세 catalog kind 또는 기존 API JSON을 사용한다.
+5. POST 접수와 목록/단건 **GET으로 확인한 저장 결과**를 구분한다.
+   응답 유실로 `결과 미확인`이면 자동 재제출하지 않고 기존 조회 동작으로 먼저 확인한다.
+   저장 성공도 image pull·import·측정·서빙 준비 성공은 아니다. Workload 연결 뒤 별도 측정과
+   실제 상태/근거를 확인한다. `403`은 기존 서버 message를 따라 권한을 요청하며 새 역할을 추정하지 않는다.
+
+외부 URL이나 로컬 모델 경로를 붙여넣어도 자산을 가져오지 않는다.
+HF/KServe/BentoML/MLflow에서 참고한 분리 원칙과 지원하지 않는 원격 입력은
+[고정 소스 링크와 CHILL 경계](../config/samples/catalog/README.md#참고한-외부-패턴과-chill-경계)에 모았다.
+
+
 ## Fixed upstream source and license
 
 Actual source fork: https://github.com/shadcn-ui/ui.git at commit `e8c3143b1cd191280befcd6c9538284bb43399a8`.
@@ -223,8 +255,9 @@ UID·resourceVersion·status 같은 원본 생명주기 정보는 전달하지 �
 상세의 등록 명세 내보내기는 이름·spec만 담은 표준 CHILL JSON 문서를 다운로드한다. 기존 인증정보 제거를 적용하되 공개 필드 `maxNewTokens`는 보존한다.
 이 경로는 파일/이미지 업로드, 모델 변환, registry 탐색, 외부 주소 가져오기, Kubernetes 직접 쓰기를 수행하지 않는다.
 자산 준비·이미지 게시의 책임은 외부 작성자/빌드 도구에 남고, 변경·충돌·참조 보호·진행은 기존 CHILL API가 소유한다.
-참조한 분리 방식은 KServe v0.16.0의 storage initializer, MLflow v3.1.4의 등록 이름/저장 위치 분리,
-BentoML v1.4.8의 모델 저장/OCI 빌드 분리, Hugging Face Hub v2.4.0의 파일 등록/revision 처리다. 해당 구현을 복사하거나 이들 플랫폼을 의존성으로 추가하지 않았다.
+준비·게시와 등록을 분리한 외부 근거는
+[카탈로그 안내의 고정 commit 링크](../config/samples/catalog/README.md#참고한-외부-패턴과-chill-경계)를 따른다.
+KServe/HF의 원격 storage 기능을 CHILL에서 제공하지 않으며, 이들 플랫폼을 의존성으로 추가하지 않았다.
 
 
 별도 개요·링크 허브·측정 6탭은 폐지한다. 요청 실패와 기존 사용 결과, 현재 사용과 품질, 실행 종료와 측정 통과·정리는 독립이다.
