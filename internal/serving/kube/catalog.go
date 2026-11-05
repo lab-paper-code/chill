@@ -19,6 +19,7 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
+	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	campaignevidence "github.com/lab-paper-code/chill/internal/profiling/campaign/evidence"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
@@ -317,6 +318,10 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	state := campaign.Spec.State
 	plan := retained.Plan
 	condition := plan.Shared()
+	discovery, sequential, err := batchenergyoptimization.DecodeDiscoveryResult(retained.Result, plan.PlannedBatchSizes())
+	if err != nil {
+		return serving.Profile{}, nil, err
+	}
 	if condition.RuntimeFamily != profilingrun.FirstfloorRuntimeFamily {
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "standalone experiment execution is not same-firstfloor serving evidence"}}, nil
 	}
@@ -328,6 +333,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	active, idle := trials.Active, trials.Idle
 	measuredAt, evidenceReferences := trials.MeasuredAt, trials.Evidence
 	activeSources, idleSources := trials.ActiveSources, trials.IdleSources
+	if sequential && len(discovery.MeasuredBatchSizes) == 0 {
+		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "batch discovery completed without a fully measured batch prefix"}}, nil
+	}
 	if len(active) == 0 || len(idle) == 0 {
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "completed active and model-loaded idle raw trials are required"}}, nil
 	}
@@ -387,6 +395,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			} else if !reflect.DeepEqual(sharedRuntimeFacts(runtimeMetadata.Runtime), sharedRuntimeFacts(raw.Runtime.Firstfloor.Runtime)) {
 				return serving.Profile{}, nil, errors.New("firstfloor trials have different actual initialized runner conditions")
 			}
+		}
+		if sequential && !slices.Contains(discovery.MeasuredBatchSizes, execution.RunConfig.Measurement.Batch) {
+			continue
 		}
 		trial, err := profilerprojection.Trial(verified)
 		if err != nil {

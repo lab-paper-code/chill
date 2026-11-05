@@ -135,6 +135,123 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 	}
 }
 
+func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
+	for _, stop := range []string{batchenergyoptimization.DiscoveryStopOOM, batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded} {
+		t.Run(stop, func(t *testing.T) {
+			catalog, source, objects, _ := catalogEvidenceFixtureConfigPolicy(t, 4096, [6]float64{6, 6, 6, 4, 4, 4}, 3, "", func(config *profilingrun.RunConfig) {
+				config.State.Firstfloor.MaxBatchSize = 2
+				config.Actor.BatchSizes = []int{1, 2}
+				config.Actor.MaxBatchSize = 2
+			}, nil, 1, 2)
+			campaign := &edgev1alpha1.BatchEnergyOptimization{}
+			ctx := context.Background()
+			if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+				t.Fatal(err)
+			}
+			retained, err := catalog.evidence.Read(ctx, campaign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := retained.Result.Spec()
+			spec.Outcome = batchenergyoptimization.BatchDiscoveryComplete
+			spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
+				MeasuredBatchSizes: []int{1},
+				Stop: batchenergyoptimization.DiscoveryStop{
+					Reason: stop, FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}, Attempt: 1,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := batchenergyoptimization.NewResultRecord(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := result.CanonicalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects[apiObjectIdentity(campaign.Status.Result).Location()] = payload
+			campaign.Status.Result.Size = int64(len(payload))
+			campaign.Status.Outcome = string(spec.Outcome)
+			if err := catalog.store.client.Status().Update(ctx, campaign); err != nil {
+				t.Fatal(err)
+			}
+			view, err := catalog.Refresh(ctx, []string{source.Namespace})
+			if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+				t.Fatalf("stopped discovery lost completed prefix: %+v %v", view, err)
+			}
+			profile := view.Profiles[0]
+			if len(profile.Batches) != 1 || profile.Batches[0].Batch != 1 ||
+				!slices.Equal(profile.Condition.PlannedBatchSizes, []int{1, 2}) ||
+				!slices.Equal(profile.RuntimeMetadata.InitializedBatches, []int{1, 2}) ||
+				profile.Batches[0].MemoryBytes != 4096 || profile.IdleBaselineWatts != 4 ||
+				len(profile.Batches[0].ServiceSamples) != 180 || math.Abs(profile.Batches[0].EnergyPerInputJoules-1) > 1e-9 {
+				t.Fatalf("candidate domain or measured service/J/idle/memory changed: %+v", profile)
+			}
+		})
+	}
+}
+
+func TestCatalogDiscoveryRejectsUnfinishedClaimAndPreservesEmptyCompletion(t *testing.T) {
+	for _, count := range []int{0, 2} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			catalog, source, objects, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{6, 6, 6, 4, 4, 4}, count, "", nil)
+			ctx := context.Background()
+			campaign := &edgev1alpha1.BatchEnergyOptimization{}
+			if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+				t.Fatal(err)
+			}
+			retained, err := catalog.evidence.Read(ctx, campaign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			measured := []int{}
+			if count != 0 {
+				measured = []int{1}
+			}
+			spec := retained.Result.Spec()
+			spec.Outcome = batchenergyoptimization.BatchDiscoveryComplete
+			spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
+				MeasuredBatchSizes: measured,
+				Stop: batchenergyoptimization.DiscoveryStop{
+					Reason: batchenergyoptimization.DiscoveryStopOOM,
+					FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1},
+					Attempt: 1,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := batchenergyoptimization.NewResultRecord(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := result.CanonicalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects[apiObjectIdentity(campaign.Status.Result).Location()] = payload
+			campaign.Status.Result.Size = int64(len(payload))
+			campaign.Status.Outcome = string(spec.Outcome)
+			if err := catalog.store.client.Status().Update(ctx, campaign); err != nil {
+				t.Fatal(err)
+			}
+			view, err := catalog.Refresh(ctx, []string{source.Namespace})
+			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 {
+				t.Fatalf("unfinished discovery became executable: %+v %v", view, err)
+			}
+			want := "MeasurementEvidenceMissing"
+			if count != 0 {
+				want = invalidEvidenceCode
+			}
+			if view.Insufficiencies[0].Code != want {
+				t.Fatalf("empty completion and invalid prefix were conflated: %+v", view.Insufficiencies)
+			}
+		})
+	}
+}
+
 func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
 	for _, phase := range []batchenergyoptimization.WorkloadMode{batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle} {
 		for _, tc := range []struct {
@@ -356,7 +473,7 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 	return catalogEvidenceFixtureConfigPolicy(t, memory, trialWatts, count, confidence, nil, change)
 }
 
-func catalogEvidenceFixtureConfigPolicy(t *testing.T, memory uint64, trialWatts [6]float64, count int, confidence string, configure func(*profilingrun.RunConfig), change func(int, *profilingrun.RuntimeResult, *profilingrun.IdleRuntimeResult)) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
+func catalogEvidenceFixtureConfigPolicy(t *testing.T, memory uint64, trialWatts [6]float64, count int, confidence string, configure func(*profilingrun.RunConfig), change func(int, *profilingrun.RuntimeResult, *profilingrun.IdleRuntimeResult), planned ...int) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -375,7 +492,10 @@ func catalogEvidenceFixtureConfigPolicy(t *testing.T, memory uint64, trialWatts 
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
 		StartupWarmupIterations: active.Measurement.StartupWarmupIterations, WarmupBatchSizes: slices.Clone(active.Measurement.WarmupBatchSizes),
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
-	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1})
+	if len(planned) == 0 {
+		planned = []int{1}
+	}
+	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, planned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,10 +658,14 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 		modelFiles[i] = "/model/" + filepath.Base(file)
 	}
 	slices.Sort(modelFiles)
+	initialized := []int{1}
+	if config.State.Firstfloor.MaxBatchSize > 1 {
+		initialized = slices.Clone(config.Actor.BatchSizes)
+	}
 	native := profilingrun.FirstfloorRuntimeEvidence{Mode: "profiling", DeadlinePolicy: firstfloor.DeadlineKeep,
-		ModelInstanceCount: 1, MaxBatchSize: 1, MaxQueueSize: 32,
+		ModelInstanceCount: 1, MaxBatchSize: int(config.State.Firstfloor.MaxBatchSize), MaxQueueSize: 32,
 		Runtime: firstfloor.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "1.16.0", ModelFiles: modelFiles, Inputs: config.State.Preprocessor.Inputs, Outputs: config.State.Preprocessor.Outputs,
-			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: []int{1},
+			Providers: []string{provider}, AvailableProviders: []string{provider}, Device: "cpu", CPUAffinity: []int{0, 1}, IntraOpThreads: 2, InterOpThreads: 1, InitializedBatches: initialized,
 			CgroupCPUMax: measuredTwoCoreCPUMax, CPUSet: "0-3"}}
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		activeNative := native

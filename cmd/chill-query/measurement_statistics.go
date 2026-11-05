@@ -99,9 +99,16 @@ func readMeasurementStatistics(
 	if err != nil {
 		return nil, statisticsCampaignError(err)
 	}
+	discovery, sequential, err := campaign.DecodeDiscoveryResult(result, retained.Plan.PlannedBatchSizes())
+	if err != nil {
+		return nil, err
+	}
 	trials, err := retainedReader.ReadTrials(ctx, cr, retained)
 	if err != nil {
 		return nil, statisticsCampaignError(err)
+	}
+	if sequential && len(discovery.MeasuredBatchSizes) == 0 {
+		return nil, errStatisticsNotRecorded
 	}
 	plan, shared := retained.Plan, retained.Plan.Shared()
 	active, idle := trials.Active, trials.Idle
@@ -109,7 +116,7 @@ func readMeasurementStatistics(
 	if len(active) == 0 || len(idle) == 0 {
 		return nil, errStatisticsNotRecorded
 	}
-	curve, err := deriveMeasurementCurve(cr, plan, active, idle)
+	curve, err := deriveMeasurementCurve(cr, plan, active, idle, discovery.MeasuredBatchSizes)
 	if err != nil {
 		return nil, err
 	}
@@ -323,6 +330,7 @@ func deriveMeasurementCurve(
 	plan derivation.CurvePlan,
 	active []evidence.VerifiedEvidence,
 	idle []evidence.VerifiedIdleEvidence,
+	measured []int,
 ) (derivation.Curve, error) {
 	var err error
 	var verifiedState derivation.VerifiedCurveState
@@ -336,6 +344,9 @@ func deriveMeasurementCurve(
 		trial, err := projection.Trial(verified)
 		if err != nil {
 			return derivation.Curve{}, err
+		}
+		if measured != nil && !slices.Contains(measured, trial.Batch) {
+			continue
 		}
 		if len(trial.LatencyMilliseconds) == 0 {
 			return derivation.Curve{}, errStatisticsNotRecorded

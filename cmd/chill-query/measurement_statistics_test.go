@@ -137,6 +137,75 @@ func TestMeasurementStatisticsRetainedReferencesOnly(t *testing.T) {
 	}
 }
 
+func TestMeasurementStatisticsDiscoveryExcludesIncompleteNextBatch(t *testing.T) {
+	cr, record, objects, reader, loader := statisticsFixture(t, 1, 1, 1, 2)
+	spec := record.Spec()
+	spec.Outcome = campaign.BatchDiscoveryComplete
+	var err error
+	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
+		MeasuredBatchSizes: []int{1},
+		Stop: campaign.DiscoveryStop{
+			Reason: campaign.DiscoveryStopOOM,
+			FailedMeasurement: &campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 2},
+			Attempt: 2,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = campaign.NewResultRecord(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cr.Status.Outcome = string(spec.Outcome)
+	before := record.Spec()
+	statistics, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record)
+	if err != nil || reason != nil || statistics == nil || len(statistics.Batches) != 1 {
+		t.Fatalf("completed prefix lost to incomplete next batch: %+v %v %v", statistics, reason, err)
+	}
+	batch := statistics.Batches[0]
+	if batch.Batch != 1 || batch.ActiveTrialCount != 3 || batch.IdleTrialCount != 3 ||
+		!reflect.DeepEqual(statistics.MeasurementFacts.Condition.PlannedBatchSizes, []int{1, 2}) {
+		t.Fatalf("incomplete batch became a measured point: %+v", statistics)
+	}
+	if !reflect.DeepEqual(record.Spec(), before) {
+		t.Fatal("filtering mutated retained trial lineage")
+	}
+}
+
+func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
+	cr, record, objects, reader, loader := statisticsFixture(t, 1, 1, 1)
+	spec := record.Spec()
+	completed := spec.CompletedTrials[:0]
+	for _, trial := range spec.CompletedTrials {
+		if trial.Measurement.WorkloadMode == campaign.WorkloadModeIdle {
+			completed = append(completed, trial)
+		}
+	}
+	spec.CompletedTrials = completed
+	spec.Outcome = campaign.BatchDiscoveryComplete
+	var err error
+	spec.Detail, err = json.Marshal(campaign.DiscoveryResult{
+		MeasuredBatchSizes: []int{},
+		Stop: campaign.DiscoveryStop{
+			Reason: campaign.DiscoveryStopOOM,
+			FailedMeasurement: &campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1},
+			Attempt: 1,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = campaign.NewResultRecord(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statistics, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record)
+	if err != nil || statistics != nil || reason == nil || *reason != statisticsNotRecordedReason {
+		t.Fatalf("unmeasured batch one became statistics: %+v %v %v", statistics, reason, err)
+	}
+}
+
 func TestRetainedQueryResultMatchesServingObservedCondition(t *testing.T) {
 	cr, record, objects, reader, loader := statisticsFixture(t)
 	ctx := context.Background()
@@ -640,6 +709,7 @@ func TestStatisticsCampaignErrorPreservesCauses(t *testing.T) {
 
 func statisticsFixture(
 	t *testing.T,
+	activeBatches ...int,
 ) (
 	*api.BatchEnergyOptimization,
 	campaign.ResultRecord,
@@ -648,6 +718,15 @@ func statisticsFixture(
 	*evidencekube.RetainedLoader,
 ) {
 	t.Helper()
+	if len(activeBatches) == 0 {
+		activeBatches = []int{1, 1}
+	}
+	trialsPerBatch := 0
+	for _, batch := range activeBatches {
+		if batch == 1 {
+			trialsPerBatch++
+		}
+	}
 	payload, err := os.ReadFile(
 		"../../internal/profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json",
 	)
@@ -718,7 +797,7 @@ func statisticsFixture(
 					PowerMode:     base.State.PowerMode,
 				},
 			},
-			TrialsPerBatch: 2, PointPolicy: api.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: "0.8"},
+			TrialsPerBatch: int32(trialsPerBatch), PointPolicy: api.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: "0.8"},
 			BatchSizes: []int32{1, 2},
 			ActiveProtocol: api.ActiveProtocolSpec{
 				Workload:                 base.Measurement.WorkloadName,
@@ -743,8 +822,16 @@ func statisticsFixture(
 	var refs []campaign.CompletedTrialReference
 	var native []client.Object
 	for _, isIdle := range []bool{false, true} {
-		for index := range 2 {
+		batches := activeBatches
+		if isIdle {
+			batches = make([]int, trialsPerBatch)
+			for index := range batches {
+				batches[index] = 1
+			}
+		}
+		for index, batch := range batches {
 			config := base
+			config.Measurement.Batch = batch
 			if isIdle {
 				config = idle
 			}
@@ -781,7 +868,7 @@ func statisticsFixture(
 			}
 			ref := campaign.CompletedTrialReference{
 				Run:         campaign.RunReference{Namespace: cr.Namespace, Name: name, UID: name},
-				Measurement: campaign.ResultMeasurement{WorkloadMode: mode, Batch: 1},
+				Measurement: campaign.ResultMeasurement{WorkloadMode: mode, Batch: config.Measurement.Batch},
 				Evidence: campaign.StoredObjectReference{
 					Store:         id.Store,
 					Key:           id.Key,
@@ -1083,14 +1170,18 @@ func statisticsTrial(
 			latencies[i] = latency
 		}
 		ff.ExecutionCount = uint64(len(latencies))
-		ff.InferenceCount = ff.ExecutionCount
-		ff.BatchExecutionCounts["1"] = ff.ExecutionCount
+		ff.InferenceCount = ff.ExecutionCount * uint64(config.Measurement.Batch)
+		ff.BatchExecutionCounts[fmt.Sprint(config.Measurement.Batch)] = ff.ExecutionCount
 		ff.Runtime.WarmupIterations = config.Actor.WarmupIterations
 		var samples []runconfig.NativeServiceSample
 		for i := range latencies {
+			records, units := make([]string, config.Measurement.Batch), make([]int, config.Measurement.Batch)
+			for index := range records {
+				records[index], units[index] = fmt.Sprint("record-", index), 1
+			}
 			samples = append(samples, runconfig.NativeServiceSample{
 				ServiceSample: fixtures.ServiceSample(name, uint64(i), 700000),
-				BatchID:       uint64(i + 1), BatchSize: 1, RecordIDs: []string{"record"}, Units: []int{1},
+				BatchID:       uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: records, Units: units,
 				RunnerServiceMilliseconds: .7, PreprocessMilliseconds: .1, PostprocessMilliseconds: .1,
 				BackendCallMilliseconds: .4, NativeRequestMilliseconds: .9,
 			})
@@ -1104,7 +1195,7 @@ func statisticsTrial(
 				Model: config.State.Model, Architecture: "x86_64", Runtime: config.State.RuntimeFamily, RuntimeVersion: "1.16.0",
 				Backend: config.State.Backend, Provider: provider, AvailableProviders: []string{provider},
 				Inputs:    config.State.Preprocessor.Inputs,
-				BatchSize: 1, WarmupIterations: config.Measurement.WarmupIterations,
+				BatchSize: config.Measurement.Batch, WarmupIterations: config.Measurement.WarmupIterations,
 				WarmupCompletedAt: start.Add(-time.Second).Format(time.RFC3339Nano),
 				InferenceCount:    len(latencies), MeasurementMode: "duration",
 				MeasurementStartedAt: start.Format(time.RFC3339Nano),
