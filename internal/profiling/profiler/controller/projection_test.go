@@ -12,10 +12,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -289,10 +287,6 @@ func TestProjectSnapshotStopsCleanlyDuringDeletion(t *testing.T) {
 }
 
 func testRun() *edgev1alpha1.ProfilingRun {
-	cadence, err := json.Marshal(fixtures.Cadence())
-	if err != nil {
-		panic(err)
-	}
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "chill-system", Name: "run", UID: "run-uid"},
 		Spec: edgev1alpha1.ProfilingRunSpec{
@@ -310,7 +304,6 @@ func testRun() *edgev1alpha1.ProfilingRun {
 				Batch: 1, WarmupIterations: 20, StartupWarmupIterations: 20, DurationSeconds: 30,
 				WarmupBatchSizes: []int32{1},
 				WorkloadMode:     "empirical-cadence-fixed-batch", Dataset: "vqav2-val-subset",
-				Cadence:  &apiextensions.JSON{Raw: cadence},
 				Workload: "mobilenet",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{

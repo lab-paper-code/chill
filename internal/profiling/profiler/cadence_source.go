@@ -135,6 +135,7 @@ type cadenceObservedGap struct {
 // BuildServingCadences keeps every known physical batch as a barrier before
 // filtering by phase/configuration/completeness. Final HTTP facts supersede
 // assigned facts; sparse native records fill only missing native fields.
+// Complete adjacent batches may have different K: G spans exchange boundaries.
 func BuildServingCadences(config profilingrun.RunConfig, trace CadenceTrace) (map[int]*firstfloor.CadenceContract, error) {
 	byInstance, blockedInstances, err := collectCadenceBatches(config, trace)
 	if err != nil {
@@ -164,7 +165,7 @@ func BuildServingCadences(config profilingrun.RunConfig, trace CadenceTrace) (ma
 			before, after := batches[i-1], batches[i]
 			if before.invalid || after.invalid || after.id-before.id != 1 || before.phase < 0 || before.phase != after.phase ||
 				before.boundary != after.boundary || after.start.Before(before.end) || before.rows[0].ProfileID != after.rows[0].ProfileID ||
-				before.rows[0].DefinitionID != after.rows[0].DefinitionID || len(before.rows) != len(after.rows) ||
+				before.rows[0].DefinitionID != after.rows[0].DefinitionID ||
 				before.rows[0].NativeTrialID != after.rows[0].NativeTrialID ||
 				after.boundary == firstfloor.NativeExchangeGapBoundary && after.rows[0].PrecedingIdleNanos == nil {
 				continue

@@ -514,6 +514,15 @@ func (s *schedulerReplayState) initializeRunning() bool {
 			elapsed = *head.source.ExchangeElapsedNanos
 		}
 		gap := head.source.PrecedingIdleNanos
+		if head.source.ExchangeElapsedNanos == nil {
+			// Actor-running begins before packing/IPC. No native S has elapsed;
+			// current idle age is a lower-bound decision approximation of G.
+			gap = i.idleNanos(s.now)
+			if gap != nil {
+				s.out.assumptions = appendUnique(s.out.assumptions,
+					"pending native exchange uses current idle-age lower-bound approximation before IPC")
+			}
+		}
 		sample, support, ok := b.ServiceDistribution.SampleResidual(gap, elapsed, s.rng)
 		s.out.conditional.record(gap, support)
 		if !ok {

@@ -233,7 +233,6 @@ type BatchChoice struct {
 	Reason                  string
 	DecisionIdleNanos       *int64
 	DecisionIdleApproximate bool
-	ConditionalSupport      ConditionalSupport
 }
 
 // ProfileRequest is exactly one execution of BatchSize samples.

@@ -33,7 +33,8 @@ const (
 // the Run; those roots are admitted before they create it.
 func ownedByMeasurementRoot(run *edgev1alpha1.ProfilingRun) bool {
 	owner := metav1.GetControllerOf(run)
-	return owner != nil && owner.APIVersion == edgev1alpha1.GroupVersion.String() &&
+	return owner != nil && owner.Name != "" && owner.UID != "" &&
+		owner.APIVersion == edgev1alpha1.GroupVersion.String() &&
 		(owner.Kind == "BatchEnergyOptimization" || owner.Kind == "ModelLoadedIdleBaseline")
 }
 

@@ -76,6 +76,13 @@ Hydration builds immutable per-physical-trial gap/service indexes once. **1-near
 
 Replay's arrivals/queue/native finish already determine g; it never adds donor trace G again. Native-finish and reply-return anchors stay separate; running residuals condition on the gap at exchange start and actual exchange elapsed. Native batch choice occurs before packing/goroutine entry, so its decision-age gap (and projected fill-wait age) is explicitly approximate, not actual G; service completion resets that anchor consistently. Capacity search opens from optimistic empirical support, not a marginal quiet-load mean. Selected-neighbor distance/trial support/outside-support evidence is retained without inventing a new admission wall.
 
+Actor `running` is declared before pack → IPC, not proof that a service
+exchange has started. A pending exchange has no consumed native S; replay uses
+the known last-exchange-end age as a lower-bound decision-gap approximation and
+records that assumption. Only an absent previous anchor selects startup. Once
+exchange elapsed is present, replay uses the observed prior G and true elapsed
+service for the residual law.
+
 The semantic key includes target loadContext/schedule, gap boundary and conditional model, but not actual trace objects, donor/window/seed/draw or observer metadata.59 is an iid marginal quantile-coverage minimum, not precise conditional p95 or κ safety; three nearest trial records are not59 local tail samples. Sparse/out-of-support history and repeated arrival seeds remain visible limitations. The1812-Job inventory is nominal and retains D28's20 prior b1-only cells; new cadence may invalidate that branch and require their already-planned higher K.
 
 공통 `MeasurementSelection.ID`는 `namespace/name/UID`(direct profile ID, `/reuse-` 전)다. `MeasurementTime(profileMeasuredAt, conditions)`은 검증 성공 profile의 `MeasuredAt` → BEO `MeasurementComplete.LastTransitionTime` → zero 순이며 creation이나 다른 condition 시각으로 채우지 않는다. failed/partial은 profileMeasuredAt을 zero로 전달한다. `ReplacedMeasurements(sourceID→대상 namespace/name, namespace/name→ID)`가 동일 namespace annotation을 대상 ID 집합으로 바꾼다. Catalog read의 `currentMeasurements`와 Query cell의 `currentMeasurement`는 이 선택을 노출하며 profile 기록·측정값·저장 형식은 바꾸지 않는다.

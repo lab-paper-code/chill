@@ -38,6 +38,14 @@ func (r *RunConfigResolver) Resolve(
 	if run == nil {
 		return ResolvedRun{}, errors.New("ProfilingRun is required")
 	}
+	// Cadence is server-resolved for public standalone input. Only an admitted
+	// measurement root may deliver its already-frozen child execution body.
+	if run.Spec.Measurement.Cadence != nil && !ownedByMeasurementRoot(run) {
+		return ResolvedRun{}, profiler.NewTerminalResolutionError(
+			profiler.ResolutionReasonInvalidRunSpec,
+			errors.New("standalone ProfilingRun cannot supply cadence; actual serving trace is resolved server-side"),
+		)
+	}
 	request, err := ProjectRequest(run.Spec)
 	if err != nil {
 		return ResolvedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)

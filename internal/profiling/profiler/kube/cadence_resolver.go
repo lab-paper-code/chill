@@ -100,35 +100,20 @@ type cadenceStageSource struct {
 	snapshot cadenceSnapshot
 }
 
-// ResolveCadence selects the latest completed, UID-pinned recorded input
-// population deterministically. Once selected, missing evidence is a bootstrap
-// prerequisite, never a reason to silently revive a different/older context.
+// ResolveCadence selects the newest intact completed source in the requested
+// frozen input population. Evidence errors in that source remain fail-closed.
 func (r *KubernetesCadenceResolver) ResolveCadence(ctx context.Context, config profilingrun.RunConfig) (map[int]*firstfloor.CadenceContract, error) {
-	sources, err := r.completedCadenceSources(ctx)
+	sources, err := r.completedCadenceSources(ctx, &config)
 	if err != nil {
 		return nil, err
 	}
-	for _, source := range sources {
-		scenario, err := r.cadenceScenario(ctx, source.stage)
-		if err != nil {
-			return nil, err
-		}
-		if !cadenceScenarioMatches(scenario, &config) {
-			continue
-		}
-		if err := r.loadCadenceSnapshot(ctx, &source, scenario); err != nil {
-			return nil, err
-		}
-		frozen := source.snapshot.Scenarios[string(scenario.UID)]
-		if !cadencePopulationMatches(frozen.Workloads, &config) {
-			continue
-		}
-		return r.resolveStage(ctx, &config, &source)
+	if len(sources) == 0 {
+		return nil, profiler.MissingServingTrace("no completed retained Evaluation serving trace matches Workload %s and its input population", config.Measurement.WorkloadName)
 	}
-	return nil, profiler.MissingServingTrace("no completed retained Evaluation serving trace matches Workload %s and its input population", config.Measurement.WorkloadName)
+	return r.resolveStage(ctx, &config, &sources[0])
 }
 
-func (r *KubernetesCadenceResolver) completedCadenceSources(ctx context.Context) ([]cadenceStageSource, error) {
+func (r *KubernetesCadenceResolver) completedCadenceSources(ctx context.Context, config *profilingrun.RunConfig) ([]cadenceStageSource, error) {
 	var runs api.EvaluationRunList
 	if err := r.reader.List(ctx, &runs, client.InNamespace(r.namespace)); err != nil {
 		return nil, fmt.Errorf("list retained cadence EvaluationRuns: %w", err)
@@ -139,19 +124,46 @@ func (r *KubernetesCadenceResolver) completedCadenceSources(ctx context.Context)
 		if run.UID == "" || run.Status.FinishedAt == nil || !cadenceCompleted(run.Status.Conditions) {
 			continue
 		}
-		for _, child := range run.Status.ChildRefs {
-			stage := &api.EvaluationStage{}
-			if err := r.reader.Get(ctx, types.NamespacedName{Namespace: r.namespace, Name: child.Name}, stage); err != nil {
-				if apierrors.IsNotFound(err) {
-					return nil, profiler.MissingServingTrace("retained EvaluationStage %s is absent", child.Name)
+		// Run templates and frozen inputs identify the population without
+		// requiring historical children belonging to other populations.
+		var candidates []cadenceStageSource
+		for _, template := range run.Spec.Stages {
+			scenario, err := r.cadenceScenario(ctx, template.LoadScenarioRef)
+			if err != nil {
+				return nil, err
+			}
+			if !cadenceScenarioMatches(scenario, config) {
+				continue
+			}
+			source := cadenceStageSource{run: run}
+			if err := r.loadCadenceSnapshot(ctx, &source, scenario); err != nil {
+				return nil, err
+			}
+			frozen := source.snapshot.Scenarios[string(scenario.UID)]
+			if cadencePopulationMatches(frozen.Workloads, frozen.Spec.DatasetRefs, config) {
+				candidates = append(candidates, source)
+			}
+		}
+		if len(candidates) == 0 {
+			continue
+		}
+		stages, err := r.completedCadenceStages(ctx, run)
+		if err != nil {
+			var prerequisite *profiler.BootstrapServingTraceError
+			if errors.As(err, &prerequisite) {
+				continue // A defective Run does not invalidate another intact Run.
+			}
+			return nil, err
+		}
+		for _, stage := range stages {
+			for _, source := range candidates {
+				frozen, found := source.snapshot.Scenarios[string(stage.Spec.LoadScenarioRef.UID)]
+				if found && frozen.Ref == stage.Spec.LoadScenarioRef &&
+					cadencePopulationMatches(frozen.Workloads, frozen.Spec.DatasetRefs, config) {
+					source.stage = stage
+					sources = append(sources, source)
+					break
 				}
-				return nil, fmt.Errorf("get cadence EvaluationStage: %w", err)
-			}
-			if stage.UID != child.UID || stage.Spec.StageID != child.StageID || !cadenceOwnedBy(stage, run) {
-				return nil, profiler.MissingServingTrace("EvaluationStage is not pinned to retained parent %s", run.Name)
-			}
-			if stage.Status.FinishedAt != nil && cadenceCompleted(stage.Status.Conditions) {
-				sources = append(sources, cadenceStageSource{run: run, stage: stage})
 			}
 		}
 	}
@@ -165,16 +177,46 @@ func (r *KubernetesCadenceResolver) completedCadenceSources(ctx context.Context)
 	return sources, nil
 }
 
-func (r *KubernetesCadenceResolver) cadenceScenario(ctx context.Context, stage *api.EvaluationStage) (*api.LoadScenario, error) {
+// completedCadenceStages screens the whole candidate Run before any child can
+// become the chosen source. Missing or changed children exclude only this Run.
+func (r *KubernetesCadenceResolver) completedCadenceStages(ctx context.Context, run *api.EvaluationRun) ([]*api.EvaluationStage, error) {
+	var stages []*api.EvaluationStage
+	for _, child := range run.Status.ChildRefs {
+		stage := &api.EvaluationStage{}
+		if err := r.reader.Get(ctx, types.NamespacedName{Namespace: r.namespace, Name: child.Name}, stage); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, profiler.MissingServingTrace("retained EvaluationStage %s is absent", child.Name)
+			}
+			return nil, fmt.Errorf("get cadence EvaluationStage: %w", err)
+		}
+		if stage.UID != child.UID || stage.Spec.StageID != child.StageID || !cadenceOwnedBy(stage, run) {
+			return nil, profiler.MissingServingTrace("EvaluationStage is not pinned to retained parent %s", run.Name)
+		}
+		for _, template := range run.Spec.Stages {
+			if template.ID == child.StageID && stage.Spec.LoadScenarioRef != template.LoadScenarioRef {
+				return nil, profiler.MissingServingTrace("LoadScenario is not pinned to retained parent %s", run.Name)
+			}
+		}
+		if stage.Spec.InputSnapshotRef != *run.Status.InputSnapshotRef {
+			return nil, profiler.MissingServingTrace("stage input snapshot is not pinned to the retained parent")
+		}
+		if stage.Status.FinishedAt != nil && cadenceCompleted(stage.Status.Conditions) {
+			stages = append(stages, stage)
+		}
+	}
+	return stages, nil
+}
+
+func (r *KubernetesCadenceResolver) cadenceScenario(ctx context.Context, ref api.EvaluationObjectReference) (*api.LoadScenario, error) {
 	scenario := &api.LoadScenario{}
-	if err := r.reader.Get(ctx, types.NamespacedName{Namespace: r.namespace, Name: stage.Spec.LoadScenarioRef.Name}, scenario); err != nil {
+	if err := r.reader.Get(ctx, types.NamespacedName{Namespace: r.namespace, Name: ref.Name}, scenario); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, profiler.MissingServingTrace("retained LoadScenario %s is absent", stage.Spec.LoadScenarioRef.Name)
+			return nil, profiler.MissingServingTrace("retained LoadScenario %s is absent", ref.Name)
 		}
 		return nil, fmt.Errorf("get cadence LoadScenario: %w", err)
 	}
-	if scenario.UID != stage.Spec.LoadScenarioRef.UID {
-		return nil, profiler.MissingServingTrace("LoadScenario UID changed for stage %s", stage.Name)
+	if scenario.UID != ref.UID {
+		return nil, profiler.MissingServingTrace("LoadScenario UID changed for %s", ref.Name)
 	}
 	return scenario, nil
 }
@@ -188,19 +230,16 @@ func cadenceScenarioMatches(scenario *api.LoadScenario, config *profilingrun.Run
 }
 
 func (r *KubernetesCadenceResolver) loadCadenceSnapshot(ctx context.Context, source *cadenceStageSource, scenario *api.LoadScenario) error {
-	run, stage := source.run, source.stage
+	run := source.run
 	if run.Status.FrozenConfig == nil || run.Status.InputSnapshotRef == nil {
 		return profiler.MissingServingTrace("retained EvaluationRun %s has no frozen evidence binding/input snapshot", run.Name)
-	}
-	if stage.Spec.InputSnapshotRef != *run.Status.InputSnapshotRef {
-		return profiler.MissingServingTrace("stage input snapshot is not pinned to the retained parent")
 	}
 	objects, err := r.evidence(ctx, run)
 	if err != nil {
 		return err
 	}
 	var snapshot cadenceSnapshot
-	if err := readCadenceJSON(ctx, objects, stage.Spec.InputSnapshotRef, &snapshot); err != nil {
+	if err := readCadenceJSON(ctx, objects, *run.Status.InputSnapshotRef, &snapshot); err != nil {
 		return cadenceReadError("input snapshot", err)
 	}
 	if snapshot.SchemaVersion != "evaluation-snapshot.v2alpha1" || snapshot.RunUID != run.UID {
@@ -214,17 +253,19 @@ func (r *KubernetesCadenceResolver) loadCadenceSnapshot(ctx context.Context, sou
 	return nil
 }
 
-func cadencePopulationMatches(workloads []cadencePopulationWorkload, config *profilingrun.RunConfig) bool {
-	population := false
+func cadencePopulationMatches(workloads []cadencePopulationWorkload, datasets map[string]api.EvaluationObjectReference, config *profilingrun.RunConfig) bool {
+	dataset, found := datasets[config.Measurement.WorkloadName]
+	if !found || config.Measurement.Dataset == nil || dataset.Name != config.Measurement.Dataset.Name || string(dataset.UID) != config.Measurement.Dataset.UID {
+		return false
+	}
 	for _, workload := range workloads {
 		if workload.UID == config.Measurement.WorkloadUID && workload.Name == config.Measurement.WorkloadName &&
 			workload.Model != nil && workload.Model.Name == config.State.Model && string(workload.Model.UID) == config.Candidate.Inputs.ModelSpec.UID &&
-			workload.Preprocessor != nil && workload.Preprocessor.Name == config.State.Preprocessor.Name && string(workload.Preprocessor.UID) == config.State.Preprocessor.UID &&
-			workload.Dataset != nil && config.Measurement.Dataset != nil && workload.Dataset.Name == config.Measurement.Dataset.Name && string(workload.Dataset.UID) == config.Measurement.Dataset.UID {
-			population = true
+			workload.Preprocessor != nil && workload.Preprocessor.Name == config.State.Preprocessor.Name && string(workload.Preprocessor.UID) == config.State.Preprocessor.UID {
+			return true
 		}
 	}
-	return population
+	return false
 }
 
 func cadenceCompleted(conditions []metav1.Condition) bool {

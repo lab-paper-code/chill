@@ -94,6 +94,17 @@ Serving catalog identities come from the existing observation-store listing,
 while Evaluation evidence uses its own frozen store binding and credentials.
 Missing attributable evidence reports `BootstrapServingTracePrerequisite`; there
 is no client-supplied cadence or rate-derived/default gap.
+An unowned standalone ProfilingRun is rejected if it supplies `measurement.cadence`,
+even if its spec claims a frozen Workload UID. Without that field it resolves the
+actual source server-side. Only a measurement-root controller reference with its
+API kind, nonempty root name and UID admits delivery of an already-frozen child
+body; that child does not re-read live Workload or trace evidence.
+Trace candidates are scoped by the frozen producer population first, using its
+actual `Spec.DatasetRefs[workload]`, not the applied Workload's dataset. A Run
+with defective child-stage identity is excluded individually; it cannot poison
+another population or an intact Run in the same population. The newest intact
+candidate is selected deterministically, then its source evidence remains
+strictly checked without a synthetic/default source.
 
 The pure profiler trace join keeps final HTTP identity authoritative, enriches
 only missing native fields, and retains partial/unknown physical batches before

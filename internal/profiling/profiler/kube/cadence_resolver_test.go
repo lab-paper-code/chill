@@ -33,6 +33,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -184,7 +185,232 @@ func TestRetainedCadenceZeroLoadSeparatorIsNotAPacingPopulation(t *testing.T) {
 	}
 }
 
+func TestRetainedCadenceExcludesOnlyDefectiveRun(t *testing.T) {
+	for _, defect := range []string{"unrelated-missing", "matching-missing", "matching-uid", "matching-owner", "matching-snapshot"} {
+		t.Run(defect, func(t *testing.T) {
+			config, _ := servingCadenceRunFixture(t)
+			resolver, _ := retainedServingCadenceFixtureWith(t, config, nil, func(reader client.Client, data map[string][]byte) {
+				ctx := context.Background()
+				var original api.EvaluationRun
+				if err := reader.Get(ctx, types.NamespacedName{Namespace: "system", Name: "evaluation"}, &original); err != nil {
+					t.Fatal(err)
+				}
+				broken := original.DeepCopy()
+				broken.Name, broken.UID, broken.ResourceVersion = "broken-newer", "broken-newer-run", ""
+				finished := metav1.NewTime(original.Status.FinishedAt.Add(time.Hour))
+				broken.Status.FinishedAt = &finished
+				broken.Status.ChildRefs[0].Name = "broken-stage"
+				broken.Status.ChildRefs[0].UID = "broken-stage-uid"
+				var snapshot map[string]any
+				ref := *original.Status.InputSnapshotRef
+				if err := json.Unmarshal(data[ref.Store+"/"+ref.Key], &snapshot); err != nil {
+					t.Fatal(err)
+				}
+				snapshot["runUID"] = string(broken.UID)
+				payload, err := json.Marshal(snapshot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ref.Key, ref.Size = "broken/input-snapshot.json", int64(len(payload))
+				data[ref.Store+"/"+ref.Key] = payload
+				broken.Status.InputSnapshotRef = &ref
+				if defect == "unrelated-missing" {
+					scenario := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "system", UID: "unrelated"}, Spec: api.LoadScenarioSpec{Workloads: []api.EvaluationWorkloadReference{{Name: "unrelated-u", UID: "unrelated-u", Generation: 1}}}}
+					broken.Spec.Stages[0].LoadScenarioRef = api.EvaluationObjectReference{Name: scenario.Name, UID: scenario.UID}
+					if err := reader.Create(ctx, scenario); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := reader.Create(ctx, broken); err != nil {
+					t.Fatal(err)
+				}
+				if defect == "unrelated-missing" || defect == "matching-missing" {
+					return
+				}
+				var stage api.EvaluationStage
+				if err := reader.Get(ctx, types.NamespacedName{Namespace: "system", Name: "stage"}, &stage); err != nil {
+					t.Fatal(err)
+				}
+				stage.Name, stage.UID, stage.ResourceVersion = "broken-stage", "broken-stage-uid", ""
+				stage.OwnerReferences[0].Name, stage.OwnerReferences[0].UID = broken.Name, broken.UID
+				stage.Spec.InputSnapshotRef = ref
+				stage.Status.FinishedAt = &finished
+				switch defect {
+				case "matching-uid":
+					stage.UID = "replaced-stage"
+				case "matching-owner":
+					stage.OwnerReferences[0].UID = "foreign-run"
+				case "matching-snapshot":
+					stage.Spec.InputSnapshotRef = *original.Status.InputSnapshotRef
+				}
+				if err := reader.Create(ctx, &stage); err != nil {
+					t.Fatal(err)
+				}
+			})
+			contracts, err := resolver.ResolveCadence(context.Background(), config)
+			if err != nil {
+				t.Fatalf("defective Run poisoned the intact matching population: %v", err)
+			}
+			if len(contracts) == 0 {
+				t.Fatal("intact Run supplied no cadence")
+			}
+			for _, contract := range contracts {
+				if !strings.Contains(contract.Target.LoadContext, config.Measurement.Dataset.Name) {
+					t.Fatal("intact source lost its input population")
+				}
+			}
+		})
+	}
+}
+
+func TestRetainedCadenceUsesProducerDatasetNotAppliedWorkloadDataset(t *testing.T) {
+	config, _ := servingCadenceRunFixture(t)
+	resolver, _ := retainedServingCadenceFixtureWith(t, config, func(scenario *api.LoadScenario) {
+		scenario.Spec.DatasetRefs[config.Measurement.WorkloadName] = api.EvaluationObjectReference{Name: "actual-producer-dataset-b", UID: "actual-producer-dataset-b-uid"}
+		if err := scenario.Spec.Validate(); err != nil {
+			t.Fatalf("distinct producer dataset must remain a valid scenario: %v", err)
+		}
+	}, nil)
+	_, err := resolver.ResolveCadence(context.Background(), config)
+	if !errors.Is(err, profiler.ErrBootstrapServingTraceRequired) {
+		t.Fatalf("producer Dataset B was accepted for profiling Dataset A: %v", err)
+	}
+	config.Measurement.Dataset.Name = "actual-producer-dataset-b"
+	config.Measurement.Dataset.UID = "actual-producer-dataset-b-uid"
+	if _, err := resolver.ResolveCadence(context.Background(), config); err != nil {
+		t.Fatalf("actual producer Dataset B was rejected in favor of applied Workload Dataset A: %v", err)
+	}
+}
+
+func TestRetainedCadenceSelectedStageIdentityFailsClosed(t *testing.T) {
+	for _, defect := range []string{"missing", "uid", "snapshot"} {
+		t.Run(defect, func(t *testing.T) {
+			config, _ := servingCadenceRunFixture(t)
+			resolver, _ := retainedServingCadenceFixtureWith(t, config, nil, func(reader client.Client, _ map[string][]byte) {
+				ctx := context.Background()
+				var stage api.EvaluationStage
+				if err := reader.Get(ctx, types.NamespacedName{Namespace: "system", Name: "stage"}, &stage); err != nil {
+					t.Fatal(err)
+				}
+				if defect == "missing" {
+					if err := reader.Delete(ctx, &stage); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				if defect == "uid" {
+					stage.UID = "replacement"
+				} else {
+					stage.Spec.InputSnapshotRef.Key = "different-input-snapshot.json"
+				}
+				if err := reader.Update(ctx, &stage); err != nil {
+					t.Fatal(err)
+				}
+			})
+			_, err := resolver.ResolveCadence(context.Background(), config)
+			if !errors.Is(err, profiler.ErrBootstrapServingTraceRequired) {
+				t.Fatalf("defective only source did not fail closed: %v", err)
+			}
+		})
+	}
+}
+
+func TestRetainedCadenceNewestMatchingStageIsDeterministic(t *testing.T) {
+	for _, newer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("later-finish-%t", newer), func(t *testing.T) {
+			config, _ := servingCadenceRunFixture(t)
+			resolver, _ := retainedServingCadenceFixtureWith(t, config, nil, func(reader client.Client, data map[string][]byte) {
+				ctx := context.Background()
+				var run api.EvaluationRun
+				var stage api.EvaluationStage
+				if err := reader.Get(ctx, types.NamespacedName{Namespace: "system", Name: "evaluation"}, &run); err != nil {
+					t.Fatal(err)
+				}
+				if err := reader.Get(ctx, types.NamespacedName{Namespace: "system", Name: "stage"}, &stage); err != nil {
+					t.Fatal(err)
+				}
+				stage.Name, stage.UID, stage.ResourceVersion = "z-stage", "z-stage-uid", ""
+				if newer {
+					finished := metav1.NewTime(stage.Status.FinishedAt.Add(time.Hour))
+					stage.Status.FinishedAt = &finished
+				}
+				ref := *stage.Status.Procedures[0].EvidenceRef
+				var manifest map[string]any
+				if err := json.Unmarshal(data[ref.Store+"/"+ref.Key], &manifest); err != nil {
+					t.Fatal(err)
+				}
+				manifest["stageUID"] = string(stage.UID)
+				body, err := json.Marshal(manifest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ref.Key, ref.Size = "z-stage/result.json", int64(len(body))
+				data[ref.Store+"/"+ref.Key] = body
+				stage.Status.Procedures[0].EvidenceRef = &ref
+				if err := reader.Create(ctx, &stage); err != nil {
+					t.Fatal(err)
+				}
+				run.Status.ChildRefs = append(run.Status.ChildRefs, api.EvaluationChildReference{StageID: stage.Spec.StageID, EvaluationObjectReference: api.EvaluationObjectReference{Name: stage.Name, UID: stage.UID}})
+				if err := reader.Update(ctx, &run); err != nil {
+					t.Fatal(err)
+				}
+			})
+			contracts, err := resolver.ResolveCadence(context.Background(), config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, contract := range contracts {
+				for _, source := range contract.Provenance.Sources {
+					if !strings.HasPrefix(source.TrialID, "evaluation-run/z-stage-uid/") {
+						t.Fatalf("selected non-newest source: %s", source.TrialID)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRetainedCadenceSelectedEvidenceErrorsRemainStrict(t *testing.T) {
+	for _, defect := range []string{"manifest-identity", "collection-incomplete", "phase-window"} {
+		t.Run(defect, func(t *testing.T) {
+			config, _ := servingCadenceRunFixture(t)
+			resolver, data := retainedServingCadenceFixture(t, config)
+			key := "evaluation/recorded/stage/result.json"
+			if defect == "collection-incomplete" {
+				key = "evaluation/recorded/stage/artifacts/measured/raw-source-index.json"
+			} else if defect == "phase-window" {
+				key = "evaluation/recorded/stage/artifacts/measured/phase.json"
+			}
+			var body map[string]any
+			if err := json.Unmarshal(data[key], &body); err != nil {
+				t.Fatal(err)
+			}
+			switch defect {
+			case "manifest-identity":
+				body["stageUID"] = "foreign-stage"
+			case "collection-incomplete":
+				body["complete"] = false
+			case "phase-window":
+				body["endUTC"] = body["startUTC"]
+			}
+			payload, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data[key] = payload
+			if _, err := resolver.ResolveCadence(context.Background(), config); err == nil {
+				t.Fatal("chosen source evidence corruption was ignored")
+			}
+		})
+	}
+}
+
 func retainedServingCadenceFixture(t *testing.T, config profilingrun.RunConfig, parts ...api.LoadScenarioPart) (*profilerkube.KubernetesCadenceResolver, map[string][]byte) {
+	t.Helper()
+	return retainedServingCadenceFixtureWith(t, config, nil, nil, parts...)
+}
+
+func retainedServingCadenceFixtureWith(t *testing.T, config profilingrun.RunConfig, scenarioChange func(*api.LoadScenario), arrange func(client.Client, map[string][]byte), parts ...api.LoadScenarioPart) (*profilerkube.KubernetesCadenceResolver, map[string][]byte) {
 	t.Helper()
 	start := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
 	data := map[string][]byte{}
@@ -223,6 +449,9 @@ func retainedServingCadenceFixture(t *testing.T, config profilingrun.RunConfig, 
 		ArrivalDistribution: map[string]string{workload: "constant"}, Seeds: map[string]api.EvaluationSeed{workload: "0"},
 		DatasetRefs: map[string]api.EvaluationObjectReference{workload: {Name: config.Measurement.Dataset.Name, UID: types.UID(config.Measurement.Dataset.UID)}},
 	}}
+	if scenarioChange != nil {
+		scenarioChange(scenario)
+	}
 	schedule := map[string]any{"id": "recorded-row", "seconds": total.Seconds(), "parts": scheduleParts, "traces": map[string]any{workload: map[string]any{"offsetsNS": offsets, "offered": len(offsets)}}}
 	snapshot := put("retained/input-snapshot.json", map[string]any{
 		"schemaVersion": "evaluation-snapshot.v2alpha1", "runUID": "evaluation-run",
@@ -278,13 +507,16 @@ func retainedServingCadenceFixture(t *testing.T, config profilingrun.RunConfig, 
 	}
 	data["observations/serving/observations.v1alpha5/20261105T10/catalog.jsonl.gz"] = gzipCadenceBytes(t, catalog)
 	owner := true
-	run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "evaluation", Namespace: "system", UID: "evaluation-run"}, Spec: api.EvaluationRunSpec{EvidenceStore: "evaluation"}, Status: api.EvaluationRunStatus{FinishedAt: &finished, FrozenConfig: &api.EvaluationFrozenConfig{}, InputSnapshotRef: &snapshot, Conditions: []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionTrue}}, ChildRefs: []api.EvaluationChildReference{{StageID: "stage-id", EvaluationObjectReference: api.EvaluationObjectReference{Name: "stage", UID: "stage-uid"}}}}}
+	run := &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "evaluation", Namespace: "system", UID: "evaluation-run"}, Spec: api.EvaluationRunSpec{EvidenceStore: "evaluation", Stages: []api.StageTemplate{{ID: "stage-id", LoadScenarioRef: api.EvaluationObjectReference{Name: scenario.Name, UID: scenario.UID}}}}, Status: api.EvaluationRunStatus{FinishedAt: &finished, FrozenConfig: &api.EvaluationFrozenConfig{}, InputSnapshotRef: &snapshot, Conditions: []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionTrue}}, ChildRefs: []api.EvaluationChildReference{{StageID: "stage-id", EvaluationObjectReference: api.EvaluationObjectReference{Name: "stage", UID: "stage-uid"}}}}}
 	stage := &api.EvaluationStage{ObjectMeta: metav1.ObjectMeta{Name: "stage", Namespace: "system", UID: "stage-uid", OwnerReferences: []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "EvaluationRun", Name: run.Name, UID: run.UID, Controller: &owner}}}, Spec: api.EvaluationStageSpec{StageID: "stage-id", Row: "recorded-row", LoadScenarioRef: api.EvaluationObjectReference{Name: scenario.Name, UID: scenario.UID}, InputSnapshotRef: snapshot, Harness: api.EvaluationImage{SourceSHA: "recorded-source"}}, Status: api.EvaluationStageStatus{FinishedAt: &finished, Conditions: []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionTrue}}, Procedures: []api.EvaluationProcedure{{Step: "stage", EvidenceRef: &manifest}}}}
 	scheme := runtime.NewScheme()
 	if err := api.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(run, stage, scenario).Build()
+	if arrange != nil {
+		arrange(reader, data)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Query().Get("list-type") == "2" {
 			type object struct {

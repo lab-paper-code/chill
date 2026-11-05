@@ -111,12 +111,6 @@ func ChooseBatch(p Policy, requests []RequestState, gapDecision *int64) BatchCho
 	choice := chooseBatch(p, requests, gapDecision)
 	choice.DecisionIdleNanos = gapDecision
 	choice.DecisionIdleApproximate = true
-	for _, b := range p.Batches {
-		if b.Size == choice.Size {
-			choice.ConditionalSupport = b.Distribution.support(gapDecision)
-			break
-		}
-	}
 	return choice
 }
 
@@ -222,7 +216,6 @@ func energyGainWait(p Policy, requests []RequestState, head, count int, availabl
 			choice.Size = 0
 			choice.WaitMS = fill
 			choice.Reason = "measured_energy_gain_fill"
-			choice.ConditionalSupport = b.Distribution.support(futureGap)
 			return choice
 		}
 	}

@@ -246,6 +246,66 @@ func TestServingCadenceFreezesEachPlannedBatchBeforeChildren(t *testing.T) {
 	}
 }
 
+func TestServingCadenceAlternatingCompleteBatchSizes(t *testing.T) {
+	config, trace := cadenceTraceFixture()
+	config.Measurement.WarmupBatchSizes = []int{1, 2, 4}
+	for index, size := range []int{1, 2, 1, 2} {
+		batch := uint64(index + 1)
+		var gap *int64
+		if index > 0 {
+			gap = cadenceInt(int64(size * 11))
+		}
+		for member := range size {
+			row := cadenceNativeRow(batch, trace.Phases[0].Start.Add(time.Duration(index+1)*time.Millisecond), gap)
+			row.RequestID = fmt.Sprintf("batch-%d-member-%d", batch, member)
+			row.BatchSize = size
+			trace.Rows = append(trace.Rows, row)
+		}
+	}
+	if len(trace.Rows) != 6 {
+		t.Fatalf("alternating complete exchanges retained %d members, want 6", len(trace.Rows))
+	}
+	contracts, err := BuildServingCadences(config, trace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, wantIDs := range map[int][]uint64{1: {3}, 2: {2, 4}, 4: {2, 3, 4}} {
+		contract := contracts[k]
+		if contract == nil || len(contract.Provenance.Draws) == 0 || len(contract.Provenance.Phases) != 1 {
+			t.Fatalf("K%d has no nonempty frozen law: %+v", k, contract)
+		}
+		elements := contract.Provenance.Phases[0].Elements
+		if len(elements) != len(wantIDs) {
+			t.Fatalf("K%d retained %d gaps, want batches %v", k, len(elements), wantIDs)
+		}
+		for index, id := range wantIDs {
+			element := elements[index]
+			observedK := 2
+			if id == 3 {
+				observedK = 1
+			}
+			source := contract.Provenance.Sources[element.SourceIndex]
+			if element.BatchID != id || element.GapNanos != int64(observedK*11) ||
+				source.ObservedBatch != observedK || source.Borrowed != (k == 4) {
+				t.Fatalf("K%d gap %d lost actual membership or donor label: element=%+v source=%+v", k, index, element, source)
+			}
+		}
+		for index := range contract.Provenance.Draws {
+			got := contract.Draw(uint64(index)).TargetIdleNanos
+			if k != 4 && got != int64(k*11) || k == 4 && got != 11 && got != 22 {
+				t.Fatalf("K%d drew %dns outside its selected actual gap law", k, got)
+			}
+		}
+	}
+	// Retain K1 -> incomplete K2 -> K1. Neither adjacent gap may survive,
+	// and the complete K1 exchanges must not be bridged across batch 2.
+	trace.Rows = trace.Rows[:4]
+	trace.Rows = append(trace.Rows[:2], trace.Rows[3:]...)
+	if _, err := BuildServingCadences(config, trace); !errors.Is(err, ErrBootstrapServingTraceRequired) {
+		t.Fatalf("missing member in mixed-K sequence manufactured a gap: %v", err)
+	}
+}
+
 func cadenceTraceFixture() (profilingrun.RunConfig, CadenceTrace) {
 	start := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
 	config := profilingrun.RunConfig{TargetNode: profilingrun.NodeSnapshot{UID: "node"}, Candidate: profilingrun.CandidateIdentity{ExecutionPath: "cpu"}, State: profilingrun.ExecutionState{PowerMode: "fixed"}, Measurement: profilingrun.MeasurementContract{WorkloadUID: "workload", Batch: 1, MinServiceSamples: 59}}
