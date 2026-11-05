@@ -447,6 +447,42 @@ func TestForeignMetadataAndDiagnosticsCannotVetoMeasurementDeletion(t *testing.T
 	}
 }
 
+func failedPreJobDeletionTask(root string) *api.BatchEnergyOptimization {
+	task := terminalDeletionTask()
+	task.Status.Phase = "Failed"
+	task.Status.Outcome = "RetryLimitExhausted"
+	task.Status.Result = nil
+	task.Status.Conditions[0].Status = meta.ConditionFalse
+	task.Status.Conditions[0].Reason = task.Status.Outcome
+	if root == "" {
+		return task
+	}
+	task.Status.Outcome = profiler.ResolutionReasonExecutionPolicyInvalid
+	task.Status.Conditions[0].Reason = task.Status.Outcome
+	switch root {
+	case "stale status":
+		task.Status.ObservedGeneration = 0
+	case "stale condition":
+		task.Status.Conditions[0].ObservedGeneration = 0
+	case "unversioned":
+		task.Generation = 0
+		task.Status.ObservedGeneration = 0
+		task.Status.Conditions[0].ObservedGeneration = 0
+	case "different outcome":
+		task.Status.Outcome = "DifferentOutcome"
+	case "true condition":
+		task.Status.Conditions[0].Status = meta.ConditionTrue
+	case "missing condition":
+		task.Status.Conditions = nil
+	case "active phase":
+		task.Status.Phase = "Pending"
+	case "unsupported reason":
+		task.Status.Outcome = "CurvePlanResolutionFailed"
+		task.Status.Conditions[0].Reason = task.Status.Outcome
+	}
+	return task
+}
+
 func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 	cases := []struct {
 		name, execution, reason, root string
@@ -475,37 +511,7 @@ func TestFailedCampaignWithPublishedPreJobFailureCanBeDeleted(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			task := terminalDeletionTask()
-			task.Status.Phase = "Failed"
-			task.Status.Outcome = "RetryLimitExhausted"
-			task.Status.Result = nil
-			task.Status.Conditions[0].Status = meta.ConditionFalse
-			task.Status.Conditions[0].Reason = task.Status.Outcome
-			if tc.root != "" {
-				task.Status.Outcome = profiler.ResolutionReasonExecutionPolicyInvalid
-				task.Status.Conditions[0].Reason = task.Status.Outcome
-				switch tc.root {
-				case "stale status":
-					task.Status.ObservedGeneration = 0
-				case "stale condition":
-					task.Status.Conditions[0].ObservedGeneration = 0
-				case "unversioned":
-					task.Generation = 0
-					task.Status.ObservedGeneration = 0
-					task.Status.Conditions[0].ObservedGeneration = 0
-				case "different outcome":
-					task.Status.Outcome = "DifferentOutcome"
-				case "true condition":
-					task.Status.Conditions[0].Status = meta.ConditionTrue
-				case "missing condition":
-					task.Status.Conditions = nil
-				case "active phase":
-					task.Status.Phase = "Pending"
-				case "unsupported reason":
-					task.Status.Outcome = "CurvePlanResolutionFailed"
-					task.Status.Conditions[0].Reason = task.Status.Outcome
-				}
-			}
+			task := failedPreJobDeletionTask(tc.root)
 			run, _ := ownedDeletionRun(task)
 			run.Generation = 1
 			reason := profiler.ResolutionReasonActuationPolicyInvalid
