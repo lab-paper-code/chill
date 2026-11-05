@@ -147,7 +147,7 @@ def _collect_streams(folder, io, hours, streams, index, deadline):
         if inventory.get('hour') != value or inventory.get('status') not in ('open', 'closed-local', 'archived'):
             raise ValueError('Invalid exact-hour raw API inventory')
         # Keep recovery facts even when the hour has no streams to download.
-        for gap in inventory.get('gaps', []):
+        for gap in inventory.get('gaps') or []:
             index['gaps'].append({**gap, 'hour': value, 'origin': 'api',
                                   'endpoint': RAW_PATH + '?hour=' + value})
         kinds = {entry['kind']: entry for entry in inventory['kinds']}

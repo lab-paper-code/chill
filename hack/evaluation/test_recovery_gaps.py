@@ -32,6 +32,7 @@ class RecoveryGapTests(unittest.TestCase):
                                  'node': {'name': 'serving', 'uid': 'serving-uid'}}, True, 'NOT_EVALUATED'),
             ('gap-only', tail, False, 'NOT_EVALUATED'),
             ('ordinary-missing-final', None, True, 'FAIL'),
+            ('ordinary-missing-final-empty', None, True, 'FAIL'),
             ('ordinary-slo-failure', None, True, 'FAIL'),
             ('gap-ends-at-start', {**tail, 'from': '2026-11-02T23:59:55Z', 'to': START}, True, 'FAIL'),
             ('gap-starts-at-end', {**tail, 'from': END, 'to': '2026-11-03T00:00:15Z'}, True, 'FAIL'),
@@ -67,7 +68,7 @@ class RecoveryGapTests(unittest.TestCase):
                 inventory = {'hour': '20261103T00', 'at': '2026-11-03T00:02:00Z', 'status': 'closed-local',
                              'kinds': [{'kind': stream, 'available': available if stream == 'requests' else False,
                                         'segments': [], 'archive': None} for stream in ('requests', 'resources', 'scheduler')],
-                             'gaps': [gap] if gap else []}
+                             'gaps': [gap] if gap else [] if label == 'ordinary-missing-final-empty' else None}
                 class Handler(BaseHTTPRequestHandler):
                     def do_GET(self):
                         if self.path.startswith('/api/v1/observations/raw?'):
