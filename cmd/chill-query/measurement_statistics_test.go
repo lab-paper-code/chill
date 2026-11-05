@@ -798,7 +798,6 @@ func statisticsFixture(
 				},
 			},
 			TrialsPerBatch: int32(trialsPerBatch), PointPolicy: api.BatchEnergyOptimizationPointPolicySpec{ConfidenceLevel: "0.8"},
-			BatchSizes: []int32{1, 2},
 			ActiveProtocol: api.ActiveProtocolSpec{
 				Workload:                 base.Measurement.WorkloadName,
 				WarmupIterations:         int32(base.Measurement.WarmupIterations),
@@ -857,7 +856,9 @@ func statisticsFixture(
 				DurationToleranceSeconds: ptr.To(config.Measurement.DurationToleranceSeconds),
 				WarmupIterations:         int32(config.Measurement.WarmupIterations),
 				StartupWarmupIterations:  int32(config.Measurement.StartupWarmupIterations),
-				WarmupBatchSizes:         append([]int32(nil), cr.Spec.BatchSizes...),
+			}
+			for _, batch := range config.Measurement.WarmupBatchSizes {
+				measurement.WarmupBatchSizes = append(measurement.WarmupBatchSizes, int32(batch))
 			}
 			if isIdle {
 				mode = campaign.WorkloadModeIdle
