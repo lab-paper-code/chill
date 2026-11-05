@@ -17,7 +17,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
-	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
