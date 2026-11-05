@@ -67,50 +67,74 @@ func evaluationFixture(t *testing.T) (*Service, EvaluationRequest) {
 	service := &Service{reader: native, client: native, namespace: "ns", store: "evidence"}
 	return service, EvaluationRequest{Name: "run", Spec: spec}
 }
+
+// preflightFault applies one boundary fault and returns an object to create, if any.
+func preflightFault(t *testing.T, service *Service, request *EvaluationRequest, fault string) client.Object {
+	t.Helper()
+	var object client.Object
+	switch fault {
+	case "pool":
+		object = &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "occupied", Namespace: "ns"},
+			Status: api.EvaluationRunStatus{Conditions: []metav1.Condition{{
+				Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue,
+			}}}}
+	case "load-generator":
+		object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			Name: "load-generator", Namespace: "ns", Labels: map[string]string{"edge.dacs.io/workload-role": "load-generator"},
+		}}
+	case "profiling":
+		object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}
+	case "idle-baseline":
+		// Defect 23: a measuring baseline launches its next run soon; it holds the pool like a BEO.
+		object = &api.ModelLoadedIdleBaseline{ObjectMeta: metav1.ObjectMeta{Name: "baseline", Namespace: "ns"},
+			Status: api.ModelLoadedIdleBaselineStatus{Phase: api.ModelLoadedIdleBaselinePhaseMeasuring}}
+	case "finished-parent-runs":
+		// A finished campaign's runs are judged through the campaign, not one by one.
+		parent := &api.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: "campaign", Namespace: "ns"},
+			Status: api.BatchEnergyOptimizationStatus{Phase: string(api.MeasurementPhaseComplete)}}
+		if err := service.client.Create(context.Background(), parent); err != nil {
+			t.Fatal(err)
+		}
+		object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "ns",
+			Labels: map[string]string{"edge.dacs.io/batch-energy-optimization": "campaign"}}}
+	case "other-jobs":
+		// Only load-generator Jobs block evaluation; other running Jobs never did.
+		object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "ns"}}
+	case "foreign-store":
+		// Defect 18: a Run naming another store would publish refs this server cannot read.
+		request.Spec.EvidenceStore = "chill-evidence-store"
+	case "shard-coverage":
+		// Defect 21: preflight applies the run's own coverage rule, not a weaker copy.
+		request.Spec.LoadGenerator.Shards["other"] = 1
+	case "operational-coverage":
+		config := &corev1.ConfigMap{}
+		key := client.ObjectKey{Namespace: "ns", Name: api.EvaluationConfigName}
+		if err := service.client.Get(context.Background(), key, config); err != nil {
+			t.Fatal(err)
+		}
+		config.Data["operational"] = `{"workloads":{"workload":{},"other":{}}}`
+		if err := service.client.Update(context.Background(), config); err != nil {
+			t.Fatal(err)
+		}
+	case "unready":
+		pod := &corev1.Pod{}
+		key := client.ObjectKey{Namespace: "ns", Name: "server"}
+		if err := service.client.Get(context.Background(), key, pod); err != nil {
+			t.Fatal(err)
+		}
+		pod.Status.Conditions[0].Status = corev1.ConditionFalse
+		if err := service.client.Status().Update(context.Background(), pod); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return object
+}
 func TestEvaluationPreflightBoundaries(t *testing.T) {
-	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready", "foreign-store", "shard-coverage", "operational-coverage"} {
+	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready", "foreign-store", "shard-coverage", "operational-coverage",
+		"idle-baseline", "finished-parent-runs", "other-jobs"} {
 		t.Run(fault, func(t *testing.T) {
 			service, request := evaluationFixture(t)
-			var object client.Object
-			switch fault {
-			case "pool":
-				object = &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "occupied", Namespace: "ns"},
-					Status: api.EvaluationRunStatus{Conditions: []metav1.Condition{{
-						Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue,
-					}}}}
-			case "load-generator":
-				object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-					Name: "load-generator", Namespace: "ns", Labels: map[string]string{"edge.dacs.io/workload-role": "load-generator"},
-				}}
-			case "profiling":
-				object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}
-			case "foreign-store":
-				// Defect 18: a Run naming another store would publish refs this server cannot read.
-				request.Spec.EvidenceStore = "chill-evidence-store"
-			case "shard-coverage":
-				// Defect 21: preflight applies the run's own coverage rule, not a weaker copy.
-				request.Spec.LoadGenerator.Shards["other"] = 1
-			case "operational-coverage":
-				config := &corev1.ConfigMap{}
-				key := client.ObjectKey{Namespace: "ns", Name: api.EvaluationConfigName}
-				if err := service.client.Get(context.Background(), key, config); err != nil {
-					t.Fatal(err)
-				}
-				config.Data["operational"] = `{"workloads":{"workload":{},"other":{}}}`
-				if err := service.client.Update(context.Background(), config); err != nil {
-					t.Fatal(err)
-				}
-			case "unready":
-				pod := &corev1.Pod{}
-				key := client.ObjectKey{Namespace: "ns", Name: "server"}
-				if err := service.client.Get(context.Background(), key, pod); err != nil {
-					t.Fatal(err)
-				}
-				pod.Status.Conditions[0].Status = corev1.ConditionFalse
-				if err := service.client.Status().Update(context.Background(), pod); err != nil {
-					t.Fatal(err)
-				}
-			}
+			object := preflightFault(t, service, &request, fault)
 			if object != nil {
 				if err := service.client.Create(context.Background(), object); err != nil {
 					t.Fatal(err)
@@ -126,7 +150,7 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 					failed = true
 				}
 			}
-			if failed != (fault != "none") {
+			if failed != (fault != "none" && fault != "finished-parent-runs" && fault != "other-jobs") {
 				t.Fatalf("checks=%+v", result.Checks)
 			}
 			if fault == "foreign-store" {
