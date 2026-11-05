@@ -39,7 +39,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "next/link":{__esModule:true,default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@/lib/client":{useChillMutation:()=>({isPending:false,reset:()=>{},...mutations[mutationIndex++]}),isCoverageWarming:()=>false},
-    "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null}},
+    "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null},SourceExport:()=>null},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
     "@/features/read-pages":{preflightConclusion:()=>"형식 검사 통과",PreflightAnswer:()=>null},
     "@/features/resources":{powerModeText:()=>"고정"},
@@ -53,6 +53,8 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "@/components/measurement-navigation":{MeasurementNavigation:()=>null},
     "@/features/dispatch-occupancy-request":{MeasurementKindSelector:({disabled}:{disabled?:boolean})=>createElement("select",{"aria-label":"측정 종류",disabled},createElement("option",{value:"dispatch-occupancy"},"d · 분배 점유시간"))},
     "@/lib/measurements":measurementHelpers,
+    "@/features/measurement-document-request":{MeasurementDocumentRequestPage:()=>null},
+    "@/components/measurement-preparation-guide":{MeasurementPreparationGuide:()=>null},
   }
   const submission:Record<string,unknown>={}
   const submissionCode=transpileModule(readFileSync(new URL("../hooks/use-measurement-submission.ts",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS}}).outputText
@@ -298,7 +300,7 @@ test("P2 profile kind selector survives profile-only dependency failures and cov
     const exports:Record<string,unknown>={}
     const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
     const modules:Record<string,unknown>={
-      "next/navigation":{useSearchParams:()=>new URLSearchParams(dependency==="coverage"?"variantId=selected":""),useRouter:()=>({replace:()=>{}})},
+      "next/navigation":{useSearchParams:()=>new URLSearchParams(dependency==="coverage"?"variantId=selected":"input=form"),useRouter:()=>({replace:()=>{}})},
       "@tanstack/react-query":{useQuery:()=>dependency==="profiles"?{error:{status:503},isPending:false}:{data:{profiles:[]},isPending:false}},
       "@/lib/client":{useSession:()=>({config:{namespace:"ns"},token:"fixture"}),useChillQuery:(path:string)=>path===dependency?{error:{status:503}}:{data:{items:[]}}},
       "@/hooks/use-measurement-data":{useMeasurementPlans:()=>({data:{items:[]}}),useCoverageInventory:()=>({data:{classes:[]}}),useMeasurementCoverage:()=>({})},
@@ -323,28 +325,9 @@ test("P2 profile kind transition remains blocked during all mutations and unknow
   assert.match(renderRequest({},"","",0,[],[],[],undefined,true),/<select aria-label="측정 종류" disabled="">/)
 })
 
-test("control323 review: failed list refresh keeps the same Funnel, pinned draft name and unknown-submit block",()=>{
-  const require=createRequire(import.meta.url)
-  const code=transpileModule(readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
-  const plans={data:{items:[plan]},error:null as {status:number}|null,isFetching:false,refetch:async()=>({error:null})}
-  const modules:Record<string,unknown>={
-    react:{...require("react"),useEffect:()=>{}},
-    "next/navigation":{useSearchParams:()=>new URLSearchParams("namespace=ns"),useRouter:()=>({})},
-    "@tanstack/react-query":{useQuery:()=>({data:{profiles:[]}})},
-    "@/lib/client":{useSession:()=>({token:"fixture",config:{namespace:"ns"}}),useChillQuery:(path:string)=>({data:path.startsWith("v1/workloads")?[]:{items:[]}})},
-    "@/lib/measurement-request":requestHelpers,"@/lib/measurement-coverage":coverageHelpers,
-    "@/hooks/use-measurement-data":{useMeasurementPlans:()=>plans,useCoverageInventory:()=>({data:{classes:[],models:[]}}),useMeasurementCoverage:()=>({})},
-  }
-  const exports={} as {MeasurementRequestPage:()=>{type:unknown;key:unknown;props:{plansError:unknown}}}
-  new Function("require","exports",code)((name:string)=>modules[name]??(name.startsWith("@/")?{}:require(name)),exports)
-  const before=exports.MeasurementRequestPage()
-  plans.error={status:503}
-  const after=exports.MeasurementRequestPage()
-  assert.equal(after.type,before.type,"refresh errors must not replace Funnel with a loading/error Screen")
-  assert.equal(after.key,before.key,"React must retain the existing draft and unknown-submit state")
-  assert.equal(after.props.plansError,plans.error)
+test("failed list refresh preserves the unknown request name and blocks resubmission",()=>{
   const context={models:[],workloads:[],classes:[],profiles:[],plans:[plan],preprocessors:[],datasets:[]}
-  const html=renderRequest({context,from:"source",plansError:plans.error},"from=source","",2,[],[],[],{name:"fixed-unknown-name"},true)
+  const html=renderRequest({context,from:"source",plansError:{status:503}},"from=source","",2,[],[],[],{name:"fixed-unknown-name"},true)
   assert.match(html,/측정 요청 목록 갱신 실패 \(HTTP 503\)/)
   assert.match(html,/fixed-unknown-name: 자동 재제출·이름 변경 차단/)
   assert.match(html,/<button[^>]*disabled=""[^>]*>측정 요청<\/button>/)

@@ -33,6 +33,49 @@ CHILL-internal Next App Router module, built independently and deployed within t
 HF/KServe/BentoML/MLflow에서 참고한 분리 원칙과 지원하지 않는 원격 입력은
 [고정 소스 링크와 CHILL 경계](../config/samples/catalog/README.md#참고한-외부-패턴과-chill-경계)에 모았다.
 
+### 프로파일 측정 요청 준비
+
+`/measurements/requests/new`의 준비 안내에서 등록된 자산과 측정 조건을 먼저 확인한다.
+Workload는 모델·처리 모듈·데이터셋을 연결한다. 자산 등록은
+`/settings?tab=models|preprocessors|datasets`, 서비스 연결 확인은 `/workloads`,
+이전 BEO(BatchEnergyOptimization) 요청 확인은 `/measurements/requests`를 사용한다.
+DeviceClass·Node·실행 경로·전력 모드 등록, 장비 가용성·플랫폼 권한은 관리자가 별도로 준비한다.
+목록 조회나 등록 성공만으로 실행 준비 완료를 판단하지 않는다.
+
+1. **직접 작성하기**는 실제 등록 선택지와 이전 측정 방식을 사용한다.
+   동일 조건의 성공 요청을 참고하거나 측정 담당자에게 조건을 받는다.
+   첫 측정에도 임의의 시간·수집 간격을 추천하거나 자동 주입하지 않는다.
+2. **YAML/JSON 가져오기**는 단일 `edge.dacs.io/v1alpha1` /
+   `BatchEnergyOptimization` 네이티브 문서를 파일 선택 또는 붙여넣기로 읽는다.
+   namespace는 화면에서 선택한 namespace와 같아야 한다. 예시 삽입은 빈 입력란에서만 가능하다.
+   모든 `<...>`를 실제 등록값으로 바꾸고 숫자 자리표시자는 따옴표까지 지워 숫자로 적는다.
+   모델 artifact가 유한한 배치 집합을 선언하면 `batchSizes` 항목 전체를 생략한다.
+   선언이 없는 경우에만 담당자가 정한 배치 집합을 적는다. 토큰·비밀번호·Secret 내용은 넣지 않는다.
+3. **문서 검토하기**는 로컬 파싱과 입력 내용 확인이다. 전체 제공 spec을 보존하며
+   서버 수명주기 metadata와 status는 제출하지 않는다. 문서를 고치면 다시 검토하고 검사한다.
+   domain 범위·연결·권한을 브라우저에서 새로 판정하지 않는다.
+4. 명시적인 서버 검사에서 기존
+   `POST /api/v1/namespaces/{ns}/batch-energy-optimizations?dryRun=All`과
+   같은 경로의 `/preflight`로 접수 조건·실행 계획을 확인한다.
+   두 검사 성공 뒤 최종 제출에서만 query 없는 기존 POST로 실제 측정을 요청한다.
+   검사 성공은 실행·측정 성공이 아니다. 초안과 서버 오류를 보존하며,
+   제출 응답 유실은 `결과 미확인`으로 두고 같은 이름의 접수 기록부터 조회한다.
+   자동 재제출하지 않는다.
+
+`activeProtocol.durationSeconds`는 부하 실행 측정 시간, `idleProtocol.durationSeconds`는
+유휴 측정 시간이다. `settlingDurationSeconds`는 유휴 측정 전 안정 대기다.
+각 `metricObservation.durationSeconds`는 해당 측정 구간을 포함할 별도의 전력 기록 시간이며,
+`intervalMilliseconds`는 수집 간격, `timeoutMilliseconds`는 수집 요청 대기 한도다.
+`warmupIterations`는 초가 아닌 예열 횟수다. 예시의 숫자 자리표시자는 권장값이나 기본값이 아니다.
+
+문서 구조는 [기존 네이티브 BEO 예제](../config/samples/profiling/edge_v1alpha1_batchenergyoptimization.yaml)와
+[BEO 타입 계약](../api/v1alpha1/batchenergyoptimization_types.go)을 따른다.
+파일·직접 입력 분리는 실제 확인한
+[BentoML deployment.py의 config-file·config-dict 옵션](https://github.com/bentoml/BentoML/blob/1ddd7e782f1ce74a0a37f51c70a44474eb58d5e1/src/bentoml_cli/deployment.py#L125-L136)을 참고했다.
+이 패턴은 입력 경로의 참고이며 Bento 설정 호환·자동 변환·BentoCloud 배포 기능을 뜻하지 않는다.
+카탈로그의 자산 제작·게시 책임과
+[고정 외부 소스](../config/samples/catalog/README.md#참고한-외부-패턴과-chill-경계)는 그대로 유지한다.
+
 
 ## Fixed upstream source and license
 

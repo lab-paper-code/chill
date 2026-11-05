@@ -134,6 +134,7 @@ export function MeasurementPlanDetails({namespace,name}:{namespace:string;name:s
       <section id="request-child-runs" className="space-y-3"><h2 className="font-semibold">자식 회차</h2><MeasurementChildRuns namespace={namespace} parent={{name,uid:campaign.uid}}/></section>
       <AssessmentDetails assessment={data?.assessment} rows={data?.resultRows}/>
       <Button variant="outline" asChild><Link href={`/measurements/requests/new?${new URLSearchParams({namespace,from:name,fromNamespace:namespace,fromUID:campaign.uid})}`}>동일 조건 요청</Link></Button>
+      <details><summary className="min-h-11 cursor-pointer py-2 text-sm">재사용할 측정 요청 문서</summary><p className="pb-3 text-sm text-muted-foreground">YAML/JSON 가져오기에서 열고 새 요청 이름과 대상 조건을 확인하세요.</p><SourceExport value={{apiVersion:"edge.dacs.io/v1alpha1",kind:"BatchEnergyOptimization",metadata:{name,namespace},spec}} filename={`${name}-request.json`}/></details>
       <details><summary className="min-h-11 cursor-pointer py-2">관리</summary><Rows label="위험 영역"><DeleteMeasurement namespace={namespace} name={name} uid={campaign.uid} version={campaign.resourceVersion} trials={campaign.completedTrials??0} blocked={campaign.phase==="Measuring"?"진행 중인 측정은 삭제할 수 없어요.":undefined} onDeleted={setDeleted}/></Rows></details>
       <section aria-label="원본"><SourceExport value={{namespace,name,expectedUID,source:data}} filename={`chill-measurement-${name}.json`}/><SourceJSON value={data} title="요청 원본"/></section>
     </>}
