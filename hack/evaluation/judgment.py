@@ -86,8 +86,10 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
                         latencies.append(latency)
             successes = sum(value <= workload['slo']['targetLatencyNanos'] for value in latencies)
             rank = math.ceil(planned * workload['slo']['percentile'] / 100)
-            part_start = evidence_io.timestamp_ns(phase['starts'][name]['at']) if gaps else 0
-            part_gaps = raw.overlapping_gaps(gaps, part_start + base, min(part_start + stop, window_end)) if gaps else []
+            part_gaps = []
+            if planned and gaps and name in phase['starts']:
+                part_start = evidence_io.timestamp_ns(phase['starts'][name]['at'])
+                part_gaps = raw.overlapping_gaps(gaps, part_start + base, min(part_start + stop, window_end))
             substages.append({'id': part['id'], 'durationSeconds': part['seconds'], 'rate': part['rates'][name], 'offered': planned,
                               'completedLatencyNS': analysis.stats(latencies), 'deadlineSuccess': successes, 'requiredSuccessfulRank': rank,
                               'D1': 'NOT_OFFERED' if not planned else 'NOT_EVALUATED' if part_gaps else
@@ -121,10 +123,10 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
 def provisional_requests(config, phase, clients, indexes, as_of, closed_through):
     """Bounded projection of the same request reducer; never publish a verdict."""
     results = reduce_requests(config, phase, clients, indexes, closed_through=closed_through)
-    keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'collectionLoss', 'slo', 'reachable', 'observationGaps')
+    keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'collectionLoss', 'slo', 'reachable')
     return {'asOf': as_of, 'closedThrough': closed_through, 'provisional': True,
             'workloads': {name: {**{key: row[key] for key in keys},
-                                'substages': [{key: value for key, value in part.items() if key != 'D1'} for part in row['substages']]}
+                                'substages': [{key: value for key, value in part.items() if key not in ('D1', 'observationGaps')} for part in row['substages']]}
                           for name, row in results.items()},
             'generatorQuality': {name: row['issuanceFidelity'] for name, row in results.items()}}
 

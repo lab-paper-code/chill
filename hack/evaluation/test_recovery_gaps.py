@@ -31,6 +31,7 @@ class RecoveryGapTests(unittest.TestCase):
                                  'instance': 'pod/container', 'podUID': 'pod', 'containerID': 'container',
                                  'node': {'name': 'serving', 'uid': 'serving-uid'}}, True, 'NOT_EVALUATED'),
             ('gap-only', tail, False, 'NOT_EVALUATED'),
+            ('zero-offer', tail, True, 'NOT_OFFERED'),
             ('ordinary-missing-final', None, True, 'FAIL'),
             ('ordinary-missing-final-empty', None, True, 'FAIL'),
             ('ordinary-slo-failure', None, True, 'FAIL'),
@@ -44,7 +45,7 @@ class RecoveryGapTests(unittest.TestCase):
                 folder = root / 'measured'
                 folder.mkdir()
                 _, _, _, _, config = fixture(root)
-                config['traceOffsets'] = {NAME: [1, 6_000_000_000]}
+                config['traceOffsets'] = {NAME: [] if label == 'zero-offer' else [1, 6_000_000_000]}
                 config['stages'][0]['parts'] = [
                     {'id': 'first', 'seconds': 5, 'rates': {NAME: 1}},
                     {'id': 'second', 'seconds': 5, 'rates': {NAME: 1}}]
@@ -52,7 +53,7 @@ class RecoveryGapTests(unittest.TestCase):
                 bound = conductor.bind(root / 'config.json')
                 evidence_io.save(root / 'binding.json', bound)
                 phase = {'stage': bound['schedule'][0], 'startUTC': START, 'endUTC': END, 'drainedUTC': END,
-                         'starts': {NAME: {'at': START, 'monotonicNS': 100}},
+                         'starts': {} if label == 'zero-offer' else {NAME: {'at': START, 'monotonicNS': 100}},
                          'producerCapture': {NAME: {'drained': True}}}
                 evidence_io.save(folder / 'phase.json', phase)
                 clients = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': offset,
@@ -120,8 +121,10 @@ class RecoveryGapTests(unittest.TestCase):
                     self.assertEqual(stored['origin'], 'api')
                 projected = tables.publication_requests(judged)[NAME]
                 self.assertEqual(projected['D1'], expected)
-                self.assertEqual(len(projected['observationGaps']), int(expected == 'NOT_EVALUATED'))
-                self.assertEqual(publication.verdict(judged)['verdict'], expected)
+                self.assertEqual(len(projected['observationGaps']), int(expected in ('NOT_EVALUATED', 'NOT_OFFERED')))
+                self.assertEqual(publication.verdict(judged)['verdict'], 'NOT_EVALUATED' if expected == 'NOT_OFFERED' else expected)
+                if label == 'zero-offer':
+                    self.assertEqual([part['D1'] for part in projected['substages']], ['NOT_OFFERED', 'NOT_OFFERED'])
                 if label == 'ordinary-slo-failure':
                     self.assertEqual(projected['substages'][0]['D1'], 'FAIL')
                 self.assertEqual(judged['power']['energyStatus'], 'MEASURED')
@@ -131,9 +134,9 @@ class RecoveryGapTests(unittest.TestCase):
                 if label == 'gap-in-second-part':
                     self.assertEqual([part['D1'] for part in projected['substages']],
                                      ['OBSERVED_THRESHOLD_MET', 'NOT_EVALUATED'])
-                if expected == 'NOT_EVALUATED':
+                if expected in ('NOT_EVALUATED', 'NOT_OFFERED'):
                     self.assertIn(gap['reason'], rendered)
-                    self.assertEqual(projected['observationGaps'][0]['boot'], gap['boot'])
+                    self.assertEqual(projected['observationGaps'][0], stored)
 
 
 if __name__ == '__main__':

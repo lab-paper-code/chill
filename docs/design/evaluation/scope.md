@@ -72,13 +72,16 @@ D44 recovery gaps from each raw-hour inventory are retained verbatim in
 `raw-source-index.json.gaps[]`, with API endpoint/hour provenance. Collection
 `complete` means the inventory and downloads were captured, not gap-free observation.
 Raw request completeness also requires no gap overlapping the requested interval.
-Judgment and publication expose `observationGaps[]` (including `[]` when unaffected).
-Any overlap with the half-open stage or substage window makes that D1
-`NOT_EVALUATED` / `ObservationUnavailable`; surviving finals cannot turn unknown
-evidence into an SLO failure or success. `open:true` influence has no end at
-`clearAt`, which remains provenance only. Non-overlapping gaps, ordinary missing
-finals and observed SLO failures retain their existing judgments. Meter energy
-remains independently evaluated from its own coverage.
+Final judgment and publication expose `observationGaps[]` (including `[]` when
+unaffected). Any overlap with a half-open offered stage or started substage window
+makes that D1 `NOT_EVALUATED` / `ObservationUnavailable`; surviving finals cannot
+turn unknown evidence into an SLO failure or success. Zero-offer workloads remain
+`NOT_OFFERED`. `open:true` influence has no end at `clearAt`, which remains
+provenance only. Non-overlapping gaps, ordinary missing finals and observed SLO
+failures retain their existing judgments. Meter energy remains independently
+evaluated from its own coverage. Provisional status keeps its existing typed
+count-only contract; recovery provenance is retained in raw snapshots and final
+artifacts, not emitted as unsupported provisional fields.
 
 
 ChillServer의 `--evaluation-store-name`, `--evaluation-store-endpoint`, `--evaluation-store-bucket`, `--evaluation-store-region`과 `EVALUATION_STORE_ACCESS_KEY_ID` / `EVALUATION_STORE_SECRET_ACCESS_KEY`는 함께 설정하거나 모두 생략한다.

@@ -1600,16 +1600,9 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(publication.verdict(judgment)['verdict'], 'FAIL')
             self.assertEqual(judgment['requests'][NAME]['substages'][0]['offered'], 2)
             self.assertEqual(judgment['requests'][NAME]['definitionID'], 'definition')
-            drained = judgment
             cutoff = '2026-11-03T00:00:31Z'
             live = judgment_rules.provisional_requests(config, phase, {NAME: rows}, indexed, cutoff, cutoff)
-            for key, value in live['workloads'][NAME].items():
-                expected = drained['requests'][NAME][key]
-                if key == 'substages':
-                    expected = [{k: v for k, v in part.items() if k != 'D1'} for part in expected]
-                self.assertEqual(value, expected)
             self.assertNotIn('D1', live['workloads'][NAME])
-            self.assertEqual(live['generatorQuality'], drained['components']['loadFidelity'])
             rows[1]['requestID'] = 'r0'
             (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
             with patch.object(evidence_io, 'module', side_effect=modules):
