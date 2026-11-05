@@ -152,6 +152,17 @@ def receipt_entry(entry, role, sha, spec):
     return copy.deepcopy(entry)
 
 
+def pending_build(spec, metadata_file):
+    """Freeze build output identity, without claiming registry verification."""
+    metadata = json.loads(Path(metadata_file).read_text())
+    role = spec["role"]
+    if not isinstance(metadata, dict) or metadata.get("image.name") != spec["image"]:
+        raise ValueError("pending build metadata image identity mismatch: " + role)
+    _reference(spec["image"], spec["repository"])
+    digest = _digest(metadata.get("containerimage.digest"))
+    return {"digest": digest, "metadataFile": str(Path(metadata_file).resolve())}
+
+
 def plan(recipe, source_sha, source, out):
     if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise ValueError("source SHA must be a resolved full commit")
@@ -295,6 +306,9 @@ def _power_context(spec, out, run):
 def build(plans, source_sha, source, out, run):
     """Publish selected builds or reverify existing receipts, never prune caches."""
     source = Path(source).resolve()
+    if any("pendingPublication" in spec and Path(out).resolve() == Path(spec["pendingPublication"]["publicationFile"]).parent.resolve()
+           for spec in plans):
+        raise ValueError("pending publication requires a new evidence directory")
     publication = {"sourceSHA": source_sha, "roles": {}, "runtimeBuilds": 0}
     for spec in plans:
         role = spec["role"]
@@ -305,6 +319,10 @@ def build(plans, source_sha, source, out, run):
         elif "reuse" in spec:
             revision = spec["reuse"]["sourceSHA"]
             digest = spec["reuse"]["receipt"]["digest"]
+        elif "pendingPublication" in spec:
+            pending = spec["pendingPublication"]
+            revision = pending["sourceSHA"]
+            digest = pending["digest"]
         else:
             argv = ["docker", "buildx", "build", "--builder", spec["builder"], "--platform", ",".join(spec["platforms"]),
                     "--label", REVISION_LABEL + "=" + source_sha, "--metadata-file", spec["metadataFile"],
@@ -322,7 +340,8 @@ def build(plans, source_sha, source, out, run):
             if role.startswith("firstfloor"):
                 publication["runtimeBuilds"] += 1
         entry = verify(spec, revision, digest, run)
-        entry["action"] = "prebuilt" if "prebuilt" in spec else ("reuse" if "reuse" in spec else "build")
+        entry["action"] = ("prebuilt" if "prebuilt" in spec else "reuse" if "reuse" in spec
+                           else "reuse-pending" if "pendingPublication" in spec else "build")
         for key in ("reason", "inputPaths"):
             if key in spec:
                 entry[key] = copy.deepcopy(spec[key])

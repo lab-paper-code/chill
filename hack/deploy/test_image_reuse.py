@@ -10,6 +10,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import image_reuse
 import images
+from test_images import Registry
 
 
 class ReuseTests(unittest.TestCase):
@@ -281,6 +282,157 @@ class ReuseTests(unittest.TestCase):
         self.put("charts/values.yaml", "unrelated change\n")
         self.commit()
         self.assertBuild()
+
+    def pending_fixture(self):
+        roles = ("server", "query", "dashboard", "profiler", "evaluation-harness", "firstfloor")
+        plans, registries = [], {}
+        for role in roles:
+            spec = copy.deepcopy(self.spec)
+            spec.update(role=role, repository="localhost:5000/chill/" + images.ROLES[role][1],
+                        deploymentMapping=images.ROLES[role][3], builder="test-builder",
+                        registryScheme="http", metadataFile=str(self.root / (role + "-build.json")),
+                        action="build")
+            spec["image"] = spec["repository"] + ":old"
+            if role == "firstfloor":
+                spec["platforms"] = list(images.MULTI)
+            if role == "evaluation-harness":
+                spec.update(buildArgs={"SOURCE_SHA": self.old}, powerSourceSHA=images.POWER_SOURCE_SHA,
+                            sourceRepository=str(self.repo))
+            plans.append(spec)
+            registries[role] = Registry(spec, revision=self.old)
+        (self.root / "image-plan.json").write_text(json.dumps(plans))
+
+        def interrupted(argv, name, timeout=120):
+            role = "evaluation-harness" if argv[0] == "git" else next(r for r in roles if name.startswith(r + "-"))
+            result = registries[role](argv, name, timeout)
+            if name == "firstfloor-build.log":
+                raise RuntimeError("post-build disk guard")
+            return result
+
+        with self.assertRaisesRegex(RuntimeError, "post-build disk guard"):
+            images.build(plans, self.old, self.repo, self.root, interrupted)
+        self.assertEqual(len(json.loads(self.publication.read_text())["roles"]), 5)
+        self.assertTrue((self.root / "firstfloor-build.json").is_file())
+        for registry in registries.values():
+            registry.calls.clear()
+        out = self.root / "new"
+        out.mkdir()
+        for spec in plans:
+            spec["image"] = spec["repository"] + ":new"
+            spec["metadataFile"] = str(out / (spec["role"] + "-build.json"))
+        pending = {"firstfloor": str(self.root / "firstfloor-build.json")}
+        return plans, registries, out, pending
+
+    def pending_apply(self, plans, pending):
+        current = self.git("rev-parse", "HEAD")
+        for spec in plans:
+            if spec["role"] == "evaluation-harness":
+                spec["buildArgs"]["SOURCE_SHA"] = current
+        return image_reuse.apply(plans, current, self.repo, self.repo, self.publication, pending)
+
+    def test_interrupted_metadata_completes_after_five_receipts_with_real_verification(self):
+        plans, registries, out, pending = self.pending_fixture()
+        self.put("charts/values.yaml", "roll forward\n")
+        current = self.commit()
+        old_files = {p: p.read_bytes() for p in self.root.glob("*.json")}
+        planned = self.pending_apply(plans, pending)
+        self.assertEqual([p["action"] for p in planned], ["reuse"] * 5 + ["verify-pending"])
+        self.assertNotIn("receipt", planned[-1]["pendingPublication"])
+        self.assertNotIn("reuse", planned[-1])
+
+        def registry_run(argv, name, timeout=120):
+            role = next(r for r in registries if name.startswith(r + "-"))
+            return registries[role](argv, name, timeout)
+
+        publication = images.build(planned, current, self.repo, out, registry_run)
+        self.assertEqual(publication["sourceSHA"], current)
+        self.assertEqual(publication["runtimeBuilds"], 0)
+        self.assertEqual(len(publication["roles"]), 6)
+        entry = publication["roles"]["firstfloor"]
+        self.assertEqual(entry["action"], "reuse-pending")
+        self.assertEqual(entry["sourceSHA"], self.old)
+        self.assertEqual({r["revision"] for r in entry["platformReceipts"]}, {self.old})
+        self.assertEqual(set(entry["platforms"]), set(images.MULTI))
+        for role, receipt in publication["roles"].items():
+            spec = next(p for p in planned if p["role"] == role)
+            self.assertEqual(images.receipt_entry(receipt, role, self.old, spec), receipt)
+            self.assertTrue(registries[role].calls)
+            self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registries[role].calls))
+        self.assertEqual(old_files, {p: p.read_bytes() for p in old_files})
+
+    def test_pending_git_input_change_stops_instead_of_rebuilding(self):
+        plans, registries, _, pending = self.pending_fixture()
+        self.put("src/main.txt", "changed input\n")
+        self.commit()
+        with self.assertRaisesRegex(ValueError, "Git inputs changed"):
+            self.pending_apply(plans, pending)
+        self.assertTrue(all(not registry.calls for registry in registries.values()))
+
+    def test_pending_requires_explicit_metadata_and_frozen_plan_provenance(self):
+        plans, _, _, pending = self.pending_fixture()
+        self.assertEqual(self.pending_apply(plans, {})[-1]["action"], "build")
+        plan_path = self.root / "image-plan.json"
+        original = json.loads(plan_path.read_text())
+        for field, value in (("role", "unknown"), ("dockerfile", "build/docker/other.Dockerfile"),
+                             ("buildArgs", {"FLAG": "changed"}), ("platforms", ["linux/arm64"]),
+                             ("repository", "foreign/chill"), ("registryScheme", "https"),
+                             ("action", "reuse"), ("metadataFile", str(self.root / "foreign-build.json"))):
+            with self.subTest(field=field):
+                changed = copy.deepcopy(original)
+                changed[-1][field] = value
+                plan_path.write_text(json.dumps(changed))
+                with self.assertRaises(ValueError):
+                    self.pending_apply(plans, pending)
+        plan_path.write_text(json.dumps(original))
+        with self.assertRaises(ValueError):
+            self.pending_apply(plans, {"firstfloor": str(self.root / "foreign-build.json")})
+        for invalid in ({"firstfloor": None}, {"unknown": pending["firstfloor"]},
+                        {"server": str(self.root / "server-build.json")}):
+            with self.subTest(pending=invalid), self.assertRaises(ValueError):
+                self.pending_apply(plans, invalid)
+        with self.assertRaisesRegex(ValueError, "requires reusePublication"):
+            image_reuse.apply(plans, self.old, self.repo, self.repo, None, pending)
+        publication = json.loads(self.publication.read_text())
+        self.publication.write_text(json.dumps(dict(publication, sourceSHA="invalid")))
+        with self.assertRaisesRegex(ValueError, "sourceSHA"):
+            self.pending_apply(plans, pending)
+        self.publication.write_text(json.dumps(publication))
+        plan_path.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.pending_apply(plans, pending)
+
+    def test_pending_metadata_identity_and_registry_revision_mismatch_stop(self):
+        plans, registries, out, pending = self.pending_fixture()
+        metadata_path = Path(pending["firstfloor"])
+        metadata = json.loads(metadata_path.read_text())
+        for value in (None, "localhost:5000/chill/foreign:old"):
+            with self.subTest(image=value):
+                metadata_path.write_text(json.dumps(dict(metadata, **{"image.name": value})))
+                with self.assertRaisesRegex(ValueError, "metadata image identity"):
+                    self.pending_apply(plans, pending)
+        metadata_path.write_text(json.dumps(dict(metadata, **{"containerimage.digest": "invalid"})))
+        with self.assertRaisesRegex(ValueError, "image digest"):
+            self.pending_apply(plans, pending)
+        metadata_path.write_text(json.dumps(metadata))
+        spec = self.pending_apply(plans, pending)[-1]
+        changed = Registry(spec, revision="b" * 40)
+        # Keep digest and tag self-consistent so OCI provenance is the failing check.
+        spec["pendingPublication"]["digest"] = changed.digest
+        with self.assertRaisesRegex(ValueError, "OCI revision mismatch"):
+            images.build([spec], "c" * 40, self.repo, out, changed)
+        self.assertTrue(all(argv[0] == "curl" for argv, _, _ in changed.calls))
+        self.assertFalse((out / "publication.json").exists())
+
+    def test_pending_cannot_overwrite_original_evidence(self):
+        plans, registries, _, pending = self.pending_fixture()
+        planned = self.pending_apply(plans, pending)
+        original = self.publication.read_bytes()
+        with self.assertRaisesRegex(ValueError, "new evidence directory"):
+            images.build(planned, self.old, self.repo, self.root,
+                         lambda *args, **kwargs: self.fail("must reject before registry calls"))
+        self.assertEqual(self.publication.read_bytes(), original)
+        self.assertTrue(all(not registry.calls for registry in registries.values()))
+
 
 
 if __name__ == "__main__":

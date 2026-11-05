@@ -35,7 +35,7 @@ FIELDS = {'source', 'context', 'kubeconfig', 'namespace', 'release', 'registry',
           'helm', 'kubectl', 'lock', 'generatedValues', 'maxDiskUsedPercent',
           'queryService', 'dashboardCheck', 'runtimeDeclarations', 'runtimeInspectionSeconds', 'publicationOnly',
           'baselineDirectory', 'expectedProfileCount', 'stagedDiffApproved', 'checkConfiguration', 'schedulerConfigMapFile', 'waitFor',
-          'inspectionCells', 'inspectionRequests', 'reusePublication'}
+          'inspectionCells', 'inspectionRequests', 'reusePublication', 'reusePendingBuilds', 'pruneCompletedBuildCache'}
 
 
 def dump(path, value):
@@ -58,7 +58,7 @@ def load(path, source):
     for field in ('namespace', 'release'):
         if not re.fullmatch(r'[a-z0-9][a-z0-9.-]*', recipe[field]):
             raise ValueError('invalid ' + field)
-    for field in ('replaceValues', 'dashboardCheck', 'runtimeDeclarations', 'checkConfiguration'):
+    for field in ('replaceValues', 'dashboardCheck', 'runtimeDeclarations', 'checkConfiguration', 'pruneCompletedBuildCache'):
         if field in recipe and type(recipe[field]) is not bool:
             raise ValueError(field + ' must be boolean')
     positive(recipe.get('expectedRevision'), 'expectedRevision')
@@ -108,6 +108,14 @@ def load(path, source):
     if any(commands.get(p) for p in ('quiesce', 'migrate', 'configure')) and not commands.get('accept'):
         raise ValueError('state-changing deployment commands require explicit accept commands')
     roles = [x if isinstance(x, str) else x.get('role', '') if isinstance(x, dict) else '' for x in recipe['images']]
+    if 'reusePendingBuilds' in recipe:
+        pending = recipe['reusePendingBuilds']
+        if (not isinstance(pending, dict) or not set(pending) <= set(roles)
+                or any(not isinstance(value, str) or not value for value in pending.values())):
+            raise ValueError('reusePendingBuilds must map selected image roles to metadata paths')
+        if not recipe.get('reusePublication'):
+            raise ValueError('reusePendingBuilds requires reusePublication')
+        recipe['reusePendingBuilds'] = {role: str(Path(value).expanduser().resolve()) for role, value in pending.items()}
     published_only = recipe.setdefault('publicationOnly', [])
     if not isinstance(published_only, list) or not set(published_only) <= set(roles):
         raise ValueError('publicationOnly must explicitly name selected roles')
@@ -147,9 +155,12 @@ def load(path, source):
 
 def plan_images(recipe, source, out):
     preflight = bool(recipe['commands'].get('preflight'))
+    if preflight and recipe.get('reusePendingBuilds'):
+        raise ValueError('reusePendingBuilds cannot be used with custom preflight commands')
     planned = image_reuse.apply(images.plan(recipe, recipe['source'], source, out),
                                 recipe['source'], ROOT, source,
-                                None if preflight else recipe.get('reusePublication'))
+                                None if preflight else recipe.get('reusePublication'),
+                                pending_builds=recipe.get('reusePendingBuilds'))
     if preflight:
         for item in planned:
             if item['action'] == 'build':
@@ -347,6 +358,8 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         budget = 120 + recipe['readinessSeconds'] + upgrade_process_seconds + len(recipe['images']) * recipe['buildSeconds'] + sum(x['seconds'] for steps in recipe['commands'].values() for x in steps)
         budget += (recipe.get('runtimeInspectionSeconds', 3600) + 2 * recipe['readinessSeconds'] if recipe.get('runtimeDeclarations') else 0) + 60 * (len(recipe['apiChecks']) + 2)
         budget += 360 if recipe.get('checkConfiguration') else 0
+        if recipe.get('pruneCompletedBuildCache', False):
+            budget += 120 * sum(item['action'] == 'build' for item in planned)
         if not inspect:
             api_checks.preflight(config, budget, out)
             commands('preflight')
@@ -399,6 +412,9 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             for item in planned:
                 if item['action'] == 'reuse':
                     images.verify(item, item['reuse']['sourceSHA'], item['reuse']['receipt']['digest'], run.run)
+                elif item['action'] == 'verify-pending':
+                    pending = item['pendingPublication']
+                    images.verify(item, pending['sourceSHA'], pending['digest'], run.run)
             check_configuration(out / 'render-before.yaml')
             if recipe.get('inspectionCells'):
                 if not frozen:
@@ -422,10 +438,15 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             run.run(['docker', 'buildx', 'du', '--builder', builder], 'build-cache-' + builder + '-before.txt', read_output=False)
         def build_run(argv, name, timeout=120):
             disk()
-            is_build = 'buildx' in list(map(str, argv))
+            argv = list(map(str, argv))
+            is_build = argv[:3] == ['docker', 'buildx', 'build']
             result = run.run(argv, name, timeout=recipe['buildSeconds'] if is_build else timeout,
                              read_output=not is_build)
-            if 'buildx' in list(map(str, argv)):
+            if is_build:
+                if recipe.get('pruneCompletedBuildCache', False):
+                    builder = argv[argv.index('--builder') + 1]
+                    run.run(['docker', 'buildx', 'prune', '--builder', builder, '--force', '--filter', 'inuse=false'],
+                            name + '-cache-prune.txt', read_output=False)
                 disk()
             return result
         publication = images.build(planned, recipe['source'], src, out, build_run)

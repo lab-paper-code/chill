@@ -108,8 +108,14 @@ def _revision_reason(repository, revision):
     return None
 
 
-def apply(plans, source_sha, repository, source, publication_path):
-    """Annotate image plans, freezing eligible old entries without registry access."""
+def _unusable(spec, reason, pending):
+    if pending:
+        raise ValueError("pending publication cannot be reused: " + spec["role"] + ": " + reason)
+    spec["reason"] = reason
+
+
+def apply(plans, source_sha, repository, source, publication_path, pending_builds=None):
+    """Freeze old receipts or explicitly selected, still-unverified build output."""
     publication = None
     if publication_path is not None:
         path = Path(publication_path)
@@ -118,6 +124,29 @@ def apply(plans, source_sha, repository, source, publication_path):
         publication = json.loads(path.read_text())
         if not isinstance(publication, dict) or not isinstance(publication.get("roles"), dict):
             raise ValueError("invalid reuse publication roles")
+    pending_builds = {} if pending_builds is None else pending_builds
+    if (not isinstance(pending_builds, dict)
+            or any(not isinstance(role, str) or not isinstance(path, str) or not path for role, path in pending_builds.items())):
+        raise ValueError("reusePendingBuilds must map roles to old build metadata")
+    pending_plans = {}
+    if pending_builds:
+        if publication is None:
+            raise ValueError("reusePendingBuilds requires reusePublication")
+        selected = {spec["role"]: spec for spec in plans}
+        if any(role not in selected or role in publication["roles"] or "prebuilt" in selected[role]
+               for role in pending_builds):
+            raise ValueError("pending role must be selected and have no existing receipt")
+        old_sha = publication.get("sourceSHA")
+        if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha):
+            raise ValueError("invalid pending publication sourceSHA")
+        plan_path = Path(publication_path).parent / "image-plan.json"
+        old_plans = json.loads(plan_path.read_text())
+        if (not isinstance(old_plans, list) or any(not isinstance(p, dict) or not isinstance(p.get("role"), str) for p in old_plans)
+                or len({p["role"] for p in old_plans}) != len(old_plans)):
+            raise ValueError("invalid pending publication image plan")
+        pending_plans = {p["role"]: p for p in old_plans if p["role"] in pending_builds}
+        if set(pending_plans) != set(pending_builds):
+            raise ValueError("missing pending role in frozen image plan")
     result = copy.deepcopy(plans)
     revision_reasons = {}
     attributes_reason = None
@@ -133,6 +162,7 @@ def apply(plans, source_sha, repository, source, publication_path):
                 attributes_reason = "repository info/attributes may transform Git archive inputs"
     for spec in result:
         spec.pop("reuse", None)
+        spec.pop("pendingPublication", None)
         paths, unknown = _inputs(spec, source)
         spec.update(action="build", reason="no reuse publication configured", inputPaths=paths)
         if "prebuilt" in spec:
@@ -141,21 +171,39 @@ def apply(plans, source_sha, repository, source, publication_path):
         if publication is None:
             continue
         role = spec["role"]
-        entry = publication["roles"].get(role)
+        pending = role in pending_builds
+        entry = pending_plans.get(role) if pending else publication["roles"].get(role)
         if entry is None:
             spec["reason"] = "no previous receipt for role: " + role
             continue
         if not isinstance(entry, dict):
             raise ValueError("invalid reuse role receipt: " + role)
-        receipts = entry.get("platformReceipts")
-        if not isinstance(receipts, list) or not receipts or any(not isinstance(r, dict) for r in receipts):
-            raise ValueError("missing reuse platform receipts: " + role)
-        revisions = [r.get("revision") for r in receipts]
-        old_sha = revisions[0]
-        if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha) or any(r != old_sha for r in revisions):
-            raise ValueError("mixed or invalid reuse platform revisions: " + role)
-        if "sourceSHA" in entry and entry["sourceSHA"] != old_sha:
-            raise ValueError("reuse sourceSHA disagrees with OCI revision: " + role)
+        if pending:
+            old_sha = publication["sourceSHA"]
+            if entry.get("action") != "build" or any(key in entry for key in ("reuse", "prebuilt", "pendingPublication")):
+                raise ValueError("pending role was not an original build: " + role)
+            metadata_path = Path(pending_builds[role])
+            expected_path = Path(publication_path).parent / (role + "-build.json")
+            if (not metadata_path.is_absolute() or metadata_path.resolve() != expected_path.resolve()
+                    or entry.get("metadataFile") != str(metadata_path)):
+                raise ValueError("pending metadata does not match frozen image plan: " + role)
+            for key in ("repository", "registryScheme", "deploymentMapping"):
+                if entry.get(key) != spec.get(key):
+                    raise ValueError("pending image plan provenance mismatch: " + role + "/" + key)
+            if images._reference(entry.get("image"), spec["repository"]) != entry["image"]:
+                raise ValueError("pending image plan must name an original tag: " + role)
+            frozen = images.pending_build(entry, metadata_path)
+            frozen.update(sourceSHA=old_sha, publicationFile=str(publication_path), planFile=str(plan_path))
+        else:
+            receipts = entry.get("platformReceipts")
+            if not isinstance(receipts, list) or not receipts or any(not isinstance(r, dict) for r in receipts):
+                raise ValueError("missing reuse platform receipts: " + role)
+            revisions = [r.get("revision") for r in receipts]
+            old_sha = revisions[0]
+            if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha) or any(r != old_sha for r in revisions):
+                raise ValueError("mixed or invalid reuse platform revisions: " + role)
+            if "sourceSHA" in entry and entry["sourceSHA"] != old_sha:
+                raise ValueError("reuse sourceSHA disagrees with OCI revision: " + role)
         expected = copy.deepcopy(spec)
         if "SOURCE_SHA" in expected["buildArgs"]:
             expected["buildArgs"]["SOURCE_SHA"] = old_sha
@@ -163,27 +211,28 @@ def apply(plans, source_sha, repository, source, publication_path):
             ("dockerfile", "Dockerfile changed"), ("buildArgs", "effective build arguments changed"),
             ("powerSourceSHA", "pinned power source changed")) if entry.get(key) != expected.get(key)), None)
         if mismatch:
-            spec["reason"] = mismatch
+            _unusable(spec, mismatch, pending)
             continue
         platforms = entry.get("platforms")
         if (not isinstance(platforms, list) or any(not isinstance(p, str) for p in platforms)
-                or sorted(platforms) != sorted(expected["platforms"])):
-            spec["reason"] = "platforms changed"
+                or len(platforms) != len(set(platforms)) or sorted(platforms) != sorted(expected["platforms"])):
+            _unusable(spec, "platforms changed", pending)
             continue
         # Reuse exactly the same structural/provenance validator as prebuilt images.
-        frozen = images.receipt_entry(entry, role, old_sha, expected)
+        if not pending:
+            frozen = images.receipt_entry(entry, role, old_sha, expected)
         if unknown:
-            spec["reason"] = unknown
+            _unusable(spec, unknown, pending)
             continue
         if attributes_reason:
-            spec["reason"] = attributes_reason
+            _unusable(spec, attributes_reason, pending)
             continue
         blocked = False
         for revision in (old_sha, source_sha):
             if revision not in revision_reasons:
                 revision_reasons[revision] = _revision_reason(repository, revision)
             if revision_reasons[revision]:
-                spec["reason"] = revision_reasons[revision]
+                _unusable(spec, revision_reasons[revision], pending)
                 blocked = True
                 break
         if blocked:
@@ -191,9 +240,12 @@ def apply(plans, source_sha, repository, source, publication_path):
         diff = _git(repository, "--literal-pathspecs", "diff", "--quiet", "--no-ext-diff", "--no-textconv", "--no-renames",
                     old_sha, source_sha, "--", *paths)
         if diff.returncode:
-            spec["reason"] = "Git inputs changed" if diff.returncode == 1 else "Git input comparison unavailable"
+            _unusable(spec, "Git inputs changed" if diff.returncode == 1 else "Git input comparison unavailable", pending)
             continue
-        spec.update(action="reuse", reason="Git build inputs unchanged from " + old_sha,
-                    image=frozen["image"].split("@", 1)[0], buildArgs=copy.deepcopy(frozen["buildArgs"]),
-                    reuse={"sourceSHA": old_sha, "receipt": frozen})
+        spec.update(reason="Git build inputs unchanged from " + old_sha,
+                    image=entry["image"].split("@", 1)[0], buildArgs=copy.deepcopy(expected["buildArgs"]))
+        if pending:
+            spec.update(action="verify-pending", pendingPublication=frozen)
+        else:
+            spec.update(action="reuse", reuse={"sourceSHA": old_sha, "receipt": frozen})
     return result

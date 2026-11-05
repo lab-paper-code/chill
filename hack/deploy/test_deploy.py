@@ -32,19 +32,33 @@ def document(image):
  return {'apiVersion':'apps/v1','kind':'Deployment','metadata':{'name':'chill-serving-entrypoint','namespace':'review'},'spec':{'template':{'spec':{'containers':[{'name':'server','image':image}]}}}}
 if name=='docker':
  if args[:2]==['buildx','du']:print('Total: 20GB');sys.exit(0)
+ if args[:2]==['buildx','prune']:
+  state['pruneCount']=state.get('pruneCount',0)+1;save()
+  if state.get('failPrune') or state['pruneCount']==state.get('failPruneAt'):sys.exit(18)
+  builder=argument('--builder')
+  state['buildCache']=[entry for entry in state.get('buildCache',[]) if entry['builder']!=builder or entry['inUse']]
+  save();print('Reclaimed completed unused build cache');sys.exit(0)
+ if args[:2]!=['buildx','build']:sys.exit(89)
  if state.get('failBuild'):sys.exit(17)
  if state.get('buildBarrier'):
   print('BUILD_PROGRESS_BEFORE_COMPLETION',flush=True)
   while not pathlib.Path(state['buildBarrier']).exists():time.sleep(.02)
  image=argument('--output').split('name=',1)[1].split(',',1)[0]; host,path=image.split('/',1); repo,tag=path.rsplit(':',1)
- revision=argument('--label').split('=',1)[1]; manifests=[]
+ revision=state.get('registryRevision',argument('--label').split('=',1)[1]); manifests=[]
  def store(kind,obj):
   data=json.dumps(obj,sort_keys=True).encode(); digest='sha256:'+hashlib.sha256(data).hexdigest(); target=root/'registry'/'v2'/repo/kind/digest;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data);return digest
  for platform in argument('--platform').split(','):
   system,arch=platform.split('/');config={'os':system,'architecture':arch,'config':{'Labels':{'org.opencontainers.image.revision':revision}}};cd=store('blobs',config)
   child={'schemaVersion':2,'config':{'digest':cd}};d=store('manifests',child);manifests.append({'digest':d,'platform':{'os':system,'architecture':arch}})
  index={'schemaVersion':2,'manifests':manifests};digest=store('manifests',index);(root/'registry'/'v2'/repo/'manifests'/tag).write_bytes((root/'registry'/'v2'/repo/'manifests'/digest).read_bytes())
- pathlib.Path(argument('--metadata-file')).write_text(json.dumps({'containerimage.digest':digest}));sys.exit(0)
+ pathlib.Path(argument('--metadata-file')).write_text(json.dumps({'containerimage.digest':digest,'image.name':image}))
+ if state.get('diskFixture'):
+  receipt=pathlib.Path(os.environ['CHILL_DEPLOY_EVIDENCE'])/'publication.json'
+  state.setdefault('receiptsBeforeBuild',[]).append(sorted(json.loads(receipt.read_text())['roles']) if receipt.exists() else [])
+  state['buildCache'].append({'builder':argument('--builder'),'id':image,'inUse':False,'bytes':100})
+  if state.get('diskRemainsLow'):state['unreclaimableBytes']=100
+  save()
+ sys.exit(0)
 if name=='helm':
  for verb in ('list','history','get','template','upgrade'):
   if verb in args:break
@@ -274,6 +288,19 @@ class DeploymentCLI(unittest.TestCase):
         script = cls.bin / 'fake'; script.write_text(FAKE); script.chmod(0o700)
         for name in ('helm', 'kubectl', 'docker'):
             (cls.bin / name).symlink_to(script)
+        # Only local disk accounting is synthetic; the official CLI and registry proof still run.
+        (cls.bin / 'sitecustomize.py').write_text('''
+import collections, json, os, pathlib, shutil
+original_disk_usage = shutil.disk_usage
+usage = collections.namedtuple('usage', 'total used free')
+def disk_usage(path):
+    state = json.loads((pathlib.Path(os.environ['FAKE_DEPLOY_DIR']) / 'state.json').read_text())
+    if not state.get('diskFixture'):
+        return original_disk_usage(path)
+    free = 450 - sum(entry['bytes'] for entry in state['buildCache']) - state.get('unreclaimableBytes', 0)
+    return usage(1000, 1000 - free, free)
+shutil.disk_usage = disk_usage
+''')
         (cls.directory / 'token').write_text(cls.token)
         (cls.directory / 'environment.json').write_text(json.dumps({'d2': {'apiBase': 'https://localhost:' + str(cls.api.server_port), 'caFile': str(cls.cert), 'tokenFile': str(cls.directory / 'token')}}))
         (cls.directory / 'kubeconfig').write_text('synthetic cluster; never read by real kubectl\n')
@@ -295,7 +322,8 @@ class DeploymentCLI(unittest.TestCase):
 
     def cli(self, *args, expected=0):
         recipe_path = self.directory / 'recipe.json'; recipe_path.write_text(json.dumps(self.recipe))
-        environment = dict(os.environ, FAKE_DEPLOY_DIR=str(self.directory), PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
+        environment = dict(os.environ, FAKE_DEPLOY_DIR=str(self.directory), PYTHONPATH=str(self.bin),
+                           PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
         environment.pop('CHILL_EXPERIMENT_CONFIG', None)
         root = getattr(self, 'repository', ROOT)
         result = subprocess.run([str(root / 'hack/fast-deploy.sh'), 'run', str(recipe_path), *args], cwd=root, env=environment, capture_output=True, text=True, timeout=90)
@@ -404,6 +432,20 @@ class DeploymentCLI(unittest.TestCase):
         self.assertFalse(self.out.exists())
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.requests, [])
+        original = self.recipe.copy()
+        for invalid in ({'pruneCompletedBuildCache': 1},
+                        {'reusePendingBuilds': []},
+                        {'reusePendingBuilds': {'foreign-role': 'metadata.json'}},
+                        {'reusePendingBuilds': {'server': ''}},
+                        {'reusePendingBuilds': {'server': 'metadata.json'}},
+                        {'reusePublication': str(self.directory / 'publication.json'),
+                         'reusePendingBuilds': {'server': 'metadata.json'},
+                         'commands': {'preflight': [{'argv': ['true'], 'seconds': 1}]}}):
+            with self.subTest(invalid=invalid):
+                self.recipe = dict(original, **invalid)
+                self.cli('--dry-run', expected=1)
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.requests, [])
 
     def test_cli_reuses_unchanged_images_and_builds_only_changed_copy_inputs(self):
         self.repository = self.directory / 'reuse-repository'
@@ -491,6 +533,7 @@ class DeploymentCLI(unittest.TestCase):
         self.assertIn('@sha256:', publication['roles']['server']['image'])
         self.assertTrue(json.loads((self.out / 'after/acceptance.json').read_text())['passed'])
         self.assertTrue(any(x[0] == 'docker' for x in self.calls()))
+        self.assertFalse(any('prune' in call for call in self.calls()))
         self.assertTrue(any(x[0] == 'helm' and 'upgrade' in x for x in self.calls()))
         self.assertTrue(all(token == 'Bearer ' + self.token for _, token in self.requests))
         self.assertNotIn(self.token, (self.out / 'commands.log').read_text())
@@ -499,6 +542,75 @@ class DeploymentCLI(unittest.TestCase):
         previous = len(self.calls())
         self.cli('--execute', '--evidence', str(self.out), expected=1)
         self.assertEqual(len(self.calls()), previous)
+        self.recipe.update(images=['server', 'dashboard'], builder='publication-builder',
+                           minFreeBytes=350, pruneCompletedBuildCache=True)
+        retained = [{'builder': 'publication-builder', 'id': 'active', 'inUse': True, 'bytes': 20},
+                    {'builder': 'unrelated-builder', 'id': 'foreign', 'inUse': False, 'bytes': 30}]
+        for scenario in ('reclaimed', 'diskRemainsLow', 'failPrune', 'failBuild', 'registryRevision', 'no-approval'):
+            with self.subTest(scenario=scenario):
+                self.recipe['pruneCompletedBuildCache'] = scenario != 'no-approval'
+                fixture = {'diskFixture': True, 'buildCache': copy.deepcopy(retained)}
+                if scenario in ('diskRemainsLow', 'failPrune', 'failBuild'):
+                    fixture[scenario] = True
+                elif scenario == 'registryRevision':
+                    fixture[scenario] = 'foreign-source'
+                self.state(**fixture)
+                call_count = len(self.calls())
+                evidence = self.out / scenario
+                self.cli('--execute', '--evidence', str(evidence), expected=0 if scenario == 'reclaimed' else 1)
+                observed = json.loads((self.directory / 'state.json').read_text())
+                calls = self.calls()[call_count:]
+                docker = [call for call in calls if call[0] == 'docker']
+                self.assertTrue(all(call[call.index('--builder') + 1] == 'publication-builder' for call in docker))
+                prunes = [call for call in docker if call[1:3] == ['buildx', 'prune']]
+                self.assertEqual(len(prunes), 2 if scenario == 'reclaimed' else 0 if scenario in ('failBuild', 'no-approval') else 1)
+                self.assertTrue(all(call == ['docker', 'buildx', 'prune', '--builder', 'publication-builder',
+                                             '--force', '--filter', 'inuse=false'] for call in prunes))
+                self.assertEqual([entry for entry in observed['buildCache'] if entry['id'] in ('active', 'foreign')], retained)
+                timings = [json.loads(line) for line in (evidence / 'command-timings.jsonl').read_text().splitlines()]
+                self.assertTrue(all(item['timeoutSeconds'] == 120 for item in timings if 'cache-prune' in item['name']))
+                if scenario == 'reclaimed':
+                    self.assertEqual(observed['buildCache'], retained)
+                    self.assertEqual(observed['receiptsBeforeBuild'], [[], ['server']])
+                    self.assertTrue(json.loads((evidence / 'state.json').read_text())['ready'])
+                    self.assertTrue(json.loads((evidence / 'after/acceptance.json').read_text())['passed'])
+                    proof = json.loads((evidence / 'publication.json').read_text())
+                    self.assertEqual(set(proof['roles']), {'server', 'dashboard'})
+                    self.assertTrue(all(entry['platformReceipts'] for entry in proof['roles'].values()))
+                else:
+                    self.assertEqual(json.loads((evidence / 'failure.json').read_text())['stage'], 'publish-images')
+                    self.assertFalse((evidence / 'publication.json').exists())
+                    self.assertFalse(any('upgrade' in call or 'apply' in call for call in calls))
+                if scenario in ('diskRemainsLow', 'no-approval'):
+                    self.assertLess(json.loads((evidence / 'disk.json').read_text())['free'], 350)
+        roles = ['server', 'query', 'dashboard', 'profiler', 'evaluation-harness', 'firstfloor']
+        self.recipe.update(images=roles, publicationOnly=['evaluation-harness', 'firstfloor'],
+                           minFreeBytes=1, pruneCompletedBuildCache=True)
+        self.state(failPruneAt=6)
+        stopped = self.out / 'five-receipts-pending-firstfloor'
+        call_count = len(self.calls())
+        self.cli('--execute', '--evidence', str(stopped), expected=1)
+        partial = json.loads((stopped / 'publication.json').read_text())
+        self.assertEqual(set(partial['roles']), set(roles[:-1]))
+        self.assertTrue((stopped / 'firstfloor-build.json').exists())
+        self.assertFalse(any('upgrade' in call or 'apply' in call for call in self.calls()[call_count:]))
+        frozen = {path: path.read_bytes() for path in stopped.iterdir() if path.is_file()}
+        self.recipe.update(reusePublication=str(stopped / 'publication.json'),
+                           reusePendingBuilds={'firstfloor': str(stopped / 'firstfloor-build.json')})
+        self.state()
+        call_count = len(self.calls())
+        self.cli('--inspect', '--evidence', str(self.out / 'pending-inspection'))
+        recovered = self.out / 'reverified-six-roles'
+        self.cli('--execute', '--evidence', str(recovered))
+        proof = json.loads((recovered / 'publication.json').read_text())
+        self.assertEqual(set(proof['roles']), set(roles))
+        self.assertTrue(all(proof['roles'][role]['action'] == 'reuse' for role in roles[:-1]))
+        self.assertEqual(proof['roles']['firstfloor']['action'], 'reuse-pending')
+        self.assertTrue(all(entry['platformReceipts'] for entry in proof['roles'].values()))
+        self.assertFalse(any(call[0] == 'docker' for call in self.calls()[call_count:]))
+        self.assertTrue(json.loads((recovered / 'state.json').read_text())['ready'])
+        self.assertTrue(json.loads((recovered / 'after/acceptance.json').read_text())['passed'])
+        self.assertTrue(all(path.read_bytes() == data for path, data in frozen.items()))
 
     def test_cli_watches_build_before_exit_and_then_completes(self):
         barrier = self.directory / 'watch-build-release'

@@ -52,7 +52,9 @@ class Registry:
         self.calls.append((argv, name, timeout))
         if argv[:3] == ["docker", "buildx", "build"]:
             metadata = Path(argv[argv.index("--metadata-file") + 1])
-            metadata.write_text(json.dumps({"containerimage.digest": self.digest}))
+            exporter = argv[argv.index("--output") + 1]
+            image = exporter.split("name=", 1)[1].split(",", 1)[0]
+            metadata.write_text(json.dumps({"containerimage.digest": self.digest, "image.name": image}))
             return b""
         if argv[0] == "curl":
             url = argv[-1]

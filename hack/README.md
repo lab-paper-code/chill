@@ -206,6 +206,18 @@ To build only changed inputs, set recipe
 This is the existing publication evidence, not a new cache database. Missing
 roles build normally; omit the field to rebuild the selection. Explicit
 `prebuilt` entries retain their same-source contract and take precedence.
+
+If a build pushed successfully but stopped before its receipt was verified, name
+that role's existing metadata explicitly:
+`"reusePendingBuilds": {"firstfloor": "/absolute/private/prior-deployment/firstfloor-build.json"}`.
+This requires `reusePublication` and the same prior directory's frozen
+`image-plan.json`. The planner binds the original role, build inputs, image and
+metadata; inspect/execute verify the published tag, platforms and original OCI
+revision. A pending candidate becomes a receipt only after registry verification.
+Invalid or changed pending inputs stop. Pending reuse also rejects custom
+preflight commands, which can mutate build inputs. Retain the old evidence and
+use a new execution directory.
+
 The planner reads each role's original OCI revision from platform receipts
 and uses Git diff against the requested source for its Dockerfile, local
 COPY/ADD inputs, and Dockerignore files. Effective arguments, platforms and
@@ -222,9 +234,9 @@ all of `internal/`, even packages not linked into that image. This does not
 detect updates to floating external base images/packages; omit reuse when
 intentionally refreshing those.
 
-Dry-run lists `action` (`build`, `reuse`, `prebuilt`), `reason`, and
-`inputPaths` without network access; reuse is an offline candidate at this
-point. Inspect rechecks candidate registry digests/platforms/OCI revisions,
+Dry-run lists `action` (`build`, `reuse`, `prebuilt`, `verify-pending`), `reason`,
+and `inputPaths` without network access; candidates still require verification.
+Inspect rechecks candidate registry digests/platforms/OCI revisions,
 and execute repeats the same checks before publication. `image-plan.json`
 freezes the decisions and prior receipts. Publication `sourceSHA` identifies
 the deployment source; each role's `sourceSHA` identifies its actual image
@@ -324,8 +336,12 @@ Keep all evidence private: live values, manifests, retained objects, commands,
 publication, renders, before/after API captures and failure records can contain
 operational data. Execute shares `/tmp/chill-heavy.lock`; inspect does not.
 The disk gates require `minFreeBytes` and `maxDiskUsedPercent` (default 85).
-Builds record `docker buildx du` before/after on their actual builders; the
-runner does not prune unrelated or supposedly local images/cache/data.
+Builds record `docker buildx du` before/after on their actual builders.
+`"pruneCompletedBuildCache": true` authorizes reclaiming unused cache on the
+recipe's CHILL-owned builder after each successful build/push, before the
+post-build disk check. It defaults to false. Cleanup failure or insufficient
+remaining headroom stops execution. Other builders, in-use cache, images and
+volumes are outside this cleanup.
 Firstfloor installs apt before Python-package arguments and shares the pinned
 Python dependency layer between CPU and RKNN; optional extras are installed
 afterward with the same pins enforced. This uses only the existing BuildKit
