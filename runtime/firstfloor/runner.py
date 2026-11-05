@@ -234,7 +234,7 @@ def ort_sessions(options, files, metadata):
     return sessions
 
 
-def rknn_session(options, files, batches, metadata):
+def rknn_session(options, files, initial_batch, metadata):
     from rknnlite.api import RKNNLite
 
     if len(files) != 1 or files[0].suffix != ".rknn":
@@ -248,9 +248,17 @@ def rknn_session(options, files, batches, metadata):
     tensors = candidate["artifactCapability"]["tensors"]
     if len(tensors) != 1 or tensors[0]["datatype"] != "FP32":
         raise ValueError("RKNN delivery must declare one FP32 NHWC tensor")
-    evidence = helper.observe_host_contract(candidate, batches[0])
-    for batch in batches:
-        helper.validate_runtime_inputs(model, candidate, batch)
+    evidence = helper.observe_host_contract(candidate, initial_batch)
+    validated_batches = set()
+
+    def validate_batch(batch):
+        if batch not in validated_batches:
+            # Native metadata inspection initializes an artifact context, so
+            # defer each K until that K is actually about to execute.
+            helper.validate_runtime_inputs(model, candidate, batch)
+            validated_batches.add(batch)
+
+    validate_batch(initial_batch)
     rknn = RKNNLite()
     if rknn.load_rknn(str(model)) != 0:
         rknn.release()
@@ -261,7 +269,7 @@ def rknn_session(options, files, batches, metadata):
         raise ValueError("RKNN native initialization failed")
     evidence["initSucceeded"] = True
     metadata.update(runtimeVersion=evidence["package"]["version"], device="npu", rknn=evidence, intraOpThreads=0, interOpThreads=0)
-    return {model.stem: rknn}
+    return {model.stem: rknn}, validate_batch
 
 
 def run(options, source, destination):
@@ -291,9 +299,12 @@ def run(options, source, destination):
         if options.runtime in ("ort-cpu", "ort-cuda"):
             sessions = ort_sessions(options, files, metadata)
         elif options.runtime == "rknnlite":
-            sessions = rknn_session(options, files, batches, metadata)
+            initial_batch = warmup_batches[0] if warmup_batches else batches[0]
+            sessions, validate_batch = rknn_session(options, files, initial_batch, metadata)
         delay_s = options.delay_ms / 1000
         for batch in warmup_batches:
+            if options.runtime == "rknnlite" and options.warmup_iterations:
+                validate_batch(batch)
             for _ in range(options.warmup_iterations):
                 items, _, _ = execute(module, sessions, [dict(module.WARMUP_SAMPLE) for _ in range(batch)], outputs, max_new_tokens, delay_s)
                 if any("error" in item for item in items):
@@ -323,6 +334,8 @@ def run(options, source, destination):
                 offset += size
             if offset != len(data):
                 raise ValueError("unbound input payload bytes")
+            if options.runtime == "rknnlite":
+                validate_batch(batch)
             samples = [{name: column[i] for name, column in zip(inputs, columns)} for i in range(batch)]
             try:
                 items, results, timings = execute(module, sessions, samples, outputs, max_new_tokens, delay_s)

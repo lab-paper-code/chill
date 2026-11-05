@@ -63,6 +63,61 @@ class RunnerContractTest(unittest.TestCase):
         self.assertIsInstance(error, ValueError)
         self.assertIn("warmup batch", str(error))
 
+    def test_rknn_validates_each_batch_only_before_its_first_execution(self):
+        events = []
+
+        def validate_batch(model, candidate, batch):
+            events.append(("validate", batch))
+            if batch == 4:
+                raise ValueError("unsupported actual RKNN batch 4")
+
+        def execute(module, sessions, samples, outputs, max_new_tokens, delay_s):
+            events.append(("execute", len(samples)))
+            return [{"units": 1} for _ in samples], {"output": [b"ok" for _ in samples]}, {}
+
+        native = mock.Mock()
+        native.load_rknn.return_value = native.init_runtime.return_value = 0
+        lite = mock.Mock(return_value=native, NPU_CORE_0=1)
+        helper = SimpleNamespace(
+            validate_candidate=mock.Mock(),
+            observe_host_contract=lambda candidate, batch: {"package": {"version": "test"}, "selectedBatch": batch},
+            validate_runtime_inputs=validate_batch,
+        )
+        cpu = SimpleNamespace(read_cpu_environment=lambda: ("", [0], ""))
+        init = encode({"type": "init", "inputs": ["input"], "outputs": ["output"],
+                       "batch_sizes": [1, 2, 4], "max_new_tokens": 0})
+        source = BytesIO(init + b"".join(infer_frame(i + 1, [b"x"] * batch)
+                                        for i, batch in enumerate([1, 1, 2, 2, 4])))
+        destination = BytesIO()
+        with tempfile.TemporaryDirectory() as directory:
+            delivery = Path(directory) / "delivery.json"
+            delivery.write_text('{"artifactCapability":{"tensors":[{"datatype":"FP32"}]}}')
+            options = SimpleNamespace(runtime="rknnlite", preprocessor=str(FIXTURE), model_dir=directory,
+                                      delay_ms=0, warmup_iterations=1, warmup_batch=[1],
+                                      delivery_json=str(delivery))
+            with mock.patch.dict(sys.modules, {"numpy": SimpleNamespace(__version__="test"),
+                                              "rknnlite": mock.Mock(), "rknnlite.api": SimpleNamespace(RKNNLite=lite)}), \
+                    mock.patch.object(runner, "import_runtime_contract", side_effect=lambda family: helper if family == "rknnlite" else cpu), \
+                    mock.patch.object(runner, "model_files", return_value=[Path(directory) / "model.rknn"]), \
+                    mock.patch.object(runner, "execute", side_effect=execute):
+                with self.assertRaisesRegex(ValueError, "unsupported actual RKNN batch 4"):
+                    runner.run(options, source, destination)
+        self.assertEqual(events, [("validate", 1), ("execute", 1), ("execute", 1), ("execute", 1),
+                                  ("validate", 2), ("execute", 2), ("execute", 2), ("validate", 4)])
+        destination.seek(0)
+        ready, _ = runner.read_frame(destination)
+        self.assertEqual(ready["type"], "ready")
+        self.assertEqual(ready["metadata"]["initializedBatches"], [1, 2, 4])
+        self.assertEqual(ready["metadata"]["rknn"]["selectedBatch"], 1)
+        for batch_id in range(1, 5):
+            output, _ = runner.read_frame(destination)
+            self.assertEqual((output["type"], output["batch_id"]), ("output", batch_id))
+        failure, _ = runner.read_frame(destination)
+        self.assertEqual((failure["type"], failure["batch_id"]), ("error", 5))
+        self.assertIn("unsupported actual RKNN batch 4", failure["error"])
+        self.assertIsNone(runner.read_frame(destination))
+        native.release.assert_called_once_with()
+
     def test_repeatable_warmup_flag_checks_every_requested_batch(self):
         init = encode({"type": "init", "inputs": ["input"], "outputs": ["output"], "batch_sizes": [1, 2],
                        "max_new_tokens": 0})

@@ -131,7 +131,7 @@ func validateProfileInputs(spec Spec, actual native.Metadata) error {
 		return errors.New("verified native initialization evidence unavailable")
 	}
 	batches := spec.Profile.RuntimeMetadata.InitializedBatches
-	if !slices.Equal(actual.Runtime.Inputs, condition.Preprocessor.Inputs) || !slices.Equal(actual.Runtime.Outputs, condition.Preprocessor.Outputs) || !slices.Equal(actual.Runtime.InitializedBatches, batches) || len(batches) == 0 || len(spec.Profile.Batches) == 0 || actual.MaxBatchSize != slices.Max(batches) || actual.Runtime.WarmupIterations != condition.ActiveProtocol.WarmupIterations {
+	if !slices.Equal(actual.Runtime.Inputs, condition.Preprocessor.Inputs) || !slices.Equal(actual.Runtime.Outputs, condition.Preprocessor.Outputs) || !slices.Equal(actual.Runtime.InitializedBatches, batches) || len(batches) == 0 || len(spec.Profile.Batches) == 0 || actual.MaxBatchSize != slices.Max(batches) || actual.Runtime.WarmupIterations != condition.Actor.WarmupIterations {
 		return errors.New("actual native raw fields/batches/warmup differ from measured condition")
 	}
 	return nil

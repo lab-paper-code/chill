@@ -231,22 +231,25 @@ func TestNativeInitializationMatchesRecordedRuntimeNotMeasuredCurve(t *testing.T
 		RuntimeMetadata: &native.RuntimeMetadata{InitializedBatches: []int{1, 2}},
 	}
 	profile.Condition.Preprocessor.Inputs = []string{"image"}
-	profile.Condition.ActiveProtocol.WarmupIterations = 2
+	profile.Condition.Actor.WarmupIterations = 2
+	profile.Condition.ActiveProtocol.WarmupIterations = 9
 	for _, tc := range []struct {
 		name    string
 		batches []int
+		warmup  int
 		valid   bool
 	}{
-		{"recorded initialization exceeds measured curve", []int{1, 2}, true},
-		{"unrecorded initialized batch", []int{1, 3}, false},
-		{"initialization reduced to measured curve", []int{1}, false},
+		{"recorded initialization exceeds measured curve", []int{1, 2}, 2, true},
+		{"unrecorded initialized batch", []int{1, 3}, 2, false},
+		{"initialization reduced to measured curve", []int{1}, 2, false},
+		{"collection warmup differs from startup recipe", []int{1, 2}, 9, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			actual := native.Metadata{
 				Runtime: native.RuntimeMetadata{
 					Inputs:             []string{"image"},
 					InitializedBatches: tc.batches,
-					WarmupIterations:   2,
+					WarmupIterations:   tc.warmup,
 				},
 				MaxBatchSize: 2,
 				Policy:       native.Policy{MaxBatchSize: 1},
