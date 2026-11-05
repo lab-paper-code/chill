@@ -54,10 +54,11 @@ func TestCatalogCompletedTrialsMatchSerialAndBoundIO(t *testing.T) {
 	if err := catalog.store.client.Get(ctx, source, measurement); err != nil {
 		t.Fatal(err)
 	}
-	result, err := campaign.DecodeResultRecord(objects[apiObjectIdentity(measurement.Status.Result).Location()])
+	retained, err := catalog.evidence.Read(ctx, measurement)
 	if err != nil {
 		t.Fatal(err)
 	}
+	result := retained.Result
 	references := result.Spec().CompletedTrials
 	delayed := &delayedCatalogObjects{objects: objects}
 	catalog.loader, err = profilerevidence.NewLoader(delayed, catalog.maxObjectBytes)
@@ -73,7 +74,9 @@ func TestCatalogCompletedTrialsMatchSerialAndBoundIO(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		trial, err := catalog.evidence.ReadTrials(ctx, measurement, campaignevidence.Campaign{Result: single})
+		singleRetained := retained
+		singleRetained.Result = single
+		trial, err := catalog.evidence.ReadTrials(ctx, measurement, singleRetained)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +86,7 @@ func TestCatalogCompletedTrialsMatchSerialAndBoundIO(t *testing.T) {
 	serialTime := time.Since(start)
 	delayed.peak.Store(0)
 	start = time.Now()
-	parallel, err := catalog.evidence.ReadTrials(ctx, measurement, campaignevidence.Campaign{Result: result})
+	parallel, err := catalog.evidence.ReadTrials(ctx, measurement, retained)
 	if err != nil {
 		t.Fatal(err)
 	}
