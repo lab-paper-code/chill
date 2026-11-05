@@ -91,6 +91,9 @@ retain occupancy. Healthy siblings can serve; inference CLEAR does not settle
 independent power/prepare/route/cleanup effects or erase historical evidence.
 Recovery provenance survives clean boots in coverage and raw indexes without
 changing original JSONL/gzip bytes.
+All-history coverage includes recovery metadata independently of source-hour
+scanning, retaining an unknown (`From=0`) start and its provenance even when
+the old interval precedes every retained source. Finite windows remain clipped.
 An exact successful Pod Create (not AlreadyExists) records its API-assigned
 Pod UID before prepared-source publication. The owner-run file retains which
 already-existing crash roots predate that creation proof, so unrelated new

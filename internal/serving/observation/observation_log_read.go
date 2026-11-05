@@ -185,6 +185,7 @@ func (r *observationRead) coverage(ranges map[string][2]time.Time) serving.Obser
 
 func (r *observationRead) streamCoverage(coverage *serving.ObservationCoverage, stream string, bounds [2]time.Time) {
 	from, to := bounds[0].UTC(), bounds[1].UTC()
+	allHistory := from.IsZero()
 	if to.IsZero() {
 		to = r.now
 	}
@@ -216,10 +217,11 @@ func (r *observationRead) streamCoverage(coverage *serving.ObservationCoverage, 
 		r.hourCoverage(coverage, stream, hour, start, end, available)
 	}
 	for _, gap := range r.recoveryGaps {
-		if !gap.From.Before(to) || !gap.To.After(from) {
+		if !gap.From.Before(to) || !allHistory && !gap.To.After(from) {
 			continue
 		}
-		if gap.From.Before(from) {
+		// Unknown-start history is metadata, not an hour-scan lower bound.
+		if !allHistory && gap.From.Before(from) {
 			gap.From = from
 		}
 		gap.To = minTime(gap.To, to)
