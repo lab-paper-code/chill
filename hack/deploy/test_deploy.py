@@ -36,6 +36,8 @@ if name=='docker':
   state['pruneCount']=state.get('pruneCount',0)+1;save()
   if state.get('failPrune') or state['pruneCount']==state.get('failPruneAt'):sys.exit(18)
   builder=argument('--builder')
+  # BuildKit exposes inuse as presence, not a string-valued boolean.
+  if '--filter' in args and argument('--filter')=='inuse=false':print('Total: 0B');sys.exit(0)
   state['buildCache']=[entry for entry in state.get('buildCache',[]) if entry['builder']!=builder or entry['inUse']]
   save();print('Reclaimed completed unused build cache');sys.exit(0)
  if args[:2]!=['buildx','build']:sys.exit(89)
@@ -564,8 +566,6 @@ shutil.disk_usage = disk_usage
                 self.assertTrue(all(call[call.index('--builder') + 1] == 'publication-builder' for call in docker))
                 prunes = [call for call in docker if call[1:3] == ['buildx', 'prune']]
                 self.assertEqual(len(prunes), 2 if scenario == 'reclaimed' else 0 if scenario in ('failBuild', 'no-approval') else 1)
-                self.assertTrue(all(call == ['docker', 'buildx', 'prune', '--builder', 'publication-builder',
-                                             '--force', '--filter', 'inuse=false'] for call in prunes))
                 self.assertEqual([entry for entry in observed['buildCache'] if entry['id'] in ('active', 'foreign')], retained)
                 if scenario == 'reclaimed':
                     self.assertEqual(observed['buildCache'], retained)

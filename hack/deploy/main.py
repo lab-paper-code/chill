@@ -445,7 +445,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             if is_build:
                 if recipe.get('pruneCompletedBuildCache', False):
                     builder = argv[argv.index('--builder') + 1]
-                    run.run(['docker', 'buildx', 'prune', '--builder', builder, '--force', '--filter', 'inuse=false'],
+                    run.run(['docker', 'buildx', 'prune', '--builder', builder, '--force'],
                             name + '-cache-prune.txt', read_output=False)
                 disk()
             return result

@@ -339,9 +339,12 @@ The disk gates require `minFreeBytes` and `maxDiskUsedPercent` (default 85).
 Builds record `docker buildx du` before/after on their actual builders.
 `"pruneCompletedBuildCache": true` authorizes reclaiming unused cache on the
 recipe's CHILL-owned builder after each successful build/push, before the
-post-build disk check. It defaults to false. Cleanup failure or insufficient
-remaining headroom stops execution. Other builders, in-use cache, images and
-volumes are outside this cleanup.
+post-build disk check. It defaults to false and runs
+`docker buildx prune --builder <actual builder> --force`.
+BuildKit protects live references; its `inuse` filter is presence-valued, so
+`inuse=false` would match no unused records. Cleanup failure or insufficient
+remaining headroom stops execution. Other builders, images and volumes remain
+outside this cleanup; default prune also retains shared/internal/frontend cache.
 Firstfloor installs apt before Python-package arguments and shares the pinned
 Python dependency layer between CPU and RKNN; optional extras are installed
 afterward with the same pins enforced. This uses only the existing BuildKit
