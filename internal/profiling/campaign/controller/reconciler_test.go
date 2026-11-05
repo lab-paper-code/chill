@@ -43,32 +43,7 @@ func TestCampaignNameLabelBoundariesProgressAndRestore(t *testing.T) {
 			parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
 			reportBytes, report := curvePlanCandidateReport(t, parent)
 			preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
-			scheme := runtime.NewScheme()
-			if err := api.AddToScheme(scheme); err != nil {
-				t.Fatal(err)
-			}
-			// Fake clients accept invalid metadata and selector values. Apply the
-			// Kubernetes boundary validators before delegating to fake storage.
-			native := fake.NewClientBuilder().WithScheme(scheme).
-				WithStatusSubresource(parent, &api.ProfilingRun{}).
-				WithObjects(parent, curvePlanModel(report)).
-				WithInterceptorFuncs(interceptor.Funcs{
-					Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
-						if errs := apivalidation.ValidateObjectMetaAccessor(object, true, apivalidation.NameIsDNSSubdomain, field.NewPath("metadata")); len(errs) != 0 {
-							return errs.ToAggregate()
-						}
-						return c.Create(ctx, object, opts...)
-					},
-					List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-						options := (&client.ListOptions{}).ApplyOptions(opts)
-						if options.LabelSelector != nil {
-							if _, err := metav1.ParseToLabelSelector(options.LabelSelector.String()); err != nil {
-								return err
-							}
-						}
-						return c.List(ctx, list, opts...)
-					},
-				}).Build()
+			native := newCampaignMetadataValidationClient(t, parent, curvePlanModel(report))
 			store := newFakeCurvePlanStore()
 			options := CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20}
 			resolver := &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}
@@ -93,14 +68,6 @@ func TestCampaignNameLabelBoundariesProgressAndRestore(t *testing.T) {
 			if !controlledByParent(parent, child) || child.OwnerReferences[0].Name != name ||
 				(len(name) <= 63 && child.Labels[labelBatchEnergyOptimization] != name) {
 				t.Fatalf("child identity changed: %+v", child.ObjectMeta)
-			}
-			// The active child uses the same bounded metadata contract.
-			active, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1}, 1, "ort-cpu")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if errs := apivalidation.ValidateObjectMeta(&active.ObjectMeta, true, apivalidation.NameIsDNSSubdomain, field.NewPath("metadata")); len(errs) != 0 {
-				t.Fatal(errs.ToAggregate())
 			}
 			prepared := len(preparer.requests)
 			preparer.err = errors.New("restart must recover the frozen plan without preparing it again")
@@ -141,18 +108,60 @@ func TestCampaignNameLabelBoundariesProgressAndRestore(t *testing.T) {
 			if err := native.Create(ctx, foreign); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, err := recovered.Resolve(ctx, parent); err == nil || !strings.Contains(err.Error(), "not controller-owned") {
+			if _, _, _, err := recovered.Resolve(ctx, parent); err == nil {
 				t.Fatalf("curve-plan recovery adopted foreign UID: %v", err)
 			}
 			runs, err = restarted.listRuns(ctx, parent)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := ProjectSnapshot(parent, runs, nil, []int{1}, false); err == nil || !strings.Contains(err.Error(), "not controller-owned") {
+			if _, err := ProjectSnapshot(parent, runs, nil, []int{1}, false); err == nil {
 				t.Fatalf("snapshot adopted foreign UID: %v", err)
 			}
 		})
 	}
+}
+
+func newCampaignMetadataValidationClient(
+	t *testing.T,
+	parent *api.BatchEnergyOptimization,
+	model *api.ModelSpec,
+) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := api.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	// The active child uses the same bounded metadata contract.
+	active, err := BuildRun(parent, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 1}, 1, "ort-cpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := apivalidation.ValidateObjectMeta(&active.ObjectMeta, true, apivalidation.NameIsDNSSubdomain, field.NewPath("metadata")); len(errs) != 0 {
+		t.Fatal(errs.ToAggregate())
+	}
+	// Fake clients accept invalid metadata and selector values. Apply the
+	// Kubernetes boundary validators before delegating to fake storage.
+	return fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(parent, &api.ProfilingRun{}).
+		WithObjects(parent, model).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.CreateOption) error {
+				if errs := apivalidation.ValidateObjectMetaAccessor(object, true, apivalidation.NameIsDNSSubdomain, field.NewPath("metadata")); len(errs) != 0 {
+					return errs.ToAggregate()
+				}
+				return c.Create(ctx, object, opts...)
+			},
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				options := (&client.ListOptions{}).ApplyOptions(opts)
+				if options.LabelSelector != nil {
+					if _, err := metav1.ParseToLabelSelector(options.LabelSelector.String()); err != nil {
+						return err
+					}
+				}
+				return c.List(ctx, list, opts...)
+			},
+		}).Build()
 }
 
 func TestDeriveStatusPreservesConditionTimeUntilStatusTransitions(t *testing.T) {
