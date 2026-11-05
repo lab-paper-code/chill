@@ -185,16 +185,22 @@ dynamic probe output is validated by the built-in path, not an arbitrary
 override.
 
 Strict dashboard-only execution preserves existing nonterminal measurements.
-It requires exactly the `dashboard` image role, no custom phase commands,
+It requires exactly the `dashboard` image role, retained live values without
+`values` overrides or `replaceValues`, and no custom phase commands,
 `generatedValues`, `toolSources`, runtime declarations, or measurement-affecting
-options. Eligibility is provisional: the captured live manifest plus Helm hooks
-and source render
+options. Both node-agent and profiler workload-observer Kubernetes clients must
+have an explicit nonempty `apiServer` or explicit
+`discoverFromDefaultEndpoint: false` in the captured live values. Missing or
+dynamic discovery inputs cannot use the dashboard-only path: offline rendering
+cannot prove the effects of Kubernetes `lookup` during upgrade.
+Eligibility is provisional: the captured live manifest plus Helm hooks and source render
 must contain identical resource identities and structurally identical objects,
 except for the `image` of container `dashboard` in the single `apps/v1`
 Deployment named `<release>-dashboard` in the selected namespace. An unchanged
 image is allowed in the pre-publication render. The final verified-image render
 must pass the same boundary before mutation. Missing, duplicate, malformed, or
-undecidable resources stop execution.
+undecidable resources stop execution. Mapping keys must be unique strings before
+YAML constructs dictionaries, so implicit boolean/numeric keys cannot hide changes.
 Hook identities and bodies must also remain unchanged. Proven dashboard-only
 execution automatically uses Helm `--no-hooks` and records the reason in
 deployment state, preventing unchanged post-upgrade jobs such as bucket setup

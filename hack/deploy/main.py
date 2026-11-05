@@ -201,9 +201,17 @@ class Runner:
                 stream.write(json.dumps(record) + '\n')
 
 
+class ManifestLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        keys = [key.value for key, _ in node.value if key.tag == 'tag:yaml.org,2002:str']
+        if len(keys) != len(node.value) or len(set(keys)) != len(keys):
+            raise ValueError('manifest mapping keys must be unique strings')
+        return super().construct_mapping(node, deep=deep)
+
+
 def objects(raw):
     result = []
-    for item in yaml.safe_load_all(raw):
+    for item in yaml.load_all(raw, Loader=ManifestLoader):
         if item is None:
             continue
         if not isinstance(item, dict) or not isinstance(item.get('metadata'), dict):
@@ -403,6 +411,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         state['dashboardOnlyEligible'] = (
             [item['role'] for item in planned] == ['dashboard']
             and not any(recipe['commands'].values())
+            and not recipe.get('replaceValues') and not recipe['values']
             and not any(recipe.get(field) for field in
                         ('generatedValues', 'toolSources', 'runtimeDeclarations',
                          'schedulerConfigMapFile', 'allowedLostProfileIDs', 'publicationOnly')))
@@ -426,6 +435,16 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         run.run(helm + ['history', recipe['release'], '-o', 'json'], 'helm-history.json', read_output=False)
         live_values = run.run(helm + ['get', 'values', recipe['release'], '-o', 'json'], 'live-values.json')
         (out / 'live-values.json').write_bytes(live_values)
+        state['dashboardOnlyStaticInputs'] = False
+        if state['dashboardOnlyEligible']:
+            settings = json.loads(live_values) or {}
+            clients = (settings.get('nodeAgent', {}).get('kubernetesClient', {}),
+                       settings.get('profiler', {}).get('workloadObserver', {}).get('kubernetesClient', {}))
+            state['dashboardOnlyStaticInputs'] = all(
+                isinstance(client, dict) and (
+                    isinstance(client.get('apiServer'), str) and bool(client['apiServer'])
+                    or client.get('discoverFromDefaultEndpoint') is False)
+                for client in clients)
         live = run.run(helm + ['get', 'manifest', recipe['release']], 'live-manifest.yaml')
         hooks = run.run(helm + ['get', 'hooks', recipe['release']], 'live-hooks.yaml')
         if not inspect:
@@ -443,7 +462,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         stage('render-review')
         before = run.run(render, 'render-before.yaml')
         (out / 'render-before.yaml').write_bytes(before)
-        state['dashboardOnlyBefore'] = state['dashboardOnlyEligible'] and dashboard_only(
+        state['dashboardOnlyBefore'] = state['dashboardOnlyStaticInputs'] and dashboard_only(
             live + b'\n---\n' + hooks, before, recipe['namespace'], recipe['release'])
         dump(out / 'state.json', state)
         print('BOUNDARY: ' + ('dashboard-image-only; retained measurements remain read-only'
