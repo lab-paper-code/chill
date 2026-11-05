@@ -74,6 +74,7 @@ func validBatchEnergyOptimization(name string) *edgev1alpha1.BatchEnergyOptimiza
 				},
 			},
 			TrialsPerBatch: 3,
+			RetryLimit:     2,
 		},
 	}
 }

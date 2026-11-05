@@ -133,7 +133,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
 
         def api(url, body=None):
             if url.endswith("/preflight"):
-                assert body is not None and "batchSizes" not in body["spec"] and "retryLimit" not in body["spec"]
+                assert body is not None and "batchSizes" not in body["spec"]
                 return {"resolves": True, "batchPlan": {"plannedBatches": list(planned_batches)}}
             assert body is None, "generation must not submit requests"
             return copy.deepcopy(result if url.endswith('/result') else inputs[url.rsplit('/', 1)[-1]])
@@ -318,7 +318,7 @@ def coverage_self_check(gen):
     assert "cpuAffinity" not in spec
     spec, source = gen.coverage_defaults(cell, "different-node", [plan, newer], [])
     assert source == "request:new" and "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
-    assert "batchSizes" not in spec and "retryLimit" not in spec and spec["activeProtocol"]["dataset"] == "dataset"
+    assert "batchSizes" not in spec and spec["activeProtocol"]["dataset"] == "dataset"
     assert plan["spec"]["batchSizes"] == [1] and plan["spec"]["retryLimit"] == 1
     assert "cpuAffinity" in plan["spec"]  # inheritance never mutates retained requests
     profile = {"id": "profile", "nodeName": "node", "measuredAt": "2026-03-01", "condition": {
@@ -332,7 +332,7 @@ def coverage_self_check(gen):
     different = copy.deepcopy(plan)
     different["spec"]["state"]["targetNode"] = "other"
     spec, source = gen.coverage_defaults(cell, "node", [different], [profile])
-    assert source == "profile:profile" and "retryLimit" not in spec
+    assert source == "profile:profile" and spec["retryLimit"] == 1
     assert "cpuQuota" not in spec and "cpuRequest" not in spec["state"]
     assert "settlingDurationSeconds" not in spec["activeProtocol"]
     execution_conditions = {"runtimeImage": "current-runtime", "curveSchema": gen.SHARED_CURVE_SCHEMA,
@@ -428,7 +428,6 @@ class CoverageGenerationTest(unittest.TestCase):
             self.assertEqual(planned['cells'][0]['candidateBatches'], candidates)
             self.assertEqual(planned['cells'][0]['batches'], candidates)
             self.assertNotIn('batchSizes', planned['manifests'][0]['spec'])
-            self.assertNotIn('retryLimit', planned['manifests'][0]['spec'])
 
     def test_actual_workload_percentile_and_unambiguous_source(self):
         gen = load_coverage_plan()

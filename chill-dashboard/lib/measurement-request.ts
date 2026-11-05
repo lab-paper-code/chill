@@ -60,11 +60,11 @@ export function requestDefaults(condition:RequestCondition, plans:MeasurementPla
     return {exact:false,source:`기존 요청 ${source.metadata.name} (${spec.state.candidate.deviceClass}, ${spec.state.candidate.modelSpec===condition.model?"같은 모델":"같은 실행 경로"}의 최근 성공 측정 방식)`,spec:{...spec,state:{...spec.state,targetNode:"",candidate:{...spec.state.candidate,preprocessor:spec.state.candidate.modelSpec===condition.model?spec.state.candidate.preprocessor:""}},activeProtocol:{...spec.activeProtocol,workload:undefined,...(spec.state.candidate.modelSpec===condition.model?{}:{dataset:undefined})},trialsPerBatch:3}}
   }
   const c=profile.condition,active=c.activeProtocol,idle=c.idleProtocol
-  return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 반복 3회)`,spec:{
+  return {exact:true,source:`측정 프로파일 ${profile.id} (동일 조건; 인프라 재시도 한도는 직접 지정)`,spec:{
     state:{candidate:{modelSpec:c.logicalModel,deviceClass:c.deviceClass,executionPath:c.artifact.executionPath,powerMode:c.powerMode,preprocessor:c.preprocessor.name},targetNode:profile.nodeName},
     activeProtocol:{warmupIterations:active.warmupIterations,durationSeconds:active.durationSeconds,dataset:active.dataset?.name,metricObservation:{intervalMilliseconds:active.metricIntervalMilliseconds,timeoutMilliseconds:active.metricTimeoutMilliseconds,durationSeconds:active.metricDurationSeconds}},
     idleProtocol:{settlingDurationSeconds:idle.settlingDurationSeconds,durationSeconds:idle.durationSeconds,metricObservation:{intervalMilliseconds:idle.metricIntervalMilliseconds,timeoutMilliseconds:idle.metricTimeoutMilliseconds,durationSeconds:idle.metricDurationSeconds}},
-    trialsPerBatch:3,
+    trialsPerBatch:3,retryLimit:NaN,
   }}
 }
 
@@ -156,7 +156,7 @@ export const steps = ["workload", "device", "run", "size", "advanced", "name", "
 export type Step = typeof steps[number]
 const dns1123 = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
-export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number }
+export type Advanced = { warmup: number; activeDuration: number; activeWindow: number; activeInterval: number; activeTimeout: number; settling: number; idleDuration: number; idleWindow: number; idleInterval: number; idleTimeout: number; retryLimit: number }
 export const advancedFields: [key: keyof Advanced, label: string, min: number][] = [
   ["warmup", "측정 전 예열 횟수", 0],
   ["activeDuration", "측정 시간 · 초", 1],
@@ -168,6 +168,7 @@ export const advancedFields: [key: keyof Advanced, label: string, min: number][]
   ["idleWindow", "쉬는 상태 전력 기록 시간 · 초", 1],
   ["idleInterval", "쉬는 상태 전력 기록 간격 · 밀리초", 1],
   ["idleTimeout", "쉬는 상태 전력 기록 대기 한도 · 밀리초", 1],
+  ["retryLimit", "일시적 인프라 장애 재시도 한도", 0],
 ]
 export type Protocol = { values: Advanced; from: string | null; spec?:MeasurementPlanSpec; target?:string; copied?:boolean }
 // model, preprocessor and dataset come from the chosen Workload's spec refs (or a copied plan); the API takes catalog names.
@@ -175,7 +176,7 @@ export type Draft = { workload: string; model: string; preprocessor: string; dat
 export type Context = { models: ModelResource[]; workloads: WorkloadSummary[]; classes: InventoryClass[]; plans: MeasurementPlan[]; preprocessors: PreprocessorResource[]; datasets: DatasetResource[]; profiles:ProfilesView["profiles"]; prefill?:boolean }
 
 export const emptyDraft: Draft = { workload: "", model: "", preprocessor: "", dataset: "", deviceClass: "", node: "", path: "", powerMode: "", trials: null, protocol: null, name: null }
-const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN }
+const blankAdvanced: Advanced = { warmup: NaN, activeDuration: NaN, activeWindow: NaN, activeInterval: NaN, activeTimeout: NaN, settling: NaN, idleDuration: NaN, idleWindow: NaN, idleInterval: NaN, idleTimeout: NaN, retryLimit: NaN }
 function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
   const active = spec.activeProtocol, idle = spec.idleProtocol
   return {
@@ -183,6 +184,7 @@ function copyAdvanced(spec: MeasurementPlanSpec): Advanced {
     activeInterval: active.metricObservation?.intervalMilliseconds ?? NaN, activeTimeout: active.metricObservation?.timeoutMilliseconds ?? NaN,
     settling: idle.settlingDurationSeconds ?? NaN, idleDuration: idle.durationSeconds ?? NaN, idleWindow: idle.metricObservation?.durationSeconds ?? NaN,
     idleInterval: idle.metricObservation?.intervalMilliseconds ?? NaN, idleTimeout: idle.metricObservation?.timeoutMilliseconds ?? NaN,
+    retryLimit: spec.retryLimit,
   }
 }
 export function fillDefaults(draft:Draft,context:Context,inherited=false):Draft {
@@ -205,6 +207,7 @@ export function updateDraft(current:Draft,patch:Partial<Draft>,context:Context,i
 function advancedProblem(values: Advanced) {
   const bad = advancedFields.find(([key, , min]) => !Number.isInteger(values[key]) || values[key] < min || values[key] > 2147483647)
   if (bad) return `"${bad[1]}"에 ${bad[2]} 이상의 정수를 적어 주세요.`
+  if (values.retryLimit > 10) return "일시적 인프라 장애 재시도 한도는 10번까지 정할 수 있어요."
   if (values.activeTimeout >= values.activeInterval || values.idleTimeout >= values.idleInterval) return "전력 기록 대기 한도는 기록 간격보다 짧아야 해요."
   if (values.activeWindow < values.activeDuration || values.idleWindow < values.idleDuration) return "전력 기록 시간은 측정 시간보다 짧을 수 없어요."
   return ""
@@ -261,6 +264,7 @@ export function manifest(d: Draft, context: Context, namespace: string) {
     activeProtocol: { ...activeProtocol, workload: d.workload, warmupIterations: p.warmup, durationSeconds: p.activeDuration, dataset: d.dataset, metricObservation: { intervalMilliseconds: p.activeInterval, timeoutMilliseconds: p.activeTimeout, durationSeconds: p.activeWindow } },
     idleProtocol: { ...v.protocol.spec?.idleProtocol, settlingDurationSeconds: p.settling, durationSeconds: p.idleDuration, metricObservation: { intervalMilliseconds: p.idleInterval, timeoutMilliseconds: p.idleTimeout, durationSeconds: p.idleWindow } },
     trialsPerBatch: v.trials,
+    retryLimit: p.retryLimit,
     ...(v.protocol.spec?.pointPolicy?{pointPolicy:v.protocol.spec.pointPolicy}:{}),
   }
   return { apiVersion: "edge.dacs.io/v1alpha1", kind: "BatchEnergyOptimization", metadata: { name: v.name, namespace }, spec }

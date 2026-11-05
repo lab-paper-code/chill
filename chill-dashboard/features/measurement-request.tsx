@@ -42,11 +42,11 @@ function AdvancedFields({ value, set, showErrors, rejection }: { value: Advanced
       {timings.map(row=>{const max=Math.max(row.duration,row.window);return Number.isFinite(max)&&max>0&&row.duration>=0&&row.window>=0?<div key={row.label} className="space-y-1 text-xs" aria-label={`${row.label} 상대 길이`}><span>{row.label} · 측정 시간</span><div className="h-2 rounded bg-primary" style={{width:`${row.duration/max*100}%`}}/><span>전력 기록 창</span><div className="h-2 rounded bg-muted-foreground" style={{width:`${row.window/max*100}%`}}/></div>:null})}
     </section>
     {advancedFields.map(([key, label, min]) => {
-      const issue=!Number.isInteger(value[key])||value[key]<min||value[key]>2147483647?"정수 범위 확인":key==="activeTimeout"&&value.activeTimeout>=value.activeInterval||key==="idleTimeout"&&value.idleTimeout>=value.idleInterval?"기록 간격 초과":key==="activeWindow"&&value.activeWindow<value.activeDuration||key==="idleWindow"&&value.idleWindow<value.idleDuration?"측정 시간 미달":""
+      const issue=!Number.isInteger(value[key])||value[key]<min||value[key]>(key==="retryLimit"?10:2147483647)?"정수 범위 확인":key==="activeTimeout"&&value.activeTimeout>=value.activeInterval||key==="idleTimeout"&&value.idleTimeout>=value.idleInterval?"기록 간격 초과":key==="activeWindow"&&value.activeWindow<value.activeDuration||key==="idleWindow"&&value.idleWindow<value.idleDuration?"측정 시간 미달":""
       const serverIssue=rejection?.fields.includes(key)?"조건 재확인":"",message=showErrors&&issue?issue:serverIssue
-      return <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} aria-invalid={!!message} aria-describedby={message?`measurement-${key}-error`:undefined} type="number" inputMode="numeric" min={min} max={2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} />{message&&<span id={`measurement-${key}-error`} className="text-destructive">{message}</span>}</label>
+      return <label htmlFor={`measurement-${key}`} key={key} className="grid gap-2 text-sm">{label}<Input id={`measurement-${key}`} aria-invalid={!!message} aria-describedby={message?`measurement-${key}-error`:undefined} type="number" inputMode="numeric" min={min} max={key === "retryLimit" ? 10 : 2147483647} step={1} value={Number.isNaN(value[key]) ? "" : value[key]} onChange={event => set({ ...value, [key]: event.target.valueAsNumber })} />{message&&<span id={`measurement-${key}-error`} className="text-destructive">{message}</span>}</label>
     })}
-    <table aria-label="수치 제약" className="w-full text-left text-xs tabular-nums sm:col-span-2"><thead><tr><th>항목</th><th>최소</th><th>최대</th></tr></thead><tbody>{advancedFields.map(([key,label,min])=><tr key={key}><th className="font-normal">{label}</th><td>{min}</td><td>제한 없음</td></tr>)}</tbody></table>
+    <table aria-label="수치 제약" className="w-full text-left text-xs tabular-nums sm:col-span-2"><thead><tr><th>항목</th><th>최소</th><th>최대</th></tr></thead><tbody>{advancedFields.map(([key,label,min])=><tr key={key}><th className="font-normal">{label}</th><td>{min}</td><td>{key==="retryLimit"?10:"제한 없음"}</td></tr>)}</tbody></table>
   </div>
 }
 
@@ -150,7 +150,7 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
       </section>
       <div hidden={stage!==1} className="space-y-5">
       <section id="measurement-batches" className="grid gap-4 border-t pt-5 md:grid-cols-2" aria-label="목표 배치와 반복">
-        <div className="space-y-2"><h2 className="font-semibold">배치 자동 탐색</h2><p className="text-sm text-muted-foreground">1건부터 배치를 늘려 탐색해요. 모델 파일과 실행 경로의 지원 범위가 탐색 상한이에요. 실행 경계에 도달하면 완료된 낮은 배치의 측정 결과를 보관해요.</p></div>
+        <div className="space-y-2"><h2 className="font-semibold">배치 자동 탐색</h2><p className="text-sm text-muted-foreground">1건부터 배치를 늘려 탐색해요. 모델 파일과 실행 경로의 지원 범위가 탐색 상한이에요. 메모리 한계(OOM)에 도달하면 완료된 낮은 배치의 결과를 보관하고 탐색을 마쳐요. 일시적 인프라 장애에는 재시도 한도를 적용해요.</p></div>
         <label className="grid gap-2 text-sm">배치별 반복 횟수<Input name="trials" aria-invalid={!!error&&v.trials!==3} aria-describedby={error&&v.problem("size")?"measurement-size-error":undefined} type="number" min={3} max={3} value={Number.isFinite(v.trials)?v.trials:""} onChange={event=>update({trials:event.target.valueAsNumber})}/></label>
         {error&&v.problem("size")&&<p id="measurement-size-error" tabIndex={-1} className="text-sm text-destructive">{v.problem("size")}</p>}
       </section>

@@ -133,7 +133,7 @@ export function formatMeasurementTime(value:string|number) {
 }
 export function measurementConditionDiff(before:MeasurementPlanSpec,after:MeasurementPlanSpec) {
   const fields: [string,unknown,unknown][]=[
-    ["반복",before.trialsPerBatch,after.trialsPerBatch],
+    ["반복",before.trialsPerBatch,after.trialsPerBatch],["인프라 재시도 한도",before.retryLimit,after.retryLimit],
     ...Object.keys({...before.state,...after.state}).filter(key=>key!=="candidate").map(key=>[key,(before.state as unknown as Record<string,unknown>)[key],(after.state as unknown as Record<string,unknown>)[key]] as [string,unknown,unknown]),
     ...Object.keys({...before.state.candidate,...after.state.candidate}).map(key=>[key,(before.state.candidate as unknown as Record<string,unknown>)[key],(after.state.candidate as unknown as Record<string,unknown>)[key]] as [string,unknown,unknown]),
     ...(["activeProtocol","idleProtocol"] as const).flatMap(protocol=>Object.keys({...before[protocol],...after[protocol]}).map(key=>[`${protocol==="activeProtocol"?"부하":"유휴"} ${key}`,(before[protocol] as Record<string,unknown>)[key],(after[protocol] as Record<string,unknown>)[key]] as [string,unknown,unknown])),

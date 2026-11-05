@@ -216,7 +216,7 @@ test("measurement timestamps retain the explicit timezone",()=>{
 })
 
 test("CPU-free retry condition diff includes protocol changes while summaries retain original reasons separately",()=>{
-  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n"},trialsPerBatch:3,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
+  const spec={state:{candidate:{modelSpec:"m",preprocessor:"p",deviceClass:"d",executionPath:"cpu",powerMode:"MAXN"},targetNode:"n"},trialsPerBatch:3,retryLimit:1,activeProtocol:{durationSeconds:10,dataset:"set"},idleProtocol:{durationSeconds:10}}
   assert.deepEqual(measurementConditionDiff(spec,spec),[])
   assert.deepEqual(measurementConditionDiff(spec,{...spec,activeProtocol:{...spec.activeProtocol,durationSeconds:20}}),["부하 durationSeconds: 10 → 20"])
   assert.match(measurementReasonSummary("context deadline exceeded"),/시간.*초과/)

@@ -24,6 +24,12 @@ type BatchEnergyOptimizationSpec struct {
 	// +optional
 	// +kubebuilder:default={}
 	PointPolicy BatchEnergyOptimizationPointPolicySpec `json:"pointPolicy,omitempty"`
+
+	// RetryLimit bounds retries at the same batch after retryable infrastructure
+	// failures. Runtime OOM, execution failures and invalid evidence do not retry.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=10
+	RetryLimit int32 `json:"retryLimit"`
 }
 
 // BatchEnergyOptimizationPointPolicySpec owns the confidence of both idle and

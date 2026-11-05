@@ -172,7 +172,7 @@ def coverage_defaults(cell, node, plans, profiles):
     for plan in newest:
         if exact(plan["spec"]["state"]["candidate"], plan["spec"]["state"]["targetNode"]):
             spec = copy.deepcopy(plan["spec"])
-            for field in ("cpuAffinity", "cpuQuota", "batchSizes", "retryLimit"):
+            for field in ("cpuAffinity", "cpuQuota", "batchSizes"):
                 spec.pop(field, None)
             spec["state"].pop("cpuRequest", None)
             return spec, "request:" + plan["metadata"]["name"]
@@ -202,11 +202,14 @@ def coverage_defaults(cell, node, plans, profiles):
                 "intervalMilliseconds": protocol["metricIntervalMilliseconds"],
                 "timeoutMilliseconds": protocol["metricTimeoutMilliseconds"],
                 "durationSeconds": protocol["metricDurationSeconds"]}
+        if source is None:
+            raise ValueError("no inherited retryLimit for " + cell["id"])
+        spec["retryLimit"] = source["spec"]["retryLimit"]
         return spec, "profile:" + profile["id"]
     if source is None:
         raise ValueError("no inherited protocol for " + cell["id"])
     spec = copy.deepcopy(source["spec"])
-    for field in ("cpuQuota", "cpuAffinity", "batchSizes", "retryLimit"):
+    for field in ("cpuQuota", "cpuAffinity", "batchSizes"):
         spec.pop(field, None)
     spec["state"].pop("cpuRequest", None)
     if source["spec"]["state"]["candidate"]["modelSpec"] != model:

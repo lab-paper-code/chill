@@ -218,7 +218,6 @@ func TestHandlerRejectsInvalidBatchEnergyOptimizationPreflightRequests(t *testin
 		"undecodable body":   `{`,
 		"unknown field":      `{"metadata":{"name":"campaign"},"unexpected":true}`,
 		"removed batch selection": `{"metadata":{"name":"campaign"},"spec":{"batchSizes":[1,2]}}`,
-		"removed retry policy": `{"metadata":{"name":"campaign"},"spec":{"retryLimit":1}}`,
 		"wrong kind":         `{"kind":"ProfilingRun","metadata":{"name":"campaign"}}`,
 		"wrong API version":  `{"apiVersion":"edge.dacs.io/v2","metadata":{"name":"campaign"}}`,
 		"namespace mismatch": `{"metadata":{"namespace":"another-namespace","name":"campaign"}}`,

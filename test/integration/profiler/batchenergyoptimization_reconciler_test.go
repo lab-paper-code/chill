@@ -103,7 +103,7 @@ func (w *fakeResultWriter) Write(
 
 func TestBatchEnergyOptimizationPlanFailureIsVisibleAndRetryable(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-plan-failure")
+	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-plan-failure", 2)
 	plans, curves, results := completedBatchFakes(t)
 	plans.unexpectedErr = fmt.Errorf("device power mode is unavailable")
 	reconciler := newBatchReconciler(t, kube, plans, curves, results)
@@ -135,7 +135,7 @@ func TestBatchEnergyOptimizationPlanFailureIsVisibleAndRetryable(t *testing.T) {
 
 func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitAndRestart(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-control-completed")
+	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-control-completed", 2)
 	plans, curves, results := completedBatchFakes(t)
 	reconciler := newBatchReconciler(t, kube, plans, curves, results)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
@@ -244,9 +244,9 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitAndRestart
 	}
 }
 
-func TestBatchEnergyOptimizationReconcilerFailsInfrastructureWithoutRetry(t *testing.T) {
+func TestBatchEnergyOptimizationReconcilerFailsUnclassifiedExecutionWithoutRetry(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-control-failed")
+	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-control-failed", 1)
 	plans, curves, results := completedBatchFakes(t)
 	reconciler := newBatchReconciler(t, kube, plans, curves, results)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
@@ -277,9 +277,43 @@ func TestBatchEnergyOptimizationReconcilerFailsInfrastructureWithoutRetry(t *tes
 	requireOwnedRunCount(t, ctx, kube, parent.UID, 1)
 }
 
+func TestBatchEnergyOptimizationReconcilerBoundsExplicitEvictionRetriesAtSameBatch(t *testing.T) {
+	ctx, kube := startProfilerEnvtest(t)
+	for _, retryLimit := range []int32{0, 1} {
+		t.Run(fmt.Sprintf("retry-limit-%d", retryLimit), func(t *testing.T) {
+			parent := createBatchEnergyOptimization(t, ctx, kube, fmt.Sprintf("batch-eviction-%d", retryLimit), retryLimit)
+			plans, curves, results := completedBatchFakes(t)
+			reconciler := newBatchReconciler(t, kube, plans, curves, results)
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+			idle := batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeIdle, Batch: 1}
+			for attempt := 1; attempt <= int(retryLimit)+1; attempt++ {
+				reconcileBatch(t, ctx, reconciler, request)
+				run := requireCampaignRun(t, ctx, kube, parent, idle, attempt)
+				run.Status.Conditions = []metav1.Condition{{
+					Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed", LastTransitionTime: metav1.Now(),
+				}}
+				run.Status.RuntimeTermination = &edgev1alpha1.ProfilingRunRuntimeTermination{
+					Class: string(batchenergyoptimization.FailureClassRetryableFailure),
+					Reason: "Evicted", JobReason: "PodEvicted",
+				}
+				if err := kube.Status().Update(ctx, run); err != nil {
+					t.Fatal(err)
+				}
+				reconcileBatch(t, ctx, reconciler, request)
+			}
+			failed := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
+			if failed.Status.Phase != "Failed" || failed.Status.Outcome != "RetryLimitExhausted" ||
+				failed.Status.CompletedTrials != 0 || failed.Status.Result != nil || curves.calls != 0 || results.calls != 0 {
+				t.Fatalf("classified eviction retry status = %+v", failed.Status)
+			}
+			requireOwnedRunCount(t, ctx, kube, parent.UID, int(retryLimit)+1)
+		})
+	}
+}
+
 func TestBatchEnergyOptimizationReconcilerRetainsPrefixAtOOMWithoutRetry(t *testing.T) {
 	ctx, kube := startProfilerEnvtest(t)
-	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-control-oom")
+	parent := createBatchEnergyOptimization(t, ctx, kube, "batch-control-oom", 2)
 	plans, curves, results := completedBatchFakes(t)
 	reconciler := newBatchReconciler(t, kube, plans, curves, results)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
@@ -298,6 +332,7 @@ func TestBatchEnergyOptimizationReconcilerRetainsPrefixAtOOMWithoutRetry(t *test
 		Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed", LastTransitionTime: metav1.Now(),
 	}}
 	run.Status.RuntimeTermination = &edgev1alpha1.ProfilingRunRuntimeTermination{
+		Class: string(batchenergyoptimization.FailureClassExpectedStop),
 		Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
 	}
 	if err := kube.Status().Update(ctx, run); err != nil {
@@ -370,6 +405,7 @@ func createBatchEnergyOptimization(
 	ctx context.Context,
 	kube client.Client,
 	name string,
+	retryLimit int32,
 ) *edgev1alpha1.BatchEnergyOptimization {
 	t.Helper()
 	parent := &edgev1alpha1.BatchEnergyOptimization{
@@ -398,6 +434,7 @@ func createBatchEnergyOptimization(
 				},
 			},
 			TrialsPerBatch: 3,
+			RetryLimit:     retryLimit,
 		},
 	}
 	if err := kube.Create(ctx, parent); err != nil {

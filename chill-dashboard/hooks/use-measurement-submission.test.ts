@@ -15,7 +15,7 @@ import * as measurementHelpers from "../lib/measurements.ts"
 import * as measurementSummary from "../lib/measurement-summary.ts"
 
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
-const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3}}
+const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
 
 function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0,bodies:unknown[]=[],compatibility:Parameters<typeof coverageHelpers.serverCompatibility>[1]=[],mutations:Record<string,unknown>[]=[] ,patch?:Record<string,unknown>,unknown=false,interact?:(render:()=>ReactNode)=>ReactNode) {
   const source=readFileSync(new URL("../features/measurement-request.tsx",import.meta.url),"utf8")
@@ -187,7 +187,7 @@ test("new and copied requests construct CPU-free manifests with the complete mea
     assert.equal(body.apiVersion,"edge.dacs.io/v1alpha1")
     assert.equal(body.kind,"BatchEnergyOptimization")
     assert.equal(body.metadata.namespace,"ns")
-    const {batchSizes: _batches,retryLimit: _retry,...spec}=source.spec
+    const {batchSizes: _batches,...spec}=source.spec
     assert.deepEqual(body.spec,{...spec,activeProtocol:{...source.spec.activeProtocol,workload:""}})
     assert.deepEqual(source.spec.batchSizes,[1,4])
     assert.equal(source.spec.retryLimit,2)
