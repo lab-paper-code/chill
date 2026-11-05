@@ -131,8 +131,7 @@ retainedRuns:
 		for _, template := range run.Spec.Stages {
 			scenario, err := r.cadenceScenario(ctx, template.LoadScenarioRef)
 			if err != nil {
-				var prerequisite *profiler.BootstrapServingTraceError
-				if errors.As(err, &prerequisite) {
+				if cadenceDiscoveryDefect(err) {
 					continue retainedRuns
 				}
 				return nil, err
@@ -142,8 +141,7 @@ retainedRuns:
 			}
 			source := cadenceStageSource{run: run}
 			if err := r.loadCadenceSnapshot(ctx, &source, scenario); err != nil {
-				var prerequisite *profiler.BootstrapServingTraceError
-				if errors.As(err, &prerequisite) {
+				if cadenceDiscoveryDefect(err) {
 					continue retainedRuns
 				}
 				return nil, err
@@ -158,8 +156,7 @@ retainedRuns:
 		}
 		stages, err := r.completedCadenceStages(ctx, run)
 		if err != nil {
-			var prerequisite *profiler.BootstrapServingTraceError
-			if errors.As(err, &prerequisite) {
+			if cadenceDiscoveryDefect(err) {
 				continue // A defective Run does not invalidate another intact Run.
 			}
 			return nil, err
@@ -249,6 +246,10 @@ func (r *KubernetesCadenceResolver) loadCadenceSnapshot(ctx context.Context, sou
 	}
 	var snapshot cadenceSnapshot
 	if err := readCadenceJSON(ctx, objects, *run.Status.InputSnapshotRef, &snapshot); err != nil {
+		var content *cadenceJSONContentError
+		if errors.As(err, &content) {
+			return profiler.MissingServingTrace("input snapshot has malformed JSON: %v", content)
+		}
 		return cadenceReadError("input snapshot", err)
 	}
 	if snapshot.SchemaVersion != "evaluation-snapshot.v2alpha1" || snapshot.RunUID != run.UID {
@@ -598,15 +599,37 @@ func cadenceObjectIdentity(ref api.EvaluationEvidenceReference) evidencestore.Ob
 	return evidencestore.ObjectIdentity{Store: ref.Store, Key: ref.Key, Size: ref.Size}
 }
 
+// Keep failed evidence I/O distinct from successfully read, malformed content.
+// Discovery may exclude the latter, but never a read or Close failure.
+type cadenceEvidenceReadError struct{ error }
+type cadenceJSONContentError struct{ error }
+
+func (e *cadenceEvidenceReadError) Unwrap() error { return e.error }
+func (e *cadenceJSONContentError) Unwrap() error  { return e.error }
+
+func cadenceDiscoveryDefect(err error) bool {
+	var readFailure *cadenceEvidenceReadError
+	if errors.As(err, &readFailure) {
+		return false
+	}
+	var prerequisite *profiler.BootstrapServingTraceError
+	return errors.As(err, &prerequisite)
+}
+
 func cadenceReadError(source string, err error) error {
+	var readFailure *cadenceEvidenceReadError
+	if errors.As(err, &readFailure) {
+		return fmt.Errorf("read retained cadence %s: %w", source, err)
+	}
 	if errors.Is(err, evidencestore.ErrNotFound) {
 		return profiler.MissingServingTrace("retained %s is unavailable: %v", source, err)
 	}
 	return fmt.Errorf("read retained cadence %s: %w", source, err)
 }
 
-// readCadenceJSON propagates decode and close failures at the evidence boundary.
-func readCadenceJSON(ctx context.Context, objects evidencestore.Reader, ref api.EvaluationEvidenceReference, target any) (err error) {
+// readCadenceJSON completes bounded reading and Close before classifying JSON.
+// A content error cannot mask a transport/context/Close failure.
+func readCadenceJSON(ctx context.Context, objects evidencestore.Reader, ref api.EvaluationEvidenceReference, target any) error {
 	if ref.Store == "" || ref.Key == "" || ref.Size <= 0 {
 		return profiler.MissingServingTrace("immutable evidence identity is incomplete")
 	}
@@ -614,14 +637,16 @@ func readCadenceJSON(ctx context.Context, objects evidencestore.Reader, ref api.
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, stream.Close()) }()
-	decoder := json.NewDecoder(io.LimitReader(stream, ref.Size+1))
-	if err := decoder.Decode(target); err != nil {
-		return err
+	body, readErr := io.ReadAll(io.LimitReader(stream, ref.Size+1))
+	closeErr := stream.Close()
+	if err := errors.Join(readErr, closeErr); err != nil {
+		return &cadenceEvidenceReadError{err}
 	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return fmt.Errorf("retained evidence contains trailing or oversized JSON: %v", err)
+	if int64(len(body)) > ref.Size {
+		return &cadenceJSONContentError{errors.New("retained evidence exceeds its recorded size")}
+	}
+	if err := json.Unmarshal(body, target); err != nil {
+		return &cadenceJSONContentError{err}
 	}
 	return nil
 }

@@ -167,6 +167,8 @@ func TestRetainedCadenceExcludesOnlyDefectiveRun(t *testing.T) {
 	const unrelatedMissingScenario = "unrelated-missing"
 	for _, defect := range []string{
 		unrelatedMissingScenario, "unrelated-scenario-uid", "unrelated-stage-missing",
+		"unrelated-snapshot-type", "unrelated-snapshot-syntax",
+		"matching-snapshot-type", "matching-snapshot-syntax",
 		"unrelated-snapshot-absent", "unrelated-snapshot-run",
 		"matching-scenario-missing", "matching-scenario-uid", "matching-extra-scenario-missing",
 		"matching-snapshot-ref", "matching-frozen-config", "matching-snapshot-absent",
@@ -750,6 +752,12 @@ func brokenCadenceSnapshot(
 	if err != nil {
 		t.Fatal(err)
 	}
+	switch defect {
+	case "unrelated-snapshot-type", "matching-snapshot-type":
+		payload = []byte(`{"runUID":123}`)
+	case "unrelated-snapshot-syntax", "matching-snapshot-syntax":
+		payload = []byte(`{"runUID":`)
+	}
 	ref.Key, ref.Size = "broken/input-snapshot.json", int64(len(payload))
 	data[ref.Store+"/"+ref.Key] = payload
 	broken.Status.InputSnapshotRef = &ref
@@ -772,3 +780,54 @@ func assertIntactCadenceSource(t *testing.T, contracts map[int]*firstfloor.Caden
 		}
 	}
 }
+
+func TestSnapshotReadAndCloseFailuresPrecedeContentClassification(t *testing.T) {
+	closeFailure := errors.New("snapshot Close failed")
+	for _, tc := range []struct {
+		name                    string
+		readErr, closeErr, want error
+	}{
+		{"context read", context.Canceled, nil, context.Canceled},
+		{"transport read", io.ErrClosedPipe, nil, io.ErrClosedPipe},
+		{"malformed plus Close", nil, closeFailure, closeFailure},
+		{"malformed plus missing Close", nil, evidencestore.ErrNotFound, evidencestore.ErrNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, _ := servingCadenceRunFixture(t)
+			var reader client.Reader
+			retainedServingCadenceFixtureWith(t, config, nil, func(actual client.Client, _ map[string][]byte) {
+				reader = actual
+			})
+			objects := cadenceObjectReader(func(context.Context, evidencestore.ObjectIdentity) (io.ReadCloser, error) {
+				return &cadenceSnapshotFailureStream{
+					Reader: strings.NewReader(`{"runUID":123}`), readErr: tc.readErr, closeErr: tc.closeErr,
+				}, nil
+			})
+			resolver, err := profilerkube.NewKubernetesCadenceResolver(reader, "system",
+				func(context.Context, *api.EvaluationRun) (evidencestore.Reader, error) {
+					return objects, nil
+				}, cadenceUnavailableArchive{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			contracts, err := resolver.ResolveCadence(context.Background(), config)
+			if !errors.Is(err, tc.want) || errors.Is(err, profiler.ErrBootstrapServingTraceRequired) || len(contracts) != 0 {
+				t.Fatalf("failed evidence I/O was excluded as malformed content: contracts=%v error=%v", contracts, err)
+			}
+		})
+	}
+}
+
+type cadenceSnapshotFailureStream struct {
+	io.Reader
+	readErr, closeErr error
+}
+
+func (s *cadenceSnapshotFailureStream) Read(p []byte) (int, error) {
+	if s.readErr != nil {
+		return 0, s.readErr
+	}
+	return s.Reader.Read(p)
+}
+
+func (s *cadenceSnapshotFailureStream) Close() error { return s.closeErr }

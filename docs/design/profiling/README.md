@@ -108,6 +108,14 @@ with defective child-stage identity is excluded individually; it cannot poison
 another population or an intact Run in the same population. The newest intact
 candidate is selected deterministically, then its source evidence remains
 strictly checked without a synthetic/default source.
+Discovery snapshot syntax/type errors exclude only their Run after bounded
+reading and Close both succeed. Transport, context, authorization and Close
+failures remain fatal, even when the same body is malformed or the Close error
+resembles an absent object. Selected stage artifacts do not gain a fallback.
+
+An already-owned Job is the authenticated immutable executable-record recovery
+boundary. Restart recovery trusts that recorded RunConfig/Job identity; it is
+not a new child-input admission and does not reinterpret mutable source data.
 
 The pure profiler trace join keeps final HTTP identity authoritative, enriches
 only missing native fields, and retains partial/unknown physical batches before
