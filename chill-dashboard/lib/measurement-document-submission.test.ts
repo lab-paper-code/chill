@@ -65,6 +65,7 @@ function consumer() {
       Facts: ({ items }: { items: unknown[][] }) => jsx("dl", { children: items.map(item => jsx("dd", { children: item[1] })) }),
     },
     "@/components/read-region": { SourceJSON: ({ value }: Record<string, unknown>) => jsx("pre", { children: JSON.stringify(value) }), SourceExport: () => null },
+    "@/components/measurement-request-source": { MeasurementRequestSource: ({ value }: Record<string, unknown>) => jsx("pre", { children: JSON.stringify(value) }) },
     "@/components/measurement-navigation": { MeasurementNavigation: () => null },
     "@/features/read-pages": { preflightConclusion: () => "", PreflightAnswer: ({ answer }: Record<string, unknown>) => jsx("pre", { children: JSON.stringify(answer) }) },
   }

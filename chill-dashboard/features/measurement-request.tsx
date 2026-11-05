@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { ApiError, decodeResponse, relay, warmingRetry, warmingDelay, isCoverageWarming, useChillQuery, useSession } from "@/lib/client"
-import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
+import { QueryGate, SourceJSON } from "@/components/read-region"
+import { MeasurementRequestSource } from "@/components/measurement-request-source"
 import { Screen, Row, Rows } from "@/components/screen"
 import { PreflightAnswer, preflightConclusion } from "@/features/read-pages"
 import { Button } from "@/components/ui/button"
@@ -213,6 +214,6 @@ function Funnel({ namespace, from, context, prefill, selected, refetchPlans, che
     {pre.error&&<table className="w-full text-left text-sm"><thead><tr><th>서빙 영향 · 서비스 (개)</th><th>예상 점유 · 최소 (s)</th></tr></thead><tbody><tr><td>미확인</td><td>미확인</td></tr></tbody></table>}
     {stage===2&&<section aria-label="검사·제출" className="space-y-3"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">제출 전 검토</caption><tbody>{[["요청",v.name],["Workload",d.workload],["모델",d.model],["장치 종류",d.deviceClass],["Node",d.node],["전력모드",v.powerMode],["실행 경로",d.path?executionPathLabel(d.path):"미제공"],["모델 입출력 처리",d.preprocessor],["데이터셋",d.dataset],["측정 방식 출처",v.protocol.from??"직접 입력"],["원본 요청",copiedIdentity?.name??source?.metadata.name??from??"복사 안 함"],["원본 저장 영역",copiedIdentity?.namespace??source?.metadata.namespace??(from?"미확인":"해당 없음")],["원본 UID",copiedIdentity?.uid??source?.metadata.uid??(from?"미확인":"해당 없음")]].map(([label,value])=><tr key={label}><th className="py-2 font-medium">{label}</th><td className="break-all">{value||"미제공"}</td></tr>)}</tbody></table><p role="status" className="text-sm font-semibold">미제출</p></section>}
     <div className="flex flex-wrap gap-2">{stage>0&&<Button variant="outline" disabled={unknown||pending||send.isPending} onClick={()=>setStage(stage-1)}>이전</Button>}{stage<2?<Button disabled={blocked||unknown||pending||send.isPending} onClick={next}>다음</Button>:<><Button variant="outline" disabled={blocked||pending||unknown||send.isPending} onClick={verify}>{pending?"검사 중":"요청 범위 검사"}</Button><Button disabled={!passed||blocked||send.isPending||unknown} onClick={submit}>측정 요청</Button></>}</div>
-    <details><summary className="min-h-11 cursor-pointer py-2">보낼 요청 원본</summary><SourceJSON inline value={manifest(d,context,namespace)}/><SourceExport value={manifest(d,context,namespace)} filename={`${v.name||"measurement-request"}.json`}/></details>{(answer||pre.error||dry.error)&&<details><summary className="min-h-11 cursor-pointer py-2">검사 원본</summary><SourceJSON inline value={{접수검사:dry.data??dry.error,실행계획검사:answer??pre.error}}/></details>}
+    <MeasurementRequestSource value={manifest(d,context,namespace)} title="보낼 요청 원본"/>{(answer||pre.error||dry.error)&&<details><summary className="min-h-11 cursor-pointer py-2">검사 원본</summary><SourceJSON inline value={{접수검사:dry.data??dry.error,실행계획검사:answer??pre.error}}/></details>}
   </Screen>
 }

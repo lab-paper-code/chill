@@ -4,7 +4,8 @@ import Link from "next/link"
 import { useState } from "react"
 import { Facts, Screen } from "@/components/screen"
 import { Button } from "@/components/ui/button"
-import { SourceExport, SourceJSON } from "@/components/read-region"
+import { SourceJSON } from "@/components/read-region"
+import { MeasurementRequestSource } from "@/components/measurement-request-source"
 import { MeasurementNavigation } from "@/components/measurement-navigation"
 import { MeasurementDocumentInput } from "@/components/measurement-document-input"
 import { MeasurementPreparationGuide } from "@/components/measurement-preparation-guide"
@@ -42,8 +43,7 @@ export function MeasurementDocumentRequestPage({namespace}:{namespace:string}) {
         <Facts label="자산 연결" items={[["네임스페이스",namespace],["모델",display(candidate.modelSpec)],["모델 입출력 처리",display(candidate.preprocessor)],["데이터셋",display(active.dataset)],["장치 종류",display(candidate.deviceClass)],["실행 경로",display(candidate.executionPath)],["전력 모드",display(candidate.powerMode)]]}/>
         <Facts label="기록 조건" items={[["실행 전력 기록 (초)",display(object(active.metricObservation).durationSeconds)],["유휴 전력 기록 (초)",display(object(idle.metricObservation).durationSeconds)],["예열 (회)",display(active.warmupIterations)],["유휴 안정 대기 (초)",display(idle.settlingDurationSeconds)]]}/>
       </div></details>
-      <SourceJSON inline value={body} title="제출할 전체 요청 보기"/>
-      <SourceExport value={body} filename={`${body.metadata.name}.json`}/>
+      <MeasurementRequestSource value={body}/>
       <p className="text-sm text-muted-foreground">이름·설정의 유효성과 실행 가능 여부는 서버 검사에서 확인해요. 최종 제출하면 실제 장비에서 측정이 시작될 수 있어요.</p>
     </section>}
     <div id="measurement-errors" role={error?"alert":undefined} className="space-y-2" tabIndex={-1}>{error&&<p className="text-sm text-destructive">{error}</p>}</div>

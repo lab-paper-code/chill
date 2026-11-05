@@ -62,6 +62,12 @@ DeviceClass·Node·실행 경로·전력 모드 등록, 장비 가용성·플랫
    제출 응답 유실은 `결과 미확인`으로 두고 같은 이름의 접수 기록부터 조회한다.
    자동 재제출하지 않는다.
 
+요청 상세·작성 폼·문서 검토의 **요청 문서 다운로드**는 네이티브 BEO를 저장한다.
+`MeasurementRequestSource`는 재사용할 metadata·spec과 원문 미리보기를 그대로 보존한다.
+민감정보가 입력됐다면 이 파일에도 포함되므로 공유 전에 확인한다.
+일반 조회 근거의 `SourceExport`·`SourceJSON`은 기존 credential 제거를 유지한다.
+기존 요청 복사는 원본 namespace·UID를 URL에 고정하는 동안에도 편집한 초안을 유지한다.
+
 `activeProtocol.durationSeconds`는 부하 실행 측정 시간, `idleProtocol.durationSeconds`는
 유휴 측정 시간이다. `settlingDurationSeconds`는 유휴 측정 전 안정 대기다.
 각 `metricObservation.durationSeconds`는 해당 측정 구간을 포함할 별도의 전력 기록 시간이며,

@@ -40,6 +40,7 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
     "next/navigation":{useRouter:()=>({replace:()=>{}}),useSearchParams:()=>new URLSearchParams(query)},
     "@/lib/client":{useChillMutation:()=>({isPending:false,reset:()=>{},...mutations[mutationIndex++]}),isCoverageWarming:()=>false},
     "@/components/read-region":{SourceJSON:({inline,value}:{inline?:boolean;value:unknown})=>{if(inline)bodies.push(value);return null},SourceExport:()=>null},
+    "@/components/measurement-request-source":{MeasurementRequestSource:({value}:{value:unknown})=>{bodies.push(value);return null}},
     "@/components/screen":{Screen:container,Rows:container,RowDialog:()=>null},
     "@/features/read-pages":{preflightConclusion:()=>"형식 검사 통과",PreflightAnswer:()=>null},
     "@/features/resources":{powerModeText:()=>"고정"},
