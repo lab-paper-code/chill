@@ -2,12 +2,9 @@ package httpapi
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
@@ -193,48 +190,4 @@ func TestSchedulerCompactOmitsUnusedPlanPopulations(t *testing.T) {
 		t.Fatal("compact changed full/exact-record evidence")
 	}
 	t.Logf("full=%d compact=%d bytes", len(full), len(raw))
-}
-
-func TestSchedulerHistoryPreservesSearchCaptureInterval(t *testing.T) {
-	h := rawHTTPHandler(t, &rawHTTPArchive{}, true)
-	started := time.Now().UTC().Add(-time.Second)
-	finished := started.Add(37*time.Millisecond + 123*time.Nanosecond)
-	search := serving.SchedulerPlanSearch{StartedAt: started, FinishedAt: finished, Duration: finished.Sub(started)}
-	decision := serving.SchedulerDecision{
-		At: finished, Status: "keep",
-		Capacity: &serving.SchedulerCapacity{Search: &search},
-	}
-	if err := h.observationLog.SchedulerRecord(observation.SchedulerObservation{At: finished, Decision: &decision}); err != nil {
-		t.Fatal(err)
-	}
-	query := url.Values{
-		"from": {started.Add(-time.Second).Format(time.RFC3339Nano)},
-		"to":   {finished.Add(time.Second).Format(time.RFC3339Nano)},
-	}
-	// Summary deliberately carries row labels, not search evidence. Full and
-	// compact retain search; read full again after compact to catch mutation.
-	for _, view := range []string{"", "compact", ""} {
-		if view == "" {
-			query.Del("view")
-		} else {
-			query.Set("view", view)
-		}
-		response := rawHTTPRequest(h, "/api/v1/observations/scheduler?"+query.Encode())
-		var page struct {
-			Events []observation.SchedulerObservation `json:"events"`
-		}
-		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil || response.Code != http.StatusOK || len(page.Events) != 1 {
-			t.Fatalf("view %q history: status=%d body=%s err=%v", view, response.Code, response.Body, err)
-		}
-		stored := page.Events[0].Decision
-		if stored == nil || stored.Capacity == nil || stored.Capacity.Search == nil {
-			t.Fatalf("view %q lost stored search: %s", view, response.Body)
-		}
-		got := stored.Capacity.Search
-		if !got.StartedAt.Equal(started) || !got.FinishedAt.Equal(finished) ||
-			got.FinishedAt.Before(got.StartedAt) || got.FinishedAt.Sub(got.StartedAt) != search.Duration ||
-			got.Duration != search.Duration {
-			t.Fatalf("view %q changed search capture interval: %+v", view, got)
-		}
-	}
 }

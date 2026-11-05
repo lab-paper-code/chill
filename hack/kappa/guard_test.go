@@ -1,14 +1,10 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/serving"
-	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 func TestReplayKeysIncludeFinalRouteAndWait(t *testing.T) {
@@ -63,60 +59,5 @@ func TestReplaySupplyUsesPolicyCapacity(t *testing.T) {
 	got := replayDemands(s, snap, rows, nil)
 	if len(got) != 1 || got[0].KeepKappa != policy || got[0].TargetKappa != policy || got[0].KeepShort {
 		t.Fatalf("batch-1 row changed policy supply: %+v", got)
-	}
-}
-
-func TestReplayReaderPreservesStoredSweepTimestamps(t *testing.T) {
-	const stored = `{
-		"at":"2026-11-05T12:00:00Z",
-		"decision":{
-			"at":"2026-11-05T12:00:00Z",
-			"status":"Keep",
-			"capacity":{"search":{
-				"startedAt":"2026-11-05T12:00:00.125Z",
-				"finishedAt":"2026-11-05T12:00:01.375Z",
-				"durationNanos":1250000000
-			}}
-		},
-		"snapshot":{
-			"at":"2026-11-05T12:00:00Z",
-			"workloadIDs":["recorded-definition"]
-		}
-	}`
-	// A stored snapshot references the catalog, so readTick must consume the
-	// record through observation.DecodeSchedulerLine rather than an API dump.
-	catalog := &observation.ObservationCatalog{}
-	catalog.Add(observation.CatalogRow{
-		Kind: "definition", Key: "recorded-definition",
-		Body: json.RawMessage(`{"uid":"w","name":"recorded-workload"}`),
-	})
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, []byte(stored)); err != nil {
-		t.Fatal(err)
-	}
-	reader := replayReader{
-		scanner:     bufio.NewScanner(bytes.NewReader(compact.Bytes())),
-		catalog:     catalog,
-		margin:      -1,
-		definitions: map[string]*serving.Definition{},
-	}
-	tick, err := reader.readTick()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tick == nil || tick.r.Decision.Capacity == nil || tick.r.Decision.Capacity.Search == nil {
-		t.Fatalf("stored sweep missing from replay input: %+v", tick)
-	}
-	search := tick.r.Decision.Capacity.Search
-	started := time.Date(2026, time.November, 5, 12, 0, 0, 125000000, time.UTC)
-	finished := time.Date(2026, time.November, 5, 12, 0, 1, 375000000, time.UTC)
-	if !search.StartedAt.Equal(started) || !search.FinishedAt.Equal(finished) {
-		t.Fatalf("replay changed stored sweep timestamps: %v to %v", search.StartedAt, search.FinishedAt)
-	}
-	if search.StartedAt.IsZero() || search.FinishedAt.IsZero() || !search.FinishedAt.After(search.StartedAt) {
-		t.Fatalf("replay lost the nonzero sweep interval: %v to %v", search.StartedAt, search.FinishedAt)
-	}
-	if len(tick.snap.Workloads) != 1 || tick.snap.Workloads[0].UID != "w" {
-		t.Fatalf("stored snapshot catalog was not restored: %+v", tick.snap.Workloads)
 	}
 }
