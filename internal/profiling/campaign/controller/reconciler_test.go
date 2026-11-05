@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/evidencestore"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
@@ -233,6 +235,180 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCampaignInvalidLabelFailsOnlyBeforeAnyOwnedRunOrEvidence(t *testing.T) {
+	temporaryList := errors.New("Run listing unavailable")
+	temporaryStore := errors.New("plan store unavailable")
+	for _, test := range []struct {
+		name       string
+		run        string
+		plan       bool
+		result     bool
+		listErr    error
+		storeErr   error
+		terminal   bool
+	}{
+		{name: "unstarted", terminal: true},
+		{name: "foreign UID does not own campaign", run: "foreign", terminal: true},
+		{name: "owned pending Run", run: "pending"},
+		{name: "owned active Run", run: "active"},
+		{name: "owned completed Run", run: "completed"},
+		{name: "recorded plan", plan: true},
+		{name: "published result", result: true},
+		{name: "transient list failure", listErr: temporaryList},
+		{name: "transient store failure", storeErr: temporaryStore},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			parent := testParent()
+			reportBytes, report := curvePlanCandidateReport(t, parent)
+			preparer := &fakeCurvePlanPreparer{report: report, reportBytes: reportBytes, nodeUID: "node-uid"}
+			modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
+			var planBytes []byte
+			if test.plan {
+				plan, _, err := (&CurvePlanProjector{
+					reader: modelReader, resolver: &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer: preparer,
+				}).Project(ctx, parent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				planBytes, err = plan.CanonicalJSON()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			prepared := len(preparer.requests)
+			parent.Name = strings.Repeat("campaign-", 10) + "trial"
+			parent.Generation = 1
+			parent.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
+			if test.result {
+				parent.Status.Result = &api.ProfilingRunEvidenceReference{Store: "evidence", Key: "published/result.json", Size: 1}
+			}
+			scheme := runtime.NewScheme()
+			if err := api.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			objects := []client.Object{parent}
+			if test.run != "" {
+				run := &api.ProfilingRun{ObjectMeta: ownedByCampaign(parent)}
+				run.Name = "existing-trial"
+				run.Namespace = parent.Namespace
+				// Discovery must use exact controller UID even with no campaign label.
+				run.Labels = nil
+				if test.run == "foreign" {
+					run.OwnerReferences[0].UID = "predecessor-uid"
+				}
+				if test.run == "active" || test.run == "completed" {
+					status := metav1.ConditionUnknown
+					if test.run == "completed" {
+						status = metav1.ConditionTrue
+					}
+					run.Status.Conditions = []metav1.Condition{{Type: "Complete", Status: status, Reason: "Observed"}}
+				}
+				objects = append(objects, run)
+			}
+			base := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(parent).WithObjects(objects...).Build()
+			native := &invalidLabelCampaignClient{Client: base, listErr: test.listErr}
+			store := &invalidLabelCampaignStore{fakeCurvePlanStore: newFakeCurvePlanStore(), err: test.storeErr}
+			source, err := NewCurvePlanSource(native, &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}, preparer, store,
+				CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.plan {
+				store.objects[source.location(parent.UID)] = planBytes
+			}
+			// The source boundary is safe even without the reconciler's discovery.
+			_, _, _, resolveErr := source.Resolve(ctx, parent)
+			reason, terminal := profiler.TerminalResolutionReason(resolveErr)
+			if resolveErr == nil || terminal != test.terminal || (terminal && reason != profiler.ResolutionReasonInvalidRunSpec) {
+				t.Fatalf("Resolve() error=%v terminal=%v reason=%q", resolveErr, terminal, reason)
+			}
+			if test.listErr != nil && !errors.Is(resolveErr, test.listErr) {
+				t.Fatalf("Resolve() lost list error: %v", resolveErr)
+			}
+			if test.storeErr != nil && !errors.Is(resolveErr, test.storeErr) {
+				t.Fatalf("Resolve() lost store error: %v", resolveErr)
+			}
+			dependencies := &terminalReplayDependencies{}
+			reconciler, err := NewBatchEnergyOptimizationReconciler(native, source.Resolve, dependencies.Derive, dependencies.Write)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+			_, reconcileErr := reconciler.Reconcile(ctx, request)
+			if (reconcileErr == nil) != test.terminal {
+				t.Fatalf("Reconcile() error=%v terminal=%v", reconcileErr, test.terminal)
+			}
+			updated := &api.BatchEnergyOptimization{}
+			if err := base.Get(ctx, request.NamespacedName, updated); err != nil {
+				t.Fatal(err)
+			}
+			if test.terminal {
+				if updated.Status.Phase != "Failed" || updated.Status.Outcome != profiler.ResolutionReasonInvalidRunSpec ||
+					updated.Status.ObservedGeneration != parent.Generation || len(updated.Status.Conditions) != 1 {
+					t.Fatalf("terminal status=%+v", updated.Status)
+				}
+				condition := updated.Status.Conditions[0]
+				if condition.Type != batchEnergyOptimizationConditionDone || condition.Status != metav1.ConditionFalse ||
+					condition.ObservedGeneration != parent.Generation || condition.Reason != updated.Status.Outcome {
+					t.Fatalf("terminal condition=%+v", condition)
+				}
+				opens := store.opens
+				native.listErr = errors.New("terminal replay must not discover Runs")
+				store.err = errors.New("terminal replay must not read evidence")
+				if _, err := reconciler.Reconcile(ctx, request); err != nil || store.opens != opens {
+					t.Fatalf("terminal replay error=%v evidence reads changed=%v", err, store.opens != opens)
+				}
+			} else if updated.Status.Outcome == profiler.ResolutionReasonInvalidRunSpec {
+				t.Fatalf("existing work or transient failure terminalized: %+v", updated.Status)
+			}
+			runs := &api.ProfilingRunList{}
+			if err := base.List(ctx, runs); err != nil {
+				t.Fatal(err)
+			}
+			if len(runs.Items) != len(objects)-1 || len(preparer.requests) != prepared || store.puts != 0 ||
+				dependencies.derives != 0 || dependencies.writes != 0 || !reflect.DeepEqual(updated.Status.Result, parent.Status.Result) {
+				t.Fatalf("unexpected work: runs=%d preparations=%d puts=%d derives=%d writes=%d result=%+v",
+					len(runs.Items), len(preparer.requests)-prepared, store.puts, dependencies.derives, dependencies.writes, updated.Status.Result)
+			}
+			if test.plan && !reflect.DeepEqual(store.objects[source.location(parent.UID)], planBytes) {
+				t.Fatal("recorded plan changed")
+			}
+		})
+	}
+}
+
+type invalidLabelCampaignClient struct {
+	client.Client
+	listErr error
+}
+
+func (c *invalidLabelCampaignClient) List(ctx context.Context, list client.ObjectList, options ...client.ListOption) error {
+	applied := &client.ListOptions{}
+	for _, option := range options {
+		option.ApplyToList(applied)
+	}
+	if applied.LabelSelector != nil && !applied.LabelSelector.Empty() {
+		return errors.New("invalid metadata must not use a campaign label selector")
+	}
+	if c.listErr != nil {
+		return c.listErr
+	}
+	return c.Client.List(ctx, list, options...)
+}
+
+type invalidLabelCampaignStore struct {
+	*fakeCurvePlanStore
+	err error
+}
+
+func (s *invalidLabelCampaignStore) OpenLocation(ctx context.Context, location evidencestore.ObjectLocation) (io.ReadCloser, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.fakeCurvePlanStore.OpenLocation(ctx, location)
 }
 
 func TestCampaignWaitsForAdmission(t *testing.T) {

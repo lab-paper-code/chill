@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -250,14 +251,32 @@ func (r *BatchEnergyOptimizationReconciler) listRuns(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
 ) ([]edgev1alpha1.ProfilingRun, error) {
+	return listCampaignRuns(ctx, r.client, parent)
+}
+
+// listCampaignRuns keeps the legacy label selector for valid metadata. Invalid
+// metadata permits namespace discovery only to prove no exact-owned Run exists.
+func listCampaignRuns(
+	ctx context.Context,
+	reader client.Reader,
+	parent *edgev1alpha1.BatchEnergyOptimization,
+) ([]edgev1alpha1.ProfilingRun, error) {
+	invalidLabel := len(validation.IsValidLabelValue(parent.Name)) > 0
+	options := []client.ListOption{client.InNamespace(parent.Namespace)}
+	if !invalidLabel {
+		options = append(options, client.MatchingLabels{labelBatchEnergyOptimization: parent.Name})
+	}
 	list := &edgev1alpha1.ProfilingRunList{}
-	if err := r.client.List(
-		ctx,
-		list,
-		client.InNamespace(parent.Namespace),
-		client.MatchingLabels{labelBatchEnergyOptimization: parent.Name},
-	); err != nil {
+	if err := reader.List(ctx, list, options...); err != nil {
 		return nil, fmt.Errorf("list BatchEnergyOptimization ProfilingRuns: %w", err)
+	}
+	if invalidLabel {
+		for index := range list.Items {
+			if controlledByParent(parent, &list.Items[index]) {
+				return nil, fmt.Errorf("invalid campaign label metadata with existing controller-owned ProfilingRun %q", list.Items[index].Name)
+			}
+		}
+		return nil, nil
 	}
 	sort.Slice(list.Items, func(left, right int) bool {
 		return list.Items[left].Name < list.Items[right].Name
