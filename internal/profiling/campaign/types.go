@@ -78,7 +78,6 @@ type Snapshot struct {
 	RequiredState      State
 	TransitionRequired bool
 	Transition         *Transition
-	RetryLimit         int
 	// PlannedBatchSizes is the recorded set of batch sizes the selected artifact
 	// declares, in ascending order. The sweep advances through it, and
 	// exhausting it is the capability boundary.
@@ -180,9 +179,6 @@ func (s State) Validate() error {
 }
 
 func (s Snapshot) Validate() error {
-	if s.RetryLimit < 0 {
-		return errors.New("retry limit must not be negative")
-	}
 	if len(s.PlannedBatchSizes) == 0 {
 		return errors.New("a non-empty planned batch size set is required")
 	}

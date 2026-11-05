@@ -112,6 +112,45 @@ func TestDecodeDiscoveryResultRejectsMalformedDetail(t *testing.T) {
 	}
 }
 
+func TestDecodeDiscoveryResultRequiresAnAnchoredBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*DiscoveryResult, *ResultRecordSpec)
+	}{
+		{"missing Run", func(detail *DiscoveryResult, _ *ResultRecordSpec) { detail.Stop.Run = nil }},
+		{"wrong Run identity", func(detail *DiscoveryResult, _ *ResultRecordSpec) { detail.Stop.Run.UID = "another-run" }},
+		{"wrong attempt", func(detail *DiscoveryResult, _ *ResultRecordSpec) { detail.Stop.Attempt++ }},
+		{"missing excluded trial", func(_ *DiscoveryResult, spec *ResultRecordSpec) { spec.ExcludedTrials = nil }},
+		{"wrong excluded measurement", func(_ *DiscoveryResult, spec *ResultRecordSpec) { spec.ExcludedTrials[0].Measurement.Batch = 4 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failed := active(2)
+			record := discoveryTestRecord(t, DiscoveryResult{
+				MeasuredBatchSizes: []int{1},
+				Stop: DiscoveryStop{Reason: DiscoveryStopOOM, FailedMeasurement: &failed, Attempt: 1},
+			}, completedForBatches([]int{1}, 3))
+			spec := record.Spec()
+			var detail DiscoveryResult
+			if err := json.Unmarshal(spec.Detail, &detail); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&detail, &spec)
+			var err error
+			spec.Detail, err = json.Marshal(detail)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record, err = NewResultRecord(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, discovery, err := DecodeDiscoveryResult(record, []int{1, 2, 4}); !discovery || err == nil {
+				t.Fatalf("unanchored boundary accepted: discovery=%t err=%v", discovery, err)
+			}
+		})
+	}
+}
+
 func discoveryTestRecord(t *testing.T, detail DiscoveryResult, completed []Measurement) ResultRecord {
 	t.Helper()
 	spec := validResultRecordSpec()
@@ -126,6 +165,15 @@ func discoveryTestRecord(t *testing.T, detail DiscoveryResult, completed []Measu
 		trial.Evidence.Key = trial.Run.Name + "/execution.json"
 		trial.Measurement = ResultMeasurement(measurement)
 		spec.CompletedTrials = append(spec.CompletedTrials, trial)
+	}
+	if detail.Stop.isExecutionBoundary() {
+		if detail.Stop.Run == nil {
+			detail.Stop.Run = &RunReference{Namespace: "chill-system", Name: "failed-trial", UID: "failed-trial-uid"}
+		}
+		spec.ExcludedTrials = []ExcludedTrialReference{{
+			Run: *detail.Stop.Run, Measurement: ResultMeasurement(*detail.Stop.FailedMeasurement),
+			Attempt: detail.Stop.Attempt, Reasons: []string{"JobFailed"},
+		}}
 	}
 	var err error
 	spec.Detail, err = json.Marshal(detail)

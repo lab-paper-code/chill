@@ -18,9 +18,6 @@ type CurveResult struct {
 	Detail   any
 }
 
-// ServiceImpossibleOutcome records negative capacity, never a usable batch or κ.
-const ServiceImpossibleOutcome = "BatchServiceExceedsSLO"
-
 type QuickEnergyConfig struct {
 	TrialsPerBatch int
 }

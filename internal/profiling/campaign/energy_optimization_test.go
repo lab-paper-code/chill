@@ -97,7 +97,7 @@ func TestQuickEnergyDoesNotDeriveBatchOneFeasibilityBeforeIncreasing(t *testing.
 	curveCalls := 0
 	method := newTestQuickEnergyMethod(t, func([]int) (CurveResult, error) {
 		curveCalls++
-		return CurveResult{Outcome: ServiceImpossibleOutcome}, nil
+		return CurveResult{Outcome: "BatchServiceExceedsSLO"}, nil
 	})
 	plan, err := method.Plan(Observed{
 		PlannedBatchSizes: []int{1, 2, 4},

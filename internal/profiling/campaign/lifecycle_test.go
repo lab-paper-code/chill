@@ -25,7 +25,7 @@ func idle(batch int) Measurement { return Measurement{WorkloadMode: WorkloadMode
 func directSnapshot() Snapshot {
 	return Snapshot{
 		RequiredState: State{TargetNode: "orangepi5", DeviceClass: "orangepi-5-plus-16g", PowerMode: "fixed"},
-		RetryLimit:    2, PlannedBatchSizes: []int{1},
+		PlannedBatchSizes: []int{1},
 	}
 }
 
@@ -67,10 +67,9 @@ func TestDecide(t *testing.T) {
 			want: ActionFail,
 		},
 		{
-			name: "failed trials remain failures regardless of the retry limit",
+			name: "multiple failed trials never create another attempt",
 			snapshot: func() Snapshot {
 				s := directSnapshot()
-				s.RetryLimit = 1
 				s.Trials = []Trial{
 					{Measurement: idle(1), Attempt: 1, Verdict: VerdictFailed},
 					{Measurement: idle(1), Attempt: 2, Verdict: VerdictFailed},
@@ -130,7 +129,6 @@ func TestDecidePassesTheObservedBoundaryWithoutRetry(t *testing.T) {
 			run := &RunReference{Namespace: "chill-system", Name: "observed-trial", UID: "actual-run"}
 			boundary := &DiscoveryStop{Reason: reason, Run: run, Diagnostic: "original failure"}
 			snapshot := directSnapshot()
-			snapshot.RetryLimit = 10
 			snapshot.PlannedBatchSizes = []int{1, 2, 4}
 			for index, completed := range completedForBatches([]int{1}, 3) {
 				snapshot.Trials = append(snapshot.Trials, Trial{Measurement: completed, Attempt: index + 1, Verdict: VerdictCompleted})
@@ -173,7 +171,6 @@ func TestDecideWaitsForALiveTrialBeforeConsumingABoundary(t *testing.T) {
 func TestDecideGivesTheMethodThePlannedBatchSizes(t *testing.T) {
 	method := &stubMethod{plan: Plan{Result: &Result{Outcome: "Stopped/CapabilityBoundary"}}}
 	snapshot := directSnapshot()
-	snapshot.RetryLimit = 1
 	snapshot.PlannedBatchSizes = []int{1, 2, 4}
 	snapshot.Trials = []Trial{
 		{Measurement: idle(1), Attempt: 1, Verdict: VerdictCompleted},
@@ -193,7 +190,7 @@ func TestDecideEmitsOneTransitionForAWholeSweep(t *testing.T) {
 	required := State{TargetNode: "jetsono", DeviceClass: "jetson-agx-orin-64g", PowerMode: "MODE_50W"}
 	snapshot := Snapshot{
 		RequiredState: required, TransitionRequired: true,
-		RetryLimit: 1, PlannedBatchSizes: []int{1, 2},
+		PlannedBatchSizes: []int{1, 2},
 	}
 	measurements := []Measurement{idle(1), active(1), active(2)}
 	method := &sweepMethod{measurements: measurements}

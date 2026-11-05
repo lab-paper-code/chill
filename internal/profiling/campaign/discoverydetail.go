@@ -41,8 +41,28 @@ func DecodeDiscoveryResult(record ResultRecord, planned []int) (detail Discovery
 		if len(prefix) != len(planned) || detail.Stop.FailedMeasurement != nil || detail.Stop.Attempt != 0 || detail.Stop.Run != nil {
 			return detail, true, errors.New("domain exhaustion requires the complete candidate domain and no failed trial")
 		}
-	} else if err := validateDiscoveryBoundary(detail.Stop, planned, prefix, counts); err != nil {
-		return detail, true, err
+	} else {
+		if err := validateDiscoveryBoundary(detail.Stop, planned, prefix, counts); err != nil {
+			return detail, true, err
+		}
+		if detail.Stop.Run == nil {
+			return detail, true, errors.New("batch discovery boundary requires its retained failed Run reference")
+		}
+		if err := validateRunReference(*detail.Stop.Run); err != nil {
+			return detail, true, fmt.Errorf("batch discovery boundary Run: %w", err)
+		}
+		anchored := false
+		for _, trial := range spec.ExcludedTrials {
+			if trial.Run == *detail.Stop.Run &&
+				Measurement(trial.Measurement) == *detail.Stop.FailedMeasurement &&
+				trial.Attempt == detail.Stop.Attempt {
+				anchored = true
+				break
+			}
+		}
+		if !anchored {
+			return detail, true, errors.New("batch discovery boundary contradicts retained excluded trial references")
+		}
 	}
 	return detail, true, nil
 }
