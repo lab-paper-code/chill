@@ -15,6 +15,7 @@ import (
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
+	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	batch "k8s.io/api/batch/v1"
@@ -160,12 +161,19 @@ func assertNativeMeasurementDeleteOptions(t *testing.T, task *api.BatchEnergyOpt
 func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T) {
 	modes := []string{
 		"stale version", "replaced UID", "physical source",
-		"active measurement", measurementFinalizerTest, "deleted",
+		"active measurement", measurementFinalizerTest, "deleted", "invalid Run spec",
 	}
 	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			task := terminalDeletionTask()
+			if mode == "invalid Run spec" {
+				task.Status.Phase = measurementPhaseFailed
+				task.Status.Outcome = profiler.ResolutionReasonInvalidRunSpec
+				task.Status.Result = nil
+				task.Status.Conditions[0].Status = meta.ConditionFalse
+				task.Status.Conditions[0].Reason = task.Status.Outcome
+			}
 			if mode == "active measurement" {
 				task.Status.Phase = string(api.MeasurementPhaseMeasuring)
 			}
@@ -178,6 +186,9 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 					Delete: func(ctx context.Context, c client.WithWatch, object client.Object, opts ...client.DeleteOption) error {
 						deletes++
 						assertNativeMeasurementDeleteOptions(t, task, opts)
+						if !reflect.DeepEqual(object.(*api.BatchEnergyOptimization).Spec, task.Spec) {
+							t.Fatal("measurement spec changed before native deletion")
+						}
 						return c.Delete(ctx, object, opts...)
 					},
 				}).Build()
@@ -209,24 +220,24 @@ func TestMeasurementDeleteFencesIdentityAndNativeFinalizerLifecycle(t *testing.T
 				uid = "old-uid"
 			}
 			result, err := service.Delete(ctx, "allowed", "task", uid, version)
-			accepted := mode == "deleted" || mode == measurementFinalizerTest
+			accepted := mode == "deleted" || mode == measurementFinalizerTest || mode == "invalid Run spec"
 			if (err == nil) != accepted || (deletes == 1) != accepted {
 				t.Fatalf("result=%+v err=%v deletes=%d", result, err, deletes)
 			}
 			current := &api.BatchEnergyOptimization{}
 			getErr := native.Get(ctx, types.NamespacedName{Namespace: "allowed", Name: "task"}, current)
-			if mode == "deleted" {
+			if mode == "deleted" || mode == "invalid Run spec" {
 				if !apierrors.IsNotFound(getErr) {
 					t.Fatal("native object survived accepted deletion")
 				}
-			} else if getErr != nil || current.Status.Result.Key != task.Status.Result.Key || current.UID != task.UID {
+			} else if getErr != nil || !reflect.DeepEqual(current.Status.Result, task.Status.Result) || current.UID != task.UID {
 				t.Fatal("rejection/finalizer lost native object identity")
 			}
 			if mode == measurementFinalizerTest && (current.DeletionTimestamp.IsZero() || len(current.Finalizers) != 1) {
 				t.Fatal("owner bypassed native finalizer")
 			}
 			if accepted && (!result.EvidenceDeleted || len(result.DeletedEvidence) != 3 ||
-				result.Task.Status.Result.Key != task.Status.Result.Key) {
+				!reflect.DeepEqual(result.Task.Status.Result, task.Status.Result)) {
 				t.Fatal("native deletion omitted exact owned evidence cleanup")
 			}
 			if !accepted && storage.deleteCalls() != 0 {

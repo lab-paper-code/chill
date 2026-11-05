@@ -41,7 +41,7 @@ func measurementTerminal(task *api.BatchEnergyOptimization) bool {
 	return task.Status.Phase == measurementPhaseFailed && condition.Status == meta.ConditionFalse &&
 		condition.Reason == task.Status.Outcome &&
 		(condition.Reason == "TransitionFailed" || condition.Reason == "RetryLimitExhausted" ||
-			condition.Reason == "EnergyObjectivePolicyMismatch")
+			condition.Reason == "EnergyObjectivePolicyMismatch" || condition.Reason == profiler.ResolutionReasonInvalidRunSpec)
 }
 
 func measurementInUse(reason string) error {

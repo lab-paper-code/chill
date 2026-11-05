@@ -117,36 +117,40 @@ func terminalDeletionTask() *api.BatchEnergyOptimization {
 	}
 }
 
-func TestMeasurementTerminalEnergyObjectivePolicyMismatch(t *testing.T) {
-	for _, mode := range []string{
-		"current failure", "stale status generation", "stale condition generation",
-		"unversioned task", "different outcome", "true condition", "active phase",
-	} {
-		t.Run(mode, func(t *testing.T) {
-			task := terminalDeletionTask()
-			task.Status.Phase = measurementPhaseFailed
-			task.Status.Outcome = "EnergyObjectivePolicyMismatch"
-			task.Status.Result = nil
-			task.Status.Conditions[0].Status = meta.ConditionFalse
-			task.Status.Conditions[0].Reason = task.Status.Outcome
-			switch mode {
-			case "stale status generation":
-				task.Status.ObservedGeneration = 0
-			case "stale condition generation":
-				task.Status.Conditions[0].ObservedGeneration = 0
-			case "unversioned task":
-				task.Generation = 0
-				task.Status.ObservedGeneration = 0
-				task.Status.Conditions[0].ObservedGeneration = 0
-			case "different outcome":
-				task.Status.Outcome = "DifferentOutcome"
-			case "true condition":
-				task.Status.Conditions[0].Status = meta.ConditionTrue
-			case "active phase":
-				task.Status.Phase = "Pending"
-			}
-			if got, want := measurementTerminal(task), mode == "current failure"; got != want {
-				t.Fatalf("measurementTerminal() = %v, want %v", got, want)
+func TestMeasurementTerminalPermanentFailure(t *testing.T) {
+	for _, reason := range []string{"EnergyObjectivePolicyMismatch", profiler.ResolutionReasonInvalidRunSpec} {
+		t.Run(reason, func(t *testing.T) {
+			for _, mode := range []string{
+				"current failure", "stale status generation", "stale condition generation",
+				"unversioned task", "different outcome", "true condition", "active phase",
+			} {
+				t.Run(mode, func(t *testing.T) {
+					task := terminalDeletionTask()
+					task.Status.Phase = measurementPhaseFailed
+					task.Status.Outcome = reason
+					task.Status.Result = nil
+					task.Status.Conditions[0].Status = meta.ConditionFalse
+					task.Status.Conditions[0].Reason = task.Status.Outcome
+					switch mode {
+					case "stale status generation":
+						task.Status.ObservedGeneration = 0
+					case "stale condition generation":
+						task.Status.Conditions[0].ObservedGeneration = 0
+					case "unversioned task":
+						task.Generation = 0
+						task.Status.ObservedGeneration = 0
+						task.Status.Conditions[0].ObservedGeneration = 0
+					case "different outcome":
+						task.Status.Outcome = "DifferentOutcome"
+					case "true condition":
+						task.Status.Conditions[0].Status = meta.ConditionTrue
+					case "active phase":
+						task.Status.Phase = "Pending"
+					}
+					if got, want := measurementTerminal(task), mode == "current failure"; got != want {
+						t.Fatalf("measurementTerminal() = %v, want %v", got, want)
+					}
+				})
 			}
 		})
 	}
