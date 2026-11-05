@@ -243,7 +243,8 @@ func TestMeasurementStatisticsDiscoveryWithoutMeasuredPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.Assessment.DisplayStatus == queryapi.MeasurementUsable || view.Assessment.DisplayStatus == queryapi.MeasurementProblem ||
+	if view.Assessment.DisplayStatus == queryapi.MeasurementUsable ||
+		view.Assessment.DisplayStatus == queryapi.MeasurementProblem ||
 		view.Assessment.Evidence.Accepted || !view.Assessment.Evidence.Available ||
 		view.Campaign.Phase != string(api.MeasurementPhaseComplete) || view.Campaign.StoredResult == nil ||
 		view.Result == nil || len(view.ResultRows) != 0 || len(view.Assessment.FailureSummary) != 0 {

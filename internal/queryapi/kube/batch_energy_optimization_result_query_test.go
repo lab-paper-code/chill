@@ -200,7 +200,7 @@ func TestBatchEnergyOptimizationResultQueryRetainsExpectedStopChildren(t *testin
 				t.Fatalf("reader changed terminal result: %+v", view)
 			}
 			if test.phase == "Complete" && (view.Assessment.Status == queryapi.MeasurementFailed ||
-				view.Assessment.Execution == nil || view.Assessment.Execution.Phase != "Complete" || !view.Assessment.Evidence.Accepted) {
+				view.Assessment.Execution == nil || view.Assessment.Execution.Phase != "Complete") {
 				t.Fatalf("expected-stop child changed completed parent: %+v", view.Assessment)
 			}
 			failures := view.Assessment.FailureSummary

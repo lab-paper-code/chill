@@ -13,6 +13,9 @@ The measurement owner does not reach into scheduler service internals or acquire
 a separate mutation authority. HTTP keeps authentication, decoding and response
 mapping; its intent/result types come from the measurement owner without aliases.
 
+순차 탐색의 `FatalFailure`·`UnknownFailure`도 현재 generation의 `Failed`와 일치하는
+`MeasurementComplete=False`가 있어야 종료 정리 대상이다. 기존 producer 종료·소유 근거 검사를 유지한다.
+
 ## 1. 측정 원칙
 
 - operation 비용은 준비, 유휴, 해제와 빈 노드 전력모드 변경을 순서 있는 요청 하나로 측정한다. 동작별 불변 기록은 요청과 실제 physical identity를 가리킨다.
@@ -1031,6 +1034,10 @@ superseded와 notInCatalogScope는 정상 측정 결과의 `complete`+보조 사
 이전 성공은 history에 남기며 현재 사용으로 승격하지 않는다. idle 3회를 active 3회로 세지 않는다.
 여러 자식은 실제 문제→부족→검토 필요→전부 기준 충족→전부 complete 순으로 요약하고, 판정 불가 자식은
 미확인 수/범위를 보존한다. unknown 통계·시각 부재만으로 채택 결과의 상태를 내리지 않는다.
+순차 탐색의 `BatchDiscoveryComplete`는 완료 active batch의 measurement facts가 있어야
+`evidence.accepted=true`가 된다. 빈 prefix는 봉인된 stop과 `Complete`를 보존하며 사용 가능으로 표시하지 않는다.
+Complete discovery의 `failureSummary`에도 같은 namespace·정확 controller UID의 ExpectedStop Run을 연결한다.
+이 자식 실패 근거는 부모의 정상 탐색 종료를 Failed로 바꾸지 않는다.
 
 처리 성능 결과 목록·상세의 `scope.schedulerUsed`는 catalog의 `currentMeasurements[].id`와
 정확히 일치하는 profile에만 true다. reuse는 `confirmationProfileID`로 대조한다.

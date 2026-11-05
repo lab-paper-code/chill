@@ -170,7 +170,8 @@ func TestBuildBatchEnergyOptimizationResultEmptyDiscoveryIsNotAccepted(t *testin
 				len(view.ResultRows) != 0 || len(view.Assessment.FailureSummary) != 0 {
 				t.Fatalf("empty prefix became usable or failed: %+v", view)
 			}
-			if view.Campaign.Phase != "Complete" || view.Campaign.StoredResult == nil || view.Result == nil ||
+			if view.Campaign.Phase != string(edgev1alpha1.MeasurementPhaseComplete) ||
+				view.Campaign.StoredResult == nil || view.Result == nil ||
 				string(view.Result.Detail) != string(spec.Detail) || len(view.Result.CompletedTrials) != 3+activeTrials {
 				t.Fatalf("sealed expected stop was lost: %+v", view)
 			}
