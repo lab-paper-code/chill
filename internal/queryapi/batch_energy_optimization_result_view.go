@@ -126,7 +126,7 @@ func BuildBatchEnergyOptimizationResult(snapshot BatchEnergyOptimizationResultSn
 			SchemaVersion: schemaVersion, ResultRecordSpec: snapshot.Result.Spec(),
 		}
 	}
-	accepted := result != nil && campaign.Status.Phase == "Complete"
+	accepted := result != nil && campaign.Status.Phase == string(edgev1alpha1.MeasurementPhaseComplete)
 	reused := campaign.Annotations["chill.dacs.io/profile-reuse"] != ""
 	rows := []ResultRow{}
 	var children []MeasurementAssessment

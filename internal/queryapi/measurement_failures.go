@@ -66,26 +66,7 @@ func MeasurementRequestFailures(task api.BatchEnergyOptimization, runs []api.Pro
 // categories are diagnostic only and never establish a discovery stop.
 func classifyMeasurementFailure(termination *api.ProfilingRunRuntimeTermination, conditions []metav1.Condition, generation int64, executionPath string) MeasurementReason {
 	if termination != nil && termination.Class != "" {
-		switch {
-		case termination.Class == string(batchenergyoptimization.FailureClassRetryableFailure):
-			return MeasurementReason{Code: "RetryableInfrastructureFailure", Label: "일시적 인프라 중단", Message: "일시적 인프라 중단이 확인되었습니다. 요청의 재시도 한도와 현재 상태를 확인해 주세요."}
-		case termination.Class == string(batchenergyoptimization.FailureClassUnknownFailure):
-			return MeasurementReason{Code: "UnknownFailure", Label: "종료 원인 미확인", Message: "실행 종료 원인을 확인하지 못했습니다. 원본 상태와 로그를 확인해 주세요."}
-		case termination.Reason == "OOMKilled" && termination.Container == "runtime":
-			if termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Stage == "Execution" {
-				return MeasurementReason{Code: "HostOOM", Label: "런타임 OOM", Message: "실행 중 런타임 컨테이너의 OOM 종료가 확인되었습니다."}
-			}
-			return MeasurementReason{Code: "RuntimeFailed", Label: "런타임 OOM", Message: "런타임 컨테이너가 OOM으로 종료되었습니다. 배치 탐색의 정상 종료로 판정하지 않습니다."}
-		case termination.Reason == "OOMKilled" && termination.Container != "":
-			return MeasurementReason{Code: "MeasurementContainerOOM", Label: "측정 컨테이너 OOM", Message: "런타임 외 측정 컨테이너가 OOM으로 종료되었습니다. 모델 배치의 메모리 한계로 판정하지 않습니다."}
-		case termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Container == "runtime" &&
-			termination.Stage == "Execution" && termination.FailureReason == "MeasurementBudgetExceeded":
-			return MeasurementReason{Code: "MeasurementBudgetExceeded", Label: "측정 예산 초과", Message: "실행 중 기존 측정 예산에 도달해 해당 배치의 측정이 종료되었습니다."}
-		case termination.FailureReason == "IntegrityError":
-			return MeasurementReason{Code: "EvidenceInvalid", Label: "증거 검증 실패", Message: "측정 증거의 무결성을 확인하지 못했습니다."}
-		default:
-			return MeasurementReason{Code: "RuntimeFailed", Label: "실행 오류", Message: "실행 오류로 측정을 완료하지 못했습니다."}
-		}
+		return classifyTypedMeasurementFailure(termination)
 	}
 	var evidence strings.Builder
 	if termination != nil {
@@ -115,5 +96,28 @@ func classifyMeasurementFailure(termination *api.ProfilingRunRuntimeTermination,
 		return MeasurementReason{Code: "RuntimeFailed", Label: "실행 오류", Message: "실행 오류로 측정을 완료하지 못했습니다."}
 	default:
 		return MeasurementReason{Code: "Other", Label: "기타 오류", Message: "측정을 완료하지 못했습니다. 실행 상세에서 상태를 확인해 주세요."}
+	}
+}
+
+func classifyTypedMeasurementFailure(termination *api.ProfilingRunRuntimeTermination) MeasurementReason {
+	switch {
+	case termination.Class == string(batchenergyoptimization.FailureClassRetryableFailure):
+		return MeasurementReason{Code: "RetryableInfrastructureFailure", Label: "일시적 인프라 중단", Message: "일시적 인프라 중단이 확인되었습니다. 요청의 재시도 한도와 현재 상태를 확인해 주세요."}
+	case termination.Class == string(batchenergyoptimization.FailureClassUnknownFailure):
+		return MeasurementReason{Code: "UnknownFailure", Label: "종료 원인 미확인", Message: "실행 종료 원인을 확인하지 못했습니다. 원본 상태와 로그를 확인해 주세요."}
+	case termination.Reason == "OOMKilled" && termination.Container == "runtime":
+		if termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Stage == "Execution" {
+			return MeasurementReason{Code: "HostOOM", Label: "런타임 OOM", Message: "실행 중 런타임 컨테이너의 OOM 종료가 확인되었습니다."}
+		}
+		return MeasurementReason{Code: "RuntimeFailed", Label: "런타임 OOM", Message: "런타임 컨테이너가 OOM으로 종료되었습니다. 배치 탐색의 정상 종료로 판정하지 않습니다."}
+	case termination.Reason == "OOMKilled" && termination.Container != "":
+		return MeasurementReason{Code: "MeasurementContainerOOM", Label: "측정 컨테이너 OOM", Message: "런타임 외 측정 컨테이너가 OOM으로 종료되었습니다. 모델 배치의 메모리 한계로 판정하지 않습니다."}
+	case termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Container == "runtime" &&
+		termination.Stage == "Execution" && termination.FailureReason == "MeasurementBudgetExceeded":
+		return MeasurementReason{Code: "MeasurementBudgetExceeded", Label: "측정 예산 초과", Message: "실행 중 기존 측정 예산에 도달해 해당 배치의 측정이 종료되었습니다."}
+	case termination.FailureReason == "IntegrityError":
+		return MeasurementReason{Code: "EvidenceInvalid", Label: "증거 검증 실패", Message: "측정 증거의 무결성을 확인하지 못했습니다."}
+	default:
+		return MeasurementReason{Code: "RuntimeFailed", Label: "실행 오류", Message: "실행 오류로 측정을 완료하지 못했습니다."}
 	}
 }

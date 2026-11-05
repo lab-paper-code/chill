@@ -121,7 +121,9 @@ func TestRequestAssessmentUsesCatalogIdentityNotCompletePhase(t *testing.T) {
 	view.Profiles[0].Condition = condition
 	zero, passed := 0.0, true
 	view.MeasurementFacts = map[string]serving.MeasurementFacts{"allowed/old/old-uid": {
-		Request:         profilederivation.MeasurementRequestReference{Namespace: task.Namespace, Name: task.Name, UID: string(task.UID)},
+		Request: profilederivation.MeasurementRequestReference{
+			Namespace: task.Namespace, Name: task.Name, UID: string(task.UID),
+		},
 		ResultReference: profilederivation.RawEvidenceIdentity{Store: "evidence", Key: "result"},
 		Condition:       condition, PointPolicy: profilederivation.PointPolicy{MinimumTrials: 3},
 		Batches: []profilederivation.MeasurementBatchFacts{{

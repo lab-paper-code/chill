@@ -20,6 +20,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const campaignFixturePhaseFailed = "Failed"
+
 type fakeCurvePlanSource struct {
 	plan          profilederivation.CurvePlan
 	reference     batchenergyoptimization.StoredObjectReference
@@ -112,7 +114,7 @@ func TestBatchEnergyOptimizationPlanFailureIsVisibleAndRetryable(t *testing.T) {
 		t.Fatal("plan failure did not remain retryable by the controller")
 	}
 	failed := getBatchEnergyOptimization(t, ctx, kube, request.NamespacedName)
-	if failed.Status.Phase != "Failed" || failed.Status.ObservedGeneration != parent.Generation ||
+	if failed.Status.Phase != campaignFixturePhaseFailed || failed.Status.ObservedGeneration != parent.Generation ||
 		len(failed.Status.Conditions) != 1 || failed.Status.Conditions[0].Status != metav1.ConditionFalse ||
 		failed.Status.Conditions[0].Message != plans.unexpectedErr.Error() {
 		t.Fatalf("plan failure was not exposed through API status: %#v", failed.Status)
@@ -205,7 +207,8 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitAndRestart
 	reconcileBatch(t, ctx, restarted, request)
 
 	finished := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
-	if finished.Status.Phase != "Complete" || finished.Status.Outcome != string(batchenergyoptimization.BatchDiscoveryComplete) ||
+	if finished.Status.Phase != "Complete" ||
+		finished.Status.Outcome != string(batchenergyoptimization.BatchDiscoveryComplete) ||
 		finished.Status.ObservedGeneration != finished.Generation || finished.Status.CompletedTrials != 9 ||
 		finished.Status.Result == nil {
 		t.Fatalf("terminal BatchEnergyOptimization status = %#v", finished.Status)
@@ -256,11 +259,12 @@ func TestBatchEnergyOptimizationReconcilerFailsUnclassifiedExecutionWithoutRetry
 	requireCampaignRun(t, ctx, kube, parent, idle, 1)
 	reconcileBatch(t, ctx, reconciler, request)
 	requireOwnedRunCount(t, ctx, kube, parent.UID, 1)
-	setCampaignRunOutcome(t, ctx, kube, parent, idle, 1, "Failed")
+	setCampaignRunOutcome(t, ctx, kube, parent, idle, 1, campaignFixturePhaseFailed)
 	reconcileBatch(t, ctx, reconciler, request)
 
 	failed := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
-	if failed.Status.Phase != "Failed" || failed.Status.Outcome != string(batchenergyoptimization.FailureClassUnknownFailure) ||
+	if failed.Status.Phase != campaignFixturePhaseFailed ||
+		failed.Status.Outcome != string(batchenergyoptimization.FailureClassUnknownFailure) ||
 		failed.Status.CompletedTrials != 0 || failed.Status.Result != nil {
 		t.Fatalf("unclassified execution status = %#v", failed.Status)
 	}
@@ -302,7 +306,7 @@ func TestBatchEnergyOptimizationReconcilerBoundsExplicitEvictionRetriesAtSameBat
 				reconcileBatch(t, ctx, reconciler, request)
 			}
 			failed := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
-			if failed.Status.Phase != "Failed" || failed.Status.Outcome != "RetryLimitExhausted" ||
+			if failed.Status.Phase != campaignFixturePhaseFailed || failed.Status.Outcome != "RetryLimitExhausted" ||
 				failed.Status.CompletedTrials != 0 || failed.Status.Result != nil || curves.calls != 0 || results.calls != 0 {
 				t.Fatalf("classified eviction retry status = %+v", failed.Status)
 			}
@@ -340,7 +344,8 @@ func TestBatchEnergyOptimizationReconcilerRetainsPrefixAtOOMWithoutRetry(t *test
 	}
 	reconcileBatch(t, ctx, reconciler, request)
 	finished := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
-	if finished.Status.Phase != "Complete" || finished.Status.Outcome != string(batchenergyoptimization.BatchDiscoveryComplete) ||
+	if finished.Status.Phase != "Complete" ||
+		finished.Status.Outcome != string(batchenergyoptimization.BatchDiscoveryComplete) ||
 		finished.Status.CompletedTrials != 6 || finished.Status.Result == nil {
 		t.Fatalf("OOM discovery status = %+v", finished.Status)
 	}
@@ -599,7 +604,7 @@ func corruptBatchStatus(
 	current := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
 	current.Status = edgev1alpha1.BatchEnergyOptimizationStatus{
 		ObservedGeneration: current.Generation,
-		Phase:              "Failed",
+		Phase:              campaignFixturePhaseFailed,
 		CompletedTrials:    accepted,
 		Outcome:            "StaleStatusMustNotDriveDecision",
 	}
