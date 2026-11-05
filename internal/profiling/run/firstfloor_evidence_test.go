@@ -46,12 +46,32 @@ func TestActiveTrialRequiresBothElapsedWindowAndNativeSampleCoverage(t *testing.
 				repetition.LatencyMilliseconds[index] = 1
 				repetition.NativeSamples[index] = template
 				repetition.NativeSamples[index].BatchID = uint64(index + 1)
-				repetition.NativeSamples[index].ServiceSample = fixtures.ServiceSample(config.Measurement.Cadence, result.ExperimentID, uint64(index), 700000)
+				repetition.NativeSamples[index].ServiceSample = fixtures.ServiceSample(result.ExperimentID, uint64(index), 700000)
 			}
 			if err := ValidateRuntime(config, "pod-uid", result); (err == nil) != test.valid {
 				t.Fatalf("valid=%t, error=%v", test.valid, err)
 			}
 		})
+	}
+}
+
+func TestActiveTrialPreservesInitiallyKnownNativeGap(t *testing.T) {
+	config := firstfloorRunConfig()
+	result := firstfloorResult(config)
+	repetition := &result.RepetitionResults[0]
+	observed := int64(123)
+	repetition.NativeSamples[0].PrecedingIdleNanos = &observed
+	repetition.NativeSamples = repetition.NativeSamples[:config.Measurement.MinServiceSamples]
+	repetition.LatencyMilliseconds = repetition.LatencyMilliseconds[:config.Measurement.MinServiceSamples]
+	result.InferenceCount = config.Measurement.MinServiceSamples
+	result.Firstfloor.ExecutionCount = uint64(result.InferenceCount)
+	result.Firstfloor.InferenceCount = uint64(result.InferenceCount)
+	result.Firstfloor.BatchExecutionCounts["1"] = uint64(result.InferenceCount)
+	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
+		t.Fatalf("observed initial native gap must count without donor authority: %v", err)
+	}
+	if got := repetition.NativeSamples[0].PrecedingIdleNanos; got == nil || *got != observed {
+		t.Fatal("observed initial gap was discarded or changed")
 	}
 }
 
@@ -84,7 +104,7 @@ func firstfloorResult(config RunConfig) RuntimeResult {
 	result.RepetitionResults[0].NativeSamples = make([]NativeServiceSample, result.InferenceCount)
 	for index := range result.RepetitionResults[0].NativeSamples {
 		result.RepetitionResults[0].NativeSamples[index] = NativeServiceSample{BatchID: uint64(21 + index), BatchSize: 1,
-			ServiceSample: fixtures.ServiceSample(config.Measurement.Cadence, result.ExperimentID, uint64(index), 700000),
+			ServiceSample: fixtures.ServiceSample(result.ExperimentID, uint64(index), 700000),
 			RecordIDs:     []string{"262148000"}, Units: []int{1}, RunnerServiceMilliseconds: 0.7,
 			PreprocessMilliseconds: 0.1, BackendCallMilliseconds: 0.4, PostprocessMilliseconds: 0.1,
 			NativeRequestMilliseconds: 0.9}
@@ -146,7 +166,6 @@ func TestFirstfloorEvidenceRetainsDistinctCorrelatedSpans(t *testing.T) {
 		{"missing canonical duration", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 0 }},
 		{"donor is not physical trial", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[0].TrialID = "donor-trial" }},
 		{"unknown gap after startup", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[1].PrecedingIdleNanos = nil }},
-		{"wrong cadence lineage", func(r *RuntimeResult) { r.RepetitionResults[0].NativeSamples[1].TraceDrawRef.DrawIndex++ }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

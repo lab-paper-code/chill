@@ -684,7 +684,7 @@ func statisticsFixture(
 	idle.Actor.MemoryRequestBytes = base.Actor.MemoryRequestBytes
 	idle.Actor.MemoryLimitBytes = base.Actor.MemoryLimitBytes
 	shared, err := projection.ProjectCurvePlanSpec(
-		"statistics", base, idle, derivation.CurveConversionContract{}, []int{1, 2}, fixtures.Cadences(1, 2),
+		"statistics", base, idle, derivation.CurveConversionContract{}, []int{1, 2},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1089,7 +1089,7 @@ func statisticsTrial(
 		var samples []runconfig.NativeServiceSample
 		for i := range latencies {
 			samples = append(samples, runconfig.NativeServiceSample{
-				ServiceSample: fixtures.ServiceSample(config.Measurement.Cadence, name, uint64(i), 700000),
+				ServiceSample: fixtures.ServiceSample(name, uint64(i), 700000),
 				BatchID:       uint64(i + 1), BatchSize: 1, RecordIDs: []string{"record"}, Units: []int{1},
 				RunnerServiceMilliseconds: .7, PreprocessMilliseconds: .1, PostprocessMilliseconds: .1,
 				BackendCallMilliseconds: .4, NativeRequestMilliseconds: .9,

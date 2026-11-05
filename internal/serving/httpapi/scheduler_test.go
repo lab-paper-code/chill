@@ -415,10 +415,10 @@ func assertSchedulerSettingsAudit(t *testing.T, persisted *core.ConfigMap, respo
 func TestSchedulerCompactReadSharesEvidenceWithoutLosingRetainedVariants(t *testing.T) {
 	at := time.Date(2026, 10, 15, 18, 22, 30, 0, time.UTC)
 	profile := &serving.Profile{ID: "profile", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "profile", Size: 123},
-		Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 12), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 34)}, EnergyPerInputJoules: 0, EnergyBelowResolution: true}}}
+		Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 12), fixtures.ServiceSample("physical-trial", 1, 34)}, EnergyPerInputJoules: 0, EnergyBelowResolution: true}}}
 	equalProfile := *profile
 	differentProfile := *profile
-	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 56), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 56)}}}
+	differentProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 56), fixtures.ServiceSample("physical-trial", 1, 56)}}}
 	instances := []serving.SchedulerInstance{
 		{ID: "physical", TargetID: "selected-slot", Node: serving.NodeReference{UID: "node-uid"}, Profile: profile, Reasons: []string{"PolicyAckPending"}},
 		{ID: "equal", Profile: &equalProfile},

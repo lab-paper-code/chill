@@ -24,7 +24,7 @@ from ortcpu import runner as common
 REQUEST_SCHEMA = "chill.dacs.io/firstfloor-runtime-request.v1alpha2"
 FRAME_BYTES = 64 << 20
 PROVIDERS = {"ort-cpu": "CPUExecutionProvider", "ort-cuda": "CUDAExecutionProvider", "rknnlite": ""}
-# Dataset sampling is independent of the frozen cadence references, not independent arrival trials.
+# Dataset sampling is independent of observed native exchange gaps.
 SAMPLE_SEED = 0
 
 
@@ -121,30 +121,15 @@ def native_sample(response: dict[str, Any], batch: int, record_ids: list[str], g
     if batch_id > (1 << 64) - 1:
         raise common.ContractError("native batch ID exceeds uint64")
     pair = common.require_object(arrays[1][0], "native service pair")
-    common.require_fields(pair, {"serviceDurationNanos", "precedingIdleNanos", "trialID"} |
-                          ({"targetIdleNanos"} if "targetIdleNanos" in pair else set()) |
-                          ({"traceDrawRef"} if "traceDrawRef" in pair else set()), "native service pair")
+    common.require_fields(pair, {"serviceDurationNanos", "precedingIdleNanos", "trialID"}, "native service pair")
     service_nanos = common.require_integer(pair["serviceDurationNanos"], "native serviceDurationNanos", 1)
     if service_nanos > (1 << 63) - 1:
         raise common.ContractError("native serviceDurationNanos exceeds int64")
     common.require_string(pair["trialID"], "native trialID")
-    for field in ("precedingIdleNanos", "targetIdleNanos"):
-        if pair.get(field) is not None:
-            value = common.require_integer(pair[field], "native " + field)
-            if value > (1 << 63) - 1:
-                raise common.ContractError("native idle exceeds int64")
-    ref = pair.get("traceDrawRef")
-    if (ref is None) != (pair.get("targetIdleNanos") is None):
-        raise common.ContractError("native target and draw identity must be paired")
-    if ref is not None:
-        ref = common.require_object(ref, "native traceDrawRef")
-        common.require_fields(ref, {"phase", "elementIndex", "drawIndex"}, "native traceDrawRef")
-        common.require_string(ref["phase"], "native draw phase")
-        common.require_integer(ref["elementIndex"], "native draw elementIndex")
-        if common.require_integer(ref["drawIndex"], "native drawIndex") > (1 << 64) - 1:
-            raise common.ContractError("native drawIndex exceeds uint64")
-        if pair["precedingIdleNanos"] is None:
-            raise common.ContractError("startup sample cannot claim a cadence draw")
+    if pair["precedingIdleNanos"] is not None:
+        value = common.require_integer(pair["precedingIdleNanos"], "native precedingIdleNanos")
+        if value > (1 << 63) - 1:
+            raise common.ContractError("native idle exceeds int64")
     service = service_nanos / 1_000_000.0
     preprocess = milliseconds(arrays[2][0], "native preprocess sample", positive=False)
     backend = milliseconds(arrays[3][0], "native backend sample")
@@ -252,12 +237,6 @@ class FirstfloorSession:
         self.record_ids: list[str] = []
         self.baseline: dict[str, int] = {}
         self.rng = random.Random(SAMPLE_SEED)
-        measurement = request["runConfig"]["measurement"]
-        cadence = measurement["cadence"] if measurement["workloadMode"] != common.IDLE_WORKLOAD else None
-        self.cadence_draws = cadence["provenance"]["draws"] if cadence is not None else []
-        self.cadence_elements = ({phase["name"]: phase["elements"] for phase in cadence["provenance"]["phases"]}
-                                 if cadence is not None else {})
-        self.prepared_draw: dict[str, Any] | None = None
         self.records: list[str] = []
         if "datasetPath" in request:
             with os.scandir(request["datasetPath"]) as entries:
@@ -301,15 +280,6 @@ class FirstfloorSession:
                                           for record in self.record_ids]}
                   for name in run["state"]["preprocessor"]["inputs"]]
         body = {"batchSize": batch, "inputs": inputs, "trialID": self.request["podUID"]}
-        self.prepared_draw = None
-        if self.samples:
-            index = len(self.samples) - 1
-            ref = self.cadence_draws[index % len(self.cadence_draws)]
-            self.prepared_draw = {
-                "targetIdleNanos": self.cadence_elements[ref["phase"]][ref["elementIndex"]]["gapNanos"],
-                "ref": dict(ref, drawIndex=index),
-            }
-            body["cadenceDraw"] = self.prepared_draw
         self.payload = json.dumps(body, separators=(",", ":")).encode()
         if len(self.payload) > FRAME_BYTES:
             raise common.ContractError("native JSON input exceeds worker request capacity")
@@ -324,12 +294,8 @@ class FirstfloorSession:
                                run["state"]["preprocessor"].get("maxNewTokens", 0) > 0)
         if sample["trialID"] != self.request["podUID"]:
             raise common.ContractError("native sample trial differs from the physical request pod")
-        if self.prepared_draw is None:
-            if sample.get("targetIdleNanos") is not None or sample.get("traceDrawRef") is not None:
-                raise common.ContractError("initial unpaced exchange invented a cadence draw")
-        elif (sample.get("targetIdleNanos") != self.prepared_draw["targetIdleNanos"] or
-              sample.get("traceDrawRef") != self.prepared_draw["ref"]):
-            raise common.ContractError("native sample differs from the requested frozen draw")
+        if self.samples and sample["precedingIdleNanos"] is None:
+            raise common.ContractError("native post-start exchange is missing its actual gap")
         if self.samples and sample["batchID"] <= self.samples[-1]["batchID"]:
             raise common.ContractError("native batch IDs must increase monotonically")
         self.samples.append(sample)
@@ -410,6 +376,10 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
             measurement = run["measurement"]
             if measurement["workloadMode"] == common.IDLE_WORKLOAD:
                 session.baseline = session.counts()
+                # No requests own this socket during settling/measurement. End
+                # its lifetime before idle so the final metadata/counters use a
+                # new connection, rather than one expired by worker IdleTimeout.
+                session.connection.close()
                 result = common.execute_idle(request, actual["runtimeVersion"], session, actual.get("availableProviders", []),
                                              architecture, cpu_max, affinity, cpuset, loaded_at, PROVIDERS[run["state"]["backend"]],
                                              memory_sampler=sampler)

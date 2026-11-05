@@ -15,7 +15,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
-	"github.com/lab-paper-code/chill/test/fixtures"
 
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -30,7 +29,6 @@ func TestMeasurementQualityDistinguishesUnsetPolicyWithoutJudgingObservations(t 
 			config.Measurement.WorkloadMode = mode
 			if mode == profilingrun.IdleModelLoadedWorkloadMode {
 				config.Measurement.Dataset = nil
-				config.Measurement.Cadence = nil
 			}
 			protocol, err := projectCurveProtocol(config)
 			if err != nil {
@@ -207,7 +205,6 @@ func projectionRunConfig() profilingrun.RunConfig {
 		TargetNode: profilingrun.NodeSnapshot{Name: "lattepanda", UID: "node-uid"},
 		Measurement: profilingrun.MeasurementContract{
 			Batch: 2, WarmupIterations: 20, DurationSeconds: 30, WorkloadMode: "empirical-cadence-fixed-batch",
-			Cadence: fixtures.Cadence(),
 			Dataset: &profilingrun.DatasetContract{
 				Name: "vqav2-val-subset", UID: "dataset-uid", Image: "dataset", Path: "/artifact/vqav2-val-subset",
 			},

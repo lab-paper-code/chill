@@ -423,7 +423,7 @@ func retainedEvidenceObjects(t *testing.T, idle bool) (retainedObjects, evidence
 			raw.Runtime.RepetitionResults[0].LatencyMilliseconds[i] = 2
 			raw.Runtime.RepetitionResults[0].NativeSamples = append(raw.Runtime.RepetitionResults[0].NativeSamples, profilingrun.NativeServiceSample{
 				BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
-				ServiceSample:             fixtures.ServiceSample(config.Measurement.Cadence, podUID, uint64(i), 700000),
+				ServiceSample:             fixtures.ServiceSample(podUID, uint64(i), 700000),
 				RunnerServiceMilliseconds: 0.7, PreprocessMilliseconds: 0.1, PostprocessMilliseconds: 0.1,
 				BackendCallMilliseconds: 0.4, NativeRequestMilliseconds: 0.9,
 			})

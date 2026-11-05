@@ -388,7 +388,6 @@ func testIdleRunConfig(t *testing.T) profilingrun.RunConfig {
 	config.Measurement.SettlingDurationSeconds = 30
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
-	config.Measurement.Cadence = nil
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +480,7 @@ func runtimeResult(config profilingrun.RunConfig, podUID string) profilingrun.Ru
 		latencies[i] = 2
 		nativeSamples[i] = profilingrun.NativeServiceSample{
 			BatchID: uint64(i + 1), BatchSize: config.Measurement.Batch, RecordIDs: recordIDs, Units: units,
-			ServiceSample:             fixtures.ServiceSample(config.Measurement.Cadence, podUID, uint64(i), 700000),
+			ServiceSample:             fixtures.ServiceSample(podUID, uint64(i), 700000),
 			RunnerServiceMilliseconds: 0.7,
 			BackendCallMilliseconds:   0.4, NativeRequestMilliseconds: 0.9,
 		}

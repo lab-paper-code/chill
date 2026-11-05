@@ -146,7 +146,7 @@ func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	c := snap.Instances[0].Profile.Condition
 	snap.DispatchOccupancy = []serving.DispatchOccupancy{{Node: snap.Nodes[0].Node, PowerMode: c.PowerMode, RuntimeImage: c.RuntimeImage, Model: c.LogicalModel, Source: "fixture"}}
 	p := *snap.Instances[0].Profile
-	p.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 8e5), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 2, 1.2e6)}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
+	p.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 8e5), fixtures.ServiceSample("physical-trial", 1, 1e6), fixtures.ServiceSample("physical-trial", 2, 1.2e6)}, EnergyPerInputJoules: 0.01, MemoryBytes: 100}}
 	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
 	if err != nil {
 		panic(err)
@@ -209,7 +209,7 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := serving.ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: settings}
 	d := &serving.Definition{Name: "workload", UID: "w1", Generation: 1, Model: serving.Model{Name: "model", UID: "m", Generation: 1, Paths: []serving.ModelPath{path}}, Preprocessor: serving.Preprocessor{Name: "pre", Input: []serving.RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []serving.RawField{{Name: "y", Format: "UTF8"}}}, Dataset: &serving.DatasetReference{Name: "data", UID: "data-uid"}, SLO: serving.SLO{Percentile: 100, TargetLatency: 100 * time.Millisecond}}
-	p := &serving.Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, int64(10*time.Millisecond)), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, int64(10*time.Millisecond))}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
+	p := &serving.Profile{ID: "profile", NodeName: node.Node.Name, Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.Node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: settings, PowerMode: "fixed", PlannedBatchSizes: []int{1}, Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}}, ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data-uid"}}, Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}}, IdleBaselineWatts: 12, MeasuredAt: at, Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "raw", Key: "profile", Size: 1}}, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, int64(10*time.Millisecond)), fixtures.ServiceSample("physical-trial", 1, int64(10*time.Millisecond))}, EnergyPerInputJoules: 1, MemoryBytes: 100}}}
 	distribution, err := firstfloor.NewServiceDistribution(p.Batches[0].ServiceSamples)
 	if err != nil {
 		panic(err)
@@ -226,7 +226,7 @@ func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 
 func directFixture(batch int) (*serving.Profile, map[string]firstfloor.Metadata, time.Time) {
 	at := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
-	p := &serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: batch, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 100*int64(batch)), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 100*int64(batch))}}}}
+	p := &serving.Profile{ID: "profile", NodeName: "node", Batches: []serving.BatchProfile{{Batch: batch, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 100*int64(batch)), fixtures.ServiceSample("physical-trial", 1, 100*int64(batch))}}}}
 	p.Condition.NodeUID = "node-uid"
 	p.Condition.LogicalModel = "model"
 	p.Condition.PowerMode = "fixture-fixed-mode"

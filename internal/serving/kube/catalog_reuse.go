@@ -139,13 +139,6 @@ func reuseCondition(condition profilederivation.CurvePlanSpec) profilederivation
 	for _, protocol := range []*profilederivation.CurveProtocolContract{&condition.ActiveProtocol, &condition.IdleProtocol} {
 		protocol.SLOPercentile, protocol.MinServiceSamples, protocol.SLOTargetLatencyNanos = 0, 0, 0
 		protocol.WorkloadName, protocol.WorkloadUID, protocol.WorkloadResourceVersion = "", "", ""
-		if protocol.Cadences != nil {
-			targets := make(map[int]*firstfloor.CadenceContract, len(protocol.Cadences))
-			for batch, cadence := range protocol.Cadences {
-				targets[batch] = &firstfloor.CadenceContract{Target: cadence.Target}
-			}
-			protocol.Cadences = targets
-		}
 	}
 	condition.ActiveProtocol.DurationSeconds, condition.ActiveProtocol.MetricDurationSeconds = 0, 0
 	condition.IdleProtocol.DurationSeconds, condition.IdleProtocol.MetricDurationSeconds = 0, 0

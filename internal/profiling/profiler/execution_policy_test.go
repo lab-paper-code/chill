@@ -20,8 +20,18 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := DeriveExecutionPlan(config, frozen); err != nil {
+	plan, err := DeriveExecutionPlan(config, frozen)
+	if err != nil {
 		t.Fatal(err)
+	}
+	wantAttempt := time.Duration(config.Metrics.DurationSeconds+config.Measurement.SettlingDurationSeconds+
+		frozen.Policy.AttemptTimeoutOverheadSeconds) * time.Second
+	wantDeadline := time.Duration(config.Metrics.DurationSeconds+config.Measurement.SettlingDurationSeconds+
+		frozen.Policy.ActiveDeadlineOverheadSeconds) * time.Second
+	if plan.AttemptTimeout != wantAttempt || plan.ActiveDeadline != wantDeadline ||
+		plan.MetricObservationTimeout != wantAttempt || plan.MetricResultTimeout != wantAttempt ||
+		plan.WorkloadEndFenceTimeout != wantAttempt || plan.WorkloadResultTimeout != wantAttempt {
+		t.Fatal("donor-free execution changed the common configured deadline lifecycle")
 	}
 	for _, resource := range []string{"result", "memory"} {
 		t.Run(resource, func(t *testing.T) {
@@ -82,7 +92,6 @@ func TestDeriveExecutionPlanIncludesIdleSettlingEnvelope(t *testing.T) {
 	config.Measurement.SettlingDurationSeconds = 60
 	config.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
 	config.Measurement.Dataset = nil
-	config.Measurement.Cadence = nil
 
 	if err := deriveConfiguredExecutionPlan(t, config); err != nil {
 		t.Fatal(err)

@@ -31,6 +31,12 @@ that connection; measurement reconnects without timeout. Rebuild every runtime
 variant and remeasure existing mobilenet profiles with one comparable image set;
 pre-fix images cannot run slow calls.
 
+Model-loaded idle also ends the HTTP connection's ownership before entering
+settling/measurement. The worker may expire an unused keep-alive socket during
+that request-free interval; final counters/metadata open a new connection.
+The idle actor, window, zero-inference check and runtime observations are
+unchanged. This is neither a timeout increase nor a retry/recovery path.
+
 ## Roles and validation ownership
 
 | Role | Contract |
@@ -98,7 +104,7 @@ and execution provenance, not a parallel execution type.
 
 ### Sample-driven active stop
 
-RunConfig v1alpha19 freezes the referenced Workload's name, UID, resourceVersion,
+RunConfig v1alpha20 freezes the referenced Workload's name, UID, resourceVersion,
 SLO percentile and target latency. Model, preprocessor and dataset must match the
 measurement selection; no percentile is inferred or defaulted. The existing 95%
 confidence convention gives `ceil(log(.05) / log(percentile/100))` completed native
@@ -137,12 +143,12 @@ q95 with probability `1-.95^59 ≈ .9515` at 59 samples. This minimal coverage i
 a precise p95 estimate, an independence/stationarity check or proof of κ safety;
 59 is a count of calls, not a count of tail exceedances.
 
-Shared CPU policy: RunConfig v1alpha19 has no CPU allocation or thread-tuning field. Jobs carry
+Shared CPU policy: RunConfig v1alpha20 has no CPU allocation or thread-tuning field. Jobs carry
 no CPU requests/limits and the runner accepts no affinity or thread override.
 ORT SessionOptions defaults are unchanged; session readback records 0 for automatic
 thread selection, not a fixed single thread. Actual cgroup quota (v2 `max`, v1 `-1`
 included), cpuset/affinity, usage and throttling remain runtime evidence. Active
-runtime body v1alpha9 and idle runtime body v1alpha7 are unchanged. Active raw v1alpha10,
+runtime body v1alpha10 drops donor fields; idle runtime body v1alpha7 is unchanged. Active raw v1alpha10,
 idle raw v1alpha8 and finalized v1alpha17 cut over together after dependent campaigns finish.
 Old controlled evidence/publications are not rewritten or admitted through a compatibility reader. Memory/GPU/Node
 identity, ownership and physical-return checks remain mandatory.
@@ -244,7 +250,7 @@ failure, surviving Pod deletion; diagnostic only, never parsed. Kubernetes owns
 native failure state.
 
 Observer images enter measurement-protocol provenance; runtime/worker image enters
-execution-state provenance. CurvePlan v1alpha11 freezes the common actor startup
+execution-state provenance. CurvePlan v1alpha12 freezes the common actor startup
 recipe and runtime package versions separately from active/idle collection and
 sample-stop policy. Active/idle pairing still checks the recorded recipe and
 protocol, but latest-success performance identity excludes exact runtime image,

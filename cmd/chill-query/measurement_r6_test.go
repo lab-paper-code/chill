@@ -21,9 +21,8 @@ import (
 func TestR6ProfileResponseOmitsRawCatalogAndLatencySamples(t *testing.T) {
 	view := httpapi.ProfilesView{ConfigVersion: "rv"}
 	samples := make([]firstfloor.ServiceSample, 100000)
-	cadence := fixtures.Cadence()
 	for i := range samples {
-		samples[i] = fixtures.ServiceSample(cadence, "physical-trial", uint64(i), 1000)
+		samples[i] = fixtures.ServiceSample("physical-trial", uint64(i), 1000)
 	}
 	view.Profiles = []serving.Profile{{
 		ID: "profile", Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: samples}},

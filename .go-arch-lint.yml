@@ -299,8 +299,6 @@ deps:
       - metric-core
       - node-actuator-core
       - profiling-run
-      # Retained serving G prefers the existing semantic execution condition.
-      - profile-derivation
       - firstfloor
 
   profiler-evidence:

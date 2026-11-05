@@ -17,13 +17,6 @@ import * as measurementSummary from "./measurement-summary.ts"
 const condition={model:"model & one",deviceClass:"device",node:"node",path:"cuda",powerMode:"MAXN"}
 const plan:MeasurementPlan={metadata:{name:"source",namespace:"ns",uid:"uid",resourceVersion:"1",creationTimestamp:"2026-10-30T00:00:00Z"},spec:{state:{candidate:{modelSpec:condition.model,deviceClass:condition.deviceClass,preprocessor:"pre",executionPath:condition.path,powerMode:condition.powerMode},targetNode:condition.node},activeProtocol:{warmupIterations:5,durationSeconds:10,dataset:"data",metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricObservation:{intervalMilliseconds:1000,timeoutMilliseconds:500,durationSeconds:11}},trialsPerBatch:3,retryLimit:1}}
 
-test("copied requests never resend server-resolved active cadence",()=>{
-  const source={...plan,spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,cadence:{target:{loadContext:"server-only"},provenance:{seed:7}}}}}
-  const context:requestHelpers.Context={models:[],workloads:[],classes:[],plans:[source],preprocessors:[],datasets:[],profiles:[]}
-  const copied=requestHelpers.begin(source.metadata.name,context)
-  const request=requestHelpers.manifest(copied.draft,context,"ns")
-  assert.equal(Object.hasOwn(request.spec.activeProtocol,"cadence"),false)
-})
 
 test("copying a request whose Workload was deleted blocks progress until a current selection is made",()=>{
   const source={...plan,spec:{...plan.spec,activeProtocol:{...plan.spec.activeProtocol,workload:"deleted"}}}

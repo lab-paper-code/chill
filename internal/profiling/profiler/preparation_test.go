@@ -9,16 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 const testARM64Architecture = "arm64"
 
-func TestPreparerUpgradesProvenFirstPathRunConfig(t *testing.T) {
+func TestPreparerFirstMeasurementWithoutArchive(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	resolvers := fixtureResolvers(expected, candidateBytes)
 	preparer := newFixturePreparer(t, resolvers)
@@ -32,6 +30,10 @@ func TestPreparerUpgradesProvenFirstPathRunConfig(t *testing.T) {
 	}
 	if resolvers.metrics.nodeName != expected.TargetNode.Name {
 		t.Fatal("metric source was not resolved from the selected Node")
+	}
+	if prepared.RunConfig.Measurement.WorkloadUID != expected.Measurement.WorkloadUID ||
+		prepared.RunConfig.Measurement.SLOPercentile != 95 || prepared.RunConfig.Measurement.MinServiceSamples != 59 {
+		t.Fatal("first preparation lost actual Workload identity or SLO-derived known-gap sample stop")
 	}
 	if resolvers.node.selection.Name != expected.TargetNode.Name ||
 		resolvers.node.selection.DeviceArchitecture != expected.TargetNode.Architecture ||
@@ -513,11 +515,6 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 		resolvers.workloads,
 		resolvers.actuation,
 		resolvers,
-		func(_ context.Context, config profilingrun.RunConfig) (map[int]*firstfloor.CadenceContract, error) {
-			cadences := fixtures.Cadences(config.Measurement.WarmupBatchSizes...)
-			cadences[config.Measurement.Batch] = fixtures.Cadence()
-			return cadences, nil
-		},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +524,6 @@ func newFixturePreparer(t *testing.T, resolvers *fakePreparationResolvers) *Prep
 
 func fixtureRequest(config profilingrun.RunConfig) PreparationRequest {
 	measurement := config.Measurement
-	measurement.Cadence = nil
 	measurement.Dataset = nil
 	measurement.WorkloadName = ""
 	measurement.WorkloadUID = ""

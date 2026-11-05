@@ -430,11 +430,10 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 	instance := snapshot.Instances[0]
 	profile := *instance.Profile
 	profile.Batches = make([]serving.BatchProfile, 6)
-	cadence := fixtures.Cadence()
 	for b := range profile.Batches {
 		profile.Batches[b] = serving.BatchProfile{Batch: b + 1, ServiceSamples: make([]firstfloor.ServiceSample, 200)}
 		for s := range profile.Batches[b].ServiceSamples {
-			profile.Batches[b].ServiceSamples[s] = fixtures.ServiceSample(cadence, "physical-trial", uint64(s), 12345679+int64(s))
+			profile.Batches[b].ServiceSamples[s] = fixtures.ServiceSample("physical-trial", uint64(s), 12345679+int64(s))
 		}
 	}
 	instance.Profile = &profile

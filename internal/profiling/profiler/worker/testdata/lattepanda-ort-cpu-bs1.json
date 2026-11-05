@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha19",
+  "schemaVersion": "chill.dacs.io/profiling-run-config.v1alpha20",
   "candidate": {
     "inputs": {
       "modelSpec": {
@@ -72,73 +72,6 @@
     "workloadResourceVersion": "1",
     "warmupBatchSizes": [1],
     "workloadMode": "empirical-cadence-fixed-batch",
-    "cadence": {
-      "target": {
-        "loadContext": "captured-shared-load",
-        "boundary": "native-exchange-end-to-next-start",
-        "conditionalModel": "nearest-gap-uniform-physical-trial",
-        "schedule": [
-          {
-            "name": "active",
-            "offeredLoad": "captured-requests",
-            "sharingContext": "shared-gateway"
-          }
-        ]
-      },
-      "provenance": {
-        "seed": 7,
-        "drawRule": "uniform-selected-records-with-replacement-frozen-cycle",
-        "sources": [
-          {
-            "object": {
-              "store": "raw",
-              "key": "captured-native-exchanges",
-              "size": 1024
-            },
-            "boundary": "native-exchange-end-to-next-start",
-            "sourceRevision": "captured-fixture",
-            "loadContext": "captured-shared-load",
-            "workload": "fixture",
-            "nodeUID": "donor-node",
-            "executionPath": "ort-cpu",
-            "powerMode": "default",
-            "physicalInstanceID": "donor-instance",
-            "trialID": "donor-trial",
-            "observedBatch": 1,
-            "windowStart": "2026-11-05T00:00:00Z",
-            "windowEnd": "2026-11-05T00:01:00Z",
-            "borrowed": true
-          }
-        ],
-        "phases": [
-          {
-            "name": "active",
-            "elements": [
-              {
-                "gapNanos": 1000000,
-                "sourceIndex": 0,
-                "batchID": 2
-              },
-              {
-                "gapNanos": 100000000,
-                "sourceIndex": 0,
-                "batchID": 3
-              }
-            ]
-          }
-        ],
-        "draws": [
-          {
-            "phase": "active",
-            "elementIndex": 0
-          },
-          {
-            "phase": "active",
-            "elementIndex": 1
-          }
-        ]
-      }
-    },
     "dataset": {
       "name": "vqav2-val-subset",
       "uid": "dataset-uid",

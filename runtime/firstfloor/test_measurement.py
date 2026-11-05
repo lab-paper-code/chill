@@ -20,10 +20,6 @@ import measurement
 PREPROCESSOR = {"name": "mobilenet-imagenet", "uid": "pre-uid", "image": "registry/pre:1", "architecture": "amd64",
                 "path": "/artifact/mobilenet-nchw", "inputs": ["image"], "outputs": ["label"]}
 
-def frozen_cadence():
-    return json.loads((Path(__file__).parent / "testdata/cadence.json").read_text())
-
-
 
 class MeasurementBoundaryTest(unittest.TestCase):
     def test_selected_deadline_policy_defaults_validates_and_reaches_worker(self):
@@ -98,6 +94,8 @@ class MeasurementBoundaryTest(unittest.TestCase):
                         {"serviceSamples": [dict(pair, precedingIdleNanos=-1)]},
                         {"serviceSamples": [dict(pair, serviceDurationNanos=1 << 63)]},
                         {"serviceSamples": [dict(pair, trialID="")]},
+                        {"serviceSamples": [dict(pair, targetIdleNanos=0)]},
+                        {"serviceSamples": [dict(pair, traceDrawRef=None)]},
                         {"postprocessSamplesMS": [-0.1]}, {"batchIDs": [True]}, {"batchIDs": [1 << 64]},
                         {"units": [1]}, {"units": [1, 0]}, {"units": [1, True]}, {"units": None},
                         {"firstTokenSamplesMS": [1.0]}, {"batchSize": 1}, {"executionComplete": False},
@@ -123,8 +121,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
             (Path(directory) / "README").write_text("not a record")
             request = {"datasetPath": directory, "podUID": "physical-pod",
                        "runConfig": {"state": {"model": "model", "preprocessor": dict(PREPROCESSOR)},
-                                     "measurement": {"batch": 2, "workloadMode": measurement.common.SUPPORTED_WORKLOAD,
-                                                     "cadence": frozen_cadence()}}}
+                                     "measurement": {"batch": 2, "workloadMode": measurement.common.SUPPORTED_WORKLOAD}}}
             session = measurement.FirstfloorSession(1, request)
             self.assertEqual(session.records, [f"q{index}" for index in range(5)])
             expected = random.Random(measurement.SAMPLE_SEED)
@@ -153,7 +150,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
             with self.assertRaisesRegex(measurement.common.ContractError, "fewer profiling records"):
                 measurement.FirstfloorSession(1, request)
 
-    def test_profile_calls_cycle_frozen_cadence_and_preserve_pairs_through_long_active_wall(self):
+    def test_unpaced_profile_calls_preserve_actual_pairs_through_long_active_wall(self):
         # This fake clock tests collection behavior, not real runtime performance.
         for backend in ("ort-cpu", "rknnlite"):
             for initial_gap, expected_calls in ((None, 60), (123, 59)):
@@ -172,8 +169,7 @@ class MeasurementBoundaryTest(unittest.TestCase):
                                       "preprocessor": dict(PREPROCESSOR)},
                             "targetNode": {"name": "node", "uid": "node-uid"},
                             "measurement": {"batch": 1, "warmupIterations": 0, "durationSeconds": 30,
-                                            "minServiceSamples": 59, "workloadMode": measurement.common.SUPPORTED_WORKLOAD,
-                                            "cadence": frozen_cadence()},
+                                            "minServiceSamples": 59, "workloadMode": measurement.common.SUPPORTED_WORKLOAD},
                         },
                     }
                     clock = [0]
@@ -185,21 +181,15 @@ class MeasurementBoundaryTest(unittest.TestCase):
                         body = json.loads(payload)
                         received.append(body)
                         self.assertEqual(body["trialID"], "new-physical-pod")
+                        self.assertEqual(set(body), {"batchSize", "inputs", "trialID"})
                         pair = {"serviceDurationNanos": 2_000_001, "trialID": "new-physical-pod"}
                         if len(received) == 1:
-                            self.assertNotIn("cadenceDraw", body)
                             pair["precedingIdleNanos"] = initial_gap
                         else:
-                            index = len(received) - 2
-                            phase, target = ("high", 7_000_000_000) if index % 2 == 0 else ("low", 5_000_000_000)
-                            self.assertEqual(body["cadenceDraw"], {
-                                "targetIdleNanos": target,
-                                "ref": {"phase": phase, "elementIndex": 0, "drawIndex": index},
-                            })
-                            # The native owner tests real remaining-idle pacing at IPC.
-                            pair.update(precedingIdleNanos=target + 17, targetIdleNanos=target,
-                                        traceDrawRef=body["cadenceDraw"]["ref"])
-                            clock[0] += target + 17
+                            # Input preparation/transport idle is observed, never requested.
+                            gap = 7_000_000_017 if len(received) % 2 == 0 else 5_000_000_017
+                            pair["precedingIdleNanos"] = gap
+                            clock[0] += gap
                         clock[0] += 4_000_000
                         return {"batchSize": 1, "executionComplete": True, "batchIDs": [len(received)],
                                 "serviceSamples": [pair], "preprocessSamplesMS": [0.25], "backendSamplesMS": [1.0],
@@ -228,7 +218,8 @@ class MeasurementBoundaryTest(unittest.TestCase):
                     self.assertEqual(rows[-1]["trialID"], "new-physical-pod")
                     self.assertEqual(rows[-1]["recordIDs"], ["record"])
                     self.assertIsInstance(rows[-1]["precedingIdleNanos"], int)
-                    self.assertEqual(rows[-1]["traceDrawRef"]["drawIndex"], expected_calls - 2)
+                    self.assertNotIn("traceDrawRef", rows[-1])
+                    self.assertNotIn("targetIdleNanos", rows[-1])
 
     def test_actual_runtime_rejects_provider_fallback_and_changed_conditions(self):
         request = {"modelDirectory": "/model", "maxInputBytes": 1024,

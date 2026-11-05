@@ -264,7 +264,7 @@ func (i RunConfig) validateMeasurementMode() error {
 			i.Measurement.WarmupIterations != 0 ||
 			i.Measurement.SettlingDurationSeconds < 1 ||
 			i.Measurement.Dataset != nil || i.Measurement.MinServiceSamples != 0 ||
-			i.Measurement.SLOPercentile != 0 || i.Measurement.Cadence != nil {
+			i.Measurement.SLOPercentile != 0 {
 			return errors.New("model-loaded idle measurement protocol is invalid")
 		}
 		return nil
@@ -288,7 +288,7 @@ func (i RunConfig) validateMeasurementMode() error {
 		!validArtifactPath(dataset.Path) {
 		return errors.New("active measurement requires a frozen dataset name, UID, image, and clean path")
 	}
-	return i.Measurement.Cadence.Validate()
+	return nil
 }
 
 // validateArtifactFiles requires clean absolute model files whose names the

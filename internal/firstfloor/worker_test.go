@@ -794,50 +794,45 @@ func TestFixedBatchValidationAndReload(t *testing.T) {
 	}
 }
 
-func TestProfilePacingPreservesActualExchangePairsAndNaturalIdle(t *testing.T) {
+func TestProfileAddsNoWaitAndPreservesActualExchangePairsAndNaturalIdle(t *testing.T) {
 	s, _ := startTestActor(t, modeProfiling, "100", nil)
 	h := NewHandler(s)
 	decode := func(reply *httptest.ResponseRecorder) ProfileResponse {
 		t.Helper()
 		var response ProfileResponse
 		if reply.Code != http.StatusOK || json.Unmarshal(reply.Body.Bytes(), &response) != nil || !response.ExecutionComplete || !reflect.DeepEqual(response.Units, []int{1, 2}) || len(response.ServiceSamples) != 1 {
-			t.Fatalf("paced execution must return real results: %d %s", reply.Code, reply.Body.String())
+			t.Fatalf("profile execution must return real results: %d %s", reply.Code, reply.Body.String())
 		}
 		return response
 	}
-	profile := func(draw *CadenceDraw) ProfileResponse {
-		return decode(postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "b+c"), TrialID: "physical-trial", CadenceDraw: draw}))
+	profile := func() ProfileResponse {
+		return decode(postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "b+c"), TrialID: "physical-trial"}))
 	}
-	first := profile(nil).ServiceSamples[0]
+	first := profile().ServiceSamples[0]
 	if first.PrecedingIdleNanos != nil {
 		t.Fatalf("Python startup warmup cannot invent a Go exchange anchor: %+v", first)
 	}
-	// This idle is longer than the execution timeout: pacing must not consume it.
-	target := int64(3200 * time.Millisecond)
-	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		done <- postJSON(h, "/v2/models/synthetic/profile", ProfileRequest{BatchSize: 2, Inputs: rawInputs("a", "b+c"), TrialID: "physical-trial", CadenceDraw: &CadenceDraw{TargetIdleNanos: target, Ref: CadenceDrawRef{Phase: "low", DrawIndex: 1}}})
-	}()
-	awaitActorState(t, s, func(state State) bool {
-		return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning && state.Requests[0].ExchangeElapsedNanos == nil
-	})
-	running := awaitActorState(t, s, func(state State) bool {
-		return len(state.Requests) == 1 && state.Requests[0].ExchangeElapsedNanos != nil
-	})
-	if running.Requests[0].PrecedingIdleNanos == nil || *running.Requests[0].PrecedingIdleNanos < target || *running.Requests[0].ExchangeElapsedNanos >= target {
-		t.Fatalf("running residual must see preceding gap and actual exchange elapsed, not actor span: %+v", running.Requests[0])
-	}
-	second := decode(<-done).ServiceSamples[0]
-	if second.PrecedingIdleNanos == nil || *second.PrecedingIdleNanos < target || second.ServiceDurationNanos >= target/2 || second.ServiceDurationNanos <= 0 {
-		t.Fatalf("paced idle must be recorded in G, never folded into S: %+v", second)
+	start := time.Now()
+	second := profile().ServiceSamples[0]
+	if second.PrecedingIdleNanos == nil || second.ServiceDurationNanos <= 0 || time.Since(start) >= 400*time.Millisecond {
+		t.Fatalf("profile must execute without adding idle: %+v", second)
 	}
 	time.Sleep(600 * time.Millisecond)
-	naturalTarget := int64(400 * time.Millisecond)
-	start := time.Now()
-	third := profile(&CadenceDraw{TargetIdleNanos: naturalTarget, Ref: CadenceDrawRef{Phase: "low", DrawIndex: 2}}).ServiceSamples[0]
-	wall := time.Since(start)
-	if third.PrecedingIdleNanos == nil || *third.PrecedingIdleNanos < int64(600*time.Millisecond) || wall >= 400*time.Millisecond {
-		t.Fatalf("natural idle must satisfy target without another full sleep: wall=%s sample=%+v", wall, third)
+	start = time.Now()
+	third := profile().ServiceSamples[0]
+	if third.PrecedingIdleNanos == nil || *third.PrecedingIdleNanos < int64(600*time.Millisecond) || time.Since(start) >= 400*time.Millisecond || third.ServiceDurationNanos >= int64(400*time.Millisecond) {
+		t.Fatalf("natural idle must remain in G, not S or an added wait: %+v", third)
+	}
+	for _, sample := range []ServiceSample{first, second, third} {
+		if sample.TrialID != "physical-trial" {
+			t.Fatalf("physical trial identity lost: %+v", sample)
+		}
+	}
+	for _, field := range []string{"cadenceDraw", "targetIdleNanos", "traceDrawRef"} {
+		request := map[string]any{"batchSize": 2, "inputs": rawInputs("a", "b+c"), "trialID": "physical-trial", field: nil}
+		if reply := postJSON(h, "/v2/models/synthetic/profile", request); reply.Code != http.StatusBadRequest {
+			t.Fatalf("obsolete donor field %s accepted: %d %s", field, reply.Code, reply.Body.String())
+		}
 	}
 }
 

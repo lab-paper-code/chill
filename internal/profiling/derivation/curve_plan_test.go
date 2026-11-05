@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
-	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 const (
@@ -128,6 +127,13 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if bytes.Contains(canonical, []byte(`"cadences"`)) {
+		t.Fatal("first curve plan acquired donor inputs")
+	}
+	withDonor := bytes.Replace(canonical, []byte(`"activeProtocol":{`), []byte(`"activeProtocol":{"cadences":{},`), 1)
+	if _, err := DecodeCurvePlan(withDonor); err == nil {
+		t.Fatal("retired donor field accepted by strict curve-plan reader")
+	}
 	decoded, err := DecodeCurvePlan(append([]byte(" \n"), canonical...))
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +149,7 @@ func TestConstructAndVerifyCurvePlan(t *testing.T) {
 	if _, err := DecodeCurvePlan(append(canonical, []byte(` {}`)...)); err == nil {
 		t.Fatal("expected trailing plan value rejection")
 	}
-	retired := bytes.Replace(canonical, []byte(curvePlanSchemaVersion), []byte("chill.dacs.io/curve-plan.v1alpha10"), 1)
+	retired := bytes.Replace(canonical, []byte(curvePlanSchemaVersion), []byte("chill.dacs.io/curve-plan.v1alpha11"), 1)
 	if _, err := DecodeCurvePlan(retired); err == nil {
 		t.Fatal("preceding curve-plan schema accepted")
 	}
@@ -319,7 +325,6 @@ func TestVerifyCurvePlanOwnsTheVerifiedState(t *testing.T) {
 func TestDeriveCurveFollowsSparsePlannedBatchSizeSequence(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
-	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +349,6 @@ func TestDeriveCurveFollowsSparsePlannedBatchSizeSequence(t *testing.T) {
 func TestDeriveCurveRejectsSkippedPlannedBatchSize(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
-	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -484,7 +488,6 @@ func TestEnergyOptimizationSelectsGlobalMinimumAfterLocalMinimum(t *testing.T) {
 func TestEnergyOptimizationFollowsSparsePlannedBatchSizes(t *testing.T) {
 	shared := validCurvePlanSpec()
 	shared.PlannedBatchSizes = []int{2, 4, 8}
-	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	contract, err := NewCurvePlan(shared)
 	if err != nil {
 		t.Fatal(err)
@@ -565,7 +568,6 @@ func validCurvePlanSpec() CurvePlanSpec {
 		PlannedBatchSizes: []int{1, 2, 4},
 	}
 	shared.ActiveProtocol.WarmupIterations = 20
-	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	shared.ActiveProtocol.Dataset = &CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	shared.IdleProtocol.SettlingDurationSeconds = 5
 	return shared
@@ -577,7 +579,6 @@ func testCurvePlanSpec(batchCount int) CurvePlanSpec {
 	for index := range shared.PlannedBatchSizes {
 		shared.PlannedBatchSizes[index] = index + 1
 	}
-	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	return shared
 }
 

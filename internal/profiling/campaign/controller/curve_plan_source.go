@@ -128,7 +128,6 @@ func (p *CurvePlanProjector) Project(
 		idle.RunConfig,
 		conversion,
 		plannedBatchSizes,
-		active.Cadences,
 	)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, fmt.Errorf("project curve-plan specification: %w", err)
@@ -398,9 +397,7 @@ func (p *CurvePlanProjector) prepare(
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
 	if frozenWorkload != nil {
-		if err := projection.ApplyFrozenActiveProtocol(&requested.Preparation.Measurement, *frozenWorkload); err != nil {
-			return profiler.PreparedRun{}, err
-		}
+		projection.ApplyFrozenActiveProtocol(&requested.Preparation.Measurement, *frozenWorkload)
 		requested.Preparation.Workload = requested.Preparation.Measurement.WorkloadName
 	}
 	return p.preparer.Prepare(ctx, requested.Preparation)

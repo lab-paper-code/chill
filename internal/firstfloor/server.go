@@ -174,8 +174,8 @@ func prepareProfile(w http.ResponseWriter, ctx context.Context, decoder *json.De
 		bodyError(w, ctx, e)
 		return false
 	}
-	if !identity(p.TrialID) || p.CadenceDraw != nil && (p.CadenceDraw.TargetIdleNanos < 0 || !identity(p.CadenceDraw.Ref.Phase) || p.CadenceDraw.Ref.ElementIndex < 0) {
-		writeError(w, http.StatusBadRequest, errors.New("physical trial ID and valid cadence draw required"))
+	if !identity(p.TrialID) {
+		writeError(w, http.StatusBadRequest, errors.New("physical trial ID required"))
 		return false
 	}
 	if !initialized(cfg.BatchSizes, p.BatchSize) {

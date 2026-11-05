@@ -50,7 +50,7 @@ func syntheticOccupancyFixture() occupancyFixture {
 		profile: &serving.Profile{
 			ID:       "allowed/beo/beo-uid",
 			NodeName: "node",
-			Batches:  []serving.BatchProfile{{Batch: 2, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 10e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 20e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 2, 30e6)}}},
+			Batches:  []serving.BatchProfile{{Batch: 2, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 10e6), fixtures.ServiceSample("physical-trial", 1, 20e6), fixtures.ServiceSample("physical-trial", 2, 30e6)}}},
 		},
 		node: &core.Node{ObjectMeta: meta.ObjectMeta{Name: "node", UID: "node-uid"}},
 		workload: &api.Workload{
@@ -194,7 +194,7 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 		"workers cannot hold batch": func(f *occupancyFixture) { f.policy.Workers = 1 },
 		"worker cap":                func(f *occupancyFixture) { f.policy.Workers = 65 },
 		"lifetime cannot hold queued batches": func(f *occupancyFixture) {
-			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 1e9), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1e9)}
+			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1e9), fixtures.ServiceSample("physical-trial", 1, 1e9)}
 		},
 		"byte supply cap": func(f *occupancyFixture) {
 			f.preprocessor.Spec.Input.Fields[0].MaxBytes = 32 << 20
@@ -202,10 +202,10 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 		"native byte cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueBytes = 8191 },
 		"queue count cap": func(f *occupancyFixture) { f.preparation.Config.MaxQueueRequests = 5 },
 		"zero service": func(f *occupancyFixture) {
-			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 0), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 0)}
+			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 0), fixtures.ServiceSample("physical-trial", 1, 0)}
 		},
 		"negative service": func(f *occupancyFixture) {
-			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, -1), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, -1)}
+			f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, -1), fixtures.ServiceSample("physical-trial", 1, -1)}
 		},
 		"elapsed overflow": func(f *occupancyFixture) {
 			f.policy.CollectionSeconds = math.MaxInt32
@@ -228,9 +228,9 @@ func TestOccupancyDerivationRefusesLifetimeIdentityAndSupply(t *testing.T) {
 func TestOccupancyBurstDoesNotDeriveWorkersWarmupOrDurationFromService(t *testing.T) {
 	for _, population := range [][]float64{{1e6}, {10e6, 20e6, 30e6}, {300e6}} {
 		f := syntheticOccupancyFixture()
-		f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, int64(population[0]))}
+		f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, int64(population[0]))}
 		for i, service := range population {
-			f.profile.Batches[0].ServiceSamples = append(f.profile.Batches[0].ServiceSamples, fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", uint64(i+1), int64(service)))
+			f.profile.Batches[0].ServiceSamples = append(f.profile.Batches[0].ServiceSamples, fixtures.ServiceSample("physical-trial", uint64(i+1), int64(service)))
 		}
 		f.preparation.Config.MaxQueueBytes = 8 * 1024
 		f.preparation.Config.MaxQueueRequests = 6
@@ -273,7 +273,7 @@ func TestOccupancyBurstLifetimeIncludesPartialQueuedBatchAndMargin(t *testing.T)
 	f := syntheticOccupancyFixture()
 	f.workload.Spec.SLO.TargetLatency.Duration = time.Second
 	f.policy.Workers = 9
-	f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 398e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 398e6)}
+	f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 398e6), fixtures.ServiceSample("physical-trial", 1, 398e6)}
 	task, err := f.build()
 	if err != nil {
 		t.Fatal("exact lifetime boundary rejected", err)
@@ -281,7 +281,7 @@ func TestOccupancyBurstLifetimeIncludesPartialQueuedBatchAndMargin(t *testing.T)
 	if task.Spec.Conditions.WaitingBatches != 4 {
 		t.Fatal("partial outstanding batch was rounded down")
 	}
-	f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 399e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 399e6)}
+	f.profile.Batches[0].ServiceSamples = []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 399e6), fixtures.ServiceSample("physical-trial", 1, 399e6)}
 	_, err = f.build()
 	requireOccupancyError(t, err, "OccupancyInfeasible")
 }

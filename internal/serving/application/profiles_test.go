@@ -57,8 +57,8 @@ func measuredAdoptionProfile() serving.Profile {
 			WarmupIterations: 5, InitializedBatches: []int{1, 2, 4},
 		},
 		Batches: []serving.BatchProfile{
-			{Batch: 1, MemoryBytes: 2048, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 2e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1e6)}},
-			{Batch: 2, MemoryBytes: 4096, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 3e6), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 3e6)}},
+			{Batch: 1, MemoryBytes: 2048, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 2e6), fixtures.ServiceSample("physical-trial", 1, 1e6)}},
+			{Batch: 2, MemoryBytes: 4096, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 3e6), fixtures.ServiceSample("physical-trial", 1, 3e6)}},
 		},
 	}
 	profile.Condition.Actor = native.Config{
@@ -99,7 +99,7 @@ func TestPositiveProfileCarriesPairedServiceToNativeConsumer(t *testing.T) {
 		if _, _, ok := distribution.QuantileNanos(nil, 95); !ok {
 			t.Fatal("startup support lost across native bundle wire")
 		}
-		gap := fixtures.Cadence().Draw(0).TargetIdleNanos
+		gap := *batch.ServiceSamples[1].PrecedingIdleNanos
 		if _, _, ok := distribution.QuantileNanos(&gap, 95); !ok {
 			t.Fatal("known-gap support lost across native bundle wire")
 		}

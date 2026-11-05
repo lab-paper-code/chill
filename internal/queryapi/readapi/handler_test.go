@@ -19,7 +19,6 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/queryapi"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -523,7 +522,6 @@ func resolvingPreflightSnapshot(t *testing.T) queryapi.BatchEnergyOptimizationPr
 func preflightPlan(t *testing.T) profilederivation.CurvePlan {
 	t.Helper()
 	active := preflightProtocol("empirical-cadence-fixed-batch")
-	active.Cadences = fixtures.Cadences(1, 2, 4)
 	active.Dataset = &profilederivation.CurveDatasetContract{Name: "vqav2-val-subset", UID: "dataset-uid"}
 	plan, err := profilederivation.NewCurvePlan(profilederivation.CurvePlanSpec{
 		Name: "mobilenet-curve", LogicalModel: "mobilenet-v2", DeviceClass: "orangepi-5-plus",

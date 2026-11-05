@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
@@ -37,12 +36,6 @@ type PreparationRequest struct {
 	Measurement profilingrun.MeasurementContract
 	Metrics     MetricObservationPolicy
 }
-
-// CadenceResolver reads actual server-owned serving evidence, never a caller's
-// synthetic pacing body. Frozen campaign children carry the resulting contract.
-type CadenceResolver func(context.Context, profilingrun.RunConfig) (map[int]*firstfloor.CadenceContract, error)
-
-var ErrBootstrapServingTraceRequired = errors.New("bootstrap serving trace is required")
 
 type MetricObservationPolicy struct {
 	IntervalMilliseconds int
@@ -120,7 +113,6 @@ type ExecutionPolicyResolver interface {
 type PreparedRun struct {
 	RunConfig       profilingrun.RunConfig
 	ActuationPolicy *FrozenActuationPolicy
-	Cadences        map[int]*firstfloor.CadenceContract
 }
 
 // ValidateActuationBinding checks the selected policy against the RunConfig
@@ -155,7 +147,6 @@ type Preparer struct {
 	workloads  WorkloadObservationResolver
 	actuation  ActuationPolicyResolver
 	execution  ExecutionPolicyResolver
-	cadence    CadenceResolver
 }
 
 func NewPreparer(
@@ -165,15 +156,13 @@ func NewPreparer(
 	workloads WorkloadObservationResolver,
 	actuation ActuationPolicyResolver,
 	execution ExecutionPolicyResolver,
-	cadence CadenceResolver,
 ) (*Preparer, error) {
 	if candidates == nil || nodes == nil || metrics == nil || workloads == nil ||
-		actuation == nil || execution == nil || cadence == nil {
-		return nil, errors.New("candidate, Node, metric, workload, actuation, execution and actual cadence resolvers are required")
+		actuation == nil || execution == nil {
+		return nil, errors.New("candidate, Node, metric, workload, actuation and execution resolvers are required")
 	}
 	return &Preparer{
 		candidates: candidates, nodes: nodes, metrics: metrics, workloads: workloads, actuation: actuation, execution: execution,
-		cadence: cadence,
 	}, nil
 }
 
@@ -244,15 +233,6 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	}
 	runConfig.Actor.MemoryRequestBytes = executionPolicy.Policy.RuntimeMemoryRequestBytes
 	runConfig.Actor.MemoryLimitBytes = executionPolicy.Policy.RuntimeMemoryLimitBytes
-	var cadences map[int]*firstfloor.CadenceContract
-	if runConfig.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode &&
-		runConfig.Measurement.Cadence == nil {
-		cadences, err = p.cadence(ctx, runConfig)
-		if err != nil {
-			return PreparedRun{}, fmt.Errorf("resolve actual serving cadence: %w", err)
-		}
-		runConfig.Measurement.Cadence = cadences[runConfig.Measurement.Batch]
-	}
 	if err := runConfig.Validate(); err != nil {
 		return PreparedRun{}, fmt.Errorf("validate RunConfig: %w", err)
 	}
@@ -261,7 +241,6 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	}
 	prepared := PreparedRun{
 		RunConfig:       runConfig,
-		Cadences:        cadences,
 		ActuationPolicy: policy,
 	}
 	if err := prepared.ValidateActuationBinding(); err != nil {

@@ -116,9 +116,8 @@ func TestSchedulerSummaryPoolReturnFacts(t *testing.T) {
 
 func TestSchedulerSummaryLargeState(t *testing.T) {
 	samples := make([]firstfloor.ServiceSample, 3<<20)
-	cadence := fixtures.Cadence()
 	for i := range samples {
-		samples[i] = fixtures.ServiceSample(cadence, "physical-trial", uint64(i), 1000)
+		samples[i] = fixtures.ServiceSample("physical-trial", uint64(i), 1000)
 	}
 	state := servingkube.SchedulerControllerState{
 		Snapshot: serving.SchedulerSnapshot{

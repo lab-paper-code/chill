@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha19"
+	RunConfigSchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha20"
 
 	EmpiricalCadenceFixedBatchWorkloadMode = "empirical-cadence-fixed-batch"
 	IdleModelLoadedWorkloadMode            = "idle-model-loaded"
@@ -164,22 +164,21 @@ type NvidiaLockedGPUClockTarget struct {
 }
 
 type MeasurementContract struct {
-	Batch                    int                         `json:"batch"`
-	WarmupIterations         int                         `json:"warmupIterations"`
-	StartupWarmupIterations  int                         `json:"startupWarmupIterations,omitempty"`
-	SettlingDurationSeconds  int                         `json:"settlingDurationSeconds,omitempty"`
-	Duration                 time.Duration               `json:"-"`
-	DurationSeconds          int                         `json:"durationSeconds"`
-	DurationToleranceSeconds float64                     `json:"durationToleranceSeconds"`
-	MinServiceSamples        int                         `json:"minServiceSamples,omitempty"`
-	SLOPercentile            float64                     `json:"sloPercentile,omitempty"`
-	SLOTargetLatencyNanos    int64                       `json:"sloTargetLatencyNanos,omitempty"`
-	WorkloadName             string                      `json:"workloadName,omitempty"`
-	WorkloadUID              string                      `json:"workloadUID,omitempty"`
-	WorkloadResourceVersion  string                      `json:"workloadResourceVersion,omitempty"`
-	WarmupBatchSizes         []int                       `json:"warmupBatchSizes,omitempty"`
-	Cadence                  *firstfloor.CadenceContract `json:"cadence,omitempty"`
-	WorkloadMode             string                      `json:"workloadMode"`
+	Batch                    int           `json:"batch"`
+	WarmupIterations         int           `json:"warmupIterations"`
+	StartupWarmupIterations  int           `json:"startupWarmupIterations,omitempty"`
+	SettlingDurationSeconds  int           `json:"settlingDurationSeconds,omitempty"`
+	Duration                 time.Duration `json:"-"`
+	DurationSeconds          int           `json:"durationSeconds"`
+	DurationToleranceSeconds float64       `json:"durationToleranceSeconds"`
+	MinServiceSamples        int           `json:"minServiceSamples,omitempty"`
+	SLOPercentile            float64       `json:"sloPercentile,omitempty"`
+	SLOTargetLatencyNanos    int64         `json:"sloTargetLatencyNanos,omitempty"`
+	WorkloadName             string        `json:"workloadName,omitempty"`
+	WorkloadUID              string        `json:"workloadUID,omitempty"`
+	WorkloadResourceVersion  string        `json:"workloadResourceVersion,omitempty"`
+	WarmupBatchSizes         []int         `json:"warmupBatchSizes,omitempty"`
+	WorkloadMode             string        `json:"workloadMode"`
 	// Dataset is present for active measurement only.
 	Dataset *DatasetContract `json:"dataset,omitempty"`
 }

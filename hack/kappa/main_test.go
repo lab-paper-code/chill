@@ -43,11 +43,11 @@ func TestProposeSLOSplitsFastFromSlowNodes(t *testing.T) {
 		ref := serving.NodeReference{Name: node, UID: node + "-uid"}
 		// Power mode scopes d; image differences are measurement history only.
 		cond := profilederivation.CurvePlanSpec{PowerMode: fmt.Sprint("mode-", len(snap.Options)), RuntimeImage: "current-image", LogicalModel: "plc"}
-		paired := []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, int64(samples[0]))}
+		paired := []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, int64(samples[0]))}
 		for i, service := range samples {
-			paired = append(paired, fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", uint64(i+1), int64(service)))
+			paired = append(paired, fixtures.ServiceSample("physical-trial", uint64(i+1), int64(service)))
 		}
-		p := &serving.Profile{ID: node, Condition: cond, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: paired}, {Batch: 2, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 1), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1)}}}}
+		p := &serving.Profile{ID: node, Condition: cond, Batches: []serving.BatchProfile{{Batch: 1, ServiceSamples: paired}, {Batch: 2, ServiceSamples: []firstfloor.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1), fixtures.ServiceSample("physical-trial", 1, 1)}}}}
 		snap.Options = append(snap.Options, serving.SchedulerOption{Instance: serving.SchedulerInstance{Node: ref, Profile: p, MaxBatch: 2}, CompatibleUIDs: []string{uid}})
 		if d {
 			snap.DispatchOccupancy = append(snap.DispatchOccupancy, serving.DispatchOccupancy{Node: ref, PowerMode: cond.PowerMode, RuntimeImage: "historical-image", Model: "plc", PerRequest: time.Millisecond})

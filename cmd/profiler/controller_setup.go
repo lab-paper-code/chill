@@ -185,26 +185,8 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 		reader: reader, namespace: opts.watchNamespace,
 		resolver: stores, factory: newEvidenceObjectStore,
 	}
-	evaluation := evaluationcontroller.NewRuntime(reader, component.ProfilerEvidenceStagingPath)
-	cadence, err := profilerkube.NewKubernetesCadenceResolver(
-		reader, opts.watchNamespace,
-		func(ctx context.Context, run *edgev1alpha1.EvaluationRun) (evidencestore.Reader, error) {
-			store, err := evaluation.Store(ctx, run.Namespace, run.Spec.EvidenceStore, run.Status.FrozenConfig.Values)
-			if err != nil {
-				return nil, err
-			}
-			objects, ok := store.(evidencestore.Reader)
-			if !ok {
-				return nil, fmt.Errorf("evaluation evidence store does not expose immutable reads")
-			}
-			return objects, nil
-		}, evidence,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct serving cadence resolver: %w", err)
-	}
 	preparer, err := profilerapp.NewPreparer(
-		candidates, nodes, power, workloads, actuationPolicies, executionPolicies, cadence.ResolveCadence,
+		candidates, nodes, power, workloads, actuationPolicies, executionPolicies,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)

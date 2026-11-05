@@ -6,7 +6,6 @@ import argparse
 import json
 import math
 import os
-import re
 import stat
 import sys
 import tempfile
@@ -17,8 +16,8 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 
-RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha19"
-RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha9"
+RUN_CONFIG_SCHEMA = "chill.dacs.io/profiling-run-config.v1alpha20"
+RESULT_SCHEMA = "chill.dacs.io/batch-characterization.v1alpha10"
 DERIVED_CONTRACT_SCHEMA = "chill.dacs.io/cpu-execution-contract.v1alpha3"
 SUPPORTED_WORKLOAD = "empirical-cadence-fixed-batch"
 IDLE_WORKLOAD = "idle-model-loaded"
@@ -374,7 +373,7 @@ def validate_request(
         measurement,
         common_measurement_fields | ({"warmupBatchSizes"} if "warmupBatchSizes" in measurement else set()) |
         ({"startupWarmupIterations"} if "startupWarmupIterations" in measurement else set()) |
-        ({"cadence", "dataset", "sloPercentile", "minServiceSamples", "sloTargetLatencyNanos",
+        ({"dataset", "sloPercentile", "minServiceSamples", "sloTargetLatencyNanos",
           "workloadName", "workloadUID"} |
          ({"workloadResourceVersion"} if "workloadResourceVersion" in measurement else set())
          if active else {"settlingDurationSeconds"}),
@@ -409,7 +408,6 @@ def validate_request(
     elif measurement["workloadMode"] != SUPPORTED_WORKLOAD:
         raise ContractError("unsupported measurement implementation contract")
     else:
-        validate_cadence(measurement["cadence"])
         percentile = measurement["sloPercentile"]
         if (isinstance(percentile, bool) or not isinstance(percentile, (int, float)) or
                 not math.isfinite(percentile) or not 0 < percentile < 100):
@@ -430,99 +428,6 @@ def validate_request(
             require_string(dataset[field], f"run_config.measurement.dataset.{field}")
         require_absolute_file_path(dataset["path"], "run_config.measurement.dataset.path")
     validate_candidate(run_config["delivery"])
-
-
-def validate_cadence(value: Any) -> None:
-    """Validate the frozen input, never discover traces or generate runtime draws."""
-    cadence = require_object(value, "cadence")
-    require_fields(cadence, {"target", "provenance"}, "cadence")
-    target = require_object(cadence["target"], "cadence.target")
-    require_fields(target, {"loadContext", "boundary", "conditionalModel", "schedule"}, "cadence.target")
-    require_string(target["loadContext"], "cadence loadContext")
-    if (target["boundary"] != "native-exchange-end-to-next-start" or
-            target["conditionalModel"] != "nearest-gap-uniform-physical-trial"):
-        raise ContractError("unsupported cadence boundary or conditional model")
-    schedule = target["schedule"]
-    if not isinstance(schedule, list) or not schedule:
-        raise ContractError("cadence schedule must be a nonempty array")
-    names: list[str] = []
-    for phase in schedule:
-        phase = require_object(phase, "cadence target phase")
-        require_fields(phase, {"name", "offeredLoad", "sharingContext"}, "cadence target phase")
-        for field in phase:
-            require_string(phase[field], "cadence phase " + field)
-        if phase["name"] in names:
-            raise ContractError("cadence target phase names must be unique")
-        names.append(phase["name"])
-    provenance = require_object(cadence["provenance"], "cadence.provenance")
-    require_fields(provenance, {"seed", "drawRule", "sources", "phases", "draws"}, "cadence.provenance")
-    seed = provenance["seed"]
-    if (isinstance(seed, bool) or not isinstance(seed, int) or not -(1 << 63) <= seed < (1 << 63) or
-            provenance["drawRule"] != "uniform-selected-records-with-replacement-frozen-cycle"):
-        raise ContractError("cadence requires an integer provenance seed and supported frozen draw rule")
-    sources = provenance["sources"]
-    if not isinstance(sources, list) or not sources:
-        raise ContractError("cadence requires frozen trace sources")
-    for source in sources:
-        source = require_object(source, "cadence source")
-        require_fields(source, {"object", "boundary", "sourceRevision", "loadContext", "workload", "nodeUID",
-                                "executionPath", "powerMode", "physicalInstanceID", "trialID", "observedBatch",
-                                "windowStart", "windowEnd", "borrowed"}, "cadence source")
-        obj = require_object(source["object"], "cadence source object")
-        require_fields(obj, {"store", "key", "size"}, "cadence source object")
-        for field in ("store", "key"):
-            require_string(obj[field], "cadence object " + field)
-        require_integer(obj["size"], "cadence object size", 1)
-        for field in ("boundary", "sourceRevision", "loadContext", "workload", "nodeUID", "executionPath",
-                      "powerMode", "physicalInstanceID", "trialID", "windowStart", "windowEnd"):
-            require_string(source[field], "cadence source " + field)
-        require_integer(source["observedBatch"], "cadence observedBatch", 1)
-        if not isinstance(source["borrowed"], bool):
-            raise ContractError("cadence borrowed must be boolean")
-        try:
-            window = []
-            for field in ("windowStart", "windowEnd"):
-                match = re.fullmatch(r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
-                                     r"(?:\.([0-9]{1,9}))?(Z|[+-][0-9]{2}:[0-9]{2})", source[field])
-                if match is None:
-                    raise ValueError("invalid RFC3339 window")
-                wall = datetime.fromisoformat(match[1] + match[3].replace("Z", "+00:00"))
-                window.append((wall, int((match[2] or "").ljust(9, "0"))))
-            if window[1] <= window[0]:
-                raise ValueError("invalid window")
-        except ValueError as error:
-            raise ContractError("cadence source window is invalid") from error
-    phases = provenance["phases"]
-    if not isinstance(phases, list) or len(phases) != len(names):
-        raise ContractError("cadence phases must match the target schedule")
-    elements_by_phase: dict[str, list[Any]] = {}
-    for phase, name in zip(phases, names):
-        phase = require_object(phase, "cadence source phase")
-        require_fields(phase, {"name", "elements"}, "cadence source phase")
-        if phase["name"] != name:
-            raise ContractError("cadence source phases must follow the target schedule")
-        elements = phase["elements"]
-        if not isinstance(elements, list) or not elements:
-            raise ContractError("cadence phase elements must be nonempty")
-        for element in elements:
-            element = require_object(element, "cadence gap element")
-            require_fields(element, {"gapNanos", "sourceIndex", "batchID"}, "cadence gap element")
-            gap = require_integer(element["gapNanos"], "cadence gapNanos")
-            source_index = require_integer(element["sourceIndex"], "cadence sourceIndex")
-            batch_id = require_integer(element["batchID"], "cadence batchID", 1)
-            if gap > (1 << 63) - 1 or source_index >= len(sources) or batch_id > (1 << 64) - 1:
-                raise ContractError("cadence element exceeds its source or integer range")
-        elements_by_phase[name] = elements
-    draws = provenance["draws"]
-    if not isinstance(draws, list) or not draws:
-        raise ContractError("cadence requires explicit frozen draws")
-    for draw in draws:
-        draw = require_object(draw, "cadence draw")
-        require_fields(draw, {"phase", "elementIndex"}, "cadence draw")
-        name = require_string(draw["phase"], "cadence draw phase")
-        index = require_integer(draw["elementIndex"], "cadence draw elementIndex")
-        if name not in elements_by_phase or index >= len(elements_by_phase[name]):
-            raise ContractError("cadence draw refers to an absent source element")
 
 
 def validate_candidate(value: Any) -> None:

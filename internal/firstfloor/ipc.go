@@ -191,23 +191,7 @@ type runnerOutput struct {
 
 // Only the actor's active batch calls infer. Caller cancellation never reaches
 // this context; capacity remains occupied until reply or process termination.
-func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, data [][]byte, draw *CadenceDraw, trialID string) (runnerOutput, error) {
-	// Natural packing/transport idle already counts toward the frozen target.
-	// Startup has no preceding anchor, even if Python warmed up during init.
-	r.clockMu.Lock()
-	lastEnd := r.lastEnd
-	r.clockMu.Unlock()
-	if draw != nil && !lastEnd.IsZero() {
-		if remaining := time.Duration(draw.TargetIdleNanos) - time.Since(lastEnd); remaining > 0 {
-			wait := time.NewTimer(remaining)
-			defer wait.Stop()
-			select {
-			case <-wait.C:
-			case <-ctx.Done():
-				return runnerOutput{}, ctx.Err()
-			}
-		}
-	}
+func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, data [][]byte, trialID string) (runnerOutput, error) {
 	if trialID == "" {
 		trialID = r.trialID
 	}
@@ -230,10 +214,6 @@ func (r *Runner) infer(ctx context.Context, id uint64, tensors []wireTensor, dat
 		ended := time.Now()
 		o.serviceMS = milliseconds(ended.Sub(started))
 		o.sample = ServiceSample{ServiceDurationNanos: ended.Sub(started).Nanoseconds(), PrecedingIdleNanos: gap, TrialID: trialID}
-		if draw != nil {
-			o.sample.TargetIdleNanos = &draw.TargetIdleNanos
-			o.sample.TraceDrawRef = &draw.Ref
-		}
 		r.clockMu.Lock()
 		r.lastEnd, r.exchangeAt, r.exchangeGap = ended, time.Time{}, nil
 		r.clockMu.Unlock()

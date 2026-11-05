@@ -10,7 +10,6 @@ import (
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func TestProjectVerifiedCurveStateRequiresLoaderEvidence(t *testing.T) {
@@ -41,7 +40,7 @@ func TestCurvePlanIdleBatchPolicy(t *testing.T) {
 				Batch: wantBatch, SettlingDurationSeconds: 60, DurationSeconds: 30,
 				WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 			}
-			spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{4}, fixtures.Cadences([]int{4}...))
+			spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{4})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,7 +76,7 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 	}
 	spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{
 		TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
-	}, []int{1, 2}, fixtures.Cadences([]int{1, 2}...))
+	}, []int{1, 2})
 	if err != nil {
 		t.Fatalf("project curve plan: %v", err)
 	}
@@ -142,7 +141,7 @@ func TestCurveAndStateIdentityDoNotRequireCPUCapacity(t *testing.T) {
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
-	spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{1, 2}, fixtures.Cadences([]int{1, 2}...))
+	spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{1, 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +169,7 @@ func TestCurvePlanProjectionFreezesPreprocessingInputs(t *testing.T) {
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
-	spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{1, 2}, fixtures.Cadences([]int{1, 2}...))
+	spec, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{}, []int{1, 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +251,7 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 			test.mutate(&idle)
 			if _, err := ProjectCurvePlanSpec("test-curve", active, idle, profilederivation.CurveConversionContract{
 				TargetPlatform: "rk3588", Tool: "rknn-toolkit2", ToolVersion: "2.3.2",
-			}, []int{1, 2}, fixtures.Cadences([]int{1, 2}...)); err == nil {
+			}, []int{1, 2}); err == nil {
 				t.Fatal("active/idle disagreement was accepted")
 			}
 		})
@@ -346,7 +345,6 @@ func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 		Preprocessor:      projectCurvePreprocessor(active.State.Preprocessor),
 		PlannedBatchSizes: []int{1, 2},
 	}
-	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	if _, err := profilederivation.NewCurvePlan(shared); err != nil {
 		t.Fatalf("construct converter-free ORT plan: %v", err)
 	}
@@ -365,7 +363,6 @@ func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 	}
 
 	shared.PlannedBatchSizes = []int{2, 4}
-	shared.ActiveProtocol.Cadences = fixtures.Cadences(shared.PlannedBatchSizes...)
 	active.Measurement.Batch = 4
 	idle.Measurement.Batch = 1
 	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {

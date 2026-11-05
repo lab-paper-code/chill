@@ -24,7 +24,6 @@ import (
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -48,7 +47,7 @@ func TestBatchOneInfeasibilityUsesFastestCurrentServiceNotSlowPercentile(t *test
 			// D28 treats margin, dispatch occupancy and waiting as zero.
 			config.Measurement.SLOTargetLatencyNanos = 1000000
 		}
-		spec, err := profilerprojection.ProjectCurvePlanSpec("feasibility", config, idleExecution.RunConfig, profilederivation.CurveConversionContract{}, []int{1, 2}, fixtures.Cadences([]int{1, 2}...))
+		spec, err := profilerprojection.ProjectCurvePlanSpec("feasibility", config, idleExecution.RunConfig, profilederivation.CurveConversionContract{}, []int{1, 2})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -442,7 +441,7 @@ func newCurveDeriverFixture(t *testing.T, batches ...int) curveDeriverFixture {
 	if err := idleRunConfig.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	spec, err := profilerprojection.ProjectCurvePlanSpec("test-curve", base, idleRunConfig, profilederivation.CurveConversionContract{}, batches, fixtures.Cadences(batches...))
+	spec, err := profilerprojection.ProjectCurvePlanSpec("test-curve", base, idleRunConfig, profilederivation.CurveConversionContract{}, batches)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -237,10 +237,9 @@ type BatchChoice struct {
 
 // ProfileRequest is exactly one execution of BatchSize samples.
 type ProfileRequest struct {
-	BatchSize   int          `json:"batchSize"`
-	Inputs      []Field      `json:"inputs"`
-	CadenceDraw *CadenceDraw `json:"cadenceDraw,omitempty"`
-	TrialID     string       `json:"trialID"`
+	BatchSize int     `json:"batchSize"`
+	Inputs    []Field `json:"inputs"`
+	TrialID   string  `json:"trialID"`
 }
 type ProfileResponse struct {
 	BatchSize            int             `json:"batchSize"`

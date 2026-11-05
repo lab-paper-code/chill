@@ -22,9 +22,8 @@ import (
 
 func TestTypedProfileReadNeverEncodesExcludedRawArrays(t *testing.T) {
 	samples := make([]firstfloor.ServiceSample, 100000)
-	cadence := fixtures.Cadence()
 	for i := range samples {
-		samples[i] = fixtures.ServiceSample(cadence, "physical-trial", uint64(i), 123456789)
+		samples[i] = fixtures.ServiceSample("physical-trial", uint64(i), 123456789)
 	}
 	// The actual owner/query HTTP
 	// projections must omit the excluded paired service population.

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha9"
+	RuntimeResultSchemaVersion = "chill.dacs.io/batch-characterization.v1alpha10"
 
 	RKNNLiteCoreMask      = "NPU_CORE_0"
 	RKNNLiteInputLayout   = "NHWC"
@@ -447,7 +447,7 @@ func validateNativeSamples(config RunConfig, trialID string, repetitions []Repet
 			return errors.New("firstfloor native and client samples are not correlated")
 		}
 		for index, sample := range repetition.NativeSamples {
-			if err := validateServicePair(config, trialID, sample, callIndex); err != nil {
+			if err := validateServicePair(trialID, sample, callIndex); err != nil {
 				return err
 			}
 			callIndex++
@@ -482,10 +482,9 @@ func validateNativeSamples(config RunConfig, trialID string, repetitions []Repet
 	return nil
 }
 
-// Pair integrity is admitted at the raw/retained reader boundary. The first
-// measured exchange has no pacing draw; subsequent calls retain the actual
-// frozen draw as well as the independently observed monotonic gap.
-func validateServicePair(config RunConfig, trialID string, sample NativeServiceSample, callIndex uint64) error {
+// Pair integrity is admitted at the raw/retained reader boundary. Only the
+// initial exchange may lack a preceding native end anchor.
+func validateServicePair(trialID string, sample NativeServiceSample, callIndex uint64) error {
 	if sample.ServiceDurationNanos <= 0 || trialID == "" || sample.TrialID != trialID ||
 		(sample.PrecedingIdleNanos != nil && *sample.PrecedingIdleNanos < 0) {
 		return errors.New("firstfloor canonical service pair or physical trial identity is invalid")
@@ -494,19 +493,8 @@ func validateServicePair(config RunConfig, trialID string, sample NativeServiceS
 	if sample.RunnerServiceMilliseconds != serviceMS {
 		return errors.New("firstfloor diagnostic service differs from canonical integer duration")
 	}
-	if callIndex == 0 {
-		if sample.TargetIdleNanos != nil || sample.TraceDrawRef != nil {
-			return errors.New("firstfloor initial exchange must not invent a cadence draw")
-		}
-		return nil
-	}
-	if sample.PrecedingIdleNanos == nil || sample.TargetIdleNanos == nil || sample.TraceDrawRef == nil ||
-		config.Measurement.Cadence == nil || len(config.Measurement.Cadence.Provenance.Draws) == 0 {
-		return errors.New("firstfloor paced exchange is missing actual gap or cadence lineage")
-	}
-	draw := config.Measurement.Cadence.Draw(callIndex - 1)
-	if *sample.TargetIdleNanos != draw.TargetIdleNanos || *sample.TraceDrawRef != draw.Ref {
-		return errors.New("firstfloor exchange cadence draw does not match the frozen sequence")
+	if callIndex > 0 && sample.PrecedingIdleNanos == nil {
+		return errors.New("firstfloor post-start exchange is missing its actual gap")
 	}
 	return nil
 }

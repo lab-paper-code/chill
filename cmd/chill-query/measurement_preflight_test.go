@@ -12,7 +12,6 @@ import (
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -124,13 +123,11 @@ func measurementPreflightTestPlan(t *testing.T) derivation.CurvePlan {
 	active := derivation.CurveProtocolContract{
 		WorkloadMode:    "empirical-cadence-fixed-batch",
 		Dataset:         &derivation.CurveDatasetContract{Name: "dataset", UID: "dataset-uid"},
-		Cadences:        fixtures.Cadences(1, 2, 4),
 		DurationSeconds: 30, MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 900, MetricDurationSeconds: 31,
 		MetricObserverImage: image, WorkloadObserverImage: image,
 		WorkloadSchemaVersion: "chill.dacs.io/workload-contract.v1alpha1",
 	}
 	idle := active
-	idle.Cadences = nil
 	idle.WorkloadMode, idle.Dataset, idle.SettlingDurationSeconds = "idle-model-loaded", nil, 5
 	plan, err := derivation.NewCurvePlan(derivation.CurvePlanSpec{
 		Name: "source", LogicalModel: "model", DeviceClass: "class", NodeUID: "node-uid",

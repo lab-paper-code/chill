@@ -11,7 +11,6 @@ import (
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	evaluationcontroller "github.com/lab-paper-code/chill/internal/evaluation/controller"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	evidences3 "github.com/lab-paper-code/chill/internal/evidencestore/s3"
@@ -150,35 +149,8 @@ func newCampaignPreflightQuery(
 	if err != nil {
 		return nil, fmt.Errorf("construct execution-policy resolver: %w", err)
 	}
-	stores, err := profilerkube.NewKubernetesEvidenceStoreResolver(
-		reader, profilerkube.EvidenceStoreResolverOptions{SystemName: opts.systemName, Namespace: opts.namespace},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct cadence Evidence Store resolver: %w", err)
-	}
-	objects := campaignResultObjectReader{
-		reader: reader, resolver: stores, namespace: opts.namespace, tempDir: opts.tempDir,
-	}
-	evaluation := evaluationcontroller.NewRuntime(reader, opts.tempDir)
-	cadence, err := profilerkube.NewKubernetesCadenceResolver(
-		reader, opts.namespace,
-		func(ctx context.Context, run *edgev1alpha1.EvaluationRun) (evidencestore.Reader, error) {
-			store, err := evaluation.Store(ctx, run.Namespace, run.Spec.EvidenceStore, run.Status.FrozenConfig.Values)
-			if err != nil {
-				return nil, err
-			}
-			reader, ok := store.(evidencestore.Reader)
-			if !ok {
-				return nil, fmt.Errorf("evaluation evidence store does not expose immutable reads")
-			}
-			return reader, nil
-		}, objects,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("construct serving cadence resolver: %w", err)
-	}
 	preparer, err := profilerapp.NewPreparer(
-		candidates, nodes, metrics, workloads, actuation, execution, cadence.ResolveCadence,
+		candidates, nodes, metrics, workloads, actuation, execution,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)

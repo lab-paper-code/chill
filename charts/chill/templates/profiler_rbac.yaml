@@ -8,12 +8,6 @@ metadata:
     app.kubernetes.io/component: profiler
     {{- include "chill.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["edge.dacs.io"]
-    resources: ["evaluationruns"]
-    verbs: ["list"]
-  - apiGroups: ["edge.dacs.io"]
-    resources: ["evaluationstages", "loadscenarios"]
-    verbs: ["get"]
   - apiGroups:
       - edge.dacs.io
     resources:

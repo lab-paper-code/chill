@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha11"
+	curvePlanSchemaVersion = "chill.dacs.io/curve-plan.v1alpha12"
 	curveRuntimeFirstfloor = "firstfloor"
 	curveBackendORTCUDA    = "ort-cuda"
 	curveBackendORTCPU     = "ort-cpu"
@@ -46,25 +46,24 @@ type CurveMetricSourceContract struct {
 type CurveProtocolContract struct {
 	WorkloadMode string `json:"workloadMode"`
 	// Dataset is the active protocol's sample source; idle protocols have none.
-	Dataset                    *CurveDatasetContract               `json:"dataset,omitempty"`
-	WarmupIterations           int                                 `json:"warmupIterations"`
-	StartupWarmupIterations    int                                 `json:"startupWarmupIterations,omitempty"`
-	SettlingDurationSeconds    int                                 `json:"settlingDurationSeconds"`
-	DurationSeconds            int                                 `json:"durationSeconds"`
-	DurationToleranceSeconds   float64                             `json:"durationToleranceSeconds"`
-	MetricIntervalMilliseconds int                                 `json:"metricIntervalMilliseconds"`
-	MetricTimeoutMilliseconds  int                                 `json:"metricTimeoutMilliseconds"`
-	MetricDurationSeconds      int                                 `json:"metricDurationSeconds"`
-	MetricObserverImage        string                              `json:"metricObserverImage"`
-	WorkloadObserverImage      string                              `json:"workloadObserverImage"`
-	WorkloadSchemaVersion      string                              `json:"workloadSchemaVersion"`
-	SLOPercentile              float64                             `json:"sloPercentile,omitempty"`
-	MinServiceSamples          int                                 `json:"minServiceSamples,omitempty"`
-	SLOTargetLatencyNanos      int64                               `json:"sloTargetLatencyNanos,omitempty"`
-	WorkloadName               string                              `json:"workloadName,omitempty"`
-	WorkloadUID                string                              `json:"workloadUID,omitempty"`
-	WorkloadResourceVersion    string                              `json:"workloadResourceVersion,omitempty"`
-	Cadences                   map[int]*firstfloor.CadenceContract `json:"cadences,omitempty"`
+	Dataset                    *CurveDatasetContract `json:"dataset,omitempty"`
+	WarmupIterations           int                   `json:"warmupIterations"`
+	StartupWarmupIterations    int                   `json:"startupWarmupIterations,omitempty"`
+	SettlingDurationSeconds    int                   `json:"settlingDurationSeconds"`
+	DurationSeconds            int                   `json:"durationSeconds"`
+	DurationToleranceSeconds   float64               `json:"durationToleranceSeconds"`
+	MetricIntervalMilliseconds int                   `json:"metricIntervalMilliseconds"`
+	MetricTimeoutMilliseconds  int                   `json:"metricTimeoutMilliseconds"`
+	MetricDurationSeconds      int                   `json:"metricDurationSeconds"`
+	MetricObserverImage        string                `json:"metricObserverImage"`
+	WorkloadObserverImage      string                `json:"workloadObserverImage"`
+	WorkloadSchemaVersion      string                `json:"workloadSchemaVersion"`
+	SLOPercentile              float64               `json:"sloPercentile,omitempty"`
+	MinServiceSamples          int                   `json:"minServiceSamples,omitempty"`
+	SLOTargetLatencyNanos      int64                 `json:"sloTargetLatencyNanos,omitempty"`
+	WorkloadName               string                `json:"workloadName,omitempty"`
+	WorkloadUID                string                `json:"workloadUID,omitempty"`
+	WorkloadResourceVersion    string                `json:"workloadResourceVersion,omitempty"`
 }
 
 // CurveConversionContract identifies how the immutable plan artifact was derived.
@@ -297,9 +296,6 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 	if len(shared.PlannedBatchSizes) == 0 {
 		return errors.New("curve plan requires at least one planned batch size")
 	}
-	if len(shared.ActiveProtocol.Cadences) != len(shared.PlannedBatchSizes) {
-		return errors.New("curve plan must freeze one cadence for every planned batch")
-	}
 	seenBatches := make(map[int]struct{}, len(shared.PlannedBatchSizes))
 	for _, plannedBatchSize := range shared.PlannedBatchSizes {
 		if plannedBatchSize <= 0 {
@@ -307,9 +303,6 @@ func validateCurvePlanSpec(shared CurvePlanSpec) error {
 		}
 		if shared.Firstfloor != nil && plannedBatchSize > int(shared.Firstfloor.MaxBatchSize) {
 			return errors.New("curve plan batch exceeds selected firstfloor maxBatchSize")
-		}
-		if shared.ActiveProtocol.Cadences[plannedBatchSize] == nil {
-			return errors.New("curve plan is missing a planned batch cadence")
 		}
 		if _, exists := seenBatches[plannedBatchSize]; exists {
 			return fmt.Errorf("curve plan batch size %d is duplicated", plannedBatchSize)
@@ -387,23 +380,6 @@ func validateCurveProtocol(mode string, protocol CurveProtocolContract) error {
 		!cleanCurveValue(protocol.WorkloadSchemaVersion) {
 		return fmt.Errorf("curve plan %s protocol is invalid", mode)
 	}
-	if mode == "active" {
-		if len(protocol.Cadences) == 0 {
-			return errors.New("active curve protocol requires frozen per-batch cadence")
-		}
-		for batch, cadence := range protocol.Cadences {
-			if batch <= 0 {
-				return errors.New("curve cadence batch must be positive")
-			}
-			if err := cadence.Validate(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if protocol.Cadences != nil {
-		return errors.New("idle curve protocol cannot contain active cadence")
-	}
 	return nil
 }
 
@@ -451,8 +427,6 @@ func CloneCurvePlanSpec(shared CurvePlanSpec) CurvePlanSpec {
 	shared.Artifact.Files = slices.Clone(shared.Artifact.Files)
 	shared.Preprocessor.Inputs = slices.Clone(shared.Preprocessor.Inputs)
 	shared.Preprocessor.Outputs = slices.Clone(shared.Preprocessor.Outputs)
-	shared.ActiveProtocol.Cadences = firstfloor.CloneCadences(shared.ActiveProtocol.Cadences)
-	shared.IdleProtocol.Cadences = firstfloor.CloneCadences(shared.IdleProtocol.Cadences)
 	if shared.ActiveProtocol.Dataset != nil {
 		dataset := *shared.ActiveProtocol.Dataset
 		shared.ActiveProtocol.Dataset = &dataset
@@ -480,14 +454,7 @@ func PerformanceCondition(condition CurvePlanSpec) CurvePlanSpec {
 	condition.MetricSource = CurveMetricSourceContract{}
 	condition.Conversion = CurveConversionContract{}
 	dataset := condition.ActiveProtocol.Dataset
-	var cadences map[int]*firstfloor.CadenceContract
-	if condition.ActiveProtocol.Cadences != nil {
-		cadences = make(map[int]*firstfloor.CadenceContract, len(condition.ActiveProtocol.Cadences))
-		for batch, cadence := range condition.ActiveProtocol.Cadences {
-			cadences[batch] = &firstfloor.CadenceContract{Target: cadence.Target}
-		}
-	}
-	condition.ActiveProtocol = CurveProtocolContract{Dataset: dataset, Cadences: cadences}
+	condition.ActiveProtocol = CurveProtocolContract{Dataset: dataset}
 	condition.IdleProtocol = CurveProtocolContract{}
 	if condition.Firstfloor != nil {
 		settings := *condition.Firstfloor

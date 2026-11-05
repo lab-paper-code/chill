@@ -65,10 +65,8 @@ class FakeActor(measurement.FirstfloorSession):
         FakeActor.counter += 1
         batch = run["measurement"]["batch"]
         body = json.loads(payload)
-        sample = {"serviceDurationNanos": 700000, "precedingIdleNanos": None, "trialID": body["trialID"]}
-        if "cadenceDraw" in body:
-            draw = body["cadenceDraw"]
-            sample.update(precedingIdleNanos=draw["targetIdleNanos"], targetIdleNanos=draw["targetIdleNanos"], traceDrawRef=draw["ref"])
+        sample = {"serviceDurationNanos": 700000, "precedingIdleNanos": None if FakeActor.counter == 1 else 17000,
+                  "trialID": body["trialID"]}
         return {"batchSize": batch, "executionComplete": True, "batchIDs": [FakeActor.counter],
                 "serviceSamples": [sample], "preprocessSamplesMS": [0.1], "backendSamplesMS": [0.4],
                 "postprocessSamplesMS": [0.1], "nativeSamplesMS": [0.9], "nativeElapsedMS": 0.95,

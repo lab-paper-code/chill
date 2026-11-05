@@ -353,6 +353,10 @@ func catalogEvidenceFixtureWithPower(t *testing.T, memory uint64, trialWatts [6]
 }
 
 func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]float64, count int, confidence string, change func(int, *profilingrun.RuntimeResult, *profilingrun.IdleRuntimeResult)) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
+	return catalogEvidenceFixtureConfigPolicy(t, memory, trialWatts, count, confidence, nil, change)
+}
+
+func catalogEvidenceFixtureConfigPolicy(t *testing.T, memory uint64, trialWatts [6]float64, count int, confidence string, configure func(*profilingrun.RunConfig), change func(int, *profilingrun.RuntimeResult, *profilingrun.IdleRuntimeResult)) (*Catalog, types.NamespacedName, catalogEvidenceObjects, evidencestore.ObjectIdentity) {
 	t.Helper()
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
@@ -362,13 +366,16 @@ func catalogEvidenceFixturePolicy(t *testing.T, memory uint64, trialWatts [6]flo
 	if err := json.Unmarshal(payload, &active); err != nil {
 		t.Fatal(err)
 	}
-	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
+	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32, DeadlinePolicy: "keep"}
 	active.Measurement.DurationToleranceSeconds = .5
+	if configure != nil {
+		configure(&active)
+	}
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
 		StartupWarmupIterations: active.Measurement.StartupWarmupIterations, WarmupBatchSizes: slices.Clone(active.Measurement.WarmupBatchSizes),
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
-	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1}, fixtures.Cadences([]int{1}...))
+	spec, err := profilerprojection.ProjectCurvePlanSpec("catalog-plan", active, idle, profilederivation.CurveConversionContract{}, []int{1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +564,7 @@ func catalogTrialRecords(config profilingrun.RunConfig, podUID string, watts flo
 			if index%2 != 0 {
 				service = 1500000
 			}
-			repetition.NativeSamples[index].ServiceSample = fixtures.ServiceSample(config.Measurement.Cadence, podUID, uint64(index), service)
+			repetition.NativeSamples[index].ServiceSample = fixtures.ServiceSample(podUID, uint64(index), service)
 		}
 	}
 	idle := profilerevidence.IdleRawMeasurement{SchemaVersion: profilerevidence.IdleRawMeasurementSchemaVersion, RunConfig: config, PodUID: podUID, Metrics: metrics, Workload: workload,

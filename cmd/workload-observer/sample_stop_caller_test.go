@@ -113,9 +113,6 @@ func sampleStopCommit(
 		raw.Metrics.Summary.ObservationDurationSeconds < raw.Runtime.MeasurementElapsedSeconds+35 {
 		t.Fatalf("raw commit lost real observer/caller coverage: %+v", raw)
 	}
-	if config.Metrics.DurationSeconds == 166 && raw.Runtime.MeasurementElapsedSeconds <= 347 {
-		t.Fatal("long active raw commit did not survive the old 166s watchdog")
-	}
 	assertSampleStopNativePairs(t, raw, config, opts)
 }
 
@@ -130,14 +127,13 @@ func assertSampleStopNativePairs(
 				t.Fatalf("raw commit lost the simulated native service/trial pair: %+v", sample)
 			}
 			if index == 0 {
-				if sample.PrecedingIdleNanos != nil || sample.TargetIdleNanos != nil || sample.TraceDrawRef != nil {
-					t.Fatalf("session startup invented a preceding gap or draw: %+v", sample)
+				if sample.PrecedingIdleNanos != nil {
+					t.Fatalf("session startup invented a preceding gap: %+v", sample)
 				}
 				continue
 			}
-			if sample.PrecedingIdleNanos == nil || sample.TargetIdleNanos == nil || sample.TraceDrawRef == nil ||
-				*sample.PrecedingIdleNanos < *sample.TargetIdleNanos {
-				t.Fatalf("raw commit lost an actual paced atomic pair: %+v", sample)
+			if sample.PrecedingIdleNanos == nil || *sample.PrecedingIdleNanos < 0 {
+				t.Fatalf("raw commit lost an actual atomic service/idle pair: %+v", sample)
 			}
 			known++
 		}

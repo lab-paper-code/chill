@@ -16,7 +16,6 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	projection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -205,7 +204,7 @@ func TestLoadPlanSeparatesStatusAcceptanceFromIdentityBinding(t *testing.T) {
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32}
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
-	spec, err := projection.ProjectCurvePlanSpec("reader-plan", active, idle, derivation.CurveConversionContract{}, []int{1}, fixtures.Cadences([]int{1}...))
+	spec, err := projection.ProjectCurvePlanSpec("reader-plan", active, idle, derivation.CurveConversionContract{}, []int{1})
 	if err != nil {
 		t.Fatal(err)
 	}

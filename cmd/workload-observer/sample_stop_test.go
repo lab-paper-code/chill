@@ -21,7 +21,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/worker"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/fake"
@@ -29,20 +28,13 @@ import (
 )
 
 // The executable, source reads and same-watch handoff use real wall time.
-// Inference and cadence below are explicitly simulated, not hardware evidence.
-// Both cases retain 60 actual simulated exchanges: startup has no G/draw,
-// leaving the required 59 known-gap pairs in the immutable raw commit.
+// Inference below is explicitly simulated, not hardware evidence. There is no
+// requested idle: startup has no G, followed by 59 measured natural-gap pairs.
 func TestStandaloneObserversCoverSampleLimitedTrial(t *testing.T) {
-	runStandaloneSampleStop(t, 2*time.Second, 0, 30, 31)
+	runStandaloneSampleStop(t, 2*time.Second)
 }
 
-func TestStandaloneObserversCoverSmolLikeLongActiveTrial(t *testing.T) {
-	// The service proxy uses the old Smol source value, but the five-second
-	// offered-load gap is a controlled fixture, not recorded Smol performance.
-	runStandaloneSampleStop(t, 867359811*time.Nanosecond, 5*time.Second, 165, 166)
-}
-
-func runStandaloneSampleStop(t *testing.T, service, gap time.Duration, minimumSeconds, nominalMetricSeconds int) {
+func runStandaloneSampleStop(t *testing.T, service time.Duration) {
 	t.Helper()
 	binary := os.Getenv("CHILL_METRIC_OBSERVER_BIN")
 	if binary == "" {
@@ -53,7 +45,7 @@ func runStandaloneSampleStop(t *testing.T, service, gap time.Duration, minimumSe
 		t.Fatal(err)
 	}
 	directory := t.TempDir()
-	opts, config := sampleStopConfiguration(t, directory, gap, minimumSeconds, nominalMetricSeconds)
+	opts, config := sampleStopConfiguration(t, directory)
 	server, firstRead, delayFinalRead := sampleStopMetricSource(config)
 	defer server.Close()
 	config.Metrics.Endpoint, config.Metrics.ThermalEndpoint = server.URL, server.URL
@@ -185,9 +177,7 @@ func runStandaloneSampleStop(t *testing.T, service, gap time.Duration, minimumSe
 	assertSampleStopCoverage(t, metricResult, opts.resultPath, started, ended, len(samples), plan)
 }
 
-func sampleStopConfiguration(
-	t *testing.T, directory string, gap time.Duration, minimumSeconds, nominalMetricSeconds int,
-) (options, profilingrun.RunConfig) {
+func sampleStopConfiguration(t *testing.T, directory string) (options, profilingrun.RunConfig) {
 	t.Helper()
 	writeWorkloadTestRunConfig(t, directory)
 	opts := workloadTestOptions(directory)
@@ -211,24 +201,6 @@ func sampleStopConfiguration(
 	if config.Measurement.DurationSeconds != 30 || config.Metrics.DurationSeconds != 31 ||
 		config.Measurement.MinServiceSamples != 59 {
 		t.Fatal("regression requires the shipped 30/31-second protocol and p95 n59 stop")
-	}
-	// Reuse the shared contract shape, but identify this as synthetic input.
-	// Freeze both the phase population and its draw cycle before deriving F10.
-	config.Measurement.Cadence = fixtures.Cadence()
-	config.Measurement.Cadence.Target.LoadContext = "simulated-observer-lifecycle"
-	config.Measurement.Cadence.Target.Schedule[0].OfferedLoad = "controlled-test-calls"
-	config.Measurement.Cadence.Target.Schedule[0].SharingContext = "test-only"
-	source := &config.Measurement.Cadence.Provenance.Sources[0]
-	source.LoadContext = config.Measurement.Cadence.Target.LoadContext
-	source.SourceRevision, source.Workload = "test-simulator", "simulated-inference"
-	source.Object.Key = "synthetic-observer-lifecycle"
-	source.PhysicalInstanceID, source.TrialID = "simulated-instance", "simulated-donor"
-	config.Measurement.DurationSeconds = minimumSeconds
-	config.Metrics.DurationSeconds = nominalMetricSeconds
-	for phase := range config.Measurement.Cadence.Provenance.Phases {
-		for element := range config.Measurement.Cadence.Provenance.Phases[phase].Elements {
-			config.Measurement.Cadence.Provenance.Phases[phase].Elements[element].GapNanos = int64(gap)
-		}
 	}
 	return opts, config
 }
@@ -256,7 +228,7 @@ func assertSampleStopCoverage(
 		metrics.Samples[0].ObservedAt.After(started) ||
 		metrics.Samples[len(metrics.Samples)-1].ObservedAt.Before(ended.Add(35*time.Second)) ||
 		metrics.Summary.ObservationDurationSeconds < ended.Sub(started).Seconds()+35 {
-		t.Fatalf("metric source does not cover the paced producer plus 35s final-read retries: %+v", metrics)
+		t.Fatalf("metric source does not cover the sample-limited producer plus 35s final-read retries: %+v", metrics)
 	}
 	for _, failure := range metrics.Failures {
 		if failure.ObservedAt.Before(ended) || failure.Reason != metricobserver.FailureReasonSourceRead {
@@ -290,13 +262,6 @@ func runSampleStopProducer(
 ) (time.Time, time.Time, []profilingrun.NativeServiceSample) {
 	t.Helper()
 	started := time.Now()
-	var oldWatchdog <-chan time.Time
-	if config.Metrics.DurationSeconds == 166 {
-		timer := time.NewTimer(166 * time.Second)
-		defer timer.Stop()
-		oldWatchdog = timer.C
-	}
-	crossedOldWatchdog := false
 	var samples []profilingrun.NativeServiceSample
 	wait := func(duration time.Duration) {
 		timer := time.NewTimer(duration)
@@ -305,10 +270,6 @@ func runSampleStopProducer(
 			select {
 			case <-timer.C:
 				return
-			case <-oldWatchdog:
-				crossedOldWatchdog = true
-				oldWatchdog = nil
-				t.Log("paced producer remains active beyond the old 166s metric watchdog")
 			case err := <-metricDone:
 				t.Fatalf("metric observer ended while producer active at call %d, elapsed %s: %v",
 					len(samples), time.Since(started), err)
@@ -327,11 +288,6 @@ func runSampleStopProducer(
 	for time.Since(started) < time.Duration(config.Measurement.DurationSeconds)*time.Second ||
 		len(samples)-1 < config.Measurement.MinServiceSamples {
 		pair := firstfloor.ServiceSample{TrialID: trialID}
-		if len(samples) > 0 {
-			draw := config.Measurement.Cadence.Draw(uint64(len(samples) - 1))
-			wait(time.Duration(draw.TargetIdleNanos))
-			pair.TargetIdleNanos, pair.TraceDrawRef = &draw.TargetIdleNanos, &draw.Ref
-		}
 		exchangeStart := time.Now()
 		if !previousEnd.IsZero() {
 			actualGap := exchangeStart.Sub(previousEnd).Nanoseconds()
@@ -348,10 +304,8 @@ func runSampleStopProducer(
 		})
 	}
 	ended := time.Now()
-	if len(samples) != 60 ||
-		(config.Metrics.DurationSeconds == 166 && (!crossedOldWatchdog || ended.Sub(started) <= 347*time.Second)) {
-		t.Fatalf("producer stop: calls=%d elapsed=%s crossed old watchdog=%t",
-			len(samples), ended.Sub(started), crossedOldWatchdog)
+	if len(samples) != 60 {
+		t.Fatalf("producer stop: calls=%d elapsed=%s", len(samples), ended.Sub(started))
 	}
 	return started, ended, samples
 }

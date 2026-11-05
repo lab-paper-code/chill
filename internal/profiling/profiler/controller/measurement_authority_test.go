@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -10,13 +9,11 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	core "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -25,13 +22,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-type cadenceAuthorityPorts struct {
+type authorityPreparationPorts struct {
 	config          profilingrun.RunConfig
 	report, catalog []byte
 	workloadError   error
 }
 
-func (p *cadenceAuthorityPorts) ResolveCandidate(
+func (p *authorityPreparationPorts) ResolveCandidate(
 	_ context.Context, selection profiler.CandidateSelection,
 ) (profiler.ResolvedCandidate, error) {
 	c := p.config
@@ -49,34 +46,34 @@ func (p *cadenceAuthorityPorts) ResolveCandidate(
 	}, nil
 }
 
-func (p *cadenceAuthorityPorts) ResolveNode(context.Context, profiler.NodeSelection) (profilingrun.NodeSnapshot, error) {
+func (p *authorityPreparationPorts) ResolveNode(context.Context, profiler.NodeSelection) (profilingrun.NodeSnapshot, error) {
 	return p.config.TargetNode, nil
 }
 
-func (p *cadenceAuthorityPorts) ResolveMetricSource(context.Context, string) (profiler.ResolvedMetricSource, error) {
+func (p *authorityPreparationPorts) ResolveMetricSource(context.Context, string) (profiler.ResolvedMetricSource, error) {
 	c := p.config.Metrics
 	return profiler.ResolvedMetricSource{Kind: c.SourceKind, Endpoint: c.Endpoint,
 		PowerMetric: c.PowerMetric, MetricLabels: c.MetricLabels,
 		ThermalEndpoint: c.ThermalEndpoint, ThermalMetrics: c.ThermalMetrics}, nil
 }
 
-func (p *cadenceAuthorityPorts) ResolveWorkloadObservation(context.Context) (profiler.ResolvedWorkloadObservation, error) {
+func (p *authorityPreparationPorts) ResolveWorkloadObservation(context.Context) (profiler.ResolvedWorkloadObservation, error) {
 	return profiler.ResolvedWorkloadObservation{Image: p.config.Images.WorkloadObserver}, nil
 }
 
-func (p *cadenceAuthorityPorts) ResolveMeasurementWorkload(
+func (p *authorityPreparationPorts) ResolveMeasurementWorkload(
 	context.Context, string, profiler.CandidateSelection,
 ) (profilingrun.MeasurementContract, error) {
 	return p.config.Measurement, p.workloadError
 }
 
-func (*cadenceAuthorityPorts) ResolveActuationPolicy(
+func (*authorityPreparationPorts) ResolveActuationPolicy(
 	context.Context, profiler.ActuationSelection,
 ) (profiler.FrozenActuationPolicy, error) {
 	return profiler.FrozenActuationPolicy{}, errors.New("unexpected fixed-node actuation")
 }
 
-func (p *cadenceAuthorityPorts) Resolve(
+func (p *authorityPreparationPorts) Resolve(
 	_ context.Context, config profilingrun.RunConfig,
 ) (profiler.FrozenExecutionPolicy, error) {
 	return profiler.FreezeConfiguredExecutionPolicy(p.catalog, config, profiler.ExecutionPolicySource{
@@ -94,7 +91,7 @@ func authorityPlan(t *testing.T, config profilingrun.RunConfig) []byte {
 		StartupWarmupIterations: config.Measurement.StartupWarmupIterations, WarmupBatchSizes: []int{1},
 	}
 	spec, err := projection.ProjectCurvePlanSpec("frozen-plan", config, idle,
-		derivation.CurveConversionContract{}, []int{1}, fixtures.Cadences(1))
+		derivation.CurveConversionContract{}, []int{1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,12 +144,9 @@ func authorityResolver(t *testing.T, kube client.Reader, config profilingrun.Run
 	if err != nil {
 		t.Fatal(err)
 	}
-	ports := &cadenceAuthorityPorts{config: config, report: report, catalog: controllerExecutionPolicyCatalog(t),
+	ports := &authorityPreparationPorts{config: config, report: report, catalog: controllerExecutionPolicyCatalog(t),
 		workloadError: errors.New("live Workload is unavailable after plan freeze")}
-	preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports,
-		func(context.Context, profilingrun.RunConfig) (map[int]*firstfloor.CadenceContract, error) {
-			return nil, profiler.MissingServingTrace("no authoritative serving source exists")
-		})
+	preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +164,7 @@ func authorityResolver(t *testing.T, kube client.Reader, config profilingrun.Run
 	return resolver
 }
 
-func TestRealAdmittedRootPlanSuppliesActiveAndIdleChild(t *testing.T) {
+func TestRealAdmittedRootPlanSuppliesChildrenWithoutArchive(t *testing.T) {
 	for _, mode := range []campaign.WorkloadMode{campaign.WorkloadModeActive, campaign.WorkloadModeIdle} {
 		t.Run(string(mode), func(t *testing.T) {
 			config := currentPreparedRun(t).RunConfig
@@ -182,12 +176,12 @@ func TestRealAdmittedRootPlanSuppliesActiveAndIdleChild(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			actual, frozen := resolved.Prepared.RunConfig.Measurement, config.Measurement
 			if mode == campaign.WorkloadModeActive &&
-				(resolved.Prepared.RunConfig.Measurement.Cadence == nil || resolved.Prepared.RunConfig.Measurement.Cadence.Draw(0).TargetIdleNanos == 0) {
-				t.Fatal("active execution did not derive the real nonzero source gap from the recorded plan")
-			}
-			if mode == campaign.WorkloadModeIdle && resolved.Prepared.RunConfig.Measurement.Cadence != nil {
-				t.Fatal("idle child acquired an active cadence")
+				(actual.WorkloadUID != frozen.WorkloadUID || actual.WorkloadResourceVersion != frozen.WorkloadResourceVersion ||
+					actual.SLOPercentile != frozen.SLOPercentile || actual.SLOTargetLatencyNanos != frozen.SLOTargetLatencyNanos ||
+					actual.MinServiceSamples != frozen.MinServiceSamples) {
+				t.Fatal("active child lost the recorded plan's actual Workload/SLO/sample stop")
 			}
 		})
 	}
@@ -215,25 +209,6 @@ func TestForgedOwnerAndUnplannedChildrenNeverPublishJob(t *testing.T) {
 				child.OwnerReferences[0].UID = "caller-invented-uid"
 			case "no-node-grant":
 				node.Spec.Taints = nil
-			}
-			// Former cadence/UID/SLO JSON is pruned by the typed public contract;
-			// a forged owner still must not authorize this executable request.
-			body, err := json.Marshal(child)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var public map[string]any
-			if err := json.Unmarshal(body, &public); err != nil {
-				t.Fatal(err)
-			}
-			measurement := public["spec"].(map[string]any)["measurement"].(map[string]any)
-			measurement["cadence"] = map[string]any{"target": map[string]any{"loadContext": "forged-zero-gap"}}
-			body, err = json.Marshal(public)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(body, child); err != nil {
-				t.Fatal(err)
 			}
 			kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).
 				WithStatusSubresource(child).WithObjects(objects...).Build()

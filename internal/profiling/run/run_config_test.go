@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
 func decodeTestRunConfig(payload []byte) (RunConfig, error) {
@@ -266,14 +264,28 @@ func TestSharedRunConfigNeedsNoAllocatableCPUAndRejectsOldAllocation(t *testing.
 	}
 }
 
+func TestRunConfigRejectsOldSchemaAndDonorMeasurementFields(t *testing.T) {
+	config := validRunConfig()
+	config.SchemaVersion = "chill.dacs.io/profiling-run-config.v1alpha19"
+	if err := config.Validate(); err == nil {
+		t.Fatal("old RunConfig schema accepted")
+	}
+	payload, err := validRunConfig().CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"cadence", "targetIdleNanos", "traceDrawRef"} {
+		body := strings.Replace(string(payload), `"measurement":{`, `"measurement":{"`+field+`":null,`, 1)
+		if _, err := decodeTestRunConfig([]byte(body)); err == nil {
+			t.Fatalf("obsolete measurement field %s accepted", field)
+		}
+	}
+}
+
 func TestRunConfigRejectsCompatibilityAndPolicyDrift(t *testing.T) {
 	tests := []func(*RunConfig){
 		func(i *RunConfig) { i.Candidate.Verdict = "Unknown" },
 		func(i *RunConfig) { i.TargetNode.ResourceVersion = "" },
-		func(i *RunConfig) { i.Measurement.Cadence = nil },
-		func(i *RunConfig) { i.Measurement.Cadence.Target.LoadContext = "" },
-		func(i *RunConfig) { i.Measurement.Cadence.Provenance.Sources = nil },
-		func(i *RunConfig) { i.Measurement.Cadence.Provenance.Draws[0].ElementIndex = -1 },
 		func(i *RunConfig) { i.Metrics.NodeName = testDifferentIdentity },
 	}
 	for _, mutate := range tests {
@@ -462,7 +474,6 @@ func validRunConfig() RunConfig {
 			WorkloadName: "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
 			WarmupBatchSizes: []int{1},
 			WorkloadMode:     "empirical-cadence-fixed-batch",
-			Cadence:          fixtures.Cadence(),
 			Dataset: &DatasetContract{
 				Name: "vqav2-val-subset", UID: "dataset-uid", Image: image, Path: "/artifact/vqav2-val-subset",
 			},

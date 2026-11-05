@@ -21,7 +21,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -138,7 +137,7 @@ func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 	}
 }
 
-func TestCurvePlanSourceRecoversFrozenWorkloadBeforeChildren(t *testing.T) {
+func TestCurvePlanSourceFreezesWithoutArchiveAndRecoversWorkloadBeforeChildren(t *testing.T) {
 	for _, mutation := range []string{"status-only", "slo", "p100", "tuple", "deleted", "recreated"} {
 		t.Run(mutation, func(t *testing.T) {
 			ctx := context.Background()
@@ -194,7 +193,7 @@ func TestCurvePlanSourceRecoversFrozenWorkloadBeforeChildren(t *testing.T) {
 				t.Fatal(err)
 			}
 			ports := &frozenWorkloadPreparationPorts{config: config, report: payload, workloads: workloads}
-			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports, fixtureCadenceResolver)
+			preparer, err := profiler.NewPreparer(ports, ports, ports, ports, ports, ports)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -777,9 +776,6 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		Workload: profilingrun.CurrentWorkloadContract(),
 	}
 	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
-		if config.Measurement.Cadence == nil {
-			config.Measurement.Cadence = fixtures.Cadence()
-		}
 		config.Measurement.SLOPercentile = 95
 		config.Measurement.MinServiceSamples = 59
 		config.Measurement.SLOTargetLatencyNanos = 1_000_000_000
@@ -809,13 +805,6 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		return profiler.PreparedRun{}, fmt.Errorf("invalid prepared config fixture: %w", err)
 	}
 	prepared := profiler.PreparedRun{RunConfig: config}
-	if config.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
-		cadences, err := fixtureCadenceResolver(context.Background(), config)
-		if err != nil {
-			return profiler.PreparedRun{}, err
-		}
-		prepared.Cadences = cadences
-	}
 	if config.Actuation != nil {
 		policy := actuatedPreparedRun(testParent()).ActuationPolicy
 		policy.Policy.Name = config.Actuation.PolicyName

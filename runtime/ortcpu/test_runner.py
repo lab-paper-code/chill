@@ -103,7 +103,6 @@ def valid_request(model_path: Path) -> dict[str, object]:
                 "durationSeconds": 30,
                 "sloPercentile": 95,
                 "minServiceSamples": 59,
-                "cadence": json.loads((Path(__file__).parent.parent / "firstfloor/testdata/cadence.json").read_text()),
                 "sloTargetLatencyNanos": 1_000_000_000,
                 "workloadName": "mobilenet",
                 "workloadUID": "workload-uid",
@@ -181,26 +180,17 @@ class RunnerTest(unittest.TestCase):
                         self.assertGreaterEqual(result["measurementElapsedSecondsMonotonic"], 30)
                         self.assertEqual(len(result["repetitionResults"][0]["latencyMs"]), expected_calls)
 
-    def test_cadence_strict_reader_rejects_unfrozen_or_unknown_inputs(self) -> None:
+    def test_active_reader_accepts_no_pacing_and_rejects_old_schema_and_donor_fields(self) -> None:
         valid = valid_request(Path("/model"))
-        valid["runConfig"]["measurement"]["cadence"]["provenance"]["seed"] = 17
         validate(valid)
-        changes = (
-            lambda m: m.pop("cadence"),
-            lambda m: m["cadence"].update(seed=1),
-            lambda m: m["cadence"]["provenance"].update(seed=True),
-            lambda m: m["cadence"]["provenance"].update(draws=[]),
-            lambda m: m["cadence"]["provenance"]["draws"][0].update(elementIndex=1),
-            lambda m: m["cadence"]["provenance"]["phases"][0]["elements"][0].update(gapNanos=1.5),
-            lambda m: m["cadence"]["provenance"]["phases"][0]["elements"][0].update(sourceIndex=1),
-            lambda m: m["cadence"]["provenance"]["sources"][0].update(windowEnd="2026-11-04T00:00:00Z"),
-            lambda m: m["cadence"]["target"].update(boundary="gateway-gap"),
-            lambda m: m["cadence"]["target"].update(conditionalModel="unconditioned"),
-        )
-        for change in changes:
+        request = copy.deepcopy(valid)
+        request["runConfig"]["schemaVersion"] = "chill.dacs.io/profiling-run-config.v1alpha19"
+        with self.assertRaises(runner.ContractError):
+            validate(request)
+        for field in ("cadence", "cadenceDraw", "targetIdleNanos", "traceDrawRef"):
             request = copy.deepcopy(valid)
-            change(request["runConfig"]["measurement"])
-            with self.subTest(change=change), self.assertRaises(runner.ContractError):
+            request["runConfig"]["measurement"][field] = None
+            with self.subTest(field=field), self.assertRaises(runner.ContractError):
                 validate(request)
 
     def test_raw_sample_contract_fields_are_required_by_mode(self) -> None:

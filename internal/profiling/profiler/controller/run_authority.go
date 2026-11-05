@@ -142,9 +142,7 @@ func (r *RunConfigResolver) authorizedCampaignRequest(ctx context.Context, run *
 		return profiler.PreparationRequest{}, invalidAuthority(err.Error())
 	}
 	if mode == campaign.WorkloadModeActive {
-		if err := projection.ApplyFrozenActiveProtocol(&request.Preparation.Measurement, protocol); err != nil {
-			return profiler.PreparationRequest{}, invalidAuthority(err.Error())
-		}
+		projection.ApplyFrozenActiveProtocol(&request.Preparation.Measurement, protocol)
 		request.Preparation.Workload = request.Preparation.Measurement.WorkloadName
 	}
 	return request.Preparation, nil

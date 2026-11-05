@@ -440,7 +440,7 @@ func preparationNativeHTTPClient(t *testing.T, ctx context.Context, config nativ
 	actorConfig.MaxQueueRequests, actorConfig.MaxQueueBytes, actorConfig.MaxRequestBytes = 4, 1<<20, 1<<20
 	actorConfig.RunnerTimeoutMS = 3000
 	actorConfig.RunnerCommand = []string{"env", "CHILL_NATIVE_STATE_RUNNER=" + string(runtimeJSON), os.Args[0], "-test.run=^TestNativeStateRunnerProcess$"}
-	actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 0, 1000000), fixtures.ServiceSample(fixtures.Cadence(), "physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}
+	actorConfig.Policy.Batches = []native.BatchProfile{{Size: 1, ServiceSamples: []native.ServiceSample{fixtures.ServiceSample("physical-trial", 0, 1000000), fixtures.ServiceSample("physical-trial", 1, 1000000)}, EnergyPerItemJ: 1}}
 	if err := native.ValidateConfig(&actorConfig); err != nil {
 		t.Fatal(err)
 	}

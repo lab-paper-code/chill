@@ -481,7 +481,7 @@ func (s *Scheduler) executeBatch(ctx context.Context, batch []*request, id uint6
 		return
 	}
 	tensors, data := packBatch(snapshot.Inputs, batch, len(batch))
-	o, e := s.runner.infer(ctx, id, tensors, data, nil, "")
+	o, e := s.runner.infer(ctx, id, tensors, data, "")
 	s.completed <- result{output: o, err: e, complete: true}
 }
 
@@ -490,7 +490,7 @@ func (s *Scheduler) executeProfile(ctx context.Context, batch []*request, id uin
 	pr := batch[0].profile
 	tensors, data := packBatch(snapshot.Inputs, batch, pr.BatchSize)
 	span := time.Now()
-	o, e := s.runner.infer(ctx, id, tensors, data, pr.CadenceDraw, pr.TrialID)
+	o, e := s.runner.infer(ctx, id, tensors, data, pr.TrialID)
 	if e != nil {
 		return result{output: o, err: e, complete: true}
 	}

@@ -41,9 +41,9 @@ Retired Plan 5 experiments remain conclusions, not current APIs: 12 retained idl
 | [WorkloadObserver](components/workload-observer.md) | Bounded Pod-membership/environment/concurrent-measurement observations — active |
 | [Runtime execution](foundations/runtime-execution/README.md) | Consolidated compatibility/execution/provenance conclusions — active |
 
-Profiling uses firstfloor with dataset `profiling` raw records and preprocessor artifacts, not a serving-entrypoint measurement command; [input contract](../serving/heterogeneous-workloads.md). Frozen RunConfig v1alpha18 binds actual model/preprocessor/dataset, batches/provider, with no CPU allocation or thread overrides; native request v1alpha2, active result v1alpha9, loaded-idle v1alpha7. Runtime-default session thread settings and actual cgroup quota/cpuset/affinity/usage/throttling remain observed evidence. Curve-plan v1alpha10 excludes CPU allocation matching. RKNN declares tensor name/FP32 datatype/batch-free NHWC shape, queries `librknnrt` metadata before measurement, and fails unsupported/unavailable metadata even for idle. Sampling uses fixed-seed `random.Random` outside timing; warmup uses module `WARMUP_SAMPLE`, measured preprocessing failure fails the trial.
+Profiling uses firstfloor with dataset `profiling` raw records and preprocessor artifacts, not a serving-entrypoint measurement command; [input contract](../serving/heterogeneous-workloads.md). Frozen RunConfig v1alpha20 binds actual model/preprocessor/dataset, batches/provider, with no CPU allocation or thread overrides; native request v1alpha2, active result v1alpha10, loaded-idle v1alpha7. Runtime-default session thread settings and actual cgroup quota/cpuset/affinity/usage/throttling remain observed evidence. Curve-plan v1alpha12 excludes CPU allocation matching. RKNN declares tensor name/FP32 datatype/batch-free NHWC shape, queries `librknnrt` metadata before measurement, and fails unsupported/unavailable metadata even for idle. Sampling uses fixed-seed `random.Random` outside timing; warmup uses module `WARMUP_SAMPLE`, measured preprocessing failure fails the trial.
 
-Evidence v1alpha16 binds actual execution/transition facts; active raw v1alpha9 and idle raw v1alpha7 retain runtime observations rather than CPU allocation requirements. This is one stored-contract cutover after dependent campaigns finish; old controlled records/publications are not rewritten or automatically reused. Permanent contradiction is `EvidenceInvalid`. Verified reference completes a Run independently of Job existence. Successful Jobs receive Background deletion only after final evidence/reference + frozen non-secret store binding + `jobCleanup: Pending` are recorded; deletion records `Done`. Failed Jobs receive post-outcome diagnostic TTL via `profiler.failedJobRetentionSeconds` / `--failed-job-retention-seconds` (default **86400**, inclusive **1..604800**). Transition attempts follow immutable-finalization eligibility; restart retries cleanup, but markerless old terminal objects are never swept or given a new TTL. Evidence itself is not automatically garbage-collected; old Runs without binding recover from their recorded owned Job.
+Evidence v1alpha17 binds actual execution/transition facts; active raw v1alpha10 and idle raw v1alpha8 retain runtime observations rather than CPU allocation requirements. This is one stored-contract cutover after dependent campaigns finish; old controlled records/publications are not rewritten or automatically reused. Permanent contradiction is `EvidenceInvalid`. Verified reference completes a Run independently of Job existence. Successful Jobs receive Background deletion only after final evidence/reference + frozen non-secret store binding + `jobCleanup: Pending` are recorded; deletion records `Done`. Failed Jobs receive post-outcome diagnostic TTL via `profiler.failedJobRetentionSeconds` / `--failed-job-retention-seconds` (default **86400**, inclusive **1..604800**). Transition attempts follow immutable-finalization eligibility; restart retries cleanup, but markerless old terminal objects are never swept or given a new TTL. Evidence itself is not automatically garbage-collected; old Runs without binding recover from their recorded owned Job.
 
 Parent controllers share the `ProfilingRunStatus` terminal-failure interpreter for
 execution/evidence interpretation. Verified evidence takes precedence; pending
@@ -85,16 +85,14 @@ Serving configurations must be measured, not inferred. Profiling and serving sha
 
 Before a CurvePlan or RunConfig is recorded, the shared preparer freezes runtime memory at `min(executionPolicyDefaults.runtimeMemoryLimitBytes, floor(Node.status.allocatable.memory × profiler.measurementMemoryFraction))` in `Actor.MemoryLimitBytes`, with the selected runtime request in `Actor.MemoryRequestBytes`. The Node UID must match the resolved Run. The chart defaults remain fraction **0.8**, **16 GiB** upper limit and **128 MiB** request. Query preflight receives the same execution-policy key and memory fraction. Actual serving Pods and measurement Jobs both call `firstfloor.RuntimeContainer` with that frozen Config for image, CPU/memory/accelerator resources, performance environment and artifact/preprocessor mounts; launching does not reselect memory or image. Copy-init containers share its memory envelope; metric/workload observers retain their separate configured limits. File-copy page cache belongs to the init cgroup, not the metric observer. Serving therefore uses the measured pressure envelope rather than substituting peak-observed bytes plus overhead. Near-limit reclaim is not claimed to be measurement-neutral; an OOM fails the existing Job rather than publishing a measurement.
 
-Active empirical cadence is server-owned: Query preflight and Profiler preparation
-resolve the latest completed retained EvaluationStage matching the pinned Workload
-and dataset population. Its parent UID, input-snapshot binding, materialized
-schedule, actual producer windows and stage manifest identify the trace; request
-artifacts are read as gzip JSONL from their recorded immutable identities.
-Serving catalog identities come from the existing observation-store listing,
-while Evaluation evidence uses its own frozen store binding and credentials.
-Missing attributable evidence reports `BootstrapServingTracePrerequisite`; there
-is no client-supplied cadence or rate-derived/default gap.
-Public ProfilingRun specs carry no cadence or frozen Workload UID/SLO/N body.
+First measurement is profile-independent: valid public BEO and standalone inputs
+need no retained profile, EvaluationRun, EvaluationStage or LoadScenario. The
+existing `empirical-cadence-fixed-batch` mode adds no wait; actual monotonic
+preceding-idle/service pairs and physical TrialID are retained, with null startup
+idle. No timing field, donor draw, synthetic gap or client cadence is introduced.
+The pinned Workload and its SLO still determine the known-gap sample minimum;
+elapsed time and sample count must both complete, across all K and three trials.
+Public ProfilingRun specs carry no frozen Workload UID/SLO/N body.
 An owner reference is only a lookup hint, never authorization. The executable
 resolver reads that root from the API, checks actual admission and the existing
 Node grant, and loads its strict immutable CurvePlan. Only a canonical child
@@ -102,16 +100,6 @@ whose logical K belongs to that plan derives the plan's frozen measurement body.
 Standalone admission uses that same resolver boundary; a fake owner, absent or
 unadmitted root, missing plan or unplanned K cannot create a Job. The existing
 idle-baseline root is authenticated through its actual immutable idle protocol.
-Trace candidates are scoped by the frozen producer population first, using its
-actual `Spec.DatasetRefs[workload]`, not the applied Workload's dataset. A Run
-with defective child-stage identity is excluded individually; it cannot poison
-another population or an intact Run in the same population. The newest intact
-candidate is selected deterministically, then its source evidence remains
-strictly checked without a synthetic/default source.
-Discovery snapshot syntax/type errors exclude only their Run after bounded
-reading and Close both succeed. Transport, context, authorization and Close
-failures remain fatal, even when the same body is malformed or the Close error
-resembles an absent object. Selected stage artifacts do not gain a fallback.
 
 An already-owned Job is the authenticated immutable executable-record recovery
 boundary. Restart recovery trusts that recorded RunConfig/Job identity; it is

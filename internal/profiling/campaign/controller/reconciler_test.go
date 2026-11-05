@@ -16,7 +16,6 @@ import (
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"github.com/lab-paper-code/chill/test/fixtures"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -330,7 +329,7 @@ func newPolicyMismatchCampaignFixture(t *testing.T, excess bool) (*api.BatchEner
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
-	spec, err := profilerprojection.ProjectCurvePlanSpec("policy-mismatch", base, idle, profilederivation.CurveConversionContract{}, []int{1, 2, 4, 8}, fixtures.Cadences([]int{1, 2, 4, 8}...))
+	spec, err := profilerprojection.ProjectCurvePlanSpec("policy-mismatch", base, idle, profilederivation.CurveConversionContract{}, []int{1, 2, 4, 8})
 	if err != nil {
 		t.Fatal(err)
 	}

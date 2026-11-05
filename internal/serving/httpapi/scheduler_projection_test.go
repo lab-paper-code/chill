@@ -15,9 +15,8 @@ import (
 
 func TestSchedulerCurrentProjectionBoundsRawProfileSamples(t *testing.T) {
 	samples := make([]firstfloor.ServiceSample, 2_000_000)
-	cadence := fixtures.Cadence()
 	for i := range samples {
-		samples[i] = fixtures.ServiceSample(cadence, "physical-trial", uint64(i), 123456789)
+		samples[i] = fixtures.ServiceSample("physical-trial", uint64(i), 123456789)
 	}
 	profile := &serving.Profile{ID: "measured", Batches: []serving.BatchProfile{{
 		Batch: 1, ServiceSamples: samples, EnergyPerInputJoules: 0, EnergyBelowResolution: true, MemoryBytes: 8192,

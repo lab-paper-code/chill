@@ -11,6 +11,11 @@ func TestValidateRuntimeRejectsMaterialDrift(t *testing.T) {
 	if err := ValidateRuntime(config, "pod-uid", valid); err != nil {
 		t.Fatal(err)
 	}
+	invalidSchema := valid
+	invalidSchema.SchemaVersion = "chill.dacs.io/batch-characterization.v1alpha9"
+	if err := ValidateRuntime(config, "pod-uid", invalidSchema); err == nil {
+		t.Fatal("old active runtime schema accepted")
+	}
 	invalid := valid
 	invalid.NodeName = "other-node"
 	if err := ValidateRuntime(config, "pod-uid", invalid); err == nil {

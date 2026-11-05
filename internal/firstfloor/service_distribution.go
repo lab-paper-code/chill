@@ -7,6 +7,9 @@ import (
 	"sort"
 )
 
+// ConditionalServiceModel identifies the implemented physical-trial mixture.
+const ConditionalServiceModel = "nearest-gap-uniform-physical-trial"
+
 // ConditionalSupport describes the selected trial mixture, not a tail-coverage claim.
 // DistanceNanos is the greatest nearest-record distance among eligible trials;
 // OutsideSupport reports a query outside any eligible trial's observed gap range.
@@ -39,11 +42,8 @@ func NewServiceDistribution(samples []ServiceSample) (*ServiceDistribution, erro
 	byTrial := make(map[string][]ServiceSample)
 	trialIDs := make([]string, 0)
 	for _, s := range samples {
-		if s.ServiceDurationNanos <= 0 || !identity(s.TrialID) || s.PrecedingIdleNanos != nil && *s.PrecedingIdleNanos < 0 || s.TargetIdleNanos != nil && *s.TargetIdleNanos < 0 {
-			return nil, errors.New("positive service, nonnegative actual/target idle and physical trial ID required")
-		}
-		if s.TraceDrawRef != nil && (s.TargetIdleNanos == nil || !identity(s.TraceDrawRef.Phase) || s.TraceDrawRef.ElementIndex < 0) {
-			return nil, errors.New("cadence draw requires target and valid source reference")
+		if s.ServiceDurationNanos <= 0 || !identity(s.TrialID) || s.PrecedingIdleNanos != nil && *s.PrecedingIdleNanos < 0 {
+			return nil, errors.New("positive service, nonnegative actual idle and physical trial ID required")
 		}
 		// Own the pointer values as well as the rows; callers may retain raw evidence.
 		s = s.Clone()
