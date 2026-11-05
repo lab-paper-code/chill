@@ -3,15 +3,12 @@
 package controller
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
@@ -51,11 +48,6 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				DurationSeconds:          int(spec.Measurement.DurationSeconds),
 				DurationToleranceSeconds: tolerance,
 				WorkloadMode:             spec.Measurement.WorkloadMode,
-				WorkloadUID:              spec.Measurement.WorkloadUID,
-				WorkloadResourceVersion:  spec.Measurement.WorkloadResourceVersion,
-				SLOPercentile:            spec.Measurement.SLOPercentile,
-				SLOTargetLatencyNanos:    spec.Measurement.SLOTargetLatencyNanos,
-				MinServiceSamples:        int(spec.Measurement.MinServiceSamples),
 			},
 			Metrics: profiler.MetricObservationPolicy{
 				IntervalMilliseconds: int(spec.MetricObservation.IntervalMilliseconds),
@@ -63,18 +55,6 @@ func ProjectRequest(spec edgev1alpha1.ProfilingRunSpec) (RequestedRun, error) {
 				DurationSeconds:      int(spec.MetricObservation.DurationSeconds),
 			},
 		},
-	}
-	if spec.Measurement.Cadence != nil {
-		cadence := new(firstfloor.CadenceContract)
-		decoder := json.NewDecoder(bytes.NewReader(spec.Measurement.Cadence.Raw))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(cadence); err != nil {
-			return RequestedRun{}, fmt.Errorf("decode frozen child cadence: %w", err)
-		}
-		request.Preparation.Measurement.Cadence = cadence
-	}
-	if spec.Measurement.WorkloadUID != "" {
-		request.Preparation.Measurement.WorkloadName = spec.Measurement.Workload
 	}
 	if request.Preparation.Measurement.StartupWarmupIterations == 0 &&
 		spec.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {

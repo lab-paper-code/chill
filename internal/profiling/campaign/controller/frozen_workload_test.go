@@ -86,17 +86,9 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var frozenProtocol *derivation.CurveProtocolContract
 			prepare := func(child *api.ProfilingRun) run.RunConfig {
-				t.Helper()
-				request, err := profilercontroller.ProjectRequest(child.Spec)
-				if err != nil {
-					t.Fatal(err)
-				}
-				prepared, err := preparer.Prepare(ctx, request.Preparation)
-				if err != nil {
-					t.Fatal(err)
-				}
-				return prepared.RunConfig
+				return prepareFrozenWorkloadChild(t, ctx, preparer, child, frozenProtocol)
 			}
 			activeMeasurement := campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1}
 			idleMeasurement := campaign.Measurement{WorkloadMode: campaign.WorkloadModeIdle, Batch: 1}
@@ -117,6 +109,8 @@ func TestCampaignChildrenRetainFrozenWorkloadAfterIdle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			protocol := plan.Shared().ActiveProtocol
+			frozenProtocol = &protocol
 			reconciler := &BatchEnergyOptimizationReconciler{client: native}
 			var idleEvidence profilerevidence.VerifiedIdleEvidence
 			for attempt := 1; attempt <= 3; attempt++ {
@@ -265,4 +259,26 @@ func (p *frozenWorkloadPreparationPorts) Resolve(_ context.Context, _ run.RunCon
 	return profiler.FrozenExecutionPolicy{Policy: profiler.ExecutionPolicy{ExecutionPolicySpec: profiler.ExecutionPolicySpec{
 		RuntimeMemoryRequestBytes: p.config.Actor.MemoryRequestBytes, RuntimeMemoryLimitBytes: p.config.Actor.MemoryLimitBytes,
 	}}}, nil
+}
+
+func prepareFrozenWorkloadChild(
+	t *testing.T, ctx context.Context, preparer *profiler.Preparer, child *api.ProfilingRun,
+	protocol *derivation.CurveProtocolContract,
+) run.RunConfig {
+	t.Helper()
+	request, err := profilercontroller.ProjectRequest(child.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if protocol != nil && child.Spec.Measurement.WorkloadMode != run.IdleModelLoadedWorkloadMode {
+		if err := projection.ApplyFrozenActiveProtocol(&request.Preparation.Measurement, *protocol); err != nil {
+			t.Fatal(err)
+		}
+		request.Preparation.Workload = request.Preparation.Measurement.WorkloadName
+	}
+	prepared, err := preparer.Prepare(ctx, request.Preparation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prepared.RunConfig
 }

@@ -32,34 +32,6 @@ func TestProjectRequestMapsOnlyCallerSelectedPolicy(t *testing.T) {
 	}
 }
 
-func TestProjectRequestValidatesFrozenWorkloadContract(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*edgev1alpha1.ProfilingRunMeasurementSpec)
-	}{
-		{"missing UID", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.WorkloadUID = "" }},
-		{"missing percentile", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOPercentile = 0 }},
-		{"wrong native N", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.MinServiceSamples = 299 }},
-		{"missing target", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOTargetLatencyNanos = 0 }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			run := testRun()
-			measurement := &run.Spec.Measurement
-			measurement.WorkloadUID = "source-workload-uid"
-			measurement.SLOPercentile = 95
-			measurement.SLOTargetLatencyNanos = 1_000_000_000
-			measurement.MinServiceSamples = 59
-			if _, err := ProjectRequest(run.Spec); err != nil {
-				t.Fatalf("complete frozen source without ResourceVersion rejected: %v", err)
-			}
-			test.mutate(measurement)
-			if _, err := ProjectRequest(run.Spec); err == nil {
-				t.Fatal("partial or inconsistent frozen source was accepted")
-			}
-		})
-	}
-}
-
 func TestProjectRequestDefaultsSingleRunWarmupDomain(t *testing.T) {
 	for _, batches := range [][]int32{nil, {1, 2, 4}} {
 		run := testRun()
@@ -104,7 +76,6 @@ func TestProjectRequestPreservesIdleSettlingContract(t *testing.T) {
 	run.Spec.Measurement.StartupWarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = profilingrun.IdleModelLoadedWorkloadMode
-	run.Spec.Measurement.Cadence = nil
 	run.Spec.Measurement.Dataset = ""
 	run.Spec.Measurement.Workload = ""
 

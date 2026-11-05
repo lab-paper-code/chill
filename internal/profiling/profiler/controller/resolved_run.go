@@ -7,6 +7,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
@@ -45,21 +46,16 @@ func validateResolvedRunForRun(run *edgev1alpha1.ProfilingRun, resolved Resolved
 }
 
 func validatePreparedForRun(run *edgev1alpha1.ProfilingRun, prepared profiler.PreparedRun) error {
+	// Owned requests are authenticated once by Resolve; recovered Jobs carry
+	// their executable record, not an authoritative child request body.
+	if metav1.GetControllerOf(run) != nil {
+		return nil
+	}
 	request, err := ProjectRequest(run.Spec)
 	if err != nil {
 		return err
 	}
 	actual := preparationFromRunConfig(prepared.RunConfig)
-	if request.Preparation.Measurement.WorkloadUID != "" {
-		actual.Measurement.WorkloadName = prepared.RunConfig.Measurement.WorkloadName
-		actual.Measurement.WorkloadUID = prepared.RunConfig.Measurement.WorkloadUID
-		actual.Measurement.SLOPercentile = prepared.RunConfig.Measurement.SLOPercentile
-		actual.Measurement.SLOTargetLatencyNanos = prepared.RunConfig.Measurement.SLOTargetLatencyNanos
-		actual.Measurement.MinServiceSamples = prepared.RunConfig.Measurement.MinServiceSamples
-	}
-	if request.Preparation.Measurement.Cadence != nil {
-		actual.Measurement.Cadence = prepared.RunConfig.Measurement.Cadence
-	}
 	// ResourceVersion remains in raw RunConfig, but never gates admission.
 	request.Preparation.Measurement.WorkloadResourceVersion = ""
 	if !reflect.DeepEqual(request.Preparation, actual) {

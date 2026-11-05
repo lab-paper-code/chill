@@ -213,14 +213,15 @@ func assertStoredResult(
 	failed := spec.ExcludedTrials[0]
 	completedRetry := spec.CompletedTrials[0]
 	active := batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}
-	if failed.Run.Namespace != "chill-system" || failed.Run.Name != RunName(parent.Name, active, 2) ||
+	if failed.Run.Namespace != "chill-system" || failed.Run.Name != batchenergyoptimization.RunName(parent.Name, active, 2) ||
 		failed.Run.UID != "failed-uid" || failed.Attempt != 2 ||
 		failed.Measurement != (batchenergyoptimization.ResultMeasurement{
 			WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 		}) || len(failed.Reasons) != 1 || failed.Reasons[0] != "JobFailed" {
 		t.Fatalf("failed attempt projection = %+v", failed)
 	}
-	if completedRetry.Run.Namespace != "chill-system" || completedRetry.Run.Name != RunName(parent.Name, active, 3) ||
+	if completedRetry.Run.Namespace != "chill-system" ||
+		completedRetry.Run.Name != batchenergyoptimization.RunName(parent.Name, active, 3) ||
 		completedRetry.Run.UID != "completed-uid" ||
 		completedRetry.Measurement != failed.Measurement || completedRetry.Evidence.Key !=
 		"profiling-runs/completed-uid/execution.json" {

@@ -91,7 +91,7 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 	if mode == batchenergyoptimization.WorkloadModeActive && run.Spec.Measurement.Batch != identity.Batch {
 		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: campaign Run execution batch disagrees with its logical trial", errInvalidCampaignTrial)
 	}
-	if run.Name != RunName(parentName, measurement, attempt) {
+	if run.Name != batchenergyoptimization.RunName(parentName, measurement, attempt) {
 		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: Run name does not match its immutable campaign trial", errInvalidCampaignTrial)
 	}
 	trial := batchenergyoptimization.Trial{

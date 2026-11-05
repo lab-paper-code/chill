@@ -7,6 +7,11 @@ import (
 	"fmt"
 )
 
+// RunName identifies one logical campaign trial, independently of its execution batch.
+func RunName(parent string, measurement Measurement, attempt int) string {
+	return fmt.Sprintf("%s-%s-b%d-a%d", parent, measurement.WorkloadMode, measurement.Batch, attempt)
+}
+
 const (
 	WorkloadModeActive WorkloadMode = "active"
 	WorkloadModeIdle   WorkloadMode = "idle"

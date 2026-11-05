@@ -59,7 +59,7 @@ fi
 resolver_method="$(position_of \
   internal/profiling/profiler/controller/run_config_resolver.go \
   'func \(r \*RunConfigResolver\) Resolve' \
-  'Resolve')"
+  'Resolve(')"
 resolver_references="$(gopls_command references "$resolver_method")"
 require_contains resolver-production-callback "$resolver_references" \
   'cmd/profiler/controller_setup.go'

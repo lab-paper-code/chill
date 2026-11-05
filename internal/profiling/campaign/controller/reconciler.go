@@ -185,11 +185,6 @@ func (r *BatchEnergyOptimizationReconciler) createMeasurementRun(
 	if err != nil {
 		return false, fmt.Errorf("build ProfilingRun: %w", err)
 	}
-	if measurement.WorkloadMode == batchenergyoptimization.WorkloadModeActive {
-		if err := projectFrozenActiveProtocol(&run.Spec.Measurement, plan.Shared().ActiveProtocol); err != nil {
-			return false, err
-		}
-	}
 	batches := plan.PlannedBatchSizes()
 	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(batches))
 	for index, batch := range batches {
@@ -298,7 +293,7 @@ func completedRuns(
 	active := make([]edgev1alpha1.ProfilingRun, 0, len(runs))
 	idle := make([]edgev1alpha1.ProfilingRun, 0, len(runs))
 	for index, trial := range snapshot.Trials {
-		if runs[index].Name != RunName(parentName, trial.Measurement, trial.Attempt) {
+		if runs[index].Name != batchenergyoptimization.RunName(parentName, trial.Measurement, trial.Attempt) {
 			return nil, nil, fmt.Errorf(
 				"projected trial/Run order invariant failed at index %d", index,
 			)

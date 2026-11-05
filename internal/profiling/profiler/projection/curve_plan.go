@@ -14,6 +14,25 @@ import (
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
 
+// ApplyFrozenActiveProtocol projects only the plan's authoritative measurement
+// body. Public child specs carry neither cadence nor frozen Workload facts.
+func ApplyFrozenActiveProtocol(
+	measurement *profilingrun.MeasurementContract, protocol profilederivation.CurveProtocolContract,
+) error {
+	cadence := protocol.Cadences[measurement.Batch]
+	if cadence == nil {
+		return fmt.Errorf("frozen plan has no cadence for batch %d", measurement.Batch)
+	}
+	measurement.WorkloadName = protocol.WorkloadName
+	measurement.WorkloadUID = protocol.WorkloadUID
+	measurement.WorkloadResourceVersion = protocol.WorkloadResourceVersion
+	measurement.SLOPercentile = protocol.SLOPercentile
+	measurement.SLOTargetLatencyNanos = protocol.SLOTargetLatencyNanos
+	measurement.MinServiceSamples = protocol.MinServiceSamples
+	measurement.Cadence = cadence.Clone()
+	return nil
+}
+
 // ProjectCurvePlanSpec builds the plan the checker in this package later
 // validates RunConfigs against.
 func ProjectCurvePlanSpec(

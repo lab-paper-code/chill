@@ -2,7 +2,6 @@ package operatorintegration
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -12,8 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/test/fixtures"
-	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
 var _ = Describe("ProfilingRun API", func() {
@@ -131,10 +128,6 @@ func uniqueProfilingRunName(prefix string) string {
 }
 
 func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
-	cadence, err := json.Marshal(fixtures.Cadence())
-	if err != nil {
-		panic(err)
-	}
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: edgev1alpha1.ProfilingRunSpec{
@@ -151,10 +144,8 @@ func validProfilingRun(name string) *edgev1alpha1.ProfilingRun {
 			Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
 				Batch: 1, WarmupIterations: 20, DurationSeconds: 30,
 				WorkloadMode: "empirical-cadence-fixed-batch",
-				Cadence:      &apiextensions.JSON{Raw: cadence},
 				Dataset:      "vqav2-val-subset",
-				Workload:     "mobilenet", WorkloadUID: "workload-uid", WorkloadResourceVersion: "1",
-				SLOPercentile: 95, SLOTargetLatencyNanos: int64(time.Second), MinServiceSamples: 59,
+				Workload:     "mobilenet",
 			},
 			MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{
 				IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31,
@@ -168,12 +159,6 @@ func configureIdleProfilingRun(run *edgev1alpha1.ProfilingRun) {
 	run.Spec.Measurement.WarmupIterations = 0
 	run.Spec.Measurement.SettlingDurationSeconds = &settling
 	run.Spec.Measurement.WorkloadMode = "idle-model-loaded"
-	run.Spec.Measurement.Cadence = nil
 	run.Spec.Measurement.Dataset = ""
 	run.Spec.Measurement.Workload = ""
-	run.Spec.Measurement.WorkloadUID = ""
-	run.Spec.Measurement.WorkloadResourceVersion = ""
-	run.Spec.Measurement.SLOPercentile = 0
-	run.Spec.Measurement.SLOTargetLatencyNanos = 0
-	run.Spec.Measurement.MinServiceSamples = 0
 }

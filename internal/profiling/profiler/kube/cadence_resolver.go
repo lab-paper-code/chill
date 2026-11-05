@@ -119,17 +119,22 @@ func (r *KubernetesCadenceResolver) completedCadenceSources(ctx context.Context,
 		return nil, fmt.Errorf("list retained cadence EvaluationRuns: %w", err)
 	}
 	var sources []cadenceStageSource
+retainedRuns:
 	for index := range runs.Items {
 		run := &runs.Items[index]
 		if run.UID == "" || run.Status.FinishedAt == nil || !cadenceCompleted(run.Status.Conditions) {
 			continue
 		}
-		// Run templates and frozen inputs identify the population without
-		// requiring historical children belonging to other populations.
+		// Structural discovery defects exclude this whole Run, not other
+		// populations or intact Runs. Selected artifacts remain fail-closed.
 		var candidates []cadenceStageSource
 		for _, template := range run.Spec.Stages {
 			scenario, err := r.cadenceScenario(ctx, template.LoadScenarioRef)
 			if err != nil {
+				var prerequisite *profiler.BootstrapServingTraceError
+				if errors.As(err, &prerequisite) {
+					continue retainedRuns
+				}
 				return nil, err
 			}
 			if !cadenceScenarioMatches(scenario, config) {
@@ -137,6 +142,10 @@ func (r *KubernetesCadenceResolver) completedCadenceSources(ctx context.Context,
 			}
 			source := cadenceStageSource{run: run}
 			if err := r.loadCadenceSnapshot(ctx, &source, scenario); err != nil {
+				var prerequisite *profiler.BootstrapServingTraceError
+				if errors.As(err, &prerequisite) {
+					continue retainedRuns
+				}
 				return nil, err
 			}
 			frozen := source.snapshot.Scenarios[string(scenario.UID)]

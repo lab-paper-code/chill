@@ -17,7 +17,6 @@ import (
 	projection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/test/fixtures"
-	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -172,15 +171,12 @@ func TestRunCompletionPrecedesEvidenceAndProtocol(t *testing.T) {
 }
 
 func completedRunFixture() (*edgev1alpha1.BatchEnergyOptimization, *edgev1alpha1.ProfilingRun, campaign.CompletedTrialReference) {
-	cadence, err := json.Marshal(fixtures.Cadence())
-	if err != nil {
-		panic(err)
-	}
 	cr := &edgev1alpha1.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "campaign", UID: "campaign-uid"}}
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "run", UID: "run-uid", Generation: 2,
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(cr, edgev1alpha1.GroupVersion.WithKind("BatchEnergyOptimization"))}},
-		Spec: edgev1alpha1.ProfilingRunSpec{Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{Batch: 1, WorkloadMode: "empirical-cadence-fixed-batch", Cadence: &apiextensions.JSON{Raw: cadence}}},
+		Spec: edgev1alpha1.ProfilingRunSpec{Measurement: edgev1alpha1.ProfilingRunMeasurementSpec{
+			Batch: 1, WorkloadMode: "empirical-cadence-fixed-batch"}},
 		Status: edgev1alpha1.ProfilingRunStatus{
 			Evidence: &edgev1alpha1.ProfilingRunEvidenceReference{Store: "store", Key: "execution", Size: 1, SchemaVersion: "schema"},
 			Conditions: []metav1.Condition{

@@ -121,12 +121,6 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
-                  cadence:
-                    description: |-
-                      Server-generated active children carry their already-frozen cadence.
-                      Standalone requests resolve it server-side; loaded-idle carries none.
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   dataset:
                     description: |-
                       Dataset names the cluster-scoped Dataset whose profiling records active
@@ -144,22 +138,12 @@ spec:
                       undershoot.
                     minimum: 0
                     type: number
-                  minServiceSamples:
-                    description: MinServiceSamples is the native sample count derived
-                      from SLOPercentile.
-                    format: int32
-                    type: integer
                   settlingDurationSeconds:
                     description: |-
                       SettlingDurationSeconds is required only for model-loaded idle. The
                       runtime loads the model before this observer-independent settling period.
                     format: int32
                     minimum: 1
-                    type: integer
-                  sloPercentile:
-                    type: number
-                  sloTargetLatencyNanos:
-                    format: int64
                     type: integer
                   startupWarmupIterations:
                     description: |-
@@ -190,15 +174,6 @@ spec:
                     - empirical-cadence-fixed-batch
                     - idle-model-loaded
                     type: string
-                  workloadResourceVersion:
-                    description: WorkloadResourceVersion records provenance only,
-                      never admission identity.
-                    type: string
-                  workloadUID:
-                    description: |-
-                      WorkloadUID freezes the source identity for campaign children. Together
-                      with the SLO fields below it bypasses mutable Workload resolution.
-                    type: string
                 required:
                 - batch
                 - durationSeconds
@@ -212,8 +187,8 @@ spec:
                 - message: measurement fields must match the selected workloadMode
                   rule: 'self.workloadMode == ''idle-model-loaded'' ? self.warmupIterations
                     == 0 && has(self.settlingDurationSeconds) && !has(self.dataset)
-                    && !has(self.workload) && !has(self.cadence) : !has(self.settlingDurationSeconds)
-                    && has(self.dataset) && has(self.workload)'
+                    && !has(self.workload) : !has(self.settlingDurationSeconds) &&
+                    has(self.dataset) && has(self.workload)'
                 - message: active measurement requires at least thirty seconds
                   rule: self.workloadMode == 'idle-model-loaded' || self.durationSeconds
                     >= 30

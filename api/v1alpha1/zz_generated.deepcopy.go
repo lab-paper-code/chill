@@ -3031,11 +3031,6 @@ func (in *ProfilingRunMeasurementSpec) DeepCopyInto(out *ProfilingRunMeasurement
 		*out = new(float64)
 		**out = **in
 	}
-	if in.Cadence != nil {
-		in, out := &in.Cadence, &out.Cadence
-		*out = new(apiextensionsv1.JSON)
-		(*in).DeepCopyInto(*out)
-	}
 	if in.WarmupBatchSizes != nil {
 		in, out := &in.WarmupBatchSizes, &out.WarmupBatchSizes
 		*out = make([]int32, len(*in))

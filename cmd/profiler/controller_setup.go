@@ -39,6 +39,7 @@ type profilerControllerShared struct {
 	stores            profilercontroller.EvidenceStoreBindingResolver
 	evidence          *currentEvidenceStore
 	retainedEvidence  *evidencekube.RetainedLoader
+	curvePlans        *batchcontroller.CurvePlanSource
 }
 
 func setupProfilerControllers(mgr ctrl.Manager, opts options) error {
@@ -68,6 +69,8 @@ func setupRunController(mgr ctrl.Manager, opts options, shared *profilerControll
 	resolver, err := profilercontroller.NewRunConfigResolver(
 		shared.preparer,
 		shared.executionPolicies,
+		shared.reader,
+		shared.curvePlans.ReadRecorded,
 	)
 	if err != nil {
 		return fmt.Errorf("construct RunConfig resolver: %w", err)
@@ -206,11 +209,22 @@ func newProfilerControllerShared(mgr ctrl.Manager, opts options) (*profilerContr
 	if err != nil {
 		return nil, fmt.Errorf("construct Run preparer: %w", err)
 	}
+	curvePlans, err := batchcontroller.NewCurvePlanSource(
+		reader, candidates, preparer, evidence,
+		batchcontroller.CurvePlanSourceOptions{
+			Store:          component.EvidenceStoreServiceName(opts.systemName),
+			MaxObjectBytes: profilingResultMaximumObjectBytes,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct immutable curve-plan source: %w", err)
+	}
 	return &profilerControllerShared{
 		reader: reader, candidates: candidates, nodes: nodes, power: power,
 		actuationPolicies: actuationPolicies, preparer: preparer,
 		executionPolicies: executionPolicies, stores: stores,
 		evidence: evidence, retainedEvidence: retainedEvidence,
+		curvePlans: curvePlans,
 	}, nil
 }
 
@@ -220,15 +234,7 @@ func setupBatchEnergyOptimizationController(
 	shared *profilerControllerShared,
 ) error {
 	logicalStore := component.EvidenceStoreServiceName(opts.systemName)
-	curvePlans, err := batchcontroller.NewCurvePlanSource(
-		shared.reader, shared.candidates, shared.preparer, shared.evidence,
-		batchcontroller.CurvePlanSourceOptions{
-			Store: logicalStore, MaxObjectBytes: profilingResultMaximumObjectBytes,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("construct BatchEnergyOptimization curve-plan source: %w", err)
-	}
+	curvePlans := shared.curvePlans
 	curves, err := batchcontroller.NewCurveDeriver(
 		retainedCurveEvidenceLoader{retained: shared.retainedEvidence},
 	)

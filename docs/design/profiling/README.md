@@ -94,11 +94,14 @@ Serving catalog identities come from the existing observation-store listing,
 while Evaluation evidence uses its own frozen store binding and credentials.
 Missing attributable evidence reports `BootstrapServingTracePrerequisite`; there
 is no client-supplied cadence or rate-derived/default gap.
-An unowned standalone ProfilingRun is rejected if it supplies `measurement.cadence`,
-even if its spec claims a frozen Workload UID. Without that field it resolves the
-actual source server-side. Only a measurement-root controller reference with its
-API kind, nonempty root name and UID admits delivery of an already-frozen child
-body; that child does not re-read live Workload or trace evidence.
+Public ProfilingRun specs carry no cadence or frozen Workload UID/SLO/N body.
+An owner reference is only a lookup hint, never authorization. The executable
+resolver reads that root from the API, checks actual admission and the existing
+Node grant, and loads its strict immutable CurvePlan. Only a canonical child
+whose logical K belongs to that plan derives the plan's frozen measurement body.
+Standalone admission uses that same resolver boundary; a fake owner, absent or
+unadmitted root, missing plan or unplanned K cannot create a Job. The existing
+idle-baseline root is authenticated through its actual immutable idle protocol.
 Trace candidates are scoped by the frozen producer population first, using its
 actual `Spec.DatasetRefs[workload]`, not the applied Workload's dataset. A Run
 with defective child-stage identity is excluded individually; it cannot poison

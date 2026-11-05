@@ -251,6 +251,13 @@ func (s *CurvePlanSource) location(parentUID types.UID) evidencestore.ObjectLoca
 	}
 }
 
+// ReadRecorded reads the existing immutable plan without projection, creation or
+// transition recovery. Executable children derive their frozen body here.
+func (s *CurvePlanSource) ReadRecorded(ctx context.Context, parentUID types.UID) (profilederivation.CurvePlan, error) {
+	plan, _, err := s.readStored(ctx, s.location(parentUID))
+	return plan, err
+}
+
 // readStored returns the stored plan and its observed reference. A missing
 // object is returned as evidencestore.ErrNotFound; any other failure,
 // including undecodable stored evidence, is a distinct error.
@@ -269,7 +276,9 @@ func (s *CurvePlanSource) readStored(
 	}
 	stored, err := profilederivation.DecodeCurvePlan(storedBytes)
 	if err != nil {
-		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("decode existing curve plan: %w", err)
+		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{},
+			profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec,
+				fmt.Errorf("decode existing curve plan: %w", err))
 	}
 	return stored, batchenergyoptimization.StoredObjectReference{
 		Store: location.Store, Key: location.Key,
@@ -380,11 +389,6 @@ func (p *CurvePlanProjector) prepare(
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
 	}
-	if frozenWorkload != nil {
-		if err := projectFrozenActiveProtocol(&run.Spec.Measurement, *frozenWorkload); err != nil {
-			return profiler.PreparedRun{}, err
-		}
-	}
 	run.Spec.Measurement.WarmupBatchSizes = make([]int32, len(plannedBatchSizes))
 	for index, batch := range plannedBatchSizes {
 		run.Spec.Measurement.WarmupBatchSizes[index] = int32(batch)
@@ -392,6 +396,12 @@ func (p *CurvePlanProjector) prepare(
 	requested, err := profilercontroller.ProjectRequest(run.Spec)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
+	}
+	if frozenWorkload != nil {
+		if err := projection.ApplyFrozenActiveProtocol(&requested.Preparation.Measurement, *frozenWorkload); err != nil {
+			return profiler.PreparedRun{}, err
+		}
+		requested.Preparation.Workload = requested.Preparation.Measurement.WorkloadName
 	}
 	return p.preparer.Prepare(ctx, requested.Preparation)
 }

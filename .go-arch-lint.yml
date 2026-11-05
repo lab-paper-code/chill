@@ -481,6 +481,9 @@ deps:
       - api
       - platform-core
       - evidence-core
+      # Executable children authenticate the recorded campaign identity and plan.
+      - batch-energy-optimization-core
+      - profile-derivation
       - evidence-kube
       - profiler-app
       - profiler-projection

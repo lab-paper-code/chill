@@ -3,15 +3,12 @@
 package controller
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
-	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,12 +21,6 @@ const (
 	labelBatch                   = "edge.dacs.io/batch"
 	labelAttempt                 = "edge.dacs.io/attempt"
 )
-
-// RunName is deterministic so re-executing one decision collides instead of
-// creating a duplicate trial.
-func RunName(parent string, measurement batchenergyoptimization.Measurement, attempt int) string {
-	return fmt.Sprintf("%s-%s-b%d-a%d", parent, measurement.WorkloadMode, measurement.Batch, attempt)
-}
 
 func BuildRun(
 	parent *edgev1alpha1.BatchEnergyOptimization,
@@ -84,7 +75,7 @@ func BuildRun(
 	}
 	return &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      RunName(parent.Name, measurement, attempt),
+			Name:      batchenergyoptimization.RunName(parent.Name, measurement, attempt),
 			Namespace: parent.Namespace,
 			Labels: map[string]string{
 				labelBatchEnergyOptimization: parent.Name,
@@ -98,21 +89,4 @@ func BuildRun(
 		},
 		Spec: spec,
 	}, nil
-}
-
-func projectFrozenActiveProtocol(
-	measurement *edgev1alpha1.ProfilingRunMeasurementSpec, protocol profilederivation.CurveProtocolContract,
-) error {
-	measurement.Workload = protocol.WorkloadName
-	measurement.WorkloadUID = protocol.WorkloadUID
-	measurement.WorkloadResourceVersion = protocol.WorkloadResourceVersion
-	measurement.SLOPercentile = protocol.SLOPercentile
-	measurement.SLOTargetLatencyNanos = protocol.SLOTargetLatencyNanos
-	measurement.MinServiceSamples = int32(protocol.MinServiceSamples)
-	body, err := json.Marshal(protocol.Cadences[int(measurement.Batch)])
-	if err != nil {
-		return fmt.Errorf("encode frozen cadence: %w", err)
-	}
-	measurement.Cadence = &apiextensionsv1.JSON{Raw: body}
-	return nil
 }

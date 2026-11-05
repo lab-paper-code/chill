@@ -36,7 +36,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	"github.com/lab-paper-code/chill/test/fixtures"
 	corev1 "k8s.io/api/core/v1"
-	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -777,18 +776,8 @@ func statisticsFixture(
 				mode = campaign.WorkloadModeIdle
 				measurement.SettlingDurationSeconds = ptr.To(int32(config.Measurement.SettlingDurationSeconds))
 			} else {
-				cadence, err := json.Marshal(config.Measurement.Cadence)
-				if err != nil {
-					t.Fatal(err)
-				}
-				measurement.Cadence = &apiextensions.JSON{Raw: cadence}
 				measurement.Dataset = config.Measurement.Dataset.Name
 				measurement.Workload = config.Measurement.WorkloadName
-				measurement.WorkloadUID = config.Measurement.WorkloadUID
-				measurement.WorkloadResourceVersion = config.Measurement.WorkloadResourceVersion
-				measurement.SLOPercentile = config.Measurement.SLOPercentile
-				measurement.SLOTargetLatencyNanos = config.Measurement.SLOTargetLatencyNanos
-				measurement.MinServiceSamples = int32(config.Measurement.MinServiceSamples)
 			}
 			ref := campaign.CompletedTrialReference{
 				Run:         campaign.RunReference{Namespace: cr.Namespace, Name: name, UID: name},

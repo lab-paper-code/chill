@@ -58,35 +58,6 @@ func TestValidatePreparedForRunSeparatesResolvedWorkloadFacts(t *testing.T) {
 	}
 }
 
-func TestValidatePreparedForRunChecksFrozenChildContractExceptResourceVersion(t *testing.T) {
-	prepared := currentPreparedRun(t)
-	for _, test := range []struct {
-		name   string
-		mutate func(*edgev1alpha1.ProfilingRunMeasurementSpec)
-	}{
-		{"UID", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.WorkloadUID = "replacement-workload" }},
-		{"percentile and N", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOPercentile, m.MinServiceSamples = 99, 299 }},
-		{"target", func(m *edgev1alpha1.ProfilingRunMeasurementSpec) { m.SLOTargetLatencyNanos++ }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			child := testRun()
-			source := prepared.RunConfig.Measurement
-			child.Spec.Measurement.WorkloadUID = source.WorkloadUID
-			child.Spec.Measurement.WorkloadResourceVersion = "plan-provenance-rv"
-			child.Spec.Measurement.SLOPercentile = source.SLOPercentile
-			child.Spec.Measurement.SLOTargetLatencyNanos = source.SLOTargetLatencyNanos
-			child.Spec.Measurement.MinServiceSamples = int32(source.MinServiceSamples)
-			if err := validateResolvedRunForRun(child, resolvedRunForPrepared(t, prepared)); err != nil {
-				t.Fatalf("frozen child or RV-only difference was rejected: %v", err)
-			}
-			test.mutate(&child.Spec.Measurement)
-			if err := validatePreparedForRun(child, prepared); err == nil {
-				t.Fatal("child's selected frozen contract was not checked")
-			}
-		})
-	}
-}
-
 func TestValidatePreparedForRunRejectsSelectedMeasurementDrift(t *testing.T) {
 	for _, test := range []struct {
 		name   string

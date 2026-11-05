@@ -10,7 +10,6 @@ import (
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
-	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,15 +27,6 @@ const (
 	runJobCleanupPending             = "Pending"
 	runJobCleanupDone                = "Done"
 )
-
-// ownedByMeasurementRoot reports whether a campaign or idle baseline controls
-// the Run; those roots are admitted before they create it.
-func ownedByMeasurementRoot(run *edgev1alpha1.ProfilingRun) bool {
-	owner := metav1.GetControllerOf(run)
-	return owner != nil && owner.Name != "" && owner.UID != "" &&
-		owner.APIVersion == edgev1alpha1.GroupVersion.String() &&
-		(owner.Kind == "BatchEnergyOptimization" || owner.Kind == "ModelLoadedIdleBaseline")
-}
 
 // RunReconciler advances one ProfilingRun through short, durable transitions;
 // the owned Job is both the executable projection and its recoverable record.
@@ -115,21 +105,11 @@ func (r *RunReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 				return ctrl.Result{}, fmt.Errorf("publish recovered ProfilingRun %s Job reference: %w", req.NamespacedName, err)
 			}
 		} else {
-			// A root Run that has not started waits for ChillServer's admission
-			// before its first Job.
-			if !ownedByMeasurementRoot(run) {
-				granted, _, refused := profilingrun.Admission(run.Annotations)
-				if refused != "" {
-					return ctrl.Result{}, r.publishExecutionOutcome(
-						ctx, run, metav1.ConditionFalse, refused, "measurement admission refused",
-					)
-				}
-				if !granted {
-					return ctrl.Result{RequeueAfter: admissionWait}, nil
-				}
-			}
 			resolved, err = r.resolve(ctx, run)
 			if err != nil {
+				if errors.Is(err, errRunAdmissionPending) {
+					return ctrl.Result{RequeueAfter: admissionWait}, nil
+				}
 				if reason, terminal := profiler.TerminalResolutionReason(err); terminal {
 					return ctrl.Result{}, r.publishRunConfigFailure(ctx, run, reason, err.Error())
 				}

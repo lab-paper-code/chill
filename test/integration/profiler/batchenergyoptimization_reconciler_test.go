@@ -222,17 +222,17 @@ func TestBatchEnergyOptimizationReconcilerCompletesAcrossCollisionWaitRetryAndRe
 		t.Fatalf("terminal result reference = %#v, want writer reference %+v", gotReference, wantReference)
 	}
 	wantActiveNames := []string{
-		batchcontroller.RunName(parent.Name, activeBatchOne, 1),
-		batchcontroller.RunName(parent.Name, activeBatchOne, 2),
-		batchcontroller.RunName(parent.Name, activeBatchOne, 3),
-		batchcontroller.RunName(parent.Name, activeBatchTwo, 1),
-		batchcontroller.RunName(parent.Name, activeBatchTwo, 2),
-		batchcontroller.RunName(parent.Name, activeBatchTwo, 3),
+		batchenergyoptimization.RunName(parent.Name, activeBatchOne, 1),
+		batchenergyoptimization.RunName(parent.Name, activeBatchOne, 2),
+		batchenergyoptimization.RunName(parent.Name, activeBatchOne, 3),
+		batchenergyoptimization.RunName(parent.Name, activeBatchTwo, 1),
+		batchenergyoptimization.RunName(parent.Name, activeBatchTwo, 2),
+		batchenergyoptimization.RunName(parent.Name, activeBatchTwo, 3),
 	}
 	wantIdleNames := []string{
-		batchcontroller.RunName(parent.Name, idle, 2),
-		batchcontroller.RunName(parent.Name, idle, 3),
-		batchcontroller.RunName(parent.Name, idle, 4),
+		batchenergyoptimization.RunName(parent.Name, idle, 2),
+		batchenergyoptimization.RunName(parent.Name, idle, 3),
+		batchenergyoptimization.RunName(parent.Name, idle, 4),
 	}
 	// D28 derives once for current-condition b1 infeasibility, then once after
 	// every planned batch completes; the first call is not a terminal/retry.
@@ -456,7 +456,7 @@ func requireCampaignRun(
 	run := &edgev1alpha1.ProfilingRun{}
 	key := client.ObjectKey{
 		Namespace: parent.Namespace,
-		Name:      batchcontroller.RunName(parent.Name, measurement, attempt),
+		Name:      batchenergyoptimization.RunName(parent.Name, measurement, attempt),
 	}
 	if err := kube.Get(ctx, key, run); err != nil {
 		t.Fatal(err)

@@ -6,51 +6,42 @@ import (
 	"fmt"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
+	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type RunPreparer interface {
 	Prepare(context.Context, profiler.PreparationRequest) (profiler.PreparedRun, error)
 }
 
-// RunConfigResolver resolves the requested ProfilingRun into the exact
-// executable configuration used to create a Job. It does not persist a second
-// Kubernetes object; the created Job becomes the recoverable execution record.
+var errRunAdmissionPending = errors.New("measurement admission pending")
+
+// RunConfigResolver authenticates the request before resolving executable state.
 type RunConfigResolver struct {
 	preparer  RunPreparer
 	execution profiler.ExecutionPolicyResolver
+	reader    client.Reader
+	readPlan  func(context.Context, types.UID) (profilederivation.CurvePlan, error)
 }
 
-func NewRunConfigResolver(
-	preparer RunPreparer,
-	execution profiler.ExecutionPolicyResolver,
-) (*RunConfigResolver, error) {
-	if preparer == nil || execution == nil {
-		return nil, errors.New("Run preparer, execution-policy resolver are required")
+func NewRunConfigResolver(preparer RunPreparer, execution profiler.ExecutionPolicyResolver, reader client.Reader, readPlan func(context.Context, types.UID) (profilederivation.CurvePlan, error)) (*RunConfigResolver, error) {
+	if preparer == nil || execution == nil || reader == nil || readPlan == nil {
+		return nil, errors.New("Run preparer, execution-policy resolver, authoritative reader and recorded plan reader are required")
 	}
-	return &RunConfigResolver{preparer: preparer, execution: execution}, nil
+	return &RunConfigResolver{preparer: preparer, execution: execution, reader: reader, readPlan: readPlan}, nil
 }
 
-func (r *RunConfigResolver) Resolve(
-	ctx context.Context,
-	run *edgev1alpha1.ProfilingRun,
-) (ResolvedRun, error) {
+func (r *RunConfigResolver) Resolve(ctx context.Context, run *edgev1alpha1.ProfilingRun) (ResolvedRun, error) {
 	if run == nil {
 		return ResolvedRun{}, errors.New("ProfilingRun is required")
 	}
-	// Cadence is server-resolved for public standalone input. Only an admitted
-	// measurement root may deliver its already-frozen child execution body.
-	if run.Spec.Measurement.Cadence != nil && !ownedByMeasurementRoot(run) {
-		return ResolvedRun{}, profiler.NewTerminalResolutionError(
-			profiler.ResolutionReasonInvalidRunSpec,
-			errors.New("standalone ProfilingRun cannot supply cadence; actual serving trace is resolved server-side"),
-		)
-	}
-	request, err := ProjectRequest(run.Spec)
+	request, err := r.authorizedRequest(ctx, run)
 	if err != nil {
-		return ResolvedRun{}, profiler.NewTerminalResolutionError(profiler.ResolutionReasonInvalidRunSpec, err)
+		return ResolvedRun{}, err
 	}
-	prepared, err := r.preparer.Prepare(ctx, request.Preparation)
+	prepared, err := r.preparer.Prepare(ctx, request)
 	if err != nil {
 		return ResolvedRun{}, fmt.Errorf("resolve RunConfig: %w", err)
 	}
@@ -58,10 +49,11 @@ func (r *RunConfigResolver) Resolve(
 	if err != nil {
 		return ResolvedRun{}, fmt.Errorf("resolve execution policy: %w", err)
 	}
-	resolved := ResolvedRun{
-		Prepared: prepared, ExecutionPolicy: executionPolicy,
+	resolved := ResolvedRun{Prepared: prepared, ExecutionPolicy: executionPolicy}
+	if err := resolved.Validate(); err != nil {
+		return ResolvedRun{}, err
 	}
-	if err := validateResolvedRunForRun(run, resolved); err != nil {
+	if err := validateSelectedExecutionPolicy(prepared, executionPolicy); err != nil {
 		return ResolvedRun{}, err
 	}
 	return resolved, nil

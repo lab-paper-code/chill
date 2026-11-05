@@ -662,7 +662,7 @@ func grant(run *edgev1alpha1.ProfilingRun) {
 	run.Annotations = map[string]string{profilingrun.AdmissionAnnotation: profilingrun.GrantedAdmission(time.Unix(0, 0))}
 }
 
-func TestRunReconcilerWaitsForAdmissionOfRootRunOnly(t *testing.T) {
+func TestRunReconcilerUsesResolverAdmissionAuthority(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, admission, owner string
@@ -672,8 +672,8 @@ func TestRunReconcilerWaitsForAdmissionOfRootRunOnly(t *testing.T) {
 	}{
 		{"root not admitted", "", "", 5 * time.Second, "", 0},
 		{"root refused", profilingrun.RefusedAdmission("NodeServing", "serving/a"), "", 0, "NodeServing", 0},
-		{"campaign child", "", "BatchEnergyOptimization", 0, "", 1},
-		{"idle baseline child", "", "ModelLoadedIdleBaseline", 0, "", 1},
+		{"forged campaign child", "", "BatchEnergyOptimization", 0, profiler.ResolutionReasonInvalidRunSpec, 0},
+		{"forged idle baseline child", "", "ModelLoadedIdleBaseline", 0, profiler.ResolutionReasonInvalidRunSpec, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			run := testRun()
@@ -685,7 +685,7 @@ func TestRunReconcilerWaitsForAdmissionOfRootRunOnly(t *testing.T) {
 				}}
 			}
 			kubeClient := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithStatusSubresource(run).WithObjects(run).Build()
-			resolver := &recordingRunConfigResolver{result: resolvedRunForPrepared(t, currentPreparedRun(t))}
+			resolver := &RunConfigResolver{reader: kubeClient}
 			jobs := &recordingExecutionJobs{}
 			reconciler, err := NewRunReconciler(kubeClient, kubeClient, resolver.Resolve, jobs.Find, jobs.Ensure, (&recordingRunEvidenceFinalizer{}).Finalize, (&recordingRunEvidenceFinalizer{}).RuntimeTermination)
 			if err != nil {
@@ -702,7 +702,7 @@ func TestRunReconcilerWaitsForAdmissionOfRootRunOnly(t *testing.T) {
 			}
 			condition := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
 			if test.reason == "" {
-				if test.jobs == 0 && (condition != nil || resolver.calls != 0) {
+				if test.jobs == 0 && condition != nil {
 					t.Fatalf("waiting Run progressed: %#v", actual.Status)
 				}
 				return

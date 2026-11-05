@@ -10,7 +10,7 @@ import (
 )
 
 func TestRunNameIsDeterministic(t *testing.T) {
-	name := RunName("jetsono-ortcpu-m50", batchenergyoptimization.Measurement{
+	name := batchenergyoptimization.RunName("jetsono-ortcpu-m50", batchenergyoptimization.Measurement{
 		WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2,
 	}, 1)
 	if name != "jetsono-ortcpu-m50-active-b2-a1" {
