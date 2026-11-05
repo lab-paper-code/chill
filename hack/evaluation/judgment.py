@@ -19,6 +19,7 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
     """Pure request judgment shared by provisional and drained publication."""
     stage = phase['stage']
     analysis = evidence_io.module('evaluation_analysis', HERE / 'request_analysis.py')
+    raw = evidence_io.module('evaluation_raw', HERE / 'raw.py')
     results = {}
     for workload in config['workloads']:
         name = workload['name']
@@ -46,6 +47,10 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
         usable = [row for row in rows if row.get('requestID') not in quarantined and
                   row.get('workloadUID') in (None, workload['uid'])]
         supported = any(row.get('requestID') in indexed['finals'] for row in usable)
+        recorded_gaps = indexed['summary'].get('observationGaps', [])
+        window_start = evidence_io.timestamp_ns(phase['startUTC']) if recorded_gaps else 0
+        window_end = evidence_io.timestamp_ns(closed_through or phase['endUTC']) if recorded_gaps else 0
+        gaps = raw.overlapping_gaps(recorded_gaps, window_start, window_end) if recorded_gaps else []
         start = phase['starts'].get(name, {}).get('monotonicNS')
         quality = analysis.issuance_fidelity(rows, trace['offsetsNS'], start, round(stage['seconds'] * 1e9), analysis.stats, config['generatorQuality'])
         completed, actual, scheduled, outcomes = [], [], [], Counter()
@@ -81,10 +86,16 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
                         latencies.append(latency)
             successes = sum(value <= workload['slo']['targetLatencyNanos'] for value in latencies)
             rank = math.ceil(planned * workload['slo']['percentile'] / 100)
+            part_gaps = []
+            if planned and gaps and name in phase['starts']:
+                part_start = evidence_io.timestamp_ns(phase['starts'][name]['at'])
+                part_gaps = raw.overlapping_gaps(gaps, part_start + base, min(part_start + stop, window_end))
             substages.append({'id': part['id'], 'durationSeconds': part['seconds'], 'rate': part['rates'][name], 'offered': planned,
                               'completedLatencyNS': analysis.stats(latencies), 'deadlineSuccess': successes, 'requiredSuccessfulRank': rank,
-                              'D1': 'NOT_OFFERED' if not planned else 'INVALID_NO_LOAD' if not part_issued else
-                                    'NOT_EVALUATED' if not part_supported else 'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET'})
+                              'D1': 'NOT_OFFERED' if not planned else 'NOT_EVALUATED' if part_gaps else
+                                    'INVALID_NO_LOAD' if not part_issued else 'NOT_EVALUATED' if not part_supported else
+                                    'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET',
+                              'observationGaps': part_gaps})
             base = stop
         results[name] = {'offered': offered, 'clientRows': len(rows), 'outcomes': dict(outcomes), 'completedLatencyNS': analysis.stats(completed),
                          'gatewayCompletedLatencyNS': analysis.stats(completed), 'actualLatencyNS': analysis.stats(actual), 'scheduledLatencyNS': analysis.stats(scheduled),
@@ -92,8 +103,10 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
                          'deadlineSuccess': hits, 'deadlineSuccessFraction': hits / offered if offered else None, 'requiredSuccessfulRank': required,
                          'unfinishedOrUnsent': max(0, offered - len(completed) - loss), 'collectionLoss': loss, 'issuanceFidelity': quality,
                          'reachable': hits + max(0, offered - sum(row.get('requestID') in indexed['finals'] for row in usable)) >= required,
-                         'D1': 'NOT_OFFERED' if not offered else 'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
+                         'D1': 'NOT_OFFERED' if not offered else 'NOT_EVALUATED' if gaps else
+                               'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
                                'NOT_EVALUATED' if not supported else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',
+                         'observationGaps': gaps,
                          'slo': workload['slo'], 'workload': {key: workload[key] for key in ('name', 'uid', 'generation')},
                          'workloadUID': workload['uid'],
                          'definitionID': identities[0]['definitionID'] if identity_known else None,
@@ -113,7 +126,7 @@ def provisional_requests(config, phase, clients, indexes, as_of, closed_through)
     keys = ('offered', 'deadlineSuccess', 'requiredSuccessfulRank', 'outcomes', 'unfinishedOrUnsent', 'collectionLoss', 'slo', 'reachable')
     return {'asOf': as_of, 'closedThrough': closed_through, 'provisional': True,
             'workloads': {name: {**{key: row[key] for key in keys},
-                                'substages': [{key: value for key, value in part.items() if key != 'D1'} for part in row['substages']]}
+                                'substages': [{key: value for key, value in part.items() if key not in ('D1', 'observationGaps')} for part in row['substages']]}
                           for name, row in results.items()},
             'generatorQuality': {name: row['issuanceFidelity'] for name, row in results.items()}}
 

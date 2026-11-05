@@ -18,7 +18,7 @@ def publication_requests(judgment):
               'deadlineSuccess', 'deadlineSuccessFraction', 'requiredSuccessfulRank', 'D1', 'slo', 'workload',
               'workloadUID', 'definitionID', 'actualGatewayIdentities', 'substages', 'identityMissingReason',
               'quarantinedRequestIDs', 'quarantinedClientRows', 'identityMismatchClientRows', 'quarantinedRequestCount',
-              'observedDefinitions', 'rawEvidenceErrorCount', 'unkeyedRawRowCount')
+              'observedDefinitions', 'rawEvidenceErrorCount', 'unkeyedRawRowCount', 'observationGaps')
     result = {}
     for name, value in judgment['requests'].items():
         row = {key: value[key] for key in fields if key in value}
@@ -40,5 +40,7 @@ def render(root, repository=None, *, evaluation=None):
         for name, result in kpis['requests'].items():
             lines.append(' | '.join(str(value) for value in (stage['id'], name, result['offered'], result['completedLatencyNS']['samples'],
                                                            result['deadlineSuccess'], result['D1'], 'UNKNOWN' if energy is None else energy)))
+            for gap in result.get('observationGaps', []):
+                lines.append('Observation gap: ' + json.dumps(gap, sort_keys=True))
     lines.append('SLO denominator: the complete frozen planned population, not successful responses. Meter energy includes every declared node, whether serving or idle.')
     return '\n'.join(lines) + '\n'
