@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -26,11 +27,7 @@ func (s *Service) Preflight(
 		result.Checks = append(result.Checks, EvaluationCheck{ID: id, Passed: passed, Reason: reason})
 	}
 	err := request.Spec.Validate()
-	reason := ""
-	if err != nil {
-		reason = err.Error()
-	}
-	add("spec", err == nil, reason)
+	add("spec", err == nil, errorReason(err))
 	add("name", len(validation.IsDNS1123Subdomain(request.Name)) == 0, "name must be a DNS subdomain")
 	// Evidence refs carry this name and the result reader serves only this store.
 	add("evidenceStore", request.Spec.EvidenceStore == s.store, "evidenceStore must be "+s.store)
@@ -42,18 +39,11 @@ func (s *Service) Preflight(
 		return result, err
 	}
 	result.Checks = append(result.Checks, patchChecks...)
-	for _, stage := range request.Spec.Stages {
-		var load api.LoadScenario
-		err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: stage.LoadScenarioRef.Name}, &load)
-		if apierrors.IsNotFound(err) {
-			add("loadScenario/"+stage.ID, false, "LoadScenario not found")
-			continue
-		}
-		if err != nil {
-			return result, err
-		}
-		add("loadScenario/"+stage.ID, load.UID == stage.LoadScenarioRef.UID, "LoadScenario UID must match")
+	inputChecks, err := s.stageInputChecks(ctx, &request.Spec)
+	if err != nil {
+		return result, err
 	}
+	result.Checks = append(result.Checks, inputChecks...)
 	for _, component := range request.Spec.Target.Components {
 		target, err := s.liveTarget(ctx, component)
 		if err != nil {
@@ -74,14 +64,12 @@ func (s *Service) Preflight(
 	}
 	add("pool", free, "another EvaluationRun occupies the pool")
 	var jobs batchv1.JobList
-	if err := s.reader.List(ctx, &jobs, client.InNamespace(s.namespace)); err != nil {
+	if err := s.reader.List(ctx, &jobs, client.InNamespace(s.namespace),
+		client.MatchingLabels{"edge.dacs.io/workload-role": "load-generator"}); err != nil {
 		return result, err
 	}
 	idle := true
 	for _, job := range jobs.Items {
-		if job.Labels["edge.dacs.io/workload-role"] != "load-generator" {
-			continue
-		}
 		terminal := false
 		for _, condition := range job.Status.Conditions {
 			if (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) &&
@@ -94,28 +82,62 @@ func (s *Service) Preflight(
 		}
 	}
 	add("load-generator", idle, "load-generator Job is active")
-	var profiles api.ProfilingRunList
-	if err := s.reader.List(ctx, &profiles); err != nil {
+	idle, err = s.profilingIdle(ctx)
+	if err != nil {
 		return result, err
-	}
-	idle = true
-	for _, run := range profiles.Items {
-		condition := meta.FindStatusCondition(run.Status.Conditions, api.ProfilingRunConditionExecutionComplete)
-		if condition == nil || condition.Status == metav1.ConditionUnknown {
-			idle = false
-		}
-	}
-	var measurements api.BatchEnergyOptimizationList
-	if err := s.reader.List(ctx, &measurements); err != nil {
-		return result, err
-	}
-	for _, measurement := range measurements.Items {
-		if measurement.Status.Phase == "" || measurement.Status.Phase == string(api.MeasurementPhaseMeasuring) {
-			idle = false
-		}
 	}
 	add("profiling", idle, "profiling measurement is active")
 	return result, nil
+}
+
+// profilingIdle reports no profiling measurement in progress. Campaign and baseline runs
+// are judged through their parent, which stays Measuring while it will launch more runs;
+// only standalone runs are read one by one, so preflight never decodes every run.
+func (s *Service) profilingIdle(ctx context.Context) (bool, error) {
+	var runs api.ProfilingRunList
+	standalone, err := labels.Parse("!edge.dacs.io/batch-energy-optimization,!edge.dacs.io/model-loaded-idle-baseline-uid")
+	if err != nil {
+		return false, err
+	}
+	if err := s.reader.List(ctx, &runs, client.MatchingLabelsSelector{Selector: standalone}); err != nil {
+		return false, err
+	}
+	for _, run := range runs.Items {
+		condition := meta.FindStatusCondition(run.Status.Conditions, api.ProfilingRunConditionExecutionComplete)
+		if condition == nil || condition.Status == metav1.ConditionUnknown {
+			return false, nil
+		}
+	}
+	var campaigns api.BatchEnergyOptimizationList
+	if err := s.reader.List(ctx, &campaigns); err != nil {
+		return false, err
+	}
+	for _, campaign := range campaigns.Items {
+		if parentMeasuring(campaign.Status.Phase) {
+			return false, nil
+		}
+	}
+	var baselines api.ModelLoadedIdleBaselineList
+	if err := s.reader.List(ctx, &baselines); err != nil {
+		return false, err
+	}
+	for _, baseline := range baselines.Items {
+		if parentMeasuring(baseline.Status.Phase) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func parentMeasuring(phase string) bool {
+	return phase == "" || phase == string(api.MeasurementPhaseMeasuring)
+}
+
+func errorReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (s *Service) liveTarget(
@@ -175,6 +197,38 @@ func (s *Service) liveTarget(
 		result.Ready = false
 	}
 	return result, nil
+}
+
+// stageInputChecks reports each stage's pinned LoadScenario and the workload coverage
+// rule the controller applies when it freezes the inputs.
+func (s *Service) stageInputChecks(ctx context.Context, spec *api.EvaluationRunSpec) ([]EvaluationCheck, error) {
+	checks := make([]EvaluationCheck, 0, 2*len(spec.Stages)+1)
+	var config corev1.ConfigMap
+	err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: api.EvaluationConfigName}, &config)
+	configFound := err == nil
+	if apierrors.IsNotFound(err) {
+		checks = append(checks, EvaluationCheck{ID: "evaluationConfig", Reason: api.EvaluationConfigName + " not found"})
+	} else if err != nil {
+		return nil, err
+	}
+	for _, stage := range spec.Stages {
+		var load api.LoadScenario
+		err := s.reader.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: stage.LoadScenarioRef.Name}, &load)
+		if apierrors.IsNotFound(err) {
+			checks = append(checks, EvaluationCheck{ID: "loadScenario/" + stage.ID, Reason: "LoadScenario not found"})
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		checks = append(checks, EvaluationCheck{ID: "loadScenario/" + stage.ID,
+			Passed: load.UID == stage.LoadScenarioRef.UID, Reason: "LoadScenario UID must match"})
+		if configFound {
+			err := api.EvaluationWorkloadCoverage(load.Spec, spec.LoadGenerator.Shards, config.Data)
+			checks = append(checks, EvaluationCheck{ID: "coverage/" + stage.ID, Passed: err == nil, Reason: errorReason(err)})
+		}
+	}
+	return checks, nil
 }
 
 func (s *Service) settingsPatchChecks(spec *api.EvaluationRunSpec) ([]EvaluationCheck, error) {

@@ -161,10 +161,14 @@ func TestSchedulerTempoBlocksIdleRemovalAndEmptyPower(t *testing.T) {
 	s, snap, rows, _, _ := capacityR5Fixture()
 	s.Controls.Routing = false // Keep idle destinations unrouted while testing the cleanup gate.
 	s.ScaleDownStabilization = time.Minute
-	snap.ScaleDown = map[string]SchedulerDownState{"w1": {}}
+	snap.ScaleDown = map[string]SchedulerDownState{"w1": {Supply: 100}}
 	since := snap.At.Add(-time.Minute)
 	for k := 1; k < len(snap.Instances); k++ {
 		snap.Instances[k].UnroutedSince = &since
+		profile := *snap.Instances[k].Profile
+		profile.IdleBaselineWatts += 10 // positive H gain; this test isolates timing
+		snap.Instances[k].Profile = &profile
+		snap.Options[k].Instance.Profile = &profile
 	}
 	got := capacityDecideForTest(t, s, snap, rows)
 	if got.Target != nil && len(got.Target.Instances) < len(snap.Instances) {

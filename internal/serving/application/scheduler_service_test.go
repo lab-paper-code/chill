@@ -359,3 +359,29 @@ func TestSchedulerPowerUsesExistingEvidenceEnvelopeBeforeSourceReads(t *testing.
 		server.Close()
 	}
 }
+
+// Defect 23: evaluation preflight reads the accepted settings; it must not wait behind
+// refresh or Tick, which hold Lock for a whole capacity search.
+func TestAcceptedSettingsReadWhileServiceIsBusy(t *testing.T) {
+	service := &SchedulerService{}
+	if _, ok := service.AcceptedSettings(); ok {
+		t.Fatal("settings reported before any configuration was accepted")
+	}
+	accepted := &SchedulerConfiguration{Settings: serving.SchedulerSettings{ControlInterval: time.Minute}}
+	service.configuration.Store(accepted)
+	service.Lock.Lock()
+	defer service.Lock.Unlock()
+	done := make(chan serving.SchedulerSettings, 1)
+	go func() {
+		settings, _ := service.AcceptedSettings()
+		done <- settings
+	}()
+	select {
+	case settings := <-done:
+		if settings.ControlInterval != time.Minute {
+			t.Fatalf("settings differ from the accepted configuration: %+v", settings)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("settings read waited behind the owner refresh/control lock")
+	}
+}

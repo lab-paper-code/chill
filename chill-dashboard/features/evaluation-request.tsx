@@ -25,7 +25,7 @@ import { Screen } from "@/components/screen"
 type RunCondition = {type:string;status:string;reason?:string;message?:string;lastTransitionTime?:string}
 type RunProcedure = {step:string;startedAt:string|null;finishedAt:string|null;reason?:string;measurementVerdict?:string}
 type RunStage = EvaluationStageProgress & {name:string;uid:string;currentProcedure?:string;conditions:RunCondition[]|null;measurementVerdict?:string;procedures:RunProcedure[]|null;startedAt:string|null;finishedAt:string|null;goAt:string|null;provisionalD1?:Published|null}
-type Run = {name:string;uid:string;spec:EvaluationSpec;liveTarget?:EvaluationLiveTarget[]|null;phase:string;conditions?:RunCondition[];currentStage?:unknown;currentProcedure?:string;procedures?:RunProcedure[]|null;stages?:RunStage[]|null;startedAt?:string;finishedAt?:string;publicationID?:string}
+type Run = {name:string;uid:string;spec:EvaluationSpec;liveTarget?:EvaluationLiveTarget[]|null;phase:string;stopRequested?:{at:string;by:string};conditions?:RunCondition[];currentStage?:unknown;currentProcedure?:string;procedures?:RunProcedure[]|null;stages?:RunStage[]|null;startedAt?:string;finishedAt?:string;publicationID?:string}
 type Created = {name:string;uid:string}
 const encode=(value:unknown)=>stringifySchedulerJSON(value)
 const phases:Record<string,string>={Pending:"시작 전",Running:"실행 중",Finishing:"정리 중",Done:"종료",Blocked:"정리 실패"}
@@ -34,6 +34,10 @@ const conditionReasons:Record<string,string>={Returned:"반환 완료",IdentityM
 const arrivalLabels:Record<string,string>={poisson:"푸아송 분포",constant:"일정 간격",uniform:"균등 분포",trace:"기록 재생"}
 const procedureLabels:Record<string,string>={prepare:"준비",factor:"조건 적용",stage:"부하 실행",judge:"측정 판정","cleanup-jobs":"작업 정리",finish:"정리",publish:"게시"}
 const loadJobStatuses={Active:"진행 중",Succeeded:"완료",Failed:"실패"}
+
+function StopRequest({request}:{request:Run["stopRequested"]}) {
+  return <div className="h-12 text-xs leading-4" role={request?"status":undefined}>{request&&<><span className="block">중지 요청됨</span><span className="block truncate" title={request.by||"미기록"}>요청자 {request.by||"미기록"}</span><time className="block whitespace-nowrap" dateTime={request.at}>{formatMeasurementTime(request.at)} (KST)</time></>}</div>
+}
 
 function ProcedureTimeline({title,procedures,current,finished,publishing=false,now}:{title:string;procedures:RunProcedure[]|null|undefined;current?:string;finished:boolean;publishing?:boolean;now:number}) {
   return <div className="overflow-x-auto"><table className="w-full text-left text-sm tabular-nums"><caption className="py-2 text-left font-medium">{title}</caption><thead><tr>{["절차","시작 (KST)","종료 (KST)","소요","사유","측정 판정"].map(label=><th key={label} className="whitespace-nowrap p-2">{label}</th>)}</tr></thead><tbody>{procedures?.map((procedure,index)=>{
@@ -71,13 +75,8 @@ function runHref(run:Created,search?:URLSearchParams) {
 function Failure({error}:{error:ApiError|null}) {
   if(!error)return null
   const value=error.data as {code?:string;message?:string}|null
-  return <strong role="alert" className="text-sm text-destructive" title={value?.message??error.body}>{error.status===403?"권한 없음(실험 운영자)":error.unknownOutcome?"결과 미확인":value?.code??error.message}</strong>
+  return <strong role="alert" className="text-sm text-destructive" title={value?.message??error.body}>{error.status===403?value?.message||`권한 없음 · HTTP ${error.status}`:error.unknownOutcome?"결과 미확인":value?.code??error.message}</strong>
 }
-
-export function EvaluationPermission({denied=false}:{denied?:boolean}) {
-  return <dl aria-label="실험 작업 권한" className="flex flex-wrap gap-x-4 gap-y-1 text-xs"><div className="flex gap-2"><dt>필요 권한</dt><dd>평가 운영자</dd></div><div className="flex gap-2"><dt>현재 권한</dt><dd className={denied?"text-destructive":"text-muted-foreground"}>{denied?"권한 없음":"미확인"}</dd></div></dl>
-}
-
 
 function EvaluationTargets({targets,title}:{targets?:EvaluationLiveTarget[]|null;title:string}) {
   return <section aria-label={title} className="space-y-2"><h3 className="text-sm font-medium">{title}</h3>{targets==null?<span className="text-sm">미기록</span>:<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>구성요소</th><th>자원</th><th>관측 이미지 ID</th><th>준비</th></tr></thead><tbody>{targets.map((target,index)=><tr key={`${target.component}/${index}`} className="border-t"><th className="py-2 font-normal">{target.component}</th><td title={`${target.resource.apiVersion} · ${target.resource.namespace}`}>{target.resource.kind}/{target.resource.name}</td><td className="break-all">{target.liveImageIDs.length?target.liveImageIDs.join(", "):"미제공"}</td><td>{target.ready?"준비됨":"준비 대기"}</td></tr>)}{!targets.length&&<tr><td colSpan={4}>대상 없음</td></tr>}</tbody></table></div>}</section>
@@ -134,7 +133,6 @@ export function EvaluationSubmit({name,spec,disabled=false,existing,onSubmitted}
     <Failure error={pre.error}/><Failure error={send.error}/>
     {replacement&&<strong role="status">{replacement==="deleted"?"삭제됨·재생성 필요":replacement==="unchanged"?"미변경":replacement==="blocked"?"중지 후 다시 실행":"결과 미확인"}</strong>}
     {(unknown||created)&&<div role="status" className="flex flex-wrap items-center gap-3 text-sm"><strong>{created?existing?"수정 접수":"실행 접수":confirmed?"실행 확인":"결과 미확인"}</strong>{(created||confirmed)&&<Link className="underline" href={runHref(created??{name:lookup.data!.name,uid:lookup.data!.uid})}>실험 상태</Link>}{unknown&&<Button variant="outline" onClick={()=>void refresh()} disabled={lookup.isFetching}>다시 조회</Button>}</div>}
-    <EvaluationPermission denied={pre.error?.status===403||send.error?.status===403}/>
     <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled||busy||unknown||!!created} onClick={verify}>{pre.isPending?"점검 중":"사전 점검"}</Button><Button disabled={disabled||busy||!!created||!evaluationCanSubmit(answer,checkedBody,body,unknown)} onClick={()=>void submit()}>{send.isPending?"제출 중":replacement==="deleted"?"재생성 제출":existing?"수정 제출":"실험 시작"}</Button></div>
   </div>
 }
@@ -180,11 +178,11 @@ function RunActions({run,refresh}:{run:Run;refresh:()=>Promise<unknown>}) {
   const [stop,setStop]=React.useState(false),[unknown,setUnknown]=React.useState(false),send=useChillMutation()
   const actions=evaluationActions(run.phase)
   async function remove() {
-    if(!run.uid||send.isPending||unknown||send.isSuccess)return
+    if(!run.uid||run.stopRequested||send.isPending||unknown||send.isSuccess)return
     try {await evaluationOperation(()=>send.mutateAsync({path:`v1/evaluations/${encodeURIComponent(run.name)}?${new URLSearchParams({uid:run.uid})}`,method:"DELETE"}),refresh);await refresh()}
     catch(error){if(error instanceof ApiError&&(error.unknownOutcome||error.status===0))setUnknown(true)}
   }
-  return <div className="flex flex-wrap gap-2">{actions.edit&&<Button variant="outline" asChild><Link href={`/experiments/runs/${encodeURIComponent(run.name)}/edit?${new URLSearchParams({uid:run.uid})}`}>수정</Link></Button>}<EvaluationLaunch sourceName={run.name} label="다시 실행"/><Button variant="outline" onClick={()=>setStop(true)}>{actions.remove}</Button><Dialog open={stop} onOpenChange={setStop}><DialogContent aria-describedby={undefined}><DialogHeader><DialogTitle>{run.name} · {actions.remove} 확인</DialogTitle></DialogHeader><span className="break-all text-sm">UID {run.uid}</span><Failure error={send.error}/>{(unknown||send.isSuccess)&&<strong role="status">{unknown?"결과 미확인":`${actions.remove} 접수`}</strong>}<Button disabled={!run.uid||send.isPending||unknown||send.isSuccess} onClick={()=>void remove()}>확인</Button>{unknown&&<Button variant="outline" onClick={()=>void refresh()}>다시 조회</Button>}</DialogContent></Dialog></div>
+  return <div className="flex flex-wrap gap-2">{actions.edit&&<Button variant="outline" asChild><Link href={`/experiments/runs/${encodeURIComponent(run.name)}/edit?${new URLSearchParams({uid:run.uid})}`}>수정</Link></Button>}<EvaluationLaunch sourceName={run.name} label="다시 실행"/>{!run.stopRequested&&<><Button variant="outline" onClick={()=>setStop(true)}>{actions.remove}</Button><Dialog open={stop} onOpenChange={setStop}><DialogContent aria-describedby={undefined}><DialogHeader><DialogTitle>{run.name} · {actions.remove} 확인</DialogTitle></DialogHeader><span className="break-all text-sm">UID {run.uid}</span><Failure error={send.error}/>{unknown&&<strong role="status">결과 미확인</strong>}<Button disabled={!run.uid||send.isPending||unknown||send.isSuccess} onClick={()=>void remove()}>확인</Button>{unknown&&<Button variant="outline" onClick={()=>void refresh()}>다시 조회</Button>}</DialogContent></Dialog></>}</div>
 }
 
 export function EvaluationsPage() {
@@ -192,7 +190,7 @@ export function EvaluationsPage() {
   const rows=list.data?.items??[]
   return <Screen width="data" title="실험" actionPlacement="header" action={<div className="flex flex-wrap items-center gap-2"><nav aria-label="실험 목록 보기" className="flex gap-2"><Button variant="secondary" asChild><Link href="/experiments" aria-current="page">실행</Link></Button><Button variant="outline" asChild><Link href="/experiments?view=published&offset=0">게시 결과</Link></Button></nav><Button variant="outline" asChild><Link href="/experiments/load-scenarios">부하 설정</Link></Button><EvaluationLaunch/></div>}>
     <QueryGate query={list}><section className="min-w-0 overflow-x-auto" aria-label="실험 실행 목록"><table className="w-full text-left text-sm max-md:[&>thead]:sr-only max-md:[&>tbody>tr]:grid max-md:[&>tbody>tr>td]:flex max-md:[&>tbody>tr>td]:justify-between max-md:[&>tbody>tr>td]:gap-3 max-md:[&>tbody>tr>td]:before:content-[attr(data-label)]"><thead><tr>{["이름","실행 상태","단계","시작 (KST)","종료 (KST)","풀 상태","결과"].map(label=><th key={label} className="p-2">{label}</th>)}</tr></thead><tbody>{rows.map(run=><tr key={run.uid} className="border-t">
-      <th scope="row" className="break-all p-2 font-normal"><Link className="inline-flex min-h-11 items-center underline" href={runHref(run)}>{run.name}</Link></th><td data-label="실행 상태">{phases[run.phase]??"미확인"}</td><td data-label="단계">{typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"}</td><td data-label="시작 (KST)">{run.startedAt?formatMeasurementTime(run.startedAt):"미기록"}</td><td data-label="종료 (KST)">{run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"}</td><td data-label="풀 상태">{run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="True"?"점유 중":run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="False"?"반환 관측":"미확인"}</td><td data-label="결과">{run.publicationID?<Link className="inline-flex min-h-11 items-center underline" href={`/experiments/results?${new URLSearchParams({a:run.publicationID})}`}>게시 결과</Link>:"미게시"}</td>
+      <th scope="row" className="break-all p-2 font-normal"><Link className="inline-flex min-h-11 items-center underline" href={runHref(run)}>{run.name}</Link></th><td data-label="실행 상태"><div>{phases[run.phase]??"미확인"}<StopRequest request={run.stopRequested}/></div></td><td data-label="단계">{typeof run.currentStage==="string"||typeof run.currentStage==="number"?String(run.currentStage):"미기록"}</td><td data-label="시작 (KST)">{run.startedAt?formatMeasurementTime(run.startedAt):"미기록"}</td><td data-label="종료 (KST)">{run.finishedAt?formatMeasurementTime(run.finishedAt):"미기록"}</td><td data-label="풀 상태">{run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="True"?"점유 중":run.conditions?.find(c=>c.type==="PoolAcquired")?.status==="False"?"반환 관측":"미확인"}</td><td data-label="결과">{run.publicationID?<Link className="inline-flex min-h-11 items-center underline" href={`/experiments/results?${new URLSearchParams({a:run.publicationID})}`}>게시 결과</Link>:"미게시"}</td>
     </tr>)}{!rows.length&&<tr><td colSpan={7}>항목 없음</td></tr>}</tbody></table></section></QueryGate>
   </Screen>
 }
@@ -256,6 +254,7 @@ export function EvaluationRunPage({name}:{name:string}) {
           <h2 className={`text-lg font-semibold ${verdict==="FAIL"?"text-destructive":""}`}>{phases[run.phase]??"미확인"} · {resultLabel}{failedServices.length>0&&` · 실패 서비스 ${failedServices.join(", ")}`}</h2>
           <div className="flex items-center gap-2">{run.publicationID?<Button variant="outline" asChild><Link href={`/experiments/results?${resultParams}`}>결과 보기</Link></Button>:<span className="text-sm text-muted-foreground">게시 후 결과 제공</span>}<TooltipProvider><Tooltip open={help} onOpenChange={setHelp}><TooltipTrigger asChild><Button variant="ghost" className="min-h-11" onClick={()=>setHelp(value=>!value)}>도움말</Button></TooltipTrigger><TooltipContent className="max-w-sm">등록 질문은 작성자의 설명이며 부하 표가 실제 참조 계획입니다. 실행 단계와 부하 구간은 다릅니다. 조건은 각 항목의 최신 상태로 전체 이력이 아니며 시각은 마지막 변경입니다. 풀 반환 시각으로 확보 시각을 알 수 없습니다. 구간 경계는 서버가 기록한 시각이며 빠진 경계를 추정하지 않습니다. flush·수집 중에는 주기 신호가 없을 수 있고 신호 없는 경과만으로 멈춤을 판단할 수 없습니다. 구간 기록이 없는 구 서버의 진행률·남은 시간은 GO 기준 계획값이며 판정·정리 시간은 포함하지 않습니다. 실행 중 요청 집계는 잠정이며 결과 대기 요청은 이후 성공으로 바뀔 수 있습니다. 최종 판정은 요청 배출 후 게시됩니다. 중지 접수와 풀 반환은 별개이며 결과 미확인 작업은 다시 보내지 않고 조회합니다.</TooltipContent></Tooltip></TooltipProvider></div>
         </div>
+        <StopRequest request={run.stopRequested}/>
         <p className="break-words text-sm"><span className="text-muted-foreground">등록 질문 </span>{definitionNotice??(typeof planSpec?.question==="string"?planSpec.question:"미기록")}</p>
         <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm tabular-nums"><strong>워크로드 {completePlan?`${workloads.length}개`:stagesNotice??loadNotice??"미기록"}</strong><span>실행 단계 {stagesNotice??`${stages.length}개`}</span><span>부하 구간 {completePlan?`${parts.length}개`:stagesNotice??loadNotice??"미기록"}</span><span>부하 계획 {plannedSeconds===null?stagesNotice??loadNotice??"미기록":`${plannedSeconds.toLocaleString("ko-KR")}초`}</span><span>{finished?"전체 실행":"실행 경과"} {elapsed!==null&&Number.isFinite(elapsed)?`${elapsed.toLocaleString("ko-KR")}초`:"미기록"}</span></p>
         {!run.finishedAt&&run.phase!=="Done"&&<EvaluationActiveDetails key={run.uid} active={active} name={name} uid={uid||run.uid} now={now} stageProgress={activeStageProgress} parentRun={run} procedures={run.procedures}/>}

@@ -28,6 +28,11 @@ func TestDefectEIdleKeepRetainsUnavailablePhysicalTarget(t *testing.T) {
 			since := snap.At.Add(-s.ObservationWindow)
 			for k := 1; k < len(snap.Instances); k++ {
 				snap.Instances[k].UnroutedSince = &since
+				// Cleanup must repay its measured removal over H.
+				profile := *snap.Instances[k].Profile
+				profile.IdleBaselineWatts += 10
+				snap.Instances[k].Profile = &profile
+				snap.Options[k].Instance.Profile = &profile
 			}
 			bad := &snap.Instances[2]
 			bad.PodUID, bad.OwnerWorkloadUID = "opi-pod", "w1"

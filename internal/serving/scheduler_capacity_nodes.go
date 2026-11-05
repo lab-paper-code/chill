@@ -47,6 +47,8 @@ type capacityPlan struct {
 	// replaces marks a plan that changes the batch policy of a current instance,
 	// or removes one while adding another.
 	replaces bool
+	// retires removes occupancy without preparing replacement capacity.
+	retires bool
 }
 
 // held reports an instance prepared under Overload still inside its hold.
@@ -54,10 +56,37 @@ func (p *capacityPlanner) held(i SchedulerInstance) bool {
 	return !i.Terminated && i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
 }
 
-// idle reports an instance unrouted for at least one observation window once
-// a whole window is observed.
-func (p *capacityPlanner) idle(i SchedulerInstance) bool {
-	return !p.partial && i.UnroutedSince != nil && p.snapshot.At.Sub(*i.UnroutedSince) >= p.settings.ObservationWindow && !p.held(i)
+// resolveCapacity freezes all option/workload and current-instance results for
+// this planner, including missing and rejected rows, before any sweep workers.
+func (p *capacityPlanner) resolveCapacity() {
+	p.optionCapacity = make(map[int][]capacityChoice, len(p.options))
+	for option, o := range p.options {
+		choices := make([]capacityChoice, len(p.ws))
+		for w := range p.ws {
+			c := capacityChoice{option: o, w: w}
+			c.kappa, c.row, c.reason = p.kappa(o, w)
+			choices[w] = c
+		}
+		p.optionCapacity[option] = choices
+	}
+	p.currentCapacity = make(map[capacityInstanceKey]capacityItem)
+	resolve := func(instance SchedulerInstance) {
+		key := currentCapacityKey(instance)
+		if _, ok := p.currentCapacity[key]; !ok {
+			k, row := p.resolveCurrentKappa(instance)
+			p.currentCapacity[key] = capacityItem{kappa: k, row: row}
+		}
+	}
+	for _, o := range p.options {
+		for _, w := range p.ws {
+			instance := o.Instance
+			instance.WorkloadUID = w.d.UID
+			resolve(instance)
+		}
+	}
+	for _, instance := range p.snapshot.Instances {
+		resolve(instance)
+	}
 }
 
 // kappa looks up the row of option variant o for Workload w.
@@ -112,7 +141,8 @@ func (p *capacityPlanner) build() error {
 		}
 		p.examined += len(p.plans[n])
 	}
-	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
+	keep := p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1)
+	p.keepWatts, p.keepFeasible = keep.joules, keep.feasible
 	return nil
 }
 
@@ -213,7 +243,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 		reason = schedulerPlanFixedWorkload
 	}
 	groups, names := map[string][]capacityChoice{}, []string{}
-	for _, o := range p.options {
+	for option, o := range p.options {
 		i := o.Instance
 		if i.Node != node.Node || i.Profile == nil || i.Profile.Condition.NodeUID != node.Node.UID {
 			continue
@@ -225,8 +255,7 @@ func (p *capacityPlanner) nodePlans(n int, common []SchedulerNode) []*capacityPl
 			if !slices.Contains(o.CompatibleUIDs, p.ws[w].d.UID) || !schedulerProfileMatches(p.ws[w].d, i.Profile) || !p.controlAllows(w, i, current) {
 				continue
 			}
-			c := capacityChoice{option: o, w: w}
-			c.kappa, c.row, c.reason = p.kappa(o, w)
+			c := p.optionCapacity[option][w]
 			name := fmt.Sprint(i.Profile.ID, i.Allocation, i.MaxWait)
 			if groups[name] == nil {
 				names = append(names, name)
@@ -354,6 +383,9 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	plan.record.Key = planKey(plan.instances)
 	removed := slices.ContainsFunc(current, func(old SchedulerInstance) bool { return !used[old.ID] })
 	plan.replaces = removed && added
+	plan.retires = !added && slices.ContainsFunc(current, func(old SchedulerInstance) bool {
+		return !old.Terminated && !used[old.ID]
+	})
 	for _, batch := range changed {
 		plan.replaces = plan.replaces || batch
 	}
@@ -472,9 +504,28 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	return plan
 }
 
-// currentKappa reads the row of a current instance through the option variant
-// with its profile and batch limit; without one the instance counts no capacity.
+// Only these instance fields affect current-instance variant resolution.
+type capacityInstanceKey struct {
+	profile    *Profile
+	node       NodeReference
+	workload   string
+	maxBatch   int
+	terminated bool
+}
+
+func currentCapacityKey(i SchedulerInstance) capacityInstanceKey {
+	return capacityInstanceKey{i.Profile, i.Node, i.WorkloadUID, i.MaxBatch, i.Terminated}
+}
+
+// currentKappa reads the tick's resolved capacity, including unresolved instances.
 func (p *capacityPlanner) currentKappa(i SchedulerInstance) (float64, string) {
+	item := p.currentCapacity[currentCapacityKey(i)]
+	return item.kappa, item.row
+}
+
+// resolveCurrentKappa reads the row through the current profile and batch
+// variant; without one the instance counts no capacity.
+func (p *capacityPlanner) resolveCurrentKappa(i SchedulerInstance) (float64, string) {
 	w, ok := p.index[i.WorkloadUID]
 	if i.Terminated || i.Profile == nil || !ok {
 		return 0, ""

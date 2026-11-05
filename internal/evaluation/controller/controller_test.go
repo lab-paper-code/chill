@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -67,7 +68,7 @@ func fixtureRun(name string) *api.EvaluationRun {
 	}
 }
 func fixtureConfig() *corev1.ConfigMap {
-	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: "system", UID: "config-uid"}, Data: map[string]string{"actionServiceAccount": "action", "publishServiceAccount": "publish", "caSecret": "ca", "evidenceCredentialsSecret": "credentials", "evidenceEndpoint": "http://store", "evidenceBucket": "bucket", "evidenceRegion": "region", "storageClass": "rwx", "workspaceSize": "400Gi", "chillAPIURL": "https://chill", "jobActiveDeadlineSeconds": "3600", "injectionWindowSeconds": "5", "injectionSnapshotTTLSeconds": "15"}}
+	return &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: api.EvaluationConfigName, Namespace: "system", UID: "config-uid"}, Data: map[string]string{"actionServiceAccount": "action", "publishServiceAccount": "publish", "caSecret": "ca", "evidenceCredentialsSecret": "credentials", "evidenceEndpoint": "http://store", "evidenceBucket": "bucket", "evidenceRegion": "region", "storageClass": "rwx", "workspaceSize": "400Gi", "chillAPIURL": "https://chill", "jobActiveDeadlineSeconds": "3600", "injectionWindowSeconds": "5", "injectionSnapshotTTLSeconds": "15", "operational": `{"workloads":{"w":{}}}`}}
 }
 func fixtureRuntime(t *testing.T, objects ...client.Object) (Runtime, memoryStore) {
 	t.Helper()
@@ -81,7 +82,8 @@ func fixtureRuntime(t *testing.T, objects ...client.Object) (Runtime, memoryStor
 	if e := batchv1.AddToScheme(scheme); e != nil {
 		t.Fatal(e)
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&api.EvaluationRun{}, &api.EvaluationStage{}).WithObjects(objects...).Build()
+	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "system", UID: "load-uid"}, Spec: api.LoadScenarioSpec{Workloads: []api.EvaluationWorkloadReference{{Name: "w"}}}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&api.EvaluationRun{}, &api.EvaluationStage{}).WithObjects(append(objects, load)...).Build()
 	store := memoryStore{}
 	return Runtime{Client: c, APIReader: c, Scheme: scheme, Now: func() time.Time { return fixtureTime }, Store: func(context.Context, string, string, map[string]string) (ObjectStore, error) { return store, nil }}, store
 }
@@ -149,6 +151,41 @@ func TestPoolExclusionAndFrozenConfig(t *testing.T) {
 	}
 	if second.Status.StartedAt != nil || second.Status.OccupyingRunUID != first.UID {
 		t.Fatal("return-unconfirmed run must retain occupancy")
+	}
+}
+
+// Defect 21: workload coverage is decided once, when the controller freezes the inputs,
+// so a mismatched run ends before it takes the pool instead of failing after prepare.
+func TestAcquireRejectsWorkloadCoverageMismatch(t *testing.T) {
+	for _, fault := range []string{"extra-shard", "operational-missing"} {
+		t.Run(fault, func(t *testing.T) {
+			ctx := context.Background()
+			run, cm := fixtureRun("mismatch"), fixtureConfig()
+			if fault == "extra-shard" {
+				run.Spec.LoadGenerator.Shards["other"] = 1
+			} else {
+				cm.Data["operational"] = `{"workloads":{}}`
+			}
+			r, _ := fixtureRuntime(t, run, cm)
+			if _, err := (&RunReconciler{Runtime: r}).acquire(ctx, run); err != nil {
+				t.Fatal(err)
+			}
+			saved := &api.EvaluationRun{}
+			if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(run), saved); err != nil {
+				t.Fatal(err)
+			}
+			execution := meta.FindStatusCondition(saved.Status.Conditions, api.EvaluationConditionExecutionComplete)
+			if saved.Status.StartedAt != nil || saved.Status.FinishedAt == nil || occupied(saved) ||
+				execution == nil || execution.Status != metav1.ConditionFalse || execution.Reason != api.EvaluationReasonFrozenInputInvalid {
+				t.Fatalf("coverage mismatch must end the run before acquisition: %+v", saved.Status)
+			}
+			if _, err := (&RunReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(run), saved); err != nil || controllerutil.ContainsFinalizer(saved, api.EvaluationRunFinalizer) {
+				t.Fatalf("a run rejected before acquisition must not block its own deletion: err=%v finalizers=%v", err, saved.Finalizers)
+			}
+		})
 	}
 }
 func TestChildCreationResponseLossAdoption(t *testing.T) {
@@ -455,6 +492,64 @@ func TestExecutionLostReleasesPoolOnlyAfterObservedCleanup(t *testing.T) {
 				if parent.Status.ResidualStateRef == nil || !bytes.Contains(store[parent.Status.ResidualStateRef.Key], []byte("remaining-producer")) {
 					t.Fatal("retained pool must expose observed residual evidence")
 				}
+			}
+		})
+	}
+}
+
+// Defect 22: a stopped (deleted) run that finished cleanup must still attempt publication
+// and record its outcome before the finalizer lets the object go.
+func TestStoppedRunPublishesBeforeFinalizerRemoval(t *testing.T) {
+	for _, published := range []bool{true, false} {
+		t.Run(map[bool]string{true: "published", false: "publication-failed"}[published], func(t *testing.T) {
+			ctx := context.Background()
+			parent := fixtureRun("stopped")
+			startRun(parent)
+			deleted := metav1.NewTime(fixtureTime)
+			parent.DeletionTimestamp = &deleted
+			parent.Status.FinishedAt = &deleted
+			parent.Status.Procedures = []api.EvaluationProcedure{{Step: api.EvaluationStepFinish, FinishedAt: &deleted}}
+			condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionFalse, "Returned", "")
+			condition(&parent.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, api.EvaluationReasonProcedureFailed, "")
+			condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionTrue, complete, "")
+			r, store := fixtureRuntime(t, parent)
+			controller := RunReconciler{Runtime: r}
+			key := client.ObjectKeyFromObject(parent)
+			reconcile := func() *api.EvaluationRun {
+				t.Helper()
+				if _, err := controller.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+					t.Fatal(err)
+				}
+				saved := &api.EvaluationRun{}
+				if err := r.APIReader.Get(ctx, key, saved); apierrors.IsNotFound(err) {
+					return nil
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				return saved
+			}
+			saved := reconcile()
+			if saved == nil {
+				t.Fatal("stopped run released its finalizer before attempting publication")
+			}
+			if publish := findProcedure(saved.Status.Procedures, api.EvaluationStepPublish); publish == nil || publish.JobRef == nil {
+				t.Fatalf("stopped run did not start publication: %+v", saved.Status.Procedures)
+			}
+			execution := map[string]string{"status": complete}
+			result := map[string]any{"schemaVersion": "evaluation-step.v1alpha1", "runUID": parent.UID, "step": api.EvaluationStepPublish,
+				"execution": execution, "startedAt": fixtureTime, "finishedAt": fixtureTime}
+			if published {
+				result["outputs"] = map[string]any{"summary": api.EvaluationEvidenceReference{Store: parent.Spec.EvidenceStore, Key: "summary", Size: 1}}
+			} else {
+				execution["status"], execution["reason"] = failed, api.EvaluationReasonPublicationFailed
+			}
+			store.put(evidenceKey(parent.UID, "run/publish/result.json"), result)
+			saved = reconcile()
+			if saved == nil || isTrue(saved.Status.Conditions, api.EvaluationConditionPublished) != published || !terminal(saved.Status.Conditions, api.EvaluationConditionPublished) {
+				t.Fatalf("publication outcome must be recorded before release: %+v", saved)
+			}
+			if reconcile() != nil {
+				t.Fatal("recorded publication attempt must release the stopped run")
 			}
 		})
 	}

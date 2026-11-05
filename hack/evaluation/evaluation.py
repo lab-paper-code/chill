@@ -119,6 +119,13 @@ class Harness:
         last = [0]
         def monitor(instance, offset, folder):
             if time.monotonic() - last[0] >= 30:
+                # Deleting the parent Run is the operator's stop: raising here takes the
+                # conductor's STOP path, which deletes this stage's generator Jobs.
+                parent = input_snapshot.kubectl(self.execution['namespace'], 'get', 'evaluationrun', self.execution['runName'])
+                if parent['metadata']['uid'] != self.execution['runUID']:
+                    raise RuntimeError('IdentityMismatch: EvaluationRun UID')
+                if parent['metadata'].get('deletionTimestamp'):
+                    raise RuntimeError('Stopped: EvaluationRun deletion requested')
                 targets = input_snapshot.check_target(self, self.spec['target'])
                 path = folder / 'target-observations.json'
                 history = input_snapshot.load(path) if path.exists() else []

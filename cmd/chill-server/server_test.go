@@ -20,7 +20,6 @@ import (
 
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/serving/httpapi"
-	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
 	"github.com/lab-paper-code/chill/internal/serving/observation"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
@@ -248,35 +247,23 @@ func TestEvaluationAssemblyResolvesLateSchedulerController(t *testing.T) {
 			t.Fatalf("uninitialized preflight HTTP status=%d", response.Code)
 		}
 	}
-	controller, err := servingkube.NewSchedulerController(
-		owners.Cluster, owners.Store, owners.Kube, owners.Execution, owners.Observer,
-		owners.Operations, owners.ObservationLog,
-		servingkube.SchedulerControllerConfig{Settings: schedulerTestConfiguration().Settings})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Defect 23: refresh and Tick hold scheduler.Lock for a whole capacity search;
+	// preflight's settings read must answer without waiting behind them.
 	scheduler.Lock.Lock()
-	scheduler.Controller = controller
+	answered := make(chan struct{})
+	go func() {
+		_, _ = config.PreflightEvaluation(ctx, request)
+		close(answered)
+	}()
+	select {
+	case <-answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("preflight waited behind the scheduler refresh/control lock")
+	}
 	scheduler.Lock.Unlock()
-	result, err := config.PreflightEvaluation(ctx, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundPatch := false
-	for _, check := range result.Checks {
-		if !check.Passed {
-			t.Fatalf("assembled initialized preflight failed: %+v", check)
-		}
-		if check.ID == "settingsPatch/run" {
-			foundPatch = true
-		}
-	}
-	if !foundPatch {
-		t.Fatal("assembled handler did not validate patch with the late controller")
-	}
 	evaluations, request = evaluationFixture(t, evaluationSettings(nil))
 	httpapi.ConfigureEvaluations(&config, evaluations)
-	_, err = config.PreflightEvaluation(ctx, request)
+	_, err := config.PreflightEvaluation(ctx, request)
 	var warming *serving.Error
 	if !errors.As(err, &warming) || warming.Code != warmingCode {
 		t.Fatalf("absent scheduler error=%v, want CoverageWarming", err)

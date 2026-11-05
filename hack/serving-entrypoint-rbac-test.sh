@@ -109,6 +109,7 @@ if config:
         ("chill-system", "", "services", "get", ()),
         ("chill-system", "", "services", "list", ()),
         ("chill-system", "edge.dacs.io", "loadscenarios", "get", ()),
+        ("chill-system", "edge.dacs.io", "evaluationruns", "get", ()),
         ("chill-system", "edge.dacs.io", "evaluationstages/status", "get", ()),
         ("chill-system", "edge.dacs.io", "evaluationstages/status", "patch", ()),
         ("chill-system", "apps", "deployments", "get", ()),

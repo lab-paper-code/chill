@@ -15,16 +15,47 @@ import * as labels from "./labels.ts"
 
 const scenario={name:"unrelated-load",uid:"load-uid",spec:{workloads:[{name:"camera"},{name:"sensor"}],arrivalDistribution:{camera:"poisson",sensor:"constant"},parts:[{id:"gentle",durationSeconds:120,rates:{camera:4.25,sensor:0}},{id:"peak",durationSeconds:180,rates:{camera:8.5}}]}}
 const baseRun={name:"arbitrary-run",uid:"selected",phase:"Done",currentStage:"trial",startedAt:"2026-11-03T00:00:00Z",finishedAt:"2026-11-03T00:06:00Z",spec:{question:"A separately registered question",stages:[{id:"trial",loadScenarioRef:{name:scenario.name,uid:scenario.uid}}]},conditions:[{type:"PoolAcquired",status:"False",reason:"Returned",lastTransitionTime:"2026-11-03T00:06:00Z"},{type:"ExecutionComplete",status:"True",reason:"Complete"},{type:"MeasurementPassed",status:"False",reason:"SLOFailed"},{type:"CleanupComplete",status:"True",reason:"ProcedureComplete"},{type:"Published",status:"True",reason:"Complete"}]}
-function renderRun(run:Record<string,unknown>,publication?:Record<string,unknown>,loads=[scenario],entries:active.ActiveEvaluation[]=[],queries:Record<string,Record<string,unknown>>={}) {
+function renderRun(run:Record<string,unknown>,publication?:Record<string,unknown>,loads=[scenario],entries:active.ActiveEvaluation[]=[],queries:Record<string,Record<string,unknown>>={},showActions=false,list=false) {
   const clock={...React,useState:(initial:unknown)=>React.useState(initial===0?Date.parse("2026-11-03T00:02:30Z"):initial)}
   const query=(path:string)=>queries[path]??{data:path==="v1/evaluations/active"?{items:entries}:path.startsWith("v1/experiments/")?publication:path==="v1/evaluations/load-scenarios"?{items:loads}:run}
-  const modules={react:clock,"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams("uid=selected"),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({})},"@/lib/client":{useChillQuery:query},"@/lib/evaluation-request":request,"@/lib/evaluation-author":author,"@/lib/evaluation-active":active,"@/lib/scheduler-settings":settings,"@/lib/labels":labels,"@/lib/scheduler":scheduler,"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements,"@/components/screen":{Screen:({children}:{children:React.ReactNode})=>React.createElement("main",null,children)},"@/components/read-region":{QueryGate:"div",SourceJSON:"pre"},"@/components/ui/button":{Button:"button"},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"span",TooltipContent:"aside"}}
+  const modules={react:clock,"next/link":{default:"a"},"next/navigation":{useSearchParams:()=>new URLSearchParams("uid=selected"),useRouter:()=>({replace:()=>{}})},"@tanstack/react-query":{useQueryClient:()=>({})},"@/lib/client":{useChillQuery:query,useChillMutation:()=>({})},"@/lib/evaluation-request":request,"@/lib/evaluation-author":author,"@/lib/evaluation-active":active,"@/lib/scheduler-settings":settings,"@/lib/labels":labels,"@/lib/scheduler":scheduler,"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements,"@/components/screen":{Screen:({children,action}:{children:React.ReactNode;action?:React.ReactNode})=>React.createElement("main",null,showActions?action:null,children)},"@/components/read-region":{QueryGate:"div",SourceJSON:"pre"},"@/components/ui/button":{Button:"button"},"@/components/ui/dialog":{Dialog:()=>null,DialogContent:"div",DialogHeader:"div",DialogTitle:"h2"},"@/components/ui/tooltip":{TooltipProvider:"div",Tooltip:"div",TooltipTrigger:"span",TooltipContent:"aside"}}
   Object.assign(modules,{"@/features/experiments-conclusion":load("../features/experiments-conclusion.tsx",{"@/lib/client":{},"@/lib/experiments":experiments,"@/lib/experiment-comparison":comparison,"@/lib/measurements":measurements})})
   Object.assign(modules,{"@/features/evaluation-active":load("../features/evaluation-active.tsx",{"@/lib/evaluation-active":active})})
-  const {EvaluationRunPage}=load("../features/evaluation-request.tsx",modules)
-  return renderToStaticMarkup(React.createElement(EvaluationRunPage as React.ComponentType<{name:string}>,{name:"arbitrary-run"}))
+  const {EvaluationRunPage,EvaluationsPage}=load("../features/evaluation-request.tsx",modules)
+  return renderToStaticMarkup(list?React.createElement(EvaluationsPage as React.ComponentType):React.createElement(EvaluationRunPage as React.ComponentType<{name:string}>,{name:"arbitrary-run"}))
 }
 const text=(html:string)=>html.replace(/<[^>]+>/g,"")
+
+test("server stop requests render requester and KST time while preventing another stop",()=>{
+  const run={...baseRun,phase:"Running",finishedAt:undefined}
+  const at="2026-11-03T00:03:21Z"
+  for(const by of ["operator@example.org",""]) {
+    const html=renderRun({...run,stopRequested:{at,by}},undefined,[scenario],[],{},true),screen=text(html)
+    assert.match(screen,/중지.*요청/)
+    assert.ok(screen.includes(by||"미기록"))
+    assert.ok(screen.includes(measurements.formatMeasurementTime(at)))
+    assert.doesNotMatch(html,/<button[^>]*>중지<\/button>/)
+    assert.match(screen,/실행 중/)
+  }
+  const html=renderRun(run,undefined,[scenario],[],{},true)
+  assert.match(html,/<button[^>]*>중지<\/button>/)
+  assert.doesNotMatch(text(html),/중지.*요청됨/)
+})
+
+test("run list preserves server stop request evidence without changing phase",()=>{
+  const run={...baseRun,phase:"Running",finishedAt:undefined}
+  for(const stopRequested of [{at:"2026-11-03T00:03:21Z",by:"list-operator"},{at:"2026-11-03T00:03:21Z",by:""},undefined]) {
+    const item=scheduler.parseSchedulerJSON(JSON.stringify({...run,stopRequested}))
+    const html=renderRun(run,undefined,[scenario],[],{"v1/evaluations":{data:{items:[item]}}},false,true)
+    const cell=html.match(/<td data-label="실행 상태">([\s\S]*?)<\/td>/)?.[1]??""
+    assert.match(text(cell),/실행 중/)
+    if(stopRequested) {
+      assert.match(text(cell),/중지.*요청/)
+      assert.ok(text(cell).includes(stopRequested.by||"미기록"))
+      assert.ok(text(cell).includes(measurements.formatMeasurementTime(stopRequested.at)))
+    } else assert.doesNotMatch(text(cell),/중지.*요청/)
+  }
+})
 
 test("run detail describes referenced load without interpreting the run name or treating a missing rate as zero",()=>{
   const html=renderRun(baseRun),screen=text(html)

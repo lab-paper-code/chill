@@ -355,6 +355,16 @@ func (o *SchedulerService) profilerFacts(
 	return policies, cm.ResourceVersion, nil
 }
 
+// AcceptedSettings returns the settings of the configuration refresh last accepted,
+// without waiting behind refresh or Tick; false before the first acceptance.
+func (o *SchedulerService) AcceptedSettings() (serving.SchedulerSettings, bool) {
+	config := o.configuration.Load()
+	if config == nil {
+		return serving.SchedulerSettings{}, false
+	}
+	return config.Settings, true
+}
+
 // schedulerMeters projects only the complete configuration accepted by refresh.
 func (o *SchedulerService) SchedulerMeters() []servingops.MeterDeclaration {
 	config := o.configuration.Load()

@@ -152,7 +152,8 @@ func (a *Authorizer) review(ctx context.Context, token, verb, path string) (Prin
 		return Principal{}, ErrAuthorizationUnavailable
 	}
 	if !access.Status.Allowed || access.Status.Denied {
-		return Principal{}, ErrForbidden
+		// Name only the permission reviewed, never the token or the caller's identity.
+		return Principal{}, fmt.Errorf("%w: requires %s on /chill%s", ErrForbidden, verb, path)
 	}
 	return Principal{username: review.Status.User.Username, uid: review.Status.User.UID, identity: review.Status.User.DeepCopy()}, nil
 }
@@ -191,7 +192,14 @@ func (a *Authorizer) AuthorizeResource(ctx context.Context, principal Principal,
 		return ErrAuthorizationUnavailable
 	}
 	if !access.Status.Allowed || access.Status.Denied {
-		return ErrForbidden
+		target := resource.Resource
+		if resource.Group != "" {
+			target += "." + resource.Group
+		}
+		if resource.Name != "" {
+			target += "/" + resource.Name
+		}
+		return fmt.Errorf("%w: requires %s on %s in namespace %s", ErrForbidden, resource.Verb, target, resource.Namespace)
 	}
 	return nil
 }

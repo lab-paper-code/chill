@@ -16,11 +16,10 @@ import { parseSchedulerJSON } from "@/lib/scheduler"
 import { evaluationPreflight, evaluationSameSpec, type EvaluationPreflight } from "@/lib/evaluation-request"
 import { object, records, patchSpec, specJSON, copyAuthorDraft, workloadChanges, adoptWorkloads, canDeleteLoad, canCreateLoad, renameLoadWorkload, removeLoadWorkload, evaluationReplacement, type LoadScenario, type Spec } from "@/lib/evaluation-author"
 import { AuthorSelect, AuthorField, AuthorJSON, AuthorHelp, EvidencePicker, useUnsavedAuthor } from "@/components/evaluation-author-fields"
-import { EvaluationPermission } from "@/features/evaluation-request"
 
 const base="v1/evaluations/load-scenarios"
 const endpoint=(item:{name:string;uid:string})=>`${base}/${encodeURIComponent(item.name)}?${new URLSearchParams({uid:item.uid})}`
-const failure=(error:unknown)=>error instanceof ApiError?error.unknownOutcome?"결과 미확인":error.status===403?"권한 없음(실험 운영자)":`${error.message} · ${error.body}`:error instanceof Error?error.message:"요청 실패"
+const failure=(error:unknown)=>error instanceof ApiError?error.status===403?(error.data as {message?:string}|null)?.message||`권한 없음 · HTTP ${error.status}`:error.unknownOutcome?"결과 미확인":`${error.message} · ${error.body}`:error instanceof Error?error.message:"요청 실패"
 function PartsPreview({spec}:{spec:Spec}) {
   const parts=records(spec.parts),workloads=records(spec.workloads),total=parts.reduce((sum,part)=>sum+(typeof part.durationSeconds==="number"&&part.durationSeconds>0?part.durationSeconds:0),0)
   if(parts.length&&workloads.length&&parts.every(part=>workloads.every(workload=>object(part.rates)[String(workload.name)]===0)))return <div className="min-w-0 overflow-x-auto"><table aria-label="무부하 구간" className="w-full text-left text-sm tabular-nums"><thead><tr><th>구간</th><th>길이 (s)</th><th>발행 요청률 (요청/s)</th></tr></thead><tbody>{parts.map((part,index)=><tr key={index} className="border-t"><th className="break-all py-2 font-normal">{String(part.id)}</th><td>{String(part.durationSeconds??"미기록")}</td><td>0</td></tr>)}</tbody></table></div>
@@ -106,7 +105,6 @@ export function LoadEditor({source,editing,onSaved,onConfirmed}:{source?:LoadSce
     <fieldset className="min-w-0" disabled={unknown||mutation.isPending}><LoadSpecEditor spec={spec} onChange={setSpec} onValidityChange={setValid}/></fieldset>
     {changes.length>0&&<div className="grid gap-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>반영</th><th>Workload</th><th>정의 UID</th><th>현재 UID</th><th>정의 세대</th><th>현재 세대</th></tr></thead><tbody>{changes.map(change=><tr key={change.name}><td><input type="checkbox" aria-label={`${change.name} 현재 식별자 반영`} checked={selected.includes(change.name)} onChange={event=>setSelected(event.target.checked?[...selected,change.name]:selected.filter(x=>x!==change.name))}/></td><th>{change.name}</th><td>{String(change.before.uid)}</td><td>{String(change.after.uid)}</td><td>{String(change.before.generation)}</td><td>{String(change.after.generation)}</td></tr>)}</tbody></table><Button type="button" variant="outline" disabled={!selected.length} onClick={()=>{setSpec(adoptWorkloads(spec,changes,selected));setAnswer(null);setLive(null);setSelected([])}}>선택한 현재 식별자 반영</Button></div>}
     {answer&&<table className="w-full text-left text-sm"><thead><tr><th>검사</th><th>상태</th><th>사유</th></tr></thead><tbody>{answer.checks.map(check=><tr key={check.id}><th>{check.id}</th><td>{check.passed?"통과":"실패"}</td><td>{check.reason??"미기록"}</td></tr>)}</tbody></table>}
-    <EvaluationPermission denied={mutation.error?.status===403}/>
     {message&&<output className="break-all text-sm" role="status">{message}</output>}<div className="flex flex-wrap gap-2"><Button type="button" variant="outline" disabled={blocked||unknown} onClick={()=>void preflight()}>사전점검</Button><Button type="button" disabled={blocked||!canCreateLoad(answer,checked,body,unknown)} onClick={()=>void save()}>{replacementLost?"다시 만들기":editing?"수정":"생성"}</Button>{unknown&&<Button type="button" variant="outline" onClick={()=>void reconcile()}>결과 다시 조회</Button>}</div>
   </div>
 }

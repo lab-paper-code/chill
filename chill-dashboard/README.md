@@ -42,6 +42,8 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
 
+실행 목록의 실행 상태 셀과 실행 상세 요약은 서버 `stopRequested`가 있을 때만 중지 요청·요청자·KST 시각을 고정 높이 슬롯에 표시한다. 빈 요청자는 미기록이며, 해당 실행의 중지 버튼은 숨긴다. DELETE 접수 응답만으로 중지 요청 표시를 만들지 않고 기존 phase·풀 반환 규칙을 유지한다.
+
 게시 에너지는 MEASURED의 `power.wholePoolJoules`만 풀 전체로, PARTIAL의 `power.observedJoules`는 관측 J(일부 노드 coverage 미달)로 표시한다. 평균 전력도 같은 범위를 따르며 차트는 풀 전체·관측을 별도 계열로 구분한다. UNAVAILABLE은 수치 대신 미기록과 게시 사유를 보여준다. 상태 없는 과거 게시만 기존 최상위 wholePoolJoules를 사용한다. 회귀 원자료 `lib/fixtures/experiment-partial-energy.json`은 control-330의 7-7 r2 게시(`72234778-e8b5-44a2-94c4-5125bad5c69d`) 원문이다.
 
 측정 요청의 계획·기본값·manifest 조립은 `lib/measurement-request.ts`, 프로파일 요청의 검사·제출·접수 결과 미확인 재조회 상태는 `hooks/use-measurement-submission.ts`가 소유한다. `features/measurement-request.tsx`는 폼·표시와 실제 조회 자료를 연결한다. d 요청은 단일 dry-run 응답의 서버 지정 이름·동결 본문과 별도 접수 기록 조회 계약을 사용하므로 프로파일 제출 hook으로 합치지 않는다.
@@ -82,6 +84,8 @@ v3 프로파일 측정 요청은 사용자가 고른 실제 Workload 이름을 `
 2026-11-04 d 요청 셀 조회 오류는 coverage 또는 BEO summary 페이지 조회에 연결된다(`features/dispatch-occupancy-request.tsx`, `hooks/use-measurement-data.ts`). 저장된 요청 화면은 오류 상세를 펼치지 않았고 해당 실패 GET의 URL·상태·본문이 없어 timeout·크기 제한·RBAC·디코딩 중 원인은 미확정이다. 빈 셀의 검사·제출 disabled는 유효 입력·검사 결과가 없을 때의 정상 경계이며 임의로 해제하지 않는다.
 
 DOM `phase`·`d`는 필수 nullable projection이며 구 `status`를 복원하는 fallback은 없다. 삭제된 단건의 404, 권한 오류 401/403, 종료 상태에서는 해당 polling을 중단한다. 서버 DOM API 변경(`392388ff`) 위로 rebase되어 실제 POST·DELETE 계약과 통합된 상태이며, 운영 서버·Query 미배포 상태 및 운영 생성·삭제 E2E 미수행과는 구별한다.
+
+실험·부하 작성 화면의 403 오류는 서버 `message`를 본문에 그대로 표시한다. message가 없으면 `권한 없음`과 HTTP 상태만 표시하며, 필요한 역할을 화면에서 별도로 추정하거나 고정 표시하지 않는다.
 
 `dispatchOccupancy` 정책 설정에는 `supplyMode`가 없다. 새 dry-run은 native `spec.supplyMode`가 실제 `closed-loop`일 때만 “공급 방식 (서버 고정)” 사실로 표시하며 응답에 없으면 `미제공`이다. 결과 조건 표의 일반 공급 방식 표시와 helper는 제거했고 원본 응답은 그대로 보존한다. 접수/삭제의 API 결과 `Accepted`·`DeletionRequested`는 유지되며 live action의 `phase:"completed"`는 해당 mutation 완료로 표시한다. DOM 측정 자체의 `Complete`와 혼동하지 않는다.
 

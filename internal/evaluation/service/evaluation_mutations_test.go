@@ -36,9 +36,12 @@ func evaluationFixture(t *testing.T) (*Service, EvaluationRequest) {
 		Name: "server", Ready: true, ImageID: "repo/server@sha256:live",
 	}}
 	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
-	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns", UID: "load-uid"}}
+	load := &api.LoadScenario{ObjectMeta: metav1.ObjectMeta{Name: "load", Namespace: "ns", UID: "load-uid"},
+		Spec: api.LoadScenarioSpec{Workloads: []api.EvaluationWorkloadReference{{Name: "workload"}}}}
+	config := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: api.EvaluationConfigName, Namespace: "ns"},
+		Data: map[string]string{"operational": `{"workloads":{"workload":{}}}`}}
 	sequence := 0
-	native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, load).WithInterceptorFuncs(interceptor.Funcs{
+	native := fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod, load, config).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			sequence++
 			if obj.GetUID() == "" {
@@ -64,37 +67,74 @@ func evaluationFixture(t *testing.T) (*Service, EvaluationRequest) {
 	service := &Service{reader: native, client: native, namespace: "ns", store: "evidence"}
 	return service, EvaluationRequest{Name: "run", Spec: spec}
 }
+
+// preflightFault applies one boundary fault and returns an object to create, if any.
+func preflightFault(t *testing.T, service *Service, request *EvaluationRequest, fault string) client.Object {
+	t.Helper()
+	var object client.Object
+	switch fault {
+	case "pool":
+		object = &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "occupied", Namespace: "ns"},
+			Status: api.EvaluationRunStatus{Conditions: []metav1.Condition{{
+				Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue,
+			}}}}
+	case "load-generator":
+		object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			Name: "load-generator", Namespace: "ns", Labels: map[string]string{"edge.dacs.io/workload-role": "load-generator"},
+		}}
+	case "profiling":
+		object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}
+	case "idle-baseline":
+		// Defect 23: a measuring baseline launches its next run soon; it holds the pool like a BEO.
+		object = &api.ModelLoadedIdleBaseline{ObjectMeta: metav1.ObjectMeta{Name: "baseline", Namespace: "ns"},
+			Status: api.ModelLoadedIdleBaselineStatus{Phase: api.ModelLoadedIdleBaselinePhaseMeasuring}}
+	case "finished-parent-runs":
+		// A finished campaign's runs are judged through the campaign, not one by one.
+		parent := &api.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Name: "campaign", Namespace: "ns"},
+			Status: api.BatchEnergyOptimizationStatus{Phase: string(api.MeasurementPhaseComplete)}}
+		if err := service.client.Create(context.Background(), parent); err != nil {
+			t.Fatal(err)
+		}
+		object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "ns",
+			Labels: map[string]string{"edge.dacs.io/batch-energy-optimization": "campaign"}}}
+	case "other-jobs":
+		// Only load-generator Jobs block evaluation; other running Jobs never did.
+		object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "ns"}}
+	case "foreign-store":
+		// Defect 18: a Run naming another store would publish refs this server cannot read.
+		request.Spec.EvidenceStore = "chill-evidence-store"
+	case "shard-coverage":
+		// Defect 21: preflight applies the run's own coverage rule, not a weaker copy.
+		request.Spec.LoadGenerator.Shards["other"] = 1
+	case "operational-coverage":
+		config := &corev1.ConfigMap{}
+		key := client.ObjectKey{Namespace: "ns", Name: api.EvaluationConfigName}
+		if err := service.client.Get(context.Background(), key, config); err != nil {
+			t.Fatal(err)
+		}
+		config.Data["operational"] = `{"workloads":{"workload":{},"other":{}}}`
+		if err := service.client.Update(context.Background(), config); err != nil {
+			t.Fatal(err)
+		}
+	case "unready":
+		pod := &corev1.Pod{}
+		key := client.ObjectKey{Namespace: "ns", Name: "server"}
+		if err := service.client.Get(context.Background(), key, pod); err != nil {
+			t.Fatal(err)
+		}
+		pod.Status.Conditions[0].Status = corev1.ConditionFalse
+		if err := service.client.Status().Update(context.Background(), pod); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return object
+}
 func TestEvaluationPreflightBoundaries(t *testing.T) {
-	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready", "foreign-store"} {
+	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready", "foreign-store", "shard-coverage", "operational-coverage",
+		"idle-baseline", "finished-parent-runs", "other-jobs"} {
 		t.Run(fault, func(t *testing.T) {
 			service, request := evaluationFixture(t)
-			var object client.Object
-			switch fault {
-			case "pool":
-				object = &api.EvaluationRun{ObjectMeta: metav1.ObjectMeta{Name: "occupied", Namespace: "ns"},
-					Status: api.EvaluationRunStatus{Conditions: []metav1.Condition{{
-						Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue,
-					}}}}
-			case "load-generator":
-				object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-					Name: "load-generator", Namespace: "ns", Labels: map[string]string{"edge.dacs.io/workload-role": "load-generator"},
-				}}
-			case "profiling":
-				object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}
-			case "foreign-store":
-				// Defect 18: a Run naming another store would publish refs this server cannot read.
-				request.Spec.EvidenceStore = "chill-evidence-store"
-			case "unready":
-				pod := &corev1.Pod{}
-				key := client.ObjectKey{Namespace: "ns", Name: "server"}
-				if err := service.client.Get(context.Background(), key, pod); err != nil {
-					t.Fatal(err)
-				}
-				pod.Status.Conditions[0].Status = corev1.ConditionFalse
-				if err := service.client.Status().Update(context.Background(), pod); err != nil {
-					t.Fatal(err)
-				}
-			}
+			object := preflightFault(t, service, &request, fault)
 			if object != nil {
 				if err := service.client.Create(context.Background(), object); err != nil {
 					t.Fatal(err)
@@ -110,12 +150,17 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 					failed = true
 				}
 			}
-			if failed != (fault != "none") {
+			if failed != (fault != "none" && fault != "finished-parent-runs" && fault != "other-jobs") {
 				t.Fatalf("checks=%+v", result.Checks)
 			}
 			if fault == "foreign-store" {
 				if _, err := service.Create(context.Background(), request, "operator"); err == nil || !strings.Contains(err.Error(), "evidenceStore") {
 					t.Fatalf("Run naming a foreign evidence store must be refused, got %v", err)
+				}
+			}
+			if strings.HasSuffix(fault, "-coverage") {
+				if _, err := service.Create(context.Background(), request, "operator"); err == nil || !strings.Contains(err.Error(), "coverage") {
+					t.Fatalf("coverage mismatch must be refused at creation, got %v", err)
 				}
 			}
 			if fault == "unready" && (result.LiveTarget[0].Ready || len(result.LiveTarget[0].LiveImageIDs) != 1) {
@@ -247,6 +292,41 @@ func TestEvaluationLifecycleMutationGuards(t *testing.T) {
 	}
 	if _, err := service.Delete(ctx, request.Name, replacement.UID, "operator"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Defect 20: a stop is visible as a fact only once deletion was actually requested; the
+// annotation alone (patched before a failed delete) does not claim a stop, and phase stays.
+func TestEvaluationViewStopRequested(t *testing.T) {
+	service, request := evaluationFixture(t)
+	ctx := context.Background()
+	created, err := service.Create(ctx, request, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var run api.EvaluationRun
+	if err := service.reader.Get(ctx, client.ObjectKey{Namespace: "ns", Name: created.Name}, &run); err != nil {
+		t.Fatal(err)
+	}
+	now := metav1.NewTime(time.Now())
+	run.Finalizers = []string{api.EvaluationRunFinalizer}
+	run.Annotations["edge.dacs.io/stop-requested-by"] = "operator"
+	run.Status.StartedAt = &now
+	run.Status.Conditions = []metav1.Condition{{Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue}}
+	if err := service.client.Update(ctx, &run); err != nil {
+		t.Fatal(err)
+	}
+	view, err := service.Get(ctx, created.Name)
+	if err != nil || view.StopRequested != nil {
+		t.Fatalf("annotation without deletion must not report a stop: %+v err=%v", view.StopRequested, err)
+	}
+	phase := view.Phase
+	if _, err := service.Delete(ctx, created.Name, created.UID, "dashboard-user"); err != nil {
+		t.Fatal(err)
+	}
+	view, err = service.Get(ctx, created.Name)
+	if err != nil || view.StopRequested == nil || view.StopRequested.At.IsZero() || view.StopRequested.By != "dashboard-user" || view.Phase != phase {
+		t.Fatalf("stop request not projected as a fact: %+v phase=%q err=%v", view.StopRequested, view.Phase, err)
 	}
 }
 func TestEvaluationPhaseTable(t *testing.T) {
