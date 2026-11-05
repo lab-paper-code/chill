@@ -30,6 +30,26 @@ def save(): (root/'state.json').write_text(json.dumps(state))
 def argument(flag):return args[args.index(flag)+1]
 def document(image):
  return {'apiVersion':'apps/v1','kind':'Deployment','metadata':{'name':'chill-serving-entrypoint','namespace':'review'},'spec':{'template':{'spec':{'containers':[{'name':'server','image':image}]}}}}
+def dashboard_hook(changed=False):
+ return {'apiVersion':'batch/v1','kind':'Job','metadata':{'name':'chill-evaluation-store-ensure-bucket','namespace':'review','annotations':{'helm.sh/hook':'post-upgrade','helm.sh/hook-delete-policy':'before-hook-creation,hook-succeeded'}},'spec':{'template':{'spec':{'restartPolicy':'Never','containers':[{'name':'ensure-bucket','image':'store-client:retained','command':['/ensure-bucket','changed-bucket' if changed else 'measurements']}]}}}}
+def dashboard_documents(image,desired=False):
+ backend=document('backend:retained')
+ dashboard={'apiVersion':'apps/v1','kind':'Deployment','metadata':{'name':'chill-dashboard','namespace':'review','labels':{'app.kubernetes.io/instance':'chill'}},'spec':{'replicas':1,'selector':{'matchLabels':{'app':'dashboard'}},'template':{'metadata':{'labels':{'app':'dashboard'}},'spec':{'containers':[{'name':'dashboard','image':image,'ports':[{'containerPort':3000}],'env':[{'name':'CHILL_API_BASE','value':'http://chill-serving-entrypoint:8080'}]}]}}}}
+ crd={'apiVersion':'apiextensions.k8s.io/v1','kind':'CustomResourceDefinition','metadata':{'name':'batchenergyoptimizations.chill.example.test'},'spec':{'group':'chill.example.test','scope':'Namespaced','names':{'plural':'batchenergyoptimizations','singular':'batchenergyoptimization','kind':'BatchEnergyOptimization'},'versions':[{'name':'v1','served':True,'storage':True,'schema':{'openAPIV3Schema':{'type':'object'}}}]}}
+ config={'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'chill-measurement-config','namespace':'review'},'data':{'measurementWindowSeconds':'60'}}
+ if desired:
+  change=state.get('dashboardChange')
+  if image!='dashboard:retained':change=state.get('dashboardChangeAtFinal',change)
+  if change=='server':backend['spec']['template']['spec']['containers'][0]['image']='backend:changed'
+  elif change=='crd':crd['spec']['versions'][0]['schema']['openAPIV3Schema']['description']='changed contract'
+  elif change=='measurement-config':config['data']['measurementWindowSeconds']='120'
+ result=[backend,dashboard,crd,config]
+ if desired and state.get('dashboardChange')=='duplicate':result.append(dashboard)
+ if desired and state.get('dashboardChange')=='missing-dashboard':result.remove(dashboard)
+ if desired:result.append(dashboard_hook(change=='hook'))
+ return result
+def emit(documents):
+ print('\n---\n'.join(json.dumps(item) for item in documents))
 if name=='docker':
  if args[:2]==['buildx','du']:print('Total: 20GB');sys.exit(0)
  if args[:2]==['buildx','prune']:
@@ -69,18 +89,26 @@ if name=='helm':
  elif verb=='get':
   what=args[args.index('get')+1]
   if what=='values':print('{}')
-  elif what=='manifest':print(json.dumps(document('old:source')))
+  elif what=='manifest':
+   if state.get('dashboardFixture'):emit(dashboard_documents('dashboard:retained'))
+   else:print(json.dumps(document('old:source')))
+  elif what=='hooks' and state.get('dashboardFixture'):emit([dashboard_hook()])
   else:print('')
  elif verb=='template':
-  image='old:source'; replicas=None
+  image='old:source';dashboard_image='dashboard:retained';replicas=None;published=False
   for i,arg in enumerate(args):
    if arg=='-f':
     path=pathlib.Path(args[i+1])
     if path.name=='image-overlay.json':
      value=json.loads(path.read_text());item=value.get('servingEntrypoint',{}).get('image');image=item['repository']+':'+item['tag'] if item else image
+     item=value.get('dashboard',{}).get('image');dashboard_image=item['repository']+':'+item['tag'] if item else dashboard_image;published=True
     elif path.name.startswith('staged-values-'):
      replicas=json.loads(path.read_text()).get('operator',{}).get('replicaCount')
-  if state.get('chartDrift'):print(json.dumps({'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'changed','namespace':'review'}}))
+  if state.get('dashboardFixture'):
+   malformed=state.get('malformedDashboardRender')
+   if malformed=='before' or malformed=='final' and published:print('{invalid render')
+   else:emit(dashboard_documents(dashboard_image,True))
+  elif state.get('chartDrift'):print(json.dumps({'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'changed','namespace':'review'}}))
   else:
    result=document(image)
    if replicas is not None:result['spec']['replicas']=replicas
@@ -90,6 +118,9 @@ if name=='helm':
   duration=argument('--timeout');wait_seconds=int(duration[:-1])*{'s':1,'m':60}[duration[-1]]
   if state.get('serverReadySeconds',0)>wait_seconds:
    print('timed out waiting for server listener',file=sys.stderr);sys.exit(20)
+  if state.get('dashboardFixture') and '--no-hooks' not in args:
+   state['hookExecutions']=state.get('hookExecutions',0)+1
+   state.setdefault('ensuredBuckets',[]).append('measurements')
   overlay=pathlib.Path(args[args.index('-f')+1])
   for i,arg in enumerate(args):
    if arg=='-f' and pathlib.Path(args[i+1]).name=='image-overlay.json':overlay=pathlib.Path(args[i+1])
@@ -99,6 +130,8 @@ if name=='helm':
    print('---\n# Source: chill/templates/evaluation_rbac.yaml\n'+json.dumps(item))
  sys.exit(0)
 if name=='kubectl':
+ if state.get('dashboardFixture') and 'get' in args and args[args.index('get')+1]=='crd':
+  emit([dashboard_documents('dashboard:retained')[2]]);sys.exit(0)
  if state.get('runtimeFixture'):
   if 'get' in args and args[args.index('get')+1]=='nodes':
    print(json.dumps(state['nodes']));sys.exit(0)
@@ -151,7 +184,8 @@ if name=='kubectl':
  if 'current-context' in args:print(state.get('currentContext','isolated-review'));sys.exit(0)
  if 'get' in args and 'profilingruns,batchenergyoptimizations,modelloadedidlebaselines,dispatchoccupancymeasurements,evaluationruns' in args and '--all-namespaces' in args:
   state['inflightChecks']=state.get('inflightChecks',0)+1;save()
-  items=[{'kind':'DispatchOccupancyMeasurement','metadata':{'name':'active','namespace':'another-chill-ns'},'status':{'phase':'Running'}}] if state.get('inflightAt')==state['inflightChecks'] else []
+  items=state.get('inflightObjects',[])
+  if state.get('inflightAt')==state['inflightChecks']:items=[{'kind':'DispatchOccupancyMeasurement','metadata':{'name':'active','namespace':'another-chill-ns'},'status':{'phase':'Running'}}]
   print(json.dumps({'items':items}));sys.exit(0)
  if 'port-forward' in args:
   import http.server
@@ -801,6 +835,134 @@ shutil.disk_usage = disk_usage
             self.assertEqual(any(call[0] == 'docker' and 'build' in call for call in self.calls()), expected_build)
             self.assertFalse(any(call[0] == 'helm' and 'upgrade' in call for call in self.calls()))
             (self.directory / 'calls.jsonl').write_text('')
+
+    def dashboard_rollout(self, **changes):
+        self.recipe.update(images=['dashboard'], dashboardCheck=True)
+        retained = {'apiVersion': 'chill.example.test/v1', 'kind': 'BatchEnergyOptimization',
+                    'metadata': {'name': 'retained-campaign', 'namespace': 'another-chill-ns',
+                                 'uid': 'retained-campaign-uid', 'resourceVersion': '452'},
+                    'spec': {'workloadRef': {'name': 'retained-workload'}},
+                    'status': {'phase': 'Running', 'completedTrials': 3}}
+        self.state(dashboardFixture=True, inflightObjects=[retained], **changes)
+        return retained
+
+    def test_dashboard_only_cli_preserves_nonterminal_campaign_and_backend(self):
+        import yaml
+        retained = self.dashboard_rollout()
+        self.cli('--execute', '--evidence', str(self.out))
+        state = json.loads((self.out / 'state.json').read_text())
+        self.assertTrue(state['ready'])
+        self.assertTrue(state['hooksSkipped'])
+        publication = json.loads((self.out / 'publication.json').read_text())
+        self.assertEqual(set(publication['roles']), {'dashboard'})
+        live = list(yaml.safe_load_all(next(self.out.glob('*-live-manifest.yaml')).read_text()))
+        live += list(yaml.safe_load_all(next(self.out.glob('*-live-hooks.yaml')).read_text()))
+        final = list(yaml.safe_load_all((self.out / 'render-final.yaml').read_text()))
+        dashboard = next(item for item in final if item['metadata']['name'] == 'chill-dashboard')
+        image = dashboard['spec']['template']['spec']['containers'][0]['image']
+        self.assertEqual(image, publication['roles']['dashboard']['image'])
+        dashboard['spec']['template']['spec']['containers'][0]['image'] = 'dashboard:retained'
+        self.assertEqual(final, live)
+        dry_run = list(yaml.safe_load_all((self.out / 'dashboard-deployment.yaml').read_text()))
+        self.assertEqual(len(dry_run), 1)
+        self.assertEqual(dry_run[0]['metadata']['name'], 'chill-dashboard')
+        self.assertEqual(dry_run[0]['spec']['template']['spec']['containers'][0]['image'], image)
+        for label in ('inflightPreflight', 'inflightPreUpgrade'):
+            report = state[label]
+            self.assertEqual(report['blockers'], [{
+                'kind': 'BatchEnergyOptimization', 'namespace': 'another-chill-ns',
+                'name': retained['metadata']['name'], 'reasons': ['campaign nonterminal/unfrozen']}])
+            evidence = Path(report['evidenceDirectory'])
+            self.assertEqual(json.loads((evidence / 'objects.json').read_text())['items'], [retained])
+            self.assertEqual(json.loads((evidence / 'blockers.json').read_text()), report['blockers'])
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['inflightObjects'], [retained])
+        self.assertFalse(cluster.get('apiMutations'))
+        self.assertFalse(cluster.get('probeCount'))
+        self.assertFalse(cluster.get('hookExecutions'))
+        self.assertFalse(cluster.get('ensuredBuckets'))
+        self.assertTrue(json.loads((self.out / 'dashboard/dashboard-check.json').read_text())['passed'])
+
+    def test_full_deployment_retains_post_upgrade_hook_execution(self):
+        self.dashboard_rollout()
+        self.recipe['images'] = ['server', 'dashboard']
+        self.state(dashboardFixture=True, inflightObjects=[])
+        self.cli('--execute', '--evidence', str(self.out))
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['hookExecutions'], 1)
+        self.assertEqual(cluster['ensuredBuckets'], ['measurements'])
+        state = json.loads((self.out / 'state.json').read_text())
+        self.assertTrue(state['ready'])
+        self.assertFalse(state['hooksSkipped'])
+
+    def test_dashboard_mixed_changes_keep_nonterminal_campaign_stop(self):
+        for change in ('server', 'crd', 'measurement-config', 'hook'):
+            with self.subTest(change=change):
+                retained = self.dashboard_rollout(dashboardChange=change)
+                evidence = self.out / change
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                reports = list(evidence.glob('inflight-preflight-*/blockers.json'))
+                self.assertEqual(len(reports), 1)
+                self.assertEqual(json.loads(reports[0].read_text())[0]['name'], retained['metadata']['name'])
+                self.assertFalse(any(call[0] == 'docker' or 'upgrade' in call for call in self.calls()))
+                self.assertEqual(json.loads((self.directory / 'state.json').read_text())['inflightObjects'], [retained])
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_dashboard_undecidable_or_final_mixed_render_stops(self):
+        cases = (
+            ('malformed-before', {'malformedDashboardRender': 'before'}, False),
+            ('duplicate', {'dashboardChange': 'duplicate'}, False),
+            ('missing-dashboard', {'dashboardChange': 'missing-dashboard'}, False),
+            ('malformed-final', {'malformedDashboardRender': 'final'}, True),
+            ('mixed-final', {'dashboardChangeAtFinal': 'measurement-config'}, True),
+            ('hook-final', {'dashboardChangeAtFinal': 'hook'}, True),
+        )
+        for label, changes, published in cases:
+            with self.subTest(label=label):
+                retained = self.dashboard_rollout(**changes)
+                evidence = self.out / label
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                self.assertTrue((evidence / 'failure.json').exists())
+                self.assertEqual((evidence / 'publication.json').exists(), published)
+                self.assertFalse(any('upgrade' in call for call in self.calls()))
+                cluster = json.loads((self.directory / 'state.json').read_text())
+                self.assertEqual(cluster['inflightObjects'], [retained])
+                self.assertFalse(cluster.get('apiMutations'))
+                self.assertFalse(cluster.get('probeCount'))
+                self.assertTrue(list(evidence.glob('inflight-preflight-*/blockers.json')))
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_dashboard_boundary_rejects_alias_and_typed_scalar_changes(self):
+        import main as runner_module
+        live = b"""apiVersion: apps/v1
+kind: Deployment
+metadata: {name: chill-dashboard, namespace: review}
+spec:
+  template:
+    spec:
+      containers:
+        - &dashboard {name: dashboard, image: dashboard:retained}
+      initContainers:
+        - *dashboard
+"""
+        desired = live.replace(b'dashboard:retained', b'dashboard:changed')
+        self.assertTrue(runner_module.dashboard_only(live, live, 'review', 'chill'))
+        self.assertFalse(runner_module.dashboard_only(live, desired, 'review', 'chill'))
+        typed_live = live.replace(b'      containers:', b'      hostNetwork: false\n      containers:')
+        typed_desired = typed_live.replace(b'hostNetwork: false', b'hostNetwork: 0')
+        self.assertTrue(runner_module.dashboard_only(typed_live, typed_live, 'review', 'chill'))
+        self.assertFalse(runner_module.dashboard_only(typed_live, typed_desired, 'review', 'chill'))
+
+    def test_dashboard_custom_phase_cannot_bypass_nonterminal_stop(self):
+        self.dashboard_rollout()
+        marker = self.directory / 'forbidden-dashboard-stage'
+        self.recipe['commands'] = {'stage': [{
+            'argv': [sys.executable, '-c',
+                     'from pathlib import Path; import sys; Path(sys.argv[1]).touch()', str(marker)],
+            'seconds': 10}]}
+        self.cli('--execute', '--evidence', str(self.out), expected=1)
+        self.assertFalse(marker.exists())
+        self.assertFalse((self.out / 'publication.json').exists())
 
     def test_context_mismatch_rejects_custom_phase_before_publication(self):
         self.state(currentContext='other-cluster')

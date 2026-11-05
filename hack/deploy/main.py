@@ -204,8 +204,15 @@ class Runner:
 def objects(raw):
     result = []
     for item in yaml.safe_load_all(raw):
-        if not isinstance(item, dict):
+        if item is None:
             continue
+        if not isinstance(item, dict) or not isinstance(item.get('metadata'), dict):
+            raise ValueError('manifest must contain Kubernetes resource objects')
+        if any(not isinstance(value, str) or not value for value in
+               (item.get('apiVersion'), item.get('kind'), item['metadata'].get('name'))):
+            raise ValueError('manifest resource identity must contain nonempty strings')
+        if not isinstance(item['metadata'].get('namespace', ''), str):
+            raise ValueError('manifest resource namespace must be a string')
         result.append(item)
     return sorted(result, key=lambda x: (x['apiVersion'], x['kind'], x['metadata'].get('namespace', ''), x['metadata']['name']))
 
@@ -213,6 +220,50 @@ def objects(raw):
 def difference(live, desired):
     return ''.join(difflib.unified_diff((json.dumps(objects(live), sort_keys=True, indent=2) + '\n').splitlines(True),
                                      (json.dumps(objects(desired), sort_keys=True, indent=2) + '\n').splitlines(True), fromfile='live', tofile='source-chart'))
+
+
+def dashboard_only(live, desired, namespace, release):
+    """Prove the sole permitted change is the dashboard container image."""
+    def equal(left, right):
+        if type(left) is not type(right):
+            return False
+        if isinstance(left, dict):
+            return ({(type(key), key) for key in left} == {(type(key), key) for key in right}
+                    and all(equal(left[key], right[key]) for key in left))
+        if isinstance(left, list):
+            return len(left) == len(right) and all(equal(a, b) for a, b in zip(left, right))
+        return left == right
+
+    try:
+        old, new = objects(live), objects(desired)
+        def identity(obj):
+            return (obj['apiVersion'], obj['kind'], obj['metadata'].get('namespace', ''), obj['metadata']['name'])
+        old_keys, new_keys = [identity(obj) for obj in old], [identity(obj) for obj in new]
+        target = ('apps/v1', 'Deployment', namespace, release + '-dashboard')
+        if (old_keys != new_keys or len(set(old_keys)) != len(old_keys)
+                or target not in old_keys):
+            return False
+        target_index = old_keys.index(target)
+        # The chart's container name is fixed; do not infer a target from labels.
+        for resources in (old, new):
+            # Break YAML aliases before removing the permitted field.
+            deployment = json.loads(json.dumps(resources[target_index]))
+            resources[target_index] = deployment
+            containers = deployment['spec']['template']['spec']['containers']
+            if (not isinstance(containers, list) or not containers
+                    or any(not isinstance(item, dict) or not isinstance(item.get('name'), str) for item in containers)
+                    or len({item['name'] for item in containers}) != len(containers)):
+                return False
+            selected = [item for item in containers if item['name'] == 'dashboard']
+            if len(selected) != 1:
+                return False
+            image = selected[0].get('image')
+            if not isinstance(image, str) or not image:
+                return False
+            del selected[0]['image']
+        return equal(old, new)
+    except (KeyError, TypeError, ValueError, AttributeError, RecursionError, yaml.YAMLError):
+        return False
 
 
 def crd_retention(original, desired, kube, run, out):
@@ -349,7 +400,15 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             print('IMAGE {role}: {action} — {reason}'.format(**item), flush=True)
         stage('preflight')
         revision()
-        state['inflightPreflight'] = inflight.check(kube, run.run, out, 'inflight-preflight')
+        state['dashboardOnlyEligible'] = (
+            [item['role'] for item in planned] == ['dashboard']
+            and not any(recipe['commands'].values())
+            and not any(recipe.get(field) for field in
+                        ('generatedValues', 'toolSources', 'runtimeDeclarations',
+                         'schedulerConfigMapFile', 'allowedLostProfileIDs', 'publicationOnly')))
+        state['inflightPreflight'] = inflight.collect(kube, run.run, out, 'inflight-preflight')
+        if not state['dashboardOnlyEligible']:
+            inflight.require_clear(state['inflightPreflight'])
         if recipe.get('runtimeDeclarations'):
             import runtime
             state['probeNodesPreflight'] = runtime.check_nodes(src, out, kube, run.run, 'preflight')
@@ -384,6 +443,14 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         stage('render-review')
         before = run.run(render, 'render-before.yaml')
         (out / 'render-before.yaml').write_bytes(before)
+        state['dashboardOnlyBefore'] = state['dashboardOnlyEligible'] and dashboard_only(
+            live + b'\n---\n' + hooks, before, recipe['namespace'], recipe['release'])
+        dump(out / 'state.json', state)
+        print('BOUNDARY: ' + ('dashboard-image-only; retained measurements remain read-only'
+                              if state['dashboardOnlyBefore'] else 'full deployment; ADR 0019 measurement gate applies'),
+              flush=True)
+        if not state['dashboardOnlyBefore']:
+            inflight.require_clear(state['inflightPreflight'])
         chart_diff = difference(live + b'\n---\n' + hooks, before)
         (out / 'chart-diff.txt').write_text(chart_diff)
         approved = approval or recipe.get('chartDiffApproved')
@@ -473,6 +540,15 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             final_flags += ['-f', str(frozen)]
         after = run.run(helm + ['template', recipe['release'], str(chart), *final_flags, '--is-upgrade'], 'render-final.yaml')
         (out / 'render-final.yaml').write_bytes(after)
+        state['dashboardOnlyFinal'] = state['dashboardOnlyBefore'] and dashboard_only(
+            live + b'\n---\n' + hooks, after, recipe['namespace'], recipe['release'])
+        state['hooksSkipped'] = state['dashboardOnlyFinal']
+        if state['hooksSkipped']:
+            state['hooksSkipReason'] = 'dashboard-image-only boundary excludes all hook execution'
+        dump(out / 'state.json', state)
+        if state['dashboardOnlyBefore'] and not state['dashboardOnlyFinal']:
+            inflight.require_clear(state['inflightPreflight'])
+            raise RuntimeError('final render exceeds the reviewed dashboard-image-only boundary')
         if recipe['generatedValues']:
             trusted = run.run(helm + ['template', recipe['release'], str(chart), *trusted_flags, '--is-upgrade'], 'render-trusted.yaml')
             staged_diff = difference(trusted, after)
@@ -487,18 +563,29 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         check_configuration(out / 'render-final.yaml')
         stage('crd-retention')
         state['crdRetention'] = crd_retention(live, after, kube, run.run, out)
-        run.run(kube + ['apply', '--dry-run=server', '-f', out / 'render-final.yaml'], 'server-dry-run.log', read_output=False)
+        validation_manifest = out / 'render-final.yaml'
+        if state['dashboardOnlyFinal']:
+            validation_manifest = out / 'dashboard-deployment.yaml'
+            dashboard = next(obj for obj in objects(after)
+                             if (obj['apiVersion'], obj['kind'], obj['metadata'].get('namespace'), obj['metadata']['name'])
+                             == ('apps/v1', 'Deployment', recipe['namespace'], recipe['release'] + '-dashboard'))
+            validation_manifest.write_text(yaml.safe_dump(dashboard, sort_keys=False))
+        run.run(kube + ['apply', '--dry-run=server', '-f', validation_manifest], 'server-dry-run.log', read_output=False)
         revision()
         api_checks.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
-        for phase in ('quiesce', 'migrate'):
-            stage(phase)
-            commands(phase)
-        stage('configure')
-        commands('configure')
+        if not state['dashboardOnlyFinal']:
+            for phase in ('quiesce', 'migrate'):
+                stage(phase)
+                commands(phase)
+            stage('configure')
+            commands('configure')
         revision()
-        state['inflightPreUpgrade'] = inflight.check(kube, run.run, out, 'inflight-pre-upgrade')
+        state['inflightPreUpgrade'] = inflight.collect(kube, run.run, out, 'inflight-pre-upgrade')
+        if not state['dashboardOnlyFinal']:
+            inflight.require_clear(state['inflightPreUpgrade'])
         stage('upgrade')
-        run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, '--wait', '--timeout', str(recipe['upgradeSeconds']) + 's'], 'upgrade.log', timeout=upgrade_process_seconds, read_output=False)
+        hook_flags = ['--no-hooks'] if state['dashboardOnlyFinal'] else []
+        run.run(helm + ['upgrade', recipe['release'], chart, '--reset-values', *final_flags, *hook_flags, '--wait', '--timeout', str(recipe['upgradeSeconds']) + 's'], 'upgrade.log', timeout=upgrade_process_seconds, read_output=False)
         stage('readiness')
         deadline = time.monotonic() + recipe['readinessSeconds']
         for resource in recipe['waitFor']:

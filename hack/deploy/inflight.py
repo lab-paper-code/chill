@@ -75,8 +75,8 @@ def _save(path, data):
         stream.write(data)
 
 
-def check(kube, run, out, label):
-    """Retain complete all-namespace evidence without copying command output."""
+def collect(kube, run, out, label):
+    """Retain complete read-only evidence, including all deployment blockers."""
     if not label or Path(label).name != label or label in ('.', '..'):
         raise ValueError('inflight evidence label must be a nonempty filename component')
     out = Path(out)
@@ -96,8 +96,17 @@ def check(kube, run, out, label):
         jobs = json.load(stream)['items']
     blocked = blockers(objects, jobs)
     _save(evidence / 'blockers.json', (json.dumps(blocked, ensure_ascii=False, indent=2) + '\n').encode())
-    report = {'checked': dict(Counter(obj['kind'] for obj in objects)),
-              'blockers': blocked, 'evidenceDirectory': str(evidence)}
-    if blocked:
-        raise RuntimeError('ADR 0019: in-flight measurement blockers prevent deployment; evidence: ' + str(evidence))
+    return {'checked': dict(Counter(obj['kind'] for obj in objects)),
+            'blockers': blocked, 'evidenceDirectory': str(evidence)}
+
+
+def require_clear(report):
+    if report['blockers']:
+        raise RuntimeError('ADR 0019: in-flight measurement blockers prevent deployment; evidence: ' + report['evidenceDirectory'])
+
+
+def check(kube, run, out, label):
+    """Stop state-changing cutovers when retained measurements remain in flight."""
+    report = collect(kube, run, out, label)
+    require_clear(report)
     return report
