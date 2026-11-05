@@ -22,6 +22,8 @@ import (
 
 const (
 	runtimeContainerName             = "runtime"
+	jobReasonDeadlineExceeded        = "DeadlineExceeded"
+	containerReasonOOMKilled         = "OOMKilled"
 	maxFinalizationObjectBytes int64 = 64 << 20
 )
 
@@ -184,30 +186,7 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 		return nil, nil
 	}
 	termination.PodReason, termination.PodMessage = pod.Status.Reason, pod.Status.Message
-	var selected *corev1.ContainerStatus
-	// A separate container's OOM is infrastructure failure, even when the
-	// runtime subsequently exits while waiting for its observer.
-	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
-		for i := range statuses {
-			status := &statuses[i]
-			if status.State.Terminated != nil && status.State.Terminated.Reason == "OOMKilled" {
-				if selected == nil || status.Name != runtimeContainerName {
-					selected = status
-				}
-			}
-		}
-	}
-	if selected == nil {
-		for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
-			for i := range statuses {
-				status := &statuses[i]
-				if status.State.Terminated != nil && status.State.Terminated.ExitCode != 0 &&
-					(selected == nil || status.Name == runtimeContainerName) {
-					selected = status
-				}
-			}
-		}
-	}
+	selected := selectFailedContainer(pod)
 	if selected == nil {
 		if err := f.classifyRuntimeFailure(ctx, pod, termination); err != nil {
 			return nil, err
@@ -229,8 +208,8 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 			termination.Stage, termination.FailureReason = record.Stage, record.FailureReason
 		}
 	}
-	if native.Reason == "OOMKilled" {
-		termination.LogTail = selected.Name + ": OOMKilled"
+	if native.Reason == containerReasonOOMKilled {
+		termination.LogTail = selected.Name + ": " + containerReasonOOMKilled
 		for _, containers := range [][]corev1.Container{pod.Spec.InitContainers, pod.Spec.Containers} {
 			for _, container := range containers {
 				if container.Name == selected.Name {
@@ -247,6 +226,34 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 		return nil, err
 	}
 	return termination, nil
+}
+
+func selectFailedContainer(pod *corev1.Pod) *corev1.ContainerStatus {
+	var selected *corev1.ContainerStatus
+	// A separate container's OOM is infrastructure failure, even when the
+	// runtime subsequently exits while waiting for its observer.
+	for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for i := range statuses {
+			status := &statuses[i]
+			if status.State.Terminated != nil && status.State.Terminated.Reason == containerReasonOOMKilled {
+				if selected == nil || status.Name != runtimeContainerName {
+					selected = status
+				}
+			}
+		}
+	}
+	if selected == nil {
+		for _, statuses := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+			for i := range statuses {
+				status := &statuses[i]
+				if status.State.Terminated != nil && status.State.Terminated.ExitCode != 0 &&
+					(selected == nil || status.Name == runtimeContainerName) {
+					selected = status
+				}
+			}
+		}
+	}
+	return selected
 }
 
 // classifyRuntimeFailure uses native disruption facts before phase attribution.
@@ -309,9 +316,9 @@ func (f *KubernetesExecutionFinalizer) classifyRuntimeFailure(
 		return nil
 	}
 	if termination.Stage == profilerevidence.StageExecution &&
-		(termination.Reason == "OOMKilled" ||
+		(termination.Reason == containerReasonOOMKilled ||
 			termination.FailureReason == profilerevidence.FailureMeasurementBudget ||
-			(termination.JobReason == "DeadlineExceeded" && termination.FailureReason == "")) {
+			(termination.JobReason == jobReasonDeadlineExceeded && termination.FailureReason == "")) {
 		termination.Class = profilerevidence.FailureClassExpectedStop
 		return nil
 	}

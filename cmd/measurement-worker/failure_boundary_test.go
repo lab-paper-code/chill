@@ -16,13 +16,18 @@ import (
 )
 
 func TestExecuteClassifiesOnlyFrozenBudgetDuringActualExecution(t *testing.T) {
-	for _, phase := range []string{evidence.StageStartup, evidence.StageObserver, evidence.StageExecution, evidence.StageResultValidation, evidence.StageEvidenceCommit} {
+	for _, phase := range []string{
+		evidence.StageStartup, evidence.StageObserver, evidence.StageExecution,
+		evidence.StageResultValidation, evidence.StageEvidenceCommit,
+	} {
 		t.Run(phase, func(t *testing.T) {
 			opts := validOptions(t)
 			opts.attemptTimeout = 10 * time.Millisecond
 			opts.runtimeFailedPath = filepath.Join(t.TempDir(), "runtime-failed")
 			deps := successfulDependencies(validReceipt())
-			deps.buildCoordinator = func(options, profilingrun.VerifiedRunConfig, io.Writer, io.Writer) (measurementCoordinator, error) {
+			deps.buildCoordinator = func(
+				options, profilingrun.VerifiedRunConfig, io.Writer, io.Writer,
+			) (measurementCoordinator, error) {
 				return deadlinePhaseCoordinator{stage: phase}, nil
 			}
 			err := execute(context.Background(), opts, io.Discard, io.Discard, deps)
@@ -47,7 +52,9 @@ func TestExecuteClassifiesOnlyFrozenBudgetDuringActualExecution(t *testing.T) {
 		opts := validOptions(t)
 		opts.runtimeFailedPath = filepath.Join(t.TempDir(), "runtime-failed")
 		deps := successfulDependencies(validReceipt())
-		deps.buildCoordinator = func(options, profilingrun.VerifiedRunConfig, io.Writer, io.Writer) (measurementCoordinator, error) {
+		deps.buildCoordinator = func(
+			options, profilingrun.VerifiedRunConfig, io.Writer, io.Writer,
+		) (measurementCoordinator, error) {
 			return deadlinePhaseCoordinator{stage: evidence.StageExecution}, nil
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
