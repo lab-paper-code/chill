@@ -260,9 +260,9 @@ func TestBatchEnergyOptimizationReconcilerFailsUnclassifiedExecutionWithoutRetry
 	reconcileBatch(t, ctx, reconciler, request)
 
 	failed := getBatchEnergyOptimization(t, ctx, kube, client.ObjectKeyFromObject(parent))
-	if failed.Status.Phase != "Failed" || failed.Status.Outcome != "TrialFailed" ||
+	if failed.Status.Phase != "Failed" || failed.Status.Outcome != string(batchenergyoptimization.FailureClassUnknownFailure) ||
 		failed.Status.CompletedTrials != 0 || failed.Status.Result != nil {
-		t.Fatalf("exhausted BatchEnergyOptimization status = %#v", failed.Status)
+		t.Fatalf("unclassified execution status = %#v", failed.Status)
 	}
 	if results.calls != 0 || curves.calls != 0 {
 		t.Fatalf("terminal failure crossed derivation/write ports: derive=%d write=%d", curves.calls, results.calls)
@@ -293,7 +293,7 @@ func TestBatchEnergyOptimizationReconcilerBoundsExplicitEvictionRetriesAtSameBat
 					Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed", LastTransitionTime: metav1.Now(),
 				}}
 				run.Status.RuntimeTermination = &edgev1alpha1.ProfilingRunRuntimeTermination{
-					Class: string(batchenergyoptimization.FailureClassRetryableFailure),
+					Class:  string(batchenergyoptimization.FailureClassRetryableFailure),
 					Reason: "Evicted", JobReason: "PodEvicted",
 				}
 				if err := kube.Status().Update(ctx, run); err != nil {
@@ -332,7 +332,7 @@ func TestBatchEnergyOptimizationReconcilerRetainsPrefixAtOOMWithoutRetry(t *test
 		Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed", LastTransitionTime: metav1.Now(),
 	}}
 	run.Status.RuntimeTermination = &edgev1alpha1.ProfilingRunRuntimeTermination{
-		Class: string(batchenergyoptimization.FailureClassExpectedStop),
+		Class:     string(batchenergyoptimization.FailureClassExpectedStop),
 		Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
 	}
 	if err := kube.Status().Update(ctx, run); err != nil {
