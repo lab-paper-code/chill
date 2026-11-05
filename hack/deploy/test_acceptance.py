@@ -242,14 +242,17 @@ class AcceptanceChecks(unittest.TestCase):
                 'runtimeMetadata': {'cpuAffinity': [0, 1], 'intraOpThreads': 3},
             })
             profile['batches'][0]['memoryBytes'] = 1234
-            profile['batches'][0]['durationNanos'] = [Decimal('1234.56789')]
+            profile['batches'][0]['serviceSamples'] = [{
+                'serviceDurationNanos': 1234567890, 'precedingIdleNanos': 9000000, 'trialID': 'physical-trial'}]
         after = copy.deepcopy(before)
         after['profiles']['profiles'][0]['assessment']['scope'] = {'schedulerUsed': False}
         after['profiles']['profiles'][0]['assessment']['currentCompatibility'] = 'changed'
         self.assertTrue(acceptance.compare_records(before, after)['passed'])
         paths = [('condition', 'runtimeImage'), ('condition', 'artifact', 'image'),
                  ('reference', 'key'), ('evidence', 0, 'key'), ('idleBaselineWatts',),
-                 ('batches', 0, 'memoryBytes'), ('batches', 0, 'durationNanos', 0),
+                 ('batches', 0, 'memoryBytes'), ('batches', 0, 'serviceSamples', 0, 'serviceDurationNanos'),
+                 ('batches', 0, 'serviceSamples', 0, 'precedingIdleNanos'),
+                 ('batches', 0, 'serviceSamples', 0, 'trialID'),
                  ('runtimeMetadata', 'intraOpThreads'), ('measuredAt',)]
         for path in paths:
             with self.subTest(path=path):

@@ -80,7 +80,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
                               'artifact': {'executionPath': path}, 'powerMode': source_mode},
                 'request': {'name': previous['metadata']['name'], 'uid': 'uid'},
                 'batches': [{'batch': 1, 'completedCalls': 1, 'quality': [
-                    {'workloadMode': 'saturated-serial-fixed-batch', 'windowSeconds': timing_seconds}]}]}
+                    {'workloadMode': 'empirical-cadence-fixed-batch', 'windowSeconds': timing_seconds}]}]}
         inputs = {
             'measurement-coverage': {'completeness': 'complete', 'snapshotId': 'snapshot', 'cells': [cell]},
             'batch-energy-optimizations': {'items': [previous]},
@@ -111,7 +111,7 @@ def generate_case(gen, image='old-runtime', phase='Complete', curve=None, eviden
         policy_path = root / 'policy.json'
         policy_path.write_text(json.dumps(policy))
         facts = {'data': {'execution-policies.yaml': json.dumps({'policies': [{
-            'deviceClass': device, 'executionPath': path, 'workloadMode': 'saturated-serial-fixed-batch',
+            'deviceClass': device, 'executionPath': path, 'workloadMode': 'empirical-cadence-fixed-batch',
             'runtimeMemoryLimitBytes': policy_limit}]})}}
         nodes = {'items': [{'metadata': {'name': 'node', 'uid': node_uid},
                             'status': {'allocatable': {} if allocatable is None else {'memory': allocatable}}}]}
@@ -374,7 +374,7 @@ def coverage_self_check(gen):
                           "powerMode": "mode", "runtimeImage": execution_conditions["runtimeImage"]},
              "request": {"name": "source", "uid": "source-uid"},
              "batches": [{"batch": 1, "completedCalls": 100, "quality": [
-                 {"workloadMode": "saturated-serial-fixed-batch", "windowSeconds": 10},
+                 {"workloadMode": "empirical-cadence-fixed-batch", "windowSeconds": 10},
                  {"workloadMode": "idle-model-loaded", "windowSeconds": 500}]}]}
     timed_result = dict(result, measurementFacts=facts)
     assert gen.coverage_timings([timed_result])[0]["secondsPerCall"] == .1
