@@ -16,7 +16,7 @@ function text(value: unknown): string {
   if (value && typeof value === "object" && "props" in value) return text((value as Tree).props.children)
   return typeof value === "string" || typeof value === "number" ? String(value) : ""
 }
-function consumer(kind: manifest.CatalogKind) {
+function consumer(kind: manifest.CatalogKind, editing = false) {
   const states = new Map<unknown, unknown[]>()
   let values: unknown[] = [], cursor = 0
   const react = { useState(initial: unknown) {
@@ -32,6 +32,8 @@ function consumer(kind: manifest.CatalogKind) {
     return Component(props)
   }
   const sent: { path: string; method: string; body: { name: string; spec: Record<string, unknown> } }[] = []
+  let refetches = 0
+  const current = { metadata: { name: "registered", uid: "original", resourceVersion: "7" }, spec: { source: { image: "registry.example/data:release", path: "/data" }, fields: [{ name: "image", format: "JPEG", maxBytes: 1048576 }] } }
   const mutation = { isPending: false, error: null as null | Error, mutateAsync: async (input: typeof sent[number]) => {
     sent.push(input)
     if (mutation.error) throw mutation.error
@@ -43,7 +45,7 @@ function consumer(kind: manifest.CatalogKind) {
     "@tanstack/react-query": { useQueryClient: () => ({ invalidateQueries: async () => {} }) },
     "lucide-react": { ChevronLeft: "svg", ChevronRight: "svg" },
     "@/lib/domain": domain, "@/lib/catalog-manifest": manifest, "@/lib/labels": labels,
-    "@/lib/client": { ApiError: Error, useChillMutation: () => mutation, useChillQuery: (path: string) => ({ data: path.includes("workloads") ? [] : { items: [] } }) },
+    "@/lib/client": { ApiError: Error, useChillMutation: () => mutation, useChillQuery: (path: string) => ({ data: editing && path === `v1/${kind}/registered` ? current : path.includes("workloads") ? [] : { items: [] }, refetch: async () => { refetches++; return { data: current } } }) },
     "@/components/ui/button": { Button: "button" }, "@/components/ui/input": { Input: "input" }, "@/components/ui/dialog": {},
     "@/components/data-table": { DataTable: () => null }, "@/features/service-hub": {}, "@/lib/measurement-request": {},
     "@/components/read-region": { SourceJSON: ({ value }: { value: unknown }) => jsx("pre", { children: JSON.stringify(value) }), StatusBadge: "span" },
@@ -59,17 +61,19 @@ function consumer(kind: manifest.CatalogKind) {
     return exports
   }
   const { ResourceEditor } = load("../features/catalog-editor.tsx")
+  if (editing) render(ResourceEditor, { kind, name: "registered" })
   let nodes: Tree[] = []
-  function expand(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(expand)
+  function expand(value: unknown, disabled = false): unknown {
+    if (Array.isArray(value)) return value.map(item => expand(item, disabled))
     if (!value || typeof value !== "object" || !("props" in value)) return value
     const node = value as Tree
-    if (typeof node.type === "function") return expand(render(node.type as Component, node.props))
-    const expanded = { ...node, props: { ...node.props, children: expand(node.props.children) } }
+    if (typeof node.type === "function") return expand(render(node.type as Component, node.props), disabled)
+    const inherited = disabled || (node.type === "fieldset" && !!node.props.disabled)
+    const expanded = { ...node, props: { ...node.props, ...(["button", "input", "select", "textarea"].includes(String(node.type)) && disabled ? { disabled: true } : {}), children: expand(node.props.children, inherited) } }
     nodes.push(expanded)
     return expanded
   }
-  function view() { nodes = []; return expand(render(ResourceEditor, { kind })) }
+  function view() { nodes = []; return expand(render(ResourceEditor, { kind, ...(editing ? { name: "registered" } : {}) })) }
   function button(name: RegExp) {
     const found = nodes.find(node => node.type === "button" && name.test(text(node)))
     assert.ok(found, `Missing action ${name}`)
@@ -78,7 +82,7 @@ function consumer(kind: manifest.CatalogKind) {
   function click(name: RegExp) { const node = button(name); assert.ok(!node.props.disabled); return (node.props.onClick as () => unknown)() }
   function paste(value: string) { const input = nodes.find(node => node.type === "textarea")!; (input.props.onChange as (event: unknown) => void)({ target: { value } }) }
   function review() { (nodes.find(node => node.type === "form")!.props.onSubmit as (event: unknown) => void)({ preventDefault() {} }) }
-  return { sent, mutation, view, click, paste, review, nodes: () => nodes }
+  return { sent, mutation, view, click, paste, review, nodes: () => nodes, refetches: () => refetches }
 }
 
 const specs: Record<manifest.CatalogKind, Record<string, unknown>> = {
@@ -198,6 +202,53 @@ test("response loss blocks resubmission and method switching until the registrat
   assert.equal(method.props.disabled, true)
   await (register.props.onClick as () => Promise<void>)()
   assert.equal(c.sent.length, 1)
+})
+
+test("alias expansion is rejected before review or POST while ordinary anchors remain usable", async () => {
+  const c = consumer("datasets")
+  c.view(); c.click(/YAML\/JSON/); c.view()
+  const bomb = ["name: alias-data", "spec:", "  a0: &a0 [1]", ...Array.from({length:8}, (_, index) => `  a${index + 1}: &a${index + 1} [${Array(10).fill(`*a${index}`).join(",")}]`)].join("\n")
+  c.paste(bomb); c.view(); c.review(); c.view()
+  assert.ok(c.nodes().some(node => node.props.role === "alert"))
+  assert.ok(!c.nodes().some(node => node.type === "button" && /등록하기/.test(text(node))))
+  assert.equal(c.sent.length, 0)
+  c.paste("name: ordinary-anchor\nspec:\n  source: &source {image: registry.example/data:release, path: /data}\n  sourceCopy: *source\n  fields: []")
+  c.view(); c.review(); c.view()
+  assert.equal(c.sent.length, 0)
+  await c.click(/등록하기/)
+  assert.equal(c.sent.length, 1)
+  const copy = c.sent[0].body.spec.sourceCopy
+  assert.ok(copy && typeof copy === "object" && "path" in copy)
+  assert.equal(copy.path, "/data")
+})
+
+test("manual response loss keeps read-only diagnostics and lookups usable while writes stay blocked", async () => {
+  for (const editing of [false, true]) {
+    const c = consumer("datasets", editing)
+    c.view()
+    if (!editing) {
+      c.click(/직접 작성/); c.view()
+      const name = c.nodes().find(node => node.type === "input" && node.props.required)!
+      ;(name.props.onChange as (event: unknown) => void)({ target: { value: "manual-data" } })
+      c.view(); c.review(); c.view()
+    }
+    c.review(); c.view()
+    c.mutation.error = Object.assign(new Error("response lost"), { unknownOutcome: true, status: 0, body: "transport interrupted" })
+    c.review()
+    await Promise.resolve()
+    c.view()
+    assert.equal(c.sent.length, 1)
+    assert.ok(c.nodes().some(node => node.type === "button" && node.props.type === "submit" && node.props.disabled))
+    assert.match(text(c.nodes()), /transport interrupted/)
+    if (editing) {
+      await c.click(/최신 상태 확인/)
+      assert.equal(c.refetches(), 1)
+    } else {
+      const lookup = c.nodes().find(node => node.type === "button" && /목록에서 확인/.test(text(node)))!
+      assert.ok(!lookup.props.disabled)
+    }
+    assert.equal(c.sent.length, 1)
+  }
 })
 
 test("manual registration remains available at the original name step", () => {

@@ -451,9 +451,9 @@ function Editor({ kind, r, models }: { kind: Kind; r: ResourceState; models: Ret
           {kind !== "workloads" && original && <RowDialog label="영향 받는 서비스" value={r.affected ? `${r.affected.length}개` : "확인 불가"} title="영향 받는 서비스"><Impact kind={kind} affected={r.affected} /></RowDialog>}
           <RowDialog label="원본 자료 보기" title="저장 원본과 비교 기준"><SourceJSON inline value={{ original, submitted: reviewed }} /></RowDialog>
         </Rows>
-        <Problem r={r} kind={kind} />
       </>}
     </fieldset></form>
+    <Problem r={r} kind={kind} />
     {validation && <p id="editor-validation" role="alert">{validation}</p>}
   </Screen>
 }

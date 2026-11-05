@@ -1,4 +1,4 @@
-import { JSON_SCHEMA, load } from "js-yaml"
+import { parse } from "yaml"
 
 export const catalogManifestKinds = { models: "ModelSpec", preprocessors: "Preprocessor", datasets: "Dataset" } as const
 export type CatalogKind = keyof typeof catalogManifestKinds
@@ -25,7 +25,7 @@ function checkJSON(value: unknown, ancestors = new Set<object>()): void {
 
 export function parseCatalogManifest(kind: CatalogKind, text: string): CatalogRegistration {
   let document: unknown
-  try { document = load(text, { schema: JSON_SCHEMA }) }
+  try { document = parse(text, { schema: "core" }) }
   catch (error) { throw new Error(`YAML/JSON 문서 하나를 확인해 주세요. ${(error as Error).message}`) }
   if (!object(document)) throw new Error("이름과 spec이 있는 YAML/JSON 문서 하나가 필요해요.")
   const native = ["apiVersion", "kind", "metadata"].some(key => Object.hasOwn(document, key))
