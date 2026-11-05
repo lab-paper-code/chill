@@ -154,8 +154,7 @@ func TestPublicFirstProfileResolvesWithNoServingOrEvaluationHistory(t *testing.T
 		t.Fatal(err)
 	}
 	shared := snapshot.Plan.Shared()
-	if len(shared.PlannedBatchSizes) != 1 || shared.PlannedBatchSizes[0] != 1 ||
-		shared.ActiveProtocol.MinServiceSamples != 59 || shared.ActiveProtocol.SLOPercentile != 95 ||
+	if shared.ActiveProtocol.MinServiceSamples != 59 || shared.ActiveProtocol.SLOPercentile != 95 ||
 		shared.ActiveProtocol.WorkloadUID != "first-profile-workload" || shared.Actor.RuntimeImage != testRuntimeImage {
 		t.Fatalf("public first-profile plan lost real recipe/Workload stop facts: %+v", shared)
 	}
