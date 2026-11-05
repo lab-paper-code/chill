@@ -112,23 +112,25 @@ func (s *Service) profilingIdle(ctx context.Context) (bool, error) {
 	if err := s.reader.List(ctx, &campaigns); err != nil {
 		return false, err
 	}
-	phases := make([]string, 0, len(campaigns.Items))
 	for _, campaign := range campaigns.Items {
-		phases = append(phases, campaign.Status.Phase)
+		if parentMeasuring(campaign.Status.Phase) {
+			return false, nil
+		}
 	}
 	var baselines api.ModelLoadedIdleBaselineList
 	if err := s.reader.List(ctx, &baselines); err != nil {
 		return false, err
 	}
 	for _, baseline := range baselines.Items {
-		phases = append(phases, baseline.Status.Phase)
-	}
-	for _, phase := range phases {
-		if phase == "" || phase == string(api.MeasurementPhaseMeasuring) {
+		if parentMeasuring(baseline.Status.Phase) {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+func parentMeasuring(phase string) bool {
+	return phase == "" || phase == string(api.MeasurementPhaseMeasuring)
 }
 
 func errorReason(err error) string {
