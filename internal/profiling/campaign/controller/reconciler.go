@@ -89,15 +89,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 
 	curvePlan, curvePlanReference, transitionMaterial, err := r.curvePlans(ctx, parent)
 	if err != nil {
-		reason, terminal := profiler.TerminalResolutionReason(err)
-		status := failedStatus(parent, cmp.Or(reason, "CurvePlanResolutionFailed"), err.Error())
-		if patchErr := r.patchStatus(ctx, parent, status); patchErr != nil {
-			return ctrl.Result{}, errors.Join(err, patchErr)
-		}
-		if terminal {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, fmt.Errorf("resolve BatchEnergyOptimization curve plan: %w", err)
+		return ctrl.Result{}, r.handleCurvePlanResolutionFailure(ctx, parent, err)
 	}
 	node, transition, err := r.observeNode(ctx, parent, transitionMaterial)
 	if err != nil {
@@ -239,6 +231,20 @@ func (r *BatchEnergyOptimizationReconciler) createMeasurementRun(
 		return true, nil
 	}
 	return false, nil
+}
+
+func (r *BatchEnergyOptimizationReconciler) handleCurvePlanResolutionFailure(
+	ctx context.Context, parent *edgev1alpha1.BatchEnergyOptimization, err error,
+) error {
+	reason, terminal := profiler.TerminalResolutionReason(err)
+	status := failedStatus(parent, cmp.Or(reason, "CurvePlanResolutionFailed"), err.Error())
+	if patchErr := r.patchStatus(ctx, parent, status); patchErr != nil {
+		return errors.Join(err, patchErr)
+	}
+	if terminal {
+		return nil
+	}
+	return fmt.Errorf("resolve BatchEnergyOptimization curve plan: %w", err)
 }
 
 // handleTrialProjectionFailure records only immutable trial-contract failures
