@@ -48,8 +48,15 @@ def dashboard_documents(image,desired=False):
  if desired and state.get('dashboardChange')=='missing-dashboard':result.remove(dashboard)
  if desired:result.append(dashboard_hook(change=='hook'))
  return result
-def emit(documents):
- print('\n---\n'.join(json.dumps(item) for item in documents))
+def emit(documents,desired=False):
+ raw_documents=[]
+ for item in documents:
+  raw=json.dumps(item)
+  if state.get('nonStringBackendKeys') and item['metadata']['name']=='chill-serving-entrypoint':
+   annotations='{true: "'+('changed' if desired else 'old')+'", 1: "stable"}'
+   raw=raw.replace('"template": {','"template": {"metadata": {"annotations": '+annotations+'}, ',1)
+  raw_documents.append(raw)
+ print('\n---\n'.join(raw_documents))
 if name=='docker':
  if args[:2]==['buildx','du']:print('Total: 20GB');sys.exit(0)
  if args[:2]==['buildx','prune']:
@@ -88,7 +95,10 @@ if name=='helm':
  elif verb=='history':print('[]')
  elif verb=='get':
   what=args[args.index('get')+1]
-  if what=='values':print('{}')
+  if what=='values':
+   client={'apiServer':'https://kubernetes.review:6443','discoverFromDefaultEndpoint':False}
+   values={'nodeAgent':{'kubernetesClient':client},'profiler':{'workloadObserver':{'kubernetesClient':client}}}
+   print(json.dumps(state.get('dashboardValues',values) if state.get('dashboardFixture') else {}))
   elif what=='manifest':
    if state.get('dashboardFixture'):emit(dashboard_documents('dashboard:retained'))
    else:print(json.dumps(document('old:source')))
@@ -107,7 +117,7 @@ if name=='helm':
   if state.get('dashboardFixture'):
    malformed=state.get('malformedDashboardRender')
    if malformed=='before' or malformed=='final' and published:print('{invalid render')
-   else:emit(dashboard_documents(dashboard_image,True))
+   else:emit(dashboard_documents(dashboard_image,True),True)
   elif state.get('chartDrift'):print(json.dumps({'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'changed','namespace':'review'}}))
   else:
    result=document(image)
@@ -911,6 +921,7 @@ shutil.disk_usage = disk_usage
     def test_dashboard_undecidable_or_final_mixed_render_stops(self):
         cases = (
             ('malformed-before', {'malformedDashboardRender': 'before'}, False),
+            ('non-string-keys', {'nonStringBackendKeys': True}, False),
             ('duplicate', {'dashboardChange': 'duplicate'}, False),
             ('missing-dashboard', {'dashboardChange': 'missing-dashboard'}, False),
             ('malformed-final', {'malformedDashboardRender': 'final'}, True),
@@ -952,6 +963,47 @@ spec:
         typed_desired = typed_live.replace(b'hostNetwork: false', b'hostNetwork: 0')
         self.assertTrue(runner_module.dashboard_only(typed_live, typed_live, 'review', 'chill'))
         self.assertFalse(runner_module.dashboard_only(typed_live, typed_desired, 'review', 'chill'))
+
+    def test_dashboard_dynamic_endpoint_inputs_keep_nonterminal_stop(self):
+        for path in (('nodeAgent', 'kubernetesClient'),
+                     ('profiler', 'workloadObserver', 'kubernetesClient'), ()):
+            with self.subTest(path=path):
+                values = {}
+                if path:
+                    for client_path in (('nodeAgent', 'kubernetesClient'),
+                                        ('profiler', 'workloadObserver', 'kubernetesClient')):
+                        parent = values
+                        for key in client_path[:-1]:
+                            parent = parent.setdefault(key, {})
+                        parent[client_path[-1]] = {'discoverFromDefaultEndpoint': client_path == path}
+                retained = self.dashboard_rollout(dashboardValues=values)
+                evidence = self.out / ('-'.join(path) or 'defaults')
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                reports = evidence.glob('inflight-preflight-*/blockers.json')
+                self.assertEqual([json.loads(report.read_text())[0]['name'] for report in reports],
+                                 [retained['metadata']['name']])
+                self.assertFalse((evidence / 'publication.json').exists())
+                self.assertFalse(any('upgrade' in call for call in self.calls()))
+                self.assertEqual(json.loads((self.directory / 'state.json').read_text())['inflightObjects'], [retained])
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_dashboard_values_changes_keep_nonterminal_stop(self):
+        retained = self.dashboard_rollout()
+        values = self.directory / 'lookup-values.json'
+        values.write_text(json.dumps({'nodeAgent': {'kubernetesClient': {
+            'apiServer': '', 'discoverFromDefaultEndpoint': True}}}))
+        for label, overrides in (('override', {'values': [str(values)]}),
+                                 ('replace', {'values': [], 'replaceValues': True})):
+            with self.subTest(label=label):
+                self.recipe.update(overrides)
+                evidence = self.out / label
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                reports = evidence.glob('inflight-preflight-*/blockers.json')
+                self.assertEqual([json.loads(report.read_text())[0]['name'] for report in reports],
+                                 [retained['metadata']['name']])
+                self.assertFalse((evidence / 'publication.json').exists())
+                self.assertFalse(any('upgrade' in call for call in self.calls()))
+                (self.directory / 'calls.jsonl').write_text('')
 
     def test_dashboard_custom_phase_cannot_bypass_nonterminal_stop(self):
         self.dashboard_rollout()
