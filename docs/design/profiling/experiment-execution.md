@@ -77,11 +77,11 @@ deliberately retains ownership and requires the existing operator release flow.
 
 | 객체 | spec 필드 | 내용·기존 입력 대응 |
 |---|---|---|
-| LoadScenario | `workloads[]` | Workload 이름·UID·generation의 유일 정본. SLO는 그 generation의 적용 정의에서 얻음 |
+| LoadScenario | `workloads[]` | Workload 이름·UID로 대상을 선택한다. 선택적 generation은 출처로 보존하며, SLO는 준비 시 동결한 적용 정의에서 얻는다 |
 | LoadScenario | `parts[]` | ID·durationSeconds·workload별 절대 rates. 길이/부하는 stage에서 override 불가 |
 | LoadScenario | `arrivalDistribution`, `traceRefs`, `seeds`, `datasetRefs` | 고정 arrival·선택 trace 증거, workload별 uint64 문자열 seed와 `{name,uid}` Dataset 참조 |
 | EvaluationRun | `question`, `target` | 질문·목적, 외부 구성요소 resource 참조와 readiness·UID 관측. CHILL image/source/profile exact-match gate 없음 |
-| EvaluationRun | `harness` | 이미지 digest·source SHA. 과학 신원으로 **spec에만** 두며 운영 ConfigMap에는 없음 |
+| EvaluationRun | `harness` | 실행 이미지와 선택적 source SHA를 spec·동결 snapshot의 출처로 보존한다 |
 | EvaluationRun | `loadGenerator`, `powerMeasurement` | 생성기 image/source·메모리·shards·barrier·nodeName; 선언 Node UID·meter/source·series/sampling |
 | EvaluationRun | `settingsPatch` | 선택 공개 SchedulerSettings 부분 객체. RFC7396이며 server 정본 검증과 ETag/If-Match 사용 |
 | EvaluationRun | `judgment`, `evidenceStore` | 생성기 품질(lateness 등)·에너지 coverage; 실행 증거 logical store. **SLO 복사본 없음** |
@@ -99,7 +99,7 @@ deliberately retains ownership and requires the existing operator release flow.
 
 builder가 부모 공통 값과 template을 합성한다. template에 settingsPatch가 있으면 부모 patch 전체를 대체하며, 두 patch를 숨은 merge하지 않는다. 생성 뒤 자식 spec은 바꾸지 않는다. 적용할 때만 live 공개 settings에 선택된 patch를 RFC7396으로 병합한다.
 동일 LoadScenario UID는 동일 선언 부하다. “같은 부하” 주장은 generator 설정도 같아야 하며 실제 발행·성공은 별도 단계 증거로 판단한다.
-SLO·서버 버전·스위치는 LoadScenario에 넣지 않는다. Workload generation 불일치를 현재 값으로 치환하지 않는다.
+SLO·서버 버전·스위치는 LoadScenario에 넣지 않는다. 요청 generation은 `requestedGeneration`, 실제 적용 generation·SLO는 snapshot에 기록한다.
 
 `environment*.json`의 토큰·CA·endpoint·host path는 spec 밖이다. release namespace의 고정 ConfigMap `chill-evaluation-config`와 Secret·Job 전달 binding으로 주입한다.
 `binding`의 과학적 조건은 위 필드·불변 입력으로 옮기고 `control` 번호·로컬 실행 폴더는 신원으로 쓰지 않는다.

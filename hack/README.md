@@ -250,10 +250,10 @@ owned Jobs and complete blocker list. Parent candidates come from actual
 The wrapper compiles `./hack/prejob-retirement-check` from the archived selected
 source with `go build -buildvcs=false` and invokes that fixed authority for each
 parent using the pinned kubeconfig, context, namespace, rendered system name,
-request name and UID. Every blocker must bind to an eligible proof's exact
+request name and UID. Every blocker must bind to the current authority's eligible
 parent/child UID and generation. The second capture and proof run immediately
-before the official Helm upgrade; parent/child cohort or generation changes stop.
-Fresh resourceVersions remain in the evidence but need not match between reads.
+before the official Helm upgrade and cover every current blocker. Prior cohorts
+and resourceVersions remain evidence; each fresh proof decides eligibility.
 No target names or UIDs are hardcoded, and no blockers are removed or rewritten.
 
 Eligibility belongs to the Go authority: a frozen recorded plan, three verified
