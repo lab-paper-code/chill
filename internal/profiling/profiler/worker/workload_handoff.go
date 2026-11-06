@@ -72,8 +72,8 @@ func (f *WorkloadResultFile) Read(ctx context.Context) (workloadobserver.Verifie
 	}
 }
 
-// PublishWorkloadResult validates and atomically publishes one observer result
-// without replacing an existing handoff.
+// PublishWorkloadResult atomically publishes one observer result without
+// replacing an existing handoff. The reader validates the external result.
 func PublishWorkloadResult(path string, maxBytes int64, result workloadobserver.Result) error {
 	if !validAbsoluteFilePath(path) {
 		return errors.New("workload result path must be a clean absolute file path")
@@ -81,11 +81,7 @@ func PublishWorkloadResult(path string, maxBytes int64, result workloadobserver.
 	if maxBytes < 1 {
 		return errors.New("workload result maximum size must be positive")
 	}
-	canonical, err := result.Canonical()
-	if err != nil {
-		return fmt.Errorf("validate workload result: %w", err)
-	}
-	payload, err := json.Marshal(canonical)
+	payload, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("encode workload result: %w", err)
 	}

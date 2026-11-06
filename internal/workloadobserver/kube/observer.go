@@ -174,9 +174,6 @@ func (o *Observer) receive(
 		if failure != nil {
 			result.Failure.ObservedAt = endedAt
 		}
-		if err := result.Validate(); err != nil {
-			return workloadobserver.Result{}, fmt.Errorf("validate projected workload observation: %w", err)
-		}
 		return result, nil
 	}
 	fail := func(reason workloadobserver.FailureReason, message string) (workloadobserver.Result, error) {

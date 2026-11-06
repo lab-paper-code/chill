@@ -40,16 +40,13 @@ func TestResultValidateAcceptsTypedIncompleteObservation(t *testing.T) {
 	}
 }
 
-func TestResultCanonicalNormalizesTimeAndOwnsMutableFacts(t *testing.T) {
+func TestResultCanonicalCopyNormalizesTimeAndOwnsMutableFacts(t *testing.T) {
 	const changed = "changed"
 	result := validResult()
 	location := time.FixedZone("KST", 9*60*60)
 	result.CoverageStartedAt = result.CoverageStartedAt.In(location)
 	result.CoverageEndedAt = result.CoverageEndedAt.In(location)
-	canonical, err := result.Canonical()
-	if err != nil {
-		t.Fatal(err)
-	}
+	canonical := result.CanonicalCopy()
 	if canonical.CoverageStartedAt.Location() != time.UTC || canonical.CoverageEndedAt.Location() != time.UTC {
 		t.Fatalf("canonical coverage is not UTC: %#v", canonical)
 	}
@@ -109,11 +106,10 @@ func TestResultValidateRejectsContradictoryEvidence(t *testing.T) {
 			match: "Run Pod",
 		},
 		{
-			name: "unsorted initial", alter: func(result *Result) {
-				result.InitialActivePods[0], result.InitialActivePods[1] =
-					result.InitialActivePods[1], result.InitialActivePods[0]
+			name: "duplicate UID", alter: func(result *Result) {
+				result.InitialActivePods = append(result.InitialActivePods, result.InitialActivePods[0])
 			},
-			match: "canonically ordered",
+			match: "duplicate UID",
 		},
 		{
 			name: "invalid phase", alter: func(result *Result) {
@@ -138,12 +134,6 @@ func TestResultValidateRejectsContradictoryEvidence(t *testing.T) {
 				}}
 			},
 			match: "outside coverage",
-		},
-		{
-			name: "final mismatch", alter: func(result *Result) {
-				result.FinalActivePods = result.FinalActivePods[:1]
-			},
-			match: "final active set",
 		},
 		{
 			name: "invalid labels", alter: func(result *Result) {

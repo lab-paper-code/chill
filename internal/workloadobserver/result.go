@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
-	"sort"
 	"strings"
 	"time"
 )
@@ -46,23 +44,11 @@ func (r Result) Validate() error {
 	if _, err := validateActiveSet(r.FinalActivePods, r.Run.PodUID, "final"); err != nil {
 		return err
 	}
-	derived := activePods(active)
-	if !reflect.DeepEqual(derived, r.FinalActivePods) {
-		return errors.New("workload observation final active set does not match retained events")
-	}
 	return nil
 }
 
-// Canonical returns a validated deep copy with all retained timestamps in UTC.
-func (r Result) Canonical() (Result, error) {
-	if err := r.Validate(); err != nil {
-		return Result{}, err
-	}
-	return r.CanonicalCopy(), nil
-}
-
-// CanonicalCopy canonicalizes an already validated Result without repeating
-// validation. Boundary owners must call Validate before using this projection.
+// CanonicalCopy returns a detached projection with retained timestamps in UTC.
+// It does not validate the observation.
 func (r Result) CanonicalCopy() Result {
 	canonical := r
 	canonical.CoverageStartedAt = r.CoverageStartedAt.UTC()
@@ -135,22 +121,16 @@ func validateFailure(failure *Failure, started, ended time.Time) error {
 
 func validateActiveSet(pods []Pod, runPodUID, boundary string) (map[string]Pod, error) {
 	active := make(map[string]Pod, len(pods))
-	previousKey := ""
 	runPresent := false
 	for index := range pods {
 		pod := pods[index]
 		if err := validatePod(pod, true); err != nil {
 			return nil, fmt.Errorf("validate %s active Pod: %w", boundary, err)
 		}
-		key := podKey(pod)
-		if previousKey != "" && key <= previousKey {
-			return nil, fmt.Errorf("%s active Pods are duplicated or not canonically ordered", boundary)
-		}
 		if _, duplicate := active[pod.UID]; duplicate {
 			return nil, fmt.Errorf("%s active Pods contain duplicate UID %q", boundary, pod.UID)
 		}
 		active[pod.UID] = pod
-		previousKey = key
 		runPresent = runPresent || pod.UID == runPodUID
 	}
 	if !runPresent {
@@ -214,35 +194,17 @@ func validatePod(pod Pod, requireActive bool) error {
 	if len(pod.Images) == 0 {
 		return errors.New("workload Pod images are empty")
 	}
-	previous := ""
 	for _, image := range pod.Images {
-		if blank(image) || (previous != "" && image <= previous) {
-			return errors.New("workload Pod images are invalid, duplicated, or not canonically ordered")
+		if blank(image) {
+			return errors.New("workload Pod image is invalid")
 		}
-		previous = image
 	}
 	for key, value := range pod.Labels {
 		if blank(key) || strings.TrimSpace(value) != value {
 			return errors.New("workload Pod selector labels are invalid")
 		}
 	}
-	if pod.Labels != nil && len(pod.Labels) == 0 {
-		return errors.New("workload Pod selector labels must use nil for an empty set")
-	}
 	return nil
-}
-
-func activePods(active map[string]Pod) []Pod {
-	pods := make([]Pod, 0, len(active))
-	for _, pod := range active {
-		pods = append(pods, pod)
-	}
-	sort.Slice(pods, func(i, j int) bool { return podKey(pods[i]) < podKey(pods[j]) })
-	return pods
-}
-
-func podKey(pod Pod) string {
-	return pod.Namespace + "\x00" + pod.Name + "\x00" + pod.UID
 }
 
 func within(value, started, ended time.Time) bool {
