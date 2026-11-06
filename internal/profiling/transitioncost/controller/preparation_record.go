@@ -211,10 +211,8 @@ func validateStoredPreparation(prepared PreparedMeasurement) error {
 			return fmt.Errorf("stored %s must be a positive whole-millisecond duration", name)
 		}
 	}
-	for _, duration := range []time.Duration{prepared.Policy.MaximumBoundaryDistance, prepared.Policy.MaximumBoundaryUncertainty} {
-		if duration < 0 || duration%time.Millisecond != 0 {
-			return errors.New("stored boundary bounds must be non-negative whole-millisecond durations")
-		}
+	if duration := prepared.Policy.MaximumBoundaryDistance; duration < 0 || duration%time.Millisecond != 0 {
+		return errors.New("stored boundary distance must be a non-negative whole-millisecond duration")
 	}
 	if prepared.Policy.MinimumCoverage <= 0 || prepared.Policy.MinimumCoverage > 1 {
 		return errors.New("stored minimum coverage must be in (0, 1]")
@@ -232,16 +230,10 @@ func validateStoredPreparation(prepared PreparedMeasurement) error {
 			"source model":       direction.FrozenContract.SourceState.Model, "source power mode": direction.FrozenContract.SourceState.PowerMode,
 			"target device type": direction.FrozenContract.TargetState.DeviceType,
 			"target model":       direction.FrozenContract.TargetState.Model, "target power mode": direction.FrozenContract.TargetState.PowerMode,
-			"baseline evidence reference": direction.FrozenContract.TargetIdleBaseline.EvidenceReference,
-			"baseline store":              direction.TargetIdleBaselineResult.Store, "baseline key": direction.TargetIdleBaselineResult.Key,
-			"baseline schema": direction.TargetIdleBaselineResult.SchemaVersion,
 		} {
 			if !clean(value) {
 				return fmt.Errorf("%s is required without surrounding whitespace", name)
 			}
-		}
-		if direction.TargetIdleBaselineResult.Size < 1 {
-			return errors.New("baseline result size must be positive")
 		}
 		if err := projectActuationTarget(direction.Actuator).Validate(); err != nil {
 			return fmt.Errorf("validate actuator target: %w", err)

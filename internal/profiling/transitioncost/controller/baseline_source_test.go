@@ -93,7 +93,6 @@ func TestIdleBaselineSourceRejectsReferenceBeforeOpen(t *testing.T) {
 			invalid.SchemaVersion = "chill.dacs.io/model-loaded-idle-baseline-result.v1alpha0"
 			return invalid
 		}()},
-		"above bound": {maximum: int64(len(payload) - 1), reference: reference},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -111,7 +110,7 @@ func TestIdleBaselineSourceRejectsReferenceBeforeOpen(t *testing.T) {
 	}
 }
 
-func TestIdleBaselineSourceRequiresExactCurrentResultBytes(t *testing.T) {
+func TestIdleBaselineSourceRejectsMalformedCurrentResult(t *testing.T) {
 	state := baselineMeasurementState()
 	baseline := retainedIdleBaseline(t)
 	reference, payload := retainedIdleResult(t, state, baseline)
@@ -119,16 +118,6 @@ func TestIdleBaselineSourceRequiresExactCurrentResultBytes(t *testing.T) {
 		payload   []byte
 		reference idlebaseline.StoredObjectReference
 	}{
-		"short object": {payload: payload, reference: func() idlebaseline.StoredObjectReference {
-			changed := reference
-			changed.Size++
-			return changed
-		}()},
-		"long object": {payload: payload, reference: func() idlebaseline.StoredObjectReference {
-			changed := reference
-			changed.Size--
-			return changed
-		}()},
 		"retired payload": func() struct {
 			payload   []byte
 			reference idlebaseline.StoredObjectReference
@@ -182,6 +171,28 @@ func TestIdleBaselineSourceRequiresExactCurrentResultBytes(t *testing.T) {
 				t.Fatal("invalid retained result was accepted")
 			}
 		})
+	}
+}
+
+func TestIdleBaselineSourceReadsWhitespaceWithinConfiguredBound(t *testing.T) {
+	state := baselineMeasurementState()
+	baseline := retainedIdleBaseline(t)
+	reference, payload := retainedIdleResult(t, state, baseline)
+	reference.Key = " opaque alternate baseline.json "
+	payload = append(payload, '\n')
+	for _, declaredSize := range []int64{1, int64(len(payload)) + 1000} {
+		reference.Size = declaredSize
+		source := newIdleBaselineSource(t, &baselineResultReader{payload: payload}, int64(len(payload)),
+			currentBaselineObject("baseline", state, reference))
+		resolved, err := source.Resolve(context.Background(), baselineNamespace, state)
+		if err != nil || resolved.MeanWallWatts() != baseline.ModelLoadedIdleMeanWallWatts {
+			t.Fatalf("retained baseline was not derivable: watts=%v err=%v", resolved.MeanWallWatts(), err)
+		}
+	}
+	source := newIdleBaselineSource(t, &baselineResultReader{payload: payload}, int64(len(payload)-1),
+		currentBaselineObject("baseline", state, reference))
+	if _, err := source.Resolve(context.Background(), baselineNamespace, state); err == nil {
+		t.Fatal("oversized retained baseline was accepted")
 	}
 }
 

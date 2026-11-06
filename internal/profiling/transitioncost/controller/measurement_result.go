@@ -92,14 +92,6 @@ func (w *measurementResultWriter) write(
 	if err != nil {
 		return storedMeasurementResult{}, fmt.Errorf("create transition measurement result: %w", err)
 	}
-	if err := receipt.Validate(); err != nil {
-		return storedMeasurementResult{}, fmt.Errorf("validate transition measurement result receipt: %w", err)
-	}
-	if receipt.Object != identity {
-		return storedMeasurementResult{}, errors.New(
-			"transition measurement result writer returned an unexpected object reference",
-		)
-	}
 	if receipt.Outcome == evidencestore.CreateOutcomeExisting {
 		winner, found, err := w.load(ctx, location)
 		if err != nil {

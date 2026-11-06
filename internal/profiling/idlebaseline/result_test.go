@@ -53,7 +53,11 @@ func TestTwoTrialNonzeroVarianceResultRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := NewResult(resultState(), baseline, resultEvidence(2))
+	references := resultEvidence(2)
+	reference := references["trial-0"]
+	reference.Key = " opaque retained execution.json "
+	references["trial-0"] = reference
+	result, err := NewResult(resultState(), baseline, references)
 	if err != nil {
 		t.Fatal(err)
 	}

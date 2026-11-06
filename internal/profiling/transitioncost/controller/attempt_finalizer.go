@@ -99,11 +99,7 @@ func (f *AttemptFinalizer) deriveFinalizedObservationFromTerminalEvidence(
 	if err != nil {
 		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{}, err
 	}
-	if rawReceipt.Object.Location() != selection.rawLocation {
-		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
-			errors.New("transition raw receipt does not match the deterministic attempt location")
-	}
-	rawBytes, err := readExactTransitionObject(ctx, f.store, rawReceipt.Object, f.maximumObjectBytes)
+	rawBytes, err := readBoundedTransitionObject(ctx, f.store, rawReceipt.Object.Location(), f.maximumObjectBytes)
 	if err != nil {
 		return evidencestore.ObjectIdentity{}, transitioncost.FinalizedObservation{},
 			fmt.Errorf("read transition raw evidence: %w", err)
@@ -142,12 +138,6 @@ func (f *AttemptFinalizer) retainFinalizedAttempt(
 	receipt, err := f.store.PutImmutable(ctx, finalReference, bytes.NewReader(payload))
 	if err != nil {
 		return FinalizedAttempt{}, fmt.Errorf("create finalized transition evidence: %w", err)
-	}
-	if err := receipt.Validate(); err != nil {
-		return FinalizedAttempt{}, fmt.Errorf("validate finalized transition receipt: %w", err)
-	}
-	if receipt.Object != finalReference {
-		return FinalizedAttempt{}, errors.New("finalized transition writer returned an unexpected object reference")
 	}
 	if receipt.Outcome == evidencestore.CreateOutcomeExisting {
 		winner, found, err := f.load(ctx, location)
@@ -309,24 +299,6 @@ func transitionTerminationReceipt(pod *corev1.Pod) (evidencestore.Receipt, error
 	return receipt, nil
 }
 
-func readExactTransitionObject(ctx context.Context, reader evidencestore.LocationReader,
-	identity evidencestore.ObjectIdentity, maximumBytes int64,
-) ([]byte, error) {
-	if err := identity.Validate(); err != nil {
-		return nil, err
-	}
-	if identity.Size > maximumBytes {
-		return nil, fmt.Errorf("evidence object exceeds %d-byte limit", maximumBytes)
-	}
-	payload, err := readBoundedTransitionObject(ctx, reader, identity.Location(), maximumBytes)
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(payload)) != identity.Size {
-		return nil, fmt.Errorf("%w: evidence object size does not match its receipt", evidencestore.ErrContentMismatch)
-	}
-	return payload, nil
-}
 
 func readBoundedTransitionObject(ctx context.Context, reader evidencestore.LocationReader,
 	location evidencestore.ObjectLocation, maximumBytes int64,

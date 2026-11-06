@@ -168,7 +168,7 @@ func validateMeasurementState(state MeasurementState) error {
 func validateStoredObjectReference(reference StoredObjectReference) error {
 	values := []string{reference.Store, reference.Key, reference.SchemaVersion}
 	for _, value := range values {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+		if value == "" {
 			return errors.New("accepted final evidence reference is incomplete")
 		}
 	}

@@ -8,7 +8,7 @@ import (
 func TestObjectIdentityValidate(t *testing.T) {
 	valid := ObjectIdentity{
 		Store: "profiling-evidence",
-		Key:   "runs/run-1.json",
+		Key:   " opaque object.json ",
 		Size:  389364,
 	}
 	if err := valid.Validate(); err != nil {
@@ -18,7 +18,6 @@ func TestObjectIdentityValidate(t *testing.T) {
 	tests := map[string]ObjectIdentity{
 		"missing store":  {Key: valid.Key, Size: valid.Size},
 		"missing key":    {Store: valid.Store, Size: valid.Size},
-		"key whitespace": {Store: valid.Store, Key: " " + valid.Key, Size: valid.Size},
 		"empty object":   {Store: valid.Store, Key: valid.Key, Size: 0},
 	}
 	for name, identity := range tests {
@@ -31,14 +30,13 @@ func TestObjectIdentityValidate(t *testing.T) {
 }
 
 func TestObjectLocationValidate(t *testing.T) {
-	valid := ObjectLocation{Store: "profiling-evidence", Key: "runs/run-1/final.json"}
+	valid := ObjectLocation{Store: "profiling-evidence", Key: " opaque object.json "}
 	if err := valid.Validate(); err != nil {
 		t.Fatalf("valid location rejected: %v", err)
 	}
 	for name, location := range map[string]ObjectLocation{
 		"missing store": {Key: valid.Key},
 		"missing key":   {Store: valid.Store},
-		"whitespace":    {Store: valid.Store, Key: valid.Key + " "},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := location.Validate(); !errors.Is(err, ErrInvalidIdentity) {

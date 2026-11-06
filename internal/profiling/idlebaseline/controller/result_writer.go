@@ -70,12 +70,6 @@ func (w *ResultWriter) Write(
 	if err != nil {
 		return edgev1alpha1.ProfilingRunEvidenceReference{}, fmt.Errorf("create idle baseline result: %w", err)
 	}
-	if err := receipt.Validate(); err != nil {
-		return edgev1alpha1.ProfilingRunEvidenceReference{}, fmt.Errorf("validate idle baseline result receipt: %w", err)
-	}
-	if receipt.Object != identity {
-		return edgev1alpha1.ProfilingRunEvidenceReference{}, errors.New("idle baseline result writer returned an unexpected object")
-	}
 	if receipt.Outcome == evidencestore.CreateOutcomeExisting {
 		winner, found, loadErr := w.load(ctx, location)
 		if loadErr != nil {

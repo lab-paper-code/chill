@@ -273,6 +273,32 @@ func (c *alreadyExistsPreparationClient) Create(
 	return apierrors.NewAlreadyExists(schema.GroupResource{Resource: "configmaps"}, "transition-cost")
 }
 
+func TestStoredPreparationDerivesWithoutProvenanceMetadata(t *testing.T) {
+	_, prepared, _ := preparationRecordFixture(t)
+	prepared.Policy.MaximumBoundaryUncertainty = -time.Millisecond
+	prepared.Directions[0].FrozenContract.TargetIdleBaseline.EvidenceReference = ""
+	prepared.Directions[0].TargetIdleBaselineResult.Key = " opaque baseline "
+	prepared.Directions[0].TargetIdleBaselineResult.Size = 0
+	payload, err := encodePreparationRecord(prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := decodePreparationRecord(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := transitioncost.Derive(restored.Directions[0].FrozenContract,
+		transitionRawObservation(restored, acceptedAttempt), restored.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, ok := result.AcceptedObservation()
+	if !ok || observation.TauMilliseconds() != 2000 ||
+		observation.TransitionWallJoules() < 29.999999 || observation.TransitionWallJoules() > 30.000001 {
+		t.Fatalf("stored provenance blocked measured transition: %+v err=%v", result.Record(), err)
+	}
+}
+
 func TestPreparationRecordIgnoresRetiredWorkloadUIDs(t *testing.T) {
 	measurement, prepared, scheme := preparationRecordFixture(t)
 	desired, err := buildPreparationRecord(measurement, prepared, scheme)

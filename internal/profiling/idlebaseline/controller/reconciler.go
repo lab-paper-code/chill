@@ -191,11 +191,7 @@ func (r *Reconciler) listRuns(
 	})
 	for index := range runs {
 		attempt := int32(index + 1)
-		expected, err := buildRun(parent, attempt)
-		if err != nil {
-			return nil, err
-		}
-		if err := validateOwnedRun(parent, &runs[index], expected); err != nil {
+		if err := validateOwnedRun(parent, &runs[index], attempt); err != nil {
 			return nil, err
 		}
 	}
@@ -231,7 +227,7 @@ func (r *Reconciler) ensureRun(
 	existing := &edgev1alpha1.ProfilingRun{}
 	key := client.ObjectKeyFromObject(desired)
 	if err := r.client.Get(ctx, key, existing); err == nil {
-		return validateOwnedRun(parent, existing, desired)
+		return validateOwnedRun(parent, existing, attempt)
 	} else if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("get idle baseline ProfilingRun %q: %w", desired.Name, err)
 	}
@@ -243,18 +239,17 @@ func (r *Reconciler) ensureRun(
 
 func validateOwnedRun(
 	parent *edgev1alpha1.ModelLoadedIdleBaseline,
-	actual, expected *edgev1alpha1.ProfilingRun,
+	actual *edgev1alpha1.ProfilingRun,
+	attempt int32,
 ) error {
 	owner := metav1.GetControllerOf(actual)
 	if owner == nil || owner.Kind != idleBaselineKind ||
 		owner.APIVersion != edgev1alpha1.GroupVersion.String() || owner.UID != parent.UID {
 		return fmt.Errorf("ProfilingRun %q is not controller-owned by this ModelLoadedIdleBaseline", actual.Name)
 	}
-	if actual.Namespace != expected.Namespace || actual.Name != expected.Name ||
-		!reflect.DeepEqual(actual.Spec, expected.Spec) ||
-		actual.Labels[labelIdleBaselineUID] != expected.Labels[labelIdleBaselineUID] ||
-		actual.Labels[labelAttempt] != expected.Labels[labelAttempt] {
-		return fmt.Errorf("ProfilingRun %q differs from its idle baseline request", actual.Name)
+	actualAttempt, err := strconv.Atoi(actual.Labels[labelAttempt])
+	if err != nil || actualAttempt != int(attempt) {
+		return fmt.Errorf("ProfilingRun %q has an unexpected idle baseline attempt", actual.Name)
 	}
 	return nil
 }

@@ -262,11 +262,15 @@ func TestRetainedLoaderLoadsRetainedAndLegacyEvidence(t *testing.T) {
 		name   string
 		idle   bool
 		legacy bool
+		missingStatus bool
+		staleStatus bool
 	}{
 		{name: "active after Job deletion"},
 		{name: "idle after Job deletion", idle: true},
 		{name: "legacy active owned Job", legacy: true},
 		{name: "legacy idle owned Job", idle: true, legacy: true},
+		{name: "active retained reference without status evidence", missingStatus: true},
+		{name: "idle retained reference with stale status schema", idle: true, staleStatus: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			run, job, secret, _ := retainedLoaderFixture()
@@ -278,6 +282,11 @@ func TestRetainedLoaderLoadsRetainedAndLegacyEvidence(t *testing.T) {
 			run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{
 				Store: reference.Store, Key: reference.Key, Size: reference.Size,
 				SchemaVersion: execution.SchemaVersion,
+			}
+			if test.missingStatus {
+				run.Status.Evidence = nil
+			} else if test.staleStatus {
+				run.Status.Evidence.SchemaVersion = "stale-status-schema"
 			}
 			run.Status.ObservedExecution = &edgev1alpha1.ProfilingRunObservedExecutionStatus{
 				Pod:  edgev1alpha1.ProfilingRunObjectReference{Name: execution.Terminal.Pod.Name, UID: execution.Terminal.Pod.UID},

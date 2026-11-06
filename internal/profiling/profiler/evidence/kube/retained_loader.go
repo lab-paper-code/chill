@@ -166,8 +166,7 @@ func validateRunEvidenceBinding(
 	run *edgev1alpha1.ProfilingRun,
 	execution profilerevidence.ExecutionEvidence,
 ) error {
-	if run.Status.Evidence == nil || run.Status.Evidence.SchemaVersion != execution.SchemaVersion ||
-		execution.Terminal.Job.Namespace != run.Namespace ||
+	if execution.Terminal.Job.Namespace != run.Namespace ||
 		execution.Terminal.Job.Name != run.Status.Job.Name ||
 		execution.Terminal.Job.UID != run.Status.Job.UID {
 		return errors.New("retained evidence does not belong to the recorded Run")

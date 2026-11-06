@@ -403,7 +403,7 @@ func TestDeriveRetainsExplicitlyTruncatedPowerDiagnostics(t *testing.T) {
 	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
 }
 
-func TestDeriveRejectsExcessiveBoundaryUncertainty(t *testing.T) {
+func TestDeriveRetainsMeasuredBoundaryUncertaintyAbovePolicy(t *testing.T) {
 	frozen, raw, policy := validInputs()
 	raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt = testTimeMillis(1949)
 
@@ -411,8 +411,13 @@ func TestDeriveRejectsExcessiveBoundaryUncertainty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOutcome(t, result, transitioncost.VerdictInsufficient,
-		transitioncost.ReasonBoundaryUncertaintyExceeded)
+	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
+	observation, ok := result.AcceptedObservation()
+	if !ok || observation.BoundaryMappingUncertainty() != 51*time.Millisecond ||
+		observation.TauMilliseconds() != 4000 || math.Abs(observation.TransitionWallJoules()-40) > 1e-9 ||
+		math.Abs(observation.EtaJoules()-(-8)) > 1e-9 {
+		t.Fatalf("measured uncertainty or energy changed: %+v", result.Record())
+	}
 }
 
 func TestDeriveRejectsMalformedFrozenInputsAsErrors(t *testing.T) {

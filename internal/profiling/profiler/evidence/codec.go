@@ -4,29 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-func validateStoredExecution(
-	payload []byte,
-	identity evidencestore.ObjectIdentity,
-	raw rawRecord,
-) error {
-	if int64(len(payload)) != identity.Size {
-		return fmt.Errorf("retained execution evidence size %d does not match declared size %d", len(payload), identity.Size)
-	}
-	var retained ExecutionEvidence
-	if err := decodeExact(payload, &retained); err != nil {
-		return err
-	}
-	if err := raw.validateExecution(retained); err != nil {
-		return err
-	}
-	return nil
-}
 
 func decodeExact(payload []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))

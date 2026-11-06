@@ -195,7 +195,7 @@ func TestDecodeMeasurementResultRejectsUntrustedStoredRecord(t *testing.T) {
 	}
 }
 
-func TestMeasurementResultWriterRejectsNonterminalProgressAndUnexpectedReceipt(t *testing.T) {
+func TestMeasurementResultWriterRejectsNonterminalProgress(t *testing.T) {
 	measurement, progress := completeMeasurementResultFixture(t)
 	writer := mustMeasurementResultWriter(t, newMeasurementResultMemoryStore())
 	if _, err := writer.write(context.Background(), measurement, measurementProgress{
@@ -204,12 +204,6 @@ func TestMeasurementResultWriterRejectsNonterminalProgressAndUnexpectedReceipt(t
 		t.Fatal("nonterminal progress was stored")
 	}
 
-	store := newMeasurementResultMemoryStore()
-	store.badReceipt = true
-	writer = mustMeasurementResultWriter(t, store)
-	if _, err := writer.write(context.Background(), measurement, progress); err == nil {
-		t.Fatal("unexpected immutable-write receipt was accepted")
-	}
 }
 
 func completeMeasurementResultFixture(
@@ -284,7 +278,6 @@ type measurementResultMemoryStore struct {
 	winnerOnPut []byte
 	puts        int
 	opens       int
-	badReceipt  bool
 }
 
 func newMeasurementResultMemoryStore() *measurementResultMemoryStore {
@@ -319,11 +312,7 @@ func (s *measurementResultMemoryStore) PutImmutable(
 		return evidencestore.Receipt{}, err
 	}
 	s.objects[identity.Location()] = payload
-	receipt := measurementResultReceipt(identity, evidencestore.CreateOutcomeCreated)
-	if s.badReceipt {
-		receipt.Object.Key += ".unexpected"
-	}
-	return receipt, nil
+	return measurementResultReceipt(identity, evidencestore.CreateOutcomeCreated), nil
 }
 
 func measurementResultReceipt(

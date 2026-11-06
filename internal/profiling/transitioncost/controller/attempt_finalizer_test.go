@@ -185,7 +185,7 @@ func TestTransitionTerminationReceiptIsStrictAndBounded(t *testing.T) {
 	}
 }
 
-func TestAttemptFinalizerRequiresExactlyOneOwnedPodAndExactRawSize(t *testing.T) {
+func TestAttemptFinalizerRequiresExactlyOneOwnedPodAndBoundedRawRead(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -212,37 +212,44 @@ func TestAttemptFinalizerRequiresExactlyOneOwnedPodAndExactRawSize(t *testing.T)
 	}
 	store := newFinalizationStore()
 	identity := evidencestore.ObjectIdentity{Store: attemptEvidenceStore, Key: "raw.json", Size: 4}
-	store.objects[identity.Location()] = []byte("abc")
-	if _, err := readExactTransitionObject(context.Background(), store, identity, 1024); err == nil {
-		t.Fatal("raw size mismatch was accepted")
-	}
 	store.objects[identity.Location()] = bytes.Repeat([]byte("x"), 1025)
-	identity.Size = 1025
-	if _, err := readExactTransitionObject(context.Background(), store, identity, 1024); err == nil {
+	if _, err := readBoundedTransitionObject(context.Background(), store, identity.Location(), 1024); err == nil {
 		t.Fatal("oversized raw object was accepted")
 	}
 }
 
-func TestAttemptFinalizerRejectsMismatchedReferences(t *testing.T) {
-	t.Run("raw receipt location", func(t *testing.T) {
-		fixture := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete, ".wrong")
-		_, err := fixture.finalizer.Finalize(
-			context.Background(), fixture.measurement, fixture.prepared, 0, 1, fixture.progress,
-		)
-		if err == nil || fixture.store.opens != 1 || fixture.store.puts != 0 {
-			t.Fatalf("err = %v, opens = %d, puts = %d", err, fixture.store.opens, fixture.store.puts)
-		}
-	})
-	t.Run("final write receipt", func(t *testing.T) {
-		fixture := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete)
-		fixture.store.badReceipt = true
-		_, err := fixture.finalizer.Finalize(
-			context.Background(), fixture.measurement, fixture.prepared, 0, 1, fixture.progress,
-		)
-		if err == nil {
-			t.Fatal("mismatched final write receipt was accepted")
-		}
-	})
+func TestAttemptFinalizerReadsOpaqueRawReferenceAndWhitespace(t *testing.T) {
+	fixture := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete, ".opaque")
+	alternate := fixture.rawReference
+	alternate.Key += ".opaque"
+	fixture.store.objects[alternate.Location()] = append(fixture.store.objects[fixture.rawReference.Location()], '\n')
+	finalized, err := fixture.finalizer.Finalize(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1, fixture.progress,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, ok := finalized.Observation.AcceptedObservation()
+	if !ok || finalized.RawReference.Location() != alternate.Location() ||
+		observation.TauMilliseconds() != 2000 ||
+		observation.TransitionWallJoules() < 29.999999 || observation.TransitionWallJoules() > 30.000001 {
+		t.Fatalf("opaque raw reference did not retain measured transition: %+v", finalized)
+	}
+}
+
+func TestAttemptFinalizerUsesWrittenObjectDespiteReceiptMetadata(t *testing.T) {
+	fixture := newAttemptFinalizerFixture(t, acceptedAttempt, batchv1.JobComplete)
+	fixture.store.badReceipt = true
+	finalized, err := fixture.finalizer.Finalize(
+		context.Background(), fixture.measurement, fixture.prepared, 0, 1, fixture.progress,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, found, err := fixture.finalizer.load(context.Background(), finalized.FinalReference.Location())
+	if err != nil || !found || recovered.Observation.Verdict() != transitioncost.VerdictAccepted {
+		t.Fatalf("written observation was not readable: %+v, %v", recovered, err)
+	}
 }
 
 type attemptFinalizerFixture struct {
@@ -367,9 +374,7 @@ func transitionRawObservation(prepared PreparedMeasurement, outcome finalization
 		raw.PostTransitionProcess = nil
 		raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
 	case insufficientAttempt:
-		raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt =
-			raw.MarkerBrackets.ApplyStartedAt.FirstPresentReceivedAt.
-				Add(-prepared.Policy.MaximumBoundaryUncertainty - time.Millisecond)
+		raw.PowerSamples = nil
 	}
 	return raw
 }

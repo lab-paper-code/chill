@@ -71,7 +71,7 @@ func TestWriteRawRejectsInvalidLocationBeforeWriting(t *testing.T) {
 	}
 }
 
-func TestWriteRawReportsWriterAndReceiptFailures(t *testing.T) {
+func TestWriteRawReportsWriterFailure(t *testing.T) {
 	location := evidencestore.ObjectLocation{Store: "evidence", Key: "transition/raw.json"}
 	writeErr := errors.New("store unavailable")
 	tests := map[string]immutableWriterFunc{
@@ -81,15 +81,6 @@ func TestWriteRawReportsWriterAndReceiptFailures(t *testing.T) {
 			io.Reader,
 		) (evidencestore.Receipt, error) {
 			return evidencestore.Receipt{}, writeErr
-		},
-		"receipt": func(
-			_ context.Context,
-			identity evidencestore.ObjectIdentity,
-			_ io.Reader,
-		) (evidencestore.Receipt, error) {
-			receipt := validReceipt(identity)
-			receipt.Object.Size++
-			return receipt, nil
 		},
 	}
 	for name, store := range tests {

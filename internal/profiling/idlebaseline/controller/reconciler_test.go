@@ -173,6 +173,33 @@ func TestReconcilerRecoversExistingCompleteWinnerWithoutRederiving(t *testing.T)
 	}
 }
 
+func TestReconcilerAcceptsOwnedNoncanonicalRunFromFrozenExecution(t *testing.T) {
+	parent := testBaselineParent()
+	objects := []client.Object{parent}
+	for attempt := int32(1); attempt <= 3; attempt++ {
+		run := acceptedRun(t, parent, attempt)
+		run.Name = "opaque-child-" + run.Labels[labelAttempt]
+		run.Spec.Measurement.Dataset = "stale-request"
+		run.Spec.Candidate.ModelSpec = "stale-request"
+		objects = append(objects, &run)
+	}
+	kube := baselineFakeClient(t, objects...)
+	reconciler := newTestReconciler(t, kube,
+		&fakeBaselineDeriver{baseline: testDerivedBaseline(t, 3), references: testFinalReferences(3)},
+		&fakeBaselineResultWriter{reference: testResultReference()})
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
+		t.Fatal(err)
+	}
+	updated := &edgev1alpha1.ModelLoadedIdleBaseline{}
+	if err := kube.Get(context.Background(), client.ObjectKeyFromObject(parent), updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status.Phase != edgev1alpha1.ModelLoadedIdleBaselinePhaseComplete ||
+		updated.Status.CompletedRuns != 3 || updated.Status.Result == nil {
+		t.Fatalf("owned completed trials did not finish the baseline: %+v", updated.Status)
+	}
+}
+
 func TestPointPolicyRejectsNonFiniteOrOutOfRangeConfidence(t *testing.T) {
 	spec := testBaselineParent().Spec.PointPolicy
 	for _, invalid := range []string{"NaN", "Inf", "0", "1", " 0.95"} {

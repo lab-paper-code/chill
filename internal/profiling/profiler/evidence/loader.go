@@ -61,7 +61,7 @@ func (l *Loader) load(
 	ctx context.Context,
 	reference evidencestore.ObjectIdentity,
 ) (ExecutionEvidence, rawRecord, error) {
-	finalBytes, err := readExpectedSize(ctx, l.store, reference, l.maxObjectBytes)
+	finalBytes, err := readBounded(ctx, l.store, reference.Location(), l.maxObjectBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read finalized evidence: %w", err)
 	}
@@ -69,7 +69,11 @@ func (l *Loader) load(
 	if err := decodeExact(finalBytes, &execution); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("decode finalized evidence: %w", err)
 	}
-	rawBytes, err := readExpectedSize(ctx, l.store, execution.RawMeasurement, l.maxObjectBytes)
+	return l.loadRaw(ctx, execution)
+}
+
+func (l *Loader) loadRaw(ctx context.Context, execution ExecutionEvidence) (ExecutionEvidence, rawRecord, error) {
+	rawBytes, err := readBounded(ctx, l.store, execution.RawMeasurement.Location(), l.maxObjectBytes)
 	if err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("read raw measurement: %w", err)
 	}
@@ -80,6 +84,9 @@ func (l *Loader) load(
 	if err := raw.validate(); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate raw measurement: %w", err)
 	}
+	// The raw record carries the config used by the measurement process.
+	// The retained envelope's copy remains stored provenance, not a second authority.
+	execution.RunConfig = raw.runConfig()
 	if err := raw.validateExecution(execution); err != nil {
 		return ExecutionEvidence{}, nil, fmt.Errorf("validate finalized evidence: %w", err)
 	}

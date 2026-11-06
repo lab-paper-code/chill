@@ -204,7 +204,7 @@ func (a *directionAccumulator) add(result FinalizedObservation) error {
 		a.targetIdleBaseline = baseline
 		a.settlingSeconds = result.record.FrozenContract.SettlingSeconds
 		a.hasTargetIdleBaseline = true
-	} else if baseline != a.targetIdleBaseline {
+	} else if baseline.State != a.targetIdleBaseline.State || baseline.MeanWallWatts != a.targetIdleBaseline.MeanWallWatts {
 		return errors.New("target idle baseline changed within one direction")
 	}
 	if result.record.FrozenContract.SettlingSeconds != a.settlingSeconds {

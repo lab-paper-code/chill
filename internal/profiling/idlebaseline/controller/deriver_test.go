@@ -37,7 +37,7 @@ func (l deriverEvidenceLoader) LoadIdle(
 	return verified, nil
 }
 
-func TestDeriverLoadsEvaluatesAndAggregatesAcceptedIdleEvidence(t *testing.T) {
+func TestDeriverAggregatesMeasuredConfigFromOpaqueStoredEvidence(t *testing.T) {
 	config := deriverIdleRunConfig(t)
 	runs := make([]edgev1alpha1.ProfilingRun, 3)
 	evidence := deriverEvidenceLoader{byRun: map[string]profilerevidence.VerifiedIdleEvidence{}}
@@ -182,15 +182,21 @@ func deriverIdleEvidence(
 		t.Fatal(err)
 	}
 	execution := deriverExecution(t, config, podUID, rawBytes)
+	// The raw process config owns execution semantics, even when the envelope
+	// retained an older copied config and stale object-size metadata.
+	execution.RunConfig.Measurement.Batch++
+	execution.RunConfig.Candidate.Inputs.ModelSpec.ResourceVersion = "older-envelope"
+	execution.RawMeasurement.Key = " opaque raw " + podUID
+	execution.RawMeasurement.Size = 2 << 20
 	executionBytes, err := execution.CanonicalIdleJSON(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reference := evidencestore.ObjectIdentity{
-		Store: "evidence", Key: "execution-" + podUID + ".json", Size: int64(len(executionBytes)),
+		Store: "evidence", Key: " opaque execution " + podUID, Size: 2 << 20,
 	}
 	loader, err := profilerevidence.NewLoader(deriverStore{
-		execution.RawMeasurement.Location(): rawBytes, reference.Location(): executionBytes,
+		execution.RawMeasurement.Location(): append(rawBytes, '\n'), reference.Location(): append(executionBytes, '\n'),
 	}, 1<<20)
 	if err != nil {
 		t.Fatal(err)

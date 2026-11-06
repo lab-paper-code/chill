@@ -39,10 +39,5 @@ func WriteRaw(
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("write transition raw evidence: %w", err)
 	}
-	if err := receipt.Validate(); err != nil || receipt.Object != identity {
-		return evidencestore.Receipt{}, errors.New(
-			"transition raw evidence writer returned an invalid receipt",
-		)
-	}
 	return receipt, nil
 }

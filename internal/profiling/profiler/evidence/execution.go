@@ -16,7 +16,7 @@ func (e ExecutionEvidence) Validate(raw RawMeasurement) error {
 	if err := e.RawMeasurement.Validate(); err != nil {
 		return fmt.Errorf("validate raw measurement identity: %w", err)
 	}
-	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload); err != nil {
+	if err := raw.validateExecution(e); err != nil {
 		return err
 	}
 	return nil
@@ -29,7 +29,7 @@ func (e ExecutionEvidence) ValidateIdle(raw IdleRawMeasurement) error {
 	if err := e.RawMeasurement.Validate(); err != nil {
 		return fmt.Errorf("validate raw measurement identity: %w", err)
 	}
-	if err := e.validateLinkedRaw(raw.PodUID, raw.Workload); err != nil {
+	if err := raw.validateExecution(e); err != nil {
 		return err
 	}
 	return nil
@@ -41,9 +41,6 @@ func (e ExecutionEvidence) validateLinkedRaw(
 ) error {
 	if !IsSupportedExecutionEvidenceSchemaVersion(e.SchemaVersion) {
 		return fmt.Errorf("unsupported execution evidence schemaVersion %q", e.SchemaVersion)
-	}
-	if err := e.RunConfig.Validate(); err != nil {
-		return fmt.Errorf("validate RunConfig: %w", err)
 	}
 	if err := e.Terminal.validate(e.RunConfig, rawPodUID); err != nil {
 		return err

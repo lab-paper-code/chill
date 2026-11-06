@@ -70,11 +70,6 @@ func (s *IdleBaselineSource) Resolve(
 			"idle baseline result schema %q is not current", reference.SchemaVersion,
 		)
 	}
-	if identity.Size > s.maxObjectBytes {
-		return ResolvedIdleBaseline{}, fmt.Errorf(
-			"idle baseline result declares %d bytes above %d-byte limit", identity.Size, s.maxObjectBytes,
-		)
-	}
 	payload, err := s.read(ctx, identity)
 	if err != nil {
 		return ResolvedIdleBaseline{}, err
@@ -147,16 +142,13 @@ func (s *IdleBaselineSource) read(
 	if err != nil {
 		return nil, fmt.Errorf("open idle baseline result: %w", err)
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(stream, identity.Size+1))
+	payload, readErr := io.ReadAll(io.LimitReader(stream, s.maxObjectBytes+1))
 	closeErr := stream.Close()
 	if readErr != nil || closeErr != nil {
 		return nil, errors.Join(readErr, closeErr)
 	}
-	if int64(len(payload)) != identity.Size {
-		return nil, fmt.Errorf(
-			"idle baseline result is %d bytes where the reference declares %d",
-			len(payload), identity.Size,
-		)
+	if int64(len(payload)) > s.maxObjectBytes {
+		return nil, fmt.Errorf("idle baseline result exceeds %d-byte limit", s.maxObjectBytes)
 	}
 	return payload, nil
 }

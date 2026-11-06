@@ -74,10 +74,6 @@ func Derive(frozen FrozenContract, raw RawObservation, policy Policy) (Finalized
 		return classified(verified, VerdictInvalid, ReasonObservationMalformed,
 			"boundary mapping uncertainty cannot be represented in milliseconds"), nil
 	}
-	if boundaryUncertainty > verified.policy.MaximumBoundaryUncertainty {
-		return classified(verified, VerdictInsufficient, ReasonBoundaryUncertaintyExceeded,
-			"boundary mapping uncertainty exceeds policy"), nil
-	}
 
 	costWindowEndedAt := completedAt.Add(time.Duration(frozen.SettlingSeconds) * time.Second)
 	if costWindowEndedAt.After(raw.ObservationEndedAt) {
@@ -152,8 +148,7 @@ func validateFrozen(frozen FrozenContract) error {
 	if frozen.SettlingSeconds < 0 || frozen.SettlingSeconds > 3600 {
 		return errors.New("settling seconds must be in [0, 3600]")
 	}
-	if !validState(frozen.SourceState) || !validState(frozen.TargetState) ||
-		!validText(frozen.TargetIdleBaseline.EvidenceReference) {
+	if !validState(frozen.SourceState) || !validState(frozen.TargetState) {
 		return errors.New("frozen transition inputs are incomplete or contain surrounding whitespace")
 	}
 	if frozen.SourceState.DeviceType != frozen.TargetState.DeviceType ||
@@ -172,7 +167,7 @@ func validateFrozen(frozen FrozenContract) error {
 
 func validatePolicy(policy Policy) error {
 	if policy.MaximumBoundaryDistance < 0 || policy.MaximumSampleGap <= 0 ||
-		policy.MaximumBoundaryUncertainty < 0 || policy.MaximumReadyObservationDelay <= 0 ||
+		policy.MaximumReadyObservationDelay <= 0 ||
 		policy.MinimumCoverage <= 0 || policy.MinimumCoverage > 1 ||
 		math.IsNaN(policy.MinimumCoverage) || math.IsInf(policy.MinimumCoverage, 0) {
 		return errors.New("policy bounds are invalid")

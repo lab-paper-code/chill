@@ -150,9 +150,6 @@ func TestSummarizeRejectsPerDirectionBaselineDrift(t *testing.T) {
 		name   string
 		mutate func(*transitioncost.FrozenContract, *transitioncost.RawObservation)
 	}{
-		{name: "evidence reference", mutate: func(f *transitioncost.FrozenContract, _ *transitioncost.RawObservation) {
-			f.TargetIdleBaseline.EvidenceReference = "evidence://other-baseline"
-		}},
 		{name: "value", mutate: func(f *transitioncost.FrozenContract, _ *transitioncost.RawObservation) {
 			f.TargetIdleBaseline.MeanWallWatts++
 		}},
@@ -168,6 +165,23 @@ func TestSummarizeRejectsPerDirectionBaselineDrift(t *testing.T) {
 				[]transitioncost.FinalizedObservation{first, drifted})
 			assertErrorContains(t, err, "target idle baseline")
 		})
+	}
+}
+
+func TestSummarizeAcceptsDifferentBaselineReferences(t *testing.T) {
+	directions := testDirections()
+	results := completeResults(t, directions)
+	different := deriveAttempt(t, directions[0], "different-reference", 2, 0, acceptedAttempt,
+		func(frozen *transitioncost.FrozenContract, _ *transitioncost.RawObservation) {
+			frozen.TargetIdleBaseline.EvidenceReference = "opaque alternate reference"
+		})
+	results = append(results, different)
+	table, err := transitioncost.Summarize(directions, 5, results)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if table.Record().Entries[0].AcceptedCount != 6 {
+		t.Fatalf("distinct execution was not counted: %+v", table.Record())
 	}
 }
 
@@ -375,8 +389,7 @@ func deriveAttempt(
 		raw.PostTransitionProcess = nil
 		raw.MarkerBrackets.ReadyProcessWitness.FirstPresentReceivedAt = time.Time{}
 	case insufficientAttempt:
-		raw.MarkerBrackets.ApplyStartedAt.LastAbsentReceivedAt =
-			startedAt.Add(-policy.MaximumBoundaryUncertainty - time.Millisecond)
+		raw.PowerSamples = nil
 	default:
 		t.Fatalf("unknown test attempt outcome %d", outcome)
 	}

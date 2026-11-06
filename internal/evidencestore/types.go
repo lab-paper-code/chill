@@ -1,9 +1,6 @@
 package evidencestore
 
-import (
-	"fmt"
-	"strings"
-)
+import "fmt"
 
 const ReceiptSchemaVersion = "chill.dacs.io/evidence-store-receipt.v1alpha1"
 
@@ -20,11 +17,8 @@ func (l ObjectLocation) Validate() error {
 		"store": l.Store,
 		"key":   l.Key,
 	} {
-		if strings.TrimSpace(value) == "" {
+		if value == "" {
 			return fmt.Errorf("%w: %s is required", ErrInvalidIdentity, name)
-		}
-		if strings.TrimSpace(value) != value {
-			return fmt.Errorf("%w: %s must not have surrounding whitespace", ErrInvalidIdentity, name)
 		}
 	}
 	return nil
