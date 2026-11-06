@@ -256,6 +256,7 @@ func TestCandidateReportValidatesHostContractDelivery(t *testing.T) {
 		Measurement: MeasurementContract{Batch: 1},
 		Delivery:    report.RuntimeDelivery(),
 	}
+	config.State.HostContract.Driver.Version = "historical-driver"
 	verified, err := VerifyCandidateReport(payload, config)
 	if err != nil {
 		t.Fatal(err)

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"path"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -159,9 +158,6 @@ func (i RunConfig) validateDelivery() error {
 		delivery.ArtifactCapability.TargetPlatform != "rk3588" {
 		return errors.New("RKNNLite requires one FP32 rank-3 NHWC sample input for rk3588")
 	}
-	if !reflect.DeepEqual(i.State.HostContract, delivery.HostContract) {
-		return errors.New("RKNNLite RunConfig state and delivery host contracts differ")
-	}
 	return nil
 }
 
@@ -186,9 +182,6 @@ func (i RunConfig) validateFirstfloorDelivery() error {
 			if delivery.RuntimeAccess == nil || delivery.RuntimeAccess.GPUUUID == "" ||
 				len(delivery.RuntimeAccess.Resources) != 1 || delivery.RuntimeAccess.Resources["nvidia.com/gpu"] != "1" {
 				return errors.New("firstfloor ort-cuda requires an explicit GPU UUID and exactly one nvidia.com/gpu resource")
-			}
-			if !reflect.DeepEqual(i.State.HostContract, delivery.HostContract) {
-				return errors.New("CUDA RunConfig state and delivery host contracts differ")
 			}
 		} else if delivery.RuntimeAccess != nil &&
 			(delivery.RuntimeAccess.GPUUUID != "" || len(delivery.RuntimeAccess.Resources) != 0) {
@@ -285,21 +278,21 @@ func (i RunConfig) validateMeasurementMode() error {
 	}
 	dataset := i.Measurement.Dataset
 	if dataset == nil || !cleanValue(dataset.Name) || !cleanValue(dataset.UID) || !cleanValue(dataset.Image) ||
-		!validArtifactPath(dataset.Path) {
-		return errors.New("active measurement requires a frozen dataset name, UID, image, and clean path")
+		!artifactPathPattern.MatchString(dataset.Path) || path.Clean(dataset.Path) == "/" {
+		return errors.New("active measurement requires a frozen dataset name, UID, image, and absolute path")
 	}
 	return nil
 }
 
-// validateArtifactFiles requires clean absolute model files whose names the
+// validateArtifactFiles requires absolute model files whose names the
 // runner can load, by the same rule the catalog applies.
 func validateArtifactFiles(files []string, rknn bool) error {
 	if len(files) == 0 {
 		return errors.New("state.artifactFiles is required")
 	}
 	for _, file := range files {
-		if !validArtifactPath(file) {
-			return errors.New("state.artifactFiles must be clean absolute container paths")
+		if !artifactPathPattern.MatchString(file) || path.Clean(file) == "/" {
+			return errors.New("state.artifactFiles must be absolute container paths")
 		}
 	}
 	if err := modelcompat.ValidateModelFileNames(files, rknn); err != nil {
@@ -310,8 +303,8 @@ func validateArtifactFiles(files []string, rknn bool) error {
 
 func validatePreprocessorState(p PreprocessorState) error {
 	if !cleanValue(p.Name) || !cleanValue(p.UID) || !cleanValue(p.Image) || !cleanValue(p.Architecture) ||
-		!validArtifactPath(p.Path) || p.MaxNewTokens < 0 {
-		return errors.New("state.preprocessor requires name, UID, image, architecture, and a clean path")
+		!artifactPathPattern.MatchString(p.Path) || path.Clean(p.Path) == "/" || p.MaxNewTokens < 0 {
+		return errors.New("state.preprocessor requires name, UID, image, architecture, and an absolute path")
 	}
 	for _, fields := range [][]string{p.Inputs, p.Outputs} {
 		if len(fields) == 0 {

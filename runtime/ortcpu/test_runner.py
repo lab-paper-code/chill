@@ -251,6 +251,10 @@ class RunnerTest(unittest.TestCase):
             model = Path(directory) / "model.onnx"
             model.write_bytes(b"model")
             validate(valid_request(model))
+            request = valid_request(model)
+            request["runConfig"]["state"]["artifactFiles"] = ["/artifact/./model.onnx"]
+            request["runConfig"]["state"]["preprocessor"]["path"] = "/artifact/./preprocessor"
+            validate(request)
 
     def test_shared_request_rejects_old_cpu_contract(self) -> None:
         request = valid_request(Path("/model/model.onnx"))

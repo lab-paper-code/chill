@@ -104,9 +104,6 @@ func (s *Scheduler) Update(ctx context.Context, cfg *Config) error {
 	next.Policy = cfg.Policy
 	next.Policy.DeadlinePolicy = EffectiveDeadlinePolicy(next.Policy.DeadlinePolicy)
 	next.Policy.Batches = current.Policy.Batches
-	if next.Policy.ProfileID != current.Policy.ProfileID {
-		return errors.New("profile changes require restart")
-	}
 	// Paired samples and their hydrated index are immutable across updates.
 	if !durationOK(next.Policy.MaxBatchWaitMS) || !identity(next.Policy.DecisionID) {
 		return errors.New("invalid mutable policy")

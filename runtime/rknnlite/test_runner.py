@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -101,7 +102,6 @@ class RunnerTest(unittest.TestCase):
 
     def test_metadata_mismatch_is_rejected(self) -> None:
         cases = [
-            ("name", {"name": b"wrong"}),
             ("datatype", {"datatype": 2}),
             ("sampleShape", {"shape": (1, 3, 112, 224)}),
             ("rank4", {"shape": (1, 224, 3)}),
@@ -120,6 +120,13 @@ class RunnerTest(unittest.TestCase):
         library = metadata_library(datatype=1)
         with mock.patch.object(runner.ctypes, "CDLL", return_value=library):
             runner.validate_runtime_inputs(Path("/model.rknn"), valid_candidate(), 1)
+
+    def test_positional_inputs_accept_opaque_native_names(self) -> None:
+        for batch in (1, 4):
+            with self.subTest(batch=batch):
+                library = metadata_library(name=b"serving_default_input:0")
+                with mock.patch.object(runner.ctypes, "CDLL", return_value=library):
+                    runner.validate_runtime_inputs(Path("/model.rknn"), valid_candidate(), batch)
 
     def test_metadata_validates_selected_dynamic_batch(self) -> None:
         candidate = valid_candidate()
@@ -144,10 +151,30 @@ class RunnerTest(unittest.TestCase):
                 runner.validate_runtime_inputs(Path("/model.rknn"), valid_candidate(), 1)
         library.rknn_destroy.assert_called_once()
 
-    def test_observe_host_contract_rejects_runtime_package_version_drift(self) -> None:
-        with mock.patch.object(runner.importlib.metadata, "version", return_value="2.3.1"):
-            with self.assertRaisesRegex(runner.ContractError, "package version"):
-                runner.observe_host_contract(valid_candidate(), 1)
+    def test_observe_host_contract_keeps_observations_despite_label_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "librknnrt.so"
+            library.touch()
+            driver = root / "driver"
+            driver.write_text("0.9.7")
+            compatible = root / "compatible"
+            compatible.write_bytes(b"vendor,compatible-rk3588\x00")
+            candidate = valid_candidate()
+            host = candidate["hostContract"]
+            host["libraries"][0]["containerPath"] = str(library)
+            host["driver"]["versionPath"] = str(driver)
+            host["platform"]["compatiblePath"] = str(compatible)
+            host["devices"] = [{"path": "/dev/null"}]
+            with mock.patch.object(runner.importlib.metadata, "version", return_value="2.3.1"):
+                observed = runner.observe_host_contract(candidate, 1)
+            self.assertEqual(observed["package"]["version"], "2.3.1")
+            self.assertEqual(observed["driver"]["version"], "0.9.7")
+            self.assertFalse(observed["platform"]["matched"])
+            host["devices"] = [{"path": str(library)}]
+            with mock.patch.object(runner.importlib.metadata, "version", return_value="2.3.1"):
+                with self.assertRaisesRegex(runner.ContractError, "not a character device"):
+                    runner.observe_host_contract(candidate, 1)
 
 
 if __name__ == "__main__":

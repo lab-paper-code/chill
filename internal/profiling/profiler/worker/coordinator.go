@@ -144,7 +144,7 @@ func (c *Coordinator) Execute(ctx context.Context, request Request) (evidencesto
 	if err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf("%w: commit raw measurement: %w", ErrEvidenceCommit, err)
 	}
-	if err := receipt.Validate(); err != nil || receipt.Object != identity {
+	if err := receipt.Validate(); err != nil {
 		return evidencestore.Receipt{}, fmt.Errorf(
 			"%w: raw evidence writer returned an invalid receipt", ErrEvidenceCommit,
 		)

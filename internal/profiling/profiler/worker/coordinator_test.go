@@ -24,6 +24,13 @@ import (
 func TestCoordinatorCommitsCanonicalRawMeasurementInOrder(t *testing.T) {
 	config := testRunConfig(t)
 	runtimeResult := testRuntimeResult(t, config)
+	config.Delivery.RuntimePackages = []profilingrun.CandidateReportRuntimePackage{
+		{Name: "onnxruntime", Version: "declared-version"}, {Name: "numpy", Version: "declared-numpy"},
+	}
+	runtimeResult.DerivedContract.Backend = "historical-backend"
+	runtimeResult.DerivedContract.Provider = "historical-provider"
+	runtimeResult.DerivedContract.NodeSnapshot.UID = "historical-node"
+	runtimeResult.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds += 1e-12
 	metricResult := testMetricResult(config)
 	var calls []string
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, payload []byte) (evidencestore.Receipt, error) {
@@ -229,8 +236,9 @@ func TestCoordinatorStopsAtInvalidRuntimeOrMetricEvidence(t *testing.T) {
 func TestCoordinatorRejectsInvalidWriterReceipt(t *testing.T) {
 	config := testRunConfig(t)
 	store := &fakeStore{put: func(identity evidencestore.ObjectIdentity, _ []byte) (evidencestore.Receipt, error) {
-		identity.Size++
-		return createdReceipt(identity), nil
+		receipt := createdReceipt(identity)
+		receipt.Outcome = "Conflict"
+		return receipt, nil
 	}}
 	coordinator := mustCoordinator(t,
 		runtimeFunc(func(context.Context, RuntimeRequest) (profilingrun.RuntimeResult, error) {

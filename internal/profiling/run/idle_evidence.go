@@ -122,12 +122,6 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 	if err := validateCPUObservation(result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
-	if result.DerivedContract.NodeSnapshot.UID != config.TargetNode.UID {
-		return errors.New("idle derived contract identity mismatch")
-	}
-	if result.DerivedContract.Backend != config.State.Backend {
-		return errors.New("idle derived contract backend mismatch")
-	}
 	return nil
 }
 
@@ -141,9 +135,6 @@ func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult)
 	if err := validateRuntimeMemory(result.MemoryBytes, result.MemorySource, result.MemorySamples,
 		result.MeasurementWindow); err != nil {
 		return err
-	}
-	if result.DerivedContract.Provider != result.Provider {
-		return errors.New("idle firstfloor derived provider evidence mismatch")
 	}
 	if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
 		result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {

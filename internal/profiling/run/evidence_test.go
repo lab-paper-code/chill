@@ -178,6 +178,10 @@ func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
 	native.Runtime, native.RuntimeVersion, native.ModelFiles = FirstfloorRKNNLiteBackend, "2.3.2", config.State.ModelFiles()
 	native.Providers, native.AvailableProviders, native.Device = nil, nil, "npu"
 	native.IntraOpThreads, native.InterOpThreads = 0, 0
+	result.RuntimeVersion, native.RuntimeVersion = "2.3.1", "2.3.1"
+	result.RKNN.Package.Version = "2.3.1"
+	result.RKNN.Driver.Version = "observed-driver"
+	result.RKNN.Platform.Matched = false
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}
@@ -207,6 +211,30 @@ func TestNormalizeRuntimeArchitecture(t *testing.T) {
 	}
 }
 
+func TestVerifiedRuntimeAcceptsDeclaredLabelsAndDiagnosticRounding(t *testing.T) {
+	config := firstfloorRunConfig()
+	config.Delivery.RuntimePackages = []CandidateReportRuntimePackage{
+		{Name: "onnxruntime", Version: "declared-version"}, {Name: "numpy", Version: "declared-numpy"},
+	}
+	result := firstfloorResult(config)
+	result.DerivedContract.NodeSnapshot.UID = "historical-node"
+	result.DerivedContract.Backend = "historical-backend"
+	result.DerivedContract.Provider = "historical-provider"
+	result.Firstfloor.Runtime.NumpyVersion = "observed-numpy"
+	result.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds += 1e-12
+	verified, err := ValidateRunConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyRuntimeResult(verified, "pod-uid", result); err != nil {
+		t.Fatal(err)
+	}
+	result.RepetitionResults[0].NativeSamples[0].ServiceDurationNanos = 0
+	if _, err := VerifyRuntimeResult(verified, "pod-uid", result); err == nil {
+		t.Fatal("missing native duration was accepted")
+	}
+}
+
 func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing.T) {
 	config := firstfloorRunConfig()
 	active := firstfloorResult(config)
@@ -230,6 +258,9 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 		ModelResidentAtEnd: true, CPUContract: active.CPUContract, DerivedContract: active.DerivedContract,
 		MemoryBytes: active.MemoryBytes, MemorySource: active.MemorySource, Firstfloor: &native,
 	}
+	result.DerivedContract.NodeSnapshot.UID = "historical-node"
+	result.DerivedContract.Backend = "historical-backend"
+	result.DerivedContract.Provider = "historical-provider"
 	if err := ValidateIdleRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}

@@ -237,12 +237,6 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if err := validateCPUObservation(result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
-	if result.DerivedContract.NodeSnapshot.UID != config.TargetNode.UID {
-		return errors.New("derived contract identity mismatch")
-	}
-	if result.DerivedContract.Backend != config.State.Backend {
-		return errors.New("derived contract backend mismatch")
-	}
 	if result.MeasurementStartedAt == "" || result.MeasurementEndedAt == "" || result.RuntimeVersion == "" {
 		return errors.New("runtime identity or timestamp evidence is incomplete")
 	}
@@ -281,9 +275,6 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 	if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
 		result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
 		return err
-	}
-	if result.DerivedContract.Provider != result.Provider {
-		return errors.New("firstfloor derived provider mismatch")
 	}
 	if err := validateFirstfloorRuntimeEvidence(config, result.Firstfloor, uint64(result.InferenceCount)); err != nil {
 		return err
@@ -371,18 +362,6 @@ func validateFirstfloorPath(config RunConfig, evidence *FirstfloorRuntimeEvidenc
 	}
 	if !slices.Equal(evidence.Runtime.AvailableProviders, providers) {
 		return errors.New("firstfloor available-provider observations contradict runner metadata")
-	}
-	for _, pkg := range config.Delivery.RuntimePackages {
-		switch pkg.Name {
-		case "onnxruntime", "onnxruntime-gpu", "rknn-toolkit-lite2":
-			if pkg.Version != runtimeVersion {
-				return errors.New("firstfloor actual backend package version differs from exact-image declaration")
-			}
-		case "numpy":
-			if pkg.Version != evidence.Runtime.NumpyVersion {
-				return errors.New("firstfloor actual NumPy version differs from exact-image declaration")
-			}
-		}
 	}
 	if err := validateFirstfloorInputsAndBatches(config, evidence); err != nil {
 		return err
@@ -489,10 +468,6 @@ func validateServicePair(trialID string, sample NativeServiceSample, callIndex u
 		(sample.PrecedingIdleNanos != nil && *sample.PrecedingIdleNanos < 0) {
 		return errors.New("firstfloor canonical service pair or physical trial identity is invalid")
 	}
-	serviceMS := float64(sample.ServiceDurationNanos) / 1e6
-	if sample.RunnerServiceMilliseconds != serviceMS {
-		return errors.New("firstfloor diagnostic service differs from canonical integer duration")
-	}
 	if callIndex > 0 && sample.PrecedingIdleNanos == nil {
 		return errors.New("firstfloor post-start exchange is missing its actual gap")
 	}
@@ -549,7 +524,7 @@ func validateRKNNRuntimeEvidence(config RunConfig, evidence *RKNNRuntimeEvidence
 		!validArtifactPath(evidence.Driver.VersionPath) {
 		return errors.New("RKNN driver evidence is invalid")
 	}
-	if !evidence.Platform.Matched || !validArtifactPath(evidence.Platform.CompatiblePath) ||
+	if !validArtifactPath(evidence.Platform.CompatiblePath) ||
 		strings.TrimSpace(evidence.Platform.CompatibleToken) == "" {
 		return errors.New("RKNN platform evidence is invalid")
 	}

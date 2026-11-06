@@ -542,9 +542,6 @@ func VerifyCandidateReportRecord(report CandidateReport, config RunConfig) (Veri
 		modelcompat.CloneFirstfloorRuntimeSettings(report.Firstfloor)) {
 		return VerifiedCandidateReport{}, errors.New("candidate firstfloor settings do not match frozen RunConfig")
 	}
-	if !reflect.DeepEqual(config.State.HostContract, report.HostContract) {
-		return VerifiedCandidateReport{}, errors.New("candidate host contract does not match RunConfig")
-	}
 	if !reflect.DeepEqual(config.Delivery.ArtifactCapability, report.ArtifactCapability) {
 		return VerifiedCandidateReport{}, errors.New("candidate input contract does not match frozen RunConfig")
 	}

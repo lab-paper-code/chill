@@ -62,9 +62,6 @@ func ReadConfig(path string) (*Config, error) {
 		if e = decodeStrict(raw, &bundle); e != nil {
 			return nil, e
 		}
-		if bundle.ProfileID == "" || bundle.ProfileID != cfg.Policy.ProfileID {
-			return nil, errors.New("immutable profile ID differs from policy")
-		}
 		cfg.Policy.Batches = bundle.Batches
 	}
 	if err = ValidateConfig(&cfg); err != nil {

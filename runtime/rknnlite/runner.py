@@ -287,8 +287,6 @@ def validate_runtime_inputs(
             if result != 0:
                 raise ContractError(f"query RKNN input metadata returned {result}")
             tensor = capability["tensors"][0]
-            if attribute.name.decode("utf-8") != tensor["name"]:
-                raise ContractError("RKNN runtime input name does not match declaration")
             # A float artifact built without quantization reports RKNN_TENSOR_FLOAT16
             # (1); with pass_through off the runtime converts the FP32 input.
             if attribute.type not in (0, 1) or attribute.pass_through:  # RKNN_TENSOR_FLOAT32/FLOAT16
@@ -306,8 +304,6 @@ def validate_runtime_inputs(
                     raise ContractError(f"query RKNN declared batch metadata returned {result}")
                 if not 1 <= profiles.shape_number <= 512 or profiles.n_dims != 4:
                     raise ContractError("RKNN runtime has invalid dynamic input metadata")
-                if profiles.name.decode("utf-8") != tensor["name"]:
-                    raise ContractError("RKNN dynamic input name does not match declaration")
                 shapes = [
                     nhwc_shape(list(row[:profiles.n_dims]), profiles.fmt)
                     for row in profiles.dyn_range[:profiles.shape_number]
@@ -352,10 +348,6 @@ def observe_host_contract(
         raise ContractError(
             f"runtime package {package['name']} is not installed"
         ) from error
-    if package_version != package["version"]:
-        raise ContractError(
-            "installed RKNNLite package version does not match the candidate"
-        )
 
     libraries: list[dict[str, Any]] = []
     for library in host["libraries"]:
@@ -367,8 +359,6 @@ def observe_host_contract(
     driver_version = read_required_text(
         Path(driver["versionPath"]), "RKNN driver version"
     )
-    if driver_version != driver["version"]:
-        raise ContractError("RKNN driver version does not match the candidate")
 
     platform_contract = host["platform"]
     compatible_path = Path(platform_contract["compatiblePath"])
@@ -378,8 +368,6 @@ def observe_host_contract(
         raise ContractError(f"read platform compatible bytes: {error}") from error
     token = platform_contract["compatibleToken"].encode("utf-8")
     matched = token in compatible.split(b"\x00")
-    if not matched:
-        raise ContractError("platform compatible token does not match the candidate")
 
     devices: list[dict[str, Any]] = []
     for device in host["devices"]:

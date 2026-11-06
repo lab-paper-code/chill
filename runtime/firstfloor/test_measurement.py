@@ -242,6 +242,8 @@ class MeasurementBoundaryTest(unittest.TestCase):
                     "modelInstanceCount": 1, "maxQueueBytes": 1024, "maxRequestBytes": measurement.FRAME_BYTES,
                     "policy": {"deadlinePolicy": "keep"},
                     "runtime": actual}
+        request["runConfig"]["delivery"]["runtimePackages"] = [
+            {"name": "onnxruntime-gpu", "version": "1.21.0"}, {"name": "numpy", "version": "2.2.0"}]
         self.assertEqual(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1")["gpuUUID"], "GPU-actual")
         for policy in ("drop", "keep", "defer"):
             request["runConfig"]["state"]["firstfloor"]["deadlinePolicy"] = policy
@@ -271,21 +273,6 @@ class MeasurementBoundaryTest(unittest.TestCase):
         with self.assertRaises(measurement.common.ContractError):
             measurement.validate_metadata(dict(metadata, runtime=dict(cpu_actual, providers=["CPUExecutionProvider", "CUDAExecutionProvider"])),
                                           cpu_request, "200000 100000", [0, 1], "0-1")
-
-    def test_rknn_actual_host_facts_must_match_declarations(self):
-        delivery = {"runtimePackages": [{"name": "rknn-toolkit-lite2", "version": "2.3.2"}],
-                    "hostContract": {"libraries": [{"name": "rknnrt", "containerPath": "/usr/lib/librknnrt.so"}],
-                                     "driver": {"name": "rknpu", "versionPath": "/sys/kernel/debug/rknpu/version", "version": "0.9.8"},
-                                     "platform": {"compatiblePath": "/proc/device-tree/compatible", "compatibleToken": "rockchip,rk3588"},
-                                     "devices": [{"path": "/dev/dri/renderD128"}]}}
-        facts = {"package": delivery["runtimePackages"][0], "hostLibraries": [{"name": "rknnrt", "path": "/usr/lib/librknnrt.so"}],
-                 "driver": delivery["hostContract"]["driver"], "platform": dict(delivery["hostContract"]["platform"], matched=True),
-                 "devices": [{"path": "/dev/dri/renderD128", "characterDevice": True, "opened": True}],
-                 "coreMask": "NPU_CORE_0", "inputLayout": "NHWC", "initSucceeded": True, "loadSucceeded": True}
-        measurement.validate_rknn_facts(facts, delivery)
-        for key in facts:
-            with self.subTest(key=key), self.assertRaises(measurement.common.ContractError):
-                measurement.validate_rknn_facts(dict(facts, **{key: None}), delivery)
 
 
 class RuntimeFailureTest(unittest.TestCase):

@@ -245,9 +245,21 @@ func TestLocalActorCancellationSnapshotsAndTypedOutputs(t *testing.T) {
 	awaitActorState(t, s, func(state State) bool { return len(state.Requests) == 1 && state.Requests[0].Phase == phaseRunning })
 	next := *cfg
 	next.Policy.DecisionID = "decision-2"
+	next.Policy.ProfileID = "relabelled-profile"
 	next.Policy.MaxBatchSize = 1
 	if e := s.Update(context.Background(), &next); e != nil {
 		t.Fatal(e)
+	}
+	for _, change := range []func(*Config){
+		func(c *Config) { c.ProfilePath = "/different/profile.json" },
+		func(c *Config) { c.Model = "different-model" },
+		func(c *Config) { c.MaxQueueRequests++ },
+	} {
+		invalid := next
+		change(&invalid)
+		if err := s.Update(context.Background(), &invalid); err == nil {
+			t.Fatal("immutable startup execution change was accepted")
+		}
 	}
 	cancelActive()
 	reply := <-activeReply
@@ -888,7 +900,7 @@ func TestNativeBundleRejectsDurationOnlyProfiles(t *testing.T) {
 	if _, err := ReadConfig(configPath); err == nil {
 		t.Fatal("duration-only bundle silently synthesized missing idle history")
 	}
-	paired, err := json.Marshal(ProfileBundle{ProfileID: cfg.Policy.ProfileID, Batches: testPolicy().Batches})
+	paired, err := json.Marshal(ProfileBundle{ProfileID: "relabelled-profile", Batches: testPolicy().Batches})
 	if err != nil {
 		t.Fatal(err)
 	}

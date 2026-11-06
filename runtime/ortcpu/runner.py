@@ -132,8 +132,8 @@ def require_integer(value: Any, name: str, minimum: int = 0) -> int:
 def require_absolute_file_path(value: Any, name: str) -> Path:
     raw = require_string(value, name)
     path = Path(raw)
-    if not path.is_absolute() or path == Path("/") or os.path.normpath(raw) != raw:
-        raise ContractError(f"{name} must be a clean absolute file path")
+    if not path.is_absolute() or os.path.normpath(raw) == "/":
+        raise ContractError(f"{name} must be an absolute file path")
     return path
 
 

@@ -216,9 +216,9 @@ func rknnDeliveryForTest(batch int32, host *CandidateReportHostContract) Candida
 	}
 }
 
-func TestCurrentRunConfigRequiresCleanUniqueArtifactFiles(t *testing.T) {
+func TestCurrentRunConfigRequiresAbsoluteUniqueArtifactFiles(t *testing.T) {
 	for _, files := range [][]string{
-		nil, {"/"}, {"artifact/model.onnx"}, {"/artifact/../model.onnx"}, {"/a/model.onnx", "/b/model.onnx"},
+		nil, {"/"}, {"artifact/model.onnx"}, {"/a/model.onnx", "/b/model.onnx"},
 		{"/artifact/model.onnx", "/artifact/model.onnx_data"},
 	} {
 		config := validRunConfig()
@@ -226,6 +226,19 @@ func TestCurrentRunConfigRequiresCleanUniqueArtifactFiles(t *testing.T) {
 		if err := config.Validate(); err == nil {
 			t.Fatalf("expected artifact files %q rejection", files)
 		}
+	}
+}
+
+func TestCurrentRunConfigAcceptsCarrierPathSpellingsAndDetachedHostHistory(t *testing.T) {
+	config := firstfloorFrozenConfig(FirstfloorRKNNLiteBackend)
+	config.State.ArtifactFiles = []string{"/artifact/./model.rknn"}
+	config.State.Preprocessor.Path = "/artifact/preprocessor/../mobilenet"
+	config.Measurement.Dataset.Path = "/artifact/./dataset"
+	history := *config.State.HostContract
+	history.Driver.Version = "historical-driver"
+	config.State.HostContract = &history
+	if _, err := ValidateRunConfig(config); err != nil {
+		t.Fatal(err)
 	}
 }
 

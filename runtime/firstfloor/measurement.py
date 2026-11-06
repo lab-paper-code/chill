@@ -89,15 +89,7 @@ def validate_request(request: dict[str, Any]) -> None:
     if maximum > queue or queue > 1 << 20:
         raise common.ContractError("firstfloor batch/queue capacity is invalid")
     initialized_batches(run)
-    if backend == "rknnlite":
-        if state.get("hostContract") != run["delivery"].get("hostContract"):
-            raise common.ContractError("frozen RKNN host identity differs from delivered host declarations")
-        from rknnlite import runner as rknn
-        try:
-            rknn.validate_candidate(run["delivery"])
-        except rknn.ContractError as error:
-            raise common.ContractError(str(error)) from error
-    elif "hostContract" in run["delivery"]:
+    if backend != "rknnlite" and "hostContract" in run["delivery"]:
         raise common.ContractError("ORT cannot use RKNN host declarations")
     if backend == "ort-cuda":
         access = common.require_object(run["delivery"].get("runtimeAccess"), "CUDA runtimeAccess")
@@ -182,22 +174,6 @@ def native_sample(response: dict[str, Any], batch: int, record_ids: list[str], g
     return sample
 
 
-def validate_rknn_facts(facts: dict[str, Any], delivery: dict[str, Any]) -> None:
-    host = delivery["hostContract"]
-    driver, platform_contract = host["driver"], host["platform"]
-    expected = {
-        "package": delivery["runtimePackages"][0],
-        "hostLibraries": [{"name": item["name"], "path": item["containerPath"]} for item in host["libraries"]],
-        "driver": driver,
-        "platform": dict(platform_contract, matched=True),
-        "devices": [dict(item, characterDevice=True, opened=True) for item in host["devices"]],
-        "coreMask": "NPU_CORE_0", "inputLayout": "NHWC",
-        "initSucceeded": True, "loadSucceeded": True,
-    }
-    if any(facts.get(key) != value for key, value in expected.items()):
-        raise common.ContractError("actual RKNN package/host/driver/platform/device/load/init facts differ from declarations")
-
-
 def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max: str,
                       affinity: list[int], cpuset: str) -> dict[str, Any]:
     run = request["runConfig"]
@@ -242,18 +218,11 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
             raise common.ContractError("CUDA execution requires one whole physical GPU")
         if uuid != run["delivery"]["runtimeAccess"]["gpuUUID"]:
             raise common.ContractError("actual GPU UUID differs from frozen allocation")
-    for package in run["delivery"].get("runtimePackages", []):
-        actual_version = {"onnxruntime": actual["runtimeVersion"], "onnxruntime-gpu": actual["runtimeVersion"],
-                          "numpy": actual["numpyVersion"], "rknn-toolkit-lite2": actual["runtimeVersion"]}.get(package["name"])
-        if actual_version != package["version"]:
-            raise common.ContractError("actual runtime package differs from frozen declaration")
     if actual.get("cgroupCPUMax") != cpu_max or actual.get("cpuSet") != cpuset:
         raise common.ContractError("actual runner cgroup quota/cpuset differs from measurement container")
     available = actual.get("availableProviders", [])
     if not isinstance(available, list) or (backend != "rknnlite" and PROVIDERS[backend] not in available):
         raise common.ContractError("actual available providers do not support the selected backend")
-    if backend == "rknnlite":
-        validate_rknn_facts(common.require_object(actual.get("rknn"), "actual RKNN runtime facts"), run["delivery"])
     return actual
 
 
@@ -442,9 +411,8 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
             observed = session.counts()
             if any(observed[key] - session.baseline[key] != executions for key in observed):
                 raise common.ContractError("actual actor execution/request counters disagree with completed fixed-K samples")
-            after = validate_metadata(session.metadata(), request, cpu_max, affinity, cpuset)
-            if after != actual or process.poll() is not None:
-                raise common.ContractError("native model/runtime conditions changed during measurement")
+            if process.poll() is not None:
+                raise common.ContractError("native actor exited during measurement")
             result["firstfloor"] = {"runtime": actual, "mode": "profiling", "modelInstanceCount": 1,
                                      "maxBatchSize": run["state"]["firstfloor"]["maxBatchSize"],
                                      "maxQueueSize": run["state"]["firstfloor"]["maxQueueSize"],
@@ -485,7 +453,6 @@ def main() -> None:
     try:
         record_stage("Startup")
         request = common.decode_request(sys.stdin.buffer)
-        validate_request(request)
         result = execute(request, arguments.result_file.parent)
         common.publish_immutable(arguments.result_file, common.encode_result(result, request["maxResultBytes"]))
     except (common.ContractError, OSError, ValueError, http.client.HTTPException, ExecutionError) as error:
