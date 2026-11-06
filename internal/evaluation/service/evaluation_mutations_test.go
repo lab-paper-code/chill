@@ -98,7 +98,7 @@ func preflightFault(t *testing.T, service *Service, request *EvaluationRequest, 
 		object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: "ns",
 			Labels: map[string]string{"edge.dacs.io/batch-energy-optimization": "campaign"}}}
 	case "other-jobs":
-		// Only load-generator Jobs block evaluation; other running Jobs never did.
+		// Other running Jobs remain environment observations.
 		object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "ns"}}
 	case "foreign-store":
 		// Defect 18: a Run naming another store would publish refs this server cannot read.
@@ -150,7 +150,7 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 					failed = true
 				}
 			}
-			if failed != (fault != "none" && fault != "finished-parent-runs" && fault != "other-jobs") {
+			if failed != (fault != "none" && fault != "finished-parent-runs" && fault != "other-jobs" && fault != "load-generator" && fault != "unready") {
 				t.Fatalf("checks=%+v", result.Checks)
 			}
 			if fault == "foreign-store" {
@@ -165,6 +165,13 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 			}
 			if fault == "unready" && (result.LiveTarget[0].Ready || len(result.LiveTarget[0].LiveImageIDs) != 1) {
 				t.Fatal("live target readiness lost")
+			}
+			if fault == "unready" || fault == "load-generator" {
+				request.Spec.Harness = api.EvaluationImage{Image: "harness:current"}
+				request.Spec.LoadGenerator.EvaluationImage = api.EvaluationImage{Image: "generator:current"}
+				if _, err := service.Create(context.Background(), request, "operator"); err != nil {
+					t.Fatalf("observed unavailable/shared supply must not block experiment creation: %v", err)
+				}
 			}
 		})
 	}
@@ -234,8 +241,8 @@ func TestEvaluationTargetIgnoresTerminatedDeploymentPods(t *testing.T) {
 			if target.Ready != tc.wantReady || len(target.LiveImageIDs) != tc.wantImages {
 				t.Fatalf("target=%+v, want ready=%v images=%d", target, tc.wantReady, tc.wantImages)
 			}
-			if _, err := service.Create(ctx, request, "operator"); (err == nil) != tc.wantReady {
-				t.Fatalf("create error=%v, want ready=%v", err, tc.wantReady)
+			if _, err := service.Create(ctx, request, "operator"); err != nil {
+				t.Fatalf("target readiness is observational: %v", err)
 			}
 		})
 	}

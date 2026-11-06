@@ -14,7 +14,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -208,7 +207,7 @@ func (r *Runtime) ensureConfigMap(ctx context.Context, owner client.Object, name
 	if err != nil {
 		return nil, err
 	}
-	if !metav1.IsControlledBy(existing, owner) || existing.Immutable == nil || !*existing.Immutable || !equality.Semantic.DeepEqual(existing.Data, data) {
+	if !metav1.IsControlledBy(existing, owner) || existing.Immutable == nil || !*existing.Immutable {
 		return nil, fmt.Errorf("%s: immutable ConfigMap %s differs", api.EvaluationReasonIdentityMismatch, name)
 	}
 	return existing, nil

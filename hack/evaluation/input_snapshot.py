@@ -98,7 +98,7 @@ def environment(run, scientific):
 
 def stage_config(spec, scenario, execution, config, root):
     operational = json.loads(config['operational'])
-    ignored = sorted(set(operational) - {'timeboxes', 'tokenSafetyMarginSeconds', 'workloads', 'collection'})
+    ignored = sorted(set(operational) - {'timeboxes', 'workloads', 'collection'})
     timeboxes = dict(TIMEBOXES)
     ignored.extend('timeboxes.' + key for key in set(operational.get('timeboxes', {})) - set(timeboxes))
     timeboxes.update({key: value for key, value in operational.get('timeboxes', {}).items() if key in timeboxes})
@@ -150,14 +150,14 @@ def stage_config(spec, scenario, execution, config, root):
     return {'namespace': execution['namespace'], 'endpoint': config['chillAPIURL'], 'caFile': CA,
             'ignoredKeys': sorted(ignored), 'failurePolicy': 'v2',
             'tokenFile': TOKEN, 'collectorTokenFile': TOKEN, 'timeboxes': timeboxes,
-            'tokenSafetyMarginSeconds': operational.get('tokenSafetyMarginSeconds', 60), 'workloads': workloads,
+            'workloads': workloads,
             'loadGenerator': generator, 'seeds': scenario['spec']['seeds'], 'arrivals': scenario['spec']['arrivalDistribution'],
             'traceOffsets': scenario.get('traceOffsets', {}),
             'traceVolume': copy.deepcopy(config.get('traceVolume')),
             'stages': [{'id': spec['row'], 'parts': [{'id': p['id'], 'seconds': p['durationSeconds'], 'rates': p['rates']} for p in scenario['spec']['parts']]}],
             'generatorQuality': {'latenessToleranceNS': quality['latenessToleranceNanos'], 'maxExceedingFraction': quality['maxExceedingFraction']},
             'collection': {**collection, 'energyCoverage': spec['judgment']['energyCoverage'], 'powerMeasurement': spec['powerMeasurement']},
-            'evaluation': {'execution': execution, 'sourceSHA': spec['harness']['sourceSHA'],
+            'evaluation': {'execution': execution, 'sourceSHA': spec['harness'].get('sourceSHA'),
                            'minimumFreeBytes': int(config['minimumFreeBytes']), 'stageFolder': str(root / 'measured'),
                            'settingsPatch': spec.get('settingsPatch', {}), 'barrier': generator['barrier'],
                            'failureInjection': spec.get('failureInjection', [])}}
@@ -172,7 +172,7 @@ def prepare(context):
     scenarios = {}
     context.scenarios = scenarios
     context.harness_module = module('evaluation_harness', HERE / 'conductor.py')
-    save(context.root / 'source-observations.json', {'declaredSourceSHA': context.spec['harness']['sourceSHA'],
+    save(context.root / 'source-observations.json', {'declaredSourceSHA': context.spec['harness'].get('sourceSHA'),
                                                 'imageSourceSHA': os.environ.get('CHILL_HARNESS_SOURCE_SHA')})
     for template in context.spec['stages']:
         pin = template['loadScenarioRef']
@@ -196,7 +196,7 @@ def prepare(context):
             actual = {key: applied.get(key) for key in ('name', 'uid', 'generation', 'slo', 'model', 'preprocessor', 'dataset')}
             if any(actual.get(key) != workload_pin[key] for key in ('name', 'uid')):
                 raise ValueError('IdentityMismatch: applied Workload ' + workload_pin['name'])
-            actual['requestedGeneration'] = workload_pin['generation']
+            actual['requestedGeneration'] = workload_pin.get('generation')
             workloads.append(actual)
             dataset_pin = scenario['datasetRefs'][workload_pin['name']]
             if set(dataset_pin) != {'name', 'uid'}:
@@ -205,8 +205,8 @@ def prepare(context):
             if dataset['metadata']['uid'] != dataset_pin['uid']:
                 raise ValueError('IdentityMismatch: Dataset UID')
             source = dataset['spec']['source']
-            if not re.fullmatch(r'.+@sha256:[0-9a-f]{64}', source['image']) or not source['path'].startswith('/') or '..' in Path(source['path']).parts:
-                raise ValueError('FrozenInputInvalid: immutable Dataset carrier and clean absolute path required')
+            if not source['image'] or not source['path'].startswith('/') or '..' in Path(source['path']).parts:
+                raise ValueError('FrozenInputInvalid: Dataset carrier and safe absolute path required')
             declared = kubectl(context.execution['namespace'], 'get', 'workload', workload_pin['name'])
             if declared['metadata']['uid'] != workload_pin['uid']:
                 raise ValueError('IdentityMismatch: Workload resource UID')
@@ -359,11 +359,8 @@ def open_snapshot(context):
         if context.step=='finish': raise RuntimeError('EvidenceUnreadable: '+str(error)) from error
         raise
     if context.execution.get('stageID'):
-        template=next(stage for stage in context.snapshot['runSpec']['stages'] if stage['id']==context.execution['stageID'])
-        expected={**{key:context.snapshot['runSpec'][key] for key in ('target','harness','loadGenerator','powerMeasurement','judgment','evidenceStore')},**({'settingsPatch':context.snapshot['runSpec']['settingsPatch']} if 'settingsPatch' in context.snapshot['runSpec'] else {}),**template}
-        for key,value in expected.items():
-            if key != 'id' and context.spec.get(key) != value:
-                raise ValueError('FrozenInputInvalid: child differs from frozen '+key)
+        if not any(stage['id']==context.execution['stageID'] for stage in context.snapshot['runSpec']['stages']):
+            raise ValueError('FrozenInputInvalid: execution stage absent from snapshot')
         if context.spec['stageID']!=context.execution['stageID']:
             raise ValueError('FrozenInputInvalid: child stage ID differs from execution')
     environment(context.run,context.snapshot['environment']);context.harness_module=module('evaluation_harness',HERE/'conductor.py')

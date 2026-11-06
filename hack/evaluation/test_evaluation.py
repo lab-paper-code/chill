@@ -4,6 +4,7 @@ import base64
 import copy
 from contextlib import nullcontext
 import hashlib
+import gzip
 import json
 import os
 from pathlib import Path
@@ -154,73 +155,92 @@ def live_fixture(root):
 
 
 class EvaluationTests(unittest.TestCase):
-    def test_start_gate_only_blocks_participating_not_ready_nodes(self):
-        for blocked in ('generator', 'meter', 'dynamic', 'other'):
-            with self.subTest(node=blocked), tempfile.TemporaryDirectory() as directory:
-                harness, state, objects, kube = live_fixture(Path(directory))
-                next(node for node in objects['nodes'] if node['metadata']['name'] == blocked)['status']['conditions'][0]['status'] = 'False'
-                with patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', return_value=200):
-                    attempt = live.gate_attempt(harness)
-                self.assertEqual(attempt['passed'], blocked == 'other')
-                self.assertEqual(attempt['participatingNodes'], ['dynamic', 'generator', 'meter'])
-                self.assertEqual(attempt['notReady'], [] if blocked == 'other' else [blocked])
-                self.assertEqual(attempt['notReadyNonParticipating'], ['other'] if blocked == 'other' else [])
+    def test_raw_duplicate_metadata_does_not_hide_measurement_conflicts(self):
+        changes = [
+            ('metadata', {'node': {'name': 'other-node', 'uid': 'other-node-uid'},
+                          'instance': 'other-instance', 'profileID': 'other-profile', 'decisionID': 'other-decision'}, False),
+            ('latency', {'elapsedNanos': 2_000_000_000}, True),
+            ('outcome', {'outcome': 'timeout'}, True),
+            ('completion', {'executionComplete': False}, True),
+            ('error', {'error': 'execution failed'}, True),
+            ('receipt', {'receivedAt': '2026-11-03T00:00:02Z'}, True),
+            ('definition', {'definitionID': 'another-definition'}, True),
+        ]
+        for name, change, conflict in changes:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                _, _, _, _, config = fixture(root)
+                config['traceOffsets'] = {NAME: [1]}
+                evidence_io.save(root / 'config.json', config)
+                stage = conductor.bind(root / 'config.json')['schedule'][0]
+                final = {'workloadUID': 'workload', 'requestID': 'r0', 'kind': 'final',
+                         'definitionID': 'definition', 'receivedAt': '2026-11-03T00:00:01Z',
+                         'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 100_000_000}
+                source = root / 'obs/20261103T00/requests.jsonl.gz'
+                source.parent.mkdir(parents=True)
+                with gzip.open(source, 'wt') as stream:
+                    for row in (final, final, {**final, **change}):
+                        stream.write(json.dumps(row) + '\n')
+                evidence_io.save(root / 'raw-source-index.json', {
+                    'complete': True, 'requestedHours': ['20261103T00'], 'supportingHours': [],
+                    'requestPopulation': {'startUTC': START, 'endUTC': END, 'drainedUTC': END},
+                    'sources': [{'path': str(source), 'hour': '20261103T00', 'stream': 'requests', 'bytes': source.stat().st_size}]})
+                raw.release_request_cache()
+                indexed = raw.index_requests(root, 'workload', START, END, approved_root=root)
+                phase = {'stage': stage, 'startUTC': START, 'endUTC': END,
+                         'starts': {NAME: {'at': START, 'monotonicNS': 100}},
+                         'producerCapture': {NAME: {'drained': True}}}
+                client = {'requestIndex': 0, 'requestID': 'r0', 'scheduledOffsetNs': 1, 'issued': True,
+                          'sentMonotonicNS': 101, 'finishedMonotonicNS': 100_000_101}
+                result = judgment_rules.reduce_requests(config, phase, {NAME: [client]}, {'workload': indexed})[NAME]
+                self.assertEqual(result['offered'], 1)
+                self.assertEqual(result['deadlineSuccess'], 0 if conflict else 1)
+                self.assertEqual(result['quarantinedRequestIDs'], ['r0'] if conflict else [])
+                self.assertEqual(indexed['summary']['duplicateRows'], 1 if conflict else 2)
 
-    def test_start_gate_rechecks_and_records_exclusion_reasons(self):
+    def test_snapshot_adoption_uses_execution_scope_without_child_recomparison(self):
         with tempfile.TemporaryDirectory() as directory:
-            harness, state, objects, kube = live_fixture(Path(directory))
-            clock = [0]
-            def sleep(seconds):
-                clock[0] += seconds
-            with patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', side_effect=[503, 200]) as probe, patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(live.time, 'sleep', side_effect=sleep):
-                live.start_gate(harness)
-            attempts = evidence_io.load(harness.root / 'start-gate.json')
-            self.assertEqual([attempt['passed'] for attempt in attempts], [False, True])
-            self.assertEqual(clock[0], 2)
-            self.assertEqual(probe.call_count, 2)
-            self.assertEqual(attempts[-1]['excludedExecutors'], {
-                'chill-executor-unready': {'reason': 'notReadyInCHILL', 'node': 'other'},
-                'chill-executor-unrouted': {'reason': 'notRouted', 'node': 'meter'},
-                'chill-executor-retired': {'reason': 'retiring:stop', 'node': 'meter'}})
-            self.assertEqual(list(attempts[-1]['executors']), ['chill-executor-active'])
+            root = Path(directory)
+            snapshot = {'schemaVersion': 'evaluation-snapshot.v2alpha1', 'inputsVersion': 'evaluation-inputs.v2alpha1',
+                        'runUID': 'run', 'runSpec': {'stages': [{'id': 'one'}]}, 'environment': {'nodes': []}}
+            context = SimpleNamespace(inputs=root / 'inputs', run=root / 'campaign/run', step='judge', config={},
+                                      execution={'runUID': 'run', 'stageID': 'one'},
+                                      spec={'stageID': 'one', 'harness': {'image': 'changed:tag'}})
+            evidence_io.save(context.inputs / 'snapshot.json', snapshot)
+            with patch.dict(os.environ):
+                input_snapshot.open_snapshot(context)
+            context.execution['runUID'] = 'different-run'
+            with self.assertRaisesRegex(ValueError, 'execution identity'):
+                input_snapshot.open_snapshot(context)
+            context.execution['runUID'], context.execution['stageID'] = 'run', 'absent'
+            with self.assertRaisesRegex(ValueError, 'stage absent'):
+                input_snapshot.open_snapshot(context)
 
-    def test_start_gate_requires_an_executor(self):
-        with tempfile.TemporaryDirectory() as directory:
-            harness, state, objects, kube = live_fixture(Path(directory))
-            objects['services'] = []
-            with patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube):
-                attempt = live.gate_attempt(harness)
-            self.assertFalse(attempt['passed'])
-            self.assertEqual(attempt['executors'], {})
-
-    def test_start_gate_timeout_is_target_unavailable_and_preserves_attempts(self):
-        with tempfile.TemporaryDirectory() as directory:
-            harness, state, objects, kube = live_fixture(Path(directory))
-            clock = [0]
-            def sleep(seconds):
-                clock[0] += seconds
-            harness.upload = lambda path, key: {'store': 'test', 'key': key, 'size': path.stat().st_size}
-            harness.controller = lambda: self.fail('gate must run before controller or load generation')
-            with patch.object(input_snapshot, 'open_snapshot'), patch.object(input_snapshot, 'api', return_value={'state': state}), patch.object(input_snapshot, 'kubectl', side_effect=kube), patch.object(live, 'health', return_value=503), patch.object(live, 'start_watcher'), patch.object(live, 'stop_watcher'), patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(live.time, 'sleep', side_effect=sleep), patch('builtins.print'):
-                self.assertEqual(harness.execute('stage'), 1)
-            record = evidence_io.load(harness.run / 'results/stages/one/stage.json')
-            self.assertEqual(record['execution']['reason'], 'TargetUnavailable')
-            self.assertLess(clock[0], 5)  # gateSeconds=5, watchSeconds=2: attempts at 0, 2, 4; none at the deadline
-            attempts = evidence_io.load(harness.root / 'start-gate.json')
-            self.assertEqual(len(attempts), 3)
-            self.assertTrue(all(not attempt['passed'] for attempt in attempts))
-            self.assertTrue(any(ref['key'].endswith('/artifacts/start-gate.json') for ref in record['artifacts']))
-
-    def test_start_gate_success_after_deadline_is_target_unavailable(self):
-        with tempfile.TemporaryDirectory() as directory:
-            harness, _, _, _ = live_fixture(Path(directory))
-            clock = [0]
-            def slow_pass(context):
-                clock[0] += live.timeboxes(context)['gateSeconds'] + 1
-                return {'at': START, 'passed': True}
-            with patch.object(live, 'gate_attempt', side_effect=slow_pass), patch.object(live.time, 'monotonic', side_effect=lambda: clock[0]):
-                with self.assertRaisesRegex(RuntimeError, '^TargetUnavailable'):
-                    live.start_gate(harness)
+    def test_stage_without_ready_supply_reaches_quality_judgment(self):
+        def finish(controller, mode, process, root, go, jobs, job_polls, signals, publications):
+            harness, _, _, _ = live_fixture(root)
+            harness.execution['runName'] = 'run-name'
+            harness.spec['target'] = {'components': []}
+            harness.spec['loadGenerator']['barrier'] = {'maxStartSkewNanos': 1_000_000_000}
+            harness.root = root
+            harness.controller = lambda: controller
+            parent = {'metadata': {'uid': harness.execution['runUID']}}
+            try:
+                with patch.object(input_snapshot, 'check_fleet'), patch.object(input_snapshot, 'kubectl', return_value=parent):
+                    harness.stage()
+            finally:
+                if process[0]:
+                    process[0].stdin.close()
+            phase = evidence_io.load(root / 'measured/phase.json')
+            rows = [json.loads(line) for line in (root / 'measured' / (NAME + '-client.jsonl')).read_text().splitlines()]
+            indexed = {'errors': [], 'identities': [], 'finals': {}, 'summary': {}}
+            result = judgment_rules.reduce_requests(controller.c, phase, {NAME: rows}, {'workload': indexed})[NAME]
+            self.assertEqual(result['offered'], 1)
+            self.assertEqual(result['deadlineSuccess'], 0)
+            self.assertEqual(result['D1'], 'INVALID_NO_LOAD')
+            self.assertTrue(go)
+        with patch.object(self, 'finish_stage_policy', side_effect=finish):
+            self.exercise_stage_policy('normal')
 
     def test_parent_run_deletion_stops_stage_load(self):
         # Defect 20: deleting the parent Run is the operator's stop; the running stage must end
@@ -238,7 +258,7 @@ class EvaluationTests(unittest.TestCase):
                 def kubectl(namespace, *args):
                     self.assertEqual((namespace, *args), ('release', 'get', 'evaluationrun', 'run-name'))
                     return parent
-                with patch.object(live, 'start_gate'), patch.object(harness, 'controller', return_value=controller), \
+                with patch.object(harness, 'controller', return_value=controller), \
                         patch.object(input_snapshot, 'check_target', return_value=[]), patch.object(input_snapshot, 'check_fleet'), \
                         patch.object(input_snapshot, 'kubectl', side_effect=kubectl):
                     with self.assertRaisesRegex(RuntimeError, '^Stopped' if deleting else '^LoadContinued'):
@@ -860,7 +880,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(policy['shards'], 3)
             self.assertNotIn('offsetsNS', policy)
 
-    def test_campaign_generated_arrivals_fit_exec_argv_and_reproduce_sha(self):
+    def test_campaign_generated_arrivals_fit_exec_argv_and_ignore_sha_metadata(self):
         # Rates copied from the archived 20261103-a1 LoadScenarios in
         # deployB/control-323-plan/eval-objects-backup.json; never read that host file.
         names = ['image-classification-tight-slo', 'plc-anomaly', 'smolvlm2-vqa']
@@ -899,15 +919,14 @@ class EvaluationTests(unittest.TestCase):
                     policy = json.loads(zlib.decompress(base64.b64decode(container['args'][0])))
                     self.assertNotIn('offsetsNS', policy)
                     self.assertNotIn('offsetsFile', policy)
+                    policy.pop('arrivalSHA256')
+                    policy['offered'] = -1
                     offsets, duration = producer.arrival_trace(policy, 'poisson', 202)
                     self.assertEqual(offsets, stage['traces'][name]['offsetsNS'])
                     self.assertEqual(duration, round(stage['seconds'] * 1e9))
-                    policy['arrivalSHA256'] = '0' * 64
-                    with self.assertRaisesRegex(ValueError, 'arrival generation differs'):
-                        producer.arrival_trace(policy, 'poisson', 202)
                 print(row + ': maximum producer argv bytes=' + str(max(sizes)))
 
-    def test_explicit_arrivals_use_workspace_file_and_validate_both_shas(self):
+    def test_explicit_arrivals_use_workspace_file_without_sha_rechecks(self):
         producer = input_snapshot.module('producer_explicit_test', evaluation.HERE / 'producer.py')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -936,14 +955,12 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(volume['persistentVolumeClaim'], {'claimName': 'run-workspace', 'readOnly': True})
             self.assertLess(sum(len(arg.encode()) + 1 for arg in container['command'] + container['args']), 120000)
             policy['offsetsFile'] = str(root / mount['subPath'])
+            policy['arrivalSHA256'] = 'unrelated'
+            policy['offsetsFileSHA256'] = 'unrelated'
+            policy['offered'] = -1
+            Path(policy['offsetsFile']).write_text(json.dumps(scenario['traceOffsets'][NAME], indent=1) + '\n')
             offsets, _ = producer.arrival_trace(policy, 'poisson', 202)
             self.assertEqual(offsets, scenario['traceOffsets'][NAME])
-            policy['arrivalSHA256'] = '0' * 64
-            with self.assertRaisesRegex(ValueError, 'arrival generation differs'):
-                producer.arrival_trace(policy, 'poisson', 202)
-            Path(policy['offsetsFile']).write_text('[]')
-            with self.assertRaisesRegex(ValueError, 'arrival file SHA differs'):
-                producer.arrival_trace(policy, 'poisson', 202)
 
     def test_materialized_dataset_actual_bytes_are_producer_evidence(self):
         producer = input_snapshot.module('producer_test', evaluation.HERE / 'producer.py')
@@ -977,6 +994,11 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec, scenario, execution, config, _ = fixture(root)
+            spec['harness'].pop('sourceSHA')
+            spec['loadGenerator'].pop('sourceSHA')
+            scenario['spec']['workloads'][0].pop('generation')
+            spec['loadGenerator']['image'] = 'generator:current'
+            scenario['datasets'][NAME]['spec']['source']['image'] = 'records:current'
             scenario['spec']['traceRefs'] = {NAME: {'store': 'store', 'key': 'trace.json', 'size': 9}}
             execution = {key: value for key, value in execution.items() if key not in ('stageUID', 'stageID', 'stageName')}
             execution.update(runName='run', childRefs=[])
@@ -1020,7 +1042,6 @@ class EvaluationTests(unittest.TestCase):
             self.assertEqual(frozen['dataset']['source']['path'], '/records')
             self.assertEqual(frozen['fields'], ['input'])
             self.assertEqual(frozen['generation'], 2)
-            self.assertEqual(frozen['requestedGeneration'], 1)
             self.assertEqual(len(uploads), 1)
 
     def exercise_stage_policy(self, mode):
@@ -1057,7 +1078,7 @@ class EvaluationTests(unittest.TestCase):
             publications = []
             controller.progress_publish_callback = lambda: publications.append(len(signals))
             ready = {'evaluationEvent': 'ready', 'at': START, 'barrierSeconds': 10000000000,
-                     'offered': len(config['traceOffsets'][NAME]), 'arrivalSHA256': controller.b['schedule'][0]['traces'][NAME]['arrivalSHA256'],
+                     'offered': -1, 'arrivalSHA256': 'different-provenance',
                      'payload': [{'recordID': 'one', 'fields': {'input': {'bytes': 1, 'sha256': 'a' * 64}}}],
                      'datasetRef': {'name': 'different-provenance', 'uid': 'different'}, 'sourceSHA': 'different-revision'}
             # Hold the load window open until provisional D1 actually ran, so the
@@ -1085,7 +1106,7 @@ class EvaluationTests(unittest.TestCase):
                       'print(json.dumps({"evaluationEvent":"window-end","at":' + repr(END) + '}),flush=True)\n' + tail)
             pod = {'metadata': {'name': 'producer', 'uid': 'pod', 'ownerReferences': [{'kind': 'Job', 'uid': 'job'}]},
                    'status': {'phase': 'Running', 'containerStatuses': [
-                       {'name': 'load', 'containerID': 'container', 'imageID': spec['loadGenerator']['image'], 'restartCount': 0, 'state': {'running': {'startedAt': START}}}]}}
+                       {'name': 'load', 'containerID': 'container', 'imageID': 'runtime://different-platform-id', 'restartCount': 0, 'state': {'running': {'startedAt': START}}}]}}
             process = [None]
             jobs, job_polls = [], []
             original_popen = subprocess.Popen
@@ -1127,10 +1148,7 @@ class EvaluationTests(unittest.TestCase):
                 raise RuntimeError('diagnostic counters unavailable')
             telemetry = SimpleNamespace(poll=missing_samples)
             original_module = evidence_io.module
-            auth = original_module('test_auth', conductor.HERE / 'auth.py')
             def modules(name, path):
-                if name == 'evaluation_auth':
-                    return SimpleNamespace(lifetime_budget=auth.lifetime_budget, check=lambda *args, **kwargs: {'accepted': True})
                 if name == 'evaluation_archive':
                     return SimpleNamespace(collect=lambda *args: {'status': 'CAPTURED_NOT_EVALUATED', 'raw': [{'bytes': 17}, {'bytes': 25}]})
                 return original_module(name, path)

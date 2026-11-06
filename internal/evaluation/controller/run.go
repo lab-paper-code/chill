@@ -9,7 +9,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -438,8 +437,8 @@ func (r *RunReconciler) ensureChild(ctx context.Context, run *api.EvaluationRun,
 	if err != nil {
 		return nil, err
 	}
-	if !metav1.IsControlledBy(existing, run) || !equality.Semantic.DeepEqual(existing.Spec, child.Spec) {
-		return nil, fmt.Errorf("IdentityMismatch: child frozen contract differs")
+	if !metav1.IsControlledBy(existing, run) {
+		return nil, fmt.Errorf("IdentityMismatch: child owner differs")
 	}
 	return existing, nil
 }

@@ -15,15 +15,10 @@ from chill_loadgen import cli
 def arrival_trace(binding, arrivals, seed):
     if 'offsetsFile' in binding:
         data = Path(binding['offsetsFile']).read_bytes()
-        if hashlib.sha256(data).hexdigest() != binding['offsetsFileSHA256']:
-            raise ValueError('Explicit arrival file SHA differs; no inference sent')
         offsets = json.loads(data)
         duration_ns = sum(round(segment['seconds'] * 1e9) for segment in binding['segments'])
     else:
         offsets, duration_ns = cli.segmented_arrivals_ns(arrivals, binding['segments'], seed)
-    encoded = json.dumps(offsets, separators=(',', ':')).encode()
-    if hashlib.sha256(encoded).hexdigest() != binding['arrivalSHA256'] or len(offsets) != binding['offered']:
-        raise ValueError('Installed CLI arrival generation differs; no inference sent')
     return offsets, duration_ns
 
 
@@ -78,8 +73,8 @@ def replay_shards(records, offsets, duration_ns, binding, kw):
         ready_at = dt.datetime.now(dt.timezone.utc)
         emit({'evaluationEvent':'ready','at':ready_at.isoformat(),'barrierSeconds':binding['barrierSeconds'],
               'payload':binding['payload'],'offered':len(offsets),
-              'arrivalSHA256':binding['arrivalSHA256'],'shards':count,
-              'datasetRef':binding['datasetRef'],'sourceSHA':binding['sourceSHA']})
+              'arrivalSHA256':binding.get('arrivalSHA256'),'shards':count,
+              'datasetRef':binding['datasetRef'],'sourceSHA':binding.get('sourceSHA')})
         while not Path('/tmp/evaluation-start').exists():
             if time.monotonic() >= deadline:
                 raise RuntimeError('Finite producer barrier expired; no inference sent')

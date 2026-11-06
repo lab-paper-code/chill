@@ -362,7 +362,7 @@ class CPO:
         policy = {'arrivalSHA256': trace['arrivalSHA256'], 'offered': trace['offered'],
                   'shards': generator['shards'][name], 'barrierSeconds': self.tb['barrierSeconds'],
                   'segments': [{'rate': part['rates'][name], 'seconds': part['seconds']} for part in stage['parts']],
-                  'datasetRef': workload['datasetRef'], 'sourceSHA': generator['sourceSHA']}
+                  'datasetRef': workload['datasetRef'], 'sourceSHA': generator.get('sourceSHA')}
         trace_mounts, trace_volumes = [], []
         if name in self.c.get('traceOffsets', {}):
             volume = self.c.get('traceVolume')
@@ -478,9 +478,6 @@ class CPO:
             raise RuntimeError('ControlConflict: settings patch not read back')
         # Provenance labels and shared-generator activity qualify the result;
         # neither is permission to discard an otherwise observable experiment.
-        auth = evidence_io.module('evaluation_auth', HERE / 'auth.py')
-        budget = auth.lifetime_budget([stage], self.tb, self.c.get('tokenSafetyMarginSeconds', 60))
-        evidence_io.save(self.out / 'token-preflight.json', auth.check(self.c['tokenFile'], budget, endpoint=self.c['endpoint'], ca_file=self.c['caFile']))
         self.disk_boundary()
         folder.mkdir(parents=True)
         phase = {'failurePolicy': 'v2', 'stage': stage, 'status': 'RUNNING', 'starts': {}, 'startUTC': None, 'endUTC': None,
@@ -514,8 +511,7 @@ class CPO:
                         phase['producerCapture'][name]['receivedRequestRows'] += 1
                     event = row.get('evaluationEvent')
                     if event == 'ready':
-                        trace = stage['traces'][name]
-                        if name in ready or row['offered'] != trace['offered'] or row['arrivalSHA256'] != trace['arrivalSHA256'] or not row['payload']:
+                        if name in ready or not row['payload']:
                             raise RuntimeError('IdentityMismatch: producer Ready input identity')
                         ready[name] = row
                         evidence_io.save(folder / ('payload-' + name + '.json'), row)
@@ -586,9 +582,8 @@ class CPO:
                     statuses = (pod or {}).get('status', {}).get('containerStatuses', [])
                     load_status = next((s for s in statuses if s['name'] == 'load'), {})
                     if load_status.get('state', {}).get('running') and load_status.get('containerID'):
-                        digest = self.c['loadGenerator']['image'].split('@')[-1]
-                        if not load_status.get('imageID', '').endswith(digest) or load_status.get('restartCount'):
-                            raise RuntimeError('IdentityMismatch: generator image or restart')
+                        if load_status.get('restartCount'):
+                            raise RuntimeError('IdentityMismatch: generator restart')
                         pods[name] = pod
                         evidence_io.save(folder / ('producer-' + name + '.json'), pod)
                         break

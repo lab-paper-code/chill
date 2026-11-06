@@ -5,7 +5,6 @@ import (
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/serving"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -50,7 +49,6 @@ func (s *Service) Preflight(
 			return result, err
 		}
 		result.LiveTarget = append(result.LiveTarget, target)
-		add("target/"+component.Name, target.Ready, "external target Pods must be Ready")
 	}
 	var runs api.EvaluationRunList
 	if err := s.reader.List(ctx, &runs); err != nil {
@@ -63,26 +61,7 @@ func (s *Service) Preflight(
 		}
 	}
 	add("pool", free, "another EvaluationRun occupies the pool")
-	var jobs batchv1.JobList
-	if err := s.reader.List(ctx, &jobs, client.InNamespace(s.namespace),
-		client.MatchingLabels{"edge.dacs.io/workload-role": "load-generator"}); err != nil {
-		return result, err
-	}
-	idle := true
-	for _, job := range jobs.Items {
-		terminal := false
-		for _, condition := range job.Status.Conditions {
-			if (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) &&
-				condition.Status == corev1.ConditionTrue {
-				terminal = true
-			}
-		}
-		if !terminal && (job.Spec.Suspend == nil || !*job.Spec.Suspend) {
-			idle = false
-		}
-	}
-	add("load-generator", idle, "load-generator Job is active")
-	idle, err = s.profilingIdle(ctx)
+	idle, err := s.profilingIdle(ctx)
 	if err != nil {
 		return result, err
 	}

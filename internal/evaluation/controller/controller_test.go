@@ -209,9 +209,43 @@ func TestChildCreationResponseLossAdoption(t *testing.T) {
 	if _, e := reconciler.ensureChild(context.Background(), parent, 0); e == nil {
 		t.Fatal("expected response loss")
 	}
+	parent.Spec.Harness = api.EvaluationImage{Image: "harness:new-tag"}
+	parent.Spec.Stages[0].Row = "new-provenance"
 	child, e := reconciler.ensureChild(context.Background(), parent, 0)
 	if e != nil || child.UID != "child-uid" {
 		t.Fatalf("adoption=%v %v", child, e)
+	}
+}
+
+func TestConfigMapAdoptionKeepsStoredInputAndOwnerBoundary(t *testing.T) {
+	for _, fault := range []string{"none", "foreign-owner", "mutable"} {
+		t.Run(fault, func(t *testing.T) {
+			parent := fixtureRun("config-adoption")
+			r, _ := fixtureRuntime(t, parent)
+			stored, err := r.ensureConfigMap(context.Background(), parent, "frozen", map[string]string{"spec.json": "stored"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fault == "foreign-owner" {
+				stored.OwnerReferences[0].UID = "another-run"
+			}
+			if fault == "mutable" {
+				stored.Immutable = ptr(false)
+			}
+			if err := r.Client.Update(context.Background(), stored); err != nil {
+				t.Fatal(err)
+			}
+			adopted, err := r.ensureConfigMap(context.Background(), parent, "frozen", map[string]string{"spec.json": "new-parent-input"})
+			if fault != "none" {
+				if err == nil {
+					t.Fatal("unsafe ConfigMap adoption")
+				}
+				return
+			}
+			if err != nil || adopted.Data["spec.json"] != "stored" {
+				t.Fatalf("stored immutable execution input must survive parent changes: %+v %v", adopted, err)
+			}
+		})
 	}
 }
 func TestStageParentBoundaries(t *testing.T) {

@@ -582,38 +582,65 @@ func assertCreatedChildContext(t *testing.T, body string, expected []api.Evaluat
 	}
 }
 
-func TestEvaluationJobsShareCPUAndRejectInjectedControls(t *testing.T) {
+func TestEvaluationAdoptsAdmittedCPUControlsAndLabels(t *testing.T) {
 	r, _, parent, stage := fixtureStageExecution(t)
-	job, err := r.job(context.Background(), stage, parent, stage, api.EvaluationStepStage, &api.EvaluationProcedure{})
+	p := &stage.Status.Procedures[1]
+	job, err := r.job(context.Background(), stage, parent, stage, api.EvaluationStepStage, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pod := job.Spec.Template.Spec
-	if pod.Affinity != nil {
-		t.Fatal("evaluation stage Job must not carry affinity")
+	job.Labels = map[string]string{"admission": "observed"}
+	job.Spec.Template.Spec.Affinity = &corev1.Affinity{}
+	job.Spec.Template.Spec.Containers[0].Resources.Requests = corev1.ResourceList{corev1.ResourceCPU: {}}
+	if err := r.Client.Update(context.Background(), job); err != nil {
+		t.Fatal(err)
 	}
-	for _, container := range append(pod.Containers, pod.InitContainers...) {
-		for _, resources := range []corev1.ResourceList{container.Resources.Requests, container.Resources.Limits} {
-			if _, present := resources[corev1.ResourceCPU]; present {
-				t.Fatalf("CPU resource on %s", container.Name)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "admitted", Namespace: stage.Namespace, UID: "admitted-pod",
+			Labels: map[string]string{"batch.kubernetes.io/controller-uid": string(job.UID)},
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr(true)}}},
+		Spec: job.Spec.Template.Spec,
+	}
+	if err := r.Client.Create(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.advance(context.Background(), parent, stage, api.EvaluationStepStage, p); err != nil {
+		t.Fatalf("admitted resource/label bookkeeping must not stop collection: %v", err)
+	}
+	if p.PodRef == nil || p.PodRef.UID != pod.UID {
+		t.Fatalf("admitted Pod was not observed: %+v", p)
+	}
+}
+
+func TestEvaluationJobRejectsWrongCredentialsWorkspaceAndOwner(t *testing.T) {
+	for _, fault := range []string{"service-account", "credential", "workspace", "owner"} {
+		t.Run(fault, func(t *testing.T) {
+			r, _, parent, stage := fixtureStageExecution(t)
+			p := &stage.Status.Procedures[1]
+			job, err := r.job(context.Background(), stage, parent, stage, api.EvaluationStepStage, p)
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-	}
-	for _, field := range []string{"requests", "limits", "affinity"} {
-		t.Run(field, func(t *testing.T) {
-			injected := job.DeepCopy()
-			if field == "affinity" {
-				injected.Spec.Template.Spec.Affinity = &corev1.Affinity{}
-			} else {
-				resources := corev1.ResourceList{corev1.ResourceCPU: {}}
-				if field == "requests" {
-					injected.Spec.Template.Spec.Containers[0].Resources.Requests = resources
-				} else {
-					injected.Spec.Template.Spec.Containers[0].Resources.Limits = resources
+			switch fault {
+			case "service-account":
+				job.Spec.Template.Spec.ServiceAccountName = "other-account"
+			case "credential":
+				for i := range job.Spec.Template.Spec.Containers[0].Env {
+					env := &job.Spec.Template.Spec.Containers[0].Env[i]
+					if env.Name == "AWS_ACCESS_KEY_ID" {
+						env.ValueFrom.SecretKeyRef.Name = "other-credentials"
+					}
 				}
+			case "workspace":
+				job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName = "other-workspace"
+			case "owner":
+				job.OwnerReferences[0].UID = "other-stage"
 			}
-			if sameJob(injected, job) {
-				t.Fatal("adopted CPU-controlled Job must be rejected, including zero quantities")
+			if err := r.Client.Update(context.Background(), job); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.job(context.Background(), stage, parent, stage, api.EvaluationStepStage, p); err == nil {
+				t.Fatal("unsafe execution context was adopted")
 			}
 		})
 	}

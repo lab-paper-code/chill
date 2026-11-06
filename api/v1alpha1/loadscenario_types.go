@@ -12,7 +12,7 @@ import (
 )
 
 // EvaluationObjectReference pins an immutable object in the release namespace
-// (or a cluster-scoped Node). Only Workload references carry a generation.
+// (or a cluster-scoped Node). Workload generation is optional provenance.
 type EvaluationObjectReference struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
@@ -31,8 +31,8 @@ type EvaluationWorkloadReference struct {
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Type=string
 	UID types.UID `json:"uid"`
-	// +kubebuilder:validation:Minimum=1
-	Generation int64 `json:"generation"`
+	// +optional
+	Generation int64 `json:"generation,omitempty"`
 }
 
 // EvaluationEvidenceReference identifies immutable evidence, never an endpoint.
@@ -111,7 +111,7 @@ func (s *LoadScenarioSpec) Validate() error {
 	}
 	names, uids := map[string]bool{}, map[types.UID]bool{}
 	for _, w := range s.Workloads {
-		if len(validation.IsDNS1123Subdomain(w.Name)) != 0 || w.UID == "" || w.Generation < 1 || names[w.Name] || uids[w.UID] {
+		if len(validation.IsDNS1123Subdomain(w.Name)) != 0 || w.UID == "" || names[w.Name] || uids[w.UID] {
 			return fmt.Errorf("invalid or duplicate workload %q", w.Name)
 		}
 		names[w.Name], uids[w.UID] = true, true

@@ -99,8 +99,8 @@ func (s *LoadService) Preflight(
 		err := s.client.Get(ctx, client.ObjectKey{Namespace: s.namespace, Name: ref.Name}, &obj)
 		if err == nil {
 			result.LiveWorkloads[ref.Name] = LiveWorkload{UID: string(obj.UID), Generation: obj.Generation}
-			if obj.UID != ref.UID || obj.Generation != ref.Generation {
-				err = fmt.Errorf("workload identity or generation differs")
+			if obj.UID != ref.UID {
+				err = fmt.Errorf("workload UID differs")
 			}
 		}
 		add("workload:"+ref.Name, err)

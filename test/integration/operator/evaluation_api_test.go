@@ -17,7 +17,7 @@ func blackBoxLoad() *unstructured.Unstructured {
 		"apiVersion": "edge.dacs.io/v1alpha1", "kind": "LoadScenario",
 		"metadata": map[string]interface{}{"name": uniqueModelSpecName("blackbox-load"), "namespace": "default"},
 		"spec": map[string]interface{}{
-			"workloads":           []interface{}{map[string]interface{}{"name": "work", "uid": "work-uid", "generation": int64(1)}},
+			"workloads":           []interface{}{map[string]interface{}{"name": "work", "uid": "work-uid"}},
 			"parts":               []interface{}{map[string]interface{}{"id": "steady", "durationSeconds": float64(10), "rates": map[string]interface{}{"work": float64(1)}}},
 			"arrivalDistribution": map[string]interface{}{"work": "poisson"},
 			"seeds":               map[string]interface{}{"work": "18446744073709551615"},
@@ -70,7 +70,7 @@ var _ = Describe("Black-box evaluation API", func() {
 
 var _ = Describe("Opaque public settings patches", func() {
 	It("creates a Run without mode or starting state and preserves the patch", func() {
-		image := api.EvaluationImage{Image: "evaluation@sha256:identity", SourceSHA: "source"}
+		image := api.EvaluationImage{Image: "evaluation:current"}
 		run := &api.EvaluationRun{
 			ObjectMeta: metav1.ObjectMeta{Name: uniqueModelSpecName("blackbox-run"), Namespace: "default"},
 			Spec: api.EvaluationRunSpec{

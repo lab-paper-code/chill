@@ -112,7 +112,6 @@ class Harness:
         input_snapshot.check_fleet(self, self.spec)
         self.controller().factor()
     def stage(self):
-        live.start_gate(self)
         controller = self.controller()
         input_snapshot.check_target(self, self.spec['target'])
         input_snapshot.check_fleet(self, self.spec)

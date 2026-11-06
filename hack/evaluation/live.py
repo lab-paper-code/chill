@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""In-Run start gate and diagnostic watcher; all evidence stays under the step root."""
+"""In-Run diagnostic watcher; all evidence stays under the step root."""
 import argparse
 import datetime as dt
 import json
@@ -45,66 +45,6 @@ def health(service):
         return error.code
     except Exception as error:
         return type(error).__name__ + ':' + str(error)[:80]
-
-
-def gate_attempt(context):
-    namespace = context.execution['namespace']
-    state = input_snapshot.api(context.config, '/api/v1/scheduler')['state']
-    ready, routed = ready_routed(state)
-    retiring = {str(a.get('instance', '')).split('/')[0]: a['kind'] for a in state.get('actions') or []
-                if a.get('kind') in ('drain', 'stop', 'remove') and a.get('status') != 'complete'}
-    workloads = set((context.spec.get('settingsPatch') or {}).get('autonomousWorkloads') or [])
-    participating = {context.spec['loadGenerator']['nodeName']}
-    participating.update(n['name'] for n in context.spec['powerMeasurement']['nodes'])
-    participating.update(i['node']['name'] for i in state['snapshot'].get('instances') or []
-                         if i.get('ownerWorkloadUID') in workloads)
-    not_ready = [n['metadata']['name'] for n in input_snapshot.kubectl(namespace, 'get', 'nodes')['items']
-                 if not any(c['type'] == 'Ready' and c['status'] == 'True'
-                            for c in n.get('status', {}).get('conditions', []))]
-    services = input_snapshot.kubectl(namespace, 'get', 'services')['items']
-    pod_nodes = {p['metadata']['uid']: p['spec'].get('nodeName')
-                 for p in input_snapshot.kubectl(namespace, 'get', 'pods')['items']}
-    executors, excluded = {}, {}
-    for service in services:
-        name = service['metadata']['name']
-        if not name.startswith(EXECUTOR_PREFIX):
-            continue
-        uid = name[len(EXECUTOR_PREFIX):]
-        reason = ('retiring:' + retiring[uid] if uid in retiring else
-                  'notReadyInCHILL' if uid not in ready else 'notRouted' if uid not in routed else None)
-        if reason:
-            excluded[name] = {'reason': reason, 'node': pod_nodes.get(uid)}
-        else:
-            executors[name] = {'health': health(service), 'node': pod_nodes.get(uid)}
-    unhealthy = {name: value for name, value in executors.items() if value['health'] != 200}
-    blocked = [name for name in not_ready if name in participating]
-    return {'at': input_snapshot.now(), 'decisionAt': state['decision'].get('at'),
-            'participatingNodes': sorted(participating), 'notReady': blocked,
-            'notReadyNonParticipating': [name for name in not_ready if name not in participating],
-            'executors': executors, 'excludedExecutors': excluded, 'unhealthyExecutors': unhealthy,
-            'passed': not blocked and bool(executors) and not unhealthy}
-
-
-def start_gate(context):
-    boxes = timeboxes(context)
-    deadline = time.monotonic() + boxes['gateSeconds']
-    path = context.root / 'start-gate.json'
-    attempts = input_snapshot.load(path) if path.exists() else []
-    while True:
-        try:
-            attempt = gate_attempt(context)
-        except Exception as error:
-            attempt = {'at': input_snapshot.now(), 'passed': False, 'error': str(error)}
-        attempts.append(attempt)
-        input_snapshot.save(path, attempts)
-        if attempt['passed'] and time.monotonic() <= deadline:
-            return
-        # The next attempt would start at or after the deadline: stop now. In-flight work is
-        # bounded by the existing per-call timeouts (apiSeconds, kubectl 60s, health 5s).
-        remaining = deadline - time.monotonic()
-        if remaining <= boxes['watchSeconds']:
-            raise RuntimeError('TargetUnavailable: start gate did not pass within gateSeconds')
-        time.sleep(boxes['watchSeconds'])
 
 
 def start_watcher(context, step):

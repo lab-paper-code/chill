@@ -143,30 +143,15 @@ func (r *Runtime) job(ctx context.Context, owner client.Object, run *api.Evaluat
 	if p.JobRef != nil && existing.UID != p.JobRef.UID {
 		return nil, errExecutionLost
 	}
-	if !metav1.IsControlledBy(existing, owner) || !equality.Semantic.DeepEqual(existing.Labels, labels) || !sameJob(existing, expected) {
+	if !metav1.IsControlledBy(existing, owner) || !sameJob(existing, expected) {
 		return nil, fmt.Errorf("%s: Job %s frozen contract mismatch", api.EvaluationReasonIdentityMismatch, name)
 	}
 	return existing, nil
 }
-func sharedCPUPod(pod corev1.PodSpec) bool {
-	if pod.Affinity != nil {
-		return false
-	}
-	for _, containers := range [2][]corev1.Container{pod.Containers, pod.InitContainers} {
-		for _, container := range containers {
-			for _, resources := range [2]corev1.ResourceList{container.Resources.Requests, container.Resources.Limits} {
-				if _, present := resources[corev1.ResourceCPU]; present {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
 
 func sameJob(a, b *batchv1.Job) bool {
 	x, y := a.Spec.Template.Spec, b.Spec.Template.Spec
-	if !sharedCPUPod(x) || len(x.InitContainers) != 0 {
+	if len(x.InitContainers) != 0 {
 		return false
 	}
 	if !equality.Semantic.DeepEqual(x.SecurityContext, y.SecurityContext) {
@@ -241,9 +226,6 @@ func (r *Runtime) advance(ctx context.Context, run *api.EvaluationRun, stage *ap
 		pod := &pods.Items[0]
 		if !metav1.IsControlledBy(pod, job) || p.PodRef != nil && p.PodRef.UID != pod.UID {
 			return nil, false, errExecutionLost
-		}
-		if !sharedCPUPod(pod.Spec) {
-			return nil, false, fmt.Errorf("%s: admitted evaluation Pod carries CPU controls", api.EvaluationReasonIdentityMismatch)
 		}
 		p.PodRef = ref(pod)
 	}

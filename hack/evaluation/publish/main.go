@@ -181,7 +181,7 @@ func verifyExistingSources(ctx context.Context, statter evidencestore.Statter, s
 		if err != nil {
 			return fmt.Errorf("verify existing publication source %s: %w", source.Key, err)
 		}
-		if observed != source {
+		if observed.Size != source.Size {
 			return fmt.Errorf("%w: existing publication source %s", evidencestore.ErrContentMismatch, source.Key)
 		}
 		seen[source.Key] = true

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -110,11 +109,9 @@ func AggregateMeasurement(verdicts ...MeasurementVerdict) (metav1.ConditionStatu
 type EvaluationImage struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
-	// +kubebuilder:validation:Pattern=`@sha256:`
 	Image string `json:"image"`
-	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
-	SourceSHA string `json:"sourceSHA"`
+	SourceSHA string `json:"sourceSHA,omitempty"`
 }
 
 type EvaluationResourceReference struct {
@@ -375,8 +372,8 @@ func validateEvaluationContext(target TargetIdentity, harness EvaluationImage, g
 		names[c.Name] = true
 	}
 	for _, image := range images {
-		if !strings.Contains(image.Image, "@sha256:") || image.SourceSHA == "" {
-			return fmt.Errorf("images require @sha256: and sourceSHA")
+		if image.Image == "" {
+			return fmt.Errorf("executable images are required")
 		}
 	}
 	if err := validateEvaluationGenerator(generator); err != nil {

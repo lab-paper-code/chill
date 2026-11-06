@@ -182,7 +182,16 @@ def _rows(sources, errors):
 
 
 def _digest(row):
-    return hashlib.sha256(json.dumps(row, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).digest()
+    # Only facts consumed by request indexing/judgment distinguish duplicate rows.
+    fields = ('workloadUID', 'requestID', 'kind')
+    if row.get('kind') == 'native':
+        fields += ('nativeOutcome',)
+    else:
+        fields += ('receivedAt', 'definitionID')
+        if row.get('kind') == 'final':
+            fields += ('outcome', 'elapsedNanos', 'executionComplete', 'error')
+    facts = {key: row[key] for key in fields if key in row}
+    return hashlib.sha256(json.dumps(facts, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8')).digest()
 
 
 def _new_request():

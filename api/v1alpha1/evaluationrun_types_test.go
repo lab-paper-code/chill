@@ -47,7 +47,12 @@ func TestEvaluationRunValidate(t *testing.T) {
 			s.Stages[0].FailureInjection = []FaultInjectionPlan{{ID: "restore", Action: "uncordon", OffsetSeconds: 30, PriorInjectionID: "missing"}}
 		}, wantError: true},
 		{name: "missing comparison", mutate: func(s *EvaluationRunSpec) { s.Comparisons[0].Left.StageID = "missing" }, wantError: true},
-		{name: "image not pinned", mutate: func(s *EvaluationRunSpec) { s.Harness.Image = "harness:latest" }, wantError: true},
+		{name: "tagged image without source", mutate: func(s *EvaluationRunSpec) {
+			s.Harness = EvaluationImage{Image: "harness:latest"}
+			s.LoadGenerator.EvaluationImage = EvaluationImage{Image: "generator:current"}
+		}},
+		{name: "missing harness image", mutate: func(s *EvaluationRunSpec) { s.Harness.Image = "" }, wantError: true},
+		{name: "missing generator image", mutate: func(s *EvaluationRunSpec) { s.LoadGenerator.Image = "" }, wantError: true},
 		{name: "out of range", mutate: func(s *EvaluationRunSpec) { s.Judgment.EnergyCoverage.MaxGapFraction = 2 }, wantError: true},
 		{name: "valid injections", mutate: func(s *EvaluationRunSpec) {
 			s.Stages[0].FailureInjection = []FaultInjectionPlan{{ID: "cordon", Action: "cordon-delete", OffsetSeconds: 10, Selection: &FaultInjectionSelection{WorkloadUIDs: []types.UID{"workload-uid"}, OrderBy: []FaultInjectionOrderKey{"node", "pod", "podUID"}}}, {ID: "restore", Action: "uncordon", OffsetSeconds: 30, PriorInjectionID: "cordon"}}
@@ -89,6 +94,7 @@ func TestLoadScenarioValidate(t *testing.T) {
 		wantError bool
 	}{
 		{name: "valid", mutate: func(*LoadScenarioSpec) {}},
+		{name: "generation omitted", mutate: func(s *LoadScenarioSpec) { s.Workloads[0].Generation = 0 }},
 		{name: "missing rates", mutate: func(s *LoadScenarioSpec) { s.Parts[0].Rates = nil }, wantError: true},
 		{name: "max seed", mutate: func(s *LoadScenarioSpec) { s.Seeds["workload"] = "18446744073709551615" }},
 		{name: "seed overflow", mutate: func(s *LoadScenarioSpec) { s.Seeds["workload"] = "18446744073709551616" }, wantError: true},

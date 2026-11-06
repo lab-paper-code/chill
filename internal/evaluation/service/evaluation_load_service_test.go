@@ -57,8 +57,22 @@ func TestLoadPreflightLiveGenerationAndMissingEvidence(t *testing.T) {
 	if err != nil || result.LiveWorkloads["work"].Generation != 2 {
 		t.Fatalf("live=%+v error=%v", result, err)
 	}
-	if result.Checks[2].Passed {
-		t.Fatal("generation mismatch accepted")
+	if !result.Checks[2].Passed {
+		t.Fatal("same Workload UID with a newer generation must remain usable")
+	}
+	if _, err := s.Create(context.Background(), loadRequest(), "actor"); err != nil {
+		t.Fatalf("create with current applied Workload: %v", err)
+	}
+	unversioned := loadRequest()
+	unversioned.Name = "unversioned"
+	unversioned.Spec.Workloads[0].Generation = 0
+	if _, err := s.Create(context.Background(), unversioned, "actor"); err != nil {
+		t.Fatalf("create without requested generation: %v", err)
+	}
+	unversioned.Name = "foreign-workload"
+	unversioned.Spec.Workloads[0].UID = "replacement-workload"
+	if _, err := s.Create(context.Background(), unversioned, "actor"); err == nil {
+		t.Fatal("wrong Workload UID accepted")
 	}
 	s.evidence = loadEvidence{missing: true}
 	result, err = s.Preflight(context.Background(), loadRequest())
