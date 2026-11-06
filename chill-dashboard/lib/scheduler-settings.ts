@@ -2,8 +2,8 @@ import type { SchedulerSettings } from "./read-types.ts"
 
 // Public editable contract: internal/serving/scheduler.go SchedulerSettings.
 // Runtime declarations returned alongside GET settings are not editable here.
-export type NumericSettingKey = { [K in keyof SchedulerSettings]-?: SchedulerSettings[K] extends number | bigint ? K : never }[keyof SchedulerSettings]
-export type SettingField = {key:Exclude<NumericSettingKey,"requestTimeout">;label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string}
+export type NumericSettingKey = { [K in keyof SchedulerSettings]-?: NonNullable<SchedulerSettings[K]> extends number | bigint ? K : never }[keyof SchedulerSettings]
+export type SettingField = {key:Exclude<NumericSettingKey,"requestTimeout">|"planSearchStrategy"|"planPostFilterFinalists"|"planPricedStart";label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string;kind?:"strategy"|"boolean";defaultValue?:string|boolean|number}
 export const settingFields: SettingField[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
   {key:"controlIntervalNanos",label:"운영 판단 주기",help:"이 간격마다 새로 판단해요.",group:"cycle"},
@@ -26,6 +26,12 @@ export const settingFields: SettingField[] = [
   {key:"capacityBisectionWidth",label:"용량 이분 탐색 폭",help:"최대 처리율에 대한 탐색 종료 폭이에요. 0 초과 1 이하예요.",group:"capacity"},
   {key:"capacityTailSamples",label:"용량 꼬리 표본 수",help:"SLO 백분위 위에 확보할 창별 표본 수예요. 1 이상이에요.",group:"capacity",unit:"개"},
   {key:"planSearchWorkers",label:"구성 탐색 동시 계산 수",help:"운영 판단이 구성 후보를 동시에 이만큼 계산해요. 탐색은 판단 주기의 절반 안에 끝나요.",group:"advanced",unit:"개"},
+  {key:"planSearchStrategy",label:"구성 탐색 전략",help:"v1은 기존 탐색, v2는 한계비용 탐욕 탐색이에요. shadow는 v1으로 결정하며 v2를 비교 기록해요.",group:"advanced",kind:"strategy",defaultValue:"v1"},
+  {key:"planSearchEvaluations",label:"구성 탐색 평가 예산",help:"v2의 증분 평가를 이 횟수까지 계산해요.",group:"advanced",unit:"회",defaultValue:500000},
+  {key:"planExactFinalists",label:"정확 검증 후보 수",help:"증분 평가의 상위 후보를 이만큼 정확히 검증해요.",group:"advanced",unit:"개",defaultValue:16},
+  {key:"planPolishActive",label:"결합 연마 활성 계획 수",help:"결합 연마에서 살펴볼 활성 계획 수예요. 0은 전체 계획이에요.",group:"advanced",unit:"개",defaultValue:8},
+  {key:"planPostFilterFinalists",label:"후처리 뒤 후보 비교",help:"후보마다 교체 회수와 최소 이득을 적용한 뒤 비교해요.",group:"advanced",kind:"boolean",defaultValue:false},
+  {key:"planPricedStart",label:"가격 유도 출발점",help:"용량 가격으로 만든 출발점도 v2 탐색에 사용해요.",group:"advanced",kind:"boolean",defaultValue:true},
 ]
 export const settingControls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
   {key:"placement",label:"배치 위치"},{key:"resources",label:"자원 할당"},

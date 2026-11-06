@@ -9,6 +9,7 @@ import * as scheduler from "./scheduler.ts"
 import * as sourceExport from "./source-export.ts"
 import * as labels from "./labels.ts"
 import * as settingDefinitions from "./scheduler-settings.ts"
+import * as capacity from "./capacity.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -748,4 +749,35 @@ test("omitted editable fields stay unset after PUT success and failed GET withou
   tree=elements(runner.render(SchedulerSettingsPage))
   assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="설정 적용하기"))
   assert.ok(!tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+})
+
+test("plan search evidence renders v2 diagnostics and historical search without new fields",()=>{
+  const {PlanSearchEvidence}=load("../features/scheduler-capacity.tsx",{...base,"@/lib/capacity":capacity})
+  const old={neighborhood:3,evaluated:40,durationNanos:1000}
+  for(const search of [old,{...old,strategy:"v2",pruned:{ZeroCapacity:2},surrogateEvaluated:100,finalists:16,exactEvaluated:19,fallback:"ExactKeep",start:"priced",surrogateGapJoules:0,postFilterReverts:0}]){
+    const tree=elements(PlanSearchEvidence({capacity:{search,plans:[{node:{name:"a"},key:"plan",eligible:false,reason:"Excluded",dominated:"ZeroCapacity"}]}}))
+    const facts=tree.find(node=>node.type==="facts")!.props.items as [string,string][]
+    assert.ok(facts.some(([label,value])=>label==="평가 수"&&value==="40"))
+    assert.equal(facts.some(([label])=>label==="탐색 전략"),"strategy" in search)
+    if("strategy" in search){
+      for(const pair of [["탐색 전략","v2"],["가지치기 · ZeroCapacity","2"],["최종 후보 수","16"],["대체 탐색 사유","ExactKeep"],["출발점","priced"],["증분·정확 에너지 차이 (J)","0"],["후처리 복귀 수","0"]])assert.ok(facts.some(([label,value])=>label===pair[0]&&value===pair[1]))
+    }
+    const table=tree.find(node=>node.type==="table")!
+    const columns=table.props.columns as {key:string;value:(row:unknown)=>unknown}[]
+    assert.equal(columns.find(column=>column.key==="dominated")!.value((table.props.data as unknown[])[0]),"ZeroCapacity")
+  }
+  assert.equal(PlanSearchEvidence({}),null)
+})
+
+test("advanced search settings use strategy select and boolean switches with zero polish allowed",()=>{
+  const runner=hooks(),settings={controls:{},planSearchWorkers:1,planSearchStrategy:"v2",planSearchEvaluations:500000,planExactFinalists:16,planPolishActive:8,planPostFilterFinalists:false,planPricedStart:true}
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"advanced"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}})
+  const tree=elements(runner.render(SchedulerSettingsPage)),table=tree.find(node=>node.type==="table")!
+  const fields=table.props.data as {key:string}[],columns=table.props.columns as {key:string;value:(field:unknown)=>Tree}[]
+  assert.equal(fields.length,7)
+  const editor=(key:string)=>columns.find(column=>column.key==="edit")!.value(fields.find(field=>field.key===key)).props
+  assert.deepEqual(editor("planSearchStrategy").options,["v1","v2","shadow"])
+  assert.equal(editor("planPostFilterFinalists").initial,false)
+  assert.equal(editor("planPricedStart").initial,true)
+  assert.doesNotThrow(()=>(editor("planPolishActive").save as (value:string)=>void)("0"))
 })
