@@ -10,6 +10,12 @@ Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 
 [M0](decision-record-diet.md)와 [M1](observability-split.md)의 기록 경계를 따른다.
 본문은 선택 계약이며 실제 source 검증과 배포 실적은 실행 근거로 확인한다.
 
+`planSearchStrategy: shadow`는 v1이 결정을 내린 뒤 같은 planner의 snapshot·용량 행·계획으로 v2를 탐색한다.
+v2에는 v1이 사용하고 남은 동일한 `ControlInterval/2` 마감만 주며, 정확 k=1 fallback까지 실패하면 `fallback: v1`을 기록하고 v1을 다시 실행하지 않는다.
+`decision.capacity.search.strategy`는 `shadow`이고 이웃·평가 수·시간·예산 종료는 v1 값이다. `key`는 v1 탐색 선택해이며, `shadow`는 v2 선택해의 key·정확 J·증분 평가 수·정확 평가 수·시간·fallback을 담는다. v2가 선택하지 못하면 빈 key가 남는다.
+Dashboard는 그림자 기록이 있는 Tick에 key 일치 여부와 v2 − v1 예상 J, 탐색 시간, fallback을 표시한다. v1 J가 없으면 v2 J만 표시한다.
+이 코드 경로는 테스트베드 배포나 E5 캠페인 수용 근거를 뜻하지 않는다.
+
 ## 1. 측정한 문제
 
 - 재생 Tick은 `replays=10/maxCandidates=32`에서 0.633/2/5 req/s의 p50 913/3,475/7,495 ms, 최대22,575 ms·CPU499m(D-16); 기본100/128에서는133회30초 deadline 실패(D-1).

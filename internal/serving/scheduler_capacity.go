@@ -82,6 +82,7 @@ type SchedulerPlanSearch struct {
 	TrailingEvaluated int                                   `json:"trailingEvaluated,omitempty"`
 	TerminationReason string                                `json:"terminationReason,omitempty"`
 	Strategy           string                     `json:"strategy,omitempty"`
+	Key                string                     `json:"key,omitempty"`
 	Pruned             map[string]int             `json:"pruned,omitempty"`
 	SurrogateEvaluated int                        `json:"surrogateEvaluated,omitempty"`
 	Finalists          int                        `json:"finalists,omitempty"`
@@ -125,11 +126,12 @@ type SchedulerPlanSearchStep struct {
 
 // SchedulerPlanSearchShadow records the independent shadow planner.
 type SchedulerPlanSearchShadow struct {
-	Key       string        `json:"key"`
-	Joules    float64       `json:"joules"`
-	Evaluated int           `json:"evaluated"`
-	Duration  time.Duration `json:"durationNanos"`
-	Fallback  string        `json:"fallback,omitempty"`
+	Key            string        `json:"key"`
+	Joules         float64       `json:"joules"`
+	Evaluated      int           `json:"evaluated"`
+	ExactEvaluated int           `json:"exactEvaluated,omitempty"`
+	Duration       time.Duration `json:"durationNanos"`
+	Fallback       string        `json:"fallback,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -473,5 +475,6 @@ func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arr
 	}
 	return float64(slices.Min(counts)) / width.Seconds()
 }
+
 
 

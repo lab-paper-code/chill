@@ -769,6 +769,20 @@ test("plan search evidence renders v2 diagnostics and historical search without 
   assert.equal(PlanSearchEvidence({}),null)
 })
 
+test("shadow evidence compares keys and exact energy only when recorded",()=>{
+  const {PlanSearchEvidence}=load("../features/scheduler-capacity.tsx",{...base,"@/lib/capacity":capacity})
+  const search={neighborhood:3,evaluated:40,durationNanos:1000,strategy:"shadow",key:"a=keep",shadow:{key:"a=keep",joules:12,evaluated:100,exactEvaluated:4,durationNanos:"9007199254740993",fallback:"exactK1"}}
+  const facts=(selectedJoules?:number)=>elements(PlanSearchEvidence({capacity:{search},selectedJoules})).find(node=>node.type==="facts")!.props.items as [string,string][]
+  const recorded=facts(15)
+  for(const pair of [["그림자 · v1 선택 key 동일","예"],["그림자 v2 − v1 에너지 (J)","-3"],["그림자 탐색 시간","9007199254740993 ns"],["그림자 대체 탐색 사유","exactK1"]])assert.ok(recorded.some(([label,value])=>label===pair[0]&&value===pair[1]))
+  assert.ok(facts().some(([label,value])=>label==="그림자 v2 에너지 (J)"&&value==="12"))
+  search.shadow.key="a=other"
+  assert.ok(facts(15).some(([label,value])=>label==="그림자 · v1 선택 key 동일"&&value==="아니요"))
+  search.shadow.key=""
+  search.shadow.fallback="v1"
+  assert.equal(facts(15).some(([label])=>label==="그림자 v2 − v1 에너지 (J)"),false)
+})
+
 test("advanced search settings use strategy select and boolean switches with zero polish allowed",()=>{
   const runner=hooks(),settings={controls:{},planSearchWorkers:1,planSearchStrategy:"v2",planSearchEvaluations:500000,planExactFinalists:16,planPolishActive:8,planPostFilterFinalists:false,planPricedStart:true}
   const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"advanced"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}})

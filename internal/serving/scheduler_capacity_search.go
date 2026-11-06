@@ -15,6 +15,9 @@ import (
 // The better end of the two starts is the result. At deadline the sweep
 // stops; the best plan set found so far stays and p.searched records the cut.
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
+	if p.settings.PlanSearchStrategy == schedulerPlanSearchShadow {
+		return p.searchShadow(deadline)
+	}
 	if p.settings.PlanSearchStrategy == schedulerPlanSearchV2 {
 		return p.searchV2(deadline)
 	}

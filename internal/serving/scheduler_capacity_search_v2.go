@@ -9,6 +9,11 @@ const (
 )
 
 func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
+	return p.searchV2WithFallback(deadline, true)
+}
+
+// searchV2WithFallback can stop before v1 when shadow has already run it.
+func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool) (capacityResult, error) {
 	started := time.Now()
 	t := p.planTable()
 	candidates, core := p.searchV2Core(t, p.settings.PlanSearchEvaluations, p.settings.PlanExactFinalists, p.settings.PlanPolishActive, deadline)
@@ -26,7 +31,7 @@ func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
 			best = &filtered
 		}
 	}
-	if best == nil {
+	if best == nil && allowV1 {
 		// Disable dispatch only for this synchronous fallback, then restore it.
 		strategy := p.settings.PlanSearchStrategy
 		p.settings.PlanSearchStrategy = schedulerPlanSearchV1
@@ -37,6 +42,9 @@ func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
 			res = p.minimumGain(p.payback(res))
 		}
 		return res, err
+	}
+	if best == nil {
+		fallback = schedulerPlanSearchV1
 	}
 	pruned := make(map[string]int, len(t.pruned)+len(t.unsearchable))
 	for reason, count := range t.pruned {
@@ -52,6 +60,9 @@ func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
 		BudgetCut: core.budgetCut, Duration: time.Since(started), Excluded: stats.excluded,
 		ReserveRejections: stats.reserves,
 		DualBound:         core.dualBound, Start: stats.start,
+	}
+	if best == nil {
+		return capacityResult{}, p.ctx.Err()
 	}
 	return *best, p.ctx.Err()
 }
