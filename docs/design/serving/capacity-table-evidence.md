@@ -252,3 +252,31 @@ SCALE(mobilenet 60, PLC 40, SmolVLM 1.2; `planSearchWorkers` 3):
 `scheduler_capacity_table.go`, `scheduler_capacity_cap.go`. 하네스 전제 수정: `evaluationScaled`의 b2 변형이 e 0.9×를 주던 것을 계획기와 같은 b1 에너지(같은 e)로 바꿨다. 정확성 게이트(노드 5 b2 공간 × 24 조합, 상태 34개 = keep·빈 집합·무작위 32, 이동 17,952): 하위 선택 후보 ≤ 2개 중 v1 `evaluate`+`better` 최선이 모든 cap 변형의 최선과 **불일치 0**. 부호 조건이 고른 우선 후보 하나만으로 일치 17,737/17,952 = 98.8%. 게이트 0.4 s.
 
 제안서 §4.1 규칙 2 정정: "Overload에서는 항상 κ 최대"는 1,833 이동에서 틀렸다. 빠진 항은 환원 1의 B_w = 0 클램프다. B_w > 0이면 초과량 λ̃/κ − 1이 κ에 엄격 감소라 κ 최대 하나가 leximin 최선이지만, B_w = 0이면 충족 cap들의 초과량이 0으로 같아 에너지·key가 가르므로 {κ 최대, κ 최소 충족} 두 후보를 그대로 둔다. 같은 option의 변형은 다른 Workload의 κ·r·κ_ret을 바꾸지 않으므로 w의 초과량만 보면 된다. 재현: mix mnv2 20·plc 15, 상태 `[2 3 1 3 0]`, 이동 genesis2/mnv2/cpu-q1, Σκ_others 124.906, λ̃ 20, B = 0: b2 76,808.20 J 대 b1 76,735.38 J(초과량 동일).
+
+#### 7.8.3 증분 평가기 (3단계)
+
+`scheduler_capacity_greedy.go`는 재사용 상태·`apply`·`delta`·`orderKey`를, `_greedy_weights.go`는 정수 가중치와 Workload 항을, `_greedy_table.go`는 탐색용 표 전처리를 맡는다. v1 `search`·`sweep`·`evaluate`는 변경하지 않았다. 상태·후보 버퍼는 처음 한 번 할당하며 `delta`의 결과 버퍼를 보존하려면 미리 할당한 `orderKey`에 `copyInto`한다. `bounded`·`searchable`·`unroutedPrepare`는 순서 키의 별도 허가 플래그다. `better` 자체는 v1 전순서를 그대로 따른다.
+
+정확성: `evaluationScaled(1,0)`, `(2,0)`, `(1,2)` × `e5Mixes` 24 × 고정 seed 무작위 이동 96 = routing ON 6,912회. 노드 5 b1의 앞 네 조합에서 routing OFF 384회를 더해 **7,296회** 비교했다. 각 이동은 현재 상태와 이동 뒤 모두 v1 `evaluate(choice, routeOf(choice))`로 검증한다. 충족·최종·초과량 벡터(무한대 포함)·J·keep·key·가중치 초과·`unroutedPrepare`·route·인스턴스 상한이 모두 일치하며 J 최대 차는 **0**이다. `delta`가 원상태를 바꾸지 않는지도 검사했다. 연속 `apply` 뒤 집계·전체 수·route·노드 에너지·Workload 항은 새로 만든 상태와 정확히 같아 누적 오차가 없었다.
+
+기존 실제 planner fixture(`BatchLimitChangeIsPolicyRoute`, `SingleNodeStoppingModeRaiseNeedsSpareSupply`)의 slow 경로도 비교했다. 수요 50/150·Allowed 참/거짓·growing 참/거짓과 모드 변경 수요 5/30에서 적격 bounded 집합 20회, slow 계획 10개, 계획 단위 timing 제외 4개다. bridge 결과 제외는 **0개**이며 timing/예비 사유 때문에 정확 평가가 거절한 결과도 수치 비교에서 빼지 않았다. 별도 정수 가중치 비교 20,000회(ON/OFF 각 10,000), 할당 없는 판정식 비교 10,000회, zero-weight prepare·others 포함 상한·replicas OFF·여러 retained item·비교 대상 아닌 노드 회귀도 통과했다.
+
+논리 key까지 가는 하네스 동률이 31회 있었다. 계획 인덱스 비교는 쓰지 않는다. 표에 미리 만든 `nodeUID=planKey` 조각과 `|`를 바이트 스트림으로 비교하므로 문자열 생성 없이 v1 연결 문자열 순서를 정확히 따른다. 빈 key·접두 key·구분자가 든 key를 포함한 별도 동률 비교 2,256회도 일치했다.
+
+제안서 §3·§4.2 식의 정정/구체화:
+
+- 노드 에너지는 v1처럼 `preJ + mid*(r-tauPre) + postJ + after*(H-r-tauPost)`다. `[·]_+`와 `min(r,H)`를 적용하지 않으며 `preJ+postJ`를 먼저 더하지 않는다. 재현 입력 `r=19.256, H=60, preJ=113.906, postJ=18.092, mid=4.8985, after=4.8866, tauPre=20.5, tauPost=80`: v1·delta **−65.924103599999967 J**, 제안서 클램프 식 **131.99799999999999 J**다.
+- 요청 평균은 연속 κ 비율 대신 정수 가중치로 계산한 `Σ(y·e)/Σy`이며, slow 보호 수요는 `capacityEnergyLoad`로 실제 수요로 되돌린 뒤 에너지에 넣는다. `κ=(1,2), e=(1,2), λ=3, H=60, r=0`에서 정수 가중치 `333:667`은 둘째에 `2.001 req/s`를 보내 final을 실패시킨다. 초과량은 v1·delta 모두 **0.00049999999999994493**, 요청 에너지는 **300.05999999999995 J**다. 연속 κ 비율 식은 **300 J**다.
+- retained 초기 요청 전력은 노드/item 순서대로 `min(λ,κ_ret)*weight/weightSum*e`를 더한다. `min(λ,κ_ret)*Σ(e·weight)/Σweight`로 재결합하지 않는다. 상태 집계도 변경된 Workload만 같은 순서로 다시 접어 반복 차감·추가의 부동소수점 누적 오차를 없앤다. 바뀌지 않은 Workload 항과 동일 retained 목록의 항은 재사용한다.
+
+성능(동일 i7-8700K, Go 1.23.4): `go test ./internal/serving -run xxx -bench BenchmarkCapacityDelta -benchmem -count=3`, 노드 8 b2 모드 4의 고정 seed 무작위 상태에서 모든 적격 이동을 순환했다.
+
+| 반복 | ns/op | B/op | allocs/op |
+|---|---:|---:|---:|
+| 1 | 648.1 | 0 | 0 |
+| 2 | 708.0 | 0 | 0 |
+| 3 | 580.6 | 0 | 0 |
+
+중앙값 **648.1 ns/op**, 목표 ≤300 ns는 넘었다. 할당은 없으며 초기 CPU profile에서 Workload 항 수집·정렬·정확 retained fold가 flat 36.34%(누적 57.24%), 정수 minimax 가중치가 flat 16.63%였다. 동일 Workload/retained 항 재사용 뒤에도 위 실측이다. 제안서 §6의 0.2 µs 가정은 이 단계의 실측 **0.6481 µs**로 바꿔 후속 탐색 비용을 계산해야 한다. `capacityJudge`가 상세 결과 포인터를 반환하며 생기는 할당은 동일 연산 순서의 값 기반 판정식으로 피했다.
+
+검사: 포커스 `go test ./internal/serving -run 'TestCapacityDelta|TestCapacityGreedy' -count=1 -v`(상위 테스트 9개와 상한 하위 테스트 3개), `GOFLAGS=-buildvcs=false make lint`, `go test ./internal/serving -count=1`, `GOFLAGS=-buildvcs=false make test` 모두 통과. 전체 게이트는 118.50 s였고, Python 91개 중 88개 통과·3개 skip, Go 전체 비-e2e 패키지·envtest·배포 설정/Helm/RBAC 검사도 통과했다. `internal/serving` coverage는 89.2%다. 새 파일은 같은 패키지이므로 `arch-check`는 해당하지 않는다. Dashboard·독립 Helm lint/template·live-cluster e2e는 실행하지 않았으며 live cluster는 변경하지 않았다.

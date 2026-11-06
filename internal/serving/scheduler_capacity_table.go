@@ -27,14 +27,22 @@ type planTable struct {
 	weightRet, energyWeightRet   [][]float64
 	count                        [][]int
 	items                        [][][]capacityItem
+	retained                     [][][]capacityItem
 	others                       []int
 	joules, before, mid, after   []float64
+	preJ, postJ                  []float64
 	tauPre, tauPost, tPre, tPost []float64
 	keep, replaces, bridge, slow []bool
 	recovery                     [][]string
 	eligible                     []bool
 	dominated                    []string
 	pruned                       map[string]int
+	// Search-only columns are initialized once with the reusable search state.
+	searchable           []bool
+	slowWorkload, outage [][]bool
+	keepInsufficient     []bool
+	unsearchable         map[string]int
+	keyParts             []string
 }
 
 func (p *capacityPlanner) planTable() *planTable {
@@ -87,6 +95,7 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 	kappa, kappaE, kappaRet := make([]float64, k), make([]float64, k), make([]float64, k)
 	weightRet, energyWeightRet := make([]float64, k), make([]float64, k)
 	count, items := make([]int, k), make([][]capacityItem, k)
+	retained := make([][]capacityItem, k)
 	plan.record.Dominated = ""
 	for w := range ws {
 		if w < len(plan.items) {
@@ -101,6 +110,7 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 			}
 		}
 		if w < len(plan.retained) {
+			retained[w] = slices.Clone(plan.retained[w])
 			for _, item := range plan.retained[w] {
 				kappaRet[w] += item.kappa
 				weightRet[w] += float64(item.weight)
@@ -115,7 +125,9 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 	t.kappa, t.kappaE, t.kappaRet = append(t.kappa, kappa), append(t.kappaE, kappaE), append(t.kappaRet, kappaRet)
 	t.weightRet, t.energyWeightRet = append(t.weightRet, weightRet), append(t.energyWeightRet, energyWeightRet)
 	t.count, t.items, t.others = append(t.count, count), append(t.items, items), append(t.others, plan.others)
+	t.retained = append(t.retained, retained)
 	t.joules = append(t.joules, plan.preJ+plan.postJ)
+	t.preJ, t.postJ = append(t.preJ, plan.preJ), append(t.postJ, plan.postJ)
 	t.before, t.mid, t.after = append(t.before, plan.before), append(t.mid, plan.mid), append(t.after, plan.after)
 	t.tauPre, t.tauPost = append(t.tauPre, plan.preMean), append(t.tauPost, plan.postMean)
 	t.tPre, t.tPost = append(t.tPre, plan.preMax), append(t.tPost, plan.postMax)
