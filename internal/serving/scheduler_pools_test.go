@@ -26,6 +26,7 @@ func poolsAddNode(snap *SchedulerSnapshot, uid string, watts map[string]float64)
 }
 
 func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
+	const targetMode = "fixed"
 	_, snap := schedulerFixture()
 	base := snap.Baselines[0]
 	baseline := func(mode string, watts float64, age time.Duration) NodeBaseline {
