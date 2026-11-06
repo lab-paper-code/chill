@@ -80,7 +80,7 @@ func evaluationScaled(variants, modes int) [][]evaluationOption {
 	for n := range nodes {
 		for _, o := range slices.Clone(nodes[n]) {
 			if variants > 1 {
-				o.name, o.kappa, o.e = o.name+"-b2", 1.3*o.kappa, o.e
+				o.name, o.kappa = o.name+"-b2", 1.3*o.kappa
 				nodes[n] = append(nodes[n], o)
 			}
 		}
@@ -199,6 +199,7 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 			mid := slices.Clone(now)
 			for _, c := range set {
 				w := index[c.w]
+				plan.option = strings.Replace(c.id, "-b2", "", 1)
 				item := capacityItem{id: c.id, kappa: c.opt.kappa, e: c.opt.e, weight: weights[c.id], row: c.id, prepare: !current[c.id]}
 				if !current[c.id] {
 					plan.preMean, plan.preMax, plan.preJ = plan.preMean+c.opt.prepareS, plan.preMax+c.opt.prepareS, plan.preJ+c.opt.prepareJ
