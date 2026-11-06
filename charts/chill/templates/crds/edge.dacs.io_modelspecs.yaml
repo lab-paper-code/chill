@@ -49,9 +49,8 @@ spec:
                   description: ModelArtifact identifies one executable representation.
                   properties:
                     derivation:
-                      description: |-
-                        Derivation binds a derived executable to its source artifact and conversion settings.
-                        It is absent for canonical source artifacts.
+                      description: Derivation records provenance and executable conversion
+                        settings.
                       properties:
                         conversion:
                           description: Conversion binds the converter and recipe used
@@ -82,9 +81,8 @@ spec:
                           type: array
                         sourceArtifact:
                           description: |-
-                            SourceArtifact references the source ModelArtifact name in this ModelSpec.
-                            Reference resolution is semantic validation, not OpenAPI structure.
-                          minLength: 1
+                            SourceArtifact records the source artifact name as optional provenance.
+                            The source need not be declared in this ModelSpec.
                           type: string
                         targetPlatform:
                           description: TargetPlatform is the converter target, such
@@ -94,7 +92,6 @@ spec:
                       required:
                       - conversion
                       - declaredBatchSizes
-                      - sourceArtifact
                       - targetPlatform
                       type: object
                     format:
@@ -174,7 +171,7 @@ spec:
                           type: string
                         files:
                           description: |-
-                            Files are the clean absolute paths of every model file in the carrier
+                            Files are the absolute paths of every model file in the carrier
                             image. Basenames are unique; the runtime loads all files together.
                           items:
                             pattern: ^/[A-Za-z0-9._/-]+$

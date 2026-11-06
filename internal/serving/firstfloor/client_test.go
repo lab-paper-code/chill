@@ -238,9 +238,9 @@ func TestNativeProbeUsesSelectedExecutionNotInitializationHistory(t *testing.T) 
 	profile.Condition.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 2}
 	profile.Condition.Preprocessor.Inputs = []string{"image"}
 	for _, tc := range []struct {
-		name string
+		name   string
 		mutate func(*native.Metadata)
-		valid bool
+		valid  bool
 	}{
 		{"history drift", func(m *native.Metadata) {
 			m.Runtime.RuntimeVersion, m.Runtime.NumpyVersion = "new", "new"

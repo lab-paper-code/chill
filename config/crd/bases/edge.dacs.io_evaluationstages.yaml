@@ -150,7 +150,7 @@ spec:
               frozenConfigMapRef:
                 description: |-
                   EvaluationObjectReference pins an immutable object in the release namespace
-                  (or a cluster-scoped Node). Only Workload references carry a generation.
+                  (or a cluster-scoped Node). Workload generation is optional provenance.
                 properties:
                   name:
                     maxLength: 253
@@ -173,20 +173,17 @@ spec:
                   image:
                     maxLength: 1024
                     minLength: 1
-                    pattern: '@sha256:'
                     type: string
                   sourceSHA:
                     maxLength: 128
-                    minLength: 1
                     type: string
                 required:
                 - image
-                - sourceSHA
                 type: object
               inputConfigMapRef:
                 description: |-
                   EvaluationObjectReference pins an immutable object in the release namespace
-                  (or a cluster-scoped Node). Only Workload references carry a generation.
+                  (or a cluster-scoped Node). Workload generation is optional provenance.
                 properties:
                   name:
                     maxLength: 253
@@ -280,7 +277,6 @@ spec:
                   image:
                     maxLength: 1024
                     minLength: 1
-                    pattern: '@sha256:'
                     type: string
                   nodeName:
                     maxLength: 253
@@ -360,7 +356,6 @@ spec:
                       rule: self.all(k, self[k] > 0)
                   sourceSHA:
                     maxLength: 128
-                    minLength: 1
                     type: string
                 required:
                 - barrier
@@ -368,7 +363,6 @@ spec:
                 - nodeName
                 - resources
                 - shards
-                - sourceSHA
                 type: object
                 x-kubernetes-validations:
                 - message: generator CPU requests are not supported
@@ -378,7 +372,7 @@ spec:
               loadScenarioRef:
                 description: |-
                   EvaluationObjectReference pins an immutable object in the release namespace
-                  (or a cluster-scoped Node). Only Workload references carry a generation.
+                  (or a cluster-scoped Node). Workload generation is optional provenance.
                 properties:
                   name:
                     maxLength: 253
@@ -422,7 +416,7 @@ spec:
                     items:
                       description: |-
                         EvaluationObjectReference pins an immutable object in the release namespace
-                        (or a cluster-scoped Node). Only Workload references carry a generation.
+                        (or a cluster-scoped Node). Workload generation is optional provenance.
                       properties:
                         name:
                           maxLength: 253
@@ -522,7 +516,7 @@ spec:
               workspace:
                 description: |-
                   EvaluationObjectReference pins an immutable object in the release namespace
-                  (or a cluster-scoped Node). Only Workload references carry a generation.
+                  (or a cluster-scoped Node). Workload generation is optional provenance.
                 properties:
                   name:
                     maxLength: 253
@@ -691,7 +685,7 @@ spec:
                     nodeRef:
                       description: |-
                         EvaluationObjectReference pins an immutable object in the release namespace
-                        (or a cluster-scoped Node). Only Workload references carry a generation.
+                        (or a cluster-scoped Node). Workload generation is optional provenance.
                       properties:
                         name:
                           maxLength: 253
@@ -714,7 +708,7 @@ spec:
                     podRef:
                       description: |-
                         EvaluationObjectReference pins an immutable object in the release namespace
-                        (or a cluster-scoped Node). Only Workload references carry a generation.
+                        (or a cluster-scoped Node). Workload generation is optional provenance.
                       properties:
                         name:
                           maxLength: 253
@@ -757,7 +751,7 @@ spec:
               jobRef:
                 description: |-
                   EvaluationObjectReference pins an immutable object in the release namespace
-                  (or a cluster-scoped Node). Only Workload references carry a generation.
+                  (or a cluster-scoped Node). Workload generation is optional provenance.
                 properties:
                   name:
                     maxLength: 253
@@ -816,7 +810,7 @@ spec:
               podRef:
                 description: |-
                   EvaluationObjectReference pins an immutable object in the release namespace
-                  (or a cluster-scoped Node). Only Workload references carry a generation.
+                  (or a cluster-scoped Node). Workload generation is optional provenance.
                 properties:
                   name:
                     maxLength: 253
@@ -864,7 +858,7 @@ spec:
                     jobRef:
                       description: |-
                         EvaluationObjectReference pins an immutable object in the release namespace
-                        (or a cluster-scoped Node). Only Workload references carry a generation.
+                        (or a cluster-scoped Node). Workload generation is optional provenance.
                       properties:
                         name:
                           maxLength: 253
@@ -892,7 +886,7 @@ spec:
                     podRef:
                       description: |-
                         EvaluationObjectReference pins an immutable object in the release namespace
-                        (or a cluster-scoped Node). Only Workload references carry a generation.
+                        (or a cluster-scoped Node). Workload generation is optional provenance.
                       properties:
                         name:
                           maxLength: 253
@@ -941,7 +935,7 @@ spec:
                     jobRef:
                       description: |-
                         EvaluationObjectReference pins an immutable object in the release namespace
-                        (or a cluster-scoped Node). Only Workload references carry a generation.
+                        (or a cluster-scoped Node). Workload generation is optional provenance.
                       properties:
                         name:
                           maxLength: 253
@@ -962,7 +956,7 @@ spec:
                     podRef:
                       description: |-
                         EvaluationObjectReference pins an immutable object in the release namespace
-                        (or a cluster-scoped Node). Only Workload references carry a generation.
+                        (or a cluster-scoped Node). Workload generation is optional provenance.
                       properties:
                         name:
                           maxLength: 253

@@ -181,7 +181,7 @@ func TestCostEvidenceLoadsPowerWithRetainedMeterAndNoCurrentProfile(t *testing.T
 	}
 	measurement := &edge.PowerModeTransitionCost{
 		ObjectMeta: meta.ObjectMeta{Namespace: "measurements", Name: "power", UID: "power-uid", Generation: 1},
-		Spec: edge.PowerModeTransitionCostSpec{TargetNode: costTestMeter.Node.Name, AcceptedCountTarget: 2},
+		Spec:       edge.PowerModeTransitionCostSpec{TargetNode: costTestMeter.Node.Name, AcceptedCountTarget: 2},
 		Status: edge.PowerModeTransitionCostStatus{ObservedGeneration: 1, Phase: edge.PowerModeTransitionCostPhaseComplete,
 			Result: &edge.ProfilingRunEvidenceReference{Store: result.Store, Key: result.Key, Size: result.Size}},
 	}

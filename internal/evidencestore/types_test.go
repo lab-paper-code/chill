@@ -16,9 +16,9 @@ func TestObjectIdentityValidate(t *testing.T) {
 	}
 
 	tests := map[string]ObjectIdentity{
-		"missing store":  {Key: valid.Key, Size: valid.Size},
-		"missing key":    {Store: valid.Store, Size: valid.Size},
-		"empty object":   {Store: valid.Store, Key: valid.Key, Size: 0},
+		"missing store": {Key: valid.Key, Size: valid.Size},
+		"missing key":   {Store: valid.Store, Size: valid.Size},
+		"empty object":  {Store: valid.Store, Key: valid.Key, Size: 0},
 	}
 	for name, identity := range tests {
 		t.Run(name, func(t *testing.T) {

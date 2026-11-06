@@ -34,7 +34,6 @@ func occupancyEvidenceFixture() (api.DispatchOccupancyMeasurement, OccupancyEvid
 		Window: OccupancyMeasurementWindow{Start: time.Unix(100, 1).UTC(), End: time.Unix(200, 2).UTC()}}
 }
 
-
 func TestW8OccupancyEvidenceLegacyMissingScalarAndReadFailures(t *testing.T) {
 	cr, record := occupancyEvidenceFixture()
 	decoded := DecodedOccupancyEvidence{Record: record, HasPerRequestNanos: false}

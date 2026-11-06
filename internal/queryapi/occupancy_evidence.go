@@ -255,4 +255,3 @@ func invalidOccupancyThroughput(throughput string) bool {
 	value, err := strconv.ParseFloat(throughput, 64)
 	return throughput != "" && (err != nil || math.IsNaN(value) || math.IsInf(value, 0))
 }
-

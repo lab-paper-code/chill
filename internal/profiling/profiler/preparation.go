@@ -372,7 +372,6 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	return nil
 }
 
-
 func (r PreparationRequest) Validate() error {
 	for name, value := range map[string]string{
 		"candidate ModelSpec":     r.Candidate.ModelSpec,

@@ -212,10 +212,10 @@ func TestMeasurementOperationProjectionUsesStoredVerdictAfterStatusDrift(t *test
 	var public struct {
 		Status struct {
 			Steps []struct {
-				Verdict string `json:"verdict"`
-				OperationID string `json:"operationID"`
-				DurationNanos *int64 `json:"durationNanos"`
-				WallJoules *float64 `json:"wallJoules"`
+				Verdict       string   `json:"verdict"`
+				OperationID   string   `json:"operationID"`
+				DurationNanos *int64   `json:"durationNanos"`
+				WallJoules    *float64 `json:"wallJoules"`
 			} `json:"steps"`
 		} `json:"status"`
 	}

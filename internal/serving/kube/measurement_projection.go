@@ -93,4 +93,3 @@ func projectOperationStep(record servingops.OperationMeasurement) (OperationStep
 	}
 	return p, nil
 }
-

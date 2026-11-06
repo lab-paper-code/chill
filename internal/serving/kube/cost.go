@@ -77,7 +77,7 @@ type operationEvidence struct {
 }
 
 type powerEvidence struct {
-	costs  []serving.OperationCost
+	costs []serving.OperationCost
 }
 
 func NewCostEvidence(store *Store, objects costObjects, maxBytes int64) (*CostEvidence, error) {

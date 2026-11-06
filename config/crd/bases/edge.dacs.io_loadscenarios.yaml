@@ -56,7 +56,7 @@ spec:
                 additionalProperties:
                   description: |-
                     EvaluationObjectReference pins an immutable object in the release namespace
-                    (or a cluster-scoped Node). Only Workload references carry a generation.
+                    (or a cluster-scoped Node). Workload generation is optional provenance.
                   properties:
                     name:
                       maxLength: 253
@@ -152,7 +152,6 @@ spec:
                   properties:
                     generation:
                       format: int64
-                      minimum: 1
                       type: integer
                     name:
                       maxLength: 253
@@ -167,7 +166,6 @@ spec:
                       minLength: 1
                       type: string
                   required:
-                  - generation
                   - name
                   - uid
                   type: object

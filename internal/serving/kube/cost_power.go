@@ -205,4 +205,3 @@ type powerPreparationWire struct {
 		} `json:"directions"`
 	} `json:"prepared"`
 }
-

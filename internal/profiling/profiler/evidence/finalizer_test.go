@@ -271,7 +271,6 @@ func TestFinalizerFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-
 	t.Run("invalid existing final object", func(t *testing.T) {
 		store := newFakeObjectStore()
 		store.objects[record.RawMeasurement.Location()] = rawBytes
@@ -336,8 +335,8 @@ type fakeObjectStore struct {
 	objects         map[evidencestore.ObjectLocation][]byte
 	puts            int
 	corruptAfterPut bool
-	winnerOnPut []byte
-	alteredReceipt bool
+	winnerOnPut     []byte
+	alteredReceipt  bool
 	putOutcome      evidencestore.CreateOutcome
 	openErrors      map[int]error
 	openCalls       int
@@ -396,7 +395,6 @@ func (s *fakeObjectStore) PutImmutable(
 	}
 	return receipt, nil
 }
-
 
 func fakeReceipt(
 	identity evidencestore.ObjectIdentity,

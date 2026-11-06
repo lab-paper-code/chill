@@ -85,4 +85,3 @@ func selectModelPath(
 ) (edgev1alpha1.ModelExecutionPath, edgev1alpha1.ModelArtifact, error) {
 	return modelcatalog.SelectModelPath(model, pathName)
 }
-

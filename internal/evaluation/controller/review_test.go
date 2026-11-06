@@ -597,7 +597,7 @@ func TestEvaluationAdoptsAdmittedCPUControlsAndLabels(t *testing.T) {
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "admitted", Namespace: stage.Namespace, UID: "admitted-pod",
-			Labels: map[string]string{"batch.kubernetes.io/controller-uid": string(job.UID)},
+			Labels:          map[string]string{"batch.kubernetes.io/controller-uid": string(job.UID)},
 			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr(true)}}},
 		Spec: job.Spec.Template.Spec,
 	}

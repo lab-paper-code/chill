@@ -9,7 +9,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-
 func decodeExact(payload []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()

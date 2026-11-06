@@ -297,10 +297,10 @@ func TestCampaignInvalidChildContractStopsWithVisibleFailure(t *testing.T) {
 
 func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 	for _, test := range []struct {
-		name             string
-		failure          error
-		mutate           func(*api.BatchEnergyOptimization)
-		terminal         bool
+		name     string
+		failure  error
+		mutate   func(*api.BatchEnergyOptimization)
+		terminal bool
 	}{
 		{name: "invalid protocol", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.ActiveProtocol.DurationSeconds = 0 }, terminal: true},
 		{name: "temporary resolver failure", failure: errors.New("resolver temporarily unavailable")},

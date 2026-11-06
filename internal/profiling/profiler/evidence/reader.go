@@ -8,7 +8,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 )
 
-
 func readBounded(
 	ctx context.Context,
 	reader evidencestore.LocationReader,

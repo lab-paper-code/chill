@@ -656,12 +656,12 @@ func (r *fakeCurvePlanCandidateResolver) ResolveCandidate(
 }
 
 type fakeCurvePlanPreparer struct {
-	report           profilingrun.CandidateReport
-	reportBytes      []byte
-	nodeUID          string
-	requests         []profiler.PreparationRequest
-	calls            *[]string
-	err              error
+	report      profilingrun.CandidateReport
+	reportBytes []byte
+	nodeUID     string
+	requests    []profiler.PreparationRequest
+	calls       *[]string
+	err         error
 }
 
 func (p *fakeCurvePlanPreparer) Prepare(

@@ -259,11 +259,11 @@ func retainedStatusBinding() *edgev1alpha1.ProfilingRunEvidenceStoreBinding {
 
 func TestRetainedLoaderLoadsRetainedAndLegacyEvidence(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		idle   bool
-		legacy bool
+		name          string
+		idle          bool
+		legacy        bool
 		missingStatus bool
-		staleStatus bool
+		staleStatus   bool
 	}{
 		{name: "active after Job deletion"},
 		{name: "idle after Job deletion", idle: true},

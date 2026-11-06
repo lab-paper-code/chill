@@ -247,7 +247,6 @@ func validateRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alph
 	return nil
 }
 
-
 func validateExecution(run *edgev1alpha1.ProfilingRun, execution profilerevidence.ExecutionEvidence) error {
 	// Reference-only loaders do not associate retained evidence with a Run.
 	// Keep this boundary so another execution cannot count as this trial.
@@ -258,7 +257,6 @@ func validateExecution(run *edgev1alpha1.ProfilingRun, execution profilerevidenc
 	}
 	return nil
 }
-
 
 func apiObjectIdentity(reference *edgev1alpha1.ProfilingRunEvidenceReference) evidencestore.ObjectIdentity {
 	return evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}

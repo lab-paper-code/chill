@@ -521,7 +521,6 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	return profile, issues, nil
 }
 
-
 // Only mutable ownership is copied; source facts are not decoded or validated
 // again. Callers cannot mutate the admitted entry through returned slices/maps.
 func cloneCatalogProfile(profile serving.Profile) serving.Profile {

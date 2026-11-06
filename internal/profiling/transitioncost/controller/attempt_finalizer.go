@@ -299,7 +299,6 @@ func transitionTerminationReceipt(pod *corev1.Pod) (evidencestore.Receipt, error
 	return receipt, nil
 }
 
-
 func readBoundedTransitionObject(ctx context.Context, reader evidencestore.LocationReader,
 	location evidencestore.ObjectLocation, maximumBytes int64,
 ) ([]byte, error) {

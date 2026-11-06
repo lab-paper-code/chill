@@ -12,9 +12,9 @@ import (
 )
 
 type loaderStore struct {
-	objects map[evidencestore.ObjectLocation][]byte
-	openErr error
-	readErr error
+	objects  map[evidencestore.ObjectLocation][]byte
+	openErr  error
+	readErr  error
 	closeErr error
 }
 
@@ -34,7 +34,7 @@ func (s loaderStore) OpenLocation(
 
 type loaderStream struct {
 	io.Reader
-	readErr error
+	readErr  error
 	closeErr error
 }
 
@@ -100,9 +100,9 @@ func TestLoaderLoadsFinalAndRawObjects(t *testing.T) {
 		t.Fatalf("loaded evidence lost the measured config authority: %#v %#v", loadedExecution, loadedRaw)
 	}
 	for _, test := range []struct {
-		name string
+		name     string
 		location evidencestore.ObjectLocation
-		payload []byte
+		payload  []byte
 	}{
 		{name: "missing final", location: executionLocation},
 		{name: "malformed final", location: executionLocation, payload: []byte("{")},

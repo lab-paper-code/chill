@@ -300,7 +300,6 @@ func cloneResultRecordSpec(spec ResultRecordSpec) ResultRecordSpec {
 	return copy
 }
 
-
 func cleanResultValue(value string) bool {
 	return strings.TrimSpace(value) != "" && strings.TrimSpace(value) == value
 }

@@ -358,7 +358,7 @@ func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: "writer-job", UID: "writer-job-uid", Controller: ptr(true)}}},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning}}
 	writerJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "writer-job", Namespace: parent.Namespace, UID: "writer-job-uid",
-		Labels: map[string]string{api.EvaluationLabelRunUID: "admitted-other-label"},
+		Labels:          map[string]string{api.EvaluationLabelRunUID: "admitted-other-label"},
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "EvaluationRun", Name: parent.Name, UID: parent.UID, Controller: ptr(true)}}}}
 	foreign := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "foreign", Namespace: parent.Namespace, UID: "foreign-job",
 		Labels: map[string]string{api.EvaluationLabelRunUID: string(parent.UID)}}}

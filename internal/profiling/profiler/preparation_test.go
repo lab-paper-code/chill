@@ -383,8 +383,6 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 	}
 }
 
-
-
 func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)
 	tests := []struct {
