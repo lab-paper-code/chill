@@ -403,10 +403,14 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 }
 
 // addBatchEnergy attributes a started batch's incremental joules within the
-// horizon on a compared Node.
+// horizon; total energy counts only compared Nodes.
 func (s *schedulerReplayState) addBatchEnergy(i *schedulerReplayInstance, b *BatchProfile, duration float64) {
-	if s.now < s.horizon && s.counted(i.config.Node) {
-		s.out.energy += b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(duration, s.horizon-s.now) / duration
+	if s.now < s.horizon {
+		joules := b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(duration, s.horizon-s.now) / duration
+		s.out.requestJoules += joules
+		if s.counted(i.config.Node) {
+			s.out.energy += joules
+		}
 	}
 }
 

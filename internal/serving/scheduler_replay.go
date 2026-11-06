@@ -72,6 +72,7 @@ type schedulerReplayInstance struct {
 
 type schedulerReplayResult struct {
 	energy      float64
+	requestJoules float64
 	samples     map[string][]float64
 	definitions map[string]*Definition
 	reasons     []string
@@ -155,6 +156,9 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 		return c, err
 	}
 	c.ConditionalService = &r.conditional
+	if capacity != nil {
+		capacity.requestJoules = r.requestJoules
+	}
 	if capacity != nil && capacity.failed {
 		return c, nil // Partial samples are not an estimate.
 	}
@@ -531,13 +535,16 @@ func (s *schedulerReplayState) initializeRunning() bool {
 		}
 		remaining := float64(sample.ServiceDurationNanos - elapsed)
 		i.nativeFinish, i.finish = remaining, remaining
+		joules := b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (float64(elapsed) + remaining)
+		s.out.requestJoules += joules
 		if s.counted(i.config.Node) {
-			s.out.energy += b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (float64(elapsed) + remaining)
+			s.out.energy += joules
 		}
 		s.out.assumptions = appendUnique(s.out.assumptions, "running incremental joules spread uniformly over sampled conditioned service interval")
 	}
 	return true
 }
+
 
 func (s *schedulerReplayState) nextEvent() (float64, bool) {
 	next := math.Inf(1)
