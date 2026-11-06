@@ -17,7 +17,7 @@ import { SettingsNavigation } from "@/components/settings-navigation"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 
 type NumericKey = Exclude<keyof SchedulerSettings,"controls"|"autonomousWorkloads"|"excludedNodes"|"minimumDemand"|"staticRouting"|"staticRoutingValidatedAt"|"meters"|"requestTimeout">
-type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string}
+type Field = {key:NumericKey;label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string;kind?:"strategy"|"boolean";defaultValue?:string|boolean|number}
 const fields: Field[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
   {key:"controlIntervalNanos",label:"운영 판단 주기",help:"이 간격마다 새로 판단해요.",group:"cycle"},
@@ -40,6 +40,12 @@ const fields: Field[] = [
   {key:"capacityBisectionWidth",label:"용량 이분 탐색 폭",help:"최대 처리율에 대한 탐색 종료 폭이에요. 0 초과 1 이하예요.",group:"capacity"},
   {key:"capacityTailSamples",label:"용량 꼬리 표본 수",help:"SLO 백분위 위에 확보할 창별 표본 수예요. 1 이상이에요.",group:"capacity",unit:"개"},
   {key:"planSearchWorkers",label:"구성 탐색 동시 계산 수",help:"운영 판단이 구성 후보를 동시에 이만큼 계산해요. 탐색은 판단 주기의 절반 안에 끝나요.",group:"advanced",unit:"개"},
+  {key:"planSearchStrategy",label:"구성 탐색 전략",help:"v1은 기존 탐색, v2는 한계비용 탐욕 탐색이에요. shadow는 v1으로 결정하며 v2를 비교 기록해요.",group:"advanced",kind:"strategy",defaultValue:"v1"},
+  {key:"planSearchEvaluations",label:"구성 탐색 평가 예산",help:"v2의 증분 평가를 이 횟수까지 계산해요.",group:"advanced",unit:"회",defaultValue:500000},
+  {key:"planExactFinalists",label:"정확 검증 후보 수",help:"증분 평가의 상위 후보를 이만큼 정확히 검증해요.",group:"advanced",unit:"개",defaultValue:16},
+  {key:"planPolishActive",label:"결합 연마 활성 계획 수",help:"결합 연마에서 살펴볼 활성 계획 수예요. 0은 전체 계획이에요.",group:"advanced",unit:"개",defaultValue:8},
+  {key:"planPostFilterFinalists",label:"후처리 뒤 후보 비교",help:"후보마다 교체 회수와 최소 이득을 적용한 뒤 비교해요.",group:"advanced",kind:"boolean",defaultValue:false},
+  {key:"planPricedStart",label:"가격 유도 출발점",help:"용량 가격으로 만든 출발점도 v2 탐색에 사용해요.",group:"advanced",kind:"boolean",defaultValue:true},
 ]
 const controls: {key:keyof SchedulerSettings["controls"];label:string}[] = [
   {key:"placement",label:"배치 위치"},{key:"resources",label:"자원 할당"},
@@ -62,8 +68,9 @@ const nodeList = (names:string[]) => {
 }
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
-function plain(field:Field,value:WireInteger):string {
+function plain(field:Field,value:WireInteger|string|boolean|undefined):string {
   if(value==null)return "기록 없음"
+  if(typeof value==="boolean")return onOff(value)
   if(field.key==="servingMemoryBytes")return mib(value)
   if(!field.key.endsWith("Nanos"))return `${value}${field.unit??""}`
   const nanos=BigInt(value)
@@ -95,7 +102,7 @@ export async function putSchedulerSettings(mutate:(input:ChillMutationInput)=>Pr
 }
 
 // One row, one value: the dialog edits only this value and adds it to the draft.
-function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disabled,nodeNames=[]}:{editKey:string;label:string;help:string;value:string;changed:boolean;initial:string|boolean|string[];unit?:string;range?:string;save:(value:string|boolean|string[])=>void;disabled:boolean;nodeNames?:string[]}) {
+function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disabled,nodeNames=[],options}:{editKey:string;label:string;help:string;value:string;changed:boolean;initial:string|boolean|string[];unit?:string;range?:string;save:(value:string|boolean|string[])=>void;disabled:boolean;nodeNames?:string[];options?:string[]}) {
   const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
   const [next,setNext]=React.useState(initial),[error,setError]=React.useState(""),id=React.useId()
   function setOpen(state:boolean) {
@@ -108,6 +115,7 @@ function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disab
     <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {save(Array.isArray(next)?nodeList(next):next);setOpen(false)} catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       {Array.isArray(next)?<div className="grid gap-3"><fieldset className="flex flex-wrap gap-2"><legend className="mb-2">관측된 장비 선택</legend>{nodeNames.map(name=><label key={name} className="flex min-h-11 items-center gap-2 rounded-md border px-3"><input type="checkbox" value={name} checked={next.includes(name)} onChange={event=>setNext(event.target.checked?[...next,name]:next.filter(item=>item!==name))}/>{name}</label>)}{!nodeNames.length&&<p>관측된 장비 목록 없음 · 현재 설정은 유지돼요.</p>}</fieldset>{next.map((name,index)=>!nodeNames.includes(name)&&<div key={index} className="flex min-w-0 gap-2"><Input aria-label={`현재 목록에 없는 장비 ${index+1}`} value={name} onChange={event=>setNext(next.map((item,i)=>i===index?event.target.value:item))}/><Button type="button" variant="outline" onClick={()=>setNext(next.filter((_,i)=>i!==index))}>제외 해제</Button></div>)}</div>:typeof next==="boolean"
         ?<label className="switch"><input type="checkbox" role="switch" checked={next} onChange={event=>setNext(event.target.checked)}/>{onOff(next)}</label>
+        :options?<label className="grid gap-2" htmlFor={id}>값<select id={id} className="min-h-11 rounded-md border bg-background px-3" value={next} onChange={event=>setNext(event.target.value)}>{options.map(option=><option key={option} value={option}>{option}</option>)}</select></label>
         :<div className="grid gap-2"><label htmlFor={id}>{unit?`값 (${unit})`:"값"}</label><Input id={id} autoFocus required inputMode={unit==="ms"?"decimal":"text"} value={next} onChange={event=>{setNext(event.target.value);setError("")}} aria-invalid={!!error} aria-describedby={`${id}-help`}/><span id={`${id}-help`} className="text-sm text-muted-foreground">{range}{unit==="bytes"&&/^\d+$/.test(next)?` · ${mib(next)}`:""}</span></div>}
       {error&&<p role="alert">{error}</p>}
       <Button type="submit" disabled={disabled}>바꾸기</Button>
@@ -304,11 +312,12 @@ export function SchedulerSettingsPage() {
   }
 
   const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline![field.key])!==String(shown[field.key])}
-    initial={field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key]):String(shown[field.key])} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
-    range={field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
+    initial={field.kind==="boolean"?Boolean(shown[field.key]??field.defaultValue):field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key] as WireInteger):String(shown[field.key]??field.defaultValue??"")} options={field.kind==="strategy"?["v1","v2","shadow"]:undefined} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
+    range={field.key==="planPolishActive"?"0 이상의 정수, 0은 전체":field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
       // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, uint64 memory bytes, positive int64 otherwise.
-      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?0n:1n):field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
+      if(field.kind){edit(base=>({...base,[field.key]:value}));return}
+      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?0n:1n):field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,field.key==="planPolishActive"?0n:1n,9223372036854775807n)
       if(field.key==="capacityBisectionWidth"&&(Number(parsed)<=0||Number(parsed)>1))throw new Error("0 초과 1 이하의 유한한 값을 적어 주세요.")
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>

@@ -1,4 +1,4 @@
-import type { NodeRef, SchedulerAllocation, SchedulerDefinition, SchedulerSettings, WireInteger } from "./read-types.ts"
+import type { NodeRef, SchedulerAllocation, SchedulerDefinition, SchedulerSettings, SchedulerPlanSearch, WireInteger } from "./read-types.ts"
 import { explain } from "./labels.ts"
 
 export const capacityFields = [
@@ -44,4 +44,17 @@ export const capacityReason=(reason?:string)=>!reason?"사유 제공 없음":({
 export const capacityPercentile=(value:number)=>value===-1?"이 창의 지연값 없음(미충족)":`${value} ms`
 export function capacityComparison(input:CapacitySettings,current:CapacitySettings) {
   return capacityFields.map(field=>({...field,used:input[field.key],current:current[field.key],same:String(input[field.key])===String(current[field.key])}))
+}
+
+export function planSearchFacts(search:SchedulerPlanSearch):[string,string][] {
+  const rows:[string,string][]=[["탐색 이웃",String(search.neighborhood)],["평가 수",String(search.evaluated)],["탐색 시간",`${search.durationNanos} ns`]]
+  const fields=[
+    ["strategy","탐색 전략"],["surrogateEvaluated","증분 평가 수"],["finalists","최종 후보 수"],
+    ["exactEvaluated","정확 평가 수"],["fallback","대체 탐색 사유"],["start","출발점"],
+    ["surrogateGapJoules","증분·정확 에너지 차이 (J)"],["postFilterReverts","후처리 복귀 수"],
+  ] as const
+  for(const [key,label] of fields)if(search[key]!==undefined)rows.push([label,String(search[key])])
+  for(const [reason,count] of Object.entries(search.pruned??{}))rows.push([`가지치기 · ${reason}`,String(count)])
+  if(search.budgetCut!==undefined)rows.push(["예산 종료",search.budgetCut?"예":"아니요"])
+  return rows
 }

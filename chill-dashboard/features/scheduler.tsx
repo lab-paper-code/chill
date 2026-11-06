@@ -8,7 +8,7 @@ import { conditionRows } from "@/features/scheduler-profiles"
 import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { capacityPath } from "@/lib/capacity"
-import { CapacityEvidence } from "@/features/scheduler-capacity"
+import { CapacityEvidence, PlanSearchEvidence } from "@/features/scheduler-capacity"
 import { safeSource } from "@/lib/source-export"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { DataTable } from "@/components/data-table"
@@ -59,7 +59,7 @@ export function SnapshotDetails({snapshot}:{snapshot:SchedulerSnapshot}) {
 }
 
 function CapacityLinks({decision}:{decision:SchedulerDecision}) {
-  return <section className="space-y-2"><h3>판단에 참조한 용량 행</h3>{decision.capacity?.workloads?.map(workload=><div key={workload.uid} className="space-y-1"><Link className="break-all" href={capacityPath(workload.uid)}>{workload.uid}</Link>{workload.rows?.map(key=><p key={key}><Link className="break-all" href={capacityPath(workload.uid,key)}>{key}</Link></p>)}</div>)}<Link href={capacityPath()}>용량 계산 근거</Link></section>
+  return <section className="space-y-2"><PlanSearchEvidence capacity={decision.capacity}/><h3>판단에 참조한 용량 행</h3>{decision.capacity?.workloads?.map(workload=><div key={workload.uid} className="space-y-1"><Link className="break-all" href={capacityPath(workload.uid)}>{workload.uid}</Link>{workload.rows?.map(key=><p key={key}><Link className="break-all" href={capacityPath(workload.uid,key)}>{key}</Link></p>)}</div>)}<Link href={capacityPath()}>용량 계산 근거</Link></section>
 }
 export function CandidateDetails({candidate,view}:{candidate:SchedulerCandidate;view:SchedulerView}) {
   const {snapshot,decision}=view.state

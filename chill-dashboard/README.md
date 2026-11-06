@@ -25,6 +25,8 @@ The upstream demo records, accounts/avatars, revenue/time series, marketing link
 
 Scheduler history keeps default/ascending unfiltered reads bounded, including explicit `filter=all`, and returns original append offsets. Current-page counts appear only in the summary table. Live incident order preserves nanoseconds and uses descending sequence for equal timestamps; shared power remains explicitly labelled cluster-wide in service details.
 
+고급 운영 설정에서 탐색 전략(`v1`/`v2`/`shadow`), 평가 예산, 정확 검증 후보 수, 결합 연마 활성 계획 수(0은 전체), 후처리 뒤 비교, 가격 유도 출발점을 편집한다. 구성·후보 상세와 저장된 판단 상세의 구성 탐색 근거는 제공된 전략·가지치기 사유별 수·평가 수·최종 후보·대체 탐색·출발점·에너지 차이·후처리 복귀 수와 계획별 `dominated` 사유를 표시한다. 이전 기록에 없는 v2 진단값은 생성하지 않는다.
+
 ## Runtime
 
 Node 24.21.0; pnpm 10.33.4. Dependencies are frozen in `pnpm-lock.yaml`. `pnpm install --frozen-lockfile`, then `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`. `pnpm start` binds `0.0.0.0:3000`. Next uses `output: standalone`; a standalone image must include `.next/standalone`, `.next/static` and `public` if present and set `HOSTNAME=0.0.0.0`, `PORT=3000`.

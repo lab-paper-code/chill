@@ -4,14 +4,28 @@ import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { useChillQuery, useSession, type ApiError } from "@/lib/client"
-import type { SchedulerSettings, WireInteger } from "@/lib/read-types"
-import { capacityComparison, capacityFields, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, selectedCapacityRow, type CapacityJudgment, type CapacityRow, type CapacityView } from "@/lib/capacity"
+import type { SchedulerCapacity, SchedulerSettings, WireInteger } from "@/lib/read-types"
+import { planSearchFacts, capacityComparison, capacityFields, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, selectedCapacityRow, type CapacityJudgment, type CapacityRow, type CapacityView } from "@/lib/capacity"
 import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { DataTable } from "@/components/data-table"
 import { QueryGate, SourceExport, SourceJSON, StatusBadge } from "@/components/read-region"
 import { Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 
+
+export function PlanSearchEvidence({capacity}:{capacity?:SchedulerCapacity}) {
+  if(!capacity?.search&&!capacity?.plans?.length)return null
+  return <section className="space-y-3"><h3>구성 탐색 근거</h3>
+    {capacity.search&&<Facts items={planSearchFacts(capacity.search)}/>}
+    {!!capacity.plans?.length&&<DataTable data={capacity.plans} columns={[
+      {key:"node",label:"장치",value:plan=>plan.node.name},
+      {key:"key",label:"계획",value:plan=>plan.key},
+      {key:"eligible",label:"적격",value:plan=>plan.eligible?"예":"아니요"},
+      {key:"reason",label:"사유",value:plan=>plan.reason??"없음"},
+      {key:"dominated",label:"가지치기 사유",value:plan=>plan.dominated??"없음"},
+    ]}/>}
+  </section>
+}
 const value=(number:WireInteger|undefined,unit="")=>number==null?"미제공":`${number}${unit?` ${unit}`:""}`
 const nanos=(number:WireInteger|undefined)=>number==null?"미제공":`${number} ns (${nanosToMilliseconds(number)} ms)`
 const at=(time?:string)=>!time||time.startsWith("0001-")?"미기록":`${time} (UTC) / ${new Date(time).toLocaleString("ko-KR",{timeZone:"Asia/Seoul"})} (KST)`

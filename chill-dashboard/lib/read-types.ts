@@ -54,6 +54,9 @@ export type SchedulerSettings = {
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
   capacityGridSteps:WireInteger; capacityBisectionWidth:number; capacityTailSamples:WireInteger
   planSearchWorkers:WireInteger
+  // Historical decisions can omit v2 search settings.
+  planSearchStrategy?:string; planSearchEvaluations?:WireInteger; planExactFinalists?:WireInteger; planPolishActive?:WireInteger
+  planPostFilterFinalists?:boolean; planPricedStart?:boolean
   autonomousWorkloads:string[]|null
   minimumDemand?:Record<string,number>
   // Nodes the planner never changes (reason ExcludedNode).
@@ -90,9 +93,9 @@ export type SchedulerSnapshot = {at:string;workloads:(SchedulerDefinition|null)[
 export type SchedulerWorkloadState = {uid:string;state:string;reason?:string}
 // internal/serving/scheduler_capacity.go SchedulerCapacity; a missing wait, drain or exceedance is unbounded.
 export type SchedulerCapacityWorkload = {uid:string;rate:number;minimumDemand:number;queued:number;kappaNew:number;kappaRetained:number;backlog:number;waitSeconds?:number;drainSeconds?:number;finalExceedance?:number;transitionExceedance?:number;weights:Record<string,number>|null;rows:string[]|null;scaleDown?:SchedulerDownState}
-export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason?:string;requiresRecovery?:string[];tempo?:"fast"|"slow";kappa?:Record<string,number>;kappaRetained?:Record<string,number>;preNanos:WireInteger;postNanos:WireInteger;joules:number;energyUncertaintyJoules?:number}
+export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason?:string;dominated?:string;requiresRecovery?:string[];tempo?:"fast"|"slow";kappa?:Record<string,number>;kappaRetained?:Record<string,number>;preNanos:WireInteger;postNanos:WireInteger;joules:number;energyUncertaintyJoules?:number}
 // search is the plan search scope: neighborhood k reached, plan sets evaluated, time, and whether the budget cut it.
-export type SchedulerPlanSearch = {neighborhood:number;evaluated:number;durationNanos:WireInteger;budgetCut?:boolean}
+export type SchedulerPlanSearch = {neighborhood:number;evaluated:number;durationNanos:WireInteger;budgetCut?:boolean;strategy?:string;pruned?:Record<string,number>;surrogateEvaluated?:number;finalists?:number;exactEvaluated?:number;surrogateGapJoules?:number;postFilterReverts?:number;fallback?:string;dualBound?:number;start?:string}
 export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;search?:SchedulerPlanSearch;workloads:SchedulerCapacityWorkload[]|null;plans:SchedulerNodePlan[]|null;gainUncertaintyJoules?:number}
 export type SchedulerDecision = {at:string;status:string;keep:SchedulerCandidate;target:SchedulerCandidate|null;reasons:string[]|null;settings:SchedulerSettings;workloads:SchedulerWorkloadState[]|null;search:{examined:number;bounds:SchedulerSettings;windowStart:string;windowEnd:string;received:number;accepted:number;computeInputs:number;population:string;loads:{uid:string;received:number;accepted:number;computeInputs:number;inputsPerSecond:number}[]|null;comparedNodes:NodeRef[]|null};references:string[]|null;capacity?:SchedulerCapacity;evaluationElapsedNanos?:WireInteger}
 // Weights per workload UID and instance ID; original weights, not probabilities.
