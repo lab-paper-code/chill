@@ -426,7 +426,7 @@ func preparationCatalogEvidence(t *testing.T) (map[string]any, preparationEviden
 		}},
 		base + "/namespaces/serving/powermodetransitioncosts": edge.PowerModeTransitionCostList{TypeMeta: meta.TypeMeta{APIVersion: edge.GroupVersion.String(), Kind: "PowerModeTransitionCostList"}},
 	}
-	var completed []campaign.CompletedTrialReference
+	completed := make([]campaign.CompletedTrialReference, 0, 4)
 	for index := range 4 {
 		config, watts, mode := active, 6.0, campaign.WorkloadModeActive
 		if index >= 2 {
