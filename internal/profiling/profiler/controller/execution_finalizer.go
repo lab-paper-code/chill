@@ -170,9 +170,13 @@ func (f *KubernetesExecutionFinalizer) RuntimeTermination(
 ) (*edgev1alpha1.ProfilingRunRuntimeTermination, error) {
 	termination := &edgev1alpha1.ProfilingRunRuntimeTermination{Class: profilerevidence.FailureClassUnknownFailure}
 	for _, condition := range job.Status.Conditions {
-		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+		if condition.Status == corev1.ConditionTrue &&
+			(condition.Type == batchv1.JobFailed || condition.Type == batchv1.JobFailureTarget) {
 			termination.JobReason, termination.JobMessage = condition.Reason, condition.Message
-			break
+			// FailureTarget precedes Failed while the Job controller terminates Pods.
+			if condition.Type == batchv1.JobFailed {
+				break
+			}
 		}
 	}
 	pod, err := f.jobPod(ctx, run, job)
@@ -318,6 +322,7 @@ func (f *KubernetesExecutionFinalizer) classifyRuntimeFailure(
 	if termination.Stage == profilerevidence.StageExecution &&
 		(termination.Reason == containerReasonOOMKilled ||
 			termination.FailureReason == profilerevidence.FailureMeasurementBudget ||
+			termination.FailureReason == profilerevidence.FailureMemoryAllocation ||
 			(termination.JobReason == jobReasonDeadlineExceeded && termination.FailureReason == "")) {
 		termination.Class = profilerevidence.FailureClassExpectedStop
 		return nil

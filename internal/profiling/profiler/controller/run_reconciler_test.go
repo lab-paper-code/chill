@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -495,6 +496,93 @@ func TestRunReconcilerRecordsRuntimeTerminationOfFailedJob(t *testing.T) {
 	execution := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
 	if execution == nil || execution.Status != metav1.ConditionFalse || execution.Reason != "JobFailed" {
 		t.Fatalf("execution condition = %#v", execution)
+	}
+}
+
+func TestRunReconcilerRetainsEarlyFailureTargetTermination(t *testing.T) {
+	for _, test := range []struct {
+		name, stage, failure, class string
+	}{
+		{name: "deadline without phase stays unknown", class: profilerevidence.FailureClassUnknownFailure},
+		{name: "execution allocation is expected stop", stage: profilerevidence.StageExecution,
+			failure: profilerevidence.FailureMemoryAllocation, class: profilerevidence.FailureClassExpectedStop},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			run := testRun()
+			recordRunConfigAndJob(run)
+			resolved := resolvedRunForPrepared(t, currentPreparedRun(t))
+			nativeFailure := batchv1.JobCondition{Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue,
+				Reason: jobReasonDeadlineExceeded, Message: "Job reached its frozen active deadline"}
+			job := recordedJob(t, run, resolved, &batchv1.JobStatus{
+				Failed: 1, Conditions: []batchv1.JobCondition{nativeFailure},
+			})
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: "measurement-pod", UID: "pod-uid",
+				OwnerReferences: []metav1.OwnerReference{{
+					APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr.To(true),
+				}}}}
+			if test.stage != "" {
+				payload, err := json.Marshal(profilerevidence.TerminationMessage{SchemaVersion: profilerevidence.TerminationSchemaVersion,
+					Stage: test.stage, FailureReason: test.failure})
+				if err != nil {
+					t.Fatal(err)
+				}
+				pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: runtimeContainerName,
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+						ExitCode: 3, Reason: "Error", Message: string(payload),
+					}}}}
+			}
+			kubeClient := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).
+				WithStatusSubresource(run, job).WithObjects(run, job, pod).Build()
+			finalizer, err := NewKubernetesExecutionFinalizer(kubeClient, unusedStoreFactory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			jobs := &recordingExecutionJobs{}
+			reconciler, err := NewRunReconciler(kubeClient, kubeClient, (&recordingRunConfigResolver{result: resolved}).Resolve,
+				jobs.Find, jobs.Ensure, finalizer.Finalize, finalizer.RuntimeTermination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := ctrl.Request{NamespacedName: types.NamespacedName{Namespace: run.Namespace, Name: run.Name}}
+			if _, err := reconciler.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			actual := &edgev1alpha1.ProfilingRun{}
+			if err := kubeClient.Get(ctx, request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			termination := actual.Status.RuntimeTermination
+			if termination == nil || termination.JobReason != nativeFailure.Reason || termination.JobMessage != nativeFailure.Message ||
+				termination.Stage != test.stage || termination.FailureReason != test.failure || termination.Class != test.class {
+				t.Fatalf("early native failure was not published intact: %#v", termination)
+			}
+			execution := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
+			if execution == nil || execution.Status != metav1.ConditionFalse || execution.Reason != "JobFailed" {
+				t.Fatalf("early failure did not terminate Run: %#v", execution)
+			}
+			retained := *termination
+			if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: job.Namespace, Name: job.Name}, job); err != nil {
+				t.Fatal(err)
+			}
+			nativeFailure.Type = batchv1.JobFailed
+			job.Status.Conditions = []batchv1.JobCondition{nativeFailure}
+			if err := kubeClient.Status().Update(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			if err := kubeClient.Delete(ctx, pod); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := reconciler.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			if err := kubeClient.Get(ctx, request.NamespacedName, actual); err != nil {
+				t.Fatal(err)
+			}
+			if actual.Status.RuntimeTermination == nil || *actual.Status.RuntimeTermination != retained {
+				t.Fatalf("terminal handling rewrote first native failure: %#v, want %#v", actual.Status.RuntimeTermination, retained)
+			}
+		})
 	}
 }
 
