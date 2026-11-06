@@ -22,6 +22,9 @@ type capacityPlanEntry struct {
 type planTable struct {
 	entries                      []capacityPlanEntry
 	byPlan                       [][]int
+	nodeOrder                    []int
+	entryOrder                   [][]int
+	entryOf                      []int
 	node, index                  []int
 	kappa, kappaE, kappaRet      [][]float64
 	weightRet, energyWeightRet   [][]float64
@@ -84,7 +87,29 @@ func (p *capacityPlanner) planTable() *planTable {
 			if entry.workload >= 0 {
 				ka, kb = t.kappa[a][entry.workload], t.kappa[b][entry.workload]
 			}
-			return cmp.Or(cmp.Compare(ka, kb), cmp.Compare(t.index[a], t.index[b]))
+			return cmp.Or(cmp.Compare(ka, kb), cmp.Compare(p.plans[entry.node][t.index[a]].record.Key, p.plans[entry.node][t.index[b]].record.Key))
+		})
+	}
+	t.nodeOrder, t.entryOrder, t.entryOf = make([]int, len(p.plans)), make([][]int, len(p.plans)), make([]int, len(t.index))
+	for n := range t.nodeOrder {
+		t.nodeOrder[n] = n
+	}
+	slices.SortFunc(t.nodeOrder, func(a, b int) int {
+		return cmp.Compare(p.snapshot.Nodes[a].Node.UID, p.snapshot.Nodes[b].Node.UID)
+	})
+	for e, entry := range t.entries {
+		t.entryOrder[entry.node] = append(t.entryOrder[entry.node], e)
+		for _, q := range entry.variants {
+			t.entryOf[q] = e
+		}
+	}
+	for n := range t.entryOrder {
+		slices.SortFunc(t.entryOrder[n], func(a, b int) int {
+			ea, eb := t.entries[a], t.entries[b]
+			qa, qb := ea.variants[0], eb.variants[0]
+			return cmp.Or(cmp.Compare(ea.option, eb.option), cmp.Compare(ea.mode, eb.mode),
+				cmp.Compare(p.plans[n][t.index[qa]].record.Key, p.plans[n][t.index[qb]].record.Key),
+				cmp.Compare(t.index[qa], t.index[qb]))
 		})
 	}
 	return t
