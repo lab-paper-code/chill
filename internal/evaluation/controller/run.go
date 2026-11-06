@@ -541,6 +541,9 @@ func (r *Runtime) ownedWritersStopped(ctx context.Context, run *api.EvaluationRu
 				jobUIDs[procedure.JobRef.UID] = true
 			}
 		}
+		for _, producer := range child.Status.ProducerRefs {
+			jobUIDs[producer.JobRef.UID] = true
+		}
 	}
 	var jobs batchv1.JobList
 	if err := r.APIReader.List(ctx, &jobs, client.InNamespace(run.Namespace)); err != nil {

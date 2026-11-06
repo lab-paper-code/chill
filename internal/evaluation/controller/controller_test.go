@@ -849,3 +849,41 @@ func TestPublishedRunReleasesHarnessJobs(t *testing.T) {
 		})
 	}
 }
+
+func TestReleaseWaitsForRecordedProducerOrphanPod(t *testing.T) {
+	ctx := context.Background()
+	parent := fixtureRun("producer-orphan")
+	startRun(parent)
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionFalse, api.EvaluationReasonProcedureFailed, "")
+	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonReturnTimeout, "")
+	child := &api.EvaluationStage{
+		ObjectMeta: metav1.ObjectMeta{Name: "child", Namespace: parent.Namespace, UID: "child-uid"},
+		Status: api.EvaluationStageStatus{ProducerRefs: []api.EvaluationProducerReference{{
+			JobRef: api.EvaluationObjectReference{Name: "deleted-producer", UID: "producer-job-uid"},
+		}}},
+	}
+	parent.Status.ChildRefs = []api.EvaluationChildReference{{StageID: "first", EvaluationObjectReference: *ref(child)}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "producer-orphan", Namespace: parent.Namespace, UID: "producer-pod-uid",
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: "deleted-producer", UID: "producer-job-uid", Controller: ptr(true)}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	r, _ := fixtureRuntime(t, parent, child, pod)
+	annotation := `{"reason":"controls reverted","at":"2026-11-01T12:00:00Z"}`
+	if _, err := (&RunReconciler{Runtime: r}).release(ctx, parent, annotation); err != nil {
+		t.Fatal(err)
+	}
+	if !occupied(parent) || len(parent.Status.ReleaseRecords) != 0 {
+		t.Fatal("active recorded producer orphan must hold the pool")
+	}
+	if err := r.Client.Delete(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&RunReconciler{Runtime: r}).release(ctx, parent, annotation); err != nil {
+		t.Fatal(err)
+	}
+	if occupied(parent) || len(parent.Status.ReleaseRecords) != 1 {
+		t.Fatal("terminated producer must allow the operator's pool release")
+	}
+}

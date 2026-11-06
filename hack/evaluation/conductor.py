@@ -413,7 +413,7 @@ class CPO:
     def owned(self, obj):
         execution = self.c['evaluation']['execution']
         owners = {execution['stageUID']} if execution.get('stageUID') else {child['uid'] for child in execution.get('childRefs', [])}
-        return obj['metadata'].get('labels', {}).get('edge.dacs.io/evaluation-run-uid') == execution['runUID'] and any(
+        return any(
             owner.get('kind') == 'EvaluationStage' and owner.get('uid') in owners
             for owner in obj['metadata'].get('ownerReferences', []))
 
@@ -834,23 +834,25 @@ class CPO:
         recorded_jobs = {p['jobRef']['uid']: p['jobRef'] for p in procedures if p.get('jobRef')}
         recorded_pods = {p['podRef']['uid']: p['podRef'] for p in procedures if p.get('podRef')}
         recorded_pod_jobs = {p['podRef']['uid']: p['jobRef']['uid'] for p in procedures if p.get('podRef') and p.get('jobRef')}
-        selector = 'edge.dacs.io/workload-role=system,edge.dacs.io/evaluation-run-uid=' + execution['runUID']
         deadline = time.monotonic() + self.tb['drainSeconds']
         while True:
-            jobs = [job for job in self.io.k(['get', 'jobs', '-l', selector, '-o', 'json'])['items'] if self.owned(job)]
+            observed_jobs = self.io.k(['get', 'jobs', '-o', 'json'])['items']
+            jobs = [job for job in observed_jobs if self.owned(job)]
             job_statuses = {job['metadata']['uid']: job.get('status', {}) for job in jobs}
             completed_jobs = {uid for uid, status in job_statuses.items()
                               if not status.get('active') and not status.get('terminating') and
                               (status.get('succeeded', 0) >= 1 or any(c['type'] == 'Complete' and c['status'] == 'True'
                                                                     for c in status.get('conditions', [])))}
             job_uids = set(recorded_jobs) | {job['metadata']['uid'] for job in jobs}
-            pods = [pod for pod in self.io.k(['get', 'pods', '-l', selector, '-o', 'json'])['items']
+            pods = [pod for pod in self.io.k(['get', 'pods', '-o', 'json'])['items']
                     if pod['metadata']['uid'] in recorded_pods or any(
                         owner.get('kind') == 'Job' and owner.get('uid') in job_uids
                         for owner in pod['metadata'].get('ownerReferences', []))]
-            residuals = [{'kind': 'Pod', 'name': ref['name'], 'reason': 'RemoteEffectUnknown'}
-                         for uid, ref in recorded_pods.items() if recorded_pod_jobs.get(uid) not in completed_jobs
-                         and not any(pod['metadata']['uid'] == uid for pod in pods)]
+            residuals = [{'kind': 'Job', 'name': job['metadata']['name'], 'reason': 'RemoteEffectUnknown'}
+                         for job in observed_jobs if job['metadata']['uid'] in recorded_jobs and not self.owned(job)]
+            residuals.extend({'kind': 'Pod', 'name': ref['name'], 'reason': 'RemoteEffectUnknown'}
+                             for uid, ref in recorded_pods.items() if recorded_pod_jobs.get(uid) not in completed_jobs
+                             and not any(pod['metadata']['uid'] == uid for pod in pods))
             for uid in job_uids:
                 status = job_statuses.get(uid, {})
                 active = status.get('active') or status.get('terminating')
@@ -859,6 +861,10 @@ class CPO:
                     ref = recorded_jobs.get(uid) or next(job['metadata'] for job in jobs if job['metadata']['uid'] == uid)
                     residuals.append({'kind': 'Job', 'name': ref['name'], 'reason': 'ResidualState' if active else 'RemoteEffectUnknown'})
             for pod in pods:
+                expected_job = recorded_pod_jobs.get(pod['metadata']['uid'])
+                if expected_job and not any(owner.get('kind') == 'Job' and owner.get('uid') == expected_job
+                                            for owner in pod['metadata'].get('ownerReferences', [])):
+                    residuals.append({'kind': 'Pod', 'name': pod['metadata']['name'], 'reason': 'RemoteEffectUnknown'})
                 statuses = pod.get('status', {}).get('containerStatuses', [])
                 terminated = bool(statuses) and all('terminated' in status.get('state', {}) for status in statuses)
                 node = pod.get('spec', {}).get('nodeName')
