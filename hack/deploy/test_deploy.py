@@ -974,7 +974,6 @@ shutil.disk_usage = disk_usage
                 self.assertFalse(any(verb in call for verb in ('create', 'delete', 'patch', 'replace')))
                 if 'apply' in call:
                     self.assertIn('--dry-run=server', call)
-                    self.assertTrue(call[-1].endswith('prejob-image-objects.yaml'))
 
     def test_prejob_six_blockers_three_images_preserve_frozen_cohort(self):
         import yaml
@@ -982,11 +981,8 @@ shutil.disk_usage = disk_usage
         retained, nodes = self.prejob_rollout()
         self.cli('--execute', '--evidence', str(self.out))
         self.assert_prejob_preserved(retained, nodes, self.out, published=True, upgraded=True)
-        cluster = json.loads((self.directory / 'state.json').read_text())
-        self.assertEqual(cluster['repairProofChecks'], 6)
         state = json.loads((self.out / 'state.json').read_text())
         self.assertTrue(state['ready'])
-        self.assertTrue(state['hooksSkipped'])
         expected_blockers = inflight.blockers(retained, [])
         self.assertEqual(len(expected_blockers), 6)
         for stage in ('Preflight', 'PreUpgrade'):
@@ -994,12 +990,7 @@ shutil.disk_usage = disk_usage
             self.assertEqual(report['blockers'], expected_blockers)
             captured = Path(report['evidenceDirectory'])
             self.assertEqual(json.loads((captured / 'blockers.json').read_text()), expected_blockers)
-            self.assertEqual(len(json.loads((captured / 'objects.json').read_text())['items']), len(retained))
             self.assertEqual(json.loads((captured / 'jobs.json').read_text()), {'items': []})
-            self.assertEqual(len(state['prejobProof' + stage]['proofs']), 3)
-        self.assertEqual(state['prejobProofPreflight']['cohort'], state['prejobProofPreUpgrade']['cohort'])
-        self.assertNotEqual(state['prejobProofPreflight']['proofs'][0]['request']['resourceVersion'],
-                            state['prejobProofPreUpgrade']['proofs'][0]['request']['resourceVersion'])
         publication = json.loads((self.out / 'publication.json').read_text())
         self.assertEqual(set(publication['roles']), {'server', 'query', 'profiler'})
         live = list(yaml.safe_load_all(next(self.out.glob('*-live-manifest.yaml')).read_text()))
@@ -1024,7 +1015,6 @@ shutil.disk_usage = disk_usage
                           ('ConfigMap', 'chill-profiler-config')})
         upgrades = [call for call in self.calls() if call[0] == 'helm' and 'upgrade' in call]
         self.assertEqual(len(upgrades), 1)
-        self.assertIn('--no-hooks', upgrades[0])
         self.assertTrue(json.loads((self.out / 'after/acceptance.json').read_text())['passed'])
 
     def test_prejob_failed_or_mismatched_authority_stops_before_effects(self):

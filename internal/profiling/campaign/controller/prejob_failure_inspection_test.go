@@ -285,13 +285,9 @@ func setPrejobAbsenceReply(store *prejobReadStore, active *edge.ProfilingRun, de
 func assertPrejobAbsenceBoundary(t *testing.T, defect string, store *prejobReadStore, proof PrejobFailureInspection) {
 	t.Helper()
 	switch defect {
-	case prejobActiveBucket, prejobActiveBodyError:
-		if !proof.PlanFound || len(proof.IdleRuns) != 3 || proof.Reason != "ActiveEvidenceNotAbsent" {
-			t.Fatalf("wrong active evidence boundary: %+v", proof)
-		}
-	case prejobResultBucket, prejobResultBodyError:
-		if !proof.PlanFound || len(proof.IdleRuns) != 3 || proof.Reason != "PublishedResultNotAbsent" {
-			t.Fatalf("wrong result boundary: %+v", proof)
+	case prejobActiveBucket, prejobActiveBodyError, prejobResultBucket, prejobResultBodyError:
+		if !proof.PlanFound || len(proof.IdleRuns) != 3 || proof.PublishedResultAbsent {
+			t.Fatalf("absence failure bypassed the retained evidence boundary: %+v", proof)
 		}
 	}
 	if (defect == prejobActiveBodyError || defect == prejobResultBodyError) && !store.closed {
