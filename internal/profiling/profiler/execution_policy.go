@@ -42,6 +42,15 @@ type ExecutionPlan struct {
 	WorkspaceBytes                     int64
 }
 
+// MetricCapacityError identifies deterministic metric admission rejection.
+// It preserves the underlying error and the existing terminal classification.
+type MetricCapacityError struct {
+	Cause error
+}
+
+func (e *MetricCapacityError) Error() string { return e.Cause.Error() }
+func (e *MetricCapacityError) Unwrap() error { return e.Cause }
+
 // DeriveExecutionPlan combines a selected worker envelope with Run-derived
 // durations. CPU scheduling and thread counts are left to the platform/runtime.
 func DeriveExecutionPlan(
@@ -90,7 +99,7 @@ func DeriveExecutionPlan(
 		MemoryBudgetBytes: policy.ObserverMemoryLimitBytes,
 	}, true)
 	if err != nil {
-		return ExecutionPlan{}, InvalidExecutionPolicy("admit metric observation: %w", err)
+		return ExecutionPlan{}, InvalidExecutionPolicy("admit metric observation: %w", &MetricCapacityError{Cause: err})
 	}
 
 	plan := ExecutionPlan{

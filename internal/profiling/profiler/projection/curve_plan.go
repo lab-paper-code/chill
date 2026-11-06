@@ -26,6 +26,17 @@ func ApplyFrozenActiveProtocol(
 	measurement.MinServiceSamples = protocol.MinServiceSamples
 }
 
+// ValidateRecordedIdleEvidence applies the existing curve-plan RunConfig
+// boundary to a retained idle witness without requiring an active execution.
+func ValidateRecordedIdleEvidence(plan profilederivation.CurvePlan, evidence profilerevidence.VerifiedIdleEvidence) error {
+	execution, _, err := evidence.Records()
+	if err != nil {
+		return err
+	}
+	shared := plan.Shared()
+	return validateCurvePlanRunConfig(execution.RunConfig, execution.Terminal.Node.UID, shared, shared.IdleProtocol)
+}
+
 // ProjectCurvePlanSpec builds the plan the checker in this package later
 // validates RunConfigs against.
 func ProjectCurvePlanSpec(

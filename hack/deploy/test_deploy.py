@@ -28,6 +28,34 @@ with (root/'calls.jsonl').open('a') as f:f.write(json.dumps([name,*args])+'\n')
 state=json.loads((root/'state.json').read_text())
 def save(): (root/'state.json').write_text(json.dumps(state))
 def argument(flag):return args[args.index(flag)+1]
+if name=='go' and args[:1]==['build'] and args[-1]=='./hack/prejob-retirement-check':
+ target=pathlib.Path(argument('-o'));target.write_text(pathlib.Path(__file__).read_text());target.chmod(0o700);sys.exit(0)
+if name=='go':
+ import shutil
+ search=os.pathsep.join(path for path in os.environ['PATH'].split(os.pathsep) if pathlib.Path(path).resolve()!=pathlib.Path(__file__).parent.resolve())
+ real=shutil.which('go',path=search)
+ if real:os.execv(real,[real,*args])
+ sys.exit(127)
+if name=='prejob-retirement-check':
+ parents=[obj for obj in state['inflightObjects'] if obj['kind']=='BatchEnergyOptimization']
+ state['repairProofChecks']=state.get('repairProofChecks',0)+1
+ final=state['repairProofChecks']>len(parents)
+ failure=state.get('repairProofFailureAtFinal' if final else 'repairProofFailure')
+ parent=next(obj for obj in parents if obj['metadata']['name']==argument('--name'))
+ meta=parent['metadata']
+ child=next(obj for obj in state['inflightObjects'] if obj['kind']=='ProfilingRun' and any(ref.get('uid')==meta['uid'] for ref in obj['metadata'].get('ownerReferences',[])))
+ def identity(obj):return {key:obj['metadata'][key] for key in ('namespace','name','uid','resourceVersion','generation')}
+ node=next(node for node in state['repairNodes'] if node['spec']['taints'][0]['value']==meta['uid'])
+ proof={'version':1,'eligible':failure is None,'reason':'ExecutionPolicyInvalid','request':identity(parent),'child':identity(child),'plan':{'store':'retained','key':'frozen-plan','schemaVersion':'1'},'ownedRunCount':4,'ownedJobCount':0,'idleRuns':[],'planFound':True,'publishedResultAbsent':True,'admission':{'granted':True,'at':'2026-11-05T00:00:00Z'},'node':{'name':node['metadata']['name'],'uid':node['metadata']['uid'],'resourceVersion':node['metadata']['resourceVersion'],'holder':meta['uid']},'checkedAt':'2026-11-06T00:00:00Z'}
+ if final:
+  proof['request']['resourceVersion']+='-fresh';proof['child']['resourceVersion']+='-fresh';proof['node']['resourceVersion']+='-heartbeat'
+ if failure=='changed-identity':proof['request']['uid']='different-uid';proof['eligible']=True
+ elif failure=='changed-child':proof['child']['uid']='different-child';proof['eligible']=True
+ elif failure=='changed-generation':proof['child']['generation']+=1;proof['eligible']=True
+ elif failure=='wrong-reason':proof['reason']='Unknown';proof['eligible']=True
+ elif failure:proof['reason']=failure
+ save();print(json.dumps(proof))
+ sys.exit(0 if proof['eligible'] else 1)
 def document(image):
  return {'apiVersion':'apps/v1','kind':'Deployment','metadata':{'name':'chill-serving-entrypoint','namespace':'review'},'spec':{'template':{'spec':{'containers':[{'name':'server','image':image}]}}}}
 def dashboard_hook(changed=False):
@@ -46,6 +74,32 @@ def dashboard_documents(image,desired=False):
  result=[backend,dashboard,crd,config]
  if desired and state.get('dashboardChange')=='duplicate':result.append(dashboard)
  if desired and state.get('dashboardChange')=='missing-dashboard':result.remove(dashboard)
+ if desired:result.append(dashboard_hook(change=='hook'))
+ return result
+def prejob_documents(server='old:source',query='query:retained',profiler='profiler:retained',desired=False):
+ result=dashboard_documents('dashboard:retained')
+ backend=result[0];backend['spec']['template']['spec']['containers'][0].update(name='serving-entrypoint',image=server)
+ backend['spec']['template']['spec']['containers'].append({'name':'sidecar','image':'sidecar:retained'})
+ query_deployment=document(query);query_deployment['metadata']['name']='chill-query';query_deployment['spec']['template']['spec']['containers'][0]['name']='query'
+ result.append(query_deployment)
+ config={'apiVersion':'v1','kind':'ConfigMap','metadata':{'name':'chill-profiler-config','namespace':'review'},'data':{'config.yaml':json.dumps({'image':profiler,'measurement':{'policy':'retained','windowSeconds':60},'healthProbePort':8081,'measurementMemoryFraction':0.8}),'other':'retained'}}
+ result.append(config)
+ result.append({'apiVersion':'chill.dacs.io/v1alpha1','kind':'ChillSystem','metadata':{'name':'chill'},'spec':{'managementNamespace':'review','evidenceStore':{'endpoint':'http://retained-store:9000','bucket':'measurements'}}})
+ change=state.get('repairChange')
+ if desired and server!='old:source':change=state.get('repairChangeAtFinal',change)
+ if desired:
+  if change=='other-image':backend['spec']['template']['spec']['containers'][1]['image']='sidecar:changed'
+  elif change=='crd':result[2]['spec']['versions'][0]['schema']['openAPIV3Schema']['description']='changed'
+  elif change=='backend-config':result[3]['data']['measurementWindowSeconds']='120'
+  elif change in ('profiler-config','policy','runtime','observer'):
+   inner=json.loads(config['data']['config.yaml']);inner[change]='changed';config['data']['config.yaml']=json.dumps(inner)
+  elif change=='duplicate-inner':config['data']['config.yaml']='image: profiler:retained\nimage: profiler:changed\n'
+  elif change=='non-string-inner':config['data']['config.yaml']='image: profiler:retained\ntrue: hidden\n1: collision\n'
+  elif change=='typed-inner':config['data']['config.yaml']=config['data']['config.yaml'].replace('"windowSeconds": 60','"windowSeconds": 60.0')
+  elif change=='sexagesimal-int':config['data']['config.yaml']=config['data']['config.yaml'].replace('"healthProbePort": 8081','"healthProbePort": 2:14:41')
+  elif change=='sexagesimal-float':config['data']['config.yaml']=config['data']['config.yaml'].replace('"measurementMemoryFraction": 0.8','"measurementMemoryFraction": 0:0.8')
+  elif change=='duplicate':result.append(query_deployment)
+  elif change=='missing-query':result.remove(query_deployment)
  if desired:result.append(dashboard_hook(change=='hook'))
  return result
 def emit(documents,desired=False):
@@ -98,23 +152,30 @@ if name=='helm':
   if what=='values':
    client={'apiServer':'https://kubernetes.review:6443','discoverFromDefaultEndpoint':False}
    values={'nodeAgent':{'kubernetesClient':client},'profiler':{'workloadObserver':{'kubernetesClient':client}}}
-   print(json.dumps(state.get('dashboardValues',values) if state.get('dashboardFixture') else {}))
+   print(json.dumps(state.get('dashboardValues',values) if state.get('dashboardFixture') or state.get('repairFixture') else {}))
   elif what=='manifest':
-   if state.get('dashboardFixture'):emit(dashboard_documents('dashboard:retained'))
+   if state.get('repairFixture'):emit(prejob_documents())
+   elif state.get('dashboardFixture'):emit(dashboard_documents('dashboard:retained'))
    else:print(json.dumps(document('old:source')))
-  elif what=='hooks' and state.get('dashboardFixture'):emit([dashboard_hook()])
+  elif what=='hooks' and (state.get('dashboardFixture') or state.get('repairFixture')):emit([dashboard_hook()])
   else:print('')
  elif verb=='template':
-  image='old:source';dashboard_image='dashboard:retained';replicas=None;published=False
+  image='old:source';dashboard_image='dashboard:retained';profiler_image='profiler:retained';query_image='query:retained';replicas=None;published=False
   for i,arg in enumerate(args):
    if arg=='-f':
     path=pathlib.Path(args[i+1])
     if path.name=='image-overlay.json':
      value=json.loads(path.read_text());item=value.get('servingEntrypoint',{}).get('image');image=item['repository']+':'+item['tag'] if item else image
      item=value.get('dashboard',{}).get('image');dashboard_image=item['repository']+':'+item['tag'] if item else dashboard_image;published=True
+     item=value.get('profiler',{}).get('image');profiler_image=item['repository']+':'+item['tag'] if item else profiler_image
+     item=value.get('query',{}).get('image');query_image=item['repository']+':'+item['tag'] if item else query_image
     elif path.name.startswith('staged-values-'):
      replicas=json.loads(path.read_text()).get('operator',{}).get('replicaCount')
-  if state.get('dashboardFixture'):
+  if state.get('repairFixture'):
+   malformed=state.get('malformedRepairRender')
+   if malformed=='before' or malformed=='final' and published:print('{invalid render')
+   else:emit(prejob_documents(image,query_image,profiler_image,True),True)
+  elif state.get('dashboardFixture'):
    malformed=state.get('malformedDashboardRender')
    if malformed=='before' or malformed=='final' and published:print('{invalid render')
    else:emit(dashboard_documents(dashboard_image,True),True)
@@ -128,7 +189,7 @@ if name=='helm':
   duration=argument('--timeout');wait_seconds=int(duration[:-1])*{'s':1,'m':60}[duration[-1]]
   if state.get('serverReadySeconds',0)>wait_seconds:
    print('timed out waiting for server listener',file=sys.stderr);sys.exit(20)
-  if state.get('dashboardFixture') and '--no-hooks' not in args:
+  if (state.get('dashboardFixture') or state.get('repairFixture')) and '--no-hooks' not in args:
    state['hookExecutions']=state.get('hookExecutions',0)+1
    state.setdefault('ensuredBuckets',[]).append('measurements')
   overlay=pathlib.Path(args[args.index('-f')+1])
@@ -140,7 +201,7 @@ if name=='helm':
    print('---\n# Source: chill/templates/evaluation_rbac.yaml\n'+json.dumps(item))
  sys.exit(0)
 if name=='kubectl':
- if state.get('dashboardFixture') and 'get' in args and args[args.index('get')+1]=='crd':
+ if (state.get('dashboardFixture') or state.get('repairFixture')) and 'get' in args and args[args.index('get')+1]=='crd':
   emit([dashboard_documents('dashboard:retained')[2]]);sys.exit(0)
  if state.get('runtimeFixture'):
   if 'get' in args and args[args.index('get')+1]=='nodes':
@@ -196,7 +257,23 @@ if name=='kubectl':
   state['inflightChecks']=state.get('inflightChecks',0)+1;save()
   items=state.get('inflightObjects',[])
   if state.get('inflightAt')==state['inflightChecks']:items=[{'kind':'DispatchOccupancyMeasurement','metadata':{'name':'active','namespace':'another-chill-ns'},'status':{'phase':'Running'}}]
+  if state.get('repairFixture') and state['inflightChecks']==2:
+   items=json.loads(json.dumps(items))
+   change=state.get('cohortChange')
+   for obj in items:
+    if 'resourceVersion' not in obj['metadata']:continue
+    obj['metadata']['resourceVersion']+='-fresh'
+    if change=='generation' and obj['kind']=='ProfilingRun':obj['metadata']['generation']+=1
+    elif change=='uid' and obj['kind']=='ProfilingRun':obj['metadata']['uid']+='-replacement'
+   if change=='new-pair':
+    extra=json.loads(json.dumps(items[:2]))
+    for obj in extra:
+     obj['metadata']['name']+='-new';obj['metadata']['uid']+='-new'
+     for owner in obj['metadata'].get('ownerReferences',[]):owner['name']+='-new';owner['uid']+='-new'
+    items+=extra
   print(json.dumps({'items':items}));sys.exit(0)
+ if 'get' in args and args[args.index('get')+1]=='jobs' and '--all-namespaces' in args:
+  print(json.dumps({'items':state.get('inflightJobs',[])}));sys.exit(0)
  if 'port-forward' in args:
   import http.server
   class Query(http.server.BaseHTTPRequestHandler):
@@ -336,7 +413,7 @@ class DeploymentCLI(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start(); cls.threads.append(thread)
         cls.bin = cls.directory / 'bin'; cls.bin.mkdir()
         script = cls.bin / 'fake'; script.write_text(FAKE); script.chmod(0o700)
-        for name in ('helm', 'kubectl', 'docker'):
+        for name in ('helm', 'kubectl', 'docker', 'go'):
             (cls.bin / name).symlink_to(script)
         # Only local disk accounting is synthetic; the official CLI and registry proof still run.
         (cls.bin / 'sitecustomize.py').write_text('''
@@ -851,6 +928,238 @@ shutil.disk_usage = disk_usage
             self.assertEqual(any(call[0] == 'docker' and 'build' in call for call in self.calls()), expected_build)
             self.assertFalse(any(call[0] == 'helm' and 'upgrade' in call for call in self.calls()))
             (self.directory / 'calls.jsonl').write_text('')
+
+    def prejob_rollout(self, **changes):
+        self.recipe.update(images=['server', 'query', 'profiler'], prejobRepairOnly=True)
+        retained, nodes = [], []
+        for index, duration in enumerate((2027, 1792, 1970)):
+            name = 'frozen-request-%d' % index
+            uid = 'parent-uid-%d' % index
+            parent = {'apiVersion': 'edge.dacs.io/v1alpha1', 'kind': 'BatchEnergyOptimization',
+                      'metadata': {'name': name, 'namespace': 'review', 'uid': uid,
+                                   'resourceVersion': str(400 + index), 'generation': 1},
+                      'status': {'phase': 'Running', 'completedTrials': 3, 'plan': {'key': name + '/plan.json'}}}
+            child = {'apiVersion': 'edge.dacs.io/v1alpha1', 'kind': 'ProfilingRun',
+                     'metadata': {'name': name + '-active-b1-a1', 'namespace': 'review',
+                                  'uid': 'child-uid-%d' % index, 'resourceVersion': str(500 + index),
+                                  'generation': 1, 'ownerReferences': [{
+                                      'apiVersion': parent['apiVersion'], 'kind': parent['kind'],
+                                      'name': name, 'uid': uid, 'controller': True}]},
+                     'spec': {'metricObservation': {'durationSeconds': duration}}}
+            retained.extend((parent, child))
+            for idle in range(3):
+                run = copy.deepcopy(child)
+                run['metadata'].update(name=name + '-idle-%d' % idle,
+                                       uid='idle-uid-%d-%d' % (index, idle))
+                run['status'] = {'conditions': [{'type': 'EvidenceVerified', 'status': 'True'}]}
+                retained.append(run)
+            nodes.append({'apiVersion': 'v1', 'kind': 'Node',
+                          'metadata': {'name': 'held-node-%d' % index, 'uid': 'node-uid-%d' % index,
+                                       'resourceVersion': str(600 + index)},
+                          'spec': {'taints': [{'key': 'chill.dacs.io/measurement',
+                                               'value': uid, 'effect': 'NoSchedule'}]}})
+        self.state(repairFixture=True, inflightObjects=retained, repairNodes=nodes, **changes)
+        return retained, nodes
+
+    def assert_prejob_preserved(self, retained, nodes, evidence, *, published=False, upgraded=False):
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['inflightObjects'], retained)
+        self.assertEqual(cluster['repairNodes'], nodes)
+        self.assertEqual(bool(cluster.get('upgraded')), upgraded)
+        self.assertEqual((evidence / 'publication.json').exists(), published)
+        for field in ('apiMutations', 'probeCount', 'hookExecutions', 'ensuredBuckets'):
+            self.assertFalse(cluster.get(field), field)
+        for call in self.calls():
+            if call[0] == 'kubectl':
+                self.assertFalse(any(verb in call for verb in ('create', 'delete', 'patch', 'replace')))
+                if 'apply' in call:
+                    self.assertIn('--dry-run=server', call)
+                    self.assertTrue(call[-1].endswith('prejob-image-objects.yaml'))
+
+    def test_prejob_six_blockers_three_images_preserve_frozen_cohort(self):
+        import yaml
+        import inflight
+        retained, nodes = self.prejob_rollout()
+        self.cli('--execute', '--evidence', str(self.out))
+        self.assert_prejob_preserved(retained, nodes, self.out, published=True, upgraded=True)
+        cluster = json.loads((self.directory / 'state.json').read_text())
+        self.assertEqual(cluster['repairProofChecks'], 6)
+        state = json.loads((self.out / 'state.json').read_text())
+        self.assertTrue(state['ready'])
+        self.assertTrue(state['hooksSkipped'])
+        expected_blockers = inflight.blockers(retained, [])
+        self.assertEqual(len(expected_blockers), 6)
+        for stage in ('Preflight', 'PreUpgrade'):
+            report = state['inflight' + stage]
+            self.assertEqual(report['blockers'], expected_blockers)
+            captured = Path(report['evidenceDirectory'])
+            self.assertEqual(json.loads((captured / 'blockers.json').read_text()), expected_blockers)
+            self.assertEqual(len(json.loads((captured / 'objects.json').read_text())['items']), len(retained))
+            self.assertEqual(json.loads((captured / 'jobs.json').read_text()), {'items': []})
+            self.assertEqual(len(state['prejobProof' + stage]['proofs']), 3)
+        self.assertEqual(state['prejobProofPreflight']['cohort'], state['prejobProofPreUpgrade']['cohort'])
+        self.assertNotEqual(state['prejobProofPreflight']['proofs'][0]['request']['resourceVersion'],
+                            state['prejobProofPreUpgrade']['proofs'][0]['request']['resourceVersion'])
+        publication = json.loads((self.out / 'publication.json').read_text())
+        self.assertEqual(set(publication['roles']), {'server', 'query', 'profiler'})
+        live = list(yaml.safe_load_all(next(self.out.glob('*-live-manifest.yaml')).read_text()))
+        live += list(yaml.safe_load_all(next(self.out.glob('*-live-hooks.yaml')).read_text()))
+        final = list(yaml.safe_load_all((self.out / 'render-final.yaml').read_text()))
+        for item in final:
+            name = item['metadata']['name']
+            if name in ('chill-serving-entrypoint', 'chill-query'):
+                role = 'server' if name.endswith('serving-entrypoint') else 'query'
+                container = item['spec']['template']['spec']['containers'][0]
+                self.assertEqual(container['image'], publication['roles'][role]['image'])
+                container['image'] = 'old:source' if role == 'server' else 'query:retained'
+            elif name == 'chill-profiler-config':
+                config = yaml.safe_load(item['data']['config.yaml'])
+                self.assertEqual(config['image'], publication['roles']['profiler']['image'])
+                config['image'] = 'profiler:retained'
+                item['data']['config.yaml'] = json.dumps(config)
+        self.assertEqual(final, live)
+        selected = list(yaml.safe_load_all((self.out / 'prejob-image-objects.yaml').read_text()))
+        self.assertEqual({(obj['kind'], obj['metadata']['name']) for obj in selected},
+                         {('Deployment', 'chill-serving-entrypoint'), ('Deployment', 'chill-query'),
+                          ('ConfigMap', 'chill-profiler-config')})
+        upgrades = [call for call in self.calls() if call[0] == 'helm' and 'upgrade' in call]
+        self.assertEqual(len(upgrades), 1)
+        self.assertIn('--no-hooks', upgrades[0])
+        self.assertTrue(json.loads((self.out / 'after/acceptance.json').read_text())['passed'])
+
+    def test_prejob_failed_or_mismatched_authority_stops_before_effects(self):
+        for failure in ('existing-job', 'foreign-owner', 'api-error', 'store-error', 'Unknown',
+                        'NoSuchBucket', 'changed-identity', 'changed-child', 'changed-generation', 'wrong-reason'):
+            for final in (False, True):
+                with self.subTest(failure=failure, final=final):
+                    key = 'repairProofFailureAtFinal' if final else 'repairProofFailure'
+                    retained, nodes = self.prejob_rollout(**{key: failure})
+                    evidence = self.out / (failure + ('-final' if final else '-preflight'))
+                    self.cli('--execute', '--evidence', str(evidence), expected=1)
+                    self.assert_prejob_preserved(retained, nodes, evidence, published=final)
+                    self.assertFalse(any('upgrade' in call for call in self.calls()))
+                    (self.directory / 'calls.jsonl').write_text('')
+
+    def test_prejob_mixed_or_unknown_render_stops(self):
+        for change in ('other-image', 'crd', 'backend-config', 'profiler-config', 'policy', 'runtime',
+                       'observer', 'hook', 'duplicate-inner', 'non-string-inner', 'typed-inner',
+                       'sexagesimal-int', 'sexagesimal-float', 'duplicate', 'missing-query'):
+            for final in (False, True):
+                with self.subTest(change=change, final=final):
+                    key = 'repairChangeAtFinal' if final else 'repairChange'
+                    retained, nodes = self.prejob_rollout(**{key: change})
+                    evidence = self.out / (change + ('-final' if final else '-preflight'))
+                    self.cli('--execute', '--evidence', str(evidence), expected=1)
+                    self.assert_prejob_preserved(retained, nodes, evidence, published=final)
+                    (self.directory / 'calls.jsonl').write_text('')
+        for phase in ('before', 'final'):
+            retained, nodes = self.prejob_rollout(malformedRepairRender=phase)
+            evidence = self.out / ('malformed-' + phase)
+            self.cli('--execute', '--evidence', str(evidence), expected=1)
+            self.assert_prejob_preserved(retained, nodes, evidence, published=phase == 'final')
+            (self.directory / 'calls.jsonl').write_text('')
+
+    def test_prejob_cohort_change_or_other_blocker_stops(self):
+        for change in ('uid', 'generation', 'new-pair', 'unrelated-final', 'unrelated-preflight',
+                       'native-job', 'foreign-owner', 'duplicate-object'):
+            with self.subTest(change=change):
+                kwargs = {'cohortChange': change} if change in ('uid', 'generation', 'new-pair') else {}
+                if change == 'unrelated-final':
+                    kwargs['inflightAt'] = 2
+                retained, nodes = self.prejob_rollout(**kwargs)
+                fixture = json.loads((self.directory / 'state.json').read_text())
+                if change == 'unrelated-preflight':
+                    fixture['inflightObjects'].append({'kind': 'EvaluationRun', 'metadata': {
+                        'name': 'unrelated', 'namespace': 'other', 'uid': 'unrelated-uid',
+                        'resourceVersion': '999', 'generation': 1}})
+                elif change == 'native-job':
+                    fixture['inflightJobs'] = [{'kind': 'Job', 'metadata': {'name': 'existing-job',
+                        'namespace': 'review', 'ownerReferences': [{'kind': 'ProfilingRun'}]}}]
+                elif change == 'foreign-owner':
+                    fixture['inflightObjects'][1]['metadata']['ownerReferences'][0]['uid'] = 'foreign'
+                elif change == 'duplicate-object':
+                    fixture['inflightObjects'].append(copy.deepcopy(fixture['inflightObjects'][0]))
+                self.state(**fixture)
+                retained = fixture['inflightObjects']
+                evidence = self.out / change
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                self.assert_prejob_preserved(retained, nodes, evidence,
+                                            published=change in ('uid', 'generation', 'new-pair', 'unrelated-final'))
+                self.assertFalse(any('upgrade' in call for call in self.calls()))
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_prejob_scope_rejects_overrides_before_cluster_access(self):
+        self.prejob_rollout()
+        original = copy.deepcopy(self.recipe)
+        for index, override in enumerate((
+                {'prejobRepairOnly': 1}, {'images': ['server', 'profiler']},
+                {'images': ['server', 'query', 'profiler', 'operator']},
+                {'values': ['unread-values.yaml']}, {'replaceValues': True},
+                {'generatedValues': ['uncreated.yaml']}, {'runtimeDeclarations': True},
+                {'publicationOnly': ['server']}, {'toolSources': {'other': self.sha}},
+                {'checkConfiguration': True}, {'allowedLostProfileIDs': ['retained']},
+                {'commands': {'stage': [{'argv': ['true'], 'seconds': 1}]}})):
+            with self.subTest(override=override):
+                self.recipe = dict(original, **override)
+                self.cli('--execute', '--evidence', str(self.out / str(index)), expected=1)
+                self.assertEqual(self.calls(), [])
+                self.assertEqual(self.requests, [])
+
+    def test_prejob_dynamic_lookup_inputs_stop_and_normal_gate_stays_closed(self):
+        for scenario in ('dynamic-node', 'dynamic-observer', 'missing-inputs', 'normal'):
+            with self.subTest(scenario=scenario):
+                retained, nodes = self.prejob_rollout()
+                if scenario == 'normal':
+                    self.recipe['prejobRepairOnly'] = False
+                else:
+                    values = {'nodeAgent': {'kubernetesClient': {'discoverFromDefaultEndpoint': False}},
+                              'profiler': {'workloadObserver': {'kubernetesClient': {'discoverFromDefaultEndpoint': False}}}}
+                    if scenario == 'missing-inputs':
+                        values = {}
+                    elif scenario == 'dynamic-node':
+                        values['nodeAgent']['kubernetesClient']['discoverFromDefaultEndpoint'] = True
+                    else:
+                        values['profiler']['workloadObserver']['kubernetesClient']['discoverFromDefaultEndpoint'] = True
+                    fixture = json.loads((self.directory / 'state.json').read_text())
+                    fixture['dashboardValues'] = values
+                    self.state(**fixture)
+                evidence = self.out / scenario
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                self.assert_prejob_preserved(retained, nodes, evidence)
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_prejob_embedded_yaml_preserves_scalar_and_alias_boundaries(self):
+        import main as runner_module
+        import yaml
+        server = {'apiVersion': 'apps/v1', 'kind': 'Deployment',
+                  'metadata': {'name': 'chill-serving-entrypoint', 'namespace': 'review'},
+                  'spec': {'template': {'spec': {'containers': [
+                      {'name': 'serving-entrypoint', 'image': 'server:retained'}]}}}}
+        query = copy.deepcopy(server)
+        query['metadata']['name'] = 'chill-query'
+        query['spec']['template']['spec']['containers'][0] = {'name': 'query', 'image': 'query:retained'}
+        config = {'apiVersion': 'v1', 'kind': 'ConfigMap',
+                  'metadata': {'name': 'chill-profiler-config', 'namespace': 'review'}, 'data': {}}
+        def manifest(raw):
+            config['data']['config.yaml'] = raw
+            return yaml.safe_dump_all([server, query, config]).encode()
+        original = 'image: profiler:retained\nport: 8081\nfraction: 0.8\nwindow: 60\n'
+        live = manifest(original)
+        self.assertTrue(runner_module.prejob_only(live, manifest(original.replace('profiler:retained', 'profiler:changed')), 'review', 'chill'))
+        for raw in (
+                original.replace('8081', '2:14:41'),
+                original.replace('0.8', '0:0.8'),
+                original.replace('60', '60.0'),
+                original.replace('60', '060'),
+                original + 'window: 60\n',
+                original + 'true: hidden\n1: collision\n',
+                original + '<<: {window: 60}\n',
+                original.replace('60', 'false')):
+            with self.subTest(raw=raw):
+                self.assertFalse(runner_module.prejob_only(live, manifest(raw), 'review', 'chill'))
+        aliased = 'image: &image profiler:retained\nobserverImage: *image\n'
+        self.assertFalse(runner_module.prejob_only(
+            manifest(aliased), manifest(aliased.replace('profiler:retained', 'profiler:changed')), 'review', 'chill'))
 
     def dashboard_rollout(self, **changes):
         self.recipe.update(images=['dashboard'], dashboardCheck=True)

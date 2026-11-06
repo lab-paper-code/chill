@@ -52,6 +52,8 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 		{name: "active request", duration: 31},
 		{name: "idle schedule", duration: 1172, idle: true},
 		{name: "oversized active schedule", duration: 2027, rejected: true},
+		{name: "rasp5 active schedule", duration: 1792, rejected: true},
+		{name: "latte active schedule", duration: 1970, rejected: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			config, report := preparationFixture(t)
@@ -76,6 +78,10 @@ func TestPreparerAdmitsMetricScheduleWithinSelectedExecutionPolicy(t *testing.T)
 			if test.rejected {
 				if reason, terminal := TerminalResolutionReason(err); !terminal || reason != ResolutionReasonExecutionPolicyInvalid {
 					t.Fatalf("oversized schedule classification = %q, terminal=%t, error=%v", reason, terminal, err)
+				}
+				var capacity *MetricCapacityError
+				if !errors.As(err, &capacity) {
+					t.Fatalf("oversized schedule lost deterministic capacity cause: %v", err)
 				}
 				return
 			}

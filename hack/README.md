@@ -211,13 +211,68 @@ from rerunning. This has no recipe switch; full deployments retain hook executio
 
 Both all-namespace in-flight reads still retain full objects, owned Jobs and
 `blockers.json`; nonterminal campaigns remain visible diagnostic evidence.
-Only the proven dashboard-only path may proceed with those blockers, without
-GPU probes, scheduler quiescence or measurement-state mutation. Server, CRD,
-measurement configuration, hook and mixed changes retain the ADR 0019 STOP, including
+The proven dashboard-only path and the explicit `prejobRepairOnly` boundary below
+may proceed with their retained blockers, without GPU probes, scheduler
+quiescence or measurement-state mutation. Other server, CRD, measurement
+configuration, hook and mixed changes retain the ADR 0019 STOP, including
 when chart differences have approval. Noneligible recipes stop before custom
 commands. Disk, authentication, revision, chart-review, backups, server dry-run,
 registry provenance, readiness and acceptance gates remain active. There is no
 force/ignore switch, object-UID exception, manual Helm bypass or guard removal.
+
+`prejobRepairOnly: true` is a separate, failure-only repair mode. Select exactly
+`images: ["server", "query", "profiler"]`; existing verified publication reuse and
+pending-build receipts remain available. All other image references and live
+values stay retained. Do not supply `values`, `replaceValues`, custom phase
+commands, `toolSources`, `generatedValues`, runtime declarations, configuration
+mutation/check inputs, publication-only roles, inspection requests or profile-loss
+overrides. The mode never falls back to a full deployment.
+
+The captured live Helm values, stored manifest and hooks must prove the same
+strict static-input boundary described above. Both source renders must contain
+the same resources and fields, except these three image slots:
+
+- Container `serving-entrypoint` in Deployment `<release>-serving-entrypoint`.
+- Container `query` in Deployment `<release>-query`.
+- Top-level `image` inside ConfigMap `<release>-profiler-config`'s `config.yaml`.
+
+All three resources must exist in the selected namespace. Embedded profiler YAML
+retains scalar tags and spellings; duplicate, non-string and merge keys,
+sexagesimal scalars, alias-hidden changes and malformed/unknown renders stop.
+CRDs, policies, budget, measurement windows, worker/observer/runtime images,
+settings, hook bodies and non-target images cannot change. Explicit retained
+Kubernetes endpoint settings keep the chart's two endpoint lookups inactive;
+missing or dynamic lookup inputs stop before publication.
+
+Both fresh all-namespace in-flight captures preserve the original inventory,
+owned Jobs and complete blocker list. Parent candidates come from actual
+`BatchEnergyOptimization` blockers and their owned `ProfilingRun` blockers.
+The wrapper compiles `./hack/prejob-retirement-check` from the archived selected
+source with `go build -buildvcs=false` and invokes that fixed authority for each
+parent using the pinned kubeconfig, context, namespace, rendered system name,
+request name and UID. Every blocker must bind to an eligible proof's exact
+parent/child UID and generation. The second capture and proof run immediately
+before the official Helm upgrade; parent/child cohort or generation changes stop.
+Fresh resourceVersions remain in the evidence but need not match between reads.
+No target names or UIDs are hardcoded, and no blockers are removed or rewritten.
+
+Eligibility belongs to the Go authority: a frozen recorded plan, three verified
+idle trials and one owned active K1/attempt1 child, with no previous active
+execution or native Job, must reach the actual typed `ExecutionPolicyInvalid`
+capacity rejection. Existing Jobs, ownership mismatch, API/store errors, unknown
+states, missing buckets, published results or unrelated blockers stop execution.
+The mode does not accept an absent-plan/no-run retirement proof.
+
+Use the normal entrypoint and exact chart-diff approval flow:
+`./hack/fast-deploy.sh run RECIPE.json --inspect --evidence INSPECT_DIR`, then
+`./hack/fast-deploy.sh run RECIPE.json --execute --evidence EXECUTE_DIR
+--chart-diff-approved REVIEWED_DIFF`. Execution retains revision/authentication,
+registry provenance, profile/evidence acceptance and selected-image readiness
+checks. Only the three image-bearing resources enter server dry-run. Helm upgrade
+uses `--no-hooks`; no CRDs, GPU/runtime probes, serving quiescence, scheduler
+settings changes or measurement-resource writes run in this mode. This wrapper
+installs the repair images; it does not delete retained requests or start a new
+measurement.
 
 `images` explicitly selects roles to deploy; selected roles may reuse unchanged
 image inputs as described below. The source role catalog has all 16 roles:
