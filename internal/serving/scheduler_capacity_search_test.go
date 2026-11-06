@@ -331,6 +331,46 @@ var e5Mixes = func() []map[int]float64 {
 	return mixes
 }()
 
+type pairCounts struct {
+	cases, changed, improved, worse, tie                  int
+	fixedImproved, fixedWorse, fixedTie, fixedUnavailable int
+}
+
+func recordPair(counts *pairCounts, off, on *capacityResult, offJ, onJ float64) {
+	counts.cases++
+	if off.key != on.key || off.joules != on.joules {
+		counts.changed++
+	}
+	switch {
+	case on.joules < off.joules:
+		counts.improved++
+	case on.joules > off.joules:
+		counts.worse++
+	default:
+		counts.tie++
+	}
+	switch {
+	case math.IsNaN(offJ) || math.IsNaN(onJ):
+		counts.fixedUnavailable++
+	case onJ < offJ:
+		counts.fixedImproved++
+	case onJ > offJ:
+		counts.fixedWorse++
+	default:
+		counts.fixedTie++
+	}
+}
+func logPairs(t *testing.T, label string, active, variants, modes int, counts pairCounts) {
+	t.Logf("%s strategy=v2 active=%d variants=%d modes=%d cases=%d changed=%d improved=%d worse=%d tie=%d fixedImproved=%d fixedWorse=%d fixedTie=%d fixedUnavailable=%d",
+		label, active, variants, modes, counts.cases, counts.changed, counts.improved, counts.worse, counts.tie,
+		counts.fixedImproved, counts.fixedWorse, counts.fixedTie, counts.fixedUnavailable)
+}
+func configure(p *capacityPlanner, active int, priced bool) {
+	p.settings.PlanSearchStrategy = "v2"
+	p.settings.PlanPolishActive = active
+	p.settings.PlanPricedStart = priced
+}
+
 // Plan search at evaluation scale (capacity-table-evidence §7.8.5). GAP pairs
 // priced OFF/ON for m=4/8 against exact search over 24 mixes in three spaces.
 // e5Converge retains payback, minimum gain, fixed-point and cycle behavior.
@@ -340,44 +380,6 @@ var e5Mixes = func() []map[int]float64 {
 func TestCapacityPlanSearchEvaluation(t *testing.T) {
 	if os.Getenv("CHILL_PLAN_SEARCH") == "" {
 		t.Skip("measurement sweep; set CHILL_PLAN_SEARCH=1")
-	}
-	type pairCounts struct {
-		cases, changed, improved, worse, tie                  int
-		fixedImproved, fixedWorse, fixedTie, fixedUnavailable int
-	}
-	recordPair := func(counts *pairCounts, off, on *capacityResult, offJ, onJ float64) {
-		counts.cases++
-		if off.key != on.key || off.joules != on.joules {
-			counts.changed++
-		}
-		switch {
-		case on.joules < off.joules:
-			counts.improved++
-		case on.joules > off.joules:
-			counts.worse++
-		default:
-			counts.tie++
-		}
-		switch {
-		case math.IsNaN(offJ) || math.IsNaN(onJ):
-			counts.fixedUnavailable++
-		case onJ < offJ:
-			counts.fixedImproved++
-		case onJ > offJ:
-			counts.fixedWorse++
-		default:
-			counts.fixedTie++
-		}
-	}
-	logPairs := func(label string, active, variants, modes int, counts pairCounts) {
-		t.Logf("%s strategy=v2 active=%d variants=%d modes=%d cases=%d changed=%d improved=%d worse=%d tie=%d fixedImproved=%d fixedWorse=%d fixedTie=%d fixedUnavailable=%d",
-			label, active, variants, modes, counts.cases, counts.changed, counts.improved, counts.worse, counts.tie,
-			counts.fixedImproved, counts.fixedWorse, counts.fixedTie, counts.fixedUnavailable)
-	}
-	configure := func(p *capacityPlanner, active int, priced bool) {
-		p.settings.PlanSearchStrategy = "v2"
-		p.settings.PlanPolishActive = active
-		p.settings.PlanPricedStart = priced
 	}
 	for _, active := range []int{4, 8} {
 		var totalPairs pairCounts
@@ -477,54 +479,59 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 					active, priced, c.variants, c.modes, len(e5Mixes), s.differs, 100*s.worst, 100*s.worstFixed, 100*s.bestFixed, s.over, s.cycles, s.exactCycles,
 					s.maxTicks, s.maxExactTicks, s.starts, s.firstStarts, s.dualSamples, s.dualMin, s.dualMax)
 			}
-			logPairs("GAP_PAIR", active, c.variants, c.modes, pairs)
+			logPairs(t, "GAP_PAIR", active, c.variants, c.modes, pairs)
 		}
-		logPairs("GAP_PAIR_TOTAL", active, -1, -1, totalPairs)
-		rates := map[int]float64{0: 60, 1: 40, 2: 1.2}
-		var budgetPairs, fullPairs pairCounts
-		for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {1, 4}, {2, 1}, {2, 2}, {2, 4}} {
-			for _, mode := range []string{"budget", "full"} {
-				if mode == "full" && active != 4 {
-					continue
-				}
-				results := [2]*capacityResult{}
-				for i, priced := range []bool{false, true} {
-					p := e5Planner(rates, evaluationScaled(c.variants, c.modes), e5Start, nil)
-					configure(p, active, priced)
-					counts, sets := []int{}, 1.0
-					for _, plans := range p.plans {
-						counts, sets = append(counts, len(plans)), sets*float64(len(plans))
-					}
-					wallBudget := 5 * time.Second
-					if mode == "full" {
-						p.settings.PlanSearchEvaluations = int(^uint(0) >> 1)
-						wallBudget = time.Hour
-					}
-					result, err := p.search(time.Now().Add(wallBudget))
-					if err != nil {
-						t.Fatal(err)
-					}
-					results[i] = &result
-					d := p.searched
-					t.Logf("SCALE strategy=v2 active=%d priced=%v variants=%d modes=%d run=%s plans=%v sets=%.3g evaluationBudget=%d wallBudgetNS=%d k=%d evaluated=%d durationNS=%d cut=%v rawJ=%.9f feasible=%v start=%q dualBound=%.9f surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g rawKey=%q",
-						active, priced, c.variants, c.modes, mode, counts, sets, p.settings.PlanSearchEvaluations, wallBudget.Nanoseconds(),
-						d.Neighborhood, d.Evaluated, d.Duration.Nanoseconds(), d.BudgetCut, result.joules, result.feasible, d.Start, d.DualBound,
-						d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, result.key)
-				}
-				off, on := results[0], results[1]
-				pairs := &budgetPairs
-				if mode == "full" {
-					pairs = &fullPairs
-				}
-				recordPair(pairs, off, on, math.NaN(), math.NaN())
-				t.Logf("SCALE_PAIR strategy=v2 active=%d variants=%d modes=%d run=%s changed=%v keyChanged=%v joulesChanged=%v offRawJ=%.9f onRawJ=%.9f rawDeltaJ=%.9f",
-					active, c.variants, c.modes, mode, off.key != on.key || off.joules != on.joules, off.key != on.key, off.joules != on.joules,
-					off.joules, on.joules, on.joules-off.joules)
+		logPairs(t, "GAP_PAIR_TOTAL", active, -1, -1, totalPairs)
+		evaluationScale(t, active)
+	}
+}
+
+func evaluationScale(t *testing.T, active int) {
+	const full = "full"
+	rates := map[int]float64{0: 60, 1: 40, 2: 1.2}
+	var budgetPairs, fullPairs pairCounts
+	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {1, 4}, {2, 1}, {2, 2}, {2, 4}} {
+		for _, mode := range []string{"budget", full} {
+			if mode == full && active != 4 {
+				continue
 			}
+			results := [2]*capacityResult{}
+			for i, priced := range []bool{false, true} {
+				p := e5Planner(rates, evaluationScaled(c.variants, c.modes), e5Start, nil)
+				configure(p, active, priced)
+				counts, sets := []int{}, 1.0
+				for _, plans := range p.plans {
+					counts, sets = append(counts, len(plans)), sets*float64(len(plans))
+				}
+				wallBudget := 5 * time.Second
+				if mode == full {
+					p.settings.PlanSearchEvaluations = int(^uint(0) >> 1)
+					wallBudget = time.Hour
+				}
+				result, err := p.search(time.Now().Add(wallBudget))
+				if err != nil {
+					t.Fatal(err)
+				}
+				results[i] = &result
+				d := p.searched
+				t.Logf("SCALE strategy=v2 active=%d priced=%v variants=%d modes=%d run=%s plans=%v sets=%.3g evaluationBudget=%d wallBudgetNS=%d k=%d evaluated=%d durationNS=%d cut=%v rawJ=%.9f feasible=%v start=%q dualBound=%.9f surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g rawKey=%q",
+					active, priced, c.variants, c.modes, mode, counts, sets, p.settings.PlanSearchEvaluations, wallBudget.Nanoseconds(),
+					d.Neighborhood, d.Evaluated, d.Duration.Nanoseconds(), d.BudgetCut, result.joules, result.feasible, d.Start, d.DualBound,
+					d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, result.key)
+			}
+			off, on := results[0], results[1]
+			pairs := &budgetPairs
+			if mode == full {
+				pairs = &fullPairs
+			}
+			recordPair(pairs, off, on, math.NaN(), math.NaN())
+			t.Logf("SCALE_PAIR strategy=v2 active=%d variants=%d modes=%d run=%s changed=%v keyChanged=%v joulesChanged=%v offRawJ=%.9f onRawJ=%.9f rawDeltaJ=%.9f",
+				active, c.variants, c.modes, mode, off.key != on.key || off.joules != on.joules, off.key != on.key, off.joules != on.joules,
+				off.joules, on.joules, on.joules-off.joules)
 		}
-		logPairs("SCALE_BUDGET_PAIR_TOTAL", active, -1, -1, budgetPairs)
-		if active == 4 {
-			logPairs("SCALE_FULL_PAIR_TOTAL", active, -1, -1, fullPairs)
-		}
+	}
+	logPairs(t, "SCALE_BUDGET_PAIR_TOTAL", active, -1, -1, budgetPairs)
+	if active == 4 {
+		logPairs(t, "SCALE_FULL_PAIR_TOTAL", active, -1, -1, fullPairs)
 	}
 }
