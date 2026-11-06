@@ -558,7 +558,7 @@ func TestRunReconcilerRetainsEarlyFailureTargetTermination(t *testing.T) {
 				t.Fatalf("early native failure was not published intact: %#v", termination)
 			}
 			execution := findRunCondition(actual.Status.Conditions, edgev1alpha1.ProfilingRunConditionExecutionComplete)
-			if execution == nil || execution.Status != metav1.ConditionFalse || execution.Reason != "JobFailed" {
+			if execution == nil || execution.Status != metav1.ConditionFalse || execution.Reason != string(batchv1.JobFailed) {
 				t.Fatalf("early failure did not terminate Run: %#v", execution)
 			}
 			retained := *termination

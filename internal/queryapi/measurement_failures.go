@@ -100,23 +100,23 @@ func classifyMeasurementFailure(termination *api.ProfilingRunRuntimeTermination,
 }
 
 func classifyTypedMeasurementFailure(termination *api.ProfilingRunRuntimeTermination) MeasurementReason {
+	executionStop := termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) &&
+		termination.Container == "runtime" && termination.Stage == "Execution"
 	switch {
 	case termination.Class == string(batchenergyoptimization.FailureClassRetryableFailure):
 		return MeasurementReason{Code: "RetryableInfrastructureFailure", Label: "일시적 인프라 중단", Message: "일시적 인프라 중단이 확인되었습니다. 요청의 재시도 한도와 현재 상태를 확인해 주세요."}
 	case termination.Class == string(batchenergyoptimization.FailureClassUnknownFailure):
 		return MeasurementReason{Code: "UnknownFailure", Label: "종료 원인 미확인", Message: "실행 종료 원인을 확인하지 못했습니다. 원본 상태와 로그를 확인해 주세요."}
 	case termination.Reason == "OOMKilled" && termination.Container == "runtime":
-		if termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Stage == "Execution" {
+		if executionStop {
 			return MeasurementReason{Code: "HostOOM", Label: "런타임 OOM", Message: "실행 중 런타임 컨테이너의 OOM 종료가 확인되었습니다."}
 		}
 		return MeasurementReason{Code: "RuntimeFailed", Label: "런타임 OOM", Message: "런타임 컨테이너가 OOM으로 종료되었습니다. 배치 탐색의 정상 종료로 판정하지 않습니다."}
 	case termination.Reason == "OOMKilled" && termination.Container != "":
 		return MeasurementReason{Code: "MeasurementContainerOOM", Label: "측정 컨테이너 OOM", Message: "런타임 외 측정 컨테이너가 OOM으로 종료되었습니다. 모델 배치의 메모리 한계로 판정하지 않습니다."}
-	case termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Container == "runtime" &&
-		termination.Stage == "Execution" && termination.FailureReason == "MeasurementBudgetExceeded":
+	case executionStop && termination.FailureReason == "MeasurementBudgetExceeded":
 		return MeasurementReason{Code: "MeasurementBudgetExceeded", Label: "측정 예산 초과", Message: "실행 중 기존 측정 예산에 도달해 해당 배치의 측정이 종료되었습니다."}
-	case termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Container == "runtime" &&
-		termination.Stage == "Execution" && termination.FailureReason == "MemoryAllocationFailed":
+	case executionStop && termination.FailureReason == "MemoryAllocationFailed":
 		return MeasurementReason{Code: "MemoryAllocationFailed", Label: "런타임 메모리 할당 실패", Message: "실행 중 네이티브 할당자가 메모리 요청을 거절해 해당 배치의 탐색이 종료되었습니다. 커널 OOM 종료나 CPU·GPU 메모리 위치를 판정하지 않습니다."}
 	case termination.FailureReason == "IntegrityError":
 		return MeasurementReason{Code: "EvidenceInvalid", Label: "증거 검증 실패", Message: "측정 증거의 무결성을 확인하지 못했습니다."}

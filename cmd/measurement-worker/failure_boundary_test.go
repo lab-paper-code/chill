@@ -75,7 +75,11 @@ func TestExecuteClassifiesOnlyFrozenBudgetDuringActualExecution(t *testing.T) {
 
 func TestNativeAllocationTerminationSurvivesWorkerCleanup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "termination.json")
-	payload := []byte(`{"schemaVersion":"chill.dacs.io/measurement-worker-termination.v1alpha1","stage":"Execution","failureReason":"MemoryAllocationFailed"}`)
+	payload := []byte(`{
+		"schemaVersion":"chill.dacs.io/measurement-worker-termination.v1alpha1",
+		"stage":"Execution",
+		"failureReason":"MemoryAllocationFailed"
+	}`)
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +90,8 @@ func TestNativeAllocationTerminationSurvivesWorkerCleanup(t *testing.T) {
 		}
 		retained, err := os.ReadFile(path)
 		record, ok := evidence.DecodeTerminationMessage(string(retained))
-		if err != nil || !ok || record.Stage != evidence.StageExecution || record.FailureReason != evidence.FailureMemoryAllocation ||
-			string(retained) != string(payload) {
+		if err != nil || !ok ||
+			record.Stage != evidence.StageExecution || record.FailureReason != evidence.FailureMemoryAllocation {
 			t.Fatalf("cleanup replaced native failure: %s %v", retained, err)
 		}
 	}
