@@ -72,8 +72,7 @@ type CurveConversionContract struct {
 	ToolVersion    string `json:"toolVersion,omitempty"`
 }
 
-// CurveDatasetContract identifies the dataset whose profiling records an
-// active measurement sampled. Matching uses name and UID.
+// CurveDatasetContract retains the dataset name and source UID as provenance.
 type CurveDatasetContract struct {
 	Name string `json:"name"`
 	UID  string `json:"uid"`
@@ -450,18 +449,34 @@ func PerformanceCondition(condition CurvePlanSpec) CurvePlanSpec {
 	condition.Name = ""
 	condition.PlannedBatchSizes = nil
 	condition.RuntimeImage = ""
+	condition.RuntimeVersion = ""
+	condition.RuntimeProvider = ""
 	condition.MetricSource = CurveMetricSourceContract{}
 	condition.Conversion = CurveConversionContract{}
-	dataset := condition.ActiveProtocol.Dataset
+	var dataset *CurveDatasetContract
+	if source := condition.ActiveProtocol.Dataset; source != nil {
+		dataset = &CurveDatasetContract{Name: source.Name}
+	}
 	condition.ActiveProtocol = CurveProtocolContract{Dataset: dataset}
 	condition.IdleProtocol = CurveProtocolContract{}
-	if condition.Firstfloor != nil {
-		settings := *condition.Firstfloor
-		settings.MaxQueueSize = 0
-		settings.DeadlinePolicy = ""
-		condition.Firstfloor = &settings
-	}
+	condition.Firstfloor = nil
 	condition.Actor.RuntimeImage = ""
+	condition.Actor.RuntimePackages = nil
+	condition.Actor.WarmupIterations = 0
+	condition.Actor.WarmupBatchSizes = nil
+	condition.Actor.BatchSizes = nil
+	condition.Actor.MaxBatchSize = 0
+	if command := condition.Actor.RunnerCommand; len(command) > 0 {
+		condition.Actor.RunnerCommand = make([]string, 0, len(command))
+		for index := 0; index < len(command); index++ {
+			switch command[index] {
+			case "--warmup-iterations", "--warmup-batch":
+				index++
+			default:
+				condition.Actor.RunnerCommand = append(condition.Actor.RunnerCommand, command[index])
+			}
+		}
+	}
 	condition.Actor.Mode = ""
 	condition.Actor.ProfilePath = ""
 	condition.Actor.Policy = firstfloor.Policy{}

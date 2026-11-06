@@ -58,8 +58,9 @@ func TestSelectConditionProfilesSemanticExecutionIdentity(t *testing.T) {
 			NodeUID: "node", RuntimeFamily: "firstfloor", Backend: "ort-cpu",
 			ActiveProtocol: profilederivation.CurveProtocolContract{
 				Dataset: &profilederivation.CurveDatasetContract{Name: "inputs", UID: "population"}},
-			Actor: firstfloor.Config{BatchSizes: []int{1, 2}, WarmupBatchSizes: []int{1, 2}},
+			Actor: firstfloor.Config{Backend: "ort-cpu", BatchSizes: []int{1, 2}, WarmupBatchSizes: []int{1, 2}},
 		}}
+	base.Condition.Actor.BuildRunnerCommand()
 	for _, tc := range []struct {
 		name     string
 		change   func(*profilederivation.CurvePlanSpec)
@@ -83,22 +84,34 @@ func TestSelectConditionProfilesSemanticExecutionIdentity(t *testing.T) {
 			c.Actor.Policy.FixedBatchSize = 2
 			c.Actor.RunnerTimeoutMS = 1000
 		}, false},
-		{"input population", func(c *profilederivation.CurvePlanSpec) {
+		{"dataset source UID", func(c *profilederivation.CurvePlanSpec) {
 			c.ActiveProtocol.Dataset.UID = schedulerTestOther
+		}, false},
+		{"dataset", func(c *profilederivation.CurvePlanSpec) {
+			c.ActiveProtocol.Dataset.Name = schedulerTestOther
 		}, true},
 		{"node", func(c *profilederivation.CurvePlanSpec) { c.NodeUID = schedulerTestOther }, true},
 		{"backend", func(c *profilederivation.CurvePlanSpec) { c.Backend = "ort-cuda" }, true},
 		{"declared runtime version", func(c *profilederivation.CurvePlanSpec) {
 			c.Actor.RuntimePackages = map[string]string{"onnxruntime": schedulerTestOther}
-		}, true},
-		{"observed runtime version", func(c *profilederivation.CurvePlanSpec) { c.RuntimeVersion = "1.27" }, true},
-		{"observed provider", func(c *profilederivation.CurvePlanSpec) { c.RuntimeProvider = "CPUExecutionProvider" }, true},
+		}, false},
+		{"observed runtime version", func(c *profilederivation.CurvePlanSpec) { c.RuntimeVersion = "1.27" }, false},
+		{"observed provider", func(c *profilederivation.CurvePlanSpec) { c.RuntimeProvider = "CPUExecutionProvider" }, false},
 		{"memory", func(c *profilederivation.CurvePlanSpec) { c.Actor.MemoryLimitBytes = 1024 }, true},
 		{"power", func(c *profilederivation.CurvePlanSpec) { c.PowerMode = schedulerTestOther }, true},
 		{"generation", func(c *profilederivation.CurvePlanSpec) { c.Actor.MaxNewTokens = 32 }, true},
-		{"warmup domain", func(c *profilederivation.CurvePlanSpec) { c.Actor.WarmupBatchSizes = []int{1} }, true},
-		{"warmup execution", func(c *profilederivation.CurvePlanSpec) { c.Actor.WarmupIterations = 2 }, true},
-		{"initialized domain", func(c *profilederivation.CurvePlanSpec) { c.Actor.BatchSizes = []int{1} }, true},
+		{"warmup domain", func(c *profilederivation.CurvePlanSpec) {
+			c.Actor.WarmupBatchSizes = []int{1}
+			c.Actor.BuildRunnerCommand()
+		}, false},
+		{"warmup execution", func(c *profilederivation.CurvePlanSpec) {
+			c.Actor.WarmupIterations = 2
+			c.Actor.BuildRunnerCommand()
+		}, false},
+		{"initialized domain", func(c *profilederivation.CurvePlanSpec) { c.Actor.BatchSizes = []int{1} }, false},
+		{"initialized capacity", func(c *profilederivation.CurvePlanSpec) { c.Actor.MaxBatchSize = 4 }, false},
+		{"native command", func(c *profilederivation.CurvePlanSpec) { c.Actor.RunnerCommand[1] = "/different-runner.py" }, true},
+		{"native inputs", func(c *profilederivation.CurvePlanSpec) { c.Actor.Inputs = []string{"different-input"} }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			next := base

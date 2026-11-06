@@ -95,12 +95,17 @@ func (w *fakeResultWriter) Write(
 	curvePlan batchenergyoptimization.StoredObjectReference,
 	runs []edgev1alpha1.ProfilingRun,
 	result batchenergyoptimization.Result,
-) (batchenergyoptimization.StoredObjectReference, error) {
+) (batchenergyoptimization.StoredObjectReference, batchenergyoptimization.Result, error) {
 	w.calls++
 	w.curvePlan = curvePlan
 	w.runs = append([]edgev1alpha1.ProfilingRun(nil), runs...)
-	w.result = result
-	return w.reference, w.unexpectedErr
+	if w.unexpectedErr != nil {
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, w.unexpectedErr
+	}
+	if w.result.Outcome == "" {
+		w.result = result
+	}
+	return w.reference, w.result, nil
 }
 
 func TestBatchEnergyOptimizationPlanFailureIsVisibleAndRetryable(t *testing.T) {
