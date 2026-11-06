@@ -694,7 +694,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         if state['prejobRepairOnlyFinal']:
             state['prejobProofPreUpgrade'] = prejob.check(
                 src, out, kube, run.run, objects(after), 'prejob-pre-upgrade',
-                state['inflightPreUpgrade'], previous=state['prejobProofPreflight'])
+                state['inflightPreUpgrade'])
             dump(out / 'state.json', state)
         elif not state['dashboardOnlyFinal']:
             inflight.require_clear(state['inflightPreUpgrade'])

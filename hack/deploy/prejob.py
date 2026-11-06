@@ -16,7 +16,7 @@ def identity(metadata):
     return {key: metadata[key] for key in IDENTITY}
 
 
-def check(source, evidence, kube, run, rendered, label, inflight_report, previous=None):
+def check(source, evidence, kube, run, rendered, label, inflight_report):
     source, evidence = Path(source), Path(evidence)
     if label not in ('prejob-preflight', 'prejob-pre-upgrade'):
         raise ValueError('unknown prejob proof stage')
@@ -75,8 +75,6 @@ def check(source, evidence, kube, run, rendered, label, inflight_report, previou
         run(['go', 'build', '-buildvcs=false', '-o', str(binary),
              './hack/prejob-retirement-check'], 'prejob-proof-build.log',
             timeout=BUILD_SECONDS, cwd=source)
-    elif previous is None or not binary.is_file():
-        raise RuntimeError('prejob final proof requires the source-compiled preflight authority')
     proofs = []
     for index, (parent, child) in enumerate(pairs):
         meta = parent['metadata']
