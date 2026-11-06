@@ -27,9 +27,11 @@ const (
 	DeadlineDefer       = "defer"
 	OutcomeDeadlineDrop = "deadline_drop"
 	ReasonDeadlineDefer = "deadline_defer"
+	// FailureMemoryAllocation denotes a native allocator rejection, not kernel OOMKilled.
+	FailureMemoryAllocation = "MemoryAllocationFailed"
 	// OutcomePreprocessFailed ends one request whose sample the module rejected (HTTP 422).
 	OutcomePreprocessFailed = "preprocess_failed"
-	// OutcomeBatchError ends every request of a batch whose module result broke the contract.
+	// OutcomeBatchError ends every request of a failed native execution batch.
 	OutcomeBatchError = "batch_error"
 	outcomeCompleted  = "completed"
 )
@@ -75,6 +77,7 @@ type Response struct {
 }
 type ErrorResponse struct {
 	Error             string    `json:"error"`
+	FailureReason     string    `json:"failureReason,omitempty"`
 	ExecutionComplete bool      `json:"executionComplete"`
 	Progress          *Progress `json:"progress,omitempty"`
 }

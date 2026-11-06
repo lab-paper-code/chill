@@ -95,8 +95,10 @@ func TestBatchEnergyOptimizationResultQueryRetainsExpectedStopChildren(t *testin
 		discovery   bool
 		prefix      int
 		wantFailure bool
+		allocation  bool
 	}{
 		{name: "completed discovery", phase: "Complete", discovery: true, prefix: 1, wantFailure: true},
+		{name: "completed allocation discovery", phase: "Complete", discovery: true, prefix: 1, wantFailure: true, allocation: true},
 		{name: "completed empty discovery", phase: "Complete", discovery: true, wantFailure: true},
 		{name: "ordinary failure", phase: "Failed", wantFailure: true},
 		{name: "legacy terminal result", phase: "Complete"},
@@ -124,6 +126,11 @@ func TestBatchEnergyOptimizationResultQueryRetainsExpectedStopChildren(t *testin
 						Class: "ExpectedStop", Container: "runtime", Stage: "Execution", Reason: "OOMKilled", ExitCode: 137,
 					},
 				},
+			}
+			if test.allocation {
+				run.Status.RuntimeTermination.Reason = "Error"
+				run.Status.RuntimeTermination.ExitCode = 3
+				run.Status.RuntimeTermination.FailureReason = "MemoryAllocationFailed"
 			}
 			if test.discovery {
 				spec := record.Spec()
@@ -204,11 +211,15 @@ func TestBatchEnergyOptimizationResultQueryRetainsExpectedStopChildren(t *testin
 				t.Fatalf("expected-stop child changed completed parent: %+v", view.Assessment)
 			}
 			failures := view.Assessment.FailureSummary
+			wantCode := "HostOOM"
+			if test.allocation {
+				wantCode = "MemoryAllocationFailed"
+			}
 			if !test.wantFailure {
 				if len(failures) != 0 {
 					t.Fatalf("legacy terminal result gained child failures: %+v", failures)
 				}
-			} else if len(failures) != 1 || failures[0].Code != "HostOOM" || failures[0].RunID != string(run.UID) {
+			} else if len(failures) != 1 || failures[0].Code != wantCode || failures[0].RunID != string(run.UID) {
 				t.Fatalf("owned expected-stop cause missing or foreign Run included: %+v", failures)
 			}
 		})

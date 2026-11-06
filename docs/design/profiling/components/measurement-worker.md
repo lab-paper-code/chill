@@ -119,12 +119,15 @@ Each of the three independently restarted active trials for every planned batch
 runs until **both** elapsed time is at least 30 seconds (or the longer requested
 minimum) and its derived known-G service-call count is complete. Budget exhaustion
 and the immutable safety timeout fail the trial; neither completes its evidence.
-For BEO, an expected runtime-execution OOM or execution measurement-budget boundary
-terminates discovery as `Complete/BatchDiscoveryComplete`, preserving the completed
-three-trial batch prefix. Budget exhaustion is not permanent runtime non-support.
-Typed execution stage distinguishes actual runtime execution from shared-worker
-preparation, observer and evidence-commit failures. Exit 137 alone does not establish
-OOM; an explicit infrastructure disruption excludes the normal OOM boundary.
+For BEO, runtime-execution memory exhaustion or an execution measurement-budget
+boundary ends discovery as `Complete/BatchDiscoveryComplete`, preserving the
+completed three-trial batch prefix. Memory exhaustion includes native `OOMKilled`
+and ORT's BFCArena allocation failure, carried as typed `MemoryAllocationFailed`
+through runner IPC, HTTP and worker termination. Generic ORT errors retain their
+failure classification. Only the runtime container's proven Execution stage can
+establish this boundary; preparation, observer and commit failures remain separate.
+Explicit infrastructure disruption takes precedence. Exit 137 alone proves no OOM,
+and budget exhaustion establishes no permanent runtime support limit.
 Known Node/Pod eviction or transient infrastructure failures use bounded same-K
 retries under the existing `retryLimit`. Generic runtime crashes, model errors,
 integrity failures and unknown failures are fatal. All previously completed raw
@@ -254,11 +257,12 @@ is a hint; controller independently retrieves/verifies. Failure codes:
 | 4 | Observer readiness/execution/handoff/result validation |
 | 5 | Raw encoding/immutable write/post-write verification |
 
-Failure writes stderr, leaves `/dev/termination-log` empty. Runtime uses
-`FallbackToLogsOnError` (Kubernetes last 80 lines or 2 KiB). Controller copies
-runtime exit/message once to `ProfilingRun.status.runtimeTermination` on Job
-failure, surviving Pod deletion; diagnostic only, never parsed. Kubernetes owns
-native failure state.
+The worker records its versioned phase and typed failure in `/dev/termination-log`;
+successful commit replaces that record with the receipt. Profiler retains the
+first runtime termination and native Job reason/message, including early
+`FailureTarget=True`; final `Failed=True` takes precedence when both are present.
+An absent Pod or execution stage leaves classification unknown even when the Job
+reports `DeadlineExceeded`. Unstructured logs remain diagnostic.
 
 Observer images enter measurement-protocol provenance; runtime/worker image enters
 execution-state provenance. CurvePlan v1alpha12 freezes the common actor startup

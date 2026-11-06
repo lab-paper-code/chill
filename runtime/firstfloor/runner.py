@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import struct
 import uuid
 import sys
@@ -17,7 +18,11 @@ MODULE_NAMES = ("WARMUP_SAMPLE", "preprocess", "infer", "postprocess")
 
 
 class BatchError(Exception):
-    """The preprocessor module broke its result contract for one batch; the runner keeps serving."""
+    """One batch failed; the runner keeps serving and preserves its failure category."""
+
+    def __init__(self, message, failure_reason=""):
+        super().__init__(message)
+        self.failure_reason = failure_reason
 
 
 def read_exact(stream, count, allow_eof=False):
@@ -184,7 +189,15 @@ def execute(module, sessions, samples, outputs, max_new_tokens, delay_s):
     except BatchError:
         raise
     except Exception as error:
-        raise BatchError(f"preprocessor module raised {type(error).__name__}: {error}") from error
+        # ORT RuntimeException also covers model and shape errors. Only the
+        # BFCArena allocation throw site proves this observed allocation failure.
+        allocation = (type(error).__module__ == "onnxruntime.capi.onnxruntime_pybind11_state"
+                      and type(error).__name__ == "RuntimeException"
+                      and re.search(r"(?:^|[/\\])bfc_arena\.cc:\d+ .*onnxruntime::BFCArena::AllocateRawInternal"
+                                    r"\([^()\n]*\) Failed to allocate memory for requested buffer of size [1-9]\d*(?:\s|$)",
+                                    str(error)) is not None)
+        raise BatchError(f"preprocessor module raised {type(error).__name__}: {error}",
+                         "MemoryAllocationFailed" if allocation else "") from error
 
 
 def ort_sessions(options, files, metadata):
@@ -343,7 +356,8 @@ def run(options, source, destination):
                 if sum(len(chunk) for chunk in chunks) > MAX_FRAME_BYTES:
                     raise BatchError("postprocess outputs exceed IPC frame cap")
             except BatchError as error:
-                write_frame(destination, {"type": "batch_error", "batch_id": batch_id, "error": bounded(str(error))})
+                write_frame(destination, {"type": "batch_error", "batch_id": batch_id,
+                                          "error": bounded(str(error)), "failure_reason": error.failure_reason})
                 continue
             successes = len(results[outputs[0]])
             descriptors = [{"name": name, "datatype": "BYTES", "shape": [successes], "bytes": len(chunk)} for name, chunk in zip(outputs, chunks)]

@@ -52,6 +52,18 @@ def serve(batches, max_new_tokens=0, preprocessor=FIXTURE, tail=b"", warmup_batc
 
 
 class RunnerContractTest(unittest.TestCase):
+    def test_allocator_origin_crosses_ipc_without_classifying_other_runtime_errors(self):
+        frames, error = serve([[b"allocation-failure"], [b"ort-shape-failure"],
+                               [b"fake-allocation-text"], [b"ok"]])
+        self.assertIsNone(error)
+        failures = [header for header, _ in frames[1:4]]
+        self.assertEqual([header["failure_reason"] for header in failures],
+                         ["MemoryAllocationFailed", "", ""])
+        self.assertTrue(all(header["type"] == "batch_error" for header in failures))
+        self.assertIn("1308622848", failures[0]["error"])
+        self.assertIn("BFCArena::AllocateRawInternal", failures[0]["error"])
+        self.assertEqual(frames[4][0]["type"], "output")
+
     def test_warms_only_requested_batches_without_changing_capabilities(self):
         for selected, expected in ((None, [1, 2, 3, 4]), ([1], [1]), ([2], [2]), ([1, 4], [1, 4])):
             with self.subTest(selected=selected), mock.patch.object(runner, "execute", wraps=runner.execute) as execute:

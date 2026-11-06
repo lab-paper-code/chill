@@ -12,8 +12,9 @@ inside that K's measured window. Three completed loaded-idle trials precede thre
 completed active trials per K. Active trials meet both elapsed-time and known-G
 sample floors.
 
-Discovery ends on domain exhaustion, expected runtime-execution OOM or the
-existing execution measurement-budget boundary. `Complete/BatchDiscoveryComplete`
+Discovery ends on domain exhaustion, runtime-execution memory exhaustion
+(`OOMKilled` or typed ORT BFCArena allocation failure), or the existing execution
+measurement-budget boundary. `Complete/BatchDiscoveryComplete`
 records the completed batch prefix, exact stop and optional prefix energy; it does
 not assert that every candidate succeeded or that a usable profile exists.
 Generic runtime/model errors, integrity failures and unknown failures are fatal.

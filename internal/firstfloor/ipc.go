@@ -40,6 +40,7 @@ type frame struct {
 	Items         []itemResult     `json:"items,omitempty"`
 	DataBytes     int              `json:"data_bytes"`
 	Error         string           `json:"error,omitempty"`
+	FailureReason string           `json:"failure_reason,omitempty"`
 	Metadata      *RuntimeMetadata `json:"metadata,omitempty"`
 	ServiceMS     float64          `json:"service_ms,omitempty"`
 	PreprocessMS  float64          `json:"preprocess_ms,omitempty"`
@@ -48,8 +49,11 @@ type frame struct {
 	FirstTokenMS  float64          `json:"first_token_ms,omitempty"`
 }
 
-// batchError ends one batch whose module result broke the contract; the runner keeps serving.
-type batchError struct{ reason string }
+// batchError ends one failed batch; the runner keeps serving.
+type batchError struct {
+	reason        string
+	failureReason string
+}
 
 func (e *batchError) Error() string { return e.reason }
 
@@ -277,10 +281,11 @@ func (r *Runner) exchange(id uint64, tensors []wireTensor, data [][]byte) (runne
 	case "error":
 		return runnerOutput{}, fmt.Errorf("runner: %s", h.Error)
 	case "batch_error":
-		if h.BatchID != id || len(b) != 0 || h.Error == "" || len(h.Error) > MaxErrorBytes {
+		if h.BatchID != id || len(b) != 0 || h.Error == "" || len(h.Error) > MaxErrorBytes ||
+			(h.FailureReason != "" && h.FailureReason != FailureMemoryAllocation) {
 			return runnerOutput{}, errors.New("invalid runner batch error")
 		}
-		return runnerOutput{}, &batchError{h.Error}
+		return runnerOutput{}, &batchError{reason: h.Error, failureReason: h.FailureReason}
 	case "output":
 	default:
 		return runnerOutput{}, errors.New("invalid runner completion")

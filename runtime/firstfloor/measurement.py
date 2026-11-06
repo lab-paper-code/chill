@@ -32,6 +32,10 @@ TERMINATION_SCHEMA = "chill.dacs.io/measurement-worker-termination.v1alpha1"
 class ExecutionError(Exception):
     """The native runtime failed to execute, rather than producing invalid evidence."""
 
+    def __init__(self, message: str, failure_reason: str = "ExecutionFailed"):
+        super().__init__(message)
+        self.failure_reason = failure_reason
+
 
 def record_stage(stage: str, failure_reason: str = "") -> None:
     path = os.environ.get("CHILL_TERMINATION_MESSAGE_PATH")
@@ -50,7 +54,7 @@ def record_failure(error: Exception) -> None:
     if path:
         stage = json.loads(Path(path).read_text(encoding="utf-8"))["stage"]
         if isinstance(cause, ExecutionError):
-            record_stage(stage, "ExecutionFailed")
+            record_stage(stage, cause.failure_reason)
         else:
             record_stage("ResultValidation" if stage == "Execution" else stage, "IntegrityError")
 
@@ -281,7 +285,16 @@ class FirstfloorSession:
         if len(data) > FRAME_BYTES:
             raise common.ContractError("native response exceeds IPC frame budget")
         if response.status != 200:
-            raise ExecutionError(f"native actor {path} HTTP {response.status}: {data[:1024]!r}")
+            failure_reason = "ExecutionFailed"
+            if response.status == 500:
+                try:
+                    failure = json.loads(data, object_pairs_hook=common.no_duplicate_object)
+                except (ValueError, common.ContractError):
+                    failure = None
+                if (isinstance(failure, dict) and failure.get("failureReason") == "MemoryAllocationFailed"
+                        and failure.get("executionComplete") is True and isinstance(failure.get("error"), str)):
+                    failure_reason = "MemoryAllocationFailed"
+            raise ExecutionError(f"native actor {path} HTTP {response.status}: {data[:1024]!r}", failure_reason)
         return common.require_object(json.loads(data, object_pairs_hook=common.no_duplicate_object), "actor response")
 
     def metadata(self) -> dict[str, Any]:

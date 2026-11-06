@@ -295,9 +295,15 @@ class RuntimeFailureTest(unittest.TestCase):
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                self.send_response(500 if self.path == "/execute-failure" else 200)
+                allocation = self.path in ("/allocation-failure", "/allocation-incomplete")
+                self.send_response(500 if allocation or self.path == "/execute-failure" else 200)
                 self.end_headers()
-                self.wfile.write(b"native execution failed" if self.path == "/execute-failure" else b"{malformed")
+                if allocation:
+                    self.wfile.write(json.dumps({"error": "original allocator diagnostic",
+                                                "failureReason": "MemoryAllocationFailed",
+                                                "executionComplete": self.path == "/allocation-failure"}).encode())
+                else:
+                    self.wfile.write(b"native execution failed" if self.path == "/execute-failure" else b"{malformed")
 
             def log_message(self, *args):
                 pass
@@ -308,6 +314,8 @@ class RuntimeFailureTest(unittest.TestCase):
         self.addCleanup(server.shutdown)
         for path, expected_stage, expected_cause in (
                 ("/execute-failure", "Execution", "ExecutionFailed"),
+                ("/allocation-failure", "Execution", "MemoryAllocationFailed"),
+                ("/allocation-incomplete", "Execution", "ExecutionFailed"),
                 ("/malformed-result", "ResultValidation", "IntegrityError")):
             with self.subTest(path=path), tempfile.TemporaryDirectory() as directory:
                 termination = Path(directory) / "termination-log"

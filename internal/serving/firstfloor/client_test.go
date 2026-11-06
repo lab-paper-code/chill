@@ -146,10 +146,12 @@ func TestModuleFailuresBecomeFinishedRequestOutcomes(t *testing.T) {
 	for _, tc := range []struct {
 		status        int
 		outcome, code string
+		failureReason string
 	}{
-		{http.StatusUnprocessableEntity, native.OutcomePreprocessFailed, "PreprocessFailed"},
-		{http.StatusInternalServerError, native.OutcomeBatchError, "BackendError"},
-		{http.StatusUnprocessableEntity, native.OutcomeBatchError, ""},
+		{http.StatusUnprocessableEntity, native.OutcomePreprocessFailed, "PreprocessFailed", ""},
+		{http.StatusInternalServerError, native.OutcomeBatchError, "BackendError", ""},
+		{http.StatusInternalServerError, native.OutcomeBatchError, "BackendError", native.FailureMemoryAllocation},
+		{http.StatusUnprocessableEntity, native.OutcomeBatchError, "", ""},
 	} {
 		t.Run(tc.outcome+"/"+http.StatusText(tc.status), func(t *testing.T) {
 			p := &native.Progress{RequestID: "request", WorkloadUID: "uid", Definition: definition.Identity(), Phase: "finished", At: time.Now().UTC(),
@@ -160,7 +162,7 @@ func TestModuleFailuresBecomeFinishedRequestOutcomes(t *testing.T) {
 					t.Errorf("raw sample was not forwarded as one native field element: %+v %v", request, err)
 				}
 				w.WriteHeader(tc.status)
-				if err := json.NewEncoder(w).Encode(native.ErrorResponse{Error: "module rejected sample", ExecutionComplete: true, Progress: p}); err != nil {
+				if err := json.NewEncoder(w).Encode(native.ErrorResponse{Error: "module rejected sample", FailureReason: tc.failureReason, ExecutionComplete: true, Progress: p}); err != nil {
 					t.Error(err)
 				}
 			}))

@@ -10,6 +10,7 @@ const (
 	StageResultValidation        = "ResultValidation"
 	StageEvidenceCommit          = "EvidenceCommit"
 	FailureExecution             = "ExecutionFailed"
+	FailureMemoryAllocation      = "MemoryAllocationFailed"
 	FailureMeasurementBudget     = "MeasurementBudgetExceeded"
 	FailureIntegrity             = "IntegrityError"
 	FailureClassExpectedStop     = "ExpectedStop"
@@ -41,7 +42,7 @@ func DecodeTerminationMessage(message string) (TerminationMessage, bool) {
 		return TerminationMessage{}, false
 	}
 	switch record.FailureReason {
-	case "", FailureExecution, FailureMeasurementBudget, FailureIntegrity:
+	case "", FailureExecution, FailureMemoryAllocation, FailureMeasurementBudget, FailureIntegrity:
 		return record, true
 	default:
 		return TerminationMessage{}, false

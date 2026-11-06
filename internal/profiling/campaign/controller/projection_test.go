@@ -145,6 +145,10 @@ func TestTrialBoundaryUsesTypedActualRuntimeTermination(t *testing.T) {
 		evidenceInvalid bool
 	}{
 		{name: "runtime OOM", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", Reason: "OOMKilled"}, want: batchenergyoptimization.DiscoveryStopOOM},
+		{name: "runtime allocator", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", FailureReason: "MemoryAllocationFailed", Reason: "Error", ExitCode: 3}, want: batchenergyoptimization.DiscoveryStopOOM},
+		{name: "startup allocator", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Class: "ExpectedStop", Container: "runtime", Stage: "Startup", FailureReason: "MemoryAllocationFailed"}},
+		{name: "observer allocator", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Class: "ExpectedStop", Container: "metric-observer", Stage: "Execution", FailureReason: "MemoryAllocationFailed"}},
+		{name: "infrastructure allocator", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Class: "RetryableFailure", Container: "runtime", Stage: "Execution", FailureReason: "MemoryAllocationFailed", PodReason: "Evicted"}},
 		{name: "startup runtime OOM", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Class: "ExpectedStop", Container: "runtime", Stage: "Startup", Reason: "OOMKilled"}},
 		{name: "runtime error", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Class: "FatalFailure", Container: "runtime", Stage: "Execution", FailureReason: "ExecutionFailed", ExitCode: 3}},
 		{name: "runtime budget", termination: edgev1alpha1.ProfilingRunRuntimeTermination{Container: "runtime", Stage: "Execution", FailureReason: "MeasurementBudgetExceeded"}, want: batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded},

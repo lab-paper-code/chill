@@ -351,6 +351,39 @@ func TestItemFailureAndBatchErrorHTTP(t *testing.T) {
 		t.Fatalf("item and batch failures are physical executions: %+v", state)
 	}
 }
+func TestNativeAllocationFailureHTTPPreservesCategoryAndServing(t *testing.T) {
+	for _, mode := range []string{modeServing, modeProfiling} {
+		t.Run(mode, func(t *testing.T) {
+			s, _ := startTestActor(t, mode, "0", nil)
+			h := NewHandler(s)
+			send := func(value string) *httptest.ResponseRecorder {
+				if mode == modeProfiling {
+					return postJSON(h, "/v2/models/synthetic/profile", map[string]any{
+						"batchSize": 2, "trialID": "allocation-trial", "inputs": rawInputs(value, value)})
+				}
+				return postJSON(h, "/v2/models/synthetic/infer", Request{
+					ID: value, Context: RequestContext{RequestID: value, WorkloadUID: "uid", Definition: "uid/1",
+						ReceivedAt: time.Now().UTC(), SLO: SLO{Percentile: 95, TargetMS: 1000}}, Inputs: rawInputs(value)})
+			}
+			for _, tc := range []struct{ value, reason string }{
+				{"allocation-failure", FailureMemoryAllocation}, {"ort-shape-failure", ""}, {"fake-allocation-text", ""},
+			} {
+				reply := send(tc.value)
+				var failure ErrorResponse
+				if reply.Code != http.StatusInternalServerError || json.Unmarshal(reply.Body.Bytes(), &failure) != nil ||
+					failure.FailureReason != tc.reason || !failure.ExecutionComplete || failure.Error == "" {
+					t.Fatalf("native category lost: %d %s", reply.Code, reply.Body.String())
+				}
+				if mode == modeServing && (failure.Progress == nil || failure.Progress.Outcome != OutcomeBatchError) {
+					t.Fatalf("serving completion lost: %+v", failure)
+				}
+			}
+			if reply := send("ok"); reply.Code != http.StatusOK {
+				t.Fatalf("batch failure poisoned runner: %d %s", reply.Code, reply.Body.String())
+			}
+		})
+	}
+}
 func TestWorkerHTTPBoundaries(t *testing.T) {
 	s, _ := startTestActor(t, "serving", "4", nil)
 	h := NewHandler(s)

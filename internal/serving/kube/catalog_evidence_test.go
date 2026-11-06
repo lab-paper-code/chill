@@ -8,7 +8,9 @@ import (
 	"io"
 	"maps"
 	"math"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,18 +19,22 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/metricobserver"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	campaigncontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	profilederivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
+	profilercontroller "github.com/lab-paper-code/chill/internal/profiling/profiler/controller"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	profilerprojection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"github.com/lab-paper-code/chill/internal/workloadobserver"
 	"github.com/lab-paper-code/chill/test/fixtures"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -137,7 +143,7 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 }
 
 func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
-	for _, stop := range []string{batchenergyoptimization.DiscoveryStopOOM, batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded} {
+	for _, stop := range []string{batchenergyoptimization.DiscoveryStopOOM, batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded, firstfloor.FailureMemoryAllocation} {
 		t.Run(stop, func(t *testing.T) {
 			catalog, source, objects, _ := catalogEvidenceFixtureConfigPolicy(t, 4096, [6]float64{6, 6, 6, 4, 4, 4}, 3, "", func(config *profilingrun.RunConfig) {
 				config.State.Firstfloor.MaxBatchSize = 2
@@ -184,13 +190,22 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 			spec.ExcludedTrials = append(spec.ExcludedTrials, batchenergyoptimization.ExcludedTrialReference{
 				Run: failed, Measurement: batchenergyoptimization.ResultMeasurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}, Attempt: 1, Reasons: []string{stop},
 			})
-			spec.Detail, err = json.Marshal(batchenergyoptimization.DiscoveryResult{
+			detail := batchenergyoptimization.DiscoveryResult{
 				MeasuredBatchSizes: []int{1},
 				Stop: batchenergyoptimization.DiscoveryStop{
 					Reason: stop, FailedMeasurement: &batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}, Attempt: 1,
 					Run: &failed,
 				},
-			})
+			}
+			if stop == firstfloor.FailureMemoryAllocation {
+				// Real error transport supplies only the failed trial. Successful
+				// protocol evidence remains the existing three-trial raw fixture.
+				detail = nativeAllocationDiscovery(t, campaign, retained.Result.Spec().CompletedTrials)
+				excluded := &spec.ExcludedTrials[len(spec.ExcludedTrials)-1]
+				excluded.Run = *detail.Stop.Run
+				excluded.Reasons = []string{detail.Stop.Reason}
+			}
+			spec.Detail, err = json.Marshal(detail)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,6 +246,140 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 			}
 		})
 	}
+}
+
+// nativeAllocationDiscovery exercises production IPC/HTTP, Python termination,
+// native classification and campaign decision. Kubernetes objects are doubles;
+// the allocator exception reproduces the retained ORT diagnostic without ORT.
+func nativeAllocationDiscovery(t *testing.T, campaign *edgev1alpha1.BatchEnergyOptimization, completed []batchenergyoptimization.CompletedTrialReference) batchenergyoptimization.DiscoveryResult {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &firstfloor.Config{
+		Model: "synthetic", Mode: "profiling", Inputs: []string{"input"}, Outputs: []string{"output"},
+		RunnerCommand: []string{"python3", filepath.Join(root, "runtime/firstfloor/runner.py"), "--echo",
+			"--preprocessor", filepath.Join(root, "runtime/firstfloor/testdata/echo"), "--warmup-iterations", "0"},
+		BatchSizes: []int{2}, MaxBatchSize: 2, MaxQueueRequests: 8, MaxQueueBytes: 1 << 20,
+		MaxRequestBytes: 1 << 20, RunnerTimeoutMS: 5000, Policy: firstfloor.Policy{DeadlinePolicy: "keep"},
+	}
+	if err := firstfloor.ValidateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	runner, err := firstfloor.StartRunner(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := firstfloor.NewScheduler(ctx, cfg, runner)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-scheduler.Done():
+		case <-time.After(5 * time.Second):
+			t.Error("native allocation smoke did not reap runner")
+		}
+	})
+	server := httptest.NewServer(firstfloor.NewHandler(scheduler))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "termination.json")
+	command := exec.CommandContext(ctx, "python3", "-c", `
+import base64, json, os, sys
+from urllib.parse import urlsplit
+sys.path.insert(0, sys.argv[1] + "/runtime/firstfloor")
+import measurement
+os.environ["CHILL_TERMINATION_MESSAGE_PATH"] = sys.argv[3]
+session = measurement.FirstfloorSession(urlsplit(sys.argv[2]).port, {"runConfig": {"state": {"model": "synthetic"}}})
+measurement.record_stage("Execution")
+try:
+    value = base64.b64encode(b"allocation-failure").decode()
+    session.json_call("POST", session.path + "/profile", json.dumps({
+        "batchSize": 2, "trialID": "allocation-smoke",
+        "inputs": [{"name": "input", "data": [value, value]}]}).encode())
+    raise AssertionError("allocator failure was lost")
+except measurement.ExecutionError as error:
+    assert "1308622848" in str(error), str(error)
+    measurement.record_failure(error)
+finally:
+    session.connection.close()
+`, root, server.URL, path)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("native measurement error transport: %v\n%s", err, output)
+	}
+	message, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, ok := profilerevidence.DecodeTerminationMessage(string(message))
+	if !ok || record.Stage != "Execution" || record.FailureReason != firstfloor.FailureMemoryAllocation {
+		t.Fatalf("allocator termination lost: %s", message)
+	}
+	run, err := campaigncontroller.BuildRun(campaign, batchenergyoptimization.Measurement{WorkloadMode: batchenergyoptimization.WorkloadModeActive, Batch: 2}, 1, "ort-cpu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.UID = "allocator-failed-k2"
+	run.Status.Conditions = []metav1.Condition{{Type: "ExecutionComplete", Status: metav1.ConditionFalse, Reason: "JobFailed"}}
+	controller := true
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: "allocation-job", UID: "allocation-job-uid"}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: run.Namespace, Name: "allocation-pod",
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: &controller}}},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "runtime",
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Reason: "Error", Message: string(message)}}}}},
+	}
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	finalizer, err := profilercontroller.NewKubernetesExecutionFinalizer(
+		fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
+		func(storekube.Binding, string, string) (profilerevidence.ObjectStore, error) {
+			t.Fatal("failure classification must not read evidence storage")
+			return nil, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Status.RuntimeTermination, err = finalizer.RuntimeTermination(ctx, run, job)
+	if err != nil || run.Status.RuntimeTermination == nil || run.Status.RuntimeTermination.Class != "ExpectedStop" ||
+		run.Status.RuntimeTermination.Reason == "OOMKilled" {
+		t.Fatalf("native classifier lost allocation stop: %+v %v", run.Status.RuntimeTermination, err)
+	}
+	snapshot, err := campaigncontroller.ProjectSnapshot(campaign, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1, 2}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := make(map[batchenergyoptimization.Measurement]int)
+	for _, trial := range completed {
+		measurement := batchenergyoptimization.Measurement(trial.Measurement)
+		attempts[measurement]++
+		snapshot.Trials = append(snapshot.Trials, batchenergyoptimization.Trial{
+			Measurement: measurement, Attempt: attempts[measurement],
+			Verdict: batchenergyoptimization.VerdictCompleted})
+	}
+	method, err := batchenergyoptimization.NewQuickEnergyMinimization(batchenergyoptimization.QuickEnergyConfig{TrialsPerBatch: 3},
+		func(prefix []int) (batchenergyoptimization.CurveResult, error) {
+			if !slices.Equal(prefix, []int{1}) {
+				t.Fatalf("failed K2 entered curve: %v", prefix)
+			}
+			return batchenergyoptimization.CurveResult{Continue: true}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision, err := batchenergyoptimization.Decide(snapshot, method)
+	if err != nil || decision.Action != batchenergyoptimization.ActionFinish || decision.Result == nil {
+		t.Fatalf("allocation stop failed campaign: %+v %v", decision, err)
+	}
+	detail, ok := decision.Result.Detail.(batchenergyoptimization.DiscoveryResult)
+	if !ok || !slices.Equal(detail.MeasuredBatchSizes, []int{1}) || detail.Stop.Reason != batchenergyoptimization.DiscoveryStopOOM {
+		t.Fatalf("allocation prefix lost: %+v", decision)
+	}
+	t.Log("native allocation → IPC/HTTP → typed termination → ExpectedStop → campaign prefix K1; strict raw-evidence catalog follows")
+	return detail
 }
 
 func assertCatalogDiscoveryCompletedPrefix(t *testing.T, profile serving.Profile) {

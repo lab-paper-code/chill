@@ -148,7 +148,7 @@ func projectDiscoveryBoundary(run *edgev1alpha1.ProfilingRun, measurement batche
 	}
 	var reason string
 	switch {
-	case termination.Stage == profilerevidence.StageExecution && termination.Reason == "OOMKilled":
+	case termination.Stage == profilerevidence.StageExecution && (termination.Reason == "OOMKilled" || termination.FailureReason == profilerevidence.FailureMemoryAllocation):
 		reason = batchenergyoptimization.DiscoveryStopOOM
 	case termination.Stage == profilerevidence.StageExecution && (termination.FailureReason == profilerevidence.FailureMeasurementBudget || termination.JobReason == "DeadlineExceeded"):
 		reason = batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded

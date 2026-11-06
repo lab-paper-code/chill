@@ -290,9 +290,14 @@ func writeFailure(w http.ResponseWriter, status int, e error, complete bool, p *
 	if len(s) > MaxErrorBytes {
 		s = "error exceeds detail bound"
 	}
+	var failedBatch *batchError
+	var failureReason string
+	if errors.As(e, &failedBatch) {
+		failureReason = failedBatch.failureReason
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(ErrorResponse{Error: s, ExecutionComplete: complete, Progress: p}); err != nil {
+	if err := json.NewEncoder(w).Encode(ErrorResponse{Error: s, FailureReason: failureReason, ExecutionComplete: complete, Progress: p}); err != nil {
 		slog.Warn("write error response", "error", err)
 	}
 }

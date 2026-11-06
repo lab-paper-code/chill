@@ -115,6 +115,9 @@ func classifyTypedMeasurementFailure(termination *api.ProfilingRunRuntimeTermina
 	case termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Container == "runtime" &&
 		termination.Stage == "Execution" && termination.FailureReason == "MeasurementBudgetExceeded":
 		return MeasurementReason{Code: "MeasurementBudgetExceeded", Label: "측정 예산 초과", Message: "실행 중 기존 측정 예산에 도달해 해당 배치의 측정이 종료되었습니다."}
+	case termination.Class == string(batchenergyoptimization.FailureClassExpectedStop) && termination.Container == "runtime" &&
+		termination.Stage == "Execution" && termination.FailureReason == "MemoryAllocationFailed":
+		return MeasurementReason{Code: "MemoryAllocationFailed", Label: "런타임 메모리 할당 실패", Message: "실행 중 네이티브 할당자가 메모리 요청을 거절해 해당 배치의 탐색이 종료되었습니다. 커널 OOM 종료나 CPU·GPU 메모리 위치를 판정하지 않습니다."}
 	case termination.FailureReason == "IntegrityError":
 		return MeasurementReason{Code: "EvidenceInvalid", Label: "증거 검증 실패", Message: "측정 증거의 무결성을 확인하지 못했습니다."}
 	default:

@@ -73,6 +73,26 @@ func TestExecuteClassifiesOnlyFrozenBudgetDuringActualExecution(t *testing.T) {
 	})
 }
 
+func TestNativeAllocationTerminationSurvivesWorkerCleanup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "termination.json")
+	payload := []byte(`{"schemaVersion":"chill.dacs.io/measurement-worker-termination.v1alpha1","stage":"Execution","failureReason":"MemoryAllocationFailed"}`)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := worker.WithTerminationMessagePath(context.Background(), path)
+	for _, failure := range []error{worker.ErrRuntimeMeasurement, worker.ErrExecutionContract} {
+		if err := worker.RecordTerminationFailure(ctx, failure); err != nil {
+			t.Fatal(err)
+		}
+		retained, err := os.ReadFile(path)
+		record, ok := evidence.DecodeTerminationMessage(string(retained))
+		if err != nil || !ok || record.Stage != evidence.StageExecution || record.FailureReason != evidence.FailureMemoryAllocation ||
+			string(retained) != string(payload) {
+			t.Fatalf("cleanup replaced native failure: %s %v", retained, err)
+		}
+	}
+}
+
 type deadlinePhaseCoordinator struct{ stage string }
 
 func (c deadlinePhaseCoordinator) Execute(ctx context.Context, _ worker.Request) (evidencestore.Receipt, error) {
