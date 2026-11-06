@@ -228,7 +228,8 @@ def verify(spec, source_sha, digest, run):
     actual = [entry["platform"] for entry in receipts]
     if len(actual) != len(set(actual)) or set(actual) != set(spec["platforms"]):
         raise ValueError("registry platform set mismatch: " + role)
-    origin = spec.get("prebuilt", spec.get("reuse", {}).get("receipt", spec))
+    origin = spec.get("prebuilt", spec.get("reuse", {}).get("receipt",
+                      spec.get("pendingPublication", {}).get("buildInputs", spec)))
     entry = {key: copy.deepcopy(origin[key]) for key in ("dockerfile", "buildArgs", "powerSourceSHA") if key in origin}
     entry["platforms"] = copy.deepcopy(spec["platforms"])
     entry.update({"image": _reference(spec["image"], spec["repository"]) + "@" + digest, "digest": digest,

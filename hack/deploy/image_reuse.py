@@ -180,7 +180,9 @@ def apply(plans, source_sha, repository, source, publication_path, pending_build
             raise ValueError("invalid reuse role receipt: " + role)
         if pending:
             origin = entry.get("prebuilt", entry.get("reuse", entry.get("pendingPublication", entry)))
-            old_sha = origin.get("sourceSHA", publication["sourceSHA"] if origin is entry else None)
+            recorded_sha = origin.get("sourceSHA", publication["sourceSHA"] if origin is entry else None)
+            origin = origin.get("receipt", origin.get("buildInputs", origin))
+            old_sha = origin.get("sourceSHA", recorded_sha)
             if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha):
                 _unusable(spec, "previous build origin unavailable", pending)
             metadata_path = Path(pending_builds[role])
@@ -188,22 +190,24 @@ def apply(plans, source_sha, repository, source, publication_path, pending_build
                 if entry.get(key) != spec.get(key):
                     raise ValueError("pending image plan provenance mismatch: " + role + "/" + key)
             frozen = images.pending_build(entry, metadata_path)
-            frozen.update(sourceSHA=old_sha, publicationFile=str(publication_path), planFile=str(plan_path))
+            frozen.update(sourceSHA=old_sha, publicationFile=str(publication_path), planFile=str(plan_path),
+                          buildInputs=copy.deepcopy(origin))
         else:
             old_sha = entry.get("sourceSHA")
             if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha):
                 spec["reason"] = "previous build origin unavailable"
                 continue
+        inputs = origin if pending else entry
         expected = copy.deepcopy(spec)
         if "SOURCE_SHA" in expected["buildArgs"]:
             expected["buildArgs"]["SOURCE_SHA"] = old_sha
         mismatch = next((reason for key, reason in (
             ("dockerfile", "Dockerfile changed"), ("buildArgs", "effective build arguments changed"),
-            ("powerSourceSHA", "pinned power source changed")) if entry.get(key) != expected.get(key)), None)
+            ("powerSourceSHA", "pinned power source changed")) if inputs.get(key) != expected.get(key)), None)
         if mismatch:
             _unusable(spec, mismatch, pending)
             continue
-        platforms = entry.get("platforms")
+        platforms = inputs.get("platforms")
         if (not isinstance(platforms, list) or any(not isinstance(p, str) for p in platforms)
                 or len(platforms) != len(set(platforms)) or sorted(platforms) != sorted(expected["platforms"])):
             _unusable(spec, "platforms changed", pending)

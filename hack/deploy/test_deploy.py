@@ -705,6 +705,48 @@ shutil.disk_usage = disk_usage
         self.assertEqual([r['platform'] for r in selected_entry['platformReceipts']], ['linux/amd64'])
         self.assertEqual(path.read_text(), json.dumps(receipt))
 
+    def test_cli_pending_prebuilt_keeps_actual_inputs_for_next_reuse(self):
+        actual = {'NUMPY_VERSION': '1.24.4'}
+        wrapper = {'NUMPY_VERSION': '1.26.4'}
+        self.recipe.update(images=['server', {'role': 'firstfloor', 'buildArgs': actual}],
+                           publicationOnly=['firstfloor'])
+        initial = self.out / 'initial'
+        self.cli('--execute', '--evidence', str(initial))
+        publication = json.loads((initial / 'publication.json').read_text())
+        origin = publication['roles'].pop('firstfloor')
+        pending = self.out / 'pending'
+        pending.mkdir()
+        publication_path = pending / 'publication.json'
+        publication_path.write_text(json.dumps(publication))
+        plans = json.loads((initial / 'image-plan.json').read_text())
+        selected = next(plan for plan in plans if plan['role'] == 'firstfloor')
+        selected.update(action='prebuilt', buildArgs=wrapper, prebuilt=origin)
+        (pending / 'image-plan.json').write_text(json.dumps(plans))
+        metadata = pending / 'relocated-build.json'
+        shutil.copy2(initial / 'firstfloor-build.json', metadata)
+        self.recipe.update(reusePublication=str(publication_path),
+                           reusePendingBuilds={'firstfloor': str(metadata)})
+
+        self.recipe['images'][-1]['buildArgs'] = wrapper
+        rejected = self.out / 'wrong-inputs'
+        self.cli('--execute', '--evidence', str(rejected), expected=1)
+        self.assertFalse((rejected / 'publication.json').exists())
+
+        self.recipe['images'][-1]['buildArgs'] = actual
+        recovered = self.out / 'recovered'
+        self.cli('--execute', '--evidence', str(recovered))
+        receipt = json.loads((recovered / 'publication.json').read_text())
+        self.assertEqual(receipt['roles']['firstfloor']['buildArgs'], actual)
+
+        self.recipe.pop('reusePendingBuilds')
+        self.recipe['reusePublication'] = str(recovered / 'publication.json')
+        self.recipe['images'][-1]['buildArgs'] = wrapper
+        follow_on = self.out / 'changed-inputs'
+        self.cli('--execute', '--evidence', str(follow_on))
+        next_publication = json.loads((follow_on / 'publication.json').read_text())
+        self.assertEqual(next_publication['roles']['firstfloor']['action'], 'build')
+        self.assertTrue(json.loads((follow_on / 'state.json').read_text())['ready'])
+
     def test_cli_unavailable_artifact_platform_and_current_readiness_stop(self):
         for failure in ('missingArtifact', 'unavailable-platform', 'wrongPodImage',
                         'podNotReady', 'containerNotReady'):

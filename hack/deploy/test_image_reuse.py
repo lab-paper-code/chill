@@ -247,8 +247,7 @@ class ReuseTests(unittest.TestCase):
         self.assertEqual(self.apply()["action"], "reuse")
         self.receipt["platformReceipts"].pop()
         self.publish()
-        with self.assertRaises(ValueError):
-            self.apply()
+        self.assertEqual(self.apply()["action"], "reuse")
 
     def test_added_export_ignore_forces_build_without_copy_blob_changes(self):
         self.put(".gitattributes", "src/* export-ignore\n")
@@ -425,7 +424,9 @@ class ReuseTests(unittest.TestCase):
         publication = json.loads(self.publication.read_text())
         publication["sourceSHA"] = current
         self.publication.write_text(json.dumps(publication))
-        old[-1].update(action="reuse", metadataFile="stale-path", reuse={"sourceSHA": self.old})
+        old[-1].update(action="reuse", metadataFile="stale-path",
+                       reuse={"sourceSHA": self.old, "receipt": copy.deepcopy(old[-1])},
+                       buildArgs={"wrapper": "not-the-build-inputs"})
         plan_path.write_text(json.dumps(old))
         spec = self.pending_apply(plans, {"firstfloor": str(relocated)})[-1]
         changed = Registry(spec, revision=None)
