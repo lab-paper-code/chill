@@ -44,11 +44,11 @@ func TestCurvePlanIdleBatchPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := validateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err != nil {
+			if err := ValidateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err != nil {
 				t.Fatal(err)
 			}
 			idle.Measurement.Batch = 5 - wantBatch
-			if err := validateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err == nil {
+			if err := ValidateCurvePlanRunConfigs(active, idle, active.TargetNode.UID, idle.TargetNode.UID, spec); err == nil {
 				t.Fatal("wrong idle measurement batch was accepted")
 			}
 		})
@@ -285,22 +285,22 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 		Preprocessor:      projectCurvePreprocessor(active.State.Preprocessor),
 		PlannedBatchSizes: []int{1},
 	}
-	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
+	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
 	}
 	drifted := active
 	drifted.Images.Artifact = "different"
-	if err := validateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := ValidateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("artifact-supply drift was accepted")
 	}
 	drifted = idle
 	drifted.TargetNode.UID = "other-node"
-	if err := validateCurvePlanRunConfigs(active, drifted, "node-uid", "other-node", shared); err == nil {
+	if err := ValidateCurvePlanRunConfigs(active, drifted, "node-uid", "other-node", shared); err == nil {
 		t.Fatal("Node drift was accepted")
 	}
 	drifted = idle
 	drifted.Candidate.ExecutionPath = "different-path"
-	if err := validateCurvePlanRunConfigs(active, drifted, "node-uid", "node-uid", shared); err == nil {
+	if err := ValidateCurvePlanRunConfigs(active, drifted, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("active/idle execution-path disagreement was accepted")
 	}
 	for name, mutate := range map[string]func(*profilingrun.RunConfig){
@@ -313,7 +313,7 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 		t.Run(name, func(t *testing.T) {
 			drifted := active
 			mutate(&drifted)
-			if err := validateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
+			if err := ValidateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
 				t.Fatalf("different actual %s entered the frozen curve", name)
 			}
 		})
@@ -354,28 +354,28 @@ func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 	if _, err := profilederivation.NewCurvePlan(shared); err != nil {
 		t.Fatalf("construct converter-free ORT plan: %v", err)
 	}
-	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
+	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatal(err)
 	}
 
 	idle.Measurement.Batch = 2
-	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("curve plan accepted a non-canonical idle batch")
 	}
 	idle.Measurement.Batch = 1
 	active.Measurement.Batch = 3
-	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("curve plan accepted an unplanned active batch")
 	}
 
 	shared.PlannedBatchSizes = []int{2, 4}
 	active.Measurement.Batch = 4
 	idle.Measurement.Batch = 1
-	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
+	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err != nil {
 		t.Fatalf("batch one was not accepted as the ORT idle witness: %v", err)
 	}
 	idle.Measurement.Batch = 2
-	if err := validateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
+	if err := ValidateCurvePlanRunConfigs(active, idle, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("curve plan accepted a non-canonical ORT idle batch")
 	}
 }

@@ -133,7 +133,7 @@ func ProjectVerifiedCurveState(
 		return profilederivation.VerifiedCurveState{}, err
 	}
 	spec := plan.Shared()
-	if err := validateCurvePlanRunConfigs(
+	if err := ValidateCurvePlanRunConfigs(
 		activeExecution.RunConfig, idleExecution.RunConfig,
 		activeExecution.Terminal.Node.UID, idleExecution.Terminal.Node.UID,
 		spec,
@@ -149,7 +149,9 @@ func ProjectVerifiedCurveState(
 	}, nil
 }
 
-func validateCurvePlanRunConfigs(
+// ValidateCurvePlanRunConfigs binds verified active/idle executable conditions
+// to one selected plan without re-projecting evidence identities or workload.
+func ValidateCurvePlanRunConfigs(
 	active, idle profilingrun.RunConfig,
 	activeNodeUID, idleNodeUID string,
 	spec profilederivation.CurvePlanSpec,
