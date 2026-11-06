@@ -57,7 +57,7 @@ func evaluationNodes() [][]evaluationOption {
 }
 
 // evaluationScaled grows evaluationNodes toward the evaluation space: every option gets a b2 variant
-// (κ 1.3×, e 0.9×) when variants is 2, and copies of genesis3, rasp5 and
+// (κ 1.3×, unchanged b1 input energy) when variants is 2, and copies of genesis3, rasp5 and
 // lattepanda stand in for jetsono, jetsonx and jetson-nano with modes power
 // modes each (mode m: κ and loaded watts (1 − 0.15m)×, prepare (1 + 0.1m)×).
 func evaluationScaled(variants, modes int) [][]evaluationOption {
@@ -80,7 +80,7 @@ func evaluationScaled(variants, modes int) [][]evaluationOption {
 	for n := range nodes {
 		for _, o := range slices.Clone(nodes[n]) {
 			if variants > 1 {
-				o.name, o.kappa, o.e = o.name+"-b2", 1.3*o.kappa, 0.9*o.e
+				o.name, o.kappa, o.e = o.name+"-b2", 1.3*o.kappa, o.e
 				nodes[n] = append(nodes[n], o)
 			}
 		}
