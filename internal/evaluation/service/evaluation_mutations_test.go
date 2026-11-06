@@ -68,6 +68,11 @@ func evaluationFixture(t *testing.T) (*Service, EvaluationRequest) {
 	return service, EvaluationRequest{Name: "run", Spec: spec}
 }
 
+const (
+	evaluationFaultGenerator = "load-generator"
+	evaluationFaultUnready   = "unready"
+)
+
 // preflightFault applies one boundary fault and returns an object to create, if any.
 func preflightFault(t *testing.T, service *Service, request *EvaluationRequest, fault string) client.Object {
 	t.Helper()
@@ -78,9 +83,9 @@ func preflightFault(t *testing.T, service *Service, request *EvaluationRequest, 
 			Status: api.EvaluationRunStatus{Conditions: []metav1.Condition{{
 				Type: api.EvaluationConditionPoolAcquired, Status: metav1.ConditionTrue,
 			}}}}
-	case "load-generator":
+	case evaluationFaultGenerator:
 		object = &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-			Name: "load-generator", Namespace: "ns", Labels: map[string]string{"edge.dacs.io/workload-role": "load-generator"},
+			Name: evaluationFaultGenerator, Namespace: "ns", Labels: map[string]string{"edge.dacs.io/workload-role": evaluationFaultGenerator},
 		}}
 	case "profiling":
 		object = &api.ProfilingRun{ObjectMeta: metav1.ObjectMeta{Name: "profile", Namespace: "ns"}}
@@ -116,7 +121,7 @@ func preflightFault(t *testing.T, service *Service, request *EvaluationRequest, 
 		if err := service.client.Update(context.Background(), config); err != nil {
 			t.Fatal(err)
 		}
-	case "unready":
+	case evaluationFaultUnready:
 		pod := &corev1.Pod{}
 		key := client.ObjectKey{Namespace: "ns", Name: "server"}
 		if err := service.client.Get(context.Background(), key, pod); err != nil {
@@ -130,7 +135,7 @@ func preflightFault(t *testing.T, service *Service, request *EvaluationRequest, 
 	return object
 }
 func TestEvaluationPreflightBoundaries(t *testing.T) {
-	for _, fault := range []string{"none", "pool", "load-generator", "profiling", "unready", "foreign-store", "shard-coverage", "operational-coverage",
+	for _, fault := range []string{"none", "pool", evaluationFaultGenerator, "profiling", evaluationFaultUnready, "foreign-store", "shard-coverage", "operational-coverage",
 		"idle-baseline", "finished-parent-runs", "other-jobs"} {
 		t.Run(fault, func(t *testing.T) {
 			service, request := evaluationFixture(t)
@@ -150,7 +155,7 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 					failed = true
 				}
 			}
-			if failed != (fault != "none" && fault != "finished-parent-runs" && fault != "other-jobs" && fault != "load-generator" && fault != "unready") {
+			if failed != (fault != "none" && fault != "finished-parent-runs" && fault != "other-jobs" && fault != evaluationFaultGenerator && fault != evaluationFaultUnready) {
 				t.Fatalf("checks=%+v", result.Checks)
 			}
 			if fault == "foreign-store" {
@@ -163,10 +168,10 @@ func TestEvaluationPreflightBoundaries(t *testing.T) {
 					t.Fatalf("coverage mismatch must be refused at creation, got %v", err)
 				}
 			}
-			if fault == "unready" && (result.LiveTarget[0].Ready || len(result.LiveTarget[0].LiveImageIDs) != 1) {
+			if fault == evaluationFaultUnready && (result.LiveTarget[0].Ready || len(result.LiveTarget[0].LiveImageIDs) != 1) {
 				t.Fatal("live target readiness lost")
 			}
-			if fault == "unready" || fault == "load-generator" {
+			if fault == evaluationFaultUnready || fault == evaluationFaultGenerator {
 				request.Spec.Harness = api.EvaluationImage{Image: "harness:current"}
 				request.Spec.LoadGenerator.EvaluationImage = api.EvaluationImage{Image: "generator:current"}
 				if _, err := service.Create(context.Background(), request, "operator"); err != nil {
