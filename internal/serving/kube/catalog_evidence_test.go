@@ -194,10 +194,10 @@ func TestCatalogIdleTrialsKeepPhysicalBindingWithoutHistoricalSourceRebinding(t 
 
 func TestIdleTrialUsesVerifiedRuntimeAccessGPUWithoutActorRebinding(t *testing.T) {
 	const (
-		referenceGPU = "GPU-reference"
+		referenceGPU  = "GPU-reference"
 		staleActorGPU = "GPU-stale-copy"
-		otherGPU = "GPU-other-physical"
-		provider = "CUDAExecutionProvider"
+		otherGPU      = "GPU-other-physical"
+		provider      = "CUDAExecutionProvider"
 	)
 	for _, differentGPU := range []bool{false, true} {
 		t.Run(fmt.Sprintf("different-gpu-%t", differentGPU), func(t *testing.T) {

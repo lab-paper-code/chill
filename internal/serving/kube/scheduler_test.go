@@ -765,7 +765,7 @@ func TestSetConfigurationDoesNotRebindRetainedMeters(t *testing.T) {
 					config.Costs = append(config.Costs, serving.OperationCost{
 						ID: declared.Node.UID, Node: declared.Node, Meter: declared.Source.Endpoint,
 						Scope: servingstate.MeasurementWallScope, Kind: servingstate.OperationPower,
-						Trials: []serving.OperationTrial{{Duration: time.Second, Joules: 2}},
+						Trials:    []serving.OperationTrial{{Duration: time.Second, Joules: 2}},
 						Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: declared.Node.UID, Size: 1},
 					})
 				}
@@ -773,9 +773,9 @@ func TestSetConfigurationDoesNotRebindRetainedMeters(t *testing.T) {
 				config.Baselines[0].Node.UID = "historical-uid"
 			case "historical cost UID":
 				config.Costs = []serving.OperationCost{{ID: "historical",
-					Node: serving.NodeReference{Name: node.Name, UID: "historical-uid"},
+					Node:  serving.NodeReference{Name: node.Name, UID: "historical-uid"},
 					Meter: meter.ID, Scope: servingstate.MeasurementWallScope, Kind: servingstate.OperationPower,
-					Trials: []serving.OperationTrial{{Duration: time.Second, Joules: 2}},
+					Trials:    []serving.OperationTrial{{Duration: time.Second, Joules: 2}},
 					Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "historical", Size: 1}}}
 			}
 			if err := controller.SetConfiguration(config); err != nil {
