@@ -505,7 +505,6 @@ func validateRKNNRuntimeEvidence(config RunConfig, evidence *RKNNRuntimeEvidence
 		return errors.New("RKNN initialization, load, batch, core-mask, or input-layout evidence mismatch")
 	}
 	if strings.TrimSpace(evidence.Package.Name) == "" ||
-		strings.TrimSpace(evidence.Package.Version) == "" ||
 		len(evidence.HostLibraries) == 0 || len(evidence.Devices) == 0 {
 		return errors.New("RKNN package or host evidence is incomplete")
 	}
@@ -520,7 +519,6 @@ func validateRKNNRuntimeEvidence(config RunConfig, evidence *RKNNRuntimeEvidence
 		seenLibraries[library.Name] = struct{}{}
 	}
 	if strings.TrimSpace(evidence.Driver.Name) == "" ||
-		strings.TrimSpace(evidence.Driver.Version) == "" ||
 		!validArtifactPath(evidence.Driver.VersionPath) {
 		return errors.New("RKNN driver evidence is invalid")
 	}

@@ -180,8 +180,8 @@ func TestValidateRuntimeRequiresCompleteRKNNLiteEvidence(t *testing.T) {
 	native.IntraOpThreads, native.InterOpThreads = 0, 0
 	const observedVersion = "2.3.1"
 	result.RuntimeVersion, native.RuntimeVersion = observedVersion, observedVersion
-	result.RKNN.Package.Version = observedVersion
-	result.RKNN.Driver.Version = "observed-driver"
+	result.RKNN.Package.Version = ""
+	result.RKNN.Driver.Version = ""
 	result.RKNN.Platform.Matched = false
 	if err := ValidateRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)

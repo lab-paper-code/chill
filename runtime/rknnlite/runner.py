@@ -327,16 +327,6 @@ def validate_regular_file(path: Path, name: str = "file") -> None:
         raise ContractError(f"{name} is not a regular file")
 
 
-def read_required_text(path: Path, name: str) -> str:
-    try:
-        value = path.read_text(encoding="utf-8").strip()
-    except OSError as error:
-        raise ContractError(f"read {name}: {error}") from error
-    if not value:
-        raise ContractError(f"{name} is empty")
-    return value
-
-
 def observe_host_contract(
     candidate: dict[str, Any], selected_batch: int
 ) -> dict[str, Any]:
@@ -344,10 +334,8 @@ def observe_host_contract(
     package = candidate["runtimePackages"][0]
     try:
         package_version = importlib.metadata.version(package["name"])
-    except importlib.metadata.PackageNotFoundError as error:
-        raise ContractError(
-            f"runtime package {package['name']} is not installed"
-        ) from error
+    except importlib.metadata.PackageNotFoundError:
+        package_version = ""
 
     libraries: list[dict[str, Any]] = []
     for library in host["libraries"]:
@@ -356,9 +344,10 @@ def observe_host_contract(
         libraries.append({"name": library["name"], "path": str(path)})
 
     driver = host["driver"]
-    driver_version = read_required_text(
-        Path(driver["versionPath"]), "RKNN driver version"
-    )
+    try:
+        driver_version = Path(driver["versionPath"]).read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise ContractError(f"read RKNN driver version: {error}") from error
 
     platform_contract = host["platform"]
     compatible_path = Path(platform_contract["compatiblePath"])

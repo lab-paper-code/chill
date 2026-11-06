@@ -245,6 +245,9 @@ class MeasurementBoundaryTest(unittest.TestCase):
         request["runConfig"]["delivery"]["runtimePackages"] = [
             {"name": "onnxruntime-gpu", "version": "1.21.0"}, {"name": "numpy", "version": "2.2.0"}]
         self.assertEqual(measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1")["gpuUUID"], "GPU-actual")
+        actual.pop("runtimeVersion")
+        actual.pop("numpyVersion")
+        measurement.validate_metadata(metadata, request, "200000 100000", [0, 1], "0-1")
         for policy in ("drop", "keep", "defer"):
             request["runConfig"]["state"]["firstfloor"]["deadlinePolicy"] = policy
             metadata["policy"]["deadlinePolicy"] = policy

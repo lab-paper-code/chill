@@ -92,7 +92,7 @@ class RunnerContractTest(unittest.TestCase):
         lite = mock.Mock(return_value=native, NPU_CORE_0=1)
         helper = SimpleNamespace(
             validate_candidate=mock.Mock(),
-            observe_host_contract=lambda candidate, batch: {"package": {"version": "test"}, "selectedBatch": batch},
+            observe_host_contract=lambda candidate, batch: {"package": {"version": ""}, "selectedBatch": batch},
             validate_runtime_inputs=validate_batch,
         )
         cpu = SimpleNamespace(read_cpu_environment=lambda: ("", [0], ""))
@@ -107,7 +107,7 @@ class RunnerContractTest(unittest.TestCase):
             options = SimpleNamespace(runtime="rknnlite", preprocessor=str(FIXTURE), model_dir=directory,
                                       delay_ms=0, warmup_iterations=1, warmup_batch=[1],
                                       delivery_json=str(delivery))
-            with mock.patch.dict(sys.modules, {"numpy": SimpleNamespace(__version__="test"),
+            with mock.patch.dict(sys.modules, {"numpy": SimpleNamespace(),
                                               "rknnlite": mock.Mock(), "rknnlite.api": SimpleNamespace(RKNNLite=lite)}), \
                     mock.patch.object(runner, "import_runtime_contract", side_effect=lambda family: helper if family == "rknnlite" else cpu), \
                     mock.patch.object(runner, "model_files", return_value=[Path(directory) / "model.rknn"]), \
@@ -234,7 +234,7 @@ class RunnerContractTest(unittest.TestCase):
                 actual.raw = state.get("actual", gpu).bytes
                 return 0
 
-        ort = SimpleNamespace(__version__="test", get_available_providers=lambda: [cuda, cpu],
+        ort = SimpleNamespace(get_available_providers=lambda: [cuda, cpu],
                               SessionOptions=Options, InferenceSession=Session)
         modules = {"onnxruntime": ort}
         uuid_text = f"GPU-{gpu}"

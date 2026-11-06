@@ -48,7 +48,7 @@ class FakeActor(measurement.FirstfloorSession):
                     "policy": {"deadlinePolicy": measurement.deadline_policy(firstfloor)}, "modelInstanceCount": 1,
                     "maxQueueBytes": min(request["maxInputBytes"], measurement.FRAME_BYTES),
                     "maxRequestBytes": measurement.FRAME_BYTES,
-                    "runtime": {"runtime": state["backend"], "runtimeVersion": "1.16.0", "numpyVersion": "2.0.0",
+                    "runtime": {"runtime": state["backend"],
                                 "modelFiles": sorted("/model/" + Path(f).name for f in state["artifactFiles"]),
                                 "inputs": state["preprocessor"]["inputs"], "outputs": state["preprocessor"]["outputs"],
                                 "providers": ["CPUExecutionProvider"], "availableProviders": ["CPUExecutionProvider"],

@@ -171,6 +171,18 @@ class RunnerTest(unittest.TestCase):
             self.assertEqual(observed["package"]["version"], "2.3.1")
             self.assertEqual(observed["driver"]["version"], "0.9.7")
             self.assertFalse(observed["platform"]["matched"])
+            driver.write_text("")
+            with mock.patch.object(runner.importlib.metadata, "version",
+                                   side_effect=runner.importlib.metadata.PackageNotFoundError):
+                observed = runner.observe_host_contract(candidate, 1)
+            self.assertEqual(observed["package"]["version"], "")
+            self.assertEqual(observed["driver"]["version"], "")
+            driver.unlink()
+            with mock.patch.object(runner.importlib.metadata, "version",
+                                   side_effect=runner.importlib.metadata.PackageNotFoundError):
+                with self.assertRaisesRegex(runner.ContractError, "read RKNN driver version"):
+                    runner.observe_host_contract(candidate, 1)
+            driver.write_text("")
             host["devices"] = [{"path": str(library)}]
             with mock.patch.object(runner.importlib.metadata, "version", return_value="2.3.1"):
                 with self.assertRaisesRegex(runner.ContractError, "not a character device"):

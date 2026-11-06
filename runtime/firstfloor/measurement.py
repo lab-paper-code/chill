@@ -192,8 +192,6 @@ def validate_metadata(metadata: dict[str, Any], request: dict[str, Any], cpu_max
         raise common.ContractError("actual actor configuration differs from frozen profiling conditions")
     if actual.get("runtime") != backend or actual.get("synthetic") is not False:
         raise common.ContractError("actual runtime must match the real frozen backend")
-    common.require_string(actual.get("runtimeVersion"), "actual runtime version")
-    common.require_string(actual.get("numpyVersion"), "actual numpy version")
     preprocessor = state["preprocessor"]
     model_files = sorted(str(Path(request["modelDirectory"]) / Path(item).name) for item in state["artifactFiles"])
     if (actual.get("modelFiles") != model_files or actual.get("inputs") != preprocessor["inputs"] or
@@ -392,12 +390,12 @@ def execute_sampled(request: dict[str, Any], workspace: Path, run: dict[str, Any
                 # its lifetime before idle so the final metadata/counters use a
                 # new connection, rather than one expired by worker IdleTimeout.
                 session.connection.close()
-                result = common.execute_idle(request, actual["runtimeVersion"], session, actual.get("availableProviders", []),
+                result = common.execute_idle(request, actual.get("runtimeVersion", ""), session, actual.get("availableProviders", []),
                                              architecture, cpu_max, affinity, cpuset, loaded_at, PROVIDERS[run["state"]["backend"]],
                                              memory_sampler=sampler, phase=record_stage)
                 executions = 0
             else:
-                result = common.execute_loaded(request, session, actual["runtimeVersion"], actual.get("availableProviders", []),
+                result = common.execute_loaded(request, session, actual.get("runtimeVersion", ""), actual.get("availableProviders", []),
                                                architecture, cpu_max, affinity, cpuset,
                                                session.begin_measurement, PROVIDERS[run["state"]["backend"]],
                                                memory_sampler=sampler, phase=record_stage)

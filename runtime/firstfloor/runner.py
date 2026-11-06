@@ -243,7 +243,7 @@ def ort_sessions(options, files, metadata):
         applied = session.get_session_options()
         metadata.update(intraOpThreads=applied.intra_op_num_threads, interOpThreads=applied.inter_op_num_threads)
         sessions[path.stem] = session
-    metadata.update(runtimeVersion=ort.__version__, providers=expected, availableProviders=available)
+    metadata.update(runtimeVersion=getattr(ort, "__version__", ""), providers=expected, availableProviders=available)
     return sessions
 
 
@@ -303,7 +303,7 @@ def run(options, source, destination):
             raise ValueError("warmup batch must be one of the initialized batches")
         module = load_preprocessor(options.preprocessor, inputs)
         files = [] if options.runtime == "echo" else model_files(options.model_dir)
-        metadata = {"runtime": options.runtime, "runtimeVersion": "synthetic", "numpyVersion": np.__version__,
+        metadata = {"runtime": options.runtime, "runtimeVersion": "synthetic", "numpyVersion": getattr(np, "__version__", ""),
                     "modelFiles": [os.path.abspath(p) for p in files], "inputs": inputs, "outputs": outputs,
                     "providers": [], "device": "synthetic", "cpuAffinity": affinity,
                     "intraOpThreads": 0, "interOpThreads": 0,
