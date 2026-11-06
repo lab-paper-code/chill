@@ -188,10 +188,10 @@ SCH-41의 단일 작업 `steps[]`는 `{name,startedAt,endedAt,status,before,actu
 3. 해당 UID outstanding0을 기존 native drain proof로 대기.
 4. 해당 UID **소유** 실물만 stop/remove. binding≠owner이며 타 UID binding/owner 충돌은 실패. exact UID/container 종료·자기 Service 해제·actual Pod 소멸 확인.
 5. UID 선언/runtime override만 release→삭제 readback.
-6. 제거로 빈 Node만 DeviceClass/actuation policy 최저 모드 ChangePower→actual readback/Ready. measurement/다른 owner/요청 Node 금지, 불필요/미지원 fixed mode는 현재 상태+skip 이유.
+6. 제거로 빈 Node의 현재 actual mode와 DeviceClass/actuation policy로 요청 가능한 mode 중, 유효한 최신 unloaded baseline의 최저 W mode를 선택한다(동률은 이름순). 전환은 ChangePower→actual readback/Ready로 완료한다. policy가 없으면 현재 mode가 전체 측정 최저이며 Ready일 때만 무변경 완료한다. fixed-only class는 skip 이유를 남긴다. measurement/다른 owner/요청 Node 보호를 유지한다.
 동일 slot 모든 owned exact Pod UID/container를 열거하고 remove 직전 재열거한다(AC-36). runtime/scheduler/native policy는 exact physical 우선→없을 때 유일 TargetID alias다. A→S,B→A에서 A는 A, B도 별도 정리하고 진짜 다중 alias는 오류다. 타 owner/binding/measurement/Node UID 보호는 유지한다.
 실패/timeout/read 실패는 단계+actual partial을 기록하고 즉시 중단한다. client cancel도 이후 단계를 중단하나 시작한 physical 효과 예약은 cancel만으로 풀지 않는다(SCH-51, AC-38). 자동 retry/rollback/후속 실행 없고 실패 선언을 refresh가 자동 적용하지 않는다.
-재호출은 현재 충족 단계 무변경 완료다. remove 뒤 release/lower-power 실패로 Pod가 없어도 현재 UID compatible preparation의 동일 Node UID를 재확인하여 최저 mode/Ready 미확인 빈 Node를 계속 처리한다. 제외/measurement/다른 serving Pod Node는 제외한다. 최저 actual readback/Ready 전 성공 아님. 두 번째 완료 reset은 새 Pod/선언/power 요청 없이 성공(SCH-AC-33), 별도 재개 state machine/hidden retry 없음.
+재호출은 현재 충족 단계를 무변경 완료한다. Pod 제거 뒤 release/lower-power가 실패해도 현재 UID compatible preparation의 동일 Node UID를 재확인하고 같은 mode 선택 규칙으로 빈 Node를 처리한다. 제외/measurement/다른 serving Pod Node는 제외한다. actual 최저 mode/Ready 전에는 partial이며, 완료 뒤 reset은 새 Pod/선언/power 요청 없이 성공한다(SCH-AC-33).
 설정 변경 전 관련 running/cancel 작업 충돌을 거절한다. terminal owner 예약은 그 **전체** Workload와 동일 UID Node가 실제 reset admission `operation.Nodes` 안에 있을 때만 원자 인계한다(SCH-51/SCH-AC-38). 과거 snapshot이 충돌 범위를 넓혀도 cleanup/admission Node 추가는 아니다. active 단계/measurement owner/범위 밖 UID·Node는 인계하지 않는다. 인계 책임은 단계 사이 계속 소유하며 reset effect 전 거절도 미확인 책임 반환이 아니다. actual reset 완료 proof 뒤 해제하고 단계별 action start/end/failure를 기록한다.
 
 ## serving-operation CLI

@@ -131,11 +131,13 @@ func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids [
 	if err != nil {
 		return nil, err
 	}
+	var classes edge.DeviceClassList
+	if err := c.store.client.List(ctx, &classes); err != nil {
+		return nil, err
+	}
 	var nodes []serving.NodeReference
 	for _, node := range snapshot.Nodes {
-		lowest := serving.SchedulerLowestMode(config.Baselines, node.Node)
-		if node.Measurement || slices.Contains(node.Reasons, serving.NodeExcluded) ||
-			lowest == "" || node.PowerMode == lowest && node.Ready {
+		if node.Measurement || slices.Contains(node.Reasons, serving.NodeExcluded) {
 			continue
 		}
 		if slices.ContainsFunc(pods.Items, func(p core.Pod) bool {
@@ -143,12 +145,27 @@ func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids [
 		}) {
 			continue
 		}
-		if slices.ContainsFunc(snapshot.Options, func(option serving.SchedulerOption) bool {
+		if !slices.ContainsFunc(snapshot.Options, func(option serving.SchedulerOption) bool {
 			return option.Instance.Node == node.Node && option.Instance.Profile != nil && option.Instance.Profile.Condition.NodeUID == node.Node.UID &&
 				slices.ContainsFunc(option.CompatibleUIDs, func(uid string) bool { return slices.Contains(uids, uid) })
 		}) {
-			nodes = append(nodes, node.Node)
+			continue
 		}
+		actual, err := c.kube.CoreV1().Nodes().Get(ctx, node.Node.Name, meta.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		if string(actual.UID) != node.Node.UID || profilingrun.InMeasurement(actual) {
+			return nil, errors.New("reset Node identity or measurement ownership changed")
+		}
+		current := servingstate.ReadBackMode(actual, servingstate.NodeClass(actual, classes.Items))
+		lowest := resetLowestPowerMode(config.Baselines, node.Node, current, nodePowerTargets(actual, classes.Items, config.PowerPolicies))
+		if lowest != "" && current == lowest && slices.ContainsFunc(actual.Status.Conditions, func(condition core.NodeCondition) bool {
+			return condition.Type == core.NodeReady && condition.Status == core.ConditionTrue
+		}) {
+			continue
+		}
+		nodes = append(nodes, node.Node)
 	}
 	return nodes, nil
 }
@@ -388,6 +405,21 @@ func (c *SchedulerController) resetRoutingPresent(ctx context.Context, uid strin
 	return declared, false, nil
 }
 
+// A reset can retain a measured current mode or request a configured target.
+// Without targets, only the original measured minimum can establish completion.
+func resetLowestPowerMode(baselines []serving.NodeBaseline, node serving.NodeReference, current string, targets map[string]time.Duration) string {
+	if len(targets) == 0 {
+		if lowest := serving.SchedulerLowestMode(baselines, node); lowest == current {
+			return lowest
+		}
+		return ""
+	}
+	return serving.SchedulerLowestModeMatching(baselines, node, func(mode string) bool {
+		_, supported := targets[mode]
+		return supported || mode == current
+	})
+}
+
 func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []serving.NodeReference, config SchedulerControllerConfig, result *servingstate.OperationResult) error {
 	var classes edge.DeviceClassList
 	if err := c.store.client.List(ctx, &classes); err != nil {
@@ -423,7 +455,8 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 		}) {
 			return errors.New("reset requires actual Node mode and Ready readback")
 		}
-		lowest := serving.SchedulerLowestMode(config.Baselines, ref)
+		targets := nodePowerTargets(node, classes.Items, config.PowerPolicies)
+		lowest := resetLowestPowerMode(config.Baselines, ref, mode, targets)
 		if lowest == "" {
 			return fmt.Errorf("Node %s lacks the measured lowest power mode", node.Name)
 		}
@@ -431,7 +464,7 @@ func (c *SchedulerController) resetLowerNodes(ctx context.Context, nodes []servi
 			result.Progress = append(result.Progress, node.Name+": lowest mode already Ready")
 			continue
 		}
-		duration, supported := nodePowerTargets(node, classes.Items, config.PowerPolicies)[lowest]
+		duration, supported := targets[lowest]
 		if !supported {
 			return fmt.Errorf("Node %s has no actuation policy for lowest mode %s", node.Name, lowest)
 		}

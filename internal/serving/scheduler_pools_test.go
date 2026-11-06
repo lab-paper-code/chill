@@ -25,6 +25,62 @@ func poolsAddNode(snap *SchedulerSnapshot, uid string, watts map[string]float64)
 	return n.Node
 }
 
+func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
+	_, snap := schedulerFixture()
+	base := snap.Baselines[0]
+	baseline := func(mode string, watts float64, age time.Duration) NodeBaseline {
+		b := base
+		b.PowerMode, b.Watts, b.MeasuredAt = mode, watts, base.MeasuredAt.Add(age)
+		return b
+	}
+	baselines := []NodeBaseline{
+		baseline("fixed", 1, 0),
+		baseline("eco", 2, -time.Second),
+		baseline("eco", 20, 0),
+		baseline("eco-a", 19, 0),
+		baseline("eco-b", 19, 0),
+		baseline("performance", 40, 0),
+	}
+	invalid := []struct {
+		name   string
+		change func(*NodeBaseline)
+	}{
+		{"other-node", func(b *NodeBaseline) { b.Node.UID = "other" }},
+		{"loaded", func(b *NodeBaseline) { b.State = []string{"running"} }},
+		{"scope", func(b *NodeBaseline) { b.Scope = "component" }},
+		{"meter", func(b *NodeBaseline) { b.Meter = "" }},
+		{"nan", func(b *NodeBaseline) { b.Watts = math.NaN() }},
+		{"negative", func(b *NodeBaseline) { b.Watts = -1 }},
+		{"id", func(b *NodeBaseline) { b.ID = "" }},
+		{"reference", func(b *NodeBaseline) { b.Reference = evidencestore.ObjectIdentity{} }},
+	}
+	for _, test := range invalid {
+		b := baseline(test.name, 0, time.Second)
+		test.change(&b)
+		baselines = append(baselines, b)
+	}
+	for _, test := range []struct {
+		name     string
+		eligible func(string) bool
+		want     string
+	}{
+		{"unfiltered", nil, "fixed"},
+		{"actuatable", func(mode string) bool { return mode != "fixed" }, "eco-a"},
+		{"latest-per-mode", func(mode string) bool { return mode == "eco" }, "eco"},
+		{"current-only", func(mode string) bool { return mode == "performance" }, "performance"},
+		{"no-eligible-measurement", func(mode string) bool { return mode == "unknown" }, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := SchedulerLowestModeMatching(baselines, base.Node, test.eligible); got != test.want {
+				t.Fatalf("lowest mode = %q, want %q", got, test.want)
+			}
+		})
+	}
+	if got := SchedulerLowestMode(baselines, base.Node); got != "fixed" {
+		t.Fatalf("unfiltered measured-energy selection changed: %q", got)
+	}
+}
+
 // poolsInstance copies the fixture instance onto node at mode, serving uid.
 func poolsInstance(base SchedulerInstance, id string, node NodeReference, mode, uid string) SchedulerInstance {
 	p := *base.Profile
