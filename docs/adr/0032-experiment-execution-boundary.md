@@ -37,7 +37,7 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 
 1. namespaced 세 CR(개정 이력 참조)에 질문·조건·순서·비교·장애 주입·불변 입력 참조를 선언한다. spec 전체는 CEL `self == oldSelf`로 불변이며 정정은 새 CR이다. 실행 두 CR(EvaluationRun·EvaluationStage)의 status는 `observedGeneration`과 type-keyed `metav1.Condition`을 사용하고 실행 완료·측정 판정·정리 완료를 구분한다.
 2. 기존 profiler manager에 reconciler를 둔다. controller는 단계 순서·Job 채택·compact status만 소유한다. 기존 다른 측정 CR 실행 위치는 이 결정으로 옮기지 않는다.
-3. 배포·업그레이드는 하지 않는다. 기대 신원과 관측한 image digest·source SHA가 다르거나 신원을 확인할 수 없으면 시작하지 않는다. 이는 배포 신원 확인이며 새 digest 형식·재계산·바이트 동일성 검증 관문은 아니다.
+3. 배포·업그레이드는 하지 않는다. 선언한 대상 resource와 Workload/Node UID·소유권으로 대상을 고정한다. 관측한 image digest·source SHA·준비 상태는 실행 증거이며 기대값과의 비교로 시작을 막지 않는다. 실제 인증·실행 입력과 측정 writer 소유권 경계는 유지한다.
 4. 시험 대상 제어·관측에는 ChillServer 공개 API와 Kubernetes API만 쓴다. failure 주입도 선언된 계획에 따라 Kubernetes API로 수행하며 ChillServer 내부 호출이나 장애 주입 API를 만들지 않는다.
 5. profiler leader election(Helm 기본 활성)·단일 worker·캐시 아닌 목록 읽기로 생성 순서에 따라 한 실험만 실행한다. leader election이 꺼지면 이 reconciler만 등록하지 않는다. 실험 시작 표시는 한 번 조건부 갱신하되 명령별 선점 장부는 만들지 않는다. 반환 미확인 실험은 다음 실행을 막으며 별도 Lease·우선순위 큐는 없다. 실제 노드 예약은 기존 ChillServer admission이 소유한다. 퇴임 leader의 늦은 명령 가능성은 알려진 한계이며 fencing을 보장한다고 주장하지 않는다.
 6. 재개는 결정적 이름으로 기존 Job을 조회하거나 AlreadyExists 결과를 채택하는 것이다. 기록된 Job/Pod UID를 관측할 뿐 재발행·재측정하지 않는다. Job 소실은 `ExecutionLost`, 원격 효과 불명은 미확인 상태로 중단하며 원 사유·증거·예약을 보존한다. 자동 물리 복구하지 않는다.
@@ -70,7 +70,7 @@ E5의 조건·순서·비교 관계는 CHILL 밖 `.cache/chill-assets/ops/pools-
 
 비용은 새 하네스 이미지의 빌드·배포, EvaluationRun과 Job/Pod·주입 대상에 대한 범위 제한 RBAC 확장, profiler leader election 유지다. 조건·상태·증거 연결을 끝까지 구현해야 하며 반환 미확인은 운영자 확인·해제 전까지 후속 실행을 막는다.
 
-평가 실행은 EvaluationRun/Stage controller와 `evaluation.py`의 factor/stage/judge/cleanup/finish/publish Job 경계로 통합한다. 절대 요청률·inline seed·Dataset carrier를 동결하고, 선언한 `settingsPatch`만 공개 settings API로 적용·readback·원복한다. 표 조립은 `tables.py`가 맡는다. 기존 로컬 deployment/calibration/restoration orchestration은 제거했으며 운영에서도 사용하지 않는다. 외부 target/Node readiness와 평가자 Job/Pod UID·실행 이미지 신원 감시는 유지하되 CHILL image/profile exact-match나 내부 상태 복원을 실행 조건으로 삼지 않는다. 과거 필드 부재는 미기록이며 이름·요청률로 복원하지 않는다.
+평가 실행은 EvaluationRun/Stage controller와 `evaluation.py`의 factor/stage/judge/cleanup/finish/publish Job 경계로 통합한다. 절대 요청률·inline seed·Dataset carrier를 동결하고, prepare가 generated·explicit arrival offsets를 한 번 고정하여 기존 workspace PVC의 읽기 전용 파일로 producer에 전달한다. producer는 재생성하지 않으며 SHA/count metadata를 접수 조건으로 삼지 않는다. 실제 숫자 입력·응답 품질·유한 drain과 소유 writer 정리 경계는 유지한다. 선언한 `settingsPatch`만 공개 settings API로 적용·readback·원복하며 표 조립은 `tables.py`가 맡는다. 기존 로컬 deployment/calibration/restoration orchestration은 제거했다. 대상·Node 준비 상태와 이미지/source 정보는 관측하고 평가자 Job/Pod UID·소유권은 유지한다. CHILL image/profile exact-match·토큰 TTL 비교·내부 상태 복원은 실행 조건이 아니다. 과거 필드 부재는 미기록이며 이름·요청률로 복원하지 않는다.
 
 과거 게시·과학 원시·실행 기록은 수정·삭제·재게시하지 않는다. [ADR 0019](0019-durable-stored-contract-compatibility.md)의 단일 버전 원칙을 유지하고 구계약 reader·dual decoder·호환 shim은 두지 않는다. 영향받는 작업용 객체만 의존 캠페인이 없는 전환 시점에 운영자가 정리한다. 과거 과학 기록 보존과 혼동하지 않는다.
 

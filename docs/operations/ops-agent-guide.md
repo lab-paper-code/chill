@@ -31,11 +31,11 @@ hack/fast-deploy.sh run /absolute/private/recipe.json --execute --evidence /abso
 - 고정 명령 phase는 `preflight`, `stage`, `quiesce`, `migrate`, `configure`, `accept`다. 명령은 `{argv: [...], seconds: 양의정수, source: 선택적 toolSources 키}`이며 shell 해석은 없다. 실제 검토한 script만 사용한다. 별도 버전 migration/tool은 `toolSources`의 commit과 `{tool:NAME}` 경로로 고정한다.
 - `stage`는 evidence 상대 경로로 선언한 `generatedValues`를 생성한다. 입력은 최종 렌더와 quiesce **이전**에 동결한다. 후속 단계가 동결 입력/기록을 고쳐서는 안 된다. runtime/harness 활성화는 실제 declaration/new-input values와 stage/accept가 필요하다. FirstFloor 6종은 `runtimeDeclarations: true`의 고정 구현을 사용할 수 있다(inspection 기본 3600초, `runtimeInspectionSeconds`). configure나 runtime probe를 추측하지 않는다.
 - 16개 source role과 플랫폼/빌드 인자는 `images.py` catalog 및 hack README에 명시되어 있다. 이미지는 자동 선택하지 않는다. Query는 server와 별도 image다. node-agent schema 변경 시 소유 operator도 검토한 명시 선택에 포함한다. runtime/harness 발행만으로 설치·실행 성공을 주장하지 않는다.
-- prebuilt는 `images` 항목의 `{"role": "server", "prebuilt": "/absolute/private/publication.json"}`로 지정한다. sourceSHA, Dockerfile/buildArgs, platforms, digest/platformDigests/platformReceipts가 일치해야 하며 registry manifest/config의 OCI source revision을 다시 확인한다. prebuilt를 재빌드하지 않으며 chart에는 digest로 고정한다.
-- 바뀐 입력만 빌드하려면 `reusePublication`에 이전 발행 증거 `publication.json`을 지정한다. 선택된 role의 Dockerfile·COPY/ADD 경로·Dockerignore 파일을 원래 이미지 OCI revision과 새 source 사이의 git diff로 비교하며 args·platform·고정 외부 source도 확인한다. `image-plan.json`과 터미널/dry-run에 build/reuse/prebuilt 및 사유를 표시한다. 이전 기록에 없는 role·비교 불가·동적 입력은 보수적으로 빌드한다. 별도 cache·해시 저장소는 없다. broad COPY의 제외 파일까지 세밀하게 최적화하지 않으며 외부 floating base/package 갱신은 감지하지 않는다. 의도적 전체 갱신에는 이 필드를 생략한다. inspect/execute는 재사용 이미지도 기존 registry 검증을 반복하고 exact-image probe·활성화를 생략하지 않는다. 발행 root sourceSHA는 배포 source, role sourceSHA는 실제 이미지 source다.
-- Pod spec의 선언 이미지/container name으로 식별하고 같은 이름의 status, Ready, restartCount 0, 발행 index/platform digest의 imageID를 확인한다. CRI status의 image 문자열을 선언 이미지 대신 쓰지 않는다.
+- prebuilt는 `images` 항목의 `{"role": "server", "prebuilt": "/absolute/private/publication.json"}`로 지정한다. 선택 repository의 image·artifact digest를 사용하고 registry에서 실제 artifact와 요청 platform config를 확인한다. 과거 sourceSHA·빌드 정보·OCI label은 기록으로 보존하며 서로의 일치를 요구하지 않는다. prebuilt를 재빌드하지 않으며 chart에는 digest로 고정한다.
+- 바뀐 입력만 빌드하려면 `reusePublication`에 이전 `publication.json`을 지정한다. 원래 빌드의 receipt/`buildInputs`에 기록된 source·Dockerfile·COPY/ADD·Dockerignore와 새 source를 비교하며 실제 args·platform·고정 외부 source도 확인한다. 후속 배포 wrapper나 OCI label로 빌드 출처를 지어내지 않는다. 출처 부재·비교 불가·동적 입력은 보수적으로 빌드한다. `image-plan.json`과 CLI에 결정·사유를 남기며 inspect/execute는 registry artifact/platform을 재확인한다. broad COPY와 floating base/package 갱신 감지의 한계는 유지한다. 의도적 전체 갱신에는 reuse를 생략한다. exact-image probe·활성화는 생략하지 않는다. 발행 root sourceSHA는 배포 source, role sourceSHA는 기록된 빌드 출처이며 명시 prebuilt에서는 미기록일 수 있다.
+- Pod spec의 선언 이미지/container name과 같은 이름의 status로 식별하고 container ready 및 Pod Ready를 확인한다. restartCount·imageID와 발행 digest 비교는 접수 조건이 아니다. CRI status의 image 문자열을 선언 이미지 대신 쓰지 않는다.
 - serving-entrypoint의 readinessProbe는 실제 TLS listener와 같은 named port `https`의 `HTTPS /healthz`를 확인한다(초기 2초, 주기 5초). 느린 초기화를 재시작시키는 liveness/startup probe는 추가하지 않는다. kubelet HTTPS probe는 인증서를 검증하지 않지만 acceptance는 지정 CA/hostname 검증을 유지한다([Kubernetes probe semantics](https://kubernetes.io/docs/concepts/workloads/pods/probes/)). rollout/Pod 검사와 API 시작 대기는 하나의 `readinessSeconds` deadline을 공유한다. connection refused/reset/timeout 및 TLS handshake EOF 등 명시적 시작 transport 오류와 HTTP 503 `CoverageWarming`만 최대 5초 간격으로 GET 대기하며, coverage 성공 뒤 profiles transport 오류도 같은 deadline으로 대기한다. coverage가 warming이면 profiles를 조회하지 않는다. 각 GET은 최대 60초 및 남은 시간의 절반으로 제한한다. `after/attempt-NNN`의 원문 HTTP/body 및 `*.transport-error.json`에 오류 종류·errno·대기 가능 여부를 보존한다. 401/403, TLS 인증서·프로토콜 오류, 잘못된 JSON, 다른 503, snapshot/source 검증과 임의 오류는 즉시 중단한다. 이는 배포 재시도나 과거 성공 fallback이 아니다.
-- API 환경 파일은 기존 `d2.apiBase`, `d2.caFile`, `d2.tokenFile`을 사용한다. CA/TLS/Bearer와 토큰 잔여 수명을 확인하며 원문 token은 로그/argv에 남기지 않는다. profile ID/수, 숫자 batch, usable coverage 및 측정 비교는 report-only이며 그 차이만으로 배포를 막지 않는다. `expectedProfileCount`·`expectedCoverageUsable`은 보고 목표다. `/api/v1/` 상대경로의 `apiChecks`는 HTTP 200과 응답 크기 `< maxBytes`를 요구한다.
+- API 환경 파일은 기존 `d2.apiBase`, `d2.caFile`, `d2.tokenFile`을 사용한다. CA/TLS/Bearer 인증과 redirect 금지를 유지하며 JWT exp·토큰 잔여 수명을 실행 예산과 비교하지 않는다. 원문 token은 로그/argv에 남기지 않는다. profile ID/수, 숫자 batch, usable coverage 및 측정 비교는 report-only이며 그 차이만으로 배포를 막지 않는다. `expectedProfileCount`·`expectedCoverageUsable`은 보고 목표다. `/api/v1/` 상대경로의 `apiChecks`는 HTTP 200과 응답 크기 `< maxBytes`를 요구한다.
 - 새 private evidence에는 recipe/source, 명령 로그, live values/manifest/hooks, retained objects, publication, render/chart diff, before/after API, readiness, 실패 기록을 보존한다. 민감한 운영 데이터를 공개 저장소에 올리지 않는다. 실패 시 자동 restore/rollback/retry/resume은 없다. 결론과 증거 절대경로를 보고한다.
 - 현재 첫 live 사용은 server/profiler/query/dashboard 및 FirstFloor 6종의 실제 dashboard 10-role 선택이다. FirstFloor build/publication → 별도 고정 승인 exact-image probe → 측정된 declaration activation을 모두 수행한다. 향후 미활성 발행에만 명시 `publicationOnly`를 사용하며 이번 활성화를 대체하지 않는다. 과학 결과는 report-only이며 실제 data 손실·보안·인증/토큰·CLI 오류 gate는 유지한다.
 - `queryService: "chill-query"`는 private port-forward의 `/api/v1/scheduler/profiles?view=summary&limit=1`로 직접 401/인증 200을 확인한다. 인증 검사는 전체 catalog 크기에 의존하지 않으며 기존 8MiB fetch 상한은 유지한다. `dashboardCheck: true`는 HTTP 200 HTML만 확인하며 browser 시험이 아니다.
@@ -62,9 +62,9 @@ hack/fast-deploy.sh run /absolute/private/recipe.json --execute --evidence /abso
 `python3 -B hack/deploy/test_deploy.py`,
 `python3 -B hack/deploy/test_acceptance.py`.
 
-## E5 각 실행 직전 표준 절차
+## 과거 E5 사전 점검 절차 기록
 
-E5보다 먼저 **최대 27분 사전 점검(Ready 대기 포함)**을 새 출력 디렉터리에서 수행한다. 이는 운영 입구 확인이지 연구 시나리오 PASS가 아니다. 현재처럼 클러스터 쓰기가 승인되지 않은 작업에서는 아래 라이브 명령을 실행하지 않는다.
+아래 명령·1620초 예산·PASS 기준은 이전 수동 E5 절차의 기록이다. 현재 `demo.py`는 오프라인 부하 미리보기만 제공하며 아래 preflight/report 명령을 실행하지 않는다. 현재 실행은 EvaluationRun/Stage와 기존 `evaluation.py` Job 경계를 사용한다. 과거 입력·승인·원시 증거는 유지한다.
 
 1. 기존 `CHILL_EXPERIMENT_CONFIG`의 API/CA/tokenFile·operationalRecipe·campaign 경로와 라이브 제어 이미지 출처를 확인한다. `hack/evaluation/preflight-config.example.json`을 승인된 외부 입력으로 복사하고 `controlSourceSHA`를 실제 배포 소스로 고정한다(예시 SHA를 최신으로 간주하지 않는다). 기존 scheduler/instance를 건드리는 **별도 Main 승인**이 있어야 실행한다.
 2. Capacity API는 자율 Workload의 행만 제공하므로 자율 off인 prepare 뒤에는 capacity 행을 기다리지 않는다. start에서 자율 on 뒤 E0 `readyGate`가 최대 720초 동안 canonical 3 Workload의 Ready + 양수 route를 기다린다. capacity 행 존재만으로 Built/Ready 성공을 판정하지 않는다.
@@ -76,15 +76,17 @@ E5보다 먼저 **최대 27분 사전 점검(Ready 대기 포함)**을 새 출�
 CHILL_EXPERIMENT_CONFIG="$ENV" python3 hack/evaluation/demo.py preflight --config "$CONFIG" --out "$OUT" --release "$RELEASE"
 ```
 
-예시 예상 예산은 단계 780초 + 두 단계 각각 timeboxes 합 405초 + 여유 30초 = **1620초(27분)**다. JSON의 `tokenSafetyMarginSeconds`로 여유를 고정하며 1620초(27분)를 넘는 사전 점검 설정은 거부한다. `collectSeconds=240`은 `archive.py`가 요구하는 drain 후 power support +60초와 exact-hour archive 대기를 수집 deadline 안에 확보하기 위한 값이다. 기존 120초는 실클러스터에서 `Finite collection deadline exhausted`로 실패했으므로 시연/시험 설정도 240초를 사용한다. 늘어난 두 단계 수집 예산으로 기존 1500초 cap을 초과하여 필요한 최소인 1620초로 올렸다. 이는 단계/대기 예산이며 prepare의 로컬 I/O와 오프라인 그래프 생성까지 포함한 강제 kill 타이머는 아니다. start에서 토큰 수명을 다시 검사한다. 시간 상한이나 수집 실패를 성공으로 바꾸지 않는다.
+당시 예상 예산은 단계 780초 + 두 단계 각각 timeboxes 합 405초 + 여유 30초 = **1620초(27분)**였다. `collectSeconds=240`은 drain 후 power support +60초와 exact-hour archive 대기를 확보하기 위한 값이었다. 기존 120초는 실클러스터에서 `Finite collection deadline exhausted`로 실패했고 두 단계 수집 예산 때문에 기존 1500초 cap을 1620초로 올렸다. 이는 당시 단계/대기 예산이며 현재 토큰 TTL 접수 기준이 아니다.
 
 `summary.json`의 `preflight.status`와 `summary.md`에 **PASS/FAIL**을 남긴다. PASS는 빈 출발, Ready 3/3, 혼합 창의 세 Workload 각각 offered>0·clientRows=offered·성공률 100%, 두 창의 offered/drain-inclusive 전력 `complete=true`, 모든 단계 완료, finish/정의 정리 완료, **최종 instances 0·예약 0**를 모두 요구한다. 누락/STOP은 FAIL(exit 2)이다. `report-tables.md`·`timeline.svg`는 같은 보존 폴더에서 생성하며 재생성만 할 때는 `python3 hack/evaluation/demo.py report "$OUT"`을 사용한다. FAIL이면 부분 증거를 보존하고 중단한다. 자동 재시도·자동 실패 reset은 없으며 정리도 별도 승인된 기존 finish 절차로 수행한다.
 
-**시작 전 토큰 만료 검사:** E5 `CPO.start/run`과 demo prepare/start/run은 같은 `hack/evaluation/auth.py`를 사용한다. 예상 실행 시간은 남은 단계 초 합 + 각 단계별 timeboxes 합 + `tokenSafetyMarginSeconds`(생략 시 60초)이며 campaign 시작은 정적 기준선/제어요소 단계도 포함한다. ServiceAccount JWT의 `exp`를 읽어 남은 시간이 예산보다 짧으면 API 변경/부하 시작 전에 거부한다. 이는 수명 검사이며 서명/권한 검증을 대체하지 않는다. JWT 형식이 아니거나 exp가 없으면 기존 CA·Bearer·redirect 금지로 scheduler state를 GET하여 **HTTP 200 + `X-Token-Expires-At`의 timezone 포함 시각**을 대안 증거로 요구한다. 서버가 만료 시각을 제공하지 않으면 추측하거나 무기한 토큰으로 처리하지 않고 거부한다. 토큰 신규 발급·TokenReview POST는 하지 않는다.
+## 현재 인증·평가 입력 경계
 
-binding의 `config.tokenLifetime.expiresUTC`와 실행별 `token-preflight-*.json`에 검사 시각/만료 시각/남은 초/필요 초/출처만 기록한다(토큰 원문 미기록). 배포는 명시 이미지 빌드 예산, 선택한 Helm `upgradeSeconds`+30초, readiness 예산, 사용자 phase 예산과 여유를 포함하여 사전 확인하고 변경 직전 다시 확인한다. `hack/deploy/main.py`가 실행 예산을, `api_checks.py`가 전송·인증·운영 API 검사를, `acceptance.py`가 측정 전후 비교와 기대 profile 수 진단을 소유한다.
+배포와 평가 실행은 실제 API의 CA/TLS/Bearer 인증 결과를 따른다. JWT `exp`, `X-Token-Expires-At`, 예상 실행 예산의 TTL 비교는 시작 조건이 아니다. 토큰 신규 발급·TokenReview POST는 하지 않으며 원문 token은 증거·argv에 남기지 않는다. 인증 거부 401/403과 실제 CLI·전송 오류는 보존한다.
 
-로컬 회귀 확인(클러스터 접근/쓰기 없음): `python3 hack/evaluation/smoke_preflight.py`, 기존 전체 lifecycle 확인은 `python3 hack/evaluation/demo.py --self-check`, 배포 확인은 `python3 -B hack/deploy/test_deploy.py`와 `python3 -B hack/deploy/test_acceptance.py`다.
+평가 prepare는 controller가 고정한 입력으로 generated·explicit arrival offsets를 한 번 동결한다. 두 종류 모두 기존 workspace PVC의 읽기 전용 파일을 producer에 전달하며 producer는 재생성하지 않는다. SHA/count는 기록이며 접수 관문이 아니다. 실제 숫자 입력·응답 품질·부분 결과와 exact-UID 소유 writer 정리 경계는 유지한다.
+
+로컬 확인 진입점은 `python3 hack/evaluation/demo.py --self-check`(오프라인 미리보기), `python3 -B hack/deploy/test_deploy.py`, `python3 -B hack/deploy/test_acceptance.py`다.
 
 ## genesis1 디스크 압박과 CloudCore 배치 (2026-10-30)
 

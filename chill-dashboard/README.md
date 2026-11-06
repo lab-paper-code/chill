@@ -48,9 +48,10 @@ HF/KServe/BentoML/MLflow에서 참고한 분리 원칙과 지원하지 않는 �
   `spec.batchSizes`를 지운다. 모델 artifact·runtime capability가 상한을 정하며, 실제 OOM·측정 예산 경계에서
   완료된 낮은 K의 결과를 보관한다. `retryLimit`은 일시적 인프라 장애의 재시도 한도다.
 - 문서 검토는 로컬 구조 확인이다. 서버 수명주기 metadata·status를 제외하고 제공된 spec을 보존한다.
-  연결·권한·실행 가능성은 기존 `POST /api/v1/namespaces/{ns}/batch-energy-optimizations?dryRun=All`과
-  `/preflight`의 응답으로 확인한다. 두 검사 후 최종 제출에서 실제 요청을 생성한다.
-  편집하면 검토·검사를 다시 한다. 응답 유실은 `결과 미확인`으로 두고 같은 이름의 접수 기록을 조회한다.
+  기존 `POST /api/v1/namespaces/{ns}/batch-energy-optimizations?dryRun=All`과
+  `/preflight`는 선택 진단이며 성공 응답을 최종 제출의 전제조건으로 삼지 않는다.
+  편집하면 이전 진단을 지운다. 유효한 로컬 입력을 최종 POST로 보내고 서버가 실제 접수를 판정한다.
+  중복 제출을 막고 응답 유실은 `결과 미확인`으로 두며 같은 이름의 접수 기록을 조회한다.
 
 요청 상세·작성 폼·문서 검토의 **요청 문서 다운로드**는 재사용할 metadata·spec을 보존한다.
 과거 요청의 원문도 보존되므로 새 API에서 제거된 필드는 제출 전에 정리한다.
@@ -115,7 +116,7 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 측정 요청의 계획·기본값·manifest 조립은 `lib/measurement-request.ts`, 프로파일 요청의 검사·제출·접수 결과 미확인 재조회 상태는 `hooks/use-measurement-submission.ts`가 소유한다. `features/measurement-request.tsx`는 폼·표시와 실제 조회 자료를 연결한다. d 요청은 단일 dry-run 응답의 서버 지정 이름·동결 본문과 별도 접수 기록 조회 계약을 사용하므로 프로파일 제출 hook으로 합치지 않는다.
 
-v3 프로파일 측정 요청은 사용자가 고른 실제 Workload 이름을 `activeProtocol.workload`로 보낸다. 선택 시 현재 `desired.spec`의 모델·전처리기·데이터셋을 채우며, 기존 요청 기본값·프로파일·유일한 조합 일치는 Workload를 자동 선택하지 않는다. 미선택은 폼 오류로 막는다. 명시적으로 복사한 요청은 입력 세 가지가 그대로일 때만 이름을 유지하고, 하나라도 바뀌면 선택과 상속된 이름을 지운다(장비·경로·전력 모드만 바뀌면 유지). 반복은 정확히 3회다. Workload 존재·조합·SLO·표본 수는 서버가 검증하고 기존 사전검사 오류에 원문을 표시한다. 과거 요청의 Workload가 없으면 `미기록`으로 표시한다.
+v3 프로파일 측정 요청은 사용자가 고른 실제 Workload 이름을 `activeProtocol.workload`로 보낸다. 선택 시 현재 `desired.spec`의 모델·전처리기·데이터셋을 채우며, 기존 요청 기본값·프로파일·유일한 조합 일치는 Workload를 자동 선택하지 않는다. 미선택은 폼 오류로 막는다. 명시적으로 복사한 요청은 입력 세 가지가 그대로일 때만 이름을 유지하고, 하나라도 바뀌면 선택과 상속된 이름을 지운다(장비·경로·전력 모드만 바뀌면 유지). 반복은 정확히 3회다. Workload 존재·조합·SLO·표본 수는 서버가 최종 POST에서 검증하며 선택 사전검사의 오류도 그대로 표시한다. 과거 요청의 Workload가 없으면 `미기록`으로 표시한다.
 
 첫 프로파일 측정은 보관된 EvaluationRun/Stage/LoadScenario 없이 기존 Workload와 측정 요청만으로 시작한다. 서버는 추가 대기 없이 실제 측정한 idle/service 쌍을 보존하며, 관측하지 않은 idle 구간의 커버리지를 주장하지 않는다.
 

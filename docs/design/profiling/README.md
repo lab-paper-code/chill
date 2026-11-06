@@ -1,6 +1,6 @@
 # Runtime, Artifact, and Profiling
 
-Current boundary: execution → immutable raw/finalized evidence → numeric derivation. Scientific admission removed @`788bcf93`: thermal/workload observations remain, without automatic scientific accept/reject. Read only the relevant contract; source and retained evidence, not historical plans, establish implementation facts.
+Current boundary: execution → immutable raw/finalized evidence → numeric derivation. The authoritative retained reader bounds actual bytes, decodes supported schemas and validates physical execution/ownership links once; raw RunConfig supplies execution authority. Mutable request/status copies, deterministic-key spelling, receipt sizes and duplicated provenance do not establish a second execution contract. Scientific admission removed @`788bcf93`: thermal/workload observations remain, without automatic scientific accept/reject. Source and retained evidence, not historical plans, establish implementation facts.
 
 Batch discovery freezes `1, 2, 4, …` through the selected firstfloor's actual
 `MaxBatchSize`, intersected with finite artifact-declared batches when present;
@@ -49,7 +49,7 @@ Retired Plan 5 experiments remain conclusions, not current APIs: 12 retained idl
 |---|---|
 | [Experiment execution](experiment-execution.md) | evaluation immutable definition, profiler orchestration, harness Job and publication — design |
 | [Measurement Worker](components/measurement-worker.md) | firstfloor Job-local execution, synchronization, raw-write/receipt — active |
-| [Evidence Store](components/evidence-store.md) | Immutable object storage, independent verification, operator lifecycle — active |
+| [Evidence Store](components/evidence-store.md) | Immutable winner, bounded authoritative reads, operator lifecycle — active |
 | [MetricObserver](components/metric-observer.md) | Bounded typed power/thermal observation, no derivation policy — active |
 | [WorkloadObserver](components/workload-observer.md) | Bounded Pod-membership/environment/concurrent-measurement observations — active |
 | [Runtime execution](foundations/runtime-execution/README.md) | Consolidated compatibility/execution/provenance conclusions — active |
@@ -74,18 +74,16 @@ uses normal Node handback. Transient dependency read errors remain reconciliatio
 errors. Root `Failed/ExecutionPolicyInvalid` supports existing guarded public
 retirement. Recorded Job recovery retains its original executable contract.
 
-`internal/profiling/campaign/evidence` reconstructs retained campaign results,
-frozen plans and completed active/model-loaded-idle trials. It owns campaign
-state/result/plan consistency and Run ownership, protocol, current-generation
-completion, evidence-reference and recorded-execution binding checks. Reads
-remain bounded to eight concurrent trials with input-ordered errors and lineage.
-Its object/trial callbacks keep the caller's store binding and byte limits.
-This boundary depends inward on the campaign, derivation, profiler evidence,
-Run, Evidence Store and API contracts; the existing profiler evidence package
-stays campaign-independent. Serving catalog selection, firstfloor admissibility,
-energy/memory/profile construction and query reporting completeness/derivation
-remain separate consumer policies. The reader's result/plan stage precedes trial
-loading so serving still rejects unsupported runtime families without trial IO.
+`internal/profiling/campaign/evidence` reconstructs retained results, frozen plans
+and completed active/model-loaded-idle trials. Result schema/outcome, Run ownership,
+current-generation completion, actual trial mode/batch and recorded Job/Pod binding
+remain checked. Frozen result/plan bodies are not re-admitted against mutable
+campaign specs or repeated reference/provenance copies. The profiler evidence
+loader validates raw execution facts and terminal links at its own read boundary.
+Reads remain bounded to eight concurrent trials with input-ordered errors and
+lineage; callbacks retain the caller's frozen store binding and actual byte cap.
+Serving selection, runtime support, energy/memory/profile construction and query
+completeness remain consumer policies. Result/plan loading precedes trial IO.
 
 Campaign Runs now freeze `spec.campaignTrial.batch` and `.attempt`; workload mode
 in `spec.measurement` identifies active versus idle, and `measurement.batch`
@@ -115,6 +113,14 @@ short-name labels, admission's 200-character name limit and stored evidence
 contracts are unchanged. No existing objects are rewritten or campaigns restarted.
 
 Serving configurations must be measured, not inferred. Profiling and serving share CPU without requests, limits, explicit pinning or quota-derived thread overrides. Runtime-default applied session settings, actual affinity/cpuset/quota (including unlimited), usage and throttling are observations, not allocation identities or active/idle matching gates. Memory is placement-feasibility evidence, not a limit sweep. On cgroup v2 without `memory.peak`, timestamped `memory.current` samples cover active/idle windows at a scheduling target interval; retained maxima can miss spikes and are not kernel high-water/absolute bounds. GPU UUID/RKNN ABI and actual backend remain execution observations.
+
+Runtime validation still checks real inference, tensor metadata, initialized and
+executed batches, counts, physical native service samples, memory observations and
+selected devices. Runtime/NumPy/RKNN package and driver version strings remain
+observed provenance; declaration-version differences do not reject real execution.
+Observer representation differences are accepted. Missing physical membership
+continuity projects an Unknown workload environment without adding a measurement
+STOP; malformed observations, wrong targets and uncovered runtime windows still fail.
 
 Before a CurvePlan or RunConfig is recorded, the shared preparer freezes runtime memory at `min(executionPolicyDefaults.runtimeMemoryLimitBytes, floor(Node.status.allocatable.memory × profiler.measurementMemoryFraction))` in `Actor.MemoryLimitBytes`, with the selected runtime request in `Actor.MemoryRequestBytes`. The Node UID must match the resolved Run. The chart defaults remain fraction **0.8**, **16 GiB** upper limit and **128 MiB** request. Query preflight receives the same execution-policy key and memory fraction. Actual serving Pods and measurement Jobs both call `firstfloor.RuntimeContainer` with that frozen Config for image, CPU/memory/accelerator resources, performance environment and artifact/preprocessor mounts; launching does not reselect memory or image. Copy-init containers share its memory envelope; metric/workload observers retain their separate configured limits. File-copy page cache belongs to the init cgroup, not the metric observer. Serving therefore uses the measured pressure envelope rather than substituting peak-observed bytes plus overhead. Near-limit reclaim is not claimed to be measurement-neutral; an OOM fails the existing Job rather than publishing a measurement.
 

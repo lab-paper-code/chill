@@ -17,11 +17,11 @@ CPU, GPU, network, application activity, or stable internal load.
 ## Ownership and execution
 
 The Job contains artifact init, runtime worker, MetricObserver, WorkloadObserver.
-The worker validates the workload result against RunConfig and includes it in raw
-evidence; Kubernetes owns Pod identity/lifecycle. No controller-memory background
-watch or reconcile-time measurement. The observer never mutates/evicts/cordons/
-taints/reschedules/pauses workloads, changes Node phase, reads runtime/power/
-thermal/application metrics, or decides profile publication.
+The workload handoff reader validates the bounded result once; raw composition
+adds RunConfig target/Pod and runtime-window links. Kubernetes owns Pod lifecycle.
+No controller-memory background watch or reconcile-time measurement. The observer
+never mutates/evicts/cordons/taints/reschedules/pauses workloads, changes Node phase,
+reads runtime/power/thermal/application metrics, or decides profile publication.
 
 Before warm-up, field-selected Pod `LIST/WATCH` for `spec.nodeName=<target>`
 probes capability without retaining measurement evidence. After warm-up, runtime
@@ -70,11 +70,15 @@ not active co-residents. Overflow is incomplete evidence, never silent truncatio
 Current raw schema requires the bounded workload result; terminal Node workload
 snapshot stays a separate post-run historical fact.
 
-Reconstruction requires list-watch continuity, surrounding coverage, matching Node/
-Run Pod/Job/RunConfig identities, strict result validation, and explicit watch-gap,
-expired-history, overflow, observer-failure and ambiguous-end-drain facts. Concurrent
-CHILL measurements and material external membership changes are retained as facts;
-stable external presence is not an allowlist or scientific rejection rule.
+The read boundary keeps supported schema, target/Run identities, bounded events,
+valid chronology and surrounding runtime coverage. Representation differences,
+including Pod ordering, image/label representation and same-Pod metadata updates,
+do not require byte-for-byte replay equality. If retained events cannot account
+for physical start/end membership, projection marks the environment Unknown.
+Watch gaps, expired history, overflow, observer failure and ambiguous end drain
+remain explicit incomplete-window facts; they add no measurement STOP or automatic
+scientific rejection. Malformed data and wrong target/window links still fail.
+Concurrent CHILL measurements and external membership changes remain observations.
 
 ## External environment identity
 

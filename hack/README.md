@@ -164,8 +164,8 @@ list those selected roles. It is not allowed to replace the required activation
 in this first live use. State-changing quiesce/migrate/configure commands
 require explicit acceptance.
 
-The execution gates are explicit target/revision and disk/token preflight,
-private backups, chart review, publication with registry provenance checks,
+The execution gates are explicit target/revision, disk and authentication checks,
+private backups, chart review, registry artifact/platform checks,
 stage/frozen final render and server dry-run, quiesce/migrate, configure,
 Helm update, Pod readiness, and acceptance. Helm/chart is the sole CRD owner:
 there is no separate SSA CRD apply/wait phase or compatibility field.
@@ -217,7 +217,7 @@ quiescence or measurement-state mutation. Other server, CRD, measurement
 configuration, hook and mixed changes retain the ADR 0019 STOP, including
 when chart differences have approval. Noneligible recipes stop before custom
 commands. Disk, authentication, revision, chart-review, backups, server dry-run,
-registry provenance, readiness and acceptance gates remain active. There is no
+registry artifact/platform, readiness and acceptance gates remain active. There is no
 force/ignore switch, object-UID exception, manual Helm bypass or guard removal.
 
 `prejobRepairOnly: true` is a separate, failure-only repair mode. Select exactly
@@ -267,8 +267,8 @@ Use the normal entrypoint and exact chart-diff approval flow:
 `./hack/fast-deploy.sh run RECIPE.json --inspect --evidence INSPECT_DIR`, then
 `./hack/fast-deploy.sh run RECIPE.json --execute --evidence EXECUTE_DIR
 --chart-diff-approved REVIEWED_DIFF`. Execution retains revision/authentication,
-registry provenance, profile/evidence acceptance and selected-image readiness
-checks. Only the three image-bearing resources enter server dry-run. Helm upgrade
+registry artifact/platform checks, profile/evidence diagnostics and selected-image
+readiness. Only the three image-bearing resources enter server dry-run. Helm upgrade
 uses `--no-hooks`; no CRDs, GPU/runtime probes, serving quiescence, scheduler
 settings changes or measurement-resource writes run in this mode. This wrapper
 installs the repair images; it does not delete retained requests or start a new
@@ -285,34 +285,35 @@ In particular Query is a separate upstream image; updating server does not
 update Query. Runtime/harness roles have no inferred Helm image mapping.
 Per-image objects may specify `role`, `platforms`, `buildArgs`, or
 `prebuilt: "/absolute/private/publication.json"` instead of a role string.
-Prebuilt receipts must carry matching `sourceSHA` and role provenance:
-`dockerfile`, `buildArgs`, `platforms`, `digest`, `platformDigests`, and
-`platformReceipts`. Execution verifies registry manifests/platform configs and
-OCI source revision before using digest-pinned images; it does not rebuild
-prebuilt inputs. Credentials do not belong in recipes, argv, or build args.
+Prebuilt receipts select an existing role's image in the selected repository and
+its artifact digest. Execution reads that registry artifact and its requested
+platform configs, then uses digest-pinned images without rebuilding. Historical
+source/build metadata and observed OCI labels remain evidence; SHA/label or old
+receipt-platform comparisons do not gate selection. Credentials do not belong in
+recipes, argv, or build args.
 
 To build only changed inputs, set recipe
 `"reusePublication": "/absolute/private/prior-deployment/publication.json"`.
 This is the existing publication evidence, not a new cache database. Missing
 roles build normally; omit the field to rebuild the selection. Explicit
-`prebuilt` entries retain their same-source contract and take precedence.
+`prebuilt` entries take precedence and need not share the deployment source.
 
 If a build pushed successfully but stopped before its receipt was verified, name
 that role's existing metadata explicitly:
 `"reusePendingBuilds": {"firstfloor": "/absolute/private/prior-deployment/firstfloor-build.json"}`.
 This requires `reusePublication` and the same prior directory's frozen
-`image-plan.json`. The planner binds the original role, build inputs, image and
-metadata; inspect/execute verify the published tag, platforms and original OCI
-revision. A pending candidate becomes a receipt only after registry verification.
+`image-plan.json`. The planner follows the originating receipt or `buildInputs`,
+not a later deployment wrapper's inputs. Inspect/execute check the selected
+registry artifact and requested platforms before creating a verified receipt.
 Invalid or changed pending inputs stop. Pending reuse also rejects custom
 preflight commands, which can mutate build inputs. Retain the old evidence and
 use a new execution directory.
 
-The planner reads each role's original OCI revision from platform receipts
-and uses Git diff against the requested source for its Dockerfile, local
-COPY/ADD inputs, and Dockerignore files. Effective arguments, platforms and
-the pinned harness power source must also match. Unknown/dynamic input forms
-or unavailable Git commits rebuild conservatively with a visible reason.
+The planner uses each role's recorded originating build source and actual
+Dockerfile/build arguments/platforms, including nested pending `buildInputs`.
+Git diff compares its Dockerfile, local COPY/ADD inputs and Dockerignore files
+against the requested source; the pinned harness power source must also match.
+Unknown origin, dynamic inputs or unavailable Git commits rebuild conservatively.
 Configured custom preflight commands also disable inferred reuse: they can
 modify archived inputs before a build. Tracked `.gitattributes` in either
 revision, or repository-local `info/attributes`, conservatively rebuild
@@ -326,12 +327,13 @@ intentionally refreshing those.
 
 Dry-run lists `action` (`build`, `reuse`, `prebuilt`, `verify-pending`), `reason`,
 and `inputPaths` without network access; candidates still require verification.
-Inspect rechecks candidate registry digests/platforms/OCI revisions,
-and execute repeats the same checks before publication. `image-plan.json`
-freezes the decisions and prior receipts. Publication `sourceSHA` identifies
-the deployment source; each role's `sourceSHA` identifies its actual image
-source, which can remain older. Reused images keep their original digest and
-labels; runtime probes and declaration activation are **not** skipped.
+Inspect checks candidate registry artifacts and requested platform configs;
+execute repeats those checks before publication. `image-plan.json` freezes the
+decisions and prior receipts. Publication `sourceSHA` records the deployment
+source; role `sourceSHA` preserves the recorded build origin, which can be older
+or unknown for explicit prebuilt inputs. OCI revisions are observations, not
+proof of that origin. Reused images retain their digest and labels; runtime
+probes and declaration activation are **not** skipped.
 Use a previous record that actually contains the roles being considered;
 the runner never scans unrelated evidence directories or invents a latest tag.
 
@@ -396,6 +398,10 @@ Additional `apiChecks` use objects such as
 `{"path": "/api/v1/scheduler/state", "maxBytes": 1048576}` and require HTTP
 200 with body size strictly **less than** `maxBytes`. The existing environment's
 `d2.apiBase`, `d2.caFile`, and `d2.tokenFile` supply HTTPS/CA/Bearer auth.
+Pod readiness identifies the declared image and matching container name, then
+requires container and Pod Ready; restart count and status imageID comparisons
+are not gates. Authentication follows actual API responses, without comparing
+token expiry against an estimated execution budget.
 `READY` means operational Pods/APIs and required steps completed, not browser,
 hardware, campaign or scientific-result acceptance.
 
@@ -584,14 +590,14 @@ select the existing record fields. Actual record order/IDs/bytes/hash are Ready
 evidence, not host inputs. Every generator Pod uses the frozen
 `loadGenerator.nodeName` verbatim. Memory and shard/barrier declarations remain.
 
-Generated arrivals travel as compact segment/rate/seed declarations, not an argv
-array of every offset. Conductor and producer use the same load-generator
-`segmented_arrivals_ns` function; producer checks the regenerated SHA and count
-before any inference. Explicit `traceRefs` instead travel as a file: preparation
-freezes the evaluator Pod's existing workspace PVC identity, and the producer
-mounts its staged trace read-only at `/evaluation/.chill-arrivals.json`.
-Both file-byte SHA and logical arrival SHA/count must match. The existing Pod
-get and Job creation grants suffice; no ConfigMap or new RBAC is required.
+The controller-driven prepare step freezes generated and explicit `traceRefs`
+arrival offsets once. Both use the evaluator Pod's existing workspace PVC:
+the producer mounts the staged offsets read-only at
+`/evaluation/.chill-arrivals.json` and replays them without regenerating arrivals.
+SHA/count metadata remains evidence, not an acceptance gate. Numeric schedule
+validity, actual response quality, finite drain and exact owned-writer cleanup
+remain enforced. Existing Pod get and Job creation grants suffice; no ConfigMap
+or new RBAC is required.
 
 At prepare start, freeze the participating nodes' Running/Pending Pod facts in
 `environment-start.json` and `snapshot.environmentStart`: namespace, name, UID,

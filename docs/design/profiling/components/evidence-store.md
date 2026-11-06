@@ -23,8 +23,8 @@ or Ceph failure, HA, backup, TLS, credential rotation, retention, or garbage col
 | `internal/evidencestore` | Product-neutral location, reference, receipt, immutable-create outcomes, typed errors, size enforcement; no Kubernetes, Operator, Profiler, or CHILL API imports |
 | `internal/evidencestore/s3` | Conditional create, retrieval, S3 error translation, cancellation, response cleanup; sole S3 client dependency |
 | CHILL Operator / `internal/operator/evidencestore` | Deployment, ClusterIP Service, Secret, persistent storage, bootstrap Job, availability; never reads or verifies Run evidence and does not import the S3 adapter |
-| Measurement worker | Assemble runtime/power raw bytes, calculate identity, immutable-create raw measurement, return bounded receipt; no Kubernetes storage/Service discovery |
-| Profiler controller | Independently retrieve receipt target, validate schema/links, combine terminal Kubernetes facts into separate immutable execution evidence, publish compact verified reference; never reconcile storage operand |
+| Measurement worker | Assemble runtime/power raw bytes, immutable-create raw measurement within its byte budget, return bounded receipt; no Kubernetes storage/Service discovery |
+| Profiler controller | Authoritative bounded decode and physical execution/ownership validation; combine terminal Kubernetes facts into immutable execution evidence; publish compact reference |
 | Kubernetes, CSI, EdgeMesh, engine | Native lifecycle, volumes, edge Service routing, stored-byte serving |
 
 ## Dependency direction
@@ -36,24 +36,30 @@ not authorize changes across those ownership boundaries.
 ## Immutable object contract
 
 - Reference: logical store, opaque key, producer metadata, byte size.
-- Create: new object or existing key, never overwrite. Candidate bytes must match
-  declared size before conditional create; mismatch returns content-mismatch and
-  leaves no new object.
-- Read: independent and byte-bounded, using streaming or a bounded temporary file,
-  not CR status or an unbounded in-memory byte slice.
+- Create: conditional create, never overwrite. Candidate bytes must match their
+  declared size before upload. Existing-key outcome preserves the retained winner;
+  the store does not download it to compare candidate bytes.
+- Read: cap actual bytes independently of the reference's declared Size. Streaming
+  and caller-side `limit+1` reads enforce the bound; Size is not content proof.
 - Stable errors: not-found, authentication, precondition, timeout, transport,
   content mismatch.
 - One configured physical S3 bucket binds a logical store; backend bucket naming
   never replaces logical identity. One adapter, no backend plugin registry.
 - Receipt adds schema version and create outcome; excludes endpoint, credentials,
   samples, Pod snapshot, backend response. It is a hint, never verification proof.
-- Location-only recovery handles deterministic keys committed before reference
-  persistence: bound bytes, strict-decode one object, validate schema/Run links.
-  Invalid existing objects are never replaced.
-- The evidence loader is the single read-side validation boundary: size-bound,
-  strict schema decode and cross-record links produce opaque active/idle evidence.
-  Finalization retains independent read-after-write decode. Scientific admission
-  was removed (`788bcf93`); retained evidence supports execution and numeric derivation.
+- Location recovery reads the retained winner without requiring deterministic-key
+  spelling or receipt/candidate byte equality. Invalid retained objects are never
+  replaced.
+- The evidence loader owns retained read validation: bounded bytes, strict decode,
+  supported schemas, raw runtime/observer facts and terminal ownership links.
+  Raw RunConfig is execution authority; the finalized envelope's Config copy is
+  provenance. Consumers do not re-admit it against mutable Run specs or repeated
+  status/reference/provenance copies.
+- Finalization independently reads after conditional create and returns the
+  validated immutable winner, including after a race. Job/Pod/Node ownership still
+  binds reuse; a different valid candidate never overwrites the winner.
+- Scientific admission was removed (`788bcf93`); retained evidence supports
+  execution and numeric derivation.
 
 ## Kubernetes management contract
 

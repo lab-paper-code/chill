@@ -42,10 +42,10 @@ unchanged. This is neither a timeout increase nor a retry/recovery path.
 | Role | Contract |
 |---|---|
 | Artifact init | Copy declared supply-image path as a regular file to runtime-specific destination |
-| Runtime worker | Sole raw writer: verify RunConfig/artifact, execute firstfloor, coordinate window, compose validated results, immutable-create raw object, write bounded receipt |
+| Runtime worker | Sole raw writer: validate executable RunConfig/artifact, execute firstfloor, coordinate window, compose boundary-validated results, immutable-create raw object, write bounded receipt |
 | MetricObserver | Wait for start; bounded observation; observe end, atomically publish only metric result, exit |
 | WorkloadObserver | Target-Node list-watch; close after same-watch metric-container successful exit fence; atomically publish only workload result |
-| Profiler | Materialize/observe native resources, independently verify immutable raw evidence and finalize with terminal Kubernetes facts; never inference/power polling |
+| Profiler | Materialize/observe native resources, load immutable raw evidence through the authoritative reader, finalize with terminal Kubernetes facts; never inference/power polling |
 
 No uploader container: it adds handoff/failure ownership without removing worker
 responsibility. MetricObserver has no storage credentials. Runtime image is the
@@ -53,14 +53,13 @@ trusted complete worker/firstfloor actor/runner plus ORT/RKNNLite helpers; trust
 execution references that image, not the artifact init supply image. Observer
 images remain separately pinned; only WorkloadObserver receives Kubernetes token.
 
-All three regular processes strict-decode/validate the same canonical RunConfig
-at their own boundary; runtime carries `profilingrun.VerifiedRunConfig`, not
-parallel mutable inputs. Result-file readers validate once after atomic handoff;
-runtime adapters strict-decode/check process results once. Coordinator passes
-sealed, unmutated source-package verified values to raw composition, which checks
-only new cross-record source/window relationships and canonicalizes without
-revalidating nested values. Deploy the three images as one schema-compatible
-set, each independently pinned to an exact OCI reference.
+Each regular process validates its delivered RunConfig at its own execution
+boundary; runtime carries `profilingrun.VerifiedRunConfig`, not parallel mutable
+inputs. Atomic result readers and runtime adapters validate their process results
+once. Coordinator consumes sealed values and checks only new source, target and
+window relationships before raw composition. Retained loading validates the raw
+record independently; later consumers do not repeat its spec/status/provenance
+comparisons. Deploy schema-compatible images, each pinned independently.
 
 ## RunConfig and delivery inputs
 
@@ -70,13 +69,11 @@ compatibility file. Resolve candidate compatibility before Job creation. Only
 runtime execution material enters `RunConfig.delivery`; selected policy payloads
 stay controller-side Job provenance.
 
-Job recovery compares caller-selected fields (including Workload name) with the
-requested ProfilingRun. Standalone SLO/sample-count/source facts resolved during
-preparation are not caller-selected. Campaign children instead carry the plan's
-frozen Workload UID, percentile, target and native sample count, so those selected
-facts are retained and checked without rereading the Workload. ResourceVersion
-is raw provenance only and never an admission/identity gate. A standalone Run
-warms its one selected batch by default. BEO children share the serving/idle/active
+Authenticated recorded-Job recovery uses its immutable executable RunConfig,
+without re-admitting it against caller-selected fields or mutable Workload/SLO
+copies. Campaign children retain the plan's frozen Workload UID, percentile,
+target and native sample count. ResourceVersion remains provenance.
+A standalone Run warms its one selected batch by default. BEO children share the serving/idle/active
 actor recipe: startup warmup domain `[1]`, with the original active warmup count
 in `StartupWarmupIterations` and `Measurement.WarmupIterations=0`.
 The actor's full `BatchSizes` declares capability; it does not eagerly execute
@@ -92,11 +89,12 @@ mounts are runtime-only. Request extended resource only if report declares one.
 Supplemental groups are necessarily Pod-level; observers get no device mount or
 privilege.
 
-Go verifies projected candidate report once before adapter construction.
-`runtime/rknnlite/runner.py`/firstfloor own RKNNLite artifact, image-package,
-host-library, driver, platform, character-device, core-mask, initialization and
-inference checks, not ORT provider vocabulary. `runtime/firstfloor/measurement.py`
-compares actual runtime facts to delivered host declarations before raw encoding.
+Go resolves the candidate report before adapter construction.
+`runtime/rknnlite/runner.py`/firstfloor own actual artifact loading, accessible
+host libraries/devices, platform, core-mask, initialization and inference checks.
+Actual runtime/package/driver versions are retained observations, not equality
+gates against declared versions. ORT/CUDA still require the actual selected
+backend/provider/device, tensor metadata and initialized batches.
 
 Active/idle accept only matching current Go/Python RunConfig/request schemas.
 Optional physical-host contract is semantic library/driver/platform/device/
@@ -212,9 +210,9 @@ Runtime: strict config validation; verify Pod UID, Node, artifact, runtime/
 provider/output-validation capability and observe actual CPU environment; bounded wait for both preflight readiness
 signals; actor startup warmup and, for loaded-idle, settling; request/await retained
 workload window; emit start; measure until elapsed and sample floors (idle: duration); emit end; bounded
-wait for both results; check new source/identity/summary/timestamp/coverage
-relationships; encode mode-specific raw object and bounded size; one immutable
-create; write validated receipt to `/dev/termination-log`; exit zero.
+wait for both results; check new source/target/window relationships; encode
+mode-specific raw object within the byte cap; immutable-create without replacing
+an existing winner; write bounded validated receipt to `/dev/termination-log`; exit zero.
 
 Idle start requires exact load/common startup warmup and full observer-independent
 settling; its measured window requires monotonic duration, zero inference and
@@ -246,16 +244,18 @@ instead of active latency/output-validation proof. Both share store/key/size
 reference boundary. No Job completion, terminal Pod/Node snapshot, credentials or
 backend response: controller adds native facts independently during finalization.
 
-Exit zero requires immutable commit and exactly one
-`evidence-store-receipt.v1alpha1` JSON termination message within 4 KiB. Receipt
-is a hint; controller independently retrieves/verifies. Failure codes:
+Exit zero requires successful immutable-create outcome and one
+`evidence-store-receipt.v1alpha1` JSON termination message within 4 KiB. An existing
+key keeps its original winner without candidate-byte comparison. The receipt is
+a hint: finalization independently reads, bounds and validates retained evidence.
+Failure codes:
 
 | Code | Meaning |
 |---:|---|
 | 2 | Invalid/drifted RunConfig or delivery |
 | 3 | Artifact/runtime/provider/inference/output validation |
 | 4 | Observer readiness/execution/handoff/result validation |
-| 5 | Raw encoding/immutable write/post-write verification |
+| 5 | Raw encoding/byte bound/immutable write/receipt failure |
 
 The worker records its versioned phase and typed failure in `/dev/termination-log`;
 successful commit replaces that record with the receipt. Profiler retains the
@@ -264,23 +264,23 @@ first runtime termination and native Job reason/message, including early
 An absent Pod or execution stage leaves classification unknown even when the Job
 reports `DeadlineExceeded`. Unstructured logs remain diagnostic.
 
-Observer images enter measurement-protocol provenance; runtime/worker image enters
-execution-state provenance. CurvePlan v1alpha12 freezes the common actor startup
-recipe and runtime package versions separately from active/idle collection and
-sample-stop policy. Active/idle pairing still checks the recorded recipe and
-protocol, but latest-success performance identity excludes exact runtime image,
-observers, windows and meter identity. Artifact/preprocessor recipes and images,
-input population, initialized/warmup domains and CPU/thread/memory/power settings
-remain semantic conditions. A collection-only change cannot revive a replaced
-older sibling; latest failed selection and explicit reuse remain separate.
+Observer images and runtime/package/driver versions remain provenance.
+CurvePlan v1alpha12 retains the actor startup recipe and active/idle collection
+policy; these stored facts are not repeated provenance-equality rejection gates.
+Latest-success performance identity excludes runtime/package versions, exact
+runtime/observer images, initialized/warmup domains, collection windows and meter
+identity. Model/artifact/preprocessor/input population, actual backend/device and
+memory/power conditions remain relevant. Actual inference, shape, fixed-batch
+counts, native service-pair integrity and selected-device checks still apply.
+Latest failed selection and operator-directed replacement/reuse remain separate.
 
 ## Kubernetes execution and bounded capacity
 
 One deterministic Run-owned Job: `parallelism=1`, `completions=1`,
 `backoffLimit=0`, `restartPolicy=Never`, no replacement for same Run;
 `automountServiceAccountToken=false`; Downward API Pod UID/scheduled Node; exact
-Node placement/configured CPU request-limit; immutable artifact/runtime/observer
-OCI references; restricted security contexts; bounded active deadline.
+Node placement, shared CPU and frozen memory/accelerator resources; immutable
+artifact/runtime/observer OCI references; restricted contexts; bounded deadline.
 Job name derives from Run UID: losing/deleting recorded Job never permits repeat.
 
 One versioned installation worker policy derives resources, deadlines/handoff
