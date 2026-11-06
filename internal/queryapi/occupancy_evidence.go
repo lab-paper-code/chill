@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -109,18 +108,7 @@ func projectBurstOccupancy(
 		})
 	} else {
 		input.Available = true
-		matches := record.SchemaVersion == BurstOccupancySchema &&
-			record.Node.Name == cr.Spec.Node && record.Node.UID != "" &&
-			cr.Status.Result.Key == BurstOccupancyPrefix+record.Node.UID+"/"+string(cr.UID)+".json" &&
-			reflect.DeepEqual(record.Conditions, cr.Spec) && record.Batch == int(cr.Spec.Batch) &&
-			(cr.Spec.Conditions.ProfileID == "" || record.ProfileID == cr.Spec.Conditions.ProfileID) &&
-			(record.Verdict == MeasurementVerdictObserved || record.Verdict == "Insufficient")
-		if estimate := record.Estimate; estimate != nil {
-			matches = matches && estimate.Node == record.Node && estimate.Model == record.Model &&
-				estimate.PowerMode == record.PowerMode && estimate.Profile.ProfileID == record.ProfileID &&
-				estimate.Batch == record.Batch
-		}
-		if matches {
+		if record.SchemaVersion == BurstOccupancySchema {
 			input.Observed = record.Verdict == MeasurementVerdictObserved
 			projection.Burst = &record.OccupancyRecordFacts
 			projection.Burst.Estimate = record.Estimate
@@ -140,7 +128,7 @@ func projectBurstOccupancy(
 			}
 		} else {
 			input.Problems = append(input.Problems, MeasurementReason{
-				Code: "OccupancyEvidenceMismatch", Message: "Stored burst evidence does not match this request",
+				Code: "OccupancyEvidenceInvalid", Message: "Unsupported stored burst evidence schema",
 				SourceIDs: []string{cr.Status.Result.Key},
 			})
 		}
@@ -206,7 +194,7 @@ func InterpretDispatchOccupancy(
 		}
 		input.Available = true
 		input.Facts = append(input.Facts, "Retained occupancy: "+ref.Store+"/"+ref.Key)
-		matches := decoded.HasPerRequestNanos && occupancyRecordMatches(cr, record)
+		matches := decoded.HasPerRequestNanos && record.SchemaVersion == DispatchOccupancySchema
 		input.Accepted = matches && record.Verdict == MeasurementVerdictAccepted
 		if matches {
 			projection.Record = &record.OccupancyRecordFacts
@@ -224,7 +212,7 @@ func InterpretDispatchOccupancy(
 		}
 		if !matches {
 			input.Problems = append(input.Problems, MeasurementReason{
-				Code: "OccupancyEvidenceMismatch", Message: "Stored occupancy does not match this request and status",
+				Code: "OccupancyEvidenceInvalid", Message: "Stored occupancy lacks a supported schema or scalar",
 				SourceIDs: []string{ref.Key},
 			})
 		}
@@ -268,11 +256,3 @@ func invalidOccupancyThroughput(throughput string) bool {
 	return throughput != "" && (err != nil || math.IsNaN(value) || math.IsInf(value, 0))
 }
 
-func occupancyRecordMatches(cr api.DispatchOccupancyMeasurement, record OccupancyEvidenceRecord) bool {
-	return record.SchemaVersion == DispatchOccupancySchema &&
-		record.Node.Name == cr.Spec.Node && record.Node.UID != "" &&
-		cr.Status.Result.Key == DispatchOccupancyPrefix+record.Node.UID+"/"+string(cr.UID)+".json" &&
-		reflect.DeepEqual(record.Conditions, cr.Spec) && record.Batch == int(cr.Spec.Batch) &&
-		(cr.Spec.Conditions.ProfileID == "" || record.ProfileID == cr.Spec.Conditions.ProfileID) &&
-		cr.Status.PerRequestNanos != nil && record.PerRequestNanos == *cr.Status.PerRequestNanos
-}

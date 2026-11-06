@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	api "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/queryapi"
@@ -52,7 +51,7 @@ func dispatchOccupancyHTTPProjection(
 // decodeOccupancyEvidence adapts the retained serving wire format, including
 // validation of fields that queries do not otherwise consume.
 func decodeOccupancyEvidence(
-	cr api.DispatchOccupancyMeasurement,
+	_ api.DispatchOccupancyMeasurement,
 	raw []byte,
 ) (queryapi.DecodedOccupancyEvidence, error) {
 	var header struct {
@@ -62,8 +61,7 @@ func decodeOccupancyEvidence(
 	out := queryapi.DecodedOccupancyEvidence{}
 	headerErr := json.Unmarshal(raw, &header)
 	out.HasPerRequestNanos = header.PerRequestNanos != nil
-	if headerErr == nil && (header.SchemaVersion == servingkube.BurstOccupancySchema ||
-		strings.HasPrefix(cr.Status.Result.Key, servingkube.BurstOccupancyPrefix)) {
+	if headerErr == nil && header.SchemaVersion == servingkube.BurstOccupancySchema {
 		out.Burst = true
 		var record servingkube.BurstOccupancyRecord
 		if err := json.Unmarshal(raw, &record); err != nil {

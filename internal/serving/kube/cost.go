@@ -17,7 +17,6 @@ import (
 
 	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
-	"github.com/lab-paper-code/chill/internal/metricobserver"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -68,7 +67,6 @@ type CostEvidence struct {
 }
 
 type operationEvidence struct {
-	meter    servingops.MeterDeclaration
 	cost     *serving.OperationCost
 	baseline *serving.NodeBaseline
 	profile  *serving.Profile // retained immutable preparation body, including old catalog versions
@@ -79,8 +77,6 @@ type operationEvidence struct {
 }
 
 type powerEvidence struct {
-	node   serving.NodeReference
-	source metricobserver.SourceIdentity
 	costs  []serving.OperationCost
 }
 
@@ -96,7 +92,7 @@ func NewCostEvidence(store *Store, objects costObjects, maxBytes int64) (*CostEv
 // Refresh lists operation measurements under the fixed prefix and Complete
 // PowerModeTransitionCost objects in namespaces. A listing failure fails the
 // refresh; one failed record or measurement becomes its own CostIssue.
-func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters []servingops.MeterDeclaration, profiles []serving.Profile) (CostView, error) {
+func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, profiles []serving.Profile) (CostView, error) {
 	view := CostView{Issues: []CostIssue{}}
 	identities, err := e.objects.List(ctx, servingops.OperationMeasurementPrefix)
 	if err != nil {
@@ -129,8 +125,6 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 		case evidence.skip:
 		case evidence.err != nil:
 			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: CostEvidenceInvalid, Reason: evidence.err.Error()})
-		case !slices.ContainsFunc(meters, func(m servingops.MeterDeclaration) bool { return reflect.DeepEqual(m, evidence.meter) }):
-			view.Issues = append(view.Issues, CostIssue{Source: identity.Key, Code: MeterUndeclared, Reason: "record meter " + evidence.meter.ID + " differs from every configured meter"})
 		case evidence.baseline != nil:
 			view.Baselines = append(view.Baselines, *evidence.baseline)
 		default:
@@ -144,7 +138,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 			profiles = append(profiles, *evidence.profile)
 		}
 	}
-	if err = e.refreshPower(ctx, namespaces, meters, profiles, &view); err != nil {
+	if err = e.refreshPower(ctx, namespaces, &view); err != nil {
 		return CostView{}, err
 	}
 	if err = e.refreshOccupancy(ctx, &view); err != nil {
@@ -182,7 +176,7 @@ func (e *CostEvidence) Refresh(ctx context.Context, namespaces []string, meters 
 	return view, nil
 }
 
-func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, meters []servingops.MeterDeclaration, profiles []serving.Profile, view *CostView) error {
+func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, view *CostView) error {
 	listed := map[string]bool{}
 	for _, namespace := range namespaces {
 		measurements := &edge.PowerModeTransitionCostList{}
@@ -207,23 +201,13 @@ func (e *CostEvidence) refreshPower(ctx context.Context, namespaces []string, me
 			evidence, cached := e.power[identity]
 			if !cached {
 				var err error
-				if evidence, err = e.loadPowerCost(ctx, measurement, profiles); err != nil {
+				if evidence, err = e.loadPowerCost(ctx, measurement); err != nil {
 					view.Issues = append(view.Issues, CostIssue{Source: name, Code: CostEvidenceInvalid, Reason: err.Error()})
 					continue
 				}
 				e.power[identity] = evidence
 			}
-			i := slices.IndexFunc(meters, func(m servingops.MeterDeclaration) bool {
-				return m.Node == evidence.node && reflect.DeepEqual(m.Source, evidence.source)
-			})
-			if i < 0 {
-				view.Issues = append(view.Issues, CostIssue{Source: name, Code: MeterUndeclared, Reason: "no configured meter has the measured Node and power source"})
-				continue
-			}
-			for _, cost := range evidence.costs {
-				cost.Meter, cost.Scope = meters[i].ID, meters[i].Scope
-				view.Costs = append(view.Costs, cost)
-			}
+			view.Costs = append(view.Costs, evidence.costs...)
 		}
 	}
 	maps.DeleteFunc(e.power, func(identity string, _ powerEvidence) bool { return !listed[identity] })
@@ -306,8 +290,7 @@ func (e *CostEvidence) readOperationEvidence(ctx context.Context, ref evidencest
 		}
 		return operationEvidence{skip: true}, nil
 	}
-	evidence.meter = record.Request.Meter
-	if evidence.err = validateRetainedMeasurement(record, ref); evidence.err != nil {
+	if evidence.err = validateRetainedMeasurement(record); evidence.err != nil {
 		return evidence, nil
 	}
 	if prepare := record.Request.Operation.Prepare; prepare != nil {
@@ -374,10 +357,7 @@ func latestBy[T any](items []T, key func(T) string, order func(T) (string, int64
 	}
 	return result
 }
-func validateRetainedMeasurement(record servingops.OperationMeasurement, ref evidencestore.ObjectIdentity) error {
-	if ref.Key != servingops.OperationMeasurementKey(record.Request.Operation) {
-		return errors.New("record is not at its fixed operation measurement key")
-	}
+func validateRetainedMeasurement(record servingops.OperationMeasurement) error {
 	if record.Result.Operation.ID != record.Request.Operation.ID || record.Result.Operation.Node != record.Request.Operation.Node || record.Result.Operation.Kind != record.Request.Operation.Kind || !record.Result.EndedAt.After(record.Result.StartedAt) {
 		return errors.New("raw operation conditions/window mismatch")
 	}
@@ -409,14 +389,13 @@ func idleMeasurementBaseline(record servingops.OperationMeasurement, ref evidenc
 	if err != nil {
 		return serving.NodeBaseline{}, err
 	}
-	joules := measurement.Joules
-	if record.WallJoules == nil || joules != *record.WallJoules || joules/record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds() != *record.MeanWatts || record.Result.Status != servingstate.NativeOperationComplete {
-		return serving.NodeBaseline{}, errors.New("idle aggregate differs from retained raw integral/window")
+	if record.WallJoules == nil || math.IsNaN(*record.WallJoules) || math.IsInf(*record.WallJoules, 0) || *record.WallJoules < 0 || record.Result.Status != servingstate.NativeOperationComplete {
+		return serving.NodeBaseline{}, errors.New("idle aggregate lacks finite completed energy")
 	}
 	keys := servingops.StateProfileKeys(record.Result.Actual)
 	slices.Sort(keys)
 	meter := record.Request.Meter
-	return serving.NodeBaseline{ID: record.Request.Operation.ID, Node: meter.Node, PowerMode: record.Result.Actual.PowerMode, State: keys, Watts: *record.MeanWatts, WattsUncertainty: measurement.UncertaintyJoules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds(), Meter: meter.ID, Scope: meter.Scope, MeasuredAt: record.Result.EndedAt, Reference: ref}, nil
+	return serving.NodeBaseline{ID: record.Request.Operation.ID, Node: meter.Node, PowerMode: record.Result.Actual.PowerMode, State: keys, Watts: measurement.Joules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds(), WattsUncertainty: measurement.UncertaintyJoules / record.Result.EndedAt.Sub(record.Result.StartedAt).Seconds(), Meter: meter.ID, Scope: meter.Scope, MeasuredAt: record.Result.EndedAt, Reference: ref}, nil
 }
 
 func retainedStateIdentities(states []string, identities map[string]string) map[string]string {

@@ -161,6 +161,23 @@ func TestReplayEnergyRemainsNonnegativeWithResolutionMarker(t *testing.T) {
 	}
 }
 
+func TestPlannerConsumesAdmittedDistributionWithoutProvenanceReadmission(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	profile := snapshot.Instances[0].Profile
+	profile.Evidence = nil
+	for index := range profile.Batches[0].ServiceSamples {
+		profile.Batches[0].ServiceSamples[index].TrialID = ""
+	}
+	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	if slices.Contains(decision.Reasons, "MissingProfileEvidence:i1") || slices.Contains(decision.Reasons, "InvalidServiceSample:i1") {
+		t.Fatalf("planner re-admitted sample provenance: %+v", decision)
+	}
+	keep := schedulerKeepForTest(t, settings, snapshot)
+	if keep.ExpectedJoules == nil || !schedulerFinite(*keep.ExpectedJoules) || *keep.ExpectedJoules <= 0 {
+		t.Fatalf("admitted numeric distribution stopped supporting replay: %+v", keep)
+	}
+}
+
 func schedulerTestCPU(i SchedulerInstance) SchedulerInstance {
 	p := *i.Profile
 	p.ID += "-other-cpu"

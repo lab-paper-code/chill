@@ -18,8 +18,6 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const projectionForeignIdentity = "foreign-operation-identity"
-
 type projectionObjects struct {
 	payload   []byte
 	locations []evidencestore.ObjectLocation
@@ -141,42 +139,32 @@ func TestLoadOperationCostStepsActualHistoryAndIdle(t *testing.T) {
 	}
 }
 
-func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
-	for _, name := range []string{"foreign-uid", "index", "name", "kind", "foreign-node", "node-uid", "key", "store", "result-id", "result-kind", "result-node", "schema", "verdict", "cost", "idle", "corrupt", "bound"} {
+func TestLoadOperationCostStepsUsesStoredHistoryWithoutReadmission(t *testing.T) {
+	cr, record := projectionRecord(t)
+	cr.UID = "new-request"
+	cr.Spec.Steps = nil
+	cr.Status.Steps[0].Name = "renamed"
+	cr.Status.Steps[0].Key = "archive/step.json"
+	cr.Status.Steps[0].Verdict = string(edge.MeasurementPhaseFailed)
+	record.Request.Store = "historical-store"
+	record.Power.Samples = nil
+	record.EnergyUncertaintyJoules = nil
+	record.Result.Operation.ID = "old-result-metadata"
+	steps, err := LoadOperationCostSteps(context.Background(), cr,
+		&projectionObjects{payload: projectionPayload(t, record)}, "store", 1<<20)
+	if err != nil || len(steps) != 1 || steps[0].Verdict != servingstate.MeasurementAccepted ||
+		steps[0].DurationNanos == nil || *steps[0].DurationNanos != int64(time.Second) ||
+		steps[0].WallJoules == nil || *steps[0].WallJoules != 20 {
+		t.Fatalf("stored accepted history was re-admitted or hidden: %+v %v", steps, err)
+	}
+}
+
+func TestLoadOperationCostStepsRejectsUnreadableEvidence(t *testing.T) {
+	for _, name := range []string{"schema", "corrupt", "bound"} {
 		t.Run(name, func(t *testing.T) {
 			cr, record := projectionRecord(t)
-			switch name {
-			case "foreign-uid":
-				cr.UID = projectionForeignIdentity
-			case "index":
-				record.Request.Operation.ID = "cr-uid.1.prepare"
-			case "name":
-				cr.Status.Steps[0].Name = projectionForeignIdentity
-			case "kind":
-				record.Request.Operation.Kind = servingstate.OperationRemove
-			case "foreign-node":
-				record.Request.Operation.Node.Name = projectionForeignIdentity
-			case "node-uid":
-				record.Request.Operation.Node.UID = projectionForeignIdentity
-			case "key":
-				cr.Status.Steps[0].Key += ".other"
-			case "store":
-				record.Request.Store = projectionForeignIdentity
-			case "result-id":
-				record.Result.Operation.ID = projectionForeignIdentity
-			case "result-kind":
-				record.Result.Operation.Kind = servingstate.OperationIdle
-			case "result-node":
-				record.Result.Operation.Node.UID = projectionForeignIdentity
-			case "schema":
+			if name == "schema" {
 				record.SchemaVersion = "unsupported-projection-schema"
-			case "verdict":
-				cr.Status.Steps[0].Verdict = string(edge.MeasurementPhaseFailed)
-			case "cost":
-				record.WallJoules = nil
-			case "idle":
-				cr.Spec.Steps[0].Kind = edge.OperationCostStepIdle
-				record.Request.Operation.Kind, record.Result.Operation.Kind = servingstate.OperationIdle, servingstate.OperationIdle
 			}
 			objects := &projectionObjects{payload: projectionPayload(t, record)}
 			bound := int64(1 << 20)
@@ -187,7 +175,7 @@ func TestLoadOperationCostStepsRejectsForeignAndCorruptEvidence(t *testing.T) {
 				bound = int64(len(objects.payload) - 1)
 			}
 			if _, err := LoadOperationCostSteps(context.Background(), cr, objects, "store", bound); err == nil {
-				t.Fatal("accepted foreign/corrupt evidence")
+				t.Fatal("accepted unreadable evidence")
 			}
 		})
 	}
@@ -235,7 +223,7 @@ func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
 	record.Result.Before.PowerMode, record.Result.Actual.PowerMode = "MAXN", "MODE_15W"
 	record.Request.Operation.Prepare = &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{Profile: &serving.Profile{}}}
 	record.Request.Operation.Prepare.Instance.Profile.Condition.LogicalModel = "frozen-model"
-	got, err := projectOperationStep(cr, 0, "store", record)
+	got, err := projectOperationStep(record)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +232,7 @@ func TestOperationProjectionRetainsOnlyRecordedDirectionAndModel(t *testing.T) {
 	}
 	record.Request.Operation.Prepare = nil
 	record.Result = servingstate.OperationResult{}
-	got, err = projectOperationStep(cr, 0, "store", record)
+	got, err = projectOperationStep(record)
 	if err != nil || got.FromPowerMode != "" || got.ToPowerMode != "" || got.Model != "" {
 		t.Fatalf("missing metadata inferred from plan or name: %+v, %v", got, err)
 	}

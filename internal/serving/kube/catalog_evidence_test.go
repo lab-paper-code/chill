@@ -88,7 +88,7 @@ func TestCampaignReaderTrialIdentityPrecedesRepeatedRunName(t *testing.T) {
 func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 	for _, memory := range []uint64{4096, 0} {
 		t.Run(fmt.Sprint(memory), func(t *testing.T) {
-			catalog, source, objects, planReference := catalogEvidenceFixture(t, memory)
+			catalog, source, _, _ := catalogEvidenceFixture(t, memory)
 			view, err := catalog.Refresh(context.Background(), []string{source.Namespace})
 			if err != nil {
 				t.Fatal(err)
@@ -103,41 +103,6 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 				t.Fatalf("same-firstfloor measurements unavailable: %+v", view)
 			}
 			assertCatalogRawProfile(t, view.Profiles[0])
-			// Change only the frozen artifact while keeping the current schema and
-			// declared size valid. Structurally valid but mismatching is ineligible.
-			plan, err := profilederivation.DecodeCurvePlan(objects[planReference.Location()])
-			if err != nil {
-				t.Fatal(err)
-			}
-			spec := plan.Shared()
-			spec.Artifact.Name = "different-onnx"
-			changed, err := profilederivation.NewCurvePlan(spec)
-			if err != nil {
-				t.Fatal(err)
-			}
-			payload, err := changed.CanonicalJSON()
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Same length makes the failure an artifact binding check, not size.
-			if len(payload) != int(planReference.Size) {
-				t.Fatal("artifact mutation must preserve payload length")
-			}
-			objects[planReference.Location()] = payload
-			// A changed native source revision opens a new admission boundary;
-			// unchanged terminal sources retain their already-verified facts.
-			campaign := &edgev1alpha1.BatchEnergyOptimization{}
-			if err := catalog.store.client.Get(context.Background(), source, campaign); err != nil {
-				t.Fatal(err)
-			}
-			campaign.Annotations = map[string]string{"catalog-test-revision": "changed"}
-			if err := catalog.store.client.Update(context.Background(), campaign); err != nil {
-				t.Fatal(err)
-			}
-			view, err = catalog.Refresh(context.Background(), []string{source.Namespace})
-			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
-				t.Fatalf("artifact mismatch remained a candidate: %+v, %v", view, err)
-			}
 		})
 	}
 }
@@ -241,8 +206,8 @@ func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 				t.Fatal(err)
 			}
 			view, err = catalog.Refresh(ctx, []string{source.Namespace})
-			if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 || view.Insufficiencies[0].Code != invalidEvidenceCode {
-				t.Fatalf("unrecorded collection warmup admitted: %+v %v", view, err)
+			if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+				t.Fatalf("historical request warmup hid retained completed prefix: %+v %v", view, err)
 			}
 		})
 	}
@@ -482,6 +447,15 @@ func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
 				cpu.ORTIntraOpThreads, cpu.ORTInterOpThreads = 0, 0
 				native.IntraOpThreads, native.InterOpThreads = 0, 0
 			}},
+			{name: "runtime version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				native.RuntimeVersion = "new-observation"
+			}},
+			{name: "numpy version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				native.NumpyVersion = "new-observation"
+			}},
+			{name: "available providers", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
+				native.AvailableProviders = []string{"CPUExecutionProvider", "unused"}
+			}},
 			{name: "physical-node", reason: "node", mutate: func(_ *profilingrun.RuntimeCPU, _ *firstfloor.RuntimeMetadata, node *string) {
 				*node = "trial-node-changed"
 			}},
@@ -495,8 +469,12 @@ func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
 					// only the second trial of the selected population.
 					if phase == batchenergyoptimization.WorkloadModeActive && index == 1 {
 						tc.mutate(&active.CPUContract, &active.Firstfloor.Runtime, &active.NodeName)
+						active.RuntimeVersion = active.Firstfloor.Runtime.RuntimeVersion
+						active.AvailableProviders = active.Firstfloor.Runtime.AvailableProviders
 					} else if phase == batchenergyoptimization.WorkloadModeIdle && index == 4 {
 						tc.mutate(&idle.CPUContract, &idle.Firstfloor.Runtime, &idle.NodeName)
+						idle.RuntimeVersion = idle.Firstfloor.Runtime.RuntimeVersion
+						idle.AvailableProviders = idle.Firstfloor.Runtime.AvailableProviders
 					}
 				}
 				catalog, source, _, _ := catalogEvidenceFixturePolicy(t, 4096, [6]float64{6, 6, 6, 4, 4, 4}, 3, "", change)

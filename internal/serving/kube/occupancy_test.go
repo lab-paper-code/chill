@@ -183,7 +183,7 @@ func TestCostEvidenceReadsLatestAcceptedOccupancy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := evidence.Refresh(context.Background(), nil, nil, []serving.Profile{{ID: "profile-max"}, {ID: "profile-low"}})
+	view, err := evidence.Refresh(context.Background(), nil, []serving.Profile{{ID: "profile-max"}, {ID: "profile-low"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := evidence.Refresh(context.Background(), nil, nil, []serving.Profile{profile})
+	view, err := evidence.Refresh(context.Background(), nil, []serving.Profile{profile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 	}
 	// Adding an older current-profile measurement must not hide the latest cell.
 	put("shared", profile.ID, 2_000_000, at)
-	view, err = evidence.Refresh(context.Background(), nil, nil, []serving.Profile{profile})
+	view, err = evidence.Refresh(context.Background(), nil, []serving.Profile{profile})
 	if err != nil {
 		t.Fatal(err)
 	}

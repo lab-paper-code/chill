@@ -1279,8 +1279,7 @@ func profilePath(d *Definition, p *Profile) *ModelPath {
 	}
 	c := p.Condition
 	pre := d.Preprocessor
-	if c.LogicalModel != d.Model.Name || c.Preprocessor.Name != pre.Name || !slices.Equal(c.Preprocessor.Inputs, rawFieldNames(pre.Input)) || !slices.Equal(c.Preprocessor.Outputs, rawFieldNames(pre.Output)) || c.Preprocessor.MaxNewTokens != int(pre.MaxNewTokens) ||
-		d.Dataset == nil || c.ActiveProtocol.Dataset == nil || d.Dataset.UID != c.ActiveProtocol.Dataset.UID {
+	if c.LogicalModel != d.Model.Name || c.Preprocessor.Name != pre.Name || !slices.Equal(c.Preprocessor.Inputs, rawFieldNames(pre.Input)) || !slices.Equal(c.Preprocessor.Outputs, rawFieldNames(pre.Output)) || c.Preprocessor.MaxNewTokens != int(pre.MaxNewTokens) {
 		return nil
 	}
 	for n := range d.Model.Paths {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	"github.com/lab-paper-code/chill/internal/modelcompat"
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -227,37 +228,50 @@ func TestNativeDispatchPreservesOriginalLifetimeSenderElapsedAndMargin(t *testin
 	}
 }
 
-func TestNativeInitializationMatchesRecordedRuntimeNotMeasuredCurve(t *testing.T) {
-	profile := &serving.Profile{
-		Batches:         []serving.BatchProfile{{Batch: 1}},
-		RuntimeMetadata: &native.RuntimeMetadata{InitializedBatches: []int{1, 2}},
-	}
+func TestNativeProbeUsesSelectedExecutionNotInitializationHistory(t *testing.T) {
+	measured := native.RuntimeMetadata{Runtime: "ort-cpu", RuntimeVersion: "old", NumpyVersion: "old",
+		ModelFiles: []string{"/model/model.onnx"}, Inputs: []string{"image"},
+		Providers: []string{"CPUExecutionProvider"}, Device: "cpu", InitializedBatches: []int{1, 2}, WarmupIterations: 2}
+	profile := &serving.Profile{ID: "profile", NodeName: "node",
+		Batches: []serving.BatchProfile{{Batch: 1}}, RuntimeMetadata: &measured}
+	profile.Condition.RuntimeFamily, profile.Condition.NodeUID = "firstfloor", "node-uid"
+	profile.Condition.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 2}
 	profile.Condition.Preprocessor.Inputs = []string{"image"}
-	profile.Condition.Actor.WarmupIterations = 2
-	profile.Condition.ActiveProtocol.WarmupIterations = 9
 	for _, tc := range []struct {
-		name    string
-		batches []int
-		warmup  int
-		valid   bool
+		name string
+		mutate func(*native.Metadata)
+		valid bool
 	}{
-		{"recorded initialization exceeds measured curve", []int{1, 2}, 2, true},
-		{"unrecorded initialized batch", []int{1, 3}, 2, false},
-		{"initialization reduced to measured curve", []int{1}, 2, false},
-		{"collection warmup differs from startup recipe", []int{1, 2}, 9, false},
+		{"history drift", func(m *native.Metadata) {
+			m.Runtime.RuntimeVersion, m.Runtime.NumpyVersion = "new", "new"
+			m.Runtime.WarmupIterations = 9
+			m.Runtime.InitializedBatches = []int{1, 3}
+			m.MaxBatchSize = 3
+		}, true},
+		{"selected domain only", func(m *native.Metadata) { m.Runtime.InitializedBatches = []int{1} }, true},
+		{"missing selected batch", func(m *native.Metadata) { m.Runtime.InitializedBatches = []int{2} }, false},
+		{"wrong input", func(m *native.Metadata) { m.Runtime.Inputs = []string{"other"} }, false},
+		{"wrong model", func(m *native.Metadata) { m.Model = "other" }, false},
+		{"wrong backend", func(m *native.Metadata) { m.Runtime.Runtime = "ort-cuda" }, false},
+		{"wrong GPU", func(m *native.Metadata) { m.Runtime.GPUUUID = "other" }, false},
+		{"wrong mode", func(m *native.Metadata) { m.Mode = "profiling" }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			actual := native.Metadata{
-				Runtime: native.RuntimeMetadata{
-					Inputs:             []string{"image"},
-					InitializedBatches: tc.batches,
-					WarmupIterations:   tc.warmup,
-				},
-				MaxBatchSize: 2,
-				Policy:       native.Policy{MaxBatchSize: 1},
-			}
-			if err := validateProfileInputs(Spec{Profile: profile}, actual); (err == nil) != tc.valid {
-				t.Fatalf("recorded initialization and measured policy domain conflated: %v", err)
+			actual := native.Metadata{Model: "model", Mode: "serving", ProfileID: profile.ID,
+				AppliedAt: time.Now().UTC(), Runtime: measured, MaxBatchSize: 2,
+				MaxQueueRequests: 4, ModelInstanceCount: 1, Policy: native.Policy{MaxBatchSize: 1}}
+			tc.mutate(&actual)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if err := json.NewEncoder(w).Encode(native.State{At: time.Now().UTC(), Ready: true, Metadata: actual}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			ready, err := (&Client{HTTPClient: server.Client()}).Probe(context.Background(), Spec{
+				Endpoint: server.URL, ModelName: "model", InstanceID: "instance", Profile: profile,
+				Node: serving.NodeReference{Name: "node", UID: "node-uid"}, Capacity: 4, Weight: 1, ExpectedRuntime: &measured})
+			if (err == nil) != tc.valid || ready.State.Ready != tc.valid {
+				t.Fatalf("readiness did not preserve selected execution boundary: %+v %v", ready, err)
 			}
 		})
 	}

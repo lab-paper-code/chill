@@ -184,6 +184,52 @@ func operationProjectionService(t *testing.T) (*measurementService, *operationPr
 	}, storage
 }
 
+func TestMeasurementOperationProjectionUsesStoredVerdictAfterStatusDrift(t *testing.T) {
+	service, storage := operationProjectionService(t)
+	var record servingops.OperationMeasurement
+	if err := json.Unmarshal(storage.payload, &record); err != nil {
+		t.Fatal(err)
+	}
+	joules := 7.25
+	record.Verdict, record.WallJoules = servingstate.MeasurementAccepted, &joules
+	record.Request.Operation.ID = "historical-operation"
+	record.Request.Store = "old-store"
+	// Public history needs the saved result, not fresh raw-power admission.
+	record.Power.Samples = nil
+	var err error
+	storage.payload, err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := service.getOperationCost(context.Background(), "allowed", "cost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var public struct {
+		Status struct {
+			Steps []struct {
+				Verdict string `json:"verdict"`
+				OperationID string `json:"operationID"`
+				DurationNanos *int64 `json:"durationNanos"`
+				WallJoules *float64 `json:"wallJoules"`
+			} `json:"steps"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(wire, &public); err != nil {
+		t.Fatal(err)
+	}
+	if len(public.Status.Steps) != 1 || public.Status.Steps[0].Verdict != servingstate.MeasurementAccepted ||
+		public.Status.Steps[0].OperationID != "historical-operation" || public.Status.Steps[0].DurationNanos == nil ||
+		*public.Status.Steps[0].DurationNanos != 123456789 || public.Status.Steps[0].WallJoules == nil ||
+		*public.Status.Steps[0].WallJoules != 7.25 {
+		t.Fatalf("public history lost stored measurement after status drift: %s", wire)
+	}
+}
+
 func TestMeasurementOperationProjectionLoadsExactEvidenceForListAndDetail(t *testing.T) {
 	service, storage := operationProjectionService(t)
 	list, err := service.listOperationCosts(context.Background(), "allowed")

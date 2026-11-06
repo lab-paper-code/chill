@@ -77,7 +77,7 @@ func reconstructIdlePower(unloaded *NodeBaseline, instances []SchedulerInstance,
 		effective, ok := schedulerIdleAtMode(i, mode, options)
 		p := effective.Profile
 		if !ok || p == nil || !schedulerFinite(p.IdleBaselineWatts) || p.IdleBaselineWatts < 0 ||
-			len(p.Evidence) == 0 || effective.IdleMeter != unloaded.Meter || effective.IdleScope != schedulerNodeWallScope {
+			effective.IdleMeter != unloaded.Meter || effective.IdleScope != schedulerNodeWallScope {
 			return IdlePowerProvenance{}, false
 		}
 		watts += p.IdleBaselineWatts - unloaded.Watts

@@ -43,7 +43,7 @@ func TestValidateInputChecksRawContract(t *testing.T) {
 	}
 }
 
-func TestProfilePathRequiresAppliedPreprocessorAndDataset(t *testing.T) {
+func TestProfilePathRequiresAppliedPreprocessor(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d, measured := snapshot.Workloads[0], *snapshot.Instances[0].Profile
 	if profilePath(d, &measured) == nil {
@@ -54,6 +54,14 @@ func TestProfilePathRequiresAppliedPreprocessorAndDataset(t *testing.T) {
 		"preprocessor name":  func(d *Definition, _ *Profile) { d.Preprocessor.Name = schedulerTestOther },
 		"output fields":      func(d *Definition, _ *Profile) { d.Preprocessor.Output = []RawField{{Name: "z"}} },
 		"max new tokens":     func(d *Definition, _ *Profile) { d.Preprocessor.MaxNewTokens = 8 },
+	} {
+		definition, profile := *d, measured
+		mutate(&definition, &profile)
+		if profilePath(&definition, &profile) != nil {
+			t.Errorf("%s mismatch matched the profile", name)
+		}
+	}
+	for name, mutate := range map[string]func(*Definition, *Profile){
 		"dataset UID": func(_ *Definition, p *Profile) {
 			p.Condition.ActiveProtocol.Dataset = &derivation.CurveDatasetContract{Name: "data", UID: schedulerTestOther}
 		},
@@ -62,8 +70,8 @@ func TestProfilePathRequiresAppliedPreprocessorAndDataset(t *testing.T) {
 	} {
 		definition, profile := *d, measured
 		mutate(&definition, &profile)
-		if profilePath(&definition, &profile) != nil {
-			t.Errorf("%s mismatch matched the profile", name)
+		if !MatchesProfile(&definition, &profile) {
+			t.Errorf("%s blocked compatible serving input", name)
 		}
 	}
 }

@@ -211,7 +211,7 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	// Coverage consumes verified measurement facts independently of operation
 	// costs and scheduler preparation/adoption. No raw evidence is read here.
 	o.catalogRead.Store(&ProfilesView{ConfigVersion: cm.ResourceVersion, CatalogView: view})
-	costs, err := o.costs.Refresh(ctx, namespaces, config.Meters, view.Profiles)
+	costs, err := o.costs.Refresh(ctx, namespaces, view.Profiles)
 	if err != nil {
 		return err
 	}

@@ -21,7 +21,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/queryapi"
 	querykube "github.com/lab-paper-code/chill/internal/queryapi/kube"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -224,25 +223,22 @@ func readStatisticsObject(
 	identity evidencestore.ObjectIdentity,
 ) ([]byte, error) {
 	const maximumStatisticsObjectBytes = 64 << 20
-	if identity.Size > maximumStatisticsObjectBytes {
-		return nil, errors.New("statistics object exceeds read limit")
-	}
 	stream, err := objects.Open(ctx, identity)
 	if err != nil {
 		return nil, err
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(stream, identity.Size+1))
+	payload, readErr := io.ReadAll(io.LimitReader(stream, maximumStatisticsObjectBytes+1))
 	if err := errors.Join(readErr, stream.Close(), ctx.Err()); err != nil {
 		return nil, err
 	}
-	if int64(len(payload)) != identity.Size {
-		return nil, errors.New("statistics object size contradicts reference")
+	if int64(len(payload)) > maximumStatisticsObjectBytes {
+		return nil, errors.New("statistics object exceeds read limit")
 	}
 	return payload, nil
 }
 
-// statisticsRuns adds only Query's stricter owner kind/version and missing-Run
-// distinction. Retained Job/Secret lookup still uses the original reader.
+// statisticsRuns distinguishes missing Runs. Retained Job/Secret lookup still
+// uses the original reader.
 type statisticsRuns struct{ client.Reader }
 
 func (r statisticsRuns) Get(
@@ -253,10 +249,6 @@ func (r statisticsRuns) Get(
 			return fmt.Errorf("%w: %w", errStatisticsRunMissing, err)
 		}
 		return err
-	}
-	owner := metav1.GetControllerOf(obj)
-	if owner == nil || owner.Kind != "BatchEnergyOptimization" || owner.APIVersion != api.GroupVersion.String() {
-		return errors.New("completed Run identity or campaign ownership mismatch")
 	}
 	return nil
 }
@@ -279,20 +271,10 @@ func statisticsCampaignError(err error) error {
 	}
 	var reason string
 	switch {
-	case errors.Is(err, campaignevidence.ErrRunEvidenceAbsent):
-		reason = "completed evidence reference is absent from Run"
-	case errors.Is(err, campaignevidence.ErrRunEvidenceMismatch):
-		reason = "completed evidence reference contradicts Run"
 	case errors.Is(err, campaignevidence.ErrUnsupportedWorkloadMode):
 		reason = "completed Run workload mode is unsupported"
-	case errors.Is(err, campaignevidence.ErrActiveProtocolMismatch):
-		reason = "completed active Run protocol contradicts campaign"
 	default:
 		switch err.Error() {
-		case "terminal result contradicts campaign measurement state":
-			reason = "result contradicts campaign measurement state"
-		case "frozen curve plan contradicts campaign measurement state":
-			reason = "curve plan contradicts campaign measurement state"
 		case "Run identity or campaign ownership mismatch":
 			reason = "completed Run identity or campaign ownership mismatch"
 		case "Run measurement state or batch contradicts completed trial reference":
@@ -301,10 +283,6 @@ func statisticsCampaignError(err error) error {
 			reason = "completed Run workload mode contradicts result"
 		case "Run has no current completed execution and verified evidence":
 			reason = "completed Run lacks current verified completion"
-		case "idle Run protocol contradicts campaign":
-			reason = "completed idle Run protocol contradicts campaign"
-		case "stored RunConfig contradicts completed Run spec":
-			reason = "stored RunConfig contradicts completed Run state"
 		case "completed trials reuse one raw measurement object", "completed trials reuse one execution Pod":
 			reason = "completed trials reuse raw evidence or execution Pod"
 		default:

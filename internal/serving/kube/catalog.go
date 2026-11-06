@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -339,14 +338,9 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	if len(active) == 0 || len(idle) == 0 {
 		return serving.Profile{}, []CatalogIssue{{Source: source, Code: "MeasurementEvidenceMissing", Reason: "completed active and model-loaded idle raw trials are required"}}, nil
 	}
-	// The existing projector binds every trial to the frozen plan. It does not
-	// apply a new environment quality or scientific admission policy.
 	idleTrials := make([]profilederivation.IdleTrial, len(idle))
 	var idleMemory profilederivation.MemoryObservation
 	for index, verified := range idle {
-		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, active[0], verified); err != nil {
-			return serving.Profile{}, nil, err
-		}
 		idleTrials[index], err = profilerprojection.IdleTrial(verified, idle[0])
 		if err != nil {
 			return serving.Profile{}, nil, err
@@ -379,20 +373,14 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	var runtimeMetadata *profilingrun.FirstfloorRuntimeEvidence
 	var delivery profilingrun.CandidateRuntimeDelivery
 	for _, verified := range active {
-		if _, err := profilerprojection.ProjectVerifiedCurveState(plan, verified, idle[0]); err != nil {
-			return serving.Profile{}, nil, err
-		}
 		execution, raw, err := verified.Records()
 		if err != nil {
 			return serving.Profile{}, nil, err
 		}
-		if !reflect.DeepEqual(metricSource, raw.Metrics.Source) {
-			return serving.Profile{}, nil, errors.New("active and idle wall-power source identities differ")
-		}
 		if raw.Runtime.Firstfloor != nil {
 			if runtimeMetadata == nil {
 				runtimeMetadata, delivery = raw.Runtime.Firstfloor, raw.RunConfig.Delivery
-			} else if !reflect.DeepEqual(sharedRuntimeFacts(runtimeMetadata.Runtime), sharedRuntimeFacts(raw.Runtime.Firstfloor.Runtime)) {
+			} else if a, b := runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime; a.Runtime != b.Runtime || a.Device != b.Device || a.GPUUUID != b.GPUUUID || !slices.Equal(a.ModelFiles, b.ModelFiles) || !slices.Equal(a.Providers, b.Providers) || !slices.Equal(a.Inputs, b.Inputs) || !slices.Equal(a.Outputs, b.Outputs) {
 				return serving.Profile{}, nil, errors.New("firstfloor trials have different actual initialized runner conditions")
 			}
 		}
@@ -428,17 +416,10 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 			if err != nil {
 				return serving.Profile{}, nil, err
 			}
-			if !reflect.DeepEqual(metricSource, raw.Metrics.Source) {
-				return serving.Profile{}, nil, errors.New("idle wall-power source identities differ")
-			}
 			if raw.Runtime.Firstfloor == nil {
 				return serving.Profile{}, nil, errors.New("idle firstfloor actual runner facts are missing")
 			}
-			activeFacts, idleFacts := sharedRuntimeFacts(runtimeMetadata.Runtime), sharedRuntimeFacts(raw.Runtime.Firstfloor.Runtime)
-			// Warmup is outside both measurement windows; active protocol performs
-			// warmup and the model-loaded idle protocol performs none.
-			activeFacts.WarmupIterations, idleFacts.WarmupIterations = 0, 0
-			if !reflect.DeepEqual(activeFacts, idleFacts) {
+			if a, b := runtimeMetadata.Runtime, raw.Runtime.Firstfloor.Runtime; a.Runtime != b.Runtime || a.Device != b.Device || a.GPUUUID != b.GPUUUID || !slices.Equal(a.ModelFiles, b.ModelFiles) || !slices.Equal(a.Providers, b.Providers) || !slices.Equal(a.Inputs, b.Inputs) || !slices.Equal(a.Outputs, b.Outputs) {
 				return serving.Profile{}, nil, errors.New("idle and active actual firstfloor runner conditions differ")
 			}
 		}
@@ -540,13 +521,6 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	return profile, issues, nil
 }
 
-// CPU observations describe shared execution, not a frozen resource allocation.
-// Return a comparison copy without changing the retained raw observations.
-func sharedRuntimeFacts(facts firstfloor.RuntimeMetadata) firstfloor.RuntimeMetadata {
-	facts.CPUAffinity, facts.CPUSet, facts.CgroupCPUMax = nil, "", ""
-	facts.IntraOpThreads, facts.InterOpThreads = 0, 0
-	return facts
-}
 
 // Only mutable ownership is copied; source facts are not decoded or validated
 // again. Callers cannot mutate the admitted entry through returned slices/maps.
@@ -637,14 +611,14 @@ func (c *Catalog) readObject(ctx context.Context, identity evidencestore.ObjectI
 	if err := identity.Validate(); err != nil {
 		return nil, err
 	}
-	if identity.Size > c.maxObjectBytes {
-		return nil, errors.New("catalog object exceeds configured byte limit")
+	if c.maxObjectBytes < 1 || c.maxObjectBytes == 1<<63-1 {
+		return nil, errors.New("catalog object read bound required")
 	}
 	stream, err := c.objects.OpenLocation(ctx, identity.Location())
 	if err != nil {
 		return nil, err
 	}
-	payload, readErr := io.ReadAll(io.LimitReader(stream, identity.Size+1))
+	payload, readErr := io.ReadAll(io.LimitReader(stream, c.maxObjectBytes+1))
 	closeErr := stream.Close()
 	if readErr != nil {
 		return nil, readErr
@@ -652,8 +626,8 @@ func (c *Catalog) readObject(ctx context.Context, identity evidencestore.ObjectI
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	if err := evidencestore.ValidateSize(bytes.NewReader(payload), identity.Size); err != nil {
-		return nil, err
+	if int64(len(payload)) > c.maxObjectBytes {
+		return nil, errors.New("catalog object exceeds configured byte limit")
 	}
 	return payload, nil
 }

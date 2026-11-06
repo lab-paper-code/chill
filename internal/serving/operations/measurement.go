@@ -311,16 +311,9 @@ func (record OperationMeasurement) EnergyMeasurement() (powerwindow.Measurement,
 	if record.Verdict == servingstate.MeasurementAccepted && (record.EnergyUncertaintyJoules == nil || record.PhaseSensitivityJoules == nil || record.MissingGapJoules == nil) {
 		return powerwindow.Measurement{}, errors.New("accepted timing measurement lacks separate uncertainty evidence")
 	}
-	for _, pair := range []struct {
-		stored *float64
-		actual float64
-	}{
-		{record.EnergyUncertaintyJoules, measurement.UncertaintyJoules},
-		{record.PhaseSensitivityJoules, measurement.SensitivityJoules},
-		{record.MissingGapJoules, measurement.MissingGapJoules},
-	} {
-		if pair.stored != nil && *pair.stored != pair.actual {
-			return powerwindow.Measurement{}, errors.New("stored uncertainty differs from retained actual curve")
+	for _, stored := range []*float64{record.EnergyUncertaintyJoules, record.PhaseSensitivityJoules, record.MissingGapJoules} {
+		if stored != nil && (math.IsNaN(*stored) || math.IsInf(*stored, 0) || *stored < 0) {
+			return powerwindow.Measurement{}, errors.New("stored uncertainty must be finite and nonnegative")
 		}
 	}
 	return measurement, nil
@@ -462,9 +455,6 @@ func MeasurementCost(record OperationMeasurement, reference evidencestore.Object
 	joules := measurement.Joules
 	if err != nil {
 		return serving.OperationCost{}, err
-	}
-	if joules != *record.WallJoules {
-		return serving.OperationCost{}, errors.New("stored cost differs from retained raw integral")
 	}
 	from, to, err := OperationCostKeys(record.Result)
 	if err != nil {

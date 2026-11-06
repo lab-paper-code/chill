@@ -223,9 +223,10 @@ func TestTimingMeasurementAcceptsHighUncertaintyAndProjectsSeparateB(t *testing.
 	if err != nil || cost.Trials[0].Joules != 1 || cost.Trials[0].EnergyUncertaintyJoules != 0.5 {
 		t.Fatalf("nominal/B projection: %+v, %v", cost, err)
 	}
-	*record.EnergyUncertaintyJoules = 0
-	if _, err := servingops.MeasurementCost(record, cost.Reference); err == nil {
-		t.Fatal("tampered stored uncertainty was not reproduced from raw")
+	*record.EnergyUncertaintyJoules, *record.WallJoules = 0, 1.0000000000000002
+	cost, err = servingops.MeasurementCost(record, cost.Reference)
+	if err != nil || cost.Trials[0].Joules != 1 || cost.Trials[0].EnergyUncertaintyJoules != 0.5 {
+		t.Fatalf("stored aggregate rounding blocked actual cost: %+v %v", cost, err)
 	}
 }
 

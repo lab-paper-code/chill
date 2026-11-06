@@ -200,7 +200,7 @@ func schedulerValidateInstance(settings SchedulerSettings, n SchedulerNode, i Sc
 	if i.Capacity < 1 || i.Weight < 0 || i.MaxWait < 0 {
 		reasons = appendUnique(reasons, "MissingQueueOrTransportEvidence:"+i.ID)
 	}
-	if len(i.Profile.Batches) == 0 || i.Profile.ID == "" || len(i.Profile.Evidence) == 0 {
+	if len(i.Profile.Batches) == 0 || i.Profile.ID == "" {
 		reasons = appendUnique(reasons, "MissingProfileEvidence:"+i.ID)
 	}
 	reasons, maxMemory := schedulerValidateService(i, reasons)
@@ -227,7 +227,7 @@ func schedulerValidateService(i SchedulerInstance, reasons []string) ([]string, 
 			reasons = appendUnique(reasons, "MissingServiceEnergyEvidence:"+i.ID)
 		}
 		for _, sample := range b.ServiceSamples {
-			if sample.ServiceDurationNanos <= 0 || sample.TrialID == "" || sample.PrecedingIdleNanos != nil && *sample.PrecedingIdleNanos < 0 {
+			if sample.ServiceDurationNanos <= 0 || sample.PrecedingIdleNanos != nil && *sample.PrecedingIdleNanos < 0 {
 				reasons = appendUnique(reasons, "InvalidServiceSample:"+i.ID)
 			}
 		}

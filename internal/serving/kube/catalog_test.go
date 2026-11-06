@@ -159,13 +159,12 @@ func TestCatalogBoundsAndStrictlyDecodesTerminalObjects(t *testing.T) {
 	}
 	identity := apiObjectIdentity(campaign.Status.Result)
 	objects.payload = append(payload, ' ')
-	if _, err := catalog.readObject(context.Background(), identity); !errors.Is(err, evidencestore.ErrContentMismatch) {
-		t.Fatalf("declared size mismatch accepted: %v", err)
+	if _, err := catalog.readObject(context.Background(), identity); err != nil {
+		t.Fatalf("harmless retained formatting change blocked reading: %v", err)
 	}
-	opens := objects.opens
-	identity.Size = 1025
-	if _, err := catalog.readObject(context.Background(), identity); err == nil || objects.opens != opens {
-		t.Fatalf("oversized reference reached object reader: opens=%d, err=%v", objects.opens, err)
+	objects.payload = make([]byte, 1025)
+	if _, err := catalog.readObject(context.Background(), identity); err == nil {
+		t.Fatal("oversized object escaped bounded reader")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

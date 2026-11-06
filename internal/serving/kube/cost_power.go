@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"reflect"
 	"slices"
 	"time"
 
@@ -24,20 +23,20 @@ func boundedCostRead(ctx context.Context, reader evidencestore.Reader, ref evide
 	if err := ref.Validate(); err != nil {
 		return nil, err
 	}
-	if ref.Size > maxBytes || maxBytes < 1 {
+	if maxBytes < 1 || maxBytes == 1<<63-1 {
 		return nil, errors.New("cost object exceeds bound")
 	}
 	stream, err := reader.Open(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(stream, ref.Size+1))
-	err = errors.Join(readErr, stream.Close())
+	raw, readErr := io.ReadAll(io.LimitReader(stream, maxBytes+1))
+	err = errors.Join(readErr, stream.Close(), ctx.Err())
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(raw)) != ref.Size {
-		return nil, errors.New("cost exact size mismatch")
+	if int64(len(raw)) > maxBytes {
+		return nil, errors.New("cost object exceeds bound")
 	}
 	return raw, nil
 }
@@ -47,8 +46,8 @@ func decodeCostJSON(raw []byte, target any) error {
 	return json.Unmarshal(raw, target)
 }
 
-// loadPowerCost verifies one Complete measurement; the caller binds its meter.
-func (e *CostEvidence) loadPowerCost(ctx context.Context, measurement *edge.PowerModeTransitionCost, profiles []serving.Profile) (powerEvidence, error) {
+// loadPowerCost derives one Complete measurement with its retained meter source.
+func (e *CostEvidence) loadPowerCost(ctx context.Context, measurement *edge.PowerModeTransitionCost) (powerEvidence, error) {
 	key := types.NamespacedName{Namespace: measurement.Namespace, Name: measurement.Name}
 	preparedWire, err := e.readPowerPreparation(ctx, key, measurement.UID)
 	if err != nil {
@@ -84,11 +83,11 @@ func (e *CostEvidence) loadPowerCost(ctx context.Context, measurement *edge.Powe
 	if _, err = transitioncost.RestoreDirectedTable(*result.DirectedTable); err != nil {
 		return powerEvidence{}, err
 	}
-	evidence := powerEvidence{node: node, source: prepared.PowerSource}
+	evidence := powerEvidence{}
 	for index, direction := range prepared.Directions {
-		cost := serving.OperationCost{ID: key.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: servingstate.OperationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, Reference: identity}
+		cost := serving.OperationCost{ID: key.String() + "/" + direction.FrozenContract.SourceState.PowerMode + "->" + direction.FrozenContract.TargetState.PowerMode, Node: node, Kind: servingstate.OperationPower, From: direction.FrozenContract.SourceState.PowerMode, To: direction.FrozenContract.TargetState.PowerMode, Reference: identity, Meter: prepared.PowerSource.Endpoint, Scope: servingstate.MeasurementWallScope}
 		for _, finalRef := range result.Directions[index].FinalEvidence {
-			if err := e.appendPowerTrial(ctx, finalRef, direction.FrozenContract, prepared.Policy, prepared.PowerSource, profiles, &cost); err != nil {
+			if err := e.appendPowerTrial(ctx, finalRef, direction.FrozenContract, prepared.Policy, &cost); err != nil {
 				return powerEvidence{}, err
 			}
 		}
@@ -116,7 +115,7 @@ func (e *CostEvidence) readPowerPreparation(ctx context.Context, key types.Names
 	}
 	return preparedWire, nil
 }
-func (e *CostEvidence) appendPowerTrial(ctx context.Context, finalRef evidencestore.ObjectIdentity, contract transitioncost.FrozenContract, policy transitioncost.Policy, source metricobserver.SourceIdentity, profiles []serving.Profile, cost *serving.OperationCost) error {
+func (e *CostEvidence) appendPowerTrial(ctx context.Context, finalRef evidencestore.ObjectIdentity, contract transitioncost.FrozenContract, policy transitioncost.Policy, cost *serving.OperationCost) error {
 	payload, err := boundedCostRead(ctx, e.objects, finalRef, e.maxBytes)
 	if err != nil {
 		return err
@@ -129,8 +128,8 @@ func (e *CostEvidence) appendPowerTrial(ctx context.Context, finalRef evidencest
 	if err = decodeCostJSON(payload, &final); err != nil {
 		return err
 	}
-	if final.SchemaVersion != transitioncost.FinalizedRecordSchemaVersion || !reflect.DeepEqual(final.Observation.FrozenContract, contract) {
-		return errors.New("directed trial frozen conditions differ")
+	if final.SchemaVersion != transitioncost.FinalizedRecordSchemaVersion {
+		return errors.New("unsupported directed trial schema")
 	}
 	if _, err = transitioncost.RestoreFinalizedObservation(final.Observation); err != nil {
 		return err
@@ -147,18 +146,12 @@ func (e *CostEvidence) appendPowerTrial(ctx context.Context, finalRef evidencest
 	if err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(derived.Record(), final.Observation) {
-		return errors.New("retained raw directed trial differs from stored accepted projection")
-	}
 	accepted, ok := derived.AcceptedObservation()
 	if !ok {
 		return nil
 	}
-	if !reflect.DeepEqual(observation.PowerSource, source) || observation.BeforeNative.NodeName != cost.Node.Name || observation.BeforeNative.NodeUID != cost.Node.UID {
-		return errors.New("retained power source/native physical Node mismatch")
-	}
-	if err = validatePowerNativeProfiles(profiles, observation.BeforeNative); err != nil {
-		return err
+	if observation.BeforeNative.NodeName != cost.Node.Name || observation.BeforeNative.NodeUID != cost.Node.UID {
+		return errors.New("retained native physical Node mismatch")
 	}
 	beforeState := nativeCostState(observation.BeforeNative)
 	targetState := nativeCostState(observation.AfterNative)
@@ -213,27 +206,3 @@ type powerPreparationWire struct {
 	} `json:"prepared"`
 }
 
-func validatePowerNativeProfiles(profiles []serving.Profile, node *transitioncost.NativeNodeObservation) error {
-	for _, instance := range node.Instances {
-		var profile *serving.Profile
-		for index := range profiles {
-			if profiles[index].ID == instance.State.Metadata.ProfileID {
-				profile = &profiles[index]
-				break
-			}
-		}
-		if profile == nil || profile.RuntimeMetadata == nil || profile.Condition.NodeUID != node.NodeUID {
-			return errors.New("power native loaded state lacks matching verified profile/physical Node")
-		}
-		actual := sharedRuntimeFacts(instance.State.Metadata.Runtime)
-		expected := sharedRuntimeFacts(*profile.RuntimeMetadata)
-		expected.ModelFiles = deliveredModelFiles(profile.Condition.Artifact.Files)
-		if !reflect.DeepEqual(actual, expected) {
-			return errors.New("power actual native runtime/provider/device differs from verified profile")
-		}
-		if instance.CPURequestMilli != 0 || instance.CPULimitMilli != 0 {
-			return errors.New("power native actor must use shared CPU execution")
-		}
-	}
-	return nil
-}

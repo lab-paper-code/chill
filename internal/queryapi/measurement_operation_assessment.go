@@ -5,6 +5,7 @@ import api "github.com/lab-paper-code/chill/api/v1alpha1"
 // OperationStepEvidence contains only facts consulted by the measurement assessment.
 type OperationStepEvidence struct {
 	OperationID   string
+	Verdict       string
 	DurationNanos *int64
 	WallJoules    *float64
 	Reason        string
@@ -31,14 +32,14 @@ func AssessOperationCost(cr api.OperationCostMeasurement, steps []OperationStepE
 		available := step.OperationID != ""
 		input.Available = input.Available || available
 		accepted := available && step.WallJoules != nil && step.DurationNanos != nil &&
-			cr.Status.Steps[i].Verdict == MeasurementVerdictAccepted
+			step.Verdict == MeasurementVerdictAccepted
 		input.Accepted = input.Accepted && accepted
 		if available {
 			input.Facts = append(input.Facts, "Stored operation step: "+cr.Status.Steps[i].Key)
 		}
 		if step.Reason != "" {
 			input.Reasons = append(input.Reasons, MeasurementReason{
-				Code: cr.Status.Steps[i].Verdict, Message: step.Reason, SourceIDs: []string{cr.Status.Steps[i].Key},
+				Code: step.Verdict, Message: step.Reason, SourceIDs: []string{cr.Status.Steps[i].Key},
 			})
 		}
 	}

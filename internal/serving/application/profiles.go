@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
@@ -91,9 +90,6 @@ func (o *SchedulerService) preparation(
 	spec.Instance.Profile = &profile
 	spec.Bundle = evidencestore.ObjectIdentity{
 		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
-	}
-	if err = servingops.ValidatePreparation(spec); err != nil {
-		return spec, err
 	}
 	if _, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw)); err != nil {
 		return spec, &preparationSourceError{err}
@@ -242,13 +238,6 @@ func (o *SchedulerService) measuredPreparation(
 			MaxBatch: p.Batches[len(p.Batches)-1].Batch,
 		},
 		Config: actor,
-	}
-	// Validate against the same measured bundle the scheduler publishes, then retain
-	// only the immutable startup reference in the persisted preparation.
-	checked := spec.Config
-	checked.Policy.Batches = p.NativeBundle().Batches
-	if err = native.ValidateConfig(&checked); err != nil {
-		return servingstate.PrepareSpec{}, err
 	}
 	return spec, nil
 }

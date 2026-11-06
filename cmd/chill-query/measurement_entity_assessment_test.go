@@ -228,7 +228,7 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 	}
 	duration, joules := int64(100), 4.0
 	steps := []servingkube.OperationStepProjection{{
-		OperationID: "uid.0.idle", DurationNanos: &duration, WallJoules: &joules,
+		OperationID: "uid.0.idle", Verdict: queryapi.MeasurementVerdictAccepted, DurationNanos: &duration, WallJoules: &joules,
 	}}
 	if got := queryapi.AssessOperationCost(
 		cr,
@@ -239,6 +239,7 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 	}
 	cr.Status.Phase = api.MeasurementPhaseFailed
 	cr.Status.Steps[0].Verdict = string(api.MeasurementPhaseFailed)
+	steps[0].Verdict = string(api.MeasurementPhaseFailed)
 	if got := queryapi.AssessOperationCost(
 		cr,
 		queryOperationSteps(steps),
@@ -308,7 +309,7 @@ func TestOccupancyAssessmentReadsExactRecordAndPreservesNegativeD(t *testing.T) 
 		if *cr.Status.PerRequestNanos != d || len(storage.reads) != 2 {
 			t.Fatal("projection changed signed d or did not read exact evidence")
 		}
-		assertOccupancyRejectedEvidence(t, service, storage, cr, record)
+		assertOccupancyRetainedEvidence(t, service, storage, cr, record)
 	}
 }
 
@@ -332,13 +333,17 @@ func assertOccupancyWireFields(t *testing.T, detail dispatchOccupancyProjection)
 	}
 }
 
-func assertOccupancyRejectedEvidence(
+func assertOccupancyRetainedEvidence(
 	t *testing.T, service *measurementService, storage *operationProjectionStore,
 	cr api.DispatchOccupancyMeasurement, record servingkube.DispatchOccupancyRecord,
 ) {
 	t.Helper()
-	d := *cr.Status.PerRequestNanos
-	record.Node.UID = "foreign-node"
+	record.Node.UID = "historical-node"
+	record.Conditions.Seed++
+	record.Batch++
+	record.PerRequestNanos++
+	cr.Status.Result.Key = "archive/occupancy.json"
+	cr.Status.PerRequestNanos = nil
 	var err error
 	storage.payload, err = json.Marshal(record)
 	if err != nil {
@@ -350,11 +355,10 @@ func assertOccupancyRejectedEvidence(
 	if err != nil {
 		t.Fatal(err)
 	}
-	mismatched := dispatchOccupancyHTTPProjection(cr, projection)
-	if projection.Record != nil || mismatched.MeasurementWindow != nil ||
-		mismatched.Evidence == nil ||
-		mismatched.D == nil || *mismatched.D.PerRequestNanos != d {
-		t.Fatal("foreign evidence became verified or hid recorded status/reference")
+	retained := dispatchOccupancyHTTPProjection(cr, projection)
+	if projection.Record == nil || retained.MeasurementWindow == nil || retained.Evidence == nil ||
+		retained.D == nil || *retained.D.PerRequestNanos != record.PerRequestNanos {
+		t.Fatal("retained measurement disappeared after metadata drift")
 	}
 	cr.Status.Result = nil
 	without, err := service.projectDispatchOccupancy(context.Background(), cr)

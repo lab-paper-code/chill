@@ -130,6 +130,7 @@ func decodeProfileReuseRequest(raw string) (profileReuseRequest, error) {
 func reuseCondition(condition profilederivation.CurvePlanSpec) profilederivation.CurvePlanSpec {
 	condition.Name, condition.NodeUID = "", ""
 	condition.RuntimeImage = ""
+	condition.RuntimeVersion = ""
 	condition.MetricSource = profilederivation.CurveMetricSourceContract{}
 	condition.Actor = profilederivation.PerformanceCondition(condition).Actor
 	condition.Actor.GPUUUID = ""
@@ -164,10 +165,9 @@ func compareReuseProfiles(source, target serving.Profile, check *serving.Profile
 	if float64(target.Condition.ActiveProtocol.DurationSeconds) < check.MinimumMeasurementSeconds || float64(target.Condition.IdleProtocol.DurationSeconds) < check.MinimumMeasurementSeconds || target.TrialsPerBatch < check.MinimumTrials {
 		return fmt.Errorf("confirmation requires active/idle windows >=%g seconds and >=%d trials", check.MinimumMeasurementSeconds, check.MinimumTrials)
 	}
-	sourceRuntime, targetRuntime := sharedRuntimeFacts(*source.RuntimeMetadata), sharedRuntimeFacts(*target.RuntimeMetadata)
-	sourceRuntime.GPUUUID, targetRuntime.GPUUUID = "", ""
-	if !reflect.DeepEqual(sourceRuntime, targetRuntime) {
-		return errors.New("actual runner versions, resources or initialized batch conditions differ")
+	a, b := source.RuntimeMetadata, target.RuntimeMetadata
+	if a.Runtime != b.Runtime || a.Device != b.Device || !slices.Equal(a.ModelFiles, b.ModelFiles) || !slices.Equal(a.Providers, b.Providers) || !slices.Equal(a.Inputs, b.Inputs) || !slices.Equal(a.Outputs, b.Outputs) {
+		return errors.New("actual runner model, backend or input conditions differ")
 	}
 	idle, err := reuseRelativeDifference(source.IdleBaselineWatts, target.IdleBaselineWatts)
 	if err != nil {

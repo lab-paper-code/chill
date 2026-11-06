@@ -108,8 +108,12 @@ func ProjectOperationCostMeasurement(cr api.OperationCostMeasurement, store stri
 	status := operationStatus{Phase: cr.Status.Phase, Reason: cr.Status.Reason}
 	for i, s := range cr.Status.Steps {
 		step := steps[i]
+		verdict := s.Verdict
+		if step.Verdict != "" {
+			verdict = step.Verdict
+		}
 		status.Steps = append(status.Steps, operationStepStatus{
-			Name: s.Name, Key: s.Key, Verdict: s.Verdict, OperationID: step.OperationID,
+			Name: s.Name, Key: s.Key, Verdict: verdict, OperationID: step.OperationID,
 			DurationNanos: step.DurationNanos, WallJoules: step.WallJoules, Reason: step.Reason,
 			FromPowerMode: step.FromPowerMode, ToPowerMode: step.ToPowerMode, Model: step.Model,
 		})

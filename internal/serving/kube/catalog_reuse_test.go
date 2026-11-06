@@ -191,6 +191,21 @@ func TestProfileReuseKeepsIndependentMeasurementFacts(t *testing.T) {
 	}
 }
 
+func TestProfileReuseRetainsCompatibleRuntimeMetadataChanges(t *testing.T) {
+	source, target := reuseProfilesFixture(t)
+	target.Condition.RuntimeVersion = "new-observation"
+	target.RuntimeMetadata.RuntimeVersion, target.RuntimeMetadata.NumpyVersion = "new-runtime", "new-numpy"
+	target.RuntimeMetadata.AvailableProviders = []string{"CUDAExecutionProvider"}
+	target.RuntimeMetadata.WarmupIterations++
+	target.RuntimeMetadata.InitializedBatches = []int{1, 2}
+	view := reuseView(t, source, target, .05)
+	if len(view.Profiles) != 2 || view.Profiles[1].Reuse == nil ||
+		view.Profiles[1].RuntimeMetadata.GPUUUID != reuseTargetGPU ||
+		view.Profiles[1].Batches[0].ServiceDistribution == nil {
+		t.Fatalf("compatible target confirmation lost usable distribution or physical device: %+v", view)
+	}
+}
+
 func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -198,7 +213,6 @@ func TestProfileReuseRejectsUnconfirmedConditionsAndDifferences(t *testing.T) {
 	}{
 		{"device-family", func(_, p *serving.Profile) { p.Condition.DeviceClass += reuseDifferentSuffix }},
 		{"power-mode", func(_, p *serving.Profile) { p.Condition.PowerMode = "different" }},
-		{"runner-version", func(_, p *serving.Profile) { p.RuntimeMetadata.RuntimeVersion += "-other-version" }},
 		{"short-window", func(_, p *serving.Profile) { p.Condition.ActiveProtocol.DurationSeconds = 29 }},
 		{"too-few-trials", func(_, p *serving.Profile) { p.TrialsPerBatch = 2 }},
 		{"missing-batch", func(s, p *serving.Profile) {

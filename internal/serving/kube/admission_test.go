@@ -394,7 +394,7 @@ func TestEvidenceReadersCountInvalidMeasurements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	costs, err := evidence.Refresh(context.Background(), []string{"chill-system"}, nil, nil)
+	costs, err := evidence.Refresh(context.Background(), []string{"chill-system"}, nil)
 	if err != nil || len(costs.Costs) != 0 || len(costs.Issues) != 1 || costs.Issues[0].Code != measurementInvalidCode {
 		t.Fatalf("invalid transition cost used: %+v %v", costs, err)
 	}

@@ -99,7 +99,7 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 	}
 	ctx := context.Background()
 	for range 2 {
-		view, err := evidence.Refresh(ctx, []string{"measurements"}, []servingops.MeterDeclaration{costTestMeter}, nil)
+		view, err := evidence.Refresh(ctx, []string{"measurements"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,25 +116,8 @@ func TestCostEvidenceDerivesLatestAcceptedCostPerCondition(t *testing.T) {
 			t.Fatalf("derived costs %+v issues %+v", ids, view.Issues)
 		}
 	}
-	for key, opens := range objects.opens {
-		if opens != 1 {
-			t.Fatalf("immutable %s read %d times", key, opens)
-		}
-	}
-	other := costTestMeter
-	other.ID = "other"
-	view, err := evidence.Refresh(ctx, nil, []servingops.MeterDeclaration{other}, nil)
-	undeclared := 0
-	for _, issue := range view.Issues {
-		if issue.Code == MeterUndeclared {
-			undeclared++
-		}
-	}
-	if err != nil || len(view.Costs) != 0 || undeclared != 3 {
-		t.Fatalf("records with an unconfigured meter contributed: %+v %v", view, err)
-	}
 	objects.listErr = errors.New("list denied")
-	if _, err = evidence.Refresh(ctx, nil, []servingops.MeterDeclaration{costTestMeter}, nil); err == nil {
+	if _, err = evidence.Refresh(ctx, nil, nil); err == nil {
 		t.Fatal("listing failure produced a partial cost view")
 	}
 }
@@ -157,7 +140,7 @@ func TestCostEvidenceIgnoresNonAcceptedAttempts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		view, err := evidence.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
+		view, err := evidence.Refresh(context.Background(), nil, nil)
 		wantCosts := 0
 		if withAccepted {
 			wantCosts = 1
@@ -191,7 +174,7 @@ func TestCostEvidenceProjectsUncertainAcceptedEnergyWithoutPrecisionRejection(t 
 			{ObservedAt: at, Watts: 20},
 			{ObservedAt: at.Add(time.Second), Watts: 30},
 		}
-		joules, bound, gap := 15.0, 10.0, 0.0
+		joules, bound, gap := 15.000000000000002, 10.000000000000002, 0.0
 		record.WallJoules, record.EnergyUncertaintyJoules = &joules, &bound
 		record.PhaseSensitivityJoules, record.MissingGapJoules = &bound, &gap
 		if kind == servingstate.OperationIdle {
@@ -209,7 +192,7 @@ func TestCostEvidenceProjectsUncertainAcceptedEnergyWithoutPrecisionRejection(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := evidence.Refresh(context.Background(), nil, []servingops.MeterDeclaration{costTestMeter}, nil)
+	view, err := evidence.Refresh(context.Background(), nil, nil)
 	if err != nil || len(view.Issues) != 0 || len(view.Costs) != 1 || len(view.Baselines) != 1 {
 		t.Fatalf("physically valid high-B records were rejected: %+v %v", view, err)
 	}
@@ -221,7 +204,7 @@ func TestCostEvidenceProjectsUncertainAcceptedEnergyWithoutPrecisionRejection(t 
 	}
 }
 
-func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *testing.T) {
+func TestCostEvidenceKeepsRetainedMetersAndLoadedStatesApart(t *testing.T) {
 	scheme := runtime.NewScheme()
 	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -238,11 +221,11 @@ func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *t
 	}
 	at := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
 	power := func(id string, state []string, measuredAt time.Time) serving.OperationCost {
-		return serving.OperationCost{ID: id, Node: costTestMeter.Node, Kind: servingstate.OperationPower, From: "fixed", To: "eco", BeforeState: state, MeasuredAt: measuredAt}
+		return serving.OperationCost{ID: id, Node: costTestMeter.Node, Kind: servingstate.OperationPower, From: "fixed", To: "eco", BeforeState: state, MeasuredAt: measuredAt, Meter: costTestMeter.Source.Endpoint, Scope: servingstate.MeasurementWallScope}
 	}
-	// Verified trials are cached per UID and result identity; only the meter binding is per refresh.
+	// Cached trials keep their historical meter provenance without current declarations.
 	evidence.power["measurements/power/power-uid/store/power/result.json"] = powerEvidence{
-		node: costTestMeter.Node, source: costTestMeter.Source, costs: []serving.OperationCost{power("measurements/power/fixed->eco", []string{"a"}, at)},
+		costs: []serving.OperationCost{power("measurements/power/fixed->eco", []string{"a"}, at)},
 	}
 	// A serving-operation power record on the empty Node is the empty-state condition of the same pair.
 	key, raw := costTestRecord(t, "raise", "fixed", at)
@@ -255,14 +238,13 @@ func TestCostEvidencePowerCostNeedsConfiguredMeterAndKeepsLoadedStatesApart(t *t
 	if objects.objects[key], err = json.Marshal(record); err != nil {
 		t.Fatal(err)
 	}
-	view, err := evidence.Refresh(context.Background(), []string{"measurements"}, nil, nil)
-	if err != nil || len(view.Costs) != 0 || len(view.Issues) != 2 || view.Issues[0].Code != MeterUndeclared || view.Issues[1].Code != MeterUndeclared {
-		t.Fatalf("power cost without a configured meter contributed: %+v %v", view, err)
-	}
-	view, err = evidence.Refresh(context.Background(), []string{"measurements"}, []servingops.MeterDeclaration{costTestMeter}, nil)
+	view, err := evidence.Refresh(context.Background(), []string{"measurements"}, nil)
 	empty := slices.IndexFunc(view.Costs, func(c serving.OperationCost) bool { return c.ID == "raise" })
-	if err != nil || len(view.Costs) != 2 || view.Costs[0].Meter != costTestMeter.ID || empty < 0 || view.Costs[empty].From != record.Result.Before.PowerMode || view.Costs[empty].To != record.Result.Actual.PowerMode || len(view.Costs[empty].BeforeState) != 0 {
-		t.Fatalf("configured meter not bound or empty-Node power record missing: %+v %v", view, err)
+	loaded := slices.IndexFunc(view.Costs, func(c serving.OperationCost) bool { return len(c.BeforeState) != 0 })
+	if err != nil || len(view.Issues) != 0 || len(view.Costs) != 2 || empty < 0 || loaded < 0 ||
+		view.Costs[empty].Meter != record.Request.Meter.ID || view.Costs[loaded].Meter != costTestMeter.Source.Endpoint ||
+		view.Costs[empty].From != record.Result.Before.PowerMode || view.Costs[empty].To != record.Result.Actual.PowerMode {
+		t.Fatalf("historical costs lost meter provenance or loaded-state separation: %+v %v", view, err)
 	}
 	latest := latestCosts([]serving.OperationCost{
 		power("old-a", []string{"a"}, at), power("new-a", []string{"a"}, at.Add(time.Hour)), power("b", []string{"b"}, at),

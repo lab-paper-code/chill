@@ -150,7 +150,7 @@ func queryOperationSteps(steps []servingkube.OperationStepProjection) []queryapi
 	facts := make([]queryapi.OperationStepEvidence, len(steps))
 	for i, step := range steps {
 		facts[i] = queryapi.OperationStepEvidence{
-			OperationID: step.OperationID, DurationNanos: step.DurationNanos,
+			OperationID: step.OperationID, Verdict: step.Verdict, DurationNanos: step.DurationNanos,
 			WallJoules: step.WallJoules, Reason: step.Reason,
 		}
 	}

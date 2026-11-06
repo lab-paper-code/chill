@@ -110,13 +110,10 @@ func validateMetadata(spec Spec, actual native.Metadata) error {
 	if condition.RuntimeFamily != "firstfloor" || condition.NodeUID != spec.Node.UID || spec.Profile.NodeName != spec.Node.Name {
 		return errors.New("profile does not match native physical execution")
 	}
-	if actual.Model != spec.ModelName || actual.Mode != "serving" || actual.ProfileID != spec.Profile.ID || actual.AppliedAt.IsZero() || actual.Runtime.Synthetic || actual.Runtime.RuntimeVersion == "" || actual.MaxQueueRequests != spec.Capacity || actual.ModelInstanceCount != 1 || condition.Firstfloor == nil || actual.MaxBatchSize > int(condition.Firstfloor.MaxBatchSize) {
+	if actual.Model != spec.ModelName || actual.Mode != "serving" || actual.ProfileID != spec.Profile.ID || actual.AppliedAt.IsZero() || actual.Runtime.Synthetic || actual.MaxQueueRequests != spec.Capacity || actual.ModelInstanceCount != 1 || condition.Firstfloor == nil || actual.MaxBatchSize < 1 || actual.Policy.MaxBatchSize < 1 || actual.Policy.MaxBatchSize > actual.MaxBatchSize || !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == actual.Policy.MaxBatchSize }) {
 		return errors.New("native prepared model/profile/policy mismatch")
 	}
-	if native.EffectiveDeadlinePolicy(actual.Policy.DeadlinePolicy) != native.EffectiveDeadlinePolicy(condition.Firstfloor.DeadlinePolicy) {
-		return errors.New("native deadline policy differs from frozen profile")
-	}
-	if b := actual.Policy.FixedBatchSize; b < 0 || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
+	if b := actual.Policy.FixedBatchSize; b < 0 || b > actual.Policy.MaxBatchSize || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
 		return errors.New("native fixed batch size has no measured profile")
 	}
 	if err := validateProfileInputs(spec, actual); err != nil {
@@ -130,9 +127,14 @@ func validateProfileInputs(spec Spec, actual native.Metadata) error {
 	if spec.Profile.RuntimeMetadata == nil {
 		return errors.New("verified native initialization evidence unavailable")
 	}
-	batches := spec.Profile.RuntimeMetadata.InitializedBatches
-	if !slices.Equal(actual.Runtime.Inputs, condition.Preprocessor.Inputs) || !slices.Equal(actual.Runtime.Outputs, condition.Preprocessor.Outputs) || !slices.Equal(actual.Runtime.InitializedBatches, batches) || len(batches) == 0 || len(spec.Profile.Batches) == 0 || actual.MaxBatchSize != slices.Max(batches) || actual.Runtime.WarmupIterations != condition.Actor.WarmupIterations {
-		return errors.New("actual native raw fields/batches/warmup differ from measured condition")
+	if !slices.Equal(actual.Runtime.Inputs, condition.Preprocessor.Inputs) || !slices.Equal(actual.Runtime.Outputs, condition.Preprocessor.Outputs) || len(spec.Profile.Batches) == 0 {
+		return errors.New("actual native raw fields or measured batches unavailable")
+	}
+	for _, batch := range spec.Profile.Batches {
+		if batch.Batch <= actual.Policy.MaxBatchSize && (actual.Policy.FixedBatchSize == 0 || actual.Policy.FixedBatchSize == batch.Batch) &&
+			!slices.Contains(actual.Runtime.InitializedBatches, batch.Batch) {
+			return errors.New("selected native batch is not initialized")
+		}
 	}
 	return nil
 }
@@ -145,7 +147,7 @@ func validateMeasuredRuntime(spec Spec, actual native.RuntimeMetadata) error {
 	if actual.IntraOpThreads < 0 || actual.InterOpThreads < 0 {
 		return errors.New("invalid observed runtime thread settings")
 	}
-	if !slices.Equal(actual.ModelFiles, measured.ModelFiles) || actual.Runtime != measured.Runtime || actual.RuntimeVersion != measured.RuntimeVersion || actual.NumpyVersion != measured.NumpyVersion || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) {
+	if !slices.Equal(actual.ModelFiles, measured.ModelFiles) || actual.Runtime != measured.Runtime || actual.Device != measured.Device || actual.GPUUUID != measured.GPUUUID || !slices.Equal(actual.Providers, measured.Providers) {
 		return errors.New("actual runtime/provider/device differs from verified profile")
 	}
 	return nil

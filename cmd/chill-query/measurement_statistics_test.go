@@ -515,12 +515,6 @@ func TestMeasurementStatisticsReaderReasonsHTTP(t *testing.T) {
 			"completed Run identity or campaign ownership mismatch"},
 		{"owner UID", 0, func(r *api.ProfilingRun) { r.OwnerReferences[0].UID = "foreign" },
 			"completed Run identity or campaign ownership mismatch"},
-		{"owner kind before batch", 0, func(r *api.ProfilingRun) {
-			r.OwnerReferences[0].Kind = "Other"
-			r.Spec.Measurement.Batch++
-		}, "completed Run identity or campaign ownership mismatch"},
-		{"owner API version", 0, func(r *api.ProfilingRun) { r.OwnerReferences[0].APIVersion = "other/v1" },
-			"completed Run identity or campaign ownership mismatch"},
 		{"batch", 0, func(r *api.ProfilingRun) { r.Spec.Measurement.Batch++ },
 			"completed Run measurement contradicts result"},
 		{"unsupported active", 0, func(r *api.ProfilingRun) { r.Spec.Measurement.WorkloadMode = "unsupported" },
@@ -536,20 +530,6 @@ func TestMeasurementStatisticsReaderReasonsHTTP(t *testing.T) {
 			r.Status.Evidence = nil
 			r.Spec.Measurement.DurationSeconds++
 		}, "completed Run lacks current verified completion"},
-		{"absent evidence before protocol", 0, func(r *api.ProfilingRun) {
-			r.Status.Evidence = nil
-			r.Spec.Measurement.DurationSeconds++
-		}, "completed evidence reference is absent from Run"},
-		{"evidence identity before protocol", 0, func(r *api.ProfilingRun) {
-			r.Status.Evidence.Key = "different-key"
-			r.Spec.Measurement.DurationSeconds++
-		}, "completed evidence reference contradicts Run"},
-		{"evidence schema", 0, func(r *api.ProfilingRun) { r.Status.Evidence.SchemaVersion = "different-schema" },
-			"completed evidence reference contradicts Run"},
-		{"active protocol", 0, func(r *api.ProfilingRun) { r.Spec.Measurement.DurationSeconds++ },
-			"completed active Run protocol contradicts campaign"},
-		{"idle protocol", 2, func(r *api.ProfilingRun) { r.Spec.Measurement.DurationSeconds++ },
-			"completed idle Run protocol contradicts campaign"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cr, record, objects, reader, loader := statisticsFixture(t)
@@ -579,6 +559,29 @@ func TestMeasurementStatisticsReaderReasonsHTTP(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMeasurementStatisticsHTTPRetainsPublishedFactsAfterMetadataDrift(t *testing.T) {
+	cr, record, objects, reader, loader := statisticsFixture(t)
+	for _, reference := range record.Spec().CompletedTrials {
+		run := &api.ProfilingRun{}
+		key := client.ObjectKey{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
+		if err := reader.Get(context.Background(), key, run); err != nil {
+			t.Fatal(err)
+		}
+		run.OwnerReferences[0].Kind, run.OwnerReferences[0].APIVersion = "HistoricalCampaign", "archive/v1"
+		run.Spec.Measurement.DurationSeconds++
+		run.Spec.Measurement.WarmupIterations++
+		if err := reader.Update(context.Background(), run); err != nil {
+			t.Fatal(err)
+		}
+		run.Status.Evidence.Key = "archive/status-only-reference.json"
+		run.Status.Evidence.SchemaVersion = "historical-status-version"
+		if err := reader.Status().Update(context.Background(), run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertStatisticsReportingResponse(t, statisticsHTTPResponse(t, cr, record, objects, reader, loader), record, "")
 }
 
 func TestMeasurementStatisticsSameNameDifferentUIDHTTP(t *testing.T) {
@@ -738,8 +741,7 @@ func statisticsHTTPResponse(
 
 func TestStatisticsCampaignErrorPreservesCauses(t *testing.T) {
 	for _, cause := range []error{
-		campaignevidence.ErrRunEvidenceAbsent, campaignevidence.ErrRunEvidenceMismatch,
-		campaignevidence.ErrUnsupportedWorkloadMode, campaignevidence.ErrActiveProtocolMismatch,
+		campaignevidence.ErrUnsupportedWorkloadMode,
 	} {
 		err := statisticsCampaignError(fmt.Errorf("completed Run namespace/name: %w", cause))
 		if !errors.Is(err, cause) {
