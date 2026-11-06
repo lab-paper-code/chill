@@ -62,6 +62,7 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 		MemoryRequestBytes: 1024, MemoryLimitBytes: 1024,
 		BatchSizes: []int{1, 2}, WarmupBatchSizes: []int{1, 2}, WarmupIterations: 1,
 	}
+	active.Actor.BuildRunnerCommand()
 	active.Measurement.SLOPercentile = 95
 	active.Measurement.StartupWarmupIterations = 1
 	active.Measurement.MinServiceSamples = 59
@@ -113,6 +114,13 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 		t.Fatal(err)
 	}
 	active.Measurement.WorkloadResourceVersion = "status-only-new-version"
+	active.Actor.WarmupIterations = 2
+	active.Actor.WarmupBatchSizes = []int{1}
+	active.Actor.BatchSizes = []int{1}
+	active.Actor.RuntimePackages = map[string]string{"runtime": "updated-observation"}
+	active.Actor.BuildRunnerCommand()
+	active.Measurement.StartupWarmupIterations = 2
+	active.Measurement.WarmupBatchSizes = []int{1}
 	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err != nil {
 		t.Fatalf("Workload observation provenance blocked curve admission: %v", err)
 	}
@@ -151,6 +159,8 @@ func TestCurveAndStateIdentityIgnoreObservationMetadata(t *testing.T) {
 	active.Metrics.Endpoint = "http://moved-meter.test/metrics"
 	active.Metrics.MetricLabels = map[string]string{"meter": "updated-label"}
 	active.State.Preprocessor.UID = "recreated-preprocessor"
+	active.State.Preprocessor.Name = "renamed-preprocessor"
+	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 64}
 	active.State.HostContract = &profilingrun.CandidateReportHostContract{
 		Driver: profilingrun.CandidateReportHostDriver{Version: "updated-driver-observation"},
 	}
@@ -258,14 +268,8 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
-	activeProtocol, err := projectCurveProtocol(active)
-	if err != nil {
-		t.Fatal(err)
-	}
-	idleProtocol, err := projectCurveProtocol(idle)
-	if err != nil {
-		t.Fatal(err)
-	}
+	activeProtocol := projectCurveProtocol(active)
+	idleProtocol := projectCurveProtocol(idle)
 	shared := profilederivation.CurvePlanSpec{
 		Name: "test-curve", LogicalModel: active.State.Model,
 		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,
@@ -299,6 +303,21 @@ func TestVerifiedCurvePlanRunConfigProjectionBindsObservableFacts(t *testing.T) 
 	if err := validateCurvePlanRunConfigs(active, drifted, "node-uid", "node-uid", shared); err == nil {
 		t.Fatal("active/idle execution-path disagreement was accepted")
 	}
+	for name, mutate := range map[string]func(*profilingrun.RunConfig){
+		"model":          func(c *profilingrun.RunConfig) { c.State.Model = "other-model" },
+		"backend":        func(c *profilingrun.RunConfig) { c.State.Backend = "other-backend" },
+		"power":          func(c *profilingrun.RunConfig) { c.State.PowerMode = "other-power-mode" },
+		"native inputs":  func(c *profilingrun.RunConfig) { c.Actor.Inputs = []string{"other-input"} },
+		"native command": func(c *profilingrun.RunConfig) { c.Actor.RunnerCommand = []string{"/other-runner"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			drifted := active
+			mutate(&drifted)
+			if err := validateCurvePlanRunConfigs(drifted, idle, "node-uid", "node-uid", shared); err == nil {
+				t.Fatalf("different actual %s entered the frozen curve", name)
+			}
+		})
+	}
 }
 
 func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
@@ -315,14 +334,8 @@ func TestVerifiedCurvePlanUsesBatchOneORTIdleWitness(t *testing.T) {
 		Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode,
 	}
-	activeProtocol, err := projectCurveProtocol(active)
-	if err != nil {
-		t.Fatal(err)
-	}
-	idleProtocol, err := projectCurveProtocol(idle)
-	if err != nil {
-		t.Fatal(err)
-	}
+	activeProtocol := projectCurveProtocol(active)
+	idleProtocol := projectCurveProtocol(idle)
 	shared := profilederivation.CurvePlanSpec{
 		Name: "test-curve", LogicalModel: active.State.Model,
 		DeviceClass: active.State.DeviceClass, NodeUID: active.TargetNode.UID,

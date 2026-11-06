@@ -460,6 +460,8 @@ func PerformanceCondition(condition CurvePlanSpec) CurvePlanSpec {
 	condition.ActiveProtocol = CurveProtocolContract{Dataset: dataset}
 	condition.IdleProtocol = CurveProtocolContract{}
 	condition.Firstfloor = nil
+	condition.Preprocessor.Name = ""
+	condition.Actor.Preprocessor = ""
 	condition.Actor.RuntimeImage = ""
 	condition.Actor.RuntimePackages = nil
 	condition.Actor.WarmupIterations = 0

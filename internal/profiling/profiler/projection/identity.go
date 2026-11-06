@@ -33,7 +33,15 @@ type metricSamplingProtocol struct {
 func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIdentities, error) {
 	executionState := config.State
 	executionState.HostContract = nil
+	executionState.Firstfloor = nil
+	executionState.Preprocessor.Name = ""
 	executionState.Preprocessor.UID = ""
+	actuation := config.Actuation
+	if actuation != nil {
+		selected := *actuation
+		selected.PolicyName = ""
+		actuation = &selected
+	}
 	state, err := digestIdentity(stateIdentitySchemaVersion, struct {
 		State        profilingrun.ExecutionState     `json:"state"`
 		RuntimeImage string                          `json:"runtimeImage"`
@@ -41,7 +49,7 @@ func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIde
 		Actuation    *profilingrun.ActuationContract `json:"actuation,omitempty"`
 	}{
 		State: executionState, RuntimeImage: config.Images.Runtime, NodeUID: nodeUID,
-		Actuation: config.Actuation,
+		Actuation: actuation,
 	})
 	if err != nil {
 		return RunIdentities{}, fmt.Errorf("derive execution-state identity: %w", err)
@@ -50,6 +58,9 @@ func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIde
 	measurement := config.Measurement
 	measurement.Batch = 0
 	measurement.WorkloadResourceVersion = ""
+	measurement.WarmupIterations = 0
+	measurement.StartupWarmupIterations = 0
+	measurement.WarmupBatchSizes = nil
 	measurement.WorkloadUID = ""
 	if measurement.Dataset != nil {
 		dataset := *measurement.Dataset

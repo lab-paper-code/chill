@@ -45,14 +45,8 @@ func ProjectCurvePlanSpec(
 	conversion profilederivation.CurveConversionContract,
 	plannedBatchSizes []int,
 ) (profilederivation.CurvePlanSpec, error) {
-	activeProtocol, err := projectCurveProtocol(active)
-	if err != nil {
-		return profilederivation.CurvePlanSpec{}, fmt.Errorf("project active curve protocol: %w", err)
-	}
-	idleProtocol, err := projectCurveProtocol(idle)
-	if err != nil {
-		return profilederivation.CurvePlanSpec{}, fmt.Errorf("project idle curve protocol: %w", err)
-	}
+	activeProtocol := projectCurveProtocol(active)
+	idleProtocol := projectCurveProtocol(idle)
 
 	spec := profilederivation.CurvePlanSpec{
 		Name:           name,
@@ -197,7 +191,9 @@ func validateCurvePlanSharedRunFacts(active, idle profilingrun.RunConfig) error 
 	if active.TargetNode.Architecture != idle.TargetNode.Architecture {
 		return errors.New("active and idle recorded candidate or Node snapshots disagree")
 	}
-	if !reflect.DeepEqual(active.Actuation, idle.Actuation) {
+	if (active.Actuation == nil) != (idle.Actuation == nil) ||
+		active.Actuation != nil && (active.Actuation.PowerMode != idle.Actuation.PowerMode ||
+			!reflect.DeepEqual(active.Actuation.Actuator, idle.Actuation.Actuator)) {
 		return errors.New("active and idle power actuation conditions disagree")
 	}
 	return nil
@@ -219,47 +215,28 @@ func validateCurvePlanRunConfig(
 		actualNodeUID != spec.NodeUID {
 		return errors.New("RunConfig contradicts curve-plan state or artifact facts")
 	}
-	if !sameFirstfloorSettings(config.State.Firstfloor, spec.Firstfloor) {
-		return errors.New("RunConfig contradicts curve-plan firstfloor settings")
-	}
-	if !reflect.DeepEqual(config.Actor, spec.Actor) {
+	actualActor := profilederivation.PerformanceCondition(profilederivation.CurvePlanSpec{Actor: config.Actor}).Actor
+	expectedActor := profilederivation.PerformanceCondition(profilederivation.CurvePlanSpec{Actor: spec.Actor}).Actor
+	if !reflect.DeepEqual(actualActor, expectedActor) {
 		return errors.New("RunConfig contradicts curve-plan actor facts")
 	}
 	if !reflect.DeepEqual(projectCurveRuntimeAccess(config.Delivery.RuntimeAccess), spec.RuntimeAccess) {
 		return errors.New("RunConfig contradicts curve-plan accelerator delivery")
 	}
-	if !reflect.DeepEqual(projectCurvePreprocessor(config.State.Preprocessor), spec.Preprocessor) {
+	preprocessor := config.State.Preprocessor
+	if preprocessor.Image != spec.Preprocessor.Image || preprocessor.Architecture != spec.Preprocessor.Architecture ||
+		preprocessor.Path != spec.Preprocessor.Path || preprocessor.MaxNewTokens != spec.Preprocessor.MaxNewTokens ||
+		!slices.Equal(preprocessor.Inputs, spec.Preprocessor.Inputs) || !slices.Equal(preprocessor.Outputs, spec.Preprocessor.Outputs) {
 		return errors.New("RunConfig contradicts curve-plan preprocessor facts")
 	}
-	projectedProtocol, err := projectCurveProtocol(config)
-	if err != nil {
-		return err
+	if config.Measurement.WorkloadMode != protocol.WorkloadMode {
+		return errors.New("RunConfig contradicts curve-plan workload mode")
 	}
-	// Object revisions and identities remain provenance, not conditions.
-	projectedProtocol.WorkloadResourceVersion = ""
-	protocol.WorkloadResourceVersion = ""
-	projectedProtocol.WorkloadUID = ""
-	protocol.WorkloadUID = ""
-	if projectedProtocol.Dataset != nil {
-		projectedProtocol.Dataset.UID = ""
-	}
-	if protocol.Dataset != nil {
-		dataset := *protocol.Dataset
-		dataset.UID = ""
-		protocol.Dataset = &dataset
-	}
-	if !reflect.DeepEqual(projectedProtocol, protocol) {
-		return errors.New("RunConfig contradicts curve-plan measurement-protocol facts")
+	if (config.Measurement.Dataset == nil) != (protocol.Dataset == nil) ||
+		config.Measurement.Dataset != nil && config.Measurement.Dataset.Name != protocol.Dataset.Name {
+		return errors.New("RunConfig contradicts curve-plan dataset selection")
 	}
 	return nil
-}
-func sameFirstfloorSettings(actual, expected *modelcompat.FirstfloorSettings) bool {
-	if actual == nil || expected == nil {
-		return actual == expected
-	}
-	return actual.MaxBatchSize == expected.MaxBatchSize && actual.MaxQueueSize == expected.MaxQueueSize &&
-		modelcompat.EffectiveDeadlinePolicy(actual.DeadlinePolicy) ==
-			modelcompat.EffectiveDeadlinePolicy(expected.DeadlinePolicy)
 }
 
 func projectCurvePreprocessor(state profilingrun.PreprocessorState) profilederivation.CurvePreprocessorContract {
@@ -286,7 +263,7 @@ func projectCurveMetricSource(metrics profilingrun.MetricContract) profilederiva
 	}
 }
 
-func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.CurveProtocolContract, error) {
+func projectCurveProtocol(config profilingrun.RunConfig) profilederivation.CurveProtocolContract {
 	var dataset *profilederivation.CurveDatasetContract
 	if config.Measurement.Dataset != nil {
 		dataset = &profilederivation.CurveDatasetContract{
@@ -313,5 +290,5 @@ func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.Curv
 		MetricObserverImage:        config.Images.MetricObserver,
 		WorkloadObserverImage:      config.Images.WorkloadObserver,
 		WorkloadSchemaVersion:      config.Workload.SchemaVersion,
-	}, nil
+	}
 }

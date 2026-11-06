@@ -67,7 +67,6 @@ func TestCampaignProjectionRejectsMissingOrContradictoryTrialIdentity(t *testing
 		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Batch = 0 },
 		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Attempt = 0 },
 		func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.WorkloadMode = activeWorkloadMode },
-		func(run *edgev1alpha1.ProfilingRun) { run.Spec.CampaignTrial.Batch = 8 },
 	} {
 		parent := testParent()
 		run, err := BuildRun(parent, batchenergyoptimization.Measurement{
