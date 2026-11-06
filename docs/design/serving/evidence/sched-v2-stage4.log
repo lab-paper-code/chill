@@ -1,0 +1,970 @@
+=== RUN   TestCapacityPlanSearchEvaluation
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74652.352800000 exactFixedJ=74652.352800000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 2:0.3] rawJ=82797.288642828 exactRawJ=82797.288642828 fixedJ=80421.106176000 exactFixedJ=80421.106176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 2:1.2] rawJ=121943.077683104 exactRawJ=121943.077683104 fixedJ=122018.455200000 exactFixedJ=122018.455200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=83787.267776768 exactRawJ=83787.267776768 fixedJ=82069.258176000 exactFixedJ=82069.258176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=127140.756775978 exactRawJ=127140.756775978 fixedJ=127796.593152000 exactFixedJ=127796.593152000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=89060.301694320 exactRawJ=85646.943471168 fixedJ=87614.248800000 exactFixedJ=84006.778176000 oneGap=3.985382% fixedGap=4.294261%
+    scheduler_capacity_search_test.go:397: ROW strategy=v1 active=4 {variants:1 modes:0} map[0:20 1:40 2:0.3] one=3.985% fixed=4.294% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1|orangepi=|lattepanda=lattepanda/plc/q1|genesis2=|genesis3=genesis3/vlm/cpu-q1-vlm
+          exact:  rasp5=rasp5/vlm/q1-vlm|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/vlm/q1-vlm|genesis2=genesis2/plc/cpu-q1|genesis3=genesis3/mnv2/cpu-q2
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=127865.496775978 exactRawJ=127865.496775978 fixedJ=128472.161952000 exactFixedJ=128472.161952000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 1:15] rawJ=78107.113490660 exactRawJ=78107.113490660 fixedJ=77864.744880000 exactFixedJ=77864.744880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 1:40] rawJ=80007.688169260 exactRawJ=80007.688169260 fixedJ=79802.264880000 exactFixedJ=79802.264880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 2:0.3] rawJ=89622.773669089 exactRawJ=89622.773669089 fixedJ=87210.624336000 exactFixedJ=87210.624336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 2:1.2] rawJ=129548.543752162 exactRawJ=129548.543752162 fixedJ=130036.402032000 exactFixedJ=130036.402032000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=90612.752803029 exactRawJ=90612.752803029 fixedJ=88858.776336000 exactFixedJ=88858.776336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=140179.452056280 exactRawJ=140179.452056280 fixedJ=139980.560880000 exactFixedJ=139980.560880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=92472.428497429 exactRawJ=92472.428497429 fixedJ=90796.296336000 exactFixedJ=90796.296336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=141809.584177080 exactRawJ=141809.584177080 fixedJ=141639.140880000 exactFixedJ=141639.140880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:110 1:15] rawJ=87980.794229454 exactRawJ=87980.794229454 fixedJ=87776.156460000 exactFixedJ=87776.156460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:110 1:40] rawJ=89886.450456254 exactRawJ=89886.450456254 fixedJ=89713.676460000 exactFixedJ=89713.676460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:110 2:0.3] rawJ=126719.792071374 exactRawJ=126719.792071374 fixedJ=97757.695596000 exactFixedJ=97757.695596000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=0 rates=map[0:110 2:1.2] rawJ=148021.982071374 exactRawJ=148021.982071374 fixedJ=147876.704460000 exactFixedJ=147876.704460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:401: GAP strategy=v1 active=4 variants=1 modes=0 mixes=24 differs=1 worstOne=3.985% fixed: worst=4.294% best=0.000% over0.5%=1 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74643.125280000 exactFixedJ=74643.125280000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 2:0.3] rawJ=81082.285607376 exactRawJ=81082.285607376 fixedJ=78760.068000000 exactFixedJ=78760.068000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 2:1.2] rawJ=112557.490122540 exactRawJ=112557.490122540 fixedJ=111210.231624000 exactFixedJ=111210.231624000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=82032.591013102 exactRawJ=82032.591013102 fixedJ=80315.580780000 exactFixedJ=80315.580780000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=122381.332615622 exactRawJ=122381.332615622 fixedJ=122459.651376000 exactFixedJ=122459.651376000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=83763.458715208 exactRawJ=83763.458715208 fixedJ=82112.302080000 exactFixedJ=82112.302080000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=123608.064823200 exactRawJ=123608.064823200 fixedJ=123796.444896000 exactFixedJ=123796.444896000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 1:15] rawJ=78006.079465225 exactRawJ=78006.079465225 fixedJ=77673.315480000 exactFixedJ=77673.315480000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 1:40] rawJ=78448.629510125 exactRawJ=78448.629510125 fixedJ=78097.395480000 exactFixedJ=78097.395480000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 2:0.3] rawJ=88353.092553590 exactRawJ=88353.092553590 fixedJ=86052.706440000 exactFixedJ=86052.706440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 2:1.2] rawJ=119659.331583660 exactRawJ=119659.331583660 fixedJ=118397.116824000 exactFixedJ=118397.116824000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=89344.761020470 exactRawJ=89344.761020470 fixedJ=87700.858440000 exactFixedJ=87700.858440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=139350.149645508 exactRawJ=129894.691690166 fixedJ=130059.542976000 exactFixedJ=130059.542976000 oneGap=7.279326% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v1 active=4 {variants:2 modes:0} map[0:60 1:15 2:1.2] one=7.279% fixed=0.000% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1-b2|orangepi=|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-b2-vlm|genesis3=genesis3/plc/cpu-q1
+          exact:  rasp5=rasp5/plc/q1-b2|orangepi=orangepi/mnv2/q1-b2|lattepanda=lattepanda/vlm/q1-b2-vlm|genesis2=genesis2/vlm/cpu-q1-b2-vlm|genesis3=genesis3/mnv2/cpu-q1
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=91007.355921837 exactRawJ=91007.355921837 fixedJ=88706.400000000 exactFixedJ=88706.400000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=140967.768310308 exactRawJ=130337.241735066 fixedJ=130483.622976000 exactFixedJ=130483.622976000 oneGap=8.156170% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v1 active=4 {variants:2 modes:0} map[0:60 1:40 2:1.2] one=8.156% fixed=0.000% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1-b2|orangepi=|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-b2-vlm|genesis3=genesis3/plc/cpu-q1
+          exact:  rasp5=rasp5/plc/q1-b2|orangepi=orangepi/mnv2/q1-b2|lattepanda=lattepanda/vlm/q1-b2-vlm|genesis2=genesis2/vlm/cpu-q1-b2-vlm|genesis3=genesis3/mnv2/cpu-q1
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 1:15] rawJ=87581.617313152 exactRawJ=87581.617313152 fixedJ=86983.378440000 exactFixedJ=86983.378440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 1:40] rawJ=89436.797522525 exactRawJ=89436.797522525 fixedJ=87970.113780000 exactFixedJ=87970.113780000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 2:0.3] rawJ=126320.780715832 exactRawJ=126320.780715832 fixedJ=92130.783960000 exactFixedJ=92130.783960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 2:1.2] rawJ=147622.970715832 exactRawJ=147622.970715832 fixedJ=127705.230804000 exactFixedJ=127705.230804000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 1:15 2:0.3] rawJ=129158.567522525 exactRawJ=129158.567522525 fixedJ=93778.935960000 exactFixedJ=93778.935960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 1:15 2:1.2] rawJ=150460.757522525 exactRawJ=150460.757522525 fixedJ=149420.131140000 exactFixedJ=149420.131140000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v1 active=4 {variants:2 modes:0} map[0:110 1:15 2:1.2] one=0.000% fixed=0.000% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 1:40 2:0.3] rawJ=129883.307522525 exactRawJ=129883.307522525 fixedJ=95716.455960000 exactFixedJ=95716.455960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=2 modes=0 rates=map[0:110 1:40 2:1.2] rawJ=151185.497522525 exactRawJ=151185.497522525 fixedJ=149844.211140000 exactFixedJ=149844.211140000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v1 active=4 {variants:2 modes:0} map[0:110 1:40 2:1.2] one=0.000% fixed=0.000% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:401: GAP strategy=v1 active=4 variants=2 modes=0 mixes=24 differs=2 worstOne=8.156% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=2 exactCycles=2 ticks<=5 exactTicks<=5
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 1:15] rawJ=112277.174167174 exactRawJ=112277.174167174 fixedJ=112186.437000000 exactFixedJ=112186.437000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 1:40] rawJ=112865.135786645 exactRawJ=112865.135786645 fixedJ=112673.841000000 exactFixedJ=112673.841000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 2:0.3] rawJ=118199.044749781 exactRawJ=118199.044749781 fixedJ=115618.719360000 exactFixedJ=115618.719360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 2:1.2] rawJ=145067.793912449 exactRawJ=145067.793912449 fixedJ=142750.628160000 exactFixedJ=142750.628160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 1:15 2:0.3] rawJ=118748.368749781 exactRawJ=118748.368749781 fixedJ=116168.043360000 exactFixedJ=116168.043360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 1:15 2:1.2] rawJ=146057.773046389 exactRawJ=146057.773046389 fixedJ=144398.780160000 exactFixedJ=144398.780160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 1:40 2:0.3] rawJ=119473.108749781 exactRawJ=119473.108749781 fixedJ=116892.783360000 exactFixedJ=116892.783360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:20 1:40 2:1.2] rawJ=147917.448740789 exactRawJ=147917.448740789 fixedJ=146336.300160000 exactFixedJ=146336.300160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 1:15] rawJ=114932.391963790 exactRawJ=114932.391963790 fixedJ=114744.421560000 exactFixedJ=114744.421560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 1:40] rawJ=115657.131963790 exactRawJ=115657.131963790 fixedJ=115486.333560000 exactFixedJ=115486.333560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 2:0.3] rawJ=121400.709089837 exactRawJ=121400.709089837 fixedJ=118598.837760000 exactFixedJ=118598.837760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 2:1.2] rawJ=151893.278938710 exactRawJ=151893.278938710 fixedJ=149540.146320000 exactFixedJ=149540.146320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 1:15 2:0.3] rawJ=122394.175666177 exactRawJ=122394.175666177 fixedJ=120246.989760000 exactFixedJ=120246.989760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 1:15 2:1.2] rawJ=152883.258072650 exactRawJ=152883.258072650 fixedJ=151188.298320000 exactFixedJ=151188.298320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 1:40 2:0.3] rawJ=124234.097086013 exactRawJ=124234.097086013 fixedJ=122021.043600000 exactFixedJ=122021.043600000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:60 1:40 2:1.2] rawJ=154742.933767050 exactRawJ=154742.933767050 fixedJ=153125.818320000 exactFixedJ=153125.818320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 1:15] rawJ=120901.869172274 exactRawJ=120901.869172274 fixedJ=119461.330680000 exactFixedJ=119347.352400000 oneGap=0.000000% fixedGap=0.095501%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 1:40] rawJ=122646.475281444 exactRawJ=122646.475281444 fixedJ=121083.257040000 exactFixedJ=121083.257040000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 2:0.3] rawJ=137757.036283876 exactRawJ=137757.036283876 fixedJ=127717.327200000 exactFixedJ=127717.327200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 2:1.2] rawJ=184308.901454536 exactRawJ=180943.222574954 fixedJ=160087.217580000 exactFixedJ=160087.217580000 oneGap=1.860075% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v1 active=4 {variants:1 modes:2} map[0:110 2:1.2] one=1.860% fixed=0.000% ticks=3 cycled=false exactTicks=3 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=jetsono/mnv2/cpu-q1@1|jetsonx=jetsonx/mnv2/q1@0|jetson-nano=jetson-nano/mnv2/q1@0
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q2|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=|jetsonx=jetsonx/mnv2/q2@0|jetson-nano=jetson-nano/mnv2/q2@0
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 1:15 2:0.3] rawJ=139568.666381246 exactRawJ=139568.666381246 fixedJ=129365.479200000 exactFixedJ=129365.479200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 1:15 2:1.2] rawJ=182761.382507844 exactRawJ=182761.382507844 fixedJ=162291.559212000 exactFixedJ=162291.559212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 1:40 2:0.3] rawJ=141188.781511646 exactRawJ=141188.781511646 fixedJ=130735.523100000 exactFixedJ=130735.523100000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v1 active=4 variants=1 modes=2 rates=map[0:110 1:40 2:1.2] rawJ=184395.175281444 exactRawJ=184395.175281444 fixedJ=163950.139212000 exactFixedJ=163950.139212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:401: GAP strategy=v1 active=4 variants=1 modes=2 mixes=24 differs=1 worstOne=1.860% fixed: worst=0.096% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:430: SCALE strategy=v1 active=4 variants=1 modes=0 plans=[6 3 5 6 5] sets=2.7e+03
+          budget 5 s: k=3 evaluated=2797 6ms cut=false 141809.6 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=3 evaluated=2797 5ms cut=false 141809.6 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:430: SCALE strategy=v1 active=4 variants=2 modes=0 plans=[11 5 9 11 9] sets=4.9e+04
+          budget 5 s: k=3 evaluated=16312 28ms cut=false 140967.8 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=3 evaluated=16312 29ms cut=false 140967.8 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:430: SCALE strategy=v1 active=4 variants=1 modes=2 plans=[6 3 5 6 5 9 11 9] sets=2.41e+06
+          budget 5 s: k=3 evaluated=55315 388ms cut=false 154742.9 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=3 evaluated=55315 252ms cut=false 154742.9 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:430: SCALE strategy=v1 active=4 variants=1 modes=4 plans=[6 3 5 6 5 17 21 17] sets=1.64e+07
+          budget 5 s: k=3 evaluated=166194 769ms cut=false 151604.3 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=3 evaluated=166194 893ms cut=false 151604.3 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:430: SCALE strategy=v1 active=4 variants=2 modes=1 plans=[11 5 9 11 9 9 11 9] sets=4.37e+07
+          budget 5 s: k=3 evaluated=102606 424ms cut=false 150269.0 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=3 evaluated=102606 494ms cut=false 150269.0 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:430: SCALE strategy=v1 active=4 variants=2 modes=2 plans=[11 5 9 11 9 17 21 17] sets=2.97e+08
+          budget 5 s: k=3 evaluated=227088 839ms cut=false 148839.6 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=3 evaluated=227088 869ms cut=false 148839.6 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:430: SCALE strategy=v1 active=4 variants=2 modes=4 plans=[11 5 9 11 9 33 41 33] sets=2.19e+09
+          budget 5 s: k=3 evaluated=670700 3.308s cut=false 147130.5 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=3 evaluated=670700 3.055s cut=false 147130.5 J surrogateEvaluated=0 finalists=0 exactEvaluated=0 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1408 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1304 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1647 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1543 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1439 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74652.352800000 exactFixedJ=74652.352800000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1565 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1055 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 2:0.3] rawJ=82797.288642828 exactRawJ=82797.288642828 fixedJ=80421.106176000 exactFixedJ=80421.106176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1044 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=840 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 2:1.2] rawJ=121943.077683104 exactRawJ=121943.077683104 fixedJ=122018.455200000 exactFixedJ=122018.455200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3038 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2507 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=83787.267776768 exactRawJ=83787.267776768 fixedJ=82069.258176000 exactFixedJ=82069.258176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1847 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1493 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=127140.756775978 exactRawJ=127140.756775978 fixedJ=127796.593152000 exactFixedJ=127796.593152000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3044 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2230 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=85646.943471168 exactRawJ=85646.943471168 fixedJ=84006.778176000 exactFixedJ=84006.778176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1447 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1447 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1270 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=127865.496775978 exactRawJ=127865.496775978 fixedJ=128472.161952000 exactFixedJ=128472.161952000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1806 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1702 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 1:15] rawJ=78107.113490660 exactRawJ=78107.113490660 fixedJ=77864.744880000 exactFixedJ=77864.744880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1595 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1387 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 1:40] rawJ=80007.688169260 exactRawJ=80007.688169260 fixedJ=79802.264880000 exactFixedJ=79802.264880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1319 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1013 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 2:0.3] rawJ=89622.773669089 exactRawJ=89622.773669089 fixedJ=87210.624336000 exactFixedJ=87210.624336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=822 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=618 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 2:1.2] rawJ=129548.543752162 exactRawJ=129548.543752162 fixedJ=130036.402032000 exactFixedJ=130036.402032000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2873 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1543 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=90612.752803029 exactRawJ=90612.752803029 fixedJ=88858.776336000 exactFixedJ=88858.776336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1230 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=876 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=140179.452056280 exactRawJ=140179.452056280 fixedJ=139980.560880000 exactFixedJ=139980.560880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2228 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1310 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=92472.428497429 exactRawJ=92472.428497429 fixedJ=90796.296336000 exactFixedJ=90796.296336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1010 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1247 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=141809.584177080 exactRawJ=141809.584177080 fixedJ=141639.140880000 exactFixedJ=141639.140880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1466 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1094 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:110 1:15] rawJ=87980.794229454 exactRawJ=87980.794229454 fixedJ=87776.156460000 exactFixedJ=87776.156460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1221 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=998 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:110 1:40] rawJ=89886.450456254 exactRawJ=89886.450456254 fixedJ=89713.676460000 exactFixedJ=89713.676460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=955 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=822 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=648 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:110 2:0.3] rawJ=126719.792071374 exactRawJ=126719.792071374 fixedJ=97757.695596000 exactFixedJ=97757.695596000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=595 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=361 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=0 rates=map[0:110 2:1.2] rawJ=148021.982071374 exactRawJ=148021.982071374 fixedJ=147876.704460000 exactFixedJ=147876.704460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1924 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1200 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=846 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1187 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=930 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=576 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1427 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=930 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1060 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=626 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1040 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1040 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=4 variants=1 modes=0 mixes=24 differs=0 worstOne=0.000% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5792 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5406 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=7776 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=6863 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=7797 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74643.125280000 exactFixedJ=74643.125280000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3420 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2755 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 2:0.3] rawJ=81082.285607376 exactRawJ=81082.285607376 fixedJ=78760.068000000 exactFixedJ=78760.068000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5296 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3128 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 2:1.2] rawJ=112557.490122540 exactRawJ=112557.490122540 fixedJ=111210.231624000 exactFixedJ=111210.231624000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=6069 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3951 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=82049.204055538 exactRawJ=82032.591013102 fixedJ=80333.281188000 exactFixedJ=80315.580780000 oneGap=0.020252% fixedGap=0.022039%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=6273 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3267 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=122381.332615622 exactRawJ=122381.332615622 fixedJ=122459.651376000 exactFixedJ=122459.651376000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=6029 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5003 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=83807.760161703 exactRawJ=83763.458715208 fixedJ=82159.503168000 exactFixedJ=82112.302080000 oneGap=0.052889% fixedGap=0.057484%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=9476 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5263 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=123608.064823200 exactRawJ=123608.064823200 fixedJ=123796.444896000 exactFixedJ=123796.444896000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=6882 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=7301 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5735 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 1:15] rawJ=78022.757246959 exactRawJ=78006.079465225 fixedJ=77673.766068000 exactFixedJ=77673.315480000 oneGap=0.021380% fixedGap=0.000580%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5789 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5702 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 1:40] rawJ=78448.629510125 exactRawJ=78448.629510125 fixedJ=78097.395480000 exactFixedJ=78097.395480000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5079 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3559 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 2:0.3] rawJ=88353.092553590 exactRawJ=88353.092553590 fixedJ=86052.706440000 exactFixedJ=86052.706440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4967 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2360 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 2:1.2] rawJ=119659.331583660 exactRawJ=119659.331583660 fixedJ=118397.116824000 exactFixedJ=118397.116824000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4741 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3847 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=89344.761020470 exactRawJ=89344.761020470 fixedJ=87700.858440000 exactFixedJ=87700.858440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4458 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2436 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2236 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=139350.149645508 exactRawJ=129894.691690166 fixedJ=139864.520880000 exactFixedJ=130059.542976000 oneGap=7.279326% fixedGap=7.538838%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:2 modes:0} map[0:60 1:15 2:1.2] one=7.279% fixed=7.539% ticks=4 cycled=true exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1-b2|orangepi=|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-b2-vlm|genesis3=genesis3/plc/cpu-q1
+          exact:  rasp5=rasp5/plc/q1-b2|orangepi=orangepi/mnv2/q1-b2|lattepanda=lattepanda/vlm/q1-b2-vlm|genesis2=genesis2/vlm/cpu-q1-b2-vlm|genesis3=genesis3/mnv2/cpu-q1
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4690 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4974 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3622 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=91207.777923770 exactRawJ=91007.355921837 fixedJ=88706.400000000 exactFixedJ=88706.400000000 oneGap=0.220226% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5208 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3652 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3383 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=140967.768310308 exactRawJ=130337.241735066 fixedJ=130483.622976000 exactFixedJ=130483.622976000 oneGap=8.156170% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:2 modes:0} map[0:60 1:40 2:1.2] one=8.156% fixed=0.000% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1-b2|orangepi=|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-b2-vlm|genesis3=genesis3/plc/cpu-q1
+          exact:  rasp5=rasp5/plc/q1-b2|orangepi=orangepi/mnv2/q1-b2|lattepanda=lattepanda/vlm/q1-b2-vlm|genesis2=genesis2/vlm/cpu-q1-b2-vlm|genesis3=genesis3/mnv2/cpu-q1
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5242 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4162 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4085 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3693 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 1:15] rawJ=87742.051850627 exactRawJ=87581.617313152 fixedJ=86983.378440000 exactFixedJ=86983.378440000 oneGap=0.183183% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=7427 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5407 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4557 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 1:40] rawJ=89436.797522525 exactRawJ=89436.797522525 fixedJ=87970.113780000 exactFixedJ=87970.113780000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3423 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=3182 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 2:0.3] rawJ=126320.780715832 exactRawJ=126320.780715832 fixedJ=92130.783960000 exactFixedJ=92130.783960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1513 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2123 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1624 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1624 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 2:1.2] rawJ=147622.970715832 exactRawJ=147622.970715832 fixedJ=147163.749480000 exactFixedJ=127705.230804000 oneGap=0.000000% fixedGap=15.237057%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:2 modes:0} map[0:110 2:1.2] one=0.000% fixed=15.237% ticks=5 cycled=true exactTicks=3 exactCycled=false
+          search: rasp5=rasp5/mnv2/q2-b2|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q2-b2|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1
+          exact:  rasp5=rasp5/mnv2/q2-b2|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q2-b2|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2902 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5001 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2684 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 1:15 2:0.3] rawJ=129158.567522525 exactRawJ=129158.567522525 fixedJ=93778.935960000 exactFixedJ=93778.935960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2468 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2471 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1918 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1918 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 1:15 2:1.2] rawJ=150460.757522525 exactRawJ=150460.757522525 fixedJ=149795.335500000 exactFixedJ=149420.131140000 oneGap=0.000000% fixedGap=0.251107%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:2 modes:0} map[0:110 1:15 2:1.2] one=0.000% fixed=0.251% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2877 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4932 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2665 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 1:40 2:0.3] rawJ=129883.307522525 exactRawJ=129883.307522525 fixedJ=95716.455960000 exactFixedJ=95716.455960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2443 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=4763 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2172 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=2172 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=2 modes=0 rates=map[0:110 1:40 2:1.2] rawJ=151185.497522525 exactRawJ=151185.497522525 fixedJ=149844.211140000 exactFixedJ=149844.211140000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:2 modes:0} map[0:110 1:40 2:1.2] one=0.000% fixed=0.000% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=4 variants=2 modes=0 mixes=24 differs=7 worstOne=8.156% fixed: worst=15.237% best=0.000% over0.5%=2 cycles=4 exactCycles=2 ticks<=5 exactTicks<=5
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=70296 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=59704 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 1:15] rawJ=112277.174167174 exactRawJ=112277.174167174 fixedJ=112186.437000000 exactFixedJ=112186.437000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=111675 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=83361 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 1:40] rawJ=112865.135786645 exactRawJ=112865.135786645 fixedJ=112673.841000000 exactFixedJ=112673.841000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=104647 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=86323 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 2:0.3] rawJ=118199.044749781 exactRawJ=118199.044749781 fixedJ=115618.719360000 exactFixedJ=115618.719360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=90088 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=53930 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 2:1.2] rawJ=145067.793912449 exactRawJ=145067.793912449 fixedJ=142750.628160000 exactFixedJ=142750.628160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=278709 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=235921 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 1:15 2:0.3] rawJ=118748.368749781 exactRawJ=118748.368749781 fixedJ=116168.043360000 exactFixedJ=116168.043360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=148960 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=123141 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 1:15 2:1.2] rawJ=147350.051035370 exactRawJ=146057.773046389 fixedJ=145648.483620000 exactFixedJ=144398.780160000 oneGap=0.884772% fixedGap=0.865453%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:1 modes:2} map[0:20 1:15 2:1.2] one=0.885% fixed=0.865% ticks=2 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/plc/q1|lattepanda=lattepanda/vlm/q1-vlm|genesis2=genesis2/plc/cpu-q1|genesis3=genesis3/vlm/cpu-q1-vlm|jetsono=|jetsonx=jetsonx/vlm/q1@0-vlm|jetson-nano=jetson-nano/vlm/q1@0-vlm
+          exact:  rasp5=rasp5/vlm/q1-vlm|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/vlm/q1-vlm|genesis2=genesis2/plc/cpu-q1|genesis3=genesis3/mnv2/cpu-q2|jetsono=jetsono/vlm/cpu-q1@1-vlm|jetsonx=jetsonx/vlm/q1@0-vlm|jetson-nano=jetson-nano/vlm/q1@0-vlm
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=238389 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=203794 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 1:40 2:0.3] rawJ=119473.108749781 exactRawJ=119473.108749781 fixedJ=116892.783360000 exactFixedJ=116892.783360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=133360 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=125365 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=124418 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:20 1:40 2:1.2] rawJ=149105.572558680 exactRawJ=147917.448740789 fixedJ=147380.638032000 exactFixedJ=146336.300160000 oneGap=0.803234% fixedGap=0.713656%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:1 modes:2} map[0:20 1:40 2:1.2] one=0.803% fixed=0.714% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/plc/q1|lattepanda=lattepanda/vlm/q1-vlm|genesis2=genesis2/plc/cpu-q1|genesis3=genesis3/vlm/cpu-q1-vlm|jetsono=|jetsonx=jetsonx/vlm/q1@0-vlm|jetson-nano=jetson-nano/vlm/q1@0-vlm
+          exact:  rasp5=rasp5/vlm/q1-vlm|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/vlm/q1-vlm|genesis2=genesis2/plc/cpu-q1|genesis3=genesis3/mnv2/cpu-q2|jetsono=jetsono/vlm/cpu-q1@1-vlm|jetsonx=jetsonx/vlm/q1@0-vlm|jetson-nano=jetson-nano/vlm/q1@0-vlm
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=169751 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=170237 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=169681 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 1:15] rawJ=114932.391963790 exactRawJ=114932.391963790 fixedJ=114744.421560000 exactFixedJ=114744.421560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=158907 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=160001 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 1:40] rawJ=115657.131963790 exactRawJ=115657.131963790 fixedJ=115486.333560000 exactFixedJ=115486.333560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=102554 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=85718 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 2:0.3] rawJ=121400.709089837 exactRawJ=121400.709089837 fixedJ=118598.837760000 exactFixedJ=118598.837760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=97354 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=69999 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 2:1.2] rawJ=151893.278938710 exactRawJ=151893.278938710 fixedJ=149540.146320000 exactFixedJ=149540.146320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=244128 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=207756 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 1:15 2:0.3] rawJ=122394.175666177 exactRawJ=122394.175666177 fixedJ=120246.989760000 exactFixedJ=120246.989760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=191950 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=60065 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 1:15 2:1.2] rawJ=152883.258072650 exactRawJ=152883.258072650 fixedJ=151188.298320000 exactFixedJ=151188.298320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=212605 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=180284 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=179337 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 1:40 2:0.3] rawJ=124234.097086013 exactRawJ=124234.097086013 fixedJ=122021.043600000 exactFixedJ=122021.043600000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=137420 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=86599 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:60 1:40 2:1.2] rawJ=154742.933767050 exactRawJ=154742.933767050 fixedJ=153125.818320000 exactFixedJ=153125.818320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=361257 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=387743 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=216526 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 1:15] rawJ=120901.869172274 exactRawJ=120901.869172274 fixedJ=119347.352400000 exactFixedJ=119347.352400000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=235894 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=195061 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=132853 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 1:40] rawJ=122646.475281444 exactRawJ=122646.475281444 fixedJ=121083.257040000 exactFixedJ=121083.257040000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=122236 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=83301 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=134643 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 2:0.3] rawJ=137757.036283876 exactRawJ=137757.036283876 fixedJ=127717.327200000 exactFixedJ=127717.327200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=80360 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=59910 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=57140 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 2:1.2] rawJ=184308.901454536 exactRawJ=180943.222574954 fixedJ=160087.217580000 exactFixedJ=160087.217580000 oneGap=1.860075% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=4 {variants:1 modes:2} map[0:110 2:1.2] one=1.860% fixed=0.000% ticks=3 cycled=false exactTicks=3 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=jetsono/mnv2/cpu-q1@1|jetsonx=jetsonx/mnv2/q1@0|jetson-nano=jetson-nano/mnv2/q1@0
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q2|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=|jetsonx=jetsonx/mnv2/q2@0|jetson-nano=jetson-nano/mnv2/q2@0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=290172 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=174619 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=171778 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 1:15 2:0.3] rawJ=139568.666381246 exactRawJ=139568.666381246 fixedJ=129365.479200000 exactFixedJ=129365.479200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=159050 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=187184 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=132054 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 1:15 2:1.2] rawJ=182761.382507844 exactRawJ=182761.382507844 fixedJ=162291.559212000 exactFixedJ=162291.559212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=198442 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=211999 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=223595 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 1:40 2:0.3] rawJ=141188.781511646 exactRawJ=141188.781511646 fixedJ=130735.523100000 exactFixedJ=130735.523100000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=111930 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=98388 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=64763 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=4 variants=1 modes=2 rates=map[0:110 1:40 2:1.2] rawJ=184395.175281444 exactRawJ=184395.175281444 fixedJ=163950.139212000 exactFixedJ=163950.139212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=4 variants=1 modes=2 mixes=24 differs=3 worstOne=1.860% fixed: worst=0.865% best=0.000% over0.5%=2 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=1010 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=4 variants=1 modes=0 plans=[6 3 5 6 5] sets=2.7e+03
+          budget 5 s: k=0 evaluated=16 2ms cut=false 141809.6 J surrogateEvaluated=1010 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 2ms cut=false 141809.6 J surrogateEvaluated=1010 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=5208 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=4 variants=2 modes=0 plans=[11 5 9 11 9] sets=4.9e+04
+          budget 5 s: k=0 evaluated=16 4ms cut=false 140967.8 J surrogateEvaluated=5208 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 4ms cut=false 140967.8 J surrogateEvaluated=5208 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=137420 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=4 variants=1 modes=2 plans=[6 3 5 6 5 9 11 9] sets=2.41e+06
+          budget 5 s: k=0 evaluated=16 174ms cut=false 154742.9 J surrogateEvaluated=137420 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 174ms cut=false 154742.9 J surrogateEvaluated=137420 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=144727 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=4 variants=1 modes=4 plans=[6 3 5 6 5 17 21 17] sets=1.64e+07
+          budget 5 s: k=0 evaluated=17 146ms cut=false 151604.3 J surrogateEvaluated=144727 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=17 148ms cut=false 151604.3 J surrogateEvaluated=144727 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=291449 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=4 variants=2 modes=1 plans=[11 5 9 11 9 9 11 9] sets=4.37e+07
+          budget 5 s: k=0 evaluated=17 355ms cut=false 150269.0 J surrogateEvaluated=291449 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=17 359ms cut=false 150269.0 J surrogateEvaluated=291449 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=298077 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=4 variants=2 modes=2 plans=[11 5 9 11 9 17 21 17] sets=2.97e+08
+          budget 5 s: k=0 evaluated=17 338ms cut=false 148839.6 J surrogateEvaluated=298077 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=17 345ms cut=false 148839.6 J surrogateEvaluated=298077 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=4 surrogateEvaluated=352063 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=4 variants=2 modes=4 plans=[11 5 9 11 9 33 41 33] sets=2.19e+09
+          budget 5 s: k=0 evaluated=17 381ms cut=false 147130.5 J surrogateEvaluated=352063 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=17 411ms cut=false 147130.5 J surrogateEvaluated=352063 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1408 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1304 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1647 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1543 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1439 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74652.352800000 exactFixedJ=74652.352800000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1565 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1055 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 2:0.3] rawJ=82797.288642828 exactRawJ=82797.288642828 fixedJ=80421.106176000 exactFixedJ=80421.106176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1044 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=840 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 2:1.2] rawJ=121943.077683104 exactRawJ=121943.077683104 fixedJ=122018.455200000 exactFixedJ=122018.455200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=3350 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=2819 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=83787.267776768 exactRawJ=83787.267776768 fixedJ=82069.258176000 exactFixedJ=82069.258176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=2027 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1673 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=127140.756775978 exactRawJ=127140.756775978 fixedJ=127796.593152000 exactFixedJ=127796.593152000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=3428 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=2518 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=85646.943471168 exactRawJ=85646.943471168 fixedJ=84006.778176000 exactFixedJ=84006.778176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1547 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1547 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1370 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=127865.496775978 exactRawJ=127865.496775978 fixedJ=128472.161952000 exactFixedJ=128472.161952000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1806 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1702 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 1:15] rawJ=78107.113490660 exactRawJ=78107.113490660 fixedJ=77864.744880000 exactFixedJ=77864.744880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1595 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1387 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 1:40] rawJ=80007.688169260 exactRawJ=80007.688169260 fixedJ=79802.264880000 exactFixedJ=79802.264880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1319 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1013 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 2:0.3] rawJ=89622.773669089 exactRawJ=89622.773669089 fixedJ=87210.624336000 exactFixedJ=87210.624336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=822 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=618 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 2:1.2] rawJ=129548.543752162 exactRawJ=129548.543752162 fixedJ=130036.402032000 exactFixedJ=130036.402032000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=3140 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1721 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=90612.752803029 exactRawJ=90612.752803029 fixedJ=88858.776336000 exactFixedJ=88858.776336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1362 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1008 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=140179.452056280 exactRawJ=140179.452056280 fixedJ=139980.560880000 exactFixedJ=139980.560880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=2366 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1402 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=92472.428497429 exactRawJ=92472.428497429 fixedJ=90796.296336000 exactFixedJ=90796.296336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1299 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=141809.584177080 exactRawJ=141809.584177080 fixedJ=141639.140880000 exactFixedJ=141639.140880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1466 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1094 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:110 1:15] rawJ=87980.794229454 exactRawJ=87980.794229454 fixedJ=87776.156460000 exactFixedJ=87776.156460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1221 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=998 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:110 1:40] rawJ=89886.450456254 exactRawJ=89886.450456254 fixedJ=89713.676460000 exactFixedJ=89713.676460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=955 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=822 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=648 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:110 2:0.3] rawJ=126719.792071374 exactRawJ=126719.792071374 fixedJ=97757.695596000 exactFixedJ=97757.695596000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=595 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=361 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=0 rates=map[0:110 2:1.2] rawJ=148021.982071374 exactRawJ=148021.982071374 fixedJ=147876.704460000 exactFixedJ=147876.704460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=2200 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1278 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=924 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1211 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=954 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=600 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1495 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1074 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1094 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=660 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1082 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1082 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=8 variants=1 modes=0 mixes=24 differs=0 worstOne=0.000% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=13512 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=13126 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=23576 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=19503 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=23597 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74643.125280000 exactFixedJ=74643.125280000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=8760 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=9985 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 2:0.3] rawJ=81082.285607376 exactRawJ=81082.285607376 fixedJ=78760.068000000 exactFixedJ=78760.068000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=7540 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=10592 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 2:1.2] rawJ=112557.490122540 exactRawJ=112557.490122540 fixedJ=111210.231624000 exactFixedJ=111210.231624000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=21261 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=31681 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=82049.204055538 exactRawJ=82032.591013102 fixedJ=80333.281188000 exactFixedJ=80315.580780000 oneGap=0.020252% fixedGap=0.022039%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=15897 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=9087 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=122381.332615622 exactRawJ=122381.332615622 fixedJ=122459.651376000 exactFixedJ=122459.651376000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=21221 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=42717 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=83807.760161703 exactRawJ=83763.458715208 fixedJ=82159.503168000 exactFixedJ=82112.302080000 oneGap=0.052889% fixedGap=0.057484%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=27008 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=18423 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=123608.064823200 exactRawJ=123608.064823200 fixedJ=123796.444896000 exactFixedJ=123796.444896000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=25756 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=17272 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 1:15] rawJ=78006.079465225 exactRawJ=78006.079465225 fixedJ=77673.315480000 exactFixedJ=77673.315480000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=18056 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=17272 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 1:40] rawJ=78448.629510125 exactRawJ=78448.629510125 fixedJ=78097.395480000 exactFixedJ=78097.395480000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=8811 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=8935 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 2:0.3] rawJ=88353.092553590 exactRawJ=88353.092553590 fixedJ=86052.706440000 exactFixedJ=86052.706440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=6941 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=8180 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 2:1.2] rawJ=119659.331583660 exactRawJ=119659.331583660 fixedJ=118397.116824000 exactFixedJ=118397.116824000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=18451 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=23307 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=89344.761020470 exactRawJ=89344.761020470 fixedJ=87700.858440000 exactFixedJ=87700.858440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=24138 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=10403 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=129894.691690166 exactRawJ=129894.691690166 fixedJ=130059.542976000 exactFixedJ=130059.542976000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=26372 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=22132 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=91007.355921837 exactRawJ=91007.355921837 fixedJ=88706.400000000 exactFixedJ=88706.400000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=24088 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=10403 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=130337.241735066 exactRawJ=130337.241735066 fixedJ=130483.622976000 exactFixedJ=130483.622976000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=10004 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=11988 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=17141 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=16749 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 1:15] rawJ=87742.051850627 exactRawJ=87581.617313152 fixedJ=86983.378440000 exactFixedJ=86983.378440000 oneGap=0.183183% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=14430 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=11159 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=13703 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 1:40] rawJ=89436.797522525 exactRawJ=89436.797522525 fixedJ=87970.113780000 exactFixedJ=87970.113780000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=6789 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=5280 finalists=17 exactEvaluated=17 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=6170 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 2:0.3] rawJ=126320.780715832 exactRawJ=126320.780715832 fixedJ=92130.783960000 exactFixedJ=92130.783960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=2641 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=7411 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=5837 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 2:1.2] rawJ=147622.970715832 exactRawJ=147622.970715832 fixedJ=127705.230804000 exactFixedJ=127705.230804000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=16238 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=13941 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=14848 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 1:15 2:0.3] rawJ=129158.567522525 exactRawJ=129158.567522525 fixedJ=93778.935960000 exactFixedJ=93778.935960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=6940 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=13611 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=7520 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=7520 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 1:15 2:1.2] rawJ=150460.757522525 exactRawJ=150460.757522525 fixedJ=149420.131140000 exactFixedJ=149420.131140000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=8 {variants:2 modes:0} map[0:110 1:15 2:1.2] one=0.000% fixed=0.000% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=16213 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=13872 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=14829 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 1:40 2:0.3] rawJ=129883.307522525 exactRawJ=129883.307522525 fixedJ=95716.455960000 exactFixedJ=95716.455960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=6915 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=8851 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=7520 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=7520 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=2 modes=0 rates=map[0:110 1:40 2:1.2] rawJ=151185.497522525 exactRawJ=151185.497522525 fixedJ=149844.211140000 exactFixedJ=149844.211140000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=8 {variants:2 modes:0} map[0:110 1:40 2:1.2] one=0.000% fixed=0.000% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=8 variants=2 modes=0 mixes=24 differs=3 worstOne=0.183% fixed: worst=0.057% best=0.000% over0.5%=0 cycles=2 exactCycles=2 ticks<=5 exactTicks<=5
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=191296 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=154764 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 1:15] rawJ=112277.174167174 exactRawJ=112277.174167174 fixedJ=112186.437000000 exactFixedJ=112186.437000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=318305 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=224531 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 1:40] rawJ=112865.135786645 exactRawJ=112865.135786645 fixedJ=112673.841000000 exactFixedJ=112673.841000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=366007 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=362683 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 2:0.3] rawJ=118199.044749781 exactRawJ=118199.044749781 fixedJ=115618.719360000 exactFixedJ=115618.719360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=205500 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=157370 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 2:1.2] rawJ=145067.793912449 exactRawJ=145067.793912449 fixedJ=142750.628160000 exactFixedJ=142750.628160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=2162661 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1951945 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 1:15 2:0.3] rawJ=118748.368749781 exactRawJ=118748.368749781 fixedJ=116168.043360000 exactFixedJ=116168.043360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1688264 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=740430 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 1:15 2:1.2] rawJ=146057.773046389 exactRawJ=146057.773046389 fixedJ=144398.780160000 exactFixedJ=144398.780160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1786677 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1622602 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 1:40 2:0.3] rawJ=119473.108749781 exactRawJ=119473.108749781 fixedJ=116892.783360000 exactFixedJ=116892.783360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1754012 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=815937 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:20 1:40 2:1.2] rawJ=147917.448740789 exactRawJ=147917.448740789 fixedJ=146336.300160000 exactFixedJ=146336.300160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=615911 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=616397 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=615841 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 1:15] rawJ=114932.391963790 exactRawJ=114932.391963790 fixedJ=114744.421560000 exactFixedJ=114744.421560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=553527 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=552971 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 1:40] rawJ=115657.131963790 exactRawJ=115657.131963790 fixedJ=115486.333560000 exactFixedJ=115486.333560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=352534 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=350388 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 2:0.3] rawJ=121400.709089837 exactRawJ=121400.709089837 fixedJ=118598.837760000 exactFixedJ=118598.837760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=248344 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=245609 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 2:1.2] rawJ=151893.278938710 exactRawJ=151893.278938710 fixedJ=149540.146320000 exactFixedJ=149540.146320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1933440 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1752402 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 1:15 2:0.3] rawJ=122394.175666177 exactRawJ=122394.175666177 fixedJ=120246.989760000 exactFixedJ=120246.989760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1042730 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=946339 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 1:15 2:1.2] rawJ=152883.258072650 exactRawJ=152883.258072650 fixedJ=151188.298320000 exactFixedJ=151188.298320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1570631 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1431526 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1430579 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 1:40 2:0.3] rawJ=124234.097086013 exactRawJ=124234.097086013 fixedJ=122021.043600000 exactFixedJ=122021.043600000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=753530 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1033944 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:60 1:40 2:1.2] rawJ=154742.933767050 exactRawJ=154742.933767050 fixedJ=153125.818320000 exactFixedJ=153125.818320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1087657 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1088143 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=815926 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 1:15] rawJ=120901.869172274 exactRawJ=120901.869172274 fixedJ=119347.352400000 exactFixedJ=119347.352400000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=725204 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=485891 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=484223 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 1:40] rawJ=122646.475281444 exactRawJ=122646.475281444 fixedJ=121083.257040000 exactFixedJ=121083.257040000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=304576 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=304331 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=453568 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 2:0.3] rawJ=137757.036283876 exactRawJ=137757.036283876 fixedJ=127717.327200000 exactFixedJ=127717.327200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=384978 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=385252 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=193840 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 2:1.2] rawJ=180943.222574954 exactRawJ=180943.222574954 fixedJ=160087.217580000 exactFixedJ=160087.217580000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1519814 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1335639 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1332798 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 1:15 2:0.3] rawJ=139568.666381246 exactRawJ=139568.666381246 fixedJ=129365.479200000 exactFixedJ=129365.479200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1046919 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1291970 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=955051 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 1:15 2:1.2] rawJ=182761.382507844 exactRawJ=182761.382507844 fixedJ=162291.559212000 exactFixedJ=162291.559212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1158902 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1580135 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1575538 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 1:40 2:0.3] rawJ=141188.781511646 exactRawJ=141188.781511646 fixedJ=130735.523100000 exactFixedJ=130735.523100000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=705369 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=665222 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=442465 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=8 variants=1 modes=2 rates=map[0:110 1:40 2:1.2] rawJ=184395.175281444 exactRawJ=184395.175281444 fixedJ=163950.139212000 exactFixedJ=163950.139212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=8 variants=1 modes=2 mixes=24 differs=0 worstOne=0.000% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=8 variants=1 modes=0 plans=[6 3 5 6 5] sets=2.7e+03
+          budget 5 s: k=0 evaluated=16 2ms cut=false 141809.6 J surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 2ms cut=false 141809.6 J surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=24088 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=8 variants=2 modes=0 plans=[11 5 9 11 9] sets=4.9e+04
+          budget 5 s: k=0 evaluated=16 21ms cut=false 130337.2 J surrogateEvaluated=24088 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 24ms cut=false 130337.2 J surrogateEvaluated=24088 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=753530 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=8 variants=1 modes=2 plans=[6 3 5 6 5 9 11 9] sets=2.41e+06
+          budget 5 s: k=0 evaluated=16 648ms cut=true 154742.9 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 975ms cut=false 154742.9 J surrogateEvaluated=753530 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=1083853 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=8 variants=1 modes=4 plans=[6 3 5 6 5 17 21 17] sets=1.64e+07
+          budget 5 s: k=0 evaluated=16 686ms cut=true 151604.3 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 1.4s cut=false 151604.3 J surrogateEvaluated=1083853 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=18955191 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=8 variants=2 modes=1 plans=[11 5 9 11 9 9 11 9] sets=4.37e+07
+          budget 5 s: k=0 evaluated=16 543ms cut=true 150269.0 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 17.698s cut=false 150269.0 J surrogateEvaluated=18955191 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=27711182 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=8 variants=2 modes=2 plans=[11 5 9 11 9 17 21 17] sets=2.97e+08
+          budget 5 s: k=0 evaluated=16 559ms cut=true 148839.6 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 25.845s cut=false 148839.6 J surrogateEvaluated=27711182 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=8 surrogateEvaluated=26743683 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=8 variants=2 modes=4 plans=[11 5 9 11 9 33 41 33] sets=2.19e+09
+          budget 5 s: k=0 evaluated=16 516ms cut=true 147130.5 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 25.207s cut=false 147130.5 J surrogateEvaluated=26743683 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1408 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1304 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1647 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1543 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1439 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74652.352800000 exactFixedJ=74652.352800000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1565 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1055 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 2:0.3] rawJ=82797.288642828 exactRawJ=82797.288642828 fixedJ=80421.106176000 exactFixedJ=80421.106176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1044 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=840 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 2:1.2] rawJ=121943.077683104 exactRawJ=121943.077683104 fixedJ=122018.455200000 exactFixedJ=122018.455200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=3350 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2819 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=83787.267776768 exactRawJ=83787.267776768 fixedJ=82069.258176000 exactFixedJ=82069.258176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2027 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1673 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=127140.756775978 exactRawJ=127140.756775978 fixedJ=127796.593152000 exactFixedJ=127796.593152000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=3428 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2518 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=85646.943471168 exactRawJ=85646.943471168 fixedJ=84006.778176000 exactFixedJ=84006.778176000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1547 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1547 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1370 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=127865.496775978 exactRawJ=127865.496775978 fixedJ=128472.161952000 exactFixedJ=128472.161952000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1806 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1702 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 1:15] rawJ=78107.113490660 exactRawJ=78107.113490660 fixedJ=77864.744880000 exactFixedJ=77864.744880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1595 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1387 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 1:40] rawJ=80007.688169260 exactRawJ=80007.688169260 fixedJ=79802.264880000 exactFixedJ=79802.264880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1319 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1013 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 2:0.3] rawJ=89622.773669089 exactRawJ=89622.773669089 fixedJ=87210.624336000 exactFixedJ=87210.624336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=822 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=618 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 2:1.2] rawJ=129548.543752162 exactRawJ=129548.543752162 fixedJ=130036.402032000 exactFixedJ=130036.402032000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=3140 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1721 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=90612.752803029 exactRawJ=90612.752803029 fixedJ=88858.776336000 exactFixedJ=88858.776336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1362 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1008 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=140179.452056280 exactRawJ=140179.452056280 fixedJ=139980.560880000 exactFixedJ=139980.560880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2366 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1402 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=92472.428497429 exactRawJ=92472.428497429 fixedJ=90796.296336000 exactFixedJ=90796.296336000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1299 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=141809.584177080 exactRawJ=141809.584177080 fixedJ=141639.140880000 exactFixedJ=141639.140880000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1466 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1094 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:110 1:15] rawJ=87980.794229454 exactRawJ=87980.794229454 fixedJ=87776.156460000 exactFixedJ=87776.156460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1221 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=998 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:110 1:40] rawJ=89886.450456254 exactRawJ=89886.450456254 fixedJ=89713.676460000 exactFixedJ=89713.676460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=955 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=822 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=648 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:110 2:0.3] rawJ=126719.792071374 exactRawJ=126719.792071374 fixedJ=97757.695596000 exactFixedJ=97757.695596000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=595 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=361 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=0 rates=map[0:110 2:1.2] rawJ=148021.982071374 exactRawJ=148021.982071374 fixedJ=147876.704460000 exactFixedJ=147876.704460000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2200 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1278 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=924 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1211 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=954 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=600 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1495 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1074 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1094 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=660 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1082 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1082 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=0 variants=1 modes=0 mixes=24 differs=0 worstOne=0.000% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=13512 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=13126 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 1:15] rawJ=73977.072873600 exactRawJ=73977.072873600 fixedJ=73976.784000000 exactFixedJ=73976.784000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=23576 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=23913 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=23597 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 1:40] rawJ=74701.812873600 exactRawJ=74701.812873600 fixedJ=74643.125280000 exactFixedJ=74643.125280000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10650 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=9985 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 2:0.3] rawJ=81082.285607376 exactRawJ=81082.285607376 fixedJ=78760.068000000 exactFixedJ=78760.068000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=15760 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10592 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 2:1.2] rawJ=112557.490122540 exactRawJ=112557.490122540 fixedJ=111210.231624000 exactFixedJ=111210.231624000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=76235 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=38121 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 1:15 2:0.3] rawJ=82032.591013102 exactRawJ=82032.591013102 fixedJ=80315.580780000 exactFixedJ=80315.580780000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=30993 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=28467 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 1:15 2:1.2] rawJ=122381.332615622 exactRawJ=122381.332615622 fixedJ=122459.651376000 exactFixedJ=122459.651376000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=76195 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=56283 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 1:40 2:0.3] rawJ=83763.458715208 exactRawJ=83763.458715208 fixedJ=82112.302080000 exactFixedJ=82112.302080000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=45296 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=42813 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:20 1:40 2:1.2] rawJ=123608.064823200 exactRawJ=123608.064823200 fixedJ=123796.444896000 exactFixedJ=123796.444896000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=42656 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=20422 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 1:15] rawJ=78006.079465225 exactRawJ=78006.079465225 fixedJ=77673.315480000 exactFixedJ=77673.315480000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=31446 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=20422 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 1:40] rawJ=78448.629510125 exactRawJ=78448.629510125 fixedJ=78097.395480000 exactFixedJ=78097.395480000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10215 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=8935 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 2:0.3] rawJ=88353.092553590 exactRawJ=88353.092553590 fixedJ=86052.706440000 exactFixedJ=86052.706440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=9437 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=8180 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 2:1.2] rawJ=119659.331583660 exactRawJ=119659.331583660 fixedJ=118397.116824000 exactFixedJ=118397.116824000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=41230 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=27787 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 1:15 2:0.3] rawJ=89344.761020470 exactRawJ=89344.761020470 fixedJ=87700.858440000 exactFixedJ=87700.858440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=38408 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=27563 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 1:15 2:1.2] rawJ=129894.691690166 exactRawJ=129894.691690166 fixedJ=130059.542976000 exactFixedJ=130059.542976000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=54014 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=26612 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 1:40 2:0.3] rawJ=91007.355921837 exactRawJ=91007.355921837 fixedJ=88706.400000000 exactFixedJ=88706.400000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=38358 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=27563 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:60 1:40 2:1.2] rawJ=130337.241735066 exactRawJ=130337.241735066 fixedJ=130483.622976000 exactFixedJ=130483.622976000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=34084 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=17404 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=16749 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 1:15] rawJ=87581.617313152 exactRawJ=87581.617313152 fixedJ=86983.378440000 exactFixedJ=86983.378440000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=25401 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=17013 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=16043 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 1:40] rawJ=89436.797522525 exactRawJ=89436.797522525 fixedJ=87970.113780000 exactFixedJ=87970.113780000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=17604 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10788 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=7418 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 2:0.3] rawJ=126320.780715832 exactRawJ=126320.780715832 fixedJ=92130.783960000 exactFixedJ=92130.783960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=6795 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=9739 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=7079 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 2:1.2] rawJ=147622.970715832 exactRawJ=147622.970715832 fixedJ=127705.230804000 exactFixedJ=127705.230804000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=30898 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=19717 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=17600 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 1:15 2:0.3] rawJ=129158.567522525 exactRawJ=129158.567522525 fixedJ=93778.935960000 exactFixedJ=93778.935960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10592 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=20195 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10236 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10236 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 1:15 2:1.2] rawJ=150460.757522525 exactRawJ=150460.757522525 fixedJ=149420.131140000 exactFixedJ=149420.131140000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=0 {variants:2 modes:0} map[0:110 1:15 2:1.2] one=0.000% fixed=0.000% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=30873 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=19648 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=17581 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 1:40 2:0.3] rawJ=129883.307522525 exactRawJ=129883.307522525 fixedJ=95716.455960000 exactFixedJ=95716.455960000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10567 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=12287 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10236 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=10236 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=2 modes=0 rates=map[0:110 1:40 2:1.2] rawJ=151185.497522525 exactRawJ=151185.497522525 fixedJ=149844.211140000 exactFixedJ=149844.211140000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:397: ROW strategy=v2 active=0 {variants:2 modes:0} map[0:110 1:40 2:1.2] one=0.000% fixed=0.000% ticks=5 cycled=true exactTicks=5 exactCycled=true
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/plc/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=0 variants=2 modes=0 mixes=24 differs=0 worstOne=0.000% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=2 exactCycles=2 ticks<=5 exactTicks<=5
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=191296 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=154764 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 1:15] rawJ=112277.174167174 exactRawJ=112277.174167174 fixedJ=112186.437000000 exactFixedJ=112186.437000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=318305 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=224531 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 1:40] rawJ=112865.135786645 exactRawJ=112865.135786645 fixedJ=112673.841000000 exactFixedJ=112673.841000000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=366007 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=362683 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 2:0.3] rawJ=118199.044749781 exactRawJ=118199.044749781 fixedJ=115618.719360000 exactFixedJ=115618.719360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=205500 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=157370 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 2:1.2] rawJ=145067.793912449 exactRawJ=145067.793912449 fixedJ=142750.628160000 exactFixedJ=142750.628160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2454261 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2450473 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 1:15 2:0.3] rawJ=118748.368749781 exactRawJ=118748.368749781 fixedJ=116168.043360000 exactFixedJ=116168.043360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1937324 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=886026 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 1:15 2:1.2] rawJ=146057.773046389 exactRawJ=146057.773046389 fixedJ=144398.780160000 exactFixedJ=144398.780160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2021829 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2019034 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 1:40 2:0.3] rawJ=119473.108749781 exactRawJ=119473.108749781 fixedJ=116892.783360000 exactFixedJ=116892.783360000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2032916 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1011153 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:20 1:40 2:1.2] rawJ=147917.448740789 exactRawJ=147917.448740789 fixedJ=146336.300160000 exactFixedJ=146336.300160000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=615911 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=616397 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=615841 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 1:15] rawJ=114932.391963790 exactRawJ=114932.391963790 fixedJ=114744.421560000 exactFixedJ=114744.421560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=553527 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=552971 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 1:40] rawJ=115657.131963790 exactRawJ=115657.131963790 fixedJ=115486.333560000 exactFixedJ=115486.333560000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=352534 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=350388 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 2:0.3] rawJ=121400.709089837 exactRawJ=121400.709089837 fixedJ=118598.837760000 exactFixedJ=118598.837760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=248344 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=245609 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 2:1.2] rawJ=151893.278938710 exactRawJ=151893.278938710 fixedJ=149540.146320000 exactFixedJ=149540.146320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2188860 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=2183178 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 1:15 2:0.3] rawJ=122394.175666177 exactRawJ=122394.175666177 fixedJ=120246.989760000 exactFixedJ=120246.989760000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1134386 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1129651 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 1:15 2:1.2] rawJ=152883.258072650 exactRawJ=152883.258072650 fixedJ=151188.298320000 exactFixedJ=151188.298320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1772339 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1765618 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1764671 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 1:40 2:0.3] rawJ=124234.097086013 exactRawJ=124234.097086013 fixedJ=122021.043600000 exactFixedJ=122021.043600000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=845186 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1255398 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:60 1:40 2:1.2] rawJ=154742.933767050 exactRawJ=154742.933767050 fixedJ=153125.818320000 exactFixedJ=153125.818320000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1087657 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1088143 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=815926 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 1:15] rawJ=120901.869172274 exactRawJ=120901.869172274 fixedJ=119347.352400000 exactFixedJ=119347.352400000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=725204 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=485891 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=484223 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 1:40] rawJ=122646.475281444 exactRawJ=122646.475281444 fixedJ=121083.257040000 exactFixedJ=121083.257040000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=304576 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=304331 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=453568 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 2:0.3] rawJ=137757.036283876 exactRawJ=137757.036283876 fixedJ=127717.327200000 exactFixedJ=127717.327200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=384978 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=385252 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=193840 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 2:1.2] rawJ=180943.222574954 exactRawJ=180943.222574954 fixedJ=160087.217580000 exactFixedJ=160087.217580000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1636286 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1635063 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1632222 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 1:15 2:0.3] rawJ=139568.666381246 exactRawJ=139568.666381246 fixedJ=129365.479200000 exactFixedJ=129365.479200000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1124931 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1500002 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1122715 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 1:15 2:1.2] rawJ=182761.382507844 exactRawJ=182761.382507844 fixedJ=162291.559212000 exactFixedJ=162291.559212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1275374 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1911515 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1906918 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 1:40 2:0.3] rawJ=141188.781511646 exactRawJ=141188.781511646 fixedJ=130735.523100000 exactFixedJ=130735.523100000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=783381 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=789734 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=526297 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:380: QUALITY strategy=v2 active=0 variants=1 modes=2 rates=map[0:110 1:40 2:1.2] rawJ=184395.175281444 exactRawJ=184395.175281444 fixedJ=163950.139212000 exactFixedJ=163950.139212000 oneGap=0.000000% fixedGap=0.000000%
+    scheduler_capacity_search_test.go:401: GAP strategy=v2 active=0 variants=1 modes=2 mixes=24 differs=0 worstOne=0.000% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=0 variants=1 modes=0 plans=[6 3 5 6 5] sets=2.7e+03
+          budget 5 s: k=0 evaluated=16 21ms cut=false 141809.6 J surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 2ms cut=false 141809.6 J surrogateEvaluated=1062 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=38358 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=0 variants=2 modes=0 plans=[11 5 9 11 9] sets=4.9e+04
+          budget 5 s: k=0 evaluated=16 35ms cut=false 130337.2 J surrogateEvaluated=38358 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 29ms cut=false 130337.2 J surrogateEvaluated=38358 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=845186 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=0 variants=1 modes=2 plans=[6 3 5 6 5 9 11 9] sets=2.41e+06
+          budget 5 s: k=0 evaluated=16 596ms cut=true 154742.9 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 1.068s cut=false 154742.9 J surrogateEvaluated=845186 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=8168017 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=0 variants=1 modes=4 plans=[6 3 5 6 5 17 21 17] sets=1.64e+07
+          budget 5 s: k=0 evaluated=16 744ms cut=true 151604.3 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 9.223s cut=false 151604.3 J surrogateEvaluated=8168017 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=49737904 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=0 variants=2 modes=1 plans=[11 5 9 11 9 9 11 9] sets=4.37e+07
+          budget 5 s: k=0 evaluated=16 525ms cut=true 150269.0 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 45.384s cut=false 150269.0 J surrogateEvaluated=49737904 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:358: V2 active=0 surrogateEvaluated=328355801 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0 budgetCut=false
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=0 variants=2 modes=2 plans=[11 5 9 11 9 17 21 17] sets=2.97e+08
+          budget 5 s: k=0 evaluated=16 458ms cut=true 148839.6 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 4m51.095s cut=false 148839.6 J surrogateEvaluated=328355801 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+    scheduler_capacity_search_test.go:430: SCALE strategy=v2 active=0 variants=2 modes=4 plans=[11 5 9 11 9 33 41 33] sets=2.19e+09
+          budget 5 s: k=0 evaluated=16 415ms cut=true 147130.5 J surrogateEvaluated=500000 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+          full: k=0 evaluated=16 5.002s cut=true 147130.5 J surrogateEvaluated=4700366 finalists=16 exactEvaluated=16 fallback="" postFilterReverts=0 surrogateGap=0
+--- PASS: TestCapacityPlanSearchEvaluation (2167.91s)
+PASS
+ok  	github.com/lab-paper-code/chill/internal/serving	2167.918s

@@ -57,8 +57,13 @@ type SchedulerSettings struct {
 	DefaultIdlePower     *IdlePowerDefault             `json:"defaultIdlePower,omitempty"`
 	// PlanSearchWorkers bounds the goroutines that evaluate plan sets at once;
 	// the search itself ends within half of ControlInterval.
-	PlanSearchWorkers int               `json:"planSearchWorkers"`
-	Controls          SchedulerControls `json:"controls"`
+	PlanSearchWorkers       int               `json:"planSearchWorkers"`
+	PlanSearchStrategy      string            `json:"planSearchStrategy"`
+	PlanSearchEvaluations   int               `json:"planSearchEvaluations"`
+	PlanExactFinalists      int               `json:"planExactFinalists"`
+	PlanPolishActive        int               `json:"planPolishActive"`
+	PlanPostFilterFinalists bool              `json:"planPostFilterFinalists"`
+	Controls                SchedulerControls `json:"controls"`
 }
 
 // ValidateSchedulerSettingsPatch applies a public settings merge patch without
@@ -619,10 +624,23 @@ func (s SchedulerSettings) Validate() error {
 	if err := s.validateCapacityNumerics(); err != nil {
 		return err
 	}
+	if err := s.validatePlanSearch(); err != nil {
+		return err
+	}
+	return s.validateExcludedNodes()
+}
+
+func (s SchedulerSettings) validatePlanSearch() error {
 	if s.PlanSearchWorkers < 1 {
 		return fmt.Errorf("planSearchWorkers must be at least 1")
 	}
-	return s.validateExcludedNodes()
+	if s.PlanSearchStrategy != schedulerPlanSearchV1 && s.PlanSearchStrategy != schedulerPlanSearchV2 && s.PlanSearchStrategy != schedulerPlanSearchShadow {
+		return fmt.Errorf("planSearchStrategy must be v1, v2 or shadow")
+	}
+	if s.PlanSearchEvaluations < 1 || s.PlanExactFinalists < 1 || s.PlanPolishActive < 0 {
+		return fmt.Errorf("planSearchEvaluations and planExactFinalists must be at least 1; planPolishActive must be nonnegative (0 searches all plans)")
+	}
+	return nil
 }
 
 func (s SchedulerSettings) validateCapacityNumerics() error {
@@ -648,13 +666,18 @@ func (s SchedulerSettings) validateExcludedNodes() error {
 // completionMarginMS apart from zero.
 type SchedulerSettingsInput struct {
 	SchedulerSettings
-	CompletionMarginMS     *float64       `json:"completionMarginMS"`
-	BootstrapCapacityWait  *time.Duration `json:"bootstrapCapacityWaitNanos"`
-	ScaleDownStabilization *time.Duration `json:"scaleDownStabilizationNanos"`
-	ReplacementDwell       *time.Duration `json:"replacementDwellNanos"`
-	CapacityGridSteps      *int           `json:"capacityGridSteps"`
-	CapacityBisectionWidth *float64       `json:"capacityBisectionWidth"`
-	CapacityTailSamples    *int           `json:"capacityTailSamples"`
+	CompletionMarginMS      *float64       `json:"completionMarginMS"`
+	BootstrapCapacityWait   *time.Duration `json:"bootstrapCapacityWaitNanos"`
+	ScaleDownStabilization  *time.Duration `json:"scaleDownStabilizationNanos"`
+	ReplacementDwell        *time.Duration `json:"replacementDwellNanos"`
+	CapacityGridSteps       *int           `json:"capacityGridSteps"`
+	CapacityBisectionWidth  *float64       `json:"capacityBisectionWidth"`
+	CapacityTailSamples     *int           `json:"capacityTailSamples"`
+	PlanSearchStrategy      *string        `json:"planSearchStrategy,omitempty"`
+	PlanSearchEvaluations   *int           `json:"planSearchEvaluations,omitempty"`
+	PlanExactFinalists      *int           `json:"planExactFinalists,omitempty"`
+	PlanPolishActive        *int           `json:"planPolishActive,omitempty"`
+	PlanPostFilterFinalists *bool          `json:"planPostFilterFinalists,omitempty"`
 }
 
 // Settings returns validated settings carrying the supplied margin.
@@ -663,6 +686,23 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
 	settings := in.SchedulerSettings
+	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = schedulerPlanSearchV1, 500000
+	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 4, false
+	if in.PlanSearchStrategy != nil {
+		settings.PlanSearchStrategy = *in.PlanSearchStrategy
+	}
+	if in.PlanSearchEvaluations != nil {
+		settings.PlanSearchEvaluations = *in.PlanSearchEvaluations
+	}
+	if in.PlanExactFinalists != nil {
+		settings.PlanExactFinalists = *in.PlanExactFinalists
+	}
+	if in.PlanPolishActive != nil {
+		settings.PlanPolishActive = *in.PlanPolishActive
+	}
+	if in.PlanPostFilterFinalists != nil {
+		settings.PlanPostFilterFinalists = *in.PlanPostFilterFinalists
+	}
 	settings.CapacityGridSteps, settings.CapacityBisectionWidth, settings.CapacityTailSamples = 20, 0.005, 100
 	if in.CapacityGridSteps != nil {
 		settings.CapacityGridSteps = *in.CapacityGridSteps

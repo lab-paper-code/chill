@@ -31,6 +31,7 @@ func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	estimates := schedulerEstimateSettingsForTest()
 	s.DefaultOperationCost, s.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples = 20, .005, 100
+	s.PlanSearchStrategy, s.PlanSearchEvaluations, s.PlanExactFinalists, s.PlanPolishActive = "v1", 500000, 16, 4
 	node := SchedulerNode{Node: NodeReference{Name: "node1", UID: "n1"}, PowerMode: "fixed", Ready: true, MemoryBytes: 10000, ObservedAt: at}
 	image := "registry/model@sha256:" + strings.Repeat("a", 64)
 	settings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}

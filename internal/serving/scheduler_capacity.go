@@ -81,6 +81,16 @@ type SchedulerPlanSearch struct {
 	Steps             []SchedulerPlanSearchStep             `json:"steps,omitempty"`
 	TrailingEvaluated int                                   `json:"trailingEvaluated,omitempty"`
 	TerminationReason string                                `json:"terminationReason,omitempty"`
+	Strategy           string                     `json:"strategy,omitempty"`
+	Pruned             map[string]int             `json:"pruned,omitempty"`
+	SurrogateEvaluated int                        `json:"surrogateEvaluated,omitempty"`
+	Finalists          int                        `json:"finalists,omitempty"`
+	ExactEvaluated     int                        `json:"exactEvaluated,omitempty"`
+	SurrogateGapJoules float64                    `json:"surrogateGapJoules,omitempty"`
+	PostFilterReverts  int                        `json:"postFilterReverts,omitempty"`
+	Fallback           string                     `json:"fallback,omitempty"`
+	DualBound          float64                    `json:"dualBound,omitempty"`
+	Shadow             *SchedulerPlanSearchShadow `json:"shadow,omitempty"`
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
@@ -110,6 +120,15 @@ type SchedulerPlanSearchStep struct {
 	Evaluated        int             `json:"evaluated"`
 	Duration         time.Duration   `json:"durationNanos"`
 	BudgetCut        bool            `json:"budgetCut,omitempty"`
+}
+
+// SchedulerPlanSearchShadow records the independent shadow planner.
+type SchedulerPlanSearchShadow struct {
+	Key       string        `json:"key"`
+	Joules    float64       `json:"joules"`
+	Evaluated int           `json:"evaluated"`
+	Duration  time.Duration `json:"durationNanos"`
+	Fallback  string        `json:"fallback,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -240,7 +259,10 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
-	decision = planner.decide(decision, planner.minimumGain(planner.payback(best)))
+	if settings.PlanSearchStrategy != schedulerPlanSearchV2 || !settings.PlanPostFilterFinalists {
+		best = planner.minimumGain(planner.payback(best))
+	}
+	decision = planner.decide(decision, best)
 	markFixedEstimates(&decision)
 	return decision, ctx.Err()
 }
@@ -450,4 +472,5 @@ func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arr
 	}
 	return float64(slices.Min(counts)) / width.Seconds()
 }
+
 

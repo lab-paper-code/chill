@@ -280,3 +280,79 @@ SCALE(mobilenet 60, PLC 40, SmolVLM 1.2; `planSearchWorkers` 3):
 중앙값 **648.1 ns/op**, 목표 ≤300 ns는 넘었다. 할당은 없으며 초기 CPU profile에서 Workload 항 수집·정렬·정확 retained fold가 flat 36.34%(누적 57.24%), 정수 minimax 가중치가 flat 16.63%였다. 동일 Workload/retained 항 재사용 뒤에도 위 실측이다. 제안서 §6의 0.2 µs 가정은 이 단계의 실측 **0.6481 µs**로 바꿔 후속 탐색 비용을 계산해야 한다. `capacityJudge`가 상세 결과 포인터를 반환하며 생기는 할당은 동일 연산 순서의 값 기반 판정식으로 피했다.
 
 검사: 포커스 `go test ./internal/serving -run 'TestCapacityDelta|TestCapacityGreedy' -count=1 -v`(상위 테스트 9개와 상한 하위 테스트 3개), `GOFLAGS=-buildvcs=false make lint`, `go test ./internal/serving -count=1`, `GOFLAGS=-buildvcs=false make test` 모두 통과. 전체 게이트는 118.50 s였고, Python 91개 중 88개 통과·3개 skip, Go 전체 비-e2e 패키지·envtest·배포 설정/Helm/RBAC 검사도 통과했다. `internal/serving` coverage는 89.2%다. 새 파일은 같은 패키지이므로 `arch-check`는 해당하지 않는다. Dashboard·독립 Helm lint/template·live-cluster e2e는 실행하지 않았으며 live cluster는 변경하지 않았다.
+
+#### 7.8.4 피복·연마·결합 탐색·정확 깔때기 (4단계)
+
+Core `2de25cd6`(동작 불변 lint 추출 `57d09c27`)와 Wire 통합을 같은 i7-8700K/Go 1.23.4에서 측정했다. keep·빈 집합 두 출발점, 정확 후보 K=16, 단일 탐색 goroutine이다. `planPostFilterFinalists=false`이며, 후보별 후처리는 진단용으로 항상 계산한다. 설정 기본값은 전략 v1, 평가 수 500,000, K=16, 활성 m=4로 유지한다. **m 기본값의 최종 결정은 보류**한다. m=0은 모든 탐색 가능 계획과 cap 변형을 활성화하며 설정 검증도 0을 허용한다.
+
+명령: `CHILL_PLAN_SEARCH=1 go test ./internal/serving -run '^TestCapacityPlanSearchEvaluation$' -count=1 -v -timeout 0 > docs/design/serving/evidence/sched-v2-stage4.log 2>&1`. PASS, 2,167.918 s. 전체 로그를 함께 보관한다. GAP은 벽시계·평가 수 예산 없이 측정했다. SCALE의 budget 열은 v2에서 5 s와 500,000회 평가 제한을 함께 적용했고 v1에는 벽시계 5 s만 적용했다. full 열은 둘 다 해제하되 m=0·노드 8 b2 모드 4만 벽시계를 5 s로 제한했다. 임계는 완화하지 않았으며 하네스 PASS와 아래 수용 게이트 통과를 구별한다.
+
+현재 하네스는 §7.8.2의 정정대로 b2에도 b1과 같은 입력당 에너지를 쓴다. §7.8.0은 정정 전 0.9× 에너지이므로 b2의 v1 GAP·J·반복 Tick 순환 수가 재현되지 않는다. 현재 v1은 노드 5 b2 worstOne 8.156%, cycles 2이며 기준선의 10.043%, cycles 0과 다르다. b1 GAP은 기준선과 같다. 탐색 구현 비교에는 아래 **동일 정정 입력의 v1/v2**를 사용한다.
+
+GAP: 각 행 24조합, raw는 깔때기 정확 평가 1등의 후처리 전 J, fixed는 `e5Converge`의 payback·minimumGain 뒤 반복 Tick 끝 J다. 전략별 72조합 중 충족 68·불충족 4로 전수 판정과 모두 일치했다. `differs`는 raw key 차이, over는 fixed 차가 0.5%를 넘은 조합 수다.
+
+| 전략 | 활성 m | 공간 | differs | raw 최악 | fixed 최악 | over 0.5% | 순환 / 전수 순환 |
+|---|---|---|---:|---:|---:|---:|---:|
+| v1 | — | 5 b1 | 1 | 3.985% | 4.294% | 1 | 0 / 0 |
+| v1 | — | 5 b2 | 2 | 8.156% | 0.000% | 0 | 2 / 2 |
+| v1 | — | 8 b1 모드 2 | 1 | 1.860% | 0.096% | 0 | 0 / 0 |
+| v2 | 4 | 5 b1 | 0 | 0.000% | 0.000% | 0 | 0 / 0 |
+| v2 | 4 | 5 b2 | 7 | 8.156% | 15.237% | 2 | 4 / 2 |
+| v2 | 4 | 8 b1 모드 2 | 3 | 1.860% | 0.865% | 2 | 0 / 0 |
+| v2 | 8 | 5 b1 | 0 | 0.000% | 0.000% | 0 | 0 / 0 |
+| v2 | 8 | 5 b2 | 3 | 0.183% | 0.057% | 0 | 2 / 2 |
+| v2 | 8 | 8 b1 모드 2 | 0 | 0.000% | 0.000% | 0 | 0 / 0 |
+| v2 | 0 (전체) | 5 b1 | 0 | 0.000% | 0.000% | 0 | 0 / 0 |
+| v2 | 0 (전체) | 5 b2 | 0 | 0.000% | 0.000% | 0 | 2 / 2 |
+| v2 | 0 (전체) | 8 b1 모드 2 | 0 | 0.000% | 0.000% | 0 | 0 / 0 |
+
+조합별 비교에서 m=4는 raw가 v1보다 큰 조합 7개(raw 차 >0.5% 5개), fixed가 v1보다 큰 조합 8개다. m=8은 raw 차 ≤0.5%를 모두 만족하지만 v1보다 큰 raw 3개·fixed 2개가 남으므로 “모든 조합에서 v1 이하” 게이트는 통과하지 못했다. 전체 활성은 raw·fixed가 전수와 모두 같고 v1 초과도 없다. 전체 활성의 순환 2회는 정확 전수 반복에서도 같은 2회가 발생한다. 순환 0 게이트는 여전히 미달이며 이 두 순환을 탐색 누락으로 분류하지 않는다.
+
+SCALE: 수요 mnv2 60·plc 40·vlm 1.2. 평가 수는 v1에서 정확 평가, v2에서 증분 평가다. 각 평가 열은 `평가 수 / 탐색 시간 / budgetCut`이다. 마지막 J는 full의 후처리 전 J이며 이 실험의 budget/full J는 모든 행에서 같았다. 공간의 “모드”와 활성 m은 별개다.
+
+| 전략 | 활성 m | 공간 | budget 5 s + 500,000회 | full | J |
+|---|---|---|---|---|---:|
+| v1 | — | 5 b1 | 2,797 / 6ms / false | 2,797 / 5ms / false | 141809.6 |
+| v1 | — | 5 b2 | 16,312 / 28ms / false | 16,312 / 29ms / false | 140967.8 |
+| v1 | — | 8 b1 모드 2 | 55,315 / 388ms / false | 55,315 / 252ms / false | 154742.9 |
+| v1 | — | 8 b1 모드 4 | 166,194 / 769ms / false | 166,194 / 893ms / false | 151604.3 |
+| v1 | — | 8 b2 모드 1 | 102,606 / 424ms / false | 102,606 / 494ms / false | 150269.0 |
+| v1 | — | 8 b2 모드 2 | 227,088 / 839ms / false | 227,088 / 869ms / false | 148839.6 |
+| v1 | — | 8 b2 모드 4 | 670,700 / 3.308s / false | 670,700 / 3.055s / false | 147130.5 |
+| v2 | 4 | 5 b1 | 1,010 / 2ms / false | 1,010 / 2ms / false | 141809.6 |
+| v2 | 4 | 5 b2 | 5,208 / 4ms / false | 5,208 / 4ms / false | 140967.8 |
+| v2 | 4 | 8 b1 모드 2 | 137,420 / 174ms / false | 137,420 / 174ms / false | 154742.9 |
+| v2 | 4 | 8 b1 모드 4 | 144,727 / 146ms / false | 144,727 / 148ms / false | 151604.3 |
+| v2 | 4 | 8 b2 모드 1 | 291,449 / 355ms / false | 291,449 / 359ms / false | 150269.0 |
+| v2 | 4 | 8 b2 모드 2 | 298,077 / 338ms / false | 298,077 / 345ms / false | 148839.6 |
+| v2 | 4 | 8 b2 모드 4 | 352,063 / 381ms / false | 352,063 / 411ms / false | 147130.5 |
+| v2 | 8 | 5 b1 | 1,062 / 2ms / false | 1,062 / 2ms / false | 141809.6 |
+| v2 | 8 | 5 b2 | 24,088 / 21ms / false | 24,088 / 24ms / false | 130337.2 |
+| v2 | 8 | 8 b1 모드 2 | 500,000 / 648ms / true | 753,530 / 975ms / false | 154742.9 |
+| v2 | 8 | 8 b1 모드 4 | 500,000 / 686ms / true | 1,083,853 / 1.4s / false | 151604.3 |
+| v2 | 8 | 8 b2 모드 1 | 500,000 / 543ms / true | 18,955,191 / 17.698s / false | 150269.0 |
+| v2 | 8 | 8 b2 모드 2 | 500,000 / 559ms / true | 27,711,182 / 25.845s / false | 148839.6 |
+| v2 | 8 | 8 b2 모드 4 | 500,000 / 516ms / true | 26,743,683 / 25.207s / false | 147130.5 |
+| v2 | 0 | 5 b1 | 1,062 / 21ms / false | 1,062 / 2ms / false | 141809.6 |
+| v2 | 0 | 5 b2 | 38,358 / 35ms / false | 38,358 / 29ms / false | 130337.2 |
+| v2 | 0 | 8 b1 모드 2 | 500,000 / 596ms / true | 845,186 / 1.068s / false | 154742.9 |
+| v2 | 0 | 8 b1 모드 4 | 500,000 / 744ms / true | 8,168,017 / 9.223s / false | 151604.3 |
+| v2 | 0 | 8 b2 모드 1 | 500,000 / 525ms / true | 49,737,904 / 45.384s / false | 150269.0 |
+| v2 | 0 | 8 b2 모드 2 | 500,000 / 458ms / true | 328,355,801 / 4m51.095s / false | 148839.6 |
+| v2 | 0 | 8 b2 모드 4 | 500,000 / 415ms / true | 4,700,366 / 5.002s / true | 147130.5 |
+
+최대 공간의 m=4는 기준선 v1 3.06 s와 현 입력 v1 3.055 s보다 빠르지만 **411 ms >100 ms**여서 비용 게이트 미달이다. m=8은 무제한 25.207 s이며 기본 평가 예산에서 잘린다. 전체 활성도 기본 예산과 5 s 안전 마감 모두에 닿는다. 활성 범위를 늘리면 품질은 개선되지만 결합 탐색 비용 게이트를 충족하지 못한다.
+
+v2 기록: m=4에서 `surrogateEvaluated` 361~387,743, finalists/exactEvaluated 16~17; m=8에서 361~27,711,182, 16~17; 전체 활성에서 361~328,355,801, 16이다(GAP 반복 Tick과 무제한 SCALE에서 기록된 범위). 모든 v2 판단의 fallback 횟수 0, `postFilterReverts` 합 0, 선택해 `abs(surrogateGapJoules)` 최대 0 J였다. 따라서 이번 품질 실패를 정확 깔때기 거절이나 증분 J 오차로 설명할 수 없다. 기본 꺼짐인 후처리 후보 비교를 켤 근거도 이번 하네스에서는 없었다.
+
+Core의 활성 범위 진단은 다음 두 사례를 찾았다. 둘 다 keep·빈 집합이 같은 국소점에 도달했고, 가지치기를 끄고 **같은 활성 집합**을 전수 탐색해도 개선되지 않았다. 전체 계획을 활성화하면 전수 최적에 도달하므로 원인은 연마의 top-4 후보 집합이다.
+
+- 5노드 b2, mnv2 60·plc 15·vlm 1.2: m=4 J=139350.14964550763, 전수 J=129894.69169016636. m=4 key는 `rasp5=rasp5/mnv2/q1-b2|orangepi=|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-b2-vlm|genesis3=genesis3/plc/cpu-q1`. 전수 key는 `rasp5=rasp5/plc/q1-b2|orangepi=orangepi/mnv2/q1-b2|lattepanda=lattepanda/vlm/q1-b2-vlm|genesis2=genesis2/vlm/cpu-q1-b2-vlm|genesis3=genesis3/mnv2/cpu-q1`. 활성 밖 계획은 `rasp5/plc/q1-b2`, `genesis2/vlm/cpu-q1-b2-vlm`; 가지치기 없는 활성 3,750리프도 같은 m=4 J다.
+- 8노드 b1 모드 2, mnv2 110·vlm 1.2: m=4 J=184308.90145453607, raw 차 1.860075%. m=4 key는 `rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=jetsono/mnv2/cpu-q1@1|jetsonx=jetsonx/mnv2/q1@0|jetson-nano=jetson-nano/mnv2/q1@0`. 전수 key는 `rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q2|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=|jetsonx=jetsonx/mnv2/q2@0|jetson-nano=jetson-nano/mnv2/q2@0`. 활성 밖 계획은 `jetsonx/mnv2/q2@0`; 가지치기 없는 활성 144,000리프도 같은 m=4 J다.
+
+제안서 §8 위험 표 보강: **활성 m의 품질·비용 상충**. 두 출발점이 같은 국소점에 모이고 전역 최적 계획이 top-m 밖이면 제한 결합 탐색은 그 해를 열거하지 않는다. 전체 활성은 이번 raw 최적을 찾지만 최대 공간의 시간·평가 예산을 넘는다. m 변경만으로 모든 수용 게이트가 충족된다고 주장하지 않는다.
+
+결정성: `TestCapacitySearchV2Determinism`에서 노드 8 b2 모드 2, 60·40·1.2 수요의 같은 planner를 계획 `[1:]` 셔플과 workers 1/3 조합으로 4회 실행했다. 결과 key·가중치·증분 평가 수·정확 평가 수가 모두 같았다. Core 포커스에서도 UID/계획 key 결정 순회와 품질을 검사했다. 호스트 2대 비교는 실행하지 않았다. `TestCapacityFunnelPostFilterReverts`는 100 J 절감/150 J 문턱의 1등과 60 J 절감/0 J 문턱의 대안에서 비교 플래그 양쪽 모두 reverts=1을 검증했다. 후처리 비교를 켠 반환값은 호출부에서 다시 후처리하지 않는다.
+
+검사: Wire 포커스 `go test ./internal/serving -run 'TestCapacitySearchV2|TestCapacityFunnel|TestSchedulerSettings' -count=1 -v` 4개 PASS(1.262 s), 위 장기 하네스 PASS. 최초 lint는 cover·Validate의 복잡도 33으로 실패했고, 같은 조건식을 helper로 추출한 뒤 `GOFLAGS=-buildvcs=false make lint && GOFLAGS=-buildvcs=false make test`가 151.53 s에 통과했다. 전체 비-e2e Go 패키지, envtest, Python, 배포 설정 strict decode·Helm release flow·RBAC 검사까지 포함한다. serving coverage는 89.3%다. 새 설정을 검증하는 직접 리터럴 fixture에만 기본값을 보강했다. ConfigMap sample·Helm 값·Dashboard는 6단계 범위로 수정하지 않았다. 독립 Dashboard·Helm lint/template·live-cluster 검증은 실행하지 않았으며 클러스터도 변경하지 않았다.
+

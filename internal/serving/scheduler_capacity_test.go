@@ -787,7 +787,7 @@ func TestCapacityPendingWithoutRows(t *testing.T) {
 }
 
 // capacityTestSettings bound synthetic planners loosely, replicas ON.
-var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxReplicas: 100, MaxInstances: 100, PlanSearchWorkers: 2, Controls: SchedulerControls{Replicas: true, Routing: true}}
+var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxReplicas: 100, MaxInstances: 100, PlanSearchWorkers: 2, PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4, Controls: SchedulerControls{Replicas: true, Routing: true}}
 
 // capacitySearchForTest runs the plan search without a time budget.
 func capacitySearchForTest(t testing.TB, p *capacityPlanner) capacityResult {
