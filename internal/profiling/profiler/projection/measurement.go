@@ -30,12 +30,19 @@ func IdleTrial(evidence, reference profilerevidence.VerifiedIdleEvidence) (profi
 		return profilederivation.IdleTrial{}, err
 	}
 	a, b := execution.RunConfig, frozen.RunConfig
+	var gpu, referenceGPU string
+	if access := a.Delivery.RuntimeAccess; access != nil {
+		gpu = access.GPUUUID
+	}
+	if access := b.Delivery.RuntimeAccess; access != nil {
+		referenceGPU = access.GPUUUID
+	}
 	if execution.Terminal.Node.UID != frozen.Terminal.Node.UID ||
 		a.State.Model != b.State.Model || a.State.RuntimeFamily != b.State.RuntimeFamily ||
 		a.State.Backend != b.State.Backend || a.State.PowerMode != b.State.PowerMode ||
 		a.Images.Artifact != b.Images.Artifact ||
 		!slices.Equal(a.State.ArtifactFiles, b.State.ArtifactFiles) ||
-		a.Actor.GPUUUID != b.Actor.GPUUUID || a.Measurement.Batch != b.Measurement.Batch ||
+		gpu != referenceGPU || a.Measurement.Batch != b.Measurement.Batch ||
 		a.State.Preprocessor.Image != b.State.Preprocessor.Image ||
 		a.State.Preprocessor.Path != b.State.Preprocessor.Path ||
 		a.State.Preprocessor.MaxNewTokens != b.State.Preprocessor.MaxNewTokens ||

@@ -16,12 +16,13 @@ import (
 )
 
 func TestCostEvidenceRetainsHistoricalMeasurementCells(t *testing.T) {
+	const retainedModelName = "model"
 	scheme := runtime.NewScheme()
 	if err := edge.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	profile := serving.Profile{ID: "profile"}
-	profile.Condition.LogicalModel = "model"
+	profile.Condition.LogicalModel = retainedModelName
 	profile.Condition.RuntimeFamily = "firstfloor"
 	profile.Condition.Backend = "ort-cpu"
 	profile.Condition.Artifact.ExecutionPath = catalogOccupancyPath

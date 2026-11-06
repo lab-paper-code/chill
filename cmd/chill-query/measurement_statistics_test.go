@@ -429,8 +429,8 @@ func TestMeasurementStatisticsRejectsForeignRunAndCorruption(t *testing.T) {
 	trial := record.Spec().CompletedTrials[0]
 	rawLocation := evidencestore.ObjectLocation{Store: trial.Evidence.Store, Key: trial.Run.Name + "/raw"}
 	objects.payloads[rawLocation] = bytes.Repeat([]byte("x"), len(objects.payloads[rawLocation]))
-	if got, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record); err == nil ||
-		got != nil || reason != nil {
+	got, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record)
+	if err == nil || got != nil || reason != nil {
 		t.Fatalf("corrupt raw accepted: %+v %v %v", got, reason, err)
 	}
 	cr, record, objects, reader, loader = statisticsFixture(t)

@@ -192,6 +192,116 @@ func TestCatalogIdleTrialsKeepPhysicalBindingWithoutHistoricalSourceRebinding(t 
 	}
 }
 
+func TestIdleTrialUsesVerifiedRuntimeAccessGPUWithoutActorRebinding(t *testing.T) {
+	const (
+		referenceGPU = "GPU-reference"
+		staleActorGPU = "GPU-stale-copy"
+		otherGPU = "GPU-other-physical"
+		provider = "CUDAExecutionProvider"
+	)
+	for _, differentGPU := range []bool{false, true} {
+		t.Run(fmt.Sprintf("different-gpu-%t", differentGPU), func(t *testing.T) {
+			configure := func(config *profilingrun.RunConfig) {
+				config.State.Backend = profilingrun.FirstfloorORTCUDABackend
+				config.Delivery.RuntimeAccess = &profilingrun.CandidateReportRuntimeAccess{
+					GPUUUID: referenceGPU, Resources: map[string]string{"nvidia.com/gpu": "1"},
+				}
+				config.Actor.Backend, config.Actor.GPUUUID = config.State.Backend, staleActorGPU
+				config.Actor.BuildRunnerCommand()
+			}
+			observe := func(_ int, active *profilingrun.RuntimeResult, idle *profilingrun.IdleRuntimeResult) {
+				active.Provider, idle.Provider = provider, provider
+				active.AvailableProviders, idle.AvailableProviders = []string{provider}, []string{provider}
+				active.DerivedContract.Provider, idle.DerivedContract.Provider = provider, provider
+				for _, native := range []*profilingrun.FirstfloorRuntimeEvidence{active.Firstfloor, idle.Firstfloor} {
+					if native != nil {
+						native.Runtime.Runtime = profilingrun.FirstfloorORTCUDABackend
+						native.Runtime.Device, native.Runtime.GPUUUID = "cuda", referenceGPU
+						native.Runtime.Providers, native.Runtime.AvailableProviders = []string{provider}, []string{provider}
+					}
+				}
+			}
+			catalog, source, objects, _ := catalogEvidenceFixtureConfigPolicy(
+				t, 4096, [6]float64{6, 6, 6, 4, 4, 4}, 3, "", configure, observe,
+			)
+			ctx := context.Background()
+			campaign := &edgev1alpha1.BatchEnergyOptimization{}
+			if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+				t.Fatal(err)
+			}
+			retained, err := catalog.evidence.Read(ctx, campaign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := retained.Result.Spec()
+			reference := &spec.CompletedTrials[4]
+			location := storedObjectIdentity(reference.Evidence).Location()
+			var execution profilerevidence.ExecutionEvidence
+			if err := json.Unmarshal(objects[location], &execution); err != nil {
+				t.Fatal(err)
+			}
+			var raw profilerevidence.IdleRawMeasurement
+			if err := json.Unmarshal(objects[execution.RawMeasurement.Location()], &raw); err != nil {
+				t.Fatal(err)
+			}
+			actualGPU := referenceGPU
+			if differentGPU {
+				actualGPU = otherGPU
+			}
+			raw.RunConfig.Delivery.RuntimeAccess.GPUUUID = actualGPU
+			raw.Runtime.Firstfloor.Runtime.GPUUUID = actualGPU
+			raw.RunConfig.Metrics.Endpoint = "http://historical-gpu-meter/metrics"
+			raw.Metrics.Source.Endpoint = raw.RunConfig.Metrics.Endpoint
+			rawBytes, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects[execution.RawMeasurement.Location()] = rawBytes
+			execution.RunConfig, execution.RawMeasurement.Size = raw.RunConfig, int64(len(rawBytes))
+			executionBytes, err := json.Marshal(execution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects[location] = executionBytes
+			reference.Evidence.Size = int64(len(executionBytes))
+			run := &edgev1alpha1.ProfilingRun{}
+			key := types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
+			if err := catalog.store.client.Get(ctx, key, run); err != nil {
+				t.Fatal(err)
+			}
+			run.Status.Evidence.Size = reference.Evidence.Size
+			if err := catalog.store.client.Update(ctx, run); err != nil {
+				t.Fatal(err)
+			}
+			retained.Result, err = batchenergyoptimization.NewResultRecord(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			trials, err := catalog.evidence.ReadTrials(ctx, campaign, retained)
+			if err != nil {
+				t.Fatalf("each retained idle execution must independently pass its Loader: %v", err)
+			}
+			loaded, observed, err := trials.Idle[1].Records()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.RunConfig.Actor.GPUUUID != staleActorGPU ||
+				loaded.RunConfig.Delivery.RuntimeAccess.GPUUUID != actualGPU ||
+				observed.Runtime.Firstfloor.Runtime.GPUUUID != actualGPU {
+				t.Fatal("fixture did not retain stale Actor alongside Loader-bound actual GPU")
+			}
+			trial, err := profilerprojection.IdleTrial(trials.Idle[1], trials.Idle[0])
+			if differentGPU {
+				if err == nil {
+					t.Fatalf("different validated physical GPU entered idle baseline: %+v", trial)
+				}
+			} else if err != nil || trial.ModelLoadedIdleMeanWallWatts != 4 {
+				t.Fatalf("same physical GPU with historical source metadata was rejected: %+v %v", trial, err)
+			}
+		})
+	}
+}
+
 func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 	for _, stop := range []string{batchenergyoptimization.DiscoveryStopOOM, batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded, firstfloor.FailureMemoryAllocation} {
 		t.Run(stop, func(t *testing.T) {
