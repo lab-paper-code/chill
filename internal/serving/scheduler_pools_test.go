@@ -34,7 +34,7 @@ func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
 		return b
 	}
 	baselines := []NodeBaseline{
-		baseline("fixed", 1, 0),
+		baseline(targetMode, 1, 0),
 		baseline("eco", 2, -time.Second),
 		baseline("eco", 20, 0),
 		baseline("eco-a", 19, 0),
@@ -45,7 +45,7 @@ func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
 		name   string
 		change func(*NodeBaseline)
 	}{
-		{"other-node", func(b *NodeBaseline) { b.Node.UID = "other" }},
+		{"other-node", func(b *NodeBaseline) { b.Node.UID = schedulerTestOther }},
 		{"loaded", func(b *NodeBaseline) { b.State = []string{"running"} }},
 		{"scope", func(b *NodeBaseline) { b.Scope = "component" }},
 		{"meter", func(b *NodeBaseline) { b.Meter = "" }},
@@ -64,8 +64,8 @@ func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
 		eligible func(string) bool
 		want     string
 	}{
-		{"unfiltered", nil, "fixed"},
-		{"actuatable", func(mode string) bool { return mode != "fixed" }, "eco-a"},
+		{"unfiltered", nil, targetMode},
+		{"actuatable", func(mode string) bool { return mode != targetMode }, "eco-a"},
 		{"latest-per-mode", func(mode string) bool { return mode == "eco" }, "eco"},
 		{"current-only", func(mode string) bool { return mode == "performance" }, "performance"},
 		{"no-eligible-measurement", func(mode string) bool { return mode == "unknown" }, ""},
@@ -76,7 +76,7 @@ func TestSchedulerLowestModeMatchingPreservesMeasuredSelection(t *testing.T) {
 			}
 		})
 	}
-	if got := SchedulerLowestMode(baselines, base.Node); got != "fixed" {
+	if got := SchedulerLowestMode(baselines, base.Node); got != targetMode {
 		t.Fatalf("unfiltered measured-energy selection changed: %q", got)
 	}
 }

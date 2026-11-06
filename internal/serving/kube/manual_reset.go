@@ -135,7 +135,7 @@ func (c *SchedulerController) resetPendingPowerNodes(ctx context.Context, uids [
 	if err := c.store.client.List(ctx, &classes); err != nil {
 		return nil, err
 	}
-	var nodes []serving.NodeReference
+	nodes := make([]serving.NodeReference, 0, len(snapshot.Nodes))
 	for _, node := range snapshot.Nodes {
 		if node.Measurement || slices.Contains(node.Reasons, serving.NodeExcluded) {
 			continue

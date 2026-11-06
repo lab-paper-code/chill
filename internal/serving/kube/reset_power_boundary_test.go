@@ -18,7 +18,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const resetHighMode = "high"
+const (
+	resetHighMode   = "high"
+	resetFixedMode  = "fixed"
+	resetLowerStep  = "lower-power"
+	resetLowestNoOp = "already lowest without policy"
+)
 
 func newMixedResetPowerHarness(t *testing.T) (*resetHarness, *edge.DeviceClass) {
 	t.Helper()
@@ -39,7 +44,7 @@ func newMixedResetPowerHarness(t *testing.T) (*resetHarness, *edge.DeviceClass) 
 	h.controller.config.Preparations[profiles[0].ID] = preparation
 	baseline := h.controller.config.Baselines[0]
 	fixed := baseline
-	fixed.ID, fixed.PowerMode, fixed.Watts = "fixed-idle", "fixed", 1
+	fixed.ID, fixed.PowerMode, fixed.Watts = "fixed-idle", resetFixedMode, 1
 	fixed.Reference.Key = fixed.ID
 	high := baseline
 	high.ID, high.PowerMode, high.Watts = "high-idle", resetHighMode, 10
@@ -97,7 +102,7 @@ func assertResetPowerFailure(t *testing.T, ctx context.Context, h *resetHarness,
 	if err != nil || result.Status != servingstate.NativeOperationPartial || result.Error == "" {
 		t.Fatalf("power failure lost partial reset evidence: %+v err=%v", result, err)
 	}
-	assertResetSteps(t, result, "disable-autonomy", "unroute", "drain", "remove", "release", "lower-power")
+	assertResetSteps(t, result, "disable-autonomy", "unroute", "drain", "remove", "release", resetLowerStep)
 	for _, step := range result.Steps[:len(result.Steps)-1] {
 		if step.Status != servingstate.NativeOperationComplete || step.Error != "" {
 			t.Fatalf("power failure changed completed cleanup: %+v", step)
@@ -169,16 +174,16 @@ func assertResetPowerUnrelated(t *testing.T, ctx context.Context, h *resetHarnes
 }
 
 func TestResetMixedPowerModesEvidenceBoundary(t *testing.T) {
-	for _, boundary := range []string{"no eligible measured mode", "unknown actual readback", "already lowest without policy"} {
+	for _, boundary := range []string{"no eligible measured mode", "unknown actual readback", resetLowestNoOp} {
 		t.Run(boundary, func(t *testing.T) {
 			h, class := newMixedResetPowerHarness(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			switch boundary {
-			case "no eligible measured mode", "already lowest without policy":
+			case "no eligible measured mode", resetLowestNoOp:
 				h.controller.mu.Lock()
 				h.controller.config.PowerPolicies = nil
-				if boundary == "already lowest without policy" {
+				if boundary == resetLowestNoOp {
 					h.controller.config.Baselines = slices.DeleteFunc(h.controller.config.Baselines, func(baseline serving.NodeBaseline) bool {
 						return baseline.PowerMode != resetHighMode
 					})
@@ -201,17 +206,17 @@ func TestResetMixedPowerModesEvidenceBoundary(t *testing.T) {
 			h.api.Client.(*nodeAPI).agent = settleAgent(class)
 			actionStart := len(h.kube.Actions())
 			result, err := h.controller.ExecuteManual(ctx, h.request())
-			if boundary == "already lowest without policy" {
+			if boundary == resetLowestNoOp {
 				assertResetComplete(t, result, err)
 				if result.Actual.Node != testNode || result.Actual.PowerMode != resetHighMode {
 					t.Fatalf("already-lowest reset lost actual mode: %+v", result)
 				}
 			} else if err != nil || result.Status != servingstate.NativeOperationPartial || result.Error == "" ||
-				len(result.Steps) == 0 || result.Steps[len(result.Steps)-1].Name != "lower-power" {
+				len(result.Steps) == 0 || result.Steps[len(result.Steps)-1].Name != resetLowerStep {
 				t.Fatalf("reset accepted missing power evidence: %+v err=%v", result, err)
 			}
 			for _, action := range h.kube.Actions()[actionStart:] {
-				if action.GetResource().Resource == "nodes" && action.GetVerb() != getVerb && action.GetVerb() != "list" {
+				if action.GetResource().Resource == "nodes" && action.GetVerb() != getVerb && action.GetVerb() != listVerb {
 					t.Fatalf("reset issued power effect without evidence: %s", action.GetVerb())
 				}
 			}
