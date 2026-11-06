@@ -690,7 +690,7 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 	settings := in.SchedulerSettings
 	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = schedulerPlanSearchV1, 500000
 	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 4, false
-	settings.PlanPricedStart = false
+	settings.PlanPricedStart = true
 	if in.PlanSearchStrategy != nil {
 		settings.PlanSearchStrategy = *in.PlanSearchStrategy
 	}
