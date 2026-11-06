@@ -21,6 +21,7 @@ func manualConfigurationFixture(t *testing.T) (*SchedulerController, *kubefake.C
 	settings := serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
 		MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+		PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 		CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, AutonomousWorkloads: []string{"auto", "keep-auto"}}
 	raw, err := json.Marshal(map[string]any{
 		"settings": settings, "staticRouting": map[string]map[string]int{"w": {"old": 3}, "other": {"physical": 7}},

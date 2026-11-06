@@ -78,12 +78,31 @@ type SchedulerCapacity struct {
 // evaluated, its time, and whether the time budget (half the control
 // interval) ended it before its last step.
 type SchedulerPlanSearch struct {
-	Neighborhood      int                                   `json:"neighborhood"`
-	Evaluated         int                                   `json:"evaluated"`
-	Duration          time.Duration                         `json:"durationNanos"`
-	BudgetCut         bool                                  `json:"budgetCut,omitempty"`
-	Excluded          map[string]int                        `json:"excluded,omitempty"`
-	ReserveRejections map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
+	Neighborhood       int                                   `json:"neighborhood"`
+	Evaluated          int                                   `json:"evaluated"`
+	Duration           time.Duration                         `json:"durationNanos"`
+	BudgetCut          bool                                  `json:"budgetCut,omitempty"`
+	Excluded           map[string]int                        `json:"excluded,omitempty"`
+	ReserveRejections  map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
+	Strategy           string                                `json:"strategy,omitempty"`
+	Pruned             map[string]int                        `json:"pruned,omitempty"`
+	SurrogateEvaluated int                                   `json:"surrogateEvaluated,omitempty"`
+	Finalists          int                                   `json:"finalists,omitempty"`
+	ExactEvaluated     int                                   `json:"exactEvaluated,omitempty"`
+	SurrogateGapJoules float64                               `json:"surrogateGapJoules,omitempty"`
+	PostFilterReverts  int                                   `json:"postFilterReverts,omitempty"`
+	Fallback           string                                `json:"fallback,omitempty"`
+	DualBound          float64                               `json:"dualBound,omitempty"`
+	Shadow             *SchedulerPlanSearchShadow            `json:"shadow,omitempty"`
+}
+
+// SchedulerPlanSearchShadow records the independent shadow planner.
+type SchedulerPlanSearchShadow struct {
+	Key       string        `json:"key"`
+	Joules    float64       `json:"joules"`
+	Evaluated int           `json:"evaluated"`
+	Duration  time.Duration `json:"durationNanos"`
+	Fallback  string        `json:"fallback,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -206,7 +225,10 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
-	decision = planner.decide(decision, planner.minimumGain(planner.payback(best)))
+	if settings.PlanSearchStrategy != schedulerPlanSearchV2 || !settings.PlanPostFilterFinalists {
+		best = planner.minimumGain(planner.payback(best))
+	}
+	decision = planner.decide(decision, best)
 	markFixedEstimates(&decision)
 	return decision, ctx.Err()
 }
@@ -1649,7 +1671,11 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 // The better end of the two starts is the result. At deadline the sweep
 // stops; the best plan set found so far stays and p.searched records the cut.
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
+	if p.settings.PlanSearchStrategy == schedulerPlanSearchV2 {
+		return p.searchV2(deadline)
+	}
 	start := time.Now()
+	p.searched.Strategy = schedulerPlanSearchV1
 	keep, empty := make([]int, len(p.plans)), make([]int, len(p.plans))
 	for n, plans := range p.plans {
 		empty[n] = max(0, slices.IndexFunc(plans, func(plan *capacityPlan) bool { return plan.record.Eligible && len(plan.instances) == 0 }))
