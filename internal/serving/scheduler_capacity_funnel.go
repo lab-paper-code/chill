@@ -9,6 +9,7 @@ type capacityFunnel struct {
 	reserves map[string]SchedulerTransitionReserve
 	gap      float64
 	reverts  int
+	start    string
 }
 
 func (p *capacityPlanner) funnelEvaluate(choice []int, stats *capacityFunnel) *capacityResult {
@@ -35,6 +36,7 @@ func (p *capacityPlanner) funnel(candidates []v2Candidate, stats *capacityFunnel
 	var rawBest, filteredBest, selected *capacityResult
 	var rawFiltered capacityResult
 	var rawGap, filteredGap float64
+	var rawStart, filteredStart string
 	anySurvivor := false
 	for _, candidate := range candidates {
 		res := p.funnelEvaluate(candidate.choice, stats)
@@ -48,18 +50,20 @@ func (p *capacityPlanner) funnel(candidates []v2Candidate, stats *capacityFunnel
 		if res.better(rawBest) {
 			rawBest, rawFiltered = res, filtered
 			rawGap = candidate.joules - res.joules
+			rawStart = candidate.start
 		}
 		if filtered.better(filteredBest) {
 			filteredBest = &filtered
 			filteredGap = candidate.joules - filtered.joules
+			filteredStart = candidate.start
 		}
 	}
 	if rawBest != nil && !capacityFilterKept(*rawBest) && capacityFilterKept(rawFiltered) && anySurvivor {
 		stats.reverts++
 	}
-	selected, stats.gap = rawBest, rawGap
+	selected, stats.gap, stats.start = rawBest, rawGap, rawStart
 	if p.settings.PlanPostFilterFinalists {
-		selected, stats.gap = filteredBest, filteredGap
+		selected, stats.gap, stats.start = filteredBest, filteredGap, filteredStart
 	}
 	return selected
 }

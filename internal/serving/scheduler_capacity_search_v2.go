@@ -51,6 +51,7 @@ func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
 		SurrogateGapJoules: stats.gap, PostFilterReverts: stats.reverts, Fallback: fallback,
 		BudgetCut: core.budgetCut, Duration: time.Since(started), Excluded: stats.excluded,
 		ReserveRejections: stats.reserves,
+		DualBound:         core.dualBound, Start: stats.start,
 	}
 	return *best, p.ctx.Err()
 }

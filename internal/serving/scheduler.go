@@ -53,6 +53,7 @@ type SchedulerSettings struct {
 	PlanExactFinalists      int               `json:"planExactFinalists"`
 	PlanPolishActive        int               `json:"planPolishActive"`
 	PlanPostFilterFinalists bool              `json:"planPostFilterFinalists"`
+	PlanPricedStart         bool              `json:"planPricedStart"`
 	Controls                SchedulerControls `json:"controls"`
 }
 
@@ -498,6 +499,7 @@ type SchedulerSettingsInput struct {
 	PlanExactFinalists      *int           `json:"planExactFinalists,omitempty"`
 	PlanPolishActive        *int           `json:"planPolishActive,omitempty"`
 	PlanPostFilterFinalists *bool          `json:"planPostFilterFinalists,omitempty"`
+	PlanPricedStart         *bool          `json:"planPricedStart,omitempty"`
 }
 
 // Settings returns validated settings carrying the supplied margin.
@@ -508,6 +510,7 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 	settings := in.SchedulerSettings
 	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = schedulerPlanSearchV1, 500000
 	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 4, false
+	settings.PlanPricedStart = false
 	if in.PlanSearchStrategy != nil {
 		settings.PlanSearchStrategy = *in.PlanSearchStrategy
 	}
@@ -522,6 +525,9 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 	}
 	if in.PlanPostFilterFinalists != nil {
 		settings.PlanPostFilterFinalists = *in.PlanPostFilterFinalists
+	}
+	if in.PlanPricedStart != nil {
+		settings.PlanPricedStart = *in.PlanPricedStart
 	}
 	settings.CapacityGridSteps, settings.CapacityBisectionWidth, settings.CapacityTailSamples = 20, 0.005, 100
 	if in.CapacityGridSteps != nil {

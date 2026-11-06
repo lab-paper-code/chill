@@ -356,3 +356,7 @@ Core의 활성 범위 진단은 다음 두 사례를 찾았다. 둘 다 keep·�
 
 검사: Wire 포커스 `go test ./internal/serving -run 'TestCapacitySearchV2|TestCapacityFunnel|TestSchedulerSettings' -count=1 -v` 4개 PASS(1.262 s), 위 장기 하네스 PASS. 최초 lint는 cover·Validate의 복잡도 33으로 실패했고, 같은 조건식을 helper로 추출한 뒤 `GOFLAGS=-buildvcs=false make lint && GOFLAGS=-buildvcs=false make test`가 151.53 s에 통과했다. 전체 비-e2e Go 패키지, envtest, Python, 배포 설정 strict decode·Helm release flow·RBAC 검사까지 포함한다. serving coverage는 89.3%다. 새 설정을 검증하는 직접 리터럴 fixture에만 기본값을 보강했다. ConfigMap sample·Helm 값·Dashboard는 6단계 범위로 수정하지 않았다. 독립 Dashboard·Helm lint/template·live-cluster 검증은 실행하지 않았으며 클러스터도 변경하지 않았다.
 
+
+#### 7.8.5 가격 유도 출발점 (5단계)
+
+`scheduler_capacity_priced.go`는 searchable 계획의 cap 변형 전부를 대상으로 가격 반복 100회를 수행한다. 직전 선택의 route·retained κ·ρ를 다음 반복에 사용하며 첫 retained κ는 keep, 첫 route는 0, 첫 ρ는 1이다. 비용·κ 중앙값은 Tick당 한 번 계산하고 반복 버퍼를 재사용한다. `planPricedStart` 기본값은 측정 전 false이며, keep·빈 집합과 다른 끝점만 세 번째 출발점으로 넣는다. 정확 깔때기가 선택한 후보의 출발점을 `search.start`, 선형화 진단값을 `search.dualBound`에 남긴다. 진단값을 실제 목적함수의 하한으로 주장하지 않는다. 기존 cover의 수 상한 초과 시 인스턴스 수·초과량 감소 조건은 이미 구현되어 있어 변경하지 않았다.

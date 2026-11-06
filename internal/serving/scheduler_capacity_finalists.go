@@ -17,6 +17,7 @@ type v2CoreStats struct {
 	surrogateEvaluated int
 	budgetCut          bool
 	steps              int
+	dualBound          float64
 }
 
 type v2Finalist struct {
@@ -139,7 +140,8 @@ func (c *v2Search) consider(key orderKey) {
 	}
 }
 
-// searchV2Core runs both deterministic starts. Endpoints are retained outside K,
+// searchV2Core runs deterministic keep, empty and optional price-guided starts.
+// Endpoints are retained outside K,
 // including a partially searched endpoint when either budget expires.
 // active<=0 includes every searchable plan, including every cap variant.
 // evaluations<=0 disables the evaluation limit for exhaustive harness runs.
@@ -178,6 +180,16 @@ func (p *capacityPlanner) searchV2Core(t *planTable, evaluations, finalists, act
 		}{"empty", empty})
 	}
 	c := newV2Search(p, t, keep, evaluations, finalists, active, deadline)
+	if p.settings.PlanPricedStart {
+		priced, dual := p.pricedStart(t)
+		c.stats.dualBound = dual
+		if priced != nil && !slices.Equal(priced, keep) && !slices.Equal(priced, empty) {
+			starts = append(starts, struct {
+				name   string
+				choice []int
+			}{"priced", priced})
+		}
+	}
 	endpoints := make([]v2Finalist, 0, len(starts))
 	for _, start := range starts {
 		if c.expired() {
