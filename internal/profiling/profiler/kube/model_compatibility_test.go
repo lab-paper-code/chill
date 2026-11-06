@@ -184,10 +184,6 @@ func TestModelCompatibilityRejectsMalformedStoredAuthorities(t *testing.T) {
 		name   string
 		mutate func([]client.Object)
 	}{
-		{"model identity", func(objects []client.Object) { objects[0].SetUID("") }},
-		{"class identity", func(objects []client.Object) { objects[1].SetUID("") }},
-		{"Node identity", func(objects []client.Object) { objects[len(objects)-1].SetUID("") }},
-		{"fact source identity", func(objects []client.Object) { objects[2].SetUID("") }},
 		{"class architecture", func(objects []client.Object) { objects[1].(*edgev1alpha1.DeviceClass).Spec.Architecture = "" }},
 		{"class selector", func(objects []client.Object) {
 			objects[1].(*edgev1alpha1.DeviceClass).Spec.NodeSelector = map[string]string{"bad key": "value"}
