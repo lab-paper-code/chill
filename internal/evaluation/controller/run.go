@@ -519,11 +519,40 @@ func (r *RunReconciler) release(ctx context.Context, run *api.EvaluationRun, ann
 
 // ownedWritersStopped does not inspect or reset serving resources.
 func (r *Runtime) ownedWritersStopped(ctx context.Context, run *api.EvaluationRun) (bool, error) {
+	owners := map[types.UID]bool{run.UID: true}
+	jobUIDs := map[types.UID]bool{}
+	for _, procedure := range run.Status.Procedures {
+		if procedure.JobRef != nil {
+			jobUIDs[procedure.JobRef.UID] = true
+		}
+	}
+	for _, reference := range run.Status.ChildRefs {
+		owners[reference.UID] = true
+		child := &api.EvaluationStage{}
+		err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: reference.Name}, child)
+		if apierrors.IsNotFound(err) || err == nil && child.UID != reference.UID {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, procedure := range child.Status.Procedures {
+			if procedure.JobRef != nil {
+				jobUIDs[procedure.JobRef.UID] = true
+			}
+		}
+	}
 	var jobs batchv1.JobList
-	if err := r.APIReader.List(ctx, &jobs, client.InNamespace(run.Namespace), client.MatchingLabels{api.EvaluationLabelRunUID: string(run.UID)}); err != nil {
+	if err := r.APIReader.List(ctx, &jobs, client.InNamespace(run.Namespace)); err != nil {
 		return false, err
 	}
-	for _, job := range jobs.Items {
+	for i := range jobs.Items {
+		job := &jobs.Items[i]
+		owner := metav1.GetControllerOf(job)
+		if owner == nil || !owners[owner.UID] {
+			continue
+		}
+		jobUIDs[job.UID] = true
 		terminal := false
 		for _, condition := range job.Status.Conditions {
 			if condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) {
@@ -535,10 +564,15 @@ func (r *Runtime) ownedWritersStopped(ctx context.Context, run *api.EvaluationRu
 		}
 	}
 	var pods corev1.PodList
-	if err := r.APIReader.List(ctx, &pods, client.InNamespace(run.Namespace), client.MatchingLabels{api.EvaluationLabelRunUID: string(run.UID)}); err != nil {
+	if err := r.APIReader.List(ctx, &pods, client.InNamespace(run.Namespace)); err != nil {
 		return false, err
 	}
-	for _, pod := range pods.Items {
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		owner := metav1.GetControllerOf(pod)
+		if owner == nil || !jobUIDs[owner.UID] {
+			continue
+		}
 		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 			return false, nil
 		}
@@ -569,8 +603,7 @@ func (r *RunReconciler) deleteRunJobs(ctx context.Context, run *api.EvaluationRu
 		owners[child.UID] = true
 	}
 	var jobs batchv1.JobList
-	if err := r.APIReader.List(ctx, &jobs, client.InNamespace(run.Namespace),
-		client.MatchingLabels{api.EvaluationLabelRunUID: string(run.UID), "edge.dacs.io/workload-role": "system"}); err != nil {
+	if err := r.APIReader.List(ctx, &jobs, client.InNamespace(run.Namespace)); err != nil {
 		return err
 	}
 	background := metav1.DeletePropagationBackground

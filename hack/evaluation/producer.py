@@ -12,13 +12,9 @@ import zlib
 from chill_loadgen import cli
 
 
-def arrival_trace(binding, arrivals, seed):
-    if 'offsetsFile' in binding:
-        data = Path(binding['offsetsFile']).read_bytes()
-        offsets = json.loads(data)
-        duration_ns = sum(round(segment['seconds'] * 1e9) for segment in binding['segments'])
-    else:
-        offsets, duration_ns = cli.segmented_arrivals_ns(arrivals, binding['segments'], seed)
+def arrival_trace(binding):
+    offsets = json.loads(Path(binding['offsetsFile']).read_bytes())
+    duration_ns = sum(round(segment['seconds'] * 1e9) for segment in binding['segments'])
     return offsets, duration_ns
 
 
@@ -111,7 +107,7 @@ def main():
         # The immutable Dataset carrier is materialized in-cluster. Actual IDs,
         # record order and field bytes are evidence, never a host-built manifest.
         binding['payload'] = identity(records)
-        offsets, base = arrival_trace(binding, kw['arrivals'], kw['seed'])
+        offsets, base = arrival_trace(binding)
         replay_shards(records, offsets, base, binding, kw)
 
     cli.replay = frozen

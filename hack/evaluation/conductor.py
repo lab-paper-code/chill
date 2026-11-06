@@ -363,22 +363,18 @@ class CPO:
                   'shards': generator['shards'][name], 'barrierSeconds': self.tb['barrierSeconds'],
                   'segments': [{'rate': part['rates'][name], 'seconds': part['seconds']} for part in stage['parts']],
                   'datasetRef': workload['datasetRef'], 'sourceSHA': generator.get('sourceSHA')}
-        trace_mounts, trace_volumes = [], []
-        if name in self.c.get('traceOffsets', {}):
-            volume = self.c.get('traceVolume')
-            if not volume:
-                raise ValueError('FrozenInputInvalid: explicit arrivals require the frozen workspace volume')
-            path = Path(folder) / ('arrivals-' + name + '.json')
-            evidence_io.save(path, trace['offsetsNS'])
-            try:
-                subpath = path.resolve().relative_to(Path(volume['mountPath']).resolve()).as_posix()
-            except ValueError as error:
-                raise ValueError('FrozenInputInvalid: explicit arrivals outside frozen workspace') from error
-            policy.update(offsetsFile='/evaluation/.chill-arrivals.json', offsetsFileSHA256=evidence_io.ref(path)['sha256'])
-            trace_volumes.append({'name': 'evaluation-arrivals',
-                                  'persistentVolumeClaim': {'claimName': volume['claimName'], 'readOnly': True}})
-            trace_mounts.append({'name': 'evaluation-arrivals', 'mountPath': policy['offsetsFile'],
-                                 'subPath': subpath, 'readOnly': True})
+        volume = self.c['traceVolume']
+        path = Path(folder) / ('arrivals-' + name + '.json')
+        evidence_io.save(path, trace['offsetsNS'])
+        try:
+            subpath = path.resolve().relative_to(Path(volume['mountPath']).resolve()).as_posix()
+        except ValueError as error:
+            raise ValueError('FrozenInputInvalid: arrivals outside frozen workspace') from error
+        policy.update(offsetsFile='/evaluation/.chill-arrivals.json', offsetsFileSHA256=evidence_io.ref(path)['sha256'])
+        trace_volumes = [{'name': 'evaluation-arrivals',
+                          'persistentVolumeClaim': {'claimName': volume['claimName'], 'readOnly': True}}]
+        trace_mounts = [{'name': 'evaluation-arrivals', 'mountPath': policy['offsetsFile'],
+                         'subPath': subpath, 'readOnly': True}]
         encoded = base64.b64encode(zlib.compress(json.dumps(policy, separators=(',', ':'), allow_nan=False).encode())).decode('ascii')
         if len(encoded) > 120000:
             raise RuntimeError('FrozenInputInvalid: arrival policy exceeds safe exec argument size')

@@ -48,7 +48,7 @@ def trace_workspace(pod):
     mounts = [mount for container in pod['spec']['containers'] for mount in container.get('volumeMounts', [])
               if mount['name'] == 'work']
     if 'persistentVolumeClaim' not in volume or len(mounts) != 1 or any(key in mounts[0] for key in ('subPath', 'subPathExpr')):
-        raise ValueError('FrozenInputInvalid: explicit arrivals require the evaluator workspace PVC mount')
+        raise ValueError('FrozenInputInvalid: arrivals require the evaluator workspace PVC mount')
     return {'claimName': volume['persistentVolumeClaim']['claimName'], 'mountPath': mounts[0]['mountPath']}
 
 
@@ -221,7 +221,7 @@ def prepare(context):
             path = folder / ('trace-' + name + '.json')
             context.store.get(reference, path)
             traces[name] = load(path)
-        if traces and 'traceVolume' not in context.config:
+        if 'traceVolume' not in context.config:
             context.config['traceVolume'] = trace_workspace(kubectl(context.execution['namespace'], 'get', 'pod', os.environ['HOSTNAME']))
         scenarios[identity] = {'ref': {'name': obj['metadata']['name'], 'uid': identity}, 'spec': scenario,
                                'workloads': workloads, 'datasets': datasets, 'fields': fields, 'traceOffsets': traces}

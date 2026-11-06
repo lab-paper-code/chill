@@ -353,14 +353,28 @@ func TestCleanupFailureReleasePreservesFailure(t *testing.T) {
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionPoolAcquired, metav1.ConditionTrue, "Acquired", "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionExecutionComplete, metav1.ConditionTrue, complete, "")
 	condition(&parent.Status.Conditions, 1, api.EvaluationConditionCleanupComplete, metav1.ConditionFalse, api.EvaluationReasonReturnTimeout, "")
-	writer := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "writer", Namespace: parent.Namespace, Labels: map[string]string{api.EvaluationLabelRunUID: string(parent.UID)}}, Status: corev1.PodStatus{Phase: corev1.PodRunning}}
-	r, _ := fixtureRuntime(t, parent, writer)
+	parent.Status.Procedures = []api.EvaluationProcedure{{JobRef: &api.EvaluationObjectReference{Name: "writer-job", UID: "writer-job-uid"}}}
+	writer := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "writer", Namespace: parent.Namespace,
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: "writer-job", UID: "writer-job-uid", Controller: ptr(true)}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning}}
+	writerJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "writer-job", Namespace: parent.Namespace, UID: "writer-job-uid",
+		Labels: map[string]string{api.EvaluationLabelRunUID: "admitted-other-label"},
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "EvaluationRun", Name: parent.Name, UID: parent.UID, Controller: ptr(true)}}}}
+	foreign := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "foreign", Namespace: parent.Namespace, UID: "foreign-job",
+		Labels: map[string]string{api.EvaluationLabelRunUID: string(parent.UID)}}}
+	r, _ := fixtureRuntime(t, parent, writerJob, writer, foreign)
 	if !occupied(parent) {
 		t.Fatal("cleanup failure released pool")
 	}
 	annotation := `{"reason":"operator confirmed controls reverted and writers stopped","at":"2026-11-01T12:00:00Z","by":"operator"}`
 	if result, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); err != nil || result.RequeueAfter == 0 || !occupied(parent) || len(parent.Status.ReleaseRecords) != 0 {
 		t.Fatalf("release must wait for evaluation writer termination: result=%v err=%v", result, err)
+	}
+	if err := r.Client.Delete(context.Background(), writerJob); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := (&RunReconciler{Runtime: r}).release(context.Background(), parent, annotation); err != nil || result.RequeueAfter == 0 || !occupied(parent) {
+		t.Fatalf("recorded Job's unlabeled Pod still writes after Job deletion: result=%v err=%v", result, err)
 	}
 	if err := r.Client.Delete(context.Background(), writer); err != nil {
 		t.Fatal(err)
@@ -809,7 +823,9 @@ func TestPublishedRunReleasesHarnessJobs(t *testing.T) {
 					OwnerReferences: []metav1.OwnerReference{{APIVersion: api.GroupVersion.String(), Kind: "EvaluationStage", Name: "owner", UID: owner, Controller: &controller}}}}
 			}
 			own := []*batchv1.Job{job("run-prepare", run.UID, run.UID), job("child-stage", "child-uid", run.UID)}
-			foreign := job("other-stage", "other-child", "other-run")
+			own[0].Labels = nil
+			own[1].Labels = map[string]string{api.EvaluationLabelRunUID: "unrelated", "edge.dacs.io/workload-role": "admitted"}
+			foreign := job("other-stage", "other-child", run.UID)
 			r, _ := fixtureRuntime(t, run, workspace.DeepCopy(), own[0], own[1], foreign)
 			if _, err := (&RunReconciler{Runtime: r}).Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(run)}); err != nil {
 				t.Fatal(err)

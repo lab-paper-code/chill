@@ -5,6 +5,7 @@ import copy
 from contextlib import nullcontext
 import hashlib
 import gzip
+import io
 import json
 import os
 from pathlib import Path
@@ -109,7 +110,8 @@ def fixture(root):
                   'producerTokenFile': '/token', 'deliverySeconds': 10, 'socketSeconds': 30, 'workers': 3,
                   'podSpec': {'serviceAccountName': 'loadgen', 'volumes': [{'name': 'ca', 'secret': {'secretName': 'ca'}}]},
                   'volumeMounts': [{'name': 'ca', 'mountPath': '/ca', 'readOnly': True}]}}}
-    config = {'operational': json.dumps(operation), 'chillAPIURL': 'https://serving.invalid', 'minimumFreeBytes': '1'}
+    config = {'operational': json.dumps(operation), 'chillAPIURL': 'https://serving.invalid', 'minimumFreeBytes': '1',
+              'traceVolume': {'claimName': 'workspace', 'mountPath': str(root)}}
     assembled = input_snapshot.stage_config(spec, scenario, execution, config, root)
     return spec, scenario, execution, config, assembled
 
@@ -911,20 +913,66 @@ class EvaluationTests(unittest.TestCase):
                 stage = controller.b['schedule'][0]
                 sizes = []
                 for name in names:
-                    container = controller.job(name, stage, root)['spec']['template']['spec']['containers'][0]
+                    pod = controller.job(name, stage, root)['spec']['template']['spec']
+                    container = pod['containers'][0]
                     argv = container['command'] + container['args']
                     sizes.append(sum(len(arg.encode()) + 1 for arg in argv))
                     self.assertLessEqual(max(len(arg.encode()) for arg in argv), 120000)
                     self.assertLessEqual(sizes[-1], 120000)
                     policy = json.loads(zlib.decompress(base64.b64decode(container['args'][0])))
                     self.assertNotIn('offsetsNS', policy)
-                    self.assertNotIn('offsetsFile', policy)
+                    mount = next(mount for mount in container['volumeMounts'] if mount['name'] == 'evaluation-arrivals')
+                    policy['offsetsFile'] = str(root / mount['subPath'])
                     policy.pop('arrivalSHA256')
                     policy['offered'] = -1
-                    offsets, duration = producer.arrival_trace(policy, 'poisson', 202)
+                    with patch.object(producer.cli, 'segmented_arrivals_ns', side_effect=AssertionError('producer regenerated frozen arrivals')):
+                        offsets, duration = producer.arrival_trace(policy)
                     self.assertEqual(offsets, stage['traces'][name]['offsetsNS'])
                     self.assertEqual(duration, round(stage['seconds'] * 1e9))
                 print(row + ': maximum producer argv bytes=' + str(max(sizes)))
+
+    def test_generated_trace_drives_replay_and_judgment_quality(self):
+        producer = input_snapshot.module('generated_trace_consumer', evaluation.HERE / 'producer.py')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, _, _, _, config = fixture(root)
+            config['arrivals'][NAME] = 'fixed'
+            config['stages'][0]['parts'] = [{'id': 'short', 'seconds': .02, 'rates': {NAME: 100}}]
+            evidence_io.save(root / 'config.json', config)
+            controller = object.__new__(conductor.CPO)
+            controller.b = conductor.bind(root / 'config.json')
+            controller.c, controller.tb = config, config['timeboxes']
+            controller.ws = {workload['name']: workload for workload in config['workloads']}
+            stage = controller.b['schedule'][0]
+            container = controller.job(NAME, stage, root)['spec']['template']['spec']['containers'][0]
+            policy = json.loads(zlib.decompress(base64.b64decode(container['args'][0])))
+            mount = next(mount for mount in container['volumeMounts'] if mount['name'] == 'evaluation-arrivals')
+            policy['offsetsFile'] = str(root / mount['subPath'])
+            with patch.object(producer.cli, 'segmented_arrivals_ns', side_effect=AssertionError('producer regenerated frozen arrivals')):
+                offsets, duration = producer.arrival_trace(policy)
+            def unavailable(*args):
+                raise OSError('no ready executor')
+            output = io.StringIO()
+            started = time.monotonic_ns()
+            cli.replay_open_loop(cli.prepare_records([('record', {'input': b'input'})]), workload=NAME,
+                                 offsets=offsets, new_client=lambda: SimpleNamespace(infer=unavailable, close=lambda: None),
+                                 out=output, start_ns=started)
+            rows = sorted((json.loads(line) for line in output.getvalue().splitlines()), key=lambda row: row['requestIndex'])
+            phase = {'stage': stage, 'starts': {NAME: {'monotonicNS': started}},
+                     'producerCapture': {NAME: {'drained': True}}}
+            indexed = {'errors': [], 'identities': [], 'finals': {}, 'summary': {}}
+            measured = judgment_rules.reduce_requests(config, phase, {NAME: rows}, {'workload': indexed})[NAME]
+            self.assertEqual([row['scheduledOffsetNs'] for row in rows], stage['traces'][NAME]['offsetsNS'])
+            self.assertEqual(duration, round(stage['seconds'] * 1e9))
+            self.assertEqual(measured['offered'], len(rows))
+            self.assertEqual(measured['deadlineSuccess'], 0)
+            self.assertTrue(measured['issuanceFidelity']['supplied'])
+            for altered, field in ((rows[:-1], 'missingClientRows'), (rows + [rows[0]], 'extraClientRows')):
+                result = judgment_rules.reduce_requests(config, phase, {NAME: altered}, {'workload': indexed})[NAME]
+                self.assertEqual(result['offered'], measured['offered'])
+                self.assertFalse(result['issuanceFidelity']['supplied'])
+                self.assertGreater(result['issuanceFidelity'][field], 0)
+                self.assertEqual(result['issuanceFidelity']['status'], 'PARTIAL')
 
     def test_explicit_arrivals_use_workspace_file_without_sha_rechecks(self):
         producer = input_snapshot.module('producer_explicit_test', evaluation.HERE / 'producer.py')
@@ -959,7 +1007,7 @@ class EvaluationTests(unittest.TestCase):
             policy['offsetsFileSHA256'] = 'unrelated'
             policy['offered'] = -1
             Path(policy['offsetsFile']).write_text(json.dumps(scenario['traceOffsets'][NAME], indent=1) + '\n')
-            offsets, _ = producer.arrival_trace(policy, 'poisson', 202)
+            offsets, _ = producer.arrival_trace(policy)
             self.assertEqual(offsets, scenario['traceOffsets'][NAME])
 
     def test_materialized_dataset_actual_bytes_are_producer_evidence(self):
@@ -994,6 +1042,7 @@ class EvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec, scenario, execution, config, _ = fixture(root)
+            config.pop('traceVolume')
             spec['harness'].pop('sourceSHA')
             spec['loadGenerator'].pop('sourceSHA')
             scenario['spec']['workloads'][0].pop('generation')
