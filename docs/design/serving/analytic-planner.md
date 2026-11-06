@@ -5,7 +5,7 @@
 [이행 대안](../architecture-rethink/README.md)과 구분한 현행 용량표 계획기 계약이다.
 option과 Workload SLO마다 인스턴스 하나가 SLO를 지키는 최대 요청률 κ를 재생으로 계산한다.
 ChillServer는 시작과 입력 변경 때 자동제어 Workload의 행을 계산하고,
-Tick은 κ 합, 노드 계획과 두 출발점의 이웃 탐색으로 구성을 고른다.
+Tick은 κ 합과 노드 계획을 만들고, `planSearchStrategy`로 고른 v1·v2 탐색으로 구성을 고른다.
 [인스턴스 용량표 근거](capacity-table-evidence.md)와 `hack/kappa`는 계산과 비교의 근거다.
 [M0](decision-record-diet.md)와 [M1](observability-split.md)의 기록 경계를 따른다.
 본문은 선택 계약이며 실제 source 검증과 배포 실적은 실행 근거로 확인한다.
@@ -128,7 +128,19 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 
 **에너지.** keep의 노드 에너지는 `P_before × H`, 전환은 `J_pre + J_post + P_mid × max(0, min(r,H) − t_pre) + P_after × max(0,H − r − t_post)`(t는 평균 시간)다. 전환 operation J는 완결 비용이므로 사슬이 H를 넘어도 전부 포함한다. bridge의 시작 지연은 H 안에서만 이전 baseline으로 센다. 요청 에너지는 [0,min(r,H)]의 retained 처리와 overflow, [r,H]의 최종 정수 weight 처리로 나눈다. H 뒤 serving은 0이다. 보호수요는 실제 λ로 비례 축소하고 backlog drain을 요청 J에 더하지 않는다. 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
-**탐색.** 계획 집합(노드마다 계획 하나)은 두 출발점에서 시작하는 이웃 탐색으로 고른다. 출발점은 keep과, 모든 노드를 비운 집합(인스턴스가 없는 계획, 그런 계획이 없는 노드는 keep)이다. 한 걸음은 지금 집합에서 노드 k개 이하의 계획을 바꾼 집합을 모두 평가하고, 순서(충족, 최종 충족, 최대 초과량, 에너지, keep, 계획 key)로 가장 좋은 집합으로 옮긴다. 출발점마다 k = 2에서 더 좋은 이웃이 없으면 그 자리에서 k = 3으로 이어 가고, k = 3에서도 없으면 멈춘다. 두 끝 중 순서가 앞선 집합이 해다. 비운 출발점은 keep에서 한 걸음마다 손해라 막히는, 노드 여럿을 한꺼번에 바꾸는 해에 반대쪽에서 닿는다. 평가는 3장 판정과 위 에너지 식을 정확한 κ 합으로 쓰고, route 시각은 그 집합에서 가장 긴 route 전 사슬이다. 후보에서 빠지는 집합은 셋이다: `maxReplicas`나 `maxInstances`를 넘는 집합(replicas가 꺼져 있으면 Workload별 인스턴스 수가 지금과 다른 집합), 새 인스턴스에 가중치 0을 주는 집합(14장), 관측 창이 덜 찬 동안 분배된 인스턴스를 빼는 집합. 걸음 없이 끝난 비운 출발점도 이 셋을 거친 뒤에만 해가 된다. 순서에서 keep이 앞서므로 완전 동률은 keep이다. 고른 해는 14장의 교체 회수와 최소 이득을 거친다. 한 걸음의 이웃은 `planSearchWorkers`개 goroutine이 첫 번째로 바꾸는 노드 계획을 차례로 나눠 평가한다. 순서가 전순서라 결과는 goroutine 실행 순서와 무관하다. 탐색은 판단 시작부터 `controlIntervalNanos`의 절반 안에 끝난다(k = 2를 두 출발점에서 먼저 마치고 k = 3으로 간다). 그 시각을 넘으면 그때까지 찾은 가장 좋은 집합을 쓰고 기록에 `budgetCut`을 남긴다. 두 출발점 어느 쪽에서도 닿지 않는 해는 놓칠 수 있다. 크기와 근거는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)이다.
+**탐색.** `planSearchStrategy`는 `v1`(현재 기본), `v2`, `shadow`다. 계획 집합은 노드마다 계획 하나를 고르며, 두 탐색은 3장의 충족·최종 충족·초과량 벡터·에너지·keep·논리 key 순서를 따른다.
+
+v1은 keep과 모든 노드를 비운 집합(인스턴스가 없는 적격 계획, 없으면 keep)에서 시작한다. 각 출발점에서 노드 k개 이하를 바꾼 이웃 중 가장 좋은 집합으로 이동하며, 두 출발점의 k = 2를 마친 뒤 각각의 끝에서 k = 3을 이어 간다. 두 끝 중 순서가 앞선 집합이 해다. 평가는 정확한 κ 합과 위 에너지 식을 쓰며 route 시각은 집합에서 가장 긴 route 전 사슬이다. `maxReplicas`·`maxInstances` 초과(replicas OFF이면 Workload별 현재 수 변경), 새 인스턴스의 가중치 0, 보호 중인 분배 인스턴스의 가중치 제거는 허가하지 않는다. 걸음 없이 끝난 빈 출발점도 같은 허가를 거친다. 이웃은 `planSearchWorkers`개 goroutine이 나눠 평가하고 전순서로 합친다. 두 출발점에서도 닿지 않는 해는 놓칠 수 있으며, 고른 해는 14장의 교체 회수와 최소 이득을 거친다.
+
+v2는 Tick마다 노드·option·모드별 계획표를 만들고 cap 변형을 κ·논리 key 순으로 묶는다. 양수 수요 Workload에 κ = 0인 인스턴스를 두는 적격 non-keep 계획은 `dominated: ZeroCapacity`로 탐색에서 뺀다. cap 하위 선택은 κ 최대와 최소 충족 cap을 남긴다. Overload라도 `B_w = 0`이면 충족 cap의 초과량이 0으로 같으므로 둘을 유지하고, `B_w > 0`인 Overload에서는 κ 최대만 남긴다([정정 근거 §7.8.2](capacity-table-evidence.md#782-계획표와-cap-하위-선택)). 증분 평가기는 바뀐 Workload 항·route·노드 에너지를 재계산하고 v1과 같은 정수 가중치와 연산 순서를 쓴다. 노드 에너지의 시간 항은 v1처럼 클램프하지 않는다. 집합 단위의 timing·예비·bridge 허가는 정확 깔때기에 남긴다.
+
+출발점은 keep·빈 집합과 선택적 가격 유도 집합(`priced`)이다. `planPricedStart` 기본값은 true이며, searchable cap 전체를 대상으로 가격 반복 100회 뒤 얻은 집합이 앞의 두 집합과 다를 때만 셋째 출발점으로 넣는다. 각 출발점에서 피복은 이미 충족한 Workload를 보존하며 미충족 용량을 채우고, 인스턴스 상한을 넘으면 수와 초과량을 줄인다. 연마는 k = 1·2 이웃의 최급강하를 반복한다. 더 좋은 이웃이 없으면 노드별 한 이동의 ΔJ/Δ피복 순으로 고른 활성 m개 cap 변형에 keep·현재 계획을 더해 분기한정 결합 탐색을 한다. 피복이 양수가 아닌 이동은 ΔJ·key 순으로 뒤에 둔다. `planPolishActive` 기본값은 8이며 0이면 모든 searchable 계획과 cap 변형을 활성화한다.
+
+탐색 중 상위 K개(`planExactFinalists`, 기본 16)와 각 출발점의 끝점을 중복 없이 모아 정확 깔때기로 보낸다. 끝점은 K 밖에서도 보존하므로 최종 후보 수는 K를 넘을 수 있다. 깔때기는 `bounded` → v1 `evaluate` → `admits` 순서다. **v2 선택은 항상 v1 `evaluate`와 `admits`를 통과한다.** 정확 후보가 모두 거절되면 가지치기 전 keep과 적격 cap 전체의 정확 k = 1 탐색(`fallback: exactK1`), 그것도 선택하지 못하면 같은 마감의 v1 탐색(`fallback: v1`)으로 이어진다. `planPostFilterFinalists` 기본값 false에서는 정확 평가 1등을 고른 뒤 교체 회수·최소 이득을 적용한다. true에서는 후보별 `payback` → `minimumGain` 뒤 결과를 비교하고 호출부에서 다시 적용하지 않는다. false에서도 후처리 진단은 계산하며, 원래 1등은 keep으로 되돌아가지만 살아남는 대안이 있으면 `postFilterReverts`를 기록한다.
+
+v2의 `planSearchEvaluations` 기본값은 증분 평가 500,000회이며 `delta` 직전에 검사한다. 벽시계 마감은 v1과 같이 판단 시작 + `controlIntervalNanos/2`이고 계획 생성 시간도 포함한다. v2는 출발점 시작, 피복·연마의 반복/노드/이동 묶음 경계와 결합 탐색 재귀 진입에서 마감을 검사한다. 평가 수나 마감에 닿으면 `budgetCut`을 남기고 그때까지의 후보·끝점을 정확 평가한다. 계획표 전처리·가격 반복·정확 깔때기·정확 k = 1 fallback은 이 증분 평가 수에 포함하지 않으며 그 안에서 마감을 검사하지 않는다. 따라서 벽시계 마감은 탐색 중단 기준이며 판단 반환의 엄격한 시간 상한은 아니다. v2는 단일 goroutine으로 UID·논리 key 순으로 순회하고, 고정 평가 예산과 같은 입력에서는 결정적이다. 벽시계로 잘리는 위치는 실행 환경에 따라 달라질 수 있다.
+
+shadow는 v1의 결정을 유지하고 같은 snapshot·계획표 입력에서 v2를 실행해 `search.shadow`만 남긴다. v1이 쓰고 남은 동일 마감만 사용하며 정확 k = 1까지 실패하면 v1 재실행 없이 `fallback: v1`을 기록한다. 그림자 캠페인은 아직 실행하지 않았다([§7.8.7](capacity-table-evidence.md#787-그림자-운영미실행)).
 
 **router 가중치.** Routing 제어가 켜져 있으면 기존 weight를 보존하거나 e순으로 채우지 않고, λ·backlog와 무관한 minimax 정수 배분으로 `max(weight_i / κ_i)`를 최소화한다. `floor(1,000 × κ_i / Σκ)`에서 시작해 남은 단위를 `(weight_i + 1) / κ_i`가 가장 작은 인스턴스에 하나씩 준다(동률은 입력 index 순). κ가 0인 인스턴스는 받지 않고, Σκ가 0일 때만 같은 몫을 쓴다. λ가 0이거나 κ 합을 넘어도 배분은 같다. 최종 정수 weight로 모든 인스턴스에서 `λ_w × weight_i / 1,000 ≤ κ_i`를 한 번 검사하며, 넘치면 `RouteWeightExceedsCapacity`로 최종 미충족이다. λ에 따라 정수 단위를 옮기지 않으므로 안전한 정수 배분이 존재하면 이 배분도 안전하다. 요청 에너지의 y는 최종 정수 weight로 계산하며, keep의 가중치가 바뀌면 사슬 없이 route 동작 하나다. Routing 제어가 꺼져 있으면 `capacityFixedWeights`로 기존 weight를 유지한다.
 근거: m4 r4에서 rasp5 q1을 κ 25.3까지 채웠을 때 1 s 이내 응답은 47%였다. full-E5-3m-12의 κ 10.191/26.498/15.976/36.859와 λ 73.8은 weight 114/296/178/412로 나눠 느린 장치만 κ까지 채우는 불균형을 없앤다.
@@ -136,7 +148,15 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 `decision.capacity.workloads[].minimumDemand`는 해당 판단의 명시적 하한이고,
 `rate`는 그 하한과 관측 수요 중 큰 값이다. 미설정 하한도 기록에서는 0으로 남긴다.
 
-**판단 기록.** `ExpectedJoules`는 고른 해를 정확한 y로 다시 계산한 위 분석 합이다. `decision.capacity`는 T, Workload별 λ, `κ_new`, `κ_ret`, B, W, 두 초과량, 고른 r, 가중치, 사용한 용량표 행 키, 탐색 범위 `search`(마지막 이웃 크기 `neighborhood`, 평가한 계획 집합 수 `evaluated`, 탐색 시간 `durationNanos`, 시간 예산으로 끝났으면 `budgetCut`), 그리고 노드 계획마다 key, 적격 여부, 제외 사유(`MissingOperationCost`, `CapacityPending`, `CapacityRejected`, `InfeasibleResources`, `FixedWorkload`, `PlacementInventoryMissing`), κ, 사슬 시간, J를 담는다(`SCH-30`). 평가한 계획 집합의 목록은 기록하지 않는다.
+**판단 기록.** `ExpectedJoules`는 고른 해를 정확한 y로 다시 계산한 위 분석 합이다. `decision.capacity`는 T, Workload별 λ, `κ_new`, `κ_ret`, B, W, 두 초과량, 고른 r, 가중치, 사용한 용량표 행 키, 탐색 범위 `search`(v1의 마지막 이웃 크기 `neighborhood`, 정확 평가 수 `evaluated`, 탐색 시간 `durationNanos`, 예산 종료 `budgetCut`), 그리고 노드 계획마다 key, 적격 여부, 제외 사유(`MissingOperationCost`, `CapacityPending`, `CapacityRejected`, `InfeasibleResources`, `FixedWorkload`, `PlacementInventoryMissing`), κ, 사슬 시간, J를 담는다(`SCH-30`). 평가한 계획 집합의 목록은 기록하지 않는다.
+
+`search`는 전략 `strategy`, 사유별 가지치기 수 `pruned`, 증분 평가 수 `surrogateEvaluated`, 깔때기로 보낸 후보 수 `finalists`, 정확 평가 수 `exactEvaluated`, 선택 후보의 증분 J − 정확 비교 J인 `surrogateGapJoules`(후처리 비교 ON이면 후처리 뒤 J와의 차), `postFilterReverts`, `fallback`, 출발점 `start`를 해당 경로에서 기록한다. `exactEvaluated`는 후처리 내부 재평가를 세지 않는다. `dualBound`는 가격 반복의 선형화 진단값이며 실제 목적함수의 하한이나 최적성 보증이 아니다. v1 fallback으로 넘어가면 탐색 통계는 v1 값으로 교체되고 `strategy: v2`, `fallback: v1`을 남긴다.
+
+shadow에서 `key`는 후처리 전 v1 탐색 선택해이며, `shadow`는 v2의 `key`, 정확 `joules`, 증분 평가 수 `evaluated`, `exactEvaluated`, `durationNanos`, `fallback`을 담는다. 바깥 탐색 수·시간·예산 종료는 v1 값이고, v2가 선택하지 못하면 그림자 key는 빈 값이다.
+
+노드 계획의 `dominated`는 적격 여부와 별도로 v2 가지치기 사유(`ZeroCapacity`)를 남긴다.
+
+용량 행의 `CapacityJudgment.energyPerInputJoules`는 판정 재생의 요청 J/요청 수다. 모듈 B 준비용 기록이며 현재 계획기는 이 열을 쓰지 않고 profile의 b1 입력당 에너지를 쓴다.
 
 `decision.search`의 `windowStart`, `windowEnd`, `recentWindowStart`는 두 구간을 나타낸다.
 Workload별 `loads`의 `computeInputs`와 `inputsPerSecond`는 장기 관측값을 유지하고,
@@ -147,7 +167,7 @@ Workload별 `loads`의 `computeInputs`와 `inputsPerSecond`는 장기 관측값�
 그 Workload의 확장과 다른 Workload의 축소, 교체와 분배 판단은 계속한다.
 기존 진행 중 목표의 유지 규칙과 장기 관측 창을 쓰는 유휴 제거, 교체 회수는 유지한다.
 
-**비용.** 한 걸음의 평가 수는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)에 비례하고 요청 수와 무관하다. 평가 하나는 약 5 µs다. evaluation 규모의 노드 계획 수, 걸음 수, 탐색 시간과 정확한 최소 대비 에너지 차는 [용량표 근거 7장](capacity-table-evidence.md#7-계획-탐색)이다.
+**비용.** v1 한 걸음의 평가 수는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)에 비례하고 요청 수와 무관하며, 평가 하나는 약 5 µs다([7장](capacity-table-evidence.md#7-계획-탐색)). v2 증분 평가 중앙값은 약 0.65 µs(648.1 ns, 할당 0)다. 기본 평가 예산 500,000회·m = 8 조건의 최대 하네스 공간 탐색은 약 0.4–0.5 s(측정 범위 370~515 ms)로 ≤ 100 ms 비용 게이트에 미달했다. 같은 호스트의 v1 기준선 최대 공간은 3.06 s다. 입력·가격 출발점·예산 조건과 품질 비교는 [§7.8.0~7.8.6](capacity-table-evidence.md#78-v2-계획기-측정-초안-단계별-게이트-수치)에 있으며 실제 E5 그림자 운영 수치는 아직 없다.
 
 ## 5. 완료 여유 규칙
 
@@ -187,7 +207,7 @@ snapshot 인스턴스의 `WorkloadUID`와 Pod owner/routing 참조는 같은 소
 | 용량표 설정 | `capacityWindowNanos`>0, `capacityWindows`≥1, `capacityPassingWindows`는 1부터 전체 창 수까지, `capacityMinimumRequests`≥1이다 |
 | 비교 기간 | `comparisonPeriodNanos`>0인 정수 ns; H의 유일한 필드다. 제안 600초. 후보 집합과 무관하며 실제 H를 `decision.capacity.periodNanos`에 남긴다 |
 | 디스패치 점유 | snapshot의 `dispatchOccupancy`는 immutable 측정 record에서 도출한다. 행 입력에 Node UID, mode, runtime/model, 값과 source를 포함한다 |
-| 탐색 병렬 | `planSearchWorkers`≥1이다. sample은 3이고 CPU 예약과 무관한 도구 병렬성이며 실제 경합·gateway/Tick 관측으로 평가한다 |
+| 탐색 병렬 | `planSearchWorkers`≥1이다. sample은 3이며 v1·v1 fallback에만 적용한다. v2는 단일 goroutine이다. CPU 예약과 무관한 도구 병렬성이며 실제 경합·gateway/Tick 관측으로 평가한다 |
 | 판단 기록 | `decision.capacity`는 구성의 판정, 에너지, 사슬과 `search`를 기록한다. `management`의 `capacity-row-built`는 행과 계산시간을 기록한다 |
 | 인스턴스 시간 | `unroutedSince`는 controller 유휴 이력이며 `heldUntil`은 Overload 준비 유지에 사용한다. 이력은 retirement의 SLO·H 판정을 면제하지 않는다 |
 | 최소 이득 | `OperationTrial.energyUncertaintyJoules`와 실제 선택한 `NodeBaseline.wattsUncertainty`를 signed 노출량으로 전파한다. `gainUncertaintyJoules`는 B-only 문턱이다 |
@@ -223,7 +243,7 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 - **제외 사유.** 4장의 사유에 더해 기준 전력이 없으면 `MissingUnloadedNodeBaseline:<노드>:<모드>`, 측정 POOL 노드는 `MeasurementNode`, 준비되지 않은 노드는 `NodeUnavailable`, 비서빙 예산 노드는 `PlacementBudgetUnavailable`을 기록한다.
 - **재사용 증거.** 분배되지 않은 준비된 인스턴스는 예약 slot(`targetID`)이나 그 Workload의 소유가 있을 때만 계획이 다시 쓴다.
 - **무한 값.** 용량이 없어 대기, 비우는 시간, 초과량이 정해지지 않으면 기록에서 그 필드가 빠지고 후보의 `worstExceedance`는 float 최댓값이다.
-- **탐색 비용.** 평가 하나는 노드 8개에서 약 5 µs이고 이웃 크기는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)이다. 시간 예산은 판단 시작부터 재므로 노드 계획 만들기도 그 안에 든다.
+- **탐색 비용.** v1 평가는 노드 8개에서 약 5 µs이고 이웃 크기는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)이다. v2 증분 평가는 약 0.65 µs이며 기본 예산은 500,000회다. m = 8의 최대 하네스 공간은 약 0.4–0.5 s(370~515 ms)로 ≤ 100 ms 게이트 미달이다([§7.8](capacity-table-evidence.md#78-v2-계획기-측정-초안-단계별-게이트-수치)). 두 경로의 벽시계 마감은 판단 시작부터 제어 주기의 절반이며 노드 계획 생성도 포함한다. v2의 증분 평가 수는 `delta` 직전에, 마감은 탐색 루프 경계에서 검사한다. 전처리·가격 반복·정확 깔때기·정확 k = 1 fallback 내부에는 같은 마감 검사가 없어 전체 판단 시간의 엄격한 상한으로 해석하지 않는다.
 - **Retirement — v2.1.** Idle time is not permission to mutate a selected target.
   Retirement is an enumerated node plan: `schedulerPlan` supplies its measured
   stop/drain/remove chain before the normal capacity, transition, reserve and
