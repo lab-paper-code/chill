@@ -148,9 +148,11 @@ Existing nonfatal equality paths remain per-source diagnostics:
 and incompatible preparations in `application/profiles.go`.
 
 Preparation completeness also guards the unchanged-source fast path: a partial
-accepted preparation map is retried by the existing refresh loop. A healthy
-retry can therefore prepare the same profile without changing its request,
-evidence or configuration identity. QPS and refresh time limits are unchanged.
+accepted preparation map is retried by the existing refresh loop. Unchanged
+preparations and diagnostics preserve the accepted controller and rolling
+occupancy snapshot, including an in-flight scan. A changed result is published,
+so recovery can prepare the same profile without changing its request, evidence
+or configuration identity. QPS and refresh time limits are unchanged.
 
 `accepted.dispatchOccupancy[]` is the same immutable list supplied to scheduler
 capture and decisions, with one exact Node/profile/path/batch entry and

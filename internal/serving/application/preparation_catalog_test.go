@@ -183,6 +183,40 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 			if !found {
 				t.Fatal("incompatible profile lost its preparation diagnostic")
 			}
+			// A permanently incompatible preparation still has measured occupancy.
+			// Refresh the real cache so both selection and scan publication matter.
+			input := fixture.service.occupancy.published.Load().input
+			now := time.Now().UTC()
+			assertMeasured := func(want time.Duration) {
+				t.Helper()
+				read, err := fixture.service.ReadCatalog(ctx)
+				if err != nil || read.Accepted == nil || len(read.Accepted.DispatchOccupancy) != 1 {
+					t.Fatalf("measured occupancy unavailable: %+v err=%v", read, err)
+				}
+				got := read.Accepted.DispatchOccupancy[0]
+				if got.ProfileID != fixture.profile.ID || got.Batch != 1 || got.PerRequest != want ||
+					got.Provenance == nil || got.Provenance.Source != "measured" || got.Provenance.Value != int64(want) {
+					t.Errorf("accepted catalog lost measured occupancy: %+v want=%s", got, want)
+				}
+			}
+			for scan, value := range []time.Duration{198305, 287654} {
+				if err := fixture.service.occupancy.refresh(ctx, input, now,
+					func(context.Context, *rollingOccupancyInput, time.Time, time.Time) ([]serving.OccupancyEstimate, error) {
+						if scan == 1 {
+							// Refresh completes while aggregation is in flight, before
+							// its result is available for cache publication.
+							if err := fixture.service.Refresh(ctx); err != nil {
+								return nil, err
+							}
+							assertMeasured(198305)
+						}
+						return []serving.OccupancyEstimate{rollingEstimate(input, fixture.profile.ID, 1,
+							int(input.configuration.DispatchOccupancy.MinimumPairs), float64(value), now)}, nil
+					}); err != nil {
+					t.Fatal(err)
+				}
+				assertMeasured(value)
+			}
 			restore()
 			if err := fixture.service.Refresh(ctx); err != nil {
 				t.Fatal(err)
@@ -190,6 +224,11 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 			healthy := fixture.prepared(t)
 			if healthy.Revision != partial.Revision || healthy.ConfigVersion != partial.ConfigVersion {
 				t.Fatal("recovery changed the measurement or configuration identity")
+			}
+			if len(healthy.Accepted.DispatchOccupancy) != 1 ||
+				healthy.Accepted.DispatchOccupancy[0].Provenance == nil ||
+				healthy.Accepted.DispatchOccupancy[0].Provenance.Source == "measured" {
+				t.Fatal("changed preparation outcome did not publish a fresh occupancy selection")
 			}
 		})
 	}
@@ -238,6 +277,8 @@ func newPreparationCatalogFixture(t *testing.T) *preparationCatalogFixture {
 	t.Helper()
 	config := schedulerTestConfiguration()
 	config.Settings.ServingMemoryBytes = 128 << 20
+	policy := syntheticOccupancyPolicy()
+	config.DispatchOccupancy = &policy
 	service := schedulerTestService(t, config)
 	resources, objects := preparationCatalogEvidence(t)
 	var sourceFailed atomic.Bool

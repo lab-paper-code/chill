@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
+	"reflect"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -243,8 +245,8 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	signature := strings.Join(sources, "\x00")
 	currentProfiles := view.CurrentProfiles()
 	accepted := o.Profiles.Load()
-	if o.Controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources &&
-		accepted != nil && len(accepted.Preparations) == len(currentProfiles) {
+	sameInputs := o.Controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources && accepted != nil
+	if sameInputs && len(accepted.Preparations) == len(currentProfiles) {
 		return ctx.Err()
 	}
 	preparations, issues, err := o.preparations(ctx, config, currentProfiles)
@@ -252,6 +254,13 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 		return err
 	}
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
+	if sameInputs && reflect.DeepEqual(view.Insufficiencies, accepted.Insufficiencies) &&
+		maps.EqualFunc(preparations, accepted.Preparations, func(spec, published servingstate.PrepareSpec) bool {
+			spec.Instance.Profile = nil // compare the accepted projection without changing the controller spec
+			return reflect.DeepEqual(spec, published)
+		}) {
+		return ctx.Err()
+	}
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings:          config.Settings,
 		ConfigurationName: o.opts.SchedulerConfigMap, ConfigurationKey: o.opts.SchedulerConfigKey,
