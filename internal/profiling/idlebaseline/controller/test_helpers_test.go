@@ -42,9 +42,9 @@ func testBaselineParent() *edgev1alpha1.ModelLoadedIdleBaseline {
 	}
 }
 
-func testDerivedBaseline(t *testing.T, count int) profilederivation.IdleBaseline {
+func testDerivedBaseline(t *testing.T) profilederivation.IdleBaseline {
 	t.Helper()
-	trials := make([]profilederivation.IdleTrial, count)
+	trials := make([]profilederivation.IdleTrial, 3)
 	for index := range trials {
 		trials[index] = profilederivation.IdleTrial{
 			ModelLoadedIdleMeanWallWatts: float64(10 + index),
@@ -56,7 +56,7 @@ func testDerivedBaseline(t *testing.T, count int) profilederivation.IdleBaseline
 		}
 	}
 	baseline, err := profilederivation.DeriveIdleBaseline(trials, profilederivation.PointPolicy{
-		Version: "idle-point-v1", MinimumTrials: count, ConfidenceLevel: .95,
+		Version: "idle-point-v1", MinimumTrials: 3, ConfidenceLevel: .95,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,9 +64,9 @@ func testDerivedBaseline(t *testing.T, count int) profilederivation.IdleBaseline
 	return baseline
 }
 
-func testFinalReferences(count int) idlebaseline.FinalEvidence {
-	references := make(idlebaseline.FinalEvidence, count)
-	for index := 0; index < count; index++ {
+func testFinalReferences() idlebaseline.FinalEvidence {
+	references := make(idlebaseline.FinalEvidence, 3)
+	for index := 0; index < 3; index++ {
 		references[fmt.Sprintf("trial-%d", index)] = idlebaseline.StoredObjectReference{
 			Store: "evidence", Key: fmt.Sprintf("runs/%d/final.json", index),
 			SchemaVersion: "final.v1", Size: 20,

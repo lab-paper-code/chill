@@ -67,7 +67,7 @@ func TestResultWriterUsesExistingObjectAsAuthority(t *testing.T) {
 func testCompleteResult(t *testing.T) idlebaseline.Result {
 	t.Helper()
 	result, err := idlebaseline.NewResult(
-		measurementState(testBaselineParent()), testDerivedBaseline(t, 3), testFinalReferences(3),
+		measurementState(testBaselineParent()), testDerivedBaseline(t), testFinalReferences(),
 	)
 	if err != nil {
 		t.Fatal(err)

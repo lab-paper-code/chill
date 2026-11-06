@@ -86,7 +86,7 @@ func TestReconcilerCreatesOneIdleRunAtATimeAndCompletes(t *testing.T) {
 		runs = append(runs, &run)
 	}
 	kube := baselineFakeClient(t, runs...)
-	deriver := &fakeBaselineDeriver{baseline: testDerivedBaseline(t, 3), references: testFinalReferences(3)}
+	deriver := &fakeBaselineDeriver{baseline: testDerivedBaseline(t), references: testFinalReferences()}
 	writer := &fakeBaselineResultWriter{reference: testResultReference()}
 	reconciler := newTestReconciler(t, kube, deriver, writer)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
@@ -189,7 +189,7 @@ func TestReconcilerAcceptsOwnedNoncanonicalRunFromFrozenExecution(t *testing.T) 
 	}
 	kube := baselineFakeClient(t, objects...)
 	reconciler := newTestReconciler(t, kube,
-		&fakeBaselineDeriver{baseline: testDerivedBaseline(t, 3), references: testFinalReferences(3)},
+		&fakeBaselineDeriver{baseline: testDerivedBaseline(t), references: testFinalReferences()},
 		&fakeBaselineResultWriter{reference: testResultReference()})
 	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
 		t.Fatal(err)
@@ -270,7 +270,7 @@ func TestRunOutcomeDrivesBaselineTransition(t *testing.T) {
 			kube := baselineFakeClient(t, objects...)
 			writer := &fakeBaselineResultWriter{reference: testResultReference()}
 			reconciler := newTestReconciler(t, kube,
-				&fakeBaselineDeriver{baseline: testDerivedBaseline(t, 3), references: testFinalReferences(3)}, writer)
+				&fakeBaselineDeriver{baseline: testDerivedBaseline(t), references: testFinalReferences()}, writer)
 			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}); err != nil {
 				t.Fatal(err)
 			}
