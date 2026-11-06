@@ -83,6 +83,8 @@ func (s *searchState) workload(w, n, q int, r float64, key *orderKey) float64 {
 		satisfied = false
 		worst = max(worst, terms.weightExcess)
 	}
+	key.demand[w], _ = capacityCoverDemand(terms.demand, terms.kret, r)
+	key.supply[w], key.satisfied[w] = terms.knew, satisfied
 	key.feasible = key.feasible && satisfied
 	key.final = key.final && terms.ok && final
 	key.weightsExceeded = key.weightsExceeded || !terms.ok

@@ -9,17 +9,29 @@ type orderKey struct {
 	feasible, final, keep, weightsExceeded bool
 	unroutedPrepare, searchable, bounded   bool
 	joules, route                          float64
-	excesses                               []float64
+	excesses, demand, supply               []float64
+	satisfied                              []bool
+	instances, countExcess                 int
 	choice                                 []int // table indices, not v1 plan indices
 	table                                  *planTable
 }
 
 func (a orderKey) copyInto(b *orderKey) {
 	excesses, choice := b.excesses, b.choice
+	demand, supply, satisfied := b.demand, b.supply, b.satisfied
 	*b = a
 	b.excesses, b.choice = excesses[:len(a.excesses)], choice[:len(a.choice)]
 	copy(b.excesses, a.excesses)
 	copy(b.choice, a.choice)
+	// Existing evaluator callers may only retain the ordering projection.
+	if len(demand) >= len(a.demand) {
+		b.demand, b.supply, b.satisfied = demand[:len(a.demand)], supply[:len(a.supply)], satisfied[:len(a.satisfied)]
+		copy(b.demand, a.demand)
+		copy(b.supply, a.supply)
+		copy(b.satisfied, a.satisfied)
+	} else {
+		b.demand, b.supply, b.satisfied = nil, nil, nil
+	}
 }
 
 func (a orderKey) better(b *orderKey) bool {
@@ -119,7 +131,8 @@ func newSearchState(p *capacityPlanner, t *planTable, choice []int) *searchState
 	s := &searchState{planner: p, table: t, choice: make([]int, n), sums: make([]searchSum, w),
 		tPre: make([]float64, n), nodeJ: make([]float64, n), items: make([]capacityItem, size),
 		weights: make([]int32, size), load: make([]float64, size), workloads: make([]searchWorkload, w),
-		result: orderKey{choice: make([]int, n), excesses: make([]float64, w), table: t}}
+		result: orderKey{choice: make([]int, n), excesses: make([]float64, w), table: t,
+			demand: make([]float64, w), supply: make([]float64, w), satisfied: make([]bool, w)}}
 	s.reset(choice)
 	return s
 }
@@ -212,6 +225,7 @@ func (s *searchState) delta(n, q int) orderKey {
 	key.feasible, key.final, key.keep, key.searchable, key.bounded = true, true, true, true, true
 	key.weightsExceeded, key.unroutedPrepare = false, false
 	key.joules, key.route = 0, 0
+	key.countExcess = 0
 	for node, pre := range s.tPre {
 		if node == n {
 			pre = 0
@@ -241,9 +255,12 @@ func (s *searchState) delta(n, q int) orderKey {
 		count := s.sums[w].count - t.count[old][w] + t.count[q][w]
 		total += t.count[q][w] - t.count[old][w]
 		key.bounded = key.bounded && count <= p.settings.MaxReplicas && (p.settings.Controls.Replicas || count == ws.current)
+		key.countExcess += max(0, count-p.settings.MaxReplicas)
 		key.joules += s.workload(w, n, q, key.route, &key)
 	}
 	key.bounded = key.bounded && total <= p.settings.MaxInstances
+	key.instances = total
+	key.countExcess += max(0, total-p.settings.MaxInstances)
 	for k := 1; k < len(key.excesses); k++ {
 		value, at := key.excesses[k], k
 		for at > 0 && value > key.excesses[at-1] {
