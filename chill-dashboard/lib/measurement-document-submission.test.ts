@@ -139,7 +139,7 @@ function failure(status: number, body: string, unknownOutcome = false): Failure 
 test("local review enables authoritative submission without optional checks", () => {
   const c = consumer()
   prepare(c)
-  assert.deepEqual(c.sent, [])
+  assert.equal(c.sent.at(-1), undefined)
   assert.equal(c.button(submit).props.disabled, false)
   c.click(submit)
   const request = c.sent.at(-1)!
