@@ -85,8 +85,8 @@ func (o options) validate() error {
 }
 
 func validateAbsolutePath(name, path string) error {
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(filepath.Separator) {
-		return fmt.Errorf("%s path must be a clean absolute file path", name)
+	if !filepath.IsAbs(path) || filepath.Clean(path) == string(filepath.Separator) {
+		return fmt.Errorf("%s path must be an absolute file path", name)
 	}
 	return nil
 }

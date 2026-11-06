@@ -26,7 +26,7 @@ type WorkloadResultFile struct {
 
 func NewWorkloadResultFile(config WorkloadResultFileConfig) (*WorkloadResultFile, error) {
 	if !validAbsoluteFilePath(config.Path) {
-		return nil, errors.New("workload result path must be a clean absolute file path")
+		return nil, errors.New("workload result path must be an absolute file path")
 	}
 	if config.WaitTimeout <= 0 || config.PollInterval <= 0 || config.PollInterval >= config.WaitTimeout {
 		return nil, errors.New("workload result wait timings are invalid")
@@ -76,7 +76,7 @@ func (f *WorkloadResultFile) Read(ctx context.Context) (workloadobserver.Verifie
 // replacing an existing handoff. The reader validates the external result.
 func PublishWorkloadResult(path string, maxBytes int64, result workloadobserver.Result) error {
 	if !validAbsoluteFilePath(path) {
-		return errors.New("workload result path must be a clean absolute file path")
+		return errors.New("workload result path must be an absolute file path")
 	}
 	if maxBytes < 1 {
 		return errors.New("workload result maximum size must be positive")

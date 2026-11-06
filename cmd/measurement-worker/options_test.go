@@ -71,3 +71,28 @@ func TestOptionsAcceptResultHandoffsSharingAttemptDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOptionsAcceptEquivalentAbsolutePaths(t *testing.T) {
+	opts := validOptions(t)
+	for _, path := range []*string{
+		&opts.workspacePath, &opts.workloadWindowStartPath, &opts.measurementStartPath,
+		&opts.workloadWindowReadyPath, &opts.measurementEndPath, &opts.metricResultPath,
+		&opts.workloadResultPath, &opts.terminationMessagePath, &opts.runtimeFailedPath,
+	} {
+		*path = "/." + *path
+	}
+	for index, path := range opts.observerReadyPaths {
+		opts.observerReadyPaths[index] = "/." + path
+	}
+	if err := opts.validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOptionsRejectObserverReadyPathAliases(t *testing.T) {
+	opts := validOptions(t)
+	opts.observerReadyPaths = []string{"/coordination/ready", "/coordination/./ready"}
+	if err := opts.validate(); err == nil {
+		t.Fatal("aliased observer-ready paths accepted")
+	}
+}

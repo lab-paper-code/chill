@@ -34,7 +34,7 @@ var _ MetricResultReader = (*MetricResultFile)(nil)
 
 func NewMetricResultFile(config MetricResultFileConfig) (*MetricResultFile, error) {
 	if !validAbsoluteFilePath(config.Path) {
-		return nil, errors.New("metric result path must be a clean absolute file path")
+		return nil, errors.New("metric result path must be an absolute file path")
 	}
 	if config.WaitTimeout <= 0 || config.PollInterval <= 0 || config.PollInterval >= config.WaitTimeout {
 		return nil, errors.New("metric result wait timings are invalid")
@@ -101,7 +101,7 @@ func ParseVerifiedRunConfig(raw string) (profilingrun.VerifiedRunConfig, error) 
 // without replacing an existing handoff.
 func PublishMetricResult(path string, maxBytes int64, result metricobserver.Result) error {
 	if !validAbsoluteFilePath(path) {
-		return errors.New("metric result path must be a clean absolute file path")
+		return errors.New("metric result path must be an absolute file path")
 	}
 	if maxBytes < 1 {
 		return errors.New("metric result maximum size must be positive")
@@ -126,7 +126,7 @@ func PublishMetricResult(path string, maxBytes int64, result metricobserver.Resu
 // refuses to replace a pre-existing path.
 func PublishSignal(path string) error {
 	if !validAbsoluteFilePath(path) {
-		return errors.New("signal path must be a clean absolute file path")
+		return errors.New("signal path must be an absolute file path")
 	}
 	if err := publishFile(path, []byte("signal\n")); err != nil {
 		return fmt.Errorf("publish signal: %w", err)
@@ -137,7 +137,7 @@ func PublishSignal(path string) error {
 // WaitForSignal waits for a regular signal file within a bounded interval.
 func WaitForSignal(ctx context.Context, path string, timeout, pollInterval time.Duration) error {
 	if !validAbsoluteFilePath(path) {
-		return errors.New("signal path must be a clean absolute file path")
+		return errors.New("signal path must be an absolute file path")
 	}
 	if timeout <= 0 || pollInterval <= 0 || pollInterval >= timeout {
 		return errors.New("signal wait timings are invalid")
@@ -265,5 +265,5 @@ func decodeJSON(payload []byte, target any) error {
 }
 
 func validAbsoluteFilePath(value string) bool {
-	return filepath.IsAbs(value) && value != string(filepath.Separator) && filepath.Clean(value) == value
+	return filepath.IsAbs(value) && filepath.Clean(value) != string(filepath.Separator)
 }

@@ -206,10 +206,15 @@ func (o options) validate() error {
 	if o.storeCredentialsSecret != "" && len(validation.IsDNS1123Subdomain(o.storeCredentialsSecret)) != 0 {
 		return errors.New("invalid Evidence Store credentials Secret name")
 	}
-	for _, path := range []string{o.tlsCert, o.tlsKey, o.observationDirectory} {
-		if !isCleanAbsolutePath(path) {
-			return errors.New("TLS files and private observation directory must be clean absolute paths")
+	for _, path := range []string{o.tlsCert, o.tlsKey} {
+		if !filepath.IsAbs(path) {
+			return errors.New("TLS files must be absolute paths")
 		}
+	}
+	// startRun creates the raw directory but joins its marker and log paths.
+	// A symlink followed by .. must not split those private storage targets.
+	if !isCleanAbsolutePath(o.observationDirectory) {
+		return errors.New("private observation directory must be a clean absolute path")
 	}
 	if o.queueLimit <= 0 || o.maxQueryEvents <= 0 || o.maxRequestBytes <= 0 || o.maxEvidenceBytes <= 0 {
 		return errors.New("queue, body, evidence and query bounds must be positive")
@@ -293,8 +298,8 @@ func (o options) validateMaterialization() error {
 	if o.profileObjectSize <= 0 || o.profileObjectSize > o.maxEvidenceBytes || o.profileObjectKey == "" {
 		return errors.New("bounded positive immutable profile object identity is required")
 	}
-	if !filepath.IsAbs(o.profileOutput) || filepath.Clean(o.profileOutput) != o.profileOutput {
-		return errors.New("profile output must be a clean absolute file path")
+	if !filepath.IsAbs(o.profileOutput) {
+		return errors.New("profile output must be an absolute file path")
 	}
 	if o.requestTimeout <= 0 {
 		return errors.New("materialization timeout must be positive")

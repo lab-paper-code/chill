@@ -124,8 +124,8 @@ func (o options) validate() error {
 		"metric result":         o.metricResultPath, "workload result": o.workloadResultPath,
 		"termination message": o.terminationMessagePath, "runtime-failed": o.runtimeFailedPath,
 	} {
-		if !filepath.IsAbs(value) || filepath.Clean(value) != value {
-			return errors.New(name + " path must be a clean absolute path")
+		if !filepath.IsAbs(value) {
+			return errors.New(name + " path must be an absolute path")
 		}
 	}
 	if len(o.observerReadyPaths) == 0 {
@@ -133,13 +133,14 @@ func (o options) validate() error {
 	}
 	seenReadyPaths := map[string]struct{}{}
 	for _, readyPath := range o.observerReadyPaths {
-		if !filepath.IsAbs(readyPath) || filepath.Clean(readyPath) != readyPath {
-			return errors.New("observer-ready path must be a clean absolute path")
+		if !filepath.IsAbs(readyPath) {
+			return errors.New("observer-ready path must be an absolute path")
 		}
-		if _, exists := seenReadyPaths[readyPath]; exists {
+		key := filepath.Clean(readyPath)
+		if _, exists := seenReadyPaths[key]; exists {
 			return errors.New("observer-ready paths must be unique")
 		}
-		seenReadyPaths[readyPath] = struct{}{}
+		seenReadyPaths[key] = struct{}{}
 	}
 	if o.attemptTimeout <= 0 || o.observerReadyTimeout <= 0 || o.metricResultTimeout <= handoffPollInterval ||
 		o.workloadResultTimeout <= handoffPollInterval {

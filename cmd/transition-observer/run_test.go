@@ -60,6 +60,7 @@ func TestProbeReadyFileModeUsesOnlyTheMarker(t *testing.T) {
 	opts.contractJSON = ""
 	opts.maxContractBytes = 0
 	opts.terminationPath = ""
+	opts.readyPath = "/." + opts.readyPath
 	if err := opts.validate(); err != nil {
 		t.Fatalf("probe options: %v", err)
 	}
@@ -72,10 +73,23 @@ func TestProbeReadyFileModeUsesOnlyTheMarker(t *testing.T) {
 	if err := probeReadyFile(opts.readyPath); err != nil {
 		t.Fatalf("regular ready marker: %v", err)
 	}
+	if err := probeReadyFile(filepath.Dir(opts.readyPath)); err == nil {
+		t.Fatal("directory accepted as a ready marker")
+	}
+	opts.readyPath = "/tmp/.."
+	if err := opts.validate(); err == nil {
+		t.Fatal("root alias accepted as a ready marker path")
+	}
 }
 
 func TestExecutePublishesReadyAndWritesRawAndReceiptOnce(t *testing.T) {
 	opts := testOptions(t)
+	opts.readyPath = "/." + opts.readyPath
+	opts.terminationPath = "/." + opts.terminationPath
+	opts.memoryLimitBytes = 64 << 20
+	if err := opts.validate(); err != nil {
+		t.Fatal(err)
+	}
 	marker := time.Now().UTC()
 	writer := &writeStub{receipt: testReceipt()}
 	err := execute(context.Background(), opts, testDependencies(

@@ -101,13 +101,14 @@ func (o options) validate() error {
 	}
 	seenPaths := make(map[string]struct{}, len(paths))
 	for name, value := range paths {
-		if !filepath.IsAbs(value) || filepath.Clean(value) != value || value == "/" {
-			return errors.New(name + " path must be a clean absolute file path")
+		key := filepath.Clean(value)
+		if !filepath.IsAbs(value) || key == string(filepath.Separator) {
+			return errors.New(name + " path must be an absolute file path")
 		}
-		if _, exists := seenPaths[value]; exists {
+		if _, exists := seenPaths[key]; exists {
 			return errors.New("workload observer coordination paths must be unique")
 		}
-		seenPaths[value] = struct{}{}
+		seenPaths[key] = struct{}{}
 	}
 	_, err := o.selectorLabelKeys()
 	return err

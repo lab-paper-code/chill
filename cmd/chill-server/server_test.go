@@ -112,7 +112,7 @@ func TestServeDuringColdStart(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				done <- serve(ctx, options{
-					bindAddress: address, tlsCert: certFile, tlsKey: keyFile,
+					bindAddress: address, tlsCert: "/." + certFile, tlsKey: "/." + keyFile,
 					requestTimeout: time.Second, drainTimeout: time.Second,
 					sourceInterval: time.Hour, profileInterval: time.Hour,
 				}, handler, execution, nil, nil, log, nil, nil, initialize)

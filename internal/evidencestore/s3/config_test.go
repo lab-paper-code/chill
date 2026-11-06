@@ -62,15 +62,21 @@ func TestNew(t *testing.T) {
 		Region:          "us-east-1",
 		AccessKeyID:     "access-key",
 		SecretAccessKey: "secret-key",
-		TempDir:         "/workspace",
+		TempDir:         t.TempDir() + "/./",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	if store == nil || store.client == nil || store.logicalStore != "chill-evidence-store" ||
-		store.bucket != "chill-profiling-evidence" || store.tempDir != "/workspace" {
+		store.bucket != "chill-profiling-evidence" {
 		t.Fatal("New() returned an unusable Store")
 	}
+	content := []byte("bounded profile")
+	candidate, err := store.prepareCandidate(identityFor(content), bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("stage candidate in equivalent absolute directory: %v", err)
+	}
+	removeCandidate(candidate)
 }
 
 // dnsLossClient answers like a pod whose cluster DNS stops answering for the

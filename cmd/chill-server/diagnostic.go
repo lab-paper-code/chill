@@ -27,6 +27,8 @@ func (o options) validateDiagnostics() error {
 		}
 		return nil
 	}
+	// Mkdir uses the raw path; artifact paths below use filepath.Join. Reject
+	// spellings whose symlink/.. traversal could write outside the fresh directory.
 	if o.materializeProfile || !filepath.IsAbs(o.diagnosticDirectory) ||
 		filepath.Clean(o.diagnosticDirectory) != o.diagnosticDirectory ||
 		o.diagnosticStartDelay < 0 || o.diagnosticTraceOffset < 0 ||

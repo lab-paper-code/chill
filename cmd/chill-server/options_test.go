@@ -61,3 +61,22 @@ func TestEvaluationStoreConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestTLSFilePathsAcceptEquivalentAbsolutePaths(t *testing.T) {
+	var opts options
+	flags := flag.NewFlagSet("chill-server", flag.ContinueOnError)
+	opts.bindFlags(flags)
+	if err := flags.Parse([]string{
+		"--serving-namespace=serving", "--tls-cert=/tls/./cert.pem", "--tls-key=/tls/./key.pem",
+		"--observation-directory=/observations",
+		"--resource-max-samples=32", "--resource-max-containers=256",
+		"--resource-max-thermal=256", "--resource-max-errors=256",
+		"--resource-release=chill", "--resource-system=chill",
+		"--resource-control-component=serving-entrypoint", "--resource-directory-interval=1m",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := opts.validate(); err != nil {
+		t.Fatal(err)
+	}
+}

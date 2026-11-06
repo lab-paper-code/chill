@@ -28,6 +28,15 @@ func TestExecutePublishesFencedWorkloadObservation(t *testing.T) {
 	directory := t.TempDir()
 	writeWorkloadTestRunConfig(t, directory)
 	opts := workloadTestOptions(directory)
+	for _, path := range []*string{
+		&opts.readyPath, &opts.windowStartPath, &opts.windowReadyPath,
+		&opts.endPath, &opts.resultPath, &opts.runtimeFailedPath,
+	} {
+		*path = "/." + *path
+	}
+	if err := opts.validate(); err != nil {
+		t.Fatal(err)
+	}
 	pod := workloadTestPod()
 	client := fake.NewSimpleClientset(pod.DeepCopy())
 	preflight := watch.NewRaceFreeFake()
@@ -146,6 +155,17 @@ func TestOptionsRejectNonCanonicalSelectorKeys(t *testing.T) {
 	opts.selectorLabelCSV = "z,a"
 	if err := opts.validate(); err == nil || !strings.Contains(err.Error(), "sorted") {
 		t.Fatalf("validate() error = %v", err)
+	}
+}
+
+func TestOptionsRejectCoordinationPathAliasesAndRoot(t *testing.T) {
+	directory := t.TempDir()
+	for _, path := range []string{directory + "/./workload-ready", "/tmp/..", "result.json"} {
+		opts := workloadTestOptions(directory)
+		opts.resultPath = path
+		if err := opts.validate(); err == nil {
+			t.Fatalf("unsafe coordination path %q accepted", path)
+		}
 	}
 }
 

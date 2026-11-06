@@ -11,7 +11,7 @@ import (
 )
 
 func TestWorkloadResultFileRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "workload-result.json")
+	path := t.TempDir() + "/./workload-result.json"
 	result := validWorkloadResult()
 	background := workloadobserver.Pod{
 		Namespace: "monitoring", Name: "agent", UID: "agent-uid", Phase: "Running",

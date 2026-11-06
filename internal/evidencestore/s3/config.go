@@ -92,8 +92,8 @@ func (c Config) validate() error {
 	if strings.TrimSpace(c.LogicalStore) != c.LogicalStore || strings.TrimSpace(c.Bucket) != c.Bucket {
 		return errors.New("logical store and bucket must not have surrounding whitespace")
 	}
-	if c.TempDir != "" && (!filepath.IsAbs(c.TempDir) || filepath.Clean(c.TempDir) != c.TempDir) {
-		return errors.New("temporary directory must be a clean absolute path")
+	if c.TempDir != "" && !filepath.IsAbs(c.TempDir) {
+		return errors.New("temporary directory must be an absolute path")
 	}
 	endpoint, err := url.Parse(c.Endpoint)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {

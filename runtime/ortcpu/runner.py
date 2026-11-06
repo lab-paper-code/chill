@@ -132,7 +132,7 @@ def require_integer(value: Any, name: str, minimum: int = 0) -> int:
 def require_absolute_file_path(value: Any, name: str) -> Path:
     raw = require_string(value, name)
     path = Path(raw)
-    if not path.is_absolute() or os.path.normpath(raw) == "/":
+    if not path.is_absolute() or os.path.normpath(raw) == path.anchor:
         raise ContractError(f"{name} must be an absolute file path")
     return path
 
@@ -266,7 +266,7 @@ def validate_request(
     if not isinstance(ready_paths, list) or not ready_paths:
         raise ContractError("observerReadyPaths must be a non-empty array")
     normalized_ready_paths = [
-        require_absolute_file_path(value, "observerReadyPaths item")
+        os.path.normpath(require_absolute_file_path(value, "observerReadyPaths item"))
         for value in ready_paths
     ]
     if len(set(normalized_ready_paths)) != len(normalized_ready_paths):

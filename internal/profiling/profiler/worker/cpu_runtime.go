@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -81,7 +82,7 @@ func newCPURuntime(config CPURuntimeConfig, runtimeName, family, backend, reques
 		"measurement-end":       config.MeasurementEndPath,
 	} {
 		if !validAbsoluteFilePath(value) {
-			return nil, fmt.Errorf("%s %s path must be a clean absolute file path", runtimeName, name)
+			return nil, fmt.Errorf("%s %s path must be an absolute file path", runtimeName, name)
 		}
 	}
 	if len(config.ObserverReadyPaths) == 0 {
@@ -90,12 +91,13 @@ func newCPURuntime(config CPURuntimeConfig, runtimeName, family, backend, reques
 	seenReadyPaths := map[string]struct{}{}
 	for _, value := range config.ObserverReadyPaths {
 		if !validAbsoluteFilePath(value) {
-			return nil, errors.New(runtimeName + " observer-ready path must be a clean absolute file path")
+			return nil, errors.New(runtimeName + " observer-ready path must be an absolute file path")
 		}
-		if _, exists := seenReadyPaths[value]; exists {
+		key := filepath.Clean(value)
+		if _, exists := seenReadyPaths[key]; exists {
 			return nil, errors.New(runtimeName + " observer-ready paths must be unique")
 		}
-		seenReadyPaths[value] = struct{}{}
+		seenReadyPaths[key] = struct{}{}
 	}
 	if config.MaxResultBytes < 1 {
 		return nil, errors.New(runtimeName + " result maximum size must be positive")

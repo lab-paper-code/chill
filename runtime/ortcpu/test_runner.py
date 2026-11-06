@@ -137,6 +137,33 @@ def valid_idle_request(model_path: Path) -> dict[str, object]:
 
 
 class RunnerTest(unittest.TestCase):
+    def test_equivalent_absolute_paths_reach_coordination_io(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            request = valid_request(Path(directory) / "model.onnx")
+            for field in ("modelDirectory", "preprocessorPath", "datasetPath",
+                          "workloadWindowStartPath", "measurementStartPath",
+                          "workloadWindowReadyPath", "measurementEndPath"):
+                request[field] = "/." + request[field]
+            request["observerReadyPaths"] = ["/." + path for path in request["observerReadyPaths"]]
+            request["runConfig"]["state"]["artifactFiles"] = ["/artifact/./model.onnx"]
+            request["runConfig"]["state"]["preprocessor"]["path"] = "/artifact/./preprocessor"
+            request["runConfig"]["measurement"]["dataset"]["path"] = "/artifact/../dataset"
+            validate(request)
+            signal = Path(request["measurementStartPath"])
+            runner.publish_immutable(signal, b"signal\n")
+            runner.wait_for_signal(signal, 1.0)
+
+    def test_coordination_paths_reject_root_relative_and_readiness_aliases(self) -> None:
+        for path in ("measurement-start", "/tmp/..", "//tmp/.."):
+            request = valid_request(Path("/model"))
+            request["measurementStartPath"] = path
+            with self.subTest(path=path), self.assertRaises(runner.ContractError):
+                validate(request)
+        request = valid_request(Path("/model"))
+        request["observerReadyPaths"] = ["/coordination/ready", "/coordination/sub/../ready"]
+        with self.assertRaises(runner.ContractError):
+            validate(request)
+
     def test_stop_policy_uses_actual_percentile_and_rejects_false_counts(self) -> None:
         request = valid_request(Path("/model"))
         validate(request)

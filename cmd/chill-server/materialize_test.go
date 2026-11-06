@@ -5,7 +5,6 @@ import (
 	"flag"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,7 +24,7 @@ func (o *profileObjects) Open(context.Context, evidencestore.ObjectIdentity) (io
 func TestMaterializerExactBoundAndAtomicOutput(t *testing.T) {
 	for _, content := range []string{"abc", "ab", "abcd"} {
 		t.Run(content, func(t *testing.T) {
-			output := filepath.Join(t.TempDir(), "bundle.json")
+			output := t.TempDir() + "/./bundle.json"
 			if err := os.WriteFile(output, []byte("original"), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -60,7 +59,7 @@ func TestMaterializerFlagsBypassChillServerRequirements(t *testing.T) {
 	var opts options
 	flags := flag.NewFlagSet("materialize", flag.ContinueOnError)
 	opts.bindFlags(flags)
-	output := filepath.Join(t.TempDir(), "bundle.json")
+	output := t.TempDir() + "/./bundle.json"
 	if err := flags.Parse([]string{
 		"--materialize-profile", "--store-name=profiles", "--store-endpoint=http://store:9000",
 		"--store-bucket=profiles", "--store-region=region", "--profile-object-key=bundle",

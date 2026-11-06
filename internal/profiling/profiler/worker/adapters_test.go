@@ -27,7 +27,7 @@ const (
 func TestFirstfloorRuntimeUsesDedicatedResultFile(t *testing.T) {
 	t.Setenv("CHILL_FIRSTFLOOR_HELPER", "success")
 	directory := t.TempDir()
-	resultPath := filepath.Join(directory, "runtime-result.json")
+	resultPath := directory + "/./runtime-result.json"
 	runtime := newTestFirstfloorRuntime(t, resultPath)
 	config := testRunConfig(t)
 
@@ -232,11 +232,29 @@ func TestFirstfloorRuntimeRequiresJobResourceBudgets(t *testing.T) {
 	}
 }
 
+func TestFirstfloorRuntimeRejectsReadinessAliasesAndRootOutput(t *testing.T) {
+	runtime := newTestFirstfloorRuntime(t, filepath.Join(t.TempDir(), "runtime-result.json"))
+	for name, mutate := range map[string]func(*CPURuntimeConfig){
+		"readiness aliases": func(config *CPURuntimeConfig) {
+			config.ObserverReadyPaths = []string{"/coordination/ready", "/coordination/./ready"}
+		},
+		"root output": func(config *CPURuntimeConfig) { config.ResultPath = "/tmp/.." },
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := runtime.config
+			mutate(&config)
+			if _, err := NewFirstfloorRuntime(config, runtimeRequest(testRunConfig(t)).RunConfig); err == nil {
+				t.Fatal("unsafe handoff paths accepted")
+			}
+		})
+	}
+}
+
 func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	config := testRunConfig(t)
 	result := testMetricResult(config)
 	directory := t.TempDir()
-	path := filepath.Join(directory, "metric-result.json")
+	path := directory + "/./metric-result.json"
 	reader := newTestMetricResultFile(t, path, time.Second)
 
 	done := make(chan error, 1)
@@ -280,7 +298,7 @@ func TestPublishMetricResultDoesNotReplaceExistingHandoff(t *testing.T) {
 }
 
 func TestSignalHandoffIsAtomicAndBounded(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "measurement-start")
+	path := t.TempDir() + "/./measurement-start"
 	done := make(chan error, 1)
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -420,11 +438,11 @@ func newTestFirstfloorRuntime(t *testing.T, resultPath string) *CPURuntime {
 	directory := filepath.Dir(resultPath)
 	runtime, err := NewFirstfloorRuntime(CPURuntimeConfig{
 		Command:                 []string{os.Args[0], "-test.run=TestFirstfloorHelperProcess", "--"},
-		ObserverReadyPaths:      []string{filepath.Join(directory, "observer-ready")},
-		WorkloadWindowStartPath: filepath.Join(directory, "workload-window-start"),
-		MeasurementStartPath:    filepath.Join(directory, "measurement-start"),
-		WorkloadWindowReadyPath: filepath.Join(directory, "workload-window-ready"),
-		MeasurementEndPath:      filepath.Join(directory, "measurement-end"), ResultPath: resultPath,
+		ObserverReadyPaths:      []string{directory + "/./observer-ready"},
+		WorkloadWindowStartPath: directory + "/./workload-window-start",
+		MeasurementStartPath:    directory + "/./measurement-start",
+		WorkloadWindowReadyPath: directory + "/./workload-window-ready",
+		MeasurementEndPath:      directory + "/./measurement-end", ResultPath: resultPath,
 		ObserverReadyTimeout: time.Second, MaxLatencySamples: 100, MaxInputBytes: 1 << 20,
 		MaxResultBytes: 1 << 20, Stdout: io.Discard, Stderr: io.Discard,
 	}, runtimeRequest(testRunConfig(t)).RunConfig)
