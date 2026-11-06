@@ -33,6 +33,7 @@ type capacityItem struct {
 type capacityPlan struct {
 	record                             SchedulerNodePlan
 	mode                               string
+	option                             string // profile, allocation, MaxWait and Workload; excludes cap
 	keep                               bool
 	instances                          []SchedulerInstance // the Node's instances after the plan
 	items                              [][]capacityItem    // per Workload, by e then ID
@@ -356,6 +357,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	for _, c := range chosen {
 		uid := p.ws[c.w].d.UID
 		i := c.option.Instance
+		plan.option = fmt.Sprintf("%q/%v/%d/%q/%q", i.Profile.ID, i.Allocation, i.MaxWait, uid, mode)
 		i.ID, i.WorkloadUID, i.Ready, i.TargetID, i.OwnerWorkloadUID = fmt.Sprintf("target-%s-%s-%d", uid, i.Profile.ID, i.MaxBatch), uid, true, "", ""
 		for _, old := range current {
 			// The same physical executor serves on. Its batch limit and wait are

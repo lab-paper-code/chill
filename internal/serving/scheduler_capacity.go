@@ -142,6 +142,7 @@ type SchedulerNodePlan struct {
 	Eligible           bool                `json:"eligible"`
 	Reason             string              `json:"reason,omitempty"`
 	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
+	Dominated          string              `json:"dominated,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
 	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
 	RequiresRecovery        []string                       `json:"requiresRecovery,omitempty"`
@@ -338,6 +339,7 @@ func schedulerCanonical(s SchedulerSnapshot) SchedulerSnapshot {
 	return s
 }
 
+
 type capacityPlanner struct {
 	ctx          context.Context
 	settings     SchedulerSettings
@@ -448,3 +450,4 @@ func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arr
 	}
 	return float64(slices.Min(counts)) / width.Seconds()
 }
+
