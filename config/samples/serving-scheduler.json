@@ -19,6 +19,12 @@
     "capacityBisectionWidth": 0.005,
     "capacityTailSamples": 100,
     "planSearchWorkers": 3,
+    "planSearchStrategy": "v1",
+    "planSearchEvaluations": 500000,
+    "planExactFinalists": 16,
+    "planPolishActive": 8,
+    "planPostFilterFinalists": false,
+    "planPricedStart": true,
     "autonomousWorkloads": [],
     "excludedNodes": [],
     "controls": {
