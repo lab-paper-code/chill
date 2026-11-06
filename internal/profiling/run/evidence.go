@@ -448,8 +448,9 @@ func validateNativeSamples(config RunConfig, trialID string, repetitions []Repet
 					return errors.New("firstfloor native span is invalid")
 				}
 			}
-			if sample.BackendCallMilliseconds > sample.RunnerServiceMilliseconds ||
-				sample.RunnerServiceMilliseconds > sample.NativeRequestMilliseconds ||
+			serviceMS := float64(sample.ServiceDurationNanos) / 1e6
+			if sample.BackendCallMilliseconds > serviceMS ||
+				serviceMS > sample.NativeRequestMilliseconds ||
 				sample.NativeRequestMilliseconds > repetition.LatencyMilliseconds[index] {
 				return errors.New("firstfloor nested monotonic span order is invalid")
 			}
