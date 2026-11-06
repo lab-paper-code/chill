@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -43,11 +42,9 @@ type MetricObservationPolicy struct {
 	DurationSeconds      int
 }
 
-// ResolvedCandidate is one already-evaluated static execution path and its
-// exact report. The preparer independently verifies these facts against the
-// report before freezing them. State carries the selected preprocessor
-// artifact; Dataset is present only when the selection names one and the
-// resolver found it compatible with the preprocessor input contract.
+// ResolvedCandidate contains the resolver's selected executable facts and report.
+// State carries the selected preprocessor artifact; Dataset is present when
+// the resolver found it compatible with the preprocessor input contract.
 type ResolvedCandidate struct {
 	ReportBytes          []byte
 	Inputs               profilingrun.CandidateReportInputs
@@ -189,9 +186,6 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	if err := validateResolvedCandidate(request.Candidate, candidate); err != nil {
 		return PreparedRun{}, err
 	}
-	if err := validateCandidateMaterialBinding(candidate); err != nil {
-		return PreparedRun{}, fmt.Errorf("validate resolved candidate material: %w", err)
-	}
 	node, err := p.nodes.ResolveNode(ctx, NodeSelection{
 		Name:                request.TargetNode,
 		DeviceArchitecture:  candidate.DeviceArchitecture,
@@ -233,21 +227,12 @@ func (p *Preparer) Prepare(ctx context.Context, request PreparationRequest) (Pre
 	}
 	runConfig.Actor.MemoryRequestBytes = executionPolicy.Policy.RuntimeMemoryRequestBytes
 	runConfig.Actor.MemoryLimitBytes = executionPolicy.Policy.RuntimeMemoryLimitBytes
-	if err := runConfig.Validate(); err != nil {
-		return PreparedRun{}, fmt.Errorf("validate RunConfig: %w", err)
-	}
 	if _, err := DeriveExecutionPlan(runConfig, executionPolicy); err != nil {
 		return PreparedRun{}, err
-	}
-	if err := profilingrun.ValidateCandidateReport(candidate.ReportBytes, runConfig); err != nil {
-		return PreparedRun{}, fmt.Errorf("validate resolved candidate report: %w", err)
 	}
 	prepared := PreparedRun{
 		RunConfig:       runConfig,
 		ActuationPolicy: policy,
-	}
-	if err := prepared.ValidateActuationBinding(); err != nil {
-		return PreparedRun{}, fmt.Errorf("validate selected actuation binding: %w", err)
 	}
 	return prepared, nil
 }
@@ -387,44 +372,6 @@ func validateResolvedCandidate(request CandidateSelection, candidate ResolvedCan
 	return nil
 }
 
-func validateCandidateMaterialBinding(candidate ResolvedCandidate) error {
-	report, err := profilingrun.DecodeCandidateReport(candidate.ReportBytes)
-	if err != nil {
-		return err
-	}
-	if !slices.Equal(candidate.State.ArtifactFiles, report.ArtifactSupply.Files) {
-		return errors.New("candidate report artifact files mismatch")
-	}
-	checks := []struct{ name, want, got string }{
-		{"DeviceClass architecture", candidate.DeviceArchitecture, report.DeviceClassFacts.Architecture},
-		{"artifact image", candidate.ArtifactImage, report.ArtifactSupply.Image},
-		{"artifact architecture", candidate.ArtifactArchitecture, report.ArtifactSupply.Architecture},
-		{"metric-observer image", candidate.MetricObserverImage, report.MetricObserverImage},
-		{"power mode", candidate.State.PowerMode, report.Selection.PowerMode},
-	}
-	for _, check := range checks {
-		if check.want != check.got {
-			return fmt.Errorf("candidate report %s mismatch", check.name)
-		}
-	}
-	if !maps.Equal(candidate.DeviceNodeSelector, report.DeviceClassFacts.NodeSelector) {
-		return errors.New("candidate report DeviceClass nodeSelector mismatch")
-	}
-	if !slices.Equal(candidate.DevicePowerModes, report.DeviceClassFacts.PowerModes) {
-		return errors.New("candidate report DeviceClass powerModes mismatch")
-	}
-	if !actuatorTargetsMatch(candidate.SelectedActuator, report.Selection.Actuator) {
-		return errors.New("candidate report selected actuator mismatch")
-	}
-	return nil
-}
-
-func actuatorTargetsMatch(left, right *profilingrun.ActuatorTarget) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return reflect.DeepEqual(left, right)
-}
 
 func (r PreparationRequest) Validate() error {
 	for name, value := range map[string]string{

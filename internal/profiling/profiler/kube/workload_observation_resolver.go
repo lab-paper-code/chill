@@ -66,11 +66,6 @@ func (r *KubernetesWorkloadObservationResolver) ResolveWorkloadObservation(
 			"get Profiler fact-source ConfigMap %s: %w", key, err,
 		)
 	}
-	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profiler.ResolvedWorkloadObservation{}, errors.New(
-			"Profiler fact-source ConfigMap has incomplete API identity",
-		)
-	}
 	raw, exists := configMap.Data[r.options.ConfigMapKey]
 	if !exists || strings.TrimSpace(raw) == "" {
 		return profiler.ResolvedWorkloadObservation{}, fmt.Errorf(
@@ -104,7 +99,7 @@ func (r *KubernetesWorkloadObservationResolver) ResolveMeasurementWorkload(
 	if err := r.reader.Get(ctx, types.NamespacedName{Name: name}, workload); err != nil {
 		return profilingrun.MeasurementContract{}, fmt.Errorf("get measurement Workload %q: %w", name, err)
 	}
-	if workload.UID == "" || workload.ResourceVersion == "" ||
+	if workload.UID == "" ||
 		workload.Spec.ModelRef.Name != selection.ModelSpec ||
 		workload.Spec.PreprocessorRef.Name != selection.Preprocessor ||
 		workload.Spec.DatasetRef == nil || workload.Spec.DatasetRef.Name != selection.Dataset ||

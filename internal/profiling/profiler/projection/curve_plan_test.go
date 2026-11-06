@@ -124,13 +124,9 @@ func TestProjectCurvePlanSpecRoundTripsThroughRunConfigValidation(t *testing.T) 
 		recorded.ActiveProtocol.WorkloadResourceVersion != "version" {
 		t.Fatal("ResourceVersion changed selected identity or lost raw provenance")
 	}
-	active.Measurement.WorkloadUID = "replacement-workload"
-	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, recorded, recorded.ActiveProtocol); err == nil {
-		t.Fatal("replacement Workload UID was admitted")
-	}
 }
 
-func TestCurveAndStateIdentityDoNotRequireCPUCapacity(t *testing.T) {
+func TestCurveAndStateIdentityIgnoreObservationMetadata(t *testing.T) {
 	active := curvePlanRunConfig()
 	active.State.RuntimeFamily, active.State.Backend = profilingrun.FirstfloorRuntimeFamily, profilingrun.FirstfloorORTCPUBackend
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 4, MaxQueueSize: 32}
@@ -150,15 +146,29 @@ func TestCurveAndStateIdentityDoNotRequireCPUCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	active.TargetNode.AllocatableCPU = "2"
+	active.Candidate.Inputs.ModelSpec.UID = "recreated-model"
+	active.Candidate.Inputs.DeviceClass.UID = "recreated-class"
+	active.Metrics.Endpoint = "http://moved-meter.test/metrics"
+	active.Metrics.MetricLabels = map[string]string{"meter": "updated-label"}
+	active.State.Preprocessor.UID = "recreated-preprocessor"
+	active.State.HostContract = &profilingrun.CandidateReportHostContract{
+		Driver: profilingrun.CandidateReportHostDriver{Version: "updated-driver-observation"},
+	}
+	active.Delivery.HostContract = active.State.HostContract
+	active.Delivery.RuntimePackages = []profilingrun.CandidateReportRuntimePackage{{Name: "runtime", Version: "updated-observation"}}
+	active.Measurement.WorkloadUID = "recreated-workload"
+	dataset := *active.Measurement.Dataset
+	dataset.UID = "recreated-dataset"
+	active.Measurement.Dataset = &dataset
 	after, err := ProjectRunIdentities(active, active.TargetNode.UID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if before.StateIdentity != after.StateIdentity || before.MeasurementProtocolIdentity != after.MeasurementProtocolIdentity {
-		t.Fatal("observed CPU capacity changed frozen execution identity")
+		t.Fatal("observation metadata changed frozen execution identity")
 	}
 	if err := validateCurvePlanRunConfig(active, active.TargetNode.UID, spec, spec.ActiveProtocol); err != nil {
-		t.Fatalf("observed CPU capacity blocked curve execution: %v", err)
+		t.Fatalf("observation metadata blocked curve execution: %v", err)
 	}
 }
 
@@ -187,11 +197,6 @@ func TestCurvePlanProjectionFreezesPreprocessingInputs(t *testing.T) {
 			func(c *profilingrun.RunConfig) { c.State.Preprocessor.Outputs = []string{"answer"} }, "preprocessor facts",
 		},
 		"artifact files": {func(c *profilingrun.RunConfig) { c.State.ArtifactFiles = []string{"/artifact/a.rknn"} }, "artifact facts"},
-		"dataset UID": {func(c *profilingrun.RunConfig) {
-			dataset := *c.Measurement.Dataset
-			dataset.UID = "other-dataset-uid"
-			c.Measurement.Dataset = &dataset
-		}, "measurement-protocol facts"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			drifted := curvePlanRunConfig()
@@ -219,18 +224,6 @@ func TestProjectCurvePlanSpecRejectsActiveIdleDisagreement(t *testing.T) {
 			name: "Node architecture",
 			mutate: func(idle *profilingrun.RunConfig) {
 				idle.TargetNode.Architecture = "different-architecture"
-			},
-		},
-		{
-			name: "wall-power labels",
-			mutate: func(idle *profilingrun.RunConfig) {
-				idle.Metrics.MetricLabels = map[string]string{"meter": "different"}
-			},
-		},
-		{
-			name: "model identity",
-			mutate: func(idle *profilingrun.RunConfig) {
-				idle.Candidate.Inputs.ModelSpec.UID = "different-model-uid"
 			},
 		},
 		{

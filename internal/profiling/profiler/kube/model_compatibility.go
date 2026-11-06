@@ -63,12 +63,6 @@ func (r *KubernetesCandidateResolver) ResolveModelCompatibility(
 		}
 		return ModelCompatibility{}, err
 	}
-	if err := validateObjectIdentity("DeviceClass", deviceClass.Name, deviceClass.UID, deviceClass.ResourceVersion); err != nil {
-		return ModelCompatibility{}, err
-	}
-	if err := validateObjectIdentity("Node", node.Name, node.UID, node.ResourceVersion); err != nil {
-		return ModelCompatibility{}, err
-	}
 	if strings.TrimSpace(deviceClass.Spec.Architecture) == "" || len(deviceClass.Spec.NodeSelector) == 0 {
 		return ModelCompatibility{}, errors.New("DeviceClass architecture and nodeSelector are required")
 	}
@@ -94,9 +88,6 @@ func (r *KubernetesCandidateResolver) ResolveModelCompatibility(
 		view.Reasons = []ModelCompatibilityReason{{Kind: modelcompat.ReasonKindUnknown,
 			Code: modelcompat.ReasonRuntimeDeclarationMissing, Message: "Profiler fact-source ConfigMap is not present"}}
 		return view, nil
-	}
-	if err := validateObjectIdentity("ConfigMap", configMap.Name, configMap.UID, configMap.ResourceVersion); err != nil {
-		return ModelCompatibility{}, err
 	}
 	declaration, err := r.selectCompatibilityDeclaration(configMap, r.options.ConfigMapKey,
 		selection.DeviceClass, selection.Node, modelPath.Runtime.Family, modelPath.Runtime.Backend)

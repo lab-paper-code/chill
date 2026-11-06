@@ -46,29 +46,29 @@ func NewResultWriter(store ResultStore, options ResultWriterOptions) (*ResultWri
 	return &ResultWriter{store: store, options: options}, nil
 }
 
-// Write records one terminal result. Existing content remains authoritative
-// and is returned only after semantic agreement with the recomputed record.
+// Write records one terminal result and returns the immutable winner's outcome
+// and detail for status publication.
 func (w *ResultWriter) Write(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
 	curvePlan batchenergyoptimization.StoredObjectReference,
 	runs []edgev1alpha1.ProfilingRun,
 	result batchenergyoptimization.Result,
-) (batchenergyoptimization.StoredObjectReference, error) {
+) (batchenergyoptimization.StoredObjectReference, batchenergyoptimization.Result, error) {
 	if parent == nil {
-		return batchenergyoptimization.StoredObjectReference{}, errors.New("a parent BatchEnergyOptimization is required")
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, errors.New("a parent BatchEnergyOptimization is required")
 	}
 	if parent.UID == "" {
-		return batchenergyoptimization.StoredObjectReference{}, errors.New("BatchEnergyOptimization UID is required")
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, errors.New("BatchEnergyOptimization UID is required")
 	}
 
 	detail, err := json.Marshal(result.Detail)
 	if err != nil {
-		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("encode result detail: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, fmt.Errorf("encode result detail: %w", err)
 	}
 	completed, excluded, err := projectResultTrials(parent, runs)
 	if err != nil {
-		return batchenergyoptimization.StoredObjectReference{}, err
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, err
 	}
 	record, err := batchenergyoptimization.NewResultRecord(batchenergyoptimization.ResultRecordSpec{
 		Outcome: batchenergyoptimization.TerminalOutcome(result.Outcome),
@@ -83,7 +83,7 @@ func (w *ResultWriter) Write(
 		ExcludedTrials: excluded, Detail: detail,
 	})
 	if err != nil {
-		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("construct result record: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, fmt.Errorf("construct result record: %w", err)
 	}
 	return w.record(ctx, parent.UID, record)
 }
@@ -158,10 +158,10 @@ func (w *ResultWriter) record(
 	ctx context.Context,
 	parentUID types.UID,
 	record batchenergyoptimization.ResultRecord,
-) (batchenergyoptimization.StoredObjectReference, error) {
+) (batchenergyoptimization.StoredObjectReference, batchenergyoptimization.Result, error) {
 	payload, err := record.CanonicalJSON()
 	if err != nil {
-		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("encode batch-energy-optimization result: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, fmt.Errorf("encode batch-energy-optimization result: %w", err)
 	}
 	identity := evidencestore.ObjectIdentity{
 		Store: w.options.Store,
@@ -174,32 +174,26 @@ func (w *ResultWriter) record(
 	}
 	receipt, err := w.store.PutImmutable(ctx, identity, bytes.NewReader(payload))
 	if err != nil {
-		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("record batch-energy-optimization result: %w", err)
-	}
-	if err := receipt.Validate(); err != nil || receipt.Object != identity {
-		return batchenergyoptimization.StoredObjectReference{}, errors.New("result writer returned an invalid receipt")
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, fmt.Errorf("record batch-energy-optimization result: %w", err)
 	}
 	if receipt.Outcome == evidencestore.CreateOutcomeCreated {
-		return reference, nil
+		spec := record.Spec()
+		return reference, batchenergyoptimization.Result{Outcome: string(spec.Outcome), Detail: spec.Detail}, nil
 	}
 
 	storedBytes, err := readStoredObject(
 		ctx, w.store, identity.Location(), w.options.MaxObjectBytes, "batch-energy-optimization result object",
 	)
 	if err != nil {
-		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("read existing batch-energy-optimization result: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, fmt.Errorf("read existing batch-energy-optimization result: %w", err)
 	}
 	stored, err := batchenergyoptimization.DecodeResultRecord(storedBytes)
 	if err != nil {
-		return batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("decode existing batch-energy-optimization result: %w", err)
+		return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, fmt.Errorf("decode existing batch-energy-optimization result: %w", err)
 	}
-	if !stored.SemanticallyEqual(record) {
-		return batchenergyoptimization.StoredObjectReference{}, errors.New(
-			"stored batch-energy-optimization result disagrees with the recomputed result",
-		)
-	}
+	spec := stored.Spec()
 	return batchenergyoptimization.StoredObjectReference{
 		Store: identity.Store, Key: identity.Key,
 		SchemaVersion: stored.SchemaVersion(), Size: int64(len(storedBytes)),
-	}, nil
+	}, batchenergyoptimization.Result{Outcome: string(spec.Outcome), Detail: spec.Detail}, nil
 }

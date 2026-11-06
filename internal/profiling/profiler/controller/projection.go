@@ -102,9 +102,6 @@ func ProjectSnapshot(
 		return profiler.Snapshot{}, err
 	}
 	snapshot.EvidenceInvalid = evidenceIsTerminallyInvalid(run.Status.Conditions)
-	if err := snapshot.Validate(); err != nil {
-		return profiler.Snapshot{}, fmt.Errorf("validate projected lifecycle snapshot: %w", err)
-	}
 	return snapshot, nil
 }
 

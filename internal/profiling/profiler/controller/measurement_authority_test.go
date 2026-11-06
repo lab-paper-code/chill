@@ -171,6 +171,7 @@ func TestRealAdmittedRootPlanSuppliesChildrenWithoutArchive(t *testing.T) {
 			config := currentPreparedRun(t).RunConfig
 			root, node := authorityRoot(config)
 			child := authorityChild(root, mode, 1)
+			child.Name = "opaque-child"
 			kube := fake.NewClientBuilder().WithScheme(runReconcilerTestScheme(t)).WithObjects(root, node).Build()
 			resolver := authorityResolver(t, kube, config, map[types.UID][]byte{root.UID: authorityPlan(t, config)})
 			resolved, err := resolver.Resolve(context.Background(), child)

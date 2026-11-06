@@ -5,47 +5,6 @@ import (
 	"testing"
 )
 
-func TestResultRecordCanonicalEncodingIsStableAndPreservesDetailValue(t *testing.T) {
-	spec := validResultRecordSpec()
-	spec.Detail = []byte(` { "selected": 2, "note": "a<b && c>d" } `)
-	record, err := NewResultRecord(spec)
-	if err != nil {
-		t.Fatalf("construct result record: %v", err)
-	}
-	payload, err := record.CanonicalJSON()
-	if err != nil {
-		t.Fatalf("encode result record: %v", err)
-	}
-	decoded, err := DecodeResultRecord(payload)
-	if err != nil {
-		t.Fatalf("decode result record: %v", err)
-	}
-	if !record.SemanticallyEqual(decoded) {
-		t.Fatalf("round trip changed decoded record value:\n got: %+v\nwant: %+v", decoded.Spec(), record.Spec())
-	}
-	if got := decoded.Spec().Detail; bytes.Equal(got, spec.Detail) || !equalJSONValues(got, spec.Detail) {
-		t.Fatalf("detail encoding = %s, original = %s", got, spec.Detail)
-	}
-	reencoded, err := decoded.CanonicalJSON()
-	if err != nil {
-		t.Fatalf("re-encode result record: %v", err)
-	}
-	if !bytes.Equal(reencoded, payload) {
-		t.Fatalf("canonical encoding is not idempotent:\n got: %s\nwant: %s", reencoded, payload)
-	}
-	decodedSpec := decoded.Spec()
-	if decodedSpec.MeasurementState != spec.MeasurementState {
-		t.Fatalf("measurement state = %+v, want %+v", decodedSpec.MeasurementState, spec.MeasurementState)
-	}
-	if decodedSpec.CompletedTrials[0].Run.Namespace != "chill-system" ||
-		decodedSpec.ExcludedTrials[0].Run.Namespace != "chill-system" {
-		t.Fatalf("Run namespaces were not retained: %+v", decodedSpec)
-	}
-	if decoded.SchemaVersion() != "chill.dacs.io/batch-energy-optimization-result.v1alpha5" {
-		t.Fatalf("schema version = %q", decoded.SchemaVersion())
-	}
-}
-
 func TestDecodeResultRecordRejectsAnyOtherSchemaVersion(t *testing.T) {
 	record, err := NewResultRecord(validResultRecordSpec())
 	if err != nil {

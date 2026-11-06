@@ -4,13 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"strings"
 
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 )
-
-var executionPolicyNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
 func (f FrozenExecutionPolicy) Validate() error {
 	if f.SchemaVersion != FrozenExecutionPolicySchemaVersion {
@@ -19,29 +16,12 @@ func (f FrozenExecutionPolicy) Validate() error {
 	if err := f.Policy.Validate(); err != nil {
 		return fmt.Errorf("validate frozen execution policy: %w", err)
 	}
-	if f.Source.Kind != ConfigMapExecutionPolicySourceKind {
-		return fmt.Errorf("unsupported execution-policy source kind %q", f.Source.Kind)
-	}
-	for name, value := range map[string]string{
-		"namespace":       f.Source.Namespace,
-		"name":            f.Source.Name,
-		"uid":             f.Source.UID,
-		"resourceVersion": f.Source.ResourceVersion,
-		"key":             f.Source.Key,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("execution-policy ConfigMap source %s is required without surrounding whitespace", name)
-		}
-	}
 	return nil
 }
 
 func (p ExecutionPolicy) Validate() error {
 	if p.SchemaVersion != ExecutionPolicySchemaVersion {
 		return fmt.Errorf("unsupported execution-policy schema %q", p.SchemaVersion)
-	}
-	if len(p.Name) < 1 || len(p.Name) > 63 || !executionPolicyNamePattern.MatchString(p.Name) {
-		return errors.New("execution-policy name must be a lowercase DNS-like identifier of at most 63 characters")
 	}
 	if strings.TrimSpace(p.DeviceClass) == "" || strings.TrimSpace(p.DeviceClass) != p.DeviceClass {
 		return errors.New("execution-policy deviceClass is required without surrounding whitespace")

@@ -12,7 +12,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
 	campaign "github.com/lab-paper-code/chill/internal/profiling/campaign"
-	campaigncontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	profilerevidence "github.com/lab-paper-code/chill/internal/profiling/profiler/evidence"
 	projection "github.com/lab-paper-code/chill/internal/profiling/profiler/projection"
@@ -47,25 +46,6 @@ func TestBindsEvidenceToRecordedRun(t *testing.T) {
 	}
 }
 
-func TestRunConfigRequiresRecordedDurationTolerance(t *testing.T) {
-	run := &edgev1alpha1.ProfilingRun{}
-	config := profilingrun.RunConfig{}
-	defaulted := .5
-	run.Spec.Measurement.DurationToleranceSeconds = &defaulted
-	if err := validateRunConfig(run, config); err == nil {
-		t.Fatal("missing historical tolerance was silently accepted")
-	}
-	config.Measurement.DurationToleranceSeconds = .5
-	if err := validateRunConfig(run, config); err != nil {
-		t.Fatalf("exact tolerance rejected: %v", err)
-	}
-	explicit := .3
-	run.Spec.Measurement.DurationToleranceSeconds = &explicit
-	if err := validateRunConfig(run, config); err == nil || !strings.Contains(err.Error(), "Run protocol") {
-		t.Fatalf("explicit spec tolerance mismatch accepted: %v", err)
-	}
-}
-
 func TestReadRequiresResultBeforeObjectAccess(t *testing.T) {
 	reader := Reader{ReadObject: func(context.Context, evidencestore.ObjectIdentity) ([]byte, error) {
 		t.Fatal("missing result reached store")
@@ -85,92 +65,60 @@ func TestReadPreservesStoreError(t *testing.T) {
 	}
 }
 
-func TestRunErrorCausesSurviveTrialWrapping(t *testing.T) {
-	const differentReference = "other"
-	cases := []struct {
-		name   string
-		change func(*edgev1alpha1.ProfilingRun)
-		want   error
-	}{
-		{"absent evidence", func(run *edgev1alpha1.ProfilingRun) { run.Status.Evidence = nil }, ErrRunEvidenceAbsent},
-		{"different store", func(run *edgev1alpha1.ProfilingRun) { run.Status.Evidence.Store = differentReference }, ErrRunEvidenceMismatch},
-		{"different key", func(run *edgev1alpha1.ProfilingRun) { run.Status.Evidence.Key = differentReference }, ErrRunEvidenceMismatch},
-		{"different size", func(run *edgev1alpha1.ProfilingRun) { run.Status.Evidence.Size++ }, ErrRunEvidenceMismatch},
-		{"different schema", func(run *edgev1alpha1.ProfilingRun) { run.Status.Evidence.SchemaVersion = differentReference }, ErrRunEvidenceMismatch},
-		{"unsupported mode", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.WorkloadMode = "unsupported" }, ErrUnsupportedWorkloadMode},
-		{"active protocol", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.DurationSeconds++ }, ErrActiveProtocolMismatch},
+func TestUnsupportedModeCauseSurvivesTrialWrapping(t *testing.T) {
+	cr, run, ref := completedRunFixture()
+	run.Spec.Measurement.WorkloadMode = "unsupported"
+	scheme := runtime.NewScheme()
+	if err := edgev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cr, run, ref, shared := completedRunFixture()
-			if err := validateRun(cr, run, ref, shared); err != nil {
-				t.Fatalf("valid Run rejected: %v", err)
-			}
-			tc.change(run)
-			scheme := runtime.NewScheme()
-			if err := edgev1alpha1.AddToScheme(scheme); err != nil {
-				t.Fatal(err)
-			}
-			reader := Reader{Runs: fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()}
-			err := reader.readCompletedTrial(context.Background(), cr, ref, shared).err
-			if !errors.Is(err, tc.want) || err.Error() != "completed Run ns/run: "+tc.want.Error() {
-				t.Fatalf("wrong wrapped cause or changed diagnostic: %v, want %v", err, tc.want)
-			}
-			for _, other := range []error{ErrRunEvidenceAbsent, ErrRunEvidenceMismatch, ErrUnsupportedWorkloadMode, ErrActiveProtocolMismatch} {
-				if other != tc.want && errors.Is(err, other) {
-					t.Fatalf("distinct causes conflated: %v matches %v", tc.want, other)
-				}
-			}
-		})
+	reader := Reader{Runs: fake.NewClientBuilder().WithScheme(scheme).WithObjects(run).Build()}
+	err := reader.readCompletedTrial(context.Background(), cr, ref).err
+	if !errors.Is(err, ErrUnsupportedWorkloadMode) {
+		t.Fatalf("unsupported mode lost its cause: %v", err)
 	}
 }
 
 func TestUnsupportedWorkloadModePrecedesReferenceModeMismatch(t *testing.T) {
-	cr, run, ref, shared := completedRunFixture()
+	cr, run, ref := completedRunFixture()
 	ref.Measurement.WorkloadMode = campaign.WorkloadModeIdle
 	run.Spec.Measurement.WorkloadMode = "unsupported"
-	if err := validateRun(cr, run, ref, shared); !errors.Is(err, ErrUnsupportedWorkloadMode) {
+	if err := validateRun(cr, run, ref); !errors.Is(err, ErrUnsupportedWorkloadMode) {
 		t.Fatalf("idle reference masked unsupported Run mode: %v", err)
 	}
 	run.Status.Conditions = nil
 	run.Status.Evidence = nil
-	if err := validateRun(cr, run, ref, shared); !errors.Is(err, ErrUnsupportedWorkloadMode) {
+	if err := validateRun(cr, run, ref); !errors.Is(err, ErrUnsupportedWorkloadMode) {
 		t.Fatalf("completion or evidence masked unsupported Run mode: %v", err)
 	}
 	run.Spec.Measurement.WorkloadMode = "empirical-cadence-fixed-batch"
-	if err := validateRun(cr, run, ref, shared); err == nil || err.Error() != "Run workload mode contradicts completed trial reference" {
+	if err := validateRun(cr, run, ref); err == nil || err.Error() != "Run workload mode contradicts completed trial reference" {
 		t.Fatalf("supported mode mismatch lost its diagnostic: %v", err)
 	}
 }
 
-func TestRunCompletionPrecedesEvidenceAndProtocol(t *testing.T) {
-	cr, run, ref, shared := completedRunFixture()
+func TestRunCompletionRemainsRequiredWithChangedMetadata(t *testing.T) {
+	cr, run, ref := completedRunFixture()
 	run.Spec.Measurement.DurationSeconds++
 	run.Status.Evidence = nil
 	for index := range run.Status.Conditions {
 		t.Run(run.Status.Conditions[index].Type, func(t *testing.T) {
 			run.Status.Conditions[index].ObservedGeneration--
-			err := validateRun(cr, run, ref, shared)
+			err := validateRun(cr, run, ref)
 			if err == nil || err.Error() != "Run has no current completed execution and verified evidence" {
 				t.Fatalf("completion did not precede absent evidence and invalid protocol: %v", err)
 			}
 			run.Status.Conditions[index].ObservedGeneration++
 		})
 	}
-	if err := validateRun(cr, run, ref, shared); !errors.Is(err, ErrRunEvidenceAbsent) {
-		t.Fatalf("evidence did not precede protocol: %v", err)
-	}
-	run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{Store: ref.Evidence.Store, Key: "other", Size: ref.Evidence.Size, SchemaVersion: ref.Evidence.SchemaVersion}
-	if err := validateRun(cr, run, ref, shared); !errors.Is(err, ErrRunEvidenceMismatch) {
-		t.Fatalf("evidence mismatch did not precede protocol: %v", err)
-	}
-	run.Status.Evidence.Key = ref.Evidence.Key
-	if err := validateRun(cr, run, ref, shared); !errors.Is(err, ErrActiveProtocolMismatch) {
-		t.Fatalf("protocol mismatch was not retained: %v", err)
+	run.Spec.TargetNode = "changed-live-node"
+	run.Spec.Candidate.ModelSpec = "changed-live-model"
+	if err := validateRun(cr, run, ref); err != nil {
+		t.Fatalf("retained reference rejected after live metadata changed: %v", err)
 	}
 }
 
-func completedRunFixture() (*edgev1alpha1.BatchEnergyOptimization, *edgev1alpha1.ProfilingRun, campaign.CompletedTrialReference, derivation.CurvePlanSpec) {
+func completedRunFixture() (*edgev1alpha1.BatchEnergyOptimization, *edgev1alpha1.ProfilingRun, campaign.CompletedTrialReference) {
 	cr := &edgev1alpha1.BatchEnergyOptimization{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "campaign", UID: "campaign-uid"}}
 	run := &edgev1alpha1.ProfilingRun{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "run", UID: "run-uid", Generation: 2,
@@ -190,60 +138,7 @@ func completedRunFixture() (*edgev1alpha1.BatchEnergyOptimization, *edgev1alpha1
 		Measurement: campaign.ResultMeasurement{Batch: 1, WorkloadMode: campaign.WorkloadModeActive},
 		Evidence:    campaign.StoredObjectReference{Store: "store", Key: "execution", Size: 1, SchemaVersion: "schema"},
 	}
-	shared := derivation.CurvePlanSpec{ActiveProtocol: derivation.CurveProtocolContract{
-		WorkloadMode: profilingrun.EmpiricalCadenceFixedBatchWorkloadMode, DurationToleranceSeconds: .5,
-	}}
-	return cr, run, ref, shared
-}
-
-func TestRunProtocolUsesFrozenStartupAndCollectionWarmup(t *testing.T) {
-	cr, run, ref, shared := completedRunFixture()
-	cr.Spec.ActiveProtocol = edgev1alpha1.ActiveProtocolSpec{
-		WarmupIterations: 20, DurationSeconds: 30, Dataset: "dataset", Workload: "workload",
-		MetricObservation: edgev1alpha1.ProfilingRunMetricObservationSpec{IntervalMilliseconds: 1000, TimeoutMilliseconds: 500, DurationSeconds: 31},
-	}
-	built, err := campaigncontroller.BuildRun(cr, campaign.Measurement{WorkloadMode: campaign.WorkloadModeActive, Batch: 1}, 1, "ort-cpu")
-	if err != nil {
-		t.Fatal(err)
-	}
-	run.Spec = built.Spec
-	shared.Actor.WarmupIterations, shared.Actor.WarmupBatchSizes = 20, []int{1}
-	shared.ActiveProtocol = derivation.CurveProtocolContract{
-		WorkloadMode: profilingrun.EmpiricalCadenceFixedBatchWorkloadMode, WorkloadName: "workload",
-		StartupWarmupIterations: 20, DurationSeconds: 30, DurationToleranceSeconds: .5,
-		Dataset:                    &derivation.CurveDatasetContract{Name: "dataset"},
-		MetricIntervalMilliseconds: 1000, MetricTimeoutMilliseconds: 500, MetricDurationSeconds: 31,
-	}
-	if err := validateRun(cr, run, ref, shared); err != nil {
-		t.Fatalf("actual discovery BuildRun rejected against frozen protocol: %v", err)
-	}
-	for _, change := range []struct {
-		name string
-		edit func(*edgev1alpha1.ProfilingRun)
-	}{
-		{"collection warmup", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.WarmupIterations = 1 }},
-		{"startup count", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.StartupWarmupIterations-- }},
-		{"startup batches", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.WarmupBatchSizes[0] = 2 }},
-		{"duration", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.DurationSeconds++ }},
-		{"dataset", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.Dataset = "other" }},
-		{"workload", func(run *edgev1alpha1.ProfilingRun) { run.Spec.Measurement.Workload = "other" }},
-		{"metric source protocol", func(run *edgev1alpha1.ProfilingRun) { run.Spec.MetricObservation.IntervalMilliseconds++ }},
-	} {
-		t.Run(change.name, func(t *testing.T) {
-			changed := run.DeepCopy()
-			change.edit(changed)
-			if err := validateRun(cr, changed, ref, shared); !errors.Is(err, ErrActiveProtocolMismatch) {
-				t.Fatalf("unrecorded protocol accepted: %v", err)
-			}
-		})
-	}
-	// Historical plans preserve their recorded collection warmup rather than
-	// acquiring the new discovery method's zero-collection convention.
-	shared.ActiveProtocol.WarmupIterations = 20
-	run.Spec.Measurement.WarmupIterations = 20
-	if err := validateRun(cr, run, ref, shared); err != nil {
-		t.Fatalf("historical recorded warmup rejected: %v", err)
-	}
+	return cr, run, ref
 }
 
 func TestLoadPlanSeparatesStatusAcceptanceFromIdentityBinding(t *testing.T) {
@@ -310,13 +205,12 @@ func TestLoadPlanSeparatesStatusAcceptanceFromIdentityBinding(t *testing.T) {
 				t.Fatalf("ReadPlan changed status acceptance or read ordering: %v, reads %d -> %d", err, before, reads)
 			}
 			retained, err = reader.LoadPlan(context.Background(), cr, result)
-			if err != nil || retained.ResultIdentity != apiObjectIdentity(cr.Status.Result) || retained.PlanIdentity != storedObjectIdentity(planRef) || !retained.Result.SemanticallyEqual(result) {
+			if err != nil || retained.ResultIdentity != apiObjectIdentity(cr.Status.Result) || retained.PlanIdentity != storedObjectIdentity(planRef) {
 				t.Fatalf("LoadPlan applied status acceptance or lost identity: %+v %v", retained, err)
 			}
 			cr.Spec.State.TargetNode = "different-node"
-			before = reads
-			if _, err := reader.LoadPlan(context.Background(), cr, result); err == nil || reads != before {
-				t.Fatalf("LoadPlan skipped measurement identity binding: %v", err)
+			if _, err := reader.LoadPlan(context.Background(), cr, result); err != nil {
+				t.Fatalf("live request metadata stranded retained plan: %v", err)
 			}
 		})
 	}

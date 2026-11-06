@@ -77,6 +77,8 @@ func TestCurvePlanSourceRecordsAndRecoversFrozenPlan(t *testing.T) {
 	parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
 	reportBytes, report := curvePlanCandidateReport(t, parent)
 	modelReader := &fakeCurvePlanModelReader{model: curvePlanModel(report)}
+	modelReader.model.UID = "recreated-model"
+	modelReader.model.ResourceVersion = "updated-status"
 	resolver := &fakeCurvePlanCandidateResolver{reportBytes: reportBytes}
 	preparer := &fakeCurvePlanPreparer{
 		report: report, reportBytes: reportBytes, nodeUID: "node-uid",
@@ -522,58 +524,6 @@ func TestCurvePlanProjectorPreservesPhaseOrderAndErrorIdentity(t *testing.T) {
 	}
 }
 
-func TestCurvePlanSourceRejectsUnsupportedArtifactBoundaries(t *testing.T) {
-	tests := []struct {
-		name             string
-		mutateReport     func(*profilingrun.CandidateReport)
-		mutateModel      func(*edgev1alpha1.ModelSpec)
-		preparedArtifact string
-		want             string
-	}{
-		{
-			name:             "prepared artifact disagrees with report",
-			preparedArtifact: "different-artifact",
-			want:             "prepared active RunConfig artifact disagrees",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			parent := testParent()
-			parent.Spec.State.Candidate.PowerMode = profilingrun.FixedPowerMode
-			_, report := curvePlanCandidateReport(t, parent)
-			model := curvePlanModel(report)
-			if test.mutateReport != nil {
-				test.mutateReport(&report)
-			}
-			if test.mutateModel != nil {
-				test.mutateModel(model)
-			}
-			reportBytes := encodeCurvePlanCandidateReport(t, report)
-			preparer := &fakeCurvePlanPreparer{
-				report: report, reportBytes: reportBytes, nodeUID: "node-uid",
-				preparedArtifact: test.preparedArtifact,
-			}
-			source, err := NewCurvePlanSource(
-				&fakeCurvePlanModelReader{model: model},
-				&fakeCurvePlanCandidateResolver{reportBytes: reportBytes},
-				preparer,
-				newFakeCurvePlanStore(),
-				CurvePlanSourceOptions{Store: "evidence", MaxObjectBytes: 1 << 20},
-			)
-			if err != nil {
-				t.Fatalf("construct curve-plan source: %v", err)
-			}
-			if _, _, _, err := source.Resolve(context.Background(), parent); err == nil ||
-				!strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Resolve() error = %v, want containing %q", err, test.want)
-			}
-			if test.preparedArtifact != "" && len(preparer.requests) != 1 {
-				t.Fatalf("active artifact mismatch prepared %d Runs, want 1", len(preparer.requests))
-			}
-		})
-	}
-}
-
 func curvePlanCandidateReport(
 	t *testing.T,
 	parent *edgev1alpha1.BatchEnergyOptimization,
@@ -709,7 +659,6 @@ type fakeCurvePlanPreparer struct {
 	report           profilingrun.CandidateReport
 	reportBytes      []byte
 	nodeUID          string
-	preparedArtifact string
 	requests         []profiler.PreparationRequest
 	calls            *[]string
 	err              error
@@ -727,9 +676,6 @@ func (p *fakeCurvePlanPreparer) Prepare(
 		*p.calls = append(*p.calls, "prepare:"+request.Measurement.WorkloadMode)
 	}
 	artifact := p.report.Selection.Artifact
-	if p.preparedArtifact != "" {
-		artifact = p.preparedArtifact
-	}
 	config := profilingrun.RunConfig{
 		SchemaVersion: profilingrun.RunConfigSchemaVersion,
 		Candidate: profilingrun.CandidateIdentity{

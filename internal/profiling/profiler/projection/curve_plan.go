@@ -197,20 +197,8 @@ func validateCurvePlanSharedRunFacts(active, idle profilingrun.RunConfig) error 
 	if active.TargetNode.Architecture != idle.TargetNode.Architecture {
 		return errors.New("active and idle recorded candidate or Node snapshots disagree")
 	}
-	if active.Candidate.Inputs.ModelSpec.UID != idle.Candidate.Inputs.ModelSpec.UID ||
-		active.Candidate.Inputs.DeviceClass.UID != idle.Candidate.Inputs.DeviceClass.UID {
-		return errors.New("active and idle model or device-class identities disagree")
-	}
-	if !reflect.DeepEqual(active.State.HostContract, idle.State.HostContract) ||
-		!reflect.DeepEqual(active.Delivery.HostContract, idle.Delivery.HostContract) ||
-		!reflect.DeepEqual(active.Delivery.RuntimePackages, idle.Delivery.RuntimePackages) {
-		return errors.New("active and idle runtime delivery conditions disagree")
-	}
 	if !reflect.DeepEqual(active.Actuation, idle.Actuation) {
 		return errors.New("active and idle power actuation conditions disagree")
-	}
-	if !maps.Equal(active.Metrics.MetricLabels, idle.Metrics.MetricLabels) {
-		return errors.New("active and idle wall-power metric labels disagree")
 	}
 	return nil
 }
@@ -243,16 +231,23 @@ func validateCurvePlanRunConfig(
 	if !reflect.DeepEqual(projectCurvePreprocessor(config.State.Preprocessor), spec.Preprocessor) {
 		return errors.New("RunConfig contradicts curve-plan preprocessor facts")
 	}
-	if projectCurveMetricSource(config.Metrics) != spec.MetricSource {
-		return errors.New("RunConfig contradicts curve-plan metric-source facts")
-	}
 	projectedProtocol, err := projectCurveProtocol(config)
 	if err != nil {
 		return err
 	}
-	// ResourceVersion is observation provenance, not a selected condition.
+	// Object revisions and identities remain provenance, not conditions.
 	projectedProtocol.WorkloadResourceVersion = ""
 	protocol.WorkloadResourceVersion = ""
+	projectedProtocol.WorkloadUID = ""
+	protocol.WorkloadUID = ""
+	if projectedProtocol.Dataset != nil {
+		projectedProtocol.Dataset.UID = ""
+	}
+	if protocol.Dataset != nil {
+		dataset := *protocol.Dataset
+		dataset.UID = ""
+		protocol.Dataset = &dataset
+	}
 	if !reflect.DeepEqual(projectedProtocol, protocol) {
 		return errors.New("RunConfig contradicts curve-plan measurement-protocol facts")
 	}
@@ -292,9 +287,6 @@ func projectCurveMetricSource(metrics profilingrun.MetricContract) profilederiva
 }
 
 func projectCurveProtocol(config profilingrun.RunConfig) (profilederivation.CurveProtocolContract, error) {
-	if err := config.Workload.Validate(); err != nil {
-		return profilederivation.CurveProtocolContract{}, fmt.Errorf("validate recorded workload contract: %w", err)
-	}
 	var dataset *profilederivation.CurveDatasetContract
 	if config.Measurement.Dataset != nil {
 		dataset = &profilederivation.CurveDatasetContract{

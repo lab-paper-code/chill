@@ -46,7 +46,7 @@ type BatchEnergyOptimizationReconciler struct {
 	client       client.Client
 	curvePlans   func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error)
 	curves       func(context.Context, profilederivation.CurvePlan, []edgev1alpha1.ProfilingRun, []edgev1alpha1.ProfilingRun, []int, profilederivation.EnergyObjectivePolicy) (batchenergyoptimization.CurveResult, error)
-	resultWriter func(context.Context, *edgev1alpha1.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []edgev1alpha1.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, error)
+	resultWriter func(context.Context, *edgev1alpha1.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []edgev1alpha1.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, batchenergyoptimization.Result, error)
 	now          func() time.Time
 }
 
@@ -54,7 +54,7 @@ func NewBatchEnergyOptimizationReconciler(
 	kubeClient client.Client,
 	curvePlans func(context.Context, *edgev1alpha1.BatchEnergyOptimization) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error),
 	curves func(context.Context, profilederivation.CurvePlan, []edgev1alpha1.ProfilingRun, []edgev1alpha1.ProfilingRun, []int, profilederivation.EnergyObjectivePolicy) (batchenergyoptimization.CurveResult, error),
-	resultWriter func(context.Context, *edgev1alpha1.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []edgev1alpha1.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, error),
+	resultWriter func(context.Context, *edgev1alpha1.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []edgev1alpha1.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, batchenergyoptimization.Result, error),
 ) (*BatchEnergyOptimizationReconciler, error) {
 	if kubeClient == nil || curvePlans == nil || curves == nil || resultWriter == nil {
 		return nil, errors.New("Kubernetes client, curve-plan source, curve deriver, and result writer are required")
@@ -106,7 +106,7 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	activeRuns, idleRuns, err := completedRuns(parent.Name, snapshot, runs)
+	activeRuns, idleRuns, err := completedRuns(snapshot, runs)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -160,13 +160,14 @@ func (r *BatchEnergyOptimizationReconciler) Reconcile(ctx context.Context, reque
 		if decision.Result == nil {
 			return ctrl.Result{}, errors.New("Finish decision omitted its result")
 		}
-		stored, writeErr := r.resultWriter(
+		stored, winner, writeErr := r.resultWriter(
 			ctx, parent, curvePlanReference, runs, *decision.Result,
 		)
 		if writeErr != nil {
 			return ctrl.Result{}, fmt.Errorf("write BatchEnergyOptimization result: %w", writeErr)
 		}
 		resultReference = &stored
+		decision.Result = &winner
 	case batchenergyoptimization.ActionFail:
 	default:
 		return ctrl.Result{}, fmt.Errorf("unsupported BatchEnergyOptimization action %q", decision.Action)
@@ -328,7 +329,6 @@ func projectEnergyObjectivePolicy(
 }
 
 func completedRuns(
-	parentName string,
 	snapshot batchenergyoptimization.Snapshot,
 	runs []edgev1alpha1.ProfilingRun,
 ) ([]edgev1alpha1.ProfilingRun, []edgev1alpha1.ProfilingRun, error) {
@@ -341,11 +341,6 @@ func completedRuns(
 	active := make([]edgev1alpha1.ProfilingRun, 0, len(runs))
 	idle := make([]edgev1alpha1.ProfilingRun, 0, len(runs))
 	for index, trial := range snapshot.Trials {
-		if runs[index].Name != batchenergyoptimization.RunName(parentName, trial.Measurement, trial.Attempt) {
-			return nil, nil, fmt.Errorf(
-				"projected trial/Run order invariant failed at index %d", index,
-			)
-		}
 		if trial.Verdict != batchenergyoptimization.VerdictCompleted {
 			continue
 		}

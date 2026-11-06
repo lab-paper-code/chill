@@ -56,11 +56,6 @@ func (r *KubernetesActuationPolicyResolver) ResolveActuationPolicy(
 	if err := r.reader.Get(ctx, key, configMap); err != nil {
 		return profiler.FrozenActuationPolicy{}, fmt.Errorf("get actuation-policy ConfigMap %s: %w", key, err)
 	}
-	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profiler.FrozenActuationPolicy{}, profiler.InvalidActuationPolicy(
-			"actuation-policy ConfigMap has incomplete Kubernetes identity",
-		)
-	}
 	if _, exists := configMap.BinaryData[r.options.ConfigMapKey]; exists {
 		return profiler.FrozenActuationPolicy{}, profiler.InvalidActuationPolicy(
 			"actuation-policy ConfigMap key must be stored in text data",

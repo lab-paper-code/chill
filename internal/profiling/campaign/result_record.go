@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 	"strings"
 )
@@ -140,21 +139,6 @@ func (r ResultRecord) SchemaVersion() string {
 // Spec returns an isolated copy of the validated record payload.
 func (r ResultRecord) Spec() ResultRecordSpec {
 	return cloneResultRecordSpec(r.record.ResultRecordSpec)
-}
-
-// SemanticallyEqual compares validated fields and the JSON value carried by
-// Detail without treating an object's whitespace or member order as identity.
-func (r ResultRecord) SemanticallyEqual(other ResultRecord) bool {
-	if r.requireInitialized() != nil || other.requireInitialized() != nil {
-		return false
-	}
-	left := r.Spec()
-	right := other.Spec()
-	leftDetail := left.Detail
-	rightDetail := right.Detail
-	left.Detail = nil
-	right.Detail = nil
-	return reflect.DeepEqual(left, right) && equalJSONValues(leftDetail, rightDetail)
 }
 
 func (r ResultRecord) requireInitialized() error {
@@ -316,24 +300,6 @@ func cloneResultRecordSpec(spec ResultRecordSpec) ResultRecordSpec {
 	return copy
 }
 
-func equalJSONValues(left, right []byte) bool {
-	decode := func(raw []byte) (any, error) {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
-			return nil, err
-		}
-		var trailing any
-		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-			return nil, errors.New("trailing JSON value")
-		}
-		return value, nil
-	}
-	leftValue, leftErr := decode(left)
-	rightValue, rightErr := decode(right)
-	return leftErr == nil && rightErr == nil && reflect.DeepEqual(leftValue, rightValue)
-}
 
 func cleanResultValue(value string) bool {
 	return strings.TrimSpace(value) != "" && strings.TrimSpace(value) == value

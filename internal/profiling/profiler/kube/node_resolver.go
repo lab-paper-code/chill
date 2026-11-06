@@ -55,7 +55,7 @@ func (r *KubernetesNodeResolver) ResolveNode(
 			selection.Name, architecture, selection.DeviceArchitecture,
 		)
 	}
-	if node.UID == "" || node.ResourceVersion == "" {
+	if node.UID == "" {
 		return profilingrun.NodeSnapshot{}, fmt.Errorf("selected Node %q has incomplete API identity", selection.Name)
 	}
 	var allocatableCPU string

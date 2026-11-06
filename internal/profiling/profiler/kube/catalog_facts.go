@@ -9,7 +9,6 @@ import (
 	"github.com/lab-paper-code/chill/internal/deviceclass"
 	"github.com/lab-paper-code/chill/internal/modelcatalog"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
-	"k8s.io/apimachinery/pkg/types"
 )
 
 type selectedDeviceFacts struct {
@@ -19,9 +18,6 @@ type selectedDeviceFacts struct {
 }
 
 func validateDeviceClass(deviceClass *edgev1alpha1.DeviceClass, powerMode string) (selectedDeviceFacts, error) {
-	if err := validateObjectIdentity("DeviceClass", deviceClass.Name, deviceClass.UID, deviceClass.ResourceVersion); err != nil {
-		return selectedDeviceFacts{}, err
-	}
 	if strings.TrimSpace(deviceClass.Spec.Architecture) == "" || len(deviceClass.Spec.NodeSelector) == 0 {
 		return selectedDeviceFacts{}, errors.New("DeviceClass architecture and nodeSelector are required")
 	}
@@ -87,15 +83,6 @@ func selectModelPath(
 	model *edgev1alpha1.ModelSpec,
 	pathName string,
 ) (edgev1alpha1.ModelExecutionPath, edgev1alpha1.ModelArtifact, error) {
-	if err := validateObjectIdentity("ModelSpec", model.Name, model.UID, model.ResourceVersion); err != nil {
-		return edgev1alpha1.ModelExecutionPath{}, edgev1alpha1.ModelArtifact{}, err
-	}
 	return modelcatalog.SelectModelPath(model, pathName)
 }
 
-func validateObjectIdentity(kind, name string, uid types.UID, resourceVersion string) error {
-	if strings.TrimSpace(name) == "" || uid == "" || strings.TrimSpace(resourceVersion) == "" {
-		return fmt.Errorf("%s has incomplete API identity", kind)
-	}
-	return nil
-}

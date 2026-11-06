@@ -64,9 +64,6 @@ func resolvedRunFromJob(run *edgev1alpha1.ProfilingRun, job *batchv1.Job) (Resol
 	if err := json.Unmarshal([]byte(rawConfig), &config); err != nil {
 		return ResolvedRun{}, fmt.Errorf("decode measurement Job RunConfig: %w", err)
 	}
-	if err := config.Validate(); err != nil {
-		return ResolvedRun{}, fmt.Errorf("validate measurement Job RunConfig: %w", err)
-	}
 
 	executionPolicy, err := profiler.DecodeFrozenExecutionPolicy(
 		[]byte(job.Annotations[executionPolicyAnnotation]),
@@ -85,8 +82,14 @@ func resolvedRunFromJob(run *edgev1alpha1.ProfilingRun, job *batchv1.Job) (Resol
 	resolved := ResolvedRun{
 		Prepared: prepared, ExecutionPolicy: executionPolicy,
 	}
-	if err := validateResolvedRunForRun(run, resolved); err != nil {
+	if err := config.Validate(); err != nil {
 		return ResolvedRun{}, fmt.Errorf("validate measurement Job RunConfig: %w", err)
+	}
+	if err := prepared.ValidateActuationBinding(); err != nil {
+		return ResolvedRun{}, err
+	}
+	if err := validateSelectedExecutionPolicy(prepared, executionPolicy); err != nil {
+		return ResolvedRun{}, err
 	}
 	return resolved, nil
 }

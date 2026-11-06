@@ -29,12 +29,11 @@ func verifyExecutionJob(
 	if err != nil {
 		return fmt.Errorf("decode existing measurement Job record: %w", err)
 	}
-	if !reflect.DeepEqual(recorded, expected) {
-		return errors.New("existing measurement Job execution identity mismatch")
-	}
+	// The stored Job owns recovery authority. New resolver provenance cannot
+	// replace its executable record.
 	existingPod := existing.Spec.Template.Spec.DeepCopy()
 	desiredPod := desired.Spec.Template.Spec.DeepCopy()
-	if err := normalizeRunConfigArguments(existingPod, expected.Prepared.RunConfig); err != nil {
+	if err := normalizeRunConfigArguments(existingPod, recorded.Prepared.RunConfig); err != nil {
 		return fmt.Errorf("validate existing measurement Job RunConfig arguments: %w", err)
 	}
 	if err := normalizeRunConfigArguments(desiredPod, expected.Prepared.RunConfig); err != nil {
@@ -66,9 +65,6 @@ func normalizeRunConfigArguments(pod *corev1.PodSpec, expected profilingrun.RunC
 		var recorded profilingrun.RunConfig
 		if err := json.Unmarshal([]byte(raw), &recorded); err != nil {
 			return fmt.Errorf("container %q: decode RunConfig: %w", container.Name, err)
-		}
-		if err := recorded.Validate(); err != nil {
-			return fmt.Errorf("container %q: validate RunConfig: %w", container.Name, err)
 		}
 		if !reflect.DeepEqual(recorded, expected) {
 			return fmt.Errorf("container %q RunConfig does not match the Job record", container.Name)

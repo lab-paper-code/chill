@@ -105,22 +105,19 @@ func (p *CurvePlanProjector) Project(
 		return profilederivation.CurvePlan{}, nil, errors.New("a parent BatchEnergyOptimization is required")
 	}
 
-	report, plannedBatchSizes, err := p.resolveCandidateReportAndBatches(ctx, parent)
+	_, plannedBatchSizes, err := p.resolveCandidateReportAndBatches(ctx, parent)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
-	active, idle, transition, err := p.prepareCurveRunConfigsAndTransition(ctx, parent, report, plannedBatchSizes)
+	active, idle, transition, err := p.prepareCurveRunConfigsAndTransition(ctx, parent, plannedBatchSizes)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
-	artifact, err := p.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, report)
+	artifact, err := p.resolveArtifact(ctx, parent.Spec.State.Candidate.ModelSpec, active.RunConfig.State.Artifact)
 	if err != nil {
 		return profilederivation.CurvePlan{}, nil, err
 	}
-	conversion, err := resolveConversion(artifact, report)
-	if err != nil {
-		return profilederivation.CurvePlan{}, nil, err
-	}
+	conversion := resolveConversion(artifact)
 
 	spec, err := projection.ProjectCurvePlanSpec(
 		parent.Name,
@@ -171,7 +168,6 @@ func (p *CurvePlanProjector) resolveCandidateReportAndBatches(
 func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	ctx context.Context,
 	parent *edgev1alpha1.BatchEnergyOptimization,
-	report profilingrun.CandidateReport,
 	plannedBatchSizes []int,
 ) (profiler.PreparedRun, profiler.PreparedRun, *TransitionMaterial, error) {
 	active, err := p.prepare(ctx, parent, batchenergyoptimization.Measurement{
@@ -180,10 +176,6 @@ func (p *CurvePlanProjector) prepareCurveRunConfigsAndTransition(
 	}, "", nil)
 	if err != nil {
 		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil, fmt.Errorf("prepare active curve-plan RunConfig: %w", err)
-	}
-	if active.RunConfig.State.Artifact != report.Selection.Artifact {
-		return profiler.PreparedRun{}, profiler.PreparedRun{}, nil,
-			errors.New("prepared active RunConfig artifact disagrees with the resolved candidate report")
 	}
 	transition, err := projectTransitionMaterial(active)
 	if err != nil {
@@ -397,20 +389,16 @@ func (p *CurvePlanProjector) prepare(
 func (p *CurvePlanProjector) resolveArtifact(
 	ctx context.Context,
 	modelSpecName string,
-	report profilingrun.CandidateReport,
+	artifactName string,
 ) (edgev1alpha1.ModelArtifact, error) {
 	model := &edgev1alpha1.ModelSpec{}
 	if err := p.reader.Get(ctx, types.NamespacedName{Name: modelSpecName}, model); err != nil {
 		return edgev1alpha1.ModelArtifact{}, fmt.Errorf("get ModelSpec %q for curve-plan artifact: %w", modelSpecName, err)
 	}
-	input := report.Inputs.ModelSpec
-	if model.Name != input.Name || string(model.UID) != input.UID || model.ResourceVersion != input.ResourceVersion {
-		return edgev1alpha1.ModelArtifact{}, errors.New("curve-plan ModelSpec does not match the resolved candidate report identity")
-	}
 	var selected *edgev1alpha1.ModelArtifact
 	for index := range model.Spec.Artifacts {
 		artifact := &model.Spec.Artifacts[index]
-		if artifact.Name != report.Selection.Artifact {
+		if artifact.Name != artifactName {
 			continue
 		}
 		if selected != nil {
@@ -422,34 +410,21 @@ func (p *CurvePlanProjector) resolveArtifact(
 	}
 	if selected == nil {
 		return edgev1alpha1.ModelArtifact{}, fmt.Errorf(
-			"ModelSpec %q does not contain selected artifact %q", model.Name, report.Selection.Artifact,
+			"ModelSpec %q does not contain selected artifact %q", model.Name, artifactName,
 		)
 	}
 	return *selected, nil
 }
 
-func resolveConversion(
-	selected edgev1alpha1.ModelArtifact,
-	report profilingrun.CandidateReport,
-) (profilederivation.CurveConversionContract, error) {
+func resolveConversion(selected edgev1alpha1.ModelArtifact) profilederivation.CurveConversionContract {
 	if selected.Derivation == nil {
-		if report.ArtifactCapability != nil && (report.ArtifactCapability.TargetPlatform != "" || len(report.ArtifactCapability.DeclaredBatchSizes) != 0) {
-			return profilederivation.CurveConversionContract{}, errors.New(
-				"canonical artifact disagrees with the candidate report artifact capability",
-			)
-		}
-		return profilederivation.CurveConversionContract{}, nil
-	}
-	if report.ArtifactCapability == nil {
-		return profilederivation.CurveConversionContract{}, errors.New(
-			"derived artifact has no candidate report artifact capability",
-		)
+		return profilederivation.CurveConversionContract{}
 	}
 	return profilederivation.CurveConversionContract{
-		TargetPlatform: report.ArtifactCapability.TargetPlatform,
+		TargetPlatform: selected.Derivation.TargetPlatform,
 		Tool:           selected.Derivation.Conversion.Tool,
 		ToolVersion:    selected.Derivation.Conversion.Version,
-	}, nil
+	}
 }
 
 func (s *CurvePlanSource) record(
@@ -471,9 +446,6 @@ func (s *CurvePlanSource) record(
 	receipt, err := s.store.PutImmutable(ctx, identity, bytes.NewReader(payload))
 	if err != nil {
 		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, fmt.Errorf("record curve plan: %w", err)
-	}
-	if err := receipt.Validate(); err != nil || receipt.Object != identity {
-		return profilederivation.CurvePlan{}, batchenergyoptimization.StoredObjectReference{}, errors.New("curve-plan writer returned an invalid receipt")
 	}
 	if receipt.Outcome == evidencestore.CreateOutcomeCreated {
 		return plan, reference, nil

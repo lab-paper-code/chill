@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strconv"
 
@@ -117,9 +116,6 @@ func (r *RunConfigResolver) authorizedCampaignRequest(ctx context.Context, run *
 	} else if run.Spec.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
 		return profiler.PreparationRequest{}, invalidAuthority("invalid campaign child mode")
 	}
-	if run.Name != campaign.RunName(root.Name, campaign.Measurement{WorkloadMode: mode, Batch: int(trial.Batch)}, int(trial.Attempt)) {
-		return profiler.PreparationRequest{}, invalidAuthority("noncanonical campaign child identity")
-	}
 	if err := grantedAuthorityNode(ctx, r.reader, root.UID, root.Spec.State.TargetNode, shared.NodeUID); err != nil {
 		return profiler.PreparationRequest{}, err
 	}
@@ -163,8 +159,8 @@ func (r *RunConfigResolver) authorizedIdleRequest(ctx context.Context, run *edge
 		return profiler.PreparationRequest{}, err
 	}
 	attempt, err := strconv.Atoi(run.Labels["edge.dacs.io/attempt"])
-	if err != nil || attempt < 1 || attempt > int(root.Spec.AttemptLimit) || run.Name != fmt.Sprintf("%s-idle-a%d", root.Name, attempt) || run.Spec.CampaignTrial != nil || run.Spec.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
-		return profiler.PreparationRequest{}, invalidAuthority("noncanonical idle baseline child identity")
+	if err != nil || attempt < 1 || attempt > int(root.Spec.AttemptLimit) || run.Spec.CampaignTrial != nil || run.Spec.Measurement.WorkloadMode != profilingrun.IdleModelLoadedWorkloadMode {
+		return profiler.PreparationRequest{}, invalidAuthority("invalid idle baseline child trial")
 	}
 	node := &corev1.Node{}
 	if err := r.reader.Get(ctx, types.NamespacedName{Name: root.Spec.State.TargetNode}, node); err != nil {

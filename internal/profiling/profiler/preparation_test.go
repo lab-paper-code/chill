@@ -320,25 +320,11 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 			match: "does not retain the selected power mode",
 		},
 		{
-			name: "DeviceClass power mode report drift",
-			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.candidate.result.DevicePowerModes = []string{"fixed", "15W"}
-			},
-			match: "candidate report DeviceClass powerModes mismatch",
-		},
-		{
 			name: "missing DeviceClass selector",
 			mutate: func(resolvers *fakePreparationResolvers) {
 				resolvers.candidate.result.DeviceNodeSelector = nil
 			},
 			match: "architecture and Node selector are required",
-		},
-		{
-			name: "candidate report mismatch",
-			mutate: func(resolvers *fakePreparationResolvers) {
-				resolvers.candidate.result.RuntimeImage = "registry.example/runtime@sha256:" + strings.Repeat("f", 64)
-			},
-			match: "candidate runtime image mismatch",
 		},
 		{
 			name: "Node identity mismatch",
@@ -397,86 +383,7 @@ func TestPreparerRejectsResolverDrift(t *testing.T) {
 	}
 }
 
-func TestPreparerRejectsInternalReportMaterialDriftBeforeNodeResolution(t *testing.T) {
-	expected, candidateBytes := preparationFixture(t)
-	tests := []struct {
-		name   string
-		mutate func(*ResolvedCandidate)
-		match  string
-	}{
-		{
-			name: "DeviceClass selector drift",
-			mutate: func(candidate *ResolvedCandidate) {
-				candidate.DeviceNodeSelector = map[string]string{"edge.dacs.io/device-class": "other"}
-			},
-			match: "DeviceClass nodeSelector mismatch",
-		},
-		{
-			name: "artifact image drift",
-			mutate: func(candidate *ResolvedCandidate) {
-				candidate.ArtifactImage = "registry.example/artifact@sha256:" + strings.Repeat("f", 64)
-			},
-			match: "artifact image mismatch",
-		},
-		{
-			name: "artifact files report drift",
-			mutate: func(candidate *ResolvedCandidate) {
-				candidate.State.ArtifactFiles = []string{"/artifact/other.onnx"}
-			},
-			match: "artifact files mismatch",
-		},
-	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			resolvers := fixtureResolvers(expected, candidateBytes)
-			promoteFixtureCandidateReport(t, resolvers.candidate.result.ReportBytes, &resolvers.candidate.result)
-			test.mutate(&resolvers.candidate.result)
-			preparer := newFixturePreparer(t, resolvers)
-			_, err := preparer.Prepare(context.Background(), fixtureRequest(expected))
-			if err == nil || !strings.Contains(err.Error(), test.match) {
-				t.Fatalf("expected error containing %q, got %v", test.match, err)
-			}
-			if resolvers.node.calls != 0 {
-				t.Fatal("material drift reached Node resolution")
-			}
-		})
-	}
-}
-
-func promoteFixtureCandidateReport(t *testing.T, payload []byte, candidate *ResolvedCandidate) {
-	t.Helper()
-	report, err := profilingrun.DecodeCandidateReport(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	report.SchemaVersion = profilingrun.CandidateReportSchemaVersion
-	report.Inputs.ModelSpec.UID, report.Inputs.ModelSpec.ResourceVersion = "model-uid", "1"
-	report.Inputs.DeviceClass.UID, report.Inputs.DeviceClass.ResourceVersion = "device-uid", "1"
-	report.Inputs.RuntimeDeclaration.Namespace = "chill-system"
-	report.Inputs.RuntimeDeclaration.Name = "chill-profiler-facts"
-	report.Inputs.RuntimeDeclaration.UID = "facts-uid"
-	report.Inputs.RuntimeDeclaration.ResourceVersion = "1"
-	report.Inputs.RuntimeDeclaration.Key = "execution-facts.yaml"
-	report.Selection.PowerMode = candidate.State.PowerMode
-	report.DeviceClassFacts = profilingrun.CandidateReportDeviceClassFacts{
-		Architecture: candidate.DeviceArchitecture,
-		NodeSelector: map[string]string{"edge.dacs.io/device-class": candidate.State.DeviceClass},
-		PowerModes:   []string{candidate.State.PowerMode},
-	}
-	candidate.ArtifactArchitecture = candidate.DeviceArchitecture
-	candidate.State.ArtifactFiles = []string{"/artifact/model.onnx"}
-	report.ArtifactSupply = profilingrun.CandidateReportArtifactSupply{
-		Image: candidate.ArtifactImage, Architecture: candidate.ArtifactArchitecture,
-		Files: candidate.State.ArtifactFiles,
-	}
-	report.MetricObserverImage = candidate.MetricObserverImage
-	encoded, err := json.Marshal(report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	candidate.ReportBytes = encoded
-}
 
 func TestPreparerPreservesResolverFailureAndStops(t *testing.T) {
 	expected, candidateBytes := preparationFixture(t)

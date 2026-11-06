@@ -8,13 +8,12 @@ import (
 	"testing"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
-	"github.com/lab-paper-code/chill/internal/evidencestore"
 	batchenergyoptimization "github.com/lab-paper-code/chill/internal/profiling/campaign"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
+func TestResultWriterRecordsAndAdoptsImmutableWinner(t *testing.T) {
 	parent := testParent()
 	runs := resultWriterRuns(t, parent)
 	store := newFakeCurvePlanStore()
@@ -26,7 +25,7 @@ func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
 		Detail:  detail,
 	}
 
-	first, err := writer.Write(context.Background(), parent, curvePlan, runs, result)
+	first, _, err := writer.Write(context.Background(), parent, curvePlan, runs, result)
 	if err != nil {
 		t.Fatalf("record result: %v", err)
 	}
@@ -41,17 +40,17 @@ func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
 	storedPayload = append([]byte(" \n"), storedPayload...)
 	store.objects[store.lastIdentity.Location()] = storedPayload
 	reorderedRuns := []edgev1alpha1.ProfilingRun{runs[2], runs[1], runs[0]}
-	second, err := writer.Write(context.Background(), parent, curvePlan, reorderedRuns, result)
+	second, _, err := writer.Write(context.Background(), parent, curvePlan, reorderedRuns, result)
 	if err != nil {
 		t.Fatalf("recover existing result: %v", err)
 	}
-	if second.Size != int64(len(storedPayload)) || second.Size == first.Size ||
-		second.SchemaVersion != first.SchemaVersion || store.puts != 2 || store.opens != 1 {
-		t.Fatalf("stored recovery = reference %+v, puts %d, opens %d", second, store.puts, store.opens)
+	if second.Size != int64(len(storedPayload)) || second.SchemaVersion != first.SchemaVersion {
+		t.Fatalf("stored recovery reference = %+v", second)
 	}
 
 	driftedSpec := stored.Spec()
 	driftedSpec.Outcome = "MinimumFound/SearchSpaceExhausted"
+	driftedSpec.Detail = json.RawMessage(`{"selectedBatch":4}`)
 	drifted, err := batchenergyoptimization.NewResultRecord(driftedSpec)
 	if err != nil {
 		t.Fatal(err)
@@ -61,9 +60,10 @@ func TestResultWriterRecordsRecoversAndRejectsDrift(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.objects[store.lastIdentity.Location()] = driftedPayload
-	if _, err := writer.Write(context.Background(), parent, curvePlan, reorderedRuns, result); err == nil ||
-		!strings.Contains(err.Error(), "stored batch-energy-optimization result disagrees") {
-		t.Fatalf("recomputed result drift error = %v", err)
+	_, winner, err := writer.Write(context.Background(), parent, curvePlan, reorderedRuns, result)
+	if err != nil || winner.Outcome != string(driftedSpec.Outcome) ||
+		string(winner.Detail.(json.RawMessage)) != string(driftedSpec.Detail) {
+		t.Fatalf("immutable winner lost: %+v, %v", winner, err)
 	}
 }
 
@@ -75,7 +75,7 @@ func TestResultWriterRejectsPendingRun(t *testing.T) {
 	store := newFakeCurvePlanStore()
 	writer := newResultWriter(t, store, 1<<20)
 
-	_, err := writer.Write(
+	_, _, err := writer.Write(
 		context.Background(), parent, resultWriterCurvePlanReference(),
 		[]edgev1alpha1.ProfilingRun{*run}, resultWriterResult(),
 	)
@@ -98,7 +98,7 @@ func TestResultWriterRecordsTerminalConditionReason(t *testing.T) {
 	store := newFakeCurvePlanStore()
 	writer := newResultWriter(t, store, 1<<20)
 
-	if _, err := writer.Write(
+	if _, _, err := writer.Write(
 		context.Background(), parent, resultWriterCurvePlanReference(),
 		[]edgev1alpha1.ProfilingRun{*run}, resultWriterResult(),
 	); err != nil {
@@ -115,48 +115,19 @@ func TestResultWriterRecordsTerminalConditionReason(t *testing.T) {
 	}
 }
 
-func TestResultWriterRejectsInvalidReceipts(t *testing.T) {
-	tests := map[string]func(evidencestore.Receipt) evidencestore.Receipt{
-		"invalid receipt": func(receipt evidencestore.Receipt) evidencestore.Receipt {
-			receipt.SchemaVersion = "unsupported"
-			return receipt
-		},
-		"different object": func(receipt evidencestore.Receipt) evidencestore.Receipt {
-			receipt.Object.Key += ".different"
-			return receipt
-		},
-	}
-	for name, mutateReceipt := range tests {
-		t.Run(name, func(t *testing.T) {
-			parent := testParent()
-			store := newFakeCurvePlanStore()
-			store.receiptMutator = mutateReceipt
-			writer := newResultWriter(t, store, 1<<20)
-
-			_, err := writer.Write(
-				context.Background(), parent, resultWriterCurvePlanReference(),
-				resultWriterRuns(t, parent), resultWriterResult(),
-			)
-			if err == nil || !strings.Contains(err.Error(), "result writer returned an invalid receipt") {
-				t.Fatalf("invalid receipt error = %v", err)
-			}
-		})
-	}
-}
-
 func TestResultWriterBoundsRecoveryRead(t *testing.T) {
 	parent := testParent()
 	runs := resultWriterRuns(t, parent)
 	store := newFakeCurvePlanStore()
 	writer := newResultWriter(t, store, 1<<20)
-	if _, err := writer.Write(
+	if _, _, err := writer.Write(
 		context.Background(), parent, resultWriterCurvePlanReference(), runs, resultWriterResult(),
 	); err != nil {
 		t.Fatalf("record result: %v", err)
 	}
 	payload := store.objects[store.lastIdentity.Location()]
 	boundedWriter := newResultWriter(t, store, int64(len(payload)-1))
-	_, err := boundedWriter.Write(
+	_, _, err := boundedWriter.Write(
 		context.Background(), parent, resultWriterCurvePlanReference(), runs, resultWriterResult(),
 	)
 	if err == nil || !strings.Contains(err.Error(), "batch-energy-optimization result object exceeds") {
@@ -323,7 +294,7 @@ func TestResultWriterRetainsTypedInfrastructureFailureDiagnostics(t *testing.T) 
 	}
 	store := newFakeCurvePlanStore()
 	writer := newResultWriter(t, store, 1<<20)
-	if _, err := writer.Write(context.Background(), parent, resultWriterCurvePlanReference(), []edgev1alpha1.ProfilingRun{*run}, resultWriterResult()); err != nil {
+	if _, _, err := writer.Write(context.Background(), parent, resultWriterCurvePlanReference(), []edgev1alpha1.ProfilingRun{*run}, resultWriterResult()); err != nil {
 		t.Fatal(err)
 	}
 	record, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])

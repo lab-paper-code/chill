@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -24,17 +23,8 @@ import (
 // buffers; tune only with store load/memory measurements, not campaign size.
 const trialConcurrency = 8
 
-var (
-	// ErrRunEvidenceAbsent identifies a Run without a retained evidence reference.
-	ErrRunEvidenceAbsent = errors.New("completed evidence reference contradicts recorded Run")
-	// ErrRunEvidenceMismatch identifies a reference that differs from the result.
-	ErrRunEvidenceMismatch = errors.New("completed evidence reference contradicts recorded Run")
-	// ErrUnsupportedWorkloadMode identifies a mode outside active and loaded idle.
-	ErrUnsupportedWorkloadMode = errors.New("active Run protocol contradicts campaign")
-	// ErrActiveProtocolMismatch identifies an active Run whose protocol differs.
-	ErrActiveProtocolMismatch = errors.New("active Run protocol contradicts campaign")
-	errIdleProtocolMismatch   = errors.New("idle Run protocol contradicts campaign")
-)
+// ErrUnsupportedWorkloadMode identifies a mode outside active and loaded idle.
+var ErrUnsupportedWorkloadMode = errors.New("unsupported Run workload mode")
 
 // Reader reconstructs retained campaign inputs without selecting measurements,
 // admitting serving profiles, or applying a reporting/derivation policy.
@@ -93,21 +83,13 @@ func (r *Reader) ReadPlan(ctx context.Context, campaign *edgev1alpha1.BatchEnerg
 	return r.LoadPlan(ctx, campaign, result)
 }
 
-// LoadPlan binds the decoded result and frozen plan to campaign measurement
-// state, without checking the result's schema/outcome against campaign status.
-// Reporting uses this entry independently of serving's status acceptance policy.
+// LoadPlan loads the retained result's frozen plan independently of the live
+// campaign request. Callers own terminal status acceptance.
 func (r *Reader) LoadPlan(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization, result batchenergyoptimization.ResultRecord) (Campaign, error) {
 	if campaign.Status.Result == nil {
 		return Campaign{}, errors.New("completed campaign has no terminal result reference")
 	}
 	resultSpec := result.Spec()
-	state := campaign.Spec.State
-	if resultSpec.MeasurementState != (batchenergyoptimization.ResultMeasurementState{
-		TargetNode: state.TargetNode, ModelSpec: state.Candidate.ModelSpec,
-		DeviceClass: state.Candidate.DeviceClass, ExecutionPath: state.Candidate.ExecutionPath, PowerMode: state.Candidate.PowerMode,
-	}) {
-		return Campaign{}, errors.New("terminal result contradicts campaign measurement state")
-	}
 	planReference := storedObjectIdentity(resultSpec.CurvePlan)
 	payload, err := r.ReadObject(ctx, planReference)
 	if err != nil {
@@ -117,12 +99,6 @@ func (r *Reader) LoadPlan(ctx context.Context, campaign *edgev1alpha1.BatchEnerg
 	if err != nil {
 		return Campaign{}, err
 	}
-	condition := plan.Shared()
-	if resultSpec.CurvePlan.SchemaVersion != plan.SchemaVersion() || condition.DeviceClass != state.Candidate.DeviceClass ||
-		condition.Artifact.ExecutionPath != state.Candidate.ExecutionPath || condition.PowerMode != state.Candidate.PowerMode ||
-		condition.MetricSource.NodeName != state.TargetNode {
-		return Campaign{}, errors.New("frozen curve plan contradicts campaign measurement state")
-	}
 	return Campaign{Result: result, Plan: plan, ResultIdentity: apiObjectIdentity(campaign.Status.Result), PlanIdentity: planReference}, nil
 }
 
@@ -131,16 +107,6 @@ func (r *Reader) LoadPlan(ctx context.Context, campaign *edgev1alpha1.BatchEnerg
 func (r *Reader) ReadTrials(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization, retained Campaign) (Trials, error) {
 	resultSpec := retained.Result.Spec()
 	planReference := retained.PlanIdentity
-	shared := retained.Plan.Shared()
-	if resultSpec.Outcome == batchenergyoptimization.TerminalOutcome(batchenergyoptimization.BatchDiscoveryComplete) {
-		startup := int(campaign.Spec.ActiveProtocol.WarmupIterations)
-		if shared.Actor.WarmupIterations != startup || shared.ActiveProtocol.StartupWarmupIterations != startup ||
-			shared.IdleProtocol.StartupWarmupIterations != startup {
-			return Trials{}, ErrActiveProtocolMismatch
-		}
-	} else if shared.ActiveProtocol.WarmupIterations != int(campaign.Spec.ActiveProtocol.WarmupIterations) {
-		return Trials{}, ErrActiveProtocolMismatch
-	}
 	var measuredAt time.Time
 	active := make([]profilerevidence.VerifiedEvidence, 0, len(resultSpec.CompletedTrials))
 	idle := make([]profilerevidence.VerifiedIdleEvidence, 0, len(resultSpec.CompletedTrials))
@@ -152,7 +118,7 @@ func (r *Reader) ReadTrials(ctx context.Context, campaign *edgev1alpha1.BatchEne
 	seenPods := make(map[string]struct{}, len(resultSpec.CompletedTrials))
 	for start := 0; start < len(resultSpec.CompletedTrials); start += trialConcurrency {
 		references := resultSpec.CompletedTrials[start:min(start+trialConcurrency, len(resultSpec.CompletedTrials))]
-		trials := r.readCompletedTrials(ctx, campaign, references, shared)
+		trials := r.readCompletedTrials(ctx, campaign, references)
 		for index, reference := range references {
 			trial := &trials[index]
 			if trial.err != nil {
@@ -204,14 +170,13 @@ type completedTrial struct {
 // duplicate detection and profile lineage regardless of completion order.
 func (r *Reader) readCompletedTrials(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization,
 	references []batchenergyoptimization.CompletedTrialReference,
-	shared profilederivation.CurvePlanSpec,
 ) []completedTrial {
 	trials := make([]completedTrial, len(references))
 	var group errgroup.Group
 	group.SetLimit(trialConcurrency)
 	for index, reference := range references {
 		group.Go(func() error {
-			trials[index] = r.readCompletedTrial(ctx, campaign, reference, shared)
+			trials[index] = r.readCompletedTrial(ctx, campaign, reference)
 			return nil // Keep errors in input order, not goroutine completion order.
 		})
 	}
@@ -221,7 +186,6 @@ func (r *Reader) readCompletedTrials(ctx context.Context, campaign *edgev1alpha1
 
 func (r *Reader) readCompletedTrial(ctx context.Context, campaign *edgev1alpha1.BatchEnergyOptimization,
 	reference batchenergyoptimization.CompletedTrialReference,
-	shared profilederivation.CurvePlanSpec,
 ) (trial completedTrial) {
 	runKey := types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
 	run := &edgev1alpha1.ProfilingRun{}
@@ -229,7 +193,7 @@ func (r *Reader) readCompletedTrial(ctx context.Context, campaign *edgev1alpha1.
 		trial.err = fmt.Errorf("get completed Run %s: %w", runKey, err)
 		return trial
 	}
-	if err := validateRun(campaign, run, reference, shared); err != nil {
+	if err := validateRun(campaign, run, reference); err != nil {
 		trial.err = fmt.Errorf("completed Run %s: %w", runKey, err)
 		return trial
 	}
@@ -252,15 +216,17 @@ func (r *Reader) readCompletedTrial(ctx context.Context, campaign *edgev1alpha1.
 	if err := validateExecution(run, trial.execution); err != nil {
 		trial.err = fmt.Errorf("completed Run %s: %w", runKey, err)
 	}
+	if trial.err == nil && trial.execution.RunConfig.Measurement.Batch != reference.Measurement.Batch {
+		trial.err = errors.New("stored execution batch contradicts completed trial reference")
+	}
 	return trial
 }
 
-func validateRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alpha1.ProfilingRun, reference batchenergyoptimization.CompletedTrialReference, shared profilederivation.CurvePlanSpec) error {
+func validateRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alpha1.ProfilingRun, reference batchenergyoptimization.CompletedTrialReference) error {
 	if run.Namespace != campaign.Namespace || string(run.UID) != reference.Run.UID || !metav1.IsControlledBy(run, campaign) || run.DeletionTimestamp != nil {
 		return errors.New("Run identity or campaign ownership mismatch")
 	}
-	if run.Spec.MeasurementStateSpec.Candidate != campaign.Spec.State.Candidate || run.Spec.TargetNode != campaign.Spec.State.TargetNode ||
-		int(run.Spec.Measurement.Batch) != reference.Measurement.Batch {
+	if int(run.Spec.Measurement.Batch) != reference.Measurement.Batch {
 		return errors.New("Run measurement state or batch contradicts completed trial reference")
 	}
 	mode := batchenergyoptimization.WorkloadModeActive
@@ -278,120 +244,21 @@ func validateRun(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alph
 			return errors.New("Run has no current completed execution and verified evidence")
 		}
 	}
-	if run.Status.Evidence == nil {
-		return ErrRunEvidenceAbsent
-	}
-	if apiObjectIdentity(run.Status.Evidence) != storedObjectIdentity(reference.Evidence) || run.Status.Evidence.SchemaVersion != reference.Evidence.SchemaVersion {
-		return ErrRunEvidenceMismatch
-	}
-	return validateRunProtocol(campaign, run, shared)
-}
-
-func validateRunProtocol(campaign *edgev1alpha1.BatchEnergyOptimization, run *edgev1alpha1.ProfilingRun, shared profilederivation.CurvePlanSpec) error {
-	measurement := run.Spec.Measurement
-	frozen := shared.ActiveProtocol
-	protocolError := ErrActiveProtocolMismatch
-	if measurement.WorkloadMode == profilingrun.IdleModelLoadedWorkloadMode {
-		frozen = shared.IdleProtocol
-		protocolError = errIdleProtocolMismatch
-	}
-	dataset := ""
-	if frozen.Dataset != nil {
-		dataset = frozen.Dataset.Name
-	}
-	if int(measurement.WarmupIterations) != frozen.WarmupIterations ||
-		int(measurement.StartupWarmupIterations) != frozen.StartupWarmupIterations ||
-		int(measurement.DurationSeconds) != frozen.DurationSeconds ||
-		int(ptr.Deref(measurement.SettlingDurationSeconds, 0)) != frozen.SettlingDurationSeconds ||
-		ptr.Deref(measurement.DurationToleranceSeconds, .5) != frozen.DurationToleranceSeconds ||
-		measurement.Dataset != dataset || measurement.WorkloadMode != frozen.WorkloadMode || measurement.Workload != frozen.WorkloadName ||
-		int(run.Spec.MetricObservation.IntervalMilliseconds) != frozen.MetricIntervalMilliseconds ||
-		int(run.Spec.MetricObservation.TimeoutMilliseconds) != frozen.MetricTimeoutMilliseconds ||
-		int(run.Spec.MetricObservation.DurationSeconds) != frozen.MetricDurationSeconds ||
-		len(measurement.WarmupBatchSizes) != len(shared.Actor.WarmupBatchSizes) {
-		return protocolError
-	}
-	for index, batch := range measurement.WarmupBatchSizes {
-		if int(batch) != shared.Actor.WarmupBatchSizes[index] {
-			return protocolError
-		}
-	}
-	if measurement.WorkloadMode == "idle-model-loaded" {
-		protocol := campaign.Spec.IdleProtocol
-		if measurement.WarmupIterations != 0 || measurement.SettlingDurationSeconds == nil ||
-			*measurement.SettlingDurationSeconds != protocol.SettlingDurationSeconds ||
-			measurement.DurationSeconds != protocol.DurationSeconds || measurement.Dataset != "" ||
-			ptr.Deref(measurement.DurationToleranceSeconds, .5) != ptr.Deref(protocol.DurationToleranceSeconds, .5) ||
-			run.Spec.MetricObservation != protocol.MetricObservation {
-			return errIdleProtocolMismatch
-		}
-	} else {
-		protocol := campaign.Spec.ActiveProtocol
-		if measurement.SettlingDurationSeconds != nil ||
-			measurement.DurationSeconds != protocol.DurationSeconds ||
-			ptr.Deref(measurement.DurationToleranceSeconds, .5) != ptr.Deref(protocol.DurationToleranceSeconds, .5) ||
-			measurement.Dataset != protocol.Dataset ||
-			run.Spec.MetricObservation != protocol.MetricObservation {
-			return ErrActiveProtocolMismatch
-		}
-	}
 	return nil
 }
+
 
 func validateExecution(run *edgev1alpha1.ProfilingRun, execution profilerevidence.ExecutionEvidence) error {
-	if run.Status.Evidence == nil || run.Status.Job == nil || run.Status.ObservedExecution == nil || run.Status.Evidence.SchemaVersion != execution.SchemaVersion ||
-		execution.Terminal.Job.Namespace != run.Namespace || execution.Terminal.Job.Name != run.Status.Job.Name || execution.Terminal.Job.UID != run.Status.Job.UID ||
-		execution.Terminal.Pod.Namespace != run.Namespace || execution.Terminal.Pod.Name != run.Status.ObservedExecution.Pod.Name || execution.Terminal.Pod.UID != run.Status.ObservedExecution.Pod.UID ||
-		execution.Terminal.Node.Name != run.Status.ObservedExecution.Node.Name || execution.Terminal.Node.UID != run.Status.ObservedExecution.Node.UID {
+	// Reference-only loaders do not associate retained evidence with a Run.
+	// Keep this boundary so another execution cannot count as this trial.
+	if run.Status.Job == nil || run.Status.ObservedExecution == nil ||
+		execution.Terminal.Job.UID != run.Status.Job.UID ||
+		execution.Terminal.Pod.UID != run.Status.ObservedExecution.Pod.UID {
 		return errors.New("stored evidence contradicts recorded Run execution identities")
-	}
-	if err := validateRunConfig(run, execution.RunConfig); err != nil {
-		return err
-	}
-	if execution.RunConfig.Actuation == nil {
-		if execution.Actuation != nil {
-			return errors.New("fixed execution has unexpected actuation evidence")
-		}
-	} else if execution.Actuation == nil ||
-		execution.Actuation.Run.Namespace != run.Namespace || execution.Actuation.Run.Name != run.Name || execution.Actuation.Run.UID != string(run.UID) {
-		return errors.New("stored actuation evidence contradicts completed Run")
 	}
 	return nil
 }
 
-func validateRunConfig(run *edgev1alpha1.ProfilingRun, config profilingrun.RunConfig) error {
-	if config.Candidate.Inputs.ModelSpec.Name != run.Spec.Candidate.ModelSpec || config.State.DeviceClass != run.Spec.Candidate.DeviceClass ||
-		config.Candidate.ExecutionPath != run.Spec.Candidate.ExecutionPath || config.State.PowerMode != run.Spec.Candidate.PowerMode ||
-		config.TargetNode.Name != run.Spec.TargetNode || config.Measurement.Batch != int(run.Spec.Measurement.Batch) ||
-		config.Measurement.WorkloadMode != run.Spec.Measurement.WorkloadMode {
-		return errors.New("stored RunConfig contradicts completed Run spec")
-	}
-	measurement := run.Spec.Measurement
-	settling := 0
-	if measurement.SettlingDurationSeconds != nil {
-		settling = int(*measurement.SettlingDurationSeconds)
-	}
-	if config.Measurement.WarmupIterations != int(measurement.WarmupIterations) ||
-		config.Measurement.StartupWarmupIterations != int(measurement.StartupWarmupIterations) ||
-		config.Measurement.DurationSeconds != int(measurement.DurationSeconds) || config.Measurement.SettlingDurationSeconds != settling ||
-		config.Measurement.DurationToleranceSeconds != ptr.Deref(measurement.DurationToleranceSeconds, .5) ||
-		config.Measurement.WorkloadName != measurement.Workload ||
-		(config.Measurement.Dataset == nil) != (measurement.Dataset == "") || (config.Measurement.Dataset != nil && config.Measurement.Dataset.Name != measurement.Dataset) ||
-		config.Metrics.IntervalMilliseconds != int(run.Spec.MetricObservation.IntervalMilliseconds) ||
-		config.Metrics.TimeoutMilliseconds != int(run.Spec.MetricObservation.TimeoutMilliseconds) ||
-		config.Metrics.DurationSeconds != int(run.Spec.MetricObservation.DurationSeconds) {
-		return errors.New("stored RunConfig contradicts completed Run protocol")
-	}
-	if len(config.Measurement.WarmupBatchSizes) != len(measurement.WarmupBatchSizes) {
-		return errors.New("stored RunConfig contradicts completed Run protocol")
-	}
-	for index, batch := range measurement.WarmupBatchSizes {
-		if config.Measurement.WarmupBatchSizes[index] != int(batch) {
-			return errors.New("stored RunConfig contradicts completed Run protocol")
-		}
-	}
-	return nil
-}
 
 func apiObjectIdentity(reference *edgev1alpha1.ProfilingRunEvidenceReference) evidencestore.ObjectIdentity {
 	return evidencestore.ObjectIdentity{Store: reference.Store, Key: reference.Key, Size: reference.Size}

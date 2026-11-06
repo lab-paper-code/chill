@@ -20,6 +20,7 @@ func TestProjectSnapshotReadsValuesFromImmutableRunFieldsNotLabels(t *testing.T)
 	}
 	run.Labels[labelBatch] = "99"
 	run.Labels[labelAttempt] = "99"
+	run.Name = "opaque-trial-name"
 
 	run.Status.Evidence = &edgev1alpha1.ProfilingRunEvidenceReference{Store: "evidence", Key: "run/final", Size: 1}
 	snapshot, err := ProjectSnapshot(parent, []edgev1alpha1.ProfilingRun{*run}, nil, []int{1, 2}, false)
@@ -178,7 +179,7 @@ func TestTrialBoundaryUsesTypedActualRuntimeTermination(t *testing.T) {
 				test.termination.Class = "ExpectedStop"
 			}
 			run.Status.RuntimeTermination = &test.termination
-			trial, err := projectTrial(parent.Name, run)
+			trial, err := projectTrial(run)
 			if err != nil {
 				t.Fatal(err)
 			}

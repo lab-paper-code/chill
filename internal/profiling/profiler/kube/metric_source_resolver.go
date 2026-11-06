@@ -85,9 +85,6 @@ func (r *KubernetesMetricSourceResolver) ResolveMetricSource(
 	if err := r.reader.Get(ctx, key, configMap); err != nil {
 		return profiler.ResolvedMetricSource{}, fmt.Errorf("get Profiler metric-source ConfigMap %s: %w", key, err)
 	}
-	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profiler.ResolvedMetricSource{}, errors.New("Profiler metric-source ConfigMap has incomplete API identity")
-	}
 	raw, exists := configMap.Data[r.options.ConfigMapKey]
 	if !exists || strings.TrimSpace(raw) == "" {
 		return profiler.ResolvedMetricSource{}, fmt.Errorf(

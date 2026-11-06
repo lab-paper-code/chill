@@ -22,14 +22,6 @@ type RunIdentities struct {
 	MeasurementProtocolIdentity string
 }
 
-type metricSourceIdentity struct {
-	SourceKind     string                             `json:"sourceKind"`
-	NodeName       string                             `json:"nodeName"`
-	Endpoint       string                             `json:"endpoint"`
-	PowerMetric    string                             `json:"powerMetric"`
-	ThermalMetrics profilingrun.ThermalMetricContract `json:"thermalMetrics"`
-}
-
 type metricSamplingProtocol struct {
 	IntervalMilliseconds int `json:"intervalMilliseconds"`
 	TimeoutMilliseconds  int `json:"timeoutMilliseconds"`
@@ -39,20 +31,17 @@ type metricSamplingProtocol struct {
 // ProjectRunIdentities derives versioned identities from one RunConfig
 // and the actual Node UID recorded in finalized evidence.
 func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIdentities, error) {
+	executionState := config.State
+	executionState.HostContract = nil
+	executionState.Preprocessor.UID = ""
 	state, err := digestIdentity(stateIdentitySchemaVersion, struct {
 		State        profilingrun.ExecutionState     `json:"state"`
 		RuntimeImage string                          `json:"runtimeImage"`
 		NodeUID      string                          `json:"nodeUID"`
-		MetricSource metricSourceIdentity            `json:"metricSource"`
 		Actuation    *profilingrun.ActuationContract `json:"actuation,omitempty"`
 	}{
-		State: config.State, RuntimeImage: config.Images.Runtime, NodeUID: nodeUID,
+		State: executionState, RuntimeImage: config.Images.Runtime, NodeUID: nodeUID,
 		Actuation: config.Actuation,
-		MetricSource: metricSourceIdentity{
-			SourceKind: config.Metrics.SourceKind, NodeName: config.Metrics.NodeName,
-			Endpoint: config.Metrics.Endpoint, PowerMetric: config.Metrics.PowerMetric,
-			ThermalMetrics: config.Metrics.ThermalMetrics,
-		},
 	})
 	if err != nil {
 		return RunIdentities{}, fmt.Errorf("derive execution-state identity: %w", err)
@@ -61,6 +50,12 @@ func ProjectRunIdentities(config profilingrun.RunConfig, nodeUID string) (RunIde
 	measurement := config.Measurement
 	measurement.Batch = 0
 	measurement.WorkloadResourceVersion = ""
+	measurement.WorkloadUID = ""
+	if measurement.Dataset != nil {
+		dataset := *measurement.Dataset
+		dataset.UID = ""
+		measurement.Dataset = &dataset
+	}
 	protocol, err := digestIdentity(measurementProtocolIdentitySchemaVersion, struct {
 		Measurement profilingrun.MeasurementContract `json:"measurement"`
 		Sampling    metricSamplingProtocol           `json:"sampling"`

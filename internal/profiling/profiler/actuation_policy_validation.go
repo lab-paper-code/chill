@@ -31,20 +31,6 @@ func (f FrozenActuationPolicy) Validate() error {
 	if err := f.Policy.Validate(); err != nil {
 		return fmt.Errorf("validate frozen actuation policy: %w", err)
 	}
-	if f.Source.Kind != ConfigMapActuationPolicySourceKind {
-		return fmt.Errorf("unsupported actuation-policy source kind %q", f.Source.Kind)
-	}
-	for name, value := range map[string]string{
-		"namespace":       f.Source.Namespace,
-		"name":            f.Source.Name,
-		"uid":             f.Source.UID,
-		"resourceVersion": f.Source.ResourceVersion,
-		"key":             f.Source.Key,
-	} {
-		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("actuation-policy ConfigMap source %s is required without surrounding whitespace", name)
-		}
-	}
 	return nil
 }
 

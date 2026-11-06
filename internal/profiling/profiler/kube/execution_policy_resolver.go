@@ -59,11 +59,6 @@ func (r *KubernetesExecutionPolicyResolver) Resolve(
 	if err := r.reader.Get(ctx, key, configMap); err != nil {
 		return profiler.FrozenExecutionPolicy{}, fmt.Errorf("get execution-policy ConfigMap %s: %w", key, err)
 	}
-	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return profiler.FrozenExecutionPolicy{}, profiler.InvalidExecutionPolicy(
-			"execution-policy ConfigMap has incomplete Kubernetes identity",
-		)
-	}
 	if _, exists := configMap.BinaryData[r.options.ConfigMapKey]; exists {
 		return profiler.FrozenExecutionPolicy{}, profiler.InvalidExecutionPolicy(
 			"execution-policy ConfigMap key must be stored in text data",

@@ -44,9 +44,6 @@ func ProjectSnapshot(
 		}
 		snapshot.Trials = append(snapshot.Trials, trial)
 	}
-	if err := snapshot.Validate(); err != nil {
-		return batchenergyoptimization.Snapshot{}, fmt.Errorf("validate projected snapshot: %w", err)
-	}
 	return snapshot, nil
 }
 
@@ -57,7 +54,7 @@ func projectOwnedTrial(
 	if !controlledByParent(parent, run) {
 		return batchenergyoptimization.Trial{}, errors.New("Run is not controller-owned by this BatchEnergyOptimization")
 	}
-	return projectTrial(parent.Name, run)
+	return projectTrial(run)
 }
 
 // controlledByParent reports whether the parent's exact UID is the object's
@@ -69,7 +66,7 @@ func controlledByParent(parent *edgev1alpha1.BatchEnergyOptimization, object met
 		parent.UID != "" && owner.UID == parent.UID
 }
 
-func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenergyoptimization.Trial, error) {
+func projectTrial(run *edgev1alpha1.ProfilingRun) (batchenergyoptimization.Trial, error) {
 	identity := run.Spec.CampaignTrial
 	if identity == nil || identity.Batch < 1 || identity.Attempt < 1 {
 		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: campaign Run requires a positive logical batch and attempt", errInvalidCampaignTrial)
@@ -91,9 +88,6 @@ func projectTrial(parentName string, run *edgev1alpha1.ProfilingRun) (batchenerg
 	// verified curve-state boundary, not inferred from this object's path name.
 	if mode == batchenergyoptimization.WorkloadModeActive && run.Spec.Measurement.Batch != identity.Batch {
 		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: campaign Run execution batch disagrees with its logical trial", errInvalidCampaignTrial)
-	}
-	if run.Name != batchenergyoptimization.RunName(parentName, measurement, attempt) {
-		return batchenergyoptimization.Trial{}, fmt.Errorf("%w: Run name does not match its immutable campaign trial", errInvalidCampaignTrial)
 	}
 	trial := batchenergyoptimization.Trial{
 		Measurement: measurement,

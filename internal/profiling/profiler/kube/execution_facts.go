@@ -181,9 +181,6 @@ func selectExecutionDeclaration(
 }
 
 func parseExecutionDeclarations(configMap *corev1.ConfigMap, configMapKey string) ([]resolvedExecutionDeclaration, error) {
-	if configMap.UID == "" || configMap.ResourceVersion == "" {
-		return nil, errors.New("Profiler fact-source ConfigMap has incomplete API identity")
-	}
 	raw, exists := configMap.Data[configMapKey]
 	if !exists || strings.TrimSpace(raw) == "" {
 		return nil, &declarationSelectionError{

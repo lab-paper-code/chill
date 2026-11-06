@@ -20,6 +20,8 @@ func TestDeriveExecutionPlanBindsOneCoherentCPUORTEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	frozen.Source = ExecutionPolicySource{}
+	frozen.Policy.Name = "Display Policy / opaque"
 	plan, err := DeriveExecutionPlan(config, frozen)
 	if err != nil {
 		t.Fatal(err)

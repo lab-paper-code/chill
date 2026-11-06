@@ -186,7 +186,7 @@ func TestDeriveStatusPreservesConditionTimeUntilStatusTransitions(t *testing.T) 
 }
 
 func TestCompletedRunsRequiresOneRunPerProjectedTrial(t *testing.T) {
-	_, _, err := completedRuns("parent", batchenergyoptimization.Snapshot{
+	_, _, err := completedRuns(batchenergyoptimization.Snapshot{
 		Trials: []batchenergyoptimization.Trial{{Verdict: batchenergyoptimization.VerdictCompleted}},
 	}, nil)
 	if err == nil {
@@ -204,9 +204,9 @@ func (d *terminalReplayDependencies) Derive(context.Context, profilederivation.C
 	d.derives++
 	return batchenergyoptimization.CurveResult{}, errors.New("unexpected derivation after terminal publication")
 }
-func (d *terminalReplayDependencies) Write(context.Context, *api.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []api.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, error) {
+func (d *terminalReplayDependencies) Write(context.Context, *api.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []api.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, batchenergyoptimization.Result, error) {
 	d.writes++
-	return batchenergyoptimization.StoredObjectReference{}, errors.New("unexpected evidence recreation")
+	return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, errors.New("unexpected evidence recreation")
 }
 
 func TestTerminalCampaignReplayDoesNotRecreateEvidenceButResolverFailureStillRetries(t *testing.T) {
@@ -300,12 +300,10 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 		name             string
 		failure          error
 		mutate           func(*api.BatchEnergyOptimization)
-		preparedArtifact string
 		terminal         bool
 	}{
 		{name: "invalid protocol", mutate: func(parent *api.BatchEnergyOptimization) { parent.Spec.ActiveProtocol.DurationSeconds = 0 }, terminal: true},
 		{name: "temporary resolver failure", failure: errors.New("resolver temporarily unavailable")},
-		{name: "mutable artifact mismatch", preparedArtifact: "different-artifact"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -318,7 +316,7 @@ func TestCampaignCurvePlanFailureClassification(t *testing.T) {
 			reportBytes, report := curvePlanCandidateReport(t, parent)
 			preparer := &fakeCurvePlanPreparer{
 				report: report, reportBytes: reportBytes, nodeUID: "node-uid",
-				err: test.failure, preparedArtifact: test.preparedArtifact,
+				err: test.failure,
 			}
 			store := newFakeCurvePlanStore()
 			source, err := NewCurvePlanSource(
@@ -428,9 +426,9 @@ func (d *policyMismatchDependencies) Resolve(context.Context, *api.BatchEnergyOp
 	return d.plan, batchenergyoptimization.StoredObjectReference{}, nil, nil
 }
 
-func (d *policyMismatchDependencies) Write(context.Context, *api.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []api.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, error) {
+func (d *policyMismatchDependencies) Write(context.Context, *api.BatchEnergyOptimization, batchenergyoptimization.StoredObjectReference, []api.ProfilingRun, batchenergyoptimization.Result) (batchenergyoptimization.StoredObjectReference, batchenergyoptimization.Result, error) {
 	d.writes++
-	return batchenergyoptimization.StoredObjectReference{}, errors.New("unexpected result write")
+	return batchenergyoptimization.StoredObjectReference{}, batchenergyoptimization.Result{}, errors.New("unexpected result write")
 }
 
 type campaignStatusPatchClient struct {
@@ -454,6 +452,54 @@ func (w *campaignStatusPatchWriter) Patch(ctx context.Context, object client.Obj
 		return w.owner.err
 	}
 	return w.SubResourceWriter.Patch(ctx, object, patch, opts...)
+}
+
+func TestCampaignRecoversImmutableWinnerAfterStatusPatchFailure(t *testing.T) {
+	ctx := context.Background()
+	parent, objects, _, dependencies := newPolicyMismatchCampaignFixture(t, false)
+	scheme := runtime.NewScheme()
+	if err := api.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	native := fake.NewClientBuilder().WithScheme(scheme).
+		WithStatusSubresource(parent, &api.ProfilingRun{}).WithObjects(objects...).Build()
+	patchFailure := errors.New("status unavailable")
+	kube := &campaignStatusPatchClient{Client: native, err: patchFailure}
+	store := newFakeCurvePlanStore()
+	writer := newResultWriter(t, store, 1<<20)
+	detail := "first measured result"
+	derive := func(context.Context, profilederivation.CurvePlan, []api.ProfilingRun, []api.ProfilingRun, []int, profilederivation.EnergyObjectivePolicy) (batchenergyoptimization.CurveResult, error) {
+		return batchenergyoptimization.CurveResult{Detail: detail}, nil
+	}
+	resolve := func(context.Context, *api.BatchEnergyOptimization) (profilederivation.CurvePlan, batchenergyoptimization.StoredObjectReference, *TransitionMaterial, error) {
+		return dependencies.plan, resultWriterCurvePlanReference(), nil, nil
+	}
+	reconciler, err := NewBatchEnergyOptimizationReconciler(kube, resolve, derive, writer.Write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(parent)}
+	if _, err := reconciler.Reconcile(ctx, request); !errors.Is(err, patchFailure) {
+		t.Fatalf("status failure lost: %v", err)
+	}
+	detail = "recomputed after restart"
+	kube.err = nil
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	current := &api.BatchEnergyOptimization{}
+	if err := native.Get(ctx, request.NamespacedName, current); err != nil {
+		t.Fatal(err)
+	}
+	record, err := batchenergyoptimization.DecodeResultRecord(store.objects[store.lastIdentity.Location()])
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, ok, err := batchenergyoptimization.DecodeDiscoveryResult(record, dependencies.plan.PlannedBatchSizes())
+	if err != nil || !ok || retained.Energy != "first measured result" ||
+		current.Status.Outcome != string(record.Spec().Outcome) || current.Status.Result == nil {
+		t.Fatalf("immutable winner/status diverged: detail=%+v status=%+v error=%v", retained, current.Status, err)
+	}
 }
 
 func newPolicyMismatchCampaignFixture(t *testing.T, excess bool) (*api.BatchEnergyOptimization, []client.Object, *fakeCurveEvidenceLoader, *policyMismatchDependencies) {

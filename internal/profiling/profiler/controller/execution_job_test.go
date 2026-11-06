@@ -541,6 +541,11 @@ func TestExecutionJobsRecoverExactOwnedJobAndRejectConflict(t *testing.T) {
 	if err != nil || created || recovered.UID != testJobUID {
 		t.Fatalf("expected exact Job recovery, got created=%v job=%#v err=%v", created, recovered, err)
 	}
+	resolved.ExecutionPolicy.Source = profiler.ExecutionPolicySource{}
+	resolved.Prepared.RunConfig.Candidate.Inputs.ModelSpec.ResourceVersion = "updated-report"
+	if recovered, created, err = jobs.Ensure(ctx, run, resolved); err != nil || created || recovered.UID != testJobUID {
+		t.Fatalf("metadata-only change stranded recorded Job: created=%v job=%#v err=%v", created, recovered, err)
+	}
 
 	retained := &batchv1.Job{}
 	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: desired.Namespace, Name: desired.Name}, retained); err != nil {
