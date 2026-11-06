@@ -241,10 +241,16 @@ func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
 	}
 	slices.Sort(sources)
 	signature := strings.Join(sources, "\x00")
-	if o.Controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources {
-		return nil
+	currentProfiles := view.CurrentProfiles()
+	accepted := o.Profiles.Load()
+	if o.Controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources &&
+		accepted != nil && len(accepted.Preparations) == len(currentProfiles) {
+		return ctx.Err()
 	}
-	preparations, issues := o.preparations(ctx, config, view.CurrentProfiles())
+	preparations, issues, err := o.preparations(ctx, config, currentProfiles)
+	if err != nil {
+		return err
+	}
 	view.Insufficiencies = append(view.Insufficiencies, issues...)
 	controllerConfig := servingkube.SchedulerControllerConfig{
 		Settings:          config.Settings,

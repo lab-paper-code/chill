@@ -17,24 +17,38 @@ import (
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	storekube "github.com/lab-paper-code/chill/internal/evidencestore/kube"
 	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	profilerkube "github.com/lab-paper-code/chill/internal/profiling/profiler/kube"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingkube "github.com/lab-paper-code/chill/internal/serving/kube"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 const preparationUnavailable = "PreparationUnavailable"
 
-// preparations builds one PrepareSpec per profile. A profile that cannot be
-// prepared becomes its own CatalogIssue; the other profiles remain usable.
+// preparationSourceError separates failed source IO from incompatible evidence.
+type preparationSourceError struct{ error }
+
+func (e *preparationSourceError) Unwrap() error { return e.error }
+
+// preparations builds one PrepareSpec per profile. Incompatible profiles become
+// CatalogIssues; API, store, and context failures leave the accepted catalog intact.
 func (o *SchedulerService) preparations(
 	ctx context.Context, config SchedulerConfiguration, profiles []serving.Profile,
-) (map[string]servingstate.PrepareSpec, []servingkube.CatalogIssue) {
+) (map[string]servingstate.PrepareSpec, []servingkube.CatalogIssue, error) {
 	preparations := make(map[string]servingstate.PrepareSpec, len(profiles))
 	var issues []servingkube.CatalogIssue
 	for _, profile := range profiles {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		spec, err := o.preparation(ctx, config, profile)
 		if err != nil {
+			var sourceError *preparationSourceError
+			if errors.As(err, &sourceError) {
+				return nil, nil, err
+			}
 			source := strings.SplitN(profile.ID, "/", 3)
 			issues = append(issues, servingkube.CatalogIssue{
 				Source: types.NamespacedName{Namespace: source[0], Name: source[1]},
@@ -44,7 +58,7 @@ func (o *SchedulerService) preparations(
 		}
 		preparations[profile.ID] = spec
 	}
-	return preparations, issues
+	return preparations, issues, ctx.Err()
 }
 
 func (o *SchedulerService) preparation(
@@ -59,6 +73,10 @@ func (o *SchedulerService) preparation(
 	}
 	spec.Config.RuntimeImage, err = o.observer.CurrentRuntimeImage(ctx, &profile)
 	if err != nil {
+		var declarationError *profilerkube.RuntimeDeclarationError
+		if !errors.As(err, &declarationError) {
+			err = &preparationSourceError{err}
+		}
 		return spec, err
 	}
 	spec.Instance.RuntimeImage = spec.Config.RuntimeImage
@@ -77,8 +95,10 @@ func (o *SchedulerService) preparation(
 	if err = servingops.ValidatePreparation(spec); err != nil {
 		return spec, err
 	}
-	_, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw))
-	return spec, err
+	if _, err = o.objects.PutImmutable(ctx, spec.Bundle, bytes.NewReader(raw)); err != nil {
+		return spec, &preparationSourceError{err}
+	}
+	return spec, nil
 }
 
 // Retain both Accepted and Rejected comparisons before publishing the catalog.
@@ -156,7 +176,10 @@ func (o *SchedulerService) measuredPreparation(
 	}
 	node, err := o.kube.CoreV1().Nodes().Get(ctx, p.NodeName, meta.GetOptions{})
 	if err != nil {
-		return spec, err
+		if apierrors.IsNotFound(err) {
+			return spec, err
+		}
+		return spec, &preparationSourceError{err}
 	}
 	if string(node.UID) != p.Condition.NodeUID {
 		return spec, fmt.Errorf("measured Node UID required")

@@ -115,23 +115,21 @@ Unprojectable selections do not fail Refresh or initialization:
 `{source,node,model,powerMode,profileID,reason}`, with reason
 `noMatchingEvidence` or `ambiguousEvidence(n)`. Other selected rows survive.
 
-Refresh boundary audit: catalog profile/trial/state/runtime comparison failures
-already become per-source `InvalidEvidence` insufficiencies; profile reuse
-comparison failures become `ReuseChecks` plus `ProfileReuseRejected`; preparation
-failures become `PreparationUnavailable`; operation/power/occupancy record
-validation failures become `CostIssue`. None aborts the complete refresh.
-Remaining fatal boundaries are required Kubernetes/store listings, cancellation,
-required configuration decode/validation and physical meter binding, power
-observation resource admission, immutable reuse-check persistence, and JSON
-encoding of frozen conditions/reuse checks (non-finite/corrupt internal facts).
-These are IO, integrity or resource-safety failures, not profile/image/CPU/state/
-per-request equality gates.
+Refresh keeps profile/trial/state/runtime incompatibilities as per-source
+`InvalidEvidence`, reuse comparisons as `ReuseChecks`/`ProfileReuseRejected`,
+and incompatible preparations as `PreparationUnavailable`. Operation/power/
+occupancy record validation remains `CostIssue`.
+Required API/store reads, preparation bundle persistence and cancellation abort
+adoption while preserving the accepted controller configuration and source signature.
+A missing measured Node or incompatible declaration remains a profile diagnostic.
+Other fatal boundaries are required configuration decode/validation, physical
+meter binding, power-observation resource admission, immutable reuse-check
+persistence and invalid internal JSON values.
 
 The fixed abort was `kube/catalog_read.go`'s `matches != 1` return, reached from
 `application/scheduler_service.go:211`; missing current profiles no longer
 erase otherwise identified evidence. No other exact-match failure aborts these
-refresh entrypoints. The retained fatal error-return sites (16 including
-propagation sites, not 16 independent root causes) are:
+refresh entrypoints. The earlier boundary audit recorded these source locations:
 
 | File under `internal/serving/` | Lines | Kept fatal, reason |
 |---|---|---|
@@ -147,7 +145,12 @@ Existing nonfatal equality paths remain per-source diagnostics:
 `kube/catalog.go:166–172,346–428` (trial/runtime/CPU/state bindings),
 `kube/catalog_reuse.go:72–98,141–190` (source ID and reuse comparisons),
 `kube/cost.go:124–138,215–226,256–263,382–419` (record/state/cost bindings),
-and `application/profiles.go:35–42` (preparation failures).
+and incompatible preparations in `application/profiles.go`.
+
+Preparation completeness also guards the unchanged-source fast path: a partial
+accepted preparation map is retried by the existing refresh loop. A healthy
+retry can therefore prepare the same profile without changing its request,
+evidence or configuration identity. QPS and refresh time limits are unchanged.
 
 `accepted.dispatchOccupancy[]` is the same immutable list supplied to scheduler
 capture and decisions, with one exact Node/profile/path/batch entry and

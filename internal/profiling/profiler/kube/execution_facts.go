@@ -138,6 +138,15 @@ func (e *declarationSelectionError) Error() string { return e.err.Error() }
 
 func (e *declarationSelectionError) Unwrap() error { return e.err }
 
+// RuntimeDeclarationError reports incompatible current facts, not a failed API read.
+type RuntimeDeclarationError struct {
+	Err error
+}
+
+func (e *RuntimeDeclarationError) Error() string { return e.Err.Error() }
+
+func (e *RuntimeDeclarationError) Unwrap() error { return e.Err }
+
 // ResolveRuntimeImage reads the single current declaration for this execution
 // scope. Replacing the ConfigMap changes future execution, not stored evidence.
 func ResolveRuntimeImage(ctx context.Context, reader client.Reader, options CandidateResolverOptions, deviceClass, node, family, backend string) (string, error) {
@@ -148,7 +157,7 @@ func ResolveRuntimeImage(ctx context.Context, reader client.Reader, options Cand
 	}
 	declaration, err := selectExecutionDeclaration(config, options.ConfigMapKey, deviceClass, node, family, backend)
 	if err != nil {
-		return "", err
+		return "", &RuntimeDeclarationError{Err: err}
 	}
 	return declaration.Runtime.Image, nil
 }
