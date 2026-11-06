@@ -59,7 +59,7 @@ export function SnapshotDetails({snapshot}:{snapshot:SchedulerSnapshot}) {
 }
 
 function CapacityLinks({decision}:{decision:SchedulerDecision}) {
-  return <section className="space-y-2"><PlanSearchEvidence capacity={decision.capacity}/><h3>판단에 참조한 용량 행</h3>{decision.capacity?.workloads?.map(workload=><div key={workload.uid} className="space-y-1"><Link className="break-all" href={capacityPath(workload.uid)}>{workload.uid}</Link>{workload.rows?.map(key=><p key={key}><Link className="break-all" href={capacityPath(workload.uid,key)}>{key}</Link></p>)}</div>)}<Link href={capacityPath()}>용량 계산 근거</Link></section>
+  return <section className="space-y-2"><PlanSearchEvidence capacity={decision.capacity} selectedJoules={(decision.target??decision.keep).expectedJoules}/><h3>판단에 참조한 용량 행</h3>{decision.capacity?.workloads?.map(workload=><div key={workload.uid} className="space-y-1"><Link className="break-all" href={capacityPath(workload.uid)}>{workload.uid}</Link>{workload.rows?.map(key=><p key={key}><Link href={capacityPath(workload.uid,key)}>{key}</Link></p>)}</div>)}<Link href={capacityPath()}>용량 계산 근거</Link></section>
 }
 export function CandidateDetails({candidate,view}:{candidate:SchedulerCandidate;view:SchedulerView}) {
   const {snapshot,decision}=view.state

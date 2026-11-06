@@ -85,6 +85,7 @@ type SchedulerPlanSearch struct {
 	Excluded           map[string]int                        `json:"excluded,omitempty"`
 	ReserveRejections  map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
 	Strategy           string                                `json:"strategy,omitempty"`
+	Key                string                                `json:"key,omitempty"`
 	Pruned             map[string]int                        `json:"pruned,omitempty"`
 	SurrogateEvaluated int                                   `json:"surrogateEvaluated,omitempty"`
 	Finalists          int                                   `json:"finalists,omitempty"`
@@ -99,11 +100,12 @@ type SchedulerPlanSearch struct {
 
 // SchedulerPlanSearchShadow records the independent shadow planner.
 type SchedulerPlanSearchShadow struct {
-	Key       string        `json:"key"`
-	Joules    float64       `json:"joules"`
-	Evaluated int           `json:"evaluated"`
-	Duration  time.Duration `json:"durationNanos"`
-	Fallback  string        `json:"fallback,omitempty"`
+	Key            string        `json:"key"`
+	Joules         float64       `json:"joules"`
+	Evaluated      int           `json:"evaluated"`
+	ExactEvaluated int           `json:"exactEvaluated,omitempty"`
+	Duration       time.Duration `json:"durationNanos"`
+	Fallback       string        `json:"fallback,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -1672,6 +1674,9 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 // The better end of the two starts is the result. At deadline the sweep
 // stops; the best plan set found so far stays and p.searched records the cut.
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
+	if p.settings.PlanSearchStrategy == schedulerPlanSearchShadow {
+		return p.searchShadow(deadline)
+	}
 	if p.settings.PlanSearchStrategy == schedulerPlanSearchV2 {
 		return p.searchV2(deadline)
 	}
