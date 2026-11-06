@@ -24,6 +24,61 @@ func TestProjectWorkloadWindowRecordsStableExternalWorkloadsWithoutRejectingThem
 	}
 }
 
+func TestProjectWorkloadWindowKeepsEquivalentRepresentationsKnown(t *testing.T) {
+	first := projectionWorkloadResult(t)
+	first.InitialActivePods[1].Images = []string{"registry.example/a", "registry.example/z"}
+	first.FinalActivePods[1].Images = []string{"registry.example/z", "registry.example/a"}
+	second := projectionWorkloadResult(t)
+	second.InitialActivePods[1].Images = []string{"registry.example/z", "registry.example/a", "registry.example/z"}
+	second.InitialActivePods[1].Labels = map[string]string{}
+	second.FinalActivePods[1].Images = []string{"registry.example/a", "registry.example/z"}
+	second.InitialActivePods[0], second.InitialActivePods[1] = second.InitialActivePods[1], second.InitialActivePods[0]
+
+	firstWindow, err := projectDefaultWorkloadWindow(&first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondWindow, err := projectDefaultWorkloadWindow(&second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !firstWindow.Known || !secondWindow.Known || firstWindow.EnvironmentIdentity != secondWindow.EnvironmentIdentity {
+		t.Fatalf("equivalent workload facts changed grouping: first=%+v second=%+v", firstWindow, secondWindow)
+	}
+}
+
+func TestProjectWorkloadWindowMarksMissingMembershipEventsUnknown(t *testing.T) {
+	unknown, err := UnknownEnvironmentIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, missingEvent := range []workloadobserver.EventKind{workloadobserver.EventEntered, workloadobserver.EventExited} {
+		t.Run(string(missingEvent), func(t *testing.T) {
+			result := projectionWorkloadResult(t)
+			if missingEvent == workloadobserver.EventEntered {
+				result.InitialActivePods = result.InitialActivePods[:1]
+			} else {
+				result.FinalActivePods = result.FinalActivePods[:1]
+			}
+			verified, err := workloadobserver.VerifyResult(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retained, err := verified.Record()
+			if err != nil {
+				t.Fatal(err)
+			}
+			window, err := projectDefaultWorkloadWindow(&retained)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if window.Known || window.EnvironmentIdentity != unknown {
+				t.Fatalf("unaccounted workload membership claimed a known environment: %+v", window)
+			}
+		})
+	}
+}
+
 func TestProjectWorkloadWindowBindsDifferentStableExternalSets(t *testing.T) {
 	first := projectionWorkloadResult(t)
 	second := projectionWorkloadResult(t)

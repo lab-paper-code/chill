@@ -3,6 +3,7 @@ package projection
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -67,24 +68,40 @@ func projectWorkloadWindow(
 		if event.ObservedAt.Before(runtimeStarted) {
 			continue
 		}
+		applyWorkloadEvent(active, event)
 		if event.ObservedAt.After(runtimeEnded) {
 			// The observer timestamps receipt, not the source-side Pod transition.
 			// Events drained while establishing the causal end fence therefore
 			// cannot be attributed safely to either side of the runtime boundary.
 			endDrainAmbiguous = true
-			break
+			continue
 		}
 		if classify(event.Pod) {
 			externalChanges[event.Pod.UID] = string(event.Kind) + ":" + workloadIdentity(event.Pod)
 		}
 	}
 
-	environmentIdentity, err := workloadEnvironmentIdentity(externalAtStart)
+	// Missing membership events leave the measured window unaccounted for.
+	// Retain the observation, but do not claim a known environment from it.
+	membershipKnown := len(active) == len(result.FinalActivePods)
+	for _, pod := range result.FinalActivePods {
+		if observed, exists := active[pod.UID]; !exists || !workloadobserver.SamePod(observed, pod) {
+			membershipKnown = false
+			break
+		}
+	}
+	var environmentIdentity string
+	var err error
+	if membershipKnown {
+		environmentIdentity, err = workloadEnvironmentIdentity(externalAtStart)
+	} else {
+		environmentIdentity, err = UnknownEnvironmentIdentity()
+	}
 	if err != nil {
 		return workloadWindow{}, err
 	}
 	return workloadWindow{
-		Known:                    result.Continuous && !endDrainAmbiguous,
+		Known:                    result.Continuous && !endDrainAmbiguous && membershipKnown,
 		ConcurrentCHILLWorkloads: sortedValues(concurrent),
 		ExternalWorkloadChanges:  sortedValues(externalChanges),
 		EnvironmentIdentity:      environmentIdentity,
@@ -127,9 +144,11 @@ func workloadEnvironmentIdentity(pods []workloadobserver.Pod) (string, error) {
 	}
 	encoded := make([]string, 0, len(pods))
 	for _, pod := range pods {
+		images := slices.Clone(pod.Images)
+		slices.Sort(images)
 		entry := member{
 			Namespace: pod.Namespace, Owner: pod.Owner, Phase: pod.Phase,
-			Images: pod.Images, Labels: pod.Labels,
+			Images: slices.Compact(images), Labels: pod.Labels,
 		}
 		if pod.Owner == nil {
 			entry.Pod = &podIdentity{Name: pod.Name, UID: pod.UID}
