@@ -79,7 +79,7 @@ func (s *prejobReadStore) OpenLocation(ctx context.Context, location evidencesto
 
 func TestInspectPrejobFailureUsesActualFrozenChildPreparation(t *testing.T) {
 	for _, duration := range []int{2027, 1792, 1970} {
-		for _, defect := range []string{"", "job", "foreign-owner", "api", "store", "unknown", "no-bucket", "result", "missing-plan", "malformed-plan", "stale-idle", "started", "node-uid", "policy-invalid", "active-evidence", prejobActiveBucket, prejobResultBucket, prejobActiveBodyError, prejobResultBodyError, prejobActiveMissingKey, prejobResultMissingKey} {
+		for _, defect := range []string{"", "job", "foreign-owner", "api", "store", "unknown", "no-bucket", "result", "missing-plan", "malformed-plan", "stale-idle", "invalid-idle", "invalid-active", "started", "node-uid", "policy-invalid", "active-evidence", prejobActiveBucket, prejobResultBucket, prejobActiveBodyError, prejobResultBodyError, prejobActiveMissingKey, prejobResultMissingKey} {
 			t.Run(fmt.Sprintf("%d/%s", duration, defect), func(t *testing.T) {
 				ctx := context.Background()
 				parent, _, active, store, objects, ports, _ := newPrejobFixture(t, duration, defect)
@@ -218,6 +218,9 @@ func newPrejobFixture(t *testing.T, duration int, defect string) (*edge.BatchEne
 		if defect == "stale-idle" && attempt == 1 {
 			run.Status.ObservedGeneration = 0
 		}
+		if defect == "invalid-idle" && attempt == 1 {
+			metav1.SetMetaDataAnnotation(&run.ObjectMeta, profilingrun.InvalidAnnotation, "")
+		}
 		objects = append(objects, run)
 	}
 	report, err := os.ReadFile("../../profiler/testdata/candidate-report.json")
@@ -254,6 +257,8 @@ func newPrejobFixture(t *testing.T, duration int, defect string) (*edge.BatchEne
 		active.Status.Job = &edge.ProfilingRunObjectReference{Name: "old", UID: "old"}
 	case "node-uid":
 		node.UID = "replacement"
+	case "invalid-active":
+		metav1.SetMetaDataAnnotation(&active.ObjectMeta, profilingrun.InvalidAnnotation, "")
 	case prejobActiveBucket, prejobActiveBodyError, prejobActiveMissingKey, prejobResultBucket, prejobResultBodyError, prejobResultMissingKey:
 		setPrejobAbsenceReply(store, active, defect)
 	}

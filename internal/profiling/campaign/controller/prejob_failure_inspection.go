@@ -214,6 +214,9 @@ func inspectPrejobTrials(ctx context.Context, runs []edge.ProfilingRun, parent *
 	var active *edge.ProfilingRun
 	for i := range runs {
 		run := &runs[i]
+		if _, invalid := run.Annotations[profilingrun.InvalidAnnotation]; invalid {
+			return nil, errors.New("RunInvalidated")
+		}
 		trial, err := projectOwnedTrial(parent, run)
 		if err != nil || run.Generation < 1 || run.UID == "" || run.ResourceVersion == "" || !run.DeletionTimestamp.IsZero() || run.Spec.MeasurementStateSpec != parent.Spec.State {
 			return nil, errors.New("RunIdentityMismatch")
