@@ -17,7 +17,7 @@ const updateState=(read:()=>live.LiveState,write:(state:live.LiveState)=>void)=>
 
 test("recent archive stops at five pages and passes the opaque cursor with identical bounds",async()=>{
   let state=live.initialLiveState();const paths:string[]=[],abort=new AbortController()
-  await history.seedRecentLiveEvents(async(path,signal)=>{assert.equal(signal,abort.signal);paths.push(path);return page(`opaque+/=${paths.length}`)},updateState(()=>state,value=>state=value),abort.signal,now)
+  await history.seedRecentLiveEvents(async(path,signal)=>{assert.equal(signal,abort.signal);paths.push(path);return {...page(`opaque+/=${paths.length}`),events:[{...event,seq:10,extension:true}],extension:true}},updateState(()=>state,value=>state=value),abort.signal,now)
   assert.equal(paths.length,5)
   for(const [index,path] of paths.entries()){
     const url=new URL(path,"http://test/")
@@ -66,7 +66,7 @@ test("archive cancellation discards late results and never starts another page",
 
 test("archive rejects invalid pages instead of silently counting or dropping malformed facts",async()=>{
   for(const invalid of [
-    {...page(),events:[{...event,seq:10}]},
+    {...page(),events:[{...event,cluster:{...event.cluster,pod:{uid:"pod-a",ready:true}}}]},
     {...page(),coverage:{...coverage,gaps:[{from:to,to:from,stream:"cluster",reason:"bad"}]}},
     {...page(),from:to},
     {...page(),events:Array.from({length:101},()=>event)},

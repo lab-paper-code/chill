@@ -123,7 +123,7 @@ function consumer() {
 
 const source = "apiVersion: edge.dacs.io/v1alpha1\nkind: BatchEnergyOptimization\nmetadata: {name: operator-request, namespace: lab, labels: {campaign: operator}, annotations: {source: producer}}\nspec:\n  activeProtocol: {workload: provided-service, durationSeconds: 17}\n  retryLimit: 2\n  producerExtension: {enabled: false, limit: 0}\n"
 const check = /선택 사전검사|검사 중/
-const submit = /측정 요청 제출/
+const submit = /측정 요청 제출|제출 중/
 const lookup = /접수 기록 조회/
 function prepare(c: ConsumerActions) { c.view(); c.paste(source); c.view(); c.review(); c.view() }
 function pass(c: ConsumerActions) {
