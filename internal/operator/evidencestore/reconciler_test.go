@@ -29,7 +29,7 @@ func TestReconcileCreatesRetainedAndReplaceableResourcesInOrder(t *testing.T) {
 	reconciler := &Reconciler{
 		Client:  k8sClient,
 		Scheme:  scheme,
-		Options: Options{SystemName: system.Name, Namespace: "operator-system"},
+		Options: Options{SystemName: system.Name, Namespace: "operator-system"}.Defaulted(),
 	}
 
 	result, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: system.Name}})
@@ -71,7 +71,7 @@ func TestReconcileStopsBeforeMutationWhenConfigIsMissing(t *testing.T) {
 	scheme := runtimeTestScheme(t)
 	system := enabledEvidenceStoreSystem()
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system).Build()
-	reconciler := &Reconciler{Client: k8sClient, Scheme: scheme, Options: Options{Namespace: "chill-system"}}
+	reconciler := &Reconciler{Client: k8sClient, Scheme: scheme, Options: Options{Namespace: "chill-system"}.Defaulted()}
 
 	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: system.Name}}); err == nil {
 		t.Fatal("Reconcile() error = nil, want missing ConfigMap error")
@@ -114,7 +114,7 @@ func TestReconcileDisableDeletesOnlyReplaceableResources(t *testing.T) {
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		system, secret, claim, deployment, service, job,
 	).Build()
-	reconciler := &Reconciler{Client: k8sClient, Scheme: scheme, Options: Options{Namespace: "chill-system"}}
+	reconciler := &Reconciler{Client: k8sClient, Scheme: scheme, Options: Options{Namespace: "chill-system"}.Defaulted()}
 
 	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{Name: system.Name}}); err != nil {
 		t.Fatal(err)

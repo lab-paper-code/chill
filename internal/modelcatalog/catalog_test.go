@@ -89,11 +89,8 @@ func TestFirstfloorCatalogBackendArtifactRelation(t *testing.T) {
 					SourceArtifact: "source", TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1, 2},
 				}
 			}
-			source := artifact
-			source.Name = "source"
-			source.Derivation = nil
 			model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
-				Artifacts: []edgev1alpha1.ModelArtifact{source, artifact},
+				Artifacts: []edgev1alpha1.ModelArtifact{artifact},
 				ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
 					Name: "native", Artifact: "model", Runtime: edgev1alpha1.ModelRuntimeRequirement{
 						Family: "firstfloor", Backend: test.backend,
@@ -108,6 +105,40 @@ func TestFirstfloorCatalogBackendArtifactRelation(t *testing.T) {
 	}
 }
 
+func TestSelectDerivedExecutableDoesNotResolveProvenance(t *testing.T) {
+	for _, source := range []string{"model", "external-onnx", ""} {
+		t.Run(source, func(t *testing.T) {
+			model := &edgev1alpha1.ModelSpec{Spec: edgev1alpha1.ModelSpecSpec{
+				Artifacts: []edgev1alpha1.ModelArtifact{{
+					Name: "model", Format: "rknn",
+					Source: edgev1alpha1.ModelArtifactSource{
+						Image: "artifact", Architecture: "arm64", Files: []string{"/artifact/./model.rknn"},
+					},
+					Input: &edgev1alpha1.ModelArtifactInputContract{Tensors: []edgev1alpha1.ModelInputTensor{
+						{Name: "input", Datatype: "FP32", SampleShape: []int32{224, 224, 3}},
+					}},
+					Derivation: &edgev1alpha1.ModelArtifactDerivation{
+						SourceArtifact: source, TargetPlatform: "rk3588", DeclaredBatchSizes: []int32{1},
+					},
+				}},
+				ExecutionPaths: []edgev1alpha1.ModelExecutionPath{{
+					Name: "native", Artifact: "model", Runtime: edgev1alpha1.ModelRuntimeRequirement{
+						Family: "firstfloor", Backend: "rknnlite",
+						Settings: &edgev1alpha1.ModelRuntimeSettings{Firstfloor: &edgev1alpha1.FirstfloorRuntimeSettings{MaxBatchSize: 1, MaxQueueSize: 32}},
+					},
+				}},
+			}}
+			if _, _, err := SelectModelPath(model, "native"); err != nil {
+				t.Fatal(err)
+			}
+			model.Spec.ExecutionPaths[0].Artifact = "missing"
+			if _, _, err := SelectModelPath(model, "native"); err == nil {
+				t.Fatal("missing executable artifact accepted")
+			}
+		})
+	}
+}
+
 func TestArtifactSourceFiles(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -117,7 +148,8 @@ func TestArtifactSourceFiles(t *testing.T) {
 		{"several files", []string{"/artifact/vision.onnx", "/artifact/decoder.onnx"}, false},
 		{"no files", nil, true},
 		{"relative", []string{"artifact/model.onnx"}, true},
-		{"unclean", []string{"/artifact/../model.onnx"}, true},
+		{"parent segment", []string{"/artifact/../model.onnx"}, false},
+		{"dot segment", []string{"/artifact/./model.onnx"}, false},
 		{"duplicate basename", []string{"/a/model.onnx", "/b/model.onnx"}, true},
 		{"shared session stem", []string{"/artifact/model.onnx", "/artifact/model.onnx_data"}, true},
 		{"dotted stems differ", []string{"/artifact/model.tar.gz", "/artifact/model.tar"}, false},

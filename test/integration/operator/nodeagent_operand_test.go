@@ -60,7 +60,7 @@ var _ = Describe("Node agent operand reconciliation", func() {
 
 		reconciler := &nodeagent.Reconciler{
 			Client: k8sClient, Scheme: scheme.Scheme,
-			Options: nodeagent.Options{SystemName: systemName, Namespace: namespaceName},
+			Options: nodeagent.Options{SystemName: systemName, Namespace: namespaceName}.Defaulted(),
 		}
 		request := ctrl.Request{NamespacedName: types.NamespacedName{Name: systemName}}
 		_, err = reconciler.Reconcile(ctx, request)

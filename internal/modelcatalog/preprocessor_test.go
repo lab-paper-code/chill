@@ -10,7 +10,7 @@ import (
 func TestPreprocessorRejectsDuplicateTarget(t *testing.T) {
 	artifact := edgev1alpha1.PreprocessorArtifact{
 		Target: edgev1alpha1.PreprocessorTarget{Model: "smolvlm2", Artifact: "onnx-fp32"},
-		Source: edgev1alpha1.PreprocessorArtifactSource{Image: "carrier", Architecture: "arm64", Path: "/artifact/smolvlm2-vqa"},
+		Source: edgev1alpha1.PreprocessorArtifactSource{Image: "carrier", Architecture: "arm64", Path: "/artifact/./smolvlm2-vqa"},
 	}
 	p := &edgev1alpha1.Preprocessor{Spec: edgev1alpha1.PreprocessorSpec{
 		Input:     edgev1alpha1.RawInputContract{Fields: []edgev1alpha1.RawField{{Name: "image", Format: "JPEG", MaxBytes: 4096}}},
@@ -68,5 +68,30 @@ func TestRawFieldNamesAreOnePathElement(t *testing.T) {
 		if err := ValidatePreprocessor(p); (err == nil) != valid {
 			t.Errorf("ValidatePreprocessor(output field %q) = %v, want valid %t", name, err, valid)
 		}
+	}
+}
+
+func TestCarrierPathsRequireAbsolutePaths(t *testing.T) {
+	for _, dir := range []string{"/artifact/./data", "/artifact/../data", "artifact/data"} {
+		t.Run(dir, func(t *testing.T) {
+			d := &edgev1alpha1.Dataset{Spec: edgev1alpha1.DatasetSpec{
+				Source: edgev1alpha1.DatasetSource{Image: "carrier", Path: dir},
+				Fields: []edgev1alpha1.RawField{{Name: "question", Format: "UTF8", MaxBytes: 16}},
+			}}
+			p := &edgev1alpha1.Preprocessor{Spec: edgev1alpha1.PreprocessorSpec{
+				Input:  edgev1alpha1.RawInputContract{Fields: d.Spec.Fields},
+				Output: edgev1alpha1.RawOutputContract{Fields: []edgev1alpha1.RawOutputField{{Name: "answer", Format: "UTF8"}}},
+				Artifacts: []edgev1alpha1.PreprocessorArtifact{{
+					Target: edgev1alpha1.PreprocessorTarget{Model: "m", Artifact: "a"},
+					Source: edgev1alpha1.PreprocessorArtifactSource{Image: "carrier", Architecture: "arm64", Path: dir},
+				}},
+			}}
+			wantError := dir == "artifact/data"
+			for _, err := range []error{ValidateDataset(d), ValidatePreprocessor(p)} {
+				if (err != nil) != wantError {
+					t.Fatalf("carrier path %q: error = %v, want error %t", dir, err, wantError)
+				}
+			}
+		})
 	}
 }

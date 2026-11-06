@@ -3,7 +3,6 @@ package modelcatalog
 import (
 	"errors"
 	"fmt"
-	"path"
 	"strings"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -132,8 +131,8 @@ func validateCarrier(dir string, identity ...string) error {
 			return errors.New("source values are required without surrounding whitespace")
 		}
 	}
-	if !artifactPath.MatchString(dir) || path.Clean(dir) != dir {
-		return errors.New("path must be a clean absolute container path")
+	if !artifactPath.MatchString(dir) {
+		return errors.New("path must be an absolute container path")
 	}
 	return nil
 }

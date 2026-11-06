@@ -9,6 +9,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
@@ -20,6 +21,17 @@ func TestBuildAgentDaemonSet(t *testing.T) {
 	t.Parallel()
 	config := validConfig()
 	config.Discovery.ExcludeNodeNames = []string{"bad-edge"}
+	config.Discovery.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		PreferredDuringSchedulingIgnoredDuringExecution: []corev1.PreferredSchedulingTerm{{
+			Weight: 100,
+			Preference: corev1.NodeSelectorTerm{MatchExpressions: []corev1.NodeSelectorRequirement{{
+				Key: hostnameLabelKey, Operator: corev1.NodeSelectorOpIn, Values: []string{"bad-edge", "good-edge"},
+			}}},
+		}},
+	}}
+	if err := config.Validate(true); err != nil {
+		t.Fatal(err)
+	}
 	daemonSet := buildAgentDaemonSet(validOptions(), config)
 	spec := daemonSet.Spec.Template.Spec
 	if daemonSet.Name != "chill-node-agent" || daemonSet.Namespace != "chill-system" ||
@@ -48,6 +60,25 @@ func TestBuildAgentDaemonSet(t *testing.T) {
 	if spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.
 		NodeSelectorTerms[0].MatchExpressions[0].Values[0] != "bad-edge" {
 		t.Fatalf("Affinity = %#v, want excluded node", spec.Affinity)
+	}
+	affinity := spec.Affinity.NodeAffinity
+	selector := &metav1.LabelSelector{}
+	for _, requirement := range append(
+		affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions,
+		affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchExpressions...,
+	) {
+		selector.MatchExpressions = append(selector.MatchExpressions, metav1.LabelSelectorRequirement{
+			Key: requirement.Key, Operator: metav1.LabelSelectorOperator(requirement.Operator), Values: requirement.Values,
+		})
+	}
+	nodeSelector, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"good-edge", "bad-edge", "other-edge"} {
+		if got := nodeSelector.Matches(labels.Set{hostnameLabelKey: name}); got != (name == "good-edge") {
+			t.Errorf("allowed preference for %s = %t", name, got)
+		}
 	}
 }
 
@@ -139,32 +170,17 @@ func TestActuationDaemonSetKeepsActuatorPrivileges(t *testing.T) {
 
 func TestActuationDaemonSetUpdateStrategy(t *testing.T) {
 	t.Parallel()
-	for name, strategy := range map[string]appsv1.DaemonSetUpdateStrategy{
-		"OnDelete": {Type: appsv1.OnDeleteDaemonSetStrategyType},
-		"missing":  {},
-		"unknown":  {Type: "Paused"},
-		"OnDelete with rolling options": {
-			Type:          appsv1.OnDeleteDaemonSetStrategyType,
-			RollingUpdate: &appsv1.RollingUpdateDaemonSet{},
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			config := validConfig()
-			config.Actuation.UpdateStrategy = strategy
-			daemonSet, err := buildActuationDaemonSet(validOptions(), config, validClasses())
-			if name != "OnDelete" {
-				if err == nil || !strings.Contains(err.Error(), "updateStrategy") {
-					t.Fatalf("invalid strategy returned %v", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(daemonSet.Spec.UpdateStrategy, strategy) || daemonSet.Spec.UpdateStrategy.RollingUpdate != nil {
-				t.Fatalf("OnDelete strategy changed: %#v", daemonSet.Spec.UpdateStrategy)
-			}
-		})
+	config := validConfig()
+	config.Actuation.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{Type: appsv1.OnDeleteDaemonSetStrategyType}
+	if err := config.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	daemonSet, err := buildActuationDaemonSet(validOptions(), config, validClasses())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if daemonSet.Spec.UpdateStrategy.Type != appsv1.OnDeleteDaemonSetStrategyType || daemonSet.Spec.UpdateStrategy.RollingUpdate != nil {
+		t.Fatalf("OnDelete strategy changed: %#v", daemonSet.Spec.UpdateStrategy)
 	}
 }
 
@@ -206,6 +222,16 @@ func TestConfigRejectsInvalidContract(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
 		"API token":  func(config *Config) { config.KubeAPITokenFile = "" },
 		"API server": func(config *Config) { config.KubeAPIServer = " https://kubernetes.example:6443" },
+		"missing update strategy": func(config *Config) {
+			config.Actuation.UpdateStrategy = appsv1.DaemonSetUpdateStrategy{}
+		},
+		"unknown update strategy": func(config *Config) {
+			config.Actuation.UpdateStrategy.Type = "Paused"
+		},
+		"OnDelete with rolling options": func(config *Config) {
+			config.Actuation.UpdateStrategy.Type = appsv1.OnDeleteDaemonSetStrategyType
+			config.Actuation.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateDaemonSet{}
+		},
 		"discovery exclude with required affinity": func(config *Config) {
 			config.Discovery.ExcludeNodeNames = []string{"bad-edge"}
 			config.Discovery.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{

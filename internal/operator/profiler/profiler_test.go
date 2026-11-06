@@ -197,7 +197,7 @@ func TestReconcileCreatesAndDeletesOwnedDeployment(t *testing.T) {
 	configMap.Data = map[string]string{DefaultConfigKey: string(configData)}
 
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(system, configMap).Build()
-	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: Options{SystemName: testSystemName, Namespace: testManagementNamespace}}
+	reconciler := &Reconciler{Client: client, Scheme: scheme, Options: validOptions()}
 	request := ctrl.Request{NamespacedName: types.NamespacedName{Name: testSystemName}}
 	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
 		t.Fatalf("Reconcile(create): %v", err)

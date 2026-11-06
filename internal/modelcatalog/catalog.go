@@ -4,7 +4,6 @@ package modelcatalog
 import (
 	"errors"
 	"fmt"
-	"path"
 	"regexp"
 	"strings"
 
@@ -78,14 +77,6 @@ func Validate(model *edgev1alpha1.ModelSpec) error {
 		} else if artifact.Input != nil {
 			return fmt.Errorf("artifact %q declares input; preprocessor artifacts define %s inputs", artifact.Name, artifact.Format)
 		}
-		if artifact.Derivation != nil {
-			if artifact.Derivation.SourceArtifact == artifact.Name {
-				return fmt.Errorf("derived artifact %q references itself as source", artifact.Name)
-			}
-			if _, exists := artifacts[artifact.Derivation.SourceArtifact]; !exists {
-				return fmt.Errorf("derived artifact %q references missing source artifact %q", artifact.Name, artifact.Derivation.SourceArtifact)
-			}
-		}
 	}
 	seenPaths := make(map[string]struct{}, len(model.Spec.ExecutionPaths))
 	for _, executionPath := range model.Spec.ExecutionPaths {
@@ -153,8 +144,8 @@ func validateSource(source edgev1alpha1.ModelArtifactSource, rknn bool) error {
 		return errors.New("files requires at least one model file")
 	}
 	for _, file := range source.Files {
-		if !artifactPath.MatchString(file) || path.Clean(file) != file {
-			return fmt.Errorf("file %q must be a clean absolute container path", file)
+		if !artifactPath.MatchString(file) {
+			return fmt.Errorf("file %q must be an absolute container path", file)
 		}
 	}
 	return modelcompat.ValidateModelFileNames(source.Files, rknn)

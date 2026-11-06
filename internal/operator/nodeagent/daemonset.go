@@ -66,9 +66,6 @@ func buildActuationDaemonSet(
 	config Config,
 	classes []edgev1alpha1.DeviceClass,
 ) (*appsv1.DaemonSet, error) {
-	if err := config.Validate(true); err != nil {
-		return nil, err
-	}
 	actuation := config.Actuation
 	affinity, err := actuationAffinity(classes, actuation.Policies)
 	if err != nil {

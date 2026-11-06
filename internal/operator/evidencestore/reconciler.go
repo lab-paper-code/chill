@@ -31,9 +31,6 @@ type Reconciler struct {
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	options := r.Options
-	if err := options.DefaultAndValidate(); err != nil {
-		return ctrl.Result{}, err
-	}
 	if req.Name == "" {
 		req.Name = options.SystemName
 	}

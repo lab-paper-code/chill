@@ -24,7 +24,7 @@ var _ = Describe("ModelSpec API", func() {
 		})
 	})
 
-	It("accepts a derived artifact", func() {
+	DescribeTable("accepts optional derived-artifact provenance", func(source string) {
 		ctx := context.Background()
 		model := validModelSpec(uniqueModelSpecName("derived"))
 		model.Spec.Artifacts = append(model.Spec.Artifacts, edgev1alpha1.ModelArtifact{
@@ -39,12 +39,17 @@ var _ = Describe("ModelSpec API", func() {
 			},
 			Derivation: validDerivedArtifact(),
 		})
+		model.Spec.Artifacts[1].Derivation.SourceArtifact = source
 
 		Expect(k8sClient.Create(ctx, model)).To(Succeed())
 		DeferCleanup(func() {
 			_ = k8sClient.Delete(ctx, model)
 		})
-	})
+	},
+		Entry("external source", "external-onnx"),
+		Entry("self source", "mobilenet-v2-050-rk3588-bs1"),
+		Entry("omitted source", ""),
+	)
 
 	DescribeTable("rejects structurally invalid catalog fields",
 		func(mutate func(*edgev1alpha1.ModelSpec)) {
@@ -82,10 +87,6 @@ var _ = Describe("ModelSpec API", func() {
 		}),
 		Entry("duplicate artifact name", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts = append(model.Spec.Artifacts, model.Spec.Artifacts[0])
-		}),
-		Entry("empty derived source artifact", func(model *edgev1alpha1.ModelSpec) {
-			model.Spec.Artifacts[0].Derivation = validDerivedArtifact()
-			model.Spec.Artifacts[0].Derivation.SourceArtifact = ""
 		}),
 		Entry("empty derived target platform", func(model *edgev1alpha1.ModelSpec) {
 			model.Spec.Artifacts[0].Derivation = validDerivedArtifact()

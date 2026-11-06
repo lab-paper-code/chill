@@ -111,7 +111,7 @@ func newProfilerIntegrationReconciler(systemName, namespace string) *operatorpro
 		Options: operatorprofiler.Options{
 			SystemName: systemName,
 			Namespace:  namespace,
-		},
+		}.Defaulted(),
 	}
 }
 

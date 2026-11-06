@@ -6,8 +6,6 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- $nodeAgentPlaceholderRepository := "chill/node-agent" -}}
-{{- $nodeAgentPlaceholderTag := "latest" -}}
 {{- $nodeAgentImageTag := include "chill.nodeAgentImageTag" . -}}
 {{- $operatorImageTag := include "chill.operatorImageTag" . -}}
 {{- $profilerImageTag := include "chill.profilerImageTag" . -}}
@@ -282,17 +280,11 @@
 {{- if empty .Values.nodeAgent.updateStrategy.type -}}
 {{- fail "nodeAgent.updateStrategy.type must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
-{{- if and .Values.nodeAgent.excludeNodeNames .Values.nodeAgent.affinity.nodeAffinity -}}
-{{- fail "nodeAgent.excludeNodeNames cannot be used together with nodeAgent.affinity.nodeAffinity" -}}
-{{- end -}}
 {{- if empty .Values.nodeAgent.kubernetesClient.tokenFile -}}
 {{- fail "nodeAgent.kubernetesClient.tokenFile must not be empty when nodeAgent.enabled=true" -}}
 {{- end -}}
 {{- if empty .Values.nodeAgent.kubernetesClient.caFile -}}
 {{- fail "nodeAgent.kubernetesClient.caFile must not be empty when nodeAgent.enabled=true" -}}
-{{- end -}}
-{{- if and (eq .Values.nodeAgent.image.repository $nodeAgentPlaceholderRepository) (eq $nodeAgentImageTag $nodeAgentPlaceholderTag) (ne .Values.nodeAgent.image.pullPolicy "Never") -}}
-{{- fail "nodeAgent image chill/node-agent:latest is a local development placeholder, not a published runtime image; set nodeAgent.image.repository/tag to a published image or use nodeAgent.image.pullPolicy=Never with a node-local image" -}}
 {{- end -}}
 {{- if empty .Values.nodeAgent.sources -}}
 {{- fail "nodeAgent.sources must contain at least one source when nodeAgent.enabled=true" -}}

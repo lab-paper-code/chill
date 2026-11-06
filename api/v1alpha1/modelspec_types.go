@@ -38,8 +38,7 @@ type ModelArtifact struct {
 	// +optional
 	Input *ModelArtifactInputContract `json:"input,omitempty"`
 
-	// Derivation binds a derived executable to its source artifact and conversion settings.
-	// It is absent for canonical source artifacts.
+	// Derivation records provenance and executable conversion settings.
 	// +optional
 	Derivation *ModelArtifactDerivation `json:"derivation,omitempty"`
 }
@@ -54,7 +53,7 @@ type ModelArtifactSource struct {
 	// +kubebuilder:validation:MinLength=1
 	Architecture string `json:"architecture"`
 
-	// Files are the clean absolute paths of every model file in the carrier
+	// Files are the absolute paths of every model file in the carrier
 	// image. Basenames are unique; the runtime loads all files together.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:Pattern=`^/[A-Za-z0-9._/-]+$`
@@ -63,10 +62,10 @@ type ModelArtifactSource struct {
 
 // ModelArtifactDerivation identifies how one derived artifact was produced.
 type ModelArtifactDerivation struct {
-	// SourceArtifact references the source ModelArtifact name in this ModelSpec.
-	// Reference resolution is semantic validation, not OpenAPI structure.
-	// +kubebuilder:validation:MinLength=1
-	SourceArtifact string `json:"sourceArtifact"`
+	// SourceArtifact records the source artifact name as optional provenance.
+	// The source need not be declared in this ModelSpec.
+	// +optional
+	SourceArtifact string `json:"sourceArtifact,omitempty"`
 
 	// TargetPlatform is the converter target, such as rk3588.
 	// +kubebuilder:validation:MinLength=1

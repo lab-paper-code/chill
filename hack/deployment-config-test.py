@@ -47,7 +47,16 @@ render = subprocess.check_output([
     "--set-string", f"servingEntrypoint.namespace={namespace}",
     "--set-string", f"servingEntrypoint.scheduler.configMap={name}",
     "--set-string", f"servingEntrypoint.scheduler.key={key}",
+    "--set-string", "nodeAgent.image.repository=chill/node-agent",
+    "--set-string", "nodeAgent.image.tag=latest",
+    "--set-string", "nodeAgent.image.pullPolicy=Always",
+    "--set-string", "nodeAgent.excludeNodeNames[0]=bad-edge",
+    "--set", "nodeAgent.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight=100",
+    "--set-string", "nodeAgent.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0].key=kubernetes.io/hostname",
+    "--set-string", "nodeAgent.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0].operator=In",
+    "--set-string", "nodeAgent.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0].values[0]=good-edge",
 ], cwd=root, text=True)
+print("chart accepts node-agent image spelling and preferred affinity with exclusions")
 # Reject CPU re-injection at the chart boundary, including explicit zero quantities.
 for component in ("operator", "profiler", "query", "servingEntrypoint", "dashboard", "nodeAgent", "nodeAgent.actuation"):
     for kind in ("requests", "limits"):

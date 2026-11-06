@@ -39,9 +39,6 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=create;delete;get;list;patch;update;watch
 
 func (r *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
-	if err := r.Options.DefaultAndValidate(); err != nil {
-		return ctrl.Result{}, err
-	}
 	if request.Name == "" {
 		request.Name = r.Options.SystemName
 	}
