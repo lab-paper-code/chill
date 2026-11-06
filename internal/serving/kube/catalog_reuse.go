@@ -128,14 +128,13 @@ func decodeProfileReuseRequest(raw string) (profileReuseRequest, error) {
 }
 
 func reuseCondition(condition profilederivation.CurvePlanSpec) profilederivation.CurvePlanSpec {
+	condition = profilederivation.PerformanceCondition(condition)
 	condition.Name, condition.NodeUID = "", ""
 	condition.RuntimeImage = ""
 	condition.RuntimeVersion = ""
 	condition.MetricSource = profilederivation.CurveMetricSourceContract{}
-	condition.Actor = profilederivation.PerformanceCondition(condition).Actor
 	condition.Actor.GPUUUID = ""
-	// The command is derived from the recipe; normalize its physical GPU
-	// argument too, while retaining semantic runtime and warmup arguments.
+	// Retain the selected backend/model command while normalizing its physical GPU.
 	condition.Actor.BuildRunnerCommand()
 	for _, protocol := range []*profilederivation.CurveProtocolContract{&condition.ActiveProtocol, &condition.IdleProtocol} {
 		protocol.SLOPercentile, protocol.MinServiceSamples, protocol.SLOTargetLatencyNanos = 0, 0, 0

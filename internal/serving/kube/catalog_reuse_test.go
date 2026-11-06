@@ -81,14 +81,9 @@ func TestProfileReuseNormalizesPhysicalGPUCommandWithoutDroppingRecipe(t *testin
 		mutate func(*serving.Profile)
 	}{
 		{"matching", func(*serving.Profile) {}},
-		{"warmup-iterations", func(p *serving.Profile) { p.Condition.Actor.WarmupIterations++ }},
-		{"warmup-batches", func(p *serving.Profile) { p.Condition.Actor.WarmupBatchSizes = []int{1, 2} }},
 		{"backend", func(p *serving.Profile) { p.Condition.Actor.Backend = "rknnlite" }},
 		{"artifact", func(p *serving.Profile) { p.Condition.Actor.ArtifactImage += reuseDifferentSuffix }},
 		{"preprocessor", func(p *serving.Profile) { p.Condition.Actor.PreprocessorPath += reuseDifferentSuffix }},
-		{"runtime-package", func(p *serving.Profile) {
-			p.Condition.Actor.RuntimePackages = map[string]string{"onnxruntime-gpu": "different"}
-		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			source, target := reuseProfilesFixture(t)
@@ -198,6 +193,13 @@ func TestProfileReuseRetainsCompatibleRuntimeMetadataChanges(t *testing.T) {
 	target.RuntimeMetadata.AvailableProviders = []string{"CUDAExecutionProvider"}
 	target.RuntimeMetadata.WarmupIterations++
 	target.RuntimeMetadata.InitializedBatches = []int{1, 2}
+	target.Condition.Actor.WarmupIterations++
+	target.Condition.Actor.WarmupBatchSizes = []int{1, 2}
+	target.Condition.Actor.RuntimePackages = map[string]string{"onnxruntime-gpu": "new-observation"}
+	target.Condition.Actor.BuildRunnerCommand()
+	if dataset := target.Condition.ActiveProtocol.Dataset; dataset != nil {
+		dataset.UID = "new-dataset-observation"
+	}
 	view := reuseView(t, source, target, .05)
 	if len(view.Profiles) != 2 || view.Profiles[1].Reuse == nil ||
 		view.Profiles[1].RuntimeMetadata.GPUUUID != reuseTargetGPU ||

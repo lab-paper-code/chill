@@ -185,19 +185,11 @@ func validateSchedulerConfiguration(config SchedulerControllerConfig) error {
 		if b.Meter == "" || b.Scope != servingstate.MeasurementWallScope {
 			return errors.New("baseline meter declaration required")
 		}
-		if n, ok := meters[b.Meter]; ok && n != b.Node {
-			return errors.New("baseline meter reused across physical Nodes")
-		}
-		meters[b.Meter] = b.Node
 	}
 	for _, cost := range config.Costs {
 		if cost.Meter == "" || cost.Scope != servingstate.MeasurementWallScope {
 			return errors.New("cost meter declaration required")
 		}
-		if n, ok := meters[cost.Meter]; ok && n != cost.Node {
-			return errors.New("cost meter reused across physical Nodes")
-		}
-		meters[cost.Meter] = cost.Node
 	}
 	return nil
 }

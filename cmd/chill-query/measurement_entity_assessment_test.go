@@ -228,7 +228,8 @@ func TestOperationAssessmentRequiresStoredAcceptedSteps(t *testing.T) {
 	}
 	duration, joules := int64(100), 4.0
 	steps := []servingkube.OperationStepProjection{{
-		OperationID: "uid.0.idle", Verdict: queryapi.MeasurementVerdictAccepted, DurationNanos: &duration, WallJoules: &joules,
+		OperationID: "uid.0.idle", Verdict: queryapi.MeasurementVerdictAccepted,
+		DurationNanos: &duration, WallJoules: &joules,
 	}}
 	if got := queryapi.AssessOperationCost(
 		cr,

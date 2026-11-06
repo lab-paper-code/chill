@@ -1188,16 +1188,16 @@ func assertPendingPhysicalCapture(t *testing.T, controller *SchedulerController,
 	}
 }
 
-func TestPolicyAckPendingDoesNotMaskNativeReadOrMetadataFailure(t *testing.T) {
-	for _, cause := range []string{"metadata", "read"} {
+func TestPolicyAckPendingDoesNotMaskNativeReadOrModelFailure(t *testing.T) {
+	for _, cause := range []string{"model", "read"} {
 		t.Run(cause, func(t *testing.T) {
 			var failed atomic.Bool
 			controller, _ := tickReadySubsetController(t, func(_ int, state *native.State) {
 				if !failed.Load() {
 					return
 				}
-				if cause == "metadata" {
-					state.Metadata.Runtime.RuntimeVersion = ""
+				if cause == "model" {
+					state.Metadata.Model = "wrong-model"
 				} else {
 					state.At = time.Time{}
 				}

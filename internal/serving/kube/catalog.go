@@ -314,7 +314,6 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 		return serving.Profile{}, nil, err
 	}
 	resultReference := retained.ResultIdentity
-	state := campaign.Spec.State
 	plan := retained.Plan
 	condition := plan.Shared()
 	discovery, sequential, err := batchenergyoptimization.DecodeDiscoveryResult(retained.Result, plan.PlannedBatchSizes())
@@ -364,7 +363,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	if err != nil {
 		return serving.Profile{}, nil, fmt.Errorf("restore measured idle baseline: %w", err)
 	}
-	_, idleRaw, err := idle[0].Records()
+	idleExecution, idleRaw, err := idle[0].Records()
 	if err != nil {
 		return serving.Profile{}, nil, err
 	}
@@ -375,6 +374,12 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	for _, verified := range active {
 		execution, raw, err := verified.Records()
 		if err != nil {
+			return serving.Profile{}, nil, err
+		}
+		if err := profilerprojection.ValidateCurvePlanRunConfigs(
+			execution.RunConfig, idleExecution.RunConfig,
+			execution.Terminal.Node.UID, idleExecution.Terminal.Node.UID, condition,
+		); err != nil {
 			return serving.Profile{}, nil, err
 		}
 		if raw.Runtime.Firstfloor != nil {
@@ -430,7 +435,7 @@ func (c *Catalog) readProfile(ctx context.Context, campaign *edgev1alpha1.BatchE
 	}
 	profile := serving.Profile{
 		ID: source.String() + "/" + string(campaign.UID), Reference: resultReference,
-		NodeName: state.TargetNode, Condition: condition, Evidence: evidenceReferences,
+		NodeName: idleExecution.RunConfig.TargetNode.Name, Condition: condition, Evidence: evidenceReferences,
 		ConfidenceLevel: confidence, IdleBaselineWatts: baseline.ModelLoadedIdleMeanWallWatts,
 		MeasuredAt:     measuredAt,
 		MetricSource:   metricSource,

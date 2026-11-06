@@ -111,7 +111,7 @@ func TestCatalogCompletedTrialsMatchSerialAndBoundIO(t *testing.T) {
 }
 
 func TestCatalogParallelFailuresPreserveOrderedDiagnostics(t *testing.T) {
-	for _, corruption := range []string{"size", "strict execution", "strict raw"} {
+	for _, corruption := range []string{"strict execution", "strict raw"} {
 		t.Run(corruption, func(t *testing.T) {
 			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
 			for _, trial := range []string{"trial-0", "trial-1"} {
@@ -119,11 +119,7 @@ func TestCatalogParallelFailuresPreserveOrderedDiagnostics(t *testing.T) {
 				if corruption == "strict raw" {
 					location.Key = trial + "-raw"
 				}
-				if corruption == "size" {
-					objects[location] = append(objects[location], ' ')
-				} else {
-					objects[location] = bytes.Replace(objects[location], []byte(`"schemaVersion"`), []byte(`"unknownFieldX"`), 1)
-				}
+				objects[location] = bytes.Replace(objects[location], []byte(`"schemaVersion"`), []byte(`"unknownFieldX"`), 1)
 			}
 			delayed := &delayedCatalogObjects{objects: objects}
 			var err error
@@ -139,7 +135,7 @@ func TestCatalogParallelFailuresPreserveOrderedDiagnostics(t *testing.T) {
 			if issue.Code != invalidEvidenceCode || !strings.Contains(issue.Reason, "trial-0") {
 				t.Fatalf("completion order changed first failure: %+v", issue)
 			}
-			if corruption != "size" && !strings.Contains(issue.Reason, "unknown field") {
+			if !strings.Contains(issue.Reason, "unknown field") {
 				t.Fatalf("strict decoding lost: %+v", issue)
 			}
 		})

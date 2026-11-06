@@ -249,6 +249,16 @@ func TestNativeProbeUsesSelectedExecutionNotInitializationHistory(t *testing.T) 
 			m.MaxBatchSize = 3
 		}, true},
 		{"selected domain only", func(m *native.Metadata) { m.Runtime.InitializedBatches = []int{1} }, true},
+		{"unrestricted measured domain", func(m *native.Metadata) { m.Policy.MaxBatchSize = 0 }, true},
+		{"upper bound above measured batch", func(m *native.Metadata) { m.Policy.MaxBatchSize = 2 }, true},
+		{"fixed batch without upper bound", func(m *native.Metadata) {
+			m.Policy.MaxBatchSize, m.Policy.FixedBatchSize = 0, 1
+		}, true},
+		{"negative upper bound", func(m *native.Metadata) { m.Policy.MaxBatchSize = -1 }, false},
+		{"unrestricted missing selected batch", func(m *native.Metadata) {
+			m.Policy.MaxBatchSize, m.Runtime.InitializedBatches = 0, []int{2}
+		}, false},
+		{"unmeasured fixed batch", func(m *native.Metadata) { m.Policy.FixedBatchSize = 2 }, false},
 		{"missing selected batch", func(m *native.Metadata) { m.Runtime.InitializedBatches = []int{2} }, false},
 		{"wrong input", func(m *native.Metadata) { m.Runtime.Inputs = []string{"other"} }, false},
 		{"wrong model", func(m *native.Metadata) { m.Model = "other" }, false},

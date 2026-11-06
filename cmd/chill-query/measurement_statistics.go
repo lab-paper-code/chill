@@ -314,17 +314,33 @@ func deriveMeasurementCurve(
 ) (derivation.Curve, error) {
 	var err error
 	var verifiedState derivation.VerifiedCurveState
+	verifiedState.Shared = plan.Shared()
+	if len(active) == 0 || len(idle) == 0 {
+		return derivation.Curve{}, errStatisticsNotRecorded
+	}
+	idleExecution, _, err := idle[0].Records()
+	if err != nil {
+		return derivation.Curve{}, err
+	}
 	batches := make(map[int][]derivation.Trial)
 	for _, verified := range active {
-		projected, err := projection.ProjectVerifiedCurveState(plan, verified, idle[0])
+		execution, _, err := verified.Records()
 		if err != nil {
 			return derivation.Curve{}, err
 		}
-		verifiedState = projected
+		if err := projection.ValidateCurvePlanRunConfigs(
+			execution.RunConfig, idleExecution.RunConfig,
+			execution.Terminal.Node.UID, idleExecution.Terminal.Node.UID, verifiedState.Shared,
+		); err != nil {
+			return derivation.Curve{}, err
+		}
 		trial, err := projection.Trial(verified)
 		if err != nil {
 			return derivation.Curve{}, err
 		}
+		verifiedState.StateIdentity = trial.StateIdentity
+		verifiedState.EnvironmentIdentity = trial.EnvironmentIdentity
+		verifiedState.ActiveProtocolIdentity = trial.MeasurementProtocolIdentity
 		if measured != nil && !slices.Contains(measured, trial.Batch) {
 			continue
 		}
@@ -335,14 +351,12 @@ func deriveMeasurementCurve(
 	}
 	idleTrials := make([]derivation.IdleTrial, len(idle))
 	for i, verified := range idle {
-		if _, err := projection.ProjectVerifiedCurveState(plan, active[0], verified); err != nil {
-			return derivation.Curve{}, err
-		}
 		idleTrials[i], err = projection.IdleTrial(verified, idle[0])
 		if err != nil {
 			return derivation.Curve{}, err
 		}
 	}
+	verifiedState.IdleProtocolIdentity = idleTrials[0].MeasurementProtocolIdentity
 	confidence, err := cr.Spec.PointPolicy.Confidence()
 	if err != nil {
 		return derivation.Curve{}, err

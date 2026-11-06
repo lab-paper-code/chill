@@ -110,10 +110,10 @@ func validateMetadata(spec Spec, actual native.Metadata) error {
 	if condition.RuntimeFamily != "firstfloor" || condition.NodeUID != spec.Node.UID || spec.Profile.NodeName != spec.Node.Name {
 		return errors.New("profile does not match native physical execution")
 	}
-	if actual.Model != spec.ModelName || actual.Mode != "serving" || actual.ProfileID != spec.Profile.ID || actual.AppliedAt.IsZero() || actual.Runtime.Synthetic || actual.MaxQueueRequests != spec.Capacity || actual.ModelInstanceCount != 1 || condition.Firstfloor == nil || actual.MaxBatchSize < 1 || actual.Policy.MaxBatchSize < 1 || actual.Policy.MaxBatchSize > actual.MaxBatchSize || !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == actual.Policy.MaxBatchSize }) {
+	if actual.Model != spec.ModelName || actual.Mode != "serving" || actual.ProfileID != spec.Profile.ID || actual.AppliedAt.IsZero() || actual.Runtime.Synthetic || actual.MaxQueueRequests != spec.Capacity || actual.ModelInstanceCount != 1 || condition.Firstfloor == nil || actual.MaxBatchSize < 1 || actual.Policy.MaxBatchSize < 0 {
 		return errors.New("native prepared model/profile/policy mismatch")
 	}
-	if b := actual.Policy.FixedBatchSize; b < 0 || b > actual.Policy.MaxBatchSize || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
+	if b := actual.Policy.FixedBatchSize; b < 0 || actual.Policy.MaxBatchSize > 0 && b > actual.Policy.MaxBatchSize || b > 0 && !slices.ContainsFunc(spec.Profile.Batches, func(p serving.BatchProfile) bool { return p.Batch == b }) {
 		return errors.New("native fixed batch size has no measured profile")
 	}
 	if err := validateProfileInputs(spec, actual); err != nil {
@@ -130,11 +130,18 @@ func validateProfileInputs(spec Spec, actual native.Metadata) error {
 	if !slices.Equal(actual.Runtime.Inputs, condition.Preprocessor.Inputs) || !slices.Equal(actual.Runtime.Outputs, condition.Preprocessor.Outputs) || len(spec.Profile.Batches) == 0 {
 		return errors.New("actual native raw fields or measured batches unavailable")
 	}
+	selected := false
 	for _, batch := range spec.Profile.Batches {
-		if batch.Batch <= actual.Policy.MaxBatchSize && (actual.Policy.FixedBatchSize == 0 || actual.Policy.FixedBatchSize == batch.Batch) &&
-			!slices.Contains(actual.Runtime.InitializedBatches, batch.Batch) {
-			return errors.New("selected native batch is not initialized")
+		if (actual.Policy.MaxBatchSize == 0 || batch.Batch <= actual.Policy.MaxBatchSize) &&
+			(actual.Policy.FixedBatchSize == 0 || actual.Policy.FixedBatchSize == batch.Batch) {
+			selected = true
+			if batch.Batch > actual.MaxBatchSize || !slices.Contains(actual.Runtime.InitializedBatches, batch.Batch) {
+				return errors.New("selected native batch is not initialized")
+			}
 		}
+	}
+	if !selected {
+		return errors.New("native policy has no executable measured batch")
 	}
 	return nil
 }

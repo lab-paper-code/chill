@@ -52,11 +52,11 @@ func TestW8BurstEvidenceDecode(t *testing.T) {
 			}
 			assertBurstOccupancyWire(t, projection, cr, verdict)
 			cr.Status.Result.Key = servingkube.DispatchOccupancyPrefix + "node-uid/burst-uid.json"
-			mismatch, err := service.projectDispatchOccupancy(context.Background(), cr)
-			if err != nil || !strings.Contains(string(mismatch.Assessment), "OccupancyEvidenceMismatch") {
-				t.Fatalf("wrong path accepted: %+v (%v)", mismatch, err)
+			relocated, err := service.projectDispatchOccupancy(context.Background(), cr)
+			if err != nil {
+				t.Fatal(err)
 			}
-			cr.Status.Result.Key = servingkube.BurstOccupancyPrefix + "node-uid/burst-uid.json"
+			assertBurstOccupancyWire(t, relocated, cr, verdict)
 			record.Estimate.Statistics = nil
 			raw, err = json.Marshal(record)
 			if err != nil {
@@ -136,6 +136,14 @@ func assertBurstOccupancyWire(
 	if err := json.Unmarshal(fields["estimate"], &estimate); err != nil ||
 		estimate.Statistics == nil || estimate.Statistics.Median != -20 || estimate.Pairs != 3 {
 		t.Fatalf("signed estimate lost: %s (%v)", wire, err)
+	}
+	if projection.MeasurementWindow == nil ||
+		!projection.MeasurementWindow.Start.Equal(time.Unix(100, 0).UTC()) ||
+		!projection.MeasurementWindow.End.Equal(time.Unix(110, 0).UTC()) ||
+		!estimate.Window.Start.Equal(projection.MeasurementWindow.Start) ||
+		!estimate.Window.End.Equal(projection.MeasurementWindow.End) ||
+		estimate.Node.UID != "node-uid" || estimate.Batch != 2 {
+		t.Fatalf("retained burst execution or measurement window lost: %+v estimate=%+v", projection, estimate)
 	}
 	for _, field := range []string{"saturation", "idleFraction"} {
 		if string(fields[field]) != "null" {

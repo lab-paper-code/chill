@@ -107,6 +107,91 @@ func TestCatalogFollowsFrozenPlanAndRawTrials(t *testing.T) {
 	}
 }
 
+func TestCatalogIdleTrialsKeepPhysicalBindingWithoutHistoricalSourceRebinding(t *testing.T) {
+	for _, foreignNode := range []bool{false, true} {
+		t.Run(fmt.Sprintf("foreign-node-%t", foreignNode), func(t *testing.T) {
+			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
+			ctx := context.Background()
+			campaign := &edgev1alpha1.BatchEnergyOptimization{}
+			if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
+				t.Fatal(err)
+			}
+			retained, err := catalog.evidence.Read(ctx, campaign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			spec := retained.Result.Spec()
+			reference := &spec.CompletedTrials[4]
+			location := storedObjectIdentity(reference.Evidence).Location()
+			var execution profilerevidence.ExecutionEvidence
+			if err := json.Unmarshal(objects[location], &execution); err != nil {
+				t.Fatal(err)
+			}
+			var raw profilerevidence.IdleRawMeasurement
+			if err := json.Unmarshal(objects[execution.RawMeasurement.Location()], &raw); err != nil {
+				t.Fatal(err)
+			}
+			raw.RunConfig.Metrics.Endpoint = "http://historical-meter/metrics"
+			raw.Metrics.Source.Endpoint = raw.RunConfig.Metrics.Endpoint
+			if foreignNode {
+				const otherNodeUID = "other-physical-node"
+				raw.RunConfig.TargetNode.UID = otherNodeUID
+				raw.Runtime.DerivedContract.NodeSnapshot.UID = otherNodeUID
+				raw.Workload.Target.NodeUID = otherNodeUID
+				execution.Terminal.Node.UID = otherNodeUID
+			}
+			rawBytes, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects[execution.RawMeasurement.Location()] = rawBytes
+			execution.RawMeasurement.Size = int64(len(rawBytes))
+			execution.RunConfig = raw.RunConfig
+			executionBytes, err := json.Marshal(execution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects[location] = executionBytes
+			reference.Evidence.Size = int64(len(executionBytes))
+			run := &edgev1alpha1.ProfilingRun{}
+			key := types.NamespacedName{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
+			if err := catalog.store.client.Get(ctx, key, run); err != nil {
+				t.Fatal(err)
+			}
+			run.Status.Evidence.Size = reference.Evidence.Size
+			run.Status.ObservedExecution.Node.UID = execution.Terminal.Node.UID
+			if err := catalog.store.client.Update(ctx, run); err != nil {
+				t.Fatal(err)
+			}
+			result, err := batchenergyoptimization.NewResultRecord(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resultBytes, err := result.CanonicalJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			objects[apiObjectIdentity(campaign.Status.Result).Location()] = resultBytes
+			campaign.Status.Result.Size = int64(len(resultBytes))
+			if err := catalog.store.client.Status().Update(ctx, campaign); err != nil {
+				t.Fatal(err)
+			}
+			view, err := catalog.Refresh(ctx, []string{source.Namespace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if foreignNode {
+				if len(view.Profiles) != 0 || len(view.Insufficiencies) == 0 {
+					t.Fatalf("different physical idle execution entered baseline: %+v", view)
+				}
+			} else if len(view.Profiles) != 1 || view.Profiles[0].IdleBaselineWatts != 4 ||
+				len(view.Profiles[0].Batches[0].ServiceSamples) == 0 {
+				t.Fatalf("historical meter metadata hid usable idle baseline: %+v", view)
+			}
+		})
+	}
+}
+
 func TestCatalogDiscoveryRetainsOnlyCompletedPrefix(t *testing.T) {
 	for _, stop := range []string{batchenergyoptimization.DiscoveryStopOOM, batchenergyoptimization.DiscoveryStopMeasurementBudgetExceeded, firstfloor.FailureMemoryAllocation} {
 		t.Run(stop, func(t *testing.T) {
@@ -425,6 +510,7 @@ func TestCatalogDiscoveryRejectsUnfinishedClaimAndPreservesEmptyCompletion(t *te
 }
 
 func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
+	const changedObservationVersion = "new-observation"
 	for _, phase := range []batchenergyoptimization.WorkloadMode{batchenergyoptimization.WorkloadModeActive, batchenergyoptimization.WorkloadModeIdle} {
 		for _, tc := range []struct {
 			name   string
@@ -448,10 +534,10 @@ func TestCatalogTrialRuntimeFactsRespectSharedCPU(t *testing.T) {
 				native.IntraOpThreads, native.InterOpThreads = 0, 0
 			}},
 			{name: "runtime version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
-				native.RuntimeVersion = "new-observation"
+				native.RuntimeVersion = changedObservationVersion
 			}},
 			{name: "numpy version", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
-				native.NumpyVersion = "new-observation"
+				native.NumpyVersion = changedObservationVersion
 			}},
 			{name: "available providers", mutate: func(_ *profilingrun.RuntimeCPU, native *firstfloor.RuntimeMetadata, _ *string) {
 				native.AvailableProviders = []string{"CPUExecutionProvider", "unused"}
@@ -618,22 +704,26 @@ func TestCatalogSelectedConfidenceChangesNegativeEnergyDecision(t *testing.T) {
 	}
 }
 
-func TestCatalogRejectsRunPowerModeChangedFromCampaignSource(t *testing.T) {
+func TestCatalogUsesRetainedExecutionPowerModeAfterRunSpecChange(t *testing.T) {
 	catalog, source, _, _ := catalogEvidenceFixture(t, 4096)
 	run := &edgev1alpha1.ProfilingRun{}
 	ctx := context.Background()
 	if err := catalog.store.client.Get(ctx, types.NamespacedName{Namespace: source.Namespace, Name: "trial-0"}, run); err != nil {
 		t.Fatal(err)
 	}
+	measuredPowerMode := run.Spec.Candidate.PowerMode
 	run.Spec.Candidate.PowerMode = "unmeasured-mode"
 	if err := catalog.store.client.Update(ctx, run); err != nil {
 		t.Fatal(err)
 	}
 	view, err := catalog.Refresh(ctx, []string{source.Namespace})
-	if err != nil || len(view.Profiles) != 0 || len(view.Insufficiencies) != 1 ||
-		view.Insufficiencies[0].Code != invalidEvidenceCode || !strings.Contains(view.Insufficiencies[0].Reason, "measurement state") {
-		t.Fatalf("source power selection drift accepted: %+v %v", view, err)
+	if err != nil || len(view.Profiles) != 1 || len(view.Insufficiencies) != 0 {
+		t.Fatalf("live Run power metadata hid retained execution: %+v %v", view, err)
 	}
+	if view.Profiles[0].Condition.PowerMode != measuredPowerMode {
+		t.Fatalf("live Run power metadata replaced retained execution power: %+v", view.Profiles[0].Condition)
+	}
+	assertCatalogRawProfile(t, view.Profiles[0])
 }
 
 type catalogEvidenceObjects map[evidencestore.ObjectLocation][]byte

@@ -30,10 +30,7 @@ func TestMeasurementQualityDistinguishesUnsetPolicyWithoutJudgingObservations(t 
 			if mode == profilingrun.IdleModelLoadedWorkloadMode {
 				config.Measurement.Dataset = nil
 			}
-			protocol, err := projectCurveProtocol(config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			protocol := projectCurveProtocol(config)
 			for _, metrics := range []metricobserver.Result{
 				{
 					Samples: []metricobserver.Sample{{ObservedAt: start, Watts: 4}, {ObservedAt: start.Add(time.Second), Watts: 6}},

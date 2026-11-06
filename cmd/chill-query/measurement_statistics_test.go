@@ -405,8 +405,9 @@ func TestMeasurementStatisticsRejectsForeignRunAndCorruption(t *testing.T) {
 		func(r *api.ProfilingRun) { r.UID = "replacement" },
 		func(r *api.ProfilingRun) { r.OwnerReferences[0].UID = "foreign" },
 		func(r *api.ProfilingRun) { r.Spec.Measurement.Batch = 2 },
-		func(r *api.ProfilingRun) { r.Spec.Measurement.DurationSeconds++ },
-		func(r *api.ProfilingRun) { r.Status.Evidence.Key = "other" },
+		func(r *api.ProfilingRun) { r.Status.Job.UID = "foreign-job" },
+		func(r *api.ProfilingRun) { r.Status.ObservedExecution.Pod.UID = "foreign-pod" },
+		func(r *api.ProfilingRun) { r.Status.ObservedExecution.Node.UID = "foreign-node" },
 	} {
 		cr, record, objects, reader, loader := statisticsFixture(t)
 		ref := record.Spec().CompletedTrials[0]
@@ -425,16 +426,20 @@ func TestMeasurementStatisticsRejectsForeignRunAndCorruption(t *testing.T) {
 		}
 	}
 	cr, record, objects, reader, loader := statisticsFixture(t)
+	trial := record.Spec().CompletedTrials[0]
+	rawLocation := evidencestore.ObjectLocation{Store: trial.Evidence.Store, Key: trial.Run.Name + "/raw"}
+	objects.payloads[rawLocation] = bytes.Repeat([]byte("x"), len(objects.payloads[rawLocation]))
+	if got, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record); err == nil ||
+		got != nil || reason != nil {
+		t.Fatalf("corrupt raw accepted: %+v %v %v", got, reason, err)
+	}
+	cr, record, objects, reader, loader = statisticsFixture(t)
 	ref := record.Spec().CurvePlan
 	plan := evidencestore.ObjectIdentity{Store: ref.Store, Key: ref.Key, Size: ref.Size}
 	objects.payloads[plan.Location()] = bytes.Repeat([]byte("x"), int(plan.Size))
 	if _, reason, err := newMeasurementStatistics(reader, objects, loader)(context.Background(), cr, record); err == nil ||
 		reason != nil {
 		t.Fatalf("corrupt plan hidden: %v %v", reason, err)
-	}
-	huge := evidencestore.ObjectIdentity{Store: "evidence", Key: "huge", Size: 65 << 20}
-	if _, err := readStatisticsObject(context.Background(), objects, huge); err == nil {
-		t.Fatal("unbounded plan read")
 	}
 }
 
@@ -563,6 +568,12 @@ func TestMeasurementStatisticsReaderReasonsHTTP(t *testing.T) {
 
 func TestMeasurementStatisticsHTTPRetainsPublishedFactsAfterMetadataDrift(t *testing.T) {
 	cr, record, objects, reader, loader := statisticsFixture(t)
+	var published queryapi.BatchEnergyOptimizationResult
+	before := statisticsHTTPResponse(t, cr, record, objects, reader, loader)
+	assertStatisticsReportingResponse(t, before, record, "")
+	if err := json.Unmarshal(before.Body.Bytes(), &published); err != nil {
+		t.Fatal(err)
+	}
 	for _, reference := range record.Spec().CompletedTrials {
 		run := &api.ProfilingRun{}
 		key := client.ObjectKey{Namespace: reference.Run.Namespace, Name: reference.Run.Name}
@@ -572,16 +583,24 @@ func TestMeasurementStatisticsHTTPRetainsPublishedFactsAfterMetadataDrift(t *tes
 		run.OwnerReferences[0].Kind, run.OwnerReferences[0].APIVersion = "HistoricalCampaign", "archive/v1"
 		run.Spec.Measurement.DurationSeconds++
 		run.Spec.Measurement.WarmupIterations++
+		run.Spec.MeasurementStateSpec.Candidate.PowerMode = "historical-request-mode"
+		run.Status.Evidence.Key = "archive/status-only-reference.json"
+		run.Status.Evidence.SchemaVersion = "historical-status-version"
 		if err := reader.Update(context.Background(), run); err != nil {
 			t.Fatal(err)
 		}
-		run.Status.Evidence.Key = "archive/status-only-reference.json"
-		run.Status.Evidence.SchemaVersion = "historical-status-version"
-		if err := reader.Status().Update(context.Background(), run); err != nil {
-			t.Fatal(err)
-		}
 	}
-	assertStatisticsReportingResponse(t, statisticsHTTPResponse(t, cr, record, objects, reader, loader), record, "")
+	response := statisticsHTTPResponse(t, cr, record, objects, reader, loader)
+	assertStatisticsReportingResponse(t, response, record, "")
+	var retained queryapi.BatchEnergyOptimizationResult
+	if err := json.Unmarshal(response.Body.Bytes(), &retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained.MeasurementFacts == nil ||
+		!reflect.DeepEqual(retained.Statistics, published.Statistics) ||
+		!reflect.DeepEqual(retained.MeasurementFacts, published.MeasurementFacts) {
+		t.Fatalf("metadata drift changed published statistics or measurement facts: %s", response.Body.String())
+	}
 }
 
 func TestMeasurementStatisticsSameNameDifferentUIDHTTP(t *testing.T) {

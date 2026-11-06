@@ -125,7 +125,7 @@ func TestCostEvidenceLoadsPowerWithRetainedMeterAndNoCurrentProfile(t *testing.T
 	var contracts []transitioncost.FrozenContract
 	var directions []transitioncost.DirectedStatePair
 	var observations []transitioncost.FinalizedObservation
-	var finalDirections []map[string]any
+	finalDirections := make([]map[string]any, 0, 2)
 	for direction := range 2 {
 		var finals []evidencestore.ObjectIdentity
 		for trial := range 2 {

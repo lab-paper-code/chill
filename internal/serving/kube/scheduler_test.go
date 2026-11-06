@@ -742,6 +742,57 @@ func TestBindProfileMeterUsesWallQuantityIdentity(t *testing.T) {
 	}
 }
 
+func TestSetConfigurationDoesNotRebindRetainedMeters(t *testing.T) {
+	for _, name := range []string{"shared endpoint distinct series", "historical baseline UID", "historical cost UID"} {
+		t.Run(name, func(t *testing.T) {
+			controller := schedulerEmptyPoolController(t)
+			config := controller.config
+			node := config.Baselines[0].Node
+			meter := servingops.MeterDeclaration{ID: config.Baselines[0].Meter, Node: node,
+				Scope: servingstate.MeasurementWallScope, Source: metricobserver.SourceIdentity{
+					Kind: "edge-metrics", NodeName: node.Name, Endpoint: "http://shared/metrics",
+					Metric: "wall_watts", MetricLabels: map[string]string{"hostname": node.Name},
+				}}
+			config.Meters = []servingops.MeterDeclaration{meter}
+			switch name {
+			case "shared endpoint distinct series":
+				other := meter
+				other.ID, other.Node = "other-wall", serving.NodeReference{Name: "other-node", UID: "other-uid"}
+				other.Source.NodeName = other.Node.Name
+				other.Source.MetricLabels = map[string]string{"hostname": other.Node.Name}
+				config.Meters = append(config.Meters, other)
+				for _, declared := range config.Meters {
+					config.Costs = append(config.Costs, serving.OperationCost{
+						ID: declared.Node.UID, Node: declared.Node, Meter: declared.Source.Endpoint,
+						Scope: servingstate.MeasurementWallScope, Kind: servingstate.OperationPower,
+						Trials: []serving.OperationTrial{{Duration: time.Second, Joules: 2}},
+						Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: declared.Node.UID, Size: 1},
+					})
+				}
+			case "historical baseline UID":
+				config.Baselines[0].Node.UID = "historical-uid"
+			case "historical cost UID":
+				config.Costs = []serving.OperationCost{{ID: "historical",
+					Node: serving.NodeReference{Name: node.Name, UID: "historical-uid"},
+					Meter: meter.ID, Scope: servingstate.MeasurementWallScope, Kind: servingstate.OperationPower,
+					Trials: []serving.OperationTrial{{Duration: time.Second, Joules: 2}},
+					Reference: evidencestore.ObjectIdentity{Store: "evidence", Key: "historical", Size: 1}}}
+			}
+			if err := controller.SetConfiguration(config); err != nil {
+				t.Fatalf("historical provenance caused global configuration refusal: %v", err)
+			}
+			if name == "shared endpoint distinct series" {
+				invalid := config
+				invalid.Meters = slices.Clone(config.Meters)
+				invalid.Meters[1].Source.MetricLabels = invalid.Meters[0].Source.MetricLabels
+				if err := controller.SetConfiguration(invalid); err == nil {
+					t.Fatal("one current wall series was admitted for multiple physical Nodes")
+				}
+			}
+		})
+	}
+}
+
 // The controller records when each instance lost its route weight and holds
 // an instance prepared while keep was in Overload for one window after Ready.
 func TestSchedulerControllerAnnotatesUnroutedAndHeldInstances(t *testing.T) {
