@@ -179,6 +179,10 @@ func TestReconcilerAcceptsOwnedNoncanonicalRunFromFrozenExecution(t *testing.T) 
 	for attempt := int32(1); attempt <= 3; attempt++ {
 		run := acceptedRun(t, parent, attempt)
 		run.Name = "opaque-child-" + run.Labels[labelAttempt]
+		delete(run.Labels, labelIdleBaselineUID)
+		if attempt == 2 {
+			run.Labels[labelIdleBaselineUID] = "stale-bookkeeping-label"
+		}
 		run.Spec.Measurement.Dataset = "stale-request"
 		run.Spec.Candidate.ModelSpec = "stale-request"
 		objects = append(objects, &run)
@@ -210,7 +214,7 @@ func TestPointPolicyRejectsNonFiniteOrOutOfRangeConfidence(t *testing.T) {
 	}
 }
 
-func TestUIDSelectorExcludesChildrenFromRecreatedSameNameParent(t *testing.T) {
+func TestOwnershipDiscoveryExcludesChildrenFromRecreatedSameNameParent(t *testing.T) {
 	parent := testBaselineParent()
 	oldParent := parent.DeepCopy()
 	oldParent.UID = types.UID("old-parent-uid")

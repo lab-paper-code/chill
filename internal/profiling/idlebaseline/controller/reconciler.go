@@ -178,12 +178,18 @@ func (r *Reconciler) listRuns(
 	parent *edgev1alpha1.ModelLoadedIdleBaseline,
 ) ([]edgev1alpha1.ProfilingRun, error) {
 	list := &edgev1alpha1.ProfilingRunList{}
-	if err := r.client.List(ctx, list, client.InNamespace(parent.Namespace), client.MatchingLabels{
-		labelIdleBaselineUID: string(parent.UID),
-	}); err != nil {
+	if err := r.client.List(ctx, list, client.InNamespace(parent.Namespace)); err != nil {
 		return nil, fmt.Errorf("list ModelLoadedIdleBaseline ProfilingRuns: %w", err)
 	}
-	runs := append([]edgev1alpha1.ProfilingRun(nil), list.Items...)
+	runs := list.Items[:0]
+	for index := range list.Items {
+		run := &list.Items[index]
+		owner := metav1.GetControllerOf(run)
+		if owner != nil && owner.Kind == idleBaselineKind &&
+			owner.APIVersion == edgev1alpha1.GroupVersion.String() && owner.UID == parent.UID {
+			runs = append(runs, *run)
+		}
+	}
 	sort.Slice(runs, func(i, j int) bool {
 		left, _ := strconv.Atoi(runs[i].Labels[labelAttempt])
 		right, _ := strconv.Atoi(runs[j].Labels[labelAttempt])
