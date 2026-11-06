@@ -223,6 +223,8 @@ func TestVerifiedRuntimeAcceptsDeclaredLabelsAndDiagnosticRounding(t *testing.T)
 	result.DerivedContract.Provider = "historical-provider"
 	result.Firstfloor.Runtime.NumpyVersion = "observed-numpy"
 	result.RepetitionResults[0].NativeSamples[0].RunnerServiceMilliseconds += 1e-12
+	result.RuntimeVersion = ""
+	result.Firstfloor.Runtime.RuntimeVersion = "observed-label"
 	verified, err := ValidateRunConfig(config)
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +264,8 @@ func TestValidateIdleRuntimeRequiresSettlingZeroInferenceAndResidency(t *testing
 	result.DerivedContract.NodeSnapshot.UID = "historical-node"
 	result.DerivedContract.Backend = "historical-backend"
 	result.DerivedContract.Provider = "historical-provider"
+	result.RuntimeVersion = ""
+	result.Firstfloor.Runtime.RuntimeVersion = ""
 	if err := ValidateIdleRuntime(config, "pod-uid", result); err != nil {
 		t.Fatal(err)
 	}

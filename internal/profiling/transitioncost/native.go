@@ -67,7 +67,7 @@ func validNativeNode(node *NativeNodeObservation) error {
 func validNativeState(state *native.State) bool {
 	m := &state.Metadata
 	return state.Ready && !state.At.IsZero() && m.Mode == "serving" && m.ProfileID != "" &&
-		!m.Runtime.Synthetic && m.Runtime.RuntimeVersion != "" && len(m.Runtime.ModelFiles) != 0 &&
+		!m.Runtime.Synthetic && len(m.Runtime.ModelFiles) != 0 &&
 		len(m.Runtime.CPUAffinity) > 0 && m.Runtime.IntraOpThreads >= 0 &&
 		m.Runtime.InterOpThreads >= 0 && len(state.Requests) == 0
 }
@@ -92,10 +92,11 @@ func VerifyNativeTransition(before, after *NativeNodeObservation) error {
 				continue
 			}
 			beforeMetadata, afterMetadata := a.State.Metadata, b.State.Metadata
-			// CPU masks/cgroups are observations, not a loaded allocation.
+			// CPU masks/cgroups and version labels are observations, not a loaded allocation.
 			beforeMetadata.Runtime.CPUAffinity = afterMetadata.Runtime.CPUAffinity
 			beforeMetadata.Runtime.CPUSet = afterMetadata.Runtime.CPUSet
 			beforeMetadata.Runtime.CgroupCPUMax = afterMetadata.Runtime.CgroupCPUMax
+			beforeMetadata.Runtime.RuntimeVersion = afterMetadata.Runtime.RuntimeVersion
 			found = true
 			if !a.StartedAt.Equal(b.StartedAt) || a.RestartCount != b.RestartCount || a.Image != b.Image || a.ImageID != b.ImageID || a.CPURequestMilli != b.CPURequestMilli || a.CPULimitMilli != b.CPULimitMilli || a.MemoryRequestBytes != b.MemoryRequestBytes || a.MemoryLimitBytes != b.MemoryLimitBytes || a.GPURequest != b.GPURequest || a.GPULimit != b.GPULimit || a.State.AcceptedRequests != b.State.AcceptedRequests || a.State.CompletedRequests != b.State.CompletedRequests || a.State.Executions != b.State.Executions || !reflect.DeepEqual(beforeMetadata, afterMetadata) {
 				return errors.New("native loaded condition changed or Serving executed during power window")

@@ -86,9 +86,6 @@ func validateBoundIdleRuntime(config RunConfig, podUID string, result IdleRuntim
 	if normalizeArchitecture(result.Architecture) != normalizeArchitecture(config.TargetNode.Architecture) {
 		return errors.New("idle runtime architecture does not match the RunConfig Node")
 	}
-	if strings.TrimSpace(result.RuntimeVersion) == "" {
-		return errors.New("idle runtime identity is incomplete")
-	}
 	if !slices.Equal(result.Inputs, config.State.Preprocessor.Inputs) {
 		return errors.New("idle runtime input field evidence does not match the frozen preprocessor inputs")
 	}
@@ -137,7 +134,7 @@ func validateIdleRuntimePathEvidence(config RunConfig, result IdleRuntimeResult)
 		return err
 	}
 	if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
-		result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
+		result.AvailableProviders, result.CPUContract); err != nil {
 		return err
 	}
 	return validateFirstfloorRuntimeEvidence(config, result.Firstfloor, 0)

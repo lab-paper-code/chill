@@ -259,7 +259,7 @@ func TestFirstfloorCUDARejectsCPUFallbackAndWrongWholeGPU(t *testing.T) {
 	config.Delivery.RuntimeAccess = &CandidateReportRuntimeAccess{GPUUUID: "GPU-a", Resources: map[string]string{"nvidia.com/gpu": "1"}}
 	result := firstfloorResult(config)
 	result.Firstfloor.Runtime.Runtime = FirstfloorORTCUDABackend
-	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err == nil {
+	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract); err == nil {
 		t.Fatal("CUDA CPU fallback accepted")
 	}
 	result.Provider = "CUDAExecutionProvider"
@@ -267,11 +267,11 @@ func TestFirstfloorCUDARejectsCPUFallbackAndWrongWholeGPU(t *testing.T) {
 	result.Firstfloor.Runtime.Providers = []string{result.Provider}
 	result.Firstfloor.Runtime.AvailableProviders = []string{result.Provider}
 	result.Firstfloor.Runtime.Device, result.Firstfloor.Runtime.GPUUUID = "cuda", "GPU-b"
-	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err == nil {
+	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract); err == nil {
 		t.Fatal("different whole GPU accepted")
 	}
 	result.Firstfloor.Runtime.GPUUUID = "GPU-a"
-	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
+	if err := validateFirstfloorPath(config, result.Firstfloor, nil, result.Provider, result.AvailableProviders, result.CPUContract); err != nil {
 		t.Fatal(err)
 	}
 }

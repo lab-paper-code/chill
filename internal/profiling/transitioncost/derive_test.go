@@ -54,6 +54,17 @@ func TestDeriveUsesOneCommonWindowAndKeepsSignedEta(t *testing.T) {
 	}
 }
 
+func TestDeriveAcceptsOptionalRuntimeVersionObservations(t *testing.T) {
+	frozen, raw, policy := validInputs()
+	raw.BeforeNative.Instances[0].State.Metadata.Runtime.RuntimeVersion = ""
+	raw.AfterNative.Instances[0].State.Metadata.Runtime.RuntimeVersion = "observed-label"
+	result, err := transitioncost.Derive(frozen, raw, policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOutcome(t, result, transitioncost.VerdictAccepted, transitioncost.ReasonAccepted)
+}
+
 func TestDeriveSeparatesTwoSecondTransitionFromDeclaredSettling(t *testing.T) {
 	frozen, raw, policy := validInputs()
 	raw.MarkerBrackets.TargetObservation = markerBracket(testTime(3))

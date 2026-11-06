@@ -237,8 +237,8 @@ func validateBoundRuntime(config RunConfig, podUID string, result RuntimeResult)
 	if err := validateCPUObservation(result.CPUContract.CgroupCPUMax); err != nil {
 		return err
 	}
-	if result.MeasurementStartedAt == "" || result.MeasurementEndedAt == "" || result.RuntimeVersion == "" {
-		return errors.New("runtime identity or timestamp evidence is incomplete")
+	if result.MeasurementStartedAt == "" || result.MeasurementEndedAt == "" {
+		return errors.New("runtime timestamp evidence is incomplete")
 	}
 	warmupCompleted, err := time.Parse(time.RFC3339Nano, result.WarmupCompletedAt)
 	if err != nil {
@@ -273,7 +273,7 @@ func validateRuntimePathEvidence(config RunConfig, result RuntimeResult) error {
 		return err
 	}
 	if err := validateFirstfloorPath(config, result.Firstfloor, result.RKNN, result.Provider,
-		result.AvailableProviders, result.CPUContract, result.RuntimeVersion); err != nil {
+		result.AvailableProviders, result.CPUContract); err != nil {
 		return err
 	}
 	if err := validateFirstfloorRuntimeEvidence(config, result.Firstfloor, uint64(result.InferenceCount)); err != nil {
@@ -351,9 +351,8 @@ func validateFirstfloorRuntimeEvidence(config RunConfig, evidence *FirstfloorRun
 }
 
 func validateFirstfloorPath(config RunConfig, evidence *FirstfloorRuntimeEvidence, rknn *RKNNRuntimeEvidence,
-	provider string, providers []string, cpu RuntimeCPU, runtimeVersion string) error {
+	provider string, providers []string, cpu RuntimeCPU) error {
 	if evidence == nil || evidence.Runtime.Synthetic || evidence.Runtime.Runtime != config.State.Backend ||
-		evidence.Runtime.RuntimeVersion == "" || evidence.Runtime.RuntimeVersion != runtimeVersion ||
 		!slices.Equal(evidence.Runtime.ModelFiles, config.State.ModelFiles()) ||
 		len(evidence.Runtime.CPUAffinity) != cpu.AffinityCPUCount || !slices.Equal(evidence.Runtime.CPUAffinity, cpu.AffinityCPUs) ||
 		evidence.Runtime.CgroupCPUMax != cpu.CgroupCPUMax || evidence.Runtime.CPUSet != cpu.CPUSetEffective ||
