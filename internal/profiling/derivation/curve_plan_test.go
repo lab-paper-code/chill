@@ -64,9 +64,6 @@ func TestNewCurvePlanRejectsInvalidArtifactAndPlannedBatchSizes(t *testing.T) {
 		{name: "relative artifact file", mutate: func(shared *CurvePlanSpec) {
 			shared.Artifact.Files = []string{"artifact/model.rknn"}
 		}},
-		{name: "unclean artifact file", mutate: func(shared *CurvePlanSpec) {
-			shared.Artifact.Files = []string{"/artifact/../model.rknn"}
-		}},
 		{name: "non-positive batch", mutate: func(shared *CurvePlanSpec) {
 			shared.PlannedBatchSizes = []int{0, 1}
 		}},

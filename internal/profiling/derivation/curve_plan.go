@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"path"
 	"reflect"
 	"slices"
 	"sort"
@@ -406,7 +405,7 @@ func cleanCurveValue(value string) bool {
 }
 
 func cleanCurvePath(value string) bool {
-	return value != "/" && strings.HasPrefix(value, "/") && path.Clean(value) == value
+	return value != "/" && strings.HasPrefix(value, "/")
 }
 
 // CloneCurvePlanSpec separates caller-owned mutable execution conditions.

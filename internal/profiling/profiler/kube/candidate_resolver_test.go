@@ -10,6 +10,7 @@ import (
 
 	edgev1alpha1 "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/modelcompat"
+	campaigncontroller "github.com/lab-paper-code/chill/internal/profiling/campaign/controller"
 	"github.com/lab-paper-code/chill/internal/profiling/profiler"
 	profilingrun "github.com/lab-paper-code/chill/internal/profiling/run"
 	corev1 "k8s.io/api/core/v1"
@@ -450,13 +451,6 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			match: "artifact supply architecture does not match DeviceClass",
 		},
 		{
-			name: "unsafe artifact file",
-			mutate: func(objects []client.Object) {
-				objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0].Source.Files = []string{"/artifact/../hidden"}
-			},
-			match: "must be a clean absolute container path",
-		},
-		{
 			name: "previous execution facts schema",
 			mutate: func(objects []client.Object) {
 				config := objects[2].(*corev1.ConfigMap)
@@ -502,22 +496,6 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			},
 			match: "references missing artifact",
 		},
-		{
-			name: "derived artifact missing source",
-			mutate: func(objects []client.Object) {
-				artifact := &objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0]
-				artifact.Derivation = validArtifactDerivation("missing")
-			},
-			match: "references missing source artifact",
-		},
-		{
-			name: "derived artifact references itself",
-			mutate: func(objects []client.Object) {
-				artifact := &objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0]
-				artifact.Derivation = validArtifactDerivation(artifact.Name)
-			},
-			match: "references itself as source",
-		},
 	}
 
 	for _, test := range tests {
@@ -528,6 +506,64 @@ func TestKubernetesCandidateResolverFailsClosed(t *testing.T) {
 			_, err := resolver.ResolveCandidate(context.Background(), validCandidateSelection())
 			if err == nil || !strings.Contains(err.Error(), test.match) {
 				t.Fatalf("expected error containing %q, got %v", test.match, err)
+			}
+		})
+	}
+}
+
+func TestSelectedArtifactProvenanceAndCarrierSpellingReachCurvePlan(t *testing.T) {
+	for _, source := range []string{"missing-history", "canonical-onnx"} {
+		t.Run(source, func(t *testing.T) {
+			objects, intent := firstProfileInputs(t)
+			artifact := &objects[0].(*edgev1alpha1.ModelSpec).Spec.Artifacts[0]
+			artifact.Derivation = validArtifactDerivation(source)
+			artifact.Derivation.TargetPlatform = "cpu"
+			artifact.Source.Files[0] = strings.Replace(artifact.Source.Files[0], "/", "/./", 1)
+			preprocessor := objects[3].(*edgev1alpha1.Preprocessor)
+			preprocessor.Spec.Artifacts[0].Source.Path = strings.Replace(
+				preprocessor.Spec.Artifacts[0].Source.Path, "/", "/./", 1,
+			)
+			reader := candidateFakeReader(t, objects...)
+			candidates, err := NewKubernetesCandidateResolver(reader, candidateResolverOptions())
+			if err != nil {
+				t.Fatal(err)
+			}
+			nodes, err := NewKubernetesNodeResolver(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			metrics, err := NewKubernetesMetricSourceResolver(reader, metricSourceResolverOptions())
+			if err != nil {
+				t.Fatal(err)
+			}
+			workloads, err := NewKubernetesWorkloadObservationResolver(reader, WorkloadObservationResolverOptions{
+				Namespace: testSystemNamespace, ConfigMapName: "chill-profiler-facts", ConfigMapKey: "workload-observation.yaml",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			actuation, err := NewKubernetesActuationPolicyResolver(reader, ActuationPolicyResolverOptions{
+				Namespace: testSystemNamespace, ConfigMapName: "chill-profiler-facts", ConfigMapKey: "actuation-policies.yaml",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			execution, err := NewKubernetesExecutionPolicyResolver(reader, ExecutionPolicyResolverOptions{
+				Namespace: testSystemNamespace, ConfigMapName: "chill-profiler-facts", ConfigMapKey: "execution-policies.yaml", MeasurementMemoryFraction: .8,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			preparer, err := profiler.NewPreparer(candidates, nodes, metrics, workloads, actuation, execution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			projector, err := campaigncontroller.NewCurvePlanProjector(reader, candidates, preparer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := projector.Project(context.Background(), intent); err != nil {
+				t.Fatalf("selected executable artifact did not reach the curve-plan consumer: %v", err)
 			}
 		})
 	}
