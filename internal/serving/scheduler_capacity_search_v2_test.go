@@ -17,7 +17,7 @@ func TestSchedulerSettingsPlanSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.PlanSearchStrategy != "v1" || got.PlanSearchEvaluations != 500000 || got.PlanExactFinalists != 16 || got.PlanPolishActive != 4 || got.PlanPostFilterFinalists {
+	if got.PlanSearchStrategy != "v1" || got.PlanSearchEvaluations != 500000 || got.PlanExactFinalists != 16 || got.PlanPolishActive != 4 || got.PlanPostFilterFinalists || got.PlanPricedStart {
 		t.Fatalf("defaults: %+v", got)
 	}
 	for _, strategy := range []string{"v1", "v2", "shadow", "", "bad"} {
@@ -44,10 +44,10 @@ func TestSchedulerSettingsPlanSearch(t *testing.T) {
 	if err := got.Validate(); err != nil {
 		t.Fatalf("all-plan active search rejected: %v", err)
 	}
-	strategy, evaluations, finalists, active, post := "v2", 123, 7, 2, true
-	in.PlanSearchStrategy, in.PlanSearchEvaluations, in.PlanExactFinalists, in.PlanPolishActive, in.PlanPostFilterFinalists = &strategy, &evaluations, &finalists, &active, &post
+	strategy, evaluations, finalists, active, post, priced := "v2", 123, 7, 2, true, true
+	in.PlanSearchStrategy, in.PlanSearchEvaluations, in.PlanExactFinalists, in.PlanPolishActive, in.PlanPostFilterFinalists, in.PlanPricedStart = &strategy, &evaluations, &finalists, &active, &post, &priced
 	got, err = in.Settings()
-	if err != nil || got.PlanSearchStrategy != strategy || got.PlanSearchEvaluations != evaluations || got.PlanExactFinalists != finalists || got.PlanPolishActive != active || !got.PlanPostFilterFinalists {
+	if err != nil || got.PlanSearchStrategy != strategy || got.PlanSearchEvaluations != evaluations || got.PlanExactFinalists != finalists || got.PlanPolishActive != active || !got.PlanPostFilterFinalists || !got.PlanPricedStart {
 		t.Fatalf("explicit: %+v %v", got, err)
 	}
 }

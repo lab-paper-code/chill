@@ -90,6 +90,7 @@ type SchedulerPlanSearch struct {
 	PostFilterReverts  int                        `json:"postFilterReverts,omitempty"`
 	Fallback           string                     `json:"fallback,omitempty"`
 	DualBound          float64                    `json:"dualBound,omitempty"`
+	Start              string                     `json:"start,omitempty"`
 	Shadow             *SchedulerPlanSearchShadow `json:"shadow,omitempty"`
 }
 
