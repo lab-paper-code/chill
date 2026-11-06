@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the actual ChillServer against a Helm render and valid/missing-worker settings."""
+"""Run ChillServer against Helm renders and explicit, defaulted, or invalid settings."""
 import argparse
 import copy
 import json
@@ -29,6 +29,9 @@ configmap = {
         "defaultIdlePower": {"nodeWatts": 54, "perInstanceWatts": 8},
         "capacityWindowNanos": 1000000000, "capacityWindows": 1,
         "capacityPassingWindows": 1, "capacityMinimumRequests": 1, "planSearchWorkers": 3,
+        "planSearchStrategy": "v1", "planSearchEvaluations": 500000,
+        "planExactFinalists": 16, "planPolishActive": 8,
+        "planPostFilterFinalists": False, "planPricedStart": True,
     }})},
 }
 if args.configmap:
@@ -71,19 +74,23 @@ with tempfile.TemporaryDirectory(prefix="chill-config-check-") as temporary:
     manifest = Path(temporary) / "render.yaml"
     selected = Path(temporary) / "scheduler.json"
     manifest.write_text(render)
-    for missing in (False, True):
+    for case in ("explicit", "defaults", "missing-workers"):
         candidate = copy.deepcopy(configmap)
-        if missing:
-            configuration = json.loads(candidate["data"][key])
+        configuration = json.loads(candidate["data"][key])
+        if case == "defaults":
+            for field in ("planSearchStrategy", "planSearchEvaluations", "planExactFinalists",
+                          "planPolishActive", "planPostFilterFinalists", "planPricedStart"):
+                configuration["settings"].pop(field, None)
+        elif case == "missing-workers":
             del configuration["settings"]["planSearchWorkers"]
-            candidate["data"][key] = json.dumps(configuration)
+        candidate["data"][key] = json.dumps(configuration)
         selected.write_text(json.dumps(candidate))
         result = subprocess.run([
             binary, f"--check-deployment-config={manifest}",
             f"--scheduler-configmap-file={selected}",
         ], capture_output=True, text=True, timeout=30)
-        if missing:
+        if case == "missing-workers":
             assert result.returncode != 0 and "planSearchWorkers" in result.stderr, result.stderr
         else:
             assert result.returncode == 0, result.stderr
-        print(f"actualbinary {'missing planSearchWorkers rejected' if missing else 'valid settings accepted'}")
+        print(f"actualbinary {case}: {'rejected' if case == 'missing-workers' else 'accepted'}")
