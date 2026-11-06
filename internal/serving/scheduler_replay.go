@@ -76,13 +76,14 @@ type schedulerReplayAction struct {
 	wallRate float64
 }
 type schedulerReplayResult struct {
-	energy      float64
-	samples     map[string][]float64
-	definitions map[string]*Definition
-	reasons     []string
-	assumptions []string
-	sources     []string
-	outcomes    map[string]map[string]int
+	energy        float64
+	requestJoules float64
+	samples       map[string][]float64
+	definitions   map[string]*Definition
+	reasons       []string
+	assumptions   []string
+	sources       []string
+	outcomes      map[string]map[string]int
 }
 
 // schedulerReplayEstimate replays candidate c once with seed and records each
@@ -108,6 +109,9 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	r, err := schedulerReplay(ctx, settings, snapshot, c, rand.New(rand.NewPCG(seed, 0)), compared, capacity)
 	if err != nil {
 		return c, err
+	}
+	if capacity != nil {
+		capacity.requestJoules = r.requestJoules
 	}
 	if capacity != nil && capacity.failed {
 		return c, nil // Partial samples are not an estimate.
@@ -804,8 +808,10 @@ func (s *schedulerReplayState) initializeRunning() bool {
 		}
 		remaining := residual[s.rng.IntN(len(residual))]
 		i.finish = remaining
+		joules := b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (elapsed + remaining)
+		s.out.requestJoules += joules
 		if s.counted(i.config.Node) {
-			s.out.energy += b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(remaining, s.horizon) / (elapsed + remaining)
+			s.out.energy += joules
 		}
 		s.out.assumptions = appendUnique(s.out.assumptions, "running incremental joules spread uniformly over sampled conditioned service interval")
 	}
@@ -1478,10 +1484,14 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 }
 
 // addBatchEnergy attributes a started batch's incremental joules within the
-// horizon on a compared Node.
+// horizon; total energy counts only compared Nodes.
 func (s *schedulerReplayState) addBatchEnergy(i *schedulerReplayInstance, b *BatchProfile, duration float64) {
-	if s.now < s.horizon && s.counted(i.config.Node) {
-		s.out.energy += b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(duration, s.horizon-s.now) / duration
+	if s.now < s.horizon {
+		joules := b.EnergyPerInputJoules * float64(len(i.batch)) * math.Min(duration, s.horizon-s.now) / duration
+		s.out.requestJoules += joules
+		if s.counted(i.config.Node) {
+			s.out.energy += joules
+		}
 	}
 }
 

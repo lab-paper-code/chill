@@ -313,9 +313,9 @@ func TestCapacityWindowPopulation(t *testing.T) {
 
 // capacityStub meets the SLO below limit req/s, misses seeds in fail, and
 // meets again from resume req/s on (0 disables).
-func capacityStub(limit, resume float64, fail map[int]bool) func(context.Context, float64, int, int) (float64, bool, error) {
-	return func(_ context.Context, lambda float64, _, seed int) (float64, bool, error) {
-		return 0, (lambda <= limit || resume > 0 && lambda >= resume) && !fail[seed], nil
+func capacityStub(limit, resume float64, fail map[int]bool) func(context.Context, float64, int, int) (capacityWindowResult, error) {
+	return func(_ context.Context, lambda float64, n, seed int) (capacityWindowResult, error) {
+		return capacityWindowResult{requests: n, met: (lambda <= limit || resume > 0 && lambda >= resume) && !fail[seed]}, nil
 	}
 }
 

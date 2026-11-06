@@ -50,11 +50,12 @@ type CapacityInput struct {
 // CapacityJudgment is one judged Poisson rate: the SLO-percentile latency of
 // each judged window (ms, margin included; NaN-free, a failed window keeps -1).
 type CapacityJudgment struct {
-	Rate         float64   `json:"rate"`
-	Requests     int       `json:"requests"`
-	Passed       int       `json:"passed"`
-	Met          bool      `json:"met"`
-	PercentileMS []float64 `json:"percentileMS"`
+	Rate                 float64   `json:"rate"`
+	Requests             int       `json:"requests"`
+	Passed               int       `json:"passed"`
+	Met                  bool      `json:"met"`
+	PercentileMS         []float64 `json:"percentileMS"`
+	EnergyPerInputJoules float64   `json:"energyPerInputJoules,omitempty"`
 }
 
 // CapacityRow is the largest Poisson rate kappa (req/s) at which one instance
@@ -126,12 +127,19 @@ func capacityThroughput(p *Profile, b int, occupancy time.Duration) float64 {
 	return mu
 }
 
-// capacityBuilder judges rates for one row with replay, which returns one
-// window's SLO-percentile latency (ms) and whether the window met the SLO.
+// capacityBuilder judges rates for one row with replay.
 type capacityBuilder struct {
 	settings   SchedulerSettings
 	percentile float64
-	replay     func(ctx context.Context, lambda float64, n, seed int) (float64, bool, error)
+	replay     func(ctx context.Context, lambda float64, n, seed int) (capacityWindowResult, error)
+}
+
+// capacityWindowResult includes energy only for complete replay populations.
+type capacityWindowResult struct {
+	latency       float64
+	requestJoules float64
+	requests      int
+	met           bool
 }
 
 // BuildCapacityRow computes the measured option's capacity, independent of
@@ -237,15 +245,22 @@ func (b *capacityBuilder) requests(lambda float64) int {
 func (b *capacityBuilder) judge(ctx context.Context, lambda float64) (CapacityJudgment, error) {
 	s := b.settings
 	j := CapacityJudgment{Rate: lambda, Requests: b.requests(lambda)}
+	var requestJoules float64
+	var requests int
 	for seed := 1; seed <= s.CapacityWindows && j.Passed < s.CapacityPassingWindows && j.Passed+s.CapacityWindows-seed+1 >= s.CapacityPassingWindows; seed++ {
-		latency, ok, err := b.replay(ctx, lambda, j.Requests, seed)
+		window, err := b.replay(ctx, lambda, j.Requests, seed)
 		if err != nil {
 			return j, err
 		}
-		j.PercentileMS = append(j.PercentileMS, latency)
-		if ok {
+		j.PercentileMS = append(j.PercentileMS, window.latency)
+		requestJoules += window.requestJoules
+		requests += window.requests
+		if window.met {
 			j.Passed++
 		}
+	}
+	if requests > 0 {
+		j.EnergyPerInputJoules = requestJoules / float64(requests)
 	}
 	j.Met = j.Passed >= s.CapacityPassingWindows
 	return j, nil
@@ -265,10 +280,11 @@ type capacityReplay struct {
 // capacityWindowLimit can only disprove a window; a passing window still
 // replays every arrival. The fixed population matches stat.Empirical's rank.
 type capacityWindowLimit struct {
-	requests int
-	slo      SLO
-	missed   int
-	failed   bool
+	requests      int
+	slo           SLO
+	missed        int
+	failed        bool
+	requestJoules float64
 }
 
 func (s *schedulerReplayState) capacityWindowFailed() bool {
@@ -297,10 +313,9 @@ func (s *schedulerReplayState) capacityWindowFailed() bool {
 	return limit.failed
 }
 
-// window replays one window of n Poisson arrivals at lambda that starts empty
-// and returns the SLO-percentile latency (ms, margin included; -1 when none)
-// and whether the SLO holds with no timeout or expiry.
-func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int) (float64, bool, error) {
+// window replays one window of n Poisson arrivals at lambda that starts empty.
+// Failed early-stop windows have no complete percentile or energy population.
+func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int) (capacityWindowResult, error) {
 	gaps := b.gaps[[2]int{seed, n}]
 	if gaps == nil {
 		rng := rand.New(rand.NewPCG(uint64(seed), 1))
@@ -336,30 +351,34 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	settings.AutonomousWorkloads = nil
 	settings.ObservationWindow, settings.ComparisonPeriod, settings.MaxObservationAge = span, span, time.Hour
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
-	// An empty compared set counts no energy, so no Node baseline is needed.
+	// An empty compared set excludes Node energy; request joules count separately.
 	limit := capacityWindowLimit{requests: n, slo: w.SLO}
 	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{}, &limit)
 	if err != nil {
-		return 0, false, err
+		return capacityWindowResult{}, err
 	}
 	if limit.failed {
-		return -1, false, nil // A failed window has no complete percentile sample.
+		// Partial energy is excluded because the request population is incomplete.
+		return capacityWindowResult{latency: -1}, nil
 	}
 	if len(estimate.Reasons) != 0 {
-		return 0, false, fmt.Errorf("capacity replay: %s", strings.Join(estimate.Reasons, ", "))
+		return capacityWindowResult{}, fmt.Errorf("capacity replay: %s", strings.Join(estimate.Reasons, ", "))
 	}
+	result := capacityWindowResult{latency: -1, requestJoules: limit.requestJoules, requests: n}
 	for _, e := range estimate.SLO {
 		if e.UID != w.UID || e.ExpectedNanos == nil {
 			continue
 		}
+		result.latency = *e.ExpectedNanos / 1e6
 		for kind, count := range e.PredictedOutcomes {
 			if count > 0 && (kind == "timeout" || strings.HasPrefix(kind, "expired-")) {
-				return *e.ExpectedNanos / 1e6, false, nil
+				return result, nil
 			}
 		}
-		return *e.ExpectedNanos / 1e6, *e.ExpectedNanos <= float64(w.SLO.TargetLatency), nil
+		result.met = *e.ExpectedNanos <= float64(w.SLO.TargetLatency)
+		return result, nil
 	}
-	return -1, false, nil
+	return result, nil
 }
 
 // CapacityTable keeps the rows of autonomous Workloads in memory. Ensure
