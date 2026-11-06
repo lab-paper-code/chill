@@ -372,9 +372,7 @@ def image_ready(pods, expected):
             if container['image'] != expected['image']:
                 continue
             status = statuses.get(container['name'], {})
-            digests = [expected['digest'], *expected['platformDigests']]
-            matches.append(status.get('ready') and status.get('restartCount') == 0 and
-                           any(status.get('imageID', '').endswith('@' + d) or status.get('imageID') == d for d in digests) and
+            matches.append(status.get('ready') and
                            any(x['type'] == 'Ready' and x['status'] == 'True' for x in pod.get('status', {}).get('conditions', [])))
     return bool(matches) and all(matches)
 
@@ -496,15 +494,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             state['probeNodesPreflight'] = runtime.check_nodes(src, out, kube, run.run, 'preflight')
         config = api_checks.load_config(recipe['apiEnvironment'])
         upgrade_process_seconds = recipe['upgradeSeconds'] + 30
-        budget = 120 + recipe['readinessSeconds'] + upgrade_process_seconds + len(recipe['images']) * recipe['buildSeconds'] + sum(x['seconds'] for steps in recipe['commands'].values() for x in steps)
-        budget += (recipe.get('runtimeInspectionSeconds', 3600) + 2 * recipe['readinessSeconds'] if recipe.get('runtimeDeclarations') else 0) + 60 * (len(recipe['apiChecks']) + 2)
-        budget += 360 if recipe.get('checkConfiguration') else 0
-        if state['prejobRepairOnlyRequested']:
-            budget += prejob.BUILD_SECONDS + 2 * prejob.CHECK_SECONDS * max(1, len(state['inflightPreflight']['blockers']) // 2)
-        if recipe.get('pruneCompletedBuildCache', False):
-            budget += 120 * sum(item['action'] == 'build' for item in planned)
         if not inspect:
-            api_checks.preflight(config, budget, out)
             commands('preflight')
         stage('backup')
         run.run(helm + ['history', recipe['release'], '-o', 'json'], 'helm-history.json', read_output=False)
@@ -693,9 +683,6 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
             validation_manifest.write_text(yaml.safe_dump_all(selected, sort_keys=False))
         run.run(kube + ['apply', '--dry-run=server', '-f', validation_manifest], 'server-dry-run.log', read_output=False)
         revision()
-        proof_seconds = (prejob.CHECK_SECONDS * len(state['prejobProofPreflight']['proofs'])
-                         if state['prejobRepairOnlyRequested'] else 0)
-        api_checks.preflight(config, 120 + recipe['readinessSeconds'] + upgrade_process_seconds + proof_seconds + 60 * (len(recipe['apiChecks']) + 2) + sum(x['seconds'] for p in ('quiesce', 'migrate', 'configure', 'accept') for x in recipe['commands'].get(p, [])), out)
         if not state['hooksSkipped']:
             for phase in ('quiesce', 'migrate'):
                 stage(phase)

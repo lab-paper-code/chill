@@ -130,11 +130,13 @@ if name=='docker':
  revision=state.get('registryRevision',argument('--label').split('=',1)[1]); manifests=[]
  def store(kind,obj):
   data=json.dumps(obj,sort_keys=True).encode(); digest='sha256:'+hashlib.sha256(data).hexdigest(); target=root/'registry'/'v2'/repo/kind/digest;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data);return digest
- for platform in argument('--platform').split(','):
-  system,arch=platform.split('/');config={'os':system,'architecture':arch,'config':{'Labels':{'org.opencontainers.image.revision':revision}}};cd=store('blobs',config)
+ for platform in state.get('registryPlatforms',argument('--platform').split(',')):
+  system,arch=platform.split('/');config={'os':system,'architecture':arch,'config':{'Labels':{} if revision is None else {'org.opencontainers.image.revision':revision}}};cd=store('blobs',config)
   child={'schemaVersion':2,'config':{'digest':cd}};d=store('manifests',child);manifests.append({'digest':d,'platform':{'os':system,'architecture':arch}})
  index={'schemaVersion':2,'manifests':manifests};digest=store('manifests',index);(root/'registry'/'v2'/repo/'manifests'/tag).write_bytes((root/'registry'/'v2'/repo/'manifests'/digest).read_bytes())
  pathlib.Path(argument('--metadata-file')).write_text(json.dumps({'containerimage.digest':digest,'image.name':image}))
+ if state.get('movedTag'):(root/'registry'/'v2'/repo/'manifests'/tag).write_text('{"schemaVersion":2,"manifests":[]}')
+ if state.get('missingArtifact'):(root/'registry'/'v2'/repo/'manifests'/digest).unlink()
  if state.get('diskFixture'):
   receipt=pathlib.Path(os.environ['CHILL_DEPLOY_EVIDENCE'])/'publication.json'
   state.setdefault('receiptsBeforeBuild',[]).append(sorted(json.loads(receipt.read_text())['roles']) if receipt.exists() else [])
@@ -241,7 +243,7 @@ if name=='kubectl':
   if 'get' in args and args[args.index('get')+1].startswith('pod/'):
    pod=state['probes'][args[args.index('get')+1].split('/',1)[1]]
    container=pod['spec']['containers'][0];backend=container['command'][-1]
-   facts={'machine':state['machines'][pod['spec']['nodeName']],'ortVersion':'1.24.0','providers':['CPUExecutionProvider','CUDAExecutionProvider'],'packages':{'onnxruntime':'1.24.0','onnxruntime-gpu':'1.24.0','numpy':'1.26.4','rknn-toolkit-lite2':'2.3.0'},'gpuUUIDs':['GPU-observed-'+pod['spec']['nodeName']],'driverVersion':'fixture-driver','compatible':['rockchip,rk3588']}
+   facts={'machine':state['machines'][pod['spec']['nodeName']],'ortVersion':state.get('importedOrtVersion','1.24.0'),'providers':['CPUExecutionProvider','CUDAExecutionProvider'],'packages':{'onnxruntime':'1.24.0','onnxruntime-gpu':'1.24.0','numpy':'1.26.4','rknn-toolkit-lite2':'2.3.0'},'gpuUUIDs':['GPU-observed-'+pod['spec']['nodeName']],'driverVersion':'fixture-driver','compatible':['rockchip,rk3588']}
    failed=state.get('failProbe') and backend=='ort-cuda'
    print(json.dumps({'status':{'phase':'Failed' if failed else 'Succeeded','containerStatuses':[{'state':{'terminated':{'exitCode':1 if failed else 0,'message':json.dumps(facts)}}}]}}));sys.exit(0)
   if 'delete' in args:
@@ -271,6 +273,9 @@ if name=='kubectl':
      obj['metadata']['name']+='-new';obj['metadata']['uid']+='-new'
      for owner in obj['metadata'].get('ownerReferences',[]):owner['name']+='-new';owner['uid']+='-new'
     items+=extra
+    node=json.loads(json.dumps(state['repairNodes'][0]));node['metadata']['name']+='-new';node['metadata']['uid']+='-new';node['spec']['taints'][0]['value']=extra[0]['metadata']['uid'];state['repairNodes'].append(node)
+   if change:
+    state['inflightObjects']=items;save()
   print(json.dumps({'items':items}));sys.exit(0)
  if 'get' in args and args[args.index('get')+1]=='jobs' and '--all-namespaces' in args:
   print(json.dumps({'items':state.get('inflightJobs',[])}));sys.exit(0)
@@ -290,7 +295,7 @@ if name=='kubectl':
   publication=json.loads(pathlib.Path(state['publication']).read_text());items=[]
   for role,entry in publication['roles'].items():
    if role not in ('server','operator','query','dashboard','node-agent','profiler'):continue
-   items.append({'metadata':{'name':role},'spec':{'containers':[{'name':role,'image':entry['image']}]},'status':{'conditions':[{'type':'Ready','status':'True'}],'containerStatuses':[{'name':role,'ready':True,'restartCount':0,'imageID':'registry@'+entry['platformDigests'][0]}]}})
+   items.append({'metadata':{'name':role},'spec':{'containers':[{'name':role,'image':'foreign:old' if state.get('wrongPodImage') else entry['image']}]},'status':{'conditions':[{'type':'Ready','status':'False' if state.get('podNotReady') else 'True'}],'containerStatuses':[{'name':role,'ready':not state.get('containerNotReady',False),'restartCount':state.get('podRestartCount',0),'imageID':state.get('podImageID','registry@'+entry['platformDigests'][0])}]}})
   print(json.dumps({'items':items}))
  else:print('{"items":[]}')
  sys.exit(0)
@@ -488,7 +493,8 @@ shutil.disk_usage = disk_usage
             with self.subTest(scenario=scenario):
                 fixture = {'runtimeFixture': True, 'nodes': nodes_fixture(ROOT), 'gpuNodes': gpu_nodes, 'machines': machines,
                            'owner': owner, 'instance': copy.deepcopy(instance), 'servingPod': copy.deepcopy(pod),
-                           'settings': copy.deepcopy(settings), 'settingsVersion': 1}
+                           'settings': copy.deepcopy(settings), 'settingsVersion': 1,
+                           'importedOrtVersion': 'observed-import-version'}
                 if scenario == 'oversized-state':
                     fixture['oversizedState'] = True
                 if scenario == 'probe-fail':
@@ -604,9 +610,16 @@ shutil.disk_usage = disk_usage
             return git('rev-parse', 'HEAD')
         self.recipe.update(source=commit('initial build inputs'), images=['server', 'dashboard'])
         original = self.recipe['source']
+        self.state(movedTag=True, registryRevision=None, podRestartCount=4, podImageID='containerd://opaque')
         initial = self.out / 'initial'
         self.cli('--execute', '--evidence', str(initial))
         before = json.loads((initial / 'publication.json').read_text())
+        stale = copy.deepcopy(before)
+        stale['sourceSHA'] = 'old-deployment-metadata'
+        for entry in stale['roles'].values():
+            entry.update(platformDigests=None, platformReceipts=None)
+            entry['image'] = entry['image'].split('@', 1)[0] + '@old-receipt-digest'
+        (initial / 'publication.json').write_text(json.dumps(stale))
         self.recipe['reusePublication'] = str(initial / 'publication.json')
         (self.repository / 'charts/chill/values.yaml').write_text('fixture: changed\n')
         self.recipe['source'] = commit('chart-only change')
@@ -626,7 +639,9 @@ shutil.disk_usage = disk_usage
             self.assertEqual(publication['roles'][role]['digest'], before['roles'][role]['digest'])
             self.assertEqual(publication['roles'][role]['sourceSHA'], original)
             self.assertEqual(publication['roles'][role]['action'], 'reuse')
+            self.assertIsNone(publication['roles'][role]['platformReceipts'][0]['revision'])
         self.assertFalse(any(call[0] == 'docker' for call in self.calls()[call_count:]))
+        self.state(movedTag=True, podRestartCount=4, podImageID='containerd://opaque')
         self.recipe['reusePublication'] = str(reused / 'publication.json')
         (self.repository / 'cmd/chill-server/main.go').write_text('package main\n// changed code input\n')
         self.recipe['source'] = commit('server COPY input change')
@@ -640,7 +655,16 @@ shutil.disk_usage = disk_usage
         self.assertEqual(publication['roles']['dashboard']['action'], 'reuse')
         builds = [call for call in self.calls()[call_count:] if call[0] == 'docker' and 'build' in call]
         self.assertEqual(len(builds), 1)
+        missing_origin = copy.deepcopy(publication)
+        missing_origin['roles']['dashboard'].pop('sourceSHA')
+        (changed / 'publication.json').write_text(json.dumps(missing_origin))
         self.recipe['reusePublication'] = str(changed / 'publication.json')
+        without_origin = self.out / 'without-origin'
+        self.cli('--execute', '--evidence', str(without_origin))
+        rebuilt = json.loads((without_origin / 'publication.json').read_text())
+        self.assertEqual(rebuilt['roles']['dashboard']['action'], 'build')
+        self.assertEqual(rebuilt['roles']['dashboard']['sourceSHA'], self.recipe['source'])
+        self.recipe['reusePublication'] = str(without_origin / 'publication.json')
         self.recipe['commands'] = {'preflight': [{
             'argv': [sys.executable, '-c',
                      "from pathlib import Path; Path('chill-dashboard/package.json').write_text('{\"name\":\"generated\"}')"],
@@ -654,6 +678,45 @@ shutil.disk_usage = disk_usage
         self.assertTrue(all(x['action'] == 'build' for x in publication['roles'].values()))
         self.assertEqual(json.loads((generated / 'source/chill-dashboard/package.json').read_text()),
                          {'name': 'generated'})
+
+    def test_cli_keeps_prebuilt_origin_and_raw_revision_despite_stale_metadata(self):
+        self.state(registryRevision='observed-old-revision', movedTag=True,
+                   registryPlatforms=['linux/amd64', 'linux/arm64'], podRestartCount=3,
+                   podImageID='cri-o://opaque-status')
+        initial = self.out / 'initial'
+        self.cli('--execute', '--evidence', str(initial))
+        receipt = json.loads((initial / 'publication.json').read_text())
+        entry = receipt['roles']['server']
+        entry.update(sourceSHA='recorded-build-origin', platformDigests=None,
+                     platformReceipts=None, dockerfile='historic/Dockerfile',
+                     buildArgs={'historic': 'value'})
+        receipt['sourceSHA'] = 'old-deployment'
+        path = self.out / 'archived-receipt.json'
+        path.write_text(json.dumps(receipt))
+        self.recipe['images'] = [{'role': 'server', 'prebuilt': str(path)}]
+        selected = self.out / 'selected'
+        self.cli('--execute', '--evidence', str(selected))
+        publication = json.loads((selected / 'publication.json').read_text())
+        selected_entry = publication['roles']['server']
+        self.assertTrue(json.loads((selected / 'state.json').read_text())['ready'])
+        self.assertEqual(selected_entry['sourceSHA'], 'recorded-build-origin')
+        self.assertEqual(selected_entry['buildArgs'], {'historic': 'value'})
+        self.assertEqual(selected_entry['platformReceipts'][0]['revision'], 'observed-old-revision')
+        self.assertEqual([r['platform'] for r in selected_entry['platformReceipts']], ['linux/amd64'])
+        self.assertEqual(path.read_text(), json.dumps(receipt))
+
+    def test_cli_unavailable_artifact_platform_and_current_readiness_stop(self):
+        for failure in ('missingArtifact', 'unavailable-platform', 'wrongPodImage',
+                        'podNotReady', 'containerNotReady'):
+            with self.subTest(failure=failure):
+                self.state(**({'registryPlatforms': ['linux/arm64']} if failure == 'unavailable-platform'
+                              else {failure: True}))
+                evidence = self.out / failure
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                self.assertFalse(json.loads((evidence / 'state.json').read_text())['ready'])
+                if failure in ('missingArtifact', 'unavailable-platform'):
+                    cluster = json.loads((self.directory / 'state.json').read_text())
+                    self.assertFalse(cluster.get('upgraded'))
 
     def test_complete_cli_build_registry_tls_and_acceptance(self):
         self.cli('--execute', '--evidence', str(self.out))
@@ -675,14 +738,12 @@ shutil.disk_usage = disk_usage
                            minFreeBytes=350, pruneCompletedBuildCache=True)
         retained = [{'builder': 'publication-builder', 'id': 'active', 'inUse': True, 'bytes': 20},
                     {'builder': 'unrelated-builder', 'id': 'foreign', 'inUse': False, 'bytes': 30}]
-        for scenario in ('reclaimed', 'diskRemainsLow', 'failPrune', 'failBuild', 'registryRevision', 'no-approval'):
+        for scenario in ('reclaimed', 'diskRemainsLow', 'failPrune', 'failBuild', 'no-approval'):
             with self.subTest(scenario=scenario):
                 self.recipe['pruneCompletedBuildCache'] = scenario != 'no-approval'
                 fixture = {'diskFixture': True, 'buildCache': copy.deepcopy(retained)}
                 if scenario in ('diskRemainsLow', 'failPrune', 'failBuild'):
                     fixture[scenario] = True
-                elif scenario == 'registryRevision':
-                    fixture[scenario] = 'foreign-source'
                 self.state(**fixture)
                 call_count = len(self.calls())
                 evidence = self.out / scenario
@@ -719,9 +780,15 @@ shutil.disk_usage = disk_usage
         self.assertEqual(set(partial['roles']), set(roles[:-1]))
         self.assertTrue((stopped / 'firstfloor-build.json').exists())
         self.assertFalse(any('upgrade' in call or 'apply' in call for call in self.calls()[call_count:]))
+        metadata = self.out / 'archived-firstfloor-build.json'
+        shutil.copy2(stopped / 'firstfloor-build.json', metadata)
+        frozen_plan_path = stopped / 'image-plan.json'
+        frozen_plan = json.loads(frozen_plan_path.read_text())
+        frozen_plan[-1].update(action='reuse', metadataFile='old-bookkeeping-path')
+        frozen_plan_path.write_text(json.dumps(frozen_plan))
         frozen = {path: path.read_bytes() for path in stopped.iterdir() if path.is_file()}
         self.recipe.update(reusePublication=str(stopped / 'publication.json'),
-                           reusePendingBuilds={'firstfloor': str(stopped / 'firstfloor-build.json')})
+                           reusePendingBuilds={'firstfloor': str(metadata)})
         self.state()
         call_count = len(self.calls())
         self.cli('--inspect', '--evidence', str(self.out / 'pending-inspection'))
@@ -1049,11 +1116,10 @@ shutil.disk_usage = disk_usage
             self.assert_prejob_preserved(retained, nodes, evidence, published=phase == 'final')
             (self.directory / 'calls.jsonl').write_text('')
 
-    def test_prejob_cohort_change_or_other_blocker_stops(self):
-        for change in ('uid', 'generation', 'new-pair', 'unrelated-final', 'unrelated-preflight',
-                       'native-job', 'foreign-owner', 'duplicate-object'):
+    def test_prejob_unproved_or_other_blocker_stops(self):
+        for change in ('unrelated-final', 'unrelated-preflight', 'native-job', 'foreign-owner', 'duplicate-object'):
             with self.subTest(change=change):
-                kwargs = {'cohortChange': change} if change in ('uid', 'generation', 'new-pair') else {}
+                kwargs = {}
                 if change == 'unrelated-final':
                     kwargs['inflightAt'] = 2
                 retained, nodes = self.prejob_rollout(**kwargs)
@@ -1074,8 +1140,24 @@ shutil.disk_usage = disk_usage
                 evidence = self.out / change
                 self.cli('--execute', '--evidence', str(evidence), expected=1)
                 self.assert_prejob_preserved(retained, nodes, evidence,
-                                            published=change in ('uid', 'generation', 'new-pair', 'unrelated-final'))
+                                            published=change == 'unrelated-final')
                 self.assertFalse(any('upgrade' in call for call in self.calls()))
+                (self.directory / 'calls.jsonl').write_text('')
+
+    def test_prejob_fresh_authority_can_approve_changed_cohort(self):
+        for change in ('uid', 'generation', 'new-pair'):
+            with self.subTest(change=change):
+                self.prejob_rollout(cohortChange=change)
+                evidence = self.out / change
+                self.cli('--execute', '--evidence', str(evidence))
+                state = json.loads((evidence / 'state.json').read_text())
+                self.assertTrue(state['ready'])
+                first = state['prejobProofPreflight']['cohort']
+                final = state['prejobProofPreUpgrade']['cohort']
+                self.assertNotEqual(first, final)
+                cluster = json.loads((self.directory / 'state.json').read_text())
+                self.assert_prejob_preserved(cluster['inflightObjects'], cluster['repairNodes'], evidence,
+                                             published=True, upgraded=True)
                 (self.directory / 'calls.jsonl').write_text('')
 
     def test_prejob_scope_rejects_overrides_before_cluster_access(self):

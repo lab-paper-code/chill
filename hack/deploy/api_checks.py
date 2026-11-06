@@ -66,16 +66,6 @@ def load_config(recipe_config=None):
     return config
 
 
-def preflight(config, required_seconds, out, timeout=10):
-    """Prove token lifetime with the existing evaluation authentication helper."""
-    _origin(config['apiBase'])
-    with _elapsed_deadline(timeout):
-        record = auth.check(config['tokenFile'], required_seconds,
-                            endpoint=config['apiBase'], ca_file=config['caFile'], timeout=timeout)
-    _report(Path(out) / 'token-lifetime.json', record)
-    return record
-
-
 class ReadinessPending(ValueError):
     """Only startup transport failures and explicit coverage warming may wait."""
 

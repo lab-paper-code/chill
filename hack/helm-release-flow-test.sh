@@ -68,4 +68,18 @@ if [[ "${component_image_values}" != "4" ]]; then
 	exit 1
 fi
 
+unsafe_capture="${temporary_directory}/unsafe.args"
+if OPERATOR_IMG="registry.example/chill/operator:safe,query.image.repository=foreign" \
+	HELM="${script}" \
+	HELM_RELEASE_FLOW_TEST_HELM=1 \
+	HELM_RELEASE_FLOW_TEST_CAPTURE="${unsafe_capture}" \
+	"${repo_root}/hack/helm-release-flow.sh" render; then
+	echo "image override allowed a second Helm value" >&2
+	exit 1
+fi
+if [[ -e "${unsafe_capture}" ]]; then
+	echo "unsafe image override reached Helm" >&2
+	exit 1
+fi
+
 echo "helm-release-flow image precedence: pass"

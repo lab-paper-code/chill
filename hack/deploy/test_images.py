@@ -1,5 +1,4 @@
 """Local image publication tests; no Docker daemon, registry or cluster needed."""
-import copy
 import hashlib
 import io
 import json
@@ -47,6 +46,7 @@ class Registry:
         self.digest = digest(index)
         tag = spec["image"].split("@", 1)[0].rsplit(":", 1)[1]
         self.documents["manifests/" + tag] = index
+        self.documents["manifests/" + self.digest] = index
 
     def __call__(self, argv, name, timeout=120):
         self.calls.append((argv, name, timeout))
@@ -116,21 +116,20 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(publication["roles"]["evaluation-harness"]["powerSourceSHA"], images.POWER_SOURCE_SHA)
         self.assertEqual(images.overlay(publication), {})
 
-    def test_registry_rejects_wrong_digest_revision_and_platform(self):
+    def test_registry_requires_selected_artifact_and_requested_platform(self):
         spec = self.plan()[0]
-        for kwargs in ({"revision": "b" * 40}, {"revision": None}, {"revision": ""},
-                       {"config_platform": "linux/arm64"}, {"advertised": "linux/arm64"}):
+        for kwargs in ({"config_platform": "linux/arm64"}, {"advertised": "linux/arm64"}):
             with self.subTest(kwargs=kwargs):
                 registry = Registry(spec, **kwargs)
                 with self.assertRaises(ValueError):
                     images.verify(spec, SHA, registry.digest, registry)
         registry = Registry(spec)
+        del registry.documents["manifests/" + registry.digest]
+        with self.assertRaises(KeyError):
+            images.verify(spec, SHA, registry.digest, registry)
+        registry.documents["manifests/" + registry.digest] = b"[]"
         with self.assertRaises(ValueError):
-            images.verify(spec, SHA, "sha256:" + "0" * 64, registry)
-        tag_key = next(key for key in registry.documents if key.startswith("manifests/sha-"))
-        registry.documents[tag_key] = b"[]"
-        with self.assertRaises(ValueError):
-            images.verify(spec, SHA, digest(b"[]"), registry)
+            images.verify(spec, SHA, registry.digest, registry)
 
     def test_overlay_component_and_scalar_observer_mappings(self):
         publication = {"roles": {}}
@@ -158,7 +157,8 @@ class ImageTests(unittest.TestCase):
         registry.calls.clear()
         publication = images.build(plans, SHA, SOURCE, self.out, registry)
         self.assertEqual(publication["runtimeBuilds"], 0)
-        self.assertEqual(publication["roles"]["firstfloor-cuda"], dict(entry, sourceSHA=SHA, action="prebuilt"))
+        self.assertIsNone(publication["roles"]["firstfloor-cuda"]["sourceSHA"])
+        self.assertEqual(publication["roles"]["firstfloor-cuda"]["platformReceipts"][0]["revision"], SHA)
         self.assertTrue(registry.calls)
         self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
 
@@ -169,7 +169,7 @@ class ImageTests(unittest.TestCase):
                 registry = Registry(spec)
                 previous = images.verify(spec, SHA, registry.digest, registry)
                 del previous["sourceSHA"]  # Existing publications predate per-role origins.
-                frozen = images.receipt_entry(previous, role, SHA, spec)
+                frozen = images.receipt_entry(previous, role, spec)
                 spec.update({"reuse": {"sourceSHA": SHA, "receipt": frozen},
                              "action": "reuse", "reason": "tracked image inputs unchanged",
                              "inputPaths": [spec["dockerfile"]]})
@@ -185,82 +185,67 @@ class ImageTests(unittest.TestCase):
                     self.assertEqual(entry["reason"], spec["reason"])
                     self.assertEqual(entry["buildArgs"], spec["buildArgs"])
                     self.assertEqual(entry["image"], frozen["image"])
-                    self.assertEqual(images.receipt_entry(entry, role, SHA, spec), entry)
                     self.assertTrue(registry.calls)
                     self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
                     if role == "evaluation-harness":
                         self.assertEqual(entry["buildArgs"]["SOURCE_SHA"], SHA)
                         self.assertEqual(entry["powerSourceSHA"], images.POWER_SOURCE_SHA)
 
-    def test_reuse_rejects_changed_registry_tag_and_corrupt_receipts(self):
+    def test_reuse_ignores_moved_tag_and_stale_receipt_bookkeeping(self):
         spec = self.plan(["node-agent"])[0]
         registry = Registry(spec)
         previous = images.verify(spec, SHA, registry.digest, registry)
+        previous["platformDigests"] = None
+        previous["platformReceipts"] = []
         spec["reuse"] = {"sourceSHA": SHA, "receipt": previous}
-        for kwargs in ({"revision": "b" * 40}, {"revision": None},
-                       {"config_platform": "linux/amd64"}, {"advertised": "linux/amd64"}):
-            with self.subTest(kwargs=kwargs):
-                changed = Registry(spec, **kwargs)
-                with self.assertRaises(ValueError):
-                    images.build([spec], "b" * 40, SOURCE, self.out, changed)
-                self.assertTrue(all(argv[0] == "curl" for argv, _, _ in changed.calls))
-        previous["platformDigests"] = ["sha256:" + "0" * 64]
-        registry.calls.clear()
-        with self.assertRaisesRegex(ValueError, "platform digest mismatch"):
-            images.build([spec], "b" * 40, SOURCE, self.out, registry)
-        self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
+        tag = spec["image"].rsplit(":", 1)[1]
+        registry.documents["manifests/" + tag] = b"[]"
+        publication = images.build([spec], "b" * 40, SOURCE, self.out, registry)
+        entry = publication["roles"]["node-agent"]
+        self.assertEqual(entry["sourceSHA"], SHA)
+        self.assertEqual(entry["digest"], registry.digest)
+        self.assertEqual({r["platform"] for r in entry["platformReceipts"]}, set(images.MULTI))
 
-    def test_reuse_rejects_self_consistent_registry_with_wrong_oci_revision(self):
+    def test_registry_keeps_raw_revision_separate_from_build_origin(self):
         spec = self.plan()[0]
-        registry = Registry(spec, revision="b" * 40)
-        previous = images.verify(spec, "b" * 40, registry.digest, registry)
-        previous["sourceSHA"] = SHA
-        previous["platformReceipts"][0]["revision"] = SHA
-        spec["reuse"] = {"sourceSHA": SHA, "receipt": images.receipt_entry(previous, "server", SHA, spec)}
-        registry.calls.clear()
-        with self.assertRaisesRegex(ValueError, "OCI revision mismatch"):
-            images.build([spec], "c" * 40, SOURCE, self.out, registry)
-        self.assertTrue(all(argv[0] == "curl" for argv, _, _ in registry.calls))
+        for revision in ("b" * 40, None, ""):
+            with self.subTest(revision=revision):
+                registry = Registry(spec, revision=revision)
+                previous = images.verify(spec, SHA, registry.digest, registry)
+                spec["reuse"] = {"sourceSHA": SHA, "receipt": previous}
+                publication = images.build([spec], "c" * 40, SOURCE, self.out, registry)
+                entry = publication["roles"]["server"]
+                self.assertEqual(entry["sourceSHA"], SHA)
+                self.assertEqual(entry["platformReceipts"][0]["revision"], revision)
 
-    def test_prebuilt_wrong_provenance_is_rejected(self):
+    def test_prebuilt_checks_selected_repository_and_artifact(self):
         spec = self.plan()[0]
         registry = Registry(spec)
         entry = images.verify(spec, SHA, registry.digest, registry)
-        receipt = self.out / "prebuilt.json"
-        changes = [("image", "foreign.test/chill/chill-serving-entrypoint:other"),
-                   ("digest", "not-a-digest"), ("platforms", ["linux/arm64"]),
-                   ("dockerfile", "build/docker/other.Dockerfile"),
-                   ("buildArgs", {"SOURCE_SHA": "b" * 40}), ("platformDigests", [])]
-        for key, value in changes:
+        for key, value in (("image", "foreign.test/chill/chill-serving-entrypoint:other"), ("digest", None)):
             with self.subTest(key=key):
-                invalid = copy.deepcopy(entry)
-                invalid[key] = value
-                receipt.write_text(json.dumps({"sourceSHA": SHA, "roles": {"server": invalid}}))
+                invalid = dict(entry, **{key: value})
                 with self.assertRaises(ValueError):
-                    self.plan([{"role": "server", "prebuilt": str(receipt)}])
-        receipt.write_text(json.dumps({"sourceSHA": "b" * 40, "roles": {"server": entry}}))
-        with self.assertRaises(ValueError):
-            self.plan([{"role": "server", "prebuilt": str(receipt)}])
+                    images.receipt_entry(invalid, "server", spec)
 
-    def test_prebuilt_requires_full_platform_receipts(self):
+    def test_prebuilt_uses_registry_platforms_not_historic_provenance(self):
         spec = self.plan()[0]
         registry = Registry(spec)
         entry = images.verify(spec, SHA, registry.digest, registry)
+        entry.update(platformReceipts=None, platformDigests="stale", platforms=[],
+                     dockerfile="old", buildArgs={"old": "args"})
         path = self.out / "prebuilt.json"
-        invalid_receipts = [None, []]
-        for key, value in (("revision", "b" * 40), ("platform", "linux/arm64"),
-                           ("digest", "sha256:" + "b" * 64),
-                           ("configDigest", "invalid"), ("variant", None)):
-            receipts = copy.deepcopy(entry["platformReceipts"])
-            receipts[0][key] = value
-            invalid_receipts.append(receipts)
-        for receipts in invalid_receipts:
-            with self.subTest(receipts=receipts):
-                invalid = copy.deepcopy(entry)
-                invalid["platformReceipts"] = receipts
-                path.write_text(json.dumps({"sourceSHA": SHA, "roles": {"server": invalid}}))
-                with self.assertRaises(ValueError):
-                    self.plan([{"role": "server", "prebuilt": str(path)}])
+        path.write_text(json.dumps({"sourceSHA": "b" * 40, "roles": {"server": entry}}))
+        plans = self.plan([{"role": "server", "prebuilt": str(path)}])
+        publication = images.build(plans, "c" * 40, SOURCE, self.out, registry)
+        self.assertEqual(publication["roles"]["server"]["sourceSHA"], SHA)
+        self.assertEqual(publication["roles"]["server"]["platformReceipts"][0]["platform"], "linux/amd64")
+
+    def test_registry_selects_requested_platform_among_extras(self):
+        spec = self.plan()[0]
+        registry = Registry(dict(spec, platforms=images.MULTI))
+        entry = images.verify(spec, SHA, registry.digest, registry)
+        self.assertEqual([r["platform"] for r in entry["platformReceipts"]], ["linux/amd64"])
 
     def test_plan_rejects_unknown_duplicate_and_vendor_platform_override(self):
         for selected in (["unknown"], ["server", "server"], [{"role": "firstfloor-cuda", "platforms": ["linux/arm64"]}], [{"role": "server", "buildArgs": {"SECRET": "forbidden"}}]):

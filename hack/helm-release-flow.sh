@@ -65,8 +65,9 @@ fi
 split_image_ref() {
 	local image="$1"
 	local component="$2"
-	if [[ "${image}" != *:* || "${image}" == *@* ]]; then
-		echo "${component} image must be repository:tag, got ${image}" >&2
+	local tagged="${image%%@*}"
+	if [[ "${tagged##*/}" != *:* || ! "${image}" =~ ^[a-zA-Z0-9._:/@+-]+$ ]]; then
+		echo "${component} image must be repository:tag or repository:tag@digest, got ${image}" >&2
 		exit 1
 	fi
 }
@@ -79,8 +80,13 @@ append_image_values() {
 		return
 	fi
 	split_image_ref "${image}" "${prefix}"
-	target_args+=("--set" "${prefix}.image.repository=${image%:*}")
-	target_args+=("--set" "${prefix}.image.tag=${image##*:}")
+	local tagged="${image%%@*}"
+	local tag="${tagged##*:}"
+	if [[ "${image}" == *@* ]]; then
+		tag+="@${image#*@}"
+	fi
+	target_args+=("--set" "${prefix}.image.repository=${tagged%:*}")
+	target_args+=("--set" "${prefix}.image.tag=${tag}")
 }
 
 render_validate() {

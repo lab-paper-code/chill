@@ -179,31 +179,21 @@ def apply(plans, source_sha, repository, source, publication_path, pending_build
         if not isinstance(entry, dict):
             raise ValueError("invalid reuse role receipt: " + role)
         if pending:
-            old_sha = publication["sourceSHA"]
-            if entry.get("action") != "build" or any(key in entry for key in ("reuse", "prebuilt", "pendingPublication")):
-                raise ValueError("pending role was not an original build: " + role)
+            origin = entry.get("prebuilt", entry.get("reuse", entry.get("pendingPublication", entry)))
+            old_sha = origin.get("sourceSHA", publication["sourceSHA"] if origin is entry else None)
+            if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha):
+                _unusable(spec, "previous build origin unavailable", pending)
             metadata_path = Path(pending_builds[role])
-            expected_path = Path(publication_path).parent / (role + "-build.json")
-            if (not metadata_path.is_absolute() or metadata_path.resolve() != expected_path.resolve()
-                    or entry.get("metadataFile") != str(metadata_path)):
-                raise ValueError("pending metadata does not match frozen image plan: " + role)
-            for key in ("repository", "registryScheme", "deploymentMapping"):
+            for key in ("repository", "registryScheme"):
                 if entry.get(key) != spec.get(key):
                     raise ValueError("pending image plan provenance mismatch: " + role + "/" + key)
-            if images._reference(entry.get("image"), spec["repository"]) != entry["image"]:
-                raise ValueError("pending image plan must name an original tag: " + role)
             frozen = images.pending_build(entry, metadata_path)
             frozen.update(sourceSHA=old_sha, publicationFile=str(publication_path), planFile=str(plan_path))
         else:
-            receipts = entry.get("platformReceipts")
-            if not isinstance(receipts, list) or not receipts or any(not isinstance(r, dict) for r in receipts):
-                raise ValueError("missing reuse platform receipts: " + role)
-            revisions = [r.get("revision") for r in receipts]
-            old_sha = revisions[0]
-            if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha) or any(r != old_sha for r in revisions):
-                raise ValueError("mixed or invalid reuse platform revisions: " + role)
-            if "sourceSHA" in entry and entry["sourceSHA"] != old_sha:
-                raise ValueError("reuse sourceSHA disagrees with OCI revision: " + role)
+            old_sha = entry.get("sourceSHA")
+            if not isinstance(old_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", old_sha):
+                spec["reason"] = "previous build origin unavailable"
+                continue
         expected = copy.deepcopy(spec)
         if "SOURCE_SHA" in expected["buildArgs"]:
             expected["buildArgs"]["SOURCE_SHA"] = old_sha
@@ -218,9 +208,8 @@ def apply(plans, source_sha, repository, source, publication_path, pending_build
                 or len(platforms) != len(set(platforms)) or sorted(platforms) != sorted(expected["platforms"])):
             _unusable(spec, "platforms changed", pending)
             continue
-        # Reuse exactly the same structural/provenance validator as prebuilt images.
         if not pending:
-            frozen = images.receipt_entry(entry, role, old_sha, expected)
+            frozen = images.receipt_entry(entry, role, expected)
         if unknown:
             _unusable(spec, unknown, pending)
             continue

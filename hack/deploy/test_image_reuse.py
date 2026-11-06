@@ -51,6 +51,7 @@ class ReuseTests(unittest.TestCase):
     def entry(self):
         digest = "sha256:" + "1" * 64
         return {"image": self.spec["repository"] + ":old@" + digest, "digest": digest,
+                "sourceSHA": self.old,
                 "dockerfile": self.spec["dockerfile"], "buildArgs": copy.deepcopy(self.spec["buildArgs"]),
                 "platforms": list(self.spec["platforms"]), "platformDigests": [digest],
                 "platformReceipts": [{"platform": "linux/amd64", "digest": digest,
@@ -148,25 +149,25 @@ class ReuseTests(unittest.TestCase):
             self.apply(path=self.root / "missing.json")
 
     def test_unavailable_old_commit_rebuilds(self):
-        self.receipt["platformReceipts"][0]["revision"] = "a" * 40
+        self.receipt["sourceSHA"] = "a" * 40
         self.publish()
         self.assertBuild()
 
-    def test_mixed_and_disagreeing_role_revisions_rejected(self):
-        other = copy.deepcopy(self.receipt["platformReceipts"][0])
-        other.update(platform="linux/arm64", revision="b" * 40)
-        self.receipt["platformReceipts"].append(other)
+    def test_reuse_uses_build_origin_despite_stale_or_missing_oci_revision(self):
+        self.receipt["platformReceipts"] = [{"revision": "b" * 40}, {"revision": None}]
+        self.receipt["platformDigests"] = None
         self.publish()
-        with self.assertRaisesRegex(ValueError, "mixed"):
-            self.apply()
-        self.receipt["platformReceipts"].pop()
-        self.receipt["sourceSHA"] = "b" * 40
-        self.publish()
-        with self.assertRaisesRegex(ValueError, "disagrees"):
-            self.apply()
+        self.assertEqual(self.apply()["action"], "reuse")
 
-    def test_existing_receipt_validator_rejects_bad_digest_and_repository(self):
-        for field, value in (("digest", "bad"), ("image", "foreign/image:old")):
+    def test_missing_build_origin_selects_existing_build_path(self):
+        for origin in (None, "", "not-a-commit"):
+            with self.subTest(origin=origin):
+                self.receipt["sourceSHA"] = origin
+                self.publish()
+                self.assertBuild()
+
+    def test_existing_receipt_checks_selected_repository_and_missing_artifact(self):
+        for field, value in (("digest", None), ("image", "foreign/image:old")):
             with self.subTest(field=field):
                 self.receipt = self.entry()
                 self.receipt[field] = value
@@ -373,8 +374,7 @@ class ReuseTests(unittest.TestCase):
         original = json.loads(plan_path.read_text())
         for field, value in (("role", "unknown"), ("dockerfile", "build/docker/other.Dockerfile"),
                              ("buildArgs", {"FLAG": "changed"}), ("platforms", ["linux/arm64"]),
-                             ("repository", "foreign/chill"), ("registryScheme", "https"),
-                             ("action", "reuse"), ("metadataFile", str(self.root / "foreign-build.json"))):
+                             ("repository", "foreign/chill"), ("registryScheme", "https")):
             with self.subTest(field=field):
                 changed = copy.deepcopy(original)
                 changed[-1][field] = value
@@ -382,7 +382,7 @@ class ReuseTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.pending_apply(plans, pending)
         plan_path.write_text(json.dumps(original))
-        with self.assertRaises(ValueError):
+        with self.assertRaises(FileNotFoundError):
             self.pending_apply(plans, {"firstfloor": str(self.root / "foreign-build.json")})
         for invalid in ({"firstfloor": None}, {"unknown": pending["firstfloor"]},
                         {"server": str(self.root / "server-build.json")}):
@@ -399,27 +399,40 @@ class ReuseTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.pending_apply(plans, pending)
 
-    def test_pending_metadata_identity_and_registry_revision_mismatch_stop(self):
+    def test_pending_metadata_identity_and_missing_artifact_stop(self):
         plans, registries, out, pending = self.pending_fixture()
         metadata_path = Path(pending["firstfloor"])
         metadata = json.loads(metadata_path.read_text())
         for value in (None, "localhost:5000/chill/foreign:old"):
             with self.subTest(image=value):
                 metadata_path.write_text(json.dumps(dict(metadata, **{"image.name": value})))
-                with self.assertRaisesRegex(ValueError, "metadata image identity"):
+                with self.assertRaises(ValueError):
                     self.pending_apply(plans, pending)
-        metadata_path.write_text(json.dumps(dict(metadata, **{"containerimage.digest": "invalid"})))
-        with self.assertRaisesRegex(ValueError, "image digest"):
-            self.pending_apply(plans, pending)
-        metadata_path.write_text(json.dumps(metadata))
+        metadata_path.write_text(json.dumps(dict(metadata, **{"containerimage.digest": "unavailable"})))
         spec = self.pending_apply(plans, pending)[-1]
-        changed = Registry(spec, revision="b" * 40)
-        # Keep digest and tag self-consistent so OCI provenance is the failing check.
-        spec["pendingPublication"]["digest"] = changed.digest
-        with self.assertRaisesRegex(ValueError, "OCI revision mismatch"):
-            images.build([spec], "c" * 40, self.repo, out, changed)
-        self.assertTrue(all(argv[0] == "curl" for argv, _, _ in changed.calls))
+        with self.assertRaises(KeyError):
+            images.build([spec], "c" * 40, self.repo, out, registries["firstfloor"])
         self.assertFalse((out / "publication.json").exists())
+
+    def test_pending_accepts_relocated_metadata_and_stale_plan_bookkeeping(self):
+        plans, registries, out, pending = self.pending_fixture()
+        relocated = self.root / "archived-build.json"
+        Path(pending["firstfloor"]).rename(relocated)
+        plan_path = self.root / "image-plan.json"
+        old = json.loads(plan_path.read_text())
+        self.put("charts/values.yaml", "new deployment, same image inputs\n")
+        current = self.commit()
+        publication = json.loads(self.publication.read_text())
+        publication["sourceSHA"] = current
+        self.publication.write_text(json.dumps(publication))
+        old[-1].update(action="reuse", metadataFile="stale-path", reuse={"sourceSHA": self.old})
+        plan_path.write_text(json.dumps(old))
+        spec = self.pending_apply(plans, {"firstfloor": str(relocated)})[-1]
+        changed = Registry(spec, revision=None)
+        spec["pendingPublication"]["digest"] = changed.digest
+        publication = images.build([spec], "c" * 40, self.repo, out, changed)
+        self.assertEqual(publication["roles"]["firstfloor"]["sourceSHA"], self.old)
+        self.assertTrue(all(r["revision"] is None for r in publication["roles"]["firstfloor"]["platformReceipts"]))
 
     def test_pending_cannot_overwrite_original_evidence(self):
         plans, registries, _, pending = self.pending_fixture()

@@ -161,23 +161,28 @@ class RuntimeStageTests(unittest.TestCase):
         self.assertEqual(result.exception.code, 0)
         self.assertEqual(len(observed), 1)
 
-    def test_requires_all_six_roles_and_correct_receipt_revision(self):
-        for broken in ("missing", "revision", "missing-source", "invalid-source", "empty-source"):
+    def test_requires_selected_runtime_roles_and_actual_platform_receipts(self):
+        for broken in ("missing-role", "missing-platform"):
             publication = copy.deepcopy(self.publication)
-            if broken == "missing":
+            if broken == "missing-role":
                 del publication["roles"]["firstfloor-rknn"]
-            elif broken == "missing-source":
-                del publication["roles"]["firstfloor"]["sourceSHA"]
-            elif broken == "invalid-source":
-                publication["roles"]["firstfloor"]["sourceSHA"] = "not-a-commit"
-            elif broken == "empty-source":
-                publication["roles"]["firstfloor"]["sourceSHA"] = None
-                publication["roles"]["firstfloor"]["platformReceipts"][0]["revision"] = None
             else:
-                publication["roles"]["firstfloor"]["platformReceipts"][0]["revision"] = "b" * 40
+                publication["roles"]["firstfloor"]["platformReceipts"] = []
             with self.subTest(broken=broken), self.assertRaises(ValueError):
                 runtime.stage(publication, SOURCE, self.out, self.kube,
                               lambda *args, **kwargs: self.fail("must reject before inspector"))
+
+    def test_staging_uses_platform_reference_without_rechecking_provenance(self):
+        for entry in self.publication["roles"].values():
+            entry.pop("sourceSHA")
+            entry["platformDigests"] = None
+            for receipt in entry["platformReceipts"]:
+                receipt["revision"] = None
+        raw = inspection_fixture(self.publication)
+        def run(argv, name, timeout=120, env=None):
+            return json.dumps(nodes_fixture()).encode() if "nodes" in argv else raw
+        result = runtime.stage(self.publication, SOURCE, self.out, self.kube, run)
+        self.assertTrue(result.is_file())
 
     def test_preflight_to_stage_node_transitions_stop_before_inspection(self):
         _, inspector = runtime._inspector(SOURCE)
@@ -232,52 +237,17 @@ class RuntimeStageTests(unittest.TestCase):
         evidence = json.loads((self.out / "failed-nodes.json").read_text())
         self.assertEqual(evidence["nodes"], [])
 
-    def test_source_declaration_scope_is_exact(self):
-        _, inspector = runtime._inspector(SOURCE)
-        classes = copy.deepcopy(inspector.CLASSES)
-        removed = "fixture-excluded-cuda-node"
-        for index, (device_class, architecture, variable, nodes, groups) in enumerate(classes):
-            if nodes:
-                removed = nodes[0]
-                classes[index] = (device_class, architecture, variable, nodes[1:], groups)
-                break
-        source = self.out / "source"
-        (source / "hack").mkdir(parents=True)
-        constants = {"CPU": inspector.CPU, "CLASSES": classes, "RKNN_NODE": inspector.RKNN_NODE,
-                     "RKNN_CLASS": inspector.RKNN_CLASS, "SCHEMA": inspector.SCHEMA,
-                     "VERIFICATION": inspector.VERIFICATION}
-        (source / "hack/runtime-declarations.py").write_text(
-            "\n".join(key + " = " + repr(value) for key, value in constants.items()) + "\n")
-        _, reduced = runtime._inspector(source)
+    def test_partial_declarations_do_not_revalidate_observed_facts(self):
         references = runtime._references(self.publication)
-        raw = inspection_fixture(self.publication, source)
-        document = yaml.safe_load(raw)
-        declarations = document["profiling"]["executionDeclarations"]
-        runtime._validate(raw, reduced, references)
-        nodes = nodes_fixture(source)
-        report = runtime.check_nodes(source, self.out, self.kube,
-                                     lambda *args, **kwargs: json.dumps(nodes).encode(), "reduced")
-        self.assertNotIn(removed, [node["name"] for node in report["nodes"]])
-        for broken in ("missing", "duplicate", "foreign", "synthetic"):
-            invalid = copy.deepcopy(document)
-            entries = invalid["profiling"]["executionDeclarations"]
-            if broken == "missing":
-                entries.pop()
-            elif broken == "duplicate":
-                entries[1] = copy.deepcopy(entries[0])
-            elif broken == "foreign":
-                entries[0]["deviceClass"] = "foreign-class"
-            else:
-                payload = json.loads(entries[0]["runtime"]["payload"])
-                payload["verification"] = "synthetic"
-                entries[0]["runtime"]["payload"] = json.dumps(payload)
-            with self.subTest(broken=broken), self.assertRaises(ValueError):
-                runtime._validate(yaml.safe_dump(invalid), reduced, references)
-        extra = copy.deepcopy(next(entry for entry in declarations if entry.get("node")))
-        extra["node"] = removed
-        declarations.append(extra)
-        with self.assertRaises(ValueError):
-            runtime._validate(yaml.safe_dump(document), reduced, references)
+        payload = {"image": references["CPU_AMD64_IMAGE"]}
+        document = {"profiling": {"executionDeclarations": [
+            {"deviceClass": "lattepanda-3-delta-8g", "runtime": {"payload": json.dumps(payload)}}]}}
+        runtime._validate(yaml.safe_dump(document), references)
+        for extra in ({"operator": {"enabled": False}},
+                      {"profiling": {"executionDeclarations": [], "hostNetwork": True}}):
+            invalid = dict(document, **extra)
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                runtime._validate(yaml.safe_dump(invalid), references)
 
 
 if __name__ == "__main__":

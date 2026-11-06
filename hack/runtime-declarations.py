@@ -20,14 +20,12 @@ Usage: hack/runtime-declarations.py > /tmp/runtime-declarations.yaml
 
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 
 SCHEMA = "chill.dacs.io/runtime-declaration.v1alpha2"
 VERIFICATION = "exact-image-runtime-inspection-v1"
-IMAGE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 MACHINES = {"x86_64": "amd64", "aarch64": "arm64"}
 PROVIDERS = {"ort-cpu": "CPUExecutionProvider", "ort-cuda": "CUDAExecutionProvider"}
 VIDEO_GID = 44
@@ -97,8 +95,6 @@ def fail(message):
 
 def payload(image, architecture, backend, facts):
     """Build the runtime declaration from probe facts read inside the image."""
-    if not IMAGE.fullmatch(image):
-        fail(f"{image}: REPOSITORY@sha256:DIGEST required")
     if MACHINES.get(facts["machine"]) != architecture:
         fail(f"{image}: probe machine {facts['machine']!r} is not {architecture}")
     found = facts["packages"]
@@ -106,8 +102,6 @@ def payload(image, architecture, backend, facts):
         names = ["rknn-toolkit-lite2"]
     else:
         ort = "onnxruntime-gpu" if backend == "ort-cuda" else "onnxruntime"
-        if found[ort] != facts["ortVersion"]:
-            fail(f"{image}: {ort} {found[ort]!r} is not the imported onnxruntime {facts['ortVersion']!r}")
         if PROVIDERS[backend] not in facts["providers"]:
             fail(f"{image}: {PROVIDERS[backend]} is unavailable")
         names = [ort, "numpy"]

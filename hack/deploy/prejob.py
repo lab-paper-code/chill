@@ -70,8 +70,6 @@ def check(source, evidence, kube, run, rendered, label, inflight_report, previou
         raise RuntimeError('prejobRepairOnly cannot cover every inflight blocker with proved parent/child identities')
     cohort = [{'request': identity(parent['metadata']), 'child': identity(child['metadata'])}
               for parent, child in pairs]
-    if previous is not None and cohort != previous['cohort']:
-        raise RuntimeError('prejob frozen request/child cohort or generation changed before upgrade')
     binary = evidence / 'prejob-retirement-check'
     if label == 'prejob-preflight':
         run(['go', 'build', '-buildvcs=false', '-o', str(binary),

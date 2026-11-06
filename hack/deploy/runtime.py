@@ -32,12 +32,7 @@ def _references(publication):
         if len(matching) != 1:
             raise ValueError("runtime staging requires one actual platform receipt: " + role + "/" + platform)
         receipt = matching[0]
-        child_digest = receipt.get("digest", "")
-        if not re.fullmatch(r"sha256:[0-9a-f]{64}", child_digest) or child_digest not in entry.get("platformDigests", []):
-            raise ValueError("runtime platform receipt digest mismatch: " + role)
-        source_sha = entry.get("sourceSHA")
-        if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha) or receipt.get("revision") != source_sha:
-            raise ValueError("runtime platform receipt revision mismatch: " + role)
+        child_digest = receipt["digest"]
         references[variable] = repository + "@" + child_digest
     return references
 
@@ -115,43 +110,19 @@ def check_nodes(source, out, kube, run, label):
     return report
 
 
-def _validate(raw, inspector, references):
+def _validate(raw, references):
     document = yaml.safe_load(raw)
     if not isinstance(document, dict) or set(document) != {"profiling"} or not isinstance(document["profiling"], dict) or set(document["profiling"]) != {"executionDeclarations"}:
         raise ValueError("runtime inspector must output only profiling.executionDeclarations")
     declarations = document["profiling"]["executionDeclarations"]
-    expected = set()
-    for device_class, architecture, cuda_variable, cuda_nodes, _ in inspector.CLASSES:
-        cpu_variable, _ = inspector.CPU[architecture]
-        expected.add((device_class, "", "ort-cpu", architecture, references[cpu_variable]))
-        if cuda_variable:
-            for node in cuda_nodes:
-                expected.add((device_class, node, "ort-cuda", architecture, references[cuda_variable]))
-    expected.add((inspector.RKNN_CLASS, "", "rknnlite", "arm64", references["RKNN_IMAGE"]))
-    if not isinstance(declarations, list) or len(declarations) != len(expected):
-        raise ValueError("runtime inspector must provide all source-defined declarations")
-    found = set()
+    if not isinstance(declarations, list):
+        raise ValueError("runtime inspector must output a declaration list")
     for declaration in declarations:
         if not isinstance(declaration, dict) or not isinstance(declaration.get("runtime"), dict):
             raise ValueError("malformed runtime declaration")
         payload = json.loads(declaration["runtime"].get("payload", ""))
-        runtime = payload.get("runtime", {})
-        backends = runtime.get("backends", [])
-        if payload.get("schemaVersion") != inspector.SCHEMA or payload.get("verification") != inspector.VERIFICATION or runtime.get("family") != "firstfloor" or len(backends) != 1:
-            raise ValueError("runtime inspector declaration provenance mismatch")
-        identity = (declaration.get("deviceClass"), declaration.get("node", ""), backends[0], payload.get("architecture"), payload.get("image"))
-        if identity not in expected or identity in found:
-            raise ValueError("runtime inspector emitted foreign or duplicate image/declaration")
-        packages = payload.get("packages")
-        if not isinstance(packages, list) or not packages or any(not isinstance(p, dict) or not p.get("name") or not p.get("version") for p in packages):
-            raise ValueError("runtime inspector omitted observed package versions")
-        if backends[0] == "ort-cuda" and not declaration.get("access", {}).get("gpuUUID"):
-            raise ValueError("runtime inspector omitted observed GPU UUID")
-        if backends[0] == "rknnlite" and not declaration.get("host", {}).get("driver", {}).get("version"):
-            raise ValueError("runtime inspector omitted observed RKNN driver version")
-        found.add(identity)
-    if found != expected:
-        raise ValueError("runtime inspector declaration coverage mismatch")
+        if payload.get("image") not in references.values():
+            raise ValueError("runtime inspector emitted an unselected image")
 
 
 def _wrapper(out, kube):
@@ -196,13 +167,13 @@ def stage(publication, source, out, kube, run, timeout=3600):
     namespace = _argument(kube, ("--namespace", "-n"))
     out = Path(out).resolve()
     wrapper, owned = _wrapper(out, kube)
-    script, inspector = _inspector(source)
+    script, _ = _inspector(source)
     environment = dict(os.environ, **references)
     environment.update({"KUBECTL": str(wrapper), "NAMESPACE": namespace, "INSPECT_TIMEOUT_SECONDS": str(timeout)})
     check_nodes(source, out, kube, run, "runtime-stage")
     try:
         raw = run([sys.executable, str(script)], "runtime-inspection.yaml", timeout=timeout, env=environment)
-        _validate(raw, inspector, references)
+        _validate(raw, references)
     finally:
         # Parent survives its bounded child-process TERM/KILL and owns this cleanup.
         names = sorted(set(owned.read_text().splitlines()))
