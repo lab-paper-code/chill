@@ -110,7 +110,7 @@ func (o *Observer) Observe(
 	}
 
 	onStarted()
-	return o.receive(ctx, end, prepared.retry, request, prepared.active, result)
+	return o.receive(ctx, end, prepared.retry, request, prepared.active, result), nil
 }
 
 func (o *Observer) prepare(
@@ -162,10 +162,10 @@ func (o *Observer) receive(
 	request Request,
 	active map[string]workloadobserver.Pod,
 	result workloadobserver.Result,
-) (workloadobserver.Result, error) {
+) workloadobserver.Result {
 	lastObservedAt := result.CoverageStartedAt
 	endFenceResourceVersion := ""
-	finish := func(failure *workloadobserver.Failure) (workloadobserver.Result, error) {
+	finish := func(failure *workloadobserver.Failure) workloadobserver.Result {
 		endedAt := o.nextTime(lastObservedAt)
 		result.CoverageEndedAt = endedAt
 		result.FinalActivePods = orderedPods(active)
@@ -174,9 +174,9 @@ func (o *Observer) receive(
 		if failure != nil {
 			result.Failure.ObservedAt = endedAt
 		}
-		return result, nil
+		return result
 	}
-	fail := func(reason workloadobserver.FailureReason, message string) (workloadobserver.Result, error) {
+	fail := func(reason workloadobserver.FailureReason, message string) workloadobserver.Result {
 		return finish(&workloadobserver.Failure{Reason: reason, Message: message})
 	}
 
@@ -233,7 +233,7 @@ func (o *Observer) receive(
 		applyTransition(kind, projected, active)
 		return nil
 	}
-	endFence := func() (workloadobserver.Result, error) {
+	endFence := func() workloadobserver.Result {
 		if cause := context.Cause(ctx); cause != nil {
 			return fail(workloadobserver.FailureReasonEndFenceFailed, fmt.Sprintf("workload observation interrupted: %v", cause))
 		}
