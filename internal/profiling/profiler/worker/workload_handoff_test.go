@@ -52,11 +52,10 @@ func TestWorkloadResultFileRoundTrip(t *testing.T) {
 		record.InitialActivePods[1].UID != record.FinalActivePods[0].UID {
 		t.Fatalf("observed membership changed: initial=%+v final=%+v", record.InitialActivePods, record.FinalActivePods)
 	}
-	if record.InitialActivePods[0].Labels == nil || record.FinalActivePods[1].Labels != nil ||
-		len(record.InitialActivePods[0].Images) != 3 ||
-		record.InitialActivePods[0].Images[0] != "registry.example/z" ||
-		len(record.Events) != 1 || record.Events[0].Pod.Images[0] != "registry.example/z" {
-		t.Fatalf("raw Pod snapshots or event changed: %+v", record)
+	if len(record.Events) != 1 || record.Events[0].Kind != workloadobserver.EventUpdated ||
+		!workloadobserver.SamePod(record.Events[0].Pod, record.InitialActivePods[0]) ||
+		record.Events[0].ResourceVersion != record.LastResourceVersion {
+		t.Fatalf("observed Pod update changed: %+v", record.Events)
 	}
 	record.InitialActivePods[0].Name = mutatedCopyName
 	sealed, err := got.Record()
