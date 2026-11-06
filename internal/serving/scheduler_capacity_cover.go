@@ -75,16 +75,7 @@ func (c *v2Search) cover() {
 					break
 				}
 				coverage, energy := capacityCoverageDelta(c.current, key), key.joules-c.current.joules
-				allowed := key.searchable && !key.unroutedPrepare
-				if c.current.countExcess > 0 {
-					allowed = allowed && key.instances < c.current.instances && key.countExcess < c.current.countExcess
-				} else {
-					allowed = allowed && key.bounded && coverage > 0
-					for w, satisfied := range c.current.satisfied {
-						allowed = allowed && (!satisfied || key.satisfied[w])
-					}
-				}
-				if !allowed {
+				if !c.coverAllows(key, coverage) {
 					continue
 				}
 				better := !found
@@ -118,6 +109,19 @@ func (c *v2Search) cover() {
 		c.best.copyInto(&c.current)
 		c.finalists.add(c.current, c.start)
 	}
+}
+
+func (c *v2Search) coverAllows(key orderKey, coverage float64) bool {
+	allowed := key.searchable && !key.unroutedPrepare
+	if c.current.countExcess > 0 {
+		allowed = allowed && key.instances < c.current.instances && key.countExcess < c.current.countExcess
+	} else {
+		allowed = allowed && key.bounded && coverage > 0
+		for w, satisfied := range c.current.satisfied {
+			allowed = allowed && (!satisfied || key.satisfied[w])
+		}
+	}
+	return allowed
 }
 
 // UID order wins a cover tie before the changed plan's logical key.
