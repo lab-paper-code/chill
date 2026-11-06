@@ -62,22 +62,34 @@ func TestBuildAgentDaemonSet(t *testing.T) {
 		t.Fatalf("Affinity = %#v, want excluded node", spec.Affinity)
 	}
 	affinity := spec.Affinity.NodeAffinity
-	selector := &metav1.LabelSelector{}
-	for _, requirement := range append(
-		affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions,
-		affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference.MatchExpressions...,
-	) {
-		selector.MatchExpressions = append(selector.MatchExpressions, metav1.LabelSelectorRequirement{
-			Key: requirement.Key, Operator: metav1.LabelSelectorOperator(requirement.Operator), Values: requirement.Values,
-		})
+	if len(affinity.PreferredDuringSchedulingIgnoredDuringExecution) == 0 ||
+		affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Weight <= 0 {
+		t.Fatal("node preference was lost")
 	}
-	nodeSelector, err := metav1.LabelSelectorAsSelector(selector)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"good-edge", "bad-edge", "other-edge"} {
-		if got := nodeSelector.Matches(labels.Set{hostnameLabelKey: name}); got != (name == "good-edge") {
-			t.Errorf("allowed preference for %s = %t", name, got)
+	for _, selection := range []struct {
+		name string
+		term corev1.NodeSelectorTerm
+		want map[string]bool
+	}{
+		{"required", affinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0],
+			map[string]bool{"good-edge": true, "other-edge": true}},
+		{"preferred", affinity.PreferredDuringSchedulingIgnoredDuringExecution[0].Preference,
+			map[string]bool{"good-edge": true, "bad-edge": true}},
+	} {
+		selector := &metav1.LabelSelector{}
+		for _, requirement := range selection.term.MatchExpressions {
+			selector.MatchExpressions = append(selector.MatchExpressions, metav1.LabelSelectorRequirement{
+				Key: requirement.Key, Operator: metav1.LabelSelectorOperator(requirement.Operator), Values: requirement.Values,
+			})
+		}
+		nodeSelector, err := metav1.LabelSelectorAsSelector(selector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"good-edge", "bad-edge", "other-edge"} {
+			if got := nodeSelector.Matches(labels.Set{hostnameLabelKey: name}); got != selection.want[name] {
+				t.Errorf("%s selection for %s = %t, want %t", selection.name, name, got, selection.want[name])
+			}
 		}
 	}
 }
