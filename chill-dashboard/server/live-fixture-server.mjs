@@ -16,6 +16,8 @@ const cert = readFileSync(join(directory,'cert.pem')), key = readFileSync(join(d
 const port = Number(process.env.CHILL_FIXTURE_PORT || 3445), upstreamPort = port + 1, nextPort = Number(process.env.CHILL_FIXTURE_NEXT_PORT || 3131)
 const origin = `https://localhost:${port}`, token = 's2-local-token'
 let state = initialLiveState(), seq = 0, scene = 'expand', resyncs = 0, authCount = 0, resumes = [], lastAt = new Date().toISOString()
+let measurementMode = 'accept'
+const submissions = [], requests = []
 let frames = fixtureMessages(scene, lastAt)
 for (const frame of frames) { const parsed = parseLiveMessage(frame); if (!parsed) throw new Error('Invalid synthetic frame'); state = applyLiveMessage(state, parsed) }
 seq = state.checkpoint.seq
@@ -49,9 +51,34 @@ function changeScene(next) {
   const metric = projected.metrics.at(-1)
   if(metric) publish(metric)
 }
-const upstream = https.createServer({key,cert}, (req,res) => {
+const upstream = https.createServer({key,cert}, async (req,res) => {
   if(req.headers.authorization !== `Bearer ${token}`){res.writeHead(401);res.end();return}
   const url = new URL(req.url,'https://localhost')
+  if(url.pathname === '/api/v1/namespaces/lab/batch-energy-optimizations' && req.method === 'GET') {
+    res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({items:requests}));return
+  }
+  if(req.method === 'POST' && /^\/api\/v1\/namespaces\/lab\/batch-energy-optimizations(?:\/preflight)?$/.test(url.pathname)) {
+    if(url.searchParams.has('dryRun') || url.pathname.endsWith('/preflight')) {
+      res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({code:'FixtureDiagnosticUnavailable',message:'Optional check unavailable'}));return
+    }
+    req.setEncoding('utf8')
+    let raw = ''
+    for await (const chunk of req) {
+      raw += chunk
+      if(Buffer.byteLength(raw)>1<<20){res.writeHead(413);res.end();return}
+    }
+    let body
+    try { body=JSON.parse(raw) } catch {res.writeHead(400);res.end();return}
+    submissions.push(body)
+    if(measurementMode === 'reject') {
+      res.writeHead(422,{'content-type':'application/json'});res.end(JSON.stringify({code:'FixtureRejected',message:'Final server rejected these conditions'}));return
+    }
+    const task = {...body,metadata:{...body.metadata,uid:`fixture-request-${submissions.length}`,resourceVersion:'1',creationTimestamp:new Date().toISOString()}}
+    requests.push(task)
+    if(measurementMode === 'lost'){res.destroy();return}
+    if(measurementMode === 'slow')await new Promise(resolve=>setTimeout(resolve,5000))
+    res.writeHead(201,{'content-type':'application/json'});res.end(JSON.stringify({request:'Accepted',task}));return
+  }
   if(url.pathname === '/api/v1/observations/scheduler') {
     const from = url.searchParams.get('from')
     const at = [...decisionTimes].find(value=>value.replace(/(?:\.(\d+))?Z$/,(_match,fraction='')=>`.${fraction.padEnd(9,'0')}Z`)===from)
@@ -89,7 +116,9 @@ const browser = https.createServer({key,cert},(req,res)=>{
       for(const client of wss.clients)client.close(1013)
     }
     if(req.method==='POST'&&url.pathname==='/__fixture/cluster')publish({type:'event',kind:'cluster',cluster:{kind:'issue',at:new Date().toISOString(),event:'issue',source:'observer',reason:'검사용 failure 실시간 장애',previousReason:'검사용 이전 사유'}})
-    res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify({scene,authCount,resumes,resyncs,connections:wss.clients.size,seq}));return
+    if(req.method==='POST'&&url.pathname==='/__fixture/additive')publish({type:'delta',extension:{version:2},nodes:state.snapshot.nodes.map(row=>({...row,extension:{driver:'new'}})),workloads:state.snapshot.workloads.map(row=>({...row,extension:{diagnostics:[]},readiness:{...row.readiness,extension:true}}))})
+    if(req.method==='POST'&&url.pathname==='/__fixture/measurement'&&['accept','reject','lost','slow'].includes(url.searchParams.get('mode')))measurementMode=url.searchParams.get('mode')
+    res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify({scene,authCount,resumes,resyncs,connections:wss.clients.size,seq,measurementMode,submissions,requests}));return
   }
   front.emit('request',req,res)
 })

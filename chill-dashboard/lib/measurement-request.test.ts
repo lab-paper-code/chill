@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { datasetGap, requestNumber, requestDefaults, requestInputs, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts, requestCheckCurrent, requestHref, requestRunHref, requestUsedResults, requestCopySource, requestCopyQuery, requestExecutionStatus } from "./measurement-request.ts"
+import { datasetGap, requestNumber, requestDefaults, requestInputs, requestConditionChanges, requestPreflightReason, requestRejectionGuidance, requestOperationalSummary, requestFailureFacts, requestHref, requestRunHref, requestUsedResults, requestCopySource, requestCopyQuery, requestExecutionStatus } from "./measurement-request.ts"
 import type { MeasurementAssessment, MeasurementCoverageCell, MeasurementPlan, ProfilesView, ResultRow } from "./read-types.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
@@ -146,15 +146,6 @@ test("rejected preflight points to exact repair fields instead of generic permis
 test("failure cause rows retain server reason and message before a generic classification",()=>{
   assert.deepEqual(requestFailureFacts([{type:"Complete",status:"False",reason:"NativePreparationFailed",message:"Pod image missing"}]),[["서버 상태","Complete: False"],["서버 사유","NativePreparationFailed"],["서버 메시지","Pod image missing"]])
   assert.deepEqual(requestFailureFacts([]),[["서버 사유","미제공"],["서버 메시지","미제공"]])
-})
-
-test("successful checks are invalid after any input or source identity change",()=>{
-  const body=JSON.stringify({name:"checked",batch:[1],sourceUID:"original"})
-  assert.equal(requestCheckCurrent(body,body,true,true),true)
-  assert.equal(requestCheckCurrent(null,body,true,true),false)
-  for(const current of [JSON.stringify({name:"renamed",batch:[1],sourceUID:"original"}),JSON.stringify({name:"checked",batch:[2],sourceUID:"original"}),JSON.stringify({name:"checked",batch:[1],sourceUID:"replacement"})])assert.equal(requestCheckCurrent(body,current,true,true),false)
-  assert.equal(requestCheckCurrent(body,body,false,true),false)
-  assert.equal(requestCheckCurrent(body,body,true,false),false)
 })
 
 test("canonical request and child round links preserve namespaces and immutable identities",()=>{

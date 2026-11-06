@@ -51,9 +51,6 @@ function object(value:unknown):Record<string,unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype,null].includes(Object.getPrototypeOf(value))) return invalid()
   return value as Record<string,unknown>
 }
-function keys(row:Record<string,unknown>,allowed:string[]) {
-  if (Object.keys(row).some(key => !allowed.includes(key))) invalid()
-}
 function text(value:unknown):string { return typeof value === "string" ? value : invalid() }
 function boolean(value:unknown):boolean { return typeof value === "boolean" ? value : invalid() }
 function number(value:unknown):number { return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : invalid() }
@@ -68,31 +65,31 @@ function nullable<T>(value:unknown,parse:(value:unknown)=>T):T|null { return val
 function array<T>(value:unknown,parse:(value:unknown)=>T):T[] { return Array.isArray(value) ? value.map(parse) : invalid() }
 function map<T>(value:unknown,parse:(value:unknown)=>T):Record<string,T> { return Object.fromEntries(Object.entries(object(value)).map(([key,row])=>[key,parse(row)])) }
 function unique<T>(rows:T[],key:(row:T)=>string):T[] { return new Set(rows.map(key)).size === rows.length ? rows : invalid() }
-function nodeRef(value:unknown) { const row=object(value);keys(row,["uid","name"]);return {uid:text(row.uid),name:text(row.name)} }
+function nodeRef(value:unknown) { const row=object(value);return {uid:text(row.uid),name:text(row.name)} }
 function workload(value:unknown):LiveWorkload {
-  const row=object(value);keys(row,["uid","name","model","definitionID","slo","autonomous","admission","pending","readiness"])
-  const slo=object(row.slo),ready=object(row.readiness);keys(slo,["percentile","targetLatencyNanos"]);keys(ready,["ready","reason","observedAt"])
+  const row=object(value)
+  const slo=object(row.slo),ready=object(row.readiness)
   const percentile=number(slo.percentile),targetLatencyNanos=number(slo.targetLatencyNanos)
   if (percentile > 100 || !Number.isInteger(targetLatencyNanos)) invalid()
   return {uid:text(row.uid),name:text(row.name),model:text(row.model),definitionID:nullable(row.definitionID,text),slo:{percentile,targetLatencyNanos},autonomous:boolean(row.autonomous),admission:boolean(row.admission),pending:count(row.pending),readiness:{ready:boolean(ready.ready),reason:text(ready.reason),observedAt:timestamp(ready.observedAt)}}
 }
 function node(value:unknown):LiveNode {
-  const row=object(value);keys(row,["uid","name","powerMode","ready","measurement","reasons","observedAt"])
+  const row=object(value)
   return {uid:text(row.uid),name:text(row.name),powerMode:text(row.powerMode),ready:boolean(row.ready),measurement:boolean(row.measurement),...(row.reasons === undefined ? {} : {reasons:array(row.reasons,text)}),observedAt:nullable(row.observedAt,timestamp)}
 }
 function instance(value:unknown):LiveInstance {
-  const row=object(value);keys(row,["id","node","ownerWorkloadUID","profileID","ready","stopped","routable","running","waiting","observedAt"])
+  const row=object(value)
   return {id:text(row.id),node:nodeRef(row.node),ownerWorkloadUID:text(row.ownerWorkloadUID),profileID:text(row.profileID),ready:boolean(row.ready),stopped:boolean(row.stopped),routable:map(row.routable === null ? {} : row.routable,boolean),running:map(row.running === null ? {} : row.running,count),waiting:map(row.waiting === null ? {} : row.waiting,count),observedAt:timestamp(row.observedAt)}
 }
-function decision(value:unknown):LiveDecision { const row=object(value);keys(row,["at","state","reason","explanation"]);return {at:timestamp(row.at),state:text(row.state),reason:text(row.reason),explanation:text(row.explanation)} }
+function decision(value:unknown):LiveDecision { const row=object(value);return {at:timestamp(row.at),state:text(row.state),reason:text(row.reason),explanation:text(row.explanation)} }
 export function liveActionKey(row:LiveAction):string { return JSON.stringify([row.id,row.node.uid,row.startedAt]) }
 /** Shared by the live board and operating menu: history and plans are not executing changes. */
 export function isLiveActionActive(row:{status:string;completedAt?:string}):boolean { return !row.completedAt && (row.status === "starting" || row.status === "running") }
-function action(value:unknown,event=false):LiveAction {
-  const row=object(value);keys(row,["id","kind","node","workloadUID","status","startedAt","completedAt","expectedSeconds","expectedSource",...(event ? ["phase","result"] : [])])
+function action(value:unknown):LiveAction {
+  const row=object(value)
   let expectedSource:LiveAction["expectedSource"]=null
   if (row.expectedSource !== null) {
-    const source=object(row.expectedSource);keys(source,["costID","reference","statistic","trialCount"])
+    const source=object(row.expectedSource)
     if (source.statistic !== "mean") invalid()
     object(source.reference)
     expectedSource={costID:text(source.costID),reference:source.reference,statistic:"mean",trialCount:count(source.trialCount)}
@@ -100,16 +97,16 @@ function action(value:unknown,event=false):LiveAction {
   return {id:text(row.id),kind:text(row.kind),node:nodeRef(row.node),workloadUID:text(row.workloadUID),status:text(row.status),startedAt:timestamp(row.startedAt),...(row.completedAt === undefined ? {} : {completedAt:timestamp(row.completedAt)}),expectedSeconds:nullable(row.expectedSeconds,number),expectedSource}
 }
 function reservation(value:unknown):LiveReservation {
-  const row=object(value);keys(row,["owner","nodes","workloadUIDs","podUIDs","instances","reason","explanation"])
+  const row=object(value)
   return {owner:text(row.owner),nodes:array(row.nodes,nodeRef),workloadUIDs:array(row.workloadUIDs === null ? [] : row.workloadUIDs,text),podUIDs:array(row.podUIDs === null ? [] : row.podUIDs,text),instances:array(row.instances === null ? [] : row.instances,text),reason:text(row.reason),explanation:text(row.explanation)}
 }
 function metric(value:unknown):LiveMetric {
-  const row=object(value);keys(row,["received","completed","failed","withinSLO","latencySamples","p50ms","p90ms","p95ms","p99ms"])
+  const row=object(value)
   const result={received:count(row.received),completed:count(row.completed),failed:count(row.failed),withinSLO:count(row.withinSLO),latencySamples:count(row.latencySamples),p50ms:nullable(row.p50ms,number),p90ms:nullable(row.p90ms,number),p95ms:nullable(row.p95ms,number),p99ms:nullable(row.p99ms,number)}
   if (result.withinSLO > result.completed || result.latencySamples > result.completed + result.failed) invalid()
   return result
 }
-function gap(value:unknown):LiveGap { const row=object(value);keys(row,["from","to","scope","reason"]);const result={from:timestamp(row.from),to:timestamp(row.to),scope:text(row.scope),reason:text(row.reason)};return compareAt(result.from,result.to) <= 0 ? result : invalid() }
+function gap(value:unknown):LiveGap { const row=object(value);const result={from:timestamp(row.from),to:timestamp(row.to),scope:text(row.scope),reason:text(row.reason)};return compareAt(result.from,result.to) <= 0 ? result : invalid() }
 const snapshotKeys=["workloads","nodes","instances","routing","decision","actions","reservations"]
 function projection(row:Record<string,unknown>,full:boolean):LiveDelta {
   const result:LiveDelta={}
@@ -127,29 +124,28 @@ function projection(row:Record<string,unknown>,full:boolean):LiveDelta {
   return result
 }
 function cluster(value:unknown):LiveCluster {
-  const row=object(value);keys(row,["kind","at","event","pod","source","reason","previousReason"])
+  const row=object(value)
   if (row.kind !== "pod" && row.kind !== "issue") return invalid()
   const result:LiveCluster={kind:row.kind,at:timestamp(row.at),event:text(row.event)}
   for (const key of ["source","reason","previousReason"] as const) if (row[key] !== undefined) result[key]=text(row[key])
   if (row.pod !== undefined) {
-    const pod=object(row.pod);keys(pod,["uid","namespace","name","node","phase","ready"])
+    const pod=object(row.pod)
     result.pod={uid:text(pod.uid)}
     for (const key of ["namespace","name","node","phase","ready"] as const) if (pod[key] !== undefined) result.pod[key]=text(pod[key])
   }
   return result
 }
 function sequenceRange(value:unknown):LiveSequenceRange {
-  const row=object(value);keys(row,["fromSeq","toSeq"])
+  const row=object(value)
   const fromSeq=count(row.fromSeq),toSeq=count(row.toSeq)
   return fromSeq > 0 && fromSeq <= toSeq ? {fromSeq,toSeq} : invalid()
 }
 function resumeHistory(value:unknown):LiveResumeHistory {
-  const row=object(value);keys(row,["reason","replayed","requested","retained","gaps"])
+  const row=object(value)
   if ((row.reason!=="fresh" && row.reason!=="checkpoint-unmatched") || row.replayed!==false) return invalid()
   const requested=object(row.requested),retained=object(row.retained)
-  keys(requested,["afterSeq","throughSeq","at"]);keys(retained,["events","power"])
   const result:LiveResumeHistory={reason:row.reason,replayed:false,requested:{afterSeq:count(requested.afterSeq),throughSeq:count(requested.throughSeq),...(requested.at===undefined?{}:{at:timestamp(requested.at)})},retained:{events:nullable(retained.events,sequenceRange),power:nullable(retained.power,sequenceRange)},gaps:array(row.gaps,value=>{
-    const row=object(value);keys(row,["fromSeq","toSeq","scope","reason"])
+    const row=object(value)
     if ((row.scope!=="events" && row.scope!=="power") || row.reason!=="NoRetainedFrames") return invalid()
     return {...sequenceRange({fromSeq:row.fromSeq,toSeq:row.toSeq}),scope:row.scope,reason:row.reason}
   })}
@@ -161,23 +157,23 @@ function eventPayload(row:Record<string,unknown>):LiveEvent {
   if (row.kind==="decision" && row.action===undefined && row.cluster===undefined) return {...base,kind:"decision",decision:decision(row.decision)}
   if (row.kind==="cluster" && row.action===undefined && row.decision===undefined) return {...base,kind:"cluster",cluster:cluster(row.cluster)}
   if (row.kind!=="action" || row.cluster!==undefined || row.decision!==undefined) return invalid()
-  const payload=object(row.action),parsed=action(payload,true),phase=payload.phase
+  const payload=object(row.action),parsed=action(payload),phase=payload.phase
   if (phase!=="started" && phase!=="completed" && phase!=="failed") return invalid()
   const result:LiveActionEvent={...parsed,phase}
-  if (payload.result!==undefined) {const row=object(payload.result);keys(row,["status","error"]);result.result={status:text(row.status),...(row.error===undefined?{}:{error:text(row.error)})}}
+  if (payload.result!==undefined) {const row=object(payload.result);result.result={status:text(row.status),...(row.error===undefined?{}:{error:text(row.error)})}}
   return {...base,kind:"action",action:result}
 }
 /** Archive rows have no live envelope and cannot advance its checkpoint. */
 export function parseRecordedLiveEvent(value:unknown):LiveEvent|null {
   try {
-    const row=object(value);keys(row,["type","at","kind","action","cluster"])
+    const row=object(value)
     if (row.type!=="event") return null
     return eventPayload(row)
   } catch {return null}
 }
 export function parseRecordedLivePage(value:unknown):RecordedLivePage|null {
   try {
-    const row=object(value);keys(row,["events","from","to","nextCursor","coverage"])
+    const row=object(value)
     const from=timestamp(row.from),to=timestamp(row.to)
     if (compareAt(from,to)>=0 || Date.parse(to)-Date.parse(from)>86_400_000) return null
     const events=array(row.events,value=>{
@@ -185,7 +181,7 @@ export function parseRecordedLivePage(value:unknown):RecordedLivePage|null {
       return event && compareAt(event.at,from)>=0 && compareAt(event.at,to)<0 ? event : invalid()
     })
     if (events.length>100) return null
-    const coverage=object(row.coverage);keys(coverage,["from","to","sources","gaps"])
+    const coverage=object(row.coverage)
     const bounds=(row:Record<string,unknown>)=>{
       const from=timestamp(row.from),to=timestamp(row.to)
       return compareAt(from,to)<=0 ? {from,to} : invalid()
@@ -195,10 +191,10 @@ export function parseRecordedLivePage(value:unknown):RecordedLivePage|null {
     const nextCursor=row.nextCursor===undefined?undefined:text(row.nextCursor)
     if (nextCursor==="") return null
     return {from,to,events,...(nextCursor===undefined?{}:{nextCursor}),coverage:{from:availableFrom,to:availableTo,sources:nullable(coverage.sources,value=>array(value,value=>{
-      const row=object(value);keys(row,["from","to","stream","source","store","key"])
+      const row=object(value)
       return {...bounds(row),stream:text(row.stream),source:text(row.source),...(row.store===undefined?{}:{store:text(row.store)}),...(row.key===undefined?{}:{key:text(row.key)})}
     })),gaps:nullable(coverage.gaps,value=>array(value,value=>{
-      const row=object(value);keys(row,["from","to","stream","reason"])
+      const row=object(value)
       return {...bounds(row),stream:text(row.stream),reason:text(row.reason)}
     }))}}
   } catch {return null}
@@ -211,20 +207,17 @@ export function parseLiveMessage(input:string|unknown):LiveMessage|null {
       input=JSON.parse(input)
     }
     const row=object(input),base={seq:count(row.seq),at:timestamp(row.at)}
-    const allowed=["type","seq","at"]
     switch (row.type) {
       case "hello": {
-        keys(row,[...allowed,"protocol","serverAt","retainFrom"])
         const retainFrom=count(row.retainFrom)
         if (row.protocol !== "chill-live/1" || retainFrom > base.seq+1 || retainFrom === 0) return null
         return {...base,type:"hello",protocol:"chill-live/1",serverAt:timestamp(row.serverAt),retainFrom}
       }
-      case "snapshot": keys(row,[...allowed,...snapshotKeys,"history"]);return {...base,type:"snapshot",...projection(row,true),...(row.history===undefined?{}:{history:resumeHistory(row.history)})} as LiveMessage
+      case "snapshot": return {...base,type:"snapshot",...projection(row,true),...(row.history===undefined?{}:{history:resumeHistory(row.history)})} as LiveMessage
       case "delta": {
-        keys(row,[...allowed,...snapshotKeys,"removed"])
         const result:LiveDelta=projection(row,false)
         if (row.removed !== undefined) {
-          const removed=object(row.removed);keys(removed,["instances","actions"])
+          const removed=object(row.removed)
           result.removed={}
           if (removed.instances !== undefined) result.removed.instances=array(removed.instances,text)
           if (removed.actions !== undefined) result.removed.actions=array(removed.actions,value=>{
@@ -236,16 +229,14 @@ export function parseLiveMessage(input:string|unknown):LiveMessage|null {
         return {...base,type:"delta",...result}
       }
       case "metrics": {
-        keys(row,[...allowed,"bucketAt","chill_obslog_queue_length","chill_obslog_oldest_wait_seconds","workloads","nodes","pool","gaps"])
-        const bucketAt=timestamp(row.bucketAt),pool=object(row.pool);keys(pool,["wholeWatts","activeWatts"])
+        const bucketAt=timestamp(row.bucketAt),pool=object(row.pool)
         if (new Date(bucketAt).getTime()%1000 || /\.[0-9]*[1-9][0-9]*Z$/.test(bucketAt)) return null
-        return {...base,type:"metrics",bucketAt,chill_obslog_queue_length:count(row.chill_obslog_queue_length),chill_obslog_oldest_wait_seconds:number(row.chill_obslog_oldest_wait_seconds),workloads:map(row.workloads,metric),nodes:map(row.nodes,value=>{const node=object(value);keys(node,["watts","observedAt"]);return {watts:nullable(node.watts,number),observedAt:nullable(node.observedAt,timestamp)}}),pool:{wholeWatts:nullable(pool.wholeWatts,number),activeWatts:nullable(pool.activeWatts,number)},...(row.gaps === undefined ? {} : {gaps:array(row.gaps,gap)})}
+        return {...base,type:"metrics",bucketAt,chill_obslog_queue_length:count(row.chill_obslog_queue_length),chill_obslog_oldest_wait_seconds:number(row.chill_obslog_oldest_wait_seconds),workloads:map(row.workloads,metric),nodes:map(row.nodes,value=>{const node=object(value);return {watts:nullable(node.watts,number),observedAt:nullable(node.observedAt,timestamp)}}),pool:{wholeWatts:nullable(pool.wholeWatts,number),activeWatts:nullable(pool.activeWatts,number)},...(row.gaps === undefined ? {} : {gaps:array(row.gaps,gap)})}
       }
       case "event": {
-        keys(row,[...allowed,"kind","decision","action","cluster"])
         return {...eventPayload(row),...base} as Envelope & LiveEvent
       }
-      case "heartbeat": keys(row,[...allowed,"serverAt"]);return {...base,type:"heartbeat",serverAt:timestamp(row.serverAt)}
+      case "heartbeat": return {...base,type:"heartbeat",serverAt:timestamp(row.serverAt)}
       default:return null
     }
   } catch { return null }

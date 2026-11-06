@@ -22,15 +22,15 @@ const display=(value:unknown)=>typeof value==="string"||typeof value==="number"?
 export function MeasurementDocumentRequestPage({namespace}:{namespace:string}) {
   const plans=useMeasurementPlans(namespace)
   const [body,setBody]=useState<MeasurementRequestDocument|null>(null)
-  const submission=useMeasurementDocumentSubmission({body,namespace,source:"document",plans:plans.data?.items??[],refetchPlans:plans.refetch})
-  const {dry,pre,send,answer,admitted,passed,pending,unknown,checked,found,error,invalidate,verify,submit,lookup}=submission
-  const locked=pending||send.isPending||unknown
+  const submission=useMeasurementDocumentSubmission({body,namespace,plans:plans.data?.items??[],refetchPlans:plans.refetch})
+  const {dry,pre,send,answer,admitted,canSubmit,pending,unknown,checked,found,error,invalidate,verify,submit,lookup}=submission
+  const locked=send.isPending||unknown
   const state=object(body?.spec.state),candidate=object(state.candidate),active=object(body?.spec.activeProtocol),idle=object(body?.spec.idleProtocol)
   return <Screen width="data" title="측정 요청 문서 가져오기" back={["/measurements/requests","측정 요청"]}>
     <MeasurementNavigation active="requests" namespace={namespace}/>
-    <p className="max-w-prose text-sm text-muted-foreground">준비된 측정 조건을 읽고 검토한 뒤, 서버 검사와 최종 제출을 진행하세요.</p>
+    <p className="max-w-prose text-sm text-muted-foreground">준비된 측정 조건을 읽고 검토한 뒤 제출하세요. 사전검사는 선택 사항이며, 최종 제출 시 서버가 현재 조건과 실행 가능 여부를 판단해요.</p>
     <details><summary className="min-h-11 cursor-pointer py-2 font-medium">준비 안내·예시</summary><MeasurementPreparationGuide/></details>
-    <MeasurementDocumentInput namespace={namespace} locked={locked} reviewed={body!==null} example={measurementRequestExample} onEdit={()=>{if(!locked){setBody(null);invalidate()}}} onReview={value=>{if(!locked){setBody(value);invalidate()}}}/>
+    <MeasurementDocumentInput namespace={namespace} locked={locked||pending} reviewed={body!==null} example={measurementRequestExample} onEdit={()=>{if(!locked&&!pending){setBody(null);invalidate()}}} onReview={value=>{if(!locked&&!pending){setBody(value);invalidate()}}}/>
     {body&&<section aria-label="측정 요청 내용 검토" className="grid min-w-0 gap-5 border-t pt-5">
       <h2 className="font-semibold">요청 내용</h2>
       <div className="grid gap-5 md:grid-cols-2">
@@ -52,6 +52,6 @@ export function MeasurementDocumentRequestPage({namespace}:{namespace:string}) {
     </section>}
     {[dry,pre,send].map((mutation,index)=>mutation.error?<section key={index} role="alert" className="notice space-y-2"><p>{["접수 검사","실행 계획 검사","제출"][index]} · {mutation.error.status?`HTTP ${mutation.error.status}`:"응답 미수신"}</p><p className="whitespace-pre-wrap break-words text-sm">{mutation.error.body}</p><SourceJSON inline value={{status:mutation.error.status,data:mutation.error.data}} title="오류 상세"/></section>:null)}
     {unknown&&<section role="alert" className="notice grid gap-3"><h2 className="font-semibold">접수 결과 미확인</h2><p className="text-sm">{body?.metadata.name} 요청이 이미 생성됐을 수 있어요. 같은 이름의 접수 기록을 확인하세요.</p><Button variant="outline" className="w-fit" disabled={plans.isFetching} onClick={lookup}>같은 이름의 접수 기록 조회</Button>{found?<Link className="underline" href={requestHref(namespace,found.metadata.name,found.metadata.uid)}>접수된 요청 열기</Link>:checked&&<p className="text-sm">접수 기록 미확인 · 재제출 차단 유지</p>}</section>}
-    <div className="flex flex-wrap gap-3"><Button variant="outline" disabled={!body||locked} onClick={verify}>{pending?"검사 중":"서버에서 요청 검사"}</Button><Button disabled={!body||!passed||locked} onClick={submit}>{send.isPending?"제출 중":"측정 요청 제출"}</Button></div>
+    <div className="flex flex-wrap gap-3"><Button variant="outline" disabled={!body||locked||pending} onClick={verify}>{pending?"검사 중":"선택 사전검사"}</Button><Button disabled={!canSubmit||locked} onClick={submit}>{send.isPending?"제출 중":"측정 요청 제출"}</Button></div>
   </Screen>
 }

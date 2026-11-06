@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { requestInputs } from "../lib/measurement-request.ts"
 import type { MeasurementPlan } from "../lib/read-types.ts"
+import type { MeasurementRequestDocument } from "../lib/measurement-document.ts"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { runInNewContext } from "node:vm"
@@ -25,7 +26,11 @@ function renderRequest(props:Record<string,unknown>={},query="",error="",stage=0
   let mutationIndex=0,stateIndex=0
   const states:unknown[]=[]
   const modules:Record<string,unknown>={
-    "react":{...require("react"),...(interact?{useEffect:()=>{}}:{}),useState:(initial:unknown)=>{
+    "react":{...require("react"),...(interact?{useEffect:()=>{},useRef:(current:unknown)=>{
+      const index=stateIndex++
+      if(!(index in states))states[index]={current}
+      return states[index]
+    }}:{}),useState:(initial:unknown)=>{
       const index=stateIndex++
       if(interact) {
         if(!(index in states))states[index]=typeof initial==="function"?(initial as ()=>unknown)():initial
@@ -102,6 +107,27 @@ test("explicit Workload selection fills desired refs and emits its name in the a
   assert.equal(body.spec.state.candidate.modelSpec,condition.model)
   assert.equal(body.spec.state.candidate.preprocessor,"pre")
   assert.equal(body.spec.activeProtocol.dataset,"data")
+})
+
+test("the guided form submits current conditions without diagnostics despite catalog metadata changes",()=>{
+  const context={...workloadContext,
+    models:workloadContext.models.map(model=>({...model,metadata:{...model.metadata}})),
+    preprocessors:workloadContext.preprocessors.map(item=>({...item,metadata:{...item.metadata}})),
+    classes:[{name:condition.deviceClass,uid:"class",resourceVersion:"1",architecture:"amd64",powerModes:[{name:condition.powerMode}],nodes:[{name:condition.node,uid:"node",ready:"True",schedulingDisabled:false}]}],
+  }
+  const submitted:{path:string;body:MeasurementRequestDocument}[]=[]
+  renderRequest({context,from:"source"},"from=source","",2,[],[],[{},{},{mutate:(request:typeof submitted[number])=>submitted.push(request)}],undefined,false,render=>{
+    context.classes[0].resourceVersion="2"
+    context.models[0].metadata.uid="replacement-model"
+    context.preprocessors[0].metadata.uid="replacement-preprocessor"
+    const action=elements(render()).find(item=>item.props.children==="측정 요청")
+    assert.ok(action)
+    assert.equal(action.props.disabled,false)
+    ;(action.props.onClick as ()=>void)()
+    return render()
+  })
+  assert.equal(submitted.at(-1)?.path,"v1/namespaces/ns/batch-energy-optimizations")
+  assert.equal((submitted.at(-1)?.body.spec.activeProtocol as Record<string,unknown>).workload,"chosen-workload")
 })
 test("defaults and a uniquely matching profile never choose a Workload; missing selection renders an error",()=>{
   const profile={id:"profile",nodeName:condition.node,measuredAt:"2026-11-05",condition:{logicalModel:condition.model,deviceClass:condition.deviceClass,powerMode:condition.powerMode,artifact:{executionPath:condition.path},preprocessor:{name:"pre"},activeProtocol:{workloadName:"chosen-workload",warmupIterations:5,durationSeconds:30,dataset:{name:"data"},metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:30},idleProtocol:{settlingDurationSeconds:2,durationSeconds:10,metricIntervalMilliseconds:1000,metricTimeoutMilliseconds:500,metricDurationSeconds:11}}}
@@ -226,10 +252,10 @@ test("creation stages keep target, conditions and check submission distinct",()=
   const target=renderRequest()
   assert.match(target,/aria-label="요청 단계"/)
   assert.match(target,/aria-current="step">대상/)
-  assert.doesNotMatch(target,/>요청 범위 검사</)
+  assert.doesNotMatch(target,/>선택 사전검사</)
   const review=renderRequest({},"","",2)
   assert.match(review,/aria-label="검사·제출"/)
-  assert.match(review,/>요청 범위 검사</)
+  assert.match(review,/>선택 사전검사</)
 })
 test("copied source identity is reviewable without a UID query and replacement blocks submission",()=>{
   const context={models:[],workloads:[],classes:[],plans:[plan],preprocessors:[],datasets:[],profiles:[]}
@@ -238,7 +264,7 @@ test("copied source identity is reviewable without a UID query and replacement b
   assert.match(html,/원본 UID<\/th><td[^>]*>uid</)
   const mismatch=renderRequest({context,from:"source"},"from=source&fromUID=old","",2)
   assert.match(mismatch,/복사 원본.*식별자/)
-  assert.match(mismatch,/<button disabled="">요청 범위 검사<\/button>/)
+  assert.match(mismatch,/<button disabled="">선택 사전검사<\/button>/)
 })
 
 test("advanced timing shows actual measurement and observation windows without inventing warmup seconds",()=>{

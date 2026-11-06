@@ -33,11 +33,6 @@ export function requestCopyQuery(params:URLSearchParams,source:MeasurementPlan) 
   return query.toString()
 }
 
-// Bind both successful checks to the complete input, including inherited source identity.
-export function requestCheckCurrent(checked:string|null,current:string,admitted:boolean,resolves?:boolean) {
-  return checked!==null&&checked===current&&admitted&&resolves===true
-}
-
 export function requestUsedResults(cells:MeasurementCoverageCell[],spec:MeasurementPlanSpec) {
   const candidate=spec.state.candidate
   return cells.filter(cell=>cell.model.name===candidate.modelSpec&&cell.deviceClass.name===candidate.deviceClass&&cell.executionPath===candidate.executionPath&&cell.powerMode===candidate.powerMode).flatMap(cell=>cell.variants.filter(variant=>{

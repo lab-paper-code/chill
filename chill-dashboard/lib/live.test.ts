@@ -92,8 +92,8 @@ test("parser accepts the server DTO and only normalizes nullable Go collections"
   assert.ok(parseLiveMessage(JSON.stringify(snapshot())))
 })
 
-test("trust boundary rejects invalid envelopes, old DTOs, missing fields and invalid numbers",()=>{
-  for (const input of [null,[],"{",{type:"raw",seq:1,at},{...snapshot(),seq:2**53},{...snapshot(),seq:-1},{...snapshot(),at:"2026-02-30T12:00:00Z"},{...snapshot(),at:"2026-10-30T12:00:00+00:00"},{...snapshot(),nodes:null},{...snapshot(),instances:[{...instance,state:"running"}]},{...snapshot(),instances:[{...instance,waiting:undefined}]},{...snapshot(),instances:[{...instance,running:{"pool-a":-1}}]},{...snapshot(),workloads:[{...workload,pending:0.5}]},{...snapshot(),actions:[{...action,expectedSeconds:Infinity}]},{...metrics(1,0),workloads:{"pool-a":{...metric,withinSLO:3}}},{...metrics(1,0),bucketAt:at},{...metrics(1,0),nodes:{"node-a":{watts:NaN,observedAt:null}}},{type:"event",seq:1,at,kind:"cluster",cluster:{kind:"pod",at,event:"pod",pod:{uid:"pod-a",ready:true}}},{type:"event",seq:1,at,kind:"decision",decision:{at,state:"Ready",reason:""},cluster:{kind:"issue",at,event:"issue"}},{type:"hello",seq:1,at,protocol:"chill-live/2",serverAt:at,retainFrom:1}]) {
+test("trust boundary rejects invalid envelopes, missing consumed fields and invalid numbers",()=>{
+  for (const input of [null,[],"{",{type:"raw",seq:1,at},{...snapshot(),seq:2**53},{...snapshot(),seq:-1},{...snapshot(),at:"2026-02-30T12:00:00Z"},{...snapshot(),at:"2026-10-30T12:00:00+00:00"},{...snapshot(),nodes:null},{...snapshot(),instances:[{...instance,waiting:undefined}]},{...snapshot(),instances:[{...instance,running:{"pool-a":-1}}]},{...snapshot(),workloads:[{...workload,pending:0.5}]},{...snapshot(),actions:[{...action,expectedSeconds:Infinity}]},{...metrics(1,0),workloads:{"pool-a":{...metric,withinSLO:3}}},{...metrics(1,0),bucketAt:at},{...metrics(1,0),nodes:{"node-a":{watts:NaN,observedAt:null}}},{type:"event",seq:1,at,kind:"cluster",cluster:{kind:"pod",at,event:"pod",pod:{uid:"pod-a",ready:true}}},{type:"event",seq:1,at,kind:"decision",decision:{at,state:"Ready",reason:""},cluster:{kind:"issue",at,event:"issue"}},{type:"hello",seq:1,at,protocol:"chill-live/2",serverAt:at,retainFrom:1}]) {
     assert.equal(parseLiveMessage(input),null)
   }
   assert.equal(parseLiveMessage(" ".repeat((1<<20)+1)),null)
@@ -372,6 +372,30 @@ test("an initially hidden tab is paused rather than disconnected or connecting",
   const {store}=browser(t,initialLiveState(),"hidden")
   assert.equal(store.state.status,"paused-hidden")
   assert.equal(FakeSocket.sockets.length,0)
+})
+
+test("additive response metadata keeps the live connection and consumed projections current",t=>{
+  const {store}=browser(t)
+  const socket=FakeSocket.sockets[0]
+  const extension={version:2,trace:"new-server"}
+  socket.open();socket.message({...hello(),extension})
+  const initial=snapshot()
+  socket.message({...initial,extension,
+    workloads:[{...workload,extension,slo:{...workload.slo,extension},readiness:{...workload.readiness,extension}}],
+    nodes:initial.nodes.map(row=>({...row,extension})),
+    instances:[{...instance,extension,node:{...node,extension}}],
+    decision:{...initial.decision,extension},
+    actions:[{...action,extension,node:{...node,extension}}],
+    reservations:[{...reservation,extension,nodes:[{...node,extension}]}],
+  })
+  socket.message({...metrics(1,0),extension,pool:{wholeWatts:50,activeWatts:20,extension},nodes:{"node-a":{watts:20,observedAt:time(0),extension}},workloads:{"pool-a":{...metric,extension}}})
+  socket.message({type:"delta",seq:2,at,extension,workloads:[{...workload,pending:7,extension}],removed:{instances:[],extension}})
+  socket.message({type:"event",seq:3,at,kind:"cluster",extension,cluster:{kind:"pod",at,event:"pod",extension,pod:{uid:"pod-a",name:"new-pod",extension}}})
+  assert.equal(socket.closed,false)
+  assert.equal(store.state.status,"live")
+  assert.equal(store.state.snapshot?.workloads[0].pending,7)
+  assert.equal(store.state.metrics.at(-1)?.pool.wholeWatts,50)
+  assert.equal(store.state.events.at(-1)?.cluster?.pod?.name,"new-pod")
 })
 
 test("malformed payload closes the connection before data can enter the cache",t=>{

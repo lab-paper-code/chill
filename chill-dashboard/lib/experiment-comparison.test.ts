@@ -209,7 +209,7 @@ test("definition boundary rejects malformed required downstream fields before an
     ["global settings patch",d=>{object(d.spec).settingsPatch=[]}],
     ["load generator",d=>{d.spec.loadGenerator={}}],
     ["generator image",d=>{delete d.spec.loadGenerator.image}],
-    ["generator source",d=>{delete d.spec.loadGenerator.sourceSHA}],
+    ["generator source type",d=>{d.spec.loadGenerator.sourceSHA=5}],
     ["generator resources",d=>{d.spec.loadGenerator.resources=[]}],
     ["generator shards",d=>{d.spec.loadGenerator.shards={camera:0}}],
     ["generator barrier",d=>{object(d.spec.loadGenerator.barrier).minimumReadySamples=0}],
@@ -328,6 +328,15 @@ test("same-load validity requires frozen scenario UID and the complete load gene
   assert.equal(comparisonValidity(a,b,renamedScenario,renamedScenario).conditions.load,"같음")
   const changedGenerator=withDefinition(run,d=>{d.spec.loadGenerator.sourceSHA="different-source"})
   assert.equal(comparisonValidity(a,b,run,changedGenerator).conditions.load,"다름")
+  for(const sourceSHA of [undefined,""]) {
+    const optionalSource=withDefinition(run,d=>{
+      if(sourceSHA===undefined)delete d.spec.loadGenerator.sourceSHA
+      else d.spec.loadGenerator.sourceSHA=sourceSHA
+      d.spec.loadGenerator.image="registry.invalid/evaluation:tag"
+    })
+    assert.equal(stageRate(a,optionalSource),stageRate(a,run))
+    assert.equal(comparisonValidity(a,b,optionalSource,optionalSource).conditions.load,"같음")
+  }
 })
 
 test("historical comparisons join publication ID and stage ID and carry both definitions through every projection",()=>{
