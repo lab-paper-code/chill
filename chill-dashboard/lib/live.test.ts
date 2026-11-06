@@ -432,6 +432,11 @@ test("snapshot history preserves fresh/unmatched retention metadata without seed
 test("history validates nested types and inclusive ranges without treating bounds as event counts",()=>{
   const history={reason:"fresh",replayed:false,requested:{afterSeq:0,throughSeq:10},retained:{events:{fromSeq:2,toSeq:2},power:null},gaps:[{fromSeq:1,toSeq:1,scope:"events",reason:"NoRetainedFrames"}]}
   assert.ok(parseLiveMessage({...snapshot(10),history}))
+  const extended=parseLiveMessage({...snapshot(10),history:{...history,unknown:true,requested:{...history.requested,extension:"new"},retained:{...history.retained,extension:"new"}}})
+  assert.ok(extended)
+  const current=applyLiveMessage(initialLiveState(),extended)
+  assert.equal(current.resumeHistory?.retained.events?.fromSeq,2)
+  assert.equal(current.resumeHistory?.gaps[0].toSeq,1)
   for(const invalid of [
     {...history,reason:"unknown"},{...history,replayed:true},{...history,retained:{events:null}},
     {...history,requested:{afterSeq:-1,throughSeq:10}},{...history,requested:{afterSeq:0,throughSeq:10,at:"bad"}},
@@ -442,7 +447,7 @@ test("history validates nested types and inclusive ranges without treating bound
     {...history,gaps:[{fromSeq:2,toSeq:1,scope:"events",reason:"NoRetainedFrames"}]},
     {...history,gaps:[{fromSeq:1,toSeq:1,scope:"events",reason:"invented"}]},
     {...history,gaps:[{fromSeq:1,toSeq:1,scope:"unknown",reason:"NoRetainedFrames"}]},
-    {...history,gaps:null},{...history,unknown:true},
+    {...history,gaps:null},
   ])assert.equal(parseLiveMessage({...snapshot(10),history:invalid}),null)
 })
 
@@ -453,7 +458,13 @@ test("recorded events reuse payload validation without inventing a websocket seq
   assert.ok(parsed)
   assert.equal(Object.hasOwn(parsed,"seq"),false)
   assert.equal(parseLiveMessage(recorded),null,"WS events still require the envelope sequence")
-  assert.equal(live.parseRecordedLiveEvent({...recorded,seq:1}),null)
+  const page=live.parseRecordedLivePage({events:[{...recorded,seq:99,extension:true}],from:time(0),to:time(1),coverage:{from:null,to:null,sources:[],gaps:[]},extension:true})
+  assert.ok(page)
+  const current=apply(initialLiveState(),snapshot(8))
+  const archived=live.applyRecordedLivePage(current,page,true)
+  assert.equal(archived.events.at(-1)?.cluster?.pod?.uid,"p")
+  assert.equal(Object.hasOwn(archived.events.at(-1)!,"seq"),false)
+  assert.equal(archived.checkpoint,current.checkpoint)
   assert.equal(live.parseRecordedLiveEvent({...recorded,cluster:{...recorded.cluster,pod:{uid:"p",ready:true}}}),null)
   assert.equal(live.parseRecordedLiveEvent({type:"event",at,kind:"action",action:{...action,phase:"completed",result:{status:"complete"}}})?.kind,"action")
 })

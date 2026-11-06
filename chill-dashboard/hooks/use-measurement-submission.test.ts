@@ -116,7 +116,14 @@ test("the guided form submits current conditions without diagnostics despite cat
     classes:[{name:condition.deviceClass,uid:"class",resourceVersion:"1",architecture:"amd64",powerModes:[{name:condition.powerMode}],nodes:[{name:condition.node,uid:"node",ready:"True",schedulingDisabled:false}]}],
   }
   const submitted:{path:string;body:MeasurementRequestDocument}[]=[]
-  renderRequest({context,from:"source"},"from=source","",2,[],[],[{},{},{mutate:(request:typeof submitted[number])=>submitted.push(request)}],undefined,false,render=>{
+  renderRequest({context,from:"source"},"from=source","",0,[],[],[{},{},{mutate:(request:typeof submitted[number])=>submitted.push(request)}],undefined,false,render=>{
+    for(let index=0;index<2;index++) {
+      const next=elements(render()).find(item=>item.props.children==="다음")
+      assert.ok(next)
+      assert.equal(next.props.disabled,false)
+      ;(next.props.onClick as ()=>void)()
+    }
+    assert.ok(elements(render()).some(item=>item.props["aria-label"]==="검사·제출"))
     context.classes[0].resourceVersion="2"
     context.models[0].metadata.uid="replacement-model"
     context.preprocessors[0].metadata.uid="replacement-preprocessor"
@@ -169,6 +176,14 @@ test("Workload preflight rejection is rendered through the existing server error
   const reason="workload chosen-workload percentile is outside finite sample coverage"
   const html=renderRequest({context:workloadContext,from:"source"},"from=source","",2,[],[],[{}, {data:{status:200,data:{resolves:false,reason}}}, {}])
   assert.ok(html.includes(reason))
+  assert.match(html,/id="measurement-rejection"[^>]*role="alert"/)
+})
+
+test("final POST preflight rejection is visible without optional diagnostics",()=>{
+  const reason="workload chosen-workload percentile is outside finite sample coverage"
+  const html=renderRequest({context:workloadContext,from:"source"},"from=source","",2,[],[],[{}, {}, {error:{status:422,body:"Final request rejected",data:{code:"MeasurementPreflightRejected",reason}}}])
+  assert.ok(html.includes(reason))
+  assert.ok(html.includes("MeasurementPreflightRejected"))
   assert.match(html,/id="measurement-rejection"[^>]*role="alert"/)
 })
 
