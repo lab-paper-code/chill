@@ -188,7 +188,8 @@ func publishFile(path string, payload []byte) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".chill-handoff-*")
+	directory, _ := filepath.Split(path)
+	temporary, err := os.CreateTemp(directory, ".chill-handoff-*")
 	if err != nil {
 		return err
 	}

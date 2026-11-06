@@ -254,7 +254,16 @@ func TestMetricResultFileWaitsForAtomicResult(t *testing.T) {
 	config := testRunConfig(t)
 	result := testMetricResult(config)
 	directory := t.TempDir()
-	path := directory + "/./metric-result.json"
+	target := filepath.Join(directory, "actual", "output")
+	if err := os.MkdirAll(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	// The lexical parent directory/output does not exist.
+	path := link + "/../output/metric-result.json"
 	reader := newTestMetricResultFile(t, path, time.Second)
 
 	done := make(chan error, 1)

@@ -84,7 +84,17 @@ func TestProbeReadyFileModeUsesOnlyTheMarker(t *testing.T) {
 
 func TestExecutePublishesReadyAndWritesRawAndReceiptOnce(t *testing.T) {
 	opts := testOptions(t)
-	opts.readyPath = "/." + opts.readyPath
+	directory := t.TempDir()
+	target := filepath.Join(directory, "actual", "output")
+	if err := os.MkdirAll(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	// The lexical parent directory/output does not exist.
+	opts.readyPath = link + "/../output/ready"
 	opts.terminationPath = "/." + opts.terminationPath
 	opts.memoryLimitBytes = 64 << 20
 	if err := opts.validate(); err != nil {

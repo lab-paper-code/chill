@@ -65,7 +65,8 @@ func materializeObject(ctx context.Context, objects evidencestore.Reader,
 			retErr = errors.Join(retErr, stream.Close())
 		}
 	}()
-	file, err := os.CreateTemp(filepath.Dir(output), ".profile-*")
+	directory, _ := filepath.Split(output)
+	file, err := os.CreateTemp(directory, ".profile-*")
 	if err != nil {
 		return err
 	}

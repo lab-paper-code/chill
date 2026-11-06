@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,7 +25,17 @@ func (o *profileObjects) Open(context.Context, evidencestore.ObjectIdentity) (io
 func TestMaterializerExactBoundAndAtomicOutput(t *testing.T) {
 	for _, content := range []string{"abc", "ab", "abcd"} {
 		t.Run(content, func(t *testing.T) {
-			output := t.TempDir() + "/./bundle.json"
+			directory := t.TempDir()
+			target := filepath.Join(directory, "actual", "output")
+			if err := os.MkdirAll(target, 0700); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(directory, "link")
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			// The lexical parent directory/output does not exist.
+			output := link + "/../output/bundle.json"
 			if err := os.WriteFile(output, []byte("original"), 0600); err != nil {
 				t.Fatal(err)
 			}

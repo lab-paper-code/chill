@@ -83,7 +83,8 @@ func execute(ctx context.Context, opts options, deps dependencies) error {
 }
 
 func publishReady(path string) error {
-	file, err := os.CreateTemp(filepath.Dir(path), ".transition-ready-*")
+	directory, _ := filepath.Split(path)
+	file, err := os.CreateTemp(directory, ".transition-ready-*")
 	if err != nil {
 		return err
 	}
