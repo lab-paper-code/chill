@@ -41,7 +41,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-const testReplacementUID = "replacement"
+const (
+	testReplacementUID            = "replacement"
+	testUnprobedReplacementReason = "replacement-not-probed"
+)
 
 func observerSourceFixture() (*corev1.Pod, *corev1.Node, serving.Profile, edgev1alpha1.DeviceClass) {
 	image := "registry/native@sha256:" + strings.Repeat("a", 64)
@@ -501,7 +504,7 @@ func TestObserverRefreshRetainsUnlabelledParentSource(t *testing.T) {
 }
 
 func TestObserverReconcileRetainedSourceWithoutPodSnapshot(t *testing.T) {
-	for _, missing := range []string{"absent", "replacement", "read failure"} {
+	for _, missing := range []string{"absent", testReplacementUID, "read failure"} {
 		t.Run(missing, func(t *testing.T) {
 			pod, _, _, _ := observerSourceFixture()
 			observedAt := time.Now().Add(-time.Minute)
@@ -518,12 +521,12 @@ func TestObserverReconcileRetainedSourceWithoutPodSnapshot(t *testing.T) {
 			observer.sources[string(independent.uid)] = independent
 			kube := kubefake.NewSimpleClientset()
 			var replacement *nativeSource
-			if missing == "replacement" {
+			if missing == testReplacementUID {
 				pod.UID = testReplacementUID
 				if _, err := kube.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
 					t.Fatal(err)
 				}
-				replacement = &nativeSource{pod: source.pod, uid: pod.UID, instance: serving.ReadyInstance{State: serving.InstanceState{Ready: true, NativeVerified: true, Reason: "replacement-not-probed"}}}
+				replacement = &nativeSource{pod: source.pod, uid: pod.UID, instance: serving.ReadyInstance{State: serving.InstanceState{Ready: true, NativeVerified: true, Reason: testUnprobedReplacementReason}}}
 				observer.sources[string(replacement.uid)] = replacement
 			}
 			if missing == "read failure" {
@@ -544,7 +547,7 @@ func TestObserverReconcileRetainedSourceWithoutPodSnapshot(t *testing.T) {
 			if !independent.instance.State.Ready || !independent.instance.State.NativeVerified {
 				t.Fatal("retained-source failure invalidated independent verified source")
 			}
-			if replacement != nil && (!replacement.instance.State.Ready || !replacement.instance.State.NativeVerified || replacement.instance.State.Reason != "replacement-not-probed") {
+			if replacement != nil && (!replacement.instance.State.Ready || !replacement.instance.State.NativeVerified || replacement.instance.State.Reason != testUnprobedReplacementReason) {
 				t.Fatal("old refresh acted on replacement UID")
 			}
 			issues := observer.Issues()

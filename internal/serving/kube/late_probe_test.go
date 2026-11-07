@@ -101,7 +101,7 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 				o.mu.Lock()
 				o.restoreSources([]core.Pod{*fresh})
 				next = o.sources[string(fresh.UID)]
-				next.instance.State.Reason = "replacement-not-probed"
+				next.instance.State.Reason = testUnprobedReplacementReason
 				o.mu.Unlock()
 			}
 			close(release)
@@ -110,7 +110,7 @@ func TestLateProbeCannotResurrectRemovedExecutor(t *testing.T) {
 			}
 			o.mu.Lock()
 			old := o.sources[string(pod.UID)]
-			changed := next != nil && (next.cancel != nil || next.instance.State.Ready || next.instance.State.Reason != "replacement-not-probed")
+			changed := next != nil && (next.cancel != nil || next.instance.State.Ready || next.instance.State.Reason != testUnprobedReplacementReason)
 			o.mu.Unlock()
 			if old != nil || changed {
 				t.Fatal("late probe resurrected old source or acted for replacement")
