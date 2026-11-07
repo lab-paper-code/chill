@@ -129,6 +129,7 @@ test("public request reads and the real download preserve optional server timing
       const path=options.queryKey[1];queries.set(path,options);return {data:results.get(path)}
     }},
     "@/components/brand":{},"@/lib/session-token":{},"@/lib/measurement-summary":{},
+    "@/components/ui/dialog":{},
   })
   modules["@/lib/client"]={...(modules["@/lib/client"] as object),useChillQuery:client.useChillQuery}
   let download:(()=>void)|undefined
