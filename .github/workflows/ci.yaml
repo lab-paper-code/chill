@@ -31,8 +31,8 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python test dependencies
-        # Match NUMPY_VERSION in build/docker/firstfloor.Dockerfile.
-        run: python3 -m pip install numpy==2.2.6
+        # Match runtime pins in build/docker/firstfloor.Dockerfile; ONNX builds Go test fixtures.
+        run: python3 -m pip install numpy==2.2.6 pillow==12.3.0 onnxruntime==1.27.0 onnx==1.17.0 PyYAML==6.0.3
 
       - name: Check generated artifacts
         run: |
