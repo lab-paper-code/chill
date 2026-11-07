@@ -54,11 +54,11 @@ func appendUnique(xs []string, more ...string) []string {
 // SchedulerContinuationReasons validates fresh physical evidence without
 // evaluating candidates or admitting a new scheduler decision.
 func SchedulerContinuationReasons(settings SchedulerSettings, snapshot SchedulerSnapshot) []string {
-	reasons := append(slices.Clone(snapshot.Reasons), schedulerValidateSnapshot(settings, snapshot)...)
+	reasons := append(slices.Clone(snapshot.Reasons), schedulerValidateSnapshot(snapshot)...)
 	return appendUnique(reasons, schedulerValidateResources(settings, snapshot.Nodes, snapshot.Instances)...)
 }
 
-func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSnapshot) []string {
+func schedulerValidateSnapshot(snapshot SchedulerSnapshot) []string {
 	reasons := schedulerValidateObservationTimes(&snapshot)
 	if len(snapshot.Nodes) == 0 {
 		reasons = append(reasons, "MissingPoolInventory")

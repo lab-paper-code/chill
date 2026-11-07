@@ -139,7 +139,7 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	c.Status = schedulerStatusPending
 	if capacity == nil {
 		c.Reasons = append(c.Reasons, snapshot.Reasons...)
-		c.Reasons = append(c.Reasons, schedulerValidateSnapshot(settings, snapshot)...)
+		c.Reasons = append(c.Reasons, schedulerValidateSnapshot(snapshot)...)
 		c.Reasons = append(c.Reasons, schedulerValidateResources(settings, c.Nodes, c.Instances)...)
 	} else {
 		// Capacity windows contain measured service and simulated arrivals, not

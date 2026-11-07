@@ -227,7 +227,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	keep.Actions = p.actions
 	keep.Status = schedulerStatusPending
 	decision.Keep = keep
-	reasons := append(slices.Clone(snapshot.Reasons), schedulerValidateSnapshot(settings, snapshot)...)
+	reasons := append(slices.Clone(snapshot.Reasons), schedulerValidateSnapshot(snapshot)...)
 	reasons = appendUnique(reasons, schedulerValidateResources(settings, snapshot.Nodes, snapshot.Instances)...)
 	if len(reasons) != 0 {
 		decision.Keep.Reasons, decision.Reasons = reasons, reasons
