@@ -109,10 +109,17 @@ func replaySupply(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, r
 	return kappa
 }
 
-func replayDemands(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows map[string]serving.CapacityRow, target *serving.SchedulerCandidate) []replayDemand {
+func replayDemands(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows map[string]serving.CapacityRow, decision *serving.SchedulerDecision, target *serving.SchedulerCandidate) ([]replayDemand, error) {
 	out := []replayDemand{}
 	for _, uid := range s.AutonomousWorkloads {
-		rate := max(s.MinimumDemand[uid], snap.ScaleDown[uid].Rate)
+		if decision.Capacity == nil {
+			return nil, fmt.Errorf("recorded decision omits current demand for workload %s", uid)
+		}
+		j := slices.IndexFunc(decision.Capacity.Workloads, func(w serving.SchedulerCapacityWorkload) bool { return w.UID == uid })
+		if j < 0 {
+			return nil, fmt.Errorf("recorded decision omits current demand for workload %s", uid)
+		}
+		rate := decision.Capacity.Workloads[j].Rate
 		keep := replaySupply(s, snap, rows, snap.Instances, snap.Routing, uid, true)
 		next := keep
 		if target != nil {
@@ -120,7 +127,7 @@ func replayDemands(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, 
 		}
 		out = append(out, replayDemand{uid, rate, keep, next, rate > keep*(1+1e-12), next > keep*(1+1e-12)})
 	}
-	return out
+	return out, nil
 }
 
 type replayTick struct {
@@ -236,7 +243,11 @@ func (reader *replayReader) readTick() (*replayTick, error) {
 func evaluateReplayTick(queue []*replayTick, rows []serving.CapacityRow, index map[string]serving.CapacityRow, next int) (replayResult, error) {
 	t := queue[0]
 	began := time.Now()
-	r := replayResult{At: t.r.At, Status: t.r.Decision.Status, TargetKey: replayKey(t.r.Decision.Target), GuardAvailable: guardAvailable, Demand: replayDemands(t.settings, t.snap, index, t.r.Decision.Target)}
+	demand, err := replayDemands(t.settings, t.snap, index, t.r.Decision, t.r.Decision.Target)
+	if err != nil {
+		return replayResult{}, err
+	}
+	r := replayResult{At: t.r.At, Status: t.r.Decision.Status, TargetKey: replayKey(t.r.Decision.Target), GuardAvailable: guardAvailable, Demand: demand}
 	if target := t.r.Decision.Target; target != nil {
 		r.TargetID = target.ID
 	}
@@ -261,7 +272,11 @@ func evaluateReplayTick(queue []*replayTick, rows []serving.CapacityRow, index m
 		uids := reductionWorkloads(t.settings, t.snap, rows, *target)
 		for offset, future := range queue {
 			reason := reductionCommit(t.settings, future.snap, rows, *target, uids)
-			r.Checks = append(r.Checks, guardCheck{future.r.At, offset, guardAvailable && reason != "", reason, uids, replayDemands(t.settings, future.snap, index, target)})
+			demand, err := replayDemands(t.settings, future.snap, index, future.r.Decision, target)
+			if err != nil {
+				return r, err
+			}
+			r.Checks = append(r.Checks, guardCheck{future.r.At, offset, guardAvailable && reason != "", reason, uids, demand})
 		}
 	}
 	r.ElapsedSeconds = time.Since(began).Seconds()
