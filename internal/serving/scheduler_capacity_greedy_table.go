@@ -24,8 +24,7 @@ func (t *planTable) initSearch(p *capacityPlanner) {
 		t.slowWorkload[q], t.outage[q] = make([]bool, len(p.ws)), make([]bool, len(p.ws))
 		choice[n] = t.index[q]
 		for w, ws := range p.ws {
-			_, slow := p.reductionDemand(ws, choice)
-			t.slowWorkload[q][w] = slow
+			t.slowWorkload[q][w] = p.reducesWorkload(ws, choice)
 			t.outage[q][w] = plan.mode != p.snapshot.Nodes[n].PowerMode && slices.ContainsFunc(p.snapshot.Instances, func(i SchedulerInstance) bool {
 				return i.Node == p.snapshot.Nodes[n].Node && i.WorkloadUID == ws.d.UID && schedulerInstanceRouted(p.keep.Routing, i.ID)
 			})

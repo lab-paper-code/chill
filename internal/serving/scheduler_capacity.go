@@ -239,7 +239,12 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		if len(snapshot.Instances) == 0 && slices.ContainsFunc(decision.Workloads, func(w SchedulerWorkloadState) bool {
 			return strings.HasPrefix(w.Reason, CapacityPending+":") || strings.HasPrefix(w.Reason, CapacityRejected+":")
 		}) {
-			decision.Status = CapacityPending
+			decision.Status = CapacityRejected
+			if slices.ContainsFunc(decision.Workloads, func(w SchedulerWorkloadState) bool {
+				return strings.HasPrefix(w.Reason, CapacityPending+":")
+			}) {
+				decision.Status = CapacityPending
+			}
 			decision.Keep.Actions = nil
 			return decision, ctx.Err()
 		}
@@ -411,7 +416,11 @@ func (p *capacityPlanner) fixCapacityWorkloads(decision *SchedulerDecision) {
 	for w, ws := range p.ws {
 		reason := CapacityRejected
 		available := false
-		for _, choices := range p.optionCapacity {
+		for option, choices := range p.optionCapacity {
+			o := p.options[option]
+			if !slices.Contains(o.CompatibleUIDs, ws.d.UID) || !schedulerProfileMatches(ws.d, o.Instance.Profile) {
+				continue
+			}
 			switch choices[w].reason {
 			case "":
 				available = true

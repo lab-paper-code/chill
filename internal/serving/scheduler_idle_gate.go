@@ -14,8 +14,8 @@ func capacityEnergyLoad(load []float64, actual, demand float64) {
 	}
 }
 
-// reductionDemand uses current effective demand and identifies removed supply.
-func (p *capacityPlanner) reductionDemand(w capacityWorkload, choice []int) (capacityWorkload, bool) {
+// reducesWorkload identifies removed supply or a non-increasing serving policy.
+func (p *capacityPlanner) reducesWorkload(w capacityWorkload, choice []int) bool {
 	slow := false
 	for n, j := range choice {
 		plan := p.plans[n][j]
@@ -39,12 +39,12 @@ func (p *capacityPlanner) reductionDemand(w capacityWorkload, choice []int) (cap
 		}
 		slow = slow || policy && plan.record.Kappa[w.d.UID] <= oldKappa
 	}
-	return w, slow
+	return slow
 }
 
 // admissionDemand separates final-route margin from bridge/reserve demand.
 func (p *capacityPlanner) admissionDemand(w capacityWorkload, choice []int, retained float64) (capacityWorkload, bool, bool, float64) {
-	demand, slow := p.reductionDemand(w, choice)
+	slow := p.reducesWorkload(w, choice)
 	recovery := slow && p.keepInsufficient(w)
 	for n, j := range choice {
 		if retained < w.rate && p.plans[n][j].mode != p.snapshot.Nodes[n].PowerMode && slices.ContainsFunc(p.snapshot.Instances, func(i SchedulerInstance) bool {
@@ -54,9 +54,9 @@ func (p *capacityPlanner) admissionDemand(w capacityWorkload, choice []int, reta
 			recovery = false
 		}
 	}
-	protected := demand.rate
+	protected := w.rate
 	if slow && !recovery {
 		protected *= 1 + p.settings.ScaleDownHeadroomFraction
 	}
-	return demand, slow, recovery, protected
+	return w, slow, recovery, protected
 }

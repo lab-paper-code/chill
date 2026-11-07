@@ -180,3 +180,45 @@ func TestStartupCapacityNeverUsesElapsedTimeFallback(t *testing.T) {
 		t.Fatal("canceled evaluation succeeded")
 	}
 }
+
+func TestStartupTerminalCapacityIgnoresIncompatibleModels(t *testing.T) {
+	for _, strategy := range []string{"v1", "v2"} {
+		t.Run(strategy, func(t *testing.T) {
+			s, snapshot := schedulerFixture()
+			s.PlanSearchStrategy = strategy
+			s.AutonomousWorkloads = []string{"w1", "w2"}
+			s.MinimumDemand = map[string]float64{"w1": 20, "w2": 20}
+			other := poolsAddWorkload(&snapshot, "w2")
+			other.Model.Name, other.Model.UID = "other-model", "other-model-uid"
+			node := poolsAddNode(&snapshot, "n2", map[string]float64{"fixed": 10})
+			option := poolsInstance(snapshot.Instances[0], "other", node, "fixed", other.UID)
+			option.Profile.Condition.LogicalModel = other.Model.Name
+			snapshot.Options = append(snapshot.Options, poolsOption(option))
+			for _, o := range snapshot.Options {
+				snapshot.Costs = append(snapshot.Costs, poolsCost(schedulerActionPrepare, o.Instance.Node, "unloaded", schedulerState(o.Instance), "fixed"))
+			}
+			snapshot.Instances = nil
+			snapshot.Routing = map[string]map[string]int32{}
+			rows := capacityRowsForTest(s, snapshot, nil)
+			for k := range rows {
+				if rows[k].Input.WorkloadUID == "w1" {
+					rows[k].Status, rows[k].Kappa = CapacityRejected, nil
+				}
+			}
+			decision := capacityDecideForTest(t, s, snapshot, rows)
+			if !slices.Contains(decision.Reasons, CapacityRejected+":w1") || slices.Contains(decision.Reasons, CapacityPending+":w1") {
+				t.Fatalf("unrelated model's absent row hid terminal w1 capacity: %+v", decision)
+			}
+			if decision.Target == nil || len(decision.Target.Instances) != 1 || len(decision.Target.Routing["w2"]) != 1 || len(decision.Target.Routing["w1"]) != 0 {
+				t.Fatalf("ready w2 failed independent startup: %+v", decision)
+			}
+			for k := range rows {
+				rows[k].Status, rows[k].Kappa = CapacityRejected, nil
+			}
+			decision = capacityDecideForTest(t, s, snapshot, rows)
+			if decision.Status != CapacityRejected || decision.Target != nil || !slices.Contains(decision.Reasons, CapacityRejected+":w2") {
+				t.Fatalf("terminal compatible rows remained pending: %+v", decision)
+			}
+		})
+	}
+}

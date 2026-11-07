@@ -63,18 +63,16 @@ func (p *capacityPlanner) bridgeSchedule(choice []int) (*schedulerBridgeSchedule
 	if !p.settings.Controls.Routing {
 		return nil, schedulerRoutedStopsFirst
 	}
-	// Preserve the global slow-window veto before allocating a DAG for a
-	// steady-state capacity deficit that no handoff could repair.
+	// Reject a final capacity deficit before allocating a handoff DAG.
 	for _, w := range p.ws {
-		demand, slow := p.reductionDemand(w, choice)
-		if !slow {
+		if !p.reducesWorkload(w, choice) {
 			continue
 		}
 		kappa := 0.0
 		for n, j := range choice {
 			kappa += p.plans[n][j].record.Kappa[w.d.UID]
 		}
-		if kappa < demand.rate {
+		if kappa < w.rate {
 			return nil, schedulerReductionCapacityInsufficient
 		}
 	}
@@ -297,14 +295,13 @@ func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 			deps, at = appendUnique(deps, prepare), max(at, b.ends[prepare])
 		}
 	}
-	demand, _ := b.p.reductionDemand(w, b.choice)
-	before, served := b.p.bridgeFlow(uid, demand.rate, b.routing[uid], b.out.instances)
-	backlog := float64(w.queued) + max(0, demand.rate-served)*at
-	if demand.slack <= 0 || kappa < demand.rate || backlog/kappa > demand.slack ||
-		b.p.settings.TransitionReserveFraction > 0 && (before < demand.rate*(1+b.p.settings.TransitionReserveFraction) || kappa < demand.rate*(1+b.p.settings.TransitionReserveFraction)) {
+	before, served := b.p.bridgeFlow(uid, w.rate, b.routing[uid], b.out.instances)
+	backlog := float64(w.queued) + max(0, w.rate-served)*at
+	if w.slack <= 0 || kappa < w.rate || backlog/kappa > w.slack ||
+		b.p.settings.TransitionReserveFraction > 0 && (before < w.rate*(1+b.p.settings.TransitionReserveFraction) || kappa < w.rate*(1+b.p.settings.TransitionReserveFraction)) {
 		return false
 	}
-	weights, _, ok := capacityWeights(demand.rate, items)
+	weights, _, ok := capacityWeights(w.rate, items)
 	if !ok {
 		return false
 	}
@@ -336,7 +333,7 @@ func (b *schedulerBridgeCompiler) handoff(w capacityWorkload) bool {
 	b.out.actions = slices.Insert(b.out.actions, final, action)
 	b.before[action.ID], b.ends[action.ID] = true, at
 	b.routing, b.previous = stage.Routing, action.ID
-	b.out.stages = append(b.out.stages, SchedulerBridgeStage{Action: action.ID, UID: uid, At: time.Duration(at * 1e9), Demand: demand.rate, Backlog: backlog, PredictedKappa: kappa, WaitSeconds: backlog / kappa, Reserve: b.p.settings.TransitionReserveFraction})
+	b.out.stages = append(b.out.stages, SchedulerBridgeStage{Action: action.ID, UID: uid, At: time.Duration(at * 1e9), Demand: w.rate, Backlog: backlog, PredictedKappa: kappa, WaitSeconds: backlog / kappa, Reserve: b.p.settings.TransitionReserveFraction})
 	return true
 }
 
