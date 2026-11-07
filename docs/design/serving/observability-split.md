@@ -54,6 +54,8 @@ firstfloor follow는 인스턴스 복원 배정의 가장 이른 dispatchedAt(�
 | HTTP 응답 | `responseWriteStart`, `responseWriteDone`, `responseFlushStart`, `responseFlushDone`: 헤더 쓰기 전·body Write 반환·flush 전후, 공통 오류 경로 포함 |
 
 handler/runtime/backend의 각 goroutine은 자기 timing 값을 소유한다. 고정 배열과 presence bitset을 값으로 복사하고 기존 Receipt·Call·BackendResult·RequestEvent에 전달한다. 기존 lock 아래 missing만 병합하며 marker별 lock·사건·동기 디스크 쓰기는 추가하지 않는다. RequestRow의 copy-on-write, enqueue된 assigned/final, 조회 snapshot은 이후 변경과 mutable backing을 공유하지 않는다. final 뒤 실행은 기존 late native supplement만 따르며 final을 다시 열지 않는다. assigned에는 당시 도달한 단계만 있고, 실패·취소도 관측하지 않은 종료 단계를 합성하지 않는다. 저장·복원·archive/query는 같은 선택적 필드를 보존하며 과거 원문을 재작성하지 않는다.
+최종 close는 기존 `RequestClosed(id, timing)` 호출과 잠금에서 마지막 값을 병합한다. 취소 응답 뒤 관측한 `replySent`도 닫기 전 보존하며, 응답 뒤 offset은 사용자 지연 합계에서 제외한다. Go 1.22의 빈 timing 값은 `[]`로 출력될 수 있으며 관측한 단계는 없다.
+
 
 공개 workload 조회의 실제 Dashboard decoder는 `parseSchedulerJSON`, 다운로드는 `SourceExport` → `safeSource` → `stringifySchedulerJSON`이다. 별도 요청 필드 whitelist는 없으며 원본 객체를 보존한다. `elapsedNanos`는 Go int64, Dashboard `WireInteger`(`number|bigint`)로 유지한다. 안전 정수 범위를 넘는 ns를 Number로 줄이지 않고 정수 JSON으로 내보낸다. `receivedAt` 등 RFC3339Nano 문자열도 유지하며 Date의 밀리초 값으로 원본을 대체하지 않는다. 새 화면·차트·SLO/κ·배치 정책·프로파일 선정·IPC/stored profile 계약은 바꾸지 않는다.
 

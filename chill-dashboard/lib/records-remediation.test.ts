@@ -130,12 +130,14 @@ test("public request reads and the real download preserve optional server timing
     }},
     "@/components/brand":{},"@/lib/session-token":{},"@/lib/measurement-summary":{},
     "@/components/ui/dialog":{},
+    "lucide-react":{},
   })
   modules["@/lib/client"]={...(modules["@/lib/client"] as object),useChillQuery:client.useChillQuery}
   let download:(()=>void)|undefined
   const readRegion=load("../components/read-region.tsx",{
     ...modules,"@/lib/source-export":sourceExport,
     "@/components/ui/dialog":{},
+    "lucide-react":{Download:box},
     "@/components/ui/button":{Button:({onClick,children}:{onClick:()=>void;children:ReactNode})=>{download=onClick;return createElement("button",null,children)}},
   })
   modules["@/components/read-region"]={...(modules["@/components/read-region"] as object),SourceExport:readRegion.SourceExport}

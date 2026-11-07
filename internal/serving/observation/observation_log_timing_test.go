@@ -62,7 +62,7 @@ func TestRequestTimingSnapshotsAndLateSupplementStaySeparate(t *testing.T) {
 	if err := log.RequestEvent(other); err != nil {
 		t.Fatal(err)
 	}
-	event.Kind, event.Outcome = "response_finished", "canceled"
+	event.Kind, event.Outcome = "response_finished", outcomeCanceled
 	event.ServerTiming.Record(serving.ServerResponseWriteDone, 12)
 	if err := log.RequestEvent(event); err != nil {
 		t.Fatal(err)
@@ -274,13 +274,13 @@ func TestCanceledCloseTimingSurvivesAppendFailureAndFlush(t *testing.T) {
 	ctx := context.Background()
 	at := observationTestHour
 	log, _ := clockedObservationLog(t, ObservationLogConfig{}, at)
-	event := serving.RequestEvent{RequestID: "canceled", WorkloadUID: "uid", Kind: "assigned", At: at, ReceivedAt: at,
+	event := serving.RequestEvent{RequestID: "close-retry", WorkloadUID: "uid", Kind: "assigned", At: at, ReceivedAt: at,
 		Assignment: &serving.Assignment{Instance: "physical", DispatchedAt: at}}
 	event.ServerTiming.Record(serving.ServerAuthStart, 0)
 	if err := log.RequestEvent(event); err != nil {
 		t.Fatal(err)
 	}
-	event.Kind, event.Outcome = "response_finished", "canceled"
+	event.Kind, event.Outcome = "response_finished", outcomeCanceled
 	if err := log.RequestEvent(event); err != nil {
 		t.Fatal(err)
 	}
@@ -307,17 +307,17 @@ func TestCanceledCloseTimingSurvivesAppendFailureAndFlush(t *testing.T) {
 	var closeTiming serving.RequestTimings
 	closeTiming.Record(serving.ServerAuthStart, 999)
 	closeTiming.Record(serving.ServerReplySent, 25)
-	if err := log.RequestClosed("canceled", closeTiming); !errors.Is(err, cause) {
+	if err := log.RequestClosed(event.RequestID, closeTiming); !errors.Is(err, cause) {
 		t.Fatalf("close hid append failure: %v", err)
 	}
 	log.requestMu.Lock()
-	retained := *log.open["canceled"]
+	retained := *log.open[event.RequestID]
 	log.requestMu.Unlock()
 	assertServerTiming(t, retained.ServerTiming, serving.ServerReplySent, 25, true)
 	assertServerTiming(t, retained.ServerTiming, serving.ServerAuthStart, 0, true)
-	assertServerTiming(t, read.open["canceled"].ServerTiming, serving.ServerReplySent, 0, false)
+	assertServerTiming(t, read.open[event.RequestID].ServerTiming, serving.ServerReplySent, 0, false)
 	log.submitMu.Lock()
-	queued := log.finalQueued["canceled"] != nil
+	queued := log.finalQueued[event.RequestID] != nil
 	log.submitMu.Unlock()
 	if !retained.Closing || queued {
 		t.Fatal("failed close lost retry state or fabricated final admission")
@@ -329,9 +329,9 @@ func TestCanceledCloseTimingSurvivesAppendFailureAndFlush(t *testing.T) {
 	rows := readRequestRows(t, log.config.Directory)
 	finals := 0
 	for _, row := range rows {
-		if row.RequestID == "canceled" && row.Kind == serving.RequestRowFinal {
+		if row.RequestID == event.RequestID && row.Kind == serving.RequestRowFinal {
 			finals++
-			if row.Outcome != "canceled" {
+			if row.Outcome != outcomeCanceled {
 				t.Fatalf("close changed cancellation outcome: %+v", row)
 			}
 			assertServerTiming(t, row.ServerTiming, serving.ServerReplySent, 25, true)

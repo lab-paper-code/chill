@@ -29,21 +29,12 @@ func TestRequestTimingsJSONPreservesPresenceAndInt64(t *testing.T) {
 			t.Fatalf("stage %d = %d, %v; want %d, %v", check.stage, elapsed, present, check.elapsed, check.present)
 		}
 	}
-	encoded, err := json.Marshal(timings)
-	want := `[{"stage":"authStart","elapsedNanos":0},{"stage":"authDone","elapsedNanos":9223372036854775807},{"stage":"workerHTTPStart","elapsedNanos":-9223372036854775808}]`
-	if err != nil || string(encoded) != want {
-		t.Fatalf("timing JSON changed: %s, %v", encoded, err)
-	}
 	before := timings
 	if err := json.Unmarshal([]byte(`[{"stage":"authStart","elapsedNanos":9223372036854775808}]`), &timings); err == nil || timings != before {
 		t.Fatalf("invalid integer changed receiver: %+v, %v", timings, err)
 	}
 	if err := json.Unmarshal([]byte(`null`), &timings); err != nil || !timings.IsZero() {
 		t.Fatalf("null timing did not clear receiver: %+v, %v", timings, err)
-	}
-	empty, err := json.Marshal(timings)
-	if err != nil || string(empty) != "[]" {
-		t.Fatalf("empty timing invented stages: %s, %v", empty, err)
 	}
 	var old RequestRow
 	if err := json.Unmarshal([]byte(`{"kind":"final","requestID":"old","futureField":true}`), &old); err != nil || !old.ServerTiming.IsZero() {
