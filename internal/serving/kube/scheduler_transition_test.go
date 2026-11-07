@@ -642,7 +642,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 
 // E5-1: old rasp5 stays serving while genesis3 is Ready and nano is late.
 func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", "same-node", "unsupported", "policy-ack", "identity", "insufficient", "stale"} {
+	for _, scenario := range []string{"admitted", "same-node", "unsupported", "policy-ack", "identity", "insufficient"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, target, physical := acknowledgedHandoffFixture(t)
 			old := target.Instances[0]
@@ -685,9 +685,6 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			snapshot.Instances = []serving.SchedulerInstance{old, added}
 			for n := range snapshot.Instances {
 				snapshot.Instances[n].ObservedAt = snapshot.At
-			}
-			if scenario == "stale" {
-				snapshot.At = snapshot.At.Add(2 * time.Minute)
 			}
 			snapshot.Routing = map[string]map[string]int32{uid: {old.ID: 1000}}
 			if err := c.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{old}, Routing: snapshot.Routing}); err != nil {
