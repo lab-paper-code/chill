@@ -180,8 +180,13 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 	}
 	r := &capacityReplay{settings: settings, at: at, occupancy: *in.DispatchOccupancy, option: o, w: w, gaps: map[[2]int][]float64{}}
 	b := capacityBuilder{settings: settings, percentile: w.SLO.Percentile, replay: r.window}
-	row.ConditionalService = &r.conditional
-	if err := b.build(ctx, &row); err != nil {
+	err := b.build(ctx, &row)
+	// Copy the evidence out: a pointer into r would keep r, and with it the
+	// per-row gaps cache (one []float64 per distinct window population), alive
+	// for as long as the table holds the row.
+	conditional := r.conditional
+	row.ConditionalService = &conditional
+	if err != nil {
 		return row, err
 	}
 	row.BuiltAt, row.Elapsed = time.Now().UTC(), time.Since(began)
