@@ -255,33 +255,26 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
   source removal and destination prepare are on different nodes. A node-local
   removal is not by itself proof of optional shrinkage. Overload ranking cannot trade unrelated healthy
   retirement for cheaper energy. Feasible, net-positive retirement remains
-  possible with an Unconfirmed sibling: physical confirmation is node-local,
-  never a global retirement veto. Disabled ownership, scale-down stabilization,
-  partial observation, hold, bridge and reserve protections still apply.
+  possible with an Unconfirmed sibling: physical confirmation is node-local.
+  Disabled ownership, partial observation, hold, bridge and reserve protections apply.
   `unroutedSince` remains captured controller history, not an energy exemption.
   Terminated-only occupancy reclamation is not serving retirement: its κ is
   already zero, and the existing physical stop/drain/remove obligations remain.
 - **준비한 인스턴스의 분배.** 해가 준비하는 새 인스턴스는 모두 그 해의 가중치를 받는다. 새 인스턴스 하나라도 가중치가 0인 해는 후보에서 빠지고 교체 회수의 되돌린 해도 같다. 근거: m4 r7에서 rasp5 q1-lut와 q2(κ 25.69 + 29.30)가 지금 가중치 467/533으로 λ 40.35를 받았고, 적재한 genesis3 q2의 노드 전력(49.80 W)이 빈 노드(49.97 W)보다 작아 그 준비가 T 동안 1.5 J 싸게 나왔다. 그 인스턴스는 가중치 0으로 준비되고 약 80 s 뒤 유휴 제거로 지워졌고, 다음 판단이 다시 준비해 2 req/s와 40 req/s에서 약 100 s 주기로 되풀이했다.
 - **만든 뒤 끊기.** 모드를 바꾸지 않는 노드 계획에서 분배된 인스턴스(어느 Workload에서든 가중치가 0보다 큰 인스턴스)의 stop, drain, remove는 그 노드 계획의 route 뒤에만 온다. 자원이 겹쳐 prepare 전에 지워야 하는 분배된 인스턴스가 있는 같은 모드의 교체는 `RoutedInstanceStopsBeforeRoute`로 빠진다. 그래서 그 교체 동안 분배된 κ는 지금 값에서 줄지 않고, route 뒤에는 최종 판정을 지나는 `κ_new`가 된다. 그 노드의 교체는 다른 해가 부하를 옮겨 그 인스턴스가 분배에서 빠진 뒤(유휴 제거) 열린다. 모드 변경은 power 동작 전에 노드의 인스턴스를 모두 멈추고 다른 길이 없으므로(노드 하나가 서빙하는 Workload의 모드 올리기) 후보로 남고, 멈춘 인스턴스는 `κ_ret`에서 빠지며 사슬 시간은 r에 들어가 3장 대기 판정을 받는다. 근거: m4 r7 07:08:31에서 genesis3 q2(κ 70.94, 가중치 532)를 같은 CPU의 q1으로 바꾸는 계획이 q2 stop을 첫 동작으로 두었고, 전환 판정은 rasp5 q1 하나(κ_ret 25.69)로 λ 38.6을 받았다. rasp5 prepare가 68 s 걸리는 동안 SLO는 0%로 떨어졌다. 07:00:38의 rasp5 q1 교체와 06:51:28의 genesis2 교체도 같은 순서였다.
 - **교체 회수.** 지금 인스턴스를 지우고 다른 인스턴스를 들이거나 배치 policy를 바꾸는 노드 계획(교체)은, 그 노드만 keep으로 되돌린 해도 충족하면 관측 창의 최소 부하에서 T 동안의 에너지로 비교한다. 최소 부하는 관측 창을 제어 주기로 나눈 구간마다의 도착률 중 가장 작은 값이다. 교체가 그 부하에서 keep보다 에너지가 크거나 같으면 keep으로 되돌리고 `ReplacementUnpaid:<노드>`를 남긴다.
-- **교체 후 최소 체류 — SCH-16/18.** `replacementDwellNanos`는 0 이상 정수 ns(int64 범위)이며 생략/0은 기존 `comparisonPeriodNanos`를 재사용한다. controller가 같은 Node UID·Workload UID의 물리 profile 교체를 전체 prepare→route→stop/drain/remove 완료 시각에 기록하고 `snapshot.replacements`로 전달한다. 그 현재 profile을 다시 교체하려는 해에서 해당 Node만 keep으로 되돌려도 κ/SLO가 충족되면, 완료 뒤 이 기간 미만인 optional energy-only 교체를 `ReplacementDwell:<노드>`로 보류한다. 경계 시각부터 허용하며 기존 최소부하 회수·최소이득 검사도 유지한다. 현재 κ 부족(keep infeasible)이나 실제 고장 복구, route-only 조정·순증설은 막지 않는다. 재시작은 이력을 잃고, UID/profile 변화·미관측/비정상 executor·기존 gap 기준(`MaxObservationAge+ControlInterval`) 초과는 이력을 버려 이력 없으면 허용한다. 이 소규모 controller 이력은 수요 창과 독립하며 교체 선택·완료가 demand history를 reset하지 않는다. 기본 기간은 정책 안정화일 뿐 실측 에너지 본전 회수의 증명이 아니다. 회귀 근거는 `replacement-01`/`full-E5-1-02`의 완료 15–17초 뒤 역방향 선택이며, 실제 손해 J나 요청 오류 감소를 주장하지 않는다.
 - **최소 이득.** 고른 해가 충족하고 노드 하나라도 바꾸며 keep도 충족하면, T 동안 nominal 이득(keep−해)이 선택된 operation과 baseline의 조건부 B 민감도 문턱보다 클 때 해를 쓴다. 같은 immutable reference/trial의 signed 노출량을 먼저 합쳐 공유 근거를 상쇄하고 남은 절댓값을 합산한다. trial 평균은 B/N을 선형 합산하며 baseline watts 민감도는 실제 초를 곱한다. 이득이 문턱과 같거나 작으면 keep과 `TransitionGainWithinUncertainty`를 기록한다. keep infeasible이면 용량/SLO 회복을 유지한다. 문턱은 profile 통계오차와 BEO idle fallback CI 및 시점/센서/모델 오차를 포괄하지 않으며 global95% gain 구간을 뜻하지 않는다. 원시 profile 분산/CI, d의 profile 포함95% 분석과 κ/SLO 계산은 각 추정 계약을 유지한다.
 - **부분 관측 창.** ChillServer가 시작한 뒤 관측 창 하나를 다 관측할 때까지 계획은 인스턴스를 더하기만 한다. 지금 인스턴스를 지우거나(그 노드 계획에 남지 않는 인스턴스) 배치 policy를 바꾸는 노드 계획은 `PartialObservationWindow`로 빠진다. 계획은 지금 인스턴스를 노드의 지금 모드에서만 다시 쓰므로, 인스턴스가 있는 노드의 모드 변경은 그 인스턴스를 지우는 계획으로 같이 빠지고 빈 노드의 모드 변경은 확장으로 남는다. 분배된 인스턴스의 가중치를 0으로 만드는 해는 후보에서 빠지며, keep의 가중치가 분배된 인스턴스를 빼면 지금 가중치를 그대로 둔다. 유휴 제거도 쉰다. 근거: m4 r7 07:00:38에서 재시작 19 s 뒤의 관측한 창은 λ 20.6이었다. 부하는 40 req/s였지만 클라이언트가 중단 동안 물러나 있어 ingress가 9.0 req/s(07:00:00~20)와 23.4 req/s(07:00:20~40)만 받았다. 계획은 그 λ로 분배된 rasp5 q1 하나를 지웠다.
 - **계획에서 뺀 노드.** `settings.excludedNodes`(Node 이름 목록, sample은 빈 목록)의 노드는 측정 POOL 노드와 같은 고정 경로를 탄다. capture가 노드 사유 `ExcludedNode`를 붙이고, 그 노드는 keep뿐이며(배치, 교체, 지우기, 전력 변경 없음) 가용 노드 최저 모드 낮춤과 유휴 제거도 받지 않는다. 판단마다 `decision.capacity.plans`에 그 노드의 `ExcludedNode` 계획이 남고 snapshot 노드 `reasons`에도 남는다. 측정 POOL 노드의 인스턴스도 유휴 제거를 받지 않는다.
 
-## 15. 두 박자 후보 허가와 고정 H — SCH-55~58
-
-2026-10-26 사용자 결정 ④ 1-A/2-A/3-A/4-B의 구현 계약이다.
 ## 15. 현재 수요 후보 비교와 고정 H — SCH-55~58
-근거는 로컬 `intent/two-tempo-questions-20261026.md`, `intent/checkpoints.md` 1949행,
+
 시간 기반 축소·교체 허가와 관측 TTL·bootstrap 대기 상한을 제거한 현행 계약이다.
-(모두 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/` 아래).
+이전 두 박자 설계의 근거는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/`의
+`intent/two-tempo-questions-20261026.md`와 `intent/checkpoints.md`에 보존한다.
 
-### 후보 허가와 지속 하강
+### 현재 수요에 따른 후보 비교
 
-- 빠른 박자는 별도 제어 루프가 아니라 매 Tick의 후보 제한이다. fast는 keep、분배 변경、안전한 순증설、물리 제거·정지 없이 κ가 증가하는 정책 변경(용량 회복)이다. 현재 Ready 집합의 중간 분배도 매 주기 계속한다. 수용 한계에서는 허용된 후보 사이에서도 기존 전체 충족→최종 충족→leximin→에너지 순서를 그대로 적용한다.
-- slow는 실물 제거·정지、에너지 절감만을 위한 교체(κ 비증가·joules 감소)、추가+제거 혼합 후보이며 하강 안정화가 필요하다. 분류가 겹치면 slow를 우선하여 증설에 제거를 섞어 우회하지 않는다. 느린 박자는 같은 Tick에서 하강 안정화 조건이 열린 범위의 전체 후보를 추가하는 것이다. 후보 허가 뒤 κ/대기/가중치/SLO·leximin·minimumGain·교체 회수 순서는 바꾸지 않는다. 축소/교체에 포함된 모든 Workload가 조건을 만족해야 하며 다른 Workload의 준비 완료나 하강을 기다리는 전역 장벽은 없다.
-- `W = settings.scaleDownStabilizationNanos`, `d_w(t)`는 기존 계획기의 유효 수요(queued·minimum demand 포함)다. 하강 판정 수요는 `D_w(t) = max { d_w(s) | t−W < s ≤ t }`다. 왼쪽 경계 관측은 W가 지난 순간 만료한다. 정상 관측이 W 전체를 덮은 경우에만, 현재 실제 Ready/ACK 가용 공급 `C_w(t)`에 대해 `D_w(t) < C_w(t)`이면 slow 후보에 적격이다. 후보의 전환·최종 κ/SLO도 D를 감당해야 하며, 에너지 비교의 실제 부하 가정과 하강 보호용 D를 기록에서 구분한다. 이는 과거 기준률 아래에 머문 시간을 재는 방식이 아니다. 국소 고점, 선택·확장·축소가 창을 재기준하거나 이력을 지우지 않는다.
 - 모든 Tick에서 분배·증설·축소·교체 후보를 같은 물리 규칙으로 비교한다. v1/v2 모두 실제 용량·대기·SLO·backlog·회복 검사를 유지한다.
 - 유입 증가만으로 축소·교체를 금지하지 않는다. 현재 수요를 감당하는 후보 사이에서 기존 leximin·에너지·minimumGain·교체 회수 순서를 유지한다.
 - 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand도 이 현재 수요다. 별도 이력 최대값이나 지속 시간 조건은 없다.

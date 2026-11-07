@@ -122,6 +122,7 @@ class Watcher:
                 self.alert(('action', action.get('kind'), (action.get('node') or {}).get('name'), action.get('status')),
                            json.dumps(actions[-1]))
         row['actions'] = actions
+        snapshot = state.get('snapshot') or {}
         instances = snapshot.get('instances') or []
         ready, routed = ready_routed(state)
         row['instances'] = {'total': len(instances), 'ready': len(ready), 'routable': len(routed & ready),
