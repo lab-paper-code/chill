@@ -649,8 +649,7 @@ local execution/finalization producers without inventing remote completion.
 
 The inward domain retains `Definition`, `RequestEvent`, `RequestRow`,
 `ObservationCoverage`/source/gap, and the scheduler records already consumed
-by planning and runtime. The custom `SchedulerDownState.UnmarshalJSON` remains
-with its domain type, with the same maximum-demand evidence requirements.
+by planning and runtime.
 Storage-only result, catalog, scheduler-observation envelope, cluster/resource,
 archive, raw-query, and power-query types live in observation.
 
