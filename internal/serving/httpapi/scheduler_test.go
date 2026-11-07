@@ -61,10 +61,8 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 		DefaultOperationCost: map[string]serving.OperationCostValue{
 			"prepare": {Seconds: 852, Joules: 36371}, "remove": {Seconds: 13, Joules: 1014}, "power": {Seconds: 166, Joules: 2229},
 		},
-		DefaultIdlePower:  &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8},
-		MaxObservationAge: time.Second, MaxReplicas: 1,
-		ReplacementDwell:       17 * time.Second,
-		ScaleDownStabilization: 120 * time.Second, TransitionReserveFraction: .25,
+		DefaultIdlePower: &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8},
+		MaxReplicas: 1, TransitionReserveFraction: .25,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1}

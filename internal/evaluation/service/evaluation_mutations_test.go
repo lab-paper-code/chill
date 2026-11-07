@@ -395,7 +395,7 @@ func TestEvaluationPreflightValidatesCanonicalSettingsPatch(t *testing.T) {
 					},
 					DefaultIdlePower:  &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8},
 					ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
-					MaxObservationAge: time.Second, MaxReplicas: 1, MaxInstances: 1,
+					MaxReplicas: 1, MaxInstances: 1,
 					CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 					CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 					CapacityMinimumRequests: 1, PlanSearchWorkers: 1,

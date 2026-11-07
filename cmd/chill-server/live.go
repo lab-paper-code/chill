@@ -246,12 +246,8 @@ func liveReasonExplanation(reason string) string {
 		return "변경 소요 시간과 전력 근거가 없어 해당 변경을 선택하지 않아요."
 	case "HeldAfterOverload":
 		return "부하 증가에 대비해 준비한 인스턴스를 관측 기간 동안 유지해요."
-	case "DemandIncreasing":
-		return "최근 유입이 늘어 처리 용량을 줄이지 않아요."
 	case "ReplacementUnpaid":
 		return "교체에 든 비용을 회수하지 못해 현재 인스턴스를 유지해요."
-	case "ReplacementDwell":
-		return "인스턴스 교체 뒤 최소 유지 시간을 기다려요."
 	case "TransitionGainWithinUncertainty":
 		return "예상 절감량이 오차 범위 안이어서 현재 구성을 유지해요."
 	case "IdleInstanceRemoved":

@@ -158,49 +158,9 @@ func capacityFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	return s, snap
 }
 
-func TestDecodeSchedulerLineRequiresMaximumDemandFields(t *testing.T) {
-	for _, field := range []string{"windowMax", "windowNanos", "supply"} {
-		evidence := map[string]any{"windowMax": 0, "windowNanos": 0, "supply": 0}
-		delete(evidence, field)
-		raw, err := json.Marshal(evidence)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, line := range []string{
-			`{"decision":{"capacity":{"workloads":[{"uid":"w","scaleDown":` + string(raw) + `}]}}}`,
-			`{"snapshot":{"scaleDown":{"w":` + string(raw) + `}}}`,
-		} {
-			if _, err := DecodeSchedulerLine([]byte(line), nil); err == nil {
-				t.Fatalf("scaleDown without %s accepted: %s", field, line)
-			}
-		}
-	}
-}
-
-func TestDecodeSchedulerLinePreservesMaximumDemandEvidence(t *testing.T) {
-	for _, evidence := range []string{
-		`{"rate":20,"windowMax":110,"windowNanos":300000000000,"supply":160,"allowed":true,"reason":"ScaleDownStabilized","resetReason":"FirstObservation"}`,
-		`{"rate":0,"windowMax":0,"windowNanos":0,"supply":0,"allowed":false,"reason":"NoSpareCapacity"}`,
-	} {
-		raw := []byte(`{"decision":{"capacity":{"workloads":[{"uid":"w","scaleDown":` + evidence + `}]}},"snapshot":{"scaleDown":{"w":` + evidence + `},"emptyNodeScaleDownAllowed":true}}`)
-		event, err := DecodeSchedulerLine(raw, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var want serving.SchedulerDownState
-		if err := json.Unmarshal([]byte(evidence), &want); err != nil {
-			t.Fatal(err)
-		}
-		got := event.Decision.Capacity.Workloads[0].ScaleDown
-		if got == nil || *got != want || event.Snapshot.ScaleDown["w"] != want || !event.Snapshot.EmptyNodeScaleDownAllowed {
-			t.Fatalf("window evidence changed: %+v %+v", got, event.Snapshot)
-		}
-	}
-}
-
 func schedulerFixture() (serving.SchedulerSettings, serving.SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := serving.SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s := serving.SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	estimates := schedulerEstimateSettingsForTest()
 	s.DefaultOperationCost, s.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples = 20, .005, 100

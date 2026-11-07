@@ -262,7 +262,7 @@ func TestSchedulerSummarySkipsUnselectedEvidenceAndCatalog(t *testing.T) {
 	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	clock.set(from)
 	// The missing catalog and incompatible detailed field must not affect a list.
-	appendObservationLine(t, log, clock, fmt.Sprintf(`{"at":%q,"decision":{"at":%q,"status":"Keep","workloads":[{"uid":"w"}]},"snapshot":{"at":%q,"workloadIDs":["w/1"],"instances":[{"scaleDown":{}}]}}`, from.Format(time.RFC3339Nano), from.Format(time.RFC3339Nano), from.Format(time.RFC3339Nano)))
+	appendObservationLine(t, log, clock, fmt.Sprintf(`{"at":%q,"decision":{"at":%q,"status":"Keep","workloads":[{"uid":"w"}]},"snapshot":{"at":%q,"workloadIDs":["w/1"],"instances":[{"observedAt":{}}]}}`, from.Format(time.RFC3339Nano), from.Format(time.RFC3339Nano), from.Format(time.RFC3339Nano)))
 	appendObservationLine(t, log, clock, fmt.Sprintf(`{"at":%q,"node":{"uid":"n","name":"node"},"meter":"missing-meter","startedAt":%q,"powerJoules":12.5,"samples":[{"watts":"detail-only"}]}`, from.Add(time.Second).Format(time.RFC3339Nano), from.Format(time.RFC3339Nano)))
 	for _, selection := range []SchedulerObservationSelection{
 		{Summary: true},
