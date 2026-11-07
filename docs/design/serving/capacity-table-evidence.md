@@ -217,7 +217,7 @@ E5는 Workload 셋(mobilenet tight, PLC, SmolVLM2)과 노드 여덟(genesis2, ge
 
 #### 7.8.0 기준선 (0단계)
 
-호스트 Intel i7-8700K(12 CPU), Go 1.23.4, commit `bb94ccb4`(`internal/serving`은 `e5a46fd` 이후 변경 없음). `CHILL_PLAN_SEARCH=1 go test ./internal/serving -run '^TestCapacityPlanSearchEvaluation$' -count=1 -v -timeout 0`(355 s). 전체 로그 `docs/design/serving/evidence/sched-v2-baseline-v1.log`. 측정 조건은 지금의 B-only 최소 이득 문턱이고, 7.6·7.7 표는 profile half-width 휴리스틱 조건이라 수치가 다르다. 같아야 통과하는 조건이 아니다.
+호스트 Intel i7-8700K(12 CPU), Go 1.23.4, commit `bb94ccb4`. **정정**: 이 commit은 로컬 `refactor/structural-20261102` 계열(11-03 분기)이고 `e5a46fd`(origin/main)의 후손이 아니다. 0단계에서 "`internal/serving`은 `e5a46fd` 이후 변경 없음"이라고 적은 것은 틀렸다(origin/main 쪽에 `internal/serving` 213 커밋이 더 있음). 따라서 이 절의 v1 수치는 옛 v1(무클램프 에너지 식)의 것이며, origin/main 위 재적용 뒤의 기준선은 §7.8.8이다. `CHILL_PLAN_SEARCH=1 go test ./internal/serving -run '^TestCapacityPlanSearchEvaluation$' -count=1 -v -timeout 0`(355 s). 전체 로그 `docs/design/serving/evidence/sched-v2-baseline-v1.log`. 측정 조건은 지금의 B-only 최소 이득 문턱이고, 7.6·7.7 표는 profile half-width 휴리스틱 조건이라 수치가 다르다. 같아야 통과하는 조건이 아니다.
 
 GAP(v1 탐색, 예산 없음, 전수 대비):
 
@@ -463,4 +463,43 @@ GAP 판단의 증분 평가 수 범위는 m=4 OFF 361~387743, ON 618~495202; m=8
 
 #### 7.8.7 그림자 운영(미실행)
 
-`planSearchStrategy: shadow`의 기록 경로는 구현되었으나 테스트베드 그림자 캠페인은 아직 실행하지 않았다. 실제 E5 입력에서 Tick별 v1 `search.key`와 v2 `search.shadow.key`의 동일 여부, v2 정확 J − v1 J, 양쪽 탐색 시간과 fallback을 잰다. 기본 `planPostFilterFinalists=false`에서 key는 후처리 전 탐색 선택해끼리 비교하고, J는 같은 단계의 `search.joules`와 `search.shadow.joules`를 비교한다. 후처리 뒤 v1 `ExpectedJoules`와 그림자의 후처리 전 J를 그대로 비교하지 않으며, v1 J가 없거나 v2 key가 비면 J 차를 계산하지 않는다. 전환 게이트는 같은 입력의 결정성, v1 대비 정확 J 비악화, 탐색 시간 ≤ 100 ms와 fallback 0을 확인하며 key 불일치만으로 품질 실패를 판정하지 않는다. §7.8.6의 하네스 품질 차 +0.020%와 비용 게이트 미달은 이 캠페인의 통과 기록으로 대체할 수 없으며, 운영 측정과 게이트 판정 전까지 기본 전략 v1과 기존 `sweep`을 유지한다.
+`planSearchStrategy: shadow`의 기록 경로는 구현되었으나 테스트베드 그림자 캠페인은 아직 실행하지 않았다. 실제 E5 입력에서 Tick별 v1 `search.key`와 v2 `search.shadow.key`의 동일 여부, v2 정확 J − v1 J, 양쪽 탐색 시간과 fallback을 잰다. 기본 `planPostFilterFinalists=false`에서 key는 후처리 전 탐색 선택해끼리 비교하고, J는 같은 단계의 `search.joules`와 `search.shadow.joules`를 비교한다. 후처리 뒤 v1 `ExpectedJoules`와 그림자의 후처리 전 J를 그대로 비교하지 않으며, v1 J가 없거나 v2 key가 비면 J 차를 계산하지 않는다. 전환 게이트는 같은 입력의 결정성, v1 대비 정확 J 비악화, 탐색 시간 ≤ 1 s(§7.8.8의 재설정 게이트)와 fallback 0을 확인하며 key 불일치만으로 품질 실패를 판정하지 않는다. §7.8.6의 하네스 품질 차 +0.020%와 비용 게이트 미달은 이 캠페인의 통과 기록으로 대체할 수 없으며, 운영 측정과 게이트 판정 전까지 기본 전략 v1과 기존 `sweep`을 유지한다.
+
+#### 7.8.8 origin/main 재적용 뒤 재측정 (리뷰 반영)
+
+브랜치 `sched-v2/main-rebase`(origin/main `e5a46fd6` 위, 17 커밋 재적용 + 호환성 수정). 리뷰 지적에 따라 바꾼 것: (1) 노드·요청 에너지 식을 main의 클램프 식으로 교체(§7.8.3 정정; 경계 표본 75건 J 차 0), `better`의 `joules − keepJoules` 비교·`pendingReplicas` 상한·`retires` 허가를 main과 같게; (2) 그림자 모드는 v2를 먼저(평가 수 예산이 결정적 종료 조건, 벽시계는 안전장치) 돌린 뒤 v1을 같은 마감으로 돌리고 `search.durationNanos`(v1)와 `search.shadow.durationNanos`(v2)를 따로 기록; (3) v1·v2 모두 후처리 전 선택해의 `search.key`·`search.joules`를 기록하고 Dashboard의 그림자 비교는 `shadow.joules − search.joules`; (4) ConfigMap sample의 여섯 값이 `Settings()` 기본값과 같은지 테스트; (5) v2도 `search.steps`를 v1 형식(출발점 origin + 수락 걸음, `phase` cover|polish|combine)으로 기록. 증분 평가 벤치마크는 525.5/555.7/574.4 ns/op, 할당 0.
+
+명령: `CHILL_PLAN_SEARCH=1 go test ./internal/serving -run '^TestCapacityPlanSearchEvaluation$' -count=1 -v -timeout 0 > docs/design/serving/evidence/sched-v2-main-rebase.log 2>&1`, PASS 523 s. GAP은 v1(예산 없음)과 v2(m = 8, priced; 평가 예산 없음·500,000·150,000) 넷을 같은 전수 oracle과 비교했다. 충족 판정은 넷 모두 전수와 일치(공간별 20/24·24/24·24/24 충족).
+
+| 전략 | 평가 예산 | 공간 | differs | raw 최악 | fixed 최악 | over 0.5% | 순환 / 전수 순환 |
+|---|---|---|---:|---:|---:|---:|---:|
+| v1 | — | 5 b1 | 1 | 3.985% | 4.294% | 1 | 0 / 0 |
+| v1 | — | 5 b2 | 2 | 8.156% | 0.000% | 0 | 2 / 2 |
+| v1 | — | 8 b1 모드 2 | 1 | 1.860% | 0.096% | 0 | 0 / 0 |
+| v2 | 없음 | 5 b1 | 0 | 0.000% | 0.000% | 0 | 0 / 0 |
+| v2 | 없음 | 5 b2 | 1 | 0.020% | 0.022% | 0 | 2 / 2 |
+| v2 | 없음 | 8 b1 모드 2 | 0 | 0.000% | 0.000% | 0 | 0 / 0 |
+| v2 | 500,000 | 5 b1 / 5 b2 / 8 b1 모드 2 | 0 / 1 / 0 | 0 / 0.020% / 0 | 0 / 0.022% / 0 | 0 | 예산 없음과 동일 |
+| v2 | 150,000 | 5 b1 / 5 b2 | 0 / 1 | 0 / 0.020% | 0 / 0.022% | 0 | 동일 |
+| v2 | 150,000 | 8 b1 모드 2 | 4 | **2.715%** | 0.434% | 0 | 0 / 0 |
+
+v1 GAP은 §7.8.4의 정정 입력 v1과 같다(클램프 식 교체가 이 하네스의 v1 선택을 바꾸지 않았다). v2(m = 8, priced)는 재적용 전과 같은 한 조합(5 b2, mnv2 20·plc 40·vlm 0.3)에서 +0.020%만 남는다. 기본 예산 500,000은 세 공간 모두 예산 없음과 같은 선택이고, 150,000은 8 b1 모드 2의 네 조합(mnv2 110 계열)에서 v1보다 나쁜 2.715%까지 벌어지므로 **기본 평가 예산은 500,000을 유지**한다.
+
+SCALE(mobilenet 60·PLC 40·SmolVLM 1.2; v1은 벽시계 5 s / 무제한, v2는 m = 8·priced·벽시계 5 s에 평가 예산 500,000 / 150,000):
+
+| 공간 | v1 평가 수 / 시간 | v2 500k 평가 수 / 시간 / cut | v2 150k 평가 수 / 시간 / cut | J (전부 동일) |
+|---|---|---|---|---:|
+| 5 b1 | 2,797 / 30~44 ms | 1,446 / 3 ms / 아니요 | 1,446 / 3 ms / 아니요 | 141,809.6 |
+| 5 b2 | 16,312 / 41~43 ms | 35,329 / 40 ms / 아니요 | 35,329 / 23 ms / 아니요 | v1 140,967.8, v2 130,337.2 |
+| 8 b1 모드 2 | 55,315 / 153~327 ms | 500,000 / 544 ms / 예 | 150,000 / 227 ms / 예 | 154,742.9 |
+| 8 b1 모드 4 | 166,194 / 761~792 ms | 500,000 / 459 ms / 예 | 150,000 / 205 ms / 예 | 151,604.3 |
+| 8 b2 모드 1 | 102,606 / 711~857 ms | 500,000 / 537 ms / 예 | 150,000 / 153 ms / 예 | 150,269.0 |
+| 8 b2 모드 2 | 227,088 / 1.38~1.84 s | 500,000 / 417 ms / 예 | 150,000 / 114 ms / 예 | 148,839.6 |
+| 8 b2 모드 4 | 670,700 / 2.97~3.48 s | 500,000 / 485 ms / 예 | 150,000 / 177 ms / 예 | 147,130.5 |
+
+모든 v2 행이 fallback 0, `postFilterReverts` 0, `surrogateGapJoules` 0, 선택 출발점 keep. SCALE의 J는 예산 500k·150k와 v1(5 b2 제외: v2가 더 낮음)이 모두 같다.
+
+**비용 게이트 재설정.** 제안서의 ≤ 100 ms는 증분 평가 0.2 µs 가정에서 나온 값이다. 실측은 증분 평가 0.55 µs(벤치)이며, 피복·연마·결합 탐색 루프 비용을 포함하면 500,000회 예산 소진까지 0.42~0.54 s다. 게이트를 Tick 예산 기준으로 다시 둔다: **v2 탐색 시간 ≤ ControlInterval/10(샘플 10 s에서 1 s)**, 단일 goroutine. 근거: v1의 벽시계 예산이 ControlInterval/2이고, v2는 그 1/5 안에서 결정적(평가 수 예산)으로 끝나야 호스트 속도에 따른 결과 차이가 없으면서 Tick CPU 점유가 10% 이하다. 150,000회 예산은 이 게이트를 더 여유 있게 통과하지만 위 GAP 손실 때문에 채택하지 않는다. 이 재설정은 하네스 기준이며 실제 E5 계획 수(≈130 열거 계획)에서의 시간은 7단계 그림자 운영이 잰다.
+
+남는 미달: 5 b2 한 조합의 v1 대비 +0.020%(허용 가능으로 기록), 그림자 캠페인 미실행.
+

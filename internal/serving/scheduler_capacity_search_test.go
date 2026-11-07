@@ -351,7 +351,13 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 	if os.Getenv("CHILL_PLAN_SEARCH") == "" {
 		t.Skip("measurement sweep; set CHILL_PLAN_SEARCH=1")
 	}
-	strategies := []string{"v1", "v2"}
+	// GAP runs v1 and v2 without an evaluation budget, then v2 at the default
+	// and the candidate default budgets so the budget's quality cost is measured.
+	unlimited := int(^uint(0) >> 1)
+	strategies := []struct {
+		name        string
+		evaluations int
+	}{{"v1", unlimited}, {"v2", unlimited}, {"v2", 500000}, {"v2", 150000}}
 	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
 		nodes := evaluationScaled(c.variants, c.modes)
 		type gapStats struct {
@@ -361,14 +367,15 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 			dualMin, dualMax                                            float64
 			dualSamples                                                 int
 		}
-		stats := [2]gapStats{}
+		stats := make([]gapStats, len(strategies))
 		for i := range stats {
 			stats[i].starts, stats[i].firstStarts = map[string]int{}, map[string]int{}
 			stats[i].dualMin, stats[i].dualMax = math.Inf(1), math.Inf(-1)
 		}
 		for mix, rates := range e5Mixes {
 			exact, exactJ, exactTicks, exactCycled := e5Converge(rates, nodes, e5Brute)
-			for i, strategy := range strategies {
+			for i, cfg := range strategies {
+				strategy := cfg.name
 				s := &stats[i]
 				tick, active, priced := 0, 0, false
 				if strategy == "v2" {
@@ -377,7 +384,7 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 				var firstSearch SchedulerPlanSearch
 				search := func(p *capacityPlanner) *capacityResult {
 					configure(p, strategy)
-					p.settings.PlanSearchEvaluations = int(^uint(0) >> 1)
+					p.settings.PlanSearchEvaluations = cfg.evaluations
 					r := capacitySearchForTest(t, p)
 					tick++
 					d := p.searched
@@ -386,8 +393,8 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 						firstSearch = d
 						s.firstStarts[d.Start]++
 					}
-					t.Logf("SEARCH strategy=%s active=%d priced=%v variants=%d modes=%d mix=%d rates=%v tick=%d start=%q dualBound=%.9f rawJ=%.9f feasible=%v evaluated=%d durationNS=%d surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g budgetCut=%v",
-						strategy, active, priced, c.variants, c.modes, mix, rates, tick, d.Start, d.DualBound, r.joules, r.feasible, d.Evaluated, d.Duration.Nanoseconds(),
+					t.Logf("SEARCH strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v tick=%d start=%q dualBound=%.9f rawJ=%.9f feasible=%v evaluated=%d durationNS=%d surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g budgetCut=%v",
+						strategy, active, priced, cfg.evaluations, c.variants, c.modes, mix, rates, tick, d.Start, d.DualBound, r.joules, r.feasible, d.Evaluated, d.Duration.Nanoseconds(),
 						d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, d.BudgetCut)
 					return &r
 				}
@@ -427,12 +434,13 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 						}
 					}
 				}
-				t.Logf("QUALITY strategy=%s active=%d priced=%v variants=%d modes=%d mix=%d rates=%v feasible=%v exactFeasible=%v rawJ=%.9f exactRawJ=%.9f fixedJ=%.9f exactFixedJ=%.9f oneGap=%.6f%% fixedGap=%.6f%% ticks=%d cycled=%v exactTicks=%d exactCycled=%v start=%q dualBound=%.9f dualExactRatio=%.9f rawKey=%q exactRawKey=%q",
-					strategy, active, priced, c.variants, c.modes, mix, rates, got.feasible, exact != nil, got.joules, exactRawJ, gotJ, exactJ, 100*gap, 100*fixed,
+				t.Logf("QUALITY strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v feasible=%v exactFeasible=%v rawJ=%.9f exactRawJ=%.9f fixedJ=%.9f exactFixedJ=%.9f oneGap=%.6f%% fixedGap=%.6f%% ticks=%d cycled=%v exactTicks=%d exactCycled=%v start=%q dualBound=%.9f dualExactRatio=%.9f rawKey=%q exactRawKey=%q",
+					strategy, active, priced, cfg.evaluations, c.variants, c.modes, mix, rates, got.feasible, exact != nil, got.joules, exactRawJ, gotJ, exactJ, 100*gap, 100*fixed,
 					ticks, cycled, exactTicks, exactCycled, firstSearch.Start, firstSearch.DualBound, ratio, got.key, exactKey)
 			}
 		}
-		for i, strategy := range strategies {
+		for i, cfg := range strategies {
+			strategy := cfg.name
 			s := stats[i]
 			active, priced := 0, false
 			if strategy == "v2" {
@@ -441,8 +449,8 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 			if s.dualSamples == 0 {
 				s.dualMin, s.dualMax = math.NaN(), math.NaN()
 			}
-			t.Logf("GAP strategy=%s active=%d priced=%v variants=%d modes=%d mixes=%d differs=%d worstOne=%.3f%% fixed: worst=%.3f%% best=%.3f%% over0.5%%=%d cycles=%d exactCycles=%d ticks<=%d exactTicks<=%d starts=%v firstStarts=%v dualExactSamples=%d dualExactMin=%.9f dualExactMax=%.9f",
-				strategy, active, priced, c.variants, c.modes, len(e5Mixes), s.differs, 100*s.worst, 100*s.worstFixed, 100*s.bestFixed, s.over, s.cycles, s.exactCycles,
+			t.Logf("GAP strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mixes=%d differs=%d worstOne=%.3f%% fixed: worst=%.3f%% best=%.3f%% over0.5%%=%d cycles=%d exactCycles=%d ticks<=%d exactTicks<=%d starts=%v firstStarts=%v dualExactSamples=%d dualExactMin=%.9f dualExactMax=%.9f",
+				strategy, active, priced, cfg.evaluations, c.variants, c.modes, len(e5Mixes), s.differs, 100*s.worst, 100*s.worstFixed, 100*s.bestFixed, s.over, s.cycles, s.exactCycles,
 				s.maxTicks, s.maxExactTicks, s.starts, s.firstStarts, s.dualSamples, s.dualMin, s.dualMax)
 		}
 	}
