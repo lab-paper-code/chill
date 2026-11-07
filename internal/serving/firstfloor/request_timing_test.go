@@ -12,15 +12,17 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
+const timingScenarioCancel = "cancel"
+
 func TestWorkerHTTPTimingAttributesBlockedExchange(t *testing.T) {
-	for _, scenario := range []string{"success", "decode", "failure", "cancel"} {
+	for _, scenario := range []string{"success", "decode", "failure", timingScenarioCancel} {
 		t.Run(scenario, func(t *testing.T) {
 			definition := &serving.Definition{UID: "uid", Generation: 1, Model: serving.Model{UID: "model", Generation: 1}}
 			entered, release := make(chan time.Time, 1), make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				entered <- time.Now()
 				<-release
-				if scenario == "cancel" {
+				if scenario == timingScenarioCancel {
 					return
 				}
 				if scenario == "decode" {
@@ -55,7 +57,7 @@ func TestWorkerHTTPTimingAttributesBlockedExchange(t *testing.T) {
 			default:
 			}
 			released := time.Now()
-			if scenario == "cancel" {
+			if scenario == timingScenarioCancel {
 				cancel()
 			}
 			close(release)
@@ -68,7 +70,7 @@ func TestWorkerHTTPTimingAttributesBlockedExchange(t *testing.T) {
 			if (completed.err == nil) != (scenario == "success") {
 				t.Fatalf("scenario %s error=%v", scenario, completed.err)
 			}
-			if scenario == "cancel" && completed.result.Finished {
+			if scenario == timingScenarioCancel && completed.result.Finished {
 				t.Fatal("canceled transport became execution completion")
 			}
 		})

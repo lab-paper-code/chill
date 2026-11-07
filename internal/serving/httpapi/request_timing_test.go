@@ -20,6 +20,16 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+const (
+	timingScenarioErrorFlush = "error-flush"
+	timingScenarioDecode     = "decode"
+	timingScenarioWorker     = "worker"
+	timingScenarioCancel     = "cancel"
+	timingOutcomeCompleted   = "completed"
+	timingOutcomeTimeout     = "timeout"
+	timingOutcomeCanceled    = "canceled"
+)
+
 func timingHandler(t *testing.T, execute func(context.Context, serving.Dispatch) (serving.BackendResult, error)) (*Handler, *observation.ObservationLog) {
 	t.Helper()
 	log, err := observation.NewObservationLog(observation.ObservationLogConfig{Directory: cleanObservationDirectory(t), Store: "evidence", Retention: 2 * time.Hour, Writer: settingsArchive{directory: t.TempDir()}})
@@ -90,7 +100,7 @@ func requireTiming(t *testing.T, row serving.RequestRow, stage serving.ServerSta
 
 // The handler runs the real runtime and persists its result through the query reader.
 func TestInferenceTimingErrorBoundaries(t *testing.T) {
-	for _, scenario := range []string{"success", "auth", "decode", "admission", "worker", "timeout", "cancel", "write", "flush", "error-write", "error-flush"} {
+	for _, scenario := range []string{"success", "auth", timingScenarioDecode, "admission", timingScenarioWorker, timingOutcomeTimeout, timingScenarioCancel, "write", "flush", "error-write", timingScenarioErrorFlush} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -98,20 +108,20 @@ func TestInferenceTimingErrorBoundaries(t *testing.T) {
 				result := serving.BackendResult{Finished: true, ContentType: "application/json", Body: []byte(`{}`)}
 				result.ServerTiming.Mark(serving.ServerWorkerHTTPStart, dispatch.ReceivedAt)
 				result.ServerTiming.Mark(serving.ServerWorkerHTTPDone, dispatch.ReceivedAt)
-				if scenario == "cancel" || scenario == "timeout" {
-					if scenario == "cancel" {
+				if scenario == timingScenarioCancel || scenario == timingOutcomeTimeout {
+					if scenario == timingScenarioCancel {
 						cancel()
 					}
 					<-ctx.Done()
 					return result, ctx.Err()
 				}
-				if scenario == "worker" {
+				if scenario == timingScenarioWorker {
 					return result, &serving.Error{Code: "BackendError", Message: "worker failed"}
 				}
 				return result, nil
 			})
 			body := `{}`
-			if scenario == "decode" {
+			if scenario == timingScenarioDecode {
 				body = `{`
 			}
 			if scenario == "admission" {
@@ -120,26 +130,26 @@ func TestInferenceTimingErrorBoundaries(t *testing.T) {
 				}
 			}
 			request := httptest.NewRequest(http.MethodPost, "/api/workloads/workload/infer", strings.NewReader(body)).WithContext(ctx)
-			if scenario != "auth" && scenario != "error-write" && scenario != "error-flush" {
+			if scenario != "auth" && scenario != "error-write" && scenario != timingScenarioErrorFlush {
 				request.Header.Set("Authorization", "Bearer client")
 			}
-			if scenario == "timeout" {
+			if scenario == timingOutcomeTimeout {
 				request.Header.Set("X-Chill-Request-Timeout", "20ms")
 			}
-			writer := &timingFailureWriter{ResponseRecorder: httptest.NewRecorder(), writeFailure: scenario == "write" || scenario == "error-write", flushFailure: scenario == "flush" || scenario == "error-flush"}
+			writer := &timingFailureWriter{ResponseRecorder: httptest.NewRecorder(), writeFailure: scenario == "write" || scenario == "error-write", flushFailure: scenario == "flush" || scenario == timingScenarioErrorFlush}
 			h.ServeHTTP(writer, request)
 			row := timingRow(t, log, writer.Header().Get("X-Chill-Request-ID"))
-			wantOutcome := "completed"
+			wantOutcome := timingOutcomeCompleted
 			switch scenario {
-			case "auth", "decode", "admission":
+			case "auth", timingScenarioDecode, "admission":
 				wantOutcome = "rejected"
-			case "worker":
+			case timingScenarioWorker:
 				wantOutcome = "error"
-			case "timeout":
-				wantOutcome = "timeout"
-			case "cancel":
-				wantOutcome = "canceled"
-			case "write", "flush", "error-write", "error-flush":
+			case timingOutcomeTimeout:
+				wantOutcome = timingOutcomeTimeout
+			case timingScenarioCancel:
+				wantOutcome = timingOutcomeCanceled
+			case "write", "flush", "error-write", timingScenarioErrorFlush:
 				wantOutcome = "delivery_failed"
 			}
 			if row.Outcome != wantOutcome {
@@ -148,11 +158,11 @@ func TestInferenceTimingErrorBoundaries(t *testing.T) {
 			requireTiming(t, row, serving.ServerReceiveDone, true)
 			requireTiming(t, row, serving.ServerAuthStart, true)
 			requireTiming(t, row, serving.ServerAuthDone, true)
-			decoded := scenario != "auth" && scenario != "error-write" && scenario != "error-flush"
+			decoded := scenario != "auth" && scenario != "error-write" && scenario != timingScenarioErrorFlush
 			requireTiming(t, row, serving.ServerBodyDecodeStart, decoded)
 			requireTiming(t, row, serving.ServerBodyDecodeDone, decoded)
-			requireTiming(t, row, serving.ServerAcceptDone, decoded && scenario != "decode")
-			wrote := scenario != "cancel"
+			requireTiming(t, row, serving.ServerAcceptDone, decoded && scenario != timingScenarioDecode)
+			wrote := scenario != timingScenarioCancel
 			writeStart := requireTiming(t, row, serving.ServerResponseWriteStart, wrote)
 			writeDone := requireTiming(t, row, serving.ServerResponseWriteDone, wrote)
 			flushed := wrote && !writer.writeFailure
@@ -161,7 +171,7 @@ func TestInferenceTimingErrorBoundaries(t *testing.T) {
 			if writeDone < writeStart || flushDone < flushStart {
 				t.Fatal("response boundaries reversed")
 			}
-			if scenario == "worker" || scenario == "success" {
+			if scenario == timingScenarioWorker || scenario == "success" {
 				requireTiming(t, row, serving.ServerWorkerHTTPStart, true)
 				requireTiming(t, row, serving.ServerWorkerHTTPDone, true)
 				requireTiming(t, row, serving.ServerReplyReceived, true)
@@ -227,7 +237,7 @@ func TestInferenceTimingAttributesAuthAndBodyWaits(t *testing.T) {
 		bodyStart < authDone || bodyStart > bodyArrived.Sub(row.ReceivedAt) || bodyDone < bodyReleased.Sub(row.ReceivedAt) {
 		t.Fatal("auth/body barrier wait attributed outside its module")
 	}
-	if row.Outcome != "completed" {
+	if row.Outcome != timingOutcomeCompleted {
 		t.Fatalf("barriers changed request outcome: %s", row.Outcome)
 	}
 }
