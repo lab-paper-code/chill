@@ -100,6 +100,9 @@ func (t *RequestTimings) Mark(stage ServerStage, origin time.Time) {
 // Merge fills only stages not already observed by this owner.
 func (t *RequestTimings) Merge(other RequestTimings) {
 	missing := other.present &^ t.present
+	if missing == 0 {
+		return
+	}
 	for stage := ServerStage(0); stage < serverStageCount; stage++ {
 		if missing&(uint32(1)<<stage) != 0 {
 			t.offsets[stage] = other.offsets[stage]

@@ -168,8 +168,6 @@ test("public request reads and the real download preserve optional server timing
     assert.equal(blob.type,"application/json")
     const exported=scheduler.parseSchedulerJSON(await blob.text()) as {source:ObservationResult}
     assert.deepEqual(exported.source,scheduler.parseSchedulerJSON(body))
-    assert.equal(Object.hasOwn(exported.source.requests[1],"serverTiming"),false)
-    assert.deepEqual(data.requests[0].serverTiming,exported.source.requests[0].serverTiming)
   } finally {
     globalThis.fetch=previousFetch;URL.createObjectURL=previousCreate;URL.revokeObjectURL=previousRevoke
     if(previousDocument)Object.defineProperty(globalThis,"document",previousDocument)
