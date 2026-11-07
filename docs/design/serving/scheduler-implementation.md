@@ -269,15 +269,15 @@ reset은 선택 owner의 **모든** exact Pod UID/container를 열거·remove �
 | 하강 여유 | 최종 하강·idle 후처리만 현재 유효 수요×(1+h)를 양수 정수 weight/각 κ로 검사한다. bridge/reserve·실제 J는 할증하지 않는다. |
 | 회복 | 실제 부족·backlog·부분 관측 가용 수요·unknown·예약·소유권·Ready/ACK·old+new peak·bridge/reserve/H를 검사한다. |
 | 빈 Node/Fixed | 같은 현재 수요와 gain/minimumGain/payback을 적용한다. 이미 허가된 owner DAG의 drain/remove는 계속한다. |
-| 예비 | 예약/unknown Node 제약 우선, 밖 fast/full 계속. f>0이면 구간별 영향 UID actual Ready/ACK κ≥λ(1+f), 같은 공급 중복 담보 금지. 부족은 후보 `TransitionReserveInsufficient`이지 전역 대기 아님. f는 요청률/요청 에너지 분모를 바꾸지 않는다. |
-| 중간 route | 느린 박자/전체 준비와 무관하게 다음 tick 실제 Ready 부분집합을 UID atomic route로 편입하되 기존 공급/ACK/stop-drain-power/인계 보호 유지. |
+| 예비 | 예약/unknown Node 제약을 유지하며 독립 후보는 계속 평가한다. f>0이면 구간별 영향 UID actual Ready/ACK κ≥λ(1+f), 같은 공급 중복 담보 금지. 부족은 해당 후보의 `TransitionReserveInsufficient`다. f는 요청률/요청 에너지 분모를 바꾸지 않는다. |
+| 중간 route | 전체 준비를 기다리지 않고 다음 tick 실제 Ready 부분집합을 UID atomic route로 편입하되 기존 공급/ACK/stop-drain-power/인계 보호를 유지한다. |
 | 고정 H | p.period 확장 폐기. keep/payback/minimumGain/decision.capacity.periodNanos와 모든 후보가 같은 H. 공통 route+선택 최장 post>H 제외, =H 허용. reserve prepare/load/Serving/remove 한 번 집계. Fixed 새 절전 선반영/에너지 면제 삭제, 일반 payback/minimumGain·원상태 keep으로 비교. H 안 nominal gain>0+minimumGain+payback 모두 필요. |
-| 기록 | settings/search.bounds/H·Run binding/summary 동결. workloads[].scaleDown=`rate,windowMax,windowNanos,supply,allowed,reason`+선택 `resetReason`. rate=현재 유효 수요,D=windowMax,W=windowNanos,supply=actual Ready/ACK. 탐색 전 반환도 창/공급/보류 이유·후보 slow/제외·energy/gain/minimumGain/payback/reserve κ 연결. 구 baselineRate/previousRate/downSince/elapsedNanos reader/alias 병행 금지; 과거 raw·게시 증거는 보존하며 typed reader는 windowMax/windowNanos/supply 누락을 오류로 거절한다. |
+| 기록 | settings/search.bounds/H·Run binding/summary를 동결한다. 현재 rate·backlog·가용 κ·후보 제외 사유·energy/gain/minimumGain/payback/reserve κ를 연결하며 과거 raw·게시 증거는 보존한다. |
 
 H=600초 근거는 로컬 `campaign/v2/demo-*/summary.json`의 `stages[].actions[].action` 성공 완료: jetsono MAXN150.939초, lattepanda Smol prepare268.867초, genesis3 Smol prepare292.163초, jetsono 하강196.180초; 보수적 직렬 약488초 포함이지 미래 상한 보장 아님. 285초/Ready와 완료 시각 차이는 계획기를 따른다.
-필수 수용: AC-42 일정100 req/s+잡음에서 W가 지나도 공급≤D면 축소/절전 없음(국소 고점 timer로39초 허가한 4회차 결함). 실제 하강은 높은 표본 W 만료·완전 창·D<공급·기존 이득/SLO 뒤 허가하며 gap/설정/restart/UID/W=0/역행/벡터 상쇄를 검사한다. D110·rate20·공급160이면 후보60 거절,120은 전환/SLO/본전 충족 시 허용한다.
+필수 수용: v1/v2 모두 현재 수요와 backlog를 감당하는 후보만 선택한다. 정상 저부하에서는 별도 기간 대기 없이 이득·SLO·전환 안전조건을 만족하는 축소를 선택하며, 수요 증가·실제 수집 실패·미확인 물리 상태에서는 공급을 잘못 줄이지 않는다.
 AC-43은 f=0 기존 SLO 보존, f>0 미준비/중복 공급 거절·충분한 예비 허가·native ACK/actual SLO/예비 포함 evaluation joules다. AC-44/SCH-59는 H600초 jetsono MAXN→15W −699J/손익 약52분 및 양수이나 문턱 미달 후보 미실행, 다른 Node 이득에 손해 Fixed를 묻지 않음, 빈 Node 후보/비교 집합/payback 포함, 미선택 긴 후보 추가/삭제에도 H/energy 불변, 조합>H 제외/=H 허용이다.
-SCH-54 빈 출발/최소 instance1/증설/부분 Ready/예약 밖 진행은 창 대기 없이 유지한다. 3회차 B의 G/L15~18초 Ready 뒤 N32초까지 대기한 fake 시계 사례에서 G/L이 다음 주기 먼저 배분되어야 한다. 무한 초과량 leximin·예약 해제·accepted drain·H 독립 action timeout·typed API/UI 구 기록 경계·Dashboard 최대 수요 창 도움말도 수용 범위다. 실클러스터 재시연/evaluation는 별도 승인 후 같은 H/binding/부하로 수행한다.
+SCH-54 빈 출발/최소 instance1/증설/부분 Ready/예약 밖 진행을 유지한다. 3회차 B의 G/L15~18초 Ready 뒤 N32초까지 대기한 fake 시계 사례에서 G/L이 다음 주기 먼저 배분되어야 한다. 무한 초과량 leximin·예약 해제·accepted drain·H 독립 action timeout·typed API/UI도 수용 범위다. 실클러스터 재시연/evaluation는 별도 승인 후 같은 H/binding/부하로 수행한다.
 
 ## 9. 실행 증거와 현재 수용 범위
 
