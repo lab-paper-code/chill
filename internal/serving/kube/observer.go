@@ -338,13 +338,18 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	o.mu.Unlock()
 	probes.Wait()
 	o.mu.Lock()
+	return o.finishRefreshLocked(ctx, observed)
+}
+
+// finishRefreshLocked finalizes the source ledger after every probe has published.
+func (o *Observer) finishRefreshLocked(ctx context.Context, observed map[types.UID]bool) error {
 	if err := ctx.Err(); err != nil {
 		o.refreshed = time.Time{}
 		o.issue("refresh", err)
 		return err
 	}
 	o.reconcileSources(ctx, observed)
-	if err = o.publishLedger(nil); err != nil {
+	if err := o.publishLedger(nil); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
