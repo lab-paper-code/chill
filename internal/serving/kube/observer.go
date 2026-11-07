@@ -305,6 +305,11 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	}
 	o.restoreSources(pods.Items)
 	observed := map[types.UID]bool{}
+	// Reconciliation owns only identities retained when this refresh began.
+	// A watch or removal may install a replacement while native probes run.
+	for _, source := range o.sources {
+		observed[source.uid] = false
+	}
 	var probes sync.WaitGroup
 	for i := range pods.Items {
 		pod := &pods.Items[i]
@@ -365,8 +370,8 @@ func (o *Observer) finishRefreshLocked(ctx context.Context, observed map[types.U
 // reconcileSources reads retained Pods even when a filtered listing omitted them.
 func (o *Observer) reconcileSources(ctx context.Context, observed map[types.UID]bool) {
 	missing := false
-	for _, source := range o.sources {
-		missing = missing || !observed[source.uid]
+	for _, seen := range observed {
+		missing = missing || !seen
 	}
 	var latest *corev1.PodList
 	var latestErr error
@@ -378,8 +383,9 @@ func (o *Observer) reconcileSources(ctx context.Context, observed map[types.UID]
 		}
 	}
 	// Missing/relabeled Pods are still read for exact old executor termination.
-	for _, source := range o.sources {
-		if observed[source.uid] {
+	for uid, seen := range observed {
+		source := o.sources[string(uid)]
+		if seen || source == nil {
 			continue
 		}
 		pod := byName[source.pod.Name]
@@ -390,7 +396,7 @@ func (o *Observer) reconcileSources(ctx context.Context, observed map[types.UID]
 			if err == nil {
 				err = errors.New("source disappeared without confirmed container termination")
 			}
-			_, _ = o.sourceUnavailable(source.podState, err)
+			_, _ = o.sourceUnavailable(source.uid, source.pod.String(), err)
 		}
 	}
 }
@@ -574,7 +580,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		}
 	}
 	if pod.Labels["app.kubernetes.io/component"] != servingstate.ServingInstanceComponent {
-		instance, publish := o.sourceUnavailable(pod, errors.New("Pod is not labelled as a serving instance"))
+		instance, publish := o.sourceUnavailable(pod.UID, pod.Namespace+"/"+pod.Name, errors.New("Pod is not labelled as a serving instance"))
 		return instance, publish, nil
 	}
 	o.recordRuntimeDeclaration(ctx, pod, profile)
@@ -641,7 +647,7 @@ func (o *Observer) probeSource(ctx context.Context, pod *corev1.Pod, node *corev
 		}
 		err = probeErr
 	}
-	instance, publish := o.sourceUnavailable(pod, err)
+	instance, publish := o.sourceUnavailable(pod.UID, pod.Namespace+"/"+pod.Name, err)
 	return instance, publish, nil
 }
 
@@ -654,7 +660,7 @@ func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestEr
 		return serving.ReadyInstance{}, false
 	}
 	if latestErr != nil {
-		return o.sourceUnavailable(p.pod, latestErr)
+		return o.sourceUnavailable(p.pod.UID, p.pod.Namespace+"/"+p.pod.Name, latestErr)
 	}
 	var current *corev1.Pod
 	selected := 0
@@ -681,12 +687,12 @@ func (o *Observer) verifySource(p probedSource, latest *corev1.PodList, latestEr
 		o.issue(p.pod.Namespace+"/"+p.pod.Name, nil)
 		return p.instance, true
 	}
-	return o.sourceUnavailable(p.pod, err)
+	return o.sourceUnavailable(p.pod.UID, p.pod.Namespace+"/"+p.pod.Name, err)
 }
 
-func (o *Observer) sourceUnavailable(pod *corev1.Pod, err error) (serving.ReadyInstance, bool) {
-	o.issue(pod.Namespace+"/"+pod.Name, err)
-	if source := o.sources[string(pod.UID)]; source != nil {
+func (o *Observer) sourceUnavailable(uid types.UID, name string, err error) (serving.ReadyInstance, bool) {
+	o.issue(name, err)
+	if source := o.sources[string(uid)]; source != nil {
 		source.instance.State.Ready = false
 		source.instance.State.NativeVerified = false
 		source.instance.State.Reason = err.Error()

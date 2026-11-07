@@ -500,6 +500,61 @@ func TestObserverRefreshRetainsUnlabelledParentSource(t *testing.T) {
 	}
 }
 
+func TestObserverReconcileRetainedSourceWithoutPodSnapshot(t *testing.T) {
+	for _, missing := range []string{"absent", "replacement", "read failure"} {
+		t.Run(missing, func(t *testing.T) {
+			pod, _, _, _ := observerSourceFixture()
+			observedAt := time.Now().Add(-time.Minute)
+			source := &nativeSource{
+				pod: types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name},
+				uid: pod.UID, containerID: servingstate.FirstfloorStatus(pod).ContainerID, ownerUID: "workload-uid",
+				instance: serving.ReadyInstance{State: serving.InstanceState{
+					Ready: true, NativeVerified: true, RecoveryUnknown: true, ObservedAt: observedAt,
+				}},
+			}
+			observer := newTestObserver(t)
+			observer.sources[string(source.uid)] = source
+			independent := &nativeSource{uid: "independent", instance: serving.ReadyInstance{State: serving.InstanceState{Ready: true, NativeVerified: true}}}
+			observer.sources[string(independent.uid)] = independent
+			kube := kubefake.NewSimpleClientset()
+			var replacement *nativeSource
+			if missing == "replacement" {
+				pod.UID = testReplacementUID
+				if _, err := kube.CoreV1().Pods(pod.Namespace).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+				replacement = &nativeSource{pod: source.pod, uid: pod.UID, instance: serving.ReadyInstance{State: serving.InstanceState{Ready: true, NativeVerified: true, Reason: "replacement-not-probed"}}}
+				observer.sources[string(replacement.uid)] = replacement
+			}
+			if missing == "read failure" {
+				kube.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+					return true, nil, fmt.Errorf("retained Pod read unavailable")
+				})
+			}
+			observer.kube = kube
+			observer.reconcileSources(context.Background(), map[types.UID]bool{source.uid: false, independent.uid: true})
+			state := source.instance.State
+			if state.Ready || state.NativeVerified || state.Reason == "" || !state.AttemptedAt.After(observedAt) {
+				t.Fatalf("retained executor stayed available without current proof: %+v", state)
+			}
+			if source.podState != nil || source.stopped || source.deleted || source.ownerUID != "workload-uid" ||
+				!state.RecoveryUnknown || !state.ObservedAt.Equal(observedAt) || observer.sources[string(source.uid)] != source {
+				t.Fatalf("unavailability discarded retained responsibility: %+v", source)
+			}
+			if !independent.instance.State.Ready || !independent.instance.State.NativeVerified {
+				t.Fatal("retained-source failure invalidated independent verified source")
+			}
+			if replacement != nil && (!replacement.instance.State.Ready || !replacement.instance.State.NativeVerified || replacement.instance.State.Reason != "replacement-not-probed") {
+				t.Fatal("old refresh acted on replacement UID")
+			}
+			issues := observer.Issues()
+			if len(issues) != 1 || issues[0].Source != source.pod.String() {
+				t.Fatalf("retained-source identity missing from issue: %+v", issues)
+			}
+		})
+	}
+}
+
 func TestObserverFilteredRefreshPreservesExactRetainedTermination(t *testing.T) {
 	for _, watching := range []bool{false, true} {
 		for _, proof := range []string{"exact", "replacement Pod", "other container"} {
