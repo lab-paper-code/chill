@@ -10,7 +10,7 @@ Tick은 κ 합과 노드 계획을 만들고, `planSearchStrategy`로 고른 v1�
 [M0](decision-record-diet.md)와 [M1](observability-split.md)의 기록 경계를 따른다.
 본문은 선택 계약이며 실제 source 검증과 배포 실적은 실행 근거로 확인한다.
 
-`planSearchStrategy: shadow`는 v1이 결정을 내린 뒤 같은 planner의 snapshot·용량 행·계획으로 v2를 탐색한다.
+`planSearchStrategy: shadow`는 v1의 결정을 유지하며 같은 planner의 snapshot·용량 행·계획으로 v2와 v1을 비교한다.
 v2를 평가 수 예산(`planSearchEvaluations`)으로 먼저 돌리고(같은 `ControlInterval/2` 마감은 안전장치), v1은 남은 마감으로 돌리며 두 시간을 `search.durationNanos`(v1)와 `search.shadow.durationNanos`(v2)에 따로 기록한다. v2가 정확 k=1 fallback까지 실패하면 `fallback: v1`을 기록하고 v1을 다시 실행하지 않는다.
 `decision.capacity.search.strategy`는 `shadow`이고 이웃·평가 수·시간·예산 종료는 v1 값이다. `key`는 v1 탐색 선택해이며, `shadow`는 v2 선택해의 key·정확 J·증분 평가 수·정확 평가 수·시간·fallback을 담는다. v2가 선택하지 못하면 빈 key가 남는다.
 Dashboard는 그림자 기록이 있는 Tick에 key 일치 여부와 v2 − v1 예상 J, 탐색 시간, fallback을 표시한다. v1 J가 없으면 v2 J만 표시한다.
