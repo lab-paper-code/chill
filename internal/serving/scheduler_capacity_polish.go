@@ -1,5 +1,7 @@
 package serving
 
+import "time"
+
 // v2Merit ranks positive-coverage moves by ΔE/Δcov. Nonpositive coverage
 // follows every positive-coverage move, ordered by ΔE, then logical plan key.
 // Each cap variant is a separate active item, not an option-level proxy.
@@ -45,17 +47,23 @@ func (c *v2Search) meritLess(a, b v2Merit) bool {
 
 func (c *v2Search) polish() {
 	for !c.expired() {
+		evaluated, stepStart := c.stats.surrogateEvaluated, time.Now()
+		phase := schedulerPlanPhasePolish
 		c.current.copyInto(&c.best)
 		c.sweepOne()
 		if !c.expired() {
 			c.sweepTwo()
 		}
 		if !c.best.better(&c.current) && !c.expired() {
+			// The unsuccessful k=1/2 sweep belongs to trailing evaluations.
+			evaluated, stepStart = c.stats.surrogateEvaluated, time.Now()
+			phase = schedulerPlanPhaseCombine
 			c.combine()
 		}
 		if !c.best.better(&c.current) {
 			return
 		}
+		c.recordStep(c.best, c.current.choice, phase, c.stats.surrogateEvaluated-evaluated, stepStart)
 		c.s.reset(c.best.choice)
 		c.best.copyInto(&c.current)
 		c.stats.steps++

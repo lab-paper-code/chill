@@ -6,6 +6,11 @@ const (
 	schedulerPlanSearchV1     = "v1"
 	schedulerPlanSearchV2     = "v2"
 	schedulerPlanSearchShadow = "shadow"
+	schedulerPlanPhaseCover   = "cover"
+	schedulerPlanPhasePolish  = "polish"
+	schedulerPlanPhaseCombine = "combine"
+	schedulerNoImprovement    = "noImprovement"
+	schedulerBudgetCut        = "budgetCut"
 )
 
 func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
@@ -44,6 +49,9 @@ func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool)
 		res, err := p.search(deadline)
 		p.settings.PlanSearchStrategy = strategy
 		p.searched.Strategy, p.searched.Fallback = schedulerPlanSearchV2, schedulerPlanSearchV1
+		p.searched.StartedAt, p.searched.FinishedAt = started.UTC(), time.Now().UTC()
+		p.searched.Duration = time.Since(started)
+		p.recordV2Steps(core)
 		if p.settings.PlanPostFilterFinalists {
 			res = p.minimumGain(p.payback(res))
 		}
@@ -69,8 +77,26 @@ func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool)
 		ReserveRejections: stats.reserves,
 		DualBound:         core.dualBound, Start: stats.start,
 	}
+	p.recordV2Steps(core)
 	if best == nil {
 		return capacityResult{}, p.ctx.Err()
 	}
 	return *best, p.ctx.Err()
+}
+
+func (p *capacityPlanner) recordV2Steps(core v2CoreStats) {
+	p.searched.Steps = core.searchSteps
+	p.searched.SurrogateEvaluated = core.surrogateEvaluated
+	p.searched.TrailingEvaluated = core.surrogateEvaluated
+	for _, step := range core.searchSteps {
+		p.searched.TrailingEvaluated -= step.Evaluated
+	}
+	p.searched.BudgetCut = p.searched.BudgetCut || core.budgetCut
+	p.searched.TerminationReason = schedulerNoImprovement
+	if p.searched.BudgetCut {
+		p.searched.TerminationReason = schedulerBudgetCut
+		if len(p.searched.Steps) > 0 {
+			p.searched.Steps[len(p.searched.Steps)-1].BudgetCut = true
+		}
+	}
 }

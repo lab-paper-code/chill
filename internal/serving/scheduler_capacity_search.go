@@ -84,9 +84,9 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 			best = end
 		}
 	}
-	p.searched.TerminationReason = "noImprovement"
+	p.searched.TerminationReason = schedulerNoImprovement
 	if p.searched.BudgetCut {
-		p.searched.TerminationReason = "budgetCut"
+		p.searched.TerminationReason = schedulerBudgetCut
 		p.searched.Steps[len(p.searched.Steps)-1].BudgetCut = true
 	}
 	finished := time.Now()

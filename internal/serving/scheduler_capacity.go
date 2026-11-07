@@ -98,8 +98,9 @@ type SchedulerPlanSearch struct {
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
-// in decision-time order. Both origins precede k = 2 then k = 3; neighborhoods
-// without accepted moves have no entry. Compare choices within the same Start.
+// in decision-time order. In v1, both origins precede k = 2 then k = 3;
+// neighborhoods without accepted moves have no entry. Compare choices within
+// the same Start.
 // ChangedNodes is relative to that start's previous choice. Better means feasible,
 // final, descending exceedances, then joules/keep/key: joules only cannot increase
 // between feasible points, and may increase when recovering feasibility.
@@ -112,8 +113,21 @@ type SchedulerPlanSearch struct {
 // BudgetCut marks only the last recorded point when the search budget expires;
 // that point need not be the selected endpoint. Final means final-capacity
 // feasible, not the last step or the chosen end. Errors return no decision.
+//
+// V2 records keep, empty and optional priced origins, followed by each start's
+// cover, polish and combine moves. K is the number of changed Nodes (1 through
+// the Node count), not a neighborhood bound. Evaluated counts incremental
+// evaluations in the accepting cover iteration, polish sweep or combine search;
+// origins remain 0. Sum(Evaluated) + TrailingEvaluated = search.SurrogateEvaluated,
+// including initial evaluations and all unaccepted sweeps in the trailing count.
+// Step Joules is the incremental surrogate and can differ from the funnel's
+// exact Joules. KeepJoules, Feasible and Final also come from that incremental key.
+// Phase identifies cover, polish or combine moves; origins leave it empty.
+// Cover can trade capacity for count-limit recovery from an unbounded point;
+// its feasibility and energy need not improve. Polish/combine strictly improve.
 type SchedulerPlanSearchStep struct {
 	Start            string          `json:"start"`
+	Phase            string          `json:"phase,omitempty"`
 	K                int             `json:"k"`
 	ChangedNodes     []NodeReference `json:"changedNodes,omitempty"`
 	Joules           float64         `json:"joules"`

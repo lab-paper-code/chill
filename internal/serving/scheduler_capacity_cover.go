@@ -1,6 +1,9 @@
 package serving
 
-import "math"
+import (
+	"math"
+	"time"
+)
 
 // capacityCoverDemand returns λ̃ and B>0, including the slack<=0 boundary.
 func capacityCoverDemand(w capacityWorkload, retained, route float64) (float64, bool) {
@@ -65,6 +68,7 @@ func (c *v2Search) movePlans(n int, overload bool, dst []int) []int {
 
 func (c *v2Search) cover() {
 	for (!c.current.feasible || !c.current.bounded) && !c.expired() {
+		evaluated, stepStart := c.stats.surrogateEvaluated, time.Now()
 		found, bestEnergy, bestCoverage := false, 0.0, 0.0
 		c.current.copyInto(&c.best)
 		for _, n := range c.s.table.nodeOrder {
@@ -105,6 +109,7 @@ func (c *v2Search) cover() {
 		if !found {
 			return
 		}
+		c.recordStep(c.best, c.current.choice, schedulerPlanPhaseCover, c.stats.surrogateEvaluated-evaluated, stepStart)
 		c.s.reset(c.best.choice)
 		c.best.copyInto(&c.current)
 		c.finalists.add(c.current, c.start)

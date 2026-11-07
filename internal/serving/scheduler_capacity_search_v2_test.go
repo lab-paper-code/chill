@@ -181,6 +181,7 @@ func TestCapacitySearchV2Determinism(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		assertCapacitySearchSteps(t, p.searched, len(p.plans))
 		current := [2]int{p.searched.SurrogateEvaluated, p.searched.ExactEvaluated}
 		if trial == 0 {
 			baseline, counts = got, current
@@ -189,5 +190,65 @@ func TestCapacitySearchV2Determinism(t *testing.T) {
 		if got.key != baseline.key || !reflect.DeepEqual(got.weights, baseline.weights) || current != counts {
 			t.Fatalf("trial=%d key=%s want=%s counts=%v want=%v weights=%v want=%v", trial, got.key, baseline.key, current, counts, got.weights, baseline.weights)
 		}
+	}
+}
+
+func TestCapacitySearchV2Steps(t *testing.T) {
+	two := capacityThreeNodeSwap()
+	two.plans, two.compared, two.snapshot.Nodes = two.plans[:2], two.compared[:2], two.snapshot.Nodes[:2]
+	two.ws[0].rate, two.plans[0][1].after = 19, 15
+	cover := capacityThreeNodeSwap()
+	cover.ws[0].rate = 45
+	countRecovery := capacityThreeNodeSwap()
+	countRecovery.settings.MaxInstances = 2
+	priced := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(2, 0), e5Start, nil)
+	priced.settings.PlanPricedStart = true
+	for _, tc := range []struct {
+		name, phase string
+		p           *capacityPlanner
+		k, budget   int
+	}{
+		{"one", schedulerPlanPhasePolish, capacityTwinSwap(100, 0), 1, 0},
+		{"two", schedulerPlanPhasePolish, two, 2, 0},
+		{"combine", schedulerPlanPhaseCombine, capacityThreeNodeSwap(), 3, 0},
+		{"cover", schedulerPlanPhaseCover, cover, 1, 0},
+		{"count-recovery", schedulerPlanPhaseCover, countRecovery, 1, 0},
+		{"priced", "", priced, 0, 0},
+		{"origin-only-budget", "", capacityTwinSwap(100, 0), 0, 1},
+		{"accepted-budget", schedulerPlanPhasePolish, capacityTwinSwap(100, 0), 1, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tc.p
+			p.settings.PlanSearchStrategy = schedulerPlanSearchV2
+			if tc.budget > 0 {
+				p.settings.PlanSearchEvaluations = tc.budget
+			}
+			capacitySearchForTest(t, p)
+			found, pricedOrigin, lostFeasibility := false, false, false
+			var previous SchedulerPlanSearchStep
+			for _, step := range p.searched.Steps {
+				if step.Start != capacitySearchStartKeep && step.Start != "empty" && step.Start != "priced" ||
+					step.ComparisonWindow != time.Duration(p.period*1e9) {
+					t.Fatalf("invalid start/window: %+v", step)
+				}
+				pricedOrigin = pricedOrigin || step.Start == "priced" && step.K == 0
+				if step.Start == capacitySearchStartKeep && step.K > 0 {
+					found = found || step.Phase == tc.phase && step.K == tc.k
+					lostFeasibility = lostFeasibility || previous.Feasible && !step.Feasible
+				}
+				if step.K > 0 && len(p.plans) == 1 && (step.Evaluated != 1 ||
+					!slices.Equal(step.ChangedNodes, []NodeReference{{UID: "n0"}})) {
+					t.Fatalf("single-node accepting sweep: %+v", step)
+				}
+				previous = step
+			}
+			if tc.phase != "" && !found || p.settings.PlanPricedStart && !pricedOrigin ||
+				tc.name == "count-recovery" && !lostFeasibility {
+				t.Fatalf("missing expected move/origin: %+v", p.searched.Steps)
+			}
+			if p.searched.BudgetCut != (tc.budget > 0) || p.searched.TrailingEvaluated == 0 {
+				t.Fatalf("budget/trailing accounting: %+v", p.searched)
+			}
+		})
 	}
 }

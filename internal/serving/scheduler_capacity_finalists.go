@@ -17,6 +17,7 @@ type v2CoreStats struct {
 	surrogateEvaluated int
 	budgetCut          bool
 	steps              int
+	searchSteps        []SchedulerPlanSearchStep
 	dualBound          float64
 }
 
@@ -140,6 +141,29 @@ func (c *v2Search) consider(key orderKey) {
 	}
 }
 
+// recordStep copies only accepted points and origins, never evaluated candidates.
+func (c *v2Search) recordStep(key orderKey, previous []int, phase string, evaluated int, started time.Time) {
+	step := SchedulerPlanSearchStep{
+		Start: c.start, Phase: phase, Joules: key.joules, KeepJoules: key.keepJoules,
+		ComparisonWindow: time.Duration(key.period * 1e9), Feasible: key.feasible, Final: key.final,
+		Evaluated: evaluated, Duration: time.Since(started),
+	}
+	if previous != nil {
+		for n, q := range key.choice {
+			if q != previous[n] {
+				step.K++
+			}
+		}
+		step.ChangedNodes = make([]NodeReference, 0, step.K)
+		for n, q := range key.choice {
+			if q != previous[n] {
+				step.ChangedNodes = append(step.ChangedNodes, c.s.planner.snapshot.Nodes[n].Node)
+			}
+		}
+	}
+	c.stats.searchSteps = append(c.stats.searchSteps, step)
+}
+
 // searchV2Core runs deterministic keep, empty and optional price-guided starts.
 // Endpoints are retained outside K,
 // including a partially searched endpoint when either budget expires.
@@ -197,11 +221,13 @@ func (p *capacityPlanner) searchV2Core(t *planTable, evaluations, finalists, act
 		}
 		c.start = start.name
 		c.s.reset(start.choice)
+		stepStart := time.Now()
 		key, ok := c.evaluate(0, c.s.choice[0])
 		if !ok {
 			break
 		}
 		key.copyInto(&c.current)
+		c.recordStep(c.current, nil, "", 0, stepStart)
 		c.finalists.add(c.current, c.start)
 		c.cover()
 		c.polish()
