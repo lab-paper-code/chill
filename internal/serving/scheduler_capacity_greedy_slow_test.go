@@ -17,7 +17,7 @@ func TestCapacityDeltaSlow(t *testing.T) {
 				s.ScaleDownStabilization, s.ComparisonPeriod = 300*time.Second, time.Minute
 				s.ScaleDownHeadroomFraction = 0.2
 				profile := *snap.Instances[0].Profile
-				profile.Batches = append(slices.Clone(profile.Batches), BatchProfile{Batch: 2, DurationNanos: []float64{float64(15 * time.Millisecond)}, EnergyPerInputJoules: 0.8, MemoryBytes: 100})
+				profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 0.8, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
 				snap.Instances[0].Profile = &profile
 				option := snap.Instances[0]
 				option.MaxBatch = 2
@@ -118,7 +118,7 @@ func TestCapacityDeltaRetainedArithmetic(t *testing.T) {
 		other.weight, other.kappa = 29, 0.125
 		plan.retained[0] = append(plan.retained[0], other)
 		plan.keep = false
-		plan.preMax, plan.preMean, plan.postMean = 19.256, 20.5, 80
+		plan.preMax, plan.preMean, plan.postMean = 20.5, 20.5, 80
 		plan.preJ, plan.postJ, plan.mid, plan.after = 113.906, 18.092, 4.8985, 4.8866
 		plan.items[0] = append(plan.items[0], other)
 	}
@@ -127,14 +127,12 @@ func TestCapacityDeltaRetainedArithmetic(t *testing.T) {
 	s := newSearchState(p, tab, []int{0, 1, 2})
 	key, exact := capacityDeltaAssert(t, p, s, 0, 0)
 	if key.joules != exact.joules {
-		t.Fatal("retained fold or unclamped Node energy differs")
+		t.Fatal("retained fold or clamped Node energy differs")
 	}
 	nodeJ := tab.energy(0, key.route, p.period)
-	proposalJ := tab.joules[0] + tab.mid[0]*max(0, min(key.route, p.period)-tab.tauPre[0]) +
-		tab.after[0]*max(0, p.period-key.route-tab.tauPost[0])
-	if nodeJ >= 0 || proposalJ <= 0 {
-		t.Fatal("fixture must expose the proposal's duration-clamp mismatch")
+	mainJ := p.plans[0][0].energy(key.route, p.period)
+	if nodeJ < 0 || nodeJ != mainJ {
+		t.Fatalf("clamped node J=%.17g main J=%.17g", nodeJ, mainJ)
 	}
-	t.Logf("r=%g H=%g preJ=%g postJ=%g mid=%g after=%g tauPre=%g tauPost=%g: v1=delta Node J=%.17g proposal-clamped=%.17g",
-		key.route, p.period, tab.preJ[0], tab.postJ[0], tab.mid[0], tab.after[0], tab.tauPre[0], tab.tauPost[0], nodeJ, proposalJ)
+	t.Logf("r=%g H=%g H-r<tauPost: main=delta Node J=%.17g max-J-diff=0", key.route, p.period, nodeJ)
 }

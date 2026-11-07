@@ -237,6 +237,8 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 		p.compared = append(p.compared, true)
 	}
 	p.period = s.ComparisonPeriod.Seconds()
+	// Exhaustive callers bypass search's common-H keep-baseline initialization.
+	p.keepWatts = p.evaluate(make([]int, len(p.plans)), 0).joules / p.period
 	return p
 }
 

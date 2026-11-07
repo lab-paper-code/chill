@@ -127,10 +127,9 @@ func (c *v2Search) combinePruned(depth int) bool {
 	return false
 }
 
-// Cache remaining-node minima once per product, not once per branch. Every
-// node's energy is affine in r, so its minimum is at zero or the product's
-// largest pre time. Keeps retain their before*H baseline. The unclamped v1
-// formula can give negative node energy; keep that value in the lower bound.
+// Cache independent clamped-term minima over [0, maximum product route].
+// Each duration is nonnegative. Nonnegative watts and request energy make
+// their sum a safe lower bound, including routes beyond the fixed horizon.
 func (c *v2Search) prepareEnergyBounds() {
 	t, p := c.s.table, c.s.planner
 	c.energyBoundValid = true
@@ -139,6 +138,7 @@ func (c *v2Search) prepareEnergyBounds() {
 		c.suffixRoute[depth] = c.suffixRoute[depth+1]
 		for _, q := range c.activePlans[n] {
 			if !t.keep[q] {
+				c.energyBoundValid = c.energyBoundValid && t.mid[q] >= 0 && t.after[q] >= 0
 				c.suffixRoute[depth] = max(c.suffixRoute[depth], t.tPre[q])
 			}
 			for _, lists := range [][][]capacityItem{t.items[q], t.retained[q]} {
@@ -150,27 +150,21 @@ func (c *v2Search) prepareEnergyBounds() {
 			}
 		}
 	}
-	c.energyBoundValid = c.energyBoundValid && c.suffixRoute[0] <= p.period
 	for depth := len(t.nodeOrder) - 1; depth >= 0; depth-- {
 		n, minimum := t.nodeOrder[depth], 0.0
 		if p.compared[n] {
 			minimum = math.Inf(1)
 			for _, q := range c.activePlans[n] {
-				r := 0.0
-				if t.mid[q] < t.after[q] {
-					r = c.suffixRoute[0]
-				}
-				minimum = min(minimum, t.energy(q, r, p.period))
+				minimum = min(minimum, t.energyLowerBound(q, 0, c.suffixRoute[0], p.period))
 			}
 		}
 		c.suffixEnergy[depth] = c.suffixEnergy[depth+1] + minimum
 	}
 }
 
-// Only feasible incumbents permit J pruning. Request energy is nonnegative
-// for 0<=r<=H and e>=0. Unfixed nodes' current pre times are NOT lower bounds:
-// their eventual choices may remove those transitions. Fixed nodes require
-// r>=their maximum pre; mid<after instead needs the remaining pre upper bound.
+// Only feasible incumbents permit J pruning. Fixed nodes require r>=their
+// maximum pre; remaining-node pre maxima bound r above. Minimize the two
+// clamped idle terms independently; never use an affine endpoint assumption.
 func (c *v2Search) energyPruned(depth int) bool {
 	if !c.energyBoundValid {
 		return false
@@ -188,11 +182,7 @@ func (c *v2Search) energyPruned(depth int) bool {
 		if !p.compared[n] {
 			continue
 		}
-		q, r := c.s.choice[n], lowRoute
-		if t.mid[q] < t.after[q] {
-			r = highRoute
-		}
-		bound += t.energy(q, r, p.period)
+		bound += t.energyLowerBound(c.s.choice[n], lowRoute, highRoute, p.period)
 	}
 	return bound > c.best.joules+max(1, math.Abs(c.best.joules))*1e-12
 }

@@ -52,11 +52,21 @@ func (t *planTable) energy(q int, r, period float64) float64 {
 	if t.keep[q] {
 		return t.before[q] * period
 	}
-	// Do not combine preJ+postJ or clamp either duration: v1 does neither.
-	return t.preJ[q] + t.mid[q]*(r-t.tauPre[q]) + t.postJ[q] + t.after[q]*(period-r-t.tauPost[q])
+	// Preserve main's clamped durations and addition order bit for bit.
+	return t.preJ[q] + t.mid[q]*max(0, min(r, period)-t.tauPre[q]) + t.postJ[q] + t.after[q]*max(0, period-r-t.tauPost[q])
+}
+
+// energyLowerBound minimizes each clamped duration separately over [low, high].
+// With nonnegative watts, each term is <= its value at every route in the
+// interval. Adding these minima cannot overestimate even across clamp bends.
+func (t *planTable) energyLowerBound(q int, low, high, period float64) float64 {
+	if t.keep[q] {
+		return t.before[q] * period
+	}
+	return t.preJ[q] + t.mid[q]*max(0, min(low, period)-t.tauPre[q]) + t.postJ[q] + t.after[q]*max(0, period-high-t.tauPost[q])
 }
 
 func (t *planTable) sameWorkload(a, b, w int) bool {
-	return t.slowWorkload[a][w] == t.slowWorkload[b][w] && t.outage[a][w] == t.outage[b][w] &&
+	return t.pending[a][w] == t.pending[b][w] && t.slowWorkload[a][w] == t.slowWorkload[b][w] && t.outage[a][w] == t.outage[b][w] &&
 		slices.Equal(t.items[a][w], t.items[b][w]) && slices.Equal(t.retained[a][w], t.retained[b][w])
 }

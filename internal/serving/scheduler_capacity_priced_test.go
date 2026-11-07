@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestCapacityPricedDeterminism(t *testing.T) {
@@ -133,7 +134,13 @@ func TestCapacityPricedStage4Gaps(t *testing.T) {
 					p.settings.PlanPricedStart = true
 					p.settings.PlanSearchEvaluations = int(^uint(0) >> 1)
 					p.settings.PlanPolishActive = active
-					got := capacitySearchForTest(t, p)
+					got, err := p.search(time.Now().Add(time.Hour))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if p.searched.Strategy != "v2" || p.searched.ExactEvaluated != p.searched.Evaluated || p.searched.ExactEvaluated == 0 {
+						t.Fatalf("invalid v2 accounting: %+v", p.searched)
+					}
 					if p.searched.BudgetCut {
 						t.Fatal("unlimited evaluation search hit budget")
 					}

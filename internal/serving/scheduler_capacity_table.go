@@ -29,6 +29,7 @@ type planTable struct {
 	kappa, kappaE, kappaRet      [][]float64
 	weightRet, energyWeightRet   [][]float64
 	count                        [][]int
+	pending                      [][]int // replica occupancy; not capacity or extra total occupancy
 	items                        [][][]capacityItem
 	retained                     [][][]capacityItem
 	others                       []int
@@ -120,6 +121,7 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 	kappa, kappaE, kappaRet := make([]float64, k), make([]float64, k), make([]float64, k)
 	weightRet, energyWeightRet := make([]float64, k), make([]float64, k)
 	count, items := make([]int, k), make([][]capacityItem, k)
+	pending := make([]int, k)
 	retained := make([][]capacityItem, k)
 	plan.record.Dominated = ""
 	for w := range ws {
@@ -127,6 +129,9 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 			items[w] = slices.Clone(plan.items[w])
 		}
 		count[w] = len(items[w])
+		if w < len(plan.pendingReplicas) {
+			pending[w] = plan.pendingReplicas[w]
+		}
 		for _, item := range items[w] {
 			kappa[w] += item.kappa
 			kappaE[w] += item.kappa * item.e
@@ -150,6 +155,7 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 	t.kappa, t.kappaE, t.kappaRet = append(t.kappa, kappa), append(t.kappaE, kappaE), append(t.kappaRet, kappaRet)
 	t.weightRet, t.energyWeightRet = append(t.weightRet, weightRet), append(t.energyWeightRet, energyWeightRet)
 	t.count, t.items, t.others = append(t.count, count), append(t.items, items), append(t.others, plan.others)
+	t.pending = append(t.pending, pending)
 	t.retained = append(t.retained, retained)
 	t.joules = append(t.joules, plan.preJ+plan.postJ)
 	t.preJ, t.postJ = append(t.preJ, plan.preJ), append(t.postJ, plan.postJ)

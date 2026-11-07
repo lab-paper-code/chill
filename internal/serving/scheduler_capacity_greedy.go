@@ -8,7 +8,7 @@ import "slices"
 type orderKey struct {
 	feasible, final, keep, weightsExceeded bool
 	unroutedPrepare, searchable, bounded   bool
-	joules, route                          float64
+	joules, route, keepJoules, period      float64
 	excesses, demand, supply               []float64
 	satisfied                              []bool
 	instances, countExcess                 int
@@ -49,8 +49,8 @@ func (a orderKey) better(b *orderKey) bool {
 			return order < 0
 		}
 	}
-	if a.joules != b.joules {
-		return a.joules < b.joules
+	if a.joules-a.keepJoules != b.joules-b.keepJoules {
+		return a.joules-a.keepJoules < b.joules-b.keepJoules
 	}
 	if a.keep != b.keep {
 		return a.keep
@@ -94,7 +94,7 @@ func (a orderKey) compareKey(b orderKey) int {
 
 type searchSum struct {
 	kappa, kappaE, kappaRet, weightRet, energyWeightRet float64
-	count, slow                                         int
+	count, pending, slow                                int
 }
 
 // searchState owns all mutable storage for one sequential search. The table is
@@ -170,6 +170,7 @@ func (s *searchState) recountWorkload(w int) {
 	s.sums[w] = searchSum{}
 	sum := &s.sums[w]
 	for _, q := range s.choice {
+		sum.pending += s.table.pending[q][w]
 		for _, item := range s.table.items[q][w] {
 			sum.kappa += item.kappa
 			sum.kappaE += item.kappa * item.e
@@ -225,6 +226,7 @@ func (s *searchState) delta(n, q int) orderKey {
 	key.feasible, key.final, key.keep, key.searchable, key.bounded = true, true, true, true, true
 	key.weightsExceeded, key.unroutedPrepare = false, false
 	key.joules, key.route = 0, 0
+	key.period, key.keepJoules = p.period, p.keepWatts*p.period
 	key.countExcess = 0
 	for node, pre := range s.tPre {
 		if node == n {
@@ -252,11 +254,14 @@ func (s *searchState) delta(n, q int) orderKey {
 	}
 	old, total := s.choice[n], s.total+t.others[q]-t.others[s.choice[n]]
 	for w, ws := range p.ws {
-		count := s.sums[w].count - t.count[old][w] + t.count[q][w]
+		count := s.sums[w].count + s.sums[w].pending - t.count[old][w] - t.pending[old][w] + t.count[q][w] + t.pending[q][w]
 		total += t.count[q][w] - t.count[old][w]
 		key.bounded = key.bounded && count <= p.settings.MaxReplicas && (p.settings.Controls.Replicas || count == ws.current)
 		key.countExcess += max(0, count-p.settings.MaxReplicas)
 		key.joules += s.workload(w, n, q, key.route, &key)
+	}
+	if key.keep {
+		key.keepJoules = key.joules
 	}
 	key.bounded = key.bounded && total <= p.settings.MaxInstances
 	key.instances = total

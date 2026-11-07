@@ -44,6 +44,7 @@ func capacityDeltaAssert(t testing.TB, p *capacityPlanner, s *searchState, n, q 
 	}
 	if key.feasible != exact.feasible || key.final != exact.final || !slices.Equal(key.excesses, exact.excesses) ||
 		key.joules != exact.joules || key.keep != exact.keep || key.weightsExceeded != exact.weightsExceeded ||
+		key.keepJoules != exact.keepJoules || key.period != exact.period ||
 		key.unroutedPrepare != exact.unroutedPrepare || capacityDeltaKey(key) != exact.key || key.route != exact.route || key.bounded != p.bounded(choice) {
 		t.Fatalf("choice=%v move=(%d,%d) delta={feasible:%t final:%t excess:%v J:%.17g keep:%t weightsExceeded:%t unroutedPrepare:%t route:%g key:%q bounded:%t} exact={feasible:%t final:%t excess:%v J:%.17g keep:%t weightsExceeded:%t unroutedPrepare:%t route:%g key:%q bounded:%t} exclusion=%q Jdiff=%.17g",
 			choice, n, q, key.feasible, key.final, key.excesses, key.joules, key.keep, key.weightsExceeded, key.unroutedPrepare, key.route, capacityDeltaKey(key), key.bounded,
@@ -72,6 +73,94 @@ func TestCapacityDeltaExact(t *testing.T) {
 		t.Fatalf("only %d comparison samples", samples)
 	}
 	t.Logf("samples=%d (routing ON=6912 OFF=384) key-ties=%d bridge-excluded=0 max-J-diff=0 aggregate-drift=0", samples, keyTies)
+}
+
+func TestCapacityDeltaClampBoundaries(t *testing.T) {
+	samples, beforePre, afterPost, beyondH := 0, 0, 0, 0
+	for _, horizon := range []float64{1, 10, 30} {
+		options := evaluationNodes()
+		for n := range options {
+			for k := range options[n] {
+				options[n][k].prepareS *= 4
+				options[n][k].removeS *= 8
+			}
+		}
+		p := e5Planner(map[int]float64{0: 20, 1: 40, 2: .3}, options, e5Start, nil)
+		p.period = horizon
+		tab := p.planTable()
+		choice := make([]int, len(p.plans))
+		for n := range choice {
+			choice[n] = tab.byPlan[n][0]
+		}
+		s := newSearchState(p, tab, choice)
+		for n, plans := range tab.byPlan {
+			for _, q := range plans {
+				key, _ := capacityDeltaAssert(t, p, s, n, q)
+				samples++
+				if !tab.keep[q] {
+					if min(key.route, horizon) < tab.tauPre[q] {
+						beforePre++
+					}
+					if horizon-key.route < tab.tauPost[q] {
+						afterPost++
+					}
+					if key.route > horizon {
+						beyondH++
+					}
+				}
+			}
+		}
+	}
+	if beforePre == 0 || afterPost == 0 || beyondH == 0 {
+		t.Fatalf("missing clamp boundary: pre=%d post=%d beyond-H=%d", beforePre, afterPost, beyondH)
+	}
+	t.Logf("samples=%d min(r,H)<tauPre=%d H-r<tauPost=%d r>H=%d max-J-diff=0", samples, beforePre, afterPost, beyondH)
+}
+
+// Normal plans satisfy r>=preMax>=preMean. Explicit-route evaluation also
+// accepts r<preMean; exercise that API boundary without inventing plan timings.
+func TestCapacityDeltaExplicitRouteBeforePre(t *testing.T) {
+	p := capacityDeltaTiny([]float64{4, 5}, 2)
+	p.period = 3
+	plan := *p.plans[0][0]
+	plan.keep, plan.preMean, plan.preMax, plan.postMean = false, 5, 6, 7
+	plan.preJ, plan.postJ, plan.mid, plan.after = 11, 13, 17, 19
+	p.plans[0] = append(p.plans[0], &plan)
+	tab := p.planTable()
+	q, keep := tab.byPlan[0][1], tab.byPlan[1][0]
+	for _, r := range []float64{0, 2} {
+		s := newSearchState(p, tab, []int{q, keep})
+		s.tPre[0], s.r = r, r
+		s.nodeJ[0] = tab.energy(q, r, p.period)
+		// A no-op on another node preserves the explicitly supplied route.
+		key := s.delta(1, keep)
+		exact := p.evaluate([]int{1, 0}, r)
+		if key.route != r || key.joules != exact.joules {
+			t.Fatalf("r=%g delta=%.17g exact=%.17g Jdiff=%.17g", r, key.joules, exact.joules, key.joules-exact.joules)
+		}
+	}
+	t.Log("explicit r<tauPre samples=2 max-J-diff=0")
+}
+
+func TestCapacityDeltaPendingReplicaBounds(t *testing.T) {
+	p := capacityDeltaTiny([]float64{4}, 2)
+	p.settings.MaxReplicas, p.settings.MaxInstances = 2, 3
+	p.ws[0].current = 2
+	for _, pending := range []int{0, 1, 2} {
+		plan := *p.plans[0][0]
+		plan.pendingReplicas, plan.others = []int{pending}, pending
+		p.plans[0] = append(p.plans[0], &plan)
+	}
+	for _, replicas := range []bool{true, false} {
+		p.settings.Controls.Replicas = replicas
+		tab := p.planTable()
+		s := newSearchState(p, tab, []int{tab.byPlan[0][0]})
+		for _, q := range tab.byPlan[0] {
+			capacityDeltaAssert(t, p, s, 0, q)
+			s.apply(0, q)
+			capacityDeltaAssert(t, p, s, 0, q)
+		}
+	}
 }
 
 func capacityDeltaWalk(t testing.TB, p *capacityPlanner, rng *rand.Rand) (int, int) {

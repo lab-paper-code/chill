@@ -399,6 +399,7 @@ func TestEvaluationPreflightValidatesCanonicalSettingsPatch(t *testing.T) {
 					CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 					CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 					CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
+					PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 8,
 				}, nil
 			}
 			request.Spec.SettingsPatch = &apiextensionsv1.JSON{Raw: []byte(test.patch)}

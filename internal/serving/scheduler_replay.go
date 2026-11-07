@@ -71,15 +71,15 @@ type schedulerReplayInstance struct {
 }
 
 type schedulerReplayResult struct {
-	energy      float64
+	energy        float64
 	requestJoules float64
-	samples     map[string][]float64
-	definitions map[string]*Definition
-	reasons     []string
-	assumptions []string
-	sources     []string
-	outcomes    map[string]map[string]int
-	conditional ConditionalServiceEvidence
+	samples       map[string][]float64
+	definitions   map[string]*Definition
+	reasons       []string
+	assumptions   []string
+	sources       []string
+	outcomes      map[string]map[string]int
+	conditional   ConditionalServiceEvidence
 }
 
 // ConditionalServiceEvidence describes the support actually queried by replay.
@@ -544,7 +544,6 @@ func (s *schedulerReplayState) initializeRunning() bool {
 	}
 	return true
 }
-
 
 func (s *schedulerReplayState) nextEvent() (float64, bool) {
 	next := math.Inf(1)

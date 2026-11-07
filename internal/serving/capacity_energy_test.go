@@ -13,8 +13,8 @@ func TestCapacityRowRecordsBatchEnergy(t *testing.T) {
 	s.CapacityMinimumRequests = 200
 	p := snap.Options[0].Instance.Profile
 	p.Batches = []BatchProfile{
-		{Batch: 1, DurationNanos: []float64{1e6}, EnergyPerInputJoules: 4, MemoryBytes: 100},
-		{Batch: 2, DurationNanos: []float64{1e6}, EnergyPerInputJoules: 1, MemoryBytes: 100},
+		schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: 4, MemoryBytes: 100}, []float64{1e6}),
+		schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 1, MemoryBytes: 100}, []float64{1e6}),
 	}
 	snap.Options[0].Instance.MaxBatch = 2
 	snap.Workloads[0].SLO.TargetLatency = 100 * time.Millisecond

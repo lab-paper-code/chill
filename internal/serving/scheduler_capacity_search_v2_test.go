@@ -87,6 +87,7 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 	alternative.operationBounds = nil
 	alternative.record.Key = "alternative"
 	p.plans[0] = append(p.plans[0], &alternative)
+	p.keepWatts = p.evaluate([]int{0}, 0).joules / p.period
 	a, b := p.evaluate([]int{1}, 0), p.evaluate([]int{2}, 0)
 	candidates := []v2Candidate{{choice: a.choice, joules: a.joules}, {choice: b.choice, joules: b.joules}}
 	for _, enabled := range []bool{false, true} {

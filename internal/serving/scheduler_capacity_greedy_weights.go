@@ -91,7 +91,8 @@ func (s *searchState) workload(w, n, q int, r float64, key *orderKey) float64 {
 	key.unroutedPrepare = key.unroutedPrepare || terms.unroutedPrepare
 	key.excesses[w] = worst
 	rate := s.planner.ws[w].rate
-	return terms.initial*r + max(0, rate-terms.kret)*r*terms.mean + (terms.served*terms.mean+max(0, rate-terms.served)*terms.mean)*(s.planner.period-r)
+	before := min(r, s.planner.period)
+	return terms.initial*before + max(0, rate-terms.kret)*before*terms.mean + (terms.served*terms.mean+max(0, rate-terms.served)*terms.mean)*max(0, s.planner.period-r)
 }
 
 // workloadTerms folds retained energy in the exact evaluator's Node/item order,

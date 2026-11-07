@@ -245,7 +245,11 @@ SCALE(mobilenet 60, PLC 40, SmolVLM 1.2; `planSearchWorkers` 3):
 
 #### 7.8.1 환원 1 (1단계)
 
-`scheduler_capacity_judge_test.go`. 충족 동치: 고정 seed 무작위 10,000 + 경계 데카르트 곱 2,592 + 하한 인접 float64 탐침 26,607 = 39,199회 일치. 초과량 값: 12,592회 일치(absent 6,341, κ = 0·빈 수요 36, κ = 0·수요 있음 288, B = 0 254, s ≤ 0 1,558, B > 0·s > 0 4,115). 비교는 v1과 같은 연산 순서(λ/κ ≤ 1, B/κ/s ≤ 1)라 경계 표본 제외 없음. 제안서 §3 환원 1과 불일치 없음.
+현재 main의 backlog는 `B = q + max(0, λ − κ_ret)·r`이다. `κ_new ≥ κ_ret`인 유지·증설도 `B > 0`이면 `B/κ_new ≤ s`를 만족해야 한다. 충족 조건은 route 존재, 최종 수요 충족, backlog 대기시간 충족이다. `κ_new = 0`은 `λ = 0`이고 `B = 0`일 때만 충족하며, `B > 0`이고 `s ≤ 0`이면 충족하지 않는다. `B = 0`에서는 slack과 무관하게 전환 초과량을 0으로 둔다.
+
+실수 수학의 하한은 `λ̃ = max(λ, B/s)`(`B = 0`이면 `λ̃ = λ`, `B > 0`이고 `s ≤ 0`이면 `+Inf`)다. float64 경계 판정과 초과량 비교는 main의 연산 순서를 보존한다. `κ_new > 0`, `B > 0`, `s > 0`에서 초과량은 `max(λ/κ_new − 1, (B/κ_new)/s − 1)`이며, 이를 `λ̃/κ_new − 1`로 다시 계산하면 반올림이 달라질 수 있다. route가 없거나 필요한 분모가 0이면 초과량은 `+Inf`다.
+
+`scheduler_capacity_judge_test.go`는 고정 seed 무작위 10,000개, 경계 데카르트 곱 2,592개, 하한 인접 float64 탐침을 유지한다. 같은 표본에서 closed form, search 판정의 충족·최종 판정·초과량, cover 수요·backlog 유무를 대조한다. 초과량은 허용 오차 없이 일치해야 한다. 별도 회귀 사례는 유지·증설의 큐 대기, retained surplus가 큐를 지우지 않는 조건, slack 경계를 고정한다. 이전 실행 기록은 충족 동치 39,199회와 초과량 12,592회 일치다. 이번 main 이식에서 테스트는 재실행하지 않았으므로 이전 수치를 현재 변경의 통과 증거로 사용하지 않는다.
 
 #### 7.8.2 계획표와 cap 하위 선택 (2단계)
 
@@ -257,6 +261,8 @@ SCALE(mobilenet 60, PLC 40, SmolVLM 1.2; `planSearchWorkers` 3):
 
 `scheduler_capacity_greedy.go`는 재사용 상태·`apply`·`delta`·`orderKey`를, `_greedy_weights.go`는 정수 가중치와 Workload 항을, `_greedy_table.go`는 탐색용 표 전처리를 맡는다. v1 `search`·`sweep`·`evaluate`는 변경하지 않았다. 상태·후보 버퍼는 처음 한 번 할당하며 `delta`의 결과 버퍼를 보존하려면 미리 할당한 `orderKey`에 `copyInto`한다. `bounded`·`searchable`·`unroutedPrepare`는 순서 키의 별도 허가 플래그다. `better` 자체는 v1 전순서를 그대로 따른다.
 
+main 재적용에서는 순서 키에 `keepJoules`·고정 `period`도 보존하고 main의 `joules - keepJoules` 비교를 따른다. `pendingReplicas`는 replica 상한에 포함하며 capacity item 수나 total occupancy에 중복 가산하지 않는다. 아래 기존 측정 수치는 재적용 전 기록이며 새 장기 하네스 측정 전까지 그대로 둔다.
+
 정확성: `evaluationScaled(1,0)`, `(2,0)`, `(1,2)` × `e5Mixes` 24 × 고정 seed 무작위 이동 96 = routing ON 6,912회. 노드 5 b1의 앞 네 조합에서 routing OFF 384회를 더해 **7,296회** 비교했다. 각 이동은 현재 상태와 이동 뒤 모두 v1 `evaluate(choice, routeOf(choice))`로 검증한다. 충족·최종·초과량 벡터(무한대 포함)·J·keep·key·가중치 초과·`unroutedPrepare`·route·인스턴스 상한이 모두 일치하며 J 최대 차는 **0**이다. `delta`가 원상태를 바꾸지 않는지도 검사했다. 연속 `apply` 뒤 집계·전체 수·route·노드 에너지·Workload 항은 새로 만든 상태와 정확히 같아 누적 오차가 없었다.
 
 기존 실제 planner fixture(`BatchLimitChangeIsPolicyRoute`, `SingleNodeStoppingModeRaiseNeedsSpareSupply`)의 slow 경로도 비교했다. 수요 50/150·Allowed 참/거짓·growing 참/거짓과 모드 변경 수요 5/30에서 적격 bounded 집합 20회, slow 계획 10개, 계획 단위 timing 제외 4개다. bridge 결과 제외는 **0개**이며 timing/예비 사유 때문에 정확 평가가 거절한 결과도 수치 비교에서 빼지 않았다. 별도 정수 가중치 비교 20,000회(ON/OFF 각 10,000), 할당 없는 판정식 비교 10,000회, zero-weight prepare·others 포함 상한·replicas OFF·여러 retained item·비교 대상 아닌 노드 회귀도 통과했다.
@@ -265,7 +271,7 @@ SCALE(mobilenet 60, PLC 40, SmolVLM 1.2; `planSearchWorkers` 3):
 
 제안서 §3·§4.2 식의 정정/구체화:
 
-- 노드 에너지는 v1처럼 `preJ + mid*(r-tauPre) + postJ + after*(H-r-tauPost)`다. `[·]_+`와 `min(r,H)`를 적용하지 않으며 `preJ+postJ`를 먼저 더하지 않는다. 재현 입력 `r=19.256, H=60, preJ=113.906, postJ=18.092, mid=4.8985, after=4.8866, tauPre=20.5, tauPost=80`: v1·delta **−65.924103599999967 J**, 제안서 클램프 식 **131.99799999999999 J**다.
+- 노드 에너지는 main의 클램프 식과 동일한 `preJ + mid*max(0,min(r,H)-tauPre) + postJ + after*max(0,H-r-tauPost)`다. 요청 에너지도 main처럼 앞 구간에 `min(r,H)`, 뒤 구간에 `max(0,H-r)`를 적용하며 더하는 순서를 유지한다. 정상 계획은 `r >= preMax >= tauPre`이므로 짧은 H에서의 `min(r,H)<tauPre`, `H-r<tauPost`, `r>H`를 실제 하네스 계획으로 비교하고, 명시 route 평가의 `r<tauPre`도 별도로 비교한다. 결합 가지치기의 에너지 하한은 각 클램프 항의 구간별 최솟값을 합하며, 같은 route에서 최솟값을 동시에 달성할 필요가 없어 과대 평가하지 않는다.
 - 요청 평균은 연속 κ 비율 대신 정수 가중치로 계산한 `Σ(y·e)/Σy`이며, slow 보호 수요는 `capacityEnergyLoad`로 실제 수요로 되돌린 뒤 에너지에 넣는다. `κ=(1,2), e=(1,2), λ=3, H=60, r=0`에서 정수 가중치 `333:667`은 둘째에 `2.001 req/s`를 보내 final을 실패시킨다. 초과량은 v1·delta 모두 **0.00049999999999994493**, 요청 에너지는 **300.05999999999995 J**다. 연속 κ 비율 식은 **300 J**다.
 - retained 초기 요청 전력은 노드/item 순서대로 `min(λ,κ_ret)*weight/weightSum*e`를 더한다. `min(λ,κ_ret)*Σ(e·weight)/Σweight`로 재결합하지 않는다. 상태 집계도 변경된 Workload만 같은 순서로 다시 접어 반복 차감·추가의 부동소수점 누적 오차를 없앤다. 바뀌지 않은 Workload 항과 동일 retained 목록의 항은 재사용한다.
 

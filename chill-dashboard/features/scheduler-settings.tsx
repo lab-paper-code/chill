@@ -128,7 +128,7 @@ function ServiceSettingsEdit({editKey,label,help,initial,version=null,services,l
 }
 
 // One row, one value: the dialog edits only this value and adds it to the draft.
-function EditRow({editKey,label,help,value,changed,initial,unit,range,save,disabled,nodeNames=[],options}:{editKey:string;label:string;help:string;value:string;changed:boolean;initial:string|boolean|string[];unit?:string;range?:string;save:(value:string|boolean|string[])=>void;disabled:boolean;nodeNames?:string[];options?:string[]}) {
+function EditRow({editKey,label,help,changed,initial,unit,range,save,disabled,nodeNames=[],options}:{editKey:string;label:string;help:string;changed:boolean;initial:string|boolean|string[];unit?:string;range?:string;save:(value:string|boolean|string[])=>void;disabled:boolean;nodeNames?:string[];options?:string[]}) {
   const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
   const [next,setNext]=React.useState(initial),[error,setError]=React.useState(""),id=React.useId()
   function setOpen(state:boolean) {
@@ -402,7 +402,7 @@ export function SchedulerSettingsPage() {
     </Screen>
   }
 
-	const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} value={plain(field,shown[field.key])} changed={!!count&&String(baseline!.settings[field.key])!==String(shown[field.key])}
+  const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} changed={!!count&&String(baseline!.settings[field.key])!==String(shown[field.key])}
     initial={field.kind==="boolean"?Boolean(shown[field.key]??field.defaultValue):field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key] as WireInteger):String(shown[field.key]??field.defaultValue??"")} options={field.kind==="strategy"?["v1","v2","shadow"]:undefined} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
     range={field.key==="planPolishActive"?"0 이상의 정수, 0은 전체":field.key==="bootstrapCapacityWaitNanos"?"0 ~ 3600000 ms":field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="capacityBisectionWidth"?"0 초과 1 이하 유한한 수":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{

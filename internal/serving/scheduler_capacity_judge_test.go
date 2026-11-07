@@ -82,9 +82,18 @@ func TestCapacityJudgeSatisfiedEquivalence(t *testing.T) {
 	probes := 0
 	check := func(s capacityJudgeSample) {
 		t.Helper()
-		got := capacityJudge(s.w, s.knew, s.kret, s.present, s.r).satisfied
+		exact := capacityJudge(s.w, s.knew, s.kret, s.present, s.r)
+		got := exact.satisfied
 		if want := s.closedSatisfied(); got != want {
 			t.Fatalf("sample=%+v B=%.17g bound=%.17g satisfied=%t closedSatisfied=%t", s, s.backlog(), s.bound(), got, want)
+		}
+		satisfied, final, worst := capacitySearchJudge(s.w, s.knew, s.kret, s.present, s.r)
+		if satisfied != exact.satisfied || final != (exact.final != nil && *exact.final <= 0) || worst != exact.worst() {
+			t.Fatalf("sample=%+v search=%t/%t/%.17g exact=%+v worst=%.17g", s, satisfied, final, worst, exact, exact.worst())
+		}
+		demand, backlog := capacityCoverDemand(s.w, s.kret, s.r)
+		if demand != s.bound() || backlog != (s.backlog() > 0) {
+			t.Fatalf("sample=%+v cover=%.17g/%t want=%.17g/%t", s, demand, backlog, s.bound(), s.backlog() > 0)
 		}
 	}
 	for _, s := range samples {
@@ -116,7 +125,7 @@ func (s capacityJudgeSample) closedWorst() (string, float64) {
 	case s.w.slack <= 0:
 		return "nonpositive slack", math.Inf(1)
 	default:
-		return "positive backlog and slack", s.bound()/s.knew - 1
+		return "positive backlog and slack", max(s.w.rate/s.knew-1, s.backlog()/s.knew/s.w.slack-1)
 	}
 }
 
@@ -133,9 +142,7 @@ func TestCapacityJudgeWorstValue(t *testing.T) {
 		if got == want {
 			continue
 		}
-		if math.IsNaN(got) || math.IsInf(got, 0) || math.IsInf(want, 0) || math.Abs(got-want) > 1e-12*math.Abs(want) {
-			t.Fatalf("category=%q sample=%+v B=%.17g bound=%.17g worst=%.17g closedWorst=%.17g", category, s, s.backlog(), s.bound(), got, want)
-		}
+		t.Fatalf("category=%q sample=%+v B=%.17g bound=%.17g worst=%.17g closedWorst=%.17g", category, s, s.backlog(), s.bound(), got, want)
 	}
 	for category, count := range counts {
 		if count == 0 {
@@ -144,4 +151,42 @@ func TestCapacityJudgeWorstValue(t *testing.T) {
 		t.Logf("category=%q samples=%d", category, count)
 	}
 	t.Logf("random=10000 Cartesian boundaries=%d total=%d", len(samples)-10000, len(samples))
+}
+
+func TestCapacityJudgeRetainedQueue(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		w         capacityWorkload
+		knew      float64
+		kret      float64
+		r         float64
+		backlog   float64
+		satisfied bool
+	}{
+		{"unchanged capacity", capacityWorkload{rate: 1, queued: 4, slack: 1}, 2, 2, 0, 4, false},
+		{"increased capacity", capacityWorkload{rate: 1, queued: 8, slack: 1}, 4, 2, 0, 8, false},
+		{"retained surplus", capacityWorkload{rate: 1, queued: 4, slack: 1}, 2, 8, 2, 4, false},
+		{"zero arrivals", capacityWorkload{queued: 4, slack: 1}, 2, 8, 2, 4, false},
+		{"route deficit and queue", capacityWorkload{rate: 3, queued: 1, slack: 1}, 5, 1, 2, 5, true},
+		{"queue at slack", capacityWorkload{rate: 1, queued: 4, slack: 1}, 4, 2, 0, 4, true},
+		{"queue below slack", capacityWorkload{rate: 1, queued: 4, slack: 1}, math.Nextafter(4, 0), 2, 0, 4, false},
+		{"queue without slack", capacityWorkload{rate: 1, queued: 4}, 8, 2, 0, 4, false},
+		{"empty queue without slack", capacityWorkload{rate: 1}, 2, 2, 0, 0, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := capacityJudgeSample{w: test.w, knew: test.knew, kret: test.kret, r: test.r, present: true}
+			j := capacityJudge(s.w, s.knew, s.kret, s.present, s.r)
+			if j.backlog != test.backlog || j.satisfied != test.satisfied {
+				t.Fatalf("sample=%+v B=%.17g satisfied=%t want=%.17g/%t", s, j.backlog, j.satisfied, test.backlog, test.satisfied)
+			}
+			satisfied, final, worst := capacitySearchJudge(s.w, s.knew, s.kret, s.present, s.r)
+			if s.closedSatisfied() != test.satisfied || satisfied != test.satisfied || final != (j.final != nil && *j.final <= 0) || worst != j.worst() {
+				t.Fatalf("sample=%+v closed=%t search=%t/%t/%.17g exact=%+v worst=%.17g", s, s.closedSatisfied(), satisfied, final, worst, j, j.worst())
+			}
+			demand, backlog := capacityCoverDemand(s.w, s.kret, s.r)
+			if demand != s.bound() || backlog != (test.backlog > 0) {
+				t.Fatalf("sample=%+v cover=%.17g/%t want=%.17g/%t", s, demand, backlog, s.bound(), test.backlog > 0)
+			}
+		})
+	}
 }

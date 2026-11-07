@@ -44,6 +44,25 @@ func TestCapacityCombineMatchesUnprunedAndExact(t *testing.T) {
 	t.Logf("prunedEvaluations=%d unprunedEvaluations=%d J=%.9f", count, c.stats.surrogateEvaluated-count, pruned.joules)
 }
 
+func TestCapacityCombineClampedMatchesUnpruned(t *testing.T) {
+	for _, horizon := range []float64{1, 10, 30} {
+		p := e5Planner(map[int]float64{0: 20, 1: 40, 2: .3}, evaluationNodes(), e5Start, nil)
+		p.period = horizon
+		c := v2TestSearch(p, 0)
+		c.current.copyInto(&c.best)
+		c.sweepOne()
+		c.combine()
+		pruned := newV2Key(c.s.table, len(p.ws))
+		c.best.copyInto(&pruned)
+		c.current.copyInto(&c.best)
+		v2UnprunedProduct(c, 0)
+		if c.best.better(&pruned) || pruned.better(&c.best) {
+			t.Fatalf("H=%g clamped bound discarded optimum: pruned=%g exhaustive=%g", horizon, pruned.joules, c.best.joules)
+		}
+		t.Logf("H=%g pruned=unpruned J=%.17g", horizon, pruned.joules)
+	}
+}
+
 func TestCapacityCombineOverloadKeepsLeximinBranches(t *testing.T) {
 	p := e5Planner(map[int]float64{0: 1000000, 1: 1000000}, evaluationNodes(), e5Start, nil)
 	c := v2TestSearch(p, 0)

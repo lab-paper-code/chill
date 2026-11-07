@@ -128,11 +128,11 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 
 **에너지.** keep의 노드 에너지는 `P_before × H`, 전환은 `J_pre + J_post + P_mid × max(0, min(r,H) − t_pre) + P_after × max(0,H − r − t_post)`(t는 평균 시간)다. 전환 operation J는 완결 비용이므로 사슬이 H를 넘어도 전부 포함한다. bridge의 시작 지연은 H 안에서만 이전 baseline으로 센다. 요청 에너지는 [0,min(r,H)]의 retained 처리와 overflow, [r,H]의 최종 정수 weight 처리로 나눈다. H 뒤 serving은 0이다. 보호수요는 실제 λ로 비례 축소하고 backlog drain을 요청 J에 더하지 않는다. 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
-**탐색.** `planSearchStrategy`는 `v1`(현재 기본), `v2`, `shadow`다. 계획 집합은 노드마다 계획 하나를 고르며, 두 탐색은 3장의 충족·최종 충족·초과량 벡터·에너지·keep·논리 key 순서를 따른다.
+**탐색.** `planSearchStrategy`는 `v1`(현재 기본), `v2`, `shadow`다. 계획 집합은 노드마다 계획 하나를 고르며, 두 탐색은 3장의 충족·최종 충족·초과량 벡터·keep 대비 에너지 차이(`joules - keepJoules`)·keep·논리 key 순서를 따른다. v2도 같은 고정 H와 keep 기준 전력을 사용하며 pending replica는 용량 없이 복제 수 상한에 포함한다. retirement 허가는 원래 계획을 읽는 main의 정확 `admits`가 판정한다.
 
 v1은 keep과 모든 노드를 비운 집합(인스턴스가 없는 적격 계획, 없으면 keep)에서 시작한다. 각 출발점에서 노드 k개 이하를 바꾼 이웃 중 가장 좋은 집합으로 이동하며, 두 출발점의 k = 2를 마친 뒤 각각의 끝에서 k = 3을 이어 간다. 두 끝 중 순서가 앞선 집합이 해다. 평가는 정확한 κ 합과 위 에너지 식을 쓰며 route 시각은 집합에서 가장 긴 route 전 사슬이다. `maxReplicas`·`maxInstances` 초과(replicas OFF이면 Workload별 현재 수 변경), 새 인스턴스의 가중치 0, 보호 중인 분배 인스턴스의 가중치 제거는 허가하지 않는다. 걸음 없이 끝난 빈 출발점도 같은 허가를 거친다. 이웃은 `planSearchWorkers`개 goroutine이 나눠 평가하고 전순서로 합친다. 두 출발점에서도 닿지 않는 해는 놓칠 수 있으며, 고른 해는 14장의 교체 회수와 최소 이득을 거친다.
 
-v2는 Tick마다 노드·option·모드별 계획표를 만들고 cap 변형을 κ·논리 key 순으로 묶는다. 양수 수요 Workload에 κ = 0인 인스턴스를 두는 적격 non-keep 계획은 `dominated: ZeroCapacity`로 탐색에서 뺀다. cap 하위 선택은 κ 최대와 최소 충족 cap을 남긴다. Overload라도 `B_w = 0`이면 충족 cap의 초과량이 0으로 같으므로 둘을 유지하고, `B_w > 0`인 Overload에서는 κ 최대만 남긴다([정정 근거 §7.8.2](capacity-table-evidence.md#782-계획표와-cap-하위-선택)). 증분 평가기는 바뀐 Workload 항·route·노드 에너지를 재계산하고 v1과 같은 정수 가중치와 연산 순서를 쓴다. 노드 에너지의 시간 항은 v1처럼 클램프하지 않는다. 집합 단위의 timing·예비·bridge 허가는 정확 깔때기에 남긴다.
+v2는 Tick마다 노드·option·모드별 계획표를 만들고 cap 변형을 κ·논리 key 순으로 묶는다. 양수 수요 Workload에 κ = 0인 인스턴스를 두는 적격 non-keep 계획은 `dominated: ZeroCapacity`로 탐색에서 뺀다. cap 하위 선택은 κ 최대와 최소 충족 cap을 남긴다. Overload라도 `B_w = 0`이면 충족 cap의 초과량이 0으로 같으므로 둘을 유지하고, `B_w > 0`인 Overload에서는 κ 최대만 남긴다([정정 근거 §7.8.2](capacity-table-evidence.md#782-계획표와-cap-하위-선택)). 증분 평가기는 바뀐 Workload 항·route·노드 에너지를 재계산하고 main v1과 같은 정수 가중치·클램프 식·연산 순서를 쓴다. 집합 단위의 timing·예비·bridge·retirement 허가는 정확 깔때기에 남긴다.
 
 출발점은 keep·빈 집합과 선택적 가격 유도 집합(`priced`)이다. `planPricedStart` 기본값은 true이며, searchable cap 전체를 대상으로 가격 반복 100회 뒤 얻은 집합이 앞의 두 집합과 다를 때만 셋째 출발점으로 넣는다. 각 출발점에서 피복은 이미 충족한 Workload를 보존하며 미충족 용량을 채우고, 인스턴스 상한을 넘으면 수와 초과량을 줄인다. 연마는 k = 1·2 이웃의 최급강하를 반복한다. 더 좋은 이웃이 없으면 노드별 한 이동의 ΔJ/Δ피복 순으로 고른 활성 m개 cap 변형에 keep·현재 계획을 더해 분기한정 결합 탐색을 한다. 피복이 양수가 아닌 이동은 ΔJ·key 순으로 뒤에 둔다. `planPolishActive` 기본값은 8이며 0이면 모든 searchable 계획과 cap 변형을 활성화한다.
 

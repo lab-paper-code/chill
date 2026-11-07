@@ -12,7 +12,7 @@ func v2TestSearch(p *capacityPlanner, active int) *v2Search {
 		choice[n] = tab.byPlan[n][0]
 	}
 	c := newV2Search(p, tab, choice, 500000, 16, active, time.Time{})
-	c.start = "keep"
+	c.start = capacitySearchStartKeep
 	key, _ := c.evaluate(0, choice[0])
 	key.copyInto(&c.current)
 	return c
