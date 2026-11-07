@@ -114,8 +114,7 @@ def emit(documents,desired=False):
 if name=='docker':
  if args[:2]==['buildx','du']:print('Total: 20GB');sys.exit(0)
  if args[:2]==['buildx','prune']:
-  state['pruneCount']=state.get('pruneCount',0)+1;save()
-  if state.get('failPrune') or state['pruneCount']==state.get('failPruneAt'):sys.exit(18)
+  if state.get('failPrune') or (state.get('failPostBuildPruneFor') and state.get('completedBuildRole')==state['failPostBuildPruneFor']):sys.exit(18)
   builder=argument('--builder')
   # BuildKit exposes inuse as presence, not a string-valued boolean.
   if '--filter' in args and argument('--filter')=='inuse=false':print('Total: 0B');sys.exit(0)
@@ -137,6 +136,8 @@ if name=='docker':
  pathlib.Path(argument('--metadata-file')).write_text(json.dumps({'containerimage.digest':digest,'image.name':image}))
  if state.get('movedTag'):(root/'registry'/'v2'/repo/'manifests'/tag).write_text('{"schemaVersion":2,"manifests":[]}')
  if state.get('missingArtifact'):(root/'registry'/'v2'/repo/'manifests'/digest).unlink()
+ state['completedBuildRole']=pathlib.Path(argument('--metadata-file')).name.rsplit('-build.json',1)[0]
+ save()
  if state.get('diskFixture'):
   receipt=pathlib.Path(os.environ['CHILL_DEPLOY_EVIDENCE'])/'publication.json'
   state.setdefault('receiptsBeforeBuild',[]).append(sorted(json.loads(receipt.read_text())['roles']) if receipt.exists() else [])
@@ -549,12 +550,15 @@ shutil.disk_usage = disk_usage
                     self.assertTrue((evidence / 'runtime-values.yaml').exists())
                     publication = json.loads((evidence / 'publication.json').read_text())
                     self.assertTrue(set(role for role, _ in runtime.RUNTIME_IMAGES.values()).issubset(publication['roles']))
-                receipts = [json.loads(path.read_text()) for path in (evidence / 'runtime-quiescence').glob('*.json')]
-                if scenario != 'foreign-consumer':
-                    self.assertTrue(any(receipt.get('revertedAt') for receipt in receipts), receipts)
-                if scenario == 'concurrent-tracked':
-                    self.assertTrue(any(any(item.get('path') == ['excludedNodes'] and item.get('reason') == 'external-change-revert-skipped'
-                                                for item in receipt.get('revertSkipped', [])) for receipt in receipts), receipts)
+                receipt_path = evidence / 'runtime-quiescence/settings-patch.json'
+                if scenario == 'foreign-consumer':
+                    self.assertFalse(receipt_path.exists())
+                else:
+                    receipt = json.loads(receipt_path.read_text())
+                    self.assertTrue(receipt['revertedAt'], receipt)
+                    if scenario == 'concurrent-tracked':
+                        self.assertTrue(any(item['path'] == ['excludedNodes'] and item['reason'] == 'external-change-revert-skipped'
+                                            for item in receipt['revertSkipped']), receipt)
                 for call in self.calls():
                     self.assertNotIn('uninstall', call)
                     self.assertNotIn('rollback', call)
@@ -814,19 +818,22 @@ shutil.disk_usage = disk_usage
         roles = ['server', 'query', 'dashboard', 'profiler', 'evaluation-harness', 'firstfloor']
         self.recipe.update(images=roles, publicationOnly=['evaluation-harness', 'firstfloor'],
                            minFreeBytes=1, pruneCompletedBuildCache=True)
-        self.state(failPruneAt=6)
-        stopped = self.out / 'five-receipts-pending-firstfloor'
+        self.state(failPostBuildPruneFor='firstfloor')
+        stopped = self.out / 'completed-receipts-pending-firstfloor'
         call_count = len(self.calls())
         self.cli('--execute', '--evidence', str(stopped), expected=1)
         partial = json.loads((stopped / 'publication.json').read_text())
-        self.assertEqual(set(partial['roles']), set(roles[:-1]))
-        self.assertTrue((stopped / 'firstfloor-build.json').exists())
+        completed_roles = set(roles) - {'firstfloor'}
+        self.assertEqual(set(partial['roles']), completed_roles)
+        pending_metadata = json.loads((stopped / 'firstfloor-build.json').read_text())
+        self.assertEqual(json.loads((stopped / 'failure.json').read_text())['stage'], 'publish-images')
         self.assertFalse(any('upgrade' in call or 'apply' in call for call in self.calls()[call_count:]))
         metadata = self.out / 'archived-firstfloor-build.json'
         shutil.copy2(stopped / 'firstfloor-build.json', metadata)
         frozen_plan_path = stopped / 'image-plan.json'
         frozen_plan = json.loads(frozen_plan_path.read_text())
-        frozen_plan[-1].update(action='reuse', metadataFile='old-bookkeeping-path')
+        next(item for item in frozen_plan if item['role'] == 'firstfloor').update(
+            action='reuse', metadataFile='old-bookkeeping-path')
         frozen_plan_path.write_text(json.dumps(frozen_plan))
         frozen = {path: path.read_bytes() for path in stopped.iterdir() if path.is_file()}
         self.recipe.update(reusePublication=str(stopped / 'publication.json'),
@@ -838,8 +845,18 @@ shutil.disk_usage = disk_usage
         self.cli('--execute', '--evidence', str(recovered))
         proof = json.loads((recovered / 'publication.json').read_text())
         self.assertEqual(set(proof['roles']), set(roles))
-        self.assertTrue(all(proof['roles'][role]['action'] == 'reuse' for role in roles[:-1]))
-        self.assertEqual(proof['roles']['firstfloor']['action'], 'reuse-pending')
+        self.assertTrue(all(proof['roles'][role]['action'] == 'reuse' for role in completed_roles))
+        for role in completed_roles:
+            self.assertEqual(proof['roles'][role]['digest'], partial['roles'][role]['digest'])
+            self.assertEqual(proof['roles'][role]['platformReceipts'], partial['roles'][role]['platformReceipts'])
+        pending_receipt = proof['roles']['firstfloor']
+        self.assertEqual(pending_receipt['action'], 'reuse-pending')
+        self.assertEqual(pending_receipt['digest'], pending_metadata['containerimage.digest'])
+        self.assertEqual(pending_receipt['image'],
+                         pending_metadata['image.name'] + '@' + pending_metadata['containerimage.digest'])
+        recovered_plan = json.loads((recovered / 'image-plan.json').read_text())
+        pending = next(item for item in recovered_plan if item['role'] == 'firstfloor')['pendingPublication']
+        self.assertEqual(pending['metadataFile'], str(metadata.resolve()))
         self.assertTrue(all(entry['platformReceipts'] for entry in proof['roles'].values()))
         self.assertFalse(any(call[0] == 'docker' for call in self.calls()[call_count:]))
         self.assertTrue(json.loads((recovered / 'state.json').read_text())['ready'])
