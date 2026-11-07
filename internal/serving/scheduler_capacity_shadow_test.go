@@ -34,7 +34,7 @@ func TestCapacityShadowMatchesIndependentSearches(t *testing.T) {
 	if record.Strategy != schedulerPlanSearchShadow || record.Key != want.key || record.Joules != want.joules || record.Neighborhood != v1.searched.Neighborhood || record.Evaluated != v1.searched.Evaluated || record.BudgetCut != v1.searched.BudgetCut {
 		t.Fatalf("v1 record changed: %+v want %+v", record, v1.searched)
 	}
-	if s == nil || s.Key != comparison.key || s.Joules != comparison.joules || s.Evaluated != v2.searched.SurrogateEvaluated || s.ExactEvaluated != v2.searched.ExactEvaluated || s.BudgetCut != v2.searched.BudgetCut || s.Fallback != v2.searched.Fallback || s.Duration <= 0 {
+	if s == nil || s.Key != comparison.key || s.Joules != comparison.joules || s.Evaluated != v2.searched.SurrogateEvaluated || s.ExactEvaluated != v2.searched.ExactEvaluated || s.BudgetCut != v2.searched.BudgetCut || s.TerminationReason != v2.searched.TerminationReason || s.Fallback != v2.searched.Fallback || s.Duration <= 0 {
 		t.Fatalf("shadow record: %+v want %s %g %+v", s, comparison.key, comparison.joules, v2.searched)
 	}
 	// UTC timestamps omit the monotonic clock used by Duration.
@@ -64,7 +64,7 @@ func TestCapacityShadowEvaluationBudgetKeepsV1Record(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.key != want.key || got.joules != want.joules || shadow.searched.Shadow == nil || !shadow.searched.Shadow.BudgetCut {
+	if got.key != want.key || got.joules != want.joules || shadow.searched.Shadow == nil || shadow.searched.Shadow.BudgetCut || shadow.searched.Shadow.TerminationReason != schedulerEvaluationBudget {
 		t.Fatalf("v2 budget must not change v1: got=%+v want=%+v record=%+v", got, want, shadow.searched)
 	}
 	normalize := func(record SchedulerPlanSearch) SchedulerPlanSearch {
@@ -127,7 +127,7 @@ func TestCapacityShadowWallDeadlineRecorded(t *testing.T) {
 	if _, err := p.search(time.Now().Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if p.searched.Shadow == nil || !p.searched.Shadow.BudgetCut || !p.searched.BudgetCut {
+	if p.searched.Shadow == nil || !p.searched.Shadow.BudgetCut || p.searched.Shadow.TerminationReason != schedulerDeadline || !p.searched.BudgetCut {
 		t.Fatalf("shared wall deadline must cut both searches: %+v shadow=%+v", p.searched, p.searched.Shadow)
 	}
 }

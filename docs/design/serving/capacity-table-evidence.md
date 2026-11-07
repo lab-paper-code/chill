@@ -463,7 +463,7 @@ GAP 판단의 증분 평가 수 범위는 m=4 OFF 361~387743, ON 618~495202; m=8
 
 #### 7.8.7 그림자 운영(미실행)
 
-`planSearchStrategy: shadow`의 기록 경로는 구현되었으나 테스트베드 그림자 캠페인은 아직 실행하지 않았다. 실제 E5 입력에서 Tick별 v1 `search.key`와 v2 `search.shadow.key`의 동일 여부, v2 정확 J − v1 J, 양쪽 탐색 시간과 fallback을 잰다. 기본 `planPostFilterFinalists=false`에서 key는 후처리 전 탐색 선택해끼리 비교하고, J는 같은 단계의 `search.joules`와 `search.shadow.joules`를 비교한다. 후처리 뒤 v1 `ExpectedJoules`와 그림자의 후처리 전 J를 그대로 비교하지 않으며, v1 J가 없거나 v2 key가 비면 J 차를 계산하지 않는다. 전환 게이트는 같은 입력의 결정성, v1 대비 정확 J 비악화, 탐색 시간 ≤ 1 s(§7.8.8의 재설정 게이트)와 fallback 0을 확인하며 key 불일치만으로 품질 실패를 판정하지 않는다. §7.8.6의 하네스 품질 차 +0.020%와 비용 게이트 미달은 이 캠페인의 통과 기록으로 대체할 수 없으며, 운영 측정과 게이트 판정 전까지 기본 전략 v1과 기존 `sweep`을 유지한다.
+`planSearchStrategy: shadow`의 기록 경로는 구현되었으나 테스트베드 그림자 캠페인은 아직 실행하지 않았다. 실제 E5 입력에서 Tick별 v1 `search.key`와 v2 `search.shadow.key`의 동일 여부, v2 정확 J − v1 J, 양쪽 탐색 시간과 fallback을 잰다. 기본 `planPostFilterFinalists=false`에서 key는 후처리 전 탐색 선택해끼리 비교하고, J는 같은 단계의 `search.joules`와 `search.shadow.joules`를 비교한다. 후처리 뒤 v1 `ExpectedJoules`와 그림자의 후처리 전 J를 그대로 비교하지 않으며, v1 J가 없거나 v2 key가 비면 J 차를 계산하지 않는다. 전환 게이트는 같은 입력의 결정성, v1 대비 정확 J 비악화, 탐색 시간 ≤ 1 s(§7.8.8의 재설정 게이트), fallback 0과 `search.shadow.budgetCut`(벽시계 마감) 발생 0회를 확인하며 key 불일치만으로 품질 실패를 판정하지 않는다. §7.8.6의 하네스 품질 차 +0.020%와 비용 게이트 미달은 이 캠페인의 통과 기록으로 대체할 수 없으며, 운영 측정과 게이트 판정 전까지 기본 전략 v1과 기존 `sweep`을 유지한다.
 
 #### 7.8.8 origin/main 재적용 뒤 재측정 (리뷰 반영)
 
@@ -484,6 +484,8 @@ GAP 판단의 증분 평가 수 범위는 m=4 OFF 361~387743, ON 618~495202; m=8
 | v2 | 150,000 | 8 b1 모드 2 | 4 | **2.715%** | 0.434% | 0 | 0 / 0 |
 
 v1 GAP은 §7.8.4의 정정 입력 v1과 같다(클램프 식 교체가 이 하네스의 v1 선택을 바꾸지 않았다). v2(m = 8, priced)는 재적용 전과 같은 한 조합(5 b2, mnv2 20·plc 40·vlm 0.3)에서 +0.020%만 남는다. 기본 예산 500,000은 세 공간 모두 예산 없음과 같은 선택이고, 150,000은 8 b1 모드 2의 네 조합(mnv2 110 계열)에서 v1보다 나쁜 2.715%까지 벌어지므로 **기본 평가 예산은 500,000을 유지**한다.
+
+아래 SCALE 표의 `cut`은 측정 당시 평가 예산 소진도 포함한 역사적 기록이다. 현재 v2의 `budgetCut`은 벽시계 마감만 뜻하며, 평가 예산 소진은 `terminationReason: evaluationBudget`으로 기록한다.
 
 SCALE(mobilenet 60·PLC 40·SmolVLM 1.2; v1은 벽시계 5 s / 무제한, v2는 m = 8·priced·벽시계 5 s에 평가 예산 500,000 / 150,000):
 

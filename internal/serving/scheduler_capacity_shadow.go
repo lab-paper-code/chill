@@ -16,6 +16,7 @@ func (p *capacityPlanner) searchShadow(deadline time.Time) (capacityResult, erro
 		Key: v2.Key, Joules: v2.Joules,
 		Evaluated: v2.SurrogateEvaluated, ExactEvaluated: v2.ExactEvaluated,
 		Duration: v2.Duration, BudgetCut: v2.BudgetCut, Fallback: v2.Fallback,
+		TerminationReason: v2.TerminationReason,
 	}
 	p.searched = SchedulerPlanSearch{}
 	p.keepWatts = keepWatts

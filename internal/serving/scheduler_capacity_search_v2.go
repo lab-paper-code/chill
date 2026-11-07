@@ -11,6 +11,8 @@ const (
 	schedulerPlanPhaseCombine = "combine"
 	schedulerNoImprovement    = "noImprovement"
 	schedulerBudgetCut        = "budgetCut"
+	schedulerDeadline         = "deadline"
+	schedulerEvaluationBudget = "evaluationBudget"
 )
 
 func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
@@ -72,7 +74,7 @@ func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool)
 		Key: stats.rawKey, Joules: stats.rawJoules,
 		Finalists: len(candidates), ExactEvaluated: stats.exact, Evaluated: stats.exact,
 		SurrogateGapJoules: stats.gap, PostFilterReverts: stats.reverts, Fallback: fallback,
-		BudgetCut: core.budgetCut, Duration: time.Since(started), Excluded: stats.excluded,
+		BudgetCut: core.deadline, Duration: time.Since(started), Excluded: stats.excluded,
 		StartedAt: started.UTC(), FinishedAt: time.Now().UTC(),
 		ReserveRejections: stats.reserves,
 		DualBound:         core.dualBound, Start: stats.start,
@@ -91,12 +93,14 @@ func (p *capacityPlanner) recordV2Steps(core v2CoreStats) {
 	for _, step := range core.searchSteps {
 		p.searched.TrailingEvaluated -= step.Evaluated
 	}
-	p.searched.BudgetCut = p.searched.BudgetCut || core.budgetCut
+	p.searched.BudgetCut = core.deadline
 	p.searched.TerminationReason = schedulerNoImprovement
-	if p.searched.BudgetCut {
-		p.searched.TerminationReason = schedulerBudgetCut
+	if core.deadline {
+		p.searched.TerminationReason = schedulerDeadline
 		if len(p.searched.Steps) > 0 {
 			p.searched.Steps[len(p.searched.Steps)-1].BudgetCut = true
 		}
+	} else if core.exhausted {
+		p.searched.TerminationReason = schedulerEvaluationBudget
 	}
 }

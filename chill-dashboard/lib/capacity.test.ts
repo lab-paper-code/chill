@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { capacityComparison, capacityPath, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, selectedCapacityRow, type CapacityInput, type CapacityRow } from "./capacity.ts"
+import { capacityComparison, capacityPath, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, planSearchFacts, selectedCapacityRow, type CapacityInput, type CapacityRow } from "./capacity.ts"
 
 const input:CapacityInput={
   workloadUID:"workload-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node-a",uid:"node-uid"},powerMode:"mode-a",profileID:"profile-id",
@@ -54,4 +54,21 @@ test("capacity percentile display distinguishes missing latency from zero",()=>{
   assert.equal(capacityPercentile(-1),"이 창의 지연값 없음(미충족)")
   assert.equal(capacityPercentile(0),"0 ms")
   assert.equal(capacityPercentile(12.5),"12.5 ms")
+})
+
+test("plan search termination reasons distinguish evaluation budget from time deadline",()=>{
+  const search={neighborhood:3,evaluated:40,durationNanos:1000}
+  const shadow={key:"a=keep",joules:12,evaluated:100,durationNanos:2000}
+  const historical=planSearchFacts({...search,shadow})
+  assert.equal(historical.some(([label])=>label.includes("종료")),false)
+  for(const [terminationReason,expected] of [["noImprovement","개선 없음"],["evaluationBudget","평가 수 예산"],["deadline","시간 마감"],["budgetCut","시간 마감"],["futureReason","futureReason"]]){
+    const facts=planSearchFacts({...search,terminationReason,budgetCut:false,shadow:{...shadow,terminationReason}})
+    assert.deepEqual(facts.find(([label])=>label==="탐색 종료 사유"),["탐색 종료 사유",expected])
+    assert.deepEqual(facts.find(([label])=>label==="그림자 탐색 종료 사유"),["그림자 탐색 종료 사유",expected])
+    assert.deepEqual(facts.find(([label])=>label==="시간 마감 종료"),["시간 마감 종료","아니요"])
+    assert.equal(facts.some(([label])=>label==="예산 종료"),false)
+  }
+  assert.deepEqual(planSearchFacts({...search,budgetCut:true}).find(([label])=>label==="시간 마감 종료"),["시간 마감 종료","예"])
+  assert.equal(planSearchFacts({...search,shadow:{...shadow,terminationReason:"evaluationBudget"}}).some(([label])=>label==="탐색 종료 사유"),false)
+  assert.equal(planSearchFacts({...search,terminationReason:"deadline",shadow}).some(([label])=>label==="그림자 탐색 종료 사유"),false)
 })

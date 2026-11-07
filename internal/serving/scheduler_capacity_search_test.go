@@ -393,9 +393,9 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 						firstSearch = d
 						s.firstStarts[d.Start]++
 					}
-					t.Logf("SEARCH strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v tick=%d start=%q dualBound=%.9f rawJ=%.9f feasible=%v evaluated=%d durationNS=%d surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g budgetCut=%v",
+					t.Logf("SEARCH strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v tick=%d start=%q dualBound=%.9f rawJ=%.9f feasible=%v evaluated=%d durationNS=%d surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g cut=%v terminationReason=%s",
 						strategy, active, priced, cfg.evaluations, c.variants, c.modes, mix, rates, tick, d.Start, d.DualBound, r.joules, r.feasible, d.Evaluated, d.Duration.Nanoseconds(),
-						d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, d.BudgetCut)
+						d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, d.BudgetCut, d.TerminationReason)
 					return &r
 				}
 				got, gotJ, ticks, cycled := e5Converge(rates, nodes, search)
@@ -482,9 +482,9 @@ func evaluationScale(t *testing.T) {
 				t.Fatal(err)
 			}
 			d := p.searched
-			t.Logf("SCALE strategy=%s active=%d priced=%v variants=%d modes=%d run=%s plans=%v sets=%.3g evaluationBudget=%d wallBudgetNS=%d k=%d evaluated=%d durationNS=%d cut=%v rawJ=%.9f feasible=%v start=%q dualBound=%.9f surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g rawKey=%q",
+			t.Logf("SCALE strategy=%s active=%d priced=%v variants=%d modes=%d run=%s plans=%v sets=%.3g evaluationBudget=%d wallBudgetNS=%d k=%d evaluated=%d durationNS=%d cut=%v terminationReason=%s rawJ=%.9f feasible=%v start=%q dualBound=%.9f surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g rawKey=%q",
 				run.strategy, p.settings.PlanPolishActive, p.settings.PlanPricedStart, c.variants, c.modes, run.mode, counts, sets, p.settings.PlanSearchEvaluations, run.wallBudget.Nanoseconds(),
-				d.Neighborhood, d.Evaluated, d.Duration.Nanoseconds(), d.BudgetCut, result.joules, result.feasible, d.Start, d.DualBound,
+				d.Neighborhood, d.Evaluated, d.Duration.Nanoseconds(), d.BudgetCut, d.TerminationReason, result.joules, result.feasible, d.Start, d.DualBound,
 				d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, result.key)
 		}
 	}

@@ -15,7 +15,8 @@ type v2Candidate struct {
 
 type v2CoreStats struct {
 	surrogateEvaluated int
-	budgetCut          bool
+	deadline           bool
+	exhausted          bool
 	steps              int
 	searchSteps        []SchedulerPlanSearchStep
 	dualBound          float64
@@ -113,19 +114,26 @@ func newV2Search(p *capacityPlanner, t *planTable, choice []int, evaluations, fi
 	return c
 }
 
+func (c *v2Search) stopped() bool {
+	return c.stats.deadline || c.stats.exhausted
+}
+
 func (c *v2Search) expired() bool {
-	if c.stats.budgetCut {
+	if c.stopped() {
 		return true
 	}
-	if !c.deadline.IsZero() && time.Now().After(c.deadline) {
-		c.stats.budgetCut = true
+	if !c.stats.deadline && !c.deadline.IsZero() && time.Now().After(c.deadline) {
+		c.stats.deadline = true
 	}
-	return c.stats.budgetCut
+	return c.stopped()
 }
 
 func (c *v2Search) evaluate(n, q int) (orderKey, bool) {
-	if c.stats.budgetCut || c.limit > 0 && c.stats.surrogateEvaluated >= c.limit {
-		c.stats.budgetCut = true
+	if c.stopped() {
+		return orderKey{}, false
+	}
+	if c.limit > 0 && c.stats.surrogateEvaluated >= c.limit {
+		c.stats.exhausted = true
 		return orderKey{}, false
 	}
 	c.stats.surrogateEvaluated++

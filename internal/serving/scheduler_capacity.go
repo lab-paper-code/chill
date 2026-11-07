@@ -73,15 +73,17 @@ type SchedulerPlanSearch struct {
 	Duration  time.Duration `json:"durationNanos"`
 	// StartedAt and FinishedAt are direct wall-clock boundaries of search,
 	// excluding node-plan construction and final decision projection.
-	StartedAt         time.Time                             `json:"startedAt"`
-	FinishedAt        time.Time                             `json:"finishedAt"`
+	StartedAt  time.Time `json:"startedAt"`
+	FinishedAt time.Time `json:"finishedAt"`
+	// BudgetCut marks wall-clock expiration in both v1 and v2.
 	BudgetCut         bool                                  `json:"budgetCut,omitempty"`
 	Excluded          map[string]int                        `json:"excluded,omitempty"`
 	ReserveRejections map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
 	Steps             []SchedulerPlanSearchStep             `json:"steps,omitempty"`
 	TrailingEvaluated int                                   `json:"trailingEvaluated,omitempty"`
-	TerminationReason string                                `json:"terminationReason,omitempty"`
-	Strategy          string                                `json:"strategy,omitempty"`
+	// TerminationReason is noImprovement/budgetCut in v1 and noImprovement/evaluationBudget/deadline in v2.
+	TerminationReason string `json:"terminationReason,omitempty"`
+	Strategy          string `json:"strategy,omitempty"`
 	// Key and Joules identify the selected exact candidate before postfilters.
 	Key                string                     `json:"key,omitempty"`
 	Joules             float64                    `json:"joules,omitempty"`
@@ -142,13 +144,14 @@ type SchedulerPlanSearchStep struct {
 
 // SchedulerPlanSearchShadow records the independent shadow planner.
 type SchedulerPlanSearchShadow struct {
-	Key            string        `json:"key"`
-	Joules         float64       `json:"joules"`
-	Evaluated      int           `json:"evaluated"`
-	ExactEvaluated int           `json:"exactEvaluated,omitempty"`
-	Duration       time.Duration `json:"durationNanos"`
-	BudgetCut      bool          `json:"budgetCut,omitempty"`
-	Fallback       string        `json:"fallback,omitempty"`
+	Key               string        `json:"key"`
+	Joules            float64       `json:"joules"`
+	Evaluated         int           `json:"evaluated"`
+	ExactEvaluated    int           `json:"exactEvaluated,omitempty"`
+	Duration          time.Duration `json:"durationNanos"`
+	BudgetCut         bool          `json:"budgetCut,omitempty"`
+	TerminationReason string        `json:"terminationReason,omitempty"`
+	Fallback          string        `json:"fallback,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.

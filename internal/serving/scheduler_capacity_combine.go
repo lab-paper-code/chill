@@ -67,7 +67,7 @@ func (c *v2Search) combineAt(depth int) {
 			c.s.apply(n, q)
 			c.combineAt(depth + 1)
 			c.s.apply(n, old)
-			if c.stats.budgetCut {
+			if c.stopped() {
 				return
 			}
 		}

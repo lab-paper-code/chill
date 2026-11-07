@@ -829,6 +829,11 @@ func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch, nodes i
 	wantReason := schedulerNoImprovement
 	if search.BudgetCut {
 		wantReason = schedulerBudgetCut
+		if v2 {
+			wantReason = schedulerDeadline
+		}
+	} else if v2 && search.TerminationReason == schedulerEvaluationBudget {
+		wantReason = schedulerEvaluationBudget
 	}
 	if search.TerminationReason != wantReason {
 		t.Fatalf("termination: got %q want %q", search.TerminationReason, wantReason)

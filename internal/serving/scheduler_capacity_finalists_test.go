@@ -66,7 +66,7 @@ func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 							t.Errorf("mix=%d m=%s rates=%v gap=%.6f%% exceeds gate: got=%s exact=%s", mix, m.name, rates, gap*100, got.key, exact.key)
 						}
 					}
-					if stats.budgetCut {
+					if stats.deadline {
 						m.cuts++
 					}
 					if math.Abs(got.joules-candidates[0].joules) > 1e-8 {
@@ -92,7 +92,7 @@ func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 					m.worst, m.maxEvaluations = max(m.worst, gap), max(m.maxEvaluations, stats.surrogateEvaluated)
 					m.totalEvaluations += stats.surrogateEvaluated
 					m.longest, m.total = max(m.longest, elapsed), m.total+elapsed
-					t.Logf("mix=%02d m=%s rates=%v gap=%.6f%% feasible=%v J=%.9f evaluations=%d duration=%s steps=%d budgetCut=%v", mix, m.name, rates, gap*100, got.feasible, got.joules, stats.surrogateEvaluated, elapsed, stats.steps, stats.budgetCut)
+					t.Logf("mix=%02d m=%s rates=%v gap=%.6f%% feasible=%v J=%.9f evaluations=%d duration=%s steps=%d budgetCut=%v exhausted=%v", mix, m.name, rates, gap*100, got.feasible, got.joules, stats.surrogateEvaluated, elapsed, stats.steps, stats.deadline, stats.exhausted)
 				}
 			}
 			for _, m := range measurements {
@@ -105,11 +105,11 @@ func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
 	p := e5Planner(e5Mixes[0], evaluationNodes(), e5Start, nil)
 	got, stats := p.searchV2Core(p.planTable(), 10, 1, 4, time.Time{})
-	if len(got) == 0 || !stats.budgetCut || stats.surrogateEvaluated != 10 {
+	if len(got) == 0 || !stats.exhausted || stats.deadline || stats.surrogateEvaluated != 10 {
 		t.Fatalf("evaluation budget: finalists=%d stats=%+v", len(got), stats)
 	}
 	got, stats = p.searchV2Core(p.planTable(), 500000, 1, 4, time.Now().Add(-time.Second))
-	if len(got) != 0 || !stats.budgetCut || stats.surrogateEvaluated != 0 {
+	if len(got) != 0 || !stats.deadline || stats.exhausted || stats.surrogateEvaluated != 0 {
 		t.Fatalf("deadline: finalists=%d stats=%+v", len(got), stats)
 	}
 }

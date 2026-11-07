@@ -11,7 +11,7 @@ func TestCapacityPolishStrictImprovementAndTermination(t *testing.T) {
 	if !c.current.better(&before) || c.stats.steps == 0 {
 		t.Fatal("polish failed to make a strict improvement")
 	}
-	if c.stats.budgetCut {
+	if c.stopped() {
 		t.Fatal("polish exhausted budget")
 	}
 	c.current.copyInto(&before)

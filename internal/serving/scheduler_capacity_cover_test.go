@@ -37,7 +37,7 @@ func TestCapacityCoverSatisfiedAndOverload(t *testing.T) {
 			if c.current.feasible != test.feasible {
 				t.Fatalf("feasible=%v, want %v: %+v", c.current.feasible, test.feasible, c.current)
 			}
-			if c.stats.budgetCut {
+			if c.stopped() {
 				t.Fatal("cover exhausted budget")
 			}
 			before := c.stats.surrogateEvaluated

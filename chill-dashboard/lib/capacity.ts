@@ -46,6 +46,8 @@ export function capacityComparison(input:CapacitySettings,current:CapacitySettin
   return capacityFields.map(field=>({...field,used:input[field.key],current:current[field.key],same:String(input[field.key])===String(current[field.key])}))
 }
 
+const searchTerminationReasons:Record<string,string>={noImprovement:"개선 없음",evaluationBudget:"평가 수 예산",deadline:"시간 마감",budgetCut:"시간 마감"}
+
 export function planSearchFacts(search:SchedulerPlanSearch):[string,string][] {
   const rows:[string,string][]=[["탐색 이웃",String(search.neighborhood)],["평가 수",String(search.evaluated)],["탐색 시간",`${search.durationNanos} ns`]]
   const fields=[
@@ -55,7 +57,8 @@ export function planSearchFacts(search:SchedulerPlanSearch):[string,string][] {
   ] as const
   for(const [key,label] of fields)if(search[key]!==undefined)rows.push([label,String(search[key])])
   for(const [reason,count] of Object.entries(search.pruned??{}))rows.push([`가지치기 · ${reason}`,String(count)])
-  if(search.budgetCut!==undefined)rows.push(["예산 종료",search.budgetCut?"예":"아니요"])
+  if(search.terminationReason!==undefined)rows.push(["탐색 종료 사유",searchTerminationReasons[search.terminationReason]??search.terminationReason])
+  if(search.budgetCut!==undefined)rows.push(["시간 마감 종료",search.budgetCut?"예":"아니요"])
   if(search.shadow){
     const shadow=search.shadow
     rows.push(["그림자 선택 key",shadow.key||"선택해 없음"])
@@ -65,6 +68,7 @@ export function planSearchFacts(search:SchedulerPlanSearch):[string,string][] {
     }
     rows.push(["그림자 증분 평가 수",String(shadow.evaluated)],["그림자 탐색 시간",`${shadow.durationNanos} ns`])
     if(shadow.exactEvaluated!==undefined)rows.push(["그림자 정확 평가 수",String(shadow.exactEvaluated)])
+    if(shadow.terminationReason!==undefined)rows.push(["그림자 탐색 종료 사유",searchTerminationReasons[shadow.terminationReason]??shadow.terminationReason])
     rows.push(["그림자 대체 탐색 사유",shadow.fallback||"없음"])
   }
   return rows

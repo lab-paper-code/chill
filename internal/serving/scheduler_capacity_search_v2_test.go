@@ -246,9 +246,20 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 				tc.name == "count-recovery" && !lostFeasibility {
 				t.Fatalf("missing expected move/origin: %+v", p.searched.Steps)
 			}
-			if p.searched.BudgetCut != (tc.budget > 0) || p.searched.TrailingEvaluated == 0 {
+			if p.searched.BudgetCut || tc.budget > 0 && p.searched.TerminationReason != schedulerEvaluationBudget || p.searched.TrailingEvaluated == 0 {
 				t.Fatalf("budget/trailing accounting: %+v", p.searched)
 			}
 		})
+	}
+}
+
+func TestCapacitySearchV2Deadline(t *testing.T) {
+	p := capacityTwinSwap(100, 0)
+	p.settings.PlanSearchStrategy = schedulerPlanSearchV2
+	if _, err := p.search(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !p.searched.BudgetCut || p.searched.TerminationReason != schedulerDeadline {
+		t.Fatalf("deadline accounting: %+v", p.searched)
 	}
 }
