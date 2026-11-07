@@ -9,10 +9,10 @@
 | 연구 목표 | 이질 워크로드가 원시 요청→응답 공통 경로를 사용하고, 실측 후보에서 첫 구성을 자동 생성한다. SLO 우선·전환 포함 전체 POOL 에너지 최소화 | 모델별 전용 경로/수동 첫 구성은 일반 제어 주장이 아님; [north-star](north-star.md) | — |
 | 자원 경계 | 워크로드별 인스턴스·POOL, Pod 실물 장부·영향 범위 예약, 무관 자원 판단 지속. 새 서비스·저장소·CRD 없음 | 시연2 중복 준비로 B mobilenet 성공0.67%; [ADR0023](../adr/0023-resource-ledger.md) | — |
 | 관측과 실물 | 정책 ACK 대기/관측 실패를 실물 소실로 해석하지 않고 마지막 확인 상태를 유지한다. 퇴역 source의 늦은 probe는 재생성/게시하지 않는다 | 실물·앎·실행 권한 분리; [사고0002](../postmortems/0002-demo2-duplicate-preparation.md) | — |
-| 빈 출발 | 초과량을 나쁜 순서로 비교하는 leximin과 전체 후보 용량 대기. bootstrapCapacityWaitNanos 기본10분·범위0~1시간; 대기 Workload Node 선점 금지는 보류 | 불가능 Workload 하나로 전 후보∞ 동점이 된 rev76 사고; [ADR0024](../adr/0024-candidate-comparison-and-bootstrap.md) | — |
+| 빈 출발 | 선택 가능한 용량 근거가 missing/pending이면 Pending과 원인을 유지하며 경과 시간 fallback은 없다 | leximin 및 실제 용량 근거; [ADR0024](../adr/0024-candidate-comparison-and-bootstrap.md) | — |
 | 수요·분배 | 최근 유입·명시 최소 수요를 반영하고 준비된 공급부터 배분한다. 마지막 소유 Workload 키는 명시적으로 비우며 필드 생략은 보존 | 첫 시연 B 성공63.8%, 잔존 staticRouting이 측정 seed를 가림; [scheduler SRS](../spec/scheduler/SRS.md) | — |
-| 두 박자 | 증가/확장은 빠르게, 축소/에너지 교체는 안정화 뒤. 기본300초·시연120초·전환 reserve0, 비교 H600초는 후보 독립 | 느린 전환의 왕복/손실 및 후보별 기간 불공정; [ADR0025](../adr/0025-two-tempo-control.md) | — |
-| 하강·빈 Node 절전 | 안정화 창의 UID별 유효 수요 최댓값·완전한 창·실제 공급 여유·후보 수용을 요구한다. 빈 Node도 일반 gain/minimumGain/payback 적용, UID 합계 상쇄 금지 | 국소 고점 timer는 실제 하강39초에 축소 허용; H600초 jetsono 이득−699J·본전약52분은 미실행. SCH-56·59/AC-42·44 | — |
+| 후보 비교 | 분배·증설·축소·교체를 매 주기 현재 유효 수요로 비교한다. 정책 시간은 ControlInterval/ObservationWindow/ComparisonPeriod | 사용자 승인 시간 정책 삭제; [ADR0025](../adr/0025-two-tempo-control.md) | — |
+| 하강·빈 Node 절전 | 현재 유효 수요·실제 용량/SLO·headroom·gain/minimumGain/payback을 적용한다. 이력 최대값과 시간 허가는 없다 | 기존 실제 안전·에너지 식 유지; SCH-56·59/AC-42·44 | — |
 | 수동 승인 | 마지막 Tick이 아닌 허가 직전 신선한 상태를 기준으로 승인하며 효과/소유 범위에 따라 예약을 처리한다 | 실제 잘못된 거절2건; [ADR0027](../adr/0027-manual-operation-admission.md) | — |
 | d 정의 | d=1/X−profile 평균시간/B, X·포화는 실제 물리 batch 기준. BatchID/실행 연속성·오류 주변 유휴·창 경계 포함, 결손은 Insufficient | HTTP 성공 행은 만료 요청의 물리 실행을 누락; [측정 설계](../design/serving/measurement-api.md) | — |
 | d 조건 | 대상 분포·SLO로 계산, 정밀도1%·양측95% 계획 근사·공통여유1.25·유휴1ms/요청·본창360초/준비60초 하한·전체3600초 상한 | Smol 실측약15.9초/batch와 손 추정10초 불일치; 95%는 전체 d 보장이 아님 | — |

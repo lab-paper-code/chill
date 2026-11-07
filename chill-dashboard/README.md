@@ -105,7 +105,7 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 결과 조회·d 측정 요청·최근 사건 복원의 원래 오류는 공통 “문제 자세히 보기” 안에만 보존한다(status, 구조화 code/message, transport 예외 name/message, 요청 pathname). d 셀은 coverage/BEO 조회를 구분한다. 요청 쿼리 전체·헤더·본문·원시 응답 body는 상세에 넣지 않으며 새 로깅/전송이나 재시도는 추가하지 않는다. 이 진단 보존은 과거 실패 원인 확정이나 실패 자체의 해결을 뜻하지 않는다.
 
-결정 상세의 선택 계획 용량 근거는 저장된 `decision.capacity.workloads`의 `kappaNew`, `kappaRetained`, `rate`, `scaleDown.windowMax`를 req/s로 표시한다. `rate`는 관측 유입이 아닌 계획 수요이며, 서버가 최근·창 평균 중 큰 값에 대기분을 더하고 `MinimumDemand` 하한을 적용해 기록한 유효 수요다. 보호 수요는 같은 결정의 `settings.scaleDownHeadroomFraction`으로 `max(rate, windowMax) × (1 + fraction)`, 여유는 목표 κ와 보호 수요의 차이만 표시하며 입력 부재는 미기록이다. 판정·평가 입력을 새로 만들지 않는다. 인스턴스의 `capacity`는 `internal/serving/application/profiles.go` 및 `kube/observer.go`에서 `MaxQueueSize`로 공급되는 요청 수용 한도(개)이며 κ(req/s)나 최대 배치가 아니다.
+결정 상세는 저장된 `decision.capacity.workloads`의 `kappaNew`, `kappaRetained`, `rate`를 req/s로 표시한다. `rate`는 최근·창 평균 중 큰 값에 대기분을 더하고 최소 수요 하한을 적용한 유효 수요다. 보호 수요는 `rate × (1 + scaleDownHeadroomFraction)`, 여유는 목표 κ − 보호 수요다. 미기록은 0이 아니다.
 
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
@@ -260,7 +260,7 @@ live-r3 로컬 게이트(2026-11-04): Node 24.14.0, offline frozen install(479�
 | 운영 설정 범위 | 편집 항목 |
 |---|---|
 | 서비스·장비 | CHILL 자동 운영 서비스, 서비스별 최소 수요(req/s), 계획 제외 장비 이름 |
-| 판단 주기와 범위 | 부하 관측 구간, 운영 판단 주기, 에너지 비교 기간, 교체 후 최소 체류 기간, 초기 용량 대기 시간, 하강 안정화 기간, 전환 예비 비율, 하강 용량 여유, 관측 사용 시간 |
+| 판단 주기와 범위 | 부하 관측 구간, 운영 판단 주기, 에너지 비교 기간, 전환 예비 비율, 하강 용량 여유 |
 | 자원 한도 | 서비스 실행 메모리(bytes), 복제 수·인스턴스 수 상한 |
 | 자동 조정 항목 | 배치 위치, 자원 할당, 복제 수, 요청 분배, 배칭, 전력모드, 실행 그룹 소속 |
 | 용량 설정 | 완료 여유(ms), 계산 창 길이·창 수·충족 창 수·최소 요청 수·격자 수·이분 탐색 폭·꼬리 표본 수 |

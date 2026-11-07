@@ -164,8 +164,6 @@
           "observationWindowNanos": 60000000000,
           "controlIntervalNanos": 10000000000,
           "comparisonPeriodNanos": 600000000000,
-          "maxObservationAgeNanos": 5000000000,
-          "bootstrapCapacityWaitNanos": 600000000000,
           "maxReplicas": 8,
           "maxInstances": 16,
           "maxCPUs": 256,

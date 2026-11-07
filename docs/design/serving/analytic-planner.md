@@ -124,7 +124,7 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 실제 중간효과는 frozen target·before/actual routing으로 분석 예측과 구분한다([중간 배분](scheduler-implementation.md#중간-배분)).
 
 
-**비교 기간 — SCH-58.** `H = settings.comparisonPeriodNanos` 하나를 결정 시점부터 keep과 모든 후보에 고정한다(기존 정책 600s 유지). 후보별 `r + max(post)` 연장은 없다. 아래 T는 H다. 전체 사슬이 H를 넘더라도 기존처럼 SLO 증설 후보로 사용할 수 있다. `scheduler_capacity_nodes.go:105-109`의 `TransitionExceedsHorizon`은 노드 사슬에 대한 진단 표시일 뿐 제외 조건이 아니다. 전체 동작 비용 J는 전부 부과하고 H 밖의 대기·서빙 시간은 계산하지 않으며 음수 꼬리는 없다. H는 SLO 시간·용량표 창·동작 timeout과 별개이고 새 설정 revision은 다음 판단부터 적용한다. `replacementDwell=0`이 ComparisonPeriod를 재사용하는 기존 규칙은 바꾸지 않는다.
+**비교 기간 — SCH-58.** `H = settings.comparisonPeriodNanos` 하나를 결정 시점부터 keep과 모든 후보에 고정한다(기존 정책 600s 유지). 후보별 `r + max(post)` 연장은 없다. 아래 T는 H다. 전체 사슬이 H를 넘더라도 기존처럼 SLO 증설 후보로 사용할 수 있다. `scheduler_capacity_nodes.go:105-109`의 `TransitionExceedsHorizon`은 노드 사슬에 대한 진단 표시일 뿐 제외 조건이 아니다. 전체 동작 비용 J는 전부 부과하고 H 밖의 대기·서빙 시간은 계산하지 않으며 음수 꼬리는 없다. H는 SLO 시간·용량표 창·동작 timeout과 별개이고 새 설정 revision은 다음 판단부터 적용한다.
 
 **에너지.** keep의 노드 에너지는 `P_before × H`, 전환은 `J_pre + J_post + P_mid × max(0, min(r,H) − t_pre) + P_after × max(0,H − r − t_post)`(t는 평균 시간)다. 전환 operation J는 완결 비용이므로 사슬이 H를 넘어도 전부 포함한다. bridge의 시작 지연은 H 안에서만 이전 baseline으로 센다. 요청 에너지는 [0,min(r,H)]의 retained 처리와 overflow, [r,H]의 최종 정수 weight 처리로 나눈다. H 뒤 serving은 0이다. 보호수요는 실제 λ로 비례 축소하고 backlog drain을 요청 J에 더하지 않는다. 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
@@ -164,10 +164,7 @@ shadow에서 `key`는 후처리 전 v1 탐색 선택해이며, `shadow`는 v2의
 Workload별 `loads`의 `computeInputs`와 `inputsPerSecond`는 장기 관측값을 유지하고,
 `recentComputeInputs`와 `recentInputsPerSecond`는 최근 구간의 계산 도착 수와 요청률이다.
 `decision.capacity.workloads`의 `queued`와 `rate`로 미완료 기여를 포함한 최종 λ를 확인한다.
-최근 관측률이 장기 관측률보다 큰 Workload의 이미 서빙하던 인스턴스를 지우거나 교체하는 노드 계획은
-`DemandIncreasing`으로 빠지고 그 Workload의 분배된 인스턴스는 양수 가중치를 유지한다.
-그 Workload의 확장과 다른 Workload의 축소, 교체와 분배 판단은 계속한다.
-기존 진행 중 목표의 유지 규칙과 장기 관측 창을 쓰는 유휴 제거, 교체 회수는 유지한다.
+모든 후보는 같은 현재 유효 수요로 비교한다. 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다.
 
 **비용.** v1 한 걸음의 평가 수는 노드 계획 수의 쌍곱(k = 2)과 세 쌍곱(k = 3)에 비례하고 요청 수와 무관하며, 평가 하나는 약 5 µs다([7장](capacity-table-evidence.md#7-계획-탐색)). v2 증분 평가 중앙값은 약 0.55 µs(555.7 ns, 할당 0)다. 기본 평가 예산 500,000회·m = 8 조건의 최대 하네스 공간 탐색은 0.42~0.54 s이고, 비용 게이트는 제안서의 ≤ 100 ms(0.2 µs 가정) 대신 v2 탐색 시간 ≤ `controlIntervalNanos`/10(샘플 10 s에서 1 s)이다. 같은 호스트의 v1 기준선 최대 공간은 3.0~3.5 s다. 평가 예산 150,000회는 시간을 반으로 줄이지만 노드 8 b1 모드 2 공간에서 한 판단 차를 2.715%까지 벌리므로 쓰지 않는다. 입력·가격 출발점·예산 조건과 품질 비교는 [§7.8](capacity-table-evidence.md#78-v2-계획기-측정-초안-단계별-게이트-수치)(origin/main 재측정은 §7.8.8)에 있으며 실제 E5 그림자 운영 수치는 아직 없다.
 
@@ -213,7 +210,7 @@ snapshot 인스턴스의 `WorkloadUID`와 Pod owner/routing 참조는 같은 소
 | 판단 기록 | `decision.capacity`는 구성의 판정, 에너지, 사슬과 `search`를 기록한다. `management`의 `capacity-row-built`는 행과 계산시간을 기록한다 |
 | 인스턴스 시간 | `unroutedSince`는 controller 유휴 이력이며 `heldUntil`은 Overload 준비 유지에 사용한다. 이력은 retirement의 SLO·H 판정을 면제하지 않는다 |
 | 최소 이득 | `OperationTrial.energyUncertaintyJoules`와 실제 선택한 `NodeBaseline.wattsUncertainty`를 signed 노출량으로 전파한다. `gainUncertaintyJoules`는 B-only 문턱이다 |
-| 두 박자 | `scaleDownStabilizationNanos`≥0인 정수 ns(기본 300초, 시연 120초, 0이면 지속 대기 없음). `transitionReserveFraction`은 유한한 `[0,1]`(기본 0)이며 NaN/±Inf/범위 밖은 거절한다. 값은 코드의 정책 상수가 아니라 scheduler 설정 기본값·sample/binding에서 제공한다 |
+| 정책 시간 | ControlInterval, ObservationWindow, ComparisonPeriod 세 시간만 사용한다. 전환 예비는 실제 Ready/ACK 공급으로 검사한다 |
 
 설정 decode는 strict하다. API, ConfigMap과 Dashboard는 같은 설정 계약을 사용한다.
 저장 형태는 [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 single-version reader를 따른다.
@@ -270,15 +267,14 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 - **교체 후 최소 체류 — SCH-16/18.** `replacementDwellNanos`는 0 이상 정수 ns(int64 범위)이며 생략/0은 기존 `comparisonPeriodNanos`를 재사용한다. controller가 같은 Node UID·Workload UID의 물리 profile 교체를 전체 prepare→route→stop/drain/remove 완료 시각에 기록하고 `snapshot.replacements`로 전달한다. 그 현재 profile을 다시 교체하려는 해에서 해당 Node만 keep으로 되돌려도 κ/SLO가 충족되면, 완료 뒤 이 기간 미만인 optional energy-only 교체를 `ReplacementDwell:<노드>`로 보류한다. 경계 시각부터 허용하며 기존 최소부하 회수·최소이득 검사도 유지한다. 현재 κ 부족(keep infeasible)이나 실제 고장 복구, route-only 조정·순증설은 막지 않는다. 재시작은 이력을 잃고, UID/profile 변화·미관측/비정상 executor·기존 gap 기준(`MaxObservationAge+ControlInterval`) 초과는 이력을 버려 이력 없으면 허용한다. 이 소규모 controller 이력은 수요 창과 독립하며 교체 선택·완료가 demand history를 reset하지 않는다. 기본 기간은 정책 안정화일 뿐 실측 에너지 본전 회수의 증명이 아니다. 회귀 근거는 `replacement-01`/`full-E5-1-02`의 완료 15–17초 뒤 역방향 선택이며, 실제 손해 J나 요청 오류 감소를 주장하지 않는다.
 - **최소 이득.** 고른 해가 충족하고 노드 하나라도 바꾸며 keep도 충족하면, T 동안 nominal 이득(keep−해)이 선택된 operation과 baseline의 조건부 B 민감도 문턱보다 클 때 해를 쓴다. 같은 immutable reference/trial의 signed 노출량을 먼저 합쳐 공유 근거를 상쇄하고 남은 절댓값을 합산한다. trial 평균은 B/N을 선형 합산하며 baseline watts 민감도는 실제 초를 곱한다. 이득이 문턱과 같거나 작으면 keep과 `TransitionGainWithinUncertainty`를 기록한다. keep infeasible이면 용량/SLO 회복을 유지한다. 문턱은 profile 통계오차와 BEO idle fallback CI 및 시점/센서/모델 오차를 포괄하지 않으며 global95% gain 구간을 뜻하지 않는다. 원시 profile 분산/CI, d의 profile 포함95% 분석과 κ/SLO 계산은 각 추정 계약을 유지한다.
 - **부분 관측 창.** ChillServer가 시작한 뒤 관측 창 하나를 다 관측할 때까지 계획은 인스턴스를 더하기만 한다. 지금 인스턴스를 지우거나(그 노드 계획에 남지 않는 인스턴스) 배치 policy를 바꾸는 노드 계획은 `PartialObservationWindow`로 빠진다. 계획은 지금 인스턴스를 노드의 지금 모드에서만 다시 쓰므로, 인스턴스가 있는 노드의 모드 변경은 그 인스턴스를 지우는 계획으로 같이 빠지고 빈 노드의 모드 변경은 확장으로 남는다. 분배된 인스턴스의 가중치를 0으로 만드는 해는 후보에서 빠지며, keep의 가중치가 분배된 인스턴스를 빼면 지금 가중치를 그대로 둔다. 유휴 제거도 쉰다. 근거: m4 r7 07:00:38에서 재시작 19 s 뒤의 관측한 창은 λ 20.6이었다. 부하는 40 req/s였지만 클라이언트가 중단 동안 물러나 있어 ingress가 9.0 req/s(07:00:00~20)와 23.4 req/s(07:00:20~40)만 받았다. 계획은 그 λ로 분배된 rasp5 q1 하나를 지웠다.
-- **Overload 준비 유지.** keep이 `Overload`인 판단이 준비한 인스턴스는 Ready가 된 때부터 관측 창 하나 동안(`heldUntil`) 지우거나 교체하는 노드 계획에서 빠지고(`HeldAfterOverload`), 유휴 제거도 받지 않는다. 근거: m4 r5의 40 req/s에서 genesis2를 keep `Overload` 판단(04:28:48)이 준비하고 50 s 뒤 지웠다.
 - **계획에서 뺀 노드.** `settings.excludedNodes`(Node 이름 목록, sample은 빈 목록)의 노드는 측정 POOL 노드와 같은 고정 경로를 탄다. capture가 노드 사유 `ExcludedNode`를 붙이고, 그 노드는 keep뿐이며(배치, 교체, 지우기, 전력 변경 없음) 가용 노드 최저 모드 낮춤과 유휴 제거도 받지 않는다. 판단마다 `decision.capacity.plans`에 그 노드의 `ExcludedNode` 계획이 남고 snapshot 노드 `reasons`에도 남는다. 측정 POOL 노드의 인스턴스도 유휴 제거를 받지 않는다.
 
 ## 15. 두 박자 후보 허가와 고정 H — SCH-55~58
 
 2026-10-26 사용자 결정 ④ 1-A/2-A/3-A/4-B의 구현 계약이다.
-controller 상태와 기존 단일 계획기에 연결하며 실제 클러스터 시연은 별도 승인 범위다.
+## 15. 현재 수요 후보 비교와 고정 H — SCH-55~58
 근거는 로컬 `intent/two-tempo-questions-20261026.md`, `intent/checkpoints.md` 1949행,
-`intent/structure-redesign-20261026.md` §5와 `audit-20261024/structure-20261026/Research-K4.md`다
+시간 기반 축소·교체 허가와 관측 TTL·bootstrap 대기 상한을 제거한 현행 계약이다.
 (모두 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/` 아래).
 
 ### 후보 허가와 지속 하강
@@ -286,16 +282,14 @@ controller 상태와 기존 단일 계획기에 연결하며 실제 클러스터
 - 빠른 박자는 별도 제어 루프가 아니라 매 Tick의 후보 제한이다. fast는 keep、분배 변경、안전한 순증설、물리 제거·정지 없이 κ가 증가하는 정책 변경(용량 회복)이다. 현재 Ready 집합의 중간 분배도 매 주기 계속한다. 수용 한계에서는 허용된 후보 사이에서도 기존 전체 충족→최종 충족→leximin→에너지 순서를 그대로 적용한다.
 - slow는 실물 제거·정지、에너지 절감만을 위한 교체(κ 비증가·joules 감소)、추가+제거 혼합 후보이며 하강 안정화가 필요하다. 분류가 겹치면 slow를 우선하여 증설에 제거를 섞어 우회하지 않는다. 느린 박자는 같은 Tick에서 하강 안정화 조건이 열린 범위의 전체 후보를 추가하는 것이다. 후보 허가 뒤 κ/대기/가중치/SLO·leximin·minimumGain·교체 회수 순서는 바꾸지 않는다. 축소/교체에 포함된 모든 Workload가 조건을 만족해야 하며 다른 Workload의 준비 완료나 하강을 기다리는 전역 장벽은 없다.
 - `W = settings.scaleDownStabilizationNanos`, `d_w(t)`는 기존 계획기의 유효 수요(queued·minimum demand 포함)다. 하강 판정 수요는 `D_w(t) = max { d_w(s) | t−W < s ≤ t }`다. 왼쪽 경계 관측은 W가 지난 순간 만료한다. 정상 관측이 W 전체를 덮은 경우에만, 현재 실제 Ready/ACK 가용 공급 `C_w(t)`에 대해 `D_w(t) < C_w(t)`이면 slow 후보에 적격이다. 후보의 전환·최종 κ/SLO도 D를 감당해야 하며, 에너지 비교의 실제 부하 가정과 하강 보호용 D를 기록에서 구분한다. 이는 과거 기준률 아래에 머문 시간을 재는 방식이 아니다. 국소 고점, 선택·확장·축소가 창을 재기준하거나 이력을 지우지 않는다.
-- **Cycle 5 / SCH-55·56:** 최종 에너지 하강 route와 retirement 후보는 `h=scaleDownHeadroomFraction`(유한 `[0,1]`, 기본0)의 `max(현재 유효수요,D)×(1+h)`를 실제 양수 정수 weight/각 κ로 검사한다. weight0은 공급이 아니다. 공유 `reductionDemand`·bridge·reserve·실제 요청 J는 할증하지 않는다. `.25`는 offline 대조값이지 배포 권고가 아니다.
-- **조건부 부족 회복:** Node-local slow 후보를 `requiresRecovery` UID와 함께 전역 조합까지 남긴다. 동일 관측 keep의 해당 UID κ/대기 SLO 미충족과 목표 완전 충족·backlog 보호 때만 해당 UID growing/Allowed timing을 면제한다. 다른 UID 에너지 하강은 독립 판정한다. partial/held·unknown·예약·소유권·Ready/native ACK·old+new peak·bridge·reserve·H는 면제하지 않는다. 중단형 power 변경은 handoff가 아니다. 증명 전 진단 후보는 공개 `eligible=false`이며 target이 아니다. `Observe.Allowed`와 에너지/leximin/payback/dwell은 유지한다.
-- **Cycle 6 / SCH-26·50:** growing의 old 양수 ID 보존은 exact physical ID의 `Terminated` 증거에만 면제한다. NotReady·논리 Stopped·관측 소실·TargetID alias는 면제하지 않으며 dead+live 혼합의 live 공급은 보존한다. slow의 완전충족 recovery timing 예외는 그대로다. Terminated는 κ=0이지 allocation 반환이 아니므로 same-Node stop/drain/remove 의존성을 유지한다. 공급0 우선 후보 탐색·목적함수 변경·standby·주기 튜닝은 추가하지 않는다.
-- `scheduler_tempo.go`의 `SchedulerTempo.Observe`/`Selected`와 `SchedulerDownState`를 이 계약으로 교체한다. `baselineRate`, `previousRate`, `downSince`, `elapsedNanos`, `globalSince` 및 선택 후 재기준을 삭제하고 UID별 시각·유효 수요 관측 이력과 연속 유효 관측 시작만 유지한다. W 밖 표본은 만료한다. 공백·시각 역행·설정 변경·UID 교체·controller 재시작은 영향 범위 이력을 비우며 새 W를 채우기 전에는 보류한다. W=0이면 현재 유효 수요만 사용하고 기간 대기는 없지만 수요<공급 판정은 남긴다. 불완전 관측 창·`DemandIncreasing`·최소 인스턴스 하나 등 기존 보호도 유지한다. 유휴 제거·배치/자원 축소·교체 회수 후처리도 같은 판정으로 탐색 뒤 우회하지 않는다.
-- 표본 시각은 기존 `SchedulerTempo.Observe`의 `snapshot.At`를 재사용하고 정상 Tick마다 기존 `w.rate` 하나를 저장한다. 유효 수요는 기존 계획기의 `max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이`에 `minimumDemand` 하한을 적용한 값이며 payback용 최소 구간률과 다르다. 기존 gap 판정(시각 역행 또는 Tick 간격>`MaxObservationAge+ControlInterval`)과 정상 관측 판정(snapshot 사유 없음 및 기존 최소 관측 길이 충족)을 재사용한다. 잘못된 관측을 0 수요 표본으로 넣거나 실패 기간을 연속 유효 시간에 포함하지 않는다.
-- 실행 중 owner 예약과 frozen target은 박자와 무관하게 보존한다. 이미 허가된 DAG의 후속 drain/remove는 그 작업의 의무이며 매 Tick 새 축소로 취급하지 않는다. 중간 배분은 느린 판단을 기다리지 않고 기존 실제 Ready/ACK·stop 제외·원자적 UID별 route 계약으로 진행한다.
-- Workload UID가 없는 빈 Node의 새 Fixed 절전도 동일 D 벡터를 사용한다. 모든 자동제어 Workload에 완전한 유효 창과 `D_w≤C_w`가 있고 하나 이상에 `D_w<C_w`가 있어야 한다. 합계 상쇄·직전 tick 증가 검사·별도 `globalSince` timer는 없다. UID 집합 변경 시 빈 Node 판정의 창 완전성도 다시 확보한다. 제어 Workload가 없으면 하강 근거가 없어 새 절전은 보류한다. 이미 실행 중인 Fixed 작업은 계속한다. `EvaluateScheduler → schedulerCommonNodes → changeNodes`와 target 없는 `Keep.Actions`에도 동일 판정을 적용한다.
-
-고정 H의 구현 연결점은 `scheduler_capacity.go:524-543`의 `p.period` 확장 규칙이다.
-이를 폐기하고 `p.period = settings.comparisonPeriodNanos`로 고정한다.
+- 모든 Tick에서 분배·증설·축소·교체 후보를 같은 물리 규칙으로 비교한다. v1/v2 모두 실제 용량·대기·SLO·backlog·회복 검사를 유지한다.
+- 유입 증가만으로 축소·교체를 금지하지 않는다. 현재 수요를 감당하는 후보 사이에서 기존 leximin·에너지·minimumGain·교체 회수 순서를 유지한다.
+- 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand도 이 현재 수요다. 별도 이력 최대값이나 지속 시간 조건은 없다.
+- 최종 에너지 하강 route와 retirement 후보는 현재 유효 수요×(1+h)를 양수 정수 weight/각 κ로 검사한다. bridge/reserve·실제 요청 J는 할증하지 않는다.
+- 실제 부족 회복, 부분 관측의 실제 가용 수요, unknown·예약·소유권·Ready/native ACK·old+new peak·bridge·reserve·H 검사를 유지한다. 중단형 power 변경은 handoff가 아니다.
+- Terminated는 κ=0이며 allocation 반환 증거가 아니다. same-Node stop/drain/remove 의존성을 유지한다.
+- 실행 중 owner 예약과 frozen target을 보존한다. 이미 허가된 DAG의 후속 drain/remove는 계속하며 중간 배분은 실제 Ready/ACK·stop 제외·원자적 UID별 route 계약을 따른다.
+- 빈 Node의 새 Fixed 절전도 같은 현재 수요·SLO와 gain/minimumGain/payback으로 비교한다. 별도 시간 허가나 이력 상태는 없다.
 후보 조합별로 `공통 route 시간 + 선택된 노드의 최장 post 사슬 시간 ≤ H`를 확인한다.
 개별 노드 사슬이 H 이하여도 조합에서 넘으면 `TransitionExceedsHorizon`으로 제외하며,
 정확히 H인 경계는 허용한다. keep 비용·교체 payback·minimumGain과

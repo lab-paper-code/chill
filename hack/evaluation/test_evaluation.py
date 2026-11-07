@@ -331,8 +331,6 @@ class EvaluationTests(unittest.TestCase):
             objects['pods'][0]['status']['containerStatuses'] = [{'restartCount': 2, 'lastState': {'terminated': {'reason': 'OOMKilled'}}}]
             objects['jobs'] = [{'metadata': {'name': 'load-failed'}, 'status': {'conditions': [{'type': 'Failed', 'status': 'True'}]}}]
             def api(config, path):
-                if path == '/api/v1/scheduler/settings':
-                    return {'scaleDownStabilizationNanos': 60_000_000_000}
                 if path == '/api/v1/scheduler':
                     return {'state': state}
                 return {'nodes': [{'node': {'name': 'meter'}, 'meterComplete': False, 'gapCount': 2, 'maximumSampleGapSeconds': 4}]}
@@ -357,7 +355,7 @@ class EvaluationTests(unittest.TestCase):
             self.assertGreaterEqual(row['harness']['vmHWMKiB'], row['harness']['vmRSSKiB'])
             alerts = [json.loads(line) for line in watcher.alerts.read_text().splitlines()]
             self.assertEqual({alert['key'][0] for alert in alerts},
-                             {'held', 'actionOnRisingLoad', 'action', 'executor', 'node', 'pod', 'loadJob'})
+                             {'actionOnRisingLoad', 'action', 'executor', 'node', 'pod', 'loadJob'})
             self.assertTrue(any(alert['key'][2] == 'reboot' for alert in alerts if alert['key'][0] == 'node'))
             self.assertTrue(all(call.args[0].startswith('EVALUATION_ALERT ') for call in log.call_args_list))
 

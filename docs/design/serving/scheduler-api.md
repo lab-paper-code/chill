@@ -16,7 +16,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 
 | 구성 필드 | 의미와 실제 근거 |
 |---|---|
-| `settings` | ns duration의 observationWindowNanos/controlIntervalNanos/comparisonPeriodNanos/maxObservationAgeNanos, 인스턴스 상한 maxReplicas/maxInstances, 메모리 안전 servingMemoryBytes, controls(placement/resources/replicas/routing/batching/power/membership). CPU 할당 상한 maxCPUs를 포함해 미선언 입력은 strict 거절한다. |
+| `settings` | ns duration의 observationWindowNanos/controlIntervalNanos/comparisonPeriodNanos, 인스턴스 상한 maxReplicas/maxInstances, 메모리 안전 servingMemoryBytes, controls(placement/resources/replicas/routing/batching/power/membership). CPU 할당 상한 maxCPUs를 포함해 미선언 입력은 strict 거절한다. |
 | `settings.servingMemoryBytes` | 서빙 Pod의 memory request와 limit은 profile의 측정 최대 메모리에 이 값을 더한 것이다. 절반(최대 64 MiB)이 firstfloor `maxQueueBytes`이고, Go의 기본 GOGC 100에서 heap이 대기 요청 바이트의 두 배까지 자라는 것을 나머지 절반이 받는다. 2 미만이면 서빙 준비가 `PreparationUnavailable`이다. sample의 128 MiB는 rasp5 q1(측정 198 MiB)이 포아송 40 req/s에서 대기 요청으로 OOMKilled된 m4 r2 사건의 대기열 64 MiB를 담는다 |
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `29`는 m4 r3 포아송 40 req/s 포화에서 잰 m(종단 경과 − (`nativeElapsedMS` − ingress))의 p95 29.2 ms다([용량표 계획기 5장](analytic-planner.md#5-완료-여유-규칙)). E1의 p99 138.23 ms는 요청마다 걸리던 TokenReview 지연이 대부분이었고, 인증 결과 재사용(c829518)과 authz singleflight가 그 지연을 없앴다 |
 | `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 용량표 행의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). sample은 60 s, 20, 19, 1,000이다([용량표 계획기](analytic-planner.md#2-용량표)) |

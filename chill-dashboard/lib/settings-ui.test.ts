@@ -96,7 +96,7 @@ test("operating settings expose service automation, minimum demand and excluded 
 })
 
 test("operating range table edits accumulate a precise draft before review",()=>{
-  const runner=hooks(),settings={controls:{placement:true},observationWindowNanos:1000000000n,controlIntervalNanos:1000000000n,comparisonPeriodNanos:1000000000n,replacementDwellNanos:0n,scaleDownStabilizationNanos:0n,transitionReserveFraction:0,scaleDownHeadroomFraction:0,maxObservationAgeNanos:1000000000n}
+  const runner=hooks(),settings={controls:{placement:true},observationWindowNanos:1000000000n,controlIntervalNanos:1000000000n,comparisonPeriodNanos:1000000000n,transitionReserveFraction:0,scaleDownHeadroomFraction:0}
   const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"cycle"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}})
   let tree=elements(runner.render(SchedulerSettingsPage))
   assert.equal(tree.find(element=>element.type==="tabs")?.props.active,"configuration")
@@ -438,22 +438,6 @@ test("settings detect added minimum demand before review and changes after confi
   }
 })
 
-test("bootstrap wait editor preserves nanoseconds and enforces the server zero-to-hour boundary",()=>{
-  const runner=hooks(),settings={controls:{},bootstrapCapacityWaitNanos:600000000000n}
-  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"cycle"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined})}})
-  const table=elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
-  const field=(table.props.data as {key:string}[]).find(field=>field.key==="bootstrapCapacityWaitNanos")!
-  assert.ok(field)
-  const editor=(table.props.columns as {key:string;value:(row:unknown)=>Tree}[]).find(column=>column.key==="edit")!.value(field)
-  const save=editor.props.save as (value:string)=>void
-  for(const text of ["-1","3600000.000001","Infinity"])assert.throws(()=>save(text))
-  for(const [text,expected] of [["0","0ms"],["0.000001","0.000001ms"],["3600000","60분"]]){
-    save(text)
-    const updated=elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
-    const value=(updated.props.columns as {key:string;value:(row:unknown)=>Tree}[]).find(column=>column.key==="value")!.value(field)
-    assert.equal((value.props.children as unknown[])[0],expected)
-  }
-})
 
 test("minimum demand removal is distinct from an explicit zero",()=>{
   const runner=hooks(),saved:unknown[]=[],settings={controls:{},minimumDemand:{known:0,retired:20}}

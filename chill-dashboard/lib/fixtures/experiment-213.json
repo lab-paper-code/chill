@@ -2616,9 +2616,6 @@
         "observationWindowNanos": 60000000000,
         "controlIntervalNanos": 10000000000,
         "comparisonPeriodNanos": 600000000000,
-        "maxObservationAgeNanos": 5000000000,
-        "bootstrapCapacityWaitNanos": 600000000000,
-        "scaleDownStabilizationNanos": 300000000000,
         "transitionReserveFraction": 0,
         "maxReplicas": 8,
         "maxInstances": 16,
@@ -2661,9 +2658,6 @@
           "observationWindowNanos": 60000000000,
           "controlIntervalNanos": 10000000000,
           "comparisonPeriodNanos": 600000000000,
-          "maxObservationAgeNanos": 5000000000,
-          "bootstrapCapacityWaitNanos": 600000000000,
-          "scaleDownStabilizationNanos": 300000000000,
           "transitionReserveFraction": 0,
           "maxReplicas": 8,
           "maxInstances": 16,
@@ -2924,15 +2918,7 @@
             "rows": [
               "7d1f00ea4e0aa5acd0cfc629",
               "ad1b5390f78f7f167de92593"
-            ],
-            "scaleDown": {
-              "rate": 40,
-              "windowMax": 40,
-              "windowNanos": 300000000000,
-              "supply": 140.76285585971843,
-              "allowed": true,
-              "reason": "ScaleDownStabilized"
-            }
+            ]
           },
           {
             "uid": "5668e113-92c0-4d71-9f79-f67ffe45f340",
@@ -2951,15 +2937,7 @@
             },
             "rows": [
               "e094f1d21c6ac40a8367f239"
-            ],
-            "scaleDown": {
-              "rate": 0.3,
-              "windowMax": 0.3,
-              "windowNanos": 300000000000,
-              "supply": 0.372262300732782,
-              "allowed": true,
-              "reason": "ScaleDownStabilized"
-            }
+            ]
           },
           {
             "uid": "5833a580-f4e7-473a-97ad-7129db6834c2",
@@ -2982,15 +2960,7 @@
               "a929287c6b38b25203619bbc",
               "5bf559ad18ae5ad5ae113c46",
               "e9a66d905d62a3b06661fcc3"
-            ],
-            "scaleDown": {
-              "rate": 20,
-              "windowMax": 20,
-              "windowNanos": 300000000000,
-              "supply": 26.322717760226524,
-              "allowed": true,
-              "reason": "ScaleDownStabilized"
-            }
+            ]
           }
         ],
         "plans": [
@@ -3022,7 +2992,6 @@
             },
             "key": "chill-system/jetson-nano-903-smolvlm-int8-q1-maxn/253eb4e8-b19c-457b-8d6c-a6ac27798500/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3045,7 +3014,6 @@
             },
             "key": "chill-system/jetson-nano-903-smolvlm-int8-q1-maxn/253eb4e8-b19c-457b-8d6c-a6ac27798500/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3068,7 +3036,6 @@
             },
             "key": "chill-system/jetson-nano-022-smolvlm-int8-q3-maxn/f9807879-ef36-473d-bd56-63b11490f330/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3091,7 +3058,6 @@
             },
             "key": "chill-system/jetson-nano-022-smolvlm-int8-q3-maxn/f9807879-ef36-473d-bd56-63b11490f330/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3114,7 +3080,6 @@
             },
             "key": "chill-system/jetson-nano-021-smolvlm-int8-q2-maxn/2271b65e-e7c1-4c5f-900d-e32410077f03/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3137,7 +3102,6 @@
             },
             "key": "chill-system/jetson-nano-021-smolvlm-int8-q2-maxn/2271b65e-e7c1-4c5f-900d-e32410077f03/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3160,7 +3124,6 @@
             },
             "key": "chill-system/jetson-nano-020-plc-cpu-q3-maxn/cbcd7c60-3973-4d35-9526-383e8f5357be/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3183,7 +3146,6 @@
             },
             "key": "chill-system/jetson-nano-020-plc-cpu-q3-maxn/cbcd7c60-3973-4d35-9526-383e8f5357be/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3206,7 +3168,6 @@
             },
             "key": "chill-system/jetson-nano-020-plc-cpu-q3-maxn/cbcd7c60-3973-4d35-9526-383e8f5357be/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3229,7 +3190,6 @@
             },
             "key": "chill-system/jetson-nano-020-plc-cpu-q3-maxn/cbcd7c60-3973-4d35-9526-383e8f5357be/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3252,7 +3212,6 @@
             },
             "key": "chill-system/jetson-nano-020-plc-cpu-q3-maxn/cbcd7c60-3973-4d35-9526-383e8f5357be/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3275,7 +3234,6 @@
             },
             "key": "chill-system/jetson-nano-019-plc-cpu-q2-maxn/10f7a9d6-4d52-4d44-aed8-3770bb56e469/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3298,7 +3256,6 @@
             },
             "key": "chill-system/jetson-nano-019-plc-cpu-q2-maxn/10f7a9d6-4d52-4d44-aed8-3770bb56e469/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3321,7 +3278,6 @@
             },
             "key": "chill-system/jetson-nano-019-plc-cpu-q2-maxn/10f7a9d6-4d52-4d44-aed8-3770bb56e469/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3344,7 +3300,6 @@
             },
             "key": "chill-system/jetson-nano-019-plc-cpu-q2-maxn/10f7a9d6-4d52-4d44-aed8-3770bb56e469/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3367,7 +3322,6 @@
             },
             "key": "chill-system/jetson-nano-019-plc-cpu-q2-maxn/10f7a9d6-4d52-4d44-aed8-3770bb56e469/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3390,7 +3344,6 @@
             },
             "key": "chill-system/jetson-nano-019-plc-cpu-q2-maxn/10f7a9d6-4d52-4d44-aed8-3770bb56e469/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3413,7 +3366,6 @@
             },
             "key": "chill-system/jetson-nano-013-mnv2-cuda-q1-maxn/16a20241-f540-470c-845b-4f771091c261/b1/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3436,7 +3388,6 @@
             },
             "key": "chill-system/jetson-nano-013-mnv2-cuda-q1-maxn/16a20241-f540-470c-845b-4f771091c261/b16/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3459,7 +3410,6 @@
             },
             "key": "chill-system/jetson-nano-013-mnv2-cuda-q1-maxn/16a20241-f540-470c-845b-4f771091c261/b2/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3482,7 +3432,6 @@
             },
             "key": "chill-system/jetson-nano-013-mnv2-cuda-q1-maxn/16a20241-f540-470c-845b-4f771091c261/b4/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3505,7 +3454,6 @@
             },
             "key": "chill-system/jetson-nano-013-mnv2-cuda-q1-maxn/16a20241-f540-470c-845b-4f771091c261/b8/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3528,7 +3476,6 @@
             },
             "key": "chill-system/jetson-nano-012-plc-cpu-q1-maxn/12dad1f0-b2d2-49f7-a682-262c19e636bc/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3551,7 +3498,6 @@
             },
             "key": "chill-system/jetson-nano-012-plc-cpu-q1-maxn/12dad1f0-b2d2-49f7-a682-262c19e636bc/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3574,7 +3520,6 @@
             },
             "key": "chill-system/jetson-nano-012-plc-cpu-q1-maxn/12dad1f0-b2d2-49f7-a682-262c19e636bc/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3597,7 +3542,6 @@
             },
             "key": "chill-system/jetson-nano-012-plc-cpu-q1-maxn/12dad1f0-b2d2-49f7-a682-262c19e636bc/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3620,7 +3564,6 @@
             },
             "key": "chill-system/jetson-nano-012-plc-cpu-q1-maxn/12dad1f0-b2d2-49f7-a682-262c19e636bc/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3643,7 +3586,6 @@
             },
             "key": "chill-system/jetson-nano-012-plc-cpu-q1-maxn/12dad1f0-b2d2-49f7-a682-262c19e636bc/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3666,7 +3608,6 @@
             },
             "key": "chill-system/jetson-nano-011-plc-cuda-q1-maxn/cef09b33-b9f1-4792-8c84-c1f1914935e1/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3689,7 +3630,6 @@
             },
             "key": "chill-system/jetson-nano-011-plc-cuda-q1-maxn/cef09b33-b9f1-4792-8c84-c1f1914935e1/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3712,7 +3652,6 @@
             },
             "key": "chill-system/jetson-nano-011-plc-cuda-q1-maxn/cef09b33-b9f1-4792-8c84-c1f1914935e1/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3735,7 +3674,6 @@
             },
             "key": "chill-system/jetson-nano-011-plc-cuda-q1-maxn/cef09b33-b9f1-4792-8c84-c1f1914935e1/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3758,7 +3696,6 @@
             },
             "key": "chill-system/jetson-nano-011-plc-cuda-q1-maxn/cef09b33-b9f1-4792-8c84-c1f1914935e1/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3781,7 +3718,6 @@
             },
             "key": "chill-system/jetson-nano-011-plc-cuda-q1-maxn/cef09b33-b9f1-4792-8c84-c1f1914935e1/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3804,7 +3740,6 @@
             },
             "key": "chill-system/jetson-nano-006-mnv2-cpu-q1-maxn/3baf5b7f-d2ea-4322-9199-16a885e038c4/b1/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -3827,7 +3762,6 @@
             },
             "key": "chill-system/jetson-nano-006-mnv2-cpu-q1-maxn/3baf5b7f-d2ea-4322-9199-16a885e038c4/b2/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -4196,7 +4130,6 @@
             "key": "chill-system/rasp5-006-mnv2-cpu-q1/f45d7ba7-eee4-45c7-ac32-e35616e6671c/b2/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": false,
             "reason": "DemandIncreasing",
-            "tempo": "slow",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -4648,7 +4581,6 @@
             "key": "chill-system/orangepi-010-smolvlm-int8-q4/78444b34-7a84-4bcb-9f9a-ac2e017c00a1/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": false,
             "reason": "DemandIncreasing",
-            "tempo": "slow",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.372262300732782,
@@ -4824,7 +4756,6 @@
             "key": "chill-system/lattepanda-011-plc-cpu-q1/2669500c-737f-48ea-aa83-82bbe46605cf/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": false,
             "reason": "DemandIncreasing",
-            "tempo": "slow",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 129.15364277487592,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -4847,7 +4778,6 @@
             "key": "chill-system/lattepanda-011-plc-cpu-q1/2669500c-737f-48ea-aa83-82bbe46605cf/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": false,
             "reason": "DemandIncreasing",
-            "tempo": "slow",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 128.05284078403878,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -4870,7 +4800,6 @@
             "key": "chill-system/lattepanda-011-plc-cpu-q1/2669500c-737f-48ea-aa83-82bbe46605cf/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": false,
             "reason": "DemandIncreasing",
-            "tempo": "slow",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 128.9989502352094,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -4893,7 +4822,6 @@
             "key": "chill-system/lattepanda-011-plc-cpu-q1/2669500c-737f-48ea-aa83-82bbe46605cf/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": false,
             "reason": "DemandIncreasing",
-            "tempo": "slow",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 128.43829806555812,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -4916,7 +4844,6 @@
             "key": "chill-system/lattepanda-011-plc-cpu-q1/2669500c-737f-48ea-aa83-82bbe46605cf/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": false,
             "reason": "DemandIncreasing",
-            "tempo": "slow",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 128.5502654025327,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5044,7 +4971,6 @@
             "key": "chill-system/u2-x-15w6c-s-beo-195/deb66c88-c6cb-4b7b-a5e4-5ad44b6e4b0d/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": false,
             "reason": "TransitionExceedsHorizon",
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5223,7 +5149,6 @@
             },
             "key": "chill-system/jetsonx-010-smolvlm-int8-q2-15w6c/15ce272a-20f8-4472-911c-5d8e6a4f8895/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5246,7 +5171,6 @@
             },
             "key": "chill-system/jetsonx-010-smolvlm-int8-q2-15w6c/15ce272a-20f8-4472-911c-5d8e6a4f8895/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5743,7 +5667,6 @@
             },
             "key": "chill-system/genesis3-027-mnv2-cpu-q4/b810fde6-31da-4e6e-b491-90f6da764d60/b1/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5766,7 +5689,6 @@
             },
             "key": "chill-system/genesis3-027-mnv2-cpu-q4/b810fde6-31da-4e6e-b491-90f6da764d60/b2/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5789,7 +5711,6 @@
             },
             "key": "chill-system/genesis3-027-mnv2-cpu-q4/b810fde6-31da-4e6e-b491-90f6da764d60/b4/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5812,7 +5733,6 @@
             },
             "key": "chill-system/genesis3-026-smolvlm-int8-q8/79cac2b5-8d76-42be-8cb7-c86ee057d27c/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.7869059861278018,
@@ -5835,7 +5755,6 @@
             },
             "key": "chill-system/genesis3-026-smolvlm-int8-q8/79cac2b5-8d76-42be-8cb7-c86ee057d27c/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.8142402101073914,
@@ -5858,7 +5777,6 @@
             },
             "key": "chill-system/genesis3-026-smolvlm-int8-q8/79cac2b5-8d76-42be-8cb7-c86ee057d27c/b4/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.818604550967757,
@@ -5881,7 +5799,6 @@
             },
             "key": "chill-system/genesis3-025-smolvlm-int8-q2/54c1c56a-6237-4749-9d81-a157e1827eab/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.4427491935798405,
@@ -5904,7 +5821,6 @@
             },
             "key": "chill-system/genesis3-025-smolvlm-int8-q2/54c1c56a-6237-4749-9d81-a157e1827eab/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.44382144714116406,
@@ -5927,7 +5843,6 @@
             },
             "key": "chill-system/genesis3-024-smolvlm-int8-q1/c8eb06cb-be3e-41e7-9086-9f0155f00e41/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.1822712076572927,
@@ -5950,7 +5865,6 @@
             },
             "key": "chill-system/genesis3-024-smolvlm-int8-q1/c8eb06cb-be3e-41e7-9086-9f0155f00e41/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.1822712076572927,
@@ -5973,7 +5887,6 @@
             },
             "key": "chill-system/genesis3-023-plc-cpu-q4/d676eae4-9de7-423b-a619-a7fce5600af2/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -5996,7 +5909,6 @@
             },
             "key": "chill-system/genesis3-023-plc-cpu-q4/d676eae4-9de7-423b-a619-a7fce5600af2/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6019,7 +5931,6 @@
             },
             "key": "chill-system/genesis3-023-plc-cpu-q4/d676eae4-9de7-423b-a619-a7fce5600af2/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6042,7 +5953,6 @@
             },
             "key": "chill-system/genesis3-023-plc-cpu-q4/d676eae4-9de7-423b-a619-a7fce5600af2/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6065,7 +5975,6 @@
             },
             "key": "chill-system/genesis3-023-plc-cpu-q4/d676eae4-9de7-423b-a619-a7fce5600af2/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6088,7 +5997,6 @@
             },
             "key": "chill-system/genesis3-023-plc-cpu-q4/d676eae4-9de7-423b-a619-a7fce5600af2/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6111,7 +6019,6 @@
             },
             "key": "chill-system/genesis3-022-plc-cpu-q2/82d20914-3c78-42e3-831c-f2ef1a5deea8/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 9.67193277368444,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6134,7 +6041,6 @@
             },
             "key": "chill-system/genesis3-022-plc-cpu-q2/82d20914-3c78-42e3-831c-f2ef1a5deea8/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6157,7 +6063,6 @@
             },
             "key": "chill-system/genesis3-022-plc-cpu-q2/82d20914-3c78-42e3-831c-f2ef1a5deea8/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6180,7 +6085,6 @@
             },
             "key": "chill-system/genesis3-022-plc-cpu-q2/82d20914-3c78-42e3-831c-f2ef1a5deea8/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6203,7 +6107,6 @@
             },
             "key": "chill-system/genesis3-022-plc-cpu-q2/82d20914-3c78-42e3-831c-f2ef1a5deea8/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6226,7 +6129,6 @@
             },
             "key": "chill-system/genesis3-022-plc-cpu-q2/82d20914-3c78-42e3-831c-f2ef1a5deea8/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6249,7 +6151,6 @@
             },
             "key": "chill-system/genesis3-015-mnv2-cuda-q1/f39c1f24-61a4-4713-b5b7-0787b3d51840/b1/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6272,7 +6173,6 @@
             },
             "key": "chill-system/genesis3-015-mnv2-cuda-q1/f39c1f24-61a4-4713-b5b7-0787b3d51840/b2/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6295,7 +6195,6 @@
             },
             "key": "chill-system/genesis3-014-plc-cpu-q1/98ea7a4d-069b-4cbf-a796-79e78aaa631a/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 12.23557800606163,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6318,7 +6217,6 @@
             },
             "key": "chill-system/genesis3-014-plc-cpu-q1/98ea7a4d-069b-4cbf-a796-79e78aaa631a/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 12.237138180443555,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6341,7 +6239,6 @@
             },
             "key": "chill-system/genesis3-014-plc-cpu-q1/98ea7a4d-069b-4cbf-a796-79e78aaa631a/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 12.565170002068069,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6364,7 +6261,6 @@
             },
             "key": "chill-system/genesis3-014-plc-cpu-q1/98ea7a4d-069b-4cbf-a796-79e78aaa631a/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 12.26556804107649,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6387,7 +6283,6 @@
             },
             "key": "chill-system/genesis3-014-plc-cpu-q1/98ea7a4d-069b-4cbf-a796-79e78aaa631a/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 12.07917226994001,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6410,7 +6305,6 @@
             },
             "key": "chill-system/genesis3-014-plc-cpu-q1/98ea7a4d-069b-4cbf-a796-79e78aaa631a/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 12.196890024303258,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6433,7 +6327,6 @@
             },
             "key": "chill-system/genesis3-013-plc-cuda-q1/28f1c980-ca91-4644-9619-cf11b39cd199/b1/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 70.94462491720438,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6456,7 +6349,6 @@
             },
             "key": "chill-system/genesis3-013-plc-cuda-q1/28f1c980-ca91-4644-9619-cf11b39cd199/b16/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 62.46352455855205,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6479,7 +6371,6 @@
             },
             "key": "chill-system/genesis3-013-plc-cuda-q1/28f1c980-ca91-4644-9619-cf11b39cd199/b2/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 62.865014250321025,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6502,7 +6393,6 @@
             },
             "key": "chill-system/genesis3-013-plc-cuda-q1/28f1c980-ca91-4644-9619-cf11b39cd199/b32/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 63.37568235534708,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6525,7 +6415,6 @@
             },
             "key": "chill-system/genesis3-013-plc-cuda-q1/28f1c980-ca91-4644-9619-cf11b39cd199/b4/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 63.28674155491668,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6548,7 +6437,6 @@
             },
             "key": "chill-system/genesis3-013-plc-cuda-q1/28f1c980-ca91-4644-9619-cf11b39cd199/b8/3e085c39-161a-4ee0-b716-f25db0aa154f",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 63.00632658766637,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6571,7 +6459,6 @@
             },
             "key": "chill-system/genesis3-012-smolvlm-fp32-q4/10d2d05d-f251-4ec5-986c-4af9656db358/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6594,7 +6481,6 @@
             },
             "key": "chill-system/genesis3-012-smolvlm-fp32-q4/10d2d05d-f251-4ec5-986c-4af9656db358/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6617,7 +6503,6 @@
             },
             "key": "chill-system/genesis3-011-smolvlm-int8-q4/36180073-c054-4c1b-a7f5-9620fe6fff38/b1/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.7240367603573428,
@@ -6640,7 +6525,6 @@
             },
             "key": "chill-system/genesis3-011-smolvlm-int8-q4/36180073-c054-4c1b-a7f5-9620fe6fff38/b2/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.7490017781011157,
@@ -6663,7 +6547,6 @@
             },
             "key": "chill-system/genesis3-011-smolvlm-int8-q4/36180073-c054-4c1b-a7f5-9620fe6fff38/b4/5668e113-92c0-4d71-9f79-f67ffe45f340",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0.7528377427837176,
@@ -6686,7 +6569,6 @@
             },
             "key": "chill-system/genesis3-008-mnv2-cpu-q2/25a10c6c-120d-457e-b734-c76c7ddc7e69/b1/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6709,7 +6591,6 @@
             },
             "key": "chill-system/genesis3-008-mnv2-cpu-q2/25a10c6c-120d-457e-b734-c76c7ddc7e69/b2/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6732,7 +6613,6 @@
             },
             "key": "chill-system/genesis3-006-mnv2-cpu-q1/7f8f1400-67d9-4242-8dce-9b5638afb133/b1/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,
@@ -6755,7 +6635,6 @@
             },
             "key": "chill-system/genesis3-006-mnv2-cpu-q1/7f8f1400-67d9-4242-8dce-9b5638afb133/b2/5833a580-f4e7-473a-97ad-7129db6834c2",
             "eligible": true,
-            "tempo": "fast",
             "kappa": {
               "3e085c39-161a-4ee0-b716-f25db0aa154f": 0,
               "5668e113-92c0-4d71-9f79-f67ffe45f340": 0,

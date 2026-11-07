@@ -136,11 +136,11 @@
   Workload 삭제도 삭제 시작 전에 Workload UID와 소유 실물의 범위를 같은 예약 경로로 획득하고, 자식 종료·정리와 finalizer 해제 이후 정확한 Workload UID의 실제 삭제 확인까지 유지한다.
 - `SCH-52` 계획기는 전역 하나를 유지하며 진행 중 작업이 예약한 범위만 고정하고, 그 밖의 Node·Workload·실물에 대해서는 현재 부하와 상태로 후보 평가·확장 판단·실행 및 준비된 용량의 배분을 계속한다. 모든 작업의 완료를 기다리는 전체 완료 장벽이나 `InProgressTarget`을 근거로 한 전역 판단 대기를 두지 않는다. 예약을 침범하거나 예약 대상의 상태 변경을 전제하는 후보는 허가하지 않으며, 기존 자원·SLO 제약은 유지한다.
 - `SCH-53` 과부하 후보는 기존 전체 충족·최종 충족 우선순위를 유지한 뒤, 각 Workload의 최종·전환 초과량 중 큰 값을 나쁜 순으로 정렬한 목록을 사전식 최소화한다. 최악 값이 같으면 다음 값을 비교하고 모든 값이 같은 경우에만 에너지를 비교한다. 용량 없는 Workload의 무한 초과량이 다른 Workload의 개선을 가리지 않아야 한다.
-- `SCH-54` 실제 인스턴스가 없는 출발에서는 선택 가능한 모든 후보의 κ 계산이 끝나거나 설정된 대기 상한에 도달하기 전까지 목표 확정·예약을 보류한다. 첫 빈 출발 판단부터 잰 대기 시작·상한·대기 후보를 결정에 기록한다. 상한은 범위 검증된 scheduler 설정이며 결정 설정에 고정한다. 실물이 있거나 작업 예약이 있는 정상 운전에는 이 출발 대기를 적용하지 않는다.
-- `SCH-55` 분배와 증설은 매 제어 주기에 판단하고, 축소와 에너지 목적 교체는 같은 하강 안정화 기간이 경과한 뒤에만 후보로 허용한다. 준비된 부분집합 배분과 예약 밖 확장은 계속하며, 기존 예약·자원·SLO·실제 Ready/ACK 제약을 면제하지 않는다.
-  Cycle 5: `scaleDownHeadroomFraction`은 유한 [0,1], 기본0이며 최종 하강 route·idle 후처리에만 `max(현재 유효수요,WindowMax)×(1+h)`를 요구한다. 실제 양수 정수 weight/각 κ를 검사하고 weight0을 세지 않는다. bridge/reserve 수요·실제 요청 J는 할증하지 않는다. 동일 관측 keep의 해당 UID κ/대기 SLO 미충족+목표 완전 충족·backlog 처리 때만 그 UID timing 예외를 인정한다. 타 UID 하강 편승 금지; partial/held/unknown·예약·소유권·Ready/정확 ACK·peak·bridge·reserve 불변. 최종 증명 전 실행 가능한 후보/target으로 공개하지 않는다. 에너지/leximin/payback/dwell은 유지한다.
-- `SCH-56` 하강 판정은 Kubernetes HPA scale-down stabilization window 방식으로 통일한다. 기존 `scaleDownStabilizationNanos`(기본 300초, 시연 120초)의 지난 기간에 관측된 Workload별 유효 수요(최소 수요 포함)의 최대값을 현재 하강 판정 수요로 사용하며, 그 값이 현재 실제 가용 공급 κ보다 엄격히 작을 때만 축소·에너지 교체에 적격이다. 축소 후보도 이 수요를 감당해야 한다. 빈 Node 새 절전에는 동일한 Workload별 판정을 적용하여 모든 제어 Workload가 비증가(최대 수요≤공급), 하나 이상이 엄격한 여유(최대 수요<공급)를 가져야 한다. 합계 상쇄, 기준률 미만 유지 timer와 별도 전역 timer를 쓰지 않는다. 전체 기간의 유효 관측이 없으면 보류하고, 공백·재시작·설정 변경·UID 교체 뒤 새 관측 기간을 채운다. 0은 추가 기간 대기만 없애며 현재 수요·공급 검사는 유지한다. 기간·관측 범위·최대 수요·공급·허가/보류 이유를 결정에 기록하고 설정을 Run의 `binding.schedulerSettings`에 고정한다.
-  회복 예외는 `Observe.Allowed`의 역사 창 의미를 바꾸지 않는다. h0/1·NaN/Inf/범위 밖·W0·공백/재시작·weight0/반올림·idle·양수 reserve 경계를 검사한다. `.25`는 offline 대조값이며 burst/Node 상실 보장이 아니다. API·ConfigMap·Dashboard·sample·결정·Run binding은 동일 설정을 보존한다.
+- `SCH-54` 빈 출발의 선택 가능한 capacity row가 missing/pending이면 Pending과 원인을 기록한다. 경과 시간 fallback은 없으며 실제 Built/rejected 근거로 평가한다.
+- `SCH-55` 분배·증설·축소·교체 후보를 매 제어 주기에 같은 현재 유효 수요와 물리 규칙으로 비교한다. 기존 예약·자원·SLO·실제 Ready/ACK 제약을 유지한다.
+  최종 하강 route·idle 후처리는 현재 유효 수요×(1+h)를 실제 양수 정수 weight/각 κ로 검사한다. bridge/reserve 수요·실제 요청 J는 할증하지 않는다.
+- `SCH-56` 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand는 같은 현재 수요이며 별도 이력 최대값·증가 추세·지속 시간 허가를 두지 않는다. 빈 Node 절전도 동일 수요와 gain/minimumGain/payback을 적용한다.
+  정책 시간은 ControlInterval, ObservationWindow, ComparisonPeriod 세 개다. API·ConfigMap·Dashboard·sample·결정·Run binding은 동일 계약을 사용한다.
 - `SCH-57` 전환 중 수요 대비 예비 용량 비율을 scheduler 설정으로 제공한다(기본 0, 0=별도 예비 없음, 유한한 0~1). 양수이면 영향을 받는 워크로드마다 실제 준비·ACK된 가용 용량으로 수요와 설정 예비를 감당하고 기존 전환 SLO 검사도 통과해야 한다. 예비를 위한 준비·유지·해제 에너지도 evaluation 전체 POOL 에너지에 포함하고 비율·판정·미확보 이유를 결정과 `binding.schedulerSettings`에 기록한다.
 - `SCH-58` 에너지 비교 기간 H는 양수인 하나의 scheduler 설정으로 고정하여 같은 판단의 keep과 모든 후보에 동일하게 사용한다. 후보의 전환 시간이나 미선택 후보의 추가·삭제로 H를 늘리지 않으며 사용한 H와 부하 가정을 결정 및 `binding.schedulerSettings`에 기록한다. H는 실제 전환 완료 확인이나 동작 timeout을 대체하지 않는다.
 - `SCH-59` 빈 Node의 새 `Fixed` 절전도 일반 교체와 동일한 keep 대비 에너지 허가를 받는다. 같은 H 안 nominal 이득이 양수이고 기존 minimumGain 문턱 및 payback을 모두 통과해야 하며, Fixed라는 이유로 비용을 공통 경로에서 소거하거나 검사를 면제하지 않는다. 별도 절전 계산기·기간·문턱을 추가하지 않는다. 이미 실행 중인 허가된 동작의 완료 의무는 유지한다.
@@ -279,15 +279,15 @@ Serving 평가에서 검증한다.
 
 #### SCH-AC-41 — 빈 출발 κ 완료 순서 독립
 - Given: 실물과 예약이 없고 Smol/PLC/MNV의 수요가 .3/40/20이며 Smol genesis2 FP32 행, PLC 행, MNV 행 순서로 계산 결과가 도착한다.
-- When: 대기 상한 전 부분 결과와 전체 terminal 결과로 각각 판단한다.
-- Then: 부분 결과에서는 목표 확정·예약을 하지 않고, 완료 후 공동 배치하여 세 Workload 모두 양수 용량을 얻는다. 상한 도달 시에는 현재 근거로 진행하며 시작·상한·남은 후보가 기록된다. 실물이 있는 독립 확장은 기다리지 않는다.
+- When: 부분 결과와 전체 terminal 결과로 각각 판단한다.
+- Then: missing/pending 근거는 Pending과 원인으로 남고 terminal 근거로 공동 배치한다. 경과 시간 fallback은 없으며 실물이 있는 독립 확장은 scoped 규칙을 따른다.
 - 요구사항: SCH-52, SCH-54.
 
-#### SCH-AC-42 — 최대 수요 창의 공통 하강 판정
-- Given: 설정 기간 W와 실제 공급 κ, 정상 관측, 축소·교체·빈 Node 절전 후보가 있다.
-- When: (1) 100 req/s 일정 부하에 관측 잡음을 섞어 W보다 오래 유지하고, (2) 실제 하강 전 높은 수요가 있는 창에서 낮은 수요로 전환하여 W 경계 전후를 비교하며, (3) 빈 출발·증설을 실행한다.
-- Then: (1) 잡음의 국소 고점으로 timer가 시작되어 축소·새 절전이 허가되지 않는다(공급은 창 최대 수요 이하인 재현 입력). (2) 높은 수요가 창에서 빠지고 전체 W의 유효 관측 및 최대 수요<현재 공급 조건이 충족되면 기존 이득·SLO 조건을 통과한 후보를 허용한다. Workload와 빈 Node는 같은 창 정의를 쓰며 UID 사이 증감을 합계로 상쇄하지 않는다. 공백·restart·설정 변경·UID 교체 후 불완전 창은 보류한다. (3) SCH-54 빈 출발과 매 주기 증설·부분 Ready 배분·예약 밖 진행은 불변이다. 0 설정도 현재 수요·공급 검사는 남긴다. 결정에는 창·최대 수요·현재 공급·보류 이유가 남는다.
-- 추가 후보 보호: 창 최대 110 req/s·현재 수요 20 req/s·현재 공급 160 req/s인 동일 입력에서는 gate가 열려도 후보 공급 60은 거절하고, 후보 공급 120은 전환·SLO·본전 등 기존 조건을 충족하면 허용한다. gate뿐 아니라 후보 검사에도 최대 수요를 사용하며, 증설 후 여유 공급에서 과거 최대 수요를 보존하는 축소까지 금지하지는 않는다.
+#### SCH-AC-42 — 현재 수요의 공통 후보 비교
+- Given: 동일한 실제 공급·SLO·에너지 근거와 축소·교체·빈 Node 절전 후보가 있다.
+- When: v1/v2에 낮은 현재 유효 수요와 높은 현재 유효 수요를 각각 입력한다.
+- Then: 낮은 수요에서는 기존 물리·SLO·에너지 검사를 통과한 축소 후보를 즉시 비교한다. 높은 수요에서는 현재 수요를 감당하지 못하는 후보를 거절한다. 별도 안정화·체류·age TTL·bootstrap timeout이나 증가 추세 gate는 없다.
+- 실제 가용 수요가 없는 부분 관측, 실패한 live capture, 미상·미래 시각, Ready/ACK·소유권·backlog·전환 peak/bridge/reserve와 owner DAG 후속 정리는 기존 계약대로 처리한다.
 - 요구사항: SCH-40, SCH-52, SCH-54, SCH-55, SCH-56.
 
 #### SCH-AC-43 — 양수 예비 비율의 전환 SLO와 에너지
@@ -299,7 +299,7 @@ Serving 평가에서 검증한다.
 #### SCH-AC-44 — 후보와 무관한 고정 H
 - Given: 동일 snapshot·설정 H와 keep·변경 후보가 있다.
 - When: 더 긴 전환의 미선택 후보를 추가·삭제한다.
-- Then: 공통 후보의 H와 [0,H] 비용은 동일하고 H 초과 후보는 기간을 늘리는 대신 명시적 부적격으로 기록한다. 설정·결정·Run binding의 H가 일치한다. 빈 Node Fixed 절전도 동일 keep/minimumGain/payback 경로를 사용하며, jetsono MAXN→15W의 H=600초 이득 −699J·손익분기 약 52분 입력에서는 실행하지 않는다. 양수 이득이어도 minimumGain 또는 payback 미충족이면 실행하지 않는다.
+- Then: 공통 후보의 H와 [0,H] 비용은 동일하고 H 초과 전환은 진단을 남기며 SLO 증설 후보를 배제하지 않는다. 설정·결정·Run binding의 H가 일치한다. 빈 Node Fixed 절전도 동일 keep/minimumGain/payback 경로를 사용하며, jetsono MAXN→15W의 H=600초 이득 −699J·손익분기 약 52분 입력에서는 실행하지 않는다. 양수 이득이어도 minimumGain 또는 payback 미충족이면 실행하지 않는다.
 - 요구사항: SCH-16, SCH-18, SCH-58, SCH-59.
 
 #### SCH-AC-45 — evaluation 실패 주입의 격리·대체·복구
@@ -376,7 +376,7 @@ Serving 평가에서 검증한다.
 | API 확장 제안(2026-10-25) — B1 측정 CR 조회, B2 실험 결과 조회, B3 축약 상태, B5 작업 예상 시간 | SCH-44, SCH-45, SCH-46, SCH-47 |
 | 이 문서 2.3 — T5는 기존 관측·작업 결과의 전달 방식이므로 별도 시스템 spec 생략 | SCH-37 |
 
-SCH-41·48·49의 기존 전환 계약은 유지한다. 2026-10-26 자원 장부 결정은 시스템 spec에 관측과 분리한 장부 및 예약 범위 밖 계속 판단 규칙을 추가하고, SCH-50~52와 SCH-AC-37~39에서 구체화한다. 새 서비스·저장소·CRD는 도입하지 않으며 기존 Pod·finalizer·controller-runtime·`c.runs`·`o.sources`·DecisionID를 재사용한다. 두 박자 제어는 SCH-55~58로 요구사항을 확정하고 구현은 별도 변경으로 둔다. 정책 ConfigMap 단일화와 finalizer 뒤처리는 evaluation 뒤의 별도 범위다.
+SCH-41·48·49의 기존 전환 계약은 유지한다. 2026-10-26 자원 장부 결정은 시스템 spec에 관측과 분리한 장부 및 예약 범위 밖 계속 판단 규칙을 추가하고, SCH-50~52와 SCH-AC-37~39에서 구체화한다. 새 서비스·저장소·CRD는 도입하지 않으며 기존 Pod·finalizer·controller-runtime·`c.runs`·`o.sources`·DecisionID를 재사용한다. 현재 수요 후보 비교와 전환 예비·고정 H는 SCH-55~58을 따른다. 정책 ConfigMap 단일화와 finalizer 뒤처리는 evaluation 뒤의 별도 범위다.
 
 ## 6. 고수준 요구사항과 구현 설계의 구분
 

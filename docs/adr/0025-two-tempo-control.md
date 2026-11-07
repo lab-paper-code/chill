@@ -23,43 +23,43 @@ Observed actions support 600 seconds: Jetson MAXN transition about **149–151 s
 
 ## Decision
 
-Keep one planner and existing admission, resource, service-level objective (SLO), readiness and policy-acknowledgment (ACK) checks. Evaluate safe allocation and expansion every control cycle. Gate physical reduction/stopping, mixed add/remove plans and energy-only replacement behind the same sustained-demand-drop period. A policy-only capacity recovery without physical removal may remain fast; when classifications overlap, slow wins. Ready-subset routing need not wait for all preparation or the slow gate, and independent reserved scopes remain isolated.
+Keep one planner and existing admission, resource, SLO, readiness and ACK checks. Compare allocation, expansion, reduction, replacement and empty-Node saving each control cycle using current effective demand. v1/v2 use the same candidates and physical rules.
 
 Use the following scheduler settings, validated at the existing input boundary:
 
-- `scaleDownStabilizationNanos`: integer nanoseconds ≥0; default **300 s**, demonstration setting **120 s**. Zero removes only the history-duration wait, not the current-demand-versus-supply or existing safety checks.
+- Policy times: ControlInterval, ObservationWindow and ComparisonPeriod only. No stabilization, replacement dwell, observation-age TTL or bounded bootstrap waiting.
 - `transitionReserveFraction`: finite **[0,1]**, default **0**. Positive f requires actual Ready/ACK supply for demand × (1+f) throughout affected transition intervals. Unready targets and supply pledged elsewhere do not count twice. Zero disables only this extra reserve condition, never existing SLO checks.
-- `scaleDownHeadroomFraction`: finite **[0,1]**, default **0**. Final energy-downscale routes and idle cleanup must carry `max(current effective demand, WindowMax) × (1+h)` on positive integer weights, each within executor κ. Zero-weight executors are not headroom. Never inflate bridge/reserve demand or actual request joules. Offline `.25` is not a deployment safety recommendation.
+- `scaleDownHeadroomFraction`: finite **[0,1]**, default **0**. Final energy-downscale routes and idle cleanup must carry `current effective demand × (1+h)` on positive integer weights, each within executor κ. Zero-weight executors are not headroom. Never inflate bridge/reserve demand or actual request joules. Offline `.25` is not a deployment safety recommendation.
 - `comparisonPeriodNanos`: positive integer nanoseconds, operational value **600 s**, shared by keep and every candidate. Do not add an alias or a single-value-only configuration field.
 
-Use the Kubernetes HPA scale-down stabilization-window principle: for each Workload UID, use the **maximum effective demand** (including queued/minimum demand) observed in the last `scaleDownStabilizationNanos` as the demand for reduction admission. Expire samples at the left boundary. Require a complete valid window and maximum demand strictly below current actual Ready/ACK supply; the candidate must also serve that maximum. Selection does not rebase history. Gaps, clock reversal, restart, settings or UID changes require a fresh valid window. Zero uses the current valid observation only.
+Effective demand is max(long-window rate, recent rate) + outstanding / actual observation length, with the minimumDemand floor. reductionDemand is this same current value; no rolling maximum, trend gate or elapsed-time qualification applies.
 
-Empty-Node new Fixed saving uses the same per-UID maxima, not a separate timer: all controlled UIDs must have complete windows and maximum demand ≤ supply, with at least one strict inequality. Do not offset one UID's rise with another's fall; without controlled UIDs there is no drop evidence. Preserve already authorized running actions and fast expansion/ready-subset allocation.
+Empty-Node saving uses the same current-demand, capacity/SLO and energy admission rules. Preserve authorized running actions, owner reservations, frozen targets and Ready-subset allocation.
 
-Cycle 5 (SCH-55/56): retain `Observe.Allowed`. Physical replacement is a conditional slow candidate; bypass UID timing only when that observation's keep fails capacity/wait SLO and the target fully satisfies that UID and backlog. Other UIDs retain their gates. Partial/held/unknown, ownership/reservations, exact Ready/native ACK, old+new peak, bridge, reserve and horizon remain mandatory; a stopping power outage is not a handoff. Unproved candidates are published ineligible with `requiresRecovery`, never as executable targets. Preserve energy/leximin/payback/dwell. This asymmetric hysteresis trades low-load savings/slots and evaluation cost for margin; it predicts neither bursts nor Node loss.
+Preserve actual shortage recovery, backlog, partial observation based on available demand, unknown/future timestamp checks, live-capture failure handling, ownership, exact Ready/native ACK, old+new peak, bridge, reserve, H, leximin, payback and minimumGain.
 
 
 Remove the Fixed exception, rather than introduce another energy calculator. Compare new empty-Node saving against the unchanged keep using the existing common-H payback/minimumGain path. Nominal gain within H must be positive and pass both existing gates. Do not preapply saving to all candidates and keep, cancel its costs as common, or dispatch new saving from targetless Keep.Actions without admission. With H=600 s, jetsono MAXN→15W has **−699 J** gain and an approximately **52-minute** break-even: do not execute or extend H to justify it.
 
-Replace `SchedulerDownState` baseline/previous/downSince/elapsed and `SchedulerTempo.globalSince` with timestamped per-UID demand history. `decision.capacity.workloads[].scaleDown` records rate, windowMax (D), windowNanos (W), supply (actual Ready/ACK C), allowed, reason and optional resetReason. Remove old fields/readers rather than dual-write aliases; old stored records remain historical evidence, not proof under the new rule.
+Delete timing-history state and obsolete decision projections without aliases or compatibility readers. Existing stored raw records remain untouched historical evidence.
 
-Do not stretch H to accommodate a candidate. Exclude a transition whose common route plus longest post-route chain exceeds H; exactly H remains eligible. H is neither an action timeout nor evidence that the physical action completed. Include reserve preparation, serving and removal energy in whole-POOL evaluation energy. Freeze the values in `decision.settings`, search bounds and Run `binding.schedulerSettings`, along with drop/gate and reserve decisions.
+Do not stretch H to accommodate a candidate. Account for complete operation joules and nonnegative waiting/serving time within H. Long transitions retain diagnostics without excluding SLO expansion. H is neither an action timeout nor completion evidence. Freeze settings in decisions and Run bindings.
 
-Authoritative detail: [scheduler SRS](../spec/scheduler/SRS.md), SCH-55–59 / AC-42–44, and [planner §15](../design/serving/analytic-planner.md#15-두-박자-후보-허가와-고정-h--sch-5558). Current code: `internal/serving/scheduler_tempo.go` (`Observe` accepts existing capacity rows to measure supply; `Selected` is removed), `scheduler_capacity.go` (candidate comparison/period), `scheduler_reserve.go` (transition supply), and `scheduler.go:SchedulerSettings.Validate` (settings).
+Authoritative detail: [scheduler SRS](../spec/scheduler/SRS.md), SCH-55–59 / AC-42–44, and [planner §15](../design/serving/analytic-planner.md).
 
 ## Rationale and rejected alternatives
 
-Demonstration four's B stage held **100 req/s**, yet the baseline timer started at **09:00:49** and admitted reduction only **39 s** after the actual drop. Staying below a noisy local high is not a complete stabilization window. The maximum-demand rule protects the recent high demand directly and is shared by workload reduction and empty-Node saving. Fixed saving is not free: its transition energy can outweigh the lower steady-state baseline within H.
+Historical rationale: demonstration four admitted reduction 39 seconds after an actual drop despite a configured window. The current user-approved policy removes timing admission and compares current demand directly. Fixed saving still requires positive common-H gain, minimumGain and payback.
 
-Rejected: retaining/restarting a pre-drop baseline timer, a separate global empty-Node timer, independent stabilization settings, summing UID demand to hide an increase, an unconditional Fixed exception, a separate saving calculator, and extending H to the 52-minute break-even. Reuse the existing setting and energy path instead.
+Retain one energy path and fixed H. Do not add substitute timers, history state, TTLs or compatibility knobs.
 
-Required regressions: (1) constant 100 req/s plus observation noise produces no reduction/new saving when current supply is at or below the window maximum; (2) after a real drop, expiry of the old high samples at W permits otherwise eligible reduction/saving; (3) the −699 J Fixed saving is not executed, nor is positive gain below minimumGain or failing payback; (4) empty start, expansion, ready-subset allocation and independent-scope progress remain unchanged. Include gaps/restart/settings/UID changes, zero W, exact expiry and new decision record shape. These are acceptance criteria, not reported test results.
+Required regressions: low current demand permits otherwise feasible reduction; high current demand protects capacity/SLO in v1/v2; negative gain or failing minimumGain/payback rejects saving; owner cleanup, Ready-subset allocation and actual missing-evidence handling survive. These are criteria, not reported test results.
 
 Evidence: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/campaign/v2/demo-20261027-4/report.md` §C and the `DemoPowerDown27` / `TempoTestCause27` investigations. Historical baseline-timer results below do not validate the corrected policy.
 
 ## Consequences
 
-evaluation comparisons must use the final controller and identical frozen H/settings on both sides. Older measurements cannot be merged as though policy were unchanged. Energy savings may arrive later, and a positive reserve consumes real energy. Neither a configured reserve nor successful analytical checks alone prove SLO.
+Evaluation comparisons must identify controller and frozen H/settings. Older measurements reflect older policies. Analytical feasibility and configured reserve alone do not prove SLO.
 
 The corrected demonstration-setting test admitted reduction **127.96 s** after the load drop (configured 120 s), with high-load MobileNet success **96.52%** and low-load **99.98%**; PLC and SmolVLM2 were 100%. This was not an E5 energy result: two power archives were missing, and diagnostic archive tolerance is forbidden for E5. The earlier 21.97% high-load run also exposed frozen-target and subset routing delays; two-tempo policy alone does not solve every transition loss.
 
@@ -67,4 +67,4 @@ Raw evidence: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/two-te
 
 ## 알려진 한계
 
-유일 공급을 멈춰야 하는 모드 상승(실물 정지·교체)은 수요 유지 중 `D<C` 미충족으로 차단되며, 다른 Node 확장(순증설 fast)으로 대체한다(근거: StabWindowReview27 §6, `TestCapacitySingleNodeRaisesItsMode` 차단 회귀).
+정지형 전환은 실제 backlog·bridge·reserve·Ready/ACK·SLO를 충족해야 한다. 이력 최대 수요나 경과 시간으로 후보를 금지하지 않는다.

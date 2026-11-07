@@ -130,8 +130,8 @@ Tick과 Continue의 `captureReconciled`는 capture 뒤 취소 확인, owner/effe
 #### 중간 배분
 
 `intermediateActions/readySubset`은 최종 route 의존성이 남아도 같은 owner의 자식 route를 실행한다(`34b9a40d` 유지). snapshot/native Ready·미정지·routable인 old 공급이 있고 target 일부가 미준비면 **old 보존+검증된 독립 Node 순증**만 허용한다. `snapshotNodeHasPositiveRoute`는 모든 UID를 보아 양수 serving Node를 순증에서 제외한다.
-`SchedulerReadyExpansion`은 최종 계획과 같은 observation freshness/MaxObservationAge gate, 현재 settings/snapshot/정확한 capacity row key·λ(최근 수요,q/창,최소 수요)·q·L−m·목적지 κ를 쓴다. Ready 합집합은 r=0,B=q,W=B/κ_new이며 기존 `capacityJudge/capacityWeights`를 쓴다. 모든 old/new 양수 정수 weight·rate/κ를 검증하고 같은 Node κ 중복/old 총κ 감소/새 solver/전체 재귀는 없다. stale/unknown/future·row/ACK/identity/용량 부족이면 current와 weights를 그대로 보존한다.
-bootstrap처럼 current serving이 없으면 target Ready 부분집합을 합 1000으로 재정규화한다. stopped/고장/unroutable/이번 tick stop 가능 경로는 되살리지 않는다. 다른 prepare/power/drain이나 slow 박자를 기다리지 않으며 UID 한정 atomic runtime route와 ACK를 쓴다. launch의 `dependenciesReady`는 부분집합 target, final route는 전체 target/DAG를 검사한다.
+`SchedulerReadyExpansion`은 최종 계획과 같은 실제 관측 유효성 검사, 현재 settings/snapshot/정확한 capacity row key·λ(최근 수요,q/창,최소 수요)·q·L−m·목적지 κ를 쓴다. Ready 합집합은 r=0,B=q,W=B/κ_new이며 기존 `capacityJudge/capacityWeights`를 쓴다. 모든 old/new 양수 정수 weight·rate/κ를 검증하고 같은 Node κ 중복/old 총κ 감소/새 solver/전체 재귀는 없다. unknown/future·row/ACK/identity/용량 부족이면 current와 weights를 그대로 보존한다.
+bootstrap처럼 current serving이 없으면 target Ready 부분집합을 합 1000으로 재정규화한다. stopped/고장/unroutable/이번 tick stop 가능 경로는 되살리지 않는다. 다른 prepare/power/drain을 기다리지 않으며 UID 한정 atomic runtime route와 ACK를 쓴다. launch의 `dependenciesReady`는 부분집합 target, final route는 전체 target/DAG를 검사한다.
 ID `<goal>-ready-<subset hash>`, `Action.from=ready-subset`, OnAction start/end·frozen `operation.target`·before/actual routing을 기록한다. 부분집합은 final target/DAG 완료 조건이 아니고 후속 subset 대체를 effect-lost로 만들지 않는다. 반영은 Ready를 캡처한 tick이며 부족한 current/bootstrap의 κ/SLO 보장은 아니다.
 생략된 bridge의 stop 소비도 완료 bridge와 동일하게 중단 source UID의 ACK/actual handoff만 검사한다. 보존된 다른 UID의 terminal route는 이 소비 범위에 포함하지 않는다(SCH-51).
 다음 bridge도 부모 DAG에서 생략된 선행 bridge를 찾아, 그 bridge에 의존하는 stop들의 source UID 범위와 기존 완료 ACK를 같은 handoff 검사로 소비한다. 부모 전체 UID에 포함된 보존 terminal route는 검사하지 않는다. 생략된 bridge 자신의 frozen 선행조건도 먼저 완료되어야 하며, prepare 결과 전 Ready-subset ACK만으로 stop을 출발시키지 않는다. 생략을 성공 run으로 만들거나 의존 edge를 삭제하지 않는다.
@@ -217,9 +217,8 @@ snapshot/decision은 고정 Node/UID/실물·owner/대기 이유를 action/opera
 
 #### ④ 빈 출발 κ 대기 — SCH-54, AC-41
 
-실물과 예약이 모두 없는 출발만 첫 판단 `bootstrapStartedAt`을 유지한다. 설정 갱신/restart는 새 출발이다. `bootstrap`에 시작/기한/pending row keys/`timedOut`, settings에 `bootstrapCapacityWaitNanos`를 고정한다(기본 10분, 0~1시간, 0은 대기 끔). 기본은 첫 Smol 20:07:12→MNV 20:09:24 행 간격+후보 계산을 기다리는 운영값이지 보장이 아니다.
-`CapacityTable.Ensure` compatible option/batch 중 실제 selectable Node/resource/measured option 행이 모두 Built/rejected면 함께 배치한다. rejected κ는 기다리지 않고 missing/pending만 기다린다. 기한 전 target/절전/예약 없음, 이후 현재 근거로 평가하고 pending/timeout을 남긴다. 실물/예약 생성 뒤는 SCH-52다.
-알려진 A안 한계: 기한 뒤 κ pending UID의 유일 Node를 다른 UID가 먼저 예약할 수 있다. 정상 운전의 선점 방지 B안은 미구현이며 사전식 비교는 다른 UID 개선을 보존하되 Node 회수/frozen DAG 변경은 하지 않는다.
+빈 출발에서도 실제 선택 가능한 후보의 capacity row가 missing/pending이면 Pending과 원인을 남긴다. 경과 시간에 따른 평가 fallback이나 bootstrap timeout 상태는 없다.
+`CapacityTable.Ensure`의 Built/rejected 근거로 평가하며 rejected κ는 기다리지 않는다. 실물/예약 생성 뒤의 scoped operation과 소유권은 유지한다.
 
 ## 6. 실제 적용과 관리 연동
 
@@ -259,17 +258,17 @@ reset은 선택 owner의 **모든** exact Pod UID/container를 열거·remove �
 
 회귀 설계는 기존 fake client/native HTTP fixture와 production 함수 경로를 사용한다. 별도 장부 모형만으로 통과하지 않으며 focused 회귀/빌드/실연 근거는 구현 담당자가 남긴다. 문서/요구사항 추적성만으로 AC를 통과 처리하지 않는다.
 
-### 두 박자·예비·고정 비교 기간 — SCH-55~58, AC-42~44
+### 현재 수요·예비·고정 비교 기간 — SCH-55~58, AC-42~44
 
-현행 정정 결정은 **SCH-56 최대 수요 창 + SCH-59 Fixed 본전 통일**이다. 이전 timer 구현/검증은 이 정정의 완료 근거가 아니다. 4회차 `demo-20261027-4/report.md` §C·ADR 0025가 근거이며 [용량표 계획기](analytic-planner.md)가 정책 원본이다. 장부/공통 예약/부분 Ready를 대체하지 않으며 클러스터/이미지 변경이나 evaluation 수용을 주장하지 않는다.
+현행 정책은 현재 유효 수요의 즉시 후보 비교다. 실제 관측·장부·공통 예약·부분 Ready·SLO·에너지 비교를 유지한다.
 | 경계 | 현행 계약 |
 |---|---|
-| strict 설정 | `scaleDownStabilizationNanos`: 정수 ns≥0, 기본300초/시연120초. `transitionReserveFraction`: 유한[0,1], 기본0. `comparisonPeriodNanos`: 정수 ns>0, H 제안600초. 표현형 초과 거절. energyHorizonNanos alias/두 번째 horizon 없음; API/ConfigMap/Dashboard/sample/binding 동일 검증. |
-| 수요 창 | `SchedulerTempo.Observe`가 기존 rows·snapshot.At·정상/gap 판정·w.rate로 실제 Ready/ACK 공급을 계산한다. Selected/선택 후 재기준·baselineRate/previousRate/downSince/globalSince 대신 UID별 (시각,유효 수요) 이력+연속 유효 시작을 쓴다. W 밖 만료, D=max d(s), t−W<s≤t. 완전 W와 D<현재 공급이 slow gate, 후보도 D 감당. W=0은 현재 표본만/기간 대기만 끔. gap/역행/restart/설정·UID 변경은 새 창, 선택은 이력 초기화 안 함. invalid를0으로 채우지 않고 새 timer/서비스/저장소 없음. |
-| fast/slow | fast=keep/분배/안전한 순증/물리 정지·제거 없는 κ 증가 정책(회복). slow=정지·제거/κ 비증가·joules 감소의 에너지 교체/추가+제거 혼합; 겹치면 slow. 안정 영향 범위만 full 집합. 현 전체 충족→최종 충족→leximin→energy/keep/key·자원/κ/관측 창/DemandIncreasing/minimumGain 유지. |
-| Cycle 5 / SCH-55·56 | `scaleDownHeadroomFraction` 유한[0,1], 기본0. 최종 에너지 하강·idle 후처리만 `max(rate,WindowMax)×(1+h)`를 양수 정수 weight/각 κ로 검사한다. weight0은 공급 아님. bridge/reserve·실제 J는 할증하지 않는다. |
-| 조건부 회복 | Node-local slow 후보를 `requiresRecovery` UID로 전역 조합까지 보존한다. 같은 관측 keep 미충족+해당 UID 목표 완전 충족·backlog 처리만 timing 예외. 타 UID 하강은 독립 판정하고 증명 전 공개 ineligible. partial/held/unknown·예약·소유권·Ready/정확 ACK·old+new peak·bridge/reserve/H 유지. 중단형 power 변경은 handoff가 아니다. Observe.Allowed·에너지/leximin/payback/dwell 불변. |
-| 빈 Node/Fixed | idle gate·탐색/후처리·commonNodes/changeNodes·target 없는 Keep.Actions 모두 같은 창. 빈 Node는 전 제어 UID 완전 창+D≤현재 공급, 하나 이상 D<공급; 벡터 상쇄/별도 전역 timer 없음. UID 변경 뒤 재충전, 제어 UID 없으면 새 절전 보류. 이미 실행 중 Fixed/허가 owner DAG 완료 의무 유지. |
+| 정책 시간 | ControlInterval, ObservationWindow, ComparisonPeriod 세 시간만 사용하며 API/ConfigMap/Dashboard/sample/binding 계약을 통일한다. |
+| 수요 | 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand도 같은 값이며 이력 최대값/지속 시간 gate는 없다. |
+| 후보 | v1/v2 모두 매 Tick 같은 물리 후보를 비교한다. 자원·κ·backlog·SLO·leximin·energy·minimumGain을 유지한다. |
+| 하강 여유 | 최종 하강·idle 후처리만 현재 유효 수요×(1+h)를 양수 정수 weight/각 κ로 검사한다. bridge/reserve·실제 J는 할증하지 않는다. |
+| 회복 | 실제 부족·backlog·부분 관측 가용 수요·unknown·예약·소유권·Ready/ACK·old+new peak·bridge/reserve/H를 검사한다. |
+| 빈 Node/Fixed | 같은 현재 수요와 gain/minimumGain/payback을 적용한다. 이미 허가된 owner DAG의 drain/remove는 계속한다. |
 | 예비 | 예약/unknown Node 제약 우선, 밖 fast/full 계속. f>0이면 구간별 영향 UID actual Ready/ACK κ≥λ(1+f), 같은 공급 중복 담보 금지. 부족은 후보 `TransitionReserveInsufficient`이지 전역 대기 아님. f는 요청률/요청 에너지 분모를 바꾸지 않는다. |
 | 중간 route | 느린 박자/전체 준비와 무관하게 다음 tick 실제 Ready 부분집합을 UID atomic route로 편입하되 기존 공급/ACK/stop-drain-power/인계 보호 유지. |
 | 고정 H | p.period 확장 폐기. keep/payback/minimumGain/decision.capacity.periodNanos와 모든 후보가 같은 H. 공통 route+선택 최장 post>H 제외, =H 허용. reserve prepare/load/Serving/remove 한 번 집계. Fixed 새 절전 선반영/에너지 면제 삭제, 일반 payback/minimumGain·원상태 keep으로 비교. H 안 nominal gain>0+minimumGain+payback 모두 필요. |

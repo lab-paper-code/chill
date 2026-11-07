@@ -451,7 +451,7 @@ func compare(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile
 		}
 		settings := base
 		recorded := r.Decision.Settings
-		settings.ObservationWindow, settings.ControlInterval, settings.ComparisonPeriod, settings.MaxObservationAge = recorded.ObservationWindow, recorded.ControlInterval, recorded.ComparisonPeriod, recorded.MaxObservationAge
+		settings.ObservationWindow, settings.ControlInterval, settings.ComparisonPeriod = recorded.ObservationWindow, recorded.ControlInterval, recorded.ComparisonPeriod
 		settings.MaxReplicas, settings.MaxInstances, settings.Controls = recorded.MaxReplicas, recorded.MaxInstances, recorded.Controls
 		settings.AutonomousWorkloads = recorded.AutonomousWorkloads
 		if margin < 0 {

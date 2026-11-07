@@ -49,21 +49,21 @@ function harness(query="",responses:Record<string,unknown>={}){
 
 test("selected decision capacity renders recorded diagnostics without inventing missing values",()=>{
   const screen=harness().load("../features/scheduler-history.tsx")
-  const capacity={workloads:[{uid:"ic",rate:97.65,kappaNew:128.16703347622592,kappaRetained:110.28686611755043,scaleDown:{windowMax:102.13333333333333}},{uid:"missing"}]}
+  const capacity={workloads:[{uid:"ic",rate:97.65,kappaNew:128.16703347622592,kappaRetained:110.28686611755043},{uid:"missing"}]}
   const tree=screen.DecisionCapacity({capacity,headroom:.25,names:new Map([["ic","IC"]])})
   const cells=nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children)
-  assert.deepEqual(cells.slice(0,7),["IC","128.1670","110.2869","127.6667","97.6500","102.1333","0.5004"])
-  assert.deepEqual(cells.slice(7),["missing",...Array(6).fill("미기록")])
+  assert.deepEqual(cells.slice(0,6),["IC","128.1670","110.2869","122.0625","97.6500","6.1045"])
+  assert.deepEqual(cells.slice(6),["missing",...Array(5).fill("미기록")])
   const missing=screen.DecisionCapacity({capacity,headroom:undefined,names:new Map()})
   const absent=nodes(missing).filter(node=>node.type==="td").map(node=>node.props.children)
   assert.equal(absent[3],"미기록")
-  assert.equal(absent[6],"미기록")
+  assert.equal(absent[5],"미기록")
   assert.equal(nodes(tree).some(node=>node.type==="badge"),false)
 })
 
 test("capacity demand labels the recorded planning floor rather than zero observed traffic",()=>{
   const screen=harness().load("../features/scheduler-history.tsx")
-  const decision={search:{loads:[{uid:"idle",inputsPerSecond:0,recentInputsPerSecond:0}]},capacity:{workloads:[{uid:"idle",rate:40,minimumDemand:40,kappaNew:50,kappaRetained:50,scaleDown:{windowMax:40}}]}}
+  const decision={search:{loads:[{uid:"idle",inputsPerSecond:0,recentInputsPerSecond:0}]},capacity:{workloads:[{uid:"idle",rate:40,minimumDemand:40,kappaNew:50,kappaRetained:50}]}}
   const tree=screen.DecisionCapacity({capacity:decision.capacity,headroom:.25,names:new Map()})
   const headers=nodes(tree).filter(node=>node.type==="th").map(node=>node.props.children)
   const cells=nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children)

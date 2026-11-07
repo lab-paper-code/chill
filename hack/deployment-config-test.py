@@ -18,7 +18,7 @@ configmap = {
     "metadata": {"name": "scheduler-check", "namespace": "config-check-runtime"},
     "data": {"scheduler.json": json.dumps({"settings": {
         "observationWindowNanos": 1000000000, "controlIntervalNanos": 1000000000,
-        "comparisonPeriodNanos": 1000000000, "maxObservationAgeNanos": 1000000000,
+        "comparisonPeriodNanos": 1000000000,
         "maxReplicas": 1, "maxInstances": 1, "completionMarginMS": 0,
         "defaultDispatchOccupancyNanos": 0,
         "defaultOperationCost": {

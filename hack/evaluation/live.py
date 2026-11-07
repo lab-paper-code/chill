@@ -88,7 +88,6 @@ class Watcher:
         print('EVALUATION_ALERT ' + json.dumps(value), flush=True)
 
     def scheduler(self, row, instant):
-        stabilization = input_snapshot.api(self.config, '/api/v1/scheduler/settings')['scaleDownStabilizationNanos'] / 1e9
         state = input_snapshot.api(self.config, '/api/v1/scheduler')['state']
         decision = state['decision']
         row['decisionAt'], row['status'] = decision.get('at'), decision.get('status')
@@ -100,9 +99,6 @@ class Watcher:
                 since = self.held_since.setdefault(uid, instant)
                 held = (instant - since).total_seconds()
                 workloads[uid[:8]]['heldSeconds'] = round(held)
-                if held >= stabilization:
-                    self.alert(('held', uid[:8], status, (reason or '').split(':')[0]),
-                               f'{uid[:8]} {status} {reason} for {held:.0f}s >= {stabilization:.0f}s')
             else:
                 self.held_since.pop(uid, None)
         row['workloads'] = workloads
@@ -110,9 +106,6 @@ class Watcher:
                  {'inputsPerSecond': load.get('inputsPerSecond'), 'recentInputsPerSecond': load.get('recentInputsPerSecond')}
                  for load in (decision.get('search') or {}).get('loads') or []}
         row['loads'] = loads
-        snapshot = state.get('snapshot') or {}
-        row['scaleDown'] = {'emptyNodeAllowed': snapshot.get('emptyNodeScaleDownAllowed'),
-                            'workloads': {key[:8]: value for key, value in (snapshot.get('scaleDown') or {}).items()}}
         rising = [uid for uid, value in loads.items()
                   if (value['recentInputsPerSecond'] or 0) > (value['inputsPerSecond'] or 0) * 1.05]
         actions = []

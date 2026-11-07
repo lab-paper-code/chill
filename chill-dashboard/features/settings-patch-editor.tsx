@@ -30,8 +30,7 @@ export function SettingsPatchEditor({spec,path,onChange,onValidityChange}:{spec:
     }}><option value="">항목 선택</option>{editableSettingKeys.map(value=><option key={value} value={value}>{labels.get(value)??(value==="controls"?"제어 항목":value)}</option>)}</AuthorSelect>
     {key&&<><label className="grid gap-1 text-sm">{`항목 값 (${unit??"JSON"})`}<textarea disabled={rawInvalid} className="min-h-24 w-full rounded-md border bg-background p-3 font-mono text-xs" value={text} aria-invalid={!!error} onChange={event=>{setText(event.target.value);setPending(true);setError("");onValidityChange(false)}}/></label>
       <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>{try {
-        const value=nanos?millisecondsToNanos(text,["scaleDownStabilizationNanos","replacementDwellNanos","bootstrapCapacityWaitNanos"].includes(key)?0n:1n):parseSchedulerJSON(text)
-        if(key==="bootstrapCapacityWaitNanos"&&typeof value==="bigint"&&value>3600000000000n)throw new Error("초기 용량 대기는 0~3600000 ms로 적어 주세요.")
+        const value=nanos?millisecondsToNanos(text,1n):parseSchedulerJSON(text)
         onChange(patchSpec(spec,path,patchSpec(patch,[key],value)));setPending(false);setError("");onValidityChange(true)
       } catch(error) {setError(error instanceof Error?error.message:"JSON 값 형식 확인");onValidityChange(false)}}}>항목 반영</Button>
       <Button type="button" variant="outline" disabled={rawInvalid} onClick={()=>replace(patchSpec(patch,[key],undefined))}>항목 제거</Button></>}
