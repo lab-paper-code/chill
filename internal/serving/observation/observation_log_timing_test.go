@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"os"
@@ -66,7 +67,17 @@ func TestRequestTimingSnapshotsAndLateSupplementStaySeparate(t *testing.T) {
 	if err := log.RequestEvent(event); err != nil {
 		t.Fatal(err)
 	}
-	if err := log.RequestClosed("a"); err != nil {
+	closeRead, _ := log.captureSnapshot(map[string][2]time.Time{observationRequestStream: {at, at.Add(time.Minute)}}, []time.Time{at})
+	defer closeRead.close()
+	var closeTiming serving.RequestTimings
+	closeTiming.Record(serving.ServerAuthStart, 999)
+	closeTiming.Record(serving.ServerReplySent, 15)
+	if err := log.RequestClosed("a", closeTiming); err != nil {
+		t.Fatal(err)
+	}
+	var duplicateClose serving.RequestTimings
+	duplicateClose.Record(serving.ServerResponseFlushDone, 16)
+	if err := log.RequestClosed("a", duplicateClose); err != nil {
 		t.Fatal(err)
 	}
 	resume()
@@ -82,6 +93,10 @@ func TestRequestTimingSnapshotsAndLateSupplementStaySeparate(t *testing.T) {
 	assertServerTiming(t, rows[1].ServerTiming, serving.ServerAuthStart, 7, true)
 	assertServerTiming(t, rows[2].ServerTiming, serving.ServerAuthDone, 9, true)
 	assertServerTiming(t, captured.ServerTiming, serving.ServerAuthDone, 0, false)
+	assertServerTiming(t, rows[2].ServerTiming, serving.ServerAuthStart, 0, true)
+	assertServerTiming(t, rows[2].ServerTiming, serving.ServerReplySent, 15, true)
+	assertServerTiming(t, rows[2].ServerTiming, serving.ServerResponseFlushDone, 0, false)
+	assertServerTiming(t, closeRead.open["a"].ServerTiming, serving.ServerReplySent, 0, false)
 	before, err := log.Query(ctx, "uid", at, at.Add(time.Minute), nil, nil, 0, "")
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +178,7 @@ func TestRequestTimingRestoreArchiveQueryAndRawRoundTrip(t *testing.T) {
 		if err := restarted.RequestEvent(event); err != nil {
 			t.Fatal(err)
 		}
-		if err := restarted.RequestClosed(row.RequestID); err != nil {
+		if err := restarted.RequestClosed(row.RequestID, serving.RequestTimings{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -253,4 +268,77 @@ func readTimingRaw(t *testing.T, log *ObservationLog, at time.Time, compressed b
 		t.Fatal(err)
 	}
 	return body
+}
+
+func TestCanceledCloseTimingSurvivesAppendFailureAndFlush(t *testing.T) {
+	ctx := context.Background()
+	at := observationTestHour
+	log, _ := clockedObservationLog(t, ObservationLogConfig{}, at)
+	event := serving.RequestEvent{RequestID: "canceled", WorkloadUID: "uid", Kind: "assigned", At: at, ReceivedAt: at,
+		Assignment: &serving.Assignment{Instance: "physical", DispatchedAt: at}}
+	event.ServerTiming.Record(serving.ServerAuthStart, 0)
+	if err := log.RequestEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	event.Kind, event.Outcome = "response_finished", "canceled"
+	if err := log.RequestEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	read, _ := log.captureSnapshot(map[string][2]time.Time{observationRequestStream: {at, at.Add(time.Minute)}}, []time.Time{at})
+	defer read.close()
+	cause := errors.New("timing append failed")
+	failing, entered, resume := injectObservationWorkerFailure(t, log, serving.RequestRowAssigned, cause)
+	head := serving.RequestEvent{RequestID: "failure-head", Kind: "assigned", At: at, ReceivedAt: at}
+	if err := log.RequestEvent(head); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not reach failure seam")
+	}
+	resume()
+	if err := log.Drain(ctx); !errors.Is(err, cause) {
+		t.Fatalf("append failure not reported: %v", err)
+	}
+	var closeTiming serving.RequestTimings
+	closeTiming.Record(serving.ServerAuthStart, 999)
+	closeTiming.Record(serving.ServerReplySent, 25)
+	if err := log.RequestClosed("canceled", closeTiming); !errors.Is(err, cause) {
+		t.Fatalf("close hid append failure: %v", err)
+	}
+	log.requestMu.Lock()
+	retained := *log.open["canceled"]
+	log.requestMu.Unlock()
+	assertServerTiming(t, retained.ServerTiming, serving.ServerReplySent, 25, true)
+	assertServerTiming(t, retained.ServerTiming, serving.ServerAuthStart, 0, true)
+	assertServerTiming(t, read.open["canceled"].ServerTiming, serving.ServerReplySent, 0, false)
+	log.submitMu.Lock()
+	queued := log.finalQueued["canceled"] != nil
+	log.submitMu.Unlock()
+	if !retained.Closing || queued {
+		t.Fatal("failed close lost retry state or fabricated final admission")
+	}
+	failing.Store(false)
+	if err := log.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows := readRequestRows(t, log.config.Directory)
+	finals := 0
+	for _, row := range rows {
+		if row.RequestID == "canceled" && row.Kind == serving.RequestRowFinal {
+			finals++
+			if row.Outcome != "canceled" {
+				t.Fatalf("close changed cancellation outcome: %+v", row)
+			}
+			assertServerTiming(t, row.ServerTiming, serving.ServerReplySent, 25, true)
+			assertServerTiming(t, row.ServerTiming, serving.ServerAuthStart, 0, true)
+		}
+	}
+	if finals != 1 {
+		t.Fatalf("retry wrote %d canceled finals", finals)
+	}
 }

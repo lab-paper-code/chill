@@ -94,29 +94,31 @@ func (l *ObservationLog) enqueueNativeLocked(event serving.RequestEvent) error {
 }
 
 // RequestClosed retains the exact admitted version until the worker commits it.
-func (l *ObservationLog) RequestClosed(id string) error {
+func (l *ObservationLog) RequestClosed(id string, timing serving.RequestTimings) error {
 	l.submitMu.Lock()
 	defer l.submitMu.Unlock()
 	if err := l.submissionErrorLocked(); err != nil {
 		if !l.closed {
 			l.requestMu.Lock()
-			if row := l.open[id]; row != nil {
+			if row := l.open[id]; row != nil && l.finalQueued[id] != row {
+				row = l.mergeCloseTimingLocked(row, timing)
 				row.Closing = true
 			}
 			l.requestMu.Unlock()
 		}
 		return err
 	}
-	return l.enqueueFinalLocked(id)
+	return l.enqueueFinalLocked(id, timing)
 }
 
-func (l *ObservationLog) enqueueFinalLocked(id string) error {
+func (l *ObservationLog) enqueueFinalLocked(id string, timing serving.RequestTimings) error {
 	l.requestMu.Lock()
 	row := l.open[id]
 	if row == nil || l.finalQueued[id] == row {
 		l.requestMu.Unlock()
 		return nil
 	}
+	row = l.mergeCloseTimingLocked(row, timing)
 	row.Closing = true
 	final := *row
 	l.requestMu.Unlock()
@@ -135,6 +137,22 @@ func (l *ObservationLog) enqueueFinalLocked(id string) error {
 	return nil
 }
 
+// mergeCloseTimingLocked requires requestMu and keeps captured row versions intact.
+func (l *ObservationLog) mergeCloseTimingLocked(row *serving.RequestRow, timing serving.RequestTimings) *serving.RequestRow {
+	if timing.IsZero() {
+		return row
+	}
+	merged := row.ServerTiming
+	merged.Merge(timing)
+	if merged == row.ServerTiming {
+		return row
+	}
+	next := *row
+	next.ServerTiming = merged
+	l.open[row.RequestID] = &next
+	return &next
+}
+
 func (l *ObservationLog) enqueueClosingLocked() error {
 	l.requestMu.Lock()
 	var closing []string
@@ -145,7 +163,7 @@ func (l *ObservationLog) enqueueClosingLocked() error {
 	}
 	l.requestMu.Unlock()
 	for _, id := range closing {
-		if err := l.enqueueFinalLocked(id); err != nil {
+		if err := l.enqueueFinalLocked(id, serving.RequestTimings{}); err != nil {
 			return err
 		}
 	}
