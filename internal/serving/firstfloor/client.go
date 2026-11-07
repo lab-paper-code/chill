@@ -211,7 +211,10 @@ func (c *Client) Execute(ctx context.Context, spec Spec, d serving.Dispatch) (se
 	c.Diagnostics.Mark(serving.DiagnosticClientExchange, serving.DiagnosticBegin, d.RequestID, 0)
 	started := time.Now()
 	body, status, err := c.request(ctx, http.MethodPost, modelURL(spec, "infer"), raw, native.MaxFrameBytes)
-	result := serving.BackendResult{Body: body, ContentType: "application/json", StatusCode: status, ClientSpan: time.Since(started)}
+	finished := time.Now()
+	result := serving.BackendResult{Body: body, ContentType: "application/json", StatusCode: status, ClientSpan: finished.Sub(started)}
+	result.ServerTiming.Record(serving.ServerWorkerHTTPStart, started.Sub(d.ReceivedAt))
+	result.ServerTiming.Record(serving.ServerWorkerHTTPDone, finished.Sub(d.ReceivedAt))
 	c.Diagnostics.Mark(serving.DiagnosticClientExchange, serving.DiagnosticEnd, d.RequestID, int64(result.ClientSpan))
 	if err != nil {
 		return result, err

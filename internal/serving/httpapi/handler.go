@@ -486,6 +486,7 @@ func (h *Handler) poolView(id string) (any, error) {
 func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	received := time.Now()
 	receipt, receiveErr := h.runtime.Receive(r.PathValue("id"), received)
+	receipt.ServerTiming.Mark(serving.ServerReceiveDone, received)
 	if receipt.ID != "" {
 		w.Header().Set("X-Chill-Request-ID", receipt.ID)
 	}
@@ -511,13 +512,19 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		diagnostics.Mark(serving.DiagnosticResponseEncode, serving.DiagnosticBegin, receipt.ID, 0)
-		if writeErr := writeError(w, err); writeErr != nil {
+		receipt.ServerTiming.Mark(serving.ServerResponseWriteStart, received)
+		writeErr := writeError(w, err)
+		receipt.ServerTiming.Mark(serving.ServerResponseWriteDone, received)
+		if writeErr != nil {
 			diagnostics.Mark(serving.DiagnosticResponseEncode, serving.DiagnosticEnd, receipt.ID, 0)
 			finish("delivery_failed", "ResponseDeliveryFailed")
 			return
 		}
 		diagnostics.Mark(serving.DiagnosticResponseEncode, serving.DiagnosticEnd, receipt.ID, 0)
-		if flushErr := flushInference(controller, diagnostics, receipt.ID); flushErr != nil {
+		receipt.ServerTiming.Mark(serving.ServerResponseFlushStart, received)
+		flushErr := flushInference(controller, diagnostics, receipt.ID)
+		receipt.ServerTiming.Mark(serving.ServerResponseFlushDone, received)
+		if flushErr != nil {
 			finish("delivery_failed", "ResponseDeliveryFailed")
 			return
 		}
@@ -542,7 +549,10 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		completeError(err, "error")
 		return
 	}
-	if err := h.authorize(r); err != nil {
+	receipt.ServerTiming.Mark(serving.ServerAuthStart, received)
+	authErr := h.authorize(r)
+	receipt.ServerTiming.Mark(serving.ServerAuthDone, received)
+	if err := authErr; err != nil {
 		completeError(err, "rejected")
 		return
 	}
@@ -555,12 +565,14 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	}
 	var input serving.InferenceInput
 	var decodeErr error
+	receipt.ServerTiming.Mark(serving.ServerBodyDecodeStart, received)
 	if captureWriter == nil {
 		decodeErr = h.decode(w, r, &input)
 	} else {
 		// MaxBytesReader needs the original writer's private oversized-body hook.
 		decodeErr = h.decode(captureWriter.ResponseWriter, r, &input)
 	}
+	receipt.ServerTiming.Mark(serving.ServerBodyDecodeDone, received)
 	if decodeErr != nil {
 		completeError(decodeErr, "rejected")
 		return
@@ -569,12 +581,14 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		completeError(contextRequestError(ctx.Err()), contextOutcome(ctx.Err()))
 		return
 	}
-	call, err := h.runtime.Accept(receipt, &input)
+	call, err := h.runtime.Accept(&receipt, &input)
+	receipt.ServerTiming.Mark(serving.ServerAcceptDone, received)
 	if err != nil {
 		completeError(err, "rejected")
 		return
 	}
 	result, err := call.Wait(ctx)
+	receipt.ServerTiming.Merge(result.ServerTiming)
 	if err != nil {
 		outcome := "error"
 		switch errorCode(err) {
@@ -592,6 +606,7 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		completeError(contextRequestError(ctx.Err()), contextOutcome(ctx.Err()))
 		return
 	}
+	receipt.ServerTiming.Mark(serving.ServerResponseWriteStart, received)
 	w.Header().Set("Content-Type", result.ContentType)
 	status := result.StatusCode
 	if status == 0 {
@@ -599,8 +614,11 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(status)
 	_, writeErr := w.Write(result.Body)
+	receipt.ServerTiming.Mark(serving.ServerResponseWriteDone, received)
 	if writeErr == nil {
+		receipt.ServerTiming.Mark(serving.ServerResponseFlushStart, received)
 		writeErr = flushInference(controller, diagnostics, receipt.ID)
+		receipt.ServerTiming.Mark(serving.ServerResponseFlushDone, received)
 	}
 	if writeErr != nil || r.Context().Err() != nil {
 		finish("delivery_failed", "ResponseDeliveryFailed")
