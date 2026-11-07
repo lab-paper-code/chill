@@ -205,7 +205,7 @@ func TestWrittenPrefixCaptureRetainsLiveRowsAndFinalPrecedence(t *testing.T) {
 		once.Do(func() { close(entered); <-release })
 		return file.Write(raw)
 	}
-	if err := log.RequestClosed(versionedRequestID); err != nil {
+	if err := log.RequestClosed(versionedRequestID, serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -256,7 +256,7 @@ func TestWrittenPrefixCaptureRetainsLiveRowsAndFinalPrecedence(t *testing.T) {
 	if err != nil || len(load.Arrivals) != 2 {
 		t.Fatalf("load lost mixed live receipts: %+v %v", load, err)
 	}
-	if err := log.RequestClosed(versionedRequestID); err != nil {
+	if err := log.RequestClosed(versionedRequestID, serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	result, err = log.Query(ctx, "w", at, at.Add(time.Minute), nil, nil, 0, "")

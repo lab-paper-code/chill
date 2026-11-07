@@ -55,7 +55,7 @@ func TestHistoricalRequestQueryReadsOnlyRequiredEvidenceAndKeepsLateFinalStatist
 		if err := log.RequestEvent(serving.RequestEvent{RequestID: id, Kind: "response_finished", At: at.Add(time.Duration(index+1) * time.Millisecond), Outcome: "completed"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := log.RequestClosed(id); err != nil {
+		if err := log.RequestClosed(id, serving.RequestTimings{}); err != nil {
 			t.Fatal(err)
 		}
 	}

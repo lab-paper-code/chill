@@ -431,7 +431,7 @@ func TestWorkloadObservationReadsOnlyRequestedRange(t *testing.T) {
 			}
 		}
 		if close {
-			if err := observationLog.RequestClosed(id); err != nil {
+			if err := observationLog.RequestClosed(id, serving.RequestTimings{}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -446,7 +446,7 @@ func TestWorkloadObservationReadsOnlyRequestedRange(t *testing.T) {
 	to := from.Add(2 * time.Minute)
 	request("late", from.Add(time.Minute), false)
 	clock.set(observationTestHour.Add(119 * time.Minute))
-	if err := observationLog.RequestClosed("late"); err != nil {
+	if err := observationLog.RequestClosed("late", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observationLog.Drain(context.Background()); err != nil {

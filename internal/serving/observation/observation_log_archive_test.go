@@ -209,7 +209,7 @@ func TestObservationArchiveLateFinalAndLocalFastPath(t *testing.T) {
 	if err := log.RequestEvent(serving.RequestEvent{RequestID: "late", WorkloadUID: archiveTestUID, Kind: "response_finished", At: at.Add(time.Second), Outcome: "completed"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := log.RequestClosed("late"); err != nil {
+	if err := log.RequestClosed("late", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := log.writeBarrier(ctx, false); err != nil {

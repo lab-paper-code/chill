@@ -57,7 +57,7 @@ func TestRequestsDoNotWaitForMaintenanceIO(t *testing.T) {
 				err := log.RequestEvent(serving.RequestEvent{RequestID: "during-maintenance", WorkloadUID: "uid", Kind: "assigned", At: at, ReceivedAt: at,
 					Assignment: &serving.Assignment{Instance: "physical", DispatchedAt: at}})
 				if err == nil {
-					err = log.RequestClosed("during-maintenance")
+					err = log.RequestClosed("during-maintenance", serving.RequestTimings{})
 				}
 				request <- err
 			}()
@@ -112,10 +112,10 @@ func TestFlushPinsFilesAcrossRotationAndClose(t *testing.T) {
 	<-entered
 	clock.set(observationTestHour.Add(time.Hour))
 	assignObservationRequest(t, log, "second", clock.now())
-	if err := log.RequestClosed("first"); err != nil {
+	if err := log.RequestClosed("first", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := log.RequestClosed("second"); err != nil {
+	if err := log.RequestClosed("second", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	closed := make(chan error, 1)
@@ -304,7 +304,7 @@ func TestFinalAppendDoesNotLoseConcurrentRequestFold(t *testing.T) {
 		return file.Write(data)
 	}
 	closed := make(chan error, 1)
-	go func() { closed <- log.RequestClosed("folding") }()
+	go func() { closed <- log.RequestClosed("folding", serving.RequestTimings{}) }()
 	<-entered
 	awaitObservationLogOperation(t, closed)
 	if err := log.RequestEvent(serving.RequestEvent{RequestID: "folding", Kind: "response_finished",
@@ -373,7 +373,7 @@ func TestWorkerFailureRetainsFIFOAndRuntimeFailure(t *testing.T) {
 				t.Fatal("worker did not reach failing head")
 			}
 			assignObservationRequest(t, log, "tail", at)
-			if err := log.RequestClosed("tail"); err != nil {
+			if err := log.RequestClosed("tail", serving.RequestTimings{}); err != nil {
 				t.Fatal(err)
 			}
 			resume()
@@ -469,7 +469,7 @@ func TestQueuedClocksRolloverAndMixedClose(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := log.RequestClosed("clocked"); err != nil {
+	if err := log.RequestClosed("clocked", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, submit := range []func() error{
@@ -785,7 +785,7 @@ func TestAsyncWriteFailureDoesNotFinishExecutingRequest(t *testing.T) {
 	if result, err := call.Wait(ctx); !result.Finished || rawErrorCode(err) != serving.ObservationUnavailableCode {
 		t.Fatalf("actual completion lost its observation failure: %+v %v", result, err)
 	}
-	if err := log.RequestClosed(receipt.ID); !errors.Is(err, cause) {
+	if err := log.RequestClosed(receipt.ID, serving.RequestTimings{}); !errors.Is(err, cause) {
 		t.Fatalf("failed final admission did not retain the storage failure: %v", err)
 	}
 	failing.Store(false)
@@ -895,7 +895,7 @@ func submitObservationFailureHead(log *ObservationLog, clock *observationClock, 
 		return log.RequestEvent(serving.RequestEvent{RequestID: "head", WorkloadUID: definition.UID, Definition: definition.Identity(), Kind: serving.RequestRowAssigned, At: at, ReceivedAt: at,
 			Assignment: &serving.Assignment{Instance: "physical", DispatchedAt: at}})
 	case serving.RequestRowFinal:
-		return log.RequestClosed("head")
+		return log.RequestClosed("head", serving.RequestTimings{})
 	case serving.RequestRowNative:
 		return log.RecordNativeSupplement(serving.RequestEvent{RequestID: "orphan", NativeInstance: "physical", At: at, NativeProgress: &serving.BackendProgress{At: at, Phase: "finished"}})
 	case observationManagementStream:

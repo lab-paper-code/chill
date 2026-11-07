@@ -34,7 +34,7 @@ func TestBlockedAppendDoesNotBlockRequestAdmission(t *testing.T) {
 	go func() {
 		err := log.RequestEvent(serving.RequestEvent{RequestID: "other", Kind: "received", At: observationTestHour})
 		if err == nil {
-			err = log.RequestClosed("assignment")
+			err = log.RequestClosed("assignment", serving.RequestTimings{})
 		}
 		admitted <- err
 	}()

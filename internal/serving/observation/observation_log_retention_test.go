@@ -60,7 +60,7 @@ func TestRequestClosedKeepsRowUntilFinalIsStored(t *testing.T) {
 	if err := os.WriteFile(blocked, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.RequestClosed("closing"); err != nil {
+	if err := observationLog.RequestClosed("closing", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := observationLog.writeBarrier(context.Background(), false); err == nil {
@@ -107,7 +107,7 @@ func TestArchiveKeepsHourOfUnsettledAssignment(t *testing.T) {
 	if err := restarted.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.RequestClosed("outstanding"); err != nil {
+	if err := observationLog.RequestClosed("outstanding", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observationLog.Flush(ctx); err != nil {

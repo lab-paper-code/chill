@@ -180,7 +180,7 @@ func TestBurstWarmupOriginJoinsLateNativeReceiptCohort(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := log.RequestClosed(request.id); err != nil {
+		if err := log.RequestClosed(request.id, serving.RequestTimings{}); err != nil {
 			t.Fatal(err)
 		}
 	}

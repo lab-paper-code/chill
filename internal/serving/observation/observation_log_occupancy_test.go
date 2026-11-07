@@ -47,7 +47,7 @@ func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
 			outcome = timedOut
 		}
 		send(id, serving.RequestEvent{Kind: "response_finished", Outcome: outcome})
-		if err := l.RequestClosed(id); err != nil {
+		if err := l.RequestClosed(id, serving.RequestTimings{}); err != nil {
 			t.Fatal(err)
 		}
 	}

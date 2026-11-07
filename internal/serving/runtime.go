@@ -23,7 +23,7 @@ type RuntimeObservation interface {
 	RuntimeFacts() (map[string]*Definition, []RequestRow)
 	DefinitionRecord(*Definition) error
 	RequestEvent(RequestEvent) error
-	RequestClosed(string) error
+	RequestClosed(string, RequestTimings) error
 	RecordNativeSupplement(RequestEvent) error
 	Drain(context.Context) error
 	Err() error
@@ -482,12 +482,14 @@ func (r *Runtime) closeLocked(c *Call) {
 func (r *Runtime) unlock() error {
 	closing := r.closing
 	r.closing = nil
+	// Closing calls are detached. This transition finished their timing writes
+	// before transferring these immutable values to final admission.
 	r.mu.Unlock()
 	var result error
 	for c := closing; c != nil; {
 		next := c.closeNext
 		c.closeNext = nil
-		err := r.config.ObservationLog.RequestClosed(c.receipt.ID)
+		err := r.config.ObservationLog.RequestClosed(c.receipt.ID, c.receipt.ServerTiming)
 		r.mu.Lock()
 		r.finalizing--
 		if w := r.workloads[c.receipt.UID]; w != nil {

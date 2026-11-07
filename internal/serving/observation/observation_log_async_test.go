@@ -92,7 +92,7 @@ func TestRuntimeDispatchDoesNotWaitForOwnObservationWrite(t *testing.T) {
 			func() error {
 				return log.RequestEvent(serving.RequestEvent{RequestID: "behind-write", WorkloadUID: definition.UID, Kind: "assigned", At: at, ReceivedAt: at, Assignment: &serving.Assignment{Instance: instance.ID, DispatchedAt: at}})
 			},
-			func() error { return log.RequestClosed("behind-write") },
+			func() error { return log.RequestClosed("behind-write", serving.RequestTimings{}) },
 			func() error { return log.ManagementEvent(serving.ManagementEvent{WorkloadUID: definition.UID, At: at}) },
 			func() error { return log.SchedulerRecord(SchedulerObservation{At: at, Snapshot: &snapshot}) },
 			func() error { return log.ResourcesRecord(ResourceObservation{Kind: "server", At: &at}) },

@@ -288,7 +288,7 @@ func seedObservationMinutes(t *testing.T, observationLog *ObservationLog, clock 
 				t.Fatal(err)
 			}
 		}
-		if err := observationLog.RequestClosed(id); err != nil {
+		if err := observationLog.RequestClosed(id, serving.RequestTimings{}); err != nil {
 			t.Fatal(err)
 		}
 		snapshot := serving.SchedulerSnapshot{At: at, Workloads: []*serving.Definition{d}}
@@ -525,7 +525,7 @@ func TestRequestFinalRowMatchesEventCohort(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := observationLog.RequestClosed(restoredRequest); err != nil {
+	if err := observationLog.RequestClosed(restoredRequest, serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := observationLog.Query(context.Background(), d.UID, received, received.Add(time.Second), nil, nil, 0, "")
@@ -589,7 +589,7 @@ func TestExchangeFinishedRecordDatesStagesLikeProgressLines(t *testing.T) {
 	for id, events := range runs {
 		send(id, serving.RequestEvent{Kind: "received", At: received}, serving.RequestEvent{Kind: serving.RequestRowAssigned, At: received, Assignment: assignment})
 		send(id, events...)
-		if err := observationLog.RequestClosed(id); err != nil {
+		if err := observationLog.RequestClosed(id, serving.RequestTimings{}); err != nil {
 			t.Fatal(err)
 		}
 		send(id, queuedLine, runningLine) // after release: no open row
@@ -657,7 +657,7 @@ func TestObservationLogCohortsSurviveRestartAndRegistration(t *testing.T) {
 	appendEvent("new", replacement, "received", "", 0)
 	appendEvent("new", replacement, "response_finished", outcomeCompleted, 999)
 	for _, id := range []string{"finished", "unfinished", "delivery", outcomeCanceled, "new"} {
-		if err := observationLog.RequestClosed(id); err != nil {
+		if err := observationLog.RequestClosed(id, serving.RequestTimings{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -741,7 +741,7 @@ func TestRequestFinalAfterTwoMinutesIsFoundByQuery(t *testing.T) {
 	if err := observationLog.RequestEvent(serving.RequestEvent{RequestID: "late", Kind: "response_finished", At: clock.now(), ReceivedAt: received, ElapsedNanos: int64(2 * time.Minute), Outcome: outcomeCompleted}); err != nil {
 		t.Fatal(err)
 	}
-	if err := observationLog.RequestClosed("late"); err != nil {
+	if err := observationLog.RequestClosed("late", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := observationLog.Query(context.Background(), "uid", received, received.Add(time.Second), nil, nil, 0, "")
@@ -766,7 +766,7 @@ func TestLoadWindowCountsAssignedAndFinalRequestOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := observationLog.RequestClosed(restoredRequest); err != nil {
+	if err := observationLog.RequestClosed(restoredRequest, serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observationLog.Drain(context.Background()); err != nil {
@@ -794,7 +794,7 @@ func TestBackendProgressForUnknownRequestWritesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := observationLog.RequestClosed("settled"); err != nil {
+	if err := observationLog.RequestClosed("settled", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observationLog.Drain(context.Background()); err != nil {
@@ -805,7 +805,7 @@ func TestBackendProgressForUnknownRequestWritesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := observationLog.RequestClosed("settled"); err != nil {
+	if err := observationLog.RequestClosed("settled", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observationLog.Drain(context.Background()); err != nil {
@@ -850,7 +850,7 @@ func TestRequestRowsStayUnderBudgetWithNineteenEvidenceReferences(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	if err := observationLog.RequestClosed("0123456789abcdef0123456789abcdef"); err != nil {
+	if err := observationLog.RequestClosed("0123456789abcdef0123456789abcdef", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observationLog.Drain(context.Background()); err != nil {

@@ -263,11 +263,12 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 			runtimeTimingMissing(t, assigned.ServerTiming, ServerAssignedEventDone, ServerWorkerHTTPStart, ServerResultLockAttempt, ServerReplyReceived)
 			runtimeTimingStage(t, final.ServerTiming, ServerAssignedEventDone)
 			runtimeTimingStage(t, final.ServerTiming, ServerResultLockAcquired)
+			sent := runtimeTimingStage(t, final.ServerTiming, ServerReplySent)
 			if outcome == "canceled" {
 				if final.Outcome != "canceled" || final.Error != "RequestCanceled" {
 					t.Fatalf("late completion replaced canceled final: %+v", final)
 				}
-				if final.ElapsedNanos == nil || *final.ElapsedNanos > responseFinishedBefore.Sub(receipt.ReceivedAt).Nanoseconds() || *final.ElapsedNanos > int64(attempt) {
+				if final.ElapsedNanos == nil || *final.ElapsedNanos > responseFinishedBefore.Sub(receipt.ReceivedAt).Nanoseconds() || *final.ElapsedNanos > int64(attempt) || int64(sent) <= *final.ElapsedNanos {
 					t.Fatalf("late backend settle shifted response elapsed: %+v", final)
 				}
 				runtimeTimingMissing(t, final.ServerTiming, ServerReplyReceived)
@@ -275,7 +276,6 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 				if final.Outcome != responseOutcome || final.Error != responseCode {
 					t.Fatalf("reply error changed final outcome: %+v", final)
 				}
-				runtimeTimingStage(t, final.ServerTiming, ServerReplySent)
 				runtimeTimingStage(t, final.ServerTiming, ServerReplyReceived)
 			}
 		})

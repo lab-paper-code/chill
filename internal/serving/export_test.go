@@ -55,10 +55,10 @@ func (l *runtimeTestLog) RequestEvent(event RequestEvent) error {
 	return l.RuntimeTestObservation.RequestEvent(event)
 }
 
-func (l *runtimeTestLog) RequestClosed(id string) error {
+func (l *runtimeTestLog) RequestClosed(id string, timing RequestTimings) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.RuntimeTestObservation.RequestClosed(id)
+	return l.RuntimeTestObservation.RequestClosed(id, timing)
 }
 
 // blockRuntimeObservationWrites creates real path conflicts for every minute in

@@ -300,7 +300,7 @@ func TestObservationReadCoverageIgnoresBoundLocations(t *testing.T) {
 	from, to := observationTestHour.Add(time.Second), observationTestHour.Add(time.Minute)
 	clock.set(from)
 	appendAssignedRequest(t, log, "location", from)
-	if err := log.RequestClosed("location"); err != nil {
+	if err := log.RequestClosed("location", serving.RequestTimings{}); err != nil {
 		t.Fatal(err)
 	}
 	clock.set(to)
