@@ -11,7 +11,7 @@ Tick은 κ 합과 노드 계획을 만들고, `planSearchStrategy`로 고른 v1�
 본문은 선택 계약이며 실제 source 검증과 배포 실적은 실행 근거로 확인한다.
 
 `planSearchStrategy: shadow`는 v1이 결정을 내린 뒤 같은 planner의 snapshot·용량 행·계획으로 v2를 탐색한다.
-v2에는 v1이 사용하고 남은 동일한 `ControlInterval/2` 마감만 주며, 정확 k=1 fallback까지 실패하면 `fallback: v1`을 기록하고 v1을 다시 실행하지 않는다.
+v2를 평가 수 예산(`planSearchEvaluations`)으로 먼저 돌리고(같은 `ControlInterval/2` 마감은 안전장치), v1은 남은 마감으로 돌리며 두 시간을 `search.durationNanos`(v1)와 `search.shadow.durationNanos`(v2)에 따로 기록한다. v2가 정확 k=1 fallback까지 실패하면 `fallback: v1`을 기록하고 v1을 다시 실행하지 않는다.
 `decision.capacity.search.strategy`는 `shadow`이고 이웃·평가 수·시간·예산 종료는 v1 값이다. `key`는 v1 탐색 선택해이며, `shadow`는 v2 선택해의 key·정확 J·증분 평가 수·정확 평가 수·시간·fallback을 담는다. v2가 선택하지 못하면 빈 key가 남는다.
 Dashboard는 그림자 기록이 있는 Tick에 key 일치 여부와 v2 − v1 예상 J, 탐색 시간, fallback을 표시한다. v1 J가 없으면 v2 J만 표시한다.
 이 코드 경로는 테스트베드 배포나 E5 캠페인 수용 근거를 뜻하지 않는다.
@@ -140,7 +140,7 @@ v2는 Tick마다 노드·option·모드별 계획표를 만들고 cap 변형을 
 
 v2의 `planSearchEvaluations` 기본값은 증분 평가 500,000회이며 `delta` 직전에 검사한다. 벽시계 마감은 v1과 같이 판단 시작 + `controlIntervalNanos/2`이고 계획 생성 시간도 포함한다. v2는 출발점 시작, 피복·연마의 반복/노드/이동 묶음 경계와 결합 탐색 재귀 진입에서 마감을 검사한다. 평가 수에 닿으면 `terminationReason: evaluationBudget`을 남기고, 벽시계 마감에 닿으면 `terminationReason: deadline`과 `budgetCut`을 남긴다. 두 경우 모두 그때까지의 후보·끝점을 정확 평가한다. 계획표 전처리·가격 반복·정확 깔때기·정확 k = 1 fallback은 이 증분 평가 수에 포함하지 않으며 그 안에서 마감을 검사하지 않는다. 따라서 벽시계 마감은 탐색 중단 기준이며 판단 반환의 엄격한 시간 상한은 아니다. v2는 단일 goroutine으로 UID·논리 key 순으로 순회하고, 고정 평가 예산과 같은 입력에서는 결정적이다. 벽시계로 잘리는 위치는 실행 환경에 따라 달라질 수 있다.
 
-shadow는 v1의 결정을 유지하고 같은 snapshot·계획표 입력에서 v2를 실행해 `search.shadow`만 남긴다. v1이 쓰고 남은 동일 마감만 사용하며 정확 k = 1까지 실패하면 v1 재실행 없이 `fallback: v1`을 기록한다. 그림자 캠페인은 아직 실행하지 않았다([§7.8.7](capacity-table-evidence.md#787-그림자-운영미실행)).
+shadow는 v1의 결정을 유지하고 같은 snapshot·계획표 입력에서 v2를 실행해 `search.shadow`만 남긴다. v2를 평가 수 예산으로 먼저 돌리고 v1은 남은 마감으로 돌리며 두 시간을 따로 기록한다(`search.durationNanos`는 v1, `search.shadow.durationNanos`는 v2). v2가 정확 k = 1까지 실패하면 v1 재실행 없이 `fallback: v1`을 기록한다. 그림자 캠페인은 아직 실행하지 않았다([§7.8.7](capacity-table-evidence.md#787-그림자-운영미실행)).
 
 **router 가중치.** Routing 제어가 켜져 있으면 기존 weight를 보존하거나 e순으로 채우지 않고, λ·backlog와 무관한 minimax 정수 배분으로 `max(weight_i / κ_i)`를 최소화한다. `floor(1,000 × κ_i / Σκ)`에서 시작해 남은 단위를 `(weight_i + 1) / κ_i`가 가장 작은 인스턴스에 하나씩 준다(동률은 입력 index 순). κ가 0인 인스턴스는 받지 않고, Σκ가 0일 때만 같은 몫을 쓴다. λ가 0이거나 κ 합을 넘어도 배분은 같다. 최종 정수 weight로 모든 인스턴스에서 `λ_w × weight_i / 1,000 ≤ κ_i`를 한 번 검사하며, 넘치면 `RouteWeightExceedsCapacity`로 최종 미충족이다. λ에 따라 정수 단위를 옮기지 않으므로 안전한 정수 배분이 존재하면 이 배분도 안전하다. 요청 에너지의 y는 최종 정수 weight로 계산하며, keep의 가중치가 바뀌면 사슬 없이 route 동작 하나다. Routing 제어가 꺼져 있으면 `capacityFixedWeights`로 기존 weight를 유지한다.
 근거: m4 r4에서 rasp5 q1을 κ 25.3까지 채웠을 때 1 s 이내 응답은 47%였다. full-E5-3m-12의 κ 10.191/26.498/15.976/36.859와 λ 73.8은 weight 114/296/178/412로 나눠 느린 장치만 κ까지 채우는 불균형을 없앤다.
