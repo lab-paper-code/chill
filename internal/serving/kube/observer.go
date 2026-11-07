@@ -339,13 +339,17 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	probes.Wait()
 	o.mu.Lock()
 	if err := ctx.Err(); err != nil {
-		return o.refreshFailure(err)
+		o.refreshed = time.Time{}
+		o.issue("refresh", err)
+		return err
 	}
 	o.reconcileSources(ctx, observed)
-	if err := ctx.Err(); err != nil {
-		return o.refreshFailure(err)
-	}
 	if err = o.publishLedger(nil); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		o.refreshed = time.Time{}
+		o.issue("refresh", err)
 		return err
 	}
 	o.issue("refresh", nil)

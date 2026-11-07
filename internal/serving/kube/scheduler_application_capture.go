@@ -20,6 +20,12 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err != nil {
 		return serving.SchedulerSnapshot{}, err
 	}
+	start := serving.LaterTime(window.From, c.observationLog.Started())
+	for _, gap := range window.Coverage.Gaps {
+		if gap.Stream == "requests" && gap.Reason == "StreamUnavailable" && gap.From.Before(now) && gap.To.After(start) {
+			return serving.SchedulerSnapshot{}, &serving.Error{Code: "IncompleteObservation", Message: "request stream unavailable in scheduler observation window"}
+		}
+	}
 	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: window.Arrivals, Costs: config.Costs, Baselines: config.Baselines,
 		DispatchOccupancy: config.DispatchOccupancy}
 	if config.DispatchOccupancySnapshot != nil {

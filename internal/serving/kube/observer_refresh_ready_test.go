@@ -143,6 +143,10 @@ func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
+			a := schedulerPhysicalState(before.ID, c.runtime.Instances())
+			if a == nil || !a.Ready {
+				t.Fatalf("another source's failed probe invalidated verified A: %+v", a)
+			}
 			b := schedulerPhysicalState("b-pod/containerd://running", c.runtime.Instances())
 			if b == nil || b.Ready != (outcome == "success") {
 				t.Fatalf("wrong probe outcome: %+v", b)

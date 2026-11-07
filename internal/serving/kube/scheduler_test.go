@@ -190,6 +190,53 @@ func TestSchedulerCaptureCancelledDuringLiveReadKeepsPublishedState(t *testing.T
 	}
 }
 
+func TestSchedulerCaptureRejectsMissingRequestStreamWithinWindow(t *testing.T) {
+	controller := schedulerCaptureClockController(t, nil)
+	ctx := context.Background()
+	start := time.Now().UTC().Truncate(time.Hour).Add(-3 * time.Hour)
+	var clock atomic.Int64
+	clock.Store(start.UnixNano())
+	history, err := observation.NewObservationLog(observation.ObservationLogConfig{
+		Directory: t.TempDir(), Store: "evidence", Retention: 24 * time.Hour, Writer: managerArchive{t.TempDir()},
+		Now: func() time.Time { return time.Unix(0, clock.Load()).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := history.Close(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := history.ManagementEvent(serving.ManagementEvent{Kind: "coverage-fixture", At: start}); err != nil {
+		t.Fatal(err)
+	}
+	if err := history.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	end := start.Add(3*time.Hour + time.Minute)
+	clock.Store(end.UnixNano())
+	controller.observationLog = history
+	controller.config.Settings.ObservationWindow = end.Sub(start)
+	window, err := history.LoadWindow(ctx, start, end)
+	if err != nil || window.GapUntil != nil || len(window.Arrivals) != 0 || !slices.ContainsFunc(window.Coverage.Gaps, func(gap serving.ObservationGap) bool {
+		return gap.Stream == "requests" && gap.Reason == "StreamUnavailable" && gap.From.After(start) && gap.To.Before(end)
+	}) {
+		t.Fatalf("fixture lacks an internal request-stream hole: %+v %v", window, err)
+	}
+	before := controller.State()
+	decision, err := controller.Tick(ctx, end)
+	var unavailable *serving.Error
+	if !errors.As(err, &unavailable) || unavailable.Code != "IncompleteObservation" || decision.Status != "" {
+		t.Fatalf("missing request observations became zero demand: %+v %v", decision, err)
+	}
+	after := controller.State()
+	if !after.Snapshot.At.Equal(before.Snapshot.At) || !after.Decision.At.Equal(before.Decision.At) ||
+		len(after.Actions) != 0 || len(after.Results) != 0 {
+		t.Fatal("missing request observations published a decision or started physical work")
+	}
+}
+
 func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	t.Helper()
 	manager, _ := newManagerHarness(t)
