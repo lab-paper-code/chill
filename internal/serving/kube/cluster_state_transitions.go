@@ -42,23 +42,6 @@ func (c *reservationState) startTransition(target *serving.SchedulerCandidate, c
 	}
 	parent := &actionRun{owner: target.ID, action: serving.Action{ID: id, Kind: transitionRunKind, Status: servingstate.NativeOperationRunning}, result: &servingstate.OperationResult{Operation: operation, Before: before, Status: servingstate.NativeOperationRunning, StartedAt: started}, started: started}
 	parent.admittedControls = controls
-	// Freeze only physical same-Node/Workload replacements, not route-only
-	// policy changes or added capacity. Completion is observed in reconcileSnapshot.
-	for _, next := range target.Instances {
-		if next.Profile == nil {
-			continue
-		}
-		for _, old := range c.state.Snapshot.Instances {
-			if old.Node == next.Node && old.WorkloadUID == next.WorkloadUID && old.Profile != nil &&
-				old.Profile.ID != next.Profile.ID && slices.ContainsFunc(target.Actions, func(a serving.Action) bool {
-				return a.Kind == servingstate.OperationRemove && a.Instance == old.ID
-			}) {
-				parent.replacements = append(parent.replacements, serving.SchedulerReplacement{
-					NodeUID: next.Node.UID, WorkloadUID: next.WorkloadUID, ProfileID: next.Profile.ID,
-				})
-			}
-		}
-	}
 	if !c.reserveRun(id, parent, operation) {
 		return
 	}

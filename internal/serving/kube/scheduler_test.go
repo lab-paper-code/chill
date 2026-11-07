@@ -64,7 +64,6 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 	}
 	manager.observer.SetProfiles([]serving.Profile{profile})
 	service := observerServiceFixture(pod)
-	maxAge := time.Second
 	var nodeReads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -120,7 +119,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 	}
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
 	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{
-		Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: maxAge, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100, PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4}),
+		Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100, PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4}),
 	}}
 }
 
@@ -152,11 +151,10 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 			t.Error(err)
 		}
 	})
-	// The window lies after the log started observing (ObservedSince) and the
-	// cutoff is older than the live sources' maximum age when the Tick runs.
+	// Keep the half-open historical interval independent of the live capture.
 	from := history.Started().Add(time.Millisecond)
 	cutoff := from.Add(controller.config.Settings.ObservationWindow)
-	time.Sleep(time.Until(cutoff.Add(controller.config.Settings.MaxObservationAge + 100*time.Millisecond)))
+	time.Sleep(time.Until(cutoff))
 	for index, at := range []time.Time{from.Add(-time.Nanosecond), from, cutoff.Add(-time.Nanosecond), cutoff} {
 		if err = history.RequestEvent(serving.RequestEvent{RequestID: strconv.Itoa(index), WorkloadUID: "clock-history", Kind: "received", At: at, ReceivedAt: at}); err != nil {
 			t.Fatal(err)
@@ -174,60 +172,21 @@ func TestSchedulerCaptureKeepsHistoricalCutoffSeparateFromLiveSourceAge(t *testi
 	if !snapshot.ObservationEnd.Equal(cutoff) || !decision.Search.WindowStart.Equal(from) || !decision.Search.WindowEnd.Equal(cutoff) || decision.Search.Received != 2 || decision.EvaluationElapsed <= 0 {
 		t.Fatalf("live reads moved the original half-open history interval: snapshot=%+v search=%+v", snapshot, decision.Search)
 	}
-	node, instance := snapshot.Nodes[0], snapshot.Instances[0]
-	if slices.Contains(decision.Keep.Reasons, "UnknownOrStaleNode:"+node.Node.Name) ||
-		slices.Contains(decision.Keep.Reasons, "UnknownOrStaleInstance:"+instance.ID) {
-		t.Fatalf("consumer falsely aged new authoritative sources: %+v", decision.Keep)
-	}
 }
 
-func TestSchedulerCaptureSlowLiveReadRemainsStale(t *testing.T) {
-	controller := schedulerCaptureClockController(t, func(*Observer) { time.Sleep(2 * time.Second) })
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func TestSchedulerCaptureCancelledDuringLiveReadKeepsPublishedState(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if _, err := controller.Tick(ctx, time.Now().Add(-10*time.Second)); err != nil {
-		t.Fatal(err)
+	controller := schedulerCaptureClockController(t, func(*Observer) { cancel() })
+	before := controller.State()
+	decision, err := controller.Tick(ctx, time.Now())
+	if !errors.Is(err, context.Canceled) || decision.Status != "" {
+		t.Fatalf("cancelled live read became a successful decision: %+v %v", decision, err)
 	}
-	state := schedulerCaptureClockState(t, controller)
-	snapshot, decision := state.Snapshot, state.Decision
-	node, instance := snapshot.Nodes[0], snapshot.Instances[0]
-	maxAge := controller.config.Settings.MaxObservationAge
-	if snapshot.At.Sub(node.ObservedAt) <= maxAge || snapshot.At.Sub(instance.ObservedAt) <= maxAge {
-		t.Fatalf("slow live HTTP latency disappeared from source age: node=%s instance=%s at=%s", node.ObservedAt, instance.ObservedAt, snapshot.At)
-	}
-	if decision.Keep.Status != "Pending" || !slices.Contains(decision.Keep.Reasons, "UnknownOrStaleNode:"+node.Node.Name) ||
-		!slices.Contains(decision.Keep.Reasons, "UnknownOrStaleInstance:"+instance.ID) {
-		t.Fatalf("consumer accepted genuinely stale live observations: %+v", decision.Keep)
-	}
-}
-
-// m4 r7: during prepares, decisions took 11-28 s and every Node was
-// UnknownOrStaleNode about 11.5 s after its list. Each running prepare polls
-// a full observer refresh every second, and the server's source ticker
-// refreshes too; capture read the observer's profiles under that lock after
-// listing the Nodes, so it waited behind those refreshes. Capture reads its
-// observer state before the Node list.
-func TestSchedulerCaptureDoesNotAgeNodesBehindObserverRefresh(t *testing.T) {
-	release := make(chan struct{})
-	controller := schedulerCaptureClockController(t, func(o *Observer) {
-		held := make(chan struct{})
-		go func() {
-			o.mu.Lock()
-			close(held)
-			<-release
-			o.mu.Unlock()
-		}()
-		<-held
-		time.AfterFunc(2*time.Second, func() { close(release) })
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if _, err := controller.Tick(ctx, time.Now().Add(-10*time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	state := controller.State()
-	if slices.ContainsFunc(state.Decision.Keep.Reasons, func(r string) bool { return strings.HasPrefix(r, "UnknownOrStaleNode:") }) {
-		t.Fatalf("a concurrent observer refresh aged the Node list: %v", state.Decision.Keep.Reasons)
+	after := controller.State()
+	if !after.Snapshot.At.Equal(before.Snapshot.At) || !after.Decision.At.Equal(before.Decision.At) ||
+		len(after.Actions) != 0 || len(after.Results) != 0 {
+		t.Fatal("cancelled live capture published state or started physical work")
 	}
 }
 
@@ -247,8 +206,7 @@ func schedulerEmptyPoolController(t *testing.T) *SchedulerController {
 	}
 	controller, err := NewSchedulerController(manager.reservations, manager.store, kube, manager.runtime, manager.observer, operations, manager.observationLog,
 		SchedulerControllerConfig{
-			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxObservationAge: time.Second,
-				CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+			Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 				PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 				MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true,
 					Routing: true, Batching: true, Power: true}}),

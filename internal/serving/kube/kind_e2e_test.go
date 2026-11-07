@@ -374,9 +374,6 @@ func kindScheduler(t *testing.T, kube kubernetes.Interface, autonomous []string,
 	config := controller.config
 	config.Settings.AutonomousWorkloads = autonomous
 	config.Settings.MaxInstances = 4
-	// kind API reads and the capacity rows share one host; a kubelet-less
-	// Node is observed only as fresh as this test's capture.
-	config.Settings.MaxObservationAge = 30 * time.Second
 	config.Settings.Controls = serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}
 	config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "cpu-eco", DeviceClass: "cpu", PowerMode: "eco",
 		ActuatorKind: nodeactuator.ActuatorKindJetsonNVPModel, SettlingDurationSeconds: 1, MaxActuationDurationSeconds: 30}}

@@ -85,8 +85,6 @@ type SchedulerController struct {
 	observationLog     *observation.ObservationLog
 	capacity           *serving.CapacityTable
 	config             SchedulerControllerConfig
-	bootstrapStartedAt time.Time
-	tempo              serving.SchedulerTempo
 	ctx                context.Context
 	cancel             context.CancelFunc
 	wg                 sync.WaitGroup
@@ -135,7 +133,6 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	previousStatic := c.config.StaticRouting
 	c.config = config
-	c.bootstrapStartedAt = time.Time{}
 	c.mu.Unlock()
 	after := len(config.Settings.AutonomousWorkloads) > 0
 	c.setRoutingControl(before, after)
@@ -239,16 +236,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	if len(snapshot.Instances) == 0 && len(snapshot.Reservations) == 0 && len(config.Settings.AutonomousWorkloads) > 0 {
-		if c.bootstrapStartedAt.IsZero() {
-			c.bootstrapStartedAt = snapshot.At
-		}
-		snapshot.BootstrapStartedAt = c.bootstrapStartedAt
-	} else {
-		c.bootstrapStartedAt = time.Time{}
-	}
 	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
-	c.tempo.Observe(config.Settings, &snapshot, c.capacity.Rows())
 	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
 	if err != nil {
 		return serving.SchedulerDecision{}, err
@@ -299,7 +287,7 @@ func (c *SchedulerController) captureReconciled(ctx context.Context, now time.Ti
 			return snapshot, fmt.Errorf("continuation observation unavailable: %s", strings.Join(reasons, ", "))
 		}
 	}
-	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	snapshot, lost := c.reconcileSnapshot(snapshot, snapshot.At, config.Settings.ObservationWindow, c.runtime)
 	for _, result := range lost {
 		if config.OnAction != nil {
 			if err := config.OnAction(result); err != nil {

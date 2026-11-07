@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"slices"
 	"strings"
@@ -136,8 +137,8 @@ func TestObserverRefreshRetainsReadyUntilProbeOutcome(t *testing.T) {
 			}
 			select {
 			case err := <-done:
-				if err != nil {
-					t.Fatal(err)
+				if !errors.Is(err, refreshCtx.Err()) {
+					t.Fatalf("refresh outcome=%v, context=%v", err, refreshCtx.Err())
 				}
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())

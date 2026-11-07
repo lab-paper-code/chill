@@ -69,7 +69,7 @@ func TestRequiredBridgeFailureFailsOwnerSCH26AC38(t *testing.T) {
 				result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &stage}, Status: status}}
 			// The bridge's successful effect can be superseded by the final
 			// route; an execution failure must still terminate its owner.
-			c.reconcileOwnersLocked(serving.SchedulerSnapshot{}, time.Now(), false, c.runtime)
+			c.reconcileOwnersLocked(serving.SchedulerSnapshot{}, time.Now(), c.runtime)
 			want := servingstate.NativeOperationFailed
 			if status == servingstate.NativeOperationComplete {
 				want = servingstate.NativeOperationRunning
@@ -436,7 +436,7 @@ func TestSkippedBridgeDoesNotRetireOwnerBeforeStopS3(t *testing.T) {
 	goal.Actions = []serving.Action{bridge, stop}
 	installTestTransition(c, &goal)
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
-	c.reconcileOwnersLocked(c.state.Snapshot, time.Now(), false, c.runtime)
+	c.reconcileOwnersLocked(c.state.Snapshot, time.Now(), c.runtime)
 	if parent.action.Status != servingstate.NativeOperationRunning || !parent.reserved || c.runs[stop.ID] != nil {
 		t.Fatalf("unstarted stop lost its live owner: %+v", parent)
 	}

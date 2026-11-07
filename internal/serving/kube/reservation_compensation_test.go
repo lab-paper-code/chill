@@ -52,7 +52,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, c.runtime)
 			if len(fresh.Reservations) != 0 || c.authorize(servingstate.Operation{WorkloadUID: uid}) != nil {
 				t.Fatalf("retired Pod did not return reservation: %+v", fresh.Reservations)
 			}
@@ -101,7 +101,7 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, c.runtime)
 	if !parent.reserved || !child.reserved || c.authorize(servingstate.Operation{WorkloadUID: wanted.WorkloadUID}) == nil {
 		t.Fatal("a sibling's previous policy released an unacknowledged new source")
 	}
@@ -115,7 +115,7 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	fresh, _ = c.reconcileSnapshot(fresh, fresh.At, c.config.Settings.ObservationWindow, c.runtime)
 	if len(fresh.Reservations) != 0 || c.authorize(servingstate.Operation{WorkloadUID: wanted.WorkloadUID}) != nil {
 		t.Fatal("fresh Pod absence did not return the compensated reservation")
 	}

@@ -196,7 +196,7 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	if _, launched := controller.runs[target.Actions[0].ID]; launched {
 		t.Fatal("a different global route overwrote the policy path before the existing native ACK")
 	}
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, time.Now(), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, time.Now(), time.Minute, controller.runtime)
 	if len(snapshot.Reservations) == 0 || snapshot.Reservations[0].Target != frozen {
 		t.Fatalf("running owner lost its frozen target: %+v", snapshot.Reservations)
 	}
@@ -304,7 +304,7 @@ func assertFailedGoalRetainsRunningRoute(t *testing.T, from string) {
 		},
 	}
 	installTestTransition(controller, &failedGoal)
-	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	snapshot, _ := controller.reconcileSnapshot(controller.state.Snapshot, now, time.Minute, controller.runtime)
 	if fixtureTarget(controller) != nil || controller.runs[routing.ID].result.Operation.Target != frozen {
 		t.Fatalf("failed owner erased another run's frozen target: %+v", snapshot.Reservations)
 	}
@@ -351,7 +351,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 	observed.TargetID = slot
 	snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{
 		At: time.Now().UTC(), Instances: []serving.SchedulerInstance{observed},
-	}, time.Now().UTC(), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	}, time.Now().UTC(), time.Minute, controller.runtime)
 	// The planner continues a running goal as keep with the goal's instances,
 	// each resolved to its captured physical identity.
 	continued := goal
@@ -461,7 +461,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, id string) {
 	t.Helper()
 	now := time.Now().UTC()
-	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	snapshot, lost := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, controller.runtime)
 	if fixtureTarget(controller) != nil || controller.runs[id].action.Status != servingstate.NativeOperationFailed ||
 		len(lost) != 1 || lost[0].Operation.ID != id || lost[0].Status != servingstate.NativeOperationFailed ||
 		!slices.ContainsFunc(snapshot.Actions, func(a serving.Action) bool { return a.ID == id && a.Status == servingstate.NativeOperationFailed }) {
@@ -481,7 +481,7 @@ func requireLostEffectFailsGoal(t *testing.T, controller *SchedulerController, i
 		}
 	}
 	controller.releaseObservedScopes(nodes, nil, nil, now.Add(time.Minute))
-	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+	controller.reconcileSnapshot(serving.SchedulerSnapshot{}, now.Add(2*time.Minute), time.Minute, controller.runtime)
 	if controller.runs[id] != nil {
 		t.Fatal("failed action outlived the observation window")
 	}
@@ -527,7 +527,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 	}
 	now := time.Now()
 	for range 2 {
-		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, func() serving.SchedulerSettings { return controller.config.Settings }, controller.runtime)
+		snapshot, _ := controller.reconcileSnapshot(serving.SchedulerSnapshot{At: now}, now, time.Minute, controller.runtime)
 		if fixtureTarget(controller) != nil {
 			t.Fatalf("owner kept executing after prepare timeout: reservations %v", snapshot.Reservations)
 		}
@@ -693,8 +693,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if err := c.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{old}, Routing: snapshot.Routing}); err != nil {
 				t.Fatal(err)
 			}
-			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, MaxObservationAge: time.Minute,
-				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}})
+			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}})
 			rows := []serving.CapacityRow{}
 			for n, i := range []serving.SchedulerInstance{old, added} {
 				in := serving.NewCapacityInput(c.config.Settings, nil, serving.SchedulerOption{Instance: i}, snapshot.Workloads[0])
@@ -982,8 +981,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 		t.Fatal(err)
 	}
 	controller := &SchedulerController{ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &manager.reservations.reservation, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
-			MaxObservationAge: time.Minute, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &manager.reservations.reservation, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 			PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 			AutonomousWorkloads: []string{d.UID}})}}
@@ -992,7 +990,6 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 
 func TestTickRoutesNewlyPreparedInstanceWhilePowerStillRuns(t *testing.T) {
 	controller, prepared := tickReadySubsetController(t, nil)
-	controller.config.Settings.ScaleDownStabilization = 300 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	snapshot, err := controller.capture(ctx, time.Now(), controller.config)
@@ -1589,13 +1586,12 @@ func TestCapturePreservesEveryExecutorlessPodUIDAC37(t *testing.T) {
 
 // SCH-20/AC-38: preparation clocks do not withdraw a serving route. Once all
 // positive destinations are Ready, independent power work still does not block it.
-func TestTwoTempoPreservesServingRouteOnPreparationClock(t *testing.T) {
+func TestReadyDestinationsPreserveServingRouteOnPreparationClock(t *testing.T) {
 	controller, target, source := acknowledgedHandoffFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	controller.ctx, controller.runs = ctx, map[string]*actionRun{}
-	controller.config.Settings.ScaleDownStabilization = 300 * time.Second
-	target.ID = "two-tempo-preparation-clock"
+	target.ID = "preparation-clock"
 	uid := target.Instances[0].WorkloadUID
 	base := target.Instances[0]
 	target.Instances = []serving.SchedulerInstance{base}

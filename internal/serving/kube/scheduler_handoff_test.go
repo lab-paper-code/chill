@@ -81,7 +81,6 @@ func handoffController(t *testing.T, extraNodes ...string) *SchedulerController 
 	settings := &c.config.Settings
 	settings.Controls = serving.SchedulerControls{Placement: true, Resources: true, Membership: true, Replicas: true, Routing: true, Batching: true}
 	settings.MaxInstances, settings.MaxReplicas = 4, 4
-	settings.ScaleDownStabilization = time.Hour
 	settings.CapacityWindow = 10 * time.Millisecond
 	// Deterministic measured durations need one tail sample for this lifecycle
 	// fixture; population-heavy statistical precision is tested in serving.

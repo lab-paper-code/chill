@@ -23,7 +23,6 @@ func TestDefectENewLedgerDoesNotReformUnavailablePhysicalOwner(t *testing.T) {
 	}
 	c := &SchedulerController{reservationState: &cluster.reservation, store: old.store, kube: old.kube, runtime: old.runtime, observer: old.observer,
 		operations: operations, observationLog: old.observationLog, capacity: old.capacity, config: old.config, ctx: old.ctx}
-	c.config.Settings.ScaleDownStabilization = 0
 	t.Cleanup(func() { c.wg.Wait() })
 	if len(c.runs) != 0 {
 		t.Fatal("new ledger inherited volatile owner evidence")
@@ -32,8 +31,7 @@ func TestDefectENewLedgerDoesNotReformUnavailablePhysicalOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.wg.Wait()
-	// Restart resets the existing idle observation window; it does not add E's
-	// own cooldown. The unavailable source remains held physically afterward.
+	// The unavailable source stays physically held across later captures.
 	time.Sleep(c.config.Settings.ObservationWindow + c.config.Settings.ControlInterval)
 	decision, err := c.Tick(c.ctx, time.Now())
 	if err != nil {

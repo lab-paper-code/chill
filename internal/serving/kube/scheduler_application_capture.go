@@ -120,6 +120,9 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		}
 	}
 	bindProfileMeters(&s, config.Meters)
+	if err := ctx.Err(); err != nil {
+		return s, err
+	}
 	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
 	return s, nil
 }

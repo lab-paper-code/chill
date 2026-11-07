@@ -15,8 +15,7 @@ import (
 
 // SCH-20/26/50: a frozen route chain progresses without Tick or a new decision.
 func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
-	const freshnessScenario = "freshness"
-	for _, scenario := range []string{"complete", "duplicate-completion", "cancel-owner", "controls-off", "uid-off", freshnessScenario, "capture-failed", "late-ack", "partial"} {
+	for _, scenario := range []string{"complete", "duplicate-completion", "cancel-owner", "controls-off", "uid-off", "capture-cancelled", "capture-failed", "late-ack", "partial"} {
 		t.Run(scenario, func(t *testing.T) {
 			ackPending, releaseACK := make(chan struct{}), make(chan struct{})
 			var armed atomic.Bool
@@ -82,22 +81,20 @@ func TestCompletionContinuesFrozenDAGWithoutPeriodicTick(t *testing.T) {
 				c.config.Settings.Controls.Routing = false
 			case "uid-off":
 				c.config.Settings.AutonomousWorkloads = nil
-			case freshnessScenario:
-				c.config.Settings.MaxObservationAge = time.Nanosecond
-			case "capture-failed":
+			case "capture-cancelled":
 				cancel()
+			case "capture-failed":
+				if err := c.observer.Close(); err != nil {
+					t.Fatal(err)
+				}
 			case "partial":
 				first.action.Status, first.result.Status = servingstate.NativeOperationPartial, servingstate.NativeOperationPartial
 			}
 			before := c.State().Decision
-			observedAt := c.replacementObservedAt
 			err = c.Continue(ctx, time.Now())
-			if scenario == freshnessScenario || scenario == "capture-failed" {
+			if scenario == "capture-cancelled" || scenario == "capture-failed" {
 				if err == nil {
 					t.Fatal("bad observation unexpectedly authorized continuation")
-				}
-				if scenario == freshnessScenario && !c.replacementObservedAt.Equal(observedAt) {
-					t.Fatal("stale observation mutated reconciliation state")
 				}
 			} else if err != nil {
 				t.Fatal(err)

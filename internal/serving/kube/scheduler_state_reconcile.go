@@ -1,7 +1,6 @@
 package kube
 
 import (
-	"slices"
 	"strings"
 	"time"
 
@@ -88,30 +87,15 @@ func (c *reservationState) markOverloadPrepares(decision serving.SchedulerDecisi
 }
 
 // reconcileSnapshot preserves each owner's frozen DAG and reservation independently.
-func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) (serving.SchedulerSnapshot, []servingstate.OperationResult) {
+func (c *reservationState) reconcileSnapshot(snapshot serving.SchedulerSnapshot, now time.Time, observationWindow time.Duration, runtime *serving.Runtime) (serving.SchedulerSnapshot, []servingstate.OperationResult) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	var lost []servingstate.OperationResult
-	settings := configuration()
-	gap := !c.replacementObservedAt.IsZero() && (now.Before(c.replacementObservedAt) || now.Sub(c.replacementObservedAt) > settings.MaxObservationAge+settings.ControlInterval)
-	if gap {
-		c.replacements = nil
-	}
-	c.replacementObservedAt = now
-	// Forget replaced UIDs/profiles and missing or unhealthy observations.
-	c.replacements = slices.DeleteFunc(c.replacements, func(r serving.SchedulerReplacement) bool {
-		return !slices.ContainsFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool {
-			return i.Node.UID == r.NodeUID && i.WorkloadUID == r.WorkloadUID && i.Profile != nil &&
-				i.Profile.ID == r.ProfileID && i.Ready && !i.Stopped
-		})
-	})
 	c.freezePreparingExecutorsLocked(snapshot)
-	lost = c.reconcileOwnersLocked(snapshot, now, gap, runtime)
+	lost := c.reconcileOwnersLocked(snapshot, now, runtime)
 	cutoff := now.Add(-observationWindow)
 	c.retireRunsLocked(cutoff, snapshot)
 	snapshot.Actions = c.actionsLocked(now)
 	snapshot.Reservations = c.reservationsLocked()
-	snapshot.Replacements = slices.Clone(c.replacements)
 	return snapshot, lost
 }
 
@@ -151,7 +135,7 @@ func (c *reservationState) freezePreparingExecutorsLocked(snapshot serving.Sched
 	}
 }
 
-func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, gap bool, runtime *serving.Runtime) []servingstate.OperationResult {
+func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnapshot, now time.Time, runtime *serving.Runtime) []servingstate.OperationResult {
 	var lost []servingstate.OperationResult
 	for _, parent := range c.runs {
 		if parent.action.Kind != transitionRunKind || parent.result == nil {
@@ -176,20 +160,6 @@ func (c *reservationState) reconcileOwnersLocked(snapshot serving.SchedulerSnaps
 		if c.ownerDAGCompleteLocked(parent) {
 			parent.action.Status = servingstate.NativeOperationComplete
 			parent.result.Status, parent.result.EndedAt = servingstate.NativeOperationComplete, now
-			if !gap {
-				for _, r := range parent.replacements {
-					if slices.ContainsFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool {
-						return i.Node.UID == r.NodeUID && i.WorkloadUID == r.WorkloadUID && i.Profile != nil &&
-							i.Profile.ID == r.ProfileID && i.Ready && !i.Stopped
-					}) {
-						r.CompletedAt = now
-						c.replacements = slices.DeleteFunc(c.replacements, func(old serving.SchedulerReplacement) bool {
-							return old.NodeUID == r.NodeUID && old.WorkloadUID == r.WorkloadUID
-						})
-						c.replacements = append(c.replacements, r)
-					}
-				}
-			}
 			c.releaseOwnerLocked(parent.owner)
 		}
 	}

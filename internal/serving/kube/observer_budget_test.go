@@ -398,6 +398,26 @@ func TestObserverPollReusesARefreshThatEndedWhileItWaited(t *testing.T) {
 	}
 }
 
+func TestObserverPollRetriesAfterFailedRefresh(t *testing.T) {
+	api := newObserverAPI(t, 1)
+	api.refresh(t)
+	api.mu.Lock()
+	api.failing = "/nodes?"
+	api.mu.Unlock()
+	if err := api.observer.Refresh(context.Background()); err == nil || api.ready() != 0 {
+		t.Fatalf("failed Node read retained a successful observation: err=%v ready=%d", err, api.ready())
+	}
+	api.mu.Lock()
+	api.failing = ""
+	api.mu.Unlock()
+	if err := api.observer.RefreshWithin(context.Background(), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if api.ready() != 1 {
+		t.Fatal("poll reused a successful refresh that preceded the failed Node read")
+	}
+}
+
 // SCH-AC-38: a canceled prepare waiting behind a source refresh must not
 // spend API budget or invalidate unrelated Ready executors when admitted.
 func TestCanceledObserverWaiterPreservesReadyAC38(t *testing.T) {

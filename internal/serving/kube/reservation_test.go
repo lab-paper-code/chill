@@ -215,10 +215,10 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					preparing := wanted
 					preparing.ID, preparing.TargetID, preparing.OwnerWorkloadUID = id, wanted.ID, wanted.WorkloadUID
 					child.action.Status = servingstate.NativeOperationRunning
-					c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+					c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, c.runtime)
 					if evidence == restartedEvidence {
 						preparing.ID += restartedContainerSuffix
-						c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+						c.reconcileSnapshot(serving.SchedulerSnapshot{Instances: []serving.SchedulerInstance{preparing}}, ended.Add(-time.Second), time.Minute, c.runtime)
 						if child.prepareIdentity != id {
 							t.Fatal("a later container replaced the frozen preparation identity")
 						}
@@ -232,7 +232,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					}
 				}
 				c.state.Results = []servingstate.OperationResult{*child.result}
-				snapshot, _ := c.reconcileSnapshot(c.state.Snapshot, ended.Add(time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+				snapshot, _ := c.reconcileSnapshot(c.state.Snapshot, ended.Add(time.Second), time.Minute, c.runtime)
 				if len(snapshot.Reservations) != 1 || c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil || parent.result.Status != servingstate.NativeOperationFailed {
 					t.Fatal("partial receipt did not retain the failed owner's reservation")
 				}
@@ -276,7 +276,7 @@ func TestPartialAutonomousOwnerAdoptsOnlyFreshKnownEffectsAC38(t *testing.T) {
 					child.result.Operation = operation
 				}
 				c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
-				snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+				snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, observed, time.Minute, c.runtime)
 				assertPartialReservationReceipt(t, c, child, parent, snapshot, lost, evidence)
 			})
 		}
@@ -332,7 +332,7 @@ func TestPartialOwnerKeepsUnconfirmedWorkloadAndPendingPowerAC38(t *testing.T) {
 	pending := core.Node{ObjectMeta: meta.ObjectMeta{Name: powerRef.Name, UID: "pending-node-uid", Labels: map[string]string{chillmeta.PowerModeState: chillmeta.PowerModePending}}}
 	observe := func() {
 		c.releaseObservedScopes([]core.Node{*node, pending}, []core.Pod{*pod, *otherPod}, []serving.InstanceState{state, otherState}, observed)
-		c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+		c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, c.runtime)
 	}
 	observe()
 	if !child.reserved || !parent.reserved || !power.reserved {
@@ -413,7 +413,7 @@ func TestTerminalPreparationsShareOnlyFrozenSiblingReceiptsAC38(t *testing.T) {
 			}
 			mutateTerminalPreparationEvidence(evidence, nodes, pods, physical, children, parent)
 			c.releaseObservedScopes(nodes, pods, physical, observed)
-			snapshot, lost := c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			snapshot, lost := c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, c.runtime)
 			wantReleased := evidence == "all-known"
 			if (c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil) != wantReleased ||
 				(len(snapshot.Reservations) == 0) != wantReleased {
@@ -520,14 +520,14 @@ func TestFailedOwnerAdoptsRegisteredRouteReceiptAC38(t *testing.T) {
 			retiring.Spec.NodeName = "retiring-node"
 			retiringNode := core.Node{ObjectMeta: meta.ObjectMeta{Name: "retiring-node", UID: "retiring-node-uid"}}
 			c.releaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod, *retiring}, []serving.InstanceState{state}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, c.runtime)
 			if !parent.reserved || !cleanup.reserved {
 				t.Fatal("refresh ACK released an unconfirmed cleanup responsibility")
 			}
 			// Retirement is now observed absent; only the registered refresh can
 			// prove the survivor's current policy, not the original handoff.
 			c.releaseObservedScopes([]core.Node{*node, retiringNode}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, c.runtime)
 			if (c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil) != (evidence == "registered") {
 				t.Fatalf("%s: unexpected cleanup reservation return", evidence)
 			}
@@ -628,13 +628,13 @@ func TestCanceledPrepareAdoptsRegisteredReadySubsetReceiptAC38(t *testing.T) {
 				parent.reserved = false // Other children can still own unconfirmed effects.
 				observed = ended.Add(3 * time.Minute)
 				state.ObservedAt = observed
-				c.reconcileSnapshot(serving.SchedulerSnapshot{}, ended.Add(2*time.Minute), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+				c.reconcileSnapshot(serving.SchedulerSnapshot{}, ended.Add(2*time.Minute), time.Minute, c.runtime)
 				if c.runs[transitionRunKind+"/"+target.ID] == nil {
 					t.Fatal("action-view expiry erased a still-owned transition baseline")
 				}
 			}
 			c.releaseObservedScopes([]core.Node{*node}, []core.Pod{*pod}, []serving.InstanceState{state}, observed)
-			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.reconcileSnapshot(serving.SchedulerSnapshot{}, observed, time.Minute, c.runtime)
 			wantReleased := evidence == "registered" || evidence == "dynamic-route" || evidence == "previous-existing" || evidence == "superseded" || evidence == supersededFailure || evidence == parentAfterWindow
 			if released := c.authorize(servingstate.Operation{WorkloadUID: "workload"}) == nil; released != wantReleased {
 				t.Fatalf("%s: reservation released=%t", evidence, released)

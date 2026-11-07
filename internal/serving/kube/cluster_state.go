@@ -35,8 +35,6 @@ type reservationState struct {
 	runs                  map[string]*actionRun
 	routeWriters          map[string]servingstate.RouteWriters
 	state                 SchedulerControllerState
-	replacements          []serving.SchedulerReplacement
-	replacementObservedAt time.Time
 	// unrouted holds when each captured instance last lost every route weight.
 	// overloaded holds the slots prepared while keep was in Overload: zero
 	// until the instance is Ready, then the end of its hold.
@@ -65,7 +63,6 @@ type actionRun struct {
 	routeReceipts        map[string]*actionRun
 	mayTouch             map[string]bool
 	proofParent          *actionRun
-	replacements         []serving.SchedulerReplacement
 	admittedControls     serving.SchedulerControls
 }
 

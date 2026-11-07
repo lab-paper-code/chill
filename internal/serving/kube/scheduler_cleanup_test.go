@@ -57,13 +57,13 @@ func TestCleanupRetainsOwnershipUntilRetirementCompletesAC38(t *testing.T) {
 	final.action.Status = servingstate.NativeOperationRunning
 	c.runs[final.action.ID] = final
 	now := time.Now()
-	before, _ := c.reconcileSnapshot(c.state.Snapshot, now, time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	before, _ := c.reconcileSnapshot(c.state.Snapshot, now, time.Minute, c.runtime)
 	if len(before.Reservations) != 1 {
 		t.Fatal("unfinished final route lost its reservation")
 	}
 	final.action.Status = servingstate.NativeOperationComplete
 	for tick, rate := range []float64{95.3, 100.2, 97.5} {
-		snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, now.Add(time.Duration(tick+1)*10*time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+		snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, now.Add(time.Duration(tick+1)*10*time.Second), time.Minute, c.runtime)
 		c.state.Snapshot = snapshot
 		if len(lost) != 0 || parent.action.Status != servingstate.NativeOperationRunning {
 			t.Fatalf("tick %.1f/s lost successful cleanup: %+v", rate, lost)
@@ -104,7 +104,7 @@ func assertCleanupCompletion(t *testing.T, c *SchedulerController, goal serving.
 	parent := c.runs[transitionRunKind+"/"+goal.ID]
 	final := c.runs[goal.Actions[0].ID]
 	// All original retirement duties remain part of the same frozen DAG.
-	snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, now.Add(40*time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	snapshot, lost := c.reconcileSnapshot(c.state.Snapshot, now.Add(40*time.Second), time.Minute, c.runtime)
 	if len(lost) != 0 || parent.action.Status != servingstate.NativeOperationRunning || final.result.Status != servingstate.NativeOperationComplete {
 		t.Fatalf("unchanged handoff falsely failed parent: %+v", lost)
 	}
@@ -125,7 +125,7 @@ func assertCleanupCompletion(t *testing.T, c *SchedulerController, goal serving.
 		t.Fatal(err)
 	}
 	snapshot.Instances = slices.Clone(goal.Instances)
-	snapshot, lost = c.reconcileSnapshot(snapshot, now.Add(50*time.Second), time.Minute, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	snapshot, lost = c.reconcileSnapshot(snapshot, now.Add(50*time.Second), time.Minute, c.runtime)
 	if len(lost) != 0 || parent.action.Status != servingstate.NativeOperationComplete || len(snapshot.Reservations) != 0 {
 		t.Fatalf("cleanup did not release only after all duties: %+v %+v", lost, snapshot.Reservations)
 	}

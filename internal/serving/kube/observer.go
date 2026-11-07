@@ -338,7 +338,13 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	o.mu.Unlock()
 	probes.Wait()
 	o.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		return o.refreshFailure(err)
+	}
 	o.reconcileSources(ctx, observed)
+	if err := ctx.Err(); err != nil {
+		return o.refreshFailure(err)
+	}
 	if err = o.publishLedger(nil); err != nil {
 		return err
 	}
@@ -363,7 +369,7 @@ func (o *Observer) reconcileSources(ctx context.Context, observed map[types.UID]
 		}
 	}
 	// Missing/relabeled Pods are still read for exact old executor termination.
-	for id, source := range o.sources {
+	for _, source := range o.sources {
 		if observed[source.uid] {
 			continue
 		}
@@ -371,7 +377,11 @@ func (o *Observer) reconcileSources(ctx context.Context, observed map[types.UID]
 		if pod != nil && pod.UID == source.uid {
 			o.observeTermination(pod)
 		} else if !source.stopped {
-			o.issue(id, errors.New("source disappeared without confirmed container termination"))
+			err := latestErr
+			if err == nil {
+				err = errors.New("source disappeared without confirmed container termination")
+			}
+			_, _ = o.sourceUnavailable(source.podState, err)
 		}
 	}
 }
@@ -677,6 +687,7 @@ func (o *Observer) sourceUnavailable(pod *corev1.Pod, err error) (serving.ReadyI
 }
 
 func (o *Observer) refreshFailure(err error) error {
+	o.refreshed = time.Time{}
 	o.issue("refresh", err)
 	for _, source := range o.sources {
 		source.instance.State.Ready = false

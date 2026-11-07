@@ -188,7 +188,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	child.reserved = true
 	parent.returnObserved = false
 	c.releaseObservedScopes(nodes, pods, physical, time.Now())
-	fresh, _ = c.reconcileSnapshot(fresh, time.Now(), c.config.Settings.ObservationWindow, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	fresh, _ = c.reconcileSnapshot(fresh, time.Now(), c.config.Settings.ObservationWindow, c.runtime)
 	if parent.reserved || child.reserved || len(fresh.Reservations) != 0 || api.deleteCalls.Load() != 0 {
 		t.Fatal("eligible fresh tick did not return the owner without compensation")
 	}
