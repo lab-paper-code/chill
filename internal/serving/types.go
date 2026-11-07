@@ -331,6 +331,7 @@ type RequestEvent struct {
 	At                time.Time        `json:"at"`
 	ReceivedAt        time.Time        `json:"receivedAt"`
 	ElapsedNanos      int64            `json:"elapsedNanos"`
+	ServerTiming      RequestTimings   `json:"serverTiming,omitempty"`
 	Assignment        *Assignment      `json:"assignment,omitempty"`
 	NativeInstance    string           `json:"nativeInstance,omitempty"`
 	NativeProgress    *BackendProgress `json:"nativeProgress,omitempty"`
@@ -377,9 +378,10 @@ type BackendResult struct {
 	StatusCode  int
 	// Finished proves either no submission or a completed synchronous response.
 	// A transport failure cannot prove that execution stopped.
-	Finished   bool
-	Progress   *BackendProgress
-	ClientSpan time.Duration
+	Finished     bool
+	Progress     *BackendProgress
+	ClientSpan   time.Duration
+	ServerTiming RequestTimings
 }
 
 // ReadyInstance is constructed by the Kubernetes and native-runtime boundary.

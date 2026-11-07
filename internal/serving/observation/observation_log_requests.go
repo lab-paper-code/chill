@@ -84,7 +84,7 @@ func (l *ObservationLog) RecordNativeSupplement(event serving.RequestEvent) erro
 
 func (l *ObservationLog) enqueueNativeLocked(event serving.RequestEvent) error {
 	late := serving.RequestRow{Kind: serving.RequestRowNative, RequestID: event.RequestID, WorkloadUID: event.WorkloadUID,
-		DefinitionID: event.Definition, Instance: event.NativeInstance}
+		DefinitionID: event.Definition, Instance: event.NativeInstance, ServerTiming: event.ServerTiming}
 	late.FoldNative(event.NativeProgress)
 	batch, err := l.rowBatchLocked(&late, l.receiptLocked())
 	if err == nil {

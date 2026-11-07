@@ -32,6 +32,7 @@ type RequestRow struct {
 	RunningNanos      *int64         `json:"runningNanos,omitempty"`
 	ExecutedNanos     *int64         `json:"executedNanos,omitempty"`
 	ExchangeNanos     *int64         `json:"exchangeNanos,omitempty"`
+	ServerTiming      RequestTimings `json:"serverTiming,omitempty"`
 	BatchID           uint64         `json:"batchID,omitempty"`
 	// Native timestamps are direct worker-clock progress, never reconstructed
 	// from QueueMS (which also includes ingress and is not actor queue wait).
@@ -93,6 +94,7 @@ func (r *RequestRow) foldIdentity(e *RequestEvent) {
 }
 
 func (r *RequestRow) foldTiming(e *RequestEvent) {
+	r.ServerTiming.Merge(e.ServerTiming)
 	if !e.ReceivedAt.IsZero() {
 		r.ReceivedAt = e.ReceivedAt
 	} else if r.ReceivedAt.IsZero() && e.Kind == phaseReceived {
