@@ -21,6 +21,11 @@ import (
 )
 
 const (
+	timingScenarioAuth       = "auth"
+	timingScenarioAdmission  = "admission"
+	timingScenarioWrite      = "write"
+	timingScenarioFlush      = "flush"
+	timingScenarioErrorWrite = "error-write"
 	timingScenarioErrorFlush = "error-flush"
 	timingScenarioDecode     = "decode"
 	timingScenarioWorker     = "worker"
@@ -100,7 +105,11 @@ func requireTiming(t *testing.T, row serving.RequestRow, stage serving.ServerSta
 
 // The handler runs the real runtime and persists its result through the query reader.
 func TestInferenceTimingErrorBoundaries(t *testing.T) {
-	for _, scenario := range []string{"success", "auth", timingScenarioDecode, "admission", timingScenarioWorker, timingOutcomeTimeout, timingScenarioCancel, "write", "flush", "error-write", timingScenarioErrorFlush} {
+	for _, scenario := range []string{
+		"success", timingScenarioAuth, timingScenarioDecode, timingScenarioAdmission, timingScenarioWorker,
+		timingOutcomeTimeout, timingScenarioCancel, timingScenarioWrite, timingScenarioFlush,
+		timingScenarioErrorWrite, timingScenarioErrorFlush,
+	} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -124,24 +133,28 @@ func TestInferenceTimingErrorBoundaries(t *testing.T) {
 			if scenario == timingScenarioDecode {
 				body = `{`
 			}
-			if scenario == "admission" {
+			if scenario == timingScenarioAdmission {
 				if err := h.runtime.StopAdmission("uid", "stopped"); err != nil {
 					t.Fatal(err)
 				}
 			}
 			request := httptest.NewRequest(http.MethodPost, "/api/workloads/workload/infer", strings.NewReader(body)).WithContext(ctx)
-			if scenario != "auth" && scenario != "error-write" && scenario != timingScenarioErrorFlush {
+			if scenario != timingScenarioAuth && scenario != timingScenarioErrorWrite && scenario != timingScenarioErrorFlush {
 				request.Header.Set("Authorization", "Bearer client")
 			}
 			if scenario == timingOutcomeTimeout {
 				request.Header.Set("X-Chill-Request-Timeout", "20ms")
 			}
-			writer := &timingFailureWriter{ResponseRecorder: httptest.NewRecorder(), writeFailure: scenario == "write" || scenario == "error-write", flushFailure: scenario == "flush" || scenario == timingScenarioErrorFlush}
+			writer := &timingFailureWriter{
+				ResponseRecorder: httptest.NewRecorder(),
+				writeFailure:     scenario == timingScenarioWrite || scenario == timingScenarioErrorWrite,
+				flushFailure:     scenario == timingScenarioFlush || scenario == timingScenarioErrorFlush,
+			}
 			h.ServeHTTP(writer, request)
 			row := timingRow(t, log, writer.Header().Get("X-Chill-Request-ID"))
 			wantOutcome := timingOutcomeCompleted
 			switch scenario {
-			case "auth", timingScenarioDecode, "admission":
+			case timingScenarioAuth, timingScenarioDecode, timingScenarioAdmission:
 				wantOutcome = "rejected"
 			case timingScenarioWorker:
 				wantOutcome = "error"
@@ -149,7 +162,7 @@ func TestInferenceTimingErrorBoundaries(t *testing.T) {
 				wantOutcome = timingOutcomeTimeout
 			case timingScenarioCancel:
 				wantOutcome = timingOutcomeCanceled
-			case "write", "flush", "error-write", timingScenarioErrorFlush:
+			case timingScenarioWrite, timingScenarioFlush, timingScenarioErrorWrite, timingScenarioErrorFlush:
 				wantOutcome = "delivery_failed"
 			}
 			if row.Outcome != wantOutcome {
@@ -158,7 +171,7 @@ func TestInferenceTimingErrorBoundaries(t *testing.T) {
 			requireTiming(t, row, serving.ServerReceiveDone, true)
 			requireTiming(t, row, serving.ServerAuthStart, true)
 			requireTiming(t, row, serving.ServerAuthDone, true)
-			decoded := scenario != "auth" && scenario != "error-write" && scenario != timingScenarioErrorFlush
+			decoded := scenario != timingScenarioAuth && scenario != timingScenarioErrorWrite && scenario != timingScenarioErrorFlush
 			requireTiming(t, row, serving.ServerBodyDecodeStart, decoded)
 			requireTiming(t, row, serving.ServerBodyDecodeDone, decoded)
 			requireTiming(t, row, serving.ServerAcceptDone, decoded && scenario != timingScenarioDecode)
