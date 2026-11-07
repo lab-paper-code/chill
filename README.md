@@ -78,6 +78,8 @@ NumPy, Pillow and ONNX Runtime match the default firstfloor image; ONNX builds
 the genuine model fixture, and PyYAML supports deployment and rendered RBAC tests.
 Use a virtual environment for local installation. SmolVLM preprocessor tests
 retain their optional runtime-image dependency skip; CI does not install those extras.
+Deployment CLI smoke tests also require full Git history to archive the pinned
+historical power-source commit; CI checks out with `fetch-depth: 0`.
 
 ```sh
 make lint                 # golangci-lint
