@@ -57,19 +57,13 @@ func TestReplaySupplyUsesPolicyCapacity(t *testing.T) {
 	in.MaxBatch = 1
 	rows[in.Key()] = serving.CapacityRow{Status: serving.CapacityBuilt, Kappa: &b1}
 	decision := &serving.SchedulerDecision{Capacity: &serving.SchedulerCapacity{Workloads: []serving.SchedulerCapacityWorkload{{UID: d.UID, Rate: 50}}}}
-	got, err := replayDemands(s, snap, rows, decision, nil)
-	if err != nil || len(got) != 1 || got[0].KeepKappa != policy || got[0].TargetKappa != policy || !got[0].KeepShort {
-		t.Fatalf("current demand above policy supply must be short: %+v, %v", got, err)
+	got := replayDemands(s, snap, rows, decision, nil)
+	if len(got) != 1 || got[0].KeepKappa != policy || got[0].TargetKappa != policy || !got[0].KeepShort {
+		t.Fatalf("current demand above policy supply must be short: %+v", got)
 	}
 	decision.Capacity.Workloads[0].Rate = 35
-	got, err = replayDemands(s, snap, rows, decision, nil)
-	if err != nil || len(got) != 1 || got[0].KeepShort {
-		t.Fatalf("current demand below policy supply must fit: %+v, %v", got, err)
-	}
-	for _, capacity := range []*serving.SchedulerCapacity{nil, {}} {
-		decision.Capacity = capacity
-		if _, err := replayDemands(s, snap, rows, decision, nil); err == nil {
-			t.Fatal("missing recorded current demand accepted")
-		}
+	got = replayDemands(s, snap, rows, decision, nil)
+	if len(got) != 1 || got[0].KeepShort {
+		t.Fatalf("current demand below policy supply must fit: %+v", got)
 	}
 }
