@@ -127,7 +127,6 @@ func TestDefectEFiveNodeCandidateExcludesUnconfirmedCleanup(t *testing.T) {
 	}
 	snap.Arrivals = nil
 	snap.Routing = map[string]map[string]int32{"w1": {}}
-	snap.EmptyNodeScaleDownAllowed = true
 	since := snap.At.Add(-s.ObservationWindow)
 	for index := range snap.Instances {
 		i := &snap.Instances[index]

@@ -15,7 +15,7 @@ func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 			s, snap := schedulerFixture()
 			s.MinimumDemand = map[string]float64{"w1": 10}
 			old := &snap.Instances[0]
-			old.Ready, old.Stopped, old.ObservedAt = false, true, snap.At.Add(-2*s.MaxObservationAge)
+			old.Ready, old.Stopped, old.ObservedAt = false, true, snap.At.Add(-time.Hour)
 			old.Routable = map[string]bool{"w1": false}
 			// Use the stored snapshot boundary so the proof must survive JSON,
 			// rather than being inferred from a reason string or elapsed time.
@@ -54,15 +54,14 @@ func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 
 func TestCapacityTerminalSlotIsRepreparedWithoutReuseAC45(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
 	s.MinimumDemand = map[string]float64{"w1": 10}
 	old := &snap.Instances[0]
 	old.Ready, old.Stopped, old.Terminated = false, true, true
-	old.ObservedAt = snap.At.Add(-2 * s.MaxObservationAge)
+	old.ObservedAt = snap.At.Add(-time.Hour)
 	until := snap.At.Add(s.ObservationWindow)
 	old.HeldUntil = &until
-	snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: false}}
 	snap.Routing = map[string]map[string]int32{"w1": {old.ID: 1000}}
 	// Reproduce E5-7's terminal route1000 while recent demand is growing.
 	capacityLoad(s, &snap, snap.Workloads[0], 10)
@@ -86,39 +85,3 @@ func TestCapacityTerminalSlotIsRepreparedWithoutReuseAC45(t *testing.T) {
 	}
 }
 
-// E5-7: a dead route1000 is not live supply, even while demand grows.
-func TestGrowingProtectsOnlyNonterminalExactRoutes(t *testing.T) {
-	for _, scenario := range []struct {
-		name      string
-		instances []SchedulerInstance
-		routes    map[string]int32
-		want      string
-	}{
-		{"terminated", []SchedulerInstance{{ID: "old", Terminated: true}}, nil, ""},
-		{"live", []SchedulerInstance{{ID: "old", Ready: true}}, nil, schedulerDemandIncreasing},
-		{"not-ready", []SchedulerInstance{{ID: "old"}}, nil, schedulerDemandIncreasing},
-		{"logical-stop", []SchedulerInstance{{ID: "old", Stopped: true}}, nil, schedulerDemandIncreasing},
-		{"missing", nil, nil, schedulerDemandIncreasing},
-		{"target-alias", []SchedulerInstance{{ID: "other", TargetID: "old", Terminated: true}}, nil, schedulerDemandIncreasing},
-		{"dead-live-drop", []SchedulerInstance{{ID: "old", Terminated: true}, {ID: "live", Ready: true}}, nil, schedulerDemandIncreasing},
-		{"dead-live-retain", []SchedulerInstance{{ID: "old", Terminated: true}, {ID: "live", Ready: true}}, map[string]int32{"live": 1000}, ""},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			p := capacityPlanner{snapshot: SchedulerSnapshot{Instances: scenario.instances},
-				keep: SchedulerCandidate{Routing: map[string]map[string]int32{"w": {"old": 1000}}}}
-			if len(scenario.instances) == 2 {
-				p.keep.Routing["w"]["live"] = 1000
-			}
-			w := capacityWorkload{d: &Definition{UID: "w"}, growing: true}
-			if got := p.timingReason(w, false, false, true, scenario.routes); got != scenario.want {
-				t.Fatalf("timingReason = %q, want %q", got, scenario.want)
-			}
-			if got := p.timingReason(w, true, false, true, scenario.routes); got != schedulerDemandIncreasing {
-				t.Fatalf("slow growth protection changed: %q", got)
-			}
-			if got := p.timingReason(w, true, true, true, scenario.routes); got != "" {
-				t.Fatalf("proved recovery exception changed: %q", got)
-			}
-		})
-	}
-}

@@ -210,7 +210,6 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		alt[n] = 0
 		r := p.routeOf(alt)
 		kept := p.evaluate(alt, r)
-		dwelling := !emptySaving && p.replacementDwelling(n, plan)
 		paid := p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route)
 		bound, withinUncertainty := 0.0, false
 		if emptySaving {
@@ -218,15 +217,10 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 			withinUncertainty = (kept.joules-kept.keepJoules)-(best.joules-best.keepJoules) <= bound
 			paid = paid && !withinUncertainty
 		}
-		if !emptySaving && !kept.feasible || !p.admits(&kept) || paid && !dwelling {
+		if !emptySaving && !kept.feasible || !p.admits(&kept) || paid {
 			continue
 		}
-		kept.unpaid, kept.dwelling = slices.Clone(best.unpaid), slices.Clone(best.dwelling)
-		if dwelling {
-			kept.dwelling = append(kept.dwelling, p.snapshot.Nodes[n].Node.UID)
-		} else {
-			kept.unpaid = append(kept.unpaid, p.snapshot.Nodes[n].Node.UID)
-		}
+		kept.unpaid = append(slices.Clone(best.unpaid), p.snapshot.Nodes[n].Node.UID)
 		kept.withinUncertainty = best.withinUncertainty || withinUncertainty
 		kept.gainUncertainty = best.gainUncertainty
 		if withinUncertainty {
@@ -235,31 +229,6 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		best = kept
 	}
 	return best
-}
-
-// A feasible alternative retaining this Node makes its replacement optional.
-// Missing history, different UIDs/profiles and unhealthy executors never hold recovery.
-func (p *capacityPlanner) replacementDwelling(n int, plan *capacityPlan) bool {
-	dwell := p.settings.ReplacementDwell
-	if dwell == 0 {
-		dwell = p.settings.ComparisonPeriod
-	}
-	for _, old := range p.plans[n][0].instances {
-		if old.Profile == nil || !old.Ready || old.Stopped || slices.ContainsFunc(plan.instances, func(i SchedulerInstance) bool {
-			return i.ID == old.ID
-		}) {
-			continue
-		}
-		for _, r := range p.snapshot.Replacements {
-			age := p.snapshot.At.Sub(r.CompletedAt)
-			if r.NodeUID == old.Node.UID && r.WorkloadUID == old.WorkloadUID && r.ProfileID == old.Profile.ID &&
-				!r.CompletedAt.IsZero() && age >= 0 && age < dwell &&
-				slices.ContainsFunc(plan.instances, func(i SchedulerInstance) bool { return i.WorkloadUID == old.WorkloadUID }) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // minimumGain requires nominal gain over T to exceed the deterministic

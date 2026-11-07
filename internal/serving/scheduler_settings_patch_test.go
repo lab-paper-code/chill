@@ -63,7 +63,7 @@ func TestSettingsPatchMatchesPUTDecode(t *testing.T) {
 		{"required null", `{"completionMarginMS":null}`, false},
 		{"omitted patch field keeps current value", `{}`, true},
 		{"normal required value", `{"completionMarginMS":0}`, true},
-		{"optional null uses PUT default", `{"bootstrapCapacityWaitNanos":null}`, true},
+		{"optional null uses PUT default", `{"capacityGridSteps":null}`, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body, err := jsonpatch.MergePatch(before, []byte(test.patch))

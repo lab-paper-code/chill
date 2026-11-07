@@ -9,31 +9,25 @@ import (
 // These are the physical fixtures from BatchLimitChangeIsPolicyRoute and
 // SingleNodeStoppingModeRaiseNeedsSpareSupply, not the fast-only E5 harness.
 func TestCapacityDeltaSlow(t *testing.T) {
-	compared, excludedBridges, slowPlans, blockedPlans := 0, 0, 0, 0
+	compared, excludedBridges, slowPlans := 0, 0, 0
 	for _, rate := range []float64{50, 150} {
-		for _, allowed := range []bool{true, false} {
-			for _, growing := range []bool{true, false} {
-				s, snap := schedulerFixture()
-				s.ScaleDownStabilization, s.ComparisonPeriod = 300*time.Second, time.Minute
-				s.ScaleDownHeadroomFraction = 0.2
-				profile := *snap.Instances[0].Profile
-				profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 0.8, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
-				snap.Instances[0].Profile = &profile
-				option := snap.Instances[0]
-				option.MaxBatch = 2
-				snap.Options, snap.Costs = []SchedulerOption{poolsOption(option)}, nil
-				snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: allowed, Supply: 100, WindowMax: 180}}
-				capacityLoad(s, &snap, snap.Workloads[0], rate)
-				p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-				p.ws[0].growing = growing
-				count, bridges, slow, blocked := capacityDeltaAllBounded(t, p)
-				compared, excludedBridges, slowPlans, blockedPlans = compared+count, excludedBridges+bridges, slowPlans+slow, blockedPlans+blocked
-			}
-		}
+		s, snap := schedulerFixture()
+		s.ComparisonPeriod = time.Minute
+		s.ScaleDownHeadroomFraction = 0.2
+		profile := *snap.Instances[0].Profile
+		profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 0.8, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
+		snap.Instances[0].Profile = &profile
+		option := snap.Instances[0]
+		option.MaxBatch = 2
+		snap.Options, snap.Costs = []SchedulerOption{poolsOption(option)}, nil
+		capacityLoad(s, &snap, snap.Workloads[0], rate)
+		p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+		count, bridges, slow := capacityDeltaAllBounded(t, p)
+		compared, excludedBridges, slowPlans = compared+count, excludedBridges+bridges, slowPlans+slow
 	}
 	for _, rate := range []float64{5, 30} {
 		s, snap := schedulerFixture()
-		s.ScaleDownStabilization, s.ComparisonPeriod = time.Minute, time.Minute
+		s.ComparisonPeriod = time.Minute
 		s.ScaleDownHeadroomFraction = 0.2
 		current, n1 := snap.Instances[0], snap.Instances[0].Node
 		raised := poolsInstance(current, "raised", n1, schedulerTestEcoMode, "w1")
@@ -46,19 +40,18 @@ func TestCapacityDeltaSlow(t *testing.T) {
 			poolsCost(schedulerActionRemove, n1, schedulerState(current), "unloaded", schedulerTestEcoMode),
 			poolsCost(schedulerActionPrepare, n1, "unloaded", schedulerState(raised), schedulerTestEcoMode),
 		}
-		snap.ScaleDown = map[string]SchedulerDownState{"w1": {Supply: 10, WindowMax: 45}}
 		capacityLoad(s, &snap, snap.Workloads[0], rate)
 		p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{current.Profile.ID: 10, raised.Profile.ID: 50})))
-		count, bridges, slow, blocked := capacityDeltaAllBounded(t, p)
-		compared, excludedBridges, slowPlans, blockedPlans = compared+count, excludedBridges+bridges, slowPlans+slow, blockedPlans+blocked
+		count, bridges, slow := capacityDeltaAllBounded(t, p)
+		compared, excludedBridges, slowPlans = compared+count, excludedBridges+bridges, slowPlans+slow
 	}
-	if compared == 0 || slowPlans == 0 || blockedPlans == 0 {
-		t.Fatalf("missing slow coverage compared=%d slow-plans=%d blocked=%d", compared, slowPlans, blockedPlans)
+	if compared == 0 || slowPlans == 0 {
+		t.Fatalf("missing reduction coverage compared=%d slow-plans=%d", compared, slowPlans)
 	}
-	t.Logf("bounded-comparisons=%d slow-plans=%d plan-local-blocked=%d bridge-excluded=%d max-J-diff=0", compared, slowPlans, blockedPlans, excludedBridges)
+	t.Logf("bounded-comparisons=%d slow-plans=%d bridge-excluded=%d max-J-diff=0", compared, slowPlans, excludedBridges)
 }
 
-func capacityDeltaAllBounded(t testing.TB, p *capacityPlanner) (compared, excludedBridges, slowPlans, blockedPlans int) {
+func capacityDeltaAllBounded(t testing.TB, p *capacityPlanner) (compared, excludedBridges, slowPlans int) {
 	t.Helper()
 	tab := p.planTable()
 	choice := make([]int, len(p.plans))
@@ -69,9 +62,6 @@ func capacityDeltaAllBounded(t testing.TB, p *capacityPlanner) (compared, exclud
 	for q := range tab.index {
 		if tab.eligible[q] && tab.slow[q] {
 			slowPlans++
-		}
-		if tab.eligible[q] && tab.dominated[q] == "" && !tab.searchable[q] {
-			blockedPlans++
 		}
 	}
 	var visit func(int)
@@ -104,7 +94,7 @@ func capacityDeltaAllBounded(t testing.TB, p *capacityPlanner) (compared, exclud
 		}
 	}
 	visit(0)
-	return compared, excludedBridges, slowPlans, blockedPlans
+	return compared, excludedBridges, slowPlans
 }
 
 func TestCapacityDeltaRetainedArithmetic(t *testing.T) {

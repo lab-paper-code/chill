@@ -29,17 +29,15 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	search := p.searched
 	record := &SchedulerCapacity{Period: time.Duration(best.period * 1e9), Route: time.Duration(best.route * 1e9), Search: &search, GainUncertaintyJoules: best.gainUncertainty}
 	record.TransitionReserves = best.reserves
-	for n, plans := range p.plans {
+	for _, plans := range p.plans {
 		for _, plan := range plans {
-			record.Plans = append(record.Plans, p.projectPlan(plan, p.plans[n][best.choice[n]] == plan && p.admits(&best)))
+			record.Plans = append(record.Plans, plan.record)
 		}
 	}
 	for w, ws := range p.ws {
 		j := best.judgments[w]
-		down := p.snapshot.ScaleDown[ws.d.UID]
 		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{
 			UID: ws.d.UID, Rate: ws.rate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued, KappaNew: best.sums[w][0], KappaRetained: best.sums[w][1], Backlog: j.backlog,
-			ScaleDown:   &down,
 			WaitSeconds: j.wait, DrainSeconds: j.drain, FinalExceedance: j.final, TransitionExceedance: j.transition, Weights: best.weights[w], Rows: best.rows[w],
 		})
 	}
@@ -72,9 +70,6 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 	}
 	for _, node := range best.unpaid {
 		decision.Reasons = append(decision.Reasons, schedulerReplacementUnpaid+":"+node)
-	}
-	for _, node := range best.dwelling {
-		decision.Reasons = append(decision.Reasons, schedulerReplacementDwell+":"+node)
 	}
 	if best.withinUncertainty {
 		decision.Reasons = append(decision.Reasons, schedulerGainWithinUncertainty)
@@ -124,16 +119,3 @@ func capacityWorst(worst float64) float64 {
 	return min(max(0, worst), math.MaxFloat64)
 }
 
-func (p *capacityPlanner) projectPlan(plan *capacityPlan, admitted bool) SchedulerNodePlan {
-	record := plan.record
-	if len(record.RequiresRecovery) == 0 || admitted {
-		return record
-	}
-	record.Eligible, record.Reason = false, schedulerScaleDownStabilizing
-	for _, ws := range p.ws {
-		if ws.growing && slices.Contains(record.RequiresRecovery, ws.d.UID) {
-			record.Reason = schedulerDemandIncreasing
-		}
-	}
-	return record
-}

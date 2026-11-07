@@ -23,13 +23,9 @@ const (
 	// arrival observation after the process starts; until one observation
 	// window is observed it names the node plans that remove or replace.
 	schedulerPartialObservation = "PartialObservationWindow"
-	// schedulerDemandIncreasing protects serving capacity while recent arrivals
-	// exceed the long-window rate.
-	schedulerDemandIncreasing = "DemandIncreasing"
 	// schedulerReplacementUnpaid names a node whose replacement did not repay
 	// its transition at the least load of the observation window.
 	schedulerReplacementUnpaid = "ReplacementUnpaid"
-	schedulerReplacementDwell  = "ReplacementDwell"
 	// schedulerGainWithinUncertainty keeps the current configuration when the
 	// chosen transition saves no more than the selected evidence's conditional B.
 	schedulerGainWithinUncertainty = "TransitionGainWithinUncertainty"
@@ -171,7 +167,6 @@ type SchedulerCapacityWorkload struct {
 	TransitionExceedance *float64            `json:"transitionExceedance,omitempty"`
 	Weights              map[string]int32    `json:"weights"`
 	Rows                 []string            `json:"rows"`
-	ScaleDown            *SchedulerDownState `json:"scaleDown,omitempty"`
 }
 
 // SchedulerNodePlan is one Node's plan: keep, or a set of option variants at
@@ -187,8 +182,6 @@ type SchedulerNodePlan struct {
 	Dominated          string              `json:"dominated,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
 	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
-	RequiresRecovery        []string                       `json:"requiresRecovery,omitempty"`
-	Tempo                   string                         `json:"tempo,omitempty"`
 	Kappa                   map[string]float64             `json:"kappa,omitempty"`
 	KappaRetained           map[string]float64             `json:"kappaRetained,omitempty"`
 	Pre                     time.Duration                  `json:"preNanos"`
@@ -217,16 +210,8 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		settings.DefaultIdlePower = &idle
 	}
 	snapshot = schedulerCanonical(snapshot)
-	if settings.ScaleDownStabilization > 0 && snapshot.ScaleDown == nil {
-		snapshot.ScaleDown = map[string]SchedulerDownState{}
-	}
 	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
-	defer func() {
-		if decision.Capacity == nil && !decision.At.IsZero() {
-			decision.Capacity = schedulerDownCapacity(settings, snapshot)
-		}
-	}()
-	fixSchedulerWorkloads(&decision, snapshot, capacity)
+	fixSchedulerWorkloads(&decision, snapshot)
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
 	for uid, routing := range snapshot.Routing {
 		keep.Routing[uid] = routing
@@ -234,10 +219,6 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err := settings.Validate(); err != nil {
 		decision.Reasons, decision.Keep = []string{err.Error()}, keep
 		return decision, ctx.Err()
-	}
-	if settings.ScaleDownStabilization == 0 && snapshot.ScaleDown == nil {
-		var tempo SchedulerTempo
-		tempo.Observe(settings, &snapshot, capacity)
 	}
 	// Keep carries only already-authorized Fixed completion obligations.
 	keep.Nodes = schedulerCommonNodes(snapshot)
@@ -252,14 +233,16 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		decision.Keep.Reasons, decision.Reasons = reasons, reasons
 		return decision, ctx.Err()
 	}
-	decision.Bootstrap = schedulerBootstrap(ctx, settings, snapshot, capacity, decision)
-	if decision.Bootstrap != nil && len(decision.Bootstrap.PendingRows) > 0 && !decision.Bootstrap.TimedOut {
-		decision.Status, decision.Reasons = CapacityPending, []string{"BootstrapCapacityPending"}
-		decision.Keep.Actions = nil
-		return decision, ctx.Err()
-	}
 	planner := newCapacityPlanner(ctx, settings, snapshot, keep, capacity, decision)
+	planner.fixCapacityWorkloads(&decision)
 	if len(planner.ws) == 0 {
+		if len(snapshot.Instances) == 0 && slices.ContainsFunc(decision.Workloads, func(w SchedulerWorkloadState) bool {
+			return strings.HasPrefix(w.Reason, CapacityPending+":") || strings.HasPrefix(w.Reason, CapacityRejected+":")
+		}) {
+			decision.Status = CapacityPending
+			decision.Keep.Actions = nil
+			return decision, ctx.Err()
+		}
 		zero := 0.0
 		decision.Keep.Status, decision.Keep.ExpectedJoules = schedulerStatusFeasible, &zero
 		target := decision.Keep
@@ -290,61 +273,6 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	return decision, ctx.Err()
 }
 
-// schedulerBootstrap waits only for rows of candidates that can occupy an empty
-// pool. Rejected rows are terminal; they need not and may never have a κ.
-//
-//nolint:gocyclo // Empty-pool candidate eligibility mirrors nodePlans without requiring κ.
-func schedulerBootstrap(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, rows []CapacityRow, decision SchedulerDecision) *SchedulerBootstrap {
-	if settings.BootstrapCapacityWait == 0 || len(snapshot.Instances) != 0 || len(snapshot.Reservations) != 0 || len(settings.AutonomousWorkloads) == 0 {
-		return nil
-	}
-	started := snapshot.BootstrapStartedAt
-	if started.IsZero() {
-		started = snapshot.At
-	}
-	result := &SchedulerBootstrap{StartedAt: started, Deadline: started.Add(settings.BootstrapCapacityWait), PendingRows: []string{}}
-	// Restore only capacity-pending UIDs for candidate eligibility; reservation
-	// and observation exclusions retain their normal meaning.
-	decision.Workloads = slices.Clone(decision.Workloads)
-	for k := range decision.Workloads {
-		if strings.HasPrefix(decision.Workloads[k].Reason, CapacityPending+":") {
-			decision.Workloads[k].State, decision.Workloads[k].Reason = WorkloadControlled, ""
-		}
-	}
-	p := newCapacityPlanner(ctx, settings, snapshot, decision.Keep, rows, decision)
-	for _, node := range snapshot.Nodes {
-		if !node.Ready || node.Measurement || slices.Contains(settings.ExcludedNodes, node.Node.Name) ||
-			slices.ContainsFunc(node.Reasons, func(reason string) bool {
-				return reason == NodeExcluded || reason == NodeInstanceUnavailable || reason == NodePlacementInventoryMissing || reason == NodePlacementBudgetUnavailable
-			}) {
-			continue
-		}
-		for _, option := range p.options {
-			i := option.Instance
-			if i.Node != node.Node || i.Profile == nil || i.Profile.Condition.NodeUID != node.Node.UID {
-				continue
-			}
-			if node.PowerMode != i.Profile.Condition.PowerMode && (!settings.Controls.Power || slices.Contains(node.Reasons, NodePowerModeUnavailable)) {
-				continue
-			}
-			if len(ValidateNodeBudget(node, append(append([]SchedulerAllocation{node.Reserved}, node.NonServing...), i.Allocation), nil)) != 0 {
-				continue
-			}
-			for w, workload := range p.ws {
-				if !slices.Contains(option.CompatibleUIDs, workload.d.UID) || !schedulerProfileMatches(workload.d, i.Profile) || !p.controlAllows(w, i, nil) {
-					continue
-				}
-				key := NewCapacityInput(settings, snapshot.DispatchOccupancy, option, workload.d).Key()
-				if row, found := p.rows[key]; !found || row.Status == CapacityPending {
-					result.PendingRows = appendUnique(result.PendingRows, key)
-				}
-			}
-		}
-	}
-	slices.Sort(result.PendingRows)
-	result.TimedOut = len(result.PendingRows) > 0 && !snapshot.At.Before(result.Deadline)
-	return result
-}
 
 // schedulerCanonical orders the snapshot lists the planner iterates, so the
 // decision does not depend on input order.
@@ -429,7 +357,6 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		for _, load := range decision.Search.Loads {
 			if load.UID == state.UID {
 				w.rate = max(load.InputsPerSecond, load.RecentInputsPerSecond)
-				w.growing = load.RecentInputsPerSecond > load.InputsPerSecond
 			}
 		}
 		for _, r := range snapshot.Outstanding {
@@ -476,6 +403,45 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 	}
 	p.resolveCapacity()
 	return p
+}
+
+// fixCapacityWorkloads uses the planner's resolved row selections. Missing
+// capacity fixes only its own UID; independent prepared UIDs remain controlled.
+func (p *capacityPlanner) fixCapacityWorkloads(decision *SchedulerDecision) {
+	kept := 0
+	for w, ws := range p.ws {
+		reason := CapacityRejected
+		available := false
+		for _, choices := range p.optionCapacity {
+			switch choices[w].reason {
+			case "":
+				available = true
+			case CapacityPending:
+				reason = CapacityPending
+			}
+		}
+		if !available {
+			delete(p.index, ws.d.UID)
+			reason += ":" + ws.d.UID
+			for k := range decision.Workloads {
+				if decision.Workloads[k].UID == ws.d.UID {
+					decision.Workloads[k].State, decision.Workloads[k].Reason = schedulerWorkloadFixed, reason
+				}
+			}
+			decision.Reasons = appendUnique(decision.Reasons, reason)
+			continue
+		}
+		p.ws[kept], p.index[ws.d.UID] = ws, kept
+		for _, choices := range p.optionCapacity {
+			choices[kept] = choices[w]
+			choices[kept].w = kept
+		}
+		kept++
+	}
+	p.ws = p.ws[:kept]
+	for option, choices := range p.optionCapacity {
+		p.optionCapacity[option] = choices[:kept]
+	}
 }
 
 // capacityMinimumRate is the least arrival rate of the Workload over the

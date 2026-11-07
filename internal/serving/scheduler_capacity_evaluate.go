@@ -91,7 +91,7 @@ func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnaps
 		settings.ObservationWindow <= 0 || settings.ControlInterval <= 0 {
 		return nil, false
 	}
-	if len(schedulerValidateObservationTimes(&snapshot, settings.MaxObservationAge)) != 0 {
+	if len(schedulerValidateObservationTimes(&snapshot)) != 0 {
 		return nil, false
 	}
 	decision := SchedulerDecision{
@@ -247,7 +247,6 @@ type capacityResult struct {
 	sums                      [][2]float64
 	// unpaid names the Nodes whose replacement payback reverted to keep.
 	unpaid   []string
-	dwelling []string
 	// withinUncertainty marks keep chosen over a transition whose gain is
 	// within the measurement uncertainty (minimumGain).
 	withinUncertainty bool
@@ -315,7 +314,7 @@ func (p *capacityPlanner) evaluateAtWindow(choice []int, r float64, bridge *sche
 			kret += item.kappa
 			weightSum += float64(item.weight)
 		}
-		demand, slow, recovery, protectedRate := p.admissionDemand(ws, choice, kret)
+		demand, slow, _, protectedRate := p.admissionDemand(ws, choice, kret)
 		var weights []int32
 		var y []float64
 		var ok bool
@@ -348,7 +347,9 @@ func (p *capacityPlanner) evaluateAtWindow(choice []int, r float64, bridge *sche
 				worst = max(worst, excess)
 			}
 		}
-		res.exclusion = cmp.Or(res.exclusion, p.timingReason(ws, slow, recovery && j.satisfied, j.satisfied, routes))
+		if slow && !j.satisfied {
+			res.exclusion = cmp.Or(res.exclusion, schedulerReductionCapacityInsufficient)
+		}
 		res.feasible = res.feasible && j.satisfied
 		res.final = res.final && ok && j.final != nil && *j.final <= 0
 		res.worst = max(res.worst, worst)
@@ -388,7 +389,13 @@ func (p *capacityPlanner) evaluateAtWindow(choice []int, r float64, bridge *sche
 // keepInsufficient uses the same observation and positive physical route supply.
 // It grants no safety exception: final backlog, bridge and reserve checks remain.
 func (p *capacityPlanner) keepInsufficient(w capacityWorkload) bool {
-	kappa := p.snapshot.ScaleDown[w.d.UID].Supply
+	kappa := 0.0
+	for _, i := range p.snapshot.Instances {
+		if i.WorkloadUID == w.d.UID && i.Ready && !i.Stopped && i.Routable[w.d.UID] && schedulerInstanceRouted(p.keep.Routing, i.ID) {
+			k, _ := p.currentKappa(i)
+			kappa += k
+		}
+	}
 	j := capacityJudge(w, kappa, kappa, kappa > 0, 0)
 	return !j.satisfied
 }

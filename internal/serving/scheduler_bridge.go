@@ -75,7 +75,7 @@ func (p *capacityPlanner) bridgeSchedule(choice []int) (*schedulerBridgeSchedule
 			kappa += p.plans[n][j].record.Kappa[w.d.UID]
 		}
 		if kappa < demand.rate {
-			return nil, schedulerWindowCapacityInsufficient
+			return nil, schedulerReductionCapacityInsufficient
 		}
 	}
 	b := schedulerBridgeCompiler{p: p, choice: choice,

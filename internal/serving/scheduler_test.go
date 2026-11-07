@@ -27,7 +27,7 @@ const (
 
 func schedulerFixture() (SchedulerSettings, SchedulerSnapshot) {
 	at := time.Unix(100, 0)
-	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxObservationAge: time.Second, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
+	s := SchedulerSettings{ObservationWindow: 100 * time.Millisecond, ControlInterval: time.Second, ComparisonPeriod: 100 * time.Millisecond, MaxReplicas: 2, MaxInstances: 4, AutonomousWorkloads: []string{"w1"}, CapacityWindow: time.Second, CapacityWindows: 3, CapacityPassingWindows: 2, CapacityMinimumRequests: 50, PlanSearchWorkers: 2, Controls: SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Power: true, Membership: true}}
 	estimates := schedulerEstimateSettingsForTest()
 	s.DefaultOperationCost, s.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples = 20, .005, 100
@@ -227,7 +227,7 @@ func TestSchedulerWindowPopulationAndZeroSample(t *testing.T) {
 
 func TestSchedulerObservationTimeBounds(t *testing.T) {
 	for _, source := range []string{
-		"missing cutoff", "future cutoff", "future node", "stale node", "future instance", "stale instance",
+		"missing cutoff", "future cutoff", "future node", "missing node time", "future instance", "missing instance time",
 	} {
 		t.Run(source, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
@@ -237,18 +237,18 @@ func TestSchedulerObservationTimeBounds(t *testing.T) {
 				snapshot.ObservationEnd = time.Time{}
 			case "future cutoff":
 				snapshot.ObservationEnd = snapshot.At.Add(time.Nanosecond)
-			case "future node", "stale node":
+			case "future node", "missing node time":
 				snapshot.Nodes[0].ObservedAt = snapshot.At.Add(time.Nanosecond)
-				if source == "stale node" {
-					snapshot.Nodes[0].ObservedAt = snapshot.At.Add(-settings.MaxObservationAge - time.Nanosecond)
+				if source == "missing node time" {
+					snapshot.Nodes[0].ObservedAt = time.Time{}
 				}
-				reason = "UnknownOrStaleNode:" + snapshot.Nodes[0].Node.Name
-			case "future instance", "stale instance":
+				reason = "UnknownOrFutureNode:" + snapshot.Nodes[0].Node.Name
+			case "future instance", "missing instance time":
 				snapshot.Instances[0].ObservedAt = snapshot.At.Add(time.Nanosecond)
-				if source == "stale instance" {
-					snapshot.Instances[0].ObservedAt = snapshot.At.Add(-settings.MaxObservationAge - time.Nanosecond)
+				if source == "missing instance time" {
+					snapshot.Instances[0].ObservedAt = time.Time{}
 				}
-				reason = "UnknownOrStaleInstance:" + snapshot.Instances[0].ID
+				reason = "UnknownOrFutureInstance:" + snapshot.Instances[0].ID
 			}
 			decision, err := EvaluateScheduler(context.Background(), settings, snapshot, nil)
 			if err != nil {
@@ -256,7 +256,7 @@ func TestSchedulerObservationTimeBounds(t *testing.T) {
 			}
 			schedulerRequireReason(t, decision.Keep.Reasons, reason)
 			if decision.Target != nil || decision.Keep.ExpectedJoules != nil {
-				t.Fatalf("unknown, future or stale observation became actionable: %+v", decision)
+				t.Fatalf("unknown or future observation became actionable: %+v", decision)
 			}
 		})
 	}

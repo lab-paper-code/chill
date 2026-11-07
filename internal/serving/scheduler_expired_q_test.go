@@ -96,7 +96,7 @@ func TestPlannerRunningAndExpiredOwnershipDoNotTriggerExpansion(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, snap := schedulerFixture()
-			s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+			s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 			snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
 			d := snap.Workloads[0]
 			d.SLO.TargetLatency = time.Second

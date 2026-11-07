@@ -124,9 +124,6 @@ func (s *searchState) workloadTerms(w, n, q int) searchWorkload {
 	ws := s.planner.ws[w]
 	demand := ws
 	recovery := slow && t.keepInsufficient[w] && !(kret < ws.rate && outage)
-	if slow && !recovery {
-		demand.rate = max(ws.rate, s.planner.snapshot.ScaleDown[ws.d.UID].WindowMax)
-	}
 	protected := demand.rate
 	if slow && !recovery {
 		protected *= 1 + s.planner.settings.ScaleDownHeadroomFraction

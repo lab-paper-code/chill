@@ -369,7 +369,7 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	}
 	settings := b.settings
 	settings.AutonomousWorkloads = nil
-	settings.ObservationWindow, settings.ComparisonPeriod, settings.MaxObservationAge = span, span, time.Hour
+	settings.ObservationWindow, settings.ComparisonPeriod = span, span
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
 	// An empty compared set excludes Node energy; request joules count separately.
 	limit := capacityWindowLimit{requests: n, slo: w.SLO}

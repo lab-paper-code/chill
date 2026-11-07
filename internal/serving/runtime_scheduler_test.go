@@ -155,7 +155,6 @@ func TestControlledRoutingRefreshesOnlyAbsentWorkloadSeeds(t *testing.T) {
 func TestSchedulerOutstandingUsesCurrentReadTimeAfterCaptureIO(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil
-	settings.MaxObservationAge = 5 * time.Second
 	d := snapshot.Workloads[0]
 	d.SLO.TargetLatency = time.Second
 	cutoff := snapshot.At

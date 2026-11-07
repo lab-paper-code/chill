@@ -22,11 +22,6 @@ type SchedulerSettings struct {
 	ObservationWindow time.Duration `json:"observationWindowNanos"`
 	ControlInterval   time.Duration `json:"controlIntervalNanos"`
 	ComparisonPeriod  time.Duration `json:"comparisonPeriodNanos"`
-	// Zero reuses ComparisonPeriod; this is not a measured energy payback time.
-	ReplacementDwell          time.Duration `json:"replacementDwellNanos"`
-	MaxObservationAge         time.Duration `json:"maxObservationAgeNanos"`
-	BootstrapCapacityWait     time.Duration `json:"bootstrapCapacityWaitNanos"`
-	ScaleDownStabilization    time.Duration `json:"scaleDownStabilizationNanos"`
 	TransitionReserveFraction float64       `json:"transitionReserveFraction"`
 	ScaleDownHeadroomFraction float64       `json:"scaleDownHeadroomFraction"`
 	MaxReplicas               int           `json:"maxReplicas"`
@@ -440,22 +435,9 @@ type Action struct {
 	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
 }
 
-// SchedulerReplacement is the last observed completed replacement of a
-// Node/Workload slot, independent of arrival-demand history.
-type SchedulerReplacement struct {
-	NodeUID     string    `json:"nodeUID"`
-	WorkloadUID string    `json:"workloadUID"`
-	ProfileID   string    `json:"profileID"`
-	CompletedAt time.Time `json:"completedAt"`
-}
-
 type SchedulerSnapshot struct {
 	// At is the current request read and decision origin, after capture I/O.
 	At                        time.Time                     `json:"at"`
-	BootstrapStartedAt        time.Time                     `json:"bootstrapStartedAt,omitempty"`
-	ScaleDown                 map[string]SchedulerDownState `json:"scaleDown,omitempty"`
-	EmptyNodeScaleDownAllowed bool                          `json:"emptyNodeScaleDownAllowed"`
-	Replacements              []SchedulerReplacement        `json:"replacements,omitempty"`
 	// ObservationEnd is the fixed historical arrival cutoff.
 	ObservationEnd time.Time `json:"observationEnd"`
 	// ObservedSince is when arrival observation became complete (the process
@@ -559,14 +541,6 @@ type SchedulerWorkloadState struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// SchedulerBootstrap records the bounded empty-pool capacity barrier.
-type SchedulerBootstrap struct {
-	StartedAt   time.Time `json:"startedAt"`
-	Deadline    time.Time `json:"deadline"`
-	PendingRows []string  `json:"pendingRows"`
-	TimedOut    bool      `json:"timedOut"`
-}
-
 type SchedulerDecision struct {
 	At         time.Time                `json:"at"`
 	Status     string                   `json:"status"`
@@ -578,23 +552,13 @@ type SchedulerDecision struct {
 	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
 	Capacity   *SchedulerCapacity       `json:"capacity,omitempty"`
-	Bootstrap  *SchedulerBootstrap      `json:"bootstrap,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }
 
 func (s SchedulerSettings) Validate() error {
-	if s.ObservationWindow <= 0 || s.ControlInterval <= 0 || s.ComparisonPeriod <= 0 || s.MaxObservationAge <= 0 {
+	if s.ObservationWindow <= 0 || s.ControlInterval <= 0 || s.ComparisonPeriod <= 0 {
 		return fmt.Errorf("scheduler time intervals must be positive")
-	}
-	if s.ReplacementDwell < 0 {
-		return fmt.Errorf("replacementDwellNanos must be nonnegative (0 reuses comparisonPeriodNanos)")
-	}
-	if s.BootstrapCapacityWait < 0 || s.BootstrapCapacityWait > time.Hour {
-		return fmt.Errorf("bootstrapCapacityWaitNanos must be between 0 and one hour")
-	}
-	if s.ScaleDownStabilization < 0 {
-		return fmt.Errorf("scaleDownStabilizationNanos must be nonnegative")
 	}
 	if !schedulerUnitFraction(s.TransitionReserveFraction) {
 		return fmt.Errorf("transitionReserveFraction must be finite and between 0 and 1")
@@ -668,9 +632,6 @@ func (s SchedulerSettings) validateExcludedNodes() error {
 type SchedulerSettingsInput struct {
 	SchedulerSettings
 	CompletionMarginMS      *float64       `json:"completionMarginMS"`
-	BootstrapCapacityWait   *time.Duration `json:"bootstrapCapacityWaitNanos"`
-	ScaleDownStabilization  *time.Duration `json:"scaleDownStabilizationNanos"`
-	ReplacementDwell        *time.Duration `json:"replacementDwellNanos"`
 	CapacityGridSteps       *int           `json:"capacityGridSteps"`
 	CapacityBisectionWidth  *float64       `json:"capacityBisectionWidth"`
 	CapacityTailSamples     *int           `json:"capacityTailSamples"`
@@ -720,18 +681,6 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		settings.CapacityTailSamples = *in.CapacityTailSamples
 	}
 	settings.CompletionMarginMS = *in.CompletionMarginMS
-	settings.BootstrapCapacityWait = 10 * time.Minute
-	if in.BootstrapCapacityWait != nil {
-		settings.BootstrapCapacityWait = *in.BootstrapCapacityWait
-	}
-	settings.ScaleDownStabilization = 300 * time.Second
-	if in.ScaleDownStabilization != nil {
-		settings.ScaleDownStabilization = *in.ScaleDownStabilization
-	}
-	settings.ReplacementDwell = 0 // Omitted/zero reuses ComparisonPeriod at admission.
-	if in.ReplacementDwell != nil {
-		settings.ReplacementDwell = *in.ReplacementDwell
-	}
 	return settings, settings.Validate()
 }
 

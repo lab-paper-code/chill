@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
@@ -60,7 +59,7 @@ func SchedulerContinuationReasons(settings SchedulerSettings, snapshot Scheduler
 }
 
 func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSnapshot) []string {
-	reasons := schedulerValidateObservationTimes(&snapshot, settings.MaxObservationAge)
+	reasons := schedulerValidateObservationTimes(&snapshot)
 	if len(snapshot.Nodes) == 0 {
 		reasons = append(reasons, "MissingPoolInventory")
 	}
@@ -97,15 +96,14 @@ func schedulerValidateSnapshot(settings SchedulerSettings, snapshot SchedulerSna
 	return reasons
 }
 
-func schedulerValidateObservationTimes(snapshot *SchedulerSnapshot, maxAge time.Duration) []string {
+func schedulerValidateObservationTimes(snapshot *SchedulerSnapshot) []string {
 	reasons := []string{}
 	if snapshot.At.IsZero() || snapshot.ObservationEnd.IsZero() || snapshot.ObservationEnd.After(snapshot.At) {
 		reasons = append(reasons, "UnknownOrFutureObservationWindow")
 	}
 	for _, n := range snapshot.Nodes {
-		if n.Node.UID == "" || n.ObservedAt.IsZero() || n.ObservedAt.After(snapshot.At) ||
-			snapshot.At.Sub(n.ObservedAt) > maxAge {
-			reasons = appendUnique(reasons, "UnknownOrStaleNode:"+n.Node.Name)
+		if n.Node.UID == "" || n.ObservedAt.IsZero() || n.ObservedAt.After(snapshot.At) {
+			reasons = appendUnique(reasons, "UnknownOrFutureNode:"+n.Node.Name)
 		}
 	}
 	for _, i := range snapshot.Instances {
@@ -115,8 +113,8 @@ func schedulerValidateObservationTimes(snapshot *SchedulerSnapshot, maxAge time.
 		if schedulerFixedReason(*snapshot, i.WorkloadUID) != "" || schedulerFixedReason(*snapshot, i.OwnerWorkloadUID) != "" {
 			continue
 		}
-		if i.ObservedAt.IsZero() || i.ObservedAt.After(snapshot.At) || snapshot.At.Sub(i.ObservedAt) > maxAge {
-			reasons = appendUnique(reasons, "UnknownOrStaleInstance:"+i.ID)
+		if i.ObservedAt.IsZero() || i.ObservedAt.After(snapshot.At) {
+			reasons = appendUnique(reasons, "UnknownOrFutureInstance:"+i.ID)
 		}
 	}
 	return reasons

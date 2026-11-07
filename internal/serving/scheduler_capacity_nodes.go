@@ -15,7 +15,6 @@ type capacityWorkload struct {
 	queued  int     // q
 	current int     // instances serving it now
 	slack   float64 // L − m, seconds
-	growing bool    // recent observed rate exceeds the long-window rate
 }
 
 // capacityItem is one instance serving a Workload: its κ, per-input energy e
@@ -32,6 +31,7 @@ type capacityItem struct {
 
 type capacityPlan struct {
 	record                             SchedulerNodePlan
+	reduces                            bool // removes supply or lowers a serving policy
 	mode                               string
 	option                             string // profile, allocation, MaxWait and Workload; excludes cap
 	keep                               bool
@@ -450,15 +450,10 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		}
 	}
 	p.sum(plan)
-	plan.record.Tempo = schedulerTempoFast
 	if len(current) == 0 && len(chosen) == 0 || slices.ContainsFunc(current, func(old SchedulerInstance) bool {
 		return old.WorkloadUID == "" && old.OwnerWorkloadUID == "" && (!used[old.ID] || mode != node.PowerMode)
 	}) {
-		plan.record.Tempo = schedulerTempoSlow
-		if !p.snapshot.EmptyNodeScaleDownAllowed {
-			plan.record.Reason = schedulerScaleDownStabilizing
-			return plan
-		}
+		plan.reduces = true
 	}
 	for _, ws := range p.ws {
 		affected := false
@@ -477,13 +472,10 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		})
 		slow := hasCurrent && (affected || policy && plan.record.Kappa[ws.d.UID] <= oldKappa)
 		if slow {
-			plan.record.Tempo = schedulerTempoSlow
+			plan.reduces = true
 			if p.partial {
 				plan.record.Reason = schedulerPartialObservation
 				return plan
-			}
-			if ws.growing || !p.snapshot.ScaleDown[ws.d.UID].Allowed {
-				plan.record.RequiresRecovery = append(plan.record.RequiresRecovery, ws.d.UID)
 			}
 		}
 	}

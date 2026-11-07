@@ -38,8 +38,8 @@ func TestCapacityTableScalars(t *testing.T) {
 	retained := capacityItem{id: "old", kappa: 11, e: 13, weight: 17}
 	plan := &capacityPlan{option: "option", mode: "mode", items: [][]capacityItem{{item}}, retained: [][]capacityItem{{retained}},
 		others: 2, preMean: 19, preMax: 23, postMean: 29, postMax: 31, preJ: 37, postJ: 41,
-		before: 43, mid: 47, after: 53, replaces: true,
-		record: SchedulerNodePlan{Eligible: true, RequiresBridge: []string{"bridge"}, RequiresRecovery: []string{"w"}, Tempo: schedulerTempoSlow}}
+		before: 43, mid: 47, after: 53, replaces: true, reduces: true,
+		record: SchedulerNodePlan{Eligible: true, RequiresBridge: []string{"bridge"}}}
 	p := &capacityPlanner{ws: []capacityWorkload{{rate: 1}}, plans: [][]*capacityPlan{{{keep: true}, plan}}}
 	tab := p.planTable()
 	q := tab.byPlan[0][1]
@@ -47,7 +47,7 @@ func TestCapacityTableScalars(t *testing.T) {
 		tab.joules[q], tab.before[q], tab.mid[q], tab.after[q], tab.tauPre[q], tab.tPre[q], tab.tauPost[q], tab.tPost[q]}
 	want := []float64{3, 15, 11, 17, 221, 78, 43, 47, 53, 19, 23, 29, 31}
 	if !slices.Equal(got, want) || tab.count[q][0] != 1 || tab.others[q] != 2 || tab.items[q][0][0] != item ||
-		!tab.replaces[q] || !tab.bridge[q] || !tab.slow[q] || !slices.Equal(tab.recovery[q], []string{"w"}) {
+		!tab.replaces[q] || !tab.bridge[q] || !tab.slow[q] {
 		t.Fatalf("scalar extraction: got=%v want=%v table=%+v", got, want, tab)
 	}
 }

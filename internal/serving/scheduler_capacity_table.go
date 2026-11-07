@@ -37,7 +37,6 @@ type planTable struct {
 	preJ, postJ                  []float64
 	tauPre, tauPost, tPre, tPost []float64
 	keep, replaces, bridge, slow []bool
-	recovery                     [][]string
 	eligible                     []bool
 	dominated                    []string
 	pruned                       map[string]int
@@ -45,7 +44,6 @@ type planTable struct {
 	searchable           []bool
 	slowWorkload, outage [][]bool
 	keepInsufficient     []bool
-	unsearchable         map[string]int
 	keyParts             []string
 }
 
@@ -163,8 +161,7 @@ func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorklo
 	t.tauPre, t.tauPost = append(t.tauPre, plan.preMean), append(t.tauPost, plan.postMean)
 	t.tPre, t.tPost = append(t.tPre, plan.preMax), append(t.tPost, plan.postMax)
 	t.keep, t.replaces = append(t.keep, plan.keep), append(t.replaces, plan.replaces)
-	t.bridge, t.slow = append(t.bridge, len(plan.record.RequiresBridge) > 0), append(t.slow, plan.record.Tempo == schedulerTempoSlow)
-	t.recovery = append(t.recovery, slices.Clone(plan.record.RequiresRecovery))
+	t.bridge, t.slow = append(t.bridge, len(plan.record.RequiresBridge) > 0), append(t.slow, plan.reduces)
 	t.eligible, t.dominated = append(t.eligible, plan.record.Eligible), append(t.dominated, plan.record.Dominated)
 	return q
 }

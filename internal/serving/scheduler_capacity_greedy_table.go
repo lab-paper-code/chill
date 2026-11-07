@@ -2,8 +2,7 @@ package serving
 
 import "slices"
 
-// initSearch folds only plan-local timing exclusions. Set-dependent timing,
-// reserves and bridge scheduling remain the exact funnel's responsibility.
+// initSearch records plan-local eligibility and physical workload effects.
 func (t *planTable) initSearch(p *capacityPlanner) {
 	if t.searchable != nil {
 		return
@@ -12,7 +11,6 @@ func (t *planTable) initSearch(p *capacityPlanner) {
 	t.slowWorkload, t.outage = make([][]bool, len(t.index)), make([][]bool, len(t.index))
 	t.keyParts = make([]string, len(t.index))
 	t.keepInsufficient = make([]bool, len(p.ws))
-	t.unsearchable = map[string]int{}
 	for w, ws := range p.ws {
 		t.keepInsufficient[w] = p.keepInsufficient(ws)
 	}
@@ -25,26 +23,15 @@ func (t *planTable) initSearch(p *capacityPlanner) {
 		}
 		t.slowWorkload[q], t.outage[q] = make([]bool, len(p.ws)), make([]bool, len(p.ws))
 		choice[n] = t.index[q]
-		reason := ""
 		for w, ws := range p.ws {
 			_, slow := p.reductionDemand(ws, choice)
 			t.slowWorkload[q][w] = slow
 			t.outage[q][w] = plan.mode != p.snapshot.Nodes[n].PowerMode && slices.ContainsFunc(p.snapshot.Instances, func(i SchedulerInstance) bool {
 				return i.Node == p.snapshot.Nodes[n].Node && i.WorkloadUID == ws.d.UID && schedulerInstanceRouted(p.keep.Routing, i.ID)
 			})
-			if !t.keepInsufficient[w] && (slices.Contains(t.recovery[q], ws.d.UID) || slow && (ws.growing || !p.snapshot.ScaleDown[ws.d.UID].Allowed)) {
-				if ws.growing {
-					reason = schedulerDemandIncreasing
-				} else if reason == "" {
-					reason = schedulerScaleDownStabilizing
-				}
-			}
 		}
 		choice[n] = 0
-		t.searchable[q] = t.eligible[q] && t.dominated[q] == "" && reason == ""
-		if reason != "" && t.eligible[q] && t.dominated[q] == "" {
-			t.unsearchable[reason]++
-		}
+		t.searchable[q] = t.eligible[q] && t.dominated[q] == ""
 	}
 }
 

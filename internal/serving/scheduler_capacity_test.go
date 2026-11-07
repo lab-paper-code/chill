@@ -88,10 +88,6 @@ func capacityPlannerForTest(t testing.TB, s SchedulerSettings, snap SchedulerSna
 	if snap.Routing == nil {
 		snap.Routing = schedulerInstanceRouting(ctx, snap.Workloads, snap.Instances)
 	}
-	if s.ScaleDownStabilization == 0 && snap.ScaleDown == nil {
-		var tempo SchedulerTempo
-		tempo.Observe(s, &snap, rows)
-	}
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: schedulerCommonNodes(snap), Instances: snap.Instances, Routing: schedulerInstanceRouting(ctx, snap.Workloads, snap.Instances)}
 	for uid, routing := range snap.Routing {
 		keep.Routing[uid] = routing
@@ -126,7 +122,7 @@ func capacityChoiceForTest(t testing.TB, p *capacityPlanner, keys map[string]str
 // 10.7 s. L 1 s, m 177 ms.
 func capacityE1Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, NodeReference) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Second, time.Minute, time.Hour, 177
+	s.ObservationWindow, s.ComparisonPeriod, s.CompletionMarginMS = time.Second, time.Minute, 177
 	d := snap.Workloads[0]
 	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
 	// E1 placed q1-lut beside q1 on rasp5; with one instance per Workload per
@@ -176,7 +172,7 @@ func TestCapacityTransientRuleRejectsCheaperSlowRoute(t *testing.T) {
 
 func TestCapacityMinimumDemandPreservesCapacityAtNoLoad(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
@@ -236,7 +232,7 @@ func TestSchedulerMinimumDemandValidation(t *testing.T) {
 // started; under one control interval of it the decision waits.
 func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge = time.Minute, 10*time.Second, time.Hour
+	s.ObservationWindow, s.ControlInterval = time.Minute, 10*time.Second
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
 	profile := *i2.Profile
@@ -269,7 +265,7 @@ func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
 // removal. Expansion still runs, and a full window allows the removal.
 func TestCapacityPartialWindowOnlyExpands(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge, s.MaxReplicas = time.Minute, 10*time.Second, time.Hour, 3
+	s.ObservationWindow, s.ControlInterval, s.MaxReplicas = time.Minute, 10*time.Second, 3
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
 	profile := *i2.Profile
@@ -306,7 +302,7 @@ func TestCapacityPartialWindowOnlyExpands(t *testing.T) {
 // The same λ reaches capacity, transient delay, route shares and request energy.
 func TestCapacityRecentDemandExpandsWithOutstandingOnce(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
 	d := snap.Workloads[0]
 	d.SLO.TargetLatency = time.Second
@@ -361,9 +357,9 @@ func TestCapacityRecentDemandExpandsWithOutstandingOnce(t *testing.T) {
 	}
 }
 
-func TestCapacityIncreasingWorkloadProtectsOnlyItsServingCapacity(t *testing.T) {
+func TestCapacityHighDemandProtectsOnlyItsServingCapacity(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
 	w1, w2 := snap.Workloads[0], poolsAddWorkload(&snap, "w2")
 	s.AutonomousWorkloads = append(s.AutonomousWorkloads, w2.UID)
@@ -380,7 +376,7 @@ func TestCapacityIncreasingWorkloadProtectsOnlyItsServingCapacity(t *testing.T) 
 	}
 	snap.Costs = append(snap.Costs, poolsCost(schedulerActionRemove, snap.Instances[0].Node, schedulerState(snap.Instances[0]), "unloaded", "fixed"))
 	snap.Routing = map[string]map[string]int32{w1.UID: {"i1": 500, "i2": 500}, w2.UID: {"i3": 500, "i4": 500}}
-	capacityLoad(s, &snap, w1, 20)
+	capacityLoad(s, &snap, w1, 120)
 	capacityLoad(s, &snap, w2, 10)
 	recent := snap.ObservationEnd.Add(-s.ControlInterval)
 	snap.Arrivals = slices.DeleteFunc(snap.Arrivals, func(a SchedulerArrival) bool { return a.WorkloadUID == w1.UID && a.At.Before(recent) })
@@ -389,14 +385,9 @@ func TestCapacityIncreasingWorkloadProtectsOnlyItsServingCapacity(t *testing.T) 
 	if got.Target == nil || len(got.Target.Routing[w1.UID]) != 2 ||
 		!poolsOn(*got.Target, snap.Nodes[0].Node) || !poolsOn(*got.Target, n2) ||
 		len(got.Target.Routing[w2.UID]) != 1 {
-		t.Fatalf("growth must protect w1 and allow w2 to shrink: %s %+v", got.Status, got.Target)
+		t.Fatalf("current demand must protect w1 and allow w2 to shrink: %s %+v", got.Status, got.Target)
 	}
-	for _, node := range []NodeReference{snap.Nodes[0].Node, n2} {
-		if !slices.ContainsFunc(poolsPlans(got, node), func(p SchedulerNodePlan) bool { return p.Reason == schedulerDemandIncreasing }) {
-			t.Fatalf("missing growth protection on %s: %+v", node.Name, poolsPlans(got, node))
-		}
-	}
-	// Once both rates agree, the same existing capacity can shrink.
+	// A lower current demand permits the same existing capacity to shrink.
 	capacityLoad(s, &snap, w1, 20)
 	got = capacityDecideForTest(t, s, snap, rows)
 	if got.Target == nil || len(got.Target.Routing[w1.UID]) != 1 {
@@ -412,7 +403,7 @@ func TestCapacityIncreasingWorkloadProtectsOnlyItsServingCapacity(t *testing.T) 
 // A plan never prepares an instance its routing leaves at weight 0.
 func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, time.Hour, 29
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, 29
 	s.MaxReplicas = 3
 	d := snap.Workloads[0]
 	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
@@ -452,7 +443,7 @@ func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
 // remaining Ready κ 25.69 cannot form that bridge, so keep carries the load.
 func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, time.Hour, 29
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, 29
 	s.MaxReplicas = 3
 	d := snap.Workloads[0]
 	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
@@ -598,9 +589,7 @@ func TestCapacitySingleNodeStoppingModeRaiseNeedsSpareSupply(t *testing.T) {
 	}
 	capacityLoad(s, &snap, snap.Workloads[0], 30)
 	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{current.Profile.ID: 10, raised.Profile.ID: 50})))
-	if d.Target != nil && d.Target.Nodes[0].PowerMode == schedulerTestEcoMode || !slices.ContainsFunc(poolsPlans(d, n1), func(plan SchedulerNodePlan) bool {
-		return plan.Tempo == schedulerTempoSlow && plan.Reason == schedulerScaleDownStabilizing
-	}) {
+	if d.Target != nil && d.Target.Nodes[0].PowerMode == schedulerTestEcoMode {
 		t.Fatalf("stopping replacement bypassed current-supply protection: %s %v %+v", d.Status, d.Reasons, poolsPlans(d, n1))
 	}
 }
@@ -630,7 +619,7 @@ func TestCapacityOverloadOrdersByWorstExceedance(t *testing.T) {
 // §9 6 판정: two Workloads with different SLOs are judged each with its own L − m.
 func TestCapacityJudgesEachWorkloadWithItsSLO(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge, s.CompletionMarginMS = time.Second, time.Minute, time.Hour, 100
+	s.ObservationWindow, s.ComparisonPeriod, s.CompletionMarginMS = time.Second, time.Minute, 100
 	s.AutonomousWorkloads = []string{"w1", "w2"}
 	relaxed := snap.Workloads[0]
 	relaxed.SLO.TargetLatency = 10 * time.Second
@@ -1519,7 +1508,6 @@ func TestCapacityBacklogDoesNotChangeWeightsOrRequestEnergy(t *testing.T) {
 // prepare (m4 r5 swapped genesis3 q2 b1↔b2 by stop, drain, remove, prepare).
 func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ScaleDownStabilization = 300 * time.Second
 	profile := *snap.Instances[0].Profile
 	profile.Batches = append(slices.Clone(profile.Batches), schedulerTestBatchProfile(BatchProfile{Batch: 2, EnergyPerInputJoules: 0.8, MemoryBytes: 100}, []float64{float64(15 * time.Millisecond)}))
 	snap.Instances[0].Profile = &profile
@@ -1540,15 +1528,12 @@ func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 		slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind != schedulerActionRoute }) {
 		t.Fatalf("target must route i1 with batch 2 only: %+v", d.Target)
 	}
-	if plans[i].Tempo != "fast" {
-		t.Fatalf("capacity recovery policy was not fast: %+v", plans[i])
-	}
 	capacityLoad(s, &snap, snap.Workloads[0], 50)
 	rows = capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 100 })
 	energyOnly := capacityDecideForTest(t, s, snap, rows)
 	for _, plan := range poolsPlans(energyOnly, n1) {
-		if plan.Key == "profile/b2/w1" && (plan.Eligible || plan.Tempo != "slow" || plan.Reason != "ScaleDownStabilizing") {
-			t.Fatalf("non-increasing policy escaped slow gate: %+v", plan)
+		if plan.Key == "profile/b2/w1" && !plan.Eligible {
+			t.Fatalf("safe policy change was excluded: %+v", plan)
 		}
 	}
 }
@@ -1604,7 +1589,7 @@ func TestCapacityPreparationFailureFactExcludesPlacement(t *testing.T) {
 // up to κ_ret, its overflow and [r, T] by the target fill.
 func TestCapacityRequestEnergySplitsAtRoute(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ComparisonPeriod, s.MaxObservationAge = time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ComparisonPeriod = time.Second, time.Minute
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
 	profile := *add.Profile
@@ -1964,7 +1949,7 @@ func TestCapacityProportionalWeightsIgnoreDemandAndBacklog(t *testing.T) {
 // genesis3 q2 and orangepi q1 Ready with weight 0, at λ 2 over a 60 s window.
 func capacityR5Fixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow, NodeReference, NodeReference) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, 10*time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, 10*time.Minute
 	genesis3 := poolsAddNode(&snap, "genesis3", map[string]float64{"fixed": 49.97})
 	orangepi := poolsAddNode(&snap, "orangepi", map[string]float64{"fixed": 2.73})
 	g3 := poolsInstance(snap.Instances[0], "g3", genesis3, "fixed", "w1")
@@ -2032,8 +2017,6 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 		snap.Instances[k].WorkloadUID, snap.Instances[k].TargetID, snap.Instances[k].UnroutedSince = "", "target-w1-"+snap.Instances[k].Profile.ID+"-1", &since
 	}
 	snap.Instances[1].OwnerWorkloadUID = "w1" // prepared with the planner's owner
-	s.ScaleDownStabilization = time.Minute
-	snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: true}}
 	// The unowned runner draws more loaded power, so the search itself wants
 	// to remove it, independently of the idle-cleanup postprocessing path.
 	originalProfile := snap.Instances[2].Profile
@@ -2042,16 +2025,6 @@ func TestCapacityUnroutedPlannerInstancesAreRemoved(t *testing.T) {
 	snap.Instances[2].Profile = &profile
 	optionIndex := slices.IndexFunc(snap.Options, func(o SchedulerOption) bool { return o.Instance.ID == snap.Instances[2].ID })
 	snap.Options[optionIndex].Instance.Profile = &profile
-	blocked := capacityDecideForTest(t, s, snap, rows)
-	if blocked.Target != nil && !poolsOn(*blocked.Target, orangepi) {
-		t.Fatalf("unowned physical removal bypassed the common gate: %+v", blocked.Target)
-	}
-	if !slices.ContainsFunc(poolsPlans(blocked, orangepi), func(plan SchedulerNodePlan) bool {
-		return plan.Tempo == schedulerTempoSlow && !plan.Eligible && plan.Reason == schedulerScaleDownStabilizing
-	}) {
-		t.Fatalf("unowned removal lacks slow exclusion: %+v", poolsPlans(blocked, orangepi))
-	}
-	snap.EmptyNodeScaleDownAllowed = true
 	removed := func(d SchedulerDecision, node NodeReference) bool {
 		return d.Target != nil && !poolsOn(*d.Target, node) &&
 			slices.ContainsFunc(d.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRemove && a.Node == node })
@@ -2094,7 +2067,7 @@ func TestCapacityHeldInstanceIsNotRemoved(t *testing.T) {
 // with the same mean but one 10 s interval at 5 req/s it does not repay.
 func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	energy := func(i *SchedulerInstance, e float64) {
 		profile := *i.Profile
@@ -2133,19 +2106,6 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	if d := capacityDecideForTest(t, s, snap, rows); !replaced(d) {
 		t.Fatalf("steady 30 req/s must replace a: %+v %v", d.Target, d.Reasons)
 	}
-	// replacement-01/full-E5-1-02: the reverse choice just 15–17 seconds
-	// after the preceding transition completed used to pass the same payback.
-	for _, elapsed := range []time.Duration{15 * time.Second, 17 * time.Second} {
-		snap.Replacements = []SchedulerReplacement{{NodeUID: n2.UID, WorkloadUID: "w1", ProfileID: a.Profile.ID, CompletedAt: snap.At.Add(-elapsed)}}
-		if d := capacityDecideForTest(t, s, snap, rows); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementDwell+":n2") {
-			t.Fatalf("optional reverse after %v must dwell: %+v %v", elapsed, d.Target, d.Reasons)
-		}
-	}
-	snap.Replacements[0].CompletedAt = snap.At.Add(-s.ComparisonPeriod)
-	if d := capacityDecideForTest(t, s, snap, rows); !replaced(d) {
-		t.Fatalf("replacement must resume at dwell boundary: %+v %v", d.Target, d.Reasons)
-	}
-	snap.Replacements[0].CompletedAt = snap.At.Add(-15 * time.Second)
 	p := capacityPlannerForTest(t, s, snap, rows)
 	best := capacitySearchForTest(t, p)
 	for _, plans := range p.plans {
@@ -2159,10 +2119,9 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	if keep := p.evaluate(make([]int, len(p.plans)), 0); keep.feasible {
 		t.Fatal("recovery fixture keep must be infeasible")
 	}
-	if got := p.payback(best); !slices.Equal(got.choice, best.choice) || len(got.dwelling) != 0 {
-		t.Fatalf("keep infeasible recovery must bypass dwell: %+v", got)
+	if got := p.payback(best); !slices.Equal(got.choice, best.choice) {
+		t.Fatalf("keep infeasible recovery must bypass optional payback: %+v", got)
 	}
-	snap.Replacements = nil
 	load(35, 35, 35, 35, 35, 5)
 	if d := capacityDecideForTest(t, s, snap, rows); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementUnpaid+":n2") {
 		t.Fatalf("replacement unpaid at 5 req/s was chosen: %+v %v", d.Target, d.Reasons)
@@ -2171,7 +2130,7 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 
 func capacityEmptyFixedFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.MaxObservationAge = time.Minute, 10*time.Second, time.Hour
+	s.ObservationWindow, s.ControlInterval = time.Minute, 10*time.Second
 	s.ComparisonPeriod, s.MaxReplicas = 600*time.Second, 1
 	snap.ObservedSince = snap.ObservationEnd.Add(-time.Hour)
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": schedulerRouteUnits}}
@@ -2207,7 +2166,7 @@ func TestCapacityEmptyFixedUsesCommonEnergyAdmission(t *testing.T) {
 			choice := capacityChoiceForTest(t, p, map[string]string{node.UID: ""})
 			n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == node })
 			plan := p.plans[n][choice[n]]
-			if !p.compared[n] || plan.record.Tempo != schedulerTempoSlow || math.Abs(plan.record.Joules-tc.joules) > 1e-9 {
+			if !p.compared[n] || !plan.reduces || math.Abs(plan.record.Joules-tc.joules) > 1e-9 {
 				t.Fatalf("Fixed saving missing from comparison or chain costs: %+v", plan.record)
 			}
 			result := p.evaluate(choice, p.routeOf(choice))
@@ -2265,16 +2224,11 @@ func TestCapacityLosingEmptyFixedCannotHideInProfitableCombination(t *testing.T)
 }
 
 func TestCapacityTargetlessKeepNeverIntroducesFixedSaving(t *testing.T) {
-	for _, allowed := range []bool{false, true} {
-		s, snap, node := capacityEmptyFixedFixture()
-		s.ScaleDownStabilization = time.Minute
-		snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: allowed}}
-		snap.EmptyNodeScaleDownAllowed = allowed
-		snap.Reasons = []string{"ObservationGap"}
-		d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-		if d.Target != nil || len(d.Keep.Actions) != 0 || schedulerNodeMode(d.Keep.Nodes, node) != schedulerNodeMode(snap.Nodes, node) {
-			t.Fatalf("targetless keep bypassed comparison: allowed=%v keep=%+v", allowed, d.Keep)
-		}
+	s, snap, node := capacityEmptyFixedFixture()
+	snap.Reasons = []string{"ObservationGap"}
+	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	if d.Target != nil || len(d.Keep.Actions) != 0 || schedulerNodeMode(d.Keep.Nodes, node) != schedulerNodeMode(snap.Nodes, node) {
+		t.Fatalf("targetless keep bypassed comparison: %+v", d.Keep)
 	}
 }
 
@@ -2289,7 +2243,7 @@ func TestSchedulerReplayFixedPowerIsNotFreeOrInstant(t *testing.T) {
 }
 
 func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "missing-row", "pending-row", "nil-kappa", "wrong-allocation", "overload", "backlog", "routing-off", "stale"} {
+	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "missing-row", "pending-row", "nil-kappa", "wrong-allocation", "overload", "backlog", "routing-off", "future"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, snap, _, _ := capacityE1Fixture()
 			old := snap.Instances[0]
@@ -2329,8 +2283,8 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 				}
 			case "routing-off":
 				s.Controls.Routing = false
-			case "stale":
-				snap.At = snap.At.Add(2 * s.MaxObservationAge)
+			case "future":
+				snap.Nodes[0].ObservedAt = snap.At.Add(time.Second)
 			}
 			weights, ok := SchedulerReadyExpansion(s, snap, rows, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added})
 			if ok != (scenario == "admitted") {

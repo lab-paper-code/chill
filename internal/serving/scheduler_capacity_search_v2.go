@@ -62,11 +62,8 @@ func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool)
 	if best == nil {
 		fallback = schedulerPlanSearchV1
 	}
-	pruned := make(map[string]int, len(t.pruned)+len(t.unsearchable))
+	pruned := make(map[string]int, len(t.pruned))
 	for reason, count := range t.pruned {
-		pruned[reason] += count
-	}
-	for reason, count := range t.unsearchable {
 		pruned[reason] += count
 	}
 	p.searched = SchedulerPlanSearch{

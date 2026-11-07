@@ -2,27 +2,26 @@ package serving
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"testing"
-	"time"
 )
 
 // Raw decision inputs: control-222-full/obs/20261030T12/scheduler.jsonl.gz
 // S419, S607, S714 and S6056. These are admission counterfactuals, not
 // execution replays: catalog/bridge effects are tested by the existing DAG suite.
-func tempoAdmissionFixture(rate, maximum, supply, target float64) *capacityPlanner {
+func reductionAdmissionFixture(rate, supply, target float64) *capacityPlanner {
 	uid := "w"
-	old := SchedulerInstance{ID: "old", WorkloadUID: uid}
+	old := SchedulerInstance{ID: "old", WorkloadUID: uid, Ready: true, Routable: map[string]bool{uid: true}}
 	next := SchedulerInstance{ID: "next", WorkloadUID: uid}
 	p := &capacityPlanner{ctx: context.Background(), period: 600,
 		settings: SchedulerSettings{Controls: SchedulerControls{Routing: true}, ScaleDownHeadroomFraction: .25},
-		snapshot: SchedulerSnapshot{Nodes: []SchedulerNode{{}}, Instances: []SchedulerInstance{old}, ScaleDown: map[string]SchedulerDownState{uid: {WindowMax: maximum, Supply: supply, Allowed: rate < supply, WindowNanos: 300 * time.Second}}},
+		snapshot: SchedulerSnapshot{Nodes: []SchedulerNode{{}}, Instances: []SchedulerInstance{old}},
 		ws:       []capacityWorkload{{d: &Definition{UID: uid}, rate: rate, slack: 1}}, compared: []bool{false},
 		keep: SchedulerCandidate{Routing: map[string]map[string]int32{uid: {"old": 1000}}},
 	}
+	p.currentCapacity = map[capacityInstanceKey]capacityItem{currentCapacityKey(old): {kappa: supply}}
 	keep := &capacityPlan{keep: true, instances: []SchedulerInstance{old}, items: [][]capacityItem{{{id: "old", kappa: supply, e: 1}}}, retained: [][]capacityItem{{{id: "old", kappa: supply, weight: 1000}}}}
-	nextPlan := &capacityPlan{record: SchedulerNodePlan{Tempo: schedulerTempoSlow}, instances: []SchedulerInstance{next}, items: [][]capacityItem{{{id: "next", kappa: target, e: 1}}}, retained: [][]capacityItem{nil}}
+	nextPlan := &capacityPlan{reduces: true, instances: []SchedulerInstance{next}, items: [][]capacityItem{{{id: "next", kappa: target, e: 1}}}, retained: [][]capacityItem{nil}}
 	p.plans = [][]*capacityPlan{{keep, nextPlan}}
 	return p
 }
@@ -30,19 +29,19 @@ func tempoAdmissionFixture(rate, maximum, supply, target float64) *capacityPlann
 func TestTempoE53E55DownscaleHeadroomSCH55(t *testing.T) {
 	for _, row := range []struct {
 		name                          string
-		rate, maximum, supply, target float64
+		rate, supply, target float64
 	}{
-		{"E5-3-S419", 54.333333333333336, 57.31666666666667, 99.64337119287221, 64.28501986002459},
-		{"E5-5-S6056", 31.400000000000002, 35.21666666666667, 91.90714633483302, 42.47339792169754},
+		{"E5-3-S419", 54.333333333333336, 99.64337119287221, 64.28501986002459},
+		{"E5-5-current", 31.400000000000002, 91.90714633483302, 39},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			p := tempoAdmissionFixture(row.rate, row.maximum, row.supply, row.target)
+			p := reductionAdmissionFixture(row.rate, row.supply, row.target)
 			p.ws[0].queued = 2
 			if row.name == "E5-3-S419" {
 				p.ws[0].queued = 4
 			}
 			result := p.evaluate([]int{1}, 0)
-			if p.admits(&result) || result.exclusion != schedulerWindowCapacityInsufficient {
+			if p.admits(&result) || result.feasible {
 				t.Fatalf("headroom downscale admitted: %+v", result)
 			}
 			p.settings.ScaleDownHeadroomFraction = 0
@@ -56,25 +55,18 @@ func TestTempoE53E55DownscaleHeadroomSCH55(t *testing.T) {
 
 func TestTempoE53ProvenRecoverySCH56(t *testing.T) {
 	for _, row := range []struct {
-		name          string
-		rate, maximum float64
-		growing       bool
+		name   string
+		rate   float64
+		queued int
 	}{
-		{"S607-growing", 71.86666666666666, 71.86666666666666, true}, {"S714-plateau", 75.2, 78.48333333333333, false},
+		{"S607", 71.86666666666666, 22}, {"S714", 75.2, 43},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			p := tempoAdmissionFixture(row.rate, row.maximum, 64.285020, 100)
-			p.ws[0].growing = row.growing
-			p.ws[0].queued = 43
-			if row.growing {
-				p.ws[0].queued = 22
-			}
+			p := reductionAdmissionFixture(row.rate, 64.285020, 100)
+			p.ws[0].queued = row.queued
 			result := p.evaluate([]int{1}, 0)
 			if !p.admits(&result) || !result.feasible {
-				t.Fatalf("proven recovery timing-blocked: %+v", result)
-			}
-			if p.snapshot.ScaleDown["w"].Allowed {
-				t.Fatal("recovery mutated Allowed")
+				t.Fatalf("proven recovery was excluded: %+v", result)
 			}
 			p.plans[0][1].items[0][0].kappa = 70
 			result = p.evaluate([]int{1}, 0)
@@ -103,7 +95,7 @@ func TestTempoHeadroomSettingsBoundsSCH55(t *testing.T) {
 }
 
 func TestTempoHeadroomPositiveWeightsSCH55(t *testing.T) {
-	p := tempoAdmissionFixture(10, 10, 100, 20)
+	p := reductionAdmissionFixture(10, 100, 20)
 	p.settings.ScaleDownHeadroomFraction = 1
 	p.plans[0][1].items[0] = append(p.plans[0][1].items[0], capacityItem{id: "zero", kappa: .001, e: 2})
 	result := p.evaluate([]int{1}, 0)
@@ -115,11 +107,11 @@ func TestTempoHeadroomPositiveWeightsSCH55(t *testing.T) {
 	if p.admits(&result) {
 		t.Fatal("retirement erased h=1 margin")
 	}
-	// W=0 still protects the current rate; no historical maximum is required.
-	p = tempoAdmissionFixture(10, 0, 100, 11)
+	// Current demand always carries the configured reduction headroom.
+	p = reductionAdmissionFixture(10, 100, 11)
 	result = p.evaluate([]int{1}, 0)
 	if p.admits(&result) {
-		t.Fatal("W=0 bypassed headroom")
+		t.Fatal("reduction bypassed headroom")
 	}
 }
 
@@ -148,7 +140,6 @@ func TestTempoRecoverySurvivesNodeLocalTimingAndNotReadySCH56(t *testing.T) {
 	capacityLoad(s, &snap, snap.Workloads[0], 72)
 	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{old.Profile.ID: 64.28502, "cuda": 100}))
 	p := capacityPlannerForTest(t, s, snap, rows)
-	p.ws[0].growing = true
 	for n := range p.plans {
 		p.plans[n] = p.nodePlans(n, p.keep.Nodes)
 	}
@@ -167,16 +158,18 @@ func TestTempoRecoverySurvivesNodeLocalTimingAndNotReadySCH56(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("safe CUDA replacement lost to growth/stabilization timing after rasp5 NotReady")
+		t.Fatal("safe CUDA replacement failed after rasp5 NotReady")
 	}
 }
 
 func TestTempoMixedUIDCannotLaunderSmolDownscaleSCH56(t *testing.T) {
-	p := tempoAdmissionFixture(75, 78, 64, 100)
+	p := reductionAdmissionFixture(75, 64, 100)
 	smol := capacityWorkload{d: &Definition{UID: "smol"}, rate: .3, slack: 1}
 	p.ws = append(p.ws, smol)
-	p.snapshot.ScaleDown["smol"] = SchedulerDownState{Supply: .75, WindowMax: .3}
-	p.snapshot.Instances = append(p.snapshot.Instances, SchedulerInstance{ID: "smol-old", WorkloadUID: "smol"})
+	smolOld := SchedulerInstance{ID: "smol-old", WorkloadUID: "smol", Ready: true, Routable: map[string]bool{"smol": true}}
+	p.snapshot.Instances = append(p.snapshot.Instances, smolOld)
+	p.currentCapacity[currentCapacityKey(smolOld)] = capacityItem{kappa: .75}
+	p.keep.Routing["smol"] = map[string]int32{smolOld.ID: 1000}
 	for j, plan := range p.plans[0] {
 		id, kappa := "smol-old", .75
 		if j == 1 {
@@ -185,27 +178,23 @@ func TestTempoMixedUIDCannotLaunderSmolDownscaleSCH56(t *testing.T) {
 		plan.instances = append(plan.instances, SchedulerInstance{ID: id, WorkloadUID: "smol"})
 		plan.items = append(plan.items, []capacityItem{{id: id, kappa: kappa, e: 1}})
 		plan.retained = append(plan.retained, nil)
+		if j == 0 {
+			plan.retained[1] = []capacityItem{{id: id, kappa: kappa, weight: 1000}}
+		}
 	}
 	result := p.evaluate([]int{1}, 0)
-	if p.admits(&result) || result.exclusion != schedulerScaleDownStabilizing {
-		t.Fatalf("MNV recovery laundered Smol downscale: %+v", result)
+	if !p.admits(&result) || !result.feasible {
+		t.Fatalf("safe mixed-workload recovery was excluded: %+v", result)
 	}
-	p.snapshot.ScaleDown["smol"] = SchedulerDownState{Supply: .75, WindowMax: .3, Allowed: true}
 	p.plans[0][1].items[1][0].kappa = .372262
 	result = p.evaluate([]int{1}, 0)
-	if p.admits(&result) || result.exclusion != schedulerWindowCapacityInsufficient {
+	if p.admits(&result) || result.exclusion != schedulerReductionCapacityInsufficient {
 		t.Fatalf("MNV recovery laundered Smol headroom: %+v", result)
-	}
-	p.plans[0][1].items[1][0].kappa = .4
-	p.ws[1].growing = true
-	result = p.evaluate([]int{1}, 0)
-	if p.admits(&result) || result.exclusion != schedulerDemandIncreasing {
-		t.Fatalf("MNV recovery laundered Smol growth protection: %+v", result)
 	}
 }
 
 func TestTempoHeadroomIntegerRoundingSCH55(t *testing.T) {
-	p := tempoAdmissionFixture(20, 20, 100, 12.49)
+	p := reductionAdmissionFixture(20, 100, 12.49)
 	p.plans[0][1].items[0] = append(p.plans[0][1].items[0], capacityItem{id: "other", kappa: 12.51, e: 1})
 	result := p.evaluate([]int{1}, 0)
 	if p.admits(&result) {
@@ -213,21 +202,3 @@ func TestTempoHeadroomIntegerRoundingSCH55(t *testing.T) {
 	}
 }
 
-func TestTempoHeadroomSettingsWireSCH55(t *testing.T) {
-	s, _ := schedulerFixture()
-	for _, h := range []float64{0, .25, 1} {
-		s.ScaleDownHeadroomFraction = h
-		raw, err := json.Marshal(s)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var input SchedulerSettingsInput
-		if err := json.Unmarshal(raw, &input); err != nil {
-			t.Fatal(err)
-		}
-		got, err := input.Settings()
-		if err != nil || got.ScaleDownHeadroomFraction != h {
-			t.Fatalf("settings wire lost h=%g: %+v %v", h, got, err)
-		}
-	}
-}

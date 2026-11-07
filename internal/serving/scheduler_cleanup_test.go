@@ -9,7 +9,7 @@ import (
 // Explicit whole-workload fences such as reset/deletion remain exclusive.
 func TestExclusiveWorkloadReservationKeepsWorkloadFixed(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, time.Minute
 	s.MaxReplicas, s.MaxInstances = 8, 8
 	base := snap.Instances[0]
 	nodes := []NodeReference{base.Node,

@@ -29,9 +29,6 @@ func TestPlannerRetirementUsesSLOAndHorizonGain(t *testing.T) {
 			s.Controls.Routing = false
 			snap.Costs[0].Trials[0].Joules = 100
 			snap.Workloads[0].SLO.TargetLatency = time.Second
-			snap.EmptyNodeScaleDownAllowed = true
-			s.ScaleDownStabilization = time.Minute
-			snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: true, Supply: 70.4}}
 			since := snap.At.Add(-s.ObservationWindow)
 			for k := 1; k < len(snap.Instances); k++ {
 				i := &snap.Instances[k]
@@ -77,10 +74,9 @@ func TestPlannerRetirementUsesSLOAndHorizonGain(t *testing.T) {
 // not optional shrinkage. MaxReplicas leaves no room to retain the old source.
 func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.MaxObservationAge = time.Minute, 10*time.Second, 10*time.Minute, time.Hour
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, 10*time.Minute
 	s.MaxReplicas, s.MaxInstances = 1, 4
 	s.Controls.Power = false
-	s.ScaleDownStabilization = time.Minute
 	snap.Workloads[0].SLO.TargetLatency = time.Second
 	old := snap.Instances[0]
 	destination := poolsAddNode(&snap, "recovery-b", map[string]float64{"fixed": 10})
@@ -88,7 +84,6 @@ func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
 	replacement.Profile.IdleBaselineWatts = 30
 	snap.Options = append(snap.Options, poolsOption(replacement))
 	snap.Routing = map[string]map[string]int32{"w1": {old.ID: schedulerRouteUnits}}
-	snap.ScaleDown = map[string]SchedulerDownState{"w1": {Allowed: true, Supply: 40, WindowMax: 80}}
 	snap.Costs = []OperationCost{
 		poolsCost(schedulerActionPrepare, destination, "unloaded", schedulerState(replacement), "fixed"),
 		poolsCost(schedulerActionRemove, old.Node, schedulerState(old), "unloaded", "fixed", schedulerState(old)),

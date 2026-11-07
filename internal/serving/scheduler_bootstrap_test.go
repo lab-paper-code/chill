@@ -28,30 +28,6 @@ func TestCapacityLeximinAC40(t *testing.T) {
 	}
 }
 
-func TestBootstrapWaitSettings(t *testing.T) {
-	s, _ := schedulerFixture()
-	margin := 0.0
-	input := SchedulerSettingsInput{SchedulerSettings: s, CompletionMarginMS: &margin}
-	got, err := input.Settings()
-	if err != nil || got.BootstrapCapacityWait != 10*time.Minute {
-		t.Fatalf("default wait: %v, %v", got.BootstrapCapacityWait, err)
-	}
-	for _, wait := range []time.Duration{0, time.Second, 3 * time.Minute, time.Hour, -1, time.Hour + 1} {
-		input.BootstrapCapacityWait = &wait
-		got, err = input.Settings()
-		valid := wait >= 0 && wait <= time.Hour
-		if (err == nil) != valid || valid && got.BootstrapCapacityWait != wait {
-			t.Fatalf("wait %v: got %v, %v", wait, got.BootstrapCapacityWait, err)
-		}
-	}
-	data, err := json.Marshal(map[string]any{"completionMarginMS": 0, "bootstrapCapacityWaitNanos": 0})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = json.Unmarshal(data, &input); err != nil || input.BootstrapCapacityWait == nil || *input.BootstrapCapacityWait != 0 {
-		t.Fatalf("explicit JSON zero lost: %+v, %v", input, err)
-	}
-}
 
 type rev76Fixture struct {
 	Settings SchedulerSettings `json:"settings"`
@@ -76,7 +52,7 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 	estimates := schedulerEstimateSettingsForTest()
 	f.Settings.DefaultOperationCost, f.Settings.DefaultIdlePower = estimates.DefaultOperationCost, estimates.DefaultIdlePower
 	margin := f.Settings.CompletionMarginMS
-	f.Settings, err = (SchedulerSettingsInput{SchedulerSettings: f.Settings, CompletionMarginMS: &margin, BootstrapCapacityWait: &f.Settings.BootstrapCapacityWait, ScaleDownStabilization: &f.Settings.ScaleDownStabilization, ReplacementDwell: &f.Settings.ReplacementDwell}).Settings()
+	f.Settings, err = (SchedulerSettingsInput{SchedulerSettings: f.Settings, CompletionMarginMS: &margin}).Settings()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,10 +80,8 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 func TestControlledRawReplayCapacityDoesNotCrossSharedCutover(t *testing.T) {
 	fixture := loadRev76Fixture(t)
 	settings, snapshot := fixture.Settings, fixture.Cold
-	settings.BootstrapCapacityWait = time.Minute
-	snapshot.BootstrapStartedAt = snapshot.At
 	decision := capacityDecideForTest(t, settings, snapshot, fixture.Rows)
-	if decision.Status != CapacityPending || decision.Target != nil || decision.Bootstrap == nil || len(decision.Bootstrap.PendingRows) == 0 {
+	if decision.Status != CapacityPending || decision.Target != nil {
 		t.Fatalf("controlled raw rows were relabeled as current shared capacity: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
 }
@@ -118,7 +92,6 @@ func sharedBootstrapFixture() (SchedulerSettings, SchedulerSnapshot, []CapacityR
 	settings.MaxReplicas, settings.MaxInstances = 3, 3
 	settings.AutonomousWorkloads = []string{"w1", "w2", "w3"}
 	settings.MinimumDemand = map[string]float64{"w1": 20, "w2": 20, "w3": 20}
-	settings.BootstrapCapacityWait = time.Minute
 	poolsAddWorkload(&snapshot, "w2")
 	poolsAddWorkload(&snapshot, "w3")
 	for _, uid := range []string{"n2", "n3"} {
@@ -133,20 +106,21 @@ func sharedBootstrapFixture() (SchedulerSettings, SchedulerSnapshot, []CapacityR
 	}
 	snapshot.Instances = nil
 	snapshot.Routing = map[string]map[string]int32{}
-	snapshot.BootstrapStartedAt = snapshot.At
 	return settings, snapshot, capacityRowsForTest(settings, snapshot, nil)
 }
 
-func TestSharedBootstrapWaitsForJointCapacityAC41(t *testing.T) {
+func TestSharedStartupUsesPreparedCapacityPerUIDAC41(t *testing.T) {
 	settings, snapshot, rows := sharedBootstrapFixture()
-	for _, count := range []int{1, len(rows) - 1} {
-		decision := capacityDecideForTest(t, settings, snapshot, rows[:count])
-		if decision.Status != CapacityPending || decision.Target != nil || decision.Bootstrap == nil || len(decision.Bootstrap.PendingRows) == 0 || len(decision.Keep.Actions) != 0 {
-			t.Fatalf("partial rows committed bootstrap: count=%d status=%s reasons=%v", count, decision.Status, decision.Reasons)
-		}
+	pending := capacityDecideForTest(t, settings, snapshot, nil)
+	if pending.Status != CapacityPending || pending.Target != nil || len(pending.Keep.Actions) != 0 {
+		t.Fatalf("missing capacity committed startup: %+v", pending)
+	}
+	partial := capacityDecideForTest(t, settings, snapshot, rows[:1])
+	if partial.Target == nil || partial.Target.Keep {
+		t.Fatalf("prepared UID did not progress independently: %+v", partial)
 	}
 	decision := capacityDecideForTest(t, settings, snapshot, rows)
-	if decision.Target == nil || decision.Target.Keep || decision.Bootstrap == nil || len(decision.Bootstrap.PendingRows) != 0 {
+	if decision.Target == nil || decision.Target.Keep {
 		t.Fatalf("complete shared rows did not release bootstrap: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
 	for _, uid := range settings.AutonomousWorkloads {
@@ -168,7 +142,7 @@ func TestSharedBootstrapReservationAllowsIndependentProgressAC40(t *testing.T) {
 	target := SchedulerCandidate{ID: "in-flight-owner", Instances: []SchedulerInstance{reserved}, Routing: map[string]map[string]int32{"w3": {reserved.ID: 1000}}}
 	reserveTargetForTest(&snapshot, &target)
 	decision := capacityDecideForTest(t, settings, snapshot, rows)
-	if decision.Bootstrap != nil || decision.Target == nil || decision.Target.Keep {
+	if decision.Target == nil || decision.Target.Keep {
 		t.Fatalf("reservation restarted empty-pool barrier or blocked independent progress: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
 	if !slices.ContainsFunc(decision.Target.Actions, func(action Action) bool { return action.Kind == schedulerActionPrepare && action.Node != reserved.Node }) {
@@ -179,34 +153,28 @@ func TestSharedBootstrapReservationAllowsIndependentProgressAC40(t *testing.T) {
 	}
 }
 
-func TestBootstrapDeadlineAndTerminalRows(t *testing.T) {
+func TestStartupCapacityNeverUsesElapsedTimeFallback(t *testing.T) {
 	s, snapshot := schedulerFixture()
 	snapshot.Instances = nil
 	snapshot.Routing = map[string]map[string]int32{}
-	snapshot.BootstrapStartedAt = snapshot.At.Add(-time.Minute)
-	s.BootstrapCapacityWait = time.Minute
-	got := capacityDecideForTest(t, s, snapshot, nil)
-	if got.Bootstrap == nil || !got.Bootstrap.TimedOut || got.Status == CapacityPending {
-		t.Fatalf("deadline did not release wait: status=%s bootstrap=%+v", got.Status, got.Bootstrap)
+	for _, elapsed := range []time.Duration{0, time.Hour} {
+		snapshot.At = snapshot.ObservationEnd.Add(elapsed)
+		for k := range snapshot.Nodes {
+			snapshot.Nodes[k].ObservedAt = snapshot.At
+		}
+		got := capacityDecideForTest(t, s, snapshot, nil)
+		if got.Status != CapacityPending || got.Target != nil {
+			t.Fatalf("missing rows gained capacity after %v: %+v", elapsed, got)
+		}
 	}
-	snapshot.BootstrapStartedAt = snapshot.At
 	rows := capacityRowsForTest(s, snapshot, nil)
 	for k := range rows {
 		rows[k].Status, rows[k].Kappa = CapacityRejected, nil
 	}
-	got = capacityDecideForTest(t, s, snapshot, rows)
-	if got.Bootstrap == nil || len(got.Bootstrap.PendingRows) != 0 || got.Status == CapacityPending {
-		t.Fatalf("terminal rejected rows waited forever: %+v", got.Bootstrap)
+	got := capacityDecideForTest(t, s, snapshot, rows)
+	if got.Target != nil || !slices.Contains(got.Reasons, CapacityRejected+":w1") {
+		t.Fatalf("rejected capacity was used: %+v", got)
 	}
-	// Unusable Nodes do not extend the empty-start barrier.
-	for k := range snapshot.Nodes {
-		snapshot.Nodes[k].Measurement = true
-	}
-	got = capacityDecideForTest(t, s, snapshot, nil)
-	if got.Bootstrap == nil || len(got.Bootstrap.PendingRows) != 0 {
-		t.Fatalf("measurement Node created pending candidates: %+v", got.Bootstrap)
-	}
-	// Directly exercise cancellation as well as the normal EvaluateScheduler path.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := EvaluateScheduler(ctx, s, snapshot, nil); err == nil {

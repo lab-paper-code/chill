@@ -566,10 +566,6 @@ func (p *schedulerPlanState) changeNodes(c SchedulerCandidate) {
 			emptySaving := schedulerAvailable(p.snap, oldNode) &&
 				!slices.ContainsFunc(c.Instances, func(i SchedulerInstance) bool { return i.Node == n.Node }) &&
 				n.PowerMode == SchedulerLowestMode(p.snap.Baselines, n.Node)
-			if emptySaving && from != n.PowerMode && p.snap.ScaleDown != nil && !p.snap.EmptyNodeScaleDownAllowed {
-				p.reasons = appendUnique(p.reasons, schedulerScaleDownStabilizing)
-				continue
-			}
 			reboot := slices.ContainsFunc(oldNode.Reboots, func(fact PowerReboot) bool {
 				return fact.From == from && fact.To == n.PowerMode
 			})
@@ -783,7 +779,7 @@ func schedulerFixedReason(snapshot SchedulerSnapshot, uid string) string {
 	return ""
 }
 
-func fixSchedulerWorkloads(decision *SchedulerDecision, snapshot SchedulerSnapshot, rows []CapacityRow) {
+func fixSchedulerWorkloads(decision *SchedulerDecision, snapshot SchedulerSnapshot) {
 	for _, instance := range snapshot.Instances {
 		if !instance.Ready && !instance.Stopped && !instance.Terminated {
 			reason := "UnconfirmedInstance:" + instance.ID
@@ -798,9 +794,6 @@ func fixSchedulerWorkloads(decision *SchedulerDecision, snapshot SchedulerSnapsh
 			continue
 		}
 		reason := schedulerFixedReason(snapshot, state.UID)
-		if reason == "" && !slices.ContainsFunc(rows, func(row CapacityRow) bool { return row.Input.WorkloadUID == state.UID && row.Kappa != nil }) {
-			reason = CapacityPending + ":" + state.UID
-		}
 		if reason != "" {
 			decision.Workloads[index].State, decision.Workloads[index].Reason = schedulerWorkloadFixed, reason
 			decision.Reasons = appendUnique(decision.Reasons, reason)
