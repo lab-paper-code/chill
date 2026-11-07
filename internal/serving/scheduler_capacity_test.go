@@ -787,7 +787,7 @@ func TestCapacityPendingWithoutRows(t *testing.T) {
 }
 
 // capacityTestSettings bound synthetic planners loosely, replicas ON.
-var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxReplicas: 100, MaxInstances: 100, PlanSearchWorkers: 2, Controls: SchedulerControls{Replicas: true, Routing: true}}
+var capacityTestSettings = SchedulerSettings{ComparisonPeriod: time.Minute, MaxReplicas: 100, MaxInstances: 100, PlanSearchWorkers: 2, PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4, Controls: SchedulerControls{Replicas: true, Routing: true}}
 
 // capacitySearchForTest runs the plan search without a time budget.
 func capacitySearchForTest(t testing.TB, p *capacityPlanner) capacityResult {
@@ -796,46 +796,70 @@ func capacitySearchForTest(t testing.TB, p *capacityPlanner) capacityResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertCapacitySearchSteps(t, p.searched)
+	assertCapacitySearchSteps(t, p.searched, len(p.plans))
 	return best
 }
 
-func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch) {
+func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch, nodes int) {
 	t.Helper()
+	v2 := search.Strategy == schedulerPlanSearchV2
+	wantEvaluated := search.Evaluated
+	if v2 {
+		wantEvaluated = search.SurrogateEvaluated
+	}
 	evaluated, duration, k := search.TrailingEvaluated, time.Duration(0), 0
 	last := map[string]SchedulerPlanSearchStep{}
 	for i, step := range search.Steps {
 		evaluated += step.Evaluated
 		duration += step.Duration
-		if step.K < k || step.Duration < 0 || step.BudgetCut != (search.BudgetCut && i == len(search.Steps)-1) {
+		if !v2 && step.K < k || step.Duration < 0 || step.BudgetCut != (search.BudgetCut && i == len(search.Steps)-1) {
 			t.Fatalf("step order, time or cut flag: %+v", search)
 		}
 		k = step.K
 		if previous, ok := last[step.Start]; ok {
-			if step.K < 2 || step.K > 3 || len(step.ChangedNodes) == 0 || len(step.ChangedNodes) > step.K || step.Evaluated == 0 {
-				t.Fatalf("invalid accepted move: %+v after %+v", step, previous)
-			}
-			// This is the recorded projection of better's priority order:
-			// feasible cannot regress; while infeasible, final cannot regress.
-			// Exceedances precede energy; feasible points promise same-window net J↓.
-			if previous.Feasible && !step.Feasible || !previous.Feasible && !step.Feasible && previous.Final && !step.Final ||
-				previous.Feasible && step.Feasible && step.Joules-step.KeepJoules > previous.Joules-previous.KeepJoules {
-				t.Fatalf("accepted point worsened: %+v after %+v", step, previous)
-			}
-		} else if step.K != 0 || step.Evaluated != 0 || len(step.ChangedNodes) != 0 {
+			assertCapacitySearchMove(t, step, previous, v2, nodes)
+		} else if step.K != 0 || step.Evaluated != 0 || len(step.ChangedNodes) != 0 || step.Phase != "" {
 			t.Fatalf("missing origin (excluded from aggregate evaluation count): %+v", step)
 		}
 		last[step.Start] = step
 	}
-	if len(last) == 0 || evaluated != search.Evaluated || duration > search.Duration {
+	if len(last) == 0 || evaluated != wantEvaluated || search.TrailingEvaluated < 0 || duration > search.Duration {
 		t.Fatalf("step accounting: evaluated=%d duration=%s search=%+v", evaluated, duration, search)
 	}
-	wantReason := "noImprovement"
+	wantReason := schedulerNoImprovement
 	if search.BudgetCut {
-		wantReason = "budgetCut"
+		wantReason = schedulerBudgetCut
+		if v2 {
+			wantReason = schedulerDeadline
+		}
+	} else if v2 && search.TerminationReason == schedulerEvaluationBudget {
+		wantReason = schedulerEvaluationBudget
 	}
 	if search.TerminationReason != wantReason {
 		t.Fatalf("termination: got %q want %q", search.TerminationReason, wantReason)
+	}
+}
+
+func assertCapacitySearchMove(t testing.TB, step, previous SchedulerPlanSearchStep, v2 bool, nodes int) {
+	t.Helper()
+	minK, maxK := 2, 3
+	if v2 {
+		minK, maxK = 1, nodes
+	}
+	if step.K < minK || step.K > maxK || len(step.ChangedNodes) == 0 || len(step.ChangedNodes) > step.K ||
+		v2 && len(step.ChangedNodes) != step.K || step.Evaluated <= 0 {
+		t.Fatalf("invalid accepted move: %+v after %+v", step, previous)
+	}
+	if v2 && (step.Phase != schedulerPlanPhaseCover && step.Phase != schedulerPlanPhasePolish && step.Phase != schedulerPlanPhaseCombine ||
+		step.Phase == schedulerPlanPhaseCover && previous.Phase != "" && previous.Phase != schedulerPlanPhaseCover) {
+		t.Fatalf("invalid v2 phase: %+v after %+v", step, previous)
+	}
+	// Polish/combine follow better's priority order. Cover can lose
+	// feasibility or increase energy while recovering count limits.
+	if (!v2 || step.Phase != schedulerPlanPhaseCover) && (previous.Feasible && !step.Feasible ||
+		!previous.Feasible && !step.Feasible && previous.Final && !step.Final ||
+		previous.Feasible && step.Feasible && step.Joules-step.KeepJoules > previous.Joules-previous.KeepJoules) {
+		t.Fatalf("accepted point worsened: %+v after %+v", step, previous)
 	}
 }
 
@@ -1229,7 +1253,7 @@ func TestCapacitySearchBudgetCutIsRecorded(t *testing.T) {
 	if steps := p.searched.Steps; len(steps) != 1 || steps[0].K != 0 || steps[0].Start != capacitySearchStartKeep || len(steps[0].ChangedNodes) != 0 {
 		t.Fatalf("spent budget must retain just the origin: %+v", steps)
 	}
-	assertCapacitySearchSteps(t, p.searched)
+	assertCapacitySearchSteps(t, p.searched, len(p.plans))
 }
 
 // Delay the main-goroutine context check after the first sweep, so the next
@@ -1263,7 +1287,7 @@ func TestCapacitySearchBudgetCutRetainsAcceptedSteps(t *testing.T) {
 		!slices.Equal(steps[1].ChangedNodes, []NodeReference{{UID: "n0"}}) {
 		t.Fatalf("budget cut lost the accepted prefix: %+v", steps)
 	}
-	assertCapacitySearchSteps(t, p.searched)
+	assertCapacitySearchSteps(t, p.searched, len(p.plans))
 }
 
 // §9 6 search: the decision records the search scope with the capacity judgment.
@@ -1300,7 +1324,7 @@ func TestCapacitySearchStepRecordSize(t *testing.T) {
 	if _, err := p.search(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	assertCapacitySearchSteps(t, p.searched)
+	assertCapacitySearchSteps(t, p.searched, len(p.plans))
 	starts := map[string]bool{}
 	for _, step := range p.searched.Steps {
 		starts[step.Start] = true

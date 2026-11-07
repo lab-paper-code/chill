@@ -18,6 +18,7 @@ import { SettingsNavigation } from "@/components/settings-navigation"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
+
 const onOff = (on:boolean) => on?"사용":"사용 안 함"
 const reserveFraction = (text:string) => {
   const value=Number(text)
@@ -34,8 +35,9 @@ const nodeList = (names:string[]) => {
 }
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
-function plain(field:Field,value:WireInteger):string {
+function plain(field:Field,value:WireInteger|string|boolean|undefined):string {
   if(value==null)return "기록 없음"
+  if(typeof value==="boolean")return onOff(value)
   if(field.key==="servingMemoryBytes")return mib(value)
   if(!field.key.endsWith("Nanos"))return `${value}${field.unit??""}`
   const nanos=BigInt(value)
@@ -126,7 +128,7 @@ function ServiceSettingsEdit({editKey,label,help,initial,version=null,services,l
 }
 
 // One row, one value: the dialog edits only this value and adds it to the draft.
-function EditRow({editKey,label,help,changed,initial,unit,range,save,disabled,nodeNames=[]}:{editKey:string;label:string;help:string;changed:boolean;initial:string|boolean|string[];unit?:string;range?:string;save:(value:string|boolean|string[])=>void;disabled:boolean;nodeNames?:string[]}) {
+function EditRow({editKey,label,help,changed,initial,unit,range,save,disabled,nodeNames=[],options}:{editKey:string;label:string;help:string;changed:boolean;initial:string|boolean|string[];unit?:string;range?:string;save:(value:string|boolean|string[])=>void;disabled:boolean;nodeNames?:string[];options?:string[]}) {
   const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
   const [next,setNext]=React.useState(initial),[error,setError]=React.useState(""),id=React.useId()
   function setOpen(state:boolean) {
@@ -139,6 +141,7 @@ function EditRow({editKey,label,help,changed,initial,unit,range,save,disabled,no
     <form className="grid gap-4" onSubmit={event=>{event.preventDefault();try {save(Array.isArray(next)?nodeList(next):next);setOpen(false)} catch(caught) {setError(caught instanceof Error?caught.message:"값을 확인해 주세요.")}}}>
       {Array.isArray(next)?<div className="grid gap-3"><fieldset className="flex flex-wrap gap-2"><legend className="mb-2">관측된 장비 선택</legend>{nodeNames.map(name=><label key={name} className="flex min-h-11 items-center gap-2 rounded-md border px-3"><input type="checkbox" value={name} checked={next.includes(name)} onChange={event=>setNext(event.target.checked?[...next,name]:next.filter(item=>item!==name))}/>{name}</label>)}{!nodeNames.length&&<p>관측된 장비 목록 없음 · 현재 설정은 유지돼요.</p>}</fieldset>{next.map((name,index)=>!nodeNames.includes(name)&&<div key={index} className="flex min-w-0 gap-2"><Input aria-label={`현재 목록에 없는 장비 ${index+1}`} value={name} onChange={event=>setNext(next.map((item,i)=>i===index?event.target.value:item))}/><Button type="button" variant="outline" onClick={()=>setNext(next.filter((_,i)=>i!==index))}>제외 해제</Button></div>)}</div>:typeof next==="boolean"
         ?<label className="switch"><input type="checkbox" role="switch" checked={next} onChange={event=>setNext(event.target.checked)}/>{onOff(next)}</label>
+        :options?<label className="grid gap-2" htmlFor={id}>값<select id={id} className="min-h-11 rounded-md border bg-background px-3" value={next} onChange={event=>setNext(event.target.value)}>{options.map(option=><option key={option} value={option}>{option}</option>)}</select></label>
         :<div className="grid gap-2"><label htmlFor={id}>{unit?`값 (${unit})`:"값"}</label><Input id={id} autoFocus required inputMode={unit==="ms"?"decimal":"text"} value={next} onChange={event=>{setNext(event.target.value);setError("")}} aria-invalid={!!error} aria-describedby={`${id}-help`}/><span id={`${id}-help`} className="text-sm text-muted-foreground">{range}{unit==="bytes"&&/^\d+$/.test(next)?` · ${mib(next)}`:""}</span></div>}
       {error&&<p role="alert">{error}</p>}
       <Button type="submit" disabled={disabled}>변경 목록에 담기</Button>
@@ -400,11 +403,12 @@ export function SchedulerSettingsPage() {
   }
 
   const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} changed={!!count&&String(baseline!.settings[field.key])!==String(shown[field.key])}
-    initial={field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key]):String(shown[field.key])} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
-    range={field.key==="bootstrapCapacityWaitNanos"?"0 ~ 3600000 ms":field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="capacityBisectionWidth"?"0 초과 1 이하 유한한 수":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
+    initial={field.kind==="boolean"?Boolean(shown[field.key]??field.defaultValue):field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key] as WireInteger):String(shown[field.key]??field.defaultValue??"")} options={field.kind==="strategy"?["v1","v2","shadow"]:undefined} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
+    range={field.key==="planPolishActive"?"0 이상의 정수, 0은 전체":field.key==="bootstrapCapacityWaitNanos"?"0 ~ 3600000 ms":field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"?"0 이상의 밀리초, 소수점 아래 6자리까지":field.key==="capacityBisectionWidth"?"0 초과 1 이하 유한한 수":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
       // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, uint64 memory bytes, positive int64 otherwise.
-      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"||field.key==="bootstrapCapacityWaitNanos"?0n:1n):field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,1n,9223372036854775807n)
+      if(field.kind){edit(base=>({...base,[field.key]:value}));return}
+      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,field.key==="scaleDownStabilizationNanos"||field.key==="replacementDwellNanos"||field.key==="bootstrapCapacityWaitNanos"?0n:1n):field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,field.key==="planPolishActive"?0n:1n,9223372036854775807n)
       if(field.key==="capacityBisectionWidth"&&(Number(parsed)<=0||Number(parsed)>1))throw new Error("0 초과 1 이하의 유한한 값을 적어 주세요.")
       if(field.key==="bootstrapCapacityWaitNanos"&&BigInt(parsed)>3600000000000n)throw new Error("초기 용량 대기는 0~3600000 ms로 적어 주세요.")
       edit(base=>({...base,[field.key]:parsed}))

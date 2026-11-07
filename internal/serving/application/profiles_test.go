@@ -422,6 +422,7 @@ func TestFailedRefreshPreservesAcceptedProfilesAndRouting(t *testing.T) {
 		MaxObservationAge: time.Second, MaxReplicas: 1,
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+		PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 		CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 	})
 	// The native store is unreachable, so listing completed measurements fails.
@@ -596,6 +597,7 @@ func schedulerTestConfiguration() SchedulerConfiguration {
 			MaxObservationAge: time.Second, MaxReplicas: 1,
 			MaxInstances: 5, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1,
 			CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+			PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 			CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 		}),
 		Reserved: map[string]serving.SchedulerAllocation{"rpi": {MemoryBytes: 1024}},

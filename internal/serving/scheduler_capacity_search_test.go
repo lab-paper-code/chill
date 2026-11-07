@@ -57,7 +57,7 @@ func evaluationNodes() [][]evaluationOption {
 }
 
 // evaluationScaled grows evaluationNodes toward the evaluation space: every option gets a b2 variant
-// (κ 1.3×, e 0.9×) when variants is 2, and copies of genesis3, rasp5 and
+// (κ 1.3×, unchanged b1 input energy) when variants is 2, and copies of genesis3, rasp5 and
 // lattepanda stand in for jetsono, jetsonx and jetson-nano with modes power
 // modes each (mode m: κ and loaded watts (1 − 0.15m)×, prepare (1 + 0.1m)×).
 func evaluationScaled(variants, modes int) [][]evaluationOption {
@@ -80,7 +80,7 @@ func evaluationScaled(variants, modes int) [][]evaluationOption {
 	for n := range nodes {
 		for _, o := range slices.Clone(nodes[n]) {
 			if variants > 1 {
-				o.name, o.kappa, o.e = o.name+"-b2", 1.3*o.kappa, 0.9*o.e
+				o.name, o.kappa = o.name+"-b2", 1.3*o.kappa
 				nodes[n] = append(nodes[n], o)
 			}
 		}
@@ -199,6 +199,7 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 			mid := slices.Clone(now)
 			for _, c := range set {
 				w := index[c.w]
+				plan.option = strings.Replace(c.id, "-b2", "", 1)
 				item := capacityItem{id: c.id, kappa: c.opt.kappa, e: c.opt.e, weight: weights[c.id], row: c.id, prepare: !current[c.id]}
 				if !current[c.id] {
 					plan.preMean, plan.preMax, plan.preJ = plan.preMean+c.opt.prepareS, plan.preMax+c.opt.prepareS, plan.preJ+c.opt.prepareJ
@@ -236,6 +237,8 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 		p.compared = append(p.compared, true)
 	}
 	p.period = s.ComparisonPeriod.Seconds()
+	// Exhaustive callers bypass search's common-H keep-baseline initialization.
+	p.keepWatts = p.evaluate(make([]int, len(p.plans)), 0).joules / p.period
 	return p
 }
 
@@ -330,75 +333,159 @@ var e5Mixes = func() []map[int]float64 {
 	return mixes
 }()
 
-// Plan search at evaluation scale (capacity-table-evidence §7). Gap: the planner's
-// search (keep and emptied starts, k = 2, then 3; no budget) against the
-// exact minimum on 24 load mixes, for one decision and over repeated Ticks
-// (each from the previous choice after payback and minimum gain) until a
-// fixed point or a cycle (energy of keeping the last configuration), over the
-// r7 nodes, the same nodes with b2 variants and 8 Nodes (b1, 2 power modes on
-// the Jetson copies). Scale: search time with 3 workers and the 5 s budget of
-// a 10 s control interval as evaluationScaled grows the space toward evaluation. About five minutes:
+func configure(p *capacityPlanner, strategy string) {
+	p.settings.PlanSearchStrategy = strategy
+	p.settings.PlanPolishActive, p.settings.PlanPricedStart = 0, false
+	if strategy == "v2" {
+		p.settings.PlanPolishActive, p.settings.PlanPricedStart = 8, true
+	}
+}
+
+// Plan search at evaluation scale (capacity-table-evidence §7.8.5). GAP compares
+// v1 and v2 (active=8, priced=true) with exact search over 24 mixes in three
+// spaces, without evaluation or wall budgets. e5Converge retains payback,
+// minimum gain, fixed-point and cycle behavior. SCALE keeps v1's budget/full
+// baseline and measures v2 with 500,000/150,000 evaluations and a 5 s wall budget.
 // CHILL_PLAN_SEARCH=1 go test ./internal/serving -run PlanSearchEvaluation -v -timeout 0.
 func TestCapacityPlanSearchEvaluation(t *testing.T) {
 	if os.Getenv("CHILL_PLAN_SEARCH") == "" {
 		t.Skip("measurement sweep; set CHILL_PLAN_SEARCH=1")
 	}
-	search := func(p *capacityPlanner) *capacityResult { r := capacitySearchForTest(t, p); return &r }
+	// GAP runs v1 and v2 without an evaluation budget, then v2 at the default
+	// and the candidate default budgets so the budget's quality cost is measured.
+	unlimited := int(^uint(0) >> 1)
+	strategies := []struct {
+		name        string
+		evaluations int
+	}{{"v1", unlimited}, {"v2", unlimited}, {"v2", 500000}, {"v2", 150000}}
 	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
 		nodes := evaluationScaled(c.variants, c.modes)
-		differs, worst, worstFixed, bestFixed, over, cycles, exactCycles, maxTicks, maxExactTicks := 0, 0.0, 0.0, 0.0, 0, 0, 0, 0, 0
-		for _, rates := range e5Mixes {
-			got, gotJ, ticks, cycled := e5Converge(rates, nodes, search)
+		type gapStats struct {
+			differs, over, cycles, exactCycles, maxTicks, maxExactTicks int
+			worst, worstFixed, bestFixed                                float64
+			starts, firstStarts                                         map[string]int
+			dualMin, dualMax                                            float64
+			dualSamples                                                 int
+		}
+		stats := make([]gapStats, len(strategies))
+		for i := range stats {
+			stats[i].starts, stats[i].firstStarts = map[string]int{}, map[string]int{}
+			stats[i].dualMin, stats[i].dualMax = math.Inf(1), math.Inf(-1)
+		}
+		for mix, rates := range e5Mixes {
 			exact, exactJ, exactTicks, exactCycled := e5Converge(rates, nodes, e5Brute)
-			if exact == nil {
-				if got.feasible {
-					t.Errorf("%+v %v: search feasible, exact infeasible", c, rates)
+			for i, cfg := range strategies {
+				strategy := cfg.name
+				s := &stats[i]
+				tick, active, priced := 0, 0, false
+				if strategy == "v2" {
+					active, priced = 8, true
 				}
-				continue
-			}
-			if !got.feasible {
-				t.Errorf("%+v %v: search infeasible, exact feasible", c, rates)
-				continue
-			}
-			gap, fixed := (got.joules-exact.joules)/exact.joules, (gotJ-exactJ)/exactJ
-			maxTicks, maxExactTicks = max(maxTicks, ticks), max(maxExactTicks, exactTicks)
-			if got.key != exact.key {
-				differs++
-			}
-			if cycled {
-				cycles++
-			}
-			if exactCycled {
-				exactCycles++
-			}
-			if fixed > 0.005 {
-				over++
-			}
-			worst, worstFixed, bestFixed = max(worst, gap), max(worstFixed, fixed), min(bestFixed, fixed)
-			if gap > 0.005 || fixed > 0.005 || fixed < -0.005 || ticks < 0 || cycled || exactCycled {
-				t.Logf("ROW %+v %v one=%.3f%% fixed=%.3f%% ticks=%d cycled=%v exactTicks=%d exactCycled=%v\n  search: %s\n  exact:  %s",
-					c, rates, 100*gap, 100*fixed, ticks, cycled, exactTicks, exactCycled, got.key, exact.key)
+				var firstSearch SchedulerPlanSearch
+				search := func(p *capacityPlanner) *capacityResult {
+					configure(p, strategy)
+					p.settings.PlanSearchEvaluations = cfg.evaluations
+					r := capacitySearchForTest(t, p)
+					tick++
+					d := p.searched
+					s.starts[d.Start]++
+					if tick == 1 {
+						firstSearch = d
+						s.firstStarts[d.Start]++
+					}
+					t.Logf("SEARCH strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v tick=%d start=%q dualBound=%.9f rawJ=%.9f feasible=%v evaluated=%d durationNS=%d surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g cut=%v terminationReason=%s",
+						strategy, active, priced, cfg.evaluations, c.variants, c.modes, mix, rates, tick, d.Start, d.DualBound, r.joules, r.feasible, d.Evaluated, d.Duration.Nanoseconds(),
+						d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, d.BudgetCut, d.TerminationReason)
+					return &r
+				}
+				got, gotJ, ticks, cycled := e5Converge(rates, nodes, search)
+				s.maxTicks, s.maxExactTicks = max(s.maxTicks, ticks), max(s.maxExactTicks, exactTicks)
+				if cycled {
+					s.cycles++
+				}
+				if exactCycled {
+					s.exactCycles++
+				}
+				exactRawJ, gap, fixed, ratio := math.NaN(), math.NaN(), math.NaN(), math.NaN()
+				exactKey := ""
+				if exact == nil {
+					if got.feasible {
+						t.Errorf("strategy=%s active=%d priced=%v %+v %v: search feasible, exact infeasible", strategy, active, priced, c, rates)
+					}
+				} else {
+					exactRawJ, exactKey = exact.joules, exact.key
+					if !got.feasible {
+						t.Errorf("strategy=%s active=%d priced=%v %+v %v: search infeasible, exact feasible", strategy, active, priced, c, rates)
+					} else {
+						gap, fixed = (got.joules-exact.joules)/exact.joules, (gotJ-exactJ)/exactJ
+						if got.key != exact.key {
+							s.differs++
+						}
+						if fixed > 0.005 {
+							s.over++
+						}
+						s.worst, s.worstFixed, s.bestFixed = max(s.worst, gap), max(s.worstFixed, fixed), min(s.bestFixed, fixed)
+					}
+					if priced && exactRawJ != 0 {
+						ratio = firstSearch.DualBound / exactRawJ
+						if !math.IsNaN(ratio) && !math.IsInf(ratio, 0) {
+							s.dualMin, s.dualMax = min(s.dualMin, ratio), max(s.dualMax, ratio)
+							s.dualSamples++
+						}
+					}
+				}
+				t.Logf("QUALITY strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v feasible=%v exactFeasible=%v rawJ=%.9f exactRawJ=%.9f fixedJ=%.9f exactFixedJ=%.9f oneGap=%.6f%% fixedGap=%.6f%% ticks=%d cycled=%v exactTicks=%d exactCycled=%v start=%q dualBound=%.9f dualExactRatio=%.9f rawKey=%q exactRawKey=%q",
+					strategy, active, priced, cfg.evaluations, c.variants, c.modes, mix, rates, got.feasible, exact != nil, got.joules, exactRawJ, gotJ, exactJ, 100*gap, 100*fixed,
+					ticks, cycled, exactTicks, exactCycled, firstSearch.Start, firstSearch.DualBound, ratio, got.key, exactKey)
 			}
 		}
-		t.Logf("GAP variants=%d modes=%d mixes=%d differs=%d worstOne=%.3f%% fixed: worst=%.3f%% best=%.3f%% over0.5%%=%d cycles=%d exactCycles=%d ticks<=%d exactTicks<=%d",
-			c.variants, c.modes, len(e5Mixes), differs, 100*worst, 100*worstFixed, 100*bestFixed, over, cycles, exactCycles, maxTicks, maxExactTicks)
+		for i, cfg := range strategies {
+			strategy := cfg.name
+			s := stats[i]
+			active, priced := 0, false
+			if strategy == "v2" {
+				active, priced = 8, true
+			}
+			if s.dualSamples == 0 {
+				s.dualMin, s.dualMax = math.NaN(), math.NaN()
+			}
+			t.Logf("GAP strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mixes=%d differs=%d worstOne=%.3f%% fixed: worst=%.3f%% best=%.3f%% over0.5%%=%d cycles=%d exactCycles=%d ticks<=%d exactTicks<=%d starts=%v firstStarts=%v dualExactSamples=%d dualExactMin=%.9f dualExactMax=%.9f",
+				strategy, active, priced, cfg.evaluations, c.variants, c.modes, len(e5Mixes), s.differs, 100*s.worst, 100*s.worstFixed, 100*s.bestFixed, s.over, s.cycles, s.exactCycles,
+				s.maxTicks, s.maxExactTicks, s.starts, s.firstStarts, s.dualSamples, s.dualMin, s.dualMax)
+		}
 	}
+	evaluationScale(t)
+}
+
+func evaluationScale(t *testing.T) {
 	rates := map[int]float64{0: 60, 1: 40, 2: 1.2}
 	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {1, 4}, {2, 1}, {2, 2}, {2, 4}} {
-		p := e5Planner(rates, evaluationScaled(c.variants, c.modes), e5Start, nil)
-		counts, sets := []int{}, 1.0
-		for _, plans := range p.plans {
-			counts, sets = append(counts, len(plans)), sets*float64(len(plans))
+		for _, run := range []struct {
+			strategy, mode string
+			evaluations    int
+			wallBudget     time.Duration
+		}{
+			{"v1", "budget", int(^uint(0) >> 1), 5 * time.Second},
+			{"v1", "full", int(^uint(0) >> 1), time.Hour},
+			{"v2", "budget", 500000, 5 * time.Second},
+			{"v2", "budget", 150000, 5 * time.Second},
+		} {
+			p := e5Planner(rates, evaluationScaled(c.variants, c.modes), e5Start, nil)
+			configure(p, run.strategy)
+			p.settings.PlanSearchEvaluations = run.evaluations
+			counts, sets := []int{}, 1.0
+			for _, plans := range p.plans {
+				counts, sets = append(counts, len(plans)), sets*float64(len(plans))
+			}
+			result, err := p.search(time.Now().Add(run.wallBudget))
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := p.searched
+			t.Logf("SCALE strategy=%s active=%d priced=%v variants=%d modes=%d run=%s plans=%v sets=%.3g evaluationBudget=%d wallBudgetNS=%d k=%d evaluated=%d durationNS=%d cut=%v terminationReason=%s rawJ=%.9f feasible=%v start=%q dualBound=%.9f surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g rawKey=%q",
+				run.strategy, p.settings.PlanPolishActive, p.settings.PlanPricedStart, c.variants, c.modes, run.mode, counts, sets, p.settings.PlanSearchEvaluations, run.wallBudget.Nanoseconds(),
+				d.Neighborhood, d.Evaluated, d.Duration.Nanoseconds(), d.BudgetCut, d.TerminationReason, result.joules, result.feasible, d.Start, d.DualBound,
+				d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, result.key)
 		}
-		budgeted, err := p.search(time.Now().Add(5 * time.Second))
-		if err != nil {
-			t.Fatal(err)
-		}
-		cut := p.searched
-		p.searched = SchedulerPlanSearch{}
-		full := search(p)
-		t.Logf("SCALE variants=%d modes=%d plans=%v sets=%.3g\n  budget 5 s: k=%d evaluated=%d %v cut=%v %.1f J\n  no budget:  k=%d evaluated=%d %v %.1f J",
-			c.variants, c.modes, counts, sets, cut.Neighborhood, cut.Evaluated, cut.Duration.Round(time.Millisecond), cut.BudgetCut, budgeted.joules,
-			p.searched.Neighborhood, p.searched.Evaluated, p.searched.Duration.Round(time.Millisecond), full.joules)
 	}
 }

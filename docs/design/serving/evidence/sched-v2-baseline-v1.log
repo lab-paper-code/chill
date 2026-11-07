@@ -1,0 +1,40 @@
+=== RUN   TestCapacityPlanSearchEvaluation
+    scheduler_capacity_search_test.go:379: ROW {variants:1 modes:0} map[0:20 1:40 2:0.3] one=3.985% fixed=4.294% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1|orangepi=|lattepanda=lattepanda/plc/q1|genesis2=|genesis3=genesis3/vlm/cpu-q1-vlm
+          exact:  rasp5=rasp5/vlm/q1-vlm|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/vlm/q1-vlm|genesis2=genesis2/plc/cpu-q1|genesis3=genesis3/mnv2/cpu-q2
+    scheduler_capacity_search_test.go:383: GAP variants=1 modes=0 mixes=24 differs=1 worstOne=3.985% fixed: worst=4.294% best=0.000% over0.5%=1 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:379: ROW {variants:2 modes:0} map[0:60 1:15 2:1.2] one=9.229% fixed=0.000% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1-b2|orangepi=|lattepanda=lattepanda/mnv2/q1-b2|genesis2=genesis2/vlm/cuda-q1-b2-vlm|genesis3=genesis3/plc/cpu-q1-b2
+          exact:  rasp5=rasp5/plc/q1-b2|orangepi=orangepi/mnv2/q1-b2|lattepanda=lattepanda/vlm/q1-b2-vlm|genesis2=genesis2/vlm/cpu-q1-b2-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:379: ROW {variants:2 modes:0} map[0:60 1:40 2:1.2] one=10.043% fixed=0.000% ticks=3 cycled=false exactTicks=2 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1-b2|orangepi=|lattepanda=lattepanda/mnv2/q1-b2|genesis2=genesis2/vlm/cuda-q1-b2-vlm|genesis3=genesis3/plc/cpu-q1-b2
+          exact:  rasp5=rasp5/plc/q1-b2|orangepi=orangepi/mnv2/q1-b2|lattepanda=lattepanda/vlm/q1-b2-vlm|genesis2=genesis2/vlm/cpu-q1-b2-vlm|genesis3=genesis3/mnv2/cpu-q1-b2
+    scheduler_capacity_search_test.go:383: GAP variants=2 modes=0 mixes=24 differs=2 worstOne=10.043% fixed: worst=0.000% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=4 exactTicks<=4
+    scheduler_capacity_search_test.go:379: ROW {variants:1 modes:2} map[0:110 2:1.2] one=1.860% fixed=0.000% ticks=3 cycled=false exactTicks=3 exactCycled=false
+          search: rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q1|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=jetsono/mnv2/cpu-q1@1|jetsonx=jetsonx/mnv2/q1@0|jetson-nano=jetson-nano/mnv2/q1@0
+          exact:  rasp5=rasp5/mnv2/q1|orangepi=orangepi/mnv2/q1|lattepanda=lattepanda/mnv2/q2|genesis2=genesis2/vlm/cuda-q1-vlm|genesis3=|jetsono=|jetsonx=jetsonx/mnv2/q2@0|jetson-nano=jetson-nano/mnv2/q2@0
+    scheduler_capacity_search_test.go:383: GAP variants=1 modes=2 mixes=24 differs=1 worstOne=1.860% fixed: worst=0.096% best=0.000% over0.5%=0 cycles=0 exactCycles=0 ticks<=3 exactTicks<=3
+    scheduler_capacity_search_test.go:400: SCALE variants=1 modes=0 plans=[6 3 5 6 5] sets=2.7e+03
+          budget 5 s: k=3 evaluated=2797 5ms cut=false 141809.6 J
+          no budget:  k=3 evaluated=2797 5ms 141809.6 J
+    scheduler_capacity_search_test.go:400: SCALE variants=2 modes=0 plans=[11 5 9 11 9] sets=4.9e+04
+          budget 5 s: k=3 evaluated=16312 30ms cut=false 137773.5 J
+          no budget:  k=3 evaluated=16312 28ms 137773.5 J
+    scheduler_capacity_search_test.go:400: SCALE variants=1 modes=2 plans=[6 3 5 6 5 9 11 9] sets=2.41e+06
+          budget 5 s: k=3 evaluated=55315 198ms cut=false 154742.9 J
+          no budget:  k=3 evaluated=55315 266ms 154742.9 J
+    scheduler_capacity_search_test.go:400: SCALE variants=1 modes=4 plans=[6 3 5 6 5 17 21 17] sets=1.64e+07
+          budget 5 s: k=3 evaluated=166194 445ms cut=false 151604.3 J
+          no budget:  k=3 evaluated=166194 731ms 151604.3 J
+    scheduler_capacity_search_test.go:400: SCALE variants=2 modes=1 plans=[11 5 9 11 9 9 11 9] sets=4.37e+07
+          budget 5 s: k=3 evaluated=102606 242ms cut=false 148636.6 J
+          no budget:  k=3 evaluated=102606 445ms 148636.6 J
+    scheduler_capacity_search_test.go:400: SCALE variants=2 modes=2 plans=[11 5 9 11 9 17 21 17] sets=2.97e+08
+          budget 5 s: k=3 evaluated=227088 640ms cut=false 147152.4 J
+          no budget:  k=3 evaluated=227088 997ms 147152.4 J
+    scheduler_capacity_search_test.go:400: SCALE variants=2 modes=4 plans=[11 5 9 11 9 33 41 33] sets=2.19e+09
+          budget 5 s: k=3 evaluated=687732 2.872s cut=false 144038.5 J
+          no budget:  k=3 evaluated=687732 3.063s 144038.5 J
+--- PASS: TestCapacityPlanSearchEvaluation (355.11s)
+PASS
+ok  	github.com/lab-paper-code/chill/internal/serving	355.117s

@@ -72,6 +72,15 @@ separate guarded targets (`make helm-purge-crds`, `make helm-adopt-crds`).
 
 ## Development
 
+Python tests and Go-to-Python consumers in `make test` require Python 3.11 and
+`python3 -m pip install numpy==2.2.6 pillow==12.3.0 onnxruntime==1.27.0 onnx==1.17.0 PyYAML==6.0.3`.
+NumPy, Pillow and ONNX Runtime match the default firstfloor image; ONNX builds
+the genuine model fixture, and PyYAML supports deployment and rendered RBAC tests.
+Use a virtual environment for local installation. SmolVLM preprocessor tests
+retain their optional runtime-image dependency skip; CI does not install those extras.
+Deployment CLI smoke tests also require full Git history to archive the pinned
+historical power-source commit; CI checks out with `fetch-depth: 0`.
+
 ```sh
 make lint                 # golangci-lint
 make test                 # generate, vet, unit + envtest (no e2e)

@@ -15,7 +15,14 @@ import (
 // The better end of the two starts is the result. At deadline the sweep
 // stops; the best plan set found so far stays and p.searched records the cut.
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
+	if p.settings.PlanSearchStrategy == schedulerPlanSearchShadow {
+		return p.searchShadow(deadline)
+	}
+	if p.settings.PlanSearchStrategy == schedulerPlanSearchV2 {
+		return p.searchV2(deadline)
+	}
 	start := time.Now()
+	p.searched.Strategy = schedulerPlanSearchV1
 	p.searched.StartedAt = start.UTC()
 	keep, empty := make([]int, len(p.plans)), make([]int, len(p.plans))
 	for n, plans := range p.plans {
@@ -77,14 +84,15 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 			best = end
 		}
 	}
-	p.searched.TerminationReason = "noImprovement"
+	p.searched.TerminationReason = schedulerNoImprovement
 	if p.searched.BudgetCut {
-		p.searched.TerminationReason = "budgetCut"
+		p.searched.TerminationReason = schedulerBudgetCut
 		p.searched.Steps[len(p.searched.Steps)-1].BudgetCut = true
 	}
 	finished := time.Now()
 	p.searched.FinishedAt = finished.UTC()
 	p.searched.Duration = finished.Sub(start)
+	p.searched.Key, p.searched.Joules = best.key, best.joules
 	return best, nil
 }
 

@@ -73,19 +73,36 @@ type SchedulerPlanSearch struct {
 	Duration  time.Duration `json:"durationNanos"`
 	// StartedAt and FinishedAt are direct wall-clock boundaries of search,
 	// excluding node-plan construction and final decision projection.
-	StartedAt         time.Time                             `json:"startedAt"`
-	FinishedAt        time.Time                             `json:"finishedAt"`
+	StartedAt  time.Time `json:"startedAt"`
+	FinishedAt time.Time `json:"finishedAt"`
+	// BudgetCut marks wall-clock expiration in both v1 and v2.
 	BudgetCut         bool                                  `json:"budgetCut,omitempty"`
 	Excluded          map[string]int                        `json:"excluded,omitempty"`
 	ReserveRejections map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
 	Steps             []SchedulerPlanSearchStep             `json:"steps,omitempty"`
 	TrailingEvaluated int                                   `json:"trailingEvaluated,omitempty"`
-	TerminationReason string                                `json:"terminationReason,omitempty"`
+	// TerminationReason is noImprovement/budgetCut in v1 and noImprovement/evaluationBudget/deadline in v2.
+	TerminationReason string `json:"terminationReason,omitempty"`
+	Strategy          string `json:"strategy,omitempty"`
+	// Key and Joules identify the selected exact candidate before postfilters.
+	Key                string                     `json:"key,omitempty"`
+	Joules             float64                    `json:"joules,omitempty"`
+	Pruned             map[string]int             `json:"pruned,omitempty"`
+	SurrogateEvaluated int                        `json:"surrogateEvaluated,omitempty"`
+	Finalists          int                        `json:"finalists,omitempty"`
+	ExactEvaluated     int                        `json:"exactEvaluated,omitempty"`
+	SurrogateGapJoules float64                    `json:"surrogateGapJoules,omitempty"`
+	PostFilterReverts  int                        `json:"postFilterReverts,omitempty"`
+	Fallback           string                     `json:"fallback,omitempty"`
+	DualBound          float64                    `json:"dualBound,omitempty"`
+	Start              string                     `json:"start,omitempty"`
+	Shadow             *SchedulerPlanSearchShadow `json:"shadow,omitempty"`
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
-// in decision-time order. Both origins precede k = 2 then k = 3; neighborhoods
-// without accepted moves have no entry. Compare choices within the same Start.
+// in decision-time order. In v1, both origins precede k = 2 then k = 3;
+// neighborhoods without accepted moves have no entry. Compare choices within
+// the same Start.
 // ChangedNodes is relative to that start's previous choice. Better means feasible,
 // final, descending exceedances, then joules/keep/key: joules only cannot increase
 // between feasible points, and may increase when recovering feasibility.
@@ -98,8 +115,21 @@ type SchedulerPlanSearch struct {
 // BudgetCut marks only the last recorded point when the search budget expires;
 // that point need not be the selected endpoint. Final means final-capacity
 // feasible, not the last step or the chosen end. Errors return no decision.
+//
+// V2 records keep, empty and optional priced origins, followed by each start's
+// cover, polish and combine moves. K is the number of changed Nodes (1 through
+// the Node count), not a neighborhood bound. Evaluated counts incremental
+// evaluations in the accepting cover iteration, polish sweep or combine search;
+// origins remain 0. Sum(Evaluated) + TrailingEvaluated = search.SurrogateEvaluated,
+// including initial evaluations and all unaccepted sweeps in the trailing count.
+// Step Joules is the incremental surrogate and can differ from the funnel's
+// exact Joules. KeepJoules, Feasible and Final also come from that incremental key.
+// Phase identifies cover, polish or combine moves; origins leave it empty.
+// Cover can trade capacity for count-limit recovery from an unbounded point;
+// its feasibility and energy need not improve. Polish/combine strictly improve.
 type SchedulerPlanSearchStep struct {
 	Start            string          `json:"start"`
+	Phase            string          `json:"phase,omitempty"`
 	K                int             `json:"k"`
 	ChangedNodes     []NodeReference `json:"changedNodes,omitempty"`
 	Joules           float64         `json:"joules"`
@@ -110,6 +140,18 @@ type SchedulerPlanSearchStep struct {
 	Evaluated        int             `json:"evaluated"`
 	Duration         time.Duration   `json:"durationNanos"`
 	BudgetCut        bool            `json:"budgetCut,omitempty"`
+}
+
+// SchedulerPlanSearchShadow records the independent shadow planner.
+type SchedulerPlanSearchShadow struct {
+	Key               string        `json:"key"`
+	Joules            float64       `json:"joules"`
+	Evaluated         int           `json:"evaluated"`
+	ExactEvaluated    int           `json:"exactEvaluated,omitempty"`
+	Duration          time.Duration `json:"durationNanos"`
+	BudgetCut         bool          `json:"budgetCut,omitempty"`
+	TerminationReason string        `json:"terminationReason,omitempty"`
+	Fallback          string        `json:"fallback,omitempty"`
 }
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
@@ -142,6 +184,7 @@ type SchedulerNodePlan struct {
 	Eligible           bool                `json:"eligible"`
 	Reason             string              `json:"reason,omitempty"`
 	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
+	Dominated          string              `json:"dominated,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
 	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
 	RequiresRecovery        []string                       `json:"requiresRecovery,omitempty"`
@@ -239,7 +282,10 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
-	decision = planner.decide(decision, planner.minimumGain(planner.payback(best)))
+	if settings.PlanSearchStrategy != schedulerPlanSearchV2 || !settings.PlanPostFilterFinalists {
+		best = planner.minimumGain(planner.payback(best))
+	}
+	decision = planner.decide(decision, best)
 	markFixedEstimates(&decision)
 	return decision, ctx.Err()
 }
