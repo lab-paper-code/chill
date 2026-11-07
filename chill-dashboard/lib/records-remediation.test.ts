@@ -11,6 +11,8 @@ import * as refs from "./scheduler-history.ts"
 import * as scheduler from "./scheduler.ts"
 import * as identity from "./workload-identity.ts"
 import * as live from "./live.ts"
+import * as sourceExport from "./source-export.ts"
+import type { ObservationResult } from "./read-types.ts"
 
 const require=createRequire(import.meta.url)
 const box=({children}:{children?:ReactNode})=>createElement("div",null,children)
@@ -112,5 +114,65 @@ test("selected routing provenance is never borrowed from another journal event",
     assert.equal(html.includes("operation-only-reason"),stored)
     assert.equal(html.includes("operation-only-actor"),stored)
     if(!stored)assert.match(html,/미기록/)
+  }
+})
+
+test("public request reads and the real download preserve optional server timing and exact nanoseconds",async()=>{
+  const body='{"uid":"service","from":"2026-11-08T00:00:00.123456789Z","to":"2026-11-08T01:00:00.987654321Z","definitionFilter":[],"outcomeFilter":[],"total":3,"selected":3,"outcomes":{"completed":3},"cohorts":[],"definitions":[],"management":[],"quantileMethod":"nearest-rank","samplePopulation":"server cohort","requests":[{"kind":"final","requestID":"timed","receivedAt":"2026-11-08T00:00:01.123456789Z","outcome":"completed","elapsedNanos":9223372036854775807,"serverTiming":[{"stage":"responseFlushDone","elapsedNanos":9223372036854775807},{"stage":"receiveLockAttempt","elapsedNanos":0},{"stage":"workerHTTPDone","elapsedNanos":9007199254740993}]},{"kind":"final","requestID":"old","receivedAt":"2026-11-08T00:00:02.123456789Z","outcome":"completed"},{"kind":"final","requestID":"empty","receivedAt":"2026-11-08T00:00:03.123456789Z","outcome":"completed","serverTiming":[]}]}'
+  const params=new URLSearchParams("kind=requests&uid=service&from=2026-11-08T00:00:00.123456789Z&to=2026-11-08T01:00:00.987654321Z&limit=17")
+  const queries=new Map<string,{queryFn:(context:{signal:AbortSignal})=>Promise<unknown>}>(),results=new Map<string,unknown>()
+  const modules=modulesFor(params,()=>({}))
+  const client=load("./client.tsx",{
+    ...modules,
+    react:{...require("react"),useContext:()=>({token:"test-token",config:{pollIntervalMs:5000}}),useSyncExternalStore:()=>true},
+    "@tanstack/react-query":{useQuery:(options:{queryKey:string[];queryFn:(context:{signal:AbortSignal})=>Promise<unknown>})=>{
+      const path=options.queryKey[1];queries.set(path,options);return {data:results.get(path)}
+    }},
+    "@/components/brand":{},"@/lib/session-token":{},"@/lib/measurement-summary":{},
+  })
+  modules["@/lib/client"]={...(modules["@/lib/client"] as object),useChillQuery:client.useChillQuery}
+  let download:(()=>void)|undefined
+  const readRegion=load("../components/read-region.tsx",{
+    ...modules,"@/lib/source-export":sourceExport,
+    "@/components/ui/dialog":{},
+    "@/components/ui/button":{Button:({onClick,children}:{onClick:()=>void;children:ReactNode})=>{download=onClick;return createElement("button",null,children)}},
+  })
+  modules["@/components/read-region"]={...(modules["@/components/read-region"] as object),SourceExport:readRegion.SourceExport}
+  modules["@/components/screen"]={...(modules["@/components/screen"] as object),RowDialog:({label,children}:{label:string;children:ReactNode})=>label==="자료 내보내기"?children:null}
+  const page=load("../features/observations.tsx",modules).ObservationsPage as ()=>ReactNode
+  const previousFetch=globalThis.fetch,previousDocument=Object.getOwnPropertyDescriptor(globalThis,"document")
+  const previousCreate=URL.createObjectURL,previousRevoke=URL.revokeObjectURL
+  const calls:string[]=[]
+  let blob:Blob|undefined,clicks=0
+  globalThis.fetch=async(input)=>{const path=String(input);calls.push(path);return new Response(path.startsWith("/api/chill/v1/observations/workloads/")?body:"[]",{headers:{"Content-Type":"application/json"}})}
+  Object.defineProperty(globalThis,"document",{configurable:true,value:{createElement:()=>({href:"",download:"",click(){clicks++}})}})
+  URL.createObjectURL=value=>{if(value instanceof Blob)blob=value;return "blob:request-timing"}
+  URL.revokeObjectURL=()=>{}
+  try {
+    renderToStaticMarkup(createElement(page))
+    for(const [path,query] of queries)results.set(path,await query.queryFn({signal:new AbortController().signal}))
+    const requestPath=[...queries.keys()].find(path=>path.startsWith("v1/observations/workloads/"))!
+    assert.equal(new URL(requestPath,"https://dashboard.invalid").searchParams.get("from"),params.get("from"))
+    assert.ok(calls.includes(`/api/chill/${requestPath}`))
+    const data=results.get(requestPath) as ObservationResult
+    assert.deepEqual(data.requests[0].serverTiming,[{stage:"responseFlushDone",elapsedNanos:9223372036854775807n},{stage:"receiveLockAttempt",elapsedNanos:0},{stage:"workerHTTPDone",elapsedNanos:9007199254740993n}])
+    assert.equal(data.requests[0].elapsedNanos,9223372036854775807n)
+    assert.equal(data.requests[0].receivedAt,"2026-11-08T00:00:01.123456789Z")
+    assert.equal(Object.hasOwn(data.requests[1],"serverTiming"),false)
+    assert.deepEqual(data.requests[2].serverTiming,[])
+    renderToStaticMarkup(createElement(page))
+    assert.ok(download)
+    download()
+    assert.equal(clicks,1)
+    assert.ok(blob)
+    assert.equal(blob.type,"application/json")
+    const exported=scheduler.parseSchedulerJSON(await blob.text()) as {source:ObservationResult}
+    assert.deepEqual(exported.source,scheduler.parseSchedulerJSON(body))
+    assert.equal(Object.hasOwn(exported.source.requests[1],"serverTiming"),false)
+    assert.deepEqual(data.requests[0].serverTiming,exported.source.requests[0].serverTiming)
+  } finally {
+    globalThis.fetch=previousFetch;URL.createObjectURL=previousCreate;URL.revokeObjectURL=previousRevoke
+    if(previousDocument)Object.defineProperty(globalThis,"document",previousDocument)
+    else Reflect.deleteProperty(globalThis,"document")
   }
 })

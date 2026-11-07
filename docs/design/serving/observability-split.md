@@ -24,6 +24,7 @@ M1은 요청 행·불변 ID·S3 시간 세그먼트/로컬 버퍼·범위 읽기
 | assigned | `requestID,workloadUID,definitionID,receivedAt,lifetimeNanos,dispatchedAt,node,instance,profileID`(약300B). 배정 시 append 실패는 배정 rollback |
 | final 식별·결과 | `requestID,workloadUID,definitionID,node,instance,profileID,decisionID,outcome,error,executionComplete,clientSpanNanos` |
 | final 시각 | `receivedAt,lifetimeNanos,elapsedNanos`(응답 종료), `validatedNanos,acceptedNanos,dispatchedNanos,queuedNanos,runningNanos,executedNanos,exchangeNanos`는 receivedAt 기준 오프셋. 미도달은 비움; 두 경로가 같은 단계를 알리면 먼저 접은 시각, 응답 종료만 마지막 값 |
+| 중앙 서버 경계 | 선택적 `serverTiming:[{stage,elapsedNanos}]`. 아래 고정 28단계 중 도달한 경계만 보존하며 기존 시각·배치 필드는 유지한다. |
 | final 배치 | 마지막 backend 진행의 `batchID,batchSize,queueMS,serviceMS,backendMS,preprocessMS,postprocessMS,firstTokenMS,units,nativeElapsedMS` |
 | final/native runner exchange | Native HTTP/log `serviceSample` is retained as integer `serviceDurationNanos` (S), nullable `precedingIdleNanos` (G), and `nativeTrialID`. `targetIdleNanos`/`traceDrawRef`, when present, are provenance only. Missing G is startup/unknown, not observed zero; old rows without canonical S/G remain proxy/unknown. Actor `nativeRunningAt` and queue offsets are not canonical IPC stopwatch anchors. |
 `queuedNanos/runningNanos`는 닫기 전 firstfloor `backend_queued/backend_running`에서 온다. final 때 빈 값은 열린 행의 마지막 실행 배치 finished(교환 결과/로그)에서 같은 worker 시계로 채운다. 시작=`At−nativeElapsedMS+queueMS`, 큐 진입=`At−nativeElapsedMS`(본문 읽기/decode만큼 로그보다 이르다); `queueMS−(runningNanos−queuedNanos)=0`.
@@ -33,6 +34,32 @@ profile 본문(근거/confidence/조건 artifact·실행 경로)은 `profileID`,
 배정 전 수신/검증/큐는 crash 때 손실을 수락했으며 loadgen requestID join의 `sent−recorded`로 드러난다. runtimeFacts는 로컬 requests의 final 없는 assigned만 RestartDrain으로 복원한다. `dispatchedNanos=dispatchedAt−receivedAt`으로 접수/배정을 세고 backend 완료 뒤 `final(incomplete,EntrypointRestarted)`을 쓴다.
 firstfloor follow는 인스턴스 복원 배정의 가장 이른 dispatchedAt(없으면 프로세스 시작)부터 읽고 열린 행 없는 줄은 버린다. `RetainedDefinition`은 삭제하지 않는 루트 definitions.jsonl(KB·정의 수 비례)에서 복원하며 같은 identity/본문 재게시를 생략한다.
 `SCH-43`/B4: DefinitionRecord→루트 정의→runtimeFacts/NewRuntime/RetainedDefinition과 시간 catalog definitionID를 재사용한다. 삭제·로컬 시간 정리는 루트 정의를 지우지 않는다. Dashboard `resolveWorkloadIdentities`(`7a1d78cb`)는 UID별 현재 등록→관측 definitions→scheduler snapshot→UID 포함 미확인 표시 순이다. 새 동명 UID와 합치지 않으며 요청 모델은 UID 최신 모델 아닌 정확한 definitionID에서 읽는다. archive catalog 정의도 같은 응답에 합치고 RetainedDefinition을 이름 검색 API로 바꾸지 않는다. 삭제/재시작/로컬 삭제·동명 재등록·동일 UID 모델 변경 뒤에도 이 해석을 검사한다.
+
+### 3.3 중앙 서버 요청 경계
+
+`serverTiming[].elapsedNanos`는 원래 `receivedAt`을 캡처한 Go `time.Time`의 monotonic 부분을 유지해 잰 경과 ns다. 직렬화된 UTC 시각을 다시 빼서 만들지 않는다. 필드가 없는 과거 행이나 미도달 단계는 비워 둔다. 관측한 0ns는 유효하며 missing과 다르다. 중복 단계는 처음 관측한 값을 유지한다. 목록은 단계명으로 읽으며 직렬화 순서를 goroutine 간 인과 순서로 해석하지 않는다.
+
+| 구간 | 고정 stage명·경계 |
+|---|---|
+| Receive | `receiveLockAttempt`, `receiveLockAcquired`, `receiveDone`: Runtime lock 전·획득 직후·handler 반환 직후 |
+| 인증 | `authStart`, `authDone`: authorize 전후, 실패 포함 |
+| 본문 | `bodyDecodeStart`, `bodyDecodeDone`: 네트워크 본문 읽기와 JSON 해석 전후 |
+| Accept 첫 검사 | `acceptCheckLockAttempt`, `acceptCheckLockAcquired`, `acceptCheckDone`: 첫 lock 전·획득 직후·unlock 뒤, 조기 반환 포함 |
+| 입력 검증 | `inputValidateStart`, `inputValidateDone`: 입력 검사 전후, 실패 포함 |
+| 검증 기록·접수 | `validatedEventDone`, `acceptLockAttempt`, `acceptLockAcquired`, `acceptDone`: validated 사건 반환·둘째 lock 전·획득 직후·handler의 Accept 반환 |
+| 실행 준비 | `executeStart`, `assignedEventDone`: 실행 goroutine 진입·assigned 사건 반환 |
+| worker HTTP | `workerHTTPStart`, `workerHTTPDone`: 기존 ClientSpan과 같은 HTTP 왕복 경계. 호출 전 구성·marshal과 반환 뒤 decode·검사는 이 구간 밖이며 후자의 끝은 기존 `exchangeNanos` |
+| 결과 반영 | `resultLockAttempt`, `resultLockAcquired`: 결과 오류 분류 뒤 Runtime lock 전·획득 직후 |
+| 결과 전달 | `replySent`, `replyReceived`: reply send 완료·Call.Wait receive 직후 |
+| HTTP 응답 | `responseWriteStart`, `responseWriteDone`, `responseFlushStart`, `responseFlushDone`: 헤더 쓰기 전·body Write 반환·flush 전후, 공통 오류 경로 포함 |
+
+handler/runtime/backend의 각 goroutine은 자기 timing 값을 소유한다. 고정 배열과 presence bitset을 값으로 복사하고 기존 Receipt·Call·BackendResult·RequestEvent에 전달한다. 기존 lock 아래 missing만 병합하며 marker별 lock·사건·동기 디스크 쓰기는 추가하지 않는다. RequestRow의 copy-on-write, enqueue된 assigned/final, 조회 snapshot은 이후 변경과 mutable backing을 공유하지 않는다. final 뒤 실행은 기존 late native supplement만 따르며 final을 다시 열지 않는다. assigned에는 당시 도달한 단계만 있고, 실패·취소도 관측하지 않은 종료 단계를 합성하지 않는다. 저장·복원·archive/query는 같은 선택적 필드를 보존하며 과거 원문을 재작성하지 않는다.
+
+공개 workload 조회의 실제 Dashboard decoder는 `parseSchedulerJSON`, 다운로드는 `SourceExport` → `safeSource` → `stringifySchedulerJSON`이다. 별도 요청 필드 whitelist는 없으며 원본 객체를 보존한다. `elapsedNanos`는 Go int64, Dashboard `WireInteger`(`number|bigint`)로 유지한다. 안전 정수 범위를 넘는 ns를 Number로 줄이지 않고 정수 JSON으로 내보낸다. `receivedAt` 등 RFC3339Nano 문자열도 유지하며 Date의 밀리초 값으로 원본을 대체하지 않는다. 새 화면·차트·SLO/κ·배치 정책·프로파일 선정·IPC/stored profile 계약은 바꾸지 않는다.
+
+분해는 기존 세 경계 `0→dispatchedNanos`, `dispatchedNanos→exchangeNanos`, `exchangeNanos→elapsedNanos` 안에서 겹치지 않는 관측 구간과 명시적 잔차를 합쳐 원래 길이에 맞춘다. 첫 구간은 Receive/auth/body/Accept, 둘째는 goroutine 시작·assigned 기록·요청 준비·HTTP·응답 해석, 셋째는 결과 반영·reply·handler·write/flush를 읽는다. 각 잔차는 그 큰 구간 길이에서 포함된 비중첩 관측 구간만 뺀 값이다. 순수 lock wait는 `attempt→acquired`이며 acquired 이후 done까지는 처리와 반환 비용도 포함한다. 중첩 HTTP·worker·lock 구간을 다시 더하지 않는다. `elapsedNanos`는 write/flush 뒤 Response 진입 직전의 기존 경계이며 이후 Runtime 정리는 사용자 지연에 더하지 않는다.
+
+worker의 S/G·queue·전처리/추론/후처리는 기존 worker 자체 duration과 배치 공유 의미를 유지한다. 중앙 서버 offset과 worker UTC를 빼서 네트워크 시간을 만들지 않는다. client의 기존 monotonic sent/finished와 RequestID join을 재사용하고 client↔server·server↔worker 미계측 부분은 잔차로 남긴다. 기존 집계 모집단·실패 분모·completion residual 정의와 증거 정책도 유지한다.
 
 ## 4. 불변 값의 ID 참조
 catalog 행은 `{kind,key,at,body}`다. 시간 안 첫 key 참조와 프로세스의 마지막 본문이 바뀔 때 쓴다. 각 시간은 모든 참조를 담고 at은 참조 기록 시각이다. 읽기는 같은 key의 기록 시각 이전 마지막 행(DuckDB ASOF JOIN), 그 이전 기록은 첫 행을 쓴다. 재시작 동일 본문은 결과를 바꾸지 않는다.
