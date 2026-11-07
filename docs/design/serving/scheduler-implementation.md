@@ -43,7 +43,7 @@ Physical execution now owns its implementations in `operations`; common native-s
 
 Reservation transition encapsulation precedes moving the remaining ledger: `startTransition` retains the complete launch mutex scope (cleanup, eligibility, parent admission and dispatch); `completeRun` and `completeAdmittedRun` publish the receipt, terminal action and result history in their original single critical sections. Cancellation and receipt retirement also mutate the existing ledger through concrete methods. Configuration continues sharing the same mutex; no lock is split or added. Controller callbacks execute synchronously under that mutex and do not escape.
 
-Scheduled child admission now creates and reserves the run, binds its cancellation context and retains its proof parent inside the ledger owner; terminal replay checks and preparation publication use that same owner. Continuation and failed-preparation compensation traverse the one ledger and synchronously dispatch under the original enclosing critical section. Handoff/effect/history/replacement projections belong to the ledger rather than reaching through controller fields. They receive the existing runtime only where the original code read it, and read configuration through a synchronous callback at the original position under the shared mutex. Snapshot/decision publication, measurement leases and reserved-node views likewise use concrete ledger methods without exposing the mutable run map.
+Scheduled child admission creates and reserves the run, binds its cancellation context and retains its proof parent inside the ledger owner; terminal replay checks and preparation publication use that same owner. Continuation and failed-preparation compensation traverse the one ledger and synchronously dispatch under the original enclosing critical section. Handoff/effect/history projections belong to the ledger rather than reaching through controller fields. Snapshot reconciliation no longer receives a configuration callback or maintains gap/replacement timing projections. Actual owner reservations, frozen targets, Ready/ACK checks and authorized drain/remove continuation remain intact. Snapshot/decision publication, measurement leases and reserved-node views use concrete ledger methods without exposing the mutable run map.
 
 Pure placement and zero-inference proof assertions now live with physical execution, allowing those helpers to remain private. `PrepareObserved`, `EnsurePreparationConfig` and `SamePreparedPod` still support Kubernetes/observer integration fixtures: importing those fixtures from internal operations tests would create the current `operations` → `kube` → `operations` test cycle. Their existing assertions remain intact pending the real observer/reconciliation boundary.
 
@@ -52,7 +52,7 @@ Pure placement and zero-inference proof assertions now live with physical execut
 ## 3. 실행기·요청 계약
 
 외부 요청은 Workload별 입력 1개, 불변 UID·definition·개별 SLO를 유지한다. [Workload 관리](workload-management.md)와 [실행기·시간 계약](scheduler-runtime-measurement.md)이 원시 입력·IPC·deadline policy·monotonic elapsed·physical release의 원본이다.
-판단은 고정 historical `observationEnd`와 현재 outstanding origin `at`를 구분한다. 미래·stale source는 Pending이며 source 시각을 재표시하지 않는다. `completionMarginMS`는 요청마다 한 번 반영하고 sender elapsed는 원래 receipt 경과에서만 뺀다.
+판단은 고정 historical `observationEnd`와 현재 outstanding origin `at`를 구분한다. 미상·미래 source 시각과 실제 capture/refresh 실패는 Pending이며 source 시각을 재표시하지 않는다. 고정 age TTL은 없다. `completionMarginMS`는 요청마다 한 번 반영하고 sender elapsed는 원래 receipt 경과에서만 뺀다.
 
 ### 3.3 같은 선택 함수의 실행과 replay
 
