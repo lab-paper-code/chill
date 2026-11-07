@@ -46,7 +46,7 @@ export function capacityComparison(input:CapacitySettings,current:CapacitySettin
   return capacityFields.map(field=>({...field,used:input[field.key],current:current[field.key],same:String(input[field.key])===String(current[field.key])}))
 }
 
-export function planSearchFacts(search:SchedulerPlanSearch,selectedJoules?:number|null):[string,string][] {
+export function planSearchFacts(search:SchedulerPlanSearch):[string,string][] {
   const rows:[string,string][]=[["탐색 이웃",String(search.neighborhood)],["평가 수",String(search.evaluated)],["탐색 시간",`${search.durationNanos} ns`]]
   const fields=[
     ["strategy","탐색 전략"],["surrogateEvaluated","증분 평가 수"],["finalists","최종 후보 수"],
@@ -61,7 +61,7 @@ export function planSearchFacts(search:SchedulerPlanSearch,selectedJoules?:numbe
     rows.push(["그림자 선택 key",shadow.key||"선택해 없음"])
     if(shadow.key){
       if(search.key!==undefined)rows.push(["그림자 · v1 선택 key 동일",shadow.key===search.key?"예":"아니요"])
-      rows.push(selectedJoules==null?["그림자 v2 에너지 (J)",String(shadow.joules)]:["그림자 v2 − v1 에너지 (J)",String(shadow.joules-selectedJoules)])
+      rows.push(search.joules===undefined?["그림자 v2 에너지 (J)",String(shadow.joules)]:["그림자 v2 − v1 에너지 (J)",String(shadow.joules-search.joules)])
     }
     rows.push(["그림자 증분 평가 수",String(shadow.evaluated)],["그림자 탐색 시간",`${shadow.durationNanos} ns`])
     if(shadow.exactEvaluated!==undefined)rows.push(["그림자 정확 평가 수",String(shadow.exactEvaluated)])

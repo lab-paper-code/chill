@@ -92,6 +92,7 @@ func (p *capacityPlanner) search(deadline time.Time) (capacityResult, error) {
 	finished := time.Now()
 	p.searched.FinishedAt = finished.UTC()
 	p.searched.Duration = finished.Sub(start)
+	p.searched.Key, p.searched.Joules = best.key, best.joules
 	return best, nil
 }
 

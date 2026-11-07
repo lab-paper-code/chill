@@ -73,26 +73,28 @@ type SchedulerPlanSearch struct {
 	Duration  time.Duration `json:"durationNanos"`
 	// StartedAt and FinishedAt are direct wall-clock boundaries of search,
 	// excluding node-plan construction and final decision projection.
-	StartedAt          time.Time                             `json:"startedAt"`
-	FinishedAt         time.Time                             `json:"finishedAt"`
-	BudgetCut          bool                                  `json:"budgetCut,omitempty"`
-	Excluded           map[string]int                        `json:"excluded,omitempty"`
-	ReserveRejections  map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
-	Steps              []SchedulerPlanSearchStep             `json:"steps,omitempty"`
-	TrailingEvaluated  int                                   `json:"trailingEvaluated,omitempty"`
-	TerminationReason  string                                `json:"terminationReason,omitempty"`
-	Strategy           string                                `json:"strategy,omitempty"`
-	Key                string                                `json:"key,omitempty"`
-	Pruned             map[string]int                        `json:"pruned,omitempty"`
-	SurrogateEvaluated int                                   `json:"surrogateEvaluated,omitempty"`
-	Finalists          int                                   `json:"finalists,omitempty"`
-	ExactEvaluated     int                                   `json:"exactEvaluated,omitempty"`
-	SurrogateGapJoules float64                               `json:"surrogateGapJoules,omitempty"`
-	PostFilterReverts  int                                   `json:"postFilterReverts,omitempty"`
-	Fallback           string                                `json:"fallback,omitempty"`
-	DualBound          float64                               `json:"dualBound,omitempty"`
-	Start              string                                `json:"start,omitempty"`
-	Shadow             *SchedulerPlanSearchShadow            `json:"shadow,omitempty"`
+	StartedAt         time.Time                             `json:"startedAt"`
+	FinishedAt        time.Time                             `json:"finishedAt"`
+	BudgetCut         bool                                  `json:"budgetCut,omitempty"`
+	Excluded          map[string]int                        `json:"excluded,omitempty"`
+	ReserveRejections map[string]SchedulerTransitionReserve `json:"reserveRejections,omitempty"`
+	Steps             []SchedulerPlanSearchStep             `json:"steps,omitempty"`
+	TrailingEvaluated int                                   `json:"trailingEvaluated,omitempty"`
+	TerminationReason string                                `json:"terminationReason,omitempty"`
+	Strategy          string                                `json:"strategy,omitempty"`
+	// Key and Joules identify the selected exact candidate before postfilters.
+	Key                string                     `json:"key,omitempty"`
+	Joules             float64                    `json:"joules,omitempty"`
+	Pruned             map[string]int             `json:"pruned,omitempty"`
+	SurrogateEvaluated int                        `json:"surrogateEvaluated,omitempty"`
+	Finalists          int                        `json:"finalists,omitempty"`
+	ExactEvaluated     int                        `json:"exactEvaluated,omitempty"`
+	SurrogateGapJoules float64                    `json:"surrogateGapJoules,omitempty"`
+	PostFilterReverts  int                        `json:"postFilterReverts,omitempty"`
+	Fallback           string                     `json:"fallback,omitempty"`
+	DualBound          float64                    `json:"dualBound,omitempty"`
+	Start              string                     `json:"start,omitempty"`
+	Shadow             *SchedulerPlanSearchShadow `json:"shadow,omitempty"`
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
@@ -131,6 +133,7 @@ type SchedulerPlanSearchShadow struct {
 	Evaluated      int           `json:"evaluated"`
 	ExactEvaluated int           `json:"exactEvaluated,omitempty"`
 	Duration       time.Duration `json:"durationNanos"`
+	BudgetCut      bool          `json:"budgetCut,omitempty"`
 	Fallback       string        `json:"fallback,omitempty"`
 }
 

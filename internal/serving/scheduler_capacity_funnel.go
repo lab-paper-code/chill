@@ -4,12 +4,14 @@ import "slices"
 
 // capacityFunnel records only exact candidate evaluations, not postfilter probes.
 type capacityFunnel struct {
-	exact    int
-	excluded map[string]int
-	reserves map[string]SchedulerTransitionReserve
-	gap      float64
-	reverts  int
-	start    string
+	exact     int
+	excluded  map[string]int
+	reserves  map[string]SchedulerTransitionReserve
+	gap       float64
+	reverts   int
+	start     string
+	rawKey    string
+	rawJoules float64
 }
 
 func (p *capacityPlanner) funnelEvaluate(choice []int, stats *capacityFunnel) *capacityResult {
@@ -56,12 +58,18 @@ func (p *capacityPlanner) funnel(candidates []v2Candidate, stats *capacityFunnel
 			filteredBest = &filtered
 			filteredGap = candidate.joules - filtered.joules
 			filteredStart = candidate.start
+			if p.settings.PlanPostFilterFinalists {
+				stats.rawKey, stats.rawJoules = res.key, res.joules
+			}
 		}
 	}
 	if rawBest != nil && !capacityFilterKept(*rawBest) && capacityFilterKept(rawFiltered) && anySurvivor {
 		stats.reverts++
 	}
 	selected, stats.gap, stats.start = rawBest, rawGap, rawStart
+	if rawBest != nil && !p.settings.PlanPostFilterFinalists {
+		stats.rawKey, stats.rawJoules = rawBest.key, rawBest.joules
+	}
 	if p.settings.PlanPostFilterFinalists {
 		selected, stats.gap, stats.start = filteredBest, filteredGap, filteredStart
 	}

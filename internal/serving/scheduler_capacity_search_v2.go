@@ -12,7 +12,7 @@ func (p *capacityPlanner) searchV2(deadline time.Time) (capacityResult, error) {
 	return p.searchV2WithFallback(deadline, true)
 }
 
-// searchV2WithFallback can stop before v1 when shadow has already run it.
+// searchV2WithFallback skips v1 fallback when shadow runs v1 separately afterward.
 func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool) (capacityResult, error) {
 	started := time.Now()
 	// Match v1's common-H keep baseline before exact admission/postfilters.
@@ -29,6 +29,9 @@ func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool)
 	if best == nil {
 		fallback = "exactK1"
 		best = p.exactK1(&stats)
+		if best != nil {
+			stats.rawKey, stats.rawJoules = best.key, best.joules
+		}
 		if best != nil && p.settings.PlanPostFilterFinalists {
 			filtered := p.minimumGain(p.payback(*best))
 			best = &filtered
@@ -58,6 +61,7 @@ func (p *capacityPlanner) searchV2WithFallback(deadline time.Time, allowV1 bool)
 	}
 	p.searched = SchedulerPlanSearch{
 		Strategy: schedulerPlanSearchV2, Pruned: pruned, SurrogateEvaluated: core.surrogateEvaluated,
+		Key: stats.rawKey, Joules: stats.rawJoules,
 		Finalists: len(candidates), ExactEvaluated: stats.exact, Evaluated: stats.exact,
 		SurrogateGapJoules: stats.gap, PostFilterReverts: stats.reverts, Fallback: fallback,
 		BudgetCut: core.budgetCut, Duration: time.Since(started), Excluded: stats.excluded,

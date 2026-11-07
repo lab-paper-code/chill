@@ -14,10 +14,10 @@ import { Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
 
 
-export function PlanSearchEvidence({capacity,selectedJoules}:{capacity?:SchedulerCapacity;selectedJoules?:number|null}) {
+export function PlanSearchEvidence({capacity}:{capacity?:SchedulerCapacity}) {
   if(!capacity?.search&&!capacity?.plans?.length)return null
   return <section className="space-y-3"><h3>구성 탐색 근거</h3>
-    {capacity.search&&<Facts items={planSearchFacts(capacity.search,selectedJoules)}/>}
+    {capacity.search&&<Facts items={planSearchFacts(capacity.search)}/>}
     {!!capacity.plans?.length&&<DataTable data={capacity.plans} columns={[
       {key:"node",label:"장치",value:plan=>plan.node.name},
       {key:"key",label:"계획",value:plan=>plan.key},

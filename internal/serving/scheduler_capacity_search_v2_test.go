@@ -1,7 +1,9 @@
 package serving
 
 import (
+	"encoding/json"
 	"math/rand/v2"
+	"os"
 	"reflect"
 	"slices"
 	"testing"
@@ -57,13 +59,71 @@ func TestSchedulerSettingsPlanSearch(t *testing.T) {
 	}
 }
 
+func TestSchedulerSamplePlanSearchDefaults(t *testing.T) {
+	raw, err := os.ReadFile("../../config/samples/serving-scheduler.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sample struct {
+		Settings json.RawMessage `json:"settings"`
+	}
+	if err := json.Unmarshal(raw, &sample); err != nil {
+		t.Fatal(err)
+	}
+	var input SchedulerSettingsInput
+	if err := json.Unmarshal(sample.Settings, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input.PlanSearchStrategy == nil || input.PlanSearchEvaluations == nil || input.PlanExactFinalists == nil || input.PlanPolishActive == nil || input.PlanPostFilterFinalists == nil || input.PlanPricedStart == nil {
+		t.Fatal("sample must explicitly set all six plan-search settings")
+	}
+	got, err := input.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var omitted map[string]json.RawMessage
+	if err := json.Unmarshal(sample.Settings, &omitted); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"planSearchStrategy", "planSearchEvaluations", "planExactFinalists", "planPolishActive", "planPostFilterFinalists", "planPricedStart"} {
+		if _, ok := omitted[key]; !ok {
+			t.Fatalf("sample missing %s", key)
+		}
+		delete(omitted, key)
+	}
+	raw, err = json.Marshal(omitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defaults SchedulerSettingsInput
+	if err := json.Unmarshal(raw, &defaults); err != nil {
+		t.Fatal(err)
+	}
+	want, err := defaults.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, values := range map[string][2]any{
+		"planSearchStrategy":      {got.PlanSearchStrategy, want.PlanSearchStrategy},
+		"planSearchEvaluations":   {got.PlanSearchEvaluations, want.PlanSearchEvaluations},
+		"planExactFinalists":      {got.PlanExactFinalists, want.PlanExactFinalists},
+		"planPolishActive":        {got.PlanPolishActive, want.PlanPolishActive},
+		"planPostFilterFinalists": {got.PlanPostFilterFinalists, want.PlanPostFilterFinalists},
+		"planPricedStart":         {got.PlanPricedStart, want.PlanPricedStart},
+	} {
+		if values[0] != values[1] {
+			t.Errorf("%s sample=%v default=%v", key, values[0], values[1])
+		}
+	}
+}
+
 func TestCapacityFunnelExactAndFallback(t *testing.T) {
 	p := e5Planner(e5Mixes[0], evaluationScaled(1, 0), e5Start, nil)
 	keep := make([]int, len(p.plans))
 	exact := p.evaluate(slices.Clone(keep), p.routeOf(keep))
 	stats := capacityFunnel{}
 	got := p.funnel([]v2Candidate{{choice: keep, joules: exact.joules + 3}}, &stats)
-	if got == nil || got.key != exact.key || stats.exact != 1 || stats.gap != 3 {
+	if got == nil || got.key != exact.key || stats.exact != 1 || stats.gap != 3 || stats.rawKey != exact.key || stats.rawJoules != exact.joules {
 		t.Fatalf("funnel: %+v %+v", got, stats)
 	}
 	stats = capacityFunnel{}
@@ -75,7 +135,7 @@ func TestCapacityFunnelExactAndFallback(t *testing.T) {
 	stats = capacityFunnel{}
 	filtered := p.funnel([]v2Candidate{{choice: best.choice, joules: best.joules}}, &stats)
 	want := p.minimumGain(p.payback(*best))
-	if filtered == nil || filtered.key != want.key || filtered.joules != want.joules {
+	if filtered == nil || filtered.key != want.key || filtered.joules != want.joules || stats.rawKey != best.key || stats.rawJoules != best.joules {
 		t.Fatalf("postfilter: %+v want %+v", filtered, want)
 	}
 }
@@ -98,7 +158,7 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 		if enabled {
 			want = b
 		}
-		if got == nil || got.key != want.key || stats.reverts != 1 {
+		if got == nil || got.key != want.key || stats.reverts != 1 || stats.rawKey != want.key || stats.rawJoules != want.joules {
 			t.Fatalf("postfilter=%v got=%+v want=%+v stats=%+v", enabled, got, want, stats)
 		}
 	}
