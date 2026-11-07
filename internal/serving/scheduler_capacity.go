@@ -154,19 +154,19 @@ type SchedulerPlanSearchShadow struct {
 // Rate is λ (req/s), Backlog B (requests). A missing wait, drain or exceedance
 // is unbounded: no capacity serves the Workload.
 type SchedulerCapacityWorkload struct {
-	UID                  string              `json:"uid"`
-	Rate                 float64             `json:"rate"`
-	MinimumDemand        float64             `json:"minimumDemand"`
-	Queued               int                 `json:"queued"`
-	KappaNew             float64             `json:"kappaNew"`
-	KappaRetained        float64             `json:"kappaRetained"`
-	Backlog              float64             `json:"backlog"`
-	WaitSeconds          *float64            `json:"waitSeconds,omitempty"`
-	DrainSeconds         *float64            `json:"drainSeconds,omitempty"`
-	FinalExceedance      *float64            `json:"finalExceedance,omitempty"`
-	TransitionExceedance *float64            `json:"transitionExceedance,omitempty"`
-	Weights              map[string]int32    `json:"weights"`
-	Rows                 []string            `json:"rows"`
+	UID                  string           `json:"uid"`
+	Rate                 float64          `json:"rate"`
+	MinimumDemand        float64          `json:"minimumDemand"`
+	Queued               int              `json:"queued"`
+	KappaNew             float64          `json:"kappaNew"`
+	KappaRetained        float64          `json:"kappaRetained"`
+	Backlog              float64          `json:"backlog"`
+	WaitSeconds          *float64         `json:"waitSeconds,omitempty"`
+	DrainSeconds         *float64         `json:"drainSeconds,omitempty"`
+	FinalExceedance      *float64         `json:"finalExceedance,omitempty"`
+	TransitionExceedance *float64         `json:"transitionExceedance,omitempty"`
+	Weights              map[string]int32 `json:"weights"`
+	Rows                 []string         `json:"rows"`
 }
 
 // SchedulerNodePlan is one Node's plan: keep, or a set of option variants at
@@ -272,7 +272,6 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	markFixedEstimates(&decision)
 	return decision, ctx.Err()
 }
-
 
 // schedulerCanonical orders the snapshot lists the planner iterates, so the
 // decision does not depend on input order.

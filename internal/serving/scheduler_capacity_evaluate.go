@@ -246,7 +246,7 @@ type capacityResult struct {
 	rows                      [][]string
 	sums                      [][2]float64
 	// unpaid names the Nodes whose replacement payback reverted to keep.
-	unpaid   []string
+	unpaid []string
 	// withinUncertainty marks keep chosen over a transition whose gain is
 	// within the measurement uncertainty (minimumGain).
 	withinUncertainty bool

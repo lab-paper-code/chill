@@ -28,7 +28,7 @@ func reductionAdmissionFixture(rate, supply, target float64) *capacityPlanner {
 
 func TestTempoE53E55DownscaleHeadroomSCH55(t *testing.T) {
 	for _, row := range []struct {
-		name                          string
+		name                 string
 		rate, supply, target float64
 	}{
 		{"E5-3-S419", 54.333333333333336, 99.64337119287221, 64.28501986002459},
@@ -201,4 +201,3 @@ func TestTempoHeadroomIntegerRoundingSCH55(t *testing.T) {
 		t.Fatal("aggregate κ met margin but no integer route carried the protected load")
 	}
 }
-

@@ -208,7 +208,7 @@ func TestSchedulerCaptureRejectsMissingRequestStreamWithinWindow(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if err := history.ManagementEvent(serving.ManagementEvent{Kind: "coverage-fixture", At: start}); err != nil {
+	if err := history.ManagementEvent(serving.ManagementEvent{WorkloadUID: "coverage-fixture", Kind: "coverage-fixture", At: start}); err != nil {
 		t.Fatal(err)
 	}
 	if err := history.Flush(ctx); err != nil {

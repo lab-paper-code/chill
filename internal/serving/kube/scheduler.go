@@ -81,14 +81,14 @@ type SchedulerController struct {
 	observer   *Observer
 	operations *servingops.Operations
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
-	measurement        *servingops.Operations
-	observationLog     *observation.ObservationLog
-	capacity           *serving.CapacityTable
-	config             SchedulerControllerConfig
-	ctx                context.Context
-	cancel             context.CancelFunc
-	wg                 sync.WaitGroup
-	completions        chan struct{}
+	measurement    *servingops.Operations
+	observationLog *observation.ObservationLog
+	capacity       *serving.CapacityTable
+	config         SchedulerControllerConfig
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	completions    chan struct{}
 	// powerTargets holds, by "<Node UID>/<mode>", the maximum actuation
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration

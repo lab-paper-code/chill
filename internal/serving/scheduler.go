@@ -19,9 +19,9 @@ import (
 // autonomous control.
 // MaxReplicas and MaxInstances bound plan instance counts; CPU is shared.
 type SchedulerSettings struct {
-	ObservationWindow time.Duration `json:"observationWindowNanos"`
-	ControlInterval   time.Duration `json:"controlIntervalNanos"`
-	ComparisonPeriod  time.Duration `json:"comparisonPeriodNanos"`
+	ObservationWindow         time.Duration `json:"observationWindowNanos"`
+	ControlInterval           time.Duration `json:"controlIntervalNanos"`
+	ComparisonPeriod          time.Duration `json:"comparisonPeriodNanos"`
 	TransitionReserveFraction float64       `json:"transitionReserveFraction"`
 	ScaleDownHeadroomFraction float64       `json:"scaleDownHeadroomFraction"`
 	MaxReplicas               int           `json:"maxReplicas"`
@@ -437,7 +437,7 @@ type Action struct {
 
 type SchedulerSnapshot struct {
 	// At is the current request read and decision origin, after capture I/O.
-	At                        time.Time                     `json:"at"`
+	At time.Time `json:"at"`
 	// ObservationEnd is the fixed historical arrival cutoff.
 	ObservationEnd time.Time `json:"observationEnd"`
 	// ObservedSince is when arrival observation became complete (the process
@@ -631,16 +631,16 @@ func (s SchedulerSettings) validateExcludedNodes() error {
 // completionMarginMS apart from zero.
 type SchedulerSettingsInput struct {
 	SchedulerSettings
-	CompletionMarginMS      *float64       `json:"completionMarginMS"`
-	CapacityGridSteps       *int           `json:"capacityGridSteps"`
-	CapacityBisectionWidth  *float64       `json:"capacityBisectionWidth"`
-	CapacityTailSamples     *int           `json:"capacityTailSamples"`
-	PlanSearchStrategy      *string        `json:"planSearchStrategy,omitempty"`
-	PlanSearchEvaluations   *int           `json:"planSearchEvaluations,omitempty"`
-	PlanExactFinalists      *int           `json:"planExactFinalists,omitempty"`
-	PlanPolishActive        *int           `json:"planPolishActive,omitempty"`
-	PlanPostFilterFinalists *bool          `json:"planPostFilterFinalists,omitempty"`
-	PlanPricedStart         *bool          `json:"planPricedStart,omitempty"`
+	CompletionMarginMS      *float64 `json:"completionMarginMS"`
+	CapacityGridSteps       *int     `json:"capacityGridSteps"`
+	CapacityBisectionWidth  *float64 `json:"capacityBisectionWidth"`
+	CapacityTailSamples     *int     `json:"capacityTailSamples"`
+	PlanSearchStrategy      *string  `json:"planSearchStrategy,omitempty"`
+	PlanSearchEvaluations   *int     `json:"planSearchEvaluations,omitempty"`
+	PlanExactFinalists      *int     `json:"planExactFinalists,omitempty"`
+	PlanPolishActive        *int     `json:"planPolishActive,omitempty"`
+	PlanPostFilterFinalists *bool    `json:"planPostFilterFinalists,omitempty"`
+	PlanPricedStart         *bool    `json:"planPricedStart,omitempty"`
 }
 
 // Settings returns validated settings carrying the supplied margin.

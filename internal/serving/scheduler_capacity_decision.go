@@ -118,4 +118,3 @@ func (p *capacityPlanner) sameRouting(routing map[string]map[string]int32) bool 
 func capacityWorst(worst float64) float64 {
 	return min(max(0, worst), math.MaxFloat64)
 }
-

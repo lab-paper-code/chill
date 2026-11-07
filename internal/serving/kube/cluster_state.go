@@ -30,11 +30,11 @@ func NewClusterState(store *Store, kube kubernetes.Interface, namespace string) 
 // reservationState owns the existing scheduler locks and the single run ledger.
 // Calls that need both locks acquire tickMu before mu.
 type reservationState struct {
-	mu                    sync.Mutex
-	tickMu                sync.Mutex
-	runs                  map[string]*actionRun
-	routeWriters          map[string]servingstate.RouteWriters
-	state                 SchedulerControllerState
+	mu           sync.Mutex
+	tickMu       sync.Mutex
+	runs         map[string]*actionRun
+	routeWriters map[string]servingstate.RouteWriters
+	state        SchedulerControllerState
 	// unrouted holds when each captured instance last lost every route weight.
 	// overloaded holds the slots prepared while keep was in Overload: zero
 	// until the instance is Ready, then the end of its hold.

@@ -60,4 +60,3 @@ func (p *capacityPlanner) admissionDemand(w capacityWorkload, choice []int, reta
 	}
 	return demand, slow, recovery, protected
 }
-

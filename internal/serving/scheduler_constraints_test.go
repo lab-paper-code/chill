@@ -89,11 +89,3 @@ func TestTransitionReserveActualSupply(t *testing.T) {
 		t.Fatal("zero reserve enabled an extra constraint")
 	}
 }
-
-
-
-
-
-
-
-

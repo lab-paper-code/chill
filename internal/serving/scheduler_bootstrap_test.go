@@ -28,7 +28,6 @@ func TestCapacityLeximinAC40(t *testing.T) {
 	}
 }
 
-
 type rev76Fixture struct {
 	Settings SchedulerSettings `json:"settings"`
 	Cold     SchedulerSnapshot `json:"cold"`
