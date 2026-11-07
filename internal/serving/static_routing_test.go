@@ -65,7 +65,7 @@ func TestStaticExclusiveBaselineThenSwappedTargetDrainsPhysicalBinding(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := runtime.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := runtime.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}

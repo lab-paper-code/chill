@@ -61,7 +61,7 @@ func TestReleaseSchedulerRoutingFollowsNewReadySeed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}

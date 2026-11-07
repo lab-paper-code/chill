@@ -197,7 +197,7 @@ func TestBlockedAssignmentCrashRequiresFreshExecutorProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := runtime.Accept(receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := runtime.Accept(&receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,7 +751,7 @@ func TestAsyncWriteFailureDoesNotFinishExecutingRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := runtime.Accept(receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := runtime.Accept(&receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -923,7 +923,7 @@ func assertObservationFailureConsumers(t *testing.T, log *ObservationLog, runtim
 	if _, err := runtime.Receive(workload, time.Now()); rawErrorCode(err) != serving.ObservationUnavailableCode {
 		t.Fatalf("Receive changed observation failure family: %v", err)
 	}
-	if _, err := runtime.Accept(receipt, &serving.InferenceInput{}); rawErrorCode(err) != serving.ObservationUnavailableCode {
+	if _, err := runtime.Accept(&receipt, &serving.InferenceInput{}); rawErrorCode(err) != serving.ObservationUnavailableCode {
 		t.Fatalf("Accept changed observation failure family: %v", err)
 	}
 	if err := log.RequestEvent(serving.RequestEvent{RequestID: "post-failure", Kind: "received", At: at}); !errors.Is(err, cause) {

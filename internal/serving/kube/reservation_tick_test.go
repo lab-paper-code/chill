@@ -268,7 +268,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			call, err := c.runtime.Accept(receipt, managerSample(t))
+			call, err := c.runtime.Accept(&receipt, managerSample(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -453,7 +453,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := c.runtime.Accept(receipt, managerSample(t))
+	call, err := c.runtime.Accept(&receipt, managerSample(t))
 	if err != nil {
 		t.Fatal(err)
 	}

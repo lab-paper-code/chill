@@ -58,7 +58,7 @@ func TestRuntimeDispatchDoesNotWaitForOwnObservationWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := runtime.Accept(receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := runtime.Accept(&receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestRuntimeDispatchDoesNotWaitForOwnObservationWrite(t *testing.T) {
 			submitted <- err
 			return
 		}
-		accepted, err := runtime.Accept(received, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+		accepted, err := runtime.Accept(&received, &serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 		if err != nil {
 			submitted <- err
 			return

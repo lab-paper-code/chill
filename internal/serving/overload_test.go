@@ -39,7 +39,7 @@ func TestHeapOverloadRejectsNewRequests(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+		_, err = r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 		var domain *Error
 		if errors.As(err, &domain) {
 			return domain.Code

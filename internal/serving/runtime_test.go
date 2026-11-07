@@ -91,7 +91,7 @@ func TestAssignmentAdmissionDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 			acceptedCall <- accepted{err: err}
 			return
 		}
-		call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+		call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 		acceptedCall <- accepted{receipt: receipt, call: call, err: err}
 	}()
 	var current accepted
@@ -157,7 +157,7 @@ func TestFinalAdmissionDoesNotHoldRuntimeOrRequestState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestCanceledPendingAssignmentNeverExecutes(t *testing.T) {
 			log.mu.Unlock()
 		}
 	}()
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}

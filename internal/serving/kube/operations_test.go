@@ -450,7 +450,7 @@ func TestReassignedInstancePersistsOnlyItsDeclaredWorkload(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				call, err := m.runtime.Accept(receipt, managerSample(t))
+				call, err := m.runtime.Accept(&receipt, managerSample(t))
 				if err != nil {
 					t.Fatal(err)
 				}

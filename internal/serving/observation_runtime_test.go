@@ -31,7 +31,7 @@ func TestAsyncWriterFailureRetainsPhysicalOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func assertHealthyServingWithFencedPeer(t *testing.T, r *Runtime, d *Definition,
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestLifecycleWaitsForDurablePrefixOutsideRuntimeLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+			call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -485,7 +485,7 @@ func TestRestartPrefixDoesNotWaitForUnrelatedFinalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}

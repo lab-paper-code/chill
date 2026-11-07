@@ -275,7 +275,7 @@ func startManagerCalls(t *testing.T, m *managerHarness, profile serving.Profile,
 		if err != nil {
 			t.Fatal(err)
 		}
-		call, err := m.runtime.Accept(r, input)
+		call, err := m.runtime.Accept(&r, input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -616,7 +616,7 @@ func TestManagerCatalogReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := managerSample(t)
-	if _, err := m.runtime.Accept(receipt, input); managerCode(err) != missingDataset {
+	if _, err := m.runtime.Accept(&receipt, input); managerCode(err) != missingDataset {
 		t.Fatalf("request without dataset = %v", err)
 	}
 	narrow := managerDatasetSpec()

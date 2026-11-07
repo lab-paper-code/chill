@@ -52,6 +52,7 @@ type Receipt struct {
 	ReceivedAt, Deadline time.Time
 	DefinitionID         string
 	RequestLifetime      time.Duration
+	ServerTiming         RequestTimings
 }
 type callResult struct {
 	result BackendResult
@@ -169,7 +170,7 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 			r.names[d.Name] = d.UID
 		}
 		assignment := &Assignment{Node: *row.Node, Instance: row.Instance, Profile: row.ProfileID, DispatchedAt: *row.DispatchedAt}
-		c := &Call{runtime: r, receipt: Receipt{ID: row.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: row.ReceivedAt}, definition: d, identity: row.DefinitionID, assignment: assignment, phase: phaseAssigned, transportDone: true}
+		c := &Call{runtime: r, receipt: Receipt{ID: row.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: row.ReceivedAt, ServerTiming: row.ServerTiming}, definition: d, identity: row.DefinitionID, assignment: assignment, phase: phaseAssigned, transportDone: true}
 		if row.LifetimeNanos > 0 {
 			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(row.LifetimeNanos))
 		}
@@ -272,6 +273,7 @@ func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEve
 	e.NativeProgress = c.progress
 	e.ClientSpanNanos = int64(c.clientSpan)
 	e.ExecutionComplete = c.backendDone
+	e.ServerTiming = c.receipt.ServerTiming
 	if c.definition != nil {
 		e.SLO = &c.definition.SLO
 	}
@@ -283,9 +285,12 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	if _, err := rand.Read(random[:]); err != nil {
 		return Receipt{}, err
 	}
+	receipt := Receipt{ID: hex.EncodeToString(random[:]), Name: name, ReceivedAt: at}
+	receipt.ServerTiming.Mark(ServerReceiveLockAttempt, at)
 	r.mu.Lock()
+	receipt.ServerTiming.Mark(ServerReceiveLockAcquired, at)
 	defer r.mu.Unlock()
-	receipt := Receipt{ID: hex.EncodeToString(random[:]), Name: name, UID: r.names[name], ReceivedAt: at}
+	receipt.UID = r.names[name]
 	if workload := r.workloads[receipt.UID]; workload != nil {
 		receipt.DefinitionID = workload.definition.Identity()
 		if workload.definition.RequestLifetime != nil {
@@ -305,28 +310,41 @@ func (r *Runtime) Receive(name string, at time.Time) (Receipt, error) {
 	return receipt, nil
 }
 
-func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) {
+// checkAcceptance keeps the first check's unlock boundary on every return path.
+func (r *Runtime) checkAcceptance(receipt *Receipt) (*Definition, error) {
+	receipt.ServerTiming.Mark(ServerAcceptCheckLockAttempt, receipt.ReceivedAt)
 	r.mu.LockRequest(receipt.ID)
-	if r.observationErrLocked() != nil {
+	receipt.ServerTiming.Mark(ServerAcceptCheckLockAcquired, receipt.ReceivedAt)
+	defer func() {
 		r.mu.Unlock()
+		receipt.ServerTiming.Mark(ServerAcceptCheckDone, receipt.ReceivedAt)
+	}()
+	if r.observationErrLocked() != nil {
 		return nil, failure(ObservationUnavailableCode, "request observation log is unavailable")
 	}
 	if !receipt.Deadline.IsZero() && !time.Now().Before(receipt.Deadline) {
-		r.mu.Unlock()
 		return nil, failure("RequestTimeout", "request lifetime expired before acceptance")
 	}
 	w := r.workloads[receipt.UID]
 	if w == nil || r.names[receipt.Name] != receipt.UID {
-		r.mu.Unlock()
 		return nil, failure("WorkloadChanged", "registration changed before acceptance")
 	}
 	d := w.definition
 	if receipt.DefinitionID != "" && receipt.DefinitionID != d.Identity() {
-		r.mu.Unlock()
 		return nil, failure("DefinitionChanged", "applied definition changed before acceptance")
 	}
-	r.mu.Unlock()
-	if err := validateInput(input, d.Preprocessor.Input); err != nil {
+	return d, nil
+}
+
+func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error) {
+	d, err := r.checkAcceptance(receipt)
+	if err != nil {
+		return nil, err
+	}
+	receipt.ServerTiming.Mark(ServerInputValidateStart, receipt.ReceivedAt)
+	err = validateInput(input, d.Preprocessor.Input)
+	receipt.ServerTiming.Mark(ServerInputValidateDone, receipt.ReceivedAt)
+	if err != nil {
 		return nil, err
 	}
 	lifetime := int64(0)
@@ -334,15 +352,19 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 		lifetime = receipt.Deadline.Sub(receipt.ReceivedAt).Nanoseconds()
 	}
 	validatedAt := time.Now()
-	if err := r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime}); err != nil {
+	err = r.config.ObservationLog.RequestEvent(RequestEvent{RequestID: receipt.ID, WorkloadName: receipt.Name, WorkloadUID: receipt.UID, Definition: d.Identity(), Kind: "validated", At: validatedAt.UTC(), ReceivedAt: receipt.ReceivedAt, ElapsedNanos: validatedAt.Sub(receipt.ReceivedAt).Nanoseconds(), SLO: &d.SLO, LifetimeNanos: lifetime, ServerTiming: receipt.ServerTiming})
+	receipt.ServerTiming.Mark(ServerValidatedEventDone, receipt.ReceivedAt)
+	if err != nil {
 		return nil, failure(ObservationUnavailableCode, "cannot persist validated compute demand")
 	}
+	receipt.ServerTiming.Mark(ServerAcceptLockAttempt, receipt.ReceivedAt)
 	r.mu.LockRequest(receipt.ID)
+	receipt.ServerTiming.Mark(ServerAcceptLockAcquired, receipt.ReceivedAt)
 	defer r.mu.Unlock()
 	if r.shuttingDown {
 		return nil, failure(reasonShuttingDown, "entry point no longer accepts requests")
 	}
-	w = r.workloads[receipt.UID]
+	w := r.workloads[receipt.UID]
 	if w == nil || r.names[receipt.Name] != receipt.UID {
 		return nil, failure("WorkloadChanged", "registration changed before acceptance")
 	}
@@ -367,7 +389,7 @@ func (r *Runtime) Accept(receipt Receipt, input *InferenceInput) (*Call, error) 
 	if r.overloaded.Load() {
 		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
 	}
-	c := &Call{runtime: r, receipt: receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
+	c := &Call{runtime: r, receipt: *receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {
 		return nil, failure(ObservationUnavailableCode, "cannot persist request acceptance")
 	}
@@ -383,6 +405,7 @@ func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
 	c.runtime.config.Diagnostics.Mark(DiagnosticWait, DiagnosticBegin, c.receipt.ID, 0)
 	select {
 	case result := <-c.reply:
+		result.result.ServerTiming.Mark(ServerReplyReceived, c.receipt.ReceivedAt)
 		c.runtime.config.Diagnostics.Mark(DiagnosticWait, DiagnosticReceived, c.receipt.ID, 0)
 		return result.result, result.err
 	case <-ctx.Done():
@@ -407,6 +430,9 @@ func (c *Call) Wait(ctx context.Context) (BackendResult, error) {
 
 func (r *Runtime) Response(receipt Receipt, outcome, code string) (err error) {
 	finishedAt := time.Now()
+	if receipt.ID == "" {
+		return nil
+	}
 	r.config.Diagnostics.Mark(DiagnosticResponse, DiagnosticBegin, receipt.ID, 0)
 	if r.config.Diagnostics.Active() {
 		defer r.config.Diagnostics.Mark(DiagnosticResponse, DiagnosticEnd, receipt.ID, 0)
@@ -421,6 +447,7 @@ func (r *Runtime) Response(receipt Receipt, outcome, code string) (err error) {
 	if c.responseRecorded {
 		return nil
 	}
+	c.receipt.ServerTiming.Merge(receipt.ServerTiming)
 	if err := r.eventAt(c, eventResponseFinished, outcome, code, finishedAt); err != nil {
 		return err
 	}
@@ -525,7 +552,8 @@ func (r *Runtime) dispatchLocked() {
 				c.backendDone = true
 				c.transportDone = true
 				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
-				c.reply <- callResult{err: failure("RequestTimeout", "request lifetime expired in ingress queue")}
+				c.reply <- callResult{result: BackendResult{ServerTiming: c.receipt.ServerTiming}, err: failure("RequestTimeout", "request lifetime expired in ingress queue")}
+				c.receipt.ServerTiming.Mark(ServerReplySent, c.receipt.ReceivedAt)
 				r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 				continue
 			}
@@ -558,7 +586,12 @@ func (r *Runtime) dispatchLocked() {
 
 func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (BackendResult, error), dispatch Dispatch, assigned RequestEvent) {
 	var result BackendResult
+	// Assigned is a value snapshot; execution owns this fragment until the result lock.
+	timing := assigned.ServerTiming
+	timing.Mark(ServerExecuteStart, dispatch.ReceivedAt)
+	assigned.ServerTiming = timing
 	persistErr := r.config.ObservationLog.RequestEvent(assigned)
+	timing.Mark(ServerAssignedEventDone, dispatch.ReceivedAt)
 	var err error
 	if persistErr != nil {
 		result.Finished = true // No native exchange began or can still execute.
@@ -590,7 +623,12 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 			outcome = "preprocess_failed"
 		}
 	}
+	timing.Merge(result.ServerTiming)
+	timing.Mark(ServerResultLockAttempt, dispatch.ReceivedAt)
 	r.mu.LockRequest(c.receipt.ID)
+	timing.Mark(ServerResultLockAcquired, dispatch.ReceivedAt)
+	c.receipt.ServerTiming.Merge(timing)
+	result.ServerTiming = c.receipt.ServerTiming
 	defer func() {
 		// unlock retains async final-write failures in observationError and signals its owner.
 		_ = r.unlock()
@@ -622,6 +660,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	if c.reply != nil {
 		r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticBegin, c.receipt.ID, 0)
 		c.reply <- callResult{result: result, err: err}
+		c.receipt.ServerTiming.Mark(ServerReplySent, dispatch.ReceivedAt)
 		r.config.Diagnostics.Mark(DiagnosticReply, DiagnosticEnd, c.receipt.ID, 0)
 	}
 	r.dispatchLocked()
@@ -694,6 +733,7 @@ func (r *Runtime) ObserveBackend(instance string, progress BackendProgress) (err
 	}
 	e.Assignment = c.assignment
 	e.ReceivedAt = c.receipt.ReceivedAt
+	e.ServerTiming = c.receipt.ServerTiming
 	if !c.receipt.Deadline.IsZero() {
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 	}

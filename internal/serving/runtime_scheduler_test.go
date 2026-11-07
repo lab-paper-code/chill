@@ -130,7 +130,7 @@ func TestControlledRoutingRefreshesOnlyAbsentWorkloadSeeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestSchedulerInputsFreezeDispatchedOwnershipAndWeightedCredits(t *testing.T
 		if receiveErr != nil {
 			t.Fatal(receiveErr)
 		}
-		call, acceptErr := r.Accept(receipt, input)
+		call, acceptErr := r.Accept(&receipt, input)
 		if acceptErr != nil {
 			t.Fatal(acceptErr)
 		}
@@ -403,7 +403,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := r.Accept(firstReceipt, input)
+	first, err := r.Accept(&firstReceipt, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestSchedulerRetirementPreservesAcceptedIngressAndPhysicalCancellation(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := r.Accept(secondReceipt, input)
+	second, err := r.Accept(&secondReceipt, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +519,7 @@ func TestErrorExchangeWithoutNativeRecordFinishesForDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt.Deadline = time.Now().Add(time.Minute)
-	call, err := r.Accept(receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +667,7 @@ func TestControlledRoutingKeepsExplicitlyUnroutedWorkloadQueuedAfterInstanceRedi
 		t.Fatal(err)
 	}
 	input := &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}}
-	call, err := r.Accept(receipt, input)
+	call, err := r.Accept(&receipt, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -733,7 +733,7 @@ func TestControlledRoutingExecutesSeededWorkloadAbsentFromAppliedDistribution(t 
 		t.Fatal(err)
 	}
 	input := &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}}
-	call, err := r.Accept(receipt, input)
+	call, err := r.Accept(&receipt, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -899,7 +899,7 @@ func schedulerActualRoute(t *testing.T, ctx context.Context, r *Runtime, d *Defi
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := r.Accept(receipt, input)
+	call, err := r.Accept(&receipt, input)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -570,7 +570,7 @@ func TestSchedulerStartupOnPreservesRestoredReadyWorkloadRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := service.execution.Accept(receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{
+	call, err := service.execution.Accept(&receipt, &serving.InferenceInput{Inputs: []serving.RawInput{{
 		Name: "image", Datatype: "BYTES", Data: []byte("1"),
 	}}})
 	if err != nil {
