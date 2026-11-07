@@ -25,6 +25,15 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python test dependencies
+        # Match NUMPY_VERSION in build/docker/firstfloor.Dockerfile.
+        run: python3 -m pip install numpy==2.2.6
+
       - name: Check generated artifacts
         run: |
           make manifests generate
