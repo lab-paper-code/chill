@@ -72,6 +72,10 @@ separate guarded targets (`make helm-purge-crds`, `make helm-adopt-crds`).
 
 ## Development
 
+Runtime tests (`make test-runtime`, also run by `make test`) require Python 3.11
+and `python3 -m pip install numpy==2.2.6`, matching the default firstfloor image.
+Use a virtual environment for local installation.
+
 ```sh
 make lint                 # golangci-lint
 make test                 # generate, vet, unit + envtest (no e2e)
