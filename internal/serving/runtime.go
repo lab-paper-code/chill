@@ -16,6 +16,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+const outcomeError = "error"
+
 // RuntimeObservation admits immutable records without waiting for storage.
 // Storage depends on serving's domain records, so Runtime must not depend on
 // the concrete storage package.
@@ -617,7 +619,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 			err = failure("BackendUnavailable", "native backend did not complete a valid exchange")
 		}
 		errors.As(err, &domain)
-		outcome, code = "error", domain.Code
+		outcome, code = outcomeError, domain.Code
 		switch domain.Code {
 		case "SLODeadlineDrop":
 			outcome = "timeout"
@@ -782,7 +784,7 @@ func (r *Runtime) ConfirmInstanceStopped(instance string) (err error) {
 		if c.assignment != nil && c.assignment.Instance == instance && !c.backendDone {
 			c.backendDone = true
 			c.phase = phaseFinished
-			if recordErr := r.event(c, "backend_finished", "error", "InstanceStopped"); recordErr != nil {
+			if recordErr := r.event(c, "backend_finished", outcomeError, "InstanceStopped"); recordErr != nil {
 				err = errors.Join(err, recordErr)
 			}
 			r.releaseLocked(c)
@@ -1308,7 +1310,7 @@ func (r *Runtime) finishAbsentLocked(state InstanceState) {
 		}
 		c.backendDone = true
 		c.phase = phaseFinished
-		if err := r.event(c, "backend_finished", "error", "NativeRequestAbsent"); err != nil {
+		if err := r.event(c, "backend_finished", outcomeError, "NativeRequestAbsent"); err != nil {
 			r.observationError = err
 		}
 		r.releaseLocked(c)

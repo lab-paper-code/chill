@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const runtimeTimingCanceled = "canceled"
+
 func runtimeTimingStage(t *testing.T, timing RequestTimings, stage ServerStage) time.Duration {
 	t.Helper()
 	elapsed, ok := timing.Elapsed(stage)
@@ -111,7 +113,11 @@ func TestRuntimeTimingAttributesReceiveAndAcceptLockWait(t *testing.T) {
 }
 
 func TestRuntimeTimingKeepsReachedStagesOnRejection(t *testing.T) {
-	for _, rejection := range []string{"expired", "changed", "input", "stopped"} {
+	const (
+		expired = "expired"
+		changed = "changed"
+	)
+	for _, rejection := range []string{expired, changed, "input", "stopped"} {
 		t.Run(rejection, func(t *testing.T) {
 			r, _, _ := routingRuntime(t, map[string]int32{"w1": 1})
 			receipt, err := r.Receive(r.workloads["w1"].definition.Name, time.Now())
@@ -120,9 +126,9 @@ func TestRuntimeTimingKeepsReachedStagesOnRejection(t *testing.T) {
 			}
 			input := &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}}
 			switch rejection {
-			case "expired":
+			case expired:
 				receipt.Deadline = receipt.ReceivedAt
-			case "changed":
+			case changed:
 				receipt.DefinitionID = "other-definition"
 			case "input":
 				input = &InferenceInput{}
@@ -135,7 +141,7 @@ func TestRuntimeTimingKeepsReachedStagesOnRejection(t *testing.T) {
 				t.Fatal("rejected request was accepted")
 			}
 			runtimeTimingStage(t, receipt.ServerTiming, ServerAcceptCheckDone)
-			if rejection == "expired" || rejection == "changed" {
+			if rejection == expired || rejection == changed {
 				runtimeTimingMissing(t, receipt.ServerTiming, ServerInputValidateStart, ServerInputValidateDone, ServerValidatedEventDone, ServerAcceptLockAttempt)
 			} else {
 				runtimeTimingStage(t, receipt.ServerTiming, ServerInputValidateDone)
@@ -163,7 +169,7 @@ func TestRuntimeTimingKeepsReachedStagesOnRejection(t *testing.T) {
 }
 
 func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
-	for _, outcome := range []string{"success", "domain-error", "backend-error", "canceled"} {
+	for _, outcome := range []string{"success", "domain-error", "backend-error", runtimeTimingCanceled} {
 		t.Run(outcome, func(t *testing.T) {
 			r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
 			d := &Diagnostics{events: make([]diagnosticEvent, 256)}
@@ -203,7 +209,7 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 				t.Fatal("backend did not start")
 			}
 			var responseFinishedBefore time.Time
-			if outcome == "canceled" {
+			if outcome == runtimeTimingCanceled {
 				canceled, stop := context.WithCancel(ctx)
 				stop()
 				result, err := call.Wait(canceled)
@@ -211,7 +217,7 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 					t.Fatalf("cancel outcome changed: %v", err)
 				}
 				runtimeTimingMissing(t, result.ServerTiming, ServerReplyReceived, ServerWorkerHTTPDone)
-				if err := r.Response(receipt, "canceled", "RequestCanceled"); err != nil {
+				if err := r.Response(receipt, runtimeTimingCanceled, "RequestCanceled"); err != nil {
 					t.Fatal(err)
 				}
 				responseFinishedBefore = time.Now()
@@ -224,12 +230,12 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 				if !hasRuntimeError(err, "PreprocessFailed") {
 					t.Fatalf("domain error changed: %v", err)
 				}
-				responseOutcome, responseCode = "error", "PreprocessFailed"
+				responseOutcome, responseCode = outcomeError, "PreprocessFailed"
 			case "backend-error":
 				if !hasRuntimeError(err, "BackendUnavailable") {
 					t.Fatalf("backend error classification changed: %v", err)
 				}
-				responseOutcome, responseCode = "error", "BackendUnavailable"
+				responseOutcome, responseCode = outcomeError, "BackendUnavailable"
 			default:
 				if err != nil {
 					t.Fatal(err)
@@ -243,7 +249,7 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 				t.Fatalf("result lock wait attributed to backend or reply: http=%v attempt=%v acquired=%v received=%v released=%v", httpDone, attempt, acquired, received, releasedAt.Sub(receipt.ReceivedAt))
 			}
 			runtimeTimingMissing(t, receipt.ServerTiming, ServerExecuteStart, ServerWorkerHTTPStart, ServerReplyReceived)
-			if outcome != "canceled" {
+			if outcome != runtimeTimingCanceled {
 				receipt.ServerTiming.Merge(result.ServerTiming)
 				if err := r.Response(receipt, responseOutcome, responseCode); err != nil {
 					t.Fatal(err)
@@ -264,21 +270,26 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 			runtimeTimingStage(t, final.ServerTiming, ServerAssignedEventDone)
 			runtimeTimingStage(t, final.ServerTiming, ServerResultLockAcquired)
 			sent := runtimeTimingStage(t, final.ServerTiming, ServerReplySent)
-			if outcome == "canceled" {
-				if final.Outcome != "canceled" || final.Error != "RequestCanceled" {
-					t.Fatalf("late completion replaced canceled final: %+v", final)
-				}
-				if final.ElapsedNanos == nil || *final.ElapsedNanos > responseFinishedBefore.Sub(receipt.ReceivedAt).Nanoseconds() || *final.ElapsedNanos > int64(attempt) || int64(sent) <= *final.ElapsedNanos {
-					t.Fatalf("late backend settle shifted response elapsed: %+v", final)
-				}
-				runtimeTimingMissing(t, final.ServerTiming, ServerReplyReceived)
-			} else {
-				if final.Outcome != responseOutcome || final.Error != responseCode {
-					t.Fatalf("reply error changed final outcome: %+v", final)
-				}
-				runtimeTimingStage(t, final.ServerTiming, ServerReplyReceived)
-			}
+			runtimeTimingAssertFinal(t, final, outcome, responseOutcome, responseCode, responseFinishedBefore.Sub(receipt.ReceivedAt), attempt, sent)
 		})
+	}
+}
+
+func runtimeTimingAssertFinal(t *testing.T, final RequestRow, outcome, responseOutcome, responseCode string, responseElapsed, attempt, sent time.Duration) {
+	t.Helper()
+	if outcome == runtimeTimingCanceled {
+		if final.Outcome != runtimeTimingCanceled || final.Error != "RequestCanceled" {
+			t.Fatalf("late completion replaced canceled final: %+v", final)
+		}
+		if final.ElapsedNanos == nil || *final.ElapsedNanos > responseElapsed.Nanoseconds() || *final.ElapsedNanos > int64(attempt) || int64(sent) <= *final.ElapsedNanos {
+			t.Fatalf("late backend settle shifted response elapsed: %+v", final)
+		}
+		runtimeTimingMissing(t, final.ServerTiming, ServerReplyReceived)
+	} else {
+		if final.Outcome != responseOutcome || final.Error != responseCode {
+			t.Fatalf("reply error changed final outcome: %+v", final)
+		}
+		runtimeTimingStage(t, final.ServerTiming, ServerReplyReceived)
 	}
 }
 
