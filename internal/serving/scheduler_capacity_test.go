@@ -570,27 +570,52 @@ func TestCapacityRetainedKappaFollowsTheChain(t *testing.T) {
 	}
 }
 
-// Raising a mode that stops the only routed executor is a slow physical
-// replacement, not a fast policy-only capacity recovery. W=0 still requires
-// spare actual supply before admitting that interruption.
-func TestCapacitySingleNodeStoppingModeRaiseNeedsSpareSupply(t *testing.T) {
-	s, snap := schedulerFixture()
-	current := snap.Instances[0]
-	n1 := current.Node
-	raised := poolsInstance(current, "raised", n1, schedulerTestEcoMode, "w1")
-	snap.Options = append(snap.Options, poolsOption(raised))
-	unloaded := snap.Baselines[0]
-	unloaded.ID, unloaded.PowerMode = "unloaded-n1-eco", schedulerTestEcoMode
-	snap.Baselines = append(snap.Baselines, unloaded)
-	snap.Costs = []OperationCost{
-		poolsCost(schedulerActionPower, n1, "fixed", schedulerTestEcoMode, "", schedulerState(current)),
-		poolsCost(schedulerActionRemove, n1, schedulerState(current), "unloaded", schedulerTestEcoMode),
-		poolsCost(schedulerActionPrepare, n1, "unloaded", schedulerState(raised), schedulerTestEcoMode),
-	}
-	capacityLoad(s, &snap, snap.Workloads[0], 30)
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{current.Profile.ID: 10, raised.Profile.ID: 50})))
-	if d.Target != nil && d.Target.Nodes[0].PowerMode == schedulerTestEcoMode {
-		t.Fatalf("stopping replacement bypassed current-supply protection: %s %v %+v", d.Status, d.Reasons, poolsPlans(d, n1))
+// A stopping mode change loses all retained supply. Its measured outage must
+// satisfy the transition SLO even when the new mode fixes an overloaded keep.
+func TestCapacitySingleNodeStoppingModeRaiseJudgesActualOutage(t *testing.T) {
+	for _, duration := range []time.Duration{time.Millisecond, 100 * time.Millisecond} {
+		t.Run(duration.String(), func(t *testing.T) {
+			s, snap := schedulerFixture()
+			current := snap.Instances[0]
+			n1 := current.Node
+			raised := poolsInstance(current, "raised", n1, schedulerTestEcoMode, "w1")
+			snap.Options = append(snap.Options, poolsOption(raised))
+			unloaded := snap.Baselines[0]
+			unloaded.ID, unloaded.PowerMode = "unloaded-n1-eco", schedulerTestEcoMode
+			snap.Baselines = append(snap.Baselines, unloaded)
+			snap.Costs = []OperationCost{
+				poolsCost(schedulerActionPower, n1, "fixed", schedulerTestEcoMode, "", schedulerState(current)),
+				poolsCost(schedulerActionRemove, n1, schedulerState(current), "unloaded", schedulerTestEcoMode),
+				poolsCost(schedulerActionPrepare, n1, "unloaded", schedulerState(raised), schedulerTestEcoMode),
+			}
+			for i := range snap.Costs {
+				snap.Costs[i].Trials[0].Duration = duration
+			}
+			capacityLoad(s, &snap, snap.Workloads[0], 30)
+			rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{current.Profile.ID: 10, raised.Profile.ID: 50}))
+			p := capacityPlannerForTest(t, s, snap, rows)
+			choice := capacityChoiceForTest(t, p, map[string]string{n1.UID: raised.Profile.ID + "/b1/w1"})
+			route := p.plans[0][choice[0]].record.Pre
+			replacement := p.evaluate(choice, route.Seconds())
+			j := replacement.judgments[0]
+			wantWait := 30 * route.Seconds() / 50
+			wantTransition := wantWait/snap.Workloads[0].SLO.TargetLatency.Seconds() - 1
+			if route != 3*duration || replacement.sums[0] != [2]float64{50, 0} ||
+				math.Abs(j.backlog-30*route.Seconds()) > 1e-9 || j.wait == nil || math.Abs(*j.wait-wantWait) > 1e-9 ||
+				j.final == nil || math.Abs(*j.final-(-0.4)) > 1e-9 || j.transition == nil || math.Abs(*j.transition-wantTransition) > 1e-9 {
+				t.Fatalf("stopping replacement lost its physical outage: route=%v sums=%v judgment=%+v", route, replacement.sums, j)
+			}
+			d := capacityDecideForTest(t, s, snap, rows)
+			if wantTransition <= 0 {
+				if !replacement.feasible || replacement.exclusion != "" || d.Status != schedulerStatusFeasible ||
+					d.Target == nil || d.Target.Keep || d.Target.Nodes[0].PowerMode != schedulerTestEcoMode {
+					t.Fatalf("SLO-safe outage failed to recover overloaded keep: result=%+v decision=%+v", replacement, d)
+				}
+			} else if replacement.feasible || replacement.exclusion != schedulerReductionCapacityInsufficient ||
+				d.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Nodes[0].PowerMode != current.Profile.Condition.PowerMode {
+				t.Fatalf("unsafe outage bypassed transition SLO: result=%+v decision=%+v", replacement, d)
+			}
+		})
 	}
 }
 

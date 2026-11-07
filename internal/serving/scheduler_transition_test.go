@@ -79,13 +79,24 @@ func TestObservedPowerRebootPlansRemovalBeforePower(t *testing.T) {
 	}
 }
 
-// The planner serves w1 from the ready prepared slot instead of preparing it again.
+// Selecting the same measured physical condition reuses its ready prepared slot.
+// Another eligible profile may still win the full optimizer's energy comparison.
 func TestPlacementReusesReadyUnboundPhysicalSlotWithoutDuplicatePreparation(t *testing.T) {
 	settings, snapshot, n2 := placementFixture()
-	snapshot.Instances = append(snapshot.Instances, preparedSlot(snapshot, n2))
+	prepared := preparedSlot(snapshot, n2)
+	snapshot.Instances = append(snapshot.Instances, prepared)
 	capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
-	d := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
-	if d.Target == nil || !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.ID == preparedPhysicalID && i.WorkloadUID == "w1" }) {
+	rows := capacityRowsForTest(settings, snapshot, nil)
+	planner := capacityPlannerForTest(t, settings, snapshot, rows)
+	choice := capacityChoiceForTest(t, planner, map[string]string{n2.UID: prepared.Profile.ID + "/b1/w1"})
+	reuse := planner.evaluate(choice, 0)
+	d := planner.decide(SchedulerDecision{Keep: planner.keep}, reuse)
+	optimized := capacityDecideForTest(t, settings, snapshot, rows)
+	if optimized.Target == nil {
+		t.Fatal("no optimizer target")
+	}
+	t.Logf("same-condition reuse J=%g; optimizer J=%g instances=%v", reuse.joules, *optimized.Target.ExpectedJoules, schedulerConfigKey(*optimized.Target))
+	if !reuse.feasible || d.Target == nil || !slices.ContainsFunc(d.Target.Instances, func(i SchedulerInstance) bool { return i.ID == preparedPhysicalID && i.WorkloadUID == "w1" }) {
 		t.Fatalf("matching actual ready slot was not reused: %+v", d.Target)
 	}
 	if slices.ContainsFunc(d.Target.Actions, func(action Action) bool {
@@ -95,6 +106,9 @@ func TestPlacementReusesReadyUnboundPhysicalSlotWithoutDuplicatePreparation(t *t
 	}
 	if result := schedulerReplayForTest(settings, snapshot, *d.Target); len(result.reasons) != 0 {
 		t.Fatalf("ready physical reuse introduced a transition failure: %v", result.reasons)
+	}
+	if result := schedulerReplayForTest(settings, snapshot, *optimized.Target); len(result.reasons) != 0 {
+		t.Fatalf("optimizer's chosen physical condition introduced a transition failure: %v", result.reasons)
 	}
 }
 
