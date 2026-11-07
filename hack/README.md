@@ -67,9 +67,16 @@ removing `--dry-run` does not. `--source SHA` overrides the recipe source.
 There are no legacy deployment modes, reset, rollback, resume, or compatibility
 flags. Failure means STOP, retain evidence, then review a fresh roll-forward.
 
+The selected release must still match the explicit reviewed `expectedRevision`
+at every revision checkpoint. Both `deployed` and `failed` permit a fresh normal
+`helm upgrade`; a failed release does not need a status edit or a recovery flag.
+Pending, uninstalling, missing, or changed releases stop. Numbered `helm-list.json`
+command outputs retain the observed release name, revision, and status.
+Chart approval, readiness, and acceptance still apply.
+
 ### Ordinary control update recipe
 
-This local recipe writer uses the actual reviewed source and current deployed
+This local recipe writer uses the actual reviewed source and current stable
 revision, not an example SHA/revision masquerading as approval. Set
 `DEPLOY_SOURCE` to the approved full commit, `DEPLOY_REVISION` to the reviewed
 current Helm revision, `DEPLOY_RECIPE` to a private JSON output path, and
@@ -462,6 +469,13 @@ and live JSON, or explicit `schedulerConfigMapFile`. The dashboard first-use
 recipe enables this check. Invalid actual configuration/CLI execution blocks;
 it is not a scientific diagnostic. Prebuilt evaluation-round deployment does
 not set it and introduces no default Go build.
+
+`schedulerConfigMapFile` is validation input; it does not apply an external
+ConfigMap. The operating profile references a separately provisioned scheduler
+ConfigMap. Configuration changes belong in the recipe's explicit reviewed
+`configure` phase or its stated deployment prerequisite. When removing stored
+settings fields, include that configuration transition before the new server
+starts; selecting a valid offline input alone leaves live settings unchanged.
 
 Optional `waitFor` explicitly names Deployment/DaemonSet resources whose
 rollout status must complete within the readiness budget. The first-use recipe

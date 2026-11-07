@@ -148,7 +148,10 @@ if name=='docker':
 if name=='helm':
  for verb in ('list','history','get','template','upgrade'):
   if verb in args:break
- if verb=='list':print(json.dumps([{'name':'chill','revision':state.get('revision',7),'status':'deployed'}]))
+ if verb=='list':
+  evidence=json.loads((pathlib.Path(os.environ['CHILL_DEPLOY_EVIDENCE'])/'state.json').read_text())
+  state.update(state.get('releaseTransitions',{}).get(evidence['stage'],{}));save()
+  print(json.dumps([] if state.get('releaseMissing') else [{'name':state.get('releaseName','chill'),'revision':state.get('revision',7),'status':state.get('releaseStatus','deployed')}]))
  elif verb=='history':print('[]')
  elif verb=='get':
   what=args[args.index('get')+1]
@@ -198,7 +201,9 @@ if name=='helm':
   overlay=pathlib.Path(args[args.index('-f')+1])
   for i,arg in enumerate(args):
    if arg=='-f' and pathlib.Path(args[i+1]).name=='image-overlay.json':overlay=pathlib.Path(args[i+1])
-  state['publication']=str(overlay.parent/'publication.json');state['upgraded']=True;save();print('upgraded')
+  state['publication']=str(overlay.parent/'publication.json');state['upgraded']=True;state['releaseStatus']='deployed'
+  if 'revision' in state:state['revision']+=1
+  save();print('upgraded')
  if verb=='template' or verb=='get' and args[args.index('get')+1]=='manifest':
   for item in state.get('evaluationRbac',[]):
    print('---\n# Source: chill/templates/evaluation_rbac.yaml\n'+json.dumps(item))
@@ -976,6 +981,74 @@ shutil.disk_usage = disk_usage
         self.assertEqual(self.requests, [])
         self.cli('--execute', '--evidence', str(self.out) + '-blocked', expected=1)
         self.assertFalse(any(x[0] == 'docker' or 'upgrade' in x for x in self.calls()))
+
+    def test_failed_release_inspects_read_only_then_rolls_forward_normally(self):
+        reviewed = self.recipe['expectedRevision']
+        self.state(revision=reviewed, releaseStatus='failed')
+        inspected = self.out / 'inspect'
+        self.cli('--inspect', '--evidence', str(inspected))
+        self.assertFalse(any(call[0] == 'docker' or 'upgrade' in call or 'apply' in call
+                             for call in self.calls()))
+        executed = self.out / 'execute'
+        self.cli('--execute', '--evidence', str(executed),
+                 '--chart-diff-approved', str(inspected / 'chart-diff.txt'))
+        state = json.loads((executed / 'state.json').read_text())
+        self.assertTrue(state['ready'])
+        observed = json.loads((self.directory / 'state.json').read_text())
+        self.assertTrue(observed['upgraded'])
+        self.assertEqual(observed['revision'], reviewed + 1)
+        self.assertEqual(observed['releaseStatus'], 'deployed')
+        self.assertTrue(json.loads((executed / 'readiness.json').read_text())['server'])
+        self.assertTrue(json.loads((executed / 'after/acceptance.json').read_text())['passed'])
+        for call in self.calls():
+            self.assertFalse(set(call) & {'rollback', 'uninstall', '--force', '--replace', '--no-hooks'})
+            if call[0] == 'kubectl':
+                self.assertFalse(set(call) & {'patch', 'replace', 'delete'})
+        self.assertTrue(all(token == 'Bearer ' + self.token for _, token in self.requests))
+
+    def test_unstable_or_missing_release_stops_before_publication(self):
+        reviewed = self.recipe['expectedRevision']
+        scenarios = [(status, {'releaseStatus': status})
+                     for status in ('pending-install', 'pending-upgrade', 'pending-rollback',
+                                    'uninstalling', 'superseded', 'unknown')]
+        scenarios += [('missing', {'releaseMissing': True}),
+                      ('other-release', {'releaseName': self.recipe['release'] + '-other'})]
+        for scenario, change in scenarios:
+            with self.subTest(scenario=scenario):
+                self.state(revision=reviewed, **change)
+                (self.directory / 'calls.jsonl').write_text('')
+                evidence = self.out / scenario
+                self.cli('--execute', '--evidence', str(evidence), expected=1)
+                failure = json.loads((evidence / 'failure.json').read_text())
+                self.assertEqual(failure['stage'], 'preflight')
+                self.assertFalse(failure['ready'])
+                self.assertFalse(any(call[0] == 'docker' or 'upgrade' in call or 'apply' in call
+                                     for call in self.calls()))
+
+    def test_failed_release_pending_or_revision_drift_stops_at_each_checkpoint(self):
+        reviewed = self.recipe['expectedRevision']
+        for stage in ('preflight', 'crd-retention', 'configure'):
+            for scenario, change in (('pending', {'releaseStatus': 'pending-upgrade'}),
+                                     ('revision', {'revision': reviewed + 1})):
+                with self.subTest(stage=stage, scenario=scenario):
+                    self.state(revision=reviewed, releaseStatus='failed',
+                               releaseTransitions={stage: change})
+                    (self.directory / 'calls.jsonl').write_text('')
+                    evidence = self.out / (stage + '-' + scenario)
+                    self.cli('--execute', '--evidence', str(evidence), expected=1)
+                    failure = json.loads((evidence / 'failure.json').read_text())
+                    self.assertEqual(failure['stage'], stage)
+                    self.assertFalse(failure['ready'])
+                    self.assertFalse(any('upgrade' in call for call in self.calls()))
+                    self.assertFalse(json.loads((self.directory / 'state.json').read_text()).get('upgraded'))
+                    self.assertFalse((evidence / 'after/acceptance.json').exists())
+                    if stage == 'preflight':
+                        self.assertFalse(any(call[0] == 'docker' or 'apply' in call
+                                             for call in self.calls()))
+                    else:
+                        self.assertTrue((evidence / 'publication.json').exists())
+                        self.assertTrue(any('apply' in call and '--dry-run=server' in call
+                                            for call in self.calls()))
 
     def test_live_revision_change_stops_before_build_or_write(self):
         self.state(revision=8)

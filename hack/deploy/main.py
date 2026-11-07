@@ -450,7 +450,7 @@ def deploy(recipe, out, inspect=False, approval=None, staged_approval=None):
         observed_cluster = True
         entries = json.loads(run.run(helm + ['list', '-o', 'json'], 'helm-list.json'))
         release = [x for x in entries if x['name'] == recipe['release']]
-        if len(release) != 1 or int(release[0]['revision']) != recipe['expectedRevision'] or release[0]['status'] != 'deployed':
+        if len(release) != 1 or int(release[0]['revision']) != recipe['expectedRevision'] or release[0]['status'] not in ('deployed', 'failed'):
             raise RuntimeError('live release/revision/status changed; review before roll-forward')
 
     try:
