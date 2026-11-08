@@ -350,6 +350,8 @@ type SchedulerRequest struct {
 	NativeSenderElapsedMS *float64      `json:"nativeSenderElapsedMS,omitempty"`
 	// CompletionMarginMS is the post-path budget frozen when this request was accepted.
 	CompletionMarginMS    *float64      `json:"completionMarginMS,omitempty"`
+	// TotalMarginMS preserves the accepted total budget before sender freeze.
+	TotalMarginMS         *float64      `json:"totalMarginMS,omitempty"`
 	NativeOutcome         string        `json:"nativeOutcome,omitempty"`
 }
 type SchedulerArrival struct {

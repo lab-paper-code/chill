@@ -199,7 +199,12 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		settings.DefaultIdlePower = &idle
 	}
 	snapshot = schedulerCanonical(snapshot)
-	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
+	decision = SchedulerDecision{
+		At: snapshot.At, Status: schedulerStatusPending, Settings: settings,
+		Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot),
+		References: slices.Clone(snapshot.References), PathBudgets: slices.Clone(snapshot.PathBudgets),
+		PathBudgetObservations: slices.Clone(snapshot.PathBudgetObservations),
+	}
 	fixSchedulerWorkloads(&decision, snapshot)
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: slices.Clone(snapshot.Instances), Routing: schedulerInstanceRouting(ctx, snapshot.Workloads, snapshot.Instances)}
 	for uid, routing := range snapshot.Routing {
@@ -367,7 +372,7 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 		w.rate = max(w.rate, settings.MinimumDemand[w.d.UID])
 		w.minRate = max(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), settings.MinimumDemand[w.d.UID])
-		w.slack = w.d.SLO.TargetLatency.Seconds() - settings.CompletionMarginMS/1e3
+		w.slack = w.d.SLO.TargetLatency.Seconds() - ResolvePathBudget(settings, snapshot.PathBudgets, w.d).TotalMS/1e3
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
 				w.current++
@@ -416,6 +421,9 @@ func (p *capacityPlanner) fixCapacityWorkloads(decision *SchedulerDecision) {
 			case CapacityPending:
 				reason = CapacityPending
 			}
+		}
+		if pathReason := p.pathInfeasibleReason(ws.d); pathReason != "" {
+			reason, available = pathReason, false
 		}
 		if !available {
 			delete(p.index, ws.d.UID)

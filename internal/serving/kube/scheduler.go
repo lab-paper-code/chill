@@ -256,7 +256,9 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		return serving.SchedulerDecision{}, err
 	}
 	c.capacity.Ensure(c.ctx, config.Settings, snapshot)
-	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
+	rows, budgets := c.capacity.Inputs()
+	snapshot.PathBudgetObservations, snapshot.PathBudgets = snapshot.PathBudgets, budgets
+	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, rows)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
@@ -279,6 +281,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	c.runtime.SetPathBudgets(snapshot.PathBudgets)
 	// Without a selected target, only finish previously authorized Fixed work.
 	if decision.Target != nil {
 		c.launch(*decision.Target, config)

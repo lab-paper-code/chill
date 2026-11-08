@@ -183,10 +183,11 @@ func (c *SchedulerController) intermediateActions(
 		return target.Actions, nil
 	}
 	var rows []serving.CapacityRow
+	var budgets []serving.PathBudget
 	if c.capacity != nil {
-		rows = c.capacity.Rows()
+		rows, budgets = c.capacity.Inputs()
 	}
-	partial := c.readySubset(target, rows, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.readySubset(target, rows, budgets, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		return target.Actions, nil
 	}
@@ -202,8 +203,9 @@ func (c *SchedulerController) intermediateActions(
 // readySubset preserves serving sources while positive targets prepare, admitting
 // independently placed Ready additions only through the capacity/weight judgment.
 // Without a serving route, it normalizes the goal's matching Ready subset.
-func (c *reservationState) readySubset(target serving.SchedulerCandidate, rows []serving.CapacityRow, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) *serving.SchedulerCandidate {
+func (c *reservationState) readySubset(target serving.SchedulerCandidate, rows []serving.CapacityRow, budgets []serving.PathBudget, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) *serving.SchedulerCandidate {
 	snapshot, physical := c.state.Snapshot, runtime.Instances()
+	snapshot.PathBudgets = budgets
 	partial := serving.SchedulerCandidate{Routing: map[string]map[string]int32{}}
 	retiring := map[string]bool{}
 	for _, action := range target.Actions {

@@ -706,7 +706,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if c.dependenciesReady(target.Actions[1], target, c.runtime) {
 				t.Fatal("late nano unexpectedly allowed final handoff")
 			}
-			partial := c.readySubset(target, rows, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			partial := c.readySubset(target, rows, c.state.Snapshot.PathBudgets, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 			if scenario != "admitted" {
 				if partial != nil {
 					t.Fatalf("unsafe expansion: %+v", partial)
@@ -1699,7 +1699,7 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	target.Instances = []serving.SchedulerInstance{first, second}
 	target.Routing = map[string]map[string]int32{first.WorkloadUID: {first.ID: 1000}, second.WorkloadUID: {second.ID: 1000}}
 	target.Actions = nil
-	partial := c.readySubset(target, nil, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.readySubset(target, nil, c.state.Snapshot.PathBudgets, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		t.Fatal("independent Ready UID made no progress")
 	}
