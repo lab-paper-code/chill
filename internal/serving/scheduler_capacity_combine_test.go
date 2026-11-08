@@ -30,7 +30,7 @@ func TestCapacityCombineMatchesExact(t *testing.T) {
 	candidates, stats = v2.Candidates(problem, problem.Table, 0, 16, 0, time.Time{})
 	if len(candidates) == 0 || !slices.Equal(candidates[0].Choice, []int{1, 1, 1}) ||
 		!slices.ContainsFunc(stats.SearchSteps, func(step protocol.Step) bool {
-			return step.Start == "keep" && step.Phase == protocol.Combine && step.K == 3 && step.Evaluated > 0
+			return step.Start == capacitySearchStartKeep && step.Phase == protocol.Combine && step.K == 3 && step.Evaluated > 0
 		}) {
 		t.Fatalf("missing accepted product move: candidates=%+v steps=%+v", candidates, stats.SearchSteps)
 	}

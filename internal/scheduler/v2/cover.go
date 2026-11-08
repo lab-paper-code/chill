@@ -1,9 +1,10 @@
 package v2
 
 import (
-	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"math"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 // CoverDemand returns λ̃ and B>0, including the slack<=0 boundary.

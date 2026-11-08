@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
-	"github.com/lab-paper-code/chill/internal/scheduler/v1"
-	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v1 "github.com/lab-paper-code/chill/internal/scheduler/v1"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 // Select receives the strategy already checked by the application's settings boundary.

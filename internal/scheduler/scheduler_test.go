@@ -10,7 +10,9 @@ import (
 	"github.com/lab-paper-code/chill/internal/scheduler"
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"github.com/lab-paper-code/chill/internal/scheduler/v1"
+	v1 "github.com/lab-paper-code/chill/internal/scheduler/v1"
 	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 type nativeResult struct {
