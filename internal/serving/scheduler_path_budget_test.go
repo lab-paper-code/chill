@@ -45,6 +45,36 @@ func TestCapacityPathBudgetsStayWithinWorkloadAndDefinition(t *testing.T) {
 	}
 }
 
+func TestResolvePathBudgetClearsConfiguredConfidenceLimits(t *testing.T) {
+	s, snap := schedulerFixture()
+	s.CompletionMarginMS = 3
+	w := snap.Workloads[0]
+	lowerTotal, lowerPost := 12.0, 4.0
+	for _, source := range []string{PathBudgetObserved, PathBudgetConfigured} {
+		for _, enabled := range []bool{false, true} {
+			s.ObservedPathBudgets = &enabled
+			raw := []PathBudget{{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: source,
+				TotalMS: 20, PostMS: 7, TotalLowerMS: &lowerTotal, PostLowerMS: &lowerPost,
+				Samples: 200, Completed: 201, Missing: 1, JudgmentPercentile: 97.5}}
+			got := ResolvePathBudget(s, raw, w)
+			if source == PathBudgetObserved && enabled {
+				if got.TotalMS != 20 || got.PostMS != 7 || got.TotalLowerMS == nil || *got.TotalLowerMS != 12 ||
+					got.PostLowerMS == nil || *got.PostLowerMS != 4 {
+					t.Fatalf("enabled observed limits lost: %+v", got)
+				}
+			} else if got.Source != PathBudgetConfigured || got.TotalMS != 3 || got.PostMS != 3 ||
+				got.TotalLowerMS != nil || got.PostLowerMS != nil {
+				t.Fatalf("configured reserve retained observed confidence: %+v", got)
+			}
+			if got.Samples != 200 || got.Completed != 201 || got.Missing != 1 ||
+				raw[0].TotalMS != 20 || raw[0].PostMS != 7 || raw[0].TotalLowerMS == nil ||
+				*raw[0].TotalLowerMS != 12 || raw[0].PostLowerMS == nil || *raw[0].PostLowerMS != 4 {
+				t.Fatalf("resolution erased raw observations: selected=%+v raw=%+v", got, raw[0])
+			}
+		}
+	}
+}
+
 func TestReplayJudgesSplitTailWithoutChangingNativePercentile(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.AutonomousWorkloads, snap.Arrivals = nil, nil

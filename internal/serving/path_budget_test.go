@@ -26,6 +26,41 @@ func TestPathUpperRankBoundaries(t *testing.T) {
 	}
 }
 
+func TestPathLowerRankBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		q    float64
+		want int
+	}{
+		{0, .5, 0}, {4, .5, 0}, {5, .5, 1}, {10, .5, 2},
+		{1, .94, 0}, {1, .96, 1}, {11, .75, 7},
+		{10, 0, 0}, {10, 1, 0}, {10, math.NaN(), 0},
+	} {
+		t.Run(fmt.Sprintf("n=%d/q=%g", tc.n, tc.q), func(t *testing.T) {
+			if got := pathLowerRank(tc.n, tc.q); got != tc.want {
+				t.Fatalf("lower rank = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPathBudgetsSeparateLowerAndUpperOrderStatistics(t *testing.T) {
+	from := time.Unix(1000, 0)
+	d := &Definition{UID: "workload", SLO: SLO{Percentile: 50}}
+	rows := pathBudgetTestRows(d, from, 11)
+	for i := range rows {
+		rows[i] = pathBudgetTestRow(d, from.Add(time.Second), int64(10-i))
+	}
+	got := ObservePathBudgets(rows, map[string]*Definition{d.Identity(): d}, from, from.Add(time.Minute))[0]
+	if got.Source != PathBudgetObserved || got.TotalMS != 42 || got.PostMS != 25 ||
+		got.TotalLowerMS == nil || *got.TotalLowerMS != 38 || got.PostLowerMS == nil || *got.PostLowerMS != 21 {
+		t.Fatalf("separate marginal ranks: %+v", got)
+	}
+	if got.Samples != 11 || got.Completed != 11 || got.Batches != 1 || got.MaxBatchSamples != 11 || got.Missing != 0 {
+		t.Fatalf("bounds changed request sample population: %+v", got)
+	}
+}
+
 func pathBudgetTestRow(d *Definition, received time.Time, extraMS int64) *RequestRow {
 	elapsed, accepted, dispatched := (100+extraMS)*int64(time.Millisecond), int64(10*time.Millisecond), int64(30*time.Millisecond)
 	native := 50.0
@@ -70,6 +105,12 @@ func TestPathBudgetsSupportAndDefinitionSegregation(t *testing.T) {
 			}
 			if tc.observed && (got.TotalMS != 32 || got.PostMS != 15 || math.Abs(got.JudgmentPercentile-(100-(100-tc.p)/2)) > 1e-12) {
 				t.Fatalf("path bound or judgment percentile: %+v", got)
+			}
+			if tc.observed && (got.TotalLowerMS == nil || *got.TotalLowerMS != 32 || got.PostLowerMS == nil || *got.PostLowerMS != 15) {
+				t.Fatalf("observed lower limits missing: %+v", got)
+			}
+			if !tc.observed && (got.TotalLowerMS != nil || got.PostLowerMS != nil) {
+				t.Fatalf("configured source manufactured lower limits: %+v", got)
 			}
 			if !tc.observed && (got.TotalMS != 0 || got.PostMS != 0) {
 				t.Fatalf("configured source manufactured measured bounds: %+v", got)
@@ -175,5 +216,7 @@ func TestPathBudgetsMissingSamplesCannotSupplySupportOrZero(t *testing.T) {
 	}
 	if got := ObservePathBudgets(rows, definitions, from, to)[0]; got.Source != PathBudgetObserved || got.TotalMS != 0 || got.PostMS != 0 {
 		t.Fatalf("measured zero treated as missing: %+v", got)
+	} else if got.TotalLowerMS == nil || *got.TotalLowerMS != 0 || got.PostLowerMS == nil || *got.PostLowerMS != 0 {
+		t.Fatalf("measured lower zero treated as missing: %+v", got)
 	}
 }

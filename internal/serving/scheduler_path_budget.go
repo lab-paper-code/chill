@@ -17,6 +17,7 @@ func ResolvePathBudget(settings SchedulerSettings, budgets []PathBudget, w *Defi
 	}
 	selected.Source = PathBudgetConfigured
 	selected.TotalMS, selected.PostMS = settings.CompletionMarginMS, settings.CompletionMarginMS
+	selected.TotalLowerMS, selected.PostLowerMS = nil, nil
 	selected.JudgmentPercentile = 100 - (100-w.SLO.Percentile)/2
 	return selected
 }

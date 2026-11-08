@@ -17,8 +17,8 @@ const (
 // PathBudget summarizes request-weighted path observations for one immutable
 // Workload definition. Only Source == "observed" supplies measured bounds;
 // configured budgets leave TotalMS/PostMS unset for the settings adapter.
-// The two bounds each use one-sided 95% confidence under an IID assumption,
-// not joint 95% confidence or independent verification of correlated batches.
+// Each marginal limit uses one-sided 95% confidence under an IID assumption.
+// These are not joint or repeated-time guarantees; batch IID is not verified.
 // No request samples survive this reduction.
 type PathBudget struct {
 	WorkloadUID        string    `json:"workloadUID"`
@@ -164,6 +164,11 @@ func (group *pathBudgetSamples) project(definition *Definition) PathBudget {
 		sort.Slice(group.post, func(i, j int) bool { return group.post[i] < group.post[j] })
 		budget.TotalMS = float64(group.total[rank-1]) / float64(time.Millisecond)
 		budget.PostMS = float64(group.post[rank-1]) / float64(time.Millisecond)
+		if lowerRank := pathLowerRank(budget.Samples, q); lowerRank != 0 {
+			total := float64(group.total[lowerRank-1]) / float64(time.Millisecond)
+			post := float64(group.post[lowerRank-1]) / float64(time.Millisecond)
+			budget.TotalLowerMS, budget.PostLowerMS = &total, &post
+		}
 		budget.JudgmentPercentile = 100 * q
 		budget.Source = PathBudgetObserved
 	}
@@ -181,4 +186,14 @@ func pathUpperRank(n int, q float64) int {
 		return 0
 	}
 	return 1 + sort.Search(n, func(i int) bool { return binomial.CDF(float64(i)) >= .95 })
+}
+
+// pathLowerRank returns the largest one-based order statistic k satisfying
+// P(Binomial(n,q) <= k-1) <= 1-.95. Zero means no observed lower limit has support.
+func pathLowerRank(n int, q float64) int {
+	if n <= 0 || !(q > 0 && q < 1) {
+		return 0
+	}
+	binomial := distuv.Binomial{N: float64(n), P: q}
+	return sort.Search(n, func(i int) bool { return binomial.CDF(float64(i)) > 1-.95 })
 }
