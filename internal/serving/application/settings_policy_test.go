@@ -210,10 +210,10 @@ func assertStalePolicyRefreshRejected(t *testing.T, done chan error) {
 	t.Helper()
 	select {
 	case err := <-done:
+		done <- err // retain completion for cleanup
 		if err == nil {
 			t.Fatal("older in-flight refresh published over the PUT")
 		}
-		done <- err // retain completion for cleanup
 	case <-time.After(3 * time.Second):
 		t.Fatal("released refresh did not complete")
 	}
