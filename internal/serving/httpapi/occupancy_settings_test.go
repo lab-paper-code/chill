@@ -18,8 +18,7 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	h, _ := occupancyHandler(t, "")
 	h.config.MaxRequestBytes = 1 << 20
 	before := schedulerSettingsForTest()
-	service, execution, _ := settingsServiceForTest(t, h.authorizer.Client, h.observationLog, before, false, false)
-	controller := service.Controller
+	service, execution := settingsServiceForTest(t, h.authorizer.Client, h.observationLog, before, false, false)
 	raw, err := os.ReadFile("../../../config/samples/serving-scheduler.json")
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +44,10 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	if _, err = h.authorizer.Client.CoreV1().ConfigMaps("serving").Create(context.Background(), cm, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
+	if err = service.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	controller := service.Controller
 	h.runtime = execution
 	h.config.Scheduler = controller
 	h.config.SchedulerNamespace = "serving"

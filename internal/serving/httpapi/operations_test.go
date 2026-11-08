@@ -43,11 +43,12 @@ func TestManualOperationsRejectKindFieldsBeforeExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = observationLog.Close(context.Background()) })
-	service, execution, _ := settingsServiceForTest(t, kube, observationLog, schedulerSettingsForTest(), false, false)
+	service, execution := settingsServiceForTest(t, kube, observationLog, schedulerSettingsForTest(), false, false)
 	controller := service.Controller
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", MaxRequestBytes: 1 << 20,
 	}}
+	kube.ClearActions()
 	for _, tc := range []struct{ body, field string }{
 		{`{"kind":"route","workloadUID":"w","weights":{"p/c":1},"reason":"test","node":null}`, "node"},
 		{`{"kind":"unroute","workloadUID":"w","reason":"test","weights":{}}`, "weights"},

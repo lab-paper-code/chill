@@ -13,7 +13,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,9 +95,8 @@ func (a settingsArchive) StreamImmutable(
 func settingsServiceForTest(
 	t *testing.T, kube kubernetes.Interface, observationLog *observation.ObservationLog, settings serving.SchedulerSettings,
 	refreshFailure, completionAppendFailure bool,
-) (*application.SchedulerService, *serving.Runtime, *atomic.Int32) {
+) (*application.SchedulerService, *serving.Runtime) {
 	t.Helper()
-	refreshes := &atomic.Int32{}
 	apiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -117,7 +115,6 @@ func settingsServiceForTest(
 				},
 			})
 		case "/apis/" + api.GroupVersion.String() + "/namespaces/serving/batchenergyoptimizations":
-			refreshes.Add(1)
 			if refreshFailure {
 				http.Error(w, "catalog source unavailable", http.StatusServiceUnavailable)
 				return
@@ -221,7 +218,7 @@ func settingsServiceForTest(
 			return false, nil, nil
 		})
 	}
-	return service, execution, refreshes
+	return service, execution
 }
 
 func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
@@ -308,7 +305,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			service, execution, _ := settingsServiceForTest(t, kube, observationLog, before, tc.refreshFailure, tc.completionAppendFailure)
+			service, execution := settingsServiceForTest(t, kube, observationLog, before, tc.refreshFailure, tc.completionAppendFailure)
 			controller := service.Controller
 			if err := execution.Publish(&serving.Definition{Name: "workload", UID: "workload-uid"}); err != nil {
 				t.Fatal(err)
@@ -506,7 +503,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
+	service, execution := settingsServiceForTest(t, kube, observationLog, settings, false, false)
 	controller := service.Controller
 	meters := []servingops.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
@@ -610,7 +607,7 @@ func TestPoolsShowMeasurementNodeAndWorkloadActivePool(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	service, execution, _ := settingsServiceForTest(t, fake.NewSimpleClientset(), observationLog, schedulerSettingsForTest(), false, false)
+	service, execution := settingsServiceForTest(t, fake.NewSimpleClientset(), observationLog, schedulerSettingsForTest(), false, false)
 	controller := service.Controller
 	tainted := serving.NodeReference{Name: "tainted", UID: "tainted-uid"}
 	serves := serving.NodeReference{Name: "serves", UID: "serves-uid"}
@@ -693,7 +690,7 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
+	service, execution := settingsServiceForTest(t, kube, observationLog, settings, false, false)
 	controller := service.Controller
 	handler := &Handler{
 		authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog,

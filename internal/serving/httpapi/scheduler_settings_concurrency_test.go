@@ -50,7 +50,7 @@ func TestSchedulerSettingsGETDoesNotWaitForServiceLock(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	service, execution, _ := settingsServiceForTest(t, kube, observationLog, settings, false, false)
+	service, execution := settingsServiceForTest(t, kube, observationLog, settings, false, false)
 	meters := []servingops.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, config: HandlerConfig{
 		Scheduler: service.Controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
