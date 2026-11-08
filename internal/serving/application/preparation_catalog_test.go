@@ -460,10 +460,10 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 	if err != nil {
 		t.Fatal(err)
 	}
-	planRef := campaign.StoredObjectReference{Store: "evidence", Key: "plan"+suffix+".json", SchemaVersion: plan.SchemaVersion(), Size: int64(len(planBytes))}
+	planRef := campaign.StoredObjectReference{Store: "evidence", Key: "plan" + suffix + ".json", SchemaVersion: plan.SchemaVersion(), Size: int64(len(planBytes))}
 	objects[evidencestore.ObjectLocation{Store: planRef.Store, Key: planRef.Key}] = planBytes
 	measurement := &edge.BatchEnergyOptimization{
-		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "catalog-campaign"+suffix, UID: types.UID("campaign-uid"+suffix), Generation: 1, ResourceVersion: "1"},
+		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "catalog-campaign" + suffix, UID: types.UID("campaign-uid" + suffix), Generation: 1, ResourceVersion: "1"},
 		Spec: edge.BatchEnergyOptimizationSpec{
 			State: edge.MeasurementStateSpec{Candidate: edge.ProfilingRunCandidateSpec{ModelSpec: active.Candidate.Inputs.ModelSpec.Name,
 				Preprocessor: active.State.Preprocessor.Name, DeviceClass: active.State.DeviceClass, ExecutionPath: active.Candidate.ExecutionPath, PowerMode: active.State.PowerMode}, TargetNode: active.TargetNode.Name},
@@ -539,8 +539,8 @@ func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]an
 	if err != nil {
 		t.Fatal(err)
 	}
-	measurement.Status.Result = &edge.ProfilingRunEvidenceReference{Store: "evidence", Key: "result"+suffix+".json", SchemaVersion: result.SchemaVersion(), Size: int64(len(resultBytes))}
-	objects[evidencestore.ObjectLocation{Store: "evidence", Key: "result"+suffix+".json"}] = resultBytes
+	measurement.Status.Result = &edge.ProfilingRunEvidenceReference{Store: "evidence", Key: "result" + suffix + ".json", SchemaVersion: result.SchemaVersion(), Size: int64(len(resultBytes))}
+	objects[evidencestore.ObjectLocation{Store: "evidence", Key: "result" + suffix + ".json"}] = resultBytes
 	resources[base+"/namespaces/serving/batchenergyoptimizations"] = edge.BatchEnergyOptimizationList{
 		TypeMeta: meta.TypeMeta{APIVersion: edge.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"}, Items: []edge.BatchEnergyOptimization{*measurement}}
 	return resources, objects
