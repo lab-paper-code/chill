@@ -1,20 +1,20 @@
-package serving
+package v2
 
-import "time"
+import ("time"; "github.com/lab-paper-code/chill/internal/scheduler/protocol")
 
 // v2Merit ranks positive-coverage moves by ΔE/Δcov. Nonpositive coverage
 // follows every positive-coverage move, ordered by ΔE, then logical plan key.
 // Each cap variant is a separate active item, not an option-level proxy.
 type v2Merit struct {
 	q                int
-	energy, coverage float64
+	Energy, coverage float64
 }
 
-func (c *v2Search) rankMove(n, q int, key orderKey) {
+func (c *v2Search) rankMove(n, q int, key protocol.Rank) {
 	if c.active == 0 {
 		return
 	}
-	move := v2Merit{q: q, energy: key.joules - c.current.joules, coverage: capacityCoverageDelta(c.current, key)}
+	move := v2Merit{q: q, Energy: key.Joules - c.current.Joules, coverage: coverageDelta(c.current, key)}
 	ranked := c.ranked[n]
 	at := 0
 	for at < len(ranked) && !c.meritLess(move, ranked[at]) {
@@ -35,46 +35,46 @@ func (c *v2Search) meritLess(a, b v2Merit) bool {
 	if (a.coverage > 0) != (b.coverage > 0) {
 		return a.coverage > 0
 	}
-	av, bv := a.energy, b.energy
+	av, bv := a.Energy, b.Energy
 	if a.coverage > 0 {
 		av, bv = av/a.coverage, bv/b.coverage
 	}
 	if av != bv {
 		return av < bv
 	}
-	return c.s.table.keyParts[a.q] < c.s.table.keyParts[b.q]
+	return c.s.Table.KeyParts[a.q] < c.s.Table.KeyParts[b.q]
 }
 
 func (c *v2Search) polish() {
 	for !c.expired() {
-		evaluated, stepStart := c.stats.surrogateEvaluated, time.Now()
-		phase := schedulerPlanPhasePolish
-		c.current.copyInto(&c.best)
+		evaluated, stepStart := c.stats.SurrogateEvaluated, time.Now()
+		phase := protocol.Polish
+		c.current.CopyInto(&c.best)
 		c.sweepOne()
 		if !c.expired() {
 			c.sweepTwo()
 		}
-		if !c.best.better(&c.current) && !c.expired() {
+		if !c.best.Better(&c.current) && !c.expired() {
 			// The unsuccessful k=1/2 sweep belongs to trailing evaluations.
-			evaluated, stepStart = c.stats.surrogateEvaluated, time.Now()
-			phase = schedulerPlanPhaseCombine
+			evaluated, stepStart = c.stats.SurrogateEvaluated, time.Now()
+			phase = protocol.Combine
 			c.combine()
 		}
-		if !c.best.better(&c.current) {
+		if !c.best.Better(&c.current) {
 			return
 		}
-		c.recordStep(c.best, c.current.choice, phase, c.stats.surrogateEvaluated-evaluated, stepStart)
-		c.s.reset(c.best.choice)
-		c.best.copyInto(&c.current)
+		c.recordStep(c.best, c.current.Choice, phase, c.stats.SurrogateEvaluated-evaluated, stepStart)
+		c.s.reset(c.best.Choice)
+		c.best.CopyInto(&c.current)
 		c.stats.steps++
-		c.finalists.add(c.current, c.start)
+		c.finalists.add(c.current, c.Start)
 	}
 }
 
 func (c *v2Search) sweepOne() {
-	for _, n := range c.s.table.nodeOrder {
+	for _, n := range c.s.Table.NodeOrder {
 		c.ranked[n] = c.ranked[n][:0]
-		c.moves[n] = c.movePlans(n, !c.current.feasible, c.moves[n])
+		c.moves[n] = c.movePlans(n, !c.current.Feasible, c.moves[n])
 		for _, q := range c.moves[n] {
 			key, ok := c.evaluate(n, q)
 			if !ok {
@@ -90,9 +90,9 @@ func (c *v2Search) sweepOne() {
 }
 
 func (c *v2Search) sweepTwo() {
-	nodes := c.s.table.nodeOrder
+	nodes := c.s.Table.NodeOrder
 	for i, n := range nodes {
-		old := c.s.choice[n]
+		old := c.s.Choice[n]
 		for _, q := range c.moves[n] {
 			c.s.apply(n, q)
 			for _, other := range nodes[i+1:] {
@@ -115,12 +115,4 @@ func (c *v2Search) sweepTwo() {
 	}
 }
 
-func (c *v2Search) overloaded() bool {
-	for _, terms := range c.s.workloads {
-		satisfied, _, _ := capacitySearchJudge(terms.demand, terms.knew, terms.kret, terms.present, c.s.r)
-		if !satisfied || !terms.ok {
-			return true
-		}
-	}
-	return false
-}
+func (c *v2Search) overloaded() bool { return c.s.port.Overloaded() }

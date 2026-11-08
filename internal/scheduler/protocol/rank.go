@@ -2,9 +2,9 @@ package protocol
 
 import "slices"
 
-// orderKey borrows searchState's result buffers until its next delta/apply/reset.
-// Retain a candidate with copyInto and caller-owned buffers, allocated once.
-// Admission flags are separate from better's unchanged v1 ordering.
+// Rank borrows State's result buffers until its next Delta, Apply or Reset.
+// Retain a candidate with CopyInto and caller-owned buffers, allocated once.
+// Admission flags are separate from Better's unchanged v1 ordering.
 type Rank struct {
 	Feasible, Final, Keep, WeightsExceeded bool
 	UnroutedPrepare, Searchable, Bounded   bool
@@ -17,15 +17,15 @@ type Rank struct {
 }
 
 func (a Rank) CopyInto(b *Rank) {
-	Excesses, Choice := b.Excesses, b.Choice
-	Demand, Supply, Satisfied := b.Demand, b.Supply, b.Satisfied
+	excesses, choice := b.Excesses, b.Choice
+	demand, supply, satisfied := b.Demand, b.Supply, b.Satisfied
 	*b = a
-	b.Excesses, b.Choice = Excesses[:len(a.Excesses)], Choice[:len(a.Choice)]
+	b.Excesses, b.Choice = excesses[:len(a.Excesses)], choice[:len(a.Choice)]
 	copy(b.Excesses, a.Excesses)
 	copy(b.Choice, a.Choice)
 	// Existing evaluator callers may only retain the ordering projection.
-	if len(Demand) >= len(a.Demand) {
-		b.Demand, b.Supply, b.Satisfied = Demand[:len(a.Demand)], Supply[:len(a.Supply)], Satisfied[:len(a.Satisfied)]
+	if len(demand) >= len(a.Demand) {
+		b.Demand, b.Supply, b.Satisfied = demand[:len(a.Demand)], supply[:len(a.Supply)], satisfied[:len(a.Satisfied)]
 		copy(b.Demand, a.Demand)
 		copy(b.Supply, a.Supply)
 		copy(b.Satisfied, a.Satisfied)
@@ -58,7 +58,7 @@ func (a Rank) Better(b *Rank) bool {
 	return a.CompareKey(*b) < 0
 }
 
-// compareKey compares the exact v1 joined string without constructing it. A
+// CompareKey compares the exact v1 joined string without constructing it. A
 // fragment rank alone is insufficient when one key prefixes another (the '|'
 // delimiter sorts after many key characters). Byte streams also handle keys
 // containing delimiters, without imposing a new key-format restriction.

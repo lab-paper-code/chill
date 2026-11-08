@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
@@ -92,7 +93,6 @@ type SchedulerPlanSearch struct {
 	Fallback           string                     `json:"fallback,omitempty"`
 	DualBound          float64                    `json:"dualBound,omitempty"`
 	Start              string                     `json:"start,omitempty"`
-	Shadow             *SchedulerPlanSearchShadow `json:"shadow,omitempty"`
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
@@ -138,17 +138,6 @@ type SchedulerPlanSearchStep struct {
 	BudgetCut        bool            `json:"budgetCut,omitempty"`
 }
 
-// SchedulerPlanSearchShadow records the independent shadow planner.
-type SchedulerPlanSearchShadow struct {
-	Key               string        `json:"key"`
-	Joules            float64       `json:"joules"`
-	Evaluated         int           `json:"evaluated"`
-	ExactEvaluated    int           `json:"exactEvaluated,omitempty"`
-	Duration          time.Duration `json:"durationNanos"`
-	BudgetCut         bool          `json:"budgetCut,omitempty"`
-	TerminationReason string        `json:"terminationReason,omitempty"`
-	Fallback          string        `json:"fallback,omitempty"`
-}
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
 // Rate is λ (req/s), Backlog B (requests). A missing wait, drain or exceedance
@@ -270,7 +259,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err != nil {
 		return SchedulerDecision{}, err
 	}
-	if settings.PlanSearchStrategy != schedulerPlanSearchV2 || !settings.PlanPostFilterFinalists {
+	if settings.PlanSearchStrategy != protocol.V2 || !settings.PlanPostFilterFinalists {
 		best = planner.minimumGain(planner.payback(best))
 	}
 	decision = planner.decide(decision, best)

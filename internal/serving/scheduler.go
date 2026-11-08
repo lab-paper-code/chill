@@ -11,6 +11,7 @@ import (
 
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 // SchedulerSettings separates the observed population from the control cadence
@@ -599,8 +600,8 @@ func (s SchedulerSettings) validatePlanSearch() error {
 	if s.PlanSearchWorkers < 1 {
 		return fmt.Errorf("planSearchWorkers must be at least 1")
 	}
-	if s.PlanSearchStrategy != schedulerPlanSearchV1 && s.PlanSearchStrategy != schedulerPlanSearchV2 && s.PlanSearchStrategy != schedulerPlanSearchShadow {
-		return fmt.Errorf("planSearchStrategy must be v1, v2 or shadow")
+	if s.PlanSearchStrategy != protocol.V1 && s.PlanSearchStrategy != protocol.V2 {
+		return fmt.Errorf("planSearchStrategy must be v1 or v2")
 	}
 	if s.PlanSearchEvaluations < 1 || s.PlanExactFinalists < 1 || s.PlanPolishActive < 0 {
 		return fmt.Errorf("planSearchEvaluations and planExactFinalists must be at least 1; planPolishActive must be nonnegative (0 searches all plans)")
@@ -649,7 +650,7 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
 	settings := in.SchedulerSettings
-	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = schedulerPlanSearchV1, 500000
+	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = protocol.V1, 500000
 	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 8, false
 	settings.PlanPricedStart = true
 	if in.PlanSearchStrategy != nil {

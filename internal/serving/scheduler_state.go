@@ -1,10 +1,5 @@
 package serving
 
-import "slices"
-
-// orderKey borrows searchState's result buffers until its next delta/apply/reset.
-// Retain a candidate with copyInto and caller-owned buffers, allocated once.
-// Admission flags are separate from better's unchanged v1 ordering.
 type orderKey struct {
 	feasible, final, keep, weightsExceeded bool
 	unroutedPrepare, searchable, bounded   bool
@@ -16,81 +11,6 @@ type orderKey struct {
 	table                                  *planTable
 }
 
-func (a orderKey) copyInto(b *orderKey) {
-	excesses, choice := b.excesses, b.choice
-	demand, supply, satisfied := b.demand, b.supply, b.satisfied
-	*b = a
-	b.excesses, b.choice = excesses[:len(a.excesses)], choice[:len(a.choice)]
-	copy(b.excesses, a.excesses)
-	copy(b.choice, a.choice)
-	// Existing evaluator callers may only retain the ordering projection.
-	if len(demand) >= len(a.demand) {
-		b.demand, b.supply, b.satisfied = demand[:len(a.demand)], supply[:len(a.supply)], satisfied[:len(a.satisfied)]
-		copy(b.demand, a.demand)
-		copy(b.supply, a.supply)
-		copy(b.satisfied, a.satisfied)
-	} else {
-		b.demand, b.supply, b.satisfied = nil, nil, nil
-	}
-}
-
-func (a orderKey) better(b *orderKey) bool {
-	if b == nil {
-		return true
-	}
-	if a.feasible != b.feasible {
-		return a.feasible
-	}
-	if !a.feasible && a.final != b.final {
-		return a.final
-	}
-	if !a.feasible {
-		if order := slices.Compare(a.excesses, b.excesses); order != 0 {
-			return order < 0
-		}
-	}
-	if a.joules-a.keepJoules != b.joules-b.keepJoules {
-		return a.joules-a.keepJoules < b.joules-b.keepJoules
-	}
-	if a.keep != b.keep {
-		return a.keep
-	}
-	return a.compareKey(*b) < 0
-}
-
-// compareKey compares the exact v1 joined string without constructing it. A
-// fragment rank alone is insufficient when one key prefixes another (the '|'
-// delimiter sorts after many key characters). Byte streams also handle keys
-// containing delimiters, without imposing a new key-format restriction.
-func (a orderKey) compareKey(b orderKey) int {
-	an, ai, bn, bi := 0, 0, 0, 0
-	for {
-		for an < len(a.choice) && ai == len(a.table.keyParts[a.choice[an]]) {
-			an, ai = an+1, 0
-		}
-		for bn < len(b.choice) && bi == len(b.table.keyParts[b.choice[bn]]) {
-			bn, bi = bn+1, 0
-		}
-		if an == len(a.choice) || bn == len(b.choice) {
-			if an == len(a.choice) && bn == len(b.choice) {
-				return 0
-			}
-			if an == len(a.choice) {
-				return -1
-			}
-			return 1
-		}
-		ac, bc := a.table.keyParts[a.choice[an]][ai], b.table.keyParts[b.choice[bn]][bi]
-		if ac < bc {
-			return -1
-		}
-		if ac > bc {
-			return 1
-		}
-		ai++
-		bi++
-	}
-}
 
 type searchSum struct {
 	kappa, kappaE, kappaRet, weightRet, energyWeightRet float64

@@ -1,17 +1,18 @@
-package serving
+package v2
 
 import (
+ "github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"math"
 	"slices"
 )
 
 func (c *v2Search) combine() {
-	t := c.s.table
-	for _, n := range t.nodeOrder {
+	t := c.s.Table
+	for _, n := range t.NodeOrder {
 		plans := c.activePlans[n][:0]
 		if c.allActive {
-			for _, q := range t.byPlan[n] {
-				if t.searchable[q] {
+			for _, q := range t.ByPlan[n] {
+				if t.Searchable[q] {
 					plans = append(plans, q)
 				}
 			}
@@ -20,28 +21,28 @@ func (c *v2Search) combine() {
 				plans = append(plans, move.q)
 			}
 		}
-		for _, q := range []int{t.byPlan[n][0], c.s.choice[n]} {
+		for _, q := range []int{t.ByPlan[n][0], c.s.Choice[n]} {
 			if !slices.Contains(plans, q) {
 				plans = append(plans, q)
 			}
 		}
 		slices.SortFunc(plans, func(a, b int) int {
-			if t.keyParts[a] < t.keyParts[b] {
+			if t.KeyParts[a] < t.KeyParts[b] {
 				return -1
 			}
-			if t.keyParts[a] > t.keyParts[b] {
+			if t.KeyParts[a] > t.KeyParts[b] {
 				return 1
 			}
 			return 0
 		})
 		c.activePlans[n] = plans
 	}
-	for depth := len(t.nodeOrder) - 1; depth >= 0; depth-- {
-		n := t.nodeOrder[depth]
-		for w := range c.s.planner.ws {
+	for depth := len(t.NodeOrder) - 1; depth >= 0; depth-- {
+		n := t.NodeOrder[depth]
+		for w := range c.problem.Workloads {
 			largest := 0.0
 			for _, q := range c.activePlans[n] {
-				largest = max(largest, t.kappa[q][w])
+				largest = max(largest, t.Kappa[q][w])
 			}
 			c.suffix[depth][w] = c.suffix[depth+1][w] + largest
 		}
@@ -54,10 +55,10 @@ func (c *v2Search) combineAt(depth int) {
 	if c.expired() || c.combinePruned(depth) {
 		return
 	}
-	n := c.s.table.nodeOrder[depth]
-	old := c.s.choice[n]
+	n := c.s.Table.NodeOrder[depth]
+	old := c.s.Choice[n]
 	for _, q := range c.activePlans[n] {
-		if depth+1 == len(c.s.choice) {
+		if depth+1 == len(c.s.Choice) {
 			key, ok := c.evaluate(n, q)
 			if !ok {
 				return
@@ -79,17 +80,17 @@ func (c *v2Search) combineAt(depth int) {
 // would discard all leximin improvements. Compare optimistic final/excess
 // bounds instead; an overload branch can still win by improving final first.
 func (c *v2Search) combinePruned(depth int) bool {
-	t, p := c.s.table, c.s.planner
+	t, p := c.s.Table, c.problem
 	possible, finalPossible := true, true
-	for w, ws := range p.ws {
+	for w, ws := range p.Workloads {
 		capacity := c.suffix[depth][w]
-		for _, n := range t.nodeOrder[:depth] {
-			capacity += t.kappa[c.s.choice[n]][w]
+		for _, n := range t.NodeOrder[:depth] {
+			capacity += t.Kappa[c.s.Choice[n]][w]
 		}
 		// Account for addition-order rounding without rejecting boundary supply.
 		capacity += math.Abs(capacity) * 1e-12
-		finalPossible = finalPossible && capacity >= ws.rate
-		demand, _ := capacityCoverDemand(ws, math.Inf(1), 0)
+		finalPossible = finalPossible && capacity >= ws.Rate
+		demand, _ := CoverDemand(ws, math.Inf(1), 0)
 		possible = possible && capacity >= demand
 		excess := math.Inf(1)
 		if capacity > 0 {
@@ -98,21 +99,21 @@ func (c *v2Search) combinePruned(depth int) bool {
 			excess = 0
 		}
 		// B=0 clamps the exact transition excess at zero.
-		if ws.queued == 0 {
+		if ws.Queued == 0 {
 			excess = max(0, excess)
 		}
 		c.optimistic[w] = excess
 	}
-	if c.best.feasible {
+	if c.best.Feasible {
 		if !possible {
 			return true
 		}
 		return c.energyPruned(depth)
 	}
-	if c.best.final && !finalPossible {
+	if c.best.Final && !finalPossible {
 		return true
 	}
-	if !possible && (c.best.final == finalPossible || !finalPossible) {
+	if !possible && (c.best.Final == finalPossible || !finalPossible) {
 		slices.SortFunc(c.optimistic, func(a, b float64) int {
 			if a > b {
 				return -1
@@ -122,7 +123,7 @@ func (c *v2Search) combinePruned(depth int) bool {
 			}
 			return 0
 		})
-		return slices.Compare(c.optimistic, c.best.excesses) > 0
+		return slices.Compare(c.optimistic, c.best.Excesses) > 0
 	}
 	return false
 }
@@ -131,31 +132,25 @@ func (c *v2Search) combinePruned(depth int) bool {
 // Each duration is nonnegative. Nonnegative watts and request energy make
 // their sum a safe lower bound, including routes beyond the fixed horizon.
 func (c *v2Search) prepareEnergyBounds() {
-	t, p := c.s.table, c.s.planner
+	t, p := c.s.Table, c.problem
 	c.energyBoundValid = true
-	for depth := len(t.nodeOrder) - 1; depth >= 0; depth-- {
-		n := t.nodeOrder[depth]
+	for depth := len(t.NodeOrder) - 1; depth >= 0; depth-- {
+		n := t.NodeOrder[depth]
 		c.suffixRoute[depth] = c.suffixRoute[depth+1]
 		for _, q := range c.activePlans[n] {
-			if !t.keep[q] {
-				c.energyBoundValid = c.energyBoundValid && t.mid[q] >= 0 && t.after[q] >= 0
-				c.suffixRoute[depth] = max(c.suffixRoute[depth], t.tPre[q])
+			if !t.Keep[q] {
+				c.energyBoundValid = c.energyBoundValid && t.Mid[q] >= 0 && t.After[q] >= 0
+				c.suffixRoute[depth] = max(c.suffixRoute[depth], t.TPre[q])
 			}
-			for _, lists := range [][][]capacityItem{t.items[q], t.retained[q]} {
-				for _, items := range lists {
-					for _, item := range items {
-						c.energyBoundValid = c.energyBoundValid && item.e >= 0
-					}
-				}
-			}
+			c.energyBoundValid = c.energyBoundValid && t.Nonnegative[q]
 		}
 	}
-	for depth := len(t.nodeOrder) - 1; depth >= 0; depth-- {
-		n, minimum := t.nodeOrder[depth], 0.0
-		if p.compared[n] {
+	for depth := len(t.NodeOrder) - 1; depth >= 0; depth-- {
+		n, minimum := t.NodeOrder[depth], 0.0
+		if p.Table.Compared[n] {
 			minimum = math.Inf(1)
 			for _, q := range c.activePlans[n] {
-				minimum = min(minimum, t.energyLowerBound(q, 0, c.suffixRoute[0], p.period))
+				minimum = min(minimum, t.EnergyLowerBound(q, 0, c.suffixRoute[0], p.Table.Period))
 			}
 		}
 		c.suffixEnergy[depth] = c.suffixEnergy[depth+1] + minimum
@@ -169,20 +164,20 @@ func (c *v2Search) energyPruned(depth int) bool {
 	if !c.energyBoundValid {
 		return false
 	}
-	t, p := c.s.table, c.s.planner
+	t, p := c.s.Table, c.problem
 	lowRoute := 0.0
-	for _, n := range t.nodeOrder[:depth] {
-		if q := c.s.choice[n]; !t.keep[q] {
-			lowRoute = max(lowRoute, t.tPre[q])
+	for _, n := range t.NodeOrder[:depth] {
+		if q := c.s.Choice[n]; !t.Keep[q] {
+			lowRoute = max(lowRoute, t.TPre[q])
 		}
 	}
 	highRoute := max(lowRoute, c.suffixRoute[depth])
 	bound := c.suffixEnergy[depth]
-	for _, n := range t.nodeOrder[:depth] {
-		if !p.compared[n] {
+	for _, n := range t.NodeOrder[:depth] {
+		if !p.Table.Compared[n] {
 			continue
 		}
-		bound += t.energyLowerBound(c.s.choice[n], lowRoute, highRoute, p.period)
+		bound += t.EnergyLowerBound(c.s.Choice[n], lowRoute, highRoute, p.Table.Period)
 	}
-	return bound > c.best.joules+max(1, math.Abs(c.best.joules))*1e-12
+	return bound > c.best.Joules+max(1, math.Abs(c.best.Joules))*1e-12
 }

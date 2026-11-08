@@ -12,7 +12,8 @@ import (
 
 type Engine[R any] struct{}
 
-func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (R, protocol.Diagnostics, error) {
+func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (protocol.Outcome[R], error) {
+ exact.ResetObservations()
  start := time.Now()
  d := protocol.Diagnostics{Strategy: protocol.V1, StartedAt: start.UTC()}
  keep, empty := make([]int, len(p.Plans)), make([]int, len(p.Plans))
@@ -35,7 +36,7 @@ func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (R, protoco
    for !d.BudgetCut {
     evaluated, started := d.Evaluated, time.Now()
     step, err := sweep(p, exact, exact.Choice(ends[s]), k, &d)
-    if err != nil { var zero R; return zero, d, err }
+    if err != nil { return protocol.Outcome[R]{Diagnostics:d}, err }
     if step == nil || !exact.Better(*step, &ends[s]) {
      d.TrailingEvaluated += d.Evaluated-evaluated
      break
@@ -59,7 +60,7 @@ func (Engine[R]) Search(p protocol.Problem, exact protocol.Exact[R]) (R, protoco
  d.FinishedAt, d.Duration = finished.UTC(), finished.Sub(start)
  point := exact.Point(best)
  d.Key, d.Joules = point.Key, point.Joules
- return best, d, nil
+ return protocol.Outcome[R]{Value:best,Diagnostics:d,Found:true}, nil
 }
 
 // Each worker owns its result and observer slot. Exact ordering makes reduction deterministic.

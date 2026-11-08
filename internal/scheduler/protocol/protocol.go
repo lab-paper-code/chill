@@ -41,6 +41,7 @@ type Table struct {
  EntryOrder [][]int
  EntryOf, Index []int
  NodeUID, KeyParts []string
+ Options, Modes, PlanKeys []string
  Kappa, KappaE, KappaRet [][]float64
  Count [][]int
  Keep, Searchable, Compared, Nonnegative []bool
@@ -99,6 +100,7 @@ type Diagnostics struct {
 // Exact keeps native result storage in the CHILL adapter. Engines retain R directly.
 // Observe uses a stable worker slot; origins and postfilter probes are not observed.
 type Exact[R any] interface {
+ ResetObservations()
  Evaluate([]int) R
  Bounded([]int) bool
  Admits(R) bool
@@ -111,6 +113,8 @@ type Exact[R any] interface {
  FilterKept(R) bool
 }
 
-type Engine[R any] interface { Search(Problem, Exact[R]) (R, Diagnostics, error) }
+// Outcome preserves the native exact result. A missing v2 result requests root-owned v1 fallback.
+type Outcome[R any] struct { Value R; Diagnostics Diagnostics; Found bool }
+type Engine[R any] interface { Search(Problem, Exact[R]) (Outcome[R], error) }
 
 type Candidate struct { Choice []int; Joules float64; Feasible bool; Start string }

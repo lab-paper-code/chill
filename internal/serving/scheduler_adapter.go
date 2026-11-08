@@ -1,10 +1,11 @@
 package serving
 
 import (
+ "slices"
  "time"
 
  "github.com/lab-paper-code/chill/internal/scheduler/protocol"
- "github.com/lab-paper-code/chill/internal/scheduler/v1"
+ "github.com/lab-paper-code/chill/internal/scheduler"
 )
 
 // capacityExact keeps lifecycle admission, reserve evidence and native results in CHILL.
@@ -19,6 +20,9 @@ func newCapacityExact(p *capacityPlanner) *capacityExact {
  e := &capacityExact{p:p, excluded:make([]map[string]int,p.settings.PlanSearchWorkers),reserves:make([]map[string]SchedulerTransitionReserve,p.settings.PlanSearchWorkers)}
  for w := range e.excluded { e.excluded[w] = map[string]int{} }
  return e
+}
+func (e *capacityExact) ResetObservations() {
+ for w := range e.excluded { clear(e.excluded[w]); e.reserves[w]=nil }
 }
 func (e *capacityExact) Evaluate(choice []int) capacityResult { return e.p.evaluate(choice,e.p.routeOf(choice)) }
 func (e *capacityExact) Bounded(choice []int) bool { return e.p.bounded(choice) }
@@ -35,6 +39,10 @@ func (e *capacityExact) Observe(r capacityResult,w int) {
  e.reserves[w] = reserveRejections(e.reserves[w],r.reserves,r.key)
  if r.exclusion != "" { e.excluded[w][r.exclusion]++ }
 }
+
+func capacityFilterKept(res capacityResult) bool {
+ return res.keep || res.withinUncertainty || len(res.unpaid)>0 && slices.IndexFunc(res.choice,func(j int) bool { return j!=0 })<0
+}
 func (e *capacityExact) record(d protocol.Diagnostics) {
  p := e.p
  p.searched = SchedulerPlanSearch{Strategy:d.Strategy,Neighborhood:d.Neighborhood,Evaluated:d.Evaluated,
@@ -42,9 +50,14 @@ func (e *capacityExact) record(d protocol.Diagnostics) {
   TrailingEvaluated:d.TrailingEvaluated,TerminationReason:d.TerminationReason,Key:d.Key,Joules:d.Joules,
   Pruned:d.Pruned,SurrogateEvaluated:d.SurrogateEvaluated,Finalists:d.Finalists,ExactEvaluated:d.ExactEvaluated,
   SurrogateGapJoules:d.SurrogateGapJoules,PostFilterReverts:d.PostFilterReverts,Fallback:d.Fallback,Start:d.Start,DualBound:d.DualBound,
-  Excluded:map[string]int{},
  }
- for _, counts := range e.excluded { for reason,count := range counts { p.searched.Excluded[reason] += count } }
+ if d.Strategy==protocol.V1 || d.Fallback==protocol.V1 { p.searched.Excluded=map[string]int{} }
+ for _, counts := range e.excluded {
+  for reason,count := range counts {
+   if p.searched.Excluded==nil { p.searched.Excluded=map[string]int{} }
+   p.searched.Excluded[reason] += count
+  }
+ }
  for _, records := range e.reserves { for _, record := range records { p.searched.ReserveRejections = reserveRejections(p.searched.ReserveRejections,[]SchedulerTransitionReserve{record},"") } }
  for _, step := range d.Steps {
   record := SchedulerPlanSearchStep{Start:step.Start,Phase:step.Phase,K:step.K,Joules:step.Joules,KeepJoules:step.KeepJoules,
@@ -70,9 +83,18 @@ func (p *capacityPlanner) searchProblem(deadline time.Time) protocol.Problem {
 }
 
 func (p *capacityPlanner) search(deadline time.Time) (capacityResult,error) {
- if p.settings.PlanSearchStrategy == schedulerPlanSearchV2 { return p.searchV2(deadline) }
+ started:=time.Now()
  e := newCapacityExact(p)
- result,d,err := (v1.Engine[capacityResult]{}).Search(p.searchProblem(deadline),e)
- e.record(d)
- return result,err
+ var problem protocol.Problem
+ if p.settings.PlanSearchStrategy==protocol.V2 {
+  problem=p.scalarProblem(p.planTable(),deadline)
+ } else {
+  problem=p.searchProblem(deadline)
+ }
+ result,err:=scheduler.Select[capacityResult](p.settings.PlanSearchStrategy).Search(problem,e)
+ finished:=time.Now()
+ result.Diagnostics.StartedAt,result.Diagnostics.FinishedAt=started.UTC(),finished.UTC()
+ result.Diagnostics.Duration=finished.Sub(started)
+ e.record(result.Diagnostics)
+ return result.Value,err
 }

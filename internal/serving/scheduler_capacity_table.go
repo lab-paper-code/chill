@@ -1,30 +1,16 @@
 package serving
 
 import (
-	"cmp"
 	"slices"
 )
 
 const capacityZeroCapacity = "ZeroCapacity"
 
-// capacityPlanEntry is one node/option/mode. Keep is always a separate entry.
-// Variants holds table indices in ascending κ, then original plan index order.
-type capacityPlanEntry struct {
-	node     int
-	option   string
-	mode     string
-	workload int // -1 for empty or multi-Workload keep
-	variants []int
-}
 
 // planTable owns the Tick's scalar columns. Search needs no capacityPlan reads.
 // Workload columns and item lists are indexed [table plan][Workload].
 type planTable struct {
-	entries                      []capacityPlanEntry
 	byPlan                       [][]int
-	nodeOrder                    []int
-	entryOrder                   [][]int
-	entryOf                      []int
 	node, index                  []int
 	kappa, kappaE, kappaRet      [][]float64
 	weightRet, energyWeightRet   [][]float64
@@ -51,65 +37,9 @@ func (p *capacityPlanner) planTable() *planTable {
 	t := &planTable{byPlan: make([][]int, len(p.plans)), pruned: map[string]int{}}
 	for n, plans := range p.plans {
 		t.byPlan[n] = make([]int, len(plans))
-		type identity struct{ option, mode string }
-		entries := map[identity]int{}
 		for j, plan := range plans {
-			q := t.appendPlan(n, j, plan, p.ws)
-			t.byPlan[n][j] = q
-			if j != 0 && (!t.eligible[q] || t.dominated[q] != "") {
-				continue
-			}
-			key := identity{plan.option, plan.mode}
-			e, found := entries[key]
-			if !found || j == 0 {
-				e = len(t.entries)
-				w := -1
-				for k, count := range t.count[q] {
-					if count > 0 {
-						w = k
-					}
-				}
-				if j == 0 {
-					w = -1
-				} else {
-					entries[key] = e
-				}
-				t.entries = append(t.entries, capacityPlanEntry{node: n, option: plan.option, mode: plan.mode, workload: w})
-			}
-			t.entries[e].variants = append(t.entries[e].variants, q)
+			t.byPlan[n][j] = t.appendPlan(n, j, plan, p.ws)
 		}
-	}
-	for e := range t.entries {
-		entry := &t.entries[e]
-		slices.SortFunc(entry.variants, func(a, b int) int {
-			ka, kb := 0.0, 0.0
-			if entry.workload >= 0 {
-				ka, kb = t.kappa[a][entry.workload], t.kappa[b][entry.workload]
-			}
-			return cmp.Or(cmp.Compare(ka, kb), cmp.Compare(p.plans[entry.node][t.index[a]].record.Key, p.plans[entry.node][t.index[b]].record.Key))
-		})
-	}
-	t.nodeOrder, t.entryOrder, t.entryOf = make([]int, len(p.plans)), make([][]int, len(p.plans)), make([]int, len(t.index))
-	for n := range t.nodeOrder {
-		t.nodeOrder[n] = n
-	}
-	slices.SortFunc(t.nodeOrder, func(a, b int) int {
-		return cmp.Compare(p.snapshot.Nodes[a].Node.UID, p.snapshot.Nodes[b].Node.UID)
-	})
-	for e, entry := range t.entries {
-		t.entryOrder[entry.node] = append(t.entryOrder[entry.node], e)
-		for _, q := range entry.variants {
-			t.entryOf[q] = e
-		}
-	}
-	for n := range t.entryOrder {
-		slices.SortFunc(t.entryOrder[n], func(a, b int) int {
-			ea, eb := t.entries[a], t.entries[b]
-			qa, qb := ea.variants[0], eb.variants[0]
-			return cmp.Or(cmp.Compare(ea.option, eb.option), cmp.Compare(ea.mode, eb.mode),
-				cmp.Compare(p.plans[n][t.index[qa]].record.Key, p.plans[n][t.index[qb]].record.Key),
-				cmp.Compare(t.index[qa], t.index[qb]))
-		})
 	}
 	return t
 }
