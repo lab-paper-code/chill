@@ -29,6 +29,8 @@ type SchedulerSettings struct {
 	MaxInstances              int           `json:"maxInstances"`
 	ServingMemoryBytes        uint64        `json:"servingMemoryBytes"`
 	CompletionMarginMS        float64       `json:"completionMarginMS"`
+	// ObservedPathBudgets enables measured TOTAL/POST budgets; omission enables them.
+	ObservedPathBudgets *bool `json:"observedPathBudgets,omitempty"`
 	AutonomousWorkloads       []string      `json:"autonomousWorkloads"`
 	// MinimumDemand floors planning demand in requests/second by Workload UID.
 	MinimumDemand map[string]float64 `json:"minimumDemand,omitempty"`
@@ -45,6 +47,8 @@ type SchedulerSettings struct {
 	CapacityGridSteps       int           `json:"capacityGridSteps"`
 	CapacityBisectionWidth  float64       `json:"capacityBisectionWidth"`
 	CapacityTailSamples     int           `json:"capacityTailSamples"`
+	// CapacityWorkers bounds row builders; zero uses half of GOMAXPROCS, at least one.
+	CapacityWorkers int `json:"capacityWorkers"`
 	// Dispatch occupancy defaults to configured ns/request when no measured/DOM d exists.
 	DefaultDispatchOccupancyNanos int64 `json:"defaultDispatchOccupancyNanos"`
 	// DefaultOperationCost supplies whole-wall costs for unmeasured operations.
@@ -61,6 +65,10 @@ type SchedulerSettings struct {
 	PlanPostFilterFinalists bool              `json:"planPostFilterFinalists"`
 	PlanPricedStart         bool              `json:"planPricedStart"`
 	Controls                SchedulerControls `json:"controls"`
+}
+
+func (s SchedulerSettings) UsesObservedPathBudgets() bool {
+	return s.ObservedPathBudgets == nil || *s.ObservedPathBudgets
 }
 
 // ValidateSchedulerSettingsPatch applies a public settings merge patch without
@@ -619,6 +627,9 @@ func (s SchedulerSettings) validatePlanSearch() error {
 }
 
 func (s SchedulerSettings) validateCapacityNumerics() error {
+	if s.CapacityWorkers < 0 {
+		return fmt.Errorf("capacityWorkers must be nonnegative")
+	}
 	if s.CapacityGridSteps < 1 || s.CapacityTailSamples < 1 || !schedulerFinite(s.CapacityBisectionWidth) ||
 		s.CapacityBisectionWidth <= 0 || s.CapacityBisectionWidth > 1 {
 		return fmt.Errorf("capacityGridSteps and capacityTailSamples must be positive; capacityBisectionWidth must be finite in (0,1]")
@@ -659,6 +670,10 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
 	settings := in.SchedulerSettings
+	if settings.ObservedPathBudgets == nil {
+		enabled := true
+		settings.ObservedPathBudgets = &enabled
+	}
 	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = protocol.V2, 500000
 	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 8, false
 	settings.PlanPricedStart = true
