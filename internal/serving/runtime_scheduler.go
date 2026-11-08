@@ -520,7 +520,7 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 		if call.assignment != nil {
 			request.Instance = call.assignment.Instance
 			request.Phase = phaseAssigned
-			request.QueueAge = call.serverSlotWait
+			request.QueueAge = max(0, call.dispatchedElapsed-call.acceptedElapsed)
 			if call.senderFrozen.Load() {
 				ms := float64(call.senderElapsedNanos.Load()) / float64(time.Millisecond)
 				request.NativeSenderElapsedMS = &ms

@@ -324,3 +324,66 @@ func TestRuntimeCapturesSenderFreezeBeforeBackendReturns(t *testing.T) {
 	defer cancel()
 	if _, err := call.Wait(ctx); err != nil { t.Fatal(err) }
 }
+
+func TestRequestPathAndSchedulerWaitIgnoreDispatchWallClockShift(t *testing.T) {
+	for _, dispatched := range []time.Duration{0, 20*time.Millisecond} {
+		accepted := min(5*time.Millisecond, dispatched)
+		for _, shift := range []time.Duration{-time.Hour, time.Hour} {
+			received := time.Now()
+			d := &Definition{UID: "workload"}
+			call := &Call{receipt: Receipt{ID: "request", ReceivedAt: received}, definition: d,
+				identity: d.Identity(), acceptedElapsed: accepted, dispatchedElapsed: dispatched,
+				assignment: &Assignment{Instance: "instance", DispatchedAt: received.Add(dispatched+shift).UTC()}}
+			call.receipt.ServerTiming.Record(ServerSenderFreeze, 30*time.Millisecond)
+			row := RequestRow{ExecutionComplete: true, NativeExecutionComplete: true, NativeOutcome: outcomeCompleted}
+			queued := time.Unix(500, 0)
+			running, finished := queued.Add(2*time.Millisecond), queued.Add(12*time.Millisecond)
+			nativeMS := 15.0
+			row.NativeQueuedAt, row.NativeRunningAt, row.NativeFinishedAt = &queued, &running, &finished
+			row.NativeElapsedMS, row.QueueMS = &nativeMS, 4
+			accept := requestEvent(call, phaseAccepted, "", "", received.Add(accepted))
+			row.Fold(&accept)
+			assign := requestEvent(call, phaseAssigned, "", "", call.assignment.DispatchedAt)
+			row.Fold(&assign)
+			response := requestEvent(call, eventResponseFinished, outcomeCompleted, "", received.Add(100*time.Millisecond))
+			row.Fold(&response)
+			path, reason := RequestPathSample(&row)
+			wait := dispatched-accepted
+			if reason != "" || path.TotalNanos != int64(87*time.Millisecond-wait) || path.PostNanos != int64(55*time.Millisecond) {
+				t.Fatalf("diagnostic dispatch clock changed path: dispatch=%s shift=%s path=%+v reason=%s", dispatched, shift, path, reason)
+			}
+			runtime := &Runtime{calls: map[string]*Call{"request": call}}
+			requests := runtime.schedulerOutstandingLocked(received.Add(100*time.Millisecond))
+			if len(requests) != 1 || requests[0].QueueAge != wait {
+				t.Fatalf("scheduler server wait used diagnostic wall clock: %+v", requests)
+			}
+		}
+	}
+}
+
+func TestInsufficientPathSummaryKeepsConfiguredCapacityPolicy(t *testing.T) {
+	s, snap := capacityFixture()
+	s.CompletionMarginMS = 21
+	w := snap.Workloads[0]
+	from, to := snap.At.Add(-time.Minute), snap.At
+	summary := PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "configured", Reason: "insufficient_samples",
+		From: from, To: to, Samples: 18, Received: 20, Completed: 18, Incomplete: 2, JudgmentPercentile: w.SLO.Percentile}
+	snap.PathBudgets = []PathBudget{summary}
+	row := capacityBuildForTest(t, s, snap)
+	if row.Reason != CapacityServiceExceedsSLO || row.Kappa == nil || *row.Kappa != 0 {
+		t.Fatalf("insufficient observations erased the configured path reserve: %+v", row)
+	}
+	selected := ResolvePathBudget(s, snap.PathBudgets, w)
+	if selected.TotalMS != 21 || selected.PostMS != 21 || selected.JudgmentPercentile != 97.5 || row.Input.SLO.Percentile != 95 {
+		t.Fatalf("configured summary changed margin or native/judging percentile split: %+v %+v", selected, row.Input)
+	}
+	if selected.Reason != summary.Reason || selected.From != from || selected.To != to ||
+		selected.Samples != 18 || selected.Received != 20 || selected.Completed != 18 || selected.Incomplete != 2 {
+		t.Fatalf("configured numerical resolution discarded observation diagnostics: %+v", selected)
+	}
+	summary.Source, summary.TotalMS, summary.PostMS, summary.JudgmentPercentile = "observed", 0, 0, 97.5
+	selected = ResolvePathBudget(s, []PathBudget{summary}, w)
+	if selected.TotalMS != 0 || selected.PostMS != 0 || selected.Source != "observed" {
+		t.Fatalf("observed zero was replaced by configured margin: %+v", selected)
+	}
+}

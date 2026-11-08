@@ -69,7 +69,7 @@ type Call struct {
 	completionMarginMS                           float64
 	totalMarginMS                                float64
 	acceptedElapsed                              time.Duration
-	serverSlotWait                               time.Duration
+	dispatchedElapsed                            time.Duration
 	hasPostMargin, hasTotalMargin                 bool
 	senderElapsedNanos                           atomic.Int64
 	senderFrozen                                 atomic.Bool
@@ -280,6 +280,12 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 
 func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEvent {
 	e := RequestEvent{RequestID: c.receipt.ID, WorkloadName: c.receipt.Name, WorkloadUID: c.receipt.UID, Definition: c.identity, Kind: kind, At: now.UTC(), ReceivedAt: c.receipt.ReceivedAt, ElapsedNanos: now.Sub(c.receipt.ReceivedAt).Nanoseconds(), Assignment: c.assignment, Outcome: outcome, Error: code}
+	if kind == phaseAssigned && c.assignment != nil {
+		// Assignment UTC is diagnostic only; folding Aw needs this monotonic
+		// offset captured before the assignment timestamp loses its clock.
+		dispatched := int64(c.dispatchedElapsed)
+		e.DispatchedNanos, e.ElapsedNanos = &dispatched, dispatched
+	}
 	if c.hasPostMargin {
 		margin := c.completionMarginMS
 		e.CompletionMarginMS = &margin
@@ -584,7 +590,7 @@ func (r *Runtime) dispatchLocked() {
 			}
 			i := entry.instance
 			dispatchedAt := time.Now()
-			c.serverSlotWait = max(0, dispatchedAt.Sub(c.receipt.ReceivedAt)-c.acceptedElapsed)
+			c.dispatchedElapsed = dispatchedAt.Sub(c.receipt.ReceivedAt)
 			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: dispatchedAt.UTC()}
 			c.assignment.ProfileBody = i.Profile
 			// Reserve physical ownership before FIFO admission; native execution

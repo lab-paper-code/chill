@@ -331,6 +331,8 @@ type RequestEvent struct {
 	At                time.Time        `json:"at"`
 	ReceivedAt        time.Time        `json:"receivedAt"`
 	ElapsedNanos      int64            `json:"elapsedNanos"`
+	// DispatchedNanos is the direct monotonic dispatch offset, including zero.
+	DispatchedNanos   *int64           `json:"dispatchedNanos,omitempty"`
 	ServerTiming      RequestTimings   `json:"serverTiming,omitempty"`
 	Assignment        *Assignment      `json:"assignment,omitempty"`
 	NativeInstance    string           `json:"nativeInstance,omitempty"`

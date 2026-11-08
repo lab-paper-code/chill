@@ -5,14 +5,20 @@ package serving
 // they are estimates, not observed confidence bounds.
 func ResolvePathBudget(settings SchedulerSettings, budgets []PathBudget, w *Definition) PathBudget {
 	identity := w.Identity()
+	selected := PathBudget{WorkloadUID: w.UID, DefinitionID: identity}
 	for _, budget := range budgets {
 		if budget.WorkloadUID == w.UID && budget.DefinitionID == identity {
-			return budget
+			if budget.Source == "observed" {
+				return budget
+			}
+			selected = budget
+			break
 		}
 	}
-	return PathBudget{WorkloadUID: w.UID, DefinitionID: identity, Source: "configured",
-		TotalMS: settings.CompletionMarginMS, PostMS: settings.CompletionMarginMS,
-		JudgmentPercentile: 100 - (100-w.SLO.Percentile)/2}
+	selected.Source = "configured"
+	selected.TotalMS, selected.PostMS = settings.CompletionMarginMS, settings.CompletionMarginMS
+	selected.JudgmentPercentile = 100 - (100-w.SLO.Percentile)/2
+	return selected
 }
 
 // replayPathMargins allocates TOTAL once in synthetic latency. The sender reserve
