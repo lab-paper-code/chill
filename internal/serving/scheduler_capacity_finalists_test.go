@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
@@ -103,7 +103,7 @@ func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
 	got, stats = v2.Candidates(problem, problem.Table, 1, 1, 4, time.Time{})
 	if len(got) != 1 || !slices.Equal(got[0].Choice, make([]int, len(p.plans))) ||
 		!stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 1 ||
-		len(stats.SearchSteps) != 1 || stats.SearchSteps[0].Start != "keep" || stats.SearchSteps[0].K != 0 {
+		len(stats.SearchSteps) != 1 || stats.SearchSteps[0].Start != capacitySearchStartKeep || stats.SearchSteps[0].K != 0 {
 		t.Fatalf("partial endpoint lost at origin-only budget: finalists=%+v stats=%+v", got, stats)
 	}
 	deadline := time.Now().Add(-time.Second)

@@ -1,8 +1,9 @@
 package v2
 
 import (
-	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 // v2Merit ranks positive-coverage moves by ΔE/Δcov. Nonpositive coverage

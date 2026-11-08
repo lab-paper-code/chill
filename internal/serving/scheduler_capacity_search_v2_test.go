@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
-	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestSchedulerSettingsPlanSearch(t *testing.T) {
@@ -233,12 +233,12 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 			found, pricedOrigin, lostFeasibility := false, false, false
 			var previous SchedulerPlanSearchStep
 			for _, step := range p.searched.Steps {
-				if step.Start != "keep" && step.Start != "empty" && step.Start != "priced" ||
+				if step.Start != capacitySearchStartKeep && step.Start != "empty" && step.Start != "priced" ||
 					step.ComparisonWindow != time.Duration(p.period*1e9) {
 					t.Fatalf("invalid start/window: %+v", step)
 				}
 				pricedOrigin = pricedOrigin || step.Start == "priced" && step.K == 0
-				if step.Start == "keep" && step.K > 0 {
+				if step.Start == capacitySearchStartKeep && step.K > 0 {
 					found = found || step.Phase == tc.phase && step.K == tc.k
 					lostFeasibility = lostFeasibility || previous.Feasible && !step.Feasible
 				}

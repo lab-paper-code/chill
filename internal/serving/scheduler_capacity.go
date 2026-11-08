@@ -4,11 +4,12 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"maps"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestCapacityPricedDeterminism(t *testing.T) {

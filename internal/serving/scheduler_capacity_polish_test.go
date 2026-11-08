@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
-	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestCapacityPolishStrictImprovementAndTermination(t *testing.T) {

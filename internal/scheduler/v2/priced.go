@@ -1,9 +1,10 @@
 package v2
 
 import (
-	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"math"
 	"slices"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 // capacityPrices owns Tick-local buffers; the fixed iteration loop allocates nothing.

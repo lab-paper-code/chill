@@ -1,9 +1,10 @@
 package v2
 
 import (
-	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"slices"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 type CoreStats struct {

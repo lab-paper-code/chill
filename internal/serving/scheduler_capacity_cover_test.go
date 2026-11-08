@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
-	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestCapacityCoverSatisfiedAndOverload(t *testing.T) {
@@ -30,7 +30,7 @@ func TestCapacityCoverSatisfiedAndOverload(t *testing.T) {
 			coverSteps := 0
 			var previous protocol.Step
 			for _, step := range stats.SearchSteps {
-				if step.Start == "keep" && step.K == 0 && step.Feasible {
+				if step.Start == capacitySearchStartKeep && step.K == 0 && step.Feasible {
 					t.Fatal("fixture must start insufficient")
 				}
 				if step.Phase == protocol.Cover {
