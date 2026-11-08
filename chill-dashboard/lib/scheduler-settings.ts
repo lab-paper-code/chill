@@ -3,7 +3,7 @@ import type { SchedulerSettings } from "./read-types.ts"
 // Public editable contract: internal/serving/scheduler.go SchedulerSettings.
 // Runtime declarations returned alongside GET settings are not editable here.
 export type NumericSettingKey = { [K in keyof SchedulerSettings]-?: NonNullable<SchedulerSettings[K]> extends number | bigint ? K : never }[keyof SchedulerSettings]
-export type SettingField = {key:Exclude<NumericSettingKey,"requestTimeout">|"planSearchStrategy"|"planPostFilterFinalists"|"planPricedStart";label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string;kind?:"strategy"|"boolean";defaultValue?:string|boolean|number}
+export type SettingField = {key:Exclude<NumericSettingKey,"requestTimeout">|"observedPathBudgets"|"planSearchStrategy"|"planPostFilterFinalists"|"planPricedStart";label:string;help:string;group:"cycle"|"limit"|"capacity"|"advanced";unit?:string;kind?:"strategy"|"boolean";defaultValue?:string|boolean|number}
 export const settingFields: SettingField[] = [
   {key:"observationWindowNanos",label:"부하를 살펴볼 구간",help:"판단할 때 최근 요청 부하를 이만큼 살펴봐요.",group:"cycle"},
   {key:"controlIntervalNanos",label:"운영 판단 주기",help:"이 간격마다 새로 판단해요.",group:"cycle"},
@@ -11,6 +11,8 @@ export const settingFields: SettingField[] = [
   {key:"transitionReserveFraction",label:"전환 예비 비율",help:"전환 중 실제 준비된 용량으로 수요와 예비를 감당해요. 0은 별도 예비 없음, 범위는 0~1이에요.",group:"cycle"},
   {key:"scaleDownHeadroomFraction",label:"하강 용량 여유",help:"최종 하강 경로가 현재 유효 수요의 (1 + 비율)을 감당해야 해요. 0은 추가 여유 없음, 범위는 0~1이에요. 회복이나 중간 전환 예비를 부풀리지 않아요.",group:"cycle"},
   {key:"completionMarginMS",label:"완료 여유",help:"실행이 끝난 뒤 응답까지 요청마다 이만큼 더해 예상 완료 시각을 계산해요.",group:"capacity",unit:"ms"},
+  {key:"observedPathBudgets",label:"관측 경로 예산 적용",help:"관측한 TOTAL·POST 예산을 용량 계산과 새 요청에 적용해요. 끄면 완료 여유 설정을 사용하고 관측 수집과 원본 기록은 유지해요. 생략 시 사용해요.",group:"capacity",kind:"boolean",defaultValue:true},
+  {key:"capacityWorkers",label:"용량 행 동시 계산 수",help:"0은 자동으로 GOMAXPROCS의 절반(최소 1개), 양수는 지정한 동시 계산 수예요. CPU를 예약하지 않아 여유를 보장하지 않아요. 줄이면 실행 중인 계산은 끝까지 진행해요.",group:"capacity",unit:"개",defaultValue:0},
   {key:"servingMemoryBytes",label:"서비스 실행 메모리",help:"측정한 모델 메모리에 인스턴스마다 더하는 메모리예요. 절반을 대기 요청에 써요. 노드 자원은 배포 설정에서 관리해요.",group:"limit"},
   {key:"maxReplicas",label:"복제 수 상한",help:"서비스 복제 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},
   {key:"maxInstances",label:"인스턴스 수 상한",help:"인스턴스 수를 이만큼까지 살펴봐요.",group:"limit",unit:"개"},

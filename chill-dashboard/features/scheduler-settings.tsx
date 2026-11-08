@@ -38,6 +38,8 @@ const nodeList = (names:string[]) => {
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
 function plain(field:Field,value:WireInteger|string|boolean|undefined):string {
+  if(field.key==="observedPathBudgets")return onOff(value==null?true:Boolean(value))
+  if(field.key==="capacityWorkers"&&(value==null||BigInt(value)===0n))return "자동 (GOMAXPROCS 절반, 최소 1개)"
   if(value==null)return "기록 없음"
   if(field.key==="planSearchStrategy")return schedulerLabel(String(value))
   if(typeof value==="boolean")return onOff(value)
@@ -406,11 +408,11 @@ export function SchedulerSettingsPage() {
 
   const editField=(field:Field)=>shown&&<EditRow key={field.key} editKey={field.key} label={field.label} help={field.help} changed={!!count&&String(baseline!.settings[field.key])!==String(shown[field.key])}
     initial={field.kind==="boolean"?Boolean(shown[field.key]??field.defaultValue):field.key.endsWith("Nanos")?nanosToMilliseconds(shown[field.key] as WireInteger):String(shown[field.key]??field.defaultValue??"")} unit={field.key.endsWith("Nanos")?"ms":field.key==="servingMemoryBytes"?"bytes":field.unit}
-    range={field.key==="planPolishActive"?"0 이상의 정수, 0은 전체":field.key==="capacityBisectionWidth"?"0 초과 1 이하 유한한 수":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
+    range={field.key==="capacityWorkers"?"0 이상의 정수, 0은 자동 (GOMAXPROCS 절반, 최소 1개)":field.key==="planPolishActive"?"0 이상의 정수, 0은 전체":field.key==="capacityBisectionWidth"?"0 초과 1 이하 유한한 수":field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"?"0 ~ 1 사이 유한한 수":field.key.endsWith("Nanos")?"0보다 큰 밀리초, 소수점 아래 6자리까지":field.key==="completionMarginMS"?"0 이상의 밀리초":field.key==="servingMemoryBytes"?"0 ~ 18446744073709551615 사이 바이트 수":"1 이상의 정수"}
     save={value=>{
-      // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms, uint64 memory bytes, positive int64 otherwise.
+      // Same validation as the wire: ms with ≤6 decimals → nanos, nonnegative margin ms and capacity workers, uint64 memory bytes, positive int64 otherwise.
       if(field.kind){edit(base=>({...base,[field.key]:value}));return}
-      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,1n):field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,field.key==="planPolishActive"?0n:1n,9223372036854775807n)
+      const text=value as string,parsed=field.key.endsWith("Nanos")?millisecondsToNanos(text,1n):field.key==="transitionReserveFraction"||field.key==="scaleDownHeadroomFraction"||field.key==="capacityBisectionWidth"?reserveFraction(text):field.key==="completionMarginMS"?marginMilliseconds(text):field.key==="servingMemoryBytes"?wireInteger(text,0n,18446744073709551615n):wireInteger(text,field.key==="planPolishActive"||field.key==="capacityWorkers"?0n:1n,9223372036854775807n)
       if(field.key==="capacityBisectionWidth"&&(Number(parsed)<=0||Number(parsed)>1))throw new Error("0 초과 1 이하의 유한한 값을 적어 주세요.")
       edit(base=>({...base,[field.key]:parsed}))
     }} disabled={blocked}/>

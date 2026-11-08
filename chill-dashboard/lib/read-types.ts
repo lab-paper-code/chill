@@ -58,6 +58,8 @@ export type SchedulerSettings = {
   scaleDownHeadroomFraction:number
   maxReplicas:WireInteger; maxInstances:WireInteger; servingMemoryBytes:WireInteger
   completionMarginMS:number
+  // Historical settings can omit these controls: enabled observed budgets, automatic workers.
+  observedPathBudgets?:boolean; capacityWorkers?:WireInteger
   capacityWindowNanos:WireInteger; capacityWindows:WireInteger; capacityPassingWindows:WireInteger; capacityMinimumRequests:WireInteger
   capacityGridSteps:WireInteger; capacityBisectionWidth:number; capacityTailSamples:WireInteger
   planSearchWorkers:WireInteger

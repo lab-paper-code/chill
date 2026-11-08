@@ -76,7 +76,7 @@ test("operating setting writes retain exact integers and omit runtime-only field
   const {putSchedulerSettings}=load("../features/scheduler-settings.tsx",{...base,"@/lib/client":{}})
   const sent:{path:string;method:string;body:string}[]=[]
   const preserved={defaultOperationCost:{prepare:{seconds:1.25,joules:2.5},remove:{seconds:0,joules:0},power:{seconds:.5,joules:3}},defaultIdlePower:{nodeWatts:4.25,perInstanceWatts:.75},defaultDispatchOccupancyNanos:9223372036854775807n}
-  const planner={planSearchStrategy:"v2",planSearchEvaluations:9223372036854775807n,planExactFinalists:9007199254740993n,planPolishActive:0,planPostFilterFinalists:false,planPricedStart:true}
+  const planner={planSearchStrategy:"v2",planSearchEvaluations:9223372036854775807n,planExactFinalists:9007199254740993n,planPolishActive:0,planPostFilterFinalists:false,planPricedStart:true,observedPathBudgets:false,capacityWorkers:0}
   const settings={observationWindowNanos:9007199254740993n,controls:{placement:true},staticRouting:{service:{instance:1}},staticRoutingValidatedAt:"past",powerObservation:{series:"read-only"},meters:{secret:"runtime"},requestTimeout:10}
   const writer=putSchedulerSettings as unknown as (mutate:(input:{path:string;method:string;body:string})=>Promise<{body:string}>,client:{invalidateQueries:()=>Promise<void>},settings:unknown)=>Promise<unknown>
   await writer(async input=>{sent.push(input);return {body:'{"appliedAt":"2026-11-01T00:00:00Z"}'}},{invalidateQueries:async()=>{}},{...settings,...preserved,...planner})
@@ -112,6 +112,37 @@ test("operating range table edits accumulate a precise draft before review",()=>
   assert.ok(JSON.stringify(value).includes("9007199254.740993ms"))
   const action=(tree.find(element=>element.type==="main")!.props.action as Tree)
   assert.ok(JSON.stringify(action.props.children).includes("1"))
+})
+
+test("capacity settings edit observed policy and zero-auto workers while retaining the draft",()=>{
+  const runner=hooks(),settings={controls:{placement:true},completionMarginMS:29,capacityWorkers:4,capacityWindowNanos:60000000000n,capacityWindows:20,defaultDispatchOccupancyNanos:9007199254740993n}
+  const {SchedulerSettingsPage,SettingsSummary}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"capacity"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}})
+  const field=(key:string)=>{
+    const table=elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
+    const row=(table.props.data as {key:string}[]).find(item=>item.key===key)!
+    const columns=table.props.columns as {key:string;value:(row:unknown)=>Tree}[]
+    return {edit:columns.find(column=>column.key==="edit")!.value(row),value:columns.find(column=>column.key==="value")!.value(row)}
+  }
+  const observed=field("observedPathBudgets")
+  assert.equal(observed.edit.props.initial,true)
+  assert.ok(JSON.stringify(observed.value).includes("사용"))
+  ;(observed.edit.props.save as (value:boolean)=>void)(false)
+  assert.ok(JSON.stringify(field("observedPathBudgets").value).includes("사용 안 함"))
+  for(const invalid of ["-1","1.5",""]){
+    assert.throws(()=>(field("capacityWorkers").edit.props.save as (value:string)=>void)(invalid))
+  }
+  ;(field("capacityWorkers").edit.props.save as (value:string)=>void)("0")
+  assert.ok(JSON.stringify(field("capacityWorkers").value).includes("자동"))
+  ;(field("capacityWorkers").edit.props.save as (value:string)=>void)("3")
+  assert.ok(JSON.stringify(field("capacityWorkers").value).includes("3개"))
+  assert.ok(JSON.stringify(field("completionMarginMS").value).includes("29ms"))
+  assert.ok(JSON.stringify(field("observedPathBudgets").value).includes("사용 안 함"))
+  const historical=SettingsSummary({settings:{controls:{}}}) as Tree
+  const facts=historical.props.items as [string,string][]
+  assert.equal(facts.find(([label])=>label==="관측 경로 예산 적용")?.[1],"사용")
+  assert.match(facts.find(([label])=>label==="용량 행 동시 계산 수")![1],/자동/)
+  assert.equal(settings.capacityWorkers,4)
+  assert.equal(settings.defaultDispatchOccupancyNanos,9007199254740993n)
 })
 
 test("operating sections and numeric, boolean and node Sheets follow URL history and reload",()=>{

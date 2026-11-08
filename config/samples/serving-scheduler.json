@@ -9,6 +9,8 @@
     "maxInstances": 16,
     "servingMemoryBytes": 134217728,
     "completionMarginMS": 29,
+    "observedPathBudgets": true,
+    "capacityWorkers": 0,
     "capacityWindowNanos": 60000000000,
     "capacityWindows": 20,
     "capacityPassingWindows": 19,

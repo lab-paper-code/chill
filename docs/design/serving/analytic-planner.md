@@ -203,6 +203,10 @@ M은 재생이 만드는 서버 slot 대기 Aw와 profile service+batch×d가 �
 
 **configured와 한계.** 기동·결손·표본 부족에서는 기존 `completionMarginMS`를 total·post의 configured 추정값으로 사용한다. 과거 값에서 pre/post 성분을 역산하지 않는다. configured에는 F 이전 비용과 native의 F 차감이 중복될 수 있다. 이 한계는 configured를 쓰는 모든 부하에 적용하며 배칭 축소·처리율 저하·backlog 영향을 별도로 검증한다. 관측 부족만으로 serving을 거절하지 않고 configured를 관측 검증 완료나 중복 제거 완료로 표시하지 않는다. 0.3 req/s·60초의 기대18개 표본에서는 configured가 유지된다. Workload 공유 예산은 후보 Node·routing·batch별 경로 차이를 완전히 설명하지 못한다.
 
+**관측 적용과 계산 병렬성.** `observedPathBudgets`는 생략 시 true다. false이면 용량 입력과 신규 요청의 TOTAL·POST에 `completionMarginMS`를 적용한다. 관측 수집·raw 기록은 계속하며 기존 접수 요청의 동결 예산은 유지한다. OFF에서는 관측 변화만으로 행 key나 계산을 바꾸지 않는다. ON→OFF 전환은 기존 직렬 settings acceptance/Tick 경계에서 configured 정책을 적용하고 관측 활성 행이나 관측 전용 진행 계산을 유효 정책으로 유지하지 않는다.
+
+`capacityWorkers=0` 또는 생략은 `max(1, GOMAXPROCS(0)/2)`, 양수는 지정한 용량 행 동시 계산 수다. 줄이면 실행 중 builder는 끝까지 진행하므로 active가 새 한도를 일시적으로 넘을 수 있고, 늘리면 빈 슬롯을 채운다. worker 변경은 수치 cache·결과를 버리거나 유효 계산을 취소하지 않고 과학적 행 key에 들어가지 않는다. CPU 예약·affinity가 아니며 전역 GOMAXPROCS는 변경하지 않는다. 자동값도 CPU 여유를 보장하지 않고 1 CPU에서는 최소 1개 계산이 필요하다.
+
 기존 LoadWindow가 읽은 행을 재사용하며 추가 archive scan·ring·ticker를 만들지 않는다. 정렬·통계는 Runtime 전역 lock 밖에서 수행한다. 판단 기록에는 출처·창·coverage·활성 예산·행·최신 요구 차이와 반영 대기를 작은 요약과 기존 참조로 연결한다. 요청 표본·profile 전체를 복제하지 않는다. 선택 모델의 예상 지연은 기존 offline replay에서 구하고 실제 경로와 구분한다. 물리 service·preceding idle 비교는 `(instance,batchID)`별 canonical 값을 한 번만 사용한다. 온라인 차이는 batch별 service/G로 보고하며 자동 profile 거절·재측정으로 연결하지 않는다. 기존 ProfileReuseCheck의 다른 Node 확인 측정 계약은 유지한다.
 
 ### 구현 경계와 offline 비교
