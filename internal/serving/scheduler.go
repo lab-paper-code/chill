@@ -30,8 +30,8 @@ type SchedulerSettings struct {
 	ServingMemoryBytes        uint64        `json:"servingMemoryBytes"`
 	CompletionMarginMS        float64       `json:"completionMarginMS"`
 	// ObservedPathBudgets enables measured TOTAL/POST budgets; omission enables them.
-	ObservedPathBudgets *bool `json:"observedPathBudgets,omitempty"`
-	AutonomousWorkloads       []string      `json:"autonomousWorkloads"`
+	ObservedPathBudgets *bool    `json:"observedPathBudgets,omitempty"`
+	AutonomousWorkloads []string `json:"autonomousWorkloads"`
 	// MinimumDemand floors planning demand in requests/second by Workload UID.
 	MinimumDemand map[string]float64 `json:"minimumDemand,omitempty"`
 	// ExcludedNodes names Nodes the planner keeps as they are, like
