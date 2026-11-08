@@ -21,8 +21,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -339,6 +339,8 @@ func TestStoppedPowerChangeFinishesNormalRetirement(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.Mode = servingstate.NativeServingMode
+	config.Policy.DecisionID = "stopped-power-source"
+	config.Policy.ProfileID = old.Profile.ID
 	oldHTTP, _ := preparationNativeHTTPClient(t, ctx, config, *old.Profile)
 	c.observer.native.HTTPClient = oldHTTP
 
