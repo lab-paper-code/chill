@@ -56,7 +56,7 @@ func RequestPathSample(row *RequestRow) (RequestPath, string) {
 	ingress := int64(queue) - row.NativeRunningAt.Sub(*row.NativeQueuedAt).Nanoseconds()
 	post := elapsed - int64(freeze) - int64(native)
 	total := elapsed - (dispatched - accepted) - int64(native)
-	if ingress < 0 || post < 0 || total < 0 {
+	if ingress < 0 || post < 0 {
 		return RequestPath{}, "inverted"
 	}
 	if ingress > math.MaxInt64-total {
