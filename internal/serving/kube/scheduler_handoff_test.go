@@ -474,6 +474,7 @@ func requireStoppedRetirementBoundaries(t *testing.T, c *SchedulerController, go
 
 func requireRetiredHandoffResources(t *testing.T, c *SchedulerController, key client.ObjectKey, old serving.SchedulerInstance) {
 	t.Helper()
+	ctx := c.ctx
 	kube := c.kube
 	for _, resource := range []string{"pod", "service", "config"} {
 		var err error
