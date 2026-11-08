@@ -27,7 +27,7 @@ func TestPathUpperRankBoundaries(t *testing.T) {
 }
 
 func pathBudgetTestRow(d *Definition, received time.Time, extraMS int64) *RequestRow {
-	elapsed, accepted, dispatched := int64((100+extraMS)*int64(time.Millisecond)), int64(10*time.Millisecond), int64(30*time.Millisecond)
+	elapsed, accepted, dispatched := (100+extraMS)*int64(time.Millisecond), int64(10*time.Millisecond), int64(30*time.Millisecond)
 	native := 50.0
 	queued := time.Unix(123, 0)
 	running, finished := queued.Add(8*time.Millisecond), queued.Add(40*time.Millisecond)
@@ -65,7 +65,7 @@ func TestPathBudgetsSupportAndDefinitionSegregation(t *testing.T) {
 			d := &Definition{UID: "workload", Generation: 1, SLO: SLO{Percentile: tc.p}}
 			rows := pathBudgetTestRows(d, from, tc.n)
 			got := ObservePathBudgets(rows, map[string]*Definition{d.Identity(): d}, from, to)[0]
-			if (got.Source == "observed") != tc.observed || got.Samples != tc.n {
+			if (got.Source == PathBudgetObserved) != tc.observed || got.Samples != tc.n {
 				t.Fatalf("sample support: %+v", got)
 			}
 			if tc.observed && (got.TotalMS != 32 || got.PostMS != 15 || math.Abs(got.JudgmentPercentile-(100-(100-tc.p)/2)) > 1e-12) {
@@ -78,7 +78,7 @@ func TestPathBudgetsSupportAndDefinitionSegregation(t *testing.T) {
 	}
 	first := &Definition{UID: "workload", Generation: 1, SLO: SLO{Percentile: 95}}
 	second := &Definition{UID: "workload", Generation: 2, SLO: SLO{Percentile: 95}}
-	other := &Definition{UID: "other", Generation: 1, SLO: SLO{Percentile: 95}}
+	other := &Definition{UID: schedulerTestOther, Generation: 1, SLO: SLO{Percentile: 95}}
 	rows := append(pathBudgetTestRows(first, from, 119), pathBudgetTestRows(second, from, 118)...)
 	rows = append(rows, pathBudgetTestRows(other, from, 118)...)
 	definitions := map[string]*Definition{first.Identity(): first, second.Identity(): second, other.Identity(): other}
@@ -87,12 +87,12 @@ func TestPathBudgetsSupportAndDefinitionSegregation(t *testing.T) {
 		t.Fatalf("definitions merged: %+v", got)
 	}
 	for _, budget := range got {
-		if (budget.Source == "observed") != (budget.DefinitionID == first.Identity()) {
+		if (budget.Source == PathBudgetObserved) != (budget.DefinitionID == first.Identity()) {
 			t.Fatalf("support borrowed from another definition or UID: %+v", got)
 		}
 	}
 	delete(definitions, first.Identity())
-	if budget := ObservePathBudgets(rows[:119], definitions, from, to)[0]; budget.Source != "configured" || budget.Reason != "definition_missing" {
+	if budget := ObservePathBudgets(rows[:119], definitions, from, to)[0]; budget.Source != PathBudgetConfigured || budget.Reason != "definition_missing" {
 		t.Fatalf("missing authoritative definition accepted: %+v", budget)
 	}
 }
@@ -105,7 +105,7 @@ func TestPathBudgetsOrderStatisticOutliersAndBatchDependence(t *testing.T) {
 	rows := pathBudgetTestRows(d, from, 200)
 	rows[0] = pathBudgetTestRow(d, from.Add(time.Second), 1000)
 	got := ObservePathBudgets(rows, definitions, from, to)[0]
-	if got.Source != "observed" || got.TotalMS != 32 || got.PostMS != 15 || got.Batches != 1 || got.MaxBatchSamples != 200 || got.Samples != 200 {
+	if got.Source != PathBudgetObserved || got.TotalMS != 32 || got.PostMS != 15 || got.Batches != 1 || got.MaxBatchSamples != 200 || got.Samples != 200 {
 		t.Fatalf("one outlier or correlated batch changed request-weighted rank: %+v", got)
 	}
 	rows[1] = pathBudgetTestRow(d, from.Add(time.Second), 1000)
@@ -131,7 +131,7 @@ func TestPathBudgetsCompletionWindowAndReceiptCohort(t *testing.T) {
 	normal := pathBudgetTestRow(d, from.Add(100*time.Millisecond), 0)
 	atEnd := pathBudgetTestRow(d, to.Add(-100*time.Millisecond), 0)
 	failed := pathBudgetTestRow(d, from.Add(200*time.Millisecond), 0)
-	failed.Outcome = "canceled"
+	failed.Outcome = runtimeTimingCanceled
 	unknown := pathBudgetTestRow(d, from.Add(300*time.Millisecond), 0)
 	unknown.Outcome = ""
 	open := pathBudgetTestRow(d, from.Add(400*time.Millisecond), 0)
@@ -162,7 +162,7 @@ func TestPathBudgetsMissingSamplesCannotSupplySupportOrZero(t *testing.T) {
 		rows := pathBudgetTestRows(d, from, 119)
 		mutate(rows[0])
 		got := ObservePathBudgets(rows, definitions, from, to)[0]
-		if got.Source != "configured" || got.Samples != 118 || got.Missing != 1 || got.Completed != 119 || len(got.MissingReasons) == 0 {
+		if got.Source != PathBudgetConfigured || got.Samples != 118 || got.Missing != 1 || got.Completed != 119 || len(got.MissingReasons) == 0 {
 			t.Fatalf("unusable request became successful zero: %+v", got)
 		}
 	}
@@ -173,7 +173,7 @@ func TestPathBudgetsMissingSamplesCannotSupplySupportOrZero(t *testing.T) {
 		row.ServerTiming = RequestTimings{}
 		row.ServerTiming.Record(ServerSenderFreeze, 0)
 	}
-	if got := ObservePathBudgets(rows, definitions, from, to)[0]; got.Source != "observed" || got.TotalMS != 0 || got.PostMS != 0 {
+	if got := ObservePathBudgets(rows, definitions, from, to)[0]; got.Source != PathBudgetObserved || got.TotalMS != 0 || got.PostMS != 0 {
 		t.Fatalf("measured zero treated as missing: %+v", got)
 	}
 }

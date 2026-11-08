@@ -45,7 +45,7 @@ func TestRequestPathSampleUsesDirectWorkerSpans(t *testing.T) {
 	if row.QueuedNanos == nil || row.RunningNanos == nil {
 		t.Fatal("test did not reconstruct native offsets")
 	}
-	if _, reason = RequestPathSample(&row); reason != "missing_native_timing" {
+	if _, reason = RequestPathSample(&row); reason != requestPathMissingNativeTiming {
 		t.Fatalf("reconstructed offsets admitted as native evidence: %q", reason)
 	}
 }
@@ -68,7 +68,7 @@ func TestRequestPathSamplePreservesZeroAndExcludesUnusable(t *testing.T) {
 		{"native-failure", func(r *RequestRow) { r.NativeOutcome = "batch_error" }, "native_failed"},
 		{"native-error", func(r *RequestRow) { r.NativeError = "runner failed" }, "native_failed"},
 		{"native-incomplete", func(r *RequestRow) { r.NativeExecutionComplete = false }, "incomplete"},
-		{"response-failed", func(r *RequestRow) { r.Outcome = "canceled" }, "failed"},
+		{"response-failed", func(r *RequestRow) { r.Outcome = runtimeTimingCanceled }, "failed"},
 		{"response-incomplete", func(r *RequestRow) { r.ExecutionComplete = false }, "incomplete"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

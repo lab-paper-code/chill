@@ -98,7 +98,7 @@ func capacityLifecycleFixture(variants int) (SchedulerSettings, SchedulerSnapsho
 func capacityLifecycleBudgets(snapshot SchedulerSnapshot, values ...float64) SchedulerSnapshot {
 	snapshot.PathBudgets = nil
 	for i, w := range snapshot.Workloads {
-		snapshot.PathBudgets = append(snapshot.PathBudgets, PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "observed",
+		snapshot.PathBudgets = append(snapshot.PathBudgets, PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved,
 			From: snapshot.At.Add(-time.Minute), To: snapshot.At, TotalMS: values[i], PostMS: values[i] / 2, JudgmentPercentile: 97.5})
 	}
 	return snapshot
@@ -285,7 +285,7 @@ func TestCapacityTableStructuralRemovalDiscardsActiveAndOldTask(t *testing.T) {
 	replacement := nextCapacityBuild(t, started)
 	assertCapacityGroup(t, table, 2, 1, CapacityPending)
 	other := *snapshot.Workloads[0]
-	other.UID = "other"
+	other.UID = schedulerTestOther
 	snapshot.Workloads = append(snapshot.Workloads, &other)
 	settings.AutonomousWorkloads = append(settings.AutonomousWorkloads, other.UID)
 	snapshot.Options[0].CompatibleUIDs = append([]string(nil), settings.AutonomousWorkloads...)

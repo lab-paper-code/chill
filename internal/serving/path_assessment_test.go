@@ -46,7 +46,7 @@ func TestAssessPathKeepsZeroMissingAndOutcomePopulations(t *testing.T) {
 	missing := assessmentTestRow(snapshot, "missing")
 	missing.NativeQueuedAt = nil
 	failed := assessmentTestRow(snapshot, "failed")
-	failed.Outcome = "canceled"
+	failed.Outcome = runtimeTimingCanceled
 	incomplete := assessmentTestRow(snapshot, "incomplete")
 	incomplete.ExecutionComplete = false
 	open := assessmentTestRow(snapshot, "open")
@@ -103,7 +103,7 @@ func TestAssessPathDeduplicatesPhysicalBatchesAndUsesActualIdleContext(t *testin
 	c := assessmentTestRow(snapshot, "c")
 	c.BatchID, c.ServiceDurationNanos, c.PrecedingIdleNanos = 2, int64(30*time.Millisecond), &long
 	failed := assessmentTestRow(snapshot, "failed")
-	failed.BatchID, failed.Outcome, failed.NativeExecutionComplete, failed.ServiceDurationNanos = 3, "canceled", false, 0
+	failed.BatchID, failed.Outcome, failed.NativeExecutionComplete, failed.ServiceDurationNanos = 3, runtimeTimingCanceled, false, 0
 	// This is the actual sparse raw native-supplement contract: no Node/ProfileID.
 	late := &RequestRow{Kind: RequestRowNative, RequestID: failed.RequestID, WorkloadUID: failed.WorkloadUID, DefinitionID: failed.DefinitionID,
 		Instance: failed.Instance, BatchID: 3, BatchSize: 1, NativeExecutionComplete: true, NativeOutcome: outcomeCompleted,
@@ -138,7 +138,7 @@ func TestAssessPathSeparatesMismatchedDefinitionProfileAndTarget(t *testing.T) {
 		{"definition", func(r *RequestRow) { r.DefinitionID = "old-definition" }, false, true},
 		{"workload", func(r *RequestRow) { r.WorkloadUID = "old-workload" }, false, true},
 		{"profile", func(r *RequestRow) { r.ProfileID = "old-profile" }, true, false},
-		{"node", func(r *RequestRow) { r.Node = &NodeReference{Name: "other", UID: "other"} }, true, false},
+		{"node", func(r *RequestRow) { r.Node = &NodeReference{Name: schedulerTestOther, UID: schedulerTestOther} }, true, false},
 	} {
 		t.Run(change.name, func(t *testing.T) {
 			row := assessmentTestRow(snapshot, "actual")

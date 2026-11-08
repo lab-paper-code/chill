@@ -15,32 +15,48 @@ type RequestPath struct {
 // RequestPathSample uses server elapsed offsets and direct worker-clock spans only.
 // A nonempty reason excludes this row from completed path samples, never serving.
 func RequestPathSample(row *RequestRow) (RequestPath, string) {
+	freeze, reason := requestPathTiming(row)
+	if reason != "" {
+		return RequestPath{}, reason
+	}
+	return requestPathArithmetic(row, freeze)
+}
+
+// requestPathTiming checks eligibility and the presence of direct clock evidence.
+func requestPathTiming(row *RequestRow) (time.Duration, string) {
 	if row == nil {
-		return RequestPath{}, "missing_row"
+		return 0, "missing_row"
 	}
 	if row.Error != "" || (row.Outcome != "" && row.Outcome != outcomeCompleted && row.Outcome != outcomeIncomplete) {
-		return RequestPath{}, "failed"
+		return 0, "failed"
 	}
 	if row.NativeError != "" || (row.NativeOutcome != "" && row.NativeOutcome != outcomeCompleted) {
-		return RequestPath{}, "native_failed"
+		return 0, "native_failed"
 	}
 	if !row.ExecutionComplete || !row.NativeExecutionComplete || row.Outcome == outcomeIncomplete {
-		return RequestPath{}, "incomplete"
+		return 0, "incomplete"
 	}
 	if row.Outcome == "" || row.NativeOutcome == "" {
-		return RequestPath{}, "missing_outcome"
+		return 0, "missing_outcome"
 	}
 	freeze, frozen := row.ServerTiming.Elapsed(ServerSenderFreeze)
 	if row.ElapsedNanos == nil || row.AcceptedNanos == nil || row.DispatchedNanos == nil || !frozen {
-		return RequestPath{}, "missing_server_timing"
+		return 0, "missing_server_timing"
 	}
 	// Reconstructed QueuedNanos/RunningNanos cannot establish worker ingress.
 	if row.NativeQueuedAt == nil || row.NativeRunningAt == nil || row.NativeFinishedAt == nil || row.NativeElapsedMS == nil {
-		return RequestPath{}, "missing_native_timing"
+		return 0, requestPathMissingNativeTiming
 	}
 	if row.NativeQueuedAt.IsZero() || row.NativeRunningAt.IsZero() || row.NativeFinishedAt.IsZero() {
-		return RequestPath{}, "missing_native_timing"
+		return 0, requestPathMissingNativeTiming
 	}
+	return freeze, ""
+}
+
+const requestPathMissingNativeTiming = "missing_native_timing"
+
+// requestPathArithmetic derives spans after timing evidence has been checked.
+func requestPathArithmetic(row *RequestRow, freeze time.Duration) (RequestPath, string) {
 	if math.IsNaN(row.QueueMS) || math.IsInf(row.QueueMS, 0) || math.IsNaN(*row.NativeElapsedMS) || math.IsInf(*row.NativeElapsedMS, 0) {
 		return RequestPath{}, "nonfinite"
 	}

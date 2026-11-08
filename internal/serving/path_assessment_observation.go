@@ -8,6 +8,8 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+const outcomeUnknown = "unknown"
+
 type assessmentKey struct {
 	uid, definition, profile string
 	node                     NodeReference
@@ -213,11 +215,11 @@ func assessmentObserveRequest(g *assessmentSamples, row *RequestRow, at time.Tim
 	settled := row.ElapsedNanos != nil && *row.ElapsedNanos >= 0 && !row.ReceivedAt.Add(time.Duration(*row.ElapsedNanos)).After(at)
 	outcome := row.Outcome
 	if !settled || outcome == "" {
-		outcome = "unknown"
+		outcome = outcomeUnknown
 	}
 	o.Outcomes[outcome]++
 	switch {
-	case !settled || outcome == "unknown" || outcome == outcomeIncomplete:
+	case !settled || outcome == outcomeUnknown || outcome == outcomeIncomplete:
 		o.Incomplete++
 	case outcome != outcomeCompleted || row.Error != "":
 		o.Failed++

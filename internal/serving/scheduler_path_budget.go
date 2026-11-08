@@ -8,14 +8,14 @@ func ResolvePathBudget(settings SchedulerSettings, budgets []PathBudget, w *Defi
 	selected := PathBudget{WorkloadUID: w.UID, DefinitionID: identity}
 	for _, budget := range budgets {
 		if budget.WorkloadUID == w.UID && budget.DefinitionID == identity {
-			if budget.Source == "observed" {
+			if budget.Source == PathBudgetObserved {
 				return budget
 			}
 			selected = budget
 			break
 		}
 	}
-	selected.Source = "configured"
+	selected.Source = PathBudgetConfigured
 	selected.TotalMS, selected.PostMS = settings.CompletionMarginMS, settings.CompletionMarginMS
 	selected.JudgmentPercentile = 100 - (100-w.SLO.Percentile)/2
 	return selected

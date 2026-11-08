@@ -8,6 +8,12 @@ import (
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
+// Path budget sources distinguish measured bounds from configured fallback.
+const (
+	PathBudgetObserved   = "observed"
+	PathBudgetConfigured = "configured"
+)
+
 // PathBudget summarizes request-weighted path observations for one immutable
 // Workload definition. Only Source == "observed" supplies measured bounds;
 // configured budgets leave TotalMS/PostMS unset for the settings adapter.
@@ -77,7 +83,7 @@ func ObservePathBudgets(rows []*RequestRow, definitions map[string]*Definition, 
 		group := groups[key]
 		if group == nil {
 			group = &pathBudgetSamples{budget: PathBudget{
-				WorkloadUID: key.uid, DefinitionID: key.definition, From: from, To: to, Source: "configured",
+				WorkloadUID: key.uid, DefinitionID: key.definition, From: from, To: to, Source: PathBudgetConfigured,
 			}}
 			groups[key] = group
 		}
@@ -120,34 +126,7 @@ func ObservePathBudgets(rows []*RequestRow, definitions map[string]*Definition, 
 	}
 	result := make([]PathBudget, 0, len(groups))
 	for _, group := range groups {
-		budget := &group.budget
-		budget.Batches = len(group.batches)
-		definition := definitions[budget.DefinitionID]
-		switch {
-		case definition == nil || definition.UID != budget.WorkloadUID || definition.Identity() != budget.DefinitionID:
-			budget.Reason = "definition_missing"
-		case math.IsNaN(definition.SLO.Percentile) || math.IsInf(definition.SLO.Percentile, 0) || definition.SLO.Percentile <= 0 || definition.SLO.Percentile > 100:
-			budget.Reason = "percentile_invalid"
-		case definition.SLO.Percentile == 100:
-			budget.JudgmentPercentile = 100
-			budget.Reason = "absolute_percentile"
-		default:
-			p := definition.SLO.Percentile
-			budget.JudgmentPercentile = p
-			q := 1 - (1-p/100)/2
-			rank := pathUpperRank(budget.Samples, q)
-			if rank == 0 {
-				budget.Reason = "insufficient_samples"
-				break
-			}
-			sort.Slice(group.total, func(i, j int) bool { return group.total[i] < group.total[j] })
-			sort.Slice(group.post, func(i, j int) bool { return group.post[i] < group.post[j] })
-			budget.TotalMS = float64(group.total[rank-1]) / float64(time.Millisecond)
-			budget.PostMS = float64(group.post[rank-1]) / float64(time.Millisecond)
-			budget.JudgmentPercentile = 100 * q
-			budget.Source = "observed"
-		}
-		result = append(result, *budget)
+		result = append(result, group.project(definitions[group.budget.DefinitionID]))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].WorkloadUID != result[j].WorkloadUID {
@@ -156,6 +135,37 @@ func ObservePathBudgets(rows []*RequestRow, definitions map[string]*Definition, 
 		return result[i].DefinitionID < result[j].DefinitionID
 	})
 	return result
+}
+
+// project reduces one cohort to bounds without changing its diagnostics.
+func (group *pathBudgetSamples) project(definition *Definition) PathBudget {
+	budget := &group.budget
+	budget.Batches = len(group.batches)
+	switch {
+	case definition == nil || definition.UID != budget.WorkloadUID || definition.Identity() != budget.DefinitionID:
+		budget.Reason = "definition_missing"
+	case math.IsNaN(definition.SLO.Percentile) || math.IsInf(definition.SLO.Percentile, 0) || definition.SLO.Percentile <= 0 || definition.SLO.Percentile > 100:
+		budget.Reason = "percentile_invalid"
+	case definition.SLO.Percentile == 100:
+		budget.JudgmentPercentile = 100
+		budget.Reason = "absolute_percentile"
+	default:
+		p := definition.SLO.Percentile
+		budget.JudgmentPercentile = p
+		q := 1 - (1-p/100)/2
+		rank := pathUpperRank(budget.Samples, q)
+		if rank == 0 {
+			budget.Reason = "insufficient_samples"
+			break
+		}
+		sort.Slice(group.total, func(i, j int) bool { return group.total[i] < group.total[j] })
+		sort.Slice(group.post, func(i, j int) bool { return group.post[i] < group.post[j] })
+		budget.TotalMS = float64(group.total[rank-1]) / float64(time.Millisecond)
+		budget.PostMS = float64(group.post[rank-1]) / float64(time.Millisecond)
+		budget.JudgmentPercentile = 100 * q
+		budget.Source = PathBudgetObserved
+	}
+	return *budget
 }
 
 // pathUpperRank returns the smallest one-based order statistic k satisfying

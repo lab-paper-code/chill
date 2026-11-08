@@ -15,13 +15,13 @@ func TestCapacityPathBudgetsStayWithinWorkloadAndDefinition(t *testing.T) {
 	s.CompletionMarginMS = 3
 	w := snap.Workloads[0]
 	other := *w
-	other.UID = "other"
+	other.UID = schedulerTestOther
 	stale := *w
 	stale.Generation++
 	snap.PathBudgets = []PathBudget{
-		{WorkloadUID: other.UID, DefinitionID: other.Identity(), Source: "observed", TotalMS: 30, PostMS: 7, JudgmentPercentile: 97.5},
-		{WorkloadUID: w.UID, DefinitionID: stale.Identity(), Source: "observed", TotalMS: 100, PostMS: 100, JudgmentPercentile: 97.5},
-		{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "observed", TotalMS: 21, PostMS: 2, JudgmentPercentile: 97.5},
+		{WorkloadUID: other.UID, DefinitionID: other.Identity(), Source: PathBudgetObserved, TotalMS: 30, PostMS: 7, JudgmentPercentile: 97.5},
+		{WorkloadUID: w.UID, DefinitionID: stale.Identity(), Source: PathBudgetObserved, TotalMS: 100, PostMS: 100, JudgmentPercentile: 97.5},
+		{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved, TotalMS: 21, PostMS: 2, JudgmentPercentile: 97.5},
 	}
 	row := capacityBuildForTest(t, s, snap)
 	if row.Reason != CapacityServiceExceedsSLO || row.Kappa == nil || *row.Kappa != 0 {
@@ -34,7 +34,7 @@ func TestCapacityPathBudgetsStayWithinWorkloadAndDefinition(t *testing.T) {
 	missing := *w
 	missing.Generation += 2
 	fallback := ResolvePathBudget(s, snap.PathBudgets, &missing)
-	if fallback.Source != "configured" || fallback.TotalMS != 3 || fallback.PostMS != 3 || fallback.JudgmentPercentile != 97.5 {
+	if fallback.Source != PathBudgetConfigured || fallback.TotalMS != 3 || fallback.PostMS != 3 || fallback.JudgmentPercentile != 97.5 {
 		t.Fatalf("missing definition did not use configured split policy: %+v", fallback)
 	}
 	input := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], w, ResolvePathBudget(s, snap.PathBudgets, w))
@@ -103,7 +103,7 @@ func TestReplayExternalBudgetChargesTotalOnce(t *testing.T) {
 		w := snap.Workloads[0]
 		w.SLO.TargetLatency = time.Second
 		snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{1e6})
-		budget := PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "observed", TotalMS: tc.total, PostMS: tc.post, JudgmentPercentile: 97.5}
+		budget := PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved, TotalMS: tc.total, PostMS: tc.post, JudgmentPercentile: 97.5}
 		snap.PathBudgets = []PathBudget{budget}
 		snap.Arrivals = []SchedulerArrival{{ID: "arrival", At: snap.ObservationEnd.Add(-s.ObservationWindow), Definition: w, Accepted: true}}
 		result := schedulerKeepForTest(t, s, snap)
@@ -123,7 +123,7 @@ func TestReplayAcceptedMarginSurvivesNewBudget(t *testing.T) {
 		s, snap := schedulerFixture()
 		s.AutonomousWorkloads, snap.Arrivals = nil, nil
 		w := snap.Workloads[0]
-		snap.PathBudgets = []PathBudget{{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "observed", TotalMS: 900, PostMS: 800, JudgmentPercentile: 97.5}}
+		snap.PathBudgets = []PathBudget{{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved, TotalMS: 900, PostMS: 800, JudgmentPercentile: 97.5}}
 		snap.Outstanding = []SchedulerRequest{{ID: "old", Definition: w, ReceivedAt: snap.At.Add(-100 * time.Millisecond), Elapsed: 100 * time.Millisecond,
 			Phase: phaseReturning, Instance: snap.Instances[0].ID, CompletionMarginMS: &margin}}
 		e := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), w.UID)
@@ -240,7 +240,7 @@ func TestReplayMixedWorkloadsUseTheirOwnBudgets(t *testing.T) {
 	s.AutonomousWorkloads = nil
 	w := snap.Workloads[0]
 	other := *w
-	other.UID, other.Name = "other", "other"
+	other.UID, other.Name = schedulerTestOther, schedulerTestOther
 	snap.Workloads = append(snap.Workloads, &other)
 	batch := schedulerTestBatchProfile(BatchProfile{Batch: 1, MemoryBytes: 100}, []float64{1e6})
 	snap.Instances[0].Profile.Batches = []BatchProfile{batch}
@@ -248,8 +248,8 @@ func TestReplayMixedWorkloadsUseTheirOwnBudgets(t *testing.T) {
 	i.ID, i.WorkloadUID, i.Routable = "other-instance", other.UID, map[string]bool{other.UID: true}
 	snap.Instances = append(snap.Instances, i)
 	snap.PathBudgets = []PathBudget{
-		{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "observed", TotalMS: 20, PostMS: 3, JudgmentPercentile: 100},
-		{WorkloadUID: other.UID, DefinitionID: other.Identity(), Source: "observed", TotalMS: 7, PostMS: 2, JudgmentPercentile: 100},
+		{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved, TotalMS: 20, PostMS: 3, JudgmentPercentile: 100},
+		{WorkloadUID: other.UID, DefinitionID: other.Identity(), Source: PathBudgetObserved, TotalMS: 7, PostMS: 2, JudgmentPercentile: 100},
 	}
 	for _, d := range snap.Workloads {
 		snap.Arrivals = append(snap.Arrivals, SchedulerArrival{ID: d.UID, At: snap.ObservationEnd.Add(-s.ObservationWindow), Definition: d, Accepted: true})
@@ -293,7 +293,7 @@ func TestReplayRetainedRequestsRespectSenderFreezeBoundary(t *testing.T) {
 				request.NativeSenderElapsedMS = &sender
 			}
 			snap.Outstanding = []SchedulerRequest{request}
-			snap.PathBudgets = []PathBudget{{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "observed", TotalMS: 900, PostMS: 800, JudgmentPercentile: 100}}
+			snap.PathBudgets = []PathBudget{{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved, TotalMS: 900, PostMS: 800, JudgmentPercentile: 100}}
 			estimate := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), w.UID)
 			if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != float64(tc.want) {
 				t.Fatalf("sender boundary charged wrong remaining path: want=%s estimate=%+v", tc.want, estimate)
@@ -390,7 +390,7 @@ func TestInsufficientPathSummaryKeepsConfiguredCapacityPolicy(t *testing.T) {
 	s.CompletionMarginMS = 21
 	w := snap.Workloads[0]
 	from, to := snap.At.Add(-time.Minute), snap.At
-	summary := PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "configured", Reason: "insufficient_samples",
+	summary := PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetConfigured, Reason: "insufficient_samples",
 		From: from, To: to, Samples: 18, Received: 20, Completed: 18, Incomplete: 2, JudgmentPercentile: w.SLO.Percentile}
 	snap.PathBudgets = []PathBudget{summary}
 	row := capacityBuildForTest(t, s, snap)
@@ -405,9 +405,9 @@ func TestInsufficientPathSummaryKeepsConfiguredCapacityPolicy(t *testing.T) {
 		selected.Samples != 18 || selected.Received != 20 || selected.Completed != 18 || selected.Incomplete != 2 {
 		t.Fatalf("configured numerical resolution discarded observation diagnostics: %+v", selected)
 	}
-	summary.Source, summary.TotalMS, summary.PostMS, summary.JudgmentPercentile = "observed", 0, 0, 97.5
+	summary.Source, summary.TotalMS, summary.PostMS, summary.JudgmentPercentile = PathBudgetObserved, 0, 0, 97.5
 	selected = ResolvePathBudget(s, []PathBudget{summary}, w)
-	if selected.TotalMS != 0 || selected.PostMS != 0 || selected.Source != "observed" {
+	if selected.TotalMS != 0 || selected.PostMS != 0 || selected.Source != PathBudgetObserved {
 		t.Fatalf("observed zero was replaced by configured margin: %+v", selected)
 	}
 }
