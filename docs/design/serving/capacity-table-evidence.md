@@ -461,9 +461,9 @@ GAP 판단의 증분 평가 수 범위는 m=4 OFF 361~387743, ON 618~495202; m=8
 
 4단계 게이트 중 미달로 남은 항목: (1) 위 한 조합의 v1 대비 +0.020%; (2) 비용 — 노드 8 b2 모드 4 공간에서 m = 8은 기본 예산 500,000회에서 잘리며 370~515 ms(J는 예산 없는 m = 4·v1과 동일), m = 4도 270~477 ms로 ≤ 100 ms 게이트를 넘는다. 원인은 증분 평가 실측 0.65 µs(제안서 가정 0.2 µs)와 결합 탐색의 분기한정이 자르는 가지가 적어 평가 수가 추정보다 많은 것이다. 제안서 §8 표에 "활성 m의 품질·비용 상충" 행이 더해졌다(§7.8.4). 당시 실제 E5 비용 재측정을 7단계로 계획했으나 실행 근거는 없다. 당시 설정 기본 전략은 `v1`이었다.
 
-#### 7.8.7 그림자 운영(당시 미실행)
+#### 7.8.7 그림자 운영
 
-`planSearchStrategy: shadow`와 `search.shadow` 기록 경로는 당시 구현됐으나 테스트베드 캠페인은 실행하지 않았다. **이 모드와 비교 진단은 2026-11-08 폐기되었다.** 아래 §7.8.8의 그림자 관련 서술은 그 브랜치의 역사적 변경 사실이며 현재 설정·운영 지시가 아니다. §7.8.6의 하네스 품질 차 +0.020%와 비용 게이트 미달을 live 통과로 해석하지 않는다. 현행 공식 선택은 [계획기](analytic-planner.md)를 따른다.
+`planSearchStrategy: shadow`의 테스트베드 E5 네 stage를 2026-11-07에 실행했다. 실제 결과와 판정은 §7.9에 기록한다. **이 모드와 비교 진단은 2026-11-08 폐기되었다.** 아래 §7.8.8의 그림자 관련 서술은 그 브랜치의 역사적 변경 사실이며 현재 설정·운영 지시가 아니다. §7.8.6의 하네스 품질 차 +0.020%와 비용 게이트 미달을 live 통과로 해석하지 않는다. 현행 공식 선택은 [계획기](analytic-planner.md)를 따른다.
 
 #### 7.8.8 origin/main 재적용 뒤 재측정 (리뷰 반영)
 
@@ -503,5 +503,43 @@ SCALE(mobilenet 60·PLC 40·SmolVLM 1.2; v1은 벽시계 5 s / 무제한, v2는 
 
 **비용 게이트 재설정.** 제안서의 ≤ 100 ms는 증분 평가 0.2 µs 가정에서 나온 값이다. 실측은 증분 평가 0.55 µs(벤치)이며, 피복·연마·결합 탐색 루프 비용을 포함하면 500,000회 예산 소진까지 0.42~0.54 s다. 당시 게이트를 Tick 예산 기준으로 다시 뒀다: **v2 탐색 시간 ≤ ControlInterval/10(샘플 10 s에서 1 s)**, 단일 goroutine. 근거: v1의 벽시계 예산이 ControlInterval/2이고, v2는 그 1/5 안에서 결정적(평가 수 예산)으로 끝나야 호스트 속도에 따른 결과 차이가 없으면서 Tick CPU 점유가 10% 이하다. 150,000회 예산은 이 게이트를 더 여유 있게 통과하지만 위 GAP 손실 때문에 채택하지 않았다. 이 재설정은 하네스 기준이며 실제 E5 계획 수(≈130 열거 계획)의 운영 시간은 이 측정에 포함되지 않았다.
 
-당시 남은 미달: 5 b2 한 조합의 v1 대비 +0.020%(허용 가능으로 기록), 그림자 캠페인 미실행.
+위 하네스 측정 시점에는 5 b2 한 조합의 v1 대비 +0.020%(허용 가능으로 기록)와 그림자 캠페인 미실행이 남았다. 후속 실캠페인 결과는 다음 절과 구별한다.
+
+
+### 7.9 테스트베드 E5 그림자 캠페인 (2026-11-07)
+
+공식 fast-deploy source `1ce08d9465fba9d32018add7ca3618bd4ff60488`, Helm revision 218에서 `planSearchStrategy: shadow`를 적용했다. v1이 실제 결정을 내렸다. EvaluationRun `evaluation-wbs7-shadow-20261108`의 UID는 `85a142fa-b774-467a-8ef0-f4cf3f51f01d`이며, 17:26:27Z부터 19:10:57Z까지 기존 네 stage E5를 실행했다. 시나리오 UID·세 workload·수요·10초 제어주기·runtime/profile을 유지했다. 공개 preflight 14개 검사는 통과했다. source와 main merge commit `48363b8e7ade191bffe9376050ce4ccb8ec4d6be`는 구별한다. CI는 사용자 지시로 별도 결과 보고 대상이며, 통과했다고 기록하지 않는다.
+
+전체 실행창의 결정 원문 12페이지를 보관했다. 고유 Tick 407개 중 381개에 양쪽 탐색 결과가 있고, 나머지 26개는 `Pending`으로 탐색 자체가 없다. 중복·충돌과 한쪽 탐색 결과만 있는 Tick은 각각 0개다. coverage의 `UnknownExecutorInfluence`는 보존했으며, 반환된 원문 수만으로 의미 관측 공백까지 없다고 주장하지 않는다.
+
+| 항목 | 관측 |
+|---|---:|
+| 비교 가능한 Tick | 381 |
+| key 동일 | 377 / 381 (98.950131%) |
+| v2 정확 J > v1 정확 J | 3 |
+| v2 − v1 J 최대 / 평균 | 186.041318 / 0.717645 J |
+| 양수 J 차이 최대 비율 | 0.263289% |
+| v2 탐색 시간 p50 / p99 / max | 0.695662 / 27.779898 / 190.171334 ms |
+| v2 벽시계 budgetCut / fallback | 0 / 0 |
+| v1 벽시계 budgetCut | 203 |
+| v2 종료 사유 | noImprovement 381 |
+
+백분위는 정렬된 관측의 nearest rank이며 p50은 짝수 개수에서 낮은 중앙값을 사용한다. J는 양쪽 모두 후처리 전 정확 평가값이다. 세 양수 차이는 18:00:00.732360889Z의 +10.206809 J(+0.014902%), 18:06:08.258427735Z의 +186.041318 J(+0.263289%), 18:06:27.689630645Z의 +77.174577 J(+0.105093%)다.
+
+시간·fallback·벽시계 마감 게이트는 통과했다. 엄격한 J 무악화 게이트는 통과하지 못했다. WBS의 소수 +0.5% 이내 예외를 자동 승인하지 않았고, v2 live는 시작하지 않았다.
+
+EvaluationRun의 `ExecutionComplete=True`, `CleanupComplete=True`, `Published=True`, `PoolAcquired=False/Returned`를 확인했다. 그러나 네 stage의 SLO는 모두 `NOT_EVALUATED`, 최종 측정 판정은 `NOT_EVALUATED/ObservationUnavailable`이다. 요청 신원 누락·격리·raw 오류는 없으며 요청 관측에 `UnknownExecutorInfluence` 공백이 남았다. 완료 지연·성공률·전력의 원수치를 SLO 통과나 비교 검증으로 대체하지 않는다.
+
+전력은 선언된 10 meter 모두의 원문을 보존했다. SCH-16 전체 POOL 집계에서는 실제 Node UID와 control-plane label로 확인한 genesis1을 제외하고 나머지 9 Node를 포함했다. scheduler 후보 제외 Node도 POOL 에너지에서 제외하지 않았다.
+
+| stage | SCH-16 전체 POOL 실측 J |
+|---|---:|
+| E5-7-7 | 171,230.824952 |
+| E5-3-7 | 379,329.973618 |
+| E5-5-7 | 232,370.875380 |
+| E5-5-8D | 245,431.488747 |
+
+포함된 meter는 각 stage에서 모두 complete/policyMet였다. 이 값은 v1 결정 아래의 실제 벽전력이며 v2 에너지 개선 증거가 아니다. 종료 후 정상 settings API로 전략만 v1에 복원하고 실제 readback을 보존했다. 다른 설정·serving 인스턴스·기존 profile/raw를 수동 변경하거나 삭제하지 않았다.
+
+근거 루트는 `/home/genesis1/.cache/chill-assets/ops/pools-deploy/deployB/control-360-scheduler-v2-shadow-20261107T155512Z/`다. `shadow-terminal-native.json`, `shadow-public-result.json`, `measurement-unavailable-diagnostics.json`, `sch16-whole-pool-energy.json`, `post-campaign-nodes.json`, `shadow-strategy-normal-restore.json`, `shadow-ticks/{export-manifest.json,ticks.jsonl,final-summary.json,positive-J-deltas.json,coverage-records.json}`에 원문·집계·한계를 연결했다.
 
