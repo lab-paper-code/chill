@@ -80,6 +80,15 @@ func (o *SchedulerService) preparation(
 	}
 	spec.Instance.RuntimeImage = spec.Config.RuntimeImage
 	spec.Instance.RunnerCommand = spec.Config.RunnerCommand
+	spec.Instance.Profile = &profile
+	if accepted := o.Profiles.Load(); accepted != nil {
+		if published, ok := accepted.Preparations[profile.ID]; ok {
+			// Profile identity includes immutable campaign and reuse-policy identity.
+			// Keep fresh Node, queue and runtime checks above; reuse only the object.
+			spec.Bundle = published.Bundle
+			return spec, nil
+		}
+	}
 	raw, err := json.Marshal(profile.NativeBundle())
 	if err != nil {
 		return spec, err
@@ -87,7 +96,6 @@ func (o *SchedulerService) preparation(
 	if int64(len(raw)) > o.opts.MaxEvidenceBytes {
 		return spec, errors.New("verified profile bundle exceeds immutable object bound")
 	}
-	spec.Instance.Profile = &profile
 	spec.Bundle = evidencestore.ObjectIdentity{
 		Store: o.opts.StoreName, Key: "serving/profiles/" + profile.ID + "/bundle.json", Size: int64(len(raw)),
 	}
@@ -180,27 +188,10 @@ func (o *SchedulerService) measuredPreparation(
 	if string(node.UID) != p.Condition.NodeUID {
 		return spec, fmt.Errorf("measured Node UID required")
 	}
-	// The measured resource envelope is an execution condition, not a fresh
-	// serving-only cap derived from an observed peak.
 	memory := p.Condition.Actor.MemoryLimitBytes
-	if memory <= 0 {
-		return spec, fmt.Errorf("measured actor memory envelope required")
-	}
-	var peak uint64
-	for _, batch := range p.Batches {
-		if batch.MemoryBytes == 0 {
-			return spec, fmt.Errorf("profile batch %d lacks measured memory", batch.Batch)
-		}
-		peak = max(peak, batch.MemoryBytes)
-	}
-	if peak >= uint64(memory) {
-		return spec, fmt.Errorf("measured actor memory envelope has no queue headroom")
-	}
-	// ponytail: Go's default GOGC=100 lets the firstfloor heap reach twice its live
-	// queue, so the queue cap is half the headroom; measure queue RSS if it OOMs again.
-	queueBytes := min(min(servingMemory, uint64(memory)-peak)/2, native.MaxFrameBytes)
-	if queueBytes < 1 {
-		return spec, fmt.Errorf("settings.servingMemoryBytes must hold the firstfloor queue")
+	queueBytes, err := measuredQueueBytes(p, servingMemory)
+	if err != nil {
+		return spec, err
 	}
 	binding := storekube.Binding{
 		Store: o.opts.StoreName, Endpoint: o.opts.StoreEndpoint, Bucket: o.opts.StoreBucket,
@@ -240,6 +231,32 @@ func (o *SchedulerService) measuredPreparation(
 		Config: actor,
 	}
 	return spec, nil
+}
+
+// measuredQueueBytes is shared by full preparation and policy-only acceptance.
+// The measured resource envelope remains fixed when user queue headroom changes.
+func measuredQueueBytes(p serving.Profile, servingMemory uint64) (uint64, error) {
+	memory := p.Condition.Actor.MemoryLimitBytes
+	if memory <= 0 {
+		return 0, fmt.Errorf("measured actor memory envelope required")
+	}
+	var peak uint64
+	for _, batch := range p.Batches {
+		if batch.MemoryBytes == 0 {
+			return 0, fmt.Errorf("profile batch %d lacks measured memory", batch.Batch)
+		}
+		peak = max(peak, batch.MemoryBytes)
+	}
+	if peak >= uint64(memory) {
+		return 0, fmt.Errorf("measured actor memory envelope has no queue headroom")
+	}
+	// ponytail: Go's default GOGC=100 lets the firstfloor heap reach twice its live
+	// queue, so the queue cap is half the headroom; measure queue RSS if it OOMs again.
+	queueBytes := min(min(servingMemory, uint64(memory)-peak)/2, native.MaxFrameBytes)
+	if queueBytes < 1 {
+		return 0, fmt.Errorf("settings.servingMemoryBytes must hold the firstfloor queue")
+	}
+	return queueBytes, nil
 }
 
 // readCatalog projects only query inputs; the scheduler remains the source of truth.

@@ -6,12 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"math"
 	"net/http"
-	"reflect"
 	"runtime/debug"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -56,6 +53,7 @@ type SchedulerConfiguration struct {
 
 type SchedulerService struct {
 	Lock                     sync.Mutex
+	refreshLock              sync.Mutex
 	Controller               *servingkube.SchedulerController
 	cluster                  *servingkube.ClusterState
 	operations               *servingops.Operations
@@ -166,147 +164,6 @@ func metricSource(identity metricobserver.SourceIdentity) (metricobserver.Source
 	return edgemetrics.NewPowerSeries(identity, meterClient)
 }
 
-func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
-	o.Lock.Lock()
-	defer o.Lock.Unlock()
-	return o.refreshLocked(ctx)
-}
-
-// refreshLocked publishes the complete accepted configuration while the service
-// excludes Tick and operator mutations.
-func (o *SchedulerService) refreshLocked(ctx context.Context) (err error) {
-	cm, err := o.kube.CoreV1().ConfigMaps(o.opts.ServingNamespace).Get(ctx, o.opts.SchedulerConfigMap, meta.GetOptions{})
-	if err != nil {
-		return err
-	}
-	config, err := DecodeSchedulerConfiguration(cm.Data[o.opts.SchedulerConfigKey], o.opts.MaxRequestBytes)
-	if err != nil {
-		return err
-	}
-	policies, factsVersion, err := o.profilerFacts(ctx, &config)
-	if err != nil {
-		return err
-	}
-	if config.PowerObservation != nil {
-		limits := metricobserver.Limits{MaxResultBytes: o.opts.MaxEvidenceBytes, MemoryBudgetBytes: debug.SetMemoryLimit(-1)}
-		for _, meter := range config.Meters {
-			if _, err := metricobserver.RequiredCapacity(
-				config.PowerObservation.Sampling, meter.Source, limits, false,
-			); err != nil {
-				return fmt.Errorf("admit scheduler power observation for %s: %w", meter.ID, err)
-			}
-		}
-	}
-	namespaces := o.opts.ProfileNamespaces
-	if len(namespaces) == 0 {
-		namespaces = []string{o.opts.ServingNamespace}
-	}
-	view, err := o.catalog.Refresh(ctx, namespaces)
-	if err != nil {
-		return err
-	}
-	if err = o.retainProfileReuseChecks(ctx, &view); err != nil {
-		return err
-	}
-	// Coverage consumes verified measurement facts independently of operation
-	// costs and scheduler preparation/adoption. No raw evidence is read here.
-	o.catalogRead.Store(&ProfilesView{ConfigVersion: cm.ResourceVersion, CatalogView: view})
-	costs, err := o.costs.Refresh(ctx, namespaces, view.Profiles)
-	if err != nil {
-		return err
-	}
-	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
-	sources := costs.Sources
-	sources = append(sources, "profiler-facts:"+factsVersion)
-	for _, meter := range config.Meters {
-		sources = append(sources, "meter:"+meter.ID+"/"+meter.Node.UID)
-	}
-	for _, p := range view.Profiles {
-		sources = append(sources, p.ID)
-	}
-	for _, measurement := range view.CurrentMeasurements {
-		sources = append(sources, "current:"+measurement.ID+"/"+measurement.MeasuredAt.Format(time.RFC3339Nano))
-	}
-	for _, issue := range costs.Issues {
-		sources = append(sources, issue.Code+":"+issue.Source)
-	}
-	// A catalog issue refuses the measurements naming its profile.
-	for _, issue := range view.Insufficiencies {
-		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
-	}
-	if len(view.ReuseChecks) != 0 {
-		checks, err := json.Marshal(view.ReuseChecks)
-		if err != nil {
-			return err
-		}
-		sources = append(sources, "profile-reuse:"+string(checks))
-	}
-	slices.Sort(sources)
-	signature := strings.Join(sources, "\x00")
-	currentProfiles := view.CurrentProfiles()
-	accepted := o.Profiles.Load()
-	sameInputs := o.Controller != nil && cm.ResourceVersion == o.resourceVersion && signature == o.sources && accepted != nil
-	if sameInputs && len(accepted.Preparations) == len(currentProfiles) {
-		return ctx.Err()
-	}
-	preparations, issues, err := o.preparations(ctx, config, currentProfiles)
-	if err != nil {
-		return err
-	}
-	view.Insufficiencies = append(view.Insufficiencies, issues...)
-	if sameInputs && reflect.DeepEqual(view.Insufficiencies, accepted.Insufficiencies) &&
-		maps.EqualFunc(preparations, accepted.Preparations, func(spec, published servingstate.PrepareSpec) bool {
-			spec.Instance.Profile = nil // compare the accepted projection without changing the controller spec
-			return reflect.DeepEqual(spec, published)
-		}) {
-		return ctx.Err()
-	}
-	controllerConfig := servingkube.SchedulerControllerConfig{
-		Settings:          config.Settings,
-		ConfigurationName: o.opts.SchedulerConfigMap, ConfigurationKey: o.opts.SchedulerConfigKey,
-		Reserved: config.Reserved, Preparations: preparations, Costs: costs.Costs, Baselines: costs.Baselines,
-		CostIssues: costs.Issues, DispatchOccupancy: costs.DispatchOccupancy, CatalogIssues: view.Insufficiencies,
-		DispatchOccupancySnapshot: o.occupancy.selected,
-		LoadGenerator:             o.opts.LoadGenerator,
-		GatewayRequestTimeout:     o.GatewayRequestTimeout,
-		Meters:                    config.Meters, PowerPolicies: policies,
-		StaticRouting: len(config.StaticRouting) > 0, MeasurementNamespaces: namespaces,
-		Evidence: o.objects, EvidenceStore: o.opts.StoreName, MeterSource: metricSource,
-		OnDecision: o.RecordDecision, OnAction: o.RecordAction,
-	}
-	if o.Controller == nil {
-		o.Controller, err = servingkube.NewSchedulerController(o.cluster, o.store, o.kube, o.execution,
-			o.observer, o.operations, o.observationLog, controllerConfig)
-	} else {
-		err = o.Controller.SetConfiguration(controllerConfig)
-	}
-	if err != nil {
-		return err
-	}
-	// Publish the complete configuration only after the controller accepted it.
-	o.observer.SetProfiles(view.Profiles)
-	o.execution.SetCompletionMargin(config.Settings.CompletionMarginMS)
-	o.configuration.Store(&config)
-	published := ProfilesView{
-		ConfigVersion: cm.ResourceVersion, CatalogView: view,
-		Preparations: make(map[string]servingstate.PrepareSpec, len(preparations)),
-		Occupancy:    occupancy, OccupancySkipped: skipped,
-	}
-	for id, spec := range preparations {
-		spec.Instance.Profile = nil // the profile body is in Profiles
-		published.Preparations[id] = spec
-	}
-	o.Profiles.Store(&published)
-	o.occupancy.configure(&rollingOccupancyInput{
-		configuration: &config, catalog: &published, profiles: o.observer.OccupancyProfiles(),
-		legacy: costs.DispatchOccupancy,
-	})
-	o.resourceVersion = cm.ResourceVersion
-	o.sources = signature
-	o.restartPower(config)
-	return nil
-}
-
 func (o *SchedulerService) measurementCatalogView(_ context.Context) (ProfilesView, error) {
 	published := o.catalogRead.Load()
 	if published == nil {
@@ -370,8 +227,8 @@ func (o *SchedulerService) profilerFacts(
 	return policies, cm.ResourceVersion, nil
 }
 
-// AcceptedSettings returns the settings of the configuration refresh last accepted,
-// without waiting behind refresh or Tick; false before the first acceptance.
+// AcceptedSettings returns the last accepted user policy without waiting behind
+// refresh or Tick; false before the first configuration acceptance.
 func (o *SchedulerService) AcceptedSettings() (serving.SchedulerSettings, bool) {
 	config := o.configuration.Load()
 	if config == nil {
@@ -537,18 +394,16 @@ func (o *SchedulerService) Start() {
 		for o.ctx.Err() == nil {
 			callCtx, cancel := context.WithTimeout(o.ctx, o.opts.RequestTimeout)
 			started := time.Now()
-			if err := o.Refresh(callCtx); err != nil {
-				ctrl.Log.Error(err, "refresh scheduler operator configuration")
-			} else {
-				o.Lock.Lock()
-				if err := o.Controller.Admit(callCtx); err != nil {
-					ctrl.Log.Error(err, "admit measurements")
-				}
-				_, err := o.Controller.Tick(callCtx, time.Now().UTC())
-				o.Lock.Unlock()
-				if err != nil {
-					ctrl.Log.Error(err, "evaluate and record scheduler control interval")
-				}
+			// The server's profile refresh owner accepts remote evidence and external
+			// ConfigMap edits. Control uses the last accepted inputs independently.
+			o.Lock.Lock()
+			if err := o.Controller.Admit(callCtx); err != nil {
+				ctrl.Log.Error(err, "admit measurements")
+			}
+			_, err := o.Controller.Tick(callCtx, time.Now().UTC())
+			o.Lock.Unlock()
+			if err != nil {
+				ctrl.Log.Error(err, "evaluate and record scheduler control interval")
 			}
 			cancel()
 			timer := time.NewTimer(max(time.Until(started.Add(o.Controller.Settings().ControlInterval)), 0))

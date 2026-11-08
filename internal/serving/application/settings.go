@@ -63,6 +63,9 @@ func (o *SchedulerService) ChangeSchedulerSettings(ctx context.Context, input Se
 	}
 	o.Lock.Lock()
 	defer o.Lock.Unlock()
+	if err := ctx.Err(); err != nil {
+		return observation.SchedulerSettingsChange{}, "", err
+	}
 	cm, config, err := SchedulerConfigMap(ctx, o.settingsKube, o.opts.ServingNamespace,
 		o.opts.SchedulerConfigMap, o.opts.SchedulerConfigKey)
 	if err != nil {
@@ -73,6 +76,13 @@ func (o *SchedulerService) ChangeSchedulerSettings(ctx context.Context, input Se
 			Code:    "SettingsConflict",
 			Message: "settings changed; GET settings before submitting again",
 		}
+	}
+	published, preparations, err := o.settingsPreparations(settings)
+	if err != nil {
+		return observation.SchedulerSettingsChange{}, "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return observation.SchedulerSettingsChange{}, "", err
 	}
 	username, uid := actorUsername, actorUID
 	now := time.Now().UTC()
@@ -87,7 +97,11 @@ func (o *SchedulerService) ChangeSchedulerSettings(ctx context.Context, input Se
 	if err := o.observationLog.SchedulerRecord(observation.SchedulerObservation{At: now, Settings: &change}); err != nil {
 		return observation.SchedulerSettingsChange{}, "", err
 	}
-	version, err := persistSchedulerSettings(ctx, o.settingsKube, cm, config, o.opts.SchedulerConfigKey, settings)
+	var version string
+	err = ctx.Err()
+	if err == nil {
+		version, err = persistSchedulerSettings(ctx, o.settingsKube, cm, config, o.opts.SchedulerConfigKey, settings)
+	}
 	if apierrors.IsConflict(err) {
 		err = &serving.Error{
 			Code:    "SettingsConflict",
@@ -95,10 +109,10 @@ func (o *SchedulerService) ChangeSchedulerSettings(ctx context.Context, input Se
 		}
 	}
 	if err == nil {
-		// Only the scheduler service's full refresh can accept a configuration. Applying
-		// settings alone could enable a catalog whose selection was removed by
-		// a previously persisted change that has not refreshed successfully.
-		err = o.refreshLocked(ctx)
+		err = ctx.Err()
+		if err == nil {
+			err = o.applySchedulerSettings(ctx, settings, published, preparations)
+		}
 	}
 	if err != nil {
 		change.Error = err.Error()
@@ -106,7 +120,7 @@ func (o *SchedulerService) ChangeSchedulerSettings(ctx context.Context, input Se
 		applied := time.Now().UTC()
 		change.AppliedAt = &applied
 	}
-	// Failure after refresh does not imply rollback: the selected policy
+	// Failure after application does not imply rollback: the selected policy
 	// may already be active even when its completion record cannot be appended.
 	recordErr := o.observationLog.SchedulerRecord(
 		observation.SchedulerObservation{At: time.Now().UTC(), Settings: &change},
@@ -156,6 +170,9 @@ func persistSchedulerSettings(
 		return "", err
 	}
 	cm.Data[key] = string(encoded)
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	updated, err := kube.CoreV1().ConfigMaps(cm.Namespace).Update(ctx, cm, meta.UpdateOptions{})
 	if err != nil {
 		return "", err

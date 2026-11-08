@@ -142,6 +142,25 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	return nil
 }
 
+// AcceptSettings applies user policy to already accepted preparations. Source
+// costs, physical bindings, reservations and routing declarations stay intact.
+func (c *SchedulerController) AcceptSettings(ctx context.Context, settings serving.SchedulerSettings, preparations map[string]servingstate.PrepareSpec) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	c.tickMu.Lock()
+	defer c.tickMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	before := len(c.config.Settings.AutonomousWorkloads) > 0
+	c.config.Settings, c.config.Preparations = settings, preparations
+	c.mu.Unlock()
+	c.setRoutingControl(before, len(settings.AutonomousWorkloads) > 0)
+	return nil
+}
+
 func (c *SchedulerController) setRoutingControl(before, after bool) {
 	if before == after {
 		return
