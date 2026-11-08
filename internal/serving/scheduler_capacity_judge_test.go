@@ -4,6 +4,9 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
+	"github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 type capacityJudgeSample struct {
@@ -92,8 +95,9 @@ func TestCapacityJudgeSatisfiedEquivalence(t *testing.T) {
 			t.Fatalf("sample=%+v search=%t/%t/%.17g exact=%+v worst=%.17g", s, satisfied, final, worst, exact, exact.worst())
 		}
 		demand, backlog := capacityCoverDemand(s.w, s.kret, s.r)
-		if demand != s.bound() || backlog != (s.backlog() > 0) {
-			t.Fatalf("sample=%+v cover=%.17g/%t want=%.17g/%t", s, demand, backlog, s.bound(), s.backlog() > 0)
+		neutralDemand, neutralBacklog := v2.CoverDemand(protocol.Workload{Rate: s.w.rate, Queued: s.w.queued, Slack: s.w.slack}, s.kret, s.r)
+		if demand != s.bound() || backlog != (s.backlog() > 0) || neutralDemand != demand || neutralBacklog != backlog {
+			t.Fatalf("sample=%+v cover=%.17g/%t neutral=%.17g/%t want=%.17g/%t", s, demand, backlog, neutralDemand, neutralBacklog, s.bound(), s.backlog() > 0)
 		}
 	}
 	for _, s := range samples {
@@ -184,8 +188,9 @@ func TestCapacityJudgeRetainedQueue(t *testing.T) {
 				t.Fatalf("sample=%+v closed=%t search=%t/%t/%.17g exact=%+v worst=%.17g", s, s.closedSatisfied(), satisfied, final, worst, j, j.worst())
 			}
 			demand, backlog := capacityCoverDemand(s.w, s.kret, s.r)
-			if demand != s.bound() || backlog != (test.backlog > 0) {
-				t.Fatalf("sample=%+v cover=%.17g/%t want=%.17g/%t", s, demand, backlog, s.bound(), test.backlog > 0)
+			neutralDemand, neutralBacklog := v2.CoverDemand(protocol.Workload{Rate: s.w.rate, Queued: s.w.queued, Slack: s.w.slack}, s.kret, s.r)
+			if demand != s.bound() || backlog != (test.backlog > 0) || neutralDemand != demand || neutralBacklog != backlog {
+				t.Fatalf("sample=%+v cover=%.17g/%t neutral=%.17g/%t want=%.17g/%t", s, demand, backlog, neutralDemand, neutralBacklog, s.bound(), test.backlog > 0)
 			}
 		})
 	}

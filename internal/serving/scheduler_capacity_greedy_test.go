@@ -10,6 +10,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 func capacityDeltaChoice(tab *planTable, choice []int) []int {
@@ -20,9 +23,9 @@ func capacityDeltaChoice(tab *planTable, choice []int) []int {
 	return result
 }
 
-func capacityDeltaSaved(key orderKey) orderKey {
-	result := orderKey{excesses: make([]float64, len(key.excesses)), choice: make([]int, len(key.choice))}
-	key.copyInto(&result)
+func capacityDeltaSaved(key protocol.Rank) protocol.Rank {
+	result := protocol.Rank{Excesses: make([]float64, len(key.Excesses)), Choice: make([]int, len(key.Choice))}
+	key.CopyInto(&result)
 	return result
 }
 
@@ -166,6 +169,7 @@ func TestCapacityDeltaPendingReplicaBounds(t *testing.T) {
 func capacityDeltaWalk(t testing.TB, p *capacityPlanner, rng *rand.Rand) (int, int) {
 	t.Helper()
 	tab := p.planTable()
+	table := p.scalarProblem(tab, time.Time{}).Table
 	choice := make([]int, len(p.plans))
 	for n := range choice {
 		choice[n] = tab.byPlan[n][0]
@@ -192,16 +196,17 @@ func capacityDeltaWalk(t testing.TB, p *capacityPlanner, rng *rand.Rand) (int, i
 		before := slices.Clone(s.choice)
 		beforeSums, beforeTimes, beforeEnergy := slices.Clone(s.sums), slices.Clone(s.tPre), slices.Clone(s.nodeJ)
 		beforeTotal, beforeRoute := s.total, s.r
-		base, baseExact := capacityDeltaAssert(t, p, s, n, s.choice[n])
-		base = capacityDeltaSaved(base)
+		baseKey, baseExact := capacityDeltaAssert(t, p, s, n, s.choice[n])
+		base := capacityDeltaSaved(capacityRank(baseKey, table))
 		key, exact := capacityDeltaAssert(t, p, s, n, q)
 		if !key.bounded {
 			t.Fatal("harness generated an unbounded choice")
 		}
-		if key.better(&base) != exact.better(&baseExact) || base.better(&key) != baseExact.better(&exact) {
+		rank := capacityRank(key, table)
+		if rank.Better(&base) != exact.better(&baseExact) || base.Better(&rank) != baseExact.better(&exact) {
 			t.Fatalf("better mismatch sample=%d routing=%t", sample, p.settings.Controls.Routing)
 		}
-		if key.feasible == base.feasible && key.final == base.final && slices.Equal(key.excesses, base.excesses) && key.joules == base.joules && key.keep == base.keep && exact.key != baseExact.key {
+		if key.feasible == base.Feasible && key.final == base.Final && slices.Equal(key.excesses, base.Excesses) && key.joules == base.Joules && key.keep == base.Keep && exact.key != baseExact.key {
 			keyTies++
 		}
 		if !slices.Equal(before, s.choice) || !slices.Equal(beforeSums, s.sums) || !slices.Equal(beforeTimes, s.tPre) ||
@@ -265,22 +270,23 @@ func TestCapacityGreedyKeyOrder(t *testing.T) {
 		}
 	}
 	tab := p.planTable()
-	var keys []orderKey
+	table := p.scalarProblem(tab, time.Time{}).Table
+	var keys []protocol.Rank
 	var exacts []capacityResult
 	for _, a := range tab.byPlan[0] {
 		for _, b := range tab.byPlan[1] {
 			s := newSearchState(p, tab, []int{a, b})
 			key, exact := capacityDeltaAssert(t, p, s, 0, a)
-			keys, exacts = append(keys, capacityDeltaSaved(key)), append(exacts, exact)
+			keys, exacts = append(keys, capacityDeltaSaved(capacityRank(key, table))), append(exacts, exact)
 		}
 	}
 	ties := 0
 	for a, key := range keys {
 		for b := range keys {
-			if key.compareKey(keys[b]) != cmp.Compare(exacts[a].key, exacts[b].key) || key.better(&keys[b]) != exacts[a].better(&exacts[b]) {
+			if key.CompareKey(keys[b]) != cmp.Compare(exacts[a].key, exacts[b].key) || key.Better(&keys[b]) != exacts[a].better(&exacts[b]) {
 				t.Fatalf("key order mismatch %q vs %q", exacts[a].key, exacts[b].key)
 			}
-			if exacts[a].key != exacts[b].key && key.keep == keys[b].keep {
+			if exacts[a].key != exacts[b].key && key.Keep == keys[b].Keep {
 				ties++
 			}
 		}
@@ -332,11 +338,12 @@ func TestCapacityGreedyWeightsAndJudge(t *testing.T) {
 	}
 }
 
-var capacityDeltaBenchmarkResult orderKey
+var capacityDeltaBenchmarkResult protocol.Rank
 
 func BenchmarkCapacityDelta(b *testing.B) {
 	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 4), e5Start, nil)
 	tab := p.planTable()
+	table := p.scalarProblem(tab, time.Time{}).Table
 	rng := rand.New(rand.NewPCG(20261107, 5))
 	choice := make([]int, len(p.plans))
 	for n, plans := range tab.byPlan {
@@ -355,19 +362,20 @@ func BenchmarkCapacityDelta(b *testing.B) {
 	b.ResetTimer()
 	for i := range b.N {
 		move := moves[i%len(moves)]
-		capacityDeltaBenchmarkResult = s.delta(move[0], move[1])
+		capacityDeltaBenchmarkResult = capacityRank(s.delta(move[0], move[1]), table)
 	}
 }
 
 func TestCapacityDeltaNoAllocations(t *testing.T) {
 	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 4), e5Start, nil)
 	tab := p.planTable()
+	table := p.scalarProblem(tab, time.Time{}).Table
 	choice := make([]int, len(p.plans))
 	for n := range choice {
 		choice[n] = tab.byPlan[n][0]
 	}
 	s := newSearchState(p, tab, choice)
-	if got := testing.AllocsPerRun(100, func() { capacityDeltaBenchmarkResult = s.delta(0, tab.byPlan[0][1]) }); got != 0 {
+	if got := testing.AllocsPerRun(100, func() { capacityDeltaBenchmarkResult = capacityRank(s.delta(0, tab.byPlan[0][1]), table) }); got != 0 {
 		t.Fatalf("delta allocs/op=%g want=0", got)
 	}
 	move := 0
@@ -377,7 +385,7 @@ func TestCapacityDeltaNoAllocations(t *testing.T) {
 	}); got != 0 {
 		t.Fatalf("apply allocs/op=%g want=0", got)
 	}
-	if math.IsNaN(capacityDeltaBenchmarkResult.joules) {
+	if math.IsNaN(capacityDeltaBenchmarkResult.Joules) {
 		t.Fatal("invalid benchmark result")
 	}
 }

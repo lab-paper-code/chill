@@ -23,7 +23,7 @@ import (
 	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
-func TestDecodeSchedulerLinePlanSearchCompatibility(t *testing.T) {
+func TestDecodeSchedulerLinePlanSearch(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		search   string
@@ -34,28 +34,19 @@ func TestDecodeSchedulerLinePlanSearchCompatibility(t *testing.T) {
 		wantSet  serving.SchedulerSettings
 	}{
 		{
-			name:   "historical",
-			search: `{"evaluated":7}`, plan: `{"key":"keep"}`,
-			settings: `{"planSearchWorkers":3}`,
-			want:     serving.SchedulerPlanSearch{Evaluated: 7},
-			wantPlan: serving.SchedulerNodePlan{Key: "keep"},
-			wantSet:  serving.SchedulerSettings{PlanSearchWorkers: 3},
-		},
-		{
 			name:     "v2",
-			search:   `{"evaluated":7,"strategy":"v2","pruned":{"ZeroCapacity":2},"surrogateEvaluated":40,"finalists":16,"exactEvaluated":19,"surrogateGapJoules":-0.25,"postFilterReverts":2,"fallback":"v1","dualBound":12.5,"start":"priced","shadow":{"key":"candidate","joules":20,"evaluated":30,"durationNanos":100,"fallback":"keep"}}`,
+			search:   `{"evaluated":7,"strategy":"v2","pruned":{"ZeroCapacity":2},"surrogateEvaluated":40,"finalists":16,"exactEvaluated":19,"surrogateGapJoules":-0.25,"postFilterReverts":2,"fallback":"v1","dualBound":12.5,"start":"priced"}`,
 			plan:     `{"key":"keep","dominated":"ZeroCapacity"}`,
-			settings: `{"planSearchWorkers":3,"planSearchStrategy":"shadow","planSearchEvaluations":1234,"planExactFinalists":12,"planPolishActive":0,"planPostFilterFinalists":true,"planPricedStart":false}`,
+			settings: `{"planSearchWorkers":3,"planSearchStrategy":"v2","planSearchEvaluations":1234,"planExactFinalists":12,"planPolishActive":0,"planPostFilterFinalists":true,"planPricedStart":false}`,
 			want: serving.SchedulerPlanSearch{
 				Evaluated: 7, Strategy: "v2", Pruned: map[string]int{"ZeroCapacity": 2},
 				SurrogateEvaluated: 40, Finalists: 16, ExactEvaluated: 19,
 				SurrogateGapJoules: -0.25, PostFilterReverts: 2, Fallback: "v1",
 				DualBound: 12.5, Start: "priced",
-				Shadow: &serving.SchedulerPlanSearchShadow{Key: "candidate", Joules: 20, Evaluated: 30, Duration: 100, Fallback: "keep"},
 			},
 			wantPlan: serving.SchedulerNodePlan{Key: "keep", Dominated: "ZeroCapacity"},
 			wantSet: serving.SchedulerSettings{
-				PlanSearchWorkers: 3, PlanSearchStrategy: "shadow", PlanSearchEvaluations: 1234,
+				PlanSearchWorkers: 3, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1234,
 				PlanExactFinalists: 12, PlanPolishActive: 0, PlanPostFilterFinalists: true, PlanPricedStart: false,
 			},
 		},

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestCapacityPricedDeterminism(t *testing.T) {
@@ -20,18 +22,18 @@ func TestCapacityPricedDeterminism(t *testing.T) {
 				rng.Shuffle(len(plans)-1, func(i, j int) { plans[i+1], plans[j+1] = plans[j+1], plans[i+1] })
 			}
 		}
-		tab := p.planTable()
-		tab.initSearch(p)
-		choice, dual := p.pricedStart(tab)
+		problem := p.scalarProblem(p.planTable(), time.Time{})
+		tab := problem.Table
+		choice, dual := v2.PricedStart(problem, tab)
 		if len(choice) != len(p.plans) || math.IsNaN(dual) || math.IsInf(dual, 0) {
 			t.Fatalf("trial=%d choice=%v dual=%g", trial, choice, dual)
 		}
 		keys := make([]string, len(choice))
 		for n, q := range choice {
-			if q < 0 || q >= len(tab.index) || tab.node[q] != n {
+			if q < 0 || q >= len(tab.Index) || !slices.Contains(tab.ByPlan[n], q) {
 				t.Fatalf("trial=%d node=%d invalid table index=%d", trial, n, q)
 			}
-			keys[n] = tab.keyParts[q]
+			keys[n] = tab.KeyParts[q]
 		}
 		if trial == 0 {
 			want, wantDual = keys, dual
@@ -65,9 +67,8 @@ func TestCapacityPricedSkip(t *testing.T) {
 					p.sum(plan)
 				}
 			}
-			tab := p.planTable()
-			tab.initSearch(p)
-			if choice, dual := p.pricedStart(tab); choice != nil || dual != 0 {
+			problem := p.scalarProblem(p.planTable(), time.Time{})
+			if choice, dual := v2.PricedStart(problem, problem.Table); choice != nil || dual != 0 {
 				t.Fatalf("skip returned choice=%v dual=%g", choice, dual)
 			}
 		})
@@ -82,34 +83,15 @@ func TestCapacityPricedFixedMultiWorkloadKeep(t *testing.T) {
 	current["rasp5/plc/q1"] = true
 	p := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(2, 0), current, nil)
 	p.compared[0] = false
-	tab := p.planTable()
-	tab.initSearch(p)
-	keep := tab.byPlan[0][0]
-	if tab.kappa[keep][0] <= 0 || tab.kappa[keep][1] <= 0 || tab.kappaE[keep][0] <= 0 || tab.kappaE[keep][1] <= 0 {
+	problem := p.scalarProblem(p.planTable(), time.Time{})
+	tab := problem.Table
+	keep := tab.ByPlan[0][0]
+	if tab.Kappa[keep][0] <= 0 || tab.Kappa[keep][1] <= 0 || tab.KappaE[keep][0] <= 0 || tab.KappaE[keep][1] <= 0 {
 		t.Fatal("fixture must retain capacity and energy terms for both Workloads")
 	}
-	choice, dual := p.pricedStart(tab)
+	choice, dual := v2.PricedStart(problem, tab)
 	if len(choice) != len(p.plans) || choice[0] != keep || math.IsNaN(dual) || math.IsInf(dual, 0) {
 		t.Fatalf("uncompared multi-Workload Node must keep: choice=%v keep=%d dual=%g", choice, keep, dual)
-	}
-	c := capacityPrices{
-		planner: p, table: tab, choice: make([]int, len(p.plans)),
-		mu: []float64{2, 3, 5}, rho: []float64{0.25, 0.5, 0.75},
-		demand: make([]float64, len(p.ws)), supply: make([]float64, len(p.ws)),
-		retained: make([]float64, len(p.ws)), route: 7,
-	}
-	want := tab.energy(keep, c.route, p.period)
-	for _, w := range []int{0, 1} {
-		want += (p.period-c.route)*c.rho[w]*tab.kappaE[keep][w] - c.mu[w]*tab.kappa[keep][w]
-	}
-	if got := c.planCost(keep); got != want {
-		t.Fatalf("multi-Workload keep cost=%.17g want=%.17g", got, want)
-	}
-	if allocations := testing.AllocsPerRun(100, func() {
-		c.selectPlans()
-		c.aggregate()
-	}); allocations != 0 {
-		t.Fatalf("price iteration allocated %g times", allocations)
 	}
 }
 

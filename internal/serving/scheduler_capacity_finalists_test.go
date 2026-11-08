@@ -8,20 +8,9 @@ import (
 	"slices"
 	"testing"
 	"time"
-)
 
-func TestCapacityV2FinalistsDistinctAndOrdered(t *testing.T) {
-	tab := &planTable{byPlan: [][]int{{0, 1, 2}}, keyParts: []string{"n=a", "n=b", "n=c"}}
-	f := newV2Finalists(tab, 0, 2)
-	key := newV2Key(tab, 0)
-	for _, q := range []int{2, 1, 1, 0, 2} {
-		key.choice[0], key.joules = q, float64(q)
-		f.add(key, "keep")
-	}
-	if f.used != 2 || f.ordered[0].key.choice[0] != 0 || f.ordered[1].key.choice[0] != 1 {
-		t.Fatalf("bad finalist set: %+v", f)
-	}
-}
+	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+)
 
 func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 	for _, space := range []struct {
@@ -49,12 +38,13 @@ func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 						budget = 0
 					} // Test the documented full-neighborhood inclusion, without a cutoff.
 					started := time.Now()
-					candidates, stats := p.searchV2Core(p.planTable(), budget, 16, m.active, time.Time{})
+					problem := p.scalarProblem(p.planTable(), time.Time{})
+					candidates, stats := v2.Candidates(problem, problem.Table, budget, 16, m.active, time.Time{})
 					elapsed := time.Since(started)
 					if len(candidates) == 0 {
 						t.Fatalf("mix=%d m=%s has no finalists", mix, m.name)
 					}
-					got := p.evaluate(candidates[0].choice, p.routeOf(candidates[0].choice))
+					got := p.evaluate(candidates[0].Choice, p.routeOf(candidates[0].Choice))
 					if got.feasible != (exact != nil) {
 						t.Errorf("mix=%d m=%s feasibility=%v, exhaustive=%v", mix, m.name, got.feasible, exact != nil)
 					}
@@ -66,11 +56,11 @@ func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 							t.Errorf("mix=%d m=%s rates=%v gap=%.6f%% exceeds gate: got=%s exact=%s", mix, m.name, rates, gap*100, got.key, exact.key)
 						}
 					}
-					if stats.deadline {
+					if stats.Deadline {
 						m.cuts++
 					}
-					if math.Abs(got.joules-candidates[0].joules) > 1e-8 {
-						t.Errorf("mix=%d m=%s surrogate=%g exact=%g", mix, m.name, candidates[0].joules, got.joules)
+					if math.Abs(got.joules-candidates[0].Joules) > 1e-8 {
+						t.Errorf("mix=%d m=%s surrogate=%g exact=%g", mix, m.name, candidates[0].Joules, got.joules)
 					}
 					shuffled := *p
 					shuffled.plans = make([][]*capacityPlan, len(p.plans))
@@ -81,18 +71,19 @@ func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 							shuffled.plans[n][a+1], shuffled.plans[n][b+1] = shuffled.plans[n][b+1], shuffled.plans[n][a+1]
 						})
 					}
-					again, repeated := shuffled.searchV2Core(shuffled.planTable(), budget, 16, m.active, time.Time{})
+					shuffledProblem := shuffled.scalarProblem(shuffled.planTable(), time.Time{})
+					again, repeated := v2.Candidates(shuffledProblem, shuffledProblem.Table, budget, 16, m.active, time.Time{})
 					if len(again) == 0 {
 						t.Fatalf("mix=%d m=%s shuffled finalists empty", mix, m.name)
 					}
-					other := shuffled.evaluate(again[0].choice, shuffled.routeOf(again[0].choice))
-					if got.key != other.key || got.joules != other.joules || stats.surrogateEvaluated != repeated.surrogateEvaluated {
-						t.Errorf("mix=%d m=%s order changed key/J/evaluations: %s %g %d vs %s %g %d", mix, m.name, got.key, got.joules, stats.surrogateEvaluated, other.key, other.joules, repeated.surrogateEvaluated)
+					other := shuffled.evaluate(again[0].Choice, shuffled.routeOf(again[0].Choice))
+					if got.key != other.key || got.joules != other.joules || stats.SurrogateEvaluated != repeated.SurrogateEvaluated {
+						t.Errorf("mix=%d m=%s order changed key/J/evaluations: %s %g %d vs %s %g %d", mix, m.name, got.key, got.joules, stats.SurrogateEvaluated, other.key, other.joules, repeated.SurrogateEvaluated)
 					}
-					m.worst, m.maxEvaluations = max(m.worst, gap), max(m.maxEvaluations, stats.surrogateEvaluated)
-					m.totalEvaluations += stats.surrogateEvaluated
+					m.worst, m.maxEvaluations = max(m.worst, gap), max(m.maxEvaluations, stats.SurrogateEvaluated)
+					m.totalEvaluations += stats.SurrogateEvaluated
 					m.longest, m.total = max(m.longest, elapsed), m.total+elapsed
-					t.Logf("mix=%02d m=%s rates=%v gap=%.6f%% feasible=%v J=%.9f evaluations=%d duration=%s steps=%d budgetCut=%v exhausted=%v", mix, m.name, rates, gap*100, got.feasible, got.joules, stats.surrogateEvaluated, elapsed, stats.steps, stats.deadline, stats.exhausted)
+					t.Logf("mix=%02d m=%s rates=%v gap=%.6f%% feasible=%v J=%.9f evaluations=%d duration=%s steps=%d budgetCut=%v exhausted=%v", mix, m.name, rates, gap*100, got.feasible, got.joules, stats.SurrogateEvaluated, elapsed, len(stats.SearchSteps), stats.Deadline, stats.Exhausted)
 				}
 			}
 			for _, m := range measurements {
@@ -104,12 +95,20 @@ func TestCapacityV2CoreQualityAndPlanOrder(t *testing.T) {
 
 func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
 	p := e5Planner(e5Mixes[0], evaluationNodes(), e5Start, nil)
-	got, stats := p.searchV2Core(p.planTable(), 10, 1, 4, time.Time{})
-	if len(got) == 0 || !stats.exhausted || stats.deadline || stats.surrogateEvaluated != 10 {
+	problem := p.scalarProblem(p.planTable(), time.Time{})
+	got, stats := v2.Candidates(problem, problem.Table, 10, 1, 4, time.Time{})
+	if len(got) == 0 || !stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 10 {
 		t.Fatalf("evaluation budget: finalists=%d stats=%+v", len(got), stats)
 	}
-	got, stats = p.searchV2Core(p.planTable(), 500000, 1, 4, time.Now().Add(-time.Second))
-	if len(got) != 0 || !stats.deadline || stats.exhausted || stats.surrogateEvaluated != 0 {
+	got, stats = v2.Candidates(problem, problem.Table, 1, 1, 4, time.Time{})
+	if len(got) != 1 || !slices.Equal(got[0].Choice, make([]int, len(p.plans))) ||
+		!stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 1 ||
+		len(stats.SearchSteps) != 1 || stats.SearchSteps[0].Start != "keep" || stats.SearchSteps[0].K != 0 {
+		t.Fatalf("partial endpoint lost at origin-only budget: finalists=%+v stats=%+v", got, stats)
+	}
+	deadline := time.Now().Add(-time.Second)
+	got, stats = v2.Candidates(problem, problem.Table, 500000, 1, 4, deadline)
+	if len(got) != 0 || !stats.Deadline || stats.Exhausted || stats.SurrogateEvaluated != 0 {
 		t.Fatalf("deadline: finalists=%d stats=%+v", len(got), stats)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 const capacitySearchStartKeep = "keep"
@@ -816,7 +817,7 @@ func capacitySearchForTest(t testing.TB, p *capacityPlanner) capacityResult {
 
 func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch, nodes int) {
 	t.Helper()
-	v2 := search.Strategy == schedulerPlanSearchV2
+	v2 := search.Strategy == protocol.V2
 	wantEvaluated := search.Evaluated
 	if v2 {
 		wantEvaluated = search.SurrogateEvaluated
@@ -840,14 +841,14 @@ func assertCapacitySearchSteps(t testing.TB, search SchedulerPlanSearch, nodes i
 	if len(last) == 0 || evaluated != wantEvaluated || search.TrailingEvaluated < 0 || duration > search.Duration {
 		t.Fatalf("step accounting: evaluated=%d duration=%s search=%+v", evaluated, duration, search)
 	}
-	wantReason := schedulerNoImprovement
+	wantReason := protocol.NoImprovement
 	if search.BudgetCut {
-		wantReason = schedulerBudgetCut
+		wantReason = protocol.BudgetCut
 		if v2 {
-			wantReason = schedulerDeadline
+			wantReason = protocol.Deadline
 		}
-	} else if v2 && search.TerminationReason == schedulerEvaluationBudget {
-		wantReason = schedulerEvaluationBudget
+	} else if v2 && search.TerminationReason == protocol.EvaluationBudget {
+		wantReason = protocol.EvaluationBudget
 	}
 	if search.TerminationReason != wantReason {
 		t.Fatalf("termination: got %q want %q", search.TerminationReason, wantReason)
@@ -864,13 +865,13 @@ func assertCapacitySearchMove(t testing.TB, step, previous SchedulerPlanSearchSt
 		v2 && len(step.ChangedNodes) != step.K || step.Evaluated <= 0 {
 		t.Fatalf("invalid accepted move: %+v after %+v", step, previous)
 	}
-	if v2 && (step.Phase != schedulerPlanPhaseCover && step.Phase != schedulerPlanPhasePolish && step.Phase != schedulerPlanPhaseCombine ||
-		step.Phase == schedulerPlanPhaseCover && previous.Phase != "" && previous.Phase != schedulerPlanPhaseCover) {
+	if v2 && (step.Phase != protocol.Cover && step.Phase != protocol.Polish && step.Phase != protocol.Combine ||
+		step.Phase == protocol.Cover && previous.Phase != "" && previous.Phase != protocol.Cover) {
 		t.Fatalf("invalid v2 phase: %+v after %+v", step, previous)
 	}
 	// Polish/combine follow better's priority order. Cover can lose
 	// feasibility or increase energy while recovering count limits.
-	if (!v2 || step.Phase != schedulerPlanPhaseCover) && (previous.Feasible && !step.Feasible ||
+	if (!v2 || step.Phase != protocol.Cover) && (previous.Feasible && !step.Feasible ||
 		!previous.Feasible && !step.Feasible && previous.Final && !step.Final ||
 		previous.Feasible && step.Feasible && step.Joules-step.KeepJoules > previous.Joules-previous.KeepJoules) {
 		t.Fatalf("accepted point worsened: %+v after %+v", step, previous)

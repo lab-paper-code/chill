@@ -3,20 +3,10 @@ package serving
 import (
 	"testing"
 	"time"
-)
 
-func v2TestSearch(p *capacityPlanner, active int) *v2Search {
-	tab := p.planTable()
-	choice := make([]int, len(p.plans))
-	for n := range choice {
-		choice[n] = tab.byPlan[n][0]
-	}
-	c := newV2Search(p, tab, choice, 500000, 16, active, time.Time{})
-	c.start = capacitySearchStartKeep
-	key, _ := c.evaluate(0, choice[0])
-	key.copyInto(&c.current)
-	return c
-}
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
+	"github.com/lab-paper-code/chill/internal/scheduler/v2"
+)
 
 func TestCapacityCoverSatisfiedAndOverload(t *testing.T) {
 	for _, test := range []struct {
@@ -29,23 +19,32 @@ func TestCapacityCoverSatisfiedAndOverload(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			p := e5Planner(test.rates, evaluationNodes(), e5Start, nil)
-			c := v2TestSearch(p, 4)
-			if c.current.feasible {
-				t.Fatal("fixture must start insufficient")
+			problem := p.scalarProblem(p.planTable(), time.Time{})
+			candidates, stats := v2.Candidates(problem, problem.Table, 500000, 16, 4, time.Time{})
+			if len(candidates) == 0 || candidates[0].Feasible != test.feasible {
+				t.Fatalf("want feasible=%v: candidates=%+v", test.feasible, candidates)
 			}
-			c.cover()
-			if c.current.feasible != test.feasible {
-				t.Fatalf("feasible=%v, want %v: %+v", c.current.feasible, test.feasible, c.current)
+			if stats.Deadline || stats.Exhausted {
+				t.Fatalf("cover exhausted budget: %+v", stats)
 			}
-			if c.stopped() {
-				t.Fatal("cover exhausted budget")
+			coverSteps := 0
+			var previous protocol.Step
+			for _, step := range stats.SearchSteps {
+				if step.Start == "keep" && step.K == 0 && step.Feasible {
+					t.Fatal("fixture must start insufficient")
+				}
+				if step.Phase == protocol.Cover {
+					coverSteps++
+					if step.K != 1 || step.Evaluated == 0 || previous.Start != step.Start || previous.Feasible {
+						t.Fatalf("cover must accept one move only while insufficient: %+v after %+v", step, previous)
+					}
+				}
+				previous = step
 			}
-			before := c.stats.surrogateEvaluated
-			c.cover()
-			if c.current.feasible && c.stats.surrogateEvaluated != before {
-				t.Fatal("satisfied cover must stop without evaluation")
+			if coverSteps == 0 {
+				t.Fatal("missing accepted cover moves")
 			}
-			t.Logf("feasible=%v evaluations=%d J=%.9f", c.current.feasible, c.stats.surrogateEvaluated, c.current.joules)
+			t.Logf("feasible=%v evaluations=%d J=%.9f", candidates[0].Feasible, stats.SurrogateEvaluated, candidates[0].Joules)
 		})
 	}
 }

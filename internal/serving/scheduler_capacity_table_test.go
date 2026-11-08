@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestCapacityTableZeroCapacity(t *testing.T) {
@@ -15,9 +18,12 @@ func TestCapacityTableZeroCapacity(t *testing.T) {
 	p := &capacityPlanner{ws: []capacityWorkload{{rate: 2}, {rate: 0}}, plans: [][]*capacityPlan{{
 		makePlan(true, true, 0), makePlan(false, true, 0), makePlan(false, true, 1), makePlan(false, false, 0),
 	}}}
+	p.snapshot.Nodes = []SchedulerNode{{}}
 	tab := p.planTable()
-	if len(tab.entries) != 2 || tab.pruned[capacityZeroCapacity] != 1 {
-		t.Fatalf("entries=%d pruned=%v", len(tab.entries), tab.pruned)
+	problem := p.scalarProblem(tab, time.Time{})
+	v2.Group(problem.Table)
+	if len(problem.Table.Entries) != 2 || tab.pruned[capacityZeroCapacity] != 1 {
+		t.Fatalf("entries=%d pruned=%v", len(problem.Table.Entries), tab.pruned)
 	}
 	for j, plan := range p.plans[0] {
 		want := ""
@@ -56,13 +62,15 @@ func TestCapacityTableVariants(t *testing.T) {
 	for mix, rates := range e5Mixes {
 		p := e5Planner(rates, evaluationScaled(2, 0), e5Start, nil)
 		tab := p.planTable()
-		for _, entry := range tab.entries {
-			first := p.plans[entry.node][tab.index[entry.variants[0]]]
+		problem := p.scalarProblem(tab, time.Time{})
+		v2.Group(problem.Table)
+		for _, entry := range problem.Table.Entries {
+			first := p.plans[entry.Node][tab.index[entry.Variants[0]]]
 			previousK, previousJ := -1.0, -1
-			for _, q := range entry.variants {
-				plan := p.plans[entry.node][tab.index[q]]
-				if entry.workload >= 0 {
-					k := tab.kappa[q][entry.workload]
+			for _, q := range entry.Variants {
+				plan := p.plans[entry.Node][tab.index[q]]
+				if entry.Workload >= 0 {
+					k := tab.kappa[q][entry.Workload]
 					if k < previousK || k == previousK && tab.index[q] < previousJ {
 						t.Fatalf("mix %d entry %+v not sorted", mix, entry)
 					}
@@ -71,16 +79,16 @@ func TestCapacityTableVariants(t *testing.T) {
 				a := []float64{first.preMean, first.preMax, first.postMean, first.postMax, first.preJ, first.postJ, first.before, first.mid, first.after}
 				b := []float64{plan.preMean, plan.preMax, plan.postMean, plan.postMax, plan.preJ, plan.postJ, plan.before, plan.mid, plan.after}
 				if !slices.Equal(a, b) || !reflect.DeepEqual(first.retained, plan.retained) || len(first.instances) != len(plan.instances) || first.others != plan.others {
-					t.Fatalf("mix %d option %q: cap invariant differs: first=%+v next=%+v", mix, entry.option, first, plan)
+					t.Fatalf("mix %d option %q: cap invariant differs: first=%+v next=%+v", mix, entry.Option, first, plan)
 				}
 				for w := range first.items {
 					if len(first.items[w]) != len(plan.items[w]) {
-						t.Fatalf("mix %d option %q: item count differs", mix, entry.option)
+						t.Fatalf("mix %d option %q: item count differs", mix, entry.Option)
 					}
 					for k, item := range first.items[w] {
 						other := plan.items[w][k]
 						if item.e != other.e || item.weight != other.weight || item.prepare != other.prepare {
-							t.Fatalf("mix %d option %q: non-cap item fields differ: %+v vs %+v", mix, entry.option, item, other)
+							t.Fatalf("mix %d option %q: non-cap item fields differ: %+v vs %+v", mix, entry.Option, item, other)
 						}
 					}
 				}

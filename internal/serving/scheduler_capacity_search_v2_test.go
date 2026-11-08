@@ -8,6 +8,9 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
+	"github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
 func TestSchedulerSettingsPlanSearch(t *testing.T) {
@@ -22,10 +25,10 @@ func TestSchedulerSettingsPlanSearch(t *testing.T) {
 	if got.PlanSearchStrategy != "v1" || got.PlanSearchEvaluations != 500000 || got.PlanExactFinalists != 16 || got.PlanPolishActive != 8 || got.PlanPostFilterFinalists || !got.PlanPricedStart {
 		t.Fatalf("defaults: %+v", got)
 	}
-	for _, strategy := range []string{"v1", "v2", "shadow", "", "bad"} {
+	for _, strategy := range []string{"v1", "v2", "", "bad"} {
 		got.PlanSearchStrategy = strategy
 		err := got.Validate()
-		if (err == nil) != (strategy == "v1" || strategy == "v2" || strategy == "shadow") {
+		if (err == nil) != (strategy == protocol.V1 || strategy == protocol.V2) {
 			t.Fatalf("strategy %q: %v", strategy, err)
 		}
 	}
@@ -121,21 +124,24 @@ func TestCapacityFunnelExactAndFallback(t *testing.T) {
 	p := e5Planner(e5Mixes[0], evaluationScaled(1, 0), e5Start, nil)
 	keep := make([]int, len(p.plans))
 	exact := p.evaluate(slices.Clone(keep), p.routeOf(keep))
-	stats := capacityFunnel{}
-	got := p.funnel([]v2Candidate{{choice: keep, joules: exact.joules + 3}}, &stats)
-	if got == nil || got.key != exact.key || stats.exact != 1 || stats.gap != 3 || stats.rawKey != exact.key || stats.rawJoules != exact.joules {
+	problem := p.searchProblem(time.Time{})
+	evaluator := newCapacityExact(p)
+	stats := v2.FunnelStats{}
+	got := v2.Funnel(problem, evaluator, []protocol.Candidate{{Choice: keep, Joules: exact.joules + 3}}, &stats)
+	if got == nil || got.key != exact.key || stats.Exact != 1 || stats.Gap != 3 || stats.RawKey != exact.key || stats.RawJoules != exact.joules {
 		t.Fatalf("funnel: %+v %+v", got, stats)
 	}
-	stats = capacityFunnel{}
-	best := p.exactK1(&stats)
-	if best == nil || !p.admits(best) || !p.bounded(best.choice) || stats.exact < 2 {
+	stats = v2.FunnelStats{}
+	best := v2.ExactK1(problem, evaluator, &stats)
+	if best == nil || !p.admits(best) || !p.bounded(best.choice) || stats.Exact < 2 {
 		t.Fatalf("fallback: %+v %+v", best, stats)
 	}
 	p.settings.PlanPostFilterFinalists = true
-	stats = capacityFunnel{}
-	filtered := p.funnel([]v2Candidate{{choice: best.choice, joules: best.joules}}, &stats)
+	problem = p.searchProblem(time.Time{})
+	stats = v2.FunnelStats{}
+	filtered := v2.Funnel(problem, evaluator, []protocol.Candidate{{Choice: best.choice, Joules: best.joules}}, &stats)
 	want := p.minimumGain(p.payback(*best))
-	if filtered == nil || filtered.key != want.key || filtered.joules != want.joules || stats.rawKey != best.key || stats.rawJoules != best.joules {
+	if filtered == nil || filtered.key != want.key || filtered.joules != want.joules || stats.RawKey != best.key || stats.RawJoules != best.joules {
 		t.Fatalf("postfilter: %+v want %+v", filtered, want)
 	}
 }
@@ -149,16 +155,16 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 	p.plans[0] = append(p.plans[0], &alternative)
 	p.keepWatts = p.evaluate([]int{0}, 0).joules / p.period
 	a, b := p.evaluate([]int{1}, 0), p.evaluate([]int{2}, 0)
-	candidates := []v2Candidate{{choice: a.choice, joules: a.joules}, {choice: b.choice, joules: b.joules}}
+	candidates := []protocol.Candidate{{Choice: a.choice, Joules: a.joules}, {Choice: b.choice, Joules: b.joules}}
 	for _, enabled := range []bool{false, true} {
 		p.settings.PlanPostFilterFinalists = enabled
-		stats := capacityFunnel{}
-		got := p.funnel(candidates, &stats)
+		stats := v2.FunnelStats{}
+		got := v2.Funnel(p.searchProblem(time.Time{}), newCapacityExact(p), candidates, &stats)
 		want := a
 		if enabled {
 			want = b
 		}
-		if got == nil || got.key != want.key || stats.reverts != 1 || stats.rawKey != want.key || stats.rawJoules != want.joules {
+		if got == nil || got.key != want.key || stats.Reverts != 1 || stats.RawKey != want.key || stats.RawJoules != want.joules {
 			t.Fatalf("postfilter=%v got=%+v want=%+v stats=%+v", enabled, got, want, stats)
 		}
 	}
@@ -177,7 +183,7 @@ func TestCapacitySearchV2Determinism(t *testing.T) {
 				rng.Shuffle(len(plans)-1, func(i, j int) { plans[i+1], plans[j+1] = plans[j+1], plans[i+1] })
 			}
 		}
-		got, err := p.searchV2(time.Now().Add(time.Hour))
+		got, err := p.search(time.Now().Add(time.Hour))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -208,18 +214,18 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 		p           *capacityPlanner
 		k, budget   int
 	}{
-		{"one", schedulerPlanPhasePolish, capacityTwinSwap(100, 0), 1, 0},
-		{"two", schedulerPlanPhasePolish, two, 2, 0},
-		{"combine", schedulerPlanPhaseCombine, capacityThreeNodeSwap(), 3, 0},
-		{"cover", schedulerPlanPhaseCover, cover, 1, 0},
-		{"count-recovery", schedulerPlanPhaseCover, countRecovery, 1, 0},
+		{"one", protocol.Polish, capacityTwinSwap(100, 0), 1, 0},
+		{"two", protocol.Polish, two, 2, 0},
+		{"combine", protocol.Combine, capacityThreeNodeSwap(), 3, 0},
+		{"cover", protocol.Cover, cover, 1, 0},
+		{"count-recovery", protocol.Cover, countRecovery, 1, 0},
 		{"priced", "", priced, 0, 0},
 		{"origin-only-budget", "", capacityTwinSwap(100, 0), 0, 1},
-		{"accepted-budget", schedulerPlanPhasePolish, capacityTwinSwap(100, 0), 1, 2},
+		{"accepted-budget", protocol.Polish, capacityTwinSwap(100, 0), 1, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := tc.p
-			p.settings.PlanSearchStrategy = schedulerPlanSearchV2
+			p.settings.PlanSearchStrategy = protocol.V2
 			if tc.budget > 0 {
 				p.settings.PlanSearchEvaluations = tc.budget
 			}
@@ -227,12 +233,12 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 			found, pricedOrigin, lostFeasibility := false, false, false
 			var previous SchedulerPlanSearchStep
 			for _, step := range p.searched.Steps {
-				if step.Start != capacitySearchStartKeep && step.Start != "empty" && step.Start != "priced" ||
+				if step.Start != "keep" && step.Start != "empty" && step.Start != "priced" ||
 					step.ComparisonWindow != time.Duration(p.period*1e9) {
 					t.Fatalf("invalid start/window: %+v", step)
 				}
 				pricedOrigin = pricedOrigin || step.Start == "priced" && step.K == 0
-				if step.Start == capacitySearchStartKeep && step.K > 0 {
+				if step.Start == "keep" && step.K > 0 {
 					found = found || step.Phase == tc.phase && step.K == tc.k
 					lostFeasibility = lostFeasibility || previous.Feasible && !step.Feasible
 				}
@@ -246,7 +252,7 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 				tc.name == "count-recovery" && !lostFeasibility {
 				t.Fatalf("missing expected move/origin: %+v", p.searched.Steps)
 			}
-			if p.searched.BudgetCut || tc.budget > 0 && p.searched.TerminationReason != schedulerEvaluationBudget || p.searched.TrailingEvaluated == 0 {
+			if p.searched.BudgetCut || tc.budget > 0 && p.searched.TerminationReason != protocol.EvaluationBudget || p.searched.TrailingEvaluated == 0 {
 				t.Fatalf("budget/trailing accounting: %+v", p.searched)
 			}
 		})
@@ -255,11 +261,11 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 
 func TestCapacitySearchV2Deadline(t *testing.T) {
 	p := capacityTwinSwap(100, 0)
-	p.settings.PlanSearchStrategy = schedulerPlanSearchV2
+	p.settings.PlanSearchStrategy = protocol.V2
 	if _, err := p.search(time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if !p.searched.BudgetCut || p.searched.TerminationReason != schedulerDeadline {
+	if !p.searched.BudgetCut || p.searched.TerminationReason != protocol.Deadline {
 		t.Fatalf("deadline accounting: %+v", p.searched)
 	}
 }
