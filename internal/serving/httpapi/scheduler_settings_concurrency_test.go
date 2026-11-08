@@ -55,7 +55,7 @@ func TestSchedulerSettingsGETDoesNotWaitForServiceLock(t *testing.T) {
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, config: HandlerConfig{
 		Scheduler: service.Controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
 		SchedulerMeters: func() []servingops.MeterDeclaration { return meters },
-		RequestTimeout: time.Second,
+		RequestTimeout:  time.Second,
 	}, mux: http.NewServeMux()}
 	handler.mux.HandleFunc("GET /api/v1/scheduler/settings", handler.scheduler)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
