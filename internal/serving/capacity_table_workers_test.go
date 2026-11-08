@@ -12,7 +12,8 @@ func TestCapacityTableWorkerLimitShrinksByDrainingAndGrowsImmediately(t *testing
 	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(3, nil, nil))
 	table.Ensure(context.Background(), settings, snapshot)
 	admitted := []*capacityBuildBoundary{nextCapacityBuild(t, started), nextCapacityBuild(t, started), nextCapacityBuild(t, started)}
-	table.SetWorkerLimit(1)
+	settings.CapacityWorkers = 1
+	table.Configure(settings)
 	if status := table.WorkerStatus(); status.Limit != 1 || status.Active != 3 {
 		t.Fatalf("lower limit lost the actual draining count: %+v", status)
 	}
@@ -47,7 +48,8 @@ func TestCapacityTableWorkerLimitShrinksByDrainingAndGrowsImmediately(t *testing
 	if status := table.WorkerStatus(); status.Active != 1 {
 		t.Fatalf("shrunken limit did not bound successor admission: %+v", status)
 	}
-	table.SetWorkerLimit(3)
+	settings.CapacityWorkers = 3
+	table.Configure(settings)
 	fifth, sixth := nextCapacityBuild(t, started), nextCapacityBuild(t, started)
 	for _, boundary := range []*capacityBuildBoundary{fourth, fifth, sixth} {
 		if boundary.ctx.Err() != nil {
@@ -66,7 +68,7 @@ func TestCapacityTableWorkerLimitShrinksByDrainingAndGrowsImmediately(t *testing
 		}
 	}
 	settings.CapacityWorkers = 2
-	table.SetWorkerLimit(settings.CapacityWorkers)
+	table.Configure(settings)
 	table.Ensure(context.Background(), settings, snapshot)
 	if !reflect.DeepEqual(before, table.Rows()) || table.WorkerStatus().Active != 0 {
 		t.Fatal("worker-only policy changed row keys, results, or started numerical work")

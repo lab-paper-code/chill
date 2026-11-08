@@ -48,12 +48,36 @@ func capacityWorkerLimit(workers int) int {
 	return max(1, workers)
 }
 
-// SetWorkerLimit changes future row admission without invalidating numerical
-// results or canceling admitted builders. Zero selects the automatic limit.
-func (t *CapacityTable) SetWorkerLimit(workers int) {
+// Configure changes worker admission and removes inputs incompatible with accepted
+// configured path budgets. Missing groups wait for the next real Ensure capture.
+func (t *CapacityTable) Configure(settings SchedulerSettings) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.parallel = capacityWorkerLimit(workers)
+	t.parallel = capacityWorkerLimit(settings.CapacityWorkers)
+	if !settings.UsesObservedPathBudgets() {
+		for uid, state := range t.groups {
+			budget := ResolvePathBudget(settings, nil, &state.latest.workload)
+			t.retainBudgetLocked(state, budget)
+			if state.latest == nil {
+				state.latest = state.building
+				if state.latest == nil {
+					state.latest = state.active
+				}
+			}
+			if state.latest == nil {
+				delete(t.groups, uid)
+				continue
+			}
+			for _, g := range []*capacityGroup{state.active, state.building, state.latest} {
+				if g != nil {
+					g.settings.CompletionMarginMS = settings.CompletionMarginMS
+					g.settings.ObservedPathBudgets = settings.ObservedPathBudgets
+					g.budget = ResolvePathBudget(settings, []PathBudget{g.budget}, &g.workload)
+				}
+			}
+		}
+		t.order = slices.DeleteFunc(t.order, func(uid string) bool { return t.groups[uid] == nil })
+	}
 	t.startLocked()
 }
 
@@ -88,17 +112,6 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 		order = append(order, w.UID)
 		g := newCapacityGroup(ctx, settings, snapshot, w)
 		state := t.groups[w.UID]
-		// Configured policy takes effect at this boundary, without publishing an
-		// older observed group while configured rows are pending.
-		if state != nil && !settings.UsesObservedPathBudgets() {
-			for _, old := range []*capacityGroup{state.active, state.building, state.latest} {
-				if old != nil && !old.sameBudget(g) {
-					t.dropLocked(w.UID, state)
-					state = nil
-					break
-				}
-			}
-		}
 		if state != nil && !state.latest.sameStructure(g) {
 			t.dropLocked(w.UID, state)
 			state = nil
@@ -107,18 +120,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 			state = &capacityTableWorkload{}
 			t.groups[w.UID] = state
 		}
-		// Refresh provenance without changing a task's frozen inputs or budget.
-		for _, old := range []*capacityGroup{state.active, state.building, state.latest} {
-			if old != nil && old.sameBudget(g) {
-				old.ctx, old.settings, old.occupancy = g.ctx, g.settings, g.occupancy
-				old.workload, old.budget, old.at, old.items = g.workload, g.budget, g.at, g.items
-				g = old
-			}
-		}
-		state.latest = g
-		if state.building == nil || !state.building.started {
-			state.building = g
-		}
+		t.mergeGroupLocked(state, g)
 	}
 	for uid, state := range t.groups {
 		if !wanted[uid] {

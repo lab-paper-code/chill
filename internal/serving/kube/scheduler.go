@@ -138,7 +138,7 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	c.config = config
 	c.runtime.SetPathBudgetPolicy(config.Settings)
 	c.mu.Unlock()
-	c.capacity.SetWorkerLimit(config.Settings.CapacityWorkers)
+	c.capacity.Configure(config.Settings)
 	after := len(config.Settings.AutonomousWorkloads) > 0
 	c.setRoutingControl(before, after)
 	if previousStatic && !config.StaticRouting && !after && !before {
@@ -163,7 +163,7 @@ func (c *SchedulerController) AcceptSettings(ctx context.Context, settings servi
 	c.config.Settings, c.config.Preparations = settings, preparations
 	c.runtime.SetPathBudgetPolicy(settings)
 	c.mu.Unlock()
-	c.capacity.SetWorkerLimit(settings.CapacityWorkers)
+	c.capacity.Configure(settings)
 	c.setRoutingControl(before, len(settings.AutonomousWorkloads) > 0)
 	return nil
 }
