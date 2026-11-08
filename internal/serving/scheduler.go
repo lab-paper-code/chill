@@ -670,10 +670,6 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
 	settings := in.SchedulerSettings
-	if settings.ObservedPathBudgets == nil {
-		enabled := true
-		settings.ObservedPathBudgets = &enabled
-	}
 	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = protocol.V2, 500000
 	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 8, false
 	settings.PlanPricedStart = true
