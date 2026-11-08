@@ -25,7 +25,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		return serving.SchedulerSnapshot{}, err
 	}
 	s := serving.SchedulerSnapshot{ObservationEnd: now, ObservedSince: c.observationLog.Started(), Arrivals: window.Arrivals, Costs: config.Costs, Baselines: config.Baselines,
-		DispatchOccupancy: config.DispatchOccupancy}
+		DispatchOccupancy: config.DispatchOccupancy, PathBudgets: window.PathBudgets}
 	if config.DispatchOccupancySnapshot != nil {
 		s.DispatchOccupancy = config.DispatchOccupancySnapshot()
 	}

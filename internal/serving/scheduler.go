@@ -348,6 +348,8 @@ type SchedulerRequest struct {
 	ReturnElapsed         time.Duration `json:"returnElapsedNanos"`
 	ArrivalRate           float64       `json:"arrivalRate"`
 	NativeSenderElapsedMS *float64      `json:"nativeSenderElapsedMS,omitempty"`
+	// CompletionMarginMS is the post-path budget frozen when this request was accepted.
+	CompletionMarginMS    *float64      `json:"completionMarginMS,omitempty"`
 	NativeOutcome         string        `json:"nativeOutcome,omitempty"`
 }
 type SchedulerArrival struct {
@@ -459,6 +461,9 @@ type SchedulerSnapshot struct {
 	// DispatchOccupancy holds the selected d and provenance per accepted
 	// node/model/mode/profile/execution path/batch, including configured defaults.
 	DispatchOccupancy []DispatchOccupancy    `json:"dispatchOccupancy"`
+	// PathBudgets is the active numerical input; observations retain the latest requested input.
+	PathBudgets            []PathBudget `json:"pathBudgets,omitempty"`
+	PathBudgetObservations []PathBudget `json:"pathBudgetObservations,omitempty"`
 	CostRefs          []string               `json:"costRefs,omitempty"`
 	Actions           []Action               `json:"actions"`
 	Reasons           []string               `json:"reasons"`
@@ -553,6 +558,8 @@ type SchedulerDecision struct {
 	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
 	Capacity   *SchedulerCapacity       `json:"capacity,omitempty"`
+	PathBudgets            []PathBudget `json:"pathBudgets,omitempty"`
+	PathBudgetObservations []PathBudget `json:"pathBudgetObservations,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }
