@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	servingops "github.com/lab-paper-code/chill/internal/serving/operations"
@@ -47,7 +46,6 @@ type HandlerConfig struct {
 	OnMutationAction                                           func(observation.SchedulerActionObservation, time.Time)
 	Scheduler                                                  *servingkube.SchedulerController
 	SchedulerConfigMap, SchedulerConfigKey, SchedulerNamespace string
-	SchedulerLock                                              *sync.Mutex
 	ChangeSchedulerSettings                                    func(context.Context, application.SettingsInput, string, bool, string, string) (observation.SchedulerSettingsChange, string, error)
 	SchedulerMeters                                            func() []servingops.MeterDeclaration
 	ReceiveResources                                           func(context.Context, observation.ResourceBatch) ([]observation.ResourceTarget, error)
@@ -96,9 +94,6 @@ func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorize
 		return nil, errors.New("concrete management/runtime/auth/observation dependencies and positive HTTP bounds are required")
 	}
 	h := &Handler{manager: manager, runtime: runtime, authorizer: authorizer, observationLog: observationLog, observer: observer, config: config, mux: http.NewServeMux()}
-	if h.config.SchedulerLock == nil {
-		h.config.SchedulerLock = &sync.Mutex{}
-	}
 	h.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		sendJSON(w, http.StatusOK, struct {
 			Alive bool `json:"alive"`

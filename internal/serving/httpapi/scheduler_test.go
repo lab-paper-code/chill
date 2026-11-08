@@ -306,7 +306,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			}
 			handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 				Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler",
-				SchedulerConfigKey: "scheduler.json", SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20,
+				SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20,
 			}}
 			if !tc.missingRefresh {
 				handler.config.ChangeSchedulerSettings = service.ChangeSchedulerSettings
@@ -515,7 +515,7 @@ func TestSchedulerSettingsProjectionsAreReadOnly(t *testing.T) {
 	meters := []servingops.MeterDeclaration{{ID: "accepted-meter", Node: serving.NodeReference{Name: "accepted-node", UID: "accepted-uid"}, Scope: "node-exclusive-wall"}}
 	handler := &Handler{authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog, config: HandlerConfig{
 		Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler", SchedulerConfigKey: "scheduler.json",
-		SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20, ChangeSchedulerSettings: service.ChangeSchedulerSettings,
+		MaxRequestBytes: 1 << 20, ChangeSchedulerSettings: service.ChangeSchedulerSettings,
 		SchedulerMeters: func() []servingops.MeterDeclaration { return meters },
 		RequestTimeout:  73125 * time.Millisecond,
 	}}
@@ -703,7 +703,7 @@ func TestSchedulerSettingsETagPreconditions(t *testing.T) {
 		authorizer: &servingkube.Authorizer{Client: kube}, runtime: execution, observationLog: observationLog,
 		config: HandlerConfig{
 			Scheduler: controller, SchedulerNamespace: "serving", SchedulerConfigMap: "scheduler",
-			SchedulerConfigKey: "scheduler.json", SchedulerLock: &service.Lock, MaxRequestBytes: 1 << 20,
+			SchedulerConfigKey: "scheduler.json", MaxRequestBytes: 1 << 20,
 			ChangeSchedulerSettings: service.ChangeSchedulerSettings,
 		},
 	}

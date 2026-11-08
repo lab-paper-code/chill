@@ -50,7 +50,6 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	h.config.SchedulerNamespace = "serving"
 	h.config.SchedulerConfigMap = "scheduler"
 	h.config.SchedulerConfigKey = "scheduler.json"
-	h.config.SchedulerLock = &service.Lock
 	h.config.ChangeSchedulerSettings = service.ChangeSchedulerSettings
 	after := before
 	after.MaxInstances++

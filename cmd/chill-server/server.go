@@ -327,7 +327,6 @@ func initializeServing(ctx context.Context, opts *options,
 		handlerConfig.SchedulerConfigMap = opts.schedulerConfigMap
 		handlerConfig.SchedulerConfigKey = opts.schedulerConfigKey
 		handlerConfig.SchedulerNamespace = opts.servingNamespace
-		handlerConfig.SchedulerLock = &scheduler.Lock
 		handlerConfig.ChangeSchedulerSettings = scheduler.ChangeSchedulerSettings
 		handlerConfig.SchedulerMeters = scheduler.SchedulerMeters
 		handlerConfig.OperatingPower = scheduler.OperatingPower
