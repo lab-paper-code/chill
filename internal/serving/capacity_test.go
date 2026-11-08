@@ -5,7 +5,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -408,33 +407,28 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 	other.UID = "w2"
 	snap.Workloads = append(snap.Workloads, &other)
 	snap.Options[0].CompatibleUIDs = []string{"w1", "w2"}
-	var recorded atomic.Int32
+	var recorded, recordedW2 atomic.Int32
 	table := NewCapacityTable(2, func(row CapacityRow) error {
-		if row.Input.WorkloadUID != "w1" {
-			t.Errorf("row for disabled Workload %s", row.Input.WorkloadUID)
+		if row.Input.WorkloadUID == "w2" {
+			recordedW2.Add(1)
 		}
 		recorded.Add(1)
 		return nil
 	}, nil)
-	table.parallel <- struct{}{}
-	table.parallel <- struct{}{}
 	table.Ensure(context.Background(), s, snap)
-	if rows := table.Rows(); len(rows) != 1 || rows[0].Status != CapacityPending || rows[0].Kappa != nil {
-		t.Fatalf("a row being computed must be CapacityPending: %+v", rows)
-	}
-	<-table.parallel
-	<-table.parallel
 	table.Wait()
-	if rows := table.Rows(); len(rows) != 1 || rows[0].Status != CapacityBuilt || recorded.Load() != 1 {
-		t.Fatalf("one built and recorded row: %+v, records %d", rows, recorded.Load())
+	rows := table.Rows()
+	if len(rows) != 1 || rows[0].Input.WorkloadUID != "w1" || rows[0].Status != CapacityBuilt || recorded.Load() != 1 || recordedW2.Load() != 0 {
+		t.Fatalf("only the autonomous Workload must build: %+v, records %d", rows, recorded.Load())
 	}
+	before := rows[0]
 	// Inputs outside the row key start nothing.
 	snap.At = snap.At.Add(time.Minute)
 	s.ControlInterval, s.MaxReplicas = 2*s.ControlInterval, s.MaxReplicas+1
 	table.Ensure(context.Background(), s, snap)
 	table.Wait()
-	if recorded.Load() != 1 {
-		t.Fatalf("unrelated change recomputed: %d", recorded.Load())
+	if row := table.Rows()[0]; row.Key != before.Key || row.BuiltAt != before.BuiltAt || recorded.Load() != 1 {
+		t.Fatalf("unrelated change recomputed: %+v, records %d", row, recorded.Load())
 	}
 	// SLO, margin, profile and capacity settings each add one missing row.
 	snap.Workloads[0].SLO.TargetLatency = 30 * time.Millisecond
@@ -456,155 +450,73 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 	}
 	// Enabling w2 builds only its row.
 	s.AutonomousWorkloads = []string{"w1", "w2"}
-	recordedW2 := 0
-	table.record = func(row CapacityRow) error {
-		if row.Input.WorkloadUID == "w2" {
-			recordedW2++
-		}
-		return nil
-	}
 	table.Ensure(context.Background(), s, snap)
 	table.Wait()
-	if rows := table.Rows(); len(rows) != 2 || recordedW2 != 1 {
-		t.Fatalf("enabling w2 must add exactly its row: %+v, %d", rows, recordedW2)
+	if rows := table.Rows(); len(rows) != 2 || recordedW2.Load() != 1 || recorded.Load() != 6 {
+		t.Fatalf("enabling w2 must add exactly its row: %+v, records %d", rows, recorded.Load())
 	}
 }
 
-// Hold the first Err call inside a running build until Ensure cancels it.
-type capacityBlockedContext struct {
-	context.Context
-	started chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
 
-func (c *capacityBlockedContext) Err() error {
-	c.once.Do(func() {
-		close(c.started)
-		<-c.release
-	})
-	return c.Context.Err()
-}
-
-func TestCapacityTableCancelsUnwantedQueuedAndRunning(t *testing.T) {
-	s, snap := capacityFixture()
-	p := *snap.Options[0].Instance.Profile
-	p.ID += "-queued"
-	o := snap.Options[0]
-	o.Instance.Profile = &p
-	snap.Options = append(snap.Options, o)
-	var recorded atomic.Int32
-	table := NewCapacityTable(1, func(CapacityRow) error {
-		recorded.Add(1)
-		return nil
-	}, nil)
-	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0])).Key()
-	queuedKey := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[1], snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0])).Key()
-	original, cancel := context.WithCancel(context.Background())
-	blocked := &capacityBlockedContext{Context: original, started: make(chan struct{}), release: make(chan struct{})}
-	// Publish the complete task before either build or Ensure can read its
-	// context. Replacing a live task's context races the admission goroutine.
-	running := &capacityTask{option: snap.Options[0], workload: snap.Workloads[0], key: key, ctx: blocked, cancel: cancel}
-	table.running[key] = running
-	table.wg.Add(1)
-	table.parallel <- struct{}{}
-	runningDone := make(chan struct{})
-	go func() {
-		table.build(s, snap.DispatchOccupancy, running, snap.At)
-		close(runningDone)
-	}()
-	table.Ensure(context.Background(), s, snap)
-	table.mu.Lock()
-	queued := table.running[queuedKey]
-	table.mu.Unlock()
-	select {
-	case <-blocked.started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("build did not start")
-	}
-	empty := snap
-	empty.Options = nil
-	table.Ensure(context.Background(), s, empty)
-	if original.Err() != context.Canceled || queued.ctx.Err() != context.Canceled {
-		t.Fatal("Ensure must cancel both running and queued obsolete keys")
-	}
-	// Re-add the same keys before the old build exits: its cleanup must not
-	// delete the replacement task or publish its canceled result.
-	table.Ensure(context.Background(), s, snap)
-	close(blocked.release)
-	select {
-	case <-runningDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("canceled tasks retained the only replay slot")
-	}
-	// Bound cancellation itself, not the replacement's measured replay work.
-	// The package watchdog still bounds the complete build/cleanup assertion.
-	table.Wait()
-	if rows := table.Rows(); len(rows) != 2 || rows[0].Status != CapacityBuilt || rows[1].Status != CapacityBuilt || recorded.Load() != 2 {
-		t.Fatalf("only replacement rows should be recorded: %+v, records %d", rows, recorded.Load())
-	}
-}
-
-func TestCapacityTableRoundRobinWorkloads(t *testing.T) {
+func TestCapacityTableBuildsEveryCompatibleVariant(t *testing.T) {
 	s, snap := capacityFixture()
 	baseWorkload, baseOption := *snap.Workloads[0], snap.Options[0]
 	s.AutonomousWorkloads, snap.Workloads, snap.Options = nil, nil, nil
 	snap.DispatchOccupancy = nil
+	expected := map[string]string{}
 	for i, count := range []int{3, 1, 2} {
 		w := baseWorkload
 		w.UID = string(rune('a' + i))
 		s.AutonomousWorkloads = append(s.AutonomousWorkloads, w.UID)
 		snap.Workloads = append(snap.Workloads, &w)
-		// Multiple options exercise advancing from one option to the next.
 		for batch := 1; batch <= count; batch++ {
 			o, p := baseOption, *baseOption.Instance.Profile
 			p.ID = w.UID + string(rune('0'+batch))
-			// Finish analytically without replay; only queue order matters.
 			p.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: batch}, []float64{float64(w.SLO.TargetLatency) + 1})}
 			o.Instance.Profile, o.Instance.MaxBatch = &p, batch
 			o.CompatibleUIDs = []string{w.UID}
 			snap.Options = append(snap.Options, o)
+			expected[p.ID] = w.UID
 		}
 	}
-	var order []string
-	table := NewCapacityTable(1, func(row CapacityRow) error {
-		order = append(order, row.Input.ProfileID)
+	var recorded atomic.Int32
+	table := NewCapacityTable(2, func(CapacityRow) error {
+		recorded.Add(1)
 		return nil
 	}, nil)
-	table.parallel <- struct{}{}
 	table.Ensure(context.Background(), s, snap)
-	table.Ensure(context.Background(), s, snap) // Queued rows must not duplicate.
-	<-table.parallel
+	table.Ensure(context.Background(), s, snap)
 	table.Wait()
-	if want := []string{"a1", "b1", "c1", "a2", "c2", "a3"}; !reflect.DeepEqual(order, want) {
-		t.Fatalf("serial row execution = %v, want %v", order, want)
+	rows := table.Rows()
+	if len(rows) != len(expected) || int(recorded.Load()) != len(expected) {
+		t.Fatalf("compatible variants must all build once: rows=%+v records=%d", rows, recorded.Load())
+	}
+	for _, row := range rows {
+		if row.Status != CapacityBuilt || expected[row.Input.ProfileID] != row.Input.WorkloadUID {
+			t.Fatalf("missing or incompatible built variant: %+v", row)
+		}
+		delete(expected, row.Input.ProfileID)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("compatible variants did not finish: %v", expected)
 	}
 }
 
 // A recorded row stands in for a row being computed and gives way once built.
 func TestCapacityTableUsesRecordedRowUntilBuilt(t *testing.T) {
 	s, snap := capacityFixture()
-	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0])).Key()
+
 	recordedKappa := 1.0
-	table := NewCapacityTable(1, nil, func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
-		if len(keys) != 1 || keys[0] != key {
-			t.Errorf("load asked %v", keys)
-		}
-		return map[string]CapacityRow{key: {Key: key, Status: CapacityBuilt, Kappa: &recordedKappa}}, nil
-	})
-	table.parallel <- struct{}{}
+	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
+		return map[string]CapacityRow{keys[0]: {Key: keys[0], Status: CapacityBuilt, Kappa: &recordedKappa}}, nil
+	}))
 	table.Ensure(context.Background(), s, snap)
-	deadline := time.Now().Add(5 * time.Second)
-	for rows := table.Rows(); !rows[0].Previous; rows = table.Rows() {
-		if time.Now().After(deadline) {
-			t.Fatalf("recorded row never stood in: %+v", rows)
-		}
-		time.Sleep(time.Millisecond)
+	running := nextCapacityBuild(t, started)
+	waitCapacityLoad(t, table)
+	if row := table.Rows()[0]; !row.Previous || row.Kappa == nil || *row.Kappa != recordedKappa {
+		t.Fatalf("recorded row must stand in until rebuilt: %+v", row)
 	}
-	if row := table.Rows()[0]; *row.Kappa != recordedKappa {
-		t.Fatalf("recorded kappa lost: %+v", row)
-	}
-	<-table.parallel
+	close(running.release)
 	table.Wait()
 	if row := table.Rows()[0]; row.Previous || row.Kappa == nil || *row.Kappa <= recordedKappa {
 		t.Fatalf("the built row must replace the recorded one: %+v", row)

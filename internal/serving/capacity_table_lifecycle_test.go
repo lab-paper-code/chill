@@ -19,11 +19,10 @@ type capacityBuildBoundary struct {
 	ignoreCancellation bool
 }
 
-func newCapacityLifecycleTable(t *testing.T, parallel int) (*CapacityTable, <-chan *capacityBuildBoundary, <-chan struct{}) {
+func gateCapacityTableBuilds(t *testing.T, table *CapacityTable) (*CapacityTable, <-chan *capacityBuildBoundary, <-chan struct{}) {
 	t.Helper()
 	started := make(chan *capacityBuildBoundary, 32)
 	stop := make(chan struct{})
-	table := NewCapacityTable(parallel, nil, nil)
 	table.buildRow = func(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, option SchedulerOption, w *Definition, at time.Time, budget PathBudget) (CapacityRow, error) {
 		boundary := &capacityBuildBoundary{ctx: ctx, budget: budget, uid: w.UID, batch: option.Instance.MaxBatch, release: make(chan struct{})}
 		select {
@@ -121,7 +120,7 @@ func assertCapacityGroup(t *testing.T, table *CapacityTable, budget float64, var
 
 func TestCapacityTableContinuousBudgetsFinishWholeGroups(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(2)
-	table, started, _ := newCapacityLifecycleTable(t, 1)
+	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, nil))
 	table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, 1))
 	first := nextCapacityBuild(t, started)
 	for _, budget := range []float64{2, 3, 4} {
@@ -183,7 +182,7 @@ func TestCapacityTableQueuedBudgetIncreasesPassDecreases(t *testing.T) {
 		settings.AutonomousWorkloads = append(settings.AutonomousWorkloads, uid)
 	}
 	snapshot.Options[0].CompatibleUIDs = settings.AutonomousWorkloads
-	table, started, _ := newCapacityLifecycleTable(t, 1)
+	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, nil))
 	table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, 10, 10, 10))
 	for range snapshot.Workloads {
 		close(nextCapacityBuild(t, started).release)
@@ -215,7 +214,7 @@ func TestCapacityTableQueuedBudgetIncreasesPassDecreases(t *testing.T) {
 
 func TestCapacityTableUnchangedNumbersRefreshProvenanceWithoutRestart(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(1)
-	table, started, _ := newCapacityLifecycleTable(t, 1)
+	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, nil))
 	desired := capacityLifecycleBudgets(snapshot, 3)
 	table.Ensure(context.Background(), settings, desired)
 	running := nextCapacityBuild(t, started)
@@ -245,7 +244,7 @@ func TestCapacityTableUnchangedNumbersRefreshProvenanceWithoutRestart(t *testing
 
 func TestCapacityTableCanceledSnapshotCanRestartUnchangedInputs(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(1)
-	table, started, _ := newCapacityLifecycleTable(t, 1)
+	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, nil))
 	desired := capacityLifecycleBudgets(snapshot, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	table.Ensure(ctx, settings, desired)
@@ -266,7 +265,7 @@ func TestCapacityTableCanceledSnapshotCanRestartUnchangedInputs(t *testing.T) {
 
 func TestCapacityTableStructuralRemovalDiscardsActiveAndOldTask(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(1)
-	table, started, _ := newCapacityLifecycleTable(t, 2)
+	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(2, nil, nil))
 	var recorded atomic.Int32
 	table.record = func(CapacityRow) error { recorded.Add(1); return nil }
 	table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, 1))
@@ -312,7 +311,7 @@ func TestCapacityTableStructuralRemovalDiscardsActiveAndOldTask(t *testing.T) {
 
 func TestCapacityTableLateLoadCannotResurrectRemovedRows(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(1)
-	table, started, stop := newCapacityLifecycleTable(t, 2)
+	table, started, stop := gateCapacityTableBuilds(t, NewCapacityTable(2, nil, nil))
 	type loadBoundary struct {
 		keys    []string
 		release chan struct{}
@@ -374,7 +373,7 @@ func TestCapacityTableLateLoadCannotResurrectRemovedRows(t *testing.T) {
 
 func TestCapacityTableReclaimsUnreferencedRowsAndGroups(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(1)
-	table, started, _ := newCapacityLifecycleTable(t, 1)
+	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, nil))
 	table.load = func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
 		return map[string]CapacityRow{keys[0]: {Key: keys[0], Status: CapacityBuilt}}, nil
 	}
