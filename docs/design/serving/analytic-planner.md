@@ -1,7 +1,5 @@
 # 용량표 계획기 (M4)
 
-상태: 2026-10-30 **2차 검토(fusion: 패널 3모델+판정) 반영**. 아래 가변 격자·tail 설정은 구현 전 변경 계약이며 현재 코드 완료 주장이 아니다.
-
 [이행 대안](../architecture-rethink/README.md)과 구분한 현행 용량표 계획기 계약이다.
 option과 Workload SLO마다 인스턴스 하나가 SLO를 지키는 최대 요청률 κ를 재생으로 계산한다.
 ChillServer는 시작과 입력 변경 때 자동제어 Workload의 행을 계산하고,
@@ -70,8 +68,9 @@ v1/v2는 protocol만 참조하고 서로나 serving을 import하지 않는다.
 - ChillServer의 용량표 worker가 시작할 때 대상 행을 계산한다. 그 뒤에는 자동제어가 켜진 Workload의 SLO, profile, 경로 예산, 디스패치 점유, 용량표 설정 변경을 최신 계산 요구로 병합한다. 관측 변화만으로 실행 중 계산을 반복 취소하거나 같은 요구를 재시작하지 않는다. 표는 메모리에만 있고 시작마다 비어 있으므로 재생, 배칭 규칙, κ 계산 코드가 바뀐 image도 그 코드로 계산한 표를 쓴다.
 - 대상은 자동제어가 켜진 Workload의 SLO와 그 Workload에 측정 근거가 있는 option 변형이다. 꺼진 Workload의 노드는 keep뿐이라(4장) 그 κ를 쓰지 않는다. E1에서는 tight 하나라 option 변형 38개, 38행이다(SLO 3개 전체는 114행).
 - 행 하나가 작업 하나이고 행끼리 독립이라 병렬로 계산한다. capacity worker 수는 runtime GOMAXPROCS의 실행 병렬성일 뿐 CPU 예약·limit이 아니다. ChillServer는 CPU request/limit이나 limits.cpu 기반 GOMAXPROCS를 설정하지 않는다.
-- 빠진 행은 Workload마다 다음 행 하나씩 round-robin으로 공용 semaphore에 투입하여, 행이 많은 Workload 뒤에서 다른 Workload가 굶지 않게 한다. 대기 계산에서는 예산 상향을 하향보다 우선하고 실행 중 작업은 완료시킨다.
+- 빠진 행은 Workload별 round-robin으로 실행 슬롯에 직접 배정한다. 대기 계산은 예산 상향을 우선하며, 실행 중 작업은 완료시킨다. 대기 행마다 goroutine을 만들지 않는다.
 - 필요한 행이 완성되면 Workload별 활성 예산·κ·slack·신규 요청 기본값을 함께 전환한다. 더 최신 관측이 생겼다는 이유만으로 유효한 완료 결과를 계속 폐기하지 않는다. 유효한 활성 행이 없으면 기존 `CapacityPending`을 유지한다. 활성 예산보다 최신 요구가 높은 동안에는 판단이 낙관적일 수 있으므로 이를 최신 관측의 검증 결과로 표시하지 않는다.
+- Runtime에 적용한 예산·행 쌍을 중간 Ready 확장과 Continue에서도 사용한다. background 계산 완료만으로 실행 중 handoff의 수치 입력을 바꾸지 않는다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
 - 각 Tick의 planner는 병렬 탐색 전에 option/Workload별 행 키·κ·사유와 현재 인스턴스별 κ·행을 한 번 해석한다. 누락·거절 결과도 포함한 이 읽기 전용 표는 그 planner에서만 살며, 후보 평가는 디스패치 점유 조회나 행 키 직렬화·해시를 반복하지 않는다. 다음 Tick은 새 snapshot과 행으로 다시 만든다.
 
@@ -205,6 +204,24 @@ M은 재생이 만드는 서버 slot 대기 Aw와 profile service+batch×d가 �
 **configured와 한계.** 기동·결손·표본 부족에서는 기존 `completionMarginMS`를 total·post의 configured 추정값으로 사용한다. 과거 값에서 pre/post 성분을 역산하지 않는다. configured에는 F 이전 비용과 native의 F 차감이 중복될 수 있다. 이 한계는 configured를 쓰는 모든 부하에 적용하며 배칭 축소·처리율 저하·backlog 영향을 별도로 검증한다. 관측 부족만으로 serving을 거절하지 않고 configured를 관측 검증 완료나 중복 제거 완료로 표시하지 않는다. 0.3 req/s·60초의 기대18개 표본에서는 configured가 유지된다. Workload 공유 예산은 후보 Node·routing·batch별 경로 차이를 완전히 설명하지 못한다.
 
 기존 LoadWindow가 읽은 행을 재사용하며 추가 archive scan·ring·ticker를 만들지 않는다. 정렬·통계는 Runtime 전역 lock 밖에서 수행한다. 판단 기록에는 출처·창·coverage·활성 예산·행·최신 요구 차이와 반영 대기를 작은 요약과 기존 참조로 연결한다. 요청 표본·profile 전체를 복제하지 않는다. 선택 모델의 예상 지연은 기존 offline replay에서 구하고 실제 경로와 구분한다. 물리 service·preceding idle 비교는 `(instance,batchID)`별 canonical 값을 한 번만 사용한다. 온라인 차이는 batch별 service/G로 보고하며 자동 profile 거절·재측정으로 연결하지 않는다. 기존 ProfileReuseCheck의 다른 Node 확인 측정 계약은 유지한다.
+
+### 구현 경계와 offline 비교
+
+`request_path.go`는 시간 분해, `path_budget.go`는 관측 상한을 담당한다.
+`capacity_table*.go`는 행의 계산·보관·전환을 맡고, `scheduler_path_budget.go`와
+`runtime_path_budget.go`가 활성 입력을 공통 adapter와 접수 요청에 연결한다.
+v1/v2 엔진의 protocol·순위·에너지 식은 유지한다.
+
+```sh
+go run ./hack/kappa -mode path -scheduler scheduler.json \
+  -rows capacity.json -arrivals requests.jsonl
+```
+
+`-arrivals`는 assigned/final/native 원시 RequestRow JSONL 또는 gzip 파일이다.
+선택 후보 재생과 실제 수신 cohort를 구분하며, 요청별 지연·동결 POST와
+물리 batch별 service/G를 비교한다. 기존 CLI의 수치·Workload 선택 옵션을 사용한다.
+같은 입력 비교에는 캡처 당시 설정을 지정한다. 결손·실패·미완료와 배치 상관은
+진단에 남기며 이 명령은 profile 적격성을 바꾸지 않는다.
 
 ## 6. 인스턴스와 Workload 경계
 
