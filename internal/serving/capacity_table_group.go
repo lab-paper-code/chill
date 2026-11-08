@@ -66,6 +66,22 @@ func (g *capacityGroup) hasBudget(budget PathBudget) bool {
 		g.budget.JudgmentPercentile == budget.JudgmentPercentile
 }
 
+// allowsBudget compares observed windows only within the same distribution.
+// An increase takes the whole new pair; every pure decrease needs separation
+// from its own active lower bound. Equivalent numbers may refresh provenance.
+func (g *capacityGroup) allowsBudget(next *capacityGroup) bool {
+	if g == nil || g.budget.Source != PathBudgetObserved || next.budget.Source != PathBudgetObserved ||
+		g.budget.DefinitionID != next.budget.DefinitionID || g.budget.JudgmentPercentile != next.budget.JudgmentPercentile {
+		return true
+	}
+	active, candidate := &g.budget, &next.budget
+	if candidate.TotalMS > active.TotalMS || candidate.PostMS > active.PostMS {
+		return true
+	}
+	return (candidate.TotalMS == active.TotalMS || active.TotalLowerMS != nil && candidate.TotalMS < *active.TotalLowerMS) &&
+		(candidate.PostMS == active.PostMS || active.PostLowerMS != nil && candidate.PostMS < *active.PostLowerMS)
+}
+
 func (t *CapacityTable) retainBudgetLocked(state *capacityTableWorkload, budget PathBudget) {
 	if state.active != nil && !state.active.hasBudget(budget) {
 		state.active = nil
@@ -99,7 +115,10 @@ func (t *CapacityTable) mergeGroupLocked(state *capacityTableWorkload, g *capaci
 	}
 	state.latest = g
 	if state.building == nil || !state.building.started {
-		state.building = g
+		state.building = nil
+		if state.active.allowsBudget(g) {
+			state.building = g
+		}
 	}
 }
 
@@ -149,7 +168,7 @@ func (t *CapacityTable) advanceLocked() {
 				}
 			}
 		}
-		if state.building == nil {
+		if state.building == nil && state.active.allowsBudget(state.latest) {
 			if t.completeLocked(state.latest, false) {
 				state.active = state.latest
 			} else {

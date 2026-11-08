@@ -98,8 +98,10 @@ func capacityLifecycleFixture(variants int) (SchedulerSettings, SchedulerSnapsho
 func capacityLifecycleBudgets(snapshot SchedulerSnapshot, values ...float64) SchedulerSnapshot {
 	snapshot.PathBudgets = nil
 	for i, w := range snapshot.Workloads {
+		totalLower, postLower := values[i]*.99, values[i]*.99/2
 		snapshot.PathBudgets = append(snapshot.PathBudgets, PathBudget{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved,
-			From: snapshot.At.Add(-time.Minute), To: snapshot.At, TotalMS: values[i], PostMS: values[i] / 2, JudgmentPercentile: 97.5})
+			From: snapshot.At.Add(-time.Minute), To: snapshot.At, TotalMS: values[i], PostMS: values[i] / 2,
+			TotalLowerMS: &totalLower, PostLowerMS: &postLower, JudgmentPercentile: 97.5})
 	}
 	return snapshot
 }
