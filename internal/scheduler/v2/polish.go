@@ -1,6 +1,9 @@
 package v2
 
-import ("time"; "github.com/lab-paper-code/chill/internal/scheduler/protocol")
+import (
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
+	"time"
+)
 
 // v2Merit ranks positive-coverage moves by ΔE/Δcov. Nonpositive coverage
 // follows every positive-coverage move, ordered by ΔE, then logical plan key.

@@ -1,11 +1,10 @@
 package v2
 
 import (
- "github.com/lab-paper-code/chill/internal/scheduler/protocol"
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"slices"
 	"time"
 )
-
 
 type CoreStats struct {
 	SurrogateEvaluated int
@@ -90,7 +89,7 @@ func newV2Search(p protocol.Problem, t *protocol.Table, choice []int, evaluation
 			active = max(active, len(plans))
 		}
 	}
-	c := &v2Search{problem:p, s: newState(p,t,choice), current: newV2Key(t, len(p.Workloads)), best: newV2Key(t, len(p.Workloads)),
+	c := &v2Search{problem: p, s: newState(p, t, choice), current: newV2Key(t, len(p.Workloads)), best: newV2Key(t, len(p.Workloads)),
 		finalists: newV2Finalists(t, len(p.Workloads), finalists), limit: evaluations, active: active, Deadline: deadline,
 		moves: make([][]int, len(p.Plans)), ranked: make([][]v2Merit, len(p.Plans)), activePlans: make([][]int, len(p.Plans)),
 		suffix: make([][]float64, len(p.Plans)+1), optimistic: make([]float64, len(p.Workloads)), allActive: allActive,
@@ -146,7 +145,7 @@ func (c *v2Search) consider(key protocol.Rank) {
 
 // recordStep copies only accepted points and origins, never evaluated candidates.
 func (c *v2Search) recordStep(key protocol.Rank, previous []int, phase string, evaluated int, started time.Time) {
-	step := protocol.Step{Start:c.Start,Phase:phase,Point:protocol.Point{Joules:key.Joules,KeepJoules:key.KeepJoules,Period:key.Period,Feasible:key.Feasible,Final:key.Final},Evaluated:evaluated,Duration:time.Since(started)}
+	step := protocol.Step{Start: c.Start, Phase: phase, Point: protocol.Point{Joules: key.Joules, KeepJoules: key.KeepJoules, Period: key.Period, Feasible: key.Feasible, Final: key.Final}, Evaluated: evaluated, Duration: time.Since(started)}
 	if previous != nil {
 		for n, q := range key.Choice {
 			if q != previous[n] {
@@ -204,7 +203,7 @@ func Candidates(p protocol.Problem, t *protocol.Table, evaluations, finalists, a
 	}
 	c := newV2Search(p, t, keep, evaluations, finalists, active, deadline)
 	if p.Priced {
-		priced, dual := PricedStart(p,t)
+		priced, dual := PricedStart(p, t)
 		c.stats.DualBound = dual
 		if priced != nil && !slices.Equal(priced, keep) && !slices.Equal(priced, empty) {
 			starts = append(starts, struct {

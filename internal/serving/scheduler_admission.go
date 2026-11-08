@@ -1,6 +1,5 @@
 package serving
 
-
 // admits applies the same SLO and horizon-gain judgment to retirement as to
 // serving changes. Overload recovery may expand or replace, never just retire.
 func (p *capacityPlanner) admits(res *capacityResult) bool {

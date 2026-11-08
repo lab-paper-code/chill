@@ -1,6 +1,7 @@
 package v2
 
 import "github.com/lab-paper-code/chill/internal/scheduler/protocol"
+
 // CapState describes the other nodes after the option move, including
 // the move's retained supply and route time in demand (λ̃).
 type CapState struct {

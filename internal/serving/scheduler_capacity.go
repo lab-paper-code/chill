@@ -4,11 +4,11 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"maps"
 	"slices"
 	"strings"
 	"time"
-	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
 // Decision statuses and reasons of the capacity planner (analytic-planner §3, §4).
@@ -82,17 +82,17 @@ type SchedulerPlanSearch struct {
 	TerminationReason string `json:"terminationReason,omitempty"`
 	Strategy          string `json:"strategy,omitempty"`
 	// Key and Joules identify the selected exact candidate before postfilters.
-	Key                string                     `json:"key,omitempty"`
-	Joules             float64                    `json:"joules,omitempty"`
-	Pruned             map[string]int             `json:"pruned,omitempty"`
-	SurrogateEvaluated int                        `json:"surrogateEvaluated,omitempty"`
-	Finalists          int                        `json:"finalists,omitempty"`
-	ExactEvaluated     int                        `json:"exactEvaluated,omitempty"`
-	SurrogateGapJoules float64                    `json:"surrogateGapJoules,omitempty"`
-	PostFilterReverts  int                        `json:"postFilterReverts,omitempty"`
-	Fallback           string                     `json:"fallback,omitempty"`
-	DualBound          float64                    `json:"dualBound,omitempty"`
-	Start              string                     `json:"start,omitempty"`
+	Key                string         `json:"key,omitempty"`
+	Joules             float64        `json:"joules,omitempty"`
+	Pruned             map[string]int `json:"pruned,omitempty"`
+	SurrogateEvaluated int            `json:"surrogateEvaluated,omitempty"`
+	Finalists          int            `json:"finalists,omitempty"`
+	ExactEvaluated     int            `json:"exactEvaluated,omitempty"`
+	SurrogateGapJoules float64        `json:"surrogateGapJoules,omitempty"`
+	PostFilterReverts  int            `json:"postFilterReverts,omitempty"`
+	Fallback           string         `json:"fallback,omitempty"`
+	DualBound          float64        `json:"dualBound,omitempty"`
+	Start              string         `json:"start,omitempty"`
 }
 
 // SchedulerPlanSearchStep records each start's origin (k = 0) and accepted moves
@@ -137,7 +137,6 @@ type SchedulerPlanSearchStep struct {
 	Duration         time.Duration   `json:"durationNanos"`
 	BudgetCut        bool            `json:"budgetCut,omitempty"`
 }
-
 
 // SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
 // Rate is λ (req/s), Backlog B (requests). A missing wait, drain or exceedance

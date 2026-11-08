@@ -1,7 +1,7 @@
 package v2
 
 import (
- "github.com/lab-paper-code/chill/internal/scheduler/protocol"
+	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	"math"
 	"time"
 )
@@ -27,25 +27,41 @@ func coverageDelta(before, after protocol.Rank) float64 {
 }
 
 func (c *v2Search) movePlans(n int, overload bool, dst []int) []int {
- s,t := c.s,c.s.Table
- dst=dst[:0]
- for _,e := range t.EntryOrder[n] {
-  if e==t.EntryOf[s.Choice[n]] { continue }
-  entry:=t.Entries[e]
-  state:=CapState{Overload:overload}
-  if w:=entry.Workload;w>=0 {
-   q:=entry.Variants[0]
-   r:=0.0
-   for node,pre:=range s.port.RouteTimes() { if node==n { pre=0; if !t.Keep[q] { pre=t.TPre[q] } };r=max(r,pre) }
-   demand,retained,kappa,kappaE:=s.port.MoveTerms(w,n,q)
-   state.Demand,state.Backlog=CoverDemand(demand,retained,r)
-   state.KappaOthers,state.KappaEOthers=kappa,kappaE
-  }
-  caps:=SelectCaps(t,entry,state)
-  if caps.Count==2 && t.KeyParts[caps.Candidates[1]]<t.KeyParts[caps.Candidates[0]] { caps.Candidates[0],caps.Candidates[1]=caps.Candidates[1],caps.Candidates[0] }
-  for _,q:=range caps.Candidates[:caps.Count] { if t.Searchable[q] { dst=append(dst,q) } }
- }
- return dst
+	s, t := c.s, c.s.Table
+	dst = dst[:0]
+	for _, e := range t.EntryOrder[n] {
+		if e == t.EntryOf[s.Choice[n]] {
+			continue
+		}
+		entry := t.Entries[e]
+		state := CapState{Overload: overload}
+		if w := entry.Workload; w >= 0 {
+			q := entry.Variants[0]
+			r := 0.0
+			for node, pre := range s.port.RouteTimes() {
+				if node == n {
+					pre = 0
+					if !t.Keep[q] {
+						pre = t.TPre[q]
+					}
+				}
+				r = max(r, pre)
+			}
+			demand, retained, kappa, kappaE := s.port.MoveTerms(w, n, q)
+			state.Demand, state.Backlog = CoverDemand(demand, retained, r)
+			state.KappaOthers, state.KappaEOthers = kappa, kappaE
+		}
+		caps := SelectCaps(t, entry, state)
+		if caps.Count == 2 && t.KeyParts[caps.Candidates[1]] < t.KeyParts[caps.Candidates[0]] {
+			caps.Candidates[0], caps.Candidates[1] = caps.Candidates[1], caps.Candidates[0]
+		}
+		for _, q := range caps.Candidates[:caps.Count] {
+			if t.Searchable[q] {
+				dst = append(dst, q)
+			}
+		}
+	}
+	return dst
 }
 
 func (c *v2Search) cover() {

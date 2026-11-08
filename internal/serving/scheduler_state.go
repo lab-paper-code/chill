@@ -11,7 +11,6 @@ type orderKey struct {
 	table                                  *planTable
 }
 
-
 type searchSum struct {
 	kappa, kappaE, kappaRet, weightRet, energyWeightRet float64
 	count, pending, slow                                int

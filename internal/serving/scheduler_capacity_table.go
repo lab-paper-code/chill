@@ -6,7 +6,6 @@ import (
 
 const capacityZeroCapacity = "ZeroCapacity"
 
-
 // planTable owns the Tick's scalar columns. Search needs no capacityPlan reads.
 // Workload columns and item lists are indexed [table plan][Workload].
 type planTable struct {

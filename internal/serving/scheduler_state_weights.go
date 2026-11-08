@@ -4,6 +4,7 @@ import (
 	"math"
 	"slices"
 )
+
 // capacityCoverDemand is the adapter's route-dependent workload demand.
 func capacityCoverDemand(w capacityWorkload, retained, route float64) (float64, bool) {
 	backlog := float64(w.queued) + max(0, w.rate-retained)*route
@@ -15,7 +16,6 @@ func capacityCoverDemand(w capacityWorkload, retained, route float64) (float64, 
 	}
 	return max(w.rate, backlog/w.slack), true
 }
-
 
 // capacitySearchWeights mirrors capacityWeights/capacityFixedWeights in caller
 // storage. Keep its arithmetic order identical to the exact evaluator.
