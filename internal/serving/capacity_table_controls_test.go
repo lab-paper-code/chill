@@ -26,7 +26,7 @@ func TestCapacityTableDisabledObservationsDoNotBuildNewRows(t *testing.T) {
 		snapshot = capacityLifecycleBudgets(snapshot, observed)
 		raw := append([]PathBudget(nil), snapshot.PathBudgets...)
 		table.Ensure(context.Background(), settings, snapshot)
-		assertCapacityGroup(t, table, 7, 2, CapacityBuilt)
+		assertCapacityGroup(t, table, 7, 2)
 		if !reflect.DeepEqual(raw, snapshot.PathBudgets) || !reflect.DeepEqual(before, table.Rows()) {
 			t.Fatal("disabled observation changed raw evidence or numerical rows")
 		}
@@ -76,7 +76,7 @@ func TestCapacityTableDisablingObservationsDropsActiveAndRunningBudgets(t *testi
 		close(boundary.release)
 	}
 	table.Wait()
-	assertCapacityGroup(t, table, 7, 2, CapacityBuilt)
+	assertCapacityGroup(t, table, 7, 2)
 	settings.CompletionMarginMS = 9
 	table.Ensure(context.Background(), settings, snapshot)
 	assertNoActiveCapacityGroup(t, table, 9, 2)
@@ -84,7 +84,7 @@ func TestCapacityTableDisablingObservationsDropsActiveAndRunningBudgets(t *testi
 		close(nextCapacityBuild(t, started).release)
 	}
 	table.Wait()
-	assertCapacityGroup(t, table, 9, 2, CapacityBuilt)
+	assertCapacityGroup(t, table, 9, 2)
 }
 
 func assertConfiguredCapacityInputs(t *testing.T, table *CapacityTable, margin float64, variants int) []CapacityRow {

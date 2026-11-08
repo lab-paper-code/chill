@@ -25,7 +25,7 @@ func TestCapacityTableInputsWaitForWholeInitialGroup(t *testing.T) {
 	}
 	close(second.release)
 	table.Wait()
-	assertCapacityGroup(t, table, 10, 2, CapacityBuilt)
+	assertCapacityGroup(t, table, 10, 2)
 	rows, budgets := table.Inputs()
 	if !reflect.DeepEqual(budgets, desired.PathBudgets) || !reflect.DeepEqual(rows, table.Rows()) {
 		t.Fatalf("whole activation lost row/budget provenance: rows=%+v budgets=%+v", rows, budgets)
@@ -72,7 +72,7 @@ func TestCapacityTableArchiveActivatesOnlyWholeTerminalGroups(t *testing.T) {
 			}
 			close(second.release)
 			table.Wait()
-			assertCapacityGroup(t, table, 10, 2, CapacityBuilt)
+			assertCapacityGroup(t, table, 10, 2)
 			for _, row := range table.Rows() {
 				if row.Previous {
 					t.Fatal("fresh whole build retained an archived stand-in")
@@ -117,7 +117,7 @@ func TestCapacityTableStructuralInvalidationWithdrawsAppliedInputs(t *testing.T)
 			if variants > 0 {
 				close(nextCapacityBuild(t, started).release)
 				table.Wait()
-				assertCapacityGroup(t, table, 10, 1, CapacityBuilt)
+				assertCapacityGroup(t, table, 10, 1)
 			} else {
 				table.Wait()
 				if rows, budgets := table.Inputs(); len(rows) != 0 || len(budgets) != 0 {

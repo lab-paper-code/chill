@@ -106,14 +106,14 @@ func capacityLifecycleBudgets(snapshot SchedulerSnapshot, values ...float64) Sch
 	return snapshot
 }
 
-func assertCapacityGroup(t *testing.T, table *CapacityTable, budget float64, variants int, status string) {
+func assertCapacityGroup(t *testing.T, table *CapacityTable, budget float64, variants int) {
 	t.Helper()
 	rows, budgets := table.Inputs()
 	if len(rows) != variants || len(budgets) != 1 || budgets[0].TotalMS != budget {
 		t.Fatalf("incoherent group: rows=%+v budgets=%+v", rows, budgets)
 	}
 	for _, row := range rows {
-		if row.Status != status || row.Input.CompletionMarginMS != budget || row.Input.PostMarginMS != budgets[0].PostMS ||
+		if row.Status != CapacityBuilt || row.Input.CompletionMarginMS != budget || row.Input.PostMarginMS != budgets[0].PostMS ||
 			row.Input.JudgmentPercentile != budgets[0].JudgmentPercentile {
 			t.Fatalf("row does not match published budget: row=%+v budget=%+v", row, budgets[0])
 		}
@@ -157,7 +157,7 @@ func TestCapacityTableContinuousBudgetsFinishWholeGroups(t *testing.T) {
 	assertNoActiveCapacityGroup(t, table, 4, 2)
 	close(second.release)
 	third := nextCapacityBuild(t, started)
-	assertCapacityGroup(t, table, 1, 2, CapacityBuilt)
+	assertCapacityGroup(t, table, 1, 2)
 	if third.budget.TotalMS != 4 {
 		t.Fatalf("queued observations did not coalesce to latest budget: %+v", third.budget)
 	}
@@ -168,13 +168,13 @@ func TestCapacityTableContinuousBudgetsFinishWholeGroups(t *testing.T) {
 	go func() { table.Wait(); close(waited) }()
 	close(third.release)
 	fourth := nextCapacityBuild(t, started)
-	assertCapacityGroup(t, table, 1, 2, CapacityBuilt)
+	assertCapacityGroup(t, table, 1, 2)
 	if fourth.budget.TotalMS != 4 {
 		t.Fatal("newest drift interrupted the intermediate group")
 	}
 	close(fourth.release)
 	fifth := nextCapacityBuild(t, started)
-	assertCapacityGroup(t, table, 4, 2, CapacityBuilt)
+	assertCapacityGroup(t, table, 4, 2)
 	if fifth.budget.TotalMS != 6 {
 		t.Fatal("latest budget was not started after promotion")
 	}
@@ -187,7 +187,7 @@ func TestCapacityTableContinuousBudgetsFinishWholeGroups(t *testing.T) {
 	}
 	close(last.release)
 	awaitCapacityBoundary(t, waited)
-	assertCapacityGroup(t, table, 6, 2, CapacityBuilt)
+	assertCapacityGroup(t, table, 6, 2)
 }
 
 func TestCapacityTableQueuedBudgetIncreasesPassDecreases(t *testing.T) {
@@ -279,7 +279,7 @@ func TestCapacityTableCanceledSnapshotCanRestartUnchangedInputs(t *testing.T) {
 	}
 	close(replacement.release)
 	table.Wait()
-	assertCapacityGroup(t, table, 1, 1, CapacityBuilt)
+	assertCapacityGroup(t, table, 1, 1)
 }
 
 func TestCapacityTableStructuralRemovalDiscardsActiveAndOldTask(t *testing.T) {
@@ -402,7 +402,7 @@ func TestCapacityTableReclaimsUnreferencedRowsAndGroups(t *testing.T) {
 		waitCapacityLoad(t, table)
 		close(boundary.release)
 		table.Wait()
-		assertCapacityGroup(t, table, budget, 1, CapacityBuilt)
+		assertCapacityGroup(t, table, budget, 1)
 		table.mu.Lock()
 		state := table.groups[snapshot.Workloads[0].UID]
 		retained := len(table.rows) == 1 && len(table.previous) == 0 && len(table.running) == 0 &&

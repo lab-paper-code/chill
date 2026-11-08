@@ -15,8 +15,10 @@ func TestCapacityTableAppliedInputsKeepMissingUIDLocalAcrossEngines(t *testing.T
 		t.Run(strategy, func(t *testing.T) {
 			settings, snapshot := capacityFixture()
 			settings.PlanSearchStrategy, settings.CompletionMarginMS = strategy, 3
+			// Exercise lifecycle and both engines without the dense replay benchmark.
+			settings.CapacityGridSteps, settings.CapacityBisectionWidth, settings.CapacityTailSamples = 4, .1, 1
 			other := *snapshot.Workloads[0]
-			other.UID, other.Name = "w2", "other"
+			other.UID, other.Name = "w2", schedulerTestOther
 			snapshot.Workloads = append(snapshot.Workloads, &other)
 			settings.AutonomousWorkloads = append(settings.AutonomousWorkloads, other.UID)
 			snapshot.Options[0].CompatibleUIDs = slices.Clone(settings.AutonomousWorkloads)

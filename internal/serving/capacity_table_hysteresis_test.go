@@ -117,7 +117,7 @@ func TestCapacityTableHeldCandidateKeepsActiveReference(t *testing.T) {
 	}
 	close(boundary.release)
 	table.Wait()
-	assertCapacityGroup(t, table, 7, 1, CapacityBuilt)
+	assertCapacityGroup(t, table, 7, 1)
 }
 
 func TestCapacityTableQueuedPairRecheckedAfterRunningCompletion(t *testing.T) {
@@ -158,7 +158,7 @@ func TestCapacityTableQueuedPairRecheckedAfterRunningCompletion(t *testing.T) {
 				want = next.total
 			}
 			table.Wait()
-			assertCapacityGroup(t, table, want, 1, CapacityBuilt)
+			assertCapacityGroup(t, table, want, 1)
 			select {
 			case boundary := <-started:
 				t.Fatalf("overlapping queued pair was admitted: %+v", boundary.budget)
@@ -201,7 +201,7 @@ func TestCapacityTableBudgetPolicyTransitionsBypassObservedHysteresis(t *testing
 			}
 			close(boundary.release)
 			table.Wait()
-			assertCapacityGroup(t, table, 1, 1, CapacityBuilt)
+			assertCapacityGroup(t, table, 1, 1)
 		})
 	}
 }
