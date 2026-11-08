@@ -20,20 +20,19 @@ import (
 	derivation "github.com/lab-paper-code/chill/internal/profiling/derivation"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingnative "github.com/lab-paper-code/chill/internal/serving/firstfloor"
+	"github.com/lab-paper-code/chill/internal/serving/observation"
 )
 
 // This smoke uses real ingress, runtime, native HTTP client, observation storage,
 // capacity replay and both scheduler engines. Only native execution and Kubernetes
 // authorization are in-process doubles; this is not hardware evidence.
-func TestPathSLOHTTPObservationCapacityConsumers(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	const count = 24 // p50 splits to p75; 24 completed samples support the upper rank.
+func newPathSLOHTTPFixture(t *testing.T, ctx context.Context, count int) *pathSLOHTTPFixture {
+	t.Helper()
 	entered := make(chan native.Request, count)
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	defer unblock()
+	t.Cleanup(unblock)
 	var runtime *serving.Runtime
 	var first sync.Once
 	// Named native HTTP double preserves the production raw-field protocol and
@@ -74,7 +73,7 @@ func TestPathSLOHTTPObservationCapacityConsumers(t *testing.T) {
 			t.Error(err)
 		}
 	}))
-	defer nativeHTTPDouble.Close()
+	t.Cleanup(nativeHTTPDouble.Close)
 	client := &servingnative.Client{HTTPClient: nativeHTTPDouble.Client()}
 	execute := func(ctx context.Context, dispatch serving.Dispatch) (serving.BackendResult, error) {
 		return client.Execute(ctx, servingnative.Spec{Endpoint: nativeHTTPDouble.URL, ModelName: "model", Profile: &serving.Profile{ID: "profile"}}, dispatch)
@@ -92,41 +91,39 @@ func TestPathSLOHTTPObservationCapacityConsumers(t *testing.T) {
 		Profile: snapshot.Instances[0].Profile, Capacity: 1, Routing: map[string]int32{definition.UID: 1}, Execute: execute}}); err != nil {
 		t.Fatal(err)
 	}
+	front := httptest.NewServer(h)
+	t.Cleanup(front.Close)
+	t.Cleanup(unblock)
+	return &pathSLOHTTPFixture{runtime: runtime, log: log, front: front, entered: entered, unblock: unblock, settings: settings, snapshot: snapshot}
+}
+
+type pathSLOHTTPFixture struct {
+	runtime *serving.Runtime
+	log *observation.ObservationLog
+	front *httptest.Server
+	entered chan native.Request
+	unblock func()
+	settings serving.SchedulerSettings
+	snapshot serving.SchedulerSnapshot
+}
+
+func TestPathSLOHTTPObservationCapacityConsumers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const count = 24 // p50 splits to p75; 24 completed samples support the upper rank.
+	fixture := newPathSLOHTTPFixture(t, ctx, count)
+	runtime, log := fixture.runtime, fixture.log
+	settings, snapshot := fixture.settings, fixture.snapshot
+	definition := snapshot.Workloads[0]
+	entered, unblock := fixture.entered, fixture.unblock
 	old := serving.PathBudget{WorkloadUID: definition.UID, DefinitionID: definition.Identity(), Source: "observed", TotalMS: 19, PostMS: 7, JudgmentPercentile: 75}
 	next := old
 	next.TotalMS, next.PostMS = 31, 13
 	runtime.SetCompletionMargin(settings.CompletionMarginMS)
 	runtime.SetPathBudgets([]serving.PathBudget{old})
-	front := httptest.NewServer(h)
-	defer front.Close()
-	defer unblock()
+	invoke := func() pathSLOHTTPReply { return fixture.invoke(ctx) }
 	from := time.Now().UTC().Add(-time.Minute)
-	type reply struct {
-		id string
-		err error
-	}
-	invoke := func() reply {
-		body, err := json.Marshal(serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("sample")}}})
-		if err != nil {
-			return reply{err: err}
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, front.URL+"/api/workloads/workload/infer", bytes.NewReader(body))
-		if err != nil {
-			return reply{err: err}
-		}
-		req.Header.Set("Authorization", "Bearer client")
-		response, err := front.Client().Do(req)
-		if err != nil {
-			return reply{err: err}
-		}
-		raw, readErr := io.ReadAll(response.Body)
-		closeErr := response.Body.Close()
-		if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK {
-			return reply{err: fmt.Errorf("ingress HTTP %d: %s; read=%v close=%v", response.StatusCode, raw, readErr, closeErr)}
-		}
-		return reply{id: response.Header.Get("X-Chill-Request-ID")}
-	}
-	results := make(chan reply, 2)
+	results := make(chan pathSLOHTTPReply, 2)
 	go func() { results <- invoke() }()
 	var requests []native.Request
 	select {
@@ -178,8 +175,45 @@ func TestPathSLOHTTPObservationCapacityConsumers(t *testing.T) {
 	if err != nil || len(read.Requests) != count || len(ids) != count || ids[""] {
 		t.Fatalf("persisted HTTP final population: rows=%d ids=%d err=%v", len(read.Requests), len(ids), err)
 	}
-	rows := make(map[string]serving.RequestRow, count)
-	for _, row := range read.Requests {
+	requirePathSLOPersistedPaths(t, read.Requests, requests, old, next)
+	window, err := log.LoadWindow(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirePathSLOCapacityConsumers(t, ctx, settings, snapshot, window, count)
+}
+
+type pathSLOHTTPReply struct {
+	id string
+	err error
+}
+
+func (f *pathSLOHTTPFixture) invoke(ctx context.Context) pathSLOHTTPReply {
+	body, err := json.Marshal(serving.InferenceInput{Inputs: []serving.RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("sample")}}})
+	if err != nil {
+		return pathSLOHTTPReply{err: err}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.front.URL+"/api/workloads/workload/infer", bytes.NewReader(body))
+	if err != nil {
+		return pathSLOHTTPReply{err: err}
+	}
+	req.Header.Set("Authorization", "Bearer client")
+	response, err := f.front.Client().Do(req)
+	if err != nil {
+		return pathSLOHTTPReply{err: err}
+	}
+	raw, readErr := io.ReadAll(response.Body)
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil || response.StatusCode != http.StatusOK {
+		return pathSLOHTTPReply{err: fmt.Errorf("ingress HTTP %d: %s; read=%v close=%v", response.StatusCode, raw, readErr, closeErr)}
+	}
+	return pathSLOHTTPReply{id: response.Header.Get("X-Chill-Request-ID")}
+}
+
+func requirePathSLOPersistedPaths(t *testing.T, persisted []serving.RequestRow, requests []native.Request, old, next serving.PathBudget) {
+	t.Helper()
+	rows := make(map[string]serving.RequestRow, len(persisted))
+	for _, row := range persisted {
 		rows[row.RequestID] = row
 		if row.Kind != serving.RequestRowFinal || row.Outcome != "completed" {
 			t.Fatalf("HTTP request did not finalize: %+v", row)
@@ -211,17 +245,20 @@ func TestPathSLOHTTPObservationCapacityConsumers(t *testing.T) {
 			t.Fatalf("native selector double charged sender/POST: %+v", choice)
 		}
 	}
-	window, err := log.LoadWindow(ctx, from, to)
-	if err != nil || len(window.PathBudgets) != 1 {
-		t.Fatalf("LoadWindow path summary: %+v %v", window.PathBudgets, err)
+}
+
+func requirePathSLOCapacityConsumers(t *testing.T, ctx context.Context, settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, window observation.LoadWindow, count int) {
+	t.Helper()
+	if len(window.PathBudgets) != 1 {
+		t.Fatalf("LoadWindow path summary: %+v", window.PathBudgets)
 	}
 	budget := window.PathBudgets[0]
 	if budget.Source != "observed" || budget.Samples != count || budget.Completed != count || budget.Missing != 0 || budget.JudgmentPercentile != 75 || budget.PostMS < 0 || budget.TotalMS < budget.PostMS {
 		t.Fatalf("final rows did not reach the observed bound consumer: %+v", budget)
 	}
-	snapshot.At, snapshot.ObservationEnd, snapshot.ObservedSince = to, to, from.Add(-time.Hour)
+	snapshot.At, snapshot.ObservationEnd, snapshot.ObservedSince = window.To, window.To, window.From.Add(-time.Hour)
 	snapshot.Arrivals, snapshot.PathBudgets = window.Arrivals, window.PathBudgets
-	settings.ObservationWindow = to.Sub(from)
+	settings.ObservationWindow = window.To.Sub(window.From)
 	table := serving.NewCapacityTable(1, nil, nil)
 	table.Ensure(ctx, settings, snapshot)
 	table.Wait()
