@@ -78,6 +78,14 @@ remain separate from code-intelligence checks.
   A CHILL-leaf package need not be Kubernetes-free or side-effect-free.
 - Adapter packages may import their core contracts; core contracts may not
   import adapters.
+- Scheduler direction is `serving → scheduler → {v1,v2} → protocol`.
+  Serving may also import `scheduler/protocol` for its adapter. The selector
+  imports `protocol`; neither algorithm imports its sibling, selector, Serving,
+  Kubernetes, firstfloor or evidence adapters. `protocol` imports no CHILL package.
+  Each scheduler package maps to its own component, mirrored in
+  `hack/architecture-coverage.sh`; there is no broad `internal/scheduler/**` grant.
+  Numerical evaluation and physical admission stay in Serving behind protocol
+  ports; this extraction does not change runtime or lifecycle policy.
 - `cmd/**` packages are composition roots. Their wiring permissions do not
   relax internal package rules.
 - Operator and Profiler runtime packages do not import each other.
@@ -103,7 +111,7 @@ import evidence. Component permissions live in `.go-arch-lint.yml`.
 |---|---|
 | `modelcompat` / `model-compat` | None; stdlib-only pure compatibility and tensor/native-setting contracts |
 | `modelcatalog` / `model-catalog` | `api/v1alpha1`, `modelcompat` |
-| `serving` / `serving-core` | `evidencestore`, `firstfloor`, `metricobserver`, `modelcompat`, `profiling/derivation` |
+| `serving` / `serving-core` | `evidencestore`, `firstfloor`, `metricobserver`, `modelcompat`, `profiling/derivation`; scheduler adapter direction below |
 | `serving/httpapi` / `serving-httpapi` | `api/v1alpha1`, `evaluation/service`, `firstfloor`, `serving` and its `application`, `kube`, `live`, `management`, `measurement`, `observation`, `operations`, `state` subpackages |
 | `firstfloor` / `firstfloor` | No CHILL package imports; native executor and `RuntimeContainer` Kubernetes value projection |
 | `serving/firstfloor` / `serving-firstfloor` | `firstfloor`, `serving` |
@@ -122,10 +130,26 @@ The ChillServer composition root injects the live scheduler settings callback
 continues to validate settings patches with `serving.ValidateSchedulerSettingsPatch`;
 UID guards, release semantics and frozen execution definitions are unchanged.
 
+The scheduler component contract is reviewed direction, not a claim that a
+package-import or architecture check has run:
+
+| Package / component | Allowed CHILL imports |
+|---|---|
+| `scheduler/protocol` / `scheduler-protocol` | None; neutral scalar problem/plan/workload, rank/evaluation and state/record ports |
+| `scheduler/v1` / `scheduler-v1` | `scheduler/protocol`; actual keep/empty K2/K3 sweep |
+| `scheduler/v2` / `scheduler-v2` | `scheduler/protocol`; actual cover/polish/combine/priced traversal, budget, finalists and exact funnel |
+| `scheduler` / `scheduler-root` | `scheduler/protocol`, `scheduler/v1`, `scheduler/v2`; global selection and v1 fallback dispatch |
+| `serving` / `serving-core` scheduler adapter | `scheduler`, `scheduler/protocol`; CHILL I/O, exact/incremental numerical evaluation, physical admission and decision/action lowering |
+
+The existing `settings.planSearchStrategy` selects one official implementation
+for all controlled Workloads; `v1` remains the default and `v2` is the other
+accepted value. See the [planner boundary](../serving/analytic-planner.md).
+
 ```sh
 go list -f '{{.ImportPath}} {{join .Imports " "}}' \
   ./internal/modelcompat ./internal/modelcatalog ./internal/serving \
-  ./internal/serving/httpapi ./internal/serving/kube ./internal/serving/firstfloor ./internal/firstfloor
+  ./internal/serving/httpapi ./internal/serving/kube ./internal/serving/firstfloor ./internal/firstfloor \
+  ./internal/scheduler ./internal/scheduler/protocol ./internal/scheduler/v1 ./internal/scheduler/v2
 ```
 
 The T5 boundary above was checked with scoped `go list` on 2026-10-28.

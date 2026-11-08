@@ -73,6 +73,10 @@ components:
   profiler-evidence-kube: { in: internal/profiling/profiler/evidence/kube }
   profiler-kube: { in: internal/profiling/profiler/kube }
   profiler-worker: { in: internal/profiling/profiler/worker }
+  scheduler-root: { in: internal/scheduler }
+  scheduler-protocol: { in: internal/scheduler/protocol }
+  scheduler-v1: { in: internal/scheduler/v1 }
+  scheduler-v2: { in: internal/scheduler/v2 }
   serving-core: { in: internal/serving }
   serving-observation: { in: internal/serving/observation }
   serving-httpapi: { in: internal/serving/httpapi }
@@ -386,8 +390,27 @@ deps:
       - serving-core
       - serving-state
       - serving-kube
+
+  # Scheduler algorithms consume neutral contracts only. CHILL numerical and
+  # physical admission adapters stay in serving-core; no reverse edge is allowed.
+  scheduler-protocol:
+    mayDependOn: []
+  scheduler-v1:
+    mayDependOn:
+      - scheduler-protocol
+  scheduler-v2:
+    mayDependOn:
+      - scheduler-protocol
+  scheduler-root:
+    mayDependOn:
+      - scheduler-protocol
+      - scheduler-v1
+      - scheduler-v2
+
   serving-core:
     mayDependOn:
+      - scheduler-root
+      - scheduler-protocol
       - model-compat
       - evidence-core
       - profile-derivation

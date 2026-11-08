@@ -51,6 +51,10 @@ components=(
   profiler-evidence-kube
   profiler-kube
   profiler-worker
+  scheduler-root
+  scheduler-protocol
+  scheduler-v1
+  scheduler-v2
   serving-core
   serving-observation
   serving-httpapi
@@ -113,6 +117,10 @@ component_for() {
     internal/profiling/profiler/evidence/kube) echo profiler-evidence-kube ;;
     internal/profiling/profiler/kube) echo profiler-kube ;;
     internal/profiling/profiler/worker) echo profiler-worker ;;
+    internal/scheduler) echo scheduler-root ;;
+    internal/scheduler/protocol) echo scheduler-protocol ;;
+    internal/scheduler/v1) echo scheduler-v1 ;;
+    internal/scheduler/v2) echo scheduler-v2 ;;
     internal/serving) echo serving-core ;;
     internal/serving/observation) echo serving-observation ;;
     internal/serving/httpapi) echo serving-httpapi ;;
