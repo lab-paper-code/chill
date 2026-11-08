@@ -29,6 +29,8 @@ type PathBudget struct {
 	To                 time.Time `json:"to"`
 	TotalMS            float64   `json:"totalMS"`
 	PostMS             float64   `json:"postMS"`
+	TotalLowerMS       *float64  `json:"totalLowerMS,omitempty"`
+	PostLowerMS        *float64  `json:"postLowerMS,omitempty"`
 	JudgmentPercentile float64   `json:"judgmentPercentile"`
 	Samples            int       `json:"samples"`
 	Received           int       `json:"received"`
