@@ -45,8 +45,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-const preparationMeasuredSourceTest = "measured"
-
 // Before the fix, the failed pass accepted an empty preparation map and froze
 // its source signature. The healthy pass then skipped materialization forever.
 func TestRefreshRecoversPreparationsAfterTransientMaterialization(t *testing.T) {
@@ -196,7 +194,7 @@ func TestRefreshRecoversPreparationsAfterCompatibilityRestored(t *testing.T) {
 			}
 			if len(healthy.Accepted.DispatchOccupancy) != 1 ||
 				healthy.Accepted.DispatchOccupancy[0].Provenance == nil ||
-				healthy.Accepted.DispatchOccupancy[0].Provenance.Source == preparationMeasuredSourceTest {
+				healthy.Accepted.DispatchOccupancy[0].Provenance.Source == measuredOccupancySource {
 				t.Fatal("changed preparation outcome did not publish a fresh occupancy selection")
 			}
 		})
@@ -218,7 +216,7 @@ func assertUnchangedPreparationKeepsOccupancy(t *testing.T, fixture *preparation
 		}
 		got := read.Accepted.DispatchOccupancy[0]
 		if got.ProfileID != fixture.profile.ID || got.Batch != 1 || got.PerRequest != want ||
-			got.Provenance == nil || got.Provenance.Source != preparationMeasuredSourceTest || got.Provenance.Value != int64(want) {
+			got.Provenance == nil || got.Provenance.Source != measuredOccupancySource || got.Provenance.Value != int64(want) {
 			t.Errorf("accepted catalog lost measured occupancy: %+v want=%s", got, want)
 		}
 	}

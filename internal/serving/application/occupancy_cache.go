@@ -11,6 +11,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+const measuredOccupancySource = "measured"
+
 // Inputs and published slices are immutable after acceptance. The sole worker
 // owns scanning/reduction; scheduler capture reads one atomic snapshot only.
 type rollingOccupancyInput struct {
@@ -101,7 +103,7 @@ func qualifiedOccupancy(
 			RuntimeImage: estimate.RuntimeImage, ProfileID: estimate.Profile.ProfileID,
 			ExecutionPath: estimate.ExecutionPath, Batch: estimate.Batch, PerRequest: time.Duration(value),
 			Provenance: &serving.DispatchOccupancyProvenance{
-				Source: "measured", Pairs: estimate.Pairs, Window: &window, UpdatedAt: updatedAt, Value: value,
+				Source: measuredOccupancySource, Pairs: estimate.Pairs, Window: &window, UpdatedAt: updatedAt, Value: value,
 			},
 		})
 	}

@@ -177,19 +177,7 @@ func TestSettingsApplyWhileNewProfileUploadHeld(t *testing.T) {
 		t.Fatal("PUT released the independent source operation")
 	default:
 	}
-	stored, _, err := SchedulerConfigMap(context.Background(), service.kube, "serving", "scheduler", "scheduler.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	storedConfig, err := DecodeSchedulerConfiguration(stored.Data["scheduler.json"], 1<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual, ok := service.AcceptedSettings()
-	if !ok || !reflect.DeepEqual(actual, settings) || !reflect.DeepEqual(service.Controller.Settings(), settings) ||
-		!reflect.DeepEqual(storedConfig.Settings, settings) {
-		t.Fatal("stored, controller and atomic settings diverged")
-	}
+	storedConfig := assertPolicySettingsConsumers(t, service, settings)
 	published := service.Profiles.Load()
 	if !reflect.DeepEqual(published.CatalogView, accepted.CatalogView) || len(published.Preparations) != 1 ||
 		published.ConfigVersion != accepted.ConfigVersion || service.resourceVersion != accepted.ConfigVersion ||
@@ -202,12 +190,6 @@ func TestSettingsApplyWhileNewProfileUploadHeld(t *testing.T) {
 		!reflect.DeepEqual(storedConfig.Reserved, desired.Reserved) {
 		t.Fatal("policy acceptance changed private fields, meters or stored declarations")
 	}
-	for _, value := range service.occupancy.selected() {
-		if value.PerRequest != time.Duration(settings.DefaultDispatchOccupancyNanos) {
-			t.Fatalf("occupancy retained old policy fallback: %+v", value)
-		}
-	}
-	assertPolicyControlUsesSettings(t, service, settings)
 	release()
 	select {
 	case err := <-done:
@@ -230,6 +212,30 @@ func TestSettingsApplyWhileNewProfileUploadHeld(t *testing.T) {
 		fresh.Preparations[newID].Config.MaxQueueBytes != 32<<20 || !reflect.DeepEqual(service.Controller.Settings(), settings) {
 		t.Fatal("fresh refresh did not accept new policy and complete catalog together")
 	}
+}
+
+func assertPolicySettingsConsumers(t *testing.T, service *SchedulerService, settings serving.SchedulerSettings) SchedulerConfiguration {
+	t.Helper()
+	stored, _, err := SchedulerConfigMap(context.Background(), service.kube, "serving", "scheduler", "scheduler.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedConfig, err := DecodeSchedulerConfiguration(stored.Data["scheduler.json"], 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, ok := service.AcceptedSettings()
+	if !ok || !reflect.DeepEqual(actual, settings) || !reflect.DeepEqual(service.Controller.Settings(), settings) ||
+		!reflect.DeepEqual(storedConfig.Settings, settings) {
+		t.Fatal("stored, controller and atomic settings diverged")
+	}
+	for _, value := range service.occupancy.selected() {
+		if value.PerRequest != time.Duration(settings.DefaultDispatchOccupancyNanos) {
+			t.Fatalf("occupancy retained old policy fallback: %+v", value)
+		}
+	}
+	assertPolicyControlUsesSettings(t, service, settings)
+	return storedConfig
 }
 
 func TestPreparationReusesAcceptedBundleButChecksCurrentBoundaries(t *testing.T) {

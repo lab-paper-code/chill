@@ -61,7 +61,7 @@ func (o *SchedulerService) applySchedulerSettings(ctx context.Context, settings 
 		// new policy. Old fallback values must not become measurement evidence.
 		var measured []serving.DispatchOccupancy
 		for _, value := range snapshot.selected {
-			if value.Provenance != nil && value.Provenance.Source == "measured" {
+			if value.Provenance != nil && value.Provenance.Source == measuredOccupancySource {
 				measured = append(measured, value)
 			}
 		}

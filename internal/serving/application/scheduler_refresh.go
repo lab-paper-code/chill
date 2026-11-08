@@ -67,33 +67,10 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 		return err
 	}
 	occupancy, skipped := o.costs.OccupancySelections(costs.DispatchOccupancy, view.Profiles)
-	sources := costs.Sources
-	sources = append(sources, "profiler-facts:"+factsVersion)
-	for _, meter := range config.Meters {
-		sources = append(sources, "meter:"+meter.ID+"/"+meter.Node.UID)
+	signature, err := refreshSourceSignature(config, view, costs, factsVersion)
+	if err != nil {
+		return err
 	}
-	for _, p := range view.Profiles {
-		sources = append(sources, p.ID)
-	}
-	for _, measurement := range view.CurrentMeasurements {
-		sources = append(sources, "current:"+measurement.ID+"/"+measurement.MeasuredAt.Format(time.RFC3339Nano))
-	}
-	for _, issue := range costs.Issues {
-		sources = append(sources, issue.Code+":"+issue.Source)
-	}
-	// A catalog issue refuses the measurements naming its profile.
-	for _, issue := range view.Insufficiencies {
-		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
-	}
-	if len(view.ReuseChecks) != 0 {
-		checks, err := json.Marshal(view.ReuseChecks)
-		if err != nil {
-			return err
-		}
-		sources = append(sources, "profile-reuse:"+string(checks))
-	}
-	slices.Sort(sources)
-	signature := strings.Join(sources, "\x00")
 	currentProfiles := view.CurrentProfiles()
 	o.Lock.Lock()
 	accepted := o.Profiles.Load()
@@ -175,4 +152,35 @@ func (o *SchedulerService) Refresh(ctx context.Context) (err error) {
 	o.sources = signature
 	o.restartPower(config)
 	return nil
+}
+
+func refreshSourceSignature(config SchedulerConfiguration, view servingkube.CatalogView, costs servingkube.CostView, factsVersion string) (string, error) {
+	sources := costs.Sources
+	sources = append(sources, "profiler-facts:"+factsVersion)
+	for _, meter := range config.Meters {
+		sources = append(sources, "meter:"+meter.ID+"/"+meter.Node.UID)
+	}
+	for _, p := range view.Profiles {
+		sources = append(sources, p.ID)
+	}
+	for _, measurement := range view.CurrentMeasurements {
+		sources = append(sources, "current:"+measurement.ID+"/"+measurement.MeasuredAt.Format(time.RFC3339Nano))
+	}
+	for _, issue := range costs.Issues {
+		sources = append(sources, issue.Code+":"+issue.Source)
+	}
+	// A catalog issue refuses the measurements naming its profile.
+	for _, issue := range view.Insufficiencies {
+		sources = append(sources, "catalog:"+issue.Code+":"+issue.Source.String())
+	}
+	if len(view.ReuseChecks) != 0 {
+		checks, err := json.Marshal(view.ReuseChecks)
+		if err != nil {
+			return "", err
+		}
+		sources = append(sources, "profile-reuse:"+string(checks))
+	}
+	slices.Sort(sources)
+	signature := strings.Join(sources, "\x00")
+	return signature, nil
 }
