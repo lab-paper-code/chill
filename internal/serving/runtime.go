@@ -608,6 +608,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		err = failure("RequestTimeout", "request lifetime expired before native dispatch")
 	} else {
 		dispatch.Elapsed = time.Since(dispatch.ReceivedAt)
+		timing.Record(ServerSenderFreeze, dispatch.Elapsed)
 		result, err = execute(c.backendContext, dispatch)
 	}
 	finishedAt := time.Now()

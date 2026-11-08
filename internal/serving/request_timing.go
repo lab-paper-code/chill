@@ -38,6 +38,7 @@ const (
 	ServerResponseWriteDone
 	ServerResponseFlushStart
 	ServerResponseFlushDone
+	ServerSenderFreeze
 	serverStageCount
 )
 
@@ -70,6 +71,7 @@ var serverStageNames = [serverStageCount]string{
 	"responseWriteDone",
 	"responseFlushStart",
 	"responseFlushDone",
+	"senderFreeze",
 }
 
 // RequestTimings owns its offsets. Copies never share mutable backing storage.

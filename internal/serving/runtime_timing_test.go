@@ -177,7 +177,9 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 			r.mu.Recorder, r.config.Diagnostics = d, d
 			defer d.Stop()
 			started, finish := make(chan struct{}), make(chan struct{})
+			var senderElapsed time.Duration
 			r.instances[instance.ID].Execute = func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
+				senderElapsed = dispatch.Elapsed
 				result := BackendResult{Finished: true}
 				result.ServerTiming.Mark(ServerWorkerHTTPStart, dispatch.ReceivedAt)
 				close(started)
@@ -268,6 +270,9 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 			runtimeTimingStage(t, assigned.ServerTiming, ServerExecuteStart)
 			runtimeTimingMissing(t, assigned.ServerTiming, ServerAssignedEventDone, ServerWorkerHTTPStart, ServerResultLockAttempt, ServerReplyReceived)
 			runtimeTimingStage(t, final.ServerTiming, ServerAssignedEventDone)
+			if freeze := runtimeTimingStage(t, final.ServerTiming, ServerSenderFreeze); freeze != senderElapsed {
+				t.Fatalf("final sender freeze=%v, sent=%v", freeze, senderElapsed)
+			}
 			runtimeTimingStage(t, final.ServerTiming, ServerResultLockAcquired)
 			sent := runtimeTimingStage(t, final.ServerTiming, ServerReplySent)
 			runtimeTimingAssertFinal(t, final, outcome, responseOutcome, responseCode, responseFinishedBefore.Sub(receipt.ReceivedAt), attempt, sent)
@@ -417,5 +422,63 @@ func TestRuntimeTimingDoesNotCreateResponseBeforeRequestID(t *testing.T) {
 	}
 	if err := log.Err(); err != nil {
 		t.Fatalf("response without RequestID latched observation failure: %v", err)
+	}
+}
+
+func TestRuntimeTimingSenderFreezeFollowsAssignmentAdmission(t *testing.T) {
+	r, instance, _ := routingRuntime(t, map[string]int32{"w1": 1})
+	log := r.config.ObservationLog.(*runtimeTestLog)
+	executed := make(chan Dispatch, 1)
+	r.instances[instance.ID].Execute = func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
+		executed <- dispatch
+		return BackendResult{Finished: true}, nil
+	}
+	log.mu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			log.mu.Unlock()
+		}
+	}()
+	receipt, err := r.Receive(r.workloads["w1"].definition.Name, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-executed:
+		t.Fatal("sender crossed held assignment admission")
+	default:
+	}
+	released := time.Since(receipt.ReceivedAt)
+	log.mu.Unlock()
+	locked = false
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := call.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch := <-executed
+	if dispatch.Elapsed < released || runtimeTimingStage(t, result.ServerTiming, ServerSenderFreeze) != dispatch.Elapsed {
+		t.Fatalf("sender freeze lost assignment wait or exact transmitted value: sent=%v released=%v", dispatch.Elapsed, released)
+	}
+	// Caller keeps its earlier receipt; the runtime must still close with F.
+	if err := r.Response(receipt, outcomeCompleted, ""); err != nil {
+		t.Fatal(err)
+	}
+	r.JoinExecutions()
+	if err := log.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows := readRequestRows(t, log.config.Directory)
+	if len(rows) != 2 || rows[1].Kind != RequestRowFinal {
+		t.Fatalf("missing final request row: %+v", rows)
+	}
+	if freeze := runtimeTimingStage(t, rows[1].ServerTiming, ServerSenderFreeze); freeze != dispatch.Elapsed {
+		t.Fatalf("persisted sender freeze=%v, sent=%v", freeze, dispatch.Elapsed)
 	}
 }
