@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -114,7 +113,7 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: &cluster.reservation, ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
 	c.measureStep = c.measureOperation
-	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
+	c.capacity = serving.NewCapacityTable(config.Settings.CapacityWorkers, func(row serving.CapacityRow) error {
 		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
 	}, observationLog.CapacityRecords)
 	runtime.SetPathBudgetPolicy(config.Settings)
@@ -139,6 +138,7 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	c.config = config
 	c.runtime.SetPathBudgetPolicy(config.Settings)
 	c.mu.Unlock()
+	c.capacity.SetWorkerLimit(config.Settings.CapacityWorkers)
 	after := len(config.Settings.AutonomousWorkloads) > 0
 	c.setRoutingControl(before, after)
 	if previousStatic && !config.StaticRouting && !after && !before {
@@ -163,6 +163,7 @@ func (c *SchedulerController) AcceptSettings(ctx context.Context, settings servi
 	c.config.Settings, c.config.Preparations = settings, preparations
 	c.runtime.SetPathBudgetPolicy(settings)
 	c.mu.Unlock()
+	c.capacity.SetWorkerLimit(settings.CapacityWorkers)
 	c.setRoutingControl(before, len(settings.AutonomousWorkloads) > 0)
 	return nil
 }
@@ -228,6 +229,11 @@ func (c *SchedulerController) Close() { c.cancel(); c.capacity.Wait(); c.wg.Wait
 
 // Capacity returns the capacity rows the autonomous Workloads need.
 func (c *SchedulerController) Capacity() []serving.CapacityRow { return c.capacity.Rows() }
+
+// CapacityWorkers reports the live row-builder limit and active count.
+func (c *SchedulerController) CapacityWorkers() serving.CapacityWorkerStatus {
+	return c.capacity.WorkerStatus()
+}
 
 func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
 	result := make([]serving.Action, 0, len(c.runs))

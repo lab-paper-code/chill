@@ -2,6 +2,7 @@ package serving
 
 import (
 	"context"
+	"runtime"
 	"slices"
 	"sync"
 	"time"
@@ -29,14 +30,45 @@ type CapacityTable struct {
 	buildRow func(context.Context, SchedulerSettings, []DispatchOccupancy, SchedulerOption, *Definition, time.Time, PathBudget) (CapacityRow, error)
 }
 
-// NewCapacityTable runs up to parallel rows at once; record receives each
-// built row (the capacity-row-built event) and its error is not retried. load
-// returns the latest recorded rows of keys; record and load may be nil.
+// NewCapacityTable runs up to parallel rows at once; zero selects half of
+// GOMAXPROCS, with at least one builder. record receives each built row (the
+// capacity-row-built event) and its error is not retried. load returns the latest
+// recorded rows of keys; record and load may be nil.
 func NewCapacityTable(parallel int, record func(CapacityRow) error, load func(context.Context, []string) (map[string]CapacityRow, error)) *CapacityTable {
 	t := &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]*capacityTask{}, previous: map[string]CapacityRow{}, asked: map[string]*capacityArchiveLoad{},
-		groups: map[string]*capacityTableWorkload{}, parallel: max(1, parallel), record: record, load: load, buildRow: BuildCapacityRow}
+		groups: map[string]*capacityTableWorkload{}, parallel: capacityWorkerLimit(parallel), record: record, load: load, buildRow: BuildCapacityRow}
 	t.idle = sync.NewCond(&t.mu)
 	return t
+}
+
+func capacityWorkerLimit(workers int) int {
+	if workers == 0 {
+		workers = runtime.GOMAXPROCS(0) / 2
+	}
+	return max(1, workers)
+}
+
+// SetWorkerLimit changes future row admission without invalidating numerical
+// results or canceling admitted builders. Zero selects the automatic limit.
+func (t *CapacityTable) SetWorkerLimit(workers int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.parallel = capacityWorkerLimit(workers)
+	t.startLocked()
+}
+
+// CapacityWorkerStatus reports row-builder admission and drain state.
+type CapacityWorkerStatus struct {
+	Limit  int `json:"limit"`
+	Active int `json:"active"`
+}
+
+// WorkerStatus includes builders still recording completed rows. Active may
+// exceed Limit after a reduction until admitted builders finish.
+func (t *CapacityTable) WorkerStatus() CapacityWorkerStatus {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return CapacityWorkerStatus{Limit: t.parallel, Active: t.workers}
 }
 
 // Ensure merges the desired inputs and returns at once. Only admitted rows get

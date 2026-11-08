@@ -206,8 +206,9 @@ func (h *Handler) schedulerCapacity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendJSON(w, http.StatusOK, struct {
-		Rows []serving.CapacityRow `json:"rows"`
-	}{h.config.Scheduler.Capacity()})
+		Rows    []serving.CapacityRow        `json:"rows"`
+		Workers serving.CapacityWorkerStatus `json:"workers"`
+	}{h.config.Scheduler.Capacity(), h.config.Scheduler.CapacityWorkers()})
 }
 
 func (h *Handler) catalogRead(w http.ResponseWriter, r *http.Request) {
