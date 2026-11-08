@@ -100,7 +100,7 @@ func (c *resetAPI) syncPod(ctx context.Context, pod *core.Pod) error {
 	err := c.Client.Get(ctx, client.ObjectKeyFromObject(pod), current)
 	resource := core.SchemeGroupVersion.WithResource("pods")
 	if apierrors.IsNotFound(err) {
-		return c.kube.Tracker().Delete(resource, pod.Namespace, pod.Name)
+		return client.IgnoreNotFound(c.kube.Tracker().Delete(resource, pod.Namespace, pod.Name))
 	}
 	if err != nil {
 		return err
