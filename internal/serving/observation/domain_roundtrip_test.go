@@ -22,7 +22,7 @@ import (
 
 func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) {
 	settings, snapshot := capacityFixture()
-	input := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0])
+	input := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, snapshot.Options[0], snapshot.Workloads[0], serving.ResolvePathBudget(settings, snapshot.PathBudgets, snapshot.Workloads[0]))
 	// Before the shared-execution cutover the input hash had no namespace.
 	payload, _ := json.Marshal(input)
 	sum := sha256.Sum256(payload)
@@ -86,7 +86,7 @@ func TestDecisionRecordIncludesSelectedDOMAndDefaultOccupancy(t *testing.T) {
 			recorded := page[0].Snapshot
 			option := recorded.Options[0]
 			option.Instance.Profile = snapshot.Options[0].Instance.Profile
-			roundtrip := serving.NewCapacityInput(page[0].Decision.Settings, recorded.DispatchOccupancy, option, snapshot.Workloads[0])
+			roundtrip := serving.NewCapacityInput(page[0].Decision.Settings, recorded.DispatchOccupancy, option, snapshot.Workloads[0], serving.ResolvePathBudget(page[0].Decision.Settings, recorded.PathBudgets, snapshot.Workloads[0]))
 			if !reflect.DeepEqual(*roundtrip.DispatchOccupancy, d) || roundtrip.DispatchOccupancy.Provenance == d.Provenance {
 				t.Fatalf("record/read/capacity roundtrip lost source/value or aliased provenance: %+v want %+v", roundtrip.DispatchOccupancy, d)
 			}

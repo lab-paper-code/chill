@@ -229,7 +229,7 @@ func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := serving.SchedulerSettings{DefaultDispatchOccupancyNanos: int64(time.Millisecond)}
-	input := serving.NewCapacityInput(settings, view.DispatchOccupancy, option, workload)
+	input := serving.NewCapacityInput(settings, view.DispatchOccupancy, option, workload, serving.ResolvePathBudget(settings, nil, workload))
 	if len(view.DispatchOccupancy) != 1 || input.DispatchOccupancy == nil ||
 		input.DispatchOccupancy.Provenance.Source != "dom" || input.DispatchOccupancy.Source != legacy ||
 		input.DispatchOccupancy.PerRequest != 9_410_000*time.Nanosecond {
@@ -241,7 +241,7 @@ func TestCostEvidenceReusesOccupancyAcrossProfileChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input = serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload)
+	input = serving.NewCapacityInput(serving.SchedulerSettings{}, view.DispatchOccupancy, option, workload, serving.ResolvePathBudget(serving.SchedulerSettings{}, nil, workload))
 	if len(view.DispatchOccupancy) != 1 || input.DispatchOccupancy == nil ||
 		input.DispatchOccupancy.Source != legacy || input.DispatchOccupancy.PerRequest != 9_410_000*time.Nanosecond {
 		t.Fatalf("latest stable occupancy cell was not preserved: %+v", input.DispatchOccupancy)

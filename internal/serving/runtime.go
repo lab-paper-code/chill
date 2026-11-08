@@ -66,6 +66,13 @@ type Call struct {
 	receipt                                      Receipt
 	definition                                   *Definition
 	identity                                     string
+	completionMarginMS                           float64
+	totalMarginMS                                float64
+	acceptedElapsed                              time.Duration
+	serverSlotWait                               time.Duration
+	hasPostMargin, hasTotalMargin                 bool
+	senderElapsedNanos                           atomic.Int64
+	senderFrozen                                 atomic.Bool
 	input                                        *InferenceInput
 	reply                                        chan callResult
 	assignment                                   *Assignment
@@ -128,6 +135,7 @@ type Runtime struct {
 	measurement       []NodeReference
 	routingControlled bool
 	completionMargin  float64
+	pathBudgets       map[string]runtimePathMargins // definition identity -> active numerical margins
 	routeTargets      map[string]map[string]int32
 	calls             map[string]*Call
 	definitions       map[string]*Definition
@@ -173,6 +181,9 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		}
 		assignment := &Assignment{Node: *row.Node, Instance: row.Instance, Profile: row.ProfileID, DispatchedAt: *row.DispatchedAt}
 		c := &Call{runtime: r, receipt: Receipt{ID: row.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: row.ReceivedAt, ServerTiming: row.ServerTiming}, definition: d, identity: row.DefinitionID, assignment: assignment, phase: phaseAssigned, transportDone: true}
+		if row.CompletionMarginMS != nil {
+			c.completionMarginMS, c.hasPostMargin = *row.CompletionMarginMS, true
+		}
 		if row.LifetimeNanos > 0 {
 			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(row.LifetimeNanos))
 		}
@@ -269,6 +280,10 @@ func (r *Runtime) eventAt(c *Call, kind, outcome, code string, now time.Time) er
 
 func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEvent {
 	e := RequestEvent{RequestID: c.receipt.ID, WorkloadName: c.receipt.Name, WorkloadUID: c.receipt.UID, Definition: c.identity, Kind: kind, At: now.UTC(), ReceivedAt: c.receipt.ReceivedAt, ElapsedNanos: now.Sub(c.receipt.ReceivedAt).Nanoseconds(), Assignment: c.assignment, Outcome: outcome, Error: code}
+	if c.hasPostMargin {
+		margin := c.completionMarginMS
+		e.CompletionMarginMS = &margin
+	}
 	if !c.receipt.Deadline.IsZero() {
 		e.LifetimeNanos = c.receipt.Deadline.Sub(c.receipt.ReceivedAt).Nanoseconds()
 	}
@@ -391,8 +406,10 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 	if r.overloaded.Load() {
 		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
 	}
-	c := &Call{runtime: r, receipt: *receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
-	if err := r.event(c, phaseAccepted, "", ""); err != nil {
+	budget := r.pathMarginsLocked(w.identity)
+	acceptedAt := time.Now()
+	c := &Call{runtime: r, receipt: *receipt, definition: w.definition, identity: w.identity, completionMarginMS: budget.postMS, totalMarginMS: budget.totalMS, hasPostMargin: true, hasTotalMargin: true, acceptedElapsed: acceptedAt.Sub(receipt.ReceivedAt), input: input, reply: make(chan callResult, 1)}
+	if err := r.eventAt(c, phaseAccepted, "", "", acceptedAt); err != nil {
 		return nil, failure(ObservationUnavailableCode, "cannot persist request acceptance")
 	}
 	w.calls[receipt.ID] = c
@@ -566,7 +583,9 @@ func (r *Runtime) dispatchLocked() {
 				break
 			}
 			i := entry.instance
-			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
+			dispatchedAt := time.Now()
+			c.serverSlotWait = max(0, dispatchedAt.Sub(c.receipt.ReceivedAt)-c.acceptedElapsed)
+			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: dispatchedAt.UTC()}
 			c.assignment.ProfileBody = i.Profile
 			// Reserve physical ownership before FIFO admission; native execution
 			// starts after enqueue, not after the assignment's disk Write.
@@ -575,7 +594,7 @@ func (r *Runtime) dispatchLocked() {
 			c.phase = phaseAssigned
 			i.outstanding++
 			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
-			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
+			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline, CompletionMarginMS: c.completionMarginMS}
 			c.input = nil // Only this Dispatch reads the sample, and no path requeues the call.
 			assigned := requestEvent(c, phaseAssigned, "", "", c.assignment.DispatchedAt)
 			r.executions.Add(1)
@@ -609,6 +628,10 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 	} else {
 		dispatch.Elapsed = time.Since(dispatch.ReceivedAt)
 		timing.Record(ServerSenderFreeze, dispatch.Elapsed)
+		// Publish the exact F before native IO; the receipt timing fragment is
+		// merged only when Execute returns, while scheduler capture may run now.
+		c.senderElapsedNanos.Store(int64(dispatch.Elapsed))
+		c.senderFrozen.Store(true)
 		result, err = execute(c.backendContext, dispatch)
 	}
 	finishedAt := time.Now()
@@ -1111,7 +1134,7 @@ func (r *Runtime) SetMeasurementNodes(nodes []NodeReference) {
 	r.signal()
 }
 
-// SetCompletionMargin applies the configured completion margin to later dispatches.
+// SetCompletionMargin applies the configured fallback to later acceptances.
 func (r *Runtime) SetCompletionMargin(ms float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

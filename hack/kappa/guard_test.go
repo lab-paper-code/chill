@@ -51,7 +51,7 @@ func TestReplaySupplyUsesPolicyCapacity(t *testing.T) {
 	i := serving.SchedulerInstance{ID: "current", WorkloadUID: d.UID, Ready: true, MaxBatch: 4, Profile: &serving.Profile{ID: "profile"}}
 	snap := serving.SchedulerSnapshot{Workloads: []*serving.Definition{d}, Instances: []serving.SchedulerInstance{i},
 		Routing: map[string]map[string]int32{d.UID: {i.ID: 1000}}}
-	in := serving.NewCapacityInput(s, snap.DispatchOccupancy, serving.SchedulerOption{Instance: i}, d)
+	in := serving.NewCapacityInput(s, snap.DispatchOccupancy, serving.SchedulerOption{Instance: i}, d, serving.ResolvePathBudget(s, snap.PathBudgets, d))
 	policy, b1 := 40.0, 26.0
 	rows := map[string]serving.CapacityRow{in.Key(): {Status: serving.CapacityBuilt, Kappa: &policy}}
 	in.MaxBatch = 1

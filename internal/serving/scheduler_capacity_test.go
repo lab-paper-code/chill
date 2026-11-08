@@ -36,7 +36,7 @@ func capacityRowsForTest(s SchedulerSettings, snap SchedulerSnapshot, kappa func
 				continue
 			}
 			for _, v := range CapacityVariants(option) {
-				in := NewCapacityInput(s, snap.DispatchOccupancy, v, w)
+				in := NewCapacityInput(s, snap.DispatchOccupancy, v, w, ResolvePathBudget(s, snap.PathBudgets, w))
 				k := kappa(v)
 				rows = append(rows, CapacityRow{Key: in.Key(), Input: in, Status: CapacityBuilt, Kappa: &k})
 			}
@@ -2281,7 +2281,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 			snap.Routing = map[string]map[string]int32{old.WorkloadUID: {old.ID: 1000}}
 			rows := []CapacityRow{}
 			for n, i := range []SchedulerInstance{old, added} {
-				in := NewCapacityInput(s, snap.DispatchOccupancy, SchedulerOption{Instance: i}, snap.Workloads[0])
+				in := NewCapacityInput(s, snap.DispatchOccupancy, SchedulerOption{Instance: i}, snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0]))
 				k := []float64{26.322718, 68.45}[n]
 				rows = append(rows, CapacityRow{Key: in.Key(), Input: in, Status: CapacityBuilt, Kappa: &k})
 			}

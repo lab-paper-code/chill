@@ -101,7 +101,7 @@ func replaySupply(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, r
 		if routing[uid][i.ID] <= 0 || i.Terminated || i.Stopped || i.WorkloadUID != uid || live && !i.Ready {
 			continue
 		}
-		row := rows[serving.NewCapacityInput(s, snap.DispatchOccupancy, serving.SchedulerOption{Instance: i}, d).Key()]
+		row := rows[serving.NewCapacityInput(s, snap.DispatchOccupancy, serving.SchedulerOption{Instance: i}, d, serving.ResolvePathBudget(s, snap.PathBudgets, d)).Key()]
 		if row.Kappa != nil && row.Status != serving.CapacityPending {
 			kappa += *row.Kappa
 		}

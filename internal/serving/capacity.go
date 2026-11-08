@@ -33,6 +33,8 @@ type CapacityInput struct {
 	Allocation         SchedulerAllocation `json:"allocation"`
 	MaxBatch           int                 `json:"maxBatch"`
 	CompletionMarginMS float64             `json:"completionMarginMS"`
+	PostMarginMS       float64             `json:"postMarginMS"`
+	JudgmentPercentile float64             `json:"judgmentPercentile"`
 	Window             time.Duration       `json:"capacityWindowNanos"`
 	Windows            int                 `json:"capacityWindows"`
 	PassingWindows     int                 `json:"capacityPassingWindows"`
@@ -45,8 +47,8 @@ type CapacityInput struct {
 	DispatchOccupancy *DispatchOccupancy `json:"dispatchOccupancy,omitempty"`
 }
 
-// CapacityJudgment is one judged Poisson rate: the SLO-percentile latency of
-// each judged window (ms, margin included; NaN-free, a failed window keeps -1).
+// CapacityJudgment is one judged Poisson rate: the judging-percentile latency of
+// each judged window (ms, TOTAL included; NaN-free, a failed window keeps -1).
 type CapacityJudgment struct {
 	Rate                 float64   `json:"rate"`
 	Requests             int       `json:"requests"`
@@ -95,11 +97,12 @@ func CapacityVariants(o SchedulerOption) []SchedulerOption {
 
 // NewCapacityInput keys option variant o for Workload w under settings and the
 // selected measured, DOM or configured default dispatch occupancy.
-func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition) CapacityInput {
+func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, budget PathBudget) CapacityInput {
 	i := o.Instance
 	return CapacityInput{
 		WorkloadUID: w.UID, SLO: w.SLO, Node: i.Node, PowerMode: i.Profile.Condition.PowerMode, ProfileID: i.Profile.ID,
-		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: settings.CompletionMarginMS,
+		Allocation: i.Allocation, MaxBatch: i.MaxBatch, CompletionMarginMS: budget.TotalMS,
+		PostMarginMS: budget.PostMS, JudgmentPercentile: budget.JudgmentPercentile,
 		Window: settings.CapacityWindow, Windows: settings.CapacityWindows, PassingWindows: settings.CapacityPassingWindows,
 		MinimumRequests: settings.CapacityMinimumRequests, DispatchOccupancy: ResolveDispatchOccupancy(settings, occupancy, o.Instance),
 		GridSteps: settings.CapacityGridSteps, BisectionWidth: settings.CapacityBisectionWidth, TailSamples: settings.CapacityTailSamples,
@@ -158,12 +161,12 @@ type capacityWindowResult struct {
 
 // BuildCapacityRow computes the measured option's capacity, independent of
 // current placement inventory. at anchors the simulated arrival windows.
-func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, at time.Time) (CapacityRow, error) {
+func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy []DispatchOccupancy, o SchedulerOption, w *Definition, at time.Time, budget PathBudget) (CapacityRow, error) {
 	if err := ctx.Err(); err != nil {
 		return CapacityRow{}, err
 	}
 	began := time.Now()
-	in := NewCapacityInput(settings, occupancy, o, w)
+	in := NewCapacityInput(settings, occupancy, o, w, budget)
 	row := CapacityRow{Key: in.Key(), Input: in}
 	row.Mu = capacityThroughput(o.Instance.Profile, o.Instance.MaxBatch)
 	// A mean is not a lower bound: replay may choose any observed sample of
@@ -178,15 +181,15 @@ func BuildCapacityRow(ctx context.Context, settings SchedulerSettings, occupancy
 			}
 		}
 	}
-	if !math.IsInf(minimum, 1) && minimum+settings.CompletionMarginMS*1e6 > float64(w.SLO.TargetLatency) {
+	if !math.IsInf(minimum, 1) && minimum+budget.TotalMS*1e6 > float64(w.SLO.TargetLatency) {
 		kappa := 0.0
 		row.Status, row.Reason, row.Kappa = CapacityBuilt, CapacityServiceExceedsSLO, &kappa
 		row.MinimumServiceNanos = minimum
 		row.BuiltAt, row.Elapsed = time.Now().UTC(), time.Since(began)
 		return row, nil
 	}
-	r := &capacityReplay{settings: settings, at: at, occupancy: *in.DispatchOccupancy, option: o, w: w, gaps: map[[2]int][]float64{}}
-	b := capacityBuilder{settings: settings, percentile: w.SLO.Percentile, replay: r.window}
+	r := &capacityReplay{settings: settings, at: at, occupancy: *in.DispatchOccupancy, option: o, w: w, budget: budget, gaps: map[[2]int][]float64{}}
+	b := capacityBuilder{settings: settings, percentile: budget.JudgmentPercentile, replay: r.window}
 	err := b.build(ctx, &row)
 	// Copy the evidence out: a pointer into r would keep r, and with it the
 	// per-row gaps cache (one []float64 per distinct window population), alive
@@ -248,7 +251,7 @@ func (b *capacityBuilder) gridStep(k int, mu float64) float64 {
 }
 
 // requests is the window population: MinimumRequests, CapacityTailSamples
-// above the SLO percentile, and at least CapacityWindow of arrivals.
+// above the judging percentile, and at least CapacityWindow of arrivals.
 func (b *capacityBuilder) requests(lambda float64) int {
 	n := max(b.settings.CapacityMinimumRequests, int(math.Ceil(lambda*b.settings.CapacityWindow.Seconds())))
 	if b.percentile < 100 {
@@ -291,6 +294,7 @@ type capacityReplay struct {
 	occupancy   DispatchOccupancy
 	option      SchedulerOption
 	w           *Definition
+	budget      PathBudget
 	gaps        map[[2]int][]float64
 	conditional ConditionalServiceEvidence
 }
@@ -300,6 +304,7 @@ type capacityReplay struct {
 type capacityWindowLimit struct {
 	requests      int
 	slo           SLO
+	percentile    float64
 	missed        int
 	failed        bool
 	requestJoules float64
@@ -327,7 +332,7 @@ func (s *schedulerReplayState) capacityWindowFailed() bool {
 			limit.missed++
 		}
 	}
-	limit.failed = limit.missed > limit.requests-int(math.Ceil(float64(limit.requests)*limit.slo.Percentile/100))
+	limit.failed = limit.missed > limit.requests-int(math.Ceil(float64(limit.requests)*limit.percentile/100))
 	return limit.failed
 }
 
@@ -365,13 +370,14 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 		At: at, ObservationEnd: at, Workloads: []*Definition{w},
 		Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{w.UID: {instance.ID: 1}},
 		Arrivals: arrivals, Options: []SchedulerOption{o}, DispatchOccupancy: []DispatchOccupancy{b.occupancy},
+		PathBudgets: []PathBudget{b.budget},
 	}
 	settings := b.settings
 	settings.AutonomousWorkloads = nil
 	settings.ObservationWindow, settings.ComparisonPeriod = span, span
 	keep := SchedulerCandidate{ID: "keep", Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
 	// An empty compared set excludes Node energy; request joules count separately.
-	limit := capacityWindowLimit{requests: n, slo: w.SLO}
+	limit := capacityWindowLimit{requests: n, slo: w.SLO, percentile: b.budget.JudgmentPercentile}
 	estimate, err := schedulerReplayEstimate(ctx, settings, snapshot, keep, uint64(seed), map[NodeReference]bool{}, &limit)
 	if err != nil {
 		return capacityWindowResult{}, err

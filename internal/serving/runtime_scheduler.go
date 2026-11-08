@@ -496,7 +496,14 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 		if call.definition == nil || (call.backendDone && call.transportDone && call.responseRecorded) {
 			continue
 		}
+		margin, total := call.completionMarginMS, call.totalMarginMS
 		request := SchedulerRequest{ID: call.receipt.ID, Definition: call.definition, QueueOrder: queueOrder[call], ReceivedAt: call.receipt.ReceivedAt, Elapsed: now.Sub(call.receipt.ReceivedAt), Phase: phasePending}
+		if call.hasPostMargin {
+			request.CompletionMarginMS = &margin
+		}
+		if call.hasTotalMargin {
+			request.TotalMarginMS = &total
+		}
 		if request.Elapsed < 0 {
 			request.Elapsed = 0
 		}
@@ -507,11 +514,20 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 			}
 			request.RemainingLifetime = &remaining
 		}
-		request.QueueAge = request.Elapsed
+		// Before native admission QueueAge is server slot wait, excluded from
+		// the observed TOTAL path population. Preserve already consumed pre-F.
+		request.QueueAge = max(0, request.Elapsed-call.acceptedElapsed)
 		if call.assignment != nil {
 			request.Instance = call.assignment.Instance
 			request.Phase = phaseAssigned
-			request.QueueAge = 0
+			request.QueueAge = call.serverSlotWait
+			if call.senderFrozen.Load() {
+				ms := float64(call.senderElapsedNanos.Load()) / float64(time.Millisecond)
+				request.NativeSenderElapsedMS = &ms
+			} else if sender, ok := call.receipt.ServerTiming.Elapsed(ServerSenderFreeze); ok {
+				ms := float64(sender) / float64(time.Millisecond)
+				request.NativeSenderElapsedMS = &ms
+			}
 			r.extendNativeOutstandingLocked(&request, call, now)
 		}
 		if call.backendDone {

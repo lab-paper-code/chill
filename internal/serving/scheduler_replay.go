@@ -38,6 +38,9 @@ type schedulerReplayRequest struct {
 	native       float64
 	queueAt      float64
 	senderMS     float64
+	postMS       float64 // frozen native external margin
+	returnMS     float64 // TOTAL synthetic charge, POST for observed outstanding
+	senderReserveMS float64 // modeled allocation only, not an observed pre quantile
 	completed    bool
 	dispatched   bool
 	returning    bool
@@ -132,7 +135,7 @@ func (i *schedulerReplayInstance) idleNanos(now float64) *int64 {
 }
 
 // schedulerReplayEstimate replays candidate c once with seed and records each
-// definition's SLO-percentile estimate and predicted outcomes in c. Energy
+// definition's judging-percentile estimate and predicted outcomes in c. Energy
 // counts the compared Nodes only (nil counts every Node). Reasons name the
 // snapshot, resource or replay facts that block the replay.
 func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, c SchedulerCandidate, seed uint64, compared map[NodeReference]bool, capacity *capacityWindowLimit) (SchedulerCandidate, error) {
@@ -180,10 +183,11 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	for _, key := range keys {
 		d := r.definitions[key]
 		samples := r.samples[key]
-		e := SchedulerEstimate{UID: d.UID, Definition: key, Samples: len(samples), Percentile: d.SLO.Percentile, TargetNanos: int64(d.SLO.TargetLatency), PredictedOutcomes: r.outcomes[key]}
+		budget := ResolvePathBudget(settings, snapshot.PathBudgets, d)
+		e := SchedulerEstimate{UID: d.UID, Definition: key, Samples: len(samples), Percentile: budget.JudgmentPercentile, TargetNanos: int64(d.SLO.TargetLatency), PredictedOutcomes: r.outcomes[key]}
 		if len(samples) > 0 {
 			sort.Float64s(samples)
-			q := stat.Quantile(d.SLO.Percentile/100, stat.Empirical, samples, nil)
+			q := stat.Quantile(budget.JudgmentPercentile/100, stat.Empirical, samples, nil)
 			e.ExpectedNanos = &q
 			e.NormalizedExceedance = math.Max(0, q/float64(d.SLO.TargetLatency)-1)
 			c.WorstExceedance = math.Max(c.WorstExceedance, e.NormalizedExceedance)
@@ -413,6 +417,18 @@ func (s *schedulerReplayState) initializeOutstanding() {
 	})
 	for _, r := range outstanding {
 		x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, arrival: 0, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred}
+		// Pending and not-yet-frozen assigned calls still owe pre-F work.
+		// QueueAge is server slot wait here, so subtract only consumed path.
+		x.postMS = s.settings.CompletionMarginMS
+		if r.CompletionMarginMS != nil {
+			x.postMS = *r.CompletionMarginMS
+		}
+		x.returnMS = x.postMS
+		if (r.Phase == phasePending || r.Phase == phaseAssigned) && r.NativeSenderElapsedMS == nil && r.TotalMarginMS != nil {
+			consumedMS := max(0, float64(r.Elapsed-r.QueueAge)/1e6)
+			x.senderReserveMS = max(0, *r.TotalMarginMS-x.postMS-consumedMS)
+			x.returnMS += x.senderReserveMS
+		}
 		if r.NativeSenderElapsedMS != nil {
 			x.senderMS = *r.NativeSenderElapsedMS
 		}
@@ -437,7 +453,9 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			case phaseAssigned:
 				// In transit: it reaches the tail of the native queue at replay start.
 				x.native = 0
-				x.senderMS = float64(r.Elapsed) / 1e6
+				if r.NativeSenderElapsedMS == nil {
+					x.senderMS = float64(r.Elapsed)/1e6 + x.senderReserveMS
+				}
 			case phaseQueued, phaseDeferred:
 				i.queue = append(i.queue, x)
 			case phaseRunning:
@@ -445,7 +463,7 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			case phaseReturning:
 				x.returning = true
 				// Native completion precedes the observed response age; the margin starts there.
-				x.completion = math.Max(0, s.settings.CompletionMarginMS*1e6-float64(r.ReturnElapsed))
+				x.completion = math.Max(0, x.returnMS*1e6-float64(r.ReturnElapsed))
 			}
 		}
 	}
@@ -470,6 +488,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 		return arrivals[i].At.Before(arrivals[j].At)
 	})
 	identities := map[*Definition]string{}
+	budgets := map[*Definition]PathBudget{}
 	for cycle := 0.0; len(arrivals) > 0 && cycle < s.horizon; cycle += window {
 		for j, a := range arrivals {
 			if ctx.Err() != nil {
@@ -484,8 +503,17 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 			if !ok {
 				identity = a.Definition.Identity()
 				identities[a.Definition] = identity
+				budgets[a.Definition] = ResolvePathBudget(s.settings, s.snap.PathBudgets, a.Definition)
+				if budgets[a.Definition].Source == "configured" {
+					s.out.assumptions = appendUnique(s.out.assumptions, "configured completion margin may reserve pre-F cost again in native sender plus margin")
+				} else {
+					s.out.assumptions = appendUnique(s.out.assumptions, "synthetic sender reserve max(TOTAL-POST,0) allocates modeled TOTAL; it is not an observed pre-F quantile")
+				}
 			}
 			x := &schedulerReplayRequest{source: r, identity: identity, arrival: at, native: math.Inf(1), expires: math.Inf(1)}
+			budget := budgets[a.Definition]
+			x.postMS = budget.PostMS
+			x.senderReserveMS, x.returnMS = replayPathMargins(budget)
 			if a.Lifetime > 0 {
 				x.expires = at + float64(a.Lifetime)
 			}

@@ -339,6 +339,8 @@ type RequestEvent struct {
 	ExecutionComplete bool             `json:"executionComplete"`
 	LifetimeNanos     int64            `json:"lifetimeNanos,omitempty"`
 	SLO               *SLO             `json:"slo,omitempty"`
+	// CompletionMarginMS is the POST margin frozen when Runtime accepts the call.
+	CompletionMarginMS *float64        `json:"completionMarginMS,omitempty"`
 	Outcome           string           `json:"outcome,omitempty"`
 	Error             string           `json:"error,omitempty"`
 }

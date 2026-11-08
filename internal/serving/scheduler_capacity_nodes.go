@@ -92,7 +92,8 @@ func (p *capacityPlanner) resolveCapacity() {
 
 // kappa looks up the row of option variant o for Workload w.
 func (p *capacityPlanner) kappa(o SchedulerOption, w int) (float64, string, string) {
-	key := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d).Key()
+	d := p.ws[w].d
+	key := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, d, ResolvePathBudget(p.settings, p.snapshot.PathBudgets, d)).Key()
 	row, ok := p.rows[key]
 	switch {
 	case !ok || row.Status == CapacityPending:

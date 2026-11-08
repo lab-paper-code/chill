@@ -693,7 +693,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}})
 			rows := []serving.CapacityRow{}
 			for n, i := range []serving.SchedulerInstance{old, added} {
-				in := serving.NewCapacityInput(c.config.Settings, nil, serving.SchedulerOption{Instance: i}, snapshot.Workloads[0])
+				in := serving.NewCapacityInput(c.config.Settings, nil, serving.SchedulerOption{Instance: i}, snapshot.Workloads[0], serving.ResolvePathBudget(c.config.Settings, snapshot.PathBudgets, snapshot.Workloads[0]))
 				k := []float64{26.322718, 68.45}[n]
 				if scenario == "insufficient" {
 					k = 1

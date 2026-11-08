@@ -29,7 +29,7 @@ func capacityFixture() (SchedulerSettings, SchedulerSnapshot) {
 
 func capacityBuildForTest(t *testing.T, s SchedulerSettings, snap SchedulerSnapshot) CapacityRow {
 	t.Helper()
-	row, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], snap.At)
+	row, err := BuildCapacityRow(context.Background(), s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], snap.At, ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 			if err != nil || len(full.Reasons) != 0 {
 				t.Fatalf("full replay failed: %v %+v", err, full)
 			}
-			limit := capacityWindowLimit{requests: n, slo: d.SLO}
+			limit := capacityWindowLimit{requests: n, slo: d.SLO, percentile: ResolvePathBudget(s, snap.PathBudgets, d).JudgmentPercentile}
 			earlyCtx := &capacityCountingContext{Context: context.Background()}
 			early, err := schedulerReplayEstimate(earlyCtx, s, snap, keep, 1, nil, &limit)
 			if err != nil || limit.failed != tc.failed || (full.Status != schedulerStatusFeasible) != tc.failed {
@@ -197,7 +197,7 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 	}
 	// Empirical p95 of 20 permits exactly one miss; equality is not a miss,
 	// and observing the same late request twice must not count it twice.
-	limit := capacityWindowLimit{requests: 20, slo: SLO{Percentile: 95, TargetLatency: time.Millisecond}}
+	limit := capacityWindowLimit{requests: 20, slo: SLO{Percentile: 95, TargetLatency: time.Millisecond}, percentile: 95}
 	late := &schedulerReplayRequest{arrival: 0}
 	s := schedulerReplayState{now: 2e6, capacity: &limit, live: []*schedulerReplayRequest{late, {arrival: 1e6}}}
 	for range 2 {
@@ -498,8 +498,8 @@ func TestCapacityTableCancelsUnwantedQueuedAndRunning(t *testing.T) {
 		recorded.Add(1)
 		return nil
 	}, nil)
-	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0]).Key()
-	queuedKey := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[1], snap.Workloads[0]).Key()
+	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0])).Key()
+	queuedKey := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[1], snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0])).Key()
 	original, cancel := context.WithCancel(context.Background())
 	blocked := &capacityBlockedContext{Context: original, started: make(chan struct{}), release: make(chan struct{})}
 	// Publish the complete task before either build or Ensure can read its
@@ -584,7 +584,7 @@ func TestCapacityTableRoundRobinWorkloads(t *testing.T) {
 // A recorded row stands in for a row being computed and gives way once built.
 func TestCapacityTableUsesRecordedRowUntilBuilt(t *testing.T) {
 	s, snap := capacityFixture()
-	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0]).Key()
+	key := NewCapacityInput(s, snap.DispatchOccupancy, snap.Options[0], snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0])).Key()
 	recordedKappa := 1.0
 	table := NewCapacityTable(1, nil, func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
 		if len(keys) != 1 || keys[0] != key {
@@ -672,7 +672,7 @@ func TestCapacityKeyIgnoresOccupancyImageHistory(t *testing.T) {
 
 func TestCapacityKeyIgnoresOccupancyProvenance(t *testing.T) {
 	s, snap := capacityFixture()
-	in := NewCapacityInput(s, nil, snap.Options[0], snap.Workloads[0])
+	in := NewCapacityInput(s, nil, snap.Options[0], snap.Workloads[0], ResolvePathBudget(s, snap.PathBudgets, snap.Workloads[0]))
 	key := in.Key()
 	in.DispatchOccupancy.Source = "new-record-key"
 	in.DispatchOccupancy.Provenance.Source = occupancySourceDOM

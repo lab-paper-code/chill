@@ -123,9 +123,9 @@ func (s *schedulerReplayState) expireRequests() {
 					}
 				}
 				i.queue = kept
-				r.completion = s.now + s.settings.CompletionMarginMS*1e6
+				r.completion = s.now + r.returnMS*1e6
 				if !math.IsInf(r.native, 1) {
-					r.completion = math.Max(s.now, r.native) + s.settings.CompletionMarginMS*1e6
+					r.completion = math.Max(s.now, r.native) + r.returnMS*1e6
 				}
 				r.native = math.Inf(1)
 			}
@@ -140,7 +140,7 @@ func (s *schedulerReplayState) completeExecution() {
 			for _, r := range i.batch {
 				r.running = false
 				r.returning = true
-				r.completion = s.now + s.settings.CompletionMarginMS*1e6
+				r.completion = s.now + r.returnMS*1e6
 			}
 			i.batch = nil
 			i.finish = math.Inf(1)
@@ -223,7 +223,7 @@ func (s *schedulerReplayState) routeRequests() {
 		i := s.instances[selected]
 		r.dispatched = true
 		r.source.Instance = i.config.ID
-		r.senderMS = math.Max(0, float64(r.source.Elapsed)+s.now-r.arrival) / 1e6
+		r.senderMS = math.Max(0, float64(r.source.Elapsed)+s.now-r.arrival)/1e6 + r.senderReserveMS
 		r.native = s.now
 		i.outstanding++
 	}
@@ -287,7 +287,7 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 	} else if r.deferred {
 		phase = phaseDeferred
 	}
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: s.settings.CompletionMarginMS, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now - r.queueAt) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.postMS, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now - r.queueAt) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
 }
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {

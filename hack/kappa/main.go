@@ -304,11 +304,12 @@ func kappaCell(kappa map[string]float64, node string) string {
 // configured default d plus the completion margin.
 func nodeLatencies(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, w *serving.Definition, q float64) map[string]float64 {
 	out := map[string]float64{}
+	budget := serving.ResolvePathBudget(settings, snapshot.PathBudgets, w)
 	for _, o := range snapshot.Options {
 		if !slices.Contains(o.CompatibleUIDs, w.UID) || o.Instance.Profile == nil {
 			continue
 		}
-		d := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w).DispatchOccupancy
+		d := serving.NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w, budget).DispatchOccupancy
 		for _, b := range o.Instance.Profile.Batches {
 			if b.Batch != 1 || len(b.ServiceSamples) == 0 || d == nil {
 				continue
@@ -319,7 +320,7 @@ func nodeLatencies(settings serving.SchedulerSettings, snapshot serving.Schedule
 			for index, sample := range b.ServiceSamples {
 				durations[index] = float64(sample.ServiceDurationNanos)
 			}
-			ms := (quantile(durations, q)+float64(d.PerRequest))/1e6 + settings.CompletionMarginMS
+			ms := (quantile(durations, q)+float64(d.PerRequest))/1e6 + budget.TotalMS
 			if old, ok := out[o.Instance.Node.Name]; !ok || ms < old {
 				out[o.Instance.Node.Name] = ms
 			}

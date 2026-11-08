@@ -432,7 +432,7 @@ func assertNativeCatalogCapacity(t *testing.T, ctx context.Context, profile *ser
 		Routable: map[string]bool{workload.UID: true}, Capacity: int(c.Firstfloor.MaxQueueSize),
 		Allocation: serving.SchedulerAllocation{MemoryBytes: batch.MemoryBytes}},
 		CompatibleUIDs: []string{workload.UID}}
-	row, err := serving.BuildCapacityRow(ctx, settings, nil, option, workload, time.Now().UTC())
+	row, err := serving.BuildCapacityRow(ctx, settings, nil, option, workload, time.Now().UTC(), serving.ResolvePathBudget(settings, nil, workload))
 	if err != nil || row.Status != serving.CapacityBuilt || row.Kappa == nil || *row.Kappa < 0 ||
 		row.Input.ProfileID != profile.ID || len(row.Grid) == 0 || row.ConditionalService == nil ||
 		row.ConditionalService.Queries == 0 || row.ConditionalService.StartupQueries == 0 || row.ConditionalService.MinimumTrialCount != 3 {
