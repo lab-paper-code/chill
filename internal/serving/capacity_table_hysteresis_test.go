@@ -122,10 +122,10 @@ func TestCapacityTableHeldCandidateKeepsActiveReference(t *testing.T) {
 
 func TestCapacityTableQueuedPairRecheckedAfterRunningCompletion(t *testing.T) {
 	for _, next := range []struct {
-		name       string
-		total      float64
-		activeLow  float64
-		wantBuild  bool
+		name      string
+		total     float64
+		activeLow float64
+		wantBuild bool
 	}{
 		{name: "overlap against completed upward pair holds", total: 8, activeLow: 7},
 		{name: "separation against completed upward pair builds", total: 8, activeLow: 9, wantBuild: true},
