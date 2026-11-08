@@ -40,15 +40,16 @@ v1/v2는 protocol만 참조하고 서로나 serving을 import하지 않는다.
 
 ## 2. 용량표
 
-**행.** 키는 option(노드, 모드, 할당, profile ID), 배치 상한 b, SLO(백분위 p, 목표 L), 완료 여유 m, 선택한 수치 디스패치 점유 d, 용량표 설정이다. 출처와 갱신 사실은 입력에 남기되 수치 키에서 제외한다. deadlinePolicy는 profile이 정한다. 행은 입력, κ, μ(b 이하 배치의 `b / (평균 실행시간 + b × d)` 최댓값), 격자 판정 결과, 창별 백분위 지연을 담는다.
+**행.** 키는 option(노드, 모드, 할당, profile ID), 배치 상한 b, SLO(백분위 p, 목표 L), 적용 total·post 경로 예산, 모델 판단 분위수, 선택한 수치 디스패치 점유 d, 용량표 설정이다. 출처와 관측 창·갱신 사실은 입력에 남기되 수치 키에서 제외한다. deadlinePolicy는 profile이 정한다. 행은 입력, κ, μ(b 이하 배치의 `b / (평균 실행시간 + b × d)` 최댓값), 격자 판정 결과, 창별 판단 분위수 지연을 담는다. 이하 m은 활성 total 예산이며, live와 replay의 배칭에는 같은 활성 입력의 post 예산을 사용한다([시간과 수명](scheduler-runtime-measurement.md#시간과-수명)).
 
-**판정.** option 인스턴스 하나만 있는 keep snapshot에 요청률 λ의 포아송 도착을 넣고 `schedulerReplayEstimate`를 읽는다. 재생은 profile 실행시간 표본에 `배치 크기 × d`를 더하고 firstfloor `ChooseBatch`를 사용한다. 저장소와 배포 runtime의 표본 선택 동등성은 `TestPolicyFastPathsMatchDeployed`로 대조한다. 백분위 지연(m 포함) ≤ L이고 timeout·만료가0이면 창은 충족이다. 창은 빈 상태에서 시작하고 요청 수는 `max(capacityMinimumRequests, ceil(capacityTailSamples/(1−p/100)), ceil(λ×capacityWindow))`다(p는0~100 백분위). p=100은 현재 별도 분기를 유지한다. seed1~capacityWindows 중 capacityPassingWindows 이상 충족하면 λ가 충족이다. 같은 seed 간격을 λ로 나누므로 판정은 결정적이다.
+**판정.** option 인스턴스 하나만 있는 keep snapshot에 요청률 λ의 포아송 도착을 넣고 `schedulerReplayEstimate`를 읽는다. 재생은 profile 실행시간 표본에 `배치 크기 × d`를 더하고 firstfloor `ChooseBatch`를 사용한다. 저장소와 배포 runtime의 표본 선택 동등성은 `TestPolicyFastPathsMatchDeployed`로 대조한다. 모델 판단 분위수의 지연(m 포함) ≤ L이고 timeout·만료가0이면 창은 충족이다. native 요청의 SLO p는 유지한다. p<100에서 α=1−p/100의 경로·worker 초과예산을 α/2씩 나누는 기준안의 판단 분위수는 `100−(100−p)/2`다. 모집단 크기·miss rank·최종 quantile·행 입력에는 같은 판단 정책을 사용한다. 요청 수는 `max(capacityMinimumRequests, ceil(capacityTailSamples/(1−판단 분위수/100)), ceil(λ×capacityWindow))`이며 p=100은 기존 별도 분기를 유지한다. seed1~capacityWindows 중 capacityPassingWindows 이상 충족하면 λ가 충족이다. 같은 seed 간격을 λ로 나누므로 판정은 결정적이다.
+α/2 정책은 연결·활성화 전에 같은 profile·점유·수요·seed 원입력으로 κ(p)와 κ(1−α/2)의 영향을 비교하고 수용해야 한다. 통계 정책만 바꾸는 공통 모집단 실행과 실제 표본 정책의 비용 실행을 구분하며 κ·선택 구성·동일 비교기간 에너지·불가 판정·계산시간·메모리를 남긴다. 저장된 `PercentileMS`에는 총 모델 지연·조기 실패 -1·미계산 창이 섞이므로 이 열에서 높은 분위수를 복원하지 않는다. α/2의 합집합 경계는 경로·worker 독립성을 요구하지 않지만, 경로 표본 직접 주입 대안에는 결합·조건부 표본 근거가 필요하다.
 
 **κ.** 요청 수와 배칭이 λ에 따라 바뀌므로 단조성을 가정하지 않는다. `G=capacityGridSteps`, `λ_k=(k/G)μ`(k=1~G)를 전부 판정한다. 충족 앞부분/미충족 뒷부분으로 나뉠 때 마지막 충족과 다음 격자 사이를 `capacityBisectionWidth×μ`까지 이분 탐색한다. K=0이면 κ0, K=G이면 κ=μ다. 미충족 뒤 충족이면 NonMonotone으로 κ가 없고 CapacityRejected다. 측정 d가 없으면 설정 d로 계산하며 미측정 자체는 거절 사유가 아니다. 격자 결과는 행에 보존한다. 격자·이분 폭·tail은 코드 상수가 아니라 기존 settings의 추가3개이며 기본20/.005/100을 유지한다. 모두 CapacityInput/용량 행에 포함하고 기본값도 새 입력 키로 재계산한다([설정 설계](configuration-hardcoding.md#3-serving-settings와-요청별-reuse)).
 
 계획·keep·retained·정수 routing과 replay 공급은 선택한 정책 행의 κ를 그대로 쓴다. b1 붕괴는 runtime `56ef4f7b`의 배치 선택 수정으로 해결했으므로 별도 `min(κpolicy, κb1)` envelope는 적용하지 않는다.
 
-**불가 조기 판정.** b 이하 모든 측정 배치의 관측 최소 실행시간 중 최솟값 + m > L이면 백분위와 무관하게 단일 배치 처리만으로 모든 요청이 초과하므로 재생 없이 `Built`, κ 0, `BatchServiceExceedsSLO`와 `minimumServiceNanos`(m·L은 입력)를 기록한다(등호는 재생); 재생 창은 확정 초과 요청이 `N − ⌈pN⌉`개를 넘거나 timeout·만료가 하나라도 있으면 즉시 실패(-1, 완전 분위수 없음)로 끝내며, `Ensure`의 최신 대상에서 빠진 queued/running 행은 취소하고 부분 결과와 기록을 버린다.
+**불가 조기 판정.** b 이하 모든 측정 배치의 관측 최소 실행시간 중 최솟값 + m > L이면 백분위와 무관하게 단일 배치 처리만으로 모든 요청이 초과하므로 재생 없이 `Built`, κ 0, `BatchServiceExceedsSLO`와 `minimumServiceNanos`(m·L은 입력)를 기록한다(등호는 재생). 재생 창은 확정 초과 요청이 `N − ⌈판단 분위수×N/100⌉`개를 넘거나 timeout·만료가 하나라도 있으면 즉시 실패(-1, 완전 분위수 없음)로 끝낸다. 일반 grid κ=0은 시험한 최소 rate 아래의 양수 처리율을 인증하지 못했다는 뜻이며 최소 service 불가 증거와 구분한다. 행 취소·적용 전환은 아래 계산 수명 계약을 따른다.
 
 **설정.** `capacityWindowNanos` 60 s, `capacityWindows` 20, `capacityPassingWindows` 19, `capacityMinimumRequests` 1,000. 60 s 창이 필요한 근거: 요청 수 창만 쓰면 빠른 option(genesis2 cuda, 2,000 요청이 14 s)의 κ가 μ에 붙어 relaxed 1.2κ에서 20/20 충족이었고, 60 s 창에서는 0/20이다. 20개 중 19개 기준이 필요한 근거: 창 하나로 정한 κ는 1.0κ에서 6~12/20만 충족했다.
 
@@ -66,15 +67,15 @@ v1/v2는 protocol만 참조하고 서로나 serving을 import하지 않는다.
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. d 없이 profile 실행시간만 재생한 E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s. rasp5 q1은 실측 처리율 26.9 req/s에서 34.3이 과대임이 드러났고, d를 넣은 값은 위 문단의 25.3이다.
 
 **계산하는 때와 대상.**
-- ChillServer의 용량표 worker가 시작할 때 표 전체를 계산한다. 그 뒤에는 Workload의 자동제어가 켜지거나, 켜진 Workload의 SLO, profile, m, 디스패치 점유, 용량표 설정이 바뀔 때 빠진 행을 계산한다. 표는 메모리에만 있고 시작마다 비어 있으므로 재생, 배칭 규칙, κ 계산 코드가 바뀐 image도 그 코드로 계산한 표를 쓴다.
+- ChillServer의 용량표 worker가 시작할 때 대상 행을 계산한다. 그 뒤에는 자동제어가 켜진 Workload의 SLO, profile, 경로 예산, 디스패치 점유, 용량표 설정 변경을 최신 계산 요구로 병합한다. 관측 변화만으로 실행 중 계산을 반복 취소하거나 같은 요구를 재시작하지 않는다. 표는 메모리에만 있고 시작마다 비어 있으므로 재생, 배칭 규칙, κ 계산 코드가 바뀐 image도 그 코드로 계산한 표를 쓴다.
 - 대상은 자동제어가 켜진 Workload의 SLO와 그 Workload에 측정 근거가 있는 option 변형이다. 꺼진 Workload의 노드는 keep뿐이라(4장) 그 κ를 쓰지 않는다. E1에서는 tight 하나라 option 변형 38개, 38행이다(SLO 3개 전체는 114행).
 - 행 하나가 작업 하나이고 행끼리 독립이라 병렬로 계산한다. capacity worker 수는 runtime GOMAXPROCS의 실행 병렬성일 뿐 CPU 예약·limit이 아니다. ChillServer는 CPU request/limit이나 limits.cpu 기반 GOMAXPROCS를 설정하지 않는다.
-- 빠진 행은 Workload마다 다음 행 하나씩 round-robin으로 공용 semaphore에 투입하여, 행이 많은 Workload 뒤에서 다른 Workload가 굶지 않게 한다.
-- 계산한 행도 기록된 이전 행(계산 시간 문단)도 없으면 그 option은 `CapacityPending`으로 계획에서 빠지고, 켜진 Workload에 κ가 있는 option이 하나도 없으면 판단이 `CapacityPending`이다.
+- 빠진 행은 Workload마다 다음 행 하나씩 round-robin으로 공용 semaphore에 투입하여, 행이 많은 Workload 뒤에서 다른 Workload가 굶지 않게 한다. 대기 계산에서는 예산 상향을 하향보다 우선하고 실행 중 작업은 완료시킨다.
+- 필요한 행이 완성되면 Workload별 활성 예산·κ·slack·신규 요청 기본값을 함께 전환한다. 더 최신 관측이 생겼다는 이유만으로 유효한 완료 결과를 계속 폐기하지 않는다. 유효한 활성 행이 없으면 기존 `CapacityPending`을 유지한다. 활성 예산보다 최신 요구가 높은 동안에는 판단이 낙관적일 수 있으므로 이를 최신 관측의 검증 결과로 표시하지 않는다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
 - 각 Tick의 planner는 병렬 탐색 전에 option/Workload별 행 키·κ·사유와 현재 인스턴스별 κ·행을 한 번 해석한다. 누락·거절 결과도 포함한 이 읽기 전용 표는 그 planner에서만 살며, 후보 평가는 디스패치 점유 조회나 행 키 직렬화·해시를 반복하지 않는다. 다음 Tick은 새 snapshot과 행으로 다시 만든다.
 
-**계산 시간과 이전 행.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. worker는 동일키 마지막 capacity-row-built를 로컬 management→archive 최신순으로 찾아 previous로 쓰고 계산 후 교체하며 없으면 CapacityPending이다.
+**계산 시간과 행 수명.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. 동일 수치 키의 이전 완료 행만 재사용한다. profile·SLO·option 등 구조적 입력 무효화는 기존 queued/running 취소 경계를 따르며 부분 결과를 버린다. 활성 행·실행 중 계산·최신 요구가 참조하는 상태만 유지하고 참조가 끝난 rows/previous/asked를 회수한다. 별도 사다리·TTL·epoch·retry 체계는 추가하지 않는다.
 
 **κ와 현재 실행 가능성(R1).** BuildCapacityRow는 profile·SLO·선택한 dispatch occupancy·수치 정책과 모의 도착만 사용한다. 현재 Node snapshot/baseline/readiness/CPU inventory/예약/GPU inventory/memory 가용성은 입력이 아니며 Ready를 덮어 통과시키지 않는다. 장치·메모리 부재 중에도 κ는 계산·재사용하고 planner/prepare가 현재 상태로 실행을 거절한다. 복구 뒤 같은 key/κ로 다시 배치 판단한다. NonMonotone/수치 오류와 κ=0의 의미는 유지한다.
 공유 실행 key는 `shared-cpu/` namespace다. local/archived management의 이전 controlled key는 새 계산의 previous 행이 될 수 없으며 원본 archive를 변경하지 않는다. 새 namespace 안에서는 같은 측정 조건의 previous/pending·취소·수치 재사용을 유지한다. TTL/retry knob나 changing snapshot 전체 hash는 없다.
@@ -115,9 +116,10 @@ from `Call.receipt.Deadline` at the snapshot clock and tightened by native
 route ownership and handoff fences are unchanged. Arrival history is unchanged;
 only q and its q/window contribution to λ use this waiting-demand projection.
 
-- 최종 충족: `κ_new,w ≥ λ_w`. 초과량 `λ_w / κ_new,w − 1`. λ가 0이어도 켜진 Workload마다 인스턴스 하나 이상이다.
+- 최종 충족: `κ_new,w ≥ λ_w`. 초과량 `λ_w / κ_new,w − 1`. λ가 0이어도 제어 대상 Workload마다 인스턴스 하나 이상이다. 아래 명시적 모델 불가 격리에는 현재 구성 보존 규칙을 적용한다.
 - 대기 충족: `B_w`가 0이면 충족이다. 아니면 EDF가 밀린 요청을 먼저 처리하므로 가장 오래 기다리는 요청의 대기는 `W_w = B_w / κ_new,w`이고, `W_w ≤ L_w − m`이면 충족이다. 초과량 `W_w / (L_w − m) − 1`. keep(r = 0)도 지금 대기 `q_w`로 같은 판정을 받으므로, 측정 λ가 κ 안이어도 줄지 않는 대기는 확장을 부른다(m4 r3: λ 29.5, κ 34.3, 대기 160에서 keep의 W 4.66 s > 0.861 s). κ는 처리율 μ 이하라 이 대기는 실제보다 길다. 밀린 요청이 다 빠지는 시간 `B_w / (κ_new,w − λ_w)`도 기록한다.
-- 순서: 모든 w에서 두 충족을 만족하는 구성 중 에너지가 작은 것, keep, 논리 구성 key 사전 순. 그런 구성이 없으면 상태는 `Overload`이고, 모든 w에서 최종 충족(가중치의 κ 검사 포함)을 만족하는 구성이 그렇지 않은 구성보다 앞선다. 같은 쪽 안에서는 Workload마다 최종·전환·route 가중치 초과량 중 큰 값을 구하고 내림차순 정렬한 목록을 사전식 최소화한다(leximin: 최악 동률이면 두 번째 최악, 이어 다음). 모든 값이 같을 때만 에너지, keep, 논리 key 순이다. 용량 없음은 +∞ 그대로 비교하며 불가능 Workload를 따로 고정하거나 큰 유한 수로 치환하지 않는다. 기록의 `worstExceedance`는 목록 첫 값의 기존 요약이다. keep은 r = 0이다.
+- 순서: 제어 대상 모든 w에서 두 충족을 만족하는 구성 중 에너지가 작은 것, keep, 논리 구성 key 사전 순. 그런 구성이 없으면 상태는 `Overload`이고, 제어 대상 모든 w에서 최종 충족(가중치의 κ 검사 포함)을 만족하는 구성이 그렇지 않은 구성보다 앞선다. 같은 쪽 안에서는 Workload마다 최종·전환·route 가중치 초과량 중 큰 값을 구하고 내림차순 정렬한 목록을 사전식 최소화한다(leximin: 최악 동률이면 두 번째 최악, 이어 다음). 모든 값이 같을 때만 에너지, keep, 논리 key 순이다. 일반 용량 없음은 +∞ 그대로 비교한다. 기록의 `worstExceedance`는 목록 첫 값의 기존 요약이다. keep은 r = 0이다.
+  제어 격리는 공통 Serving adapter에서만 수행한다. 모든 호환 option의 유효한 행이 `활성 예산 + 최소 관측 실행시간 > SLO`를 입증한 Workload만 현재 인스턴스 구성으로 고정하고 제어 대상 feasibility·초과량 비교에서 제외한다. 빈 후보·Pending·Rejected·일반 grid κ=0은 격리하지 않는다. 기존 `fixCapacityWorkloads`와 고정 구성 보호를 재사용하며 v1/v2 엔진의 protocol·Rank·에너지 식은 유지한다. 격리 중에도 전체 SLO 미충족과 고정 인스턴스의 물리 점유·공급·에너지를 기록하고, 다른 Workload 배치나 Node mode 변경으로 실행 조건을 깨뜨리지 않는다. 경로만의 초과와 경로+최소 service 초과를 구분하며 grid 실패를 `PathBudgetExceedsSLO`로 표시하지 않는다. 매 판단에서 근거를 재확인하고 양수 용량이 확인되면 정상 제어로 복귀한다. 근거가 사라지면 기존 미계산·결손 처리로 전환한다. 격리는 해당 Workload의 축소·이동 회복을 수행하지 않으며 현재 인스턴스가 없으면 없는 상태를 유지한다. 다른 판단·적격성·상위 순위·비교기간이 같을 때 κ=0 복제 추가만으로 더 큰 에너지 후보를 선호하지 않아야 한다. 이를 전체 클러스터 최소 구성 수렴 보장으로 확대하지 않는다.
 - 근거: 마지막 E1 snapshot에 포아송 40 req/s를 넣으면 에너지만으로는 rasp5 q1 + q1-lut(route 20.2 s)가 나오고 재생에서 전환 중 SLO에서 진다. 위 규칙으로 그 구성은 `B = 5.7 × 20.2 = 115`, `W = 115 / 69.2 = 1.67 s > 0.82 s`(L 1 s, m 177 ms)로 탈락한다. genesis3 q2 추가(route 10.7 s)는 `W = 61 / 144 = 0.42 s`로 충족이고, 재생 계획기와 같은 노드와 option이다.
 
 ## 4. 노드 계획과 탐색
@@ -183,23 +185,26 @@ Workload별 `loads`의 `computeInputs`와 `inputsPerSecond`는 장기 관측값�
 
 ## 5. 완료 여유 규칙
 
-사용자가 채택한 규칙(firstfloor 큐와 실행 밖 시간의 백분위)을 firstfloor 단계 기록과 2장의 d에 맞춰 정한다. m은 요청 행의 `elapsedNanos − (nativeElapsedMS − ingress)`의 Workload SLO 백분위다. `ingress = queueMS − (runningNanos − queuedNanos)`는 firstfloor가 HTTP 요청을 받은 때부터 큐에 넣을 때까지(본문 읽기와 decode)이고 `queueMS`의 앞부분이다. `nativeElapsedMS − ingress`는 firstfloor actor가 요청을 큐에 넣은 때부터 실행 기록을 낼 때까지이고, 재생이 큐 대기와 `실행시간 + d`로 대신하는 구간이다. m은 그 밖의 모든 시간이다. `queuedNanos`가 없는 행(m4에서 약 20%, native 로그를 따라 읽을 때 queued 줄이 빠진 행)은 m 표본에서 빠진다. `hack/observations/e1.sql`의 `margin` 열이 이 값을 내고 운영자가 E 실행 결과로 `completionMarginMS`를 바꾼다. m이 바뀌면 2장의 행을 다시 계산한다. κ는 m에 둔감하지만(rasp5 tight d 없이 m 139 ms 34.3, m 179 ms 34.2) 3장의 `L − m`과 짧은 SLO의 κ는 m을 그대로 쓴다.
+Workload UID와 불변 `Definition.Identity()`별로 같은 관측 cutoff의 요청을 집계한다. 경로 경계는 [시간과 수명](scheduler-runtime-measurement.md#시간과-수명)을 따른다.
 
-| 구간 | 기록 | m | 재생 |
-|---|---|---|---|
-| 수신, 인증(TokenReview), 본문 decode, 입력 계약 검사 | `validatedNanos`(ChillServer received → validated) | 들어감 | 없음 |
-| 접수, ChillServer 유입 큐, firstfloor로 전달 | `acceptedNanos`, `dispatchedNanos`, firstfloor 수신까지 | 들어감 | 없음 |
-| firstfloor 본문 읽기와 decode | `queueMS − (runningNanos − queuedNanos)` | 들어감 | 없음 |
-| firstfloor 큐 대기 | `runningNanos − queuedNanos` | 빠짐 | 재생의 큐 대기 |
-| 전처리, 추론, 후처리 | runner의 `preprocessMS`, `backendMS`, `postprocessMS`, 모두 `serviceMS`(runner 교환) 안 | 빠짐 | profile 실행시간 표본(같은 runner 교환 시간) |
-| 서빙 부하에서 늘어난 runner 실행시간 | `serviceMS` − profile | 빠짐 | d |
-| 배치 준비, runner 응답 뒤 actor가 실행 기록을 내기까지 | `nativeElapsedMS − queueMS − serviceMS` | 빠짐 | d |
-| 실행 기록 뒤 다음 배치 시작까지 actor 시간 | 다음 요청들의 큐 대기 | 빠짐 | d |
-| 응답 교환(firstfloor → ChillServer → client) | `exchangeNanos`, `elapsedNanos` | 들어감 | 없음 |
+```text
+E      = 서버 수신 → 응답 종료
+Aw     = dispatched − accepted
+F      = 실제 RequestContext.SenderElapsedMS의 원본 경과
+I      = queueMS − 직접 관측한 (NativeRunningAt − NativeQueuedAt)
+M      = E − Aw − nativeElapsed + I
+M_post = E − F − nativeElapsed
+```
 
-- 재생은 요청 자신의 완료도 `실행시간 + 배치 크기 × d` 뒤로 둔다. 그래서 m은 actor 구간 전체를 뺀다. 남는 차이는 보수 쪽이다. 실행 기록 뒤 다음 배치까지의 actor 시간(포화에서 평균 약 0.5 ms)은 그 요청을 늦추지 않는데 재생은 더하고, 가벼운 부하에서는 늘어난 실행시간(m4 2 req/s 평균 2.7 ms)이 d보다 작다.
-- 값(p95, `stat.Empirical`): E1 2 req/s 177.8 ms, m4 r2 고정 2 req/s 28.5 ms, m4 r3 고정 2 req/s 25.8 ms, m4 r3 포아송 40 req/s 포화 29.2 ms(첫 10,000행). κ가 정해지는 부하는 포화 근처이므로 설정값은 29 ms다. 캠페인 뒤 SmolVLM2와 PLC 요청으로 m을 다시 재고, Workload마다 잰 값 중 가장 큰 값으로 정한다.
-- E1과 m4의 차이는 인증이다. E1의 received → validated p95가 103.2 ms였고, 요청마다 TokenReview가 client-go 요청 한도에 걸렸다. c829518(허용된 인증 결과를 10 s 재사용) 뒤 m4에서는 12.6~16.1 ms다. 나머지(firstfloor로 전달, ingress p95 약 9.5 ms, 응답 교환 p95 약 5~6 ms)는 두 실행에서 비슷하다. `queueMS` 전체를 빼는 열(E1 169.0 ms, m4 17.9~22.1 ms)은 firstfloor ingress를 m과 재생 어느 쪽에도 넣지 않는다.
+M은 재생이 만드는 서버 slot 대기 Aw와 profile service+batch×d가 담당하는 actor 비용을 제외한 total 경로다. I는 decode·입력 검사·framing·actor admission을 포함한다. M_post는 이미 F·local elapsed를 차감하는 firstfloor의 외부 여유다. F 이전 비용을 M_post에 다시 넣지 않는다. 같은 worker의 시각 차이와 서버 monotonic 경과만 사용하며 host간 절대시각을 빼지 않는다.
+
+**관측 상한.** 완료 시각 기준의 사용 가능한 요청 표본에서 M·M_post 각각의 순서통계 단측 95% 신뢰상한을 구한다. α/2 정책 수용 시 경로의 목표 분위수도 `q=1−α/2`다. 목표 분위수 q, 오름차순 표본 X_(k)에 대해 iid 연속 모집단에서는 `P(Q_q ≤ X_(k)) = P(Binomial(n,q) ≤ k−1)`이다. 이 값이 .95 이상인 최소 순위를 사용하며 `n_min = ceil(log(.05)/log(q))`에도 못 미치면 configured로 돌아간다. q=.975의 최소 표본은119개, q=.995는598개다. 각 상한의 95%는 동시 95%나 전체 Tick·운용기간 보장이 아니며, 신뢰오류 .05와 SLO 초과예산 α를 구분한다. p=100은 기존 별도 처리를 유지하고 유한 최댓값을 미래 절대 상한으로 부르지 않는다. 표본 수에 맞는 순위는 기존 통계 의존성을 재사용해 계산하며 관측 표본 정책과 replay의 `capacityTailSamples`를 혼동하지 않는다.
+
+관측 0은 유효한 값이며 결손·역전·비유한 값·실패·취소·미완료와 구분한다. 직접 native queued/running 시각 없이 복원된 시각만 있는 행은 사용 불가로 분류하고 사유·분모에 남긴다. 수신 cohort의 실패·미완료와 완료 시각 표본을 구분한다. 미완료는 성공·완료 지연 표본이 아니며 확인 가능한 경과 하한이 임계치를 넘을 때만 그 임계치 초과로 센다. E 초과만으로 M 초과를 단정하지 않는다. 요청 단위 모집단을 유지하고 배치 최댓값을 독립 요청 표본으로 바꾸지 않는다. 같은 배치·공통 혼잡의 상관, 결손·완료 선택 편향과 대표성 한계를 기록하며 iid 전제가 뒷받침되지 않는 자료를 관측 검증 완료로 표시하지 않는다. 표본 부족을 해결하려고 창을 늘리거나 프로토콜 표본 조건을 낮추지 않는다.
+
+**configured와 한계.** 기동·결손·표본 부족에서는 기존 `completionMarginMS`를 total·post의 configured 추정값으로 사용한다. 과거 값에서 pre/post 성분을 역산하지 않는다. configured에는 F 이전 비용과 native의 F 차감이 중복될 수 있다. 이 한계는 configured를 쓰는 모든 부하에 적용하며 배칭 축소·처리율 저하·backlog 영향을 별도로 검증한다. 관측 부족만으로 serving을 거절하지 않고 configured를 관측 검증 완료나 중복 제거 완료로 표시하지 않는다. 0.3 req/s·60초의 기대18개 표본에서는 configured가 유지된다. Workload 공유 예산은 후보 Node·routing·batch별 경로 차이를 완전히 설명하지 못한다.
+
+기존 LoadWindow가 읽은 행을 재사용하며 추가 archive scan·ring·ticker를 만들지 않는다. 정렬·통계는 Runtime 전역 lock 밖에서 수행한다. 판단 기록에는 출처·창·coverage·활성 예산·행·최신 요구 차이와 반영 대기를 작은 요약과 기존 참조로 연결한다. 요청 표본·profile 전체를 복제하지 않는다. 선택 모델의 예상 지연은 기존 offline replay에서 구하고 실제 경로와 구분한다. 물리 service·preceding idle 비교는 `(instance,batchID)`별 canonical 값을 한 번만 사용한다. 온라인 차이는 batch별 service/G로 보고하며 자동 profile 거절·재측정으로 연결하지 않는다. 기존 ProfileReuseCheck의 다른 Node 확인 측정 계약은 유지한다.
 
 ## 6. 인스턴스와 Workload 경계
 

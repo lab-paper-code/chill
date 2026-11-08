@@ -11,10 +11,12 @@ IPC는 bounded length-prefix header+binary payload다. frame 길이는 big-endia
 
 ## 시간과 수명
 
-원래 receipt+sender monotonic elapsed를 유지하며 host간 UTC 차이로 나이를 확정하지 않는다. 필수 `settings.completionMarginMS`는 유한≥0이고 ChillServer가 요청별 `RequestContext.completionMarginMS`로 전달한다. 인증/업로드/decode/accept/dispatch/응답의 운영자 non-native 여유이지 측정값이 아니다. 미관측 overhead로 후보를 Pending 처리하지 않으며 실제 cohort `completionResidualNanos`는 분석용으로 보존한다.
-- worker `requestSlack = RemainingSLOMS − completionMarginMS − serviceCost(batch,percentile)`. RemainingSLOMS는 frozen sender elapsed+local monotonic queue/service를 뺀 SLO다.
-- 명시 수명은 원래 receipt 기준 `lifetimeMS − senderElapsedMS − completionMarginMS`다. sender elapsed는 한 번만 빼고 margin 자체를 줄이지 않는다.
-- replay는 queued/running 예상 완료에 margin 한 번, returning에는 `max(0,completionMarginMS−응답 경과)`만 둔다. 실제 span/예상값 출처를 raw context에 연결한다.
+원래 receipt와 서버·worker의 monotonic 경과를 유지하며 host간 UTC 차이로 나이를 확정하지 않는다. F는 assigned 이후 sender가 실제 `RequestContext.SenderElapsedMS`로 전달한 원본 경과값이다. 이 같은 값을 요청과 RequestTimings의 sender freeze에 보존하고 기록용 시계를 다시 읽어 대체하지 않는다. 요청의 정의·SLO·적용 경로 예산은 접수 시 동결하며 이후 활성 예산 전환으로 기존 요청을 바꾸지 않는다.
+- worker `requestSlack = RemainingSLOMS − postBudgetMS − serviceCost(batch,percentile)`. RemainingSLOMS는 원래 SLO에서 frozen F와 local monotonic 큐·실행 경과를 뺀 값이다. native 요청의 percentile은 원래 SLO p이며 모델 tail 판단 분위수로 바꾸지 않는다.
+- 명시 수명의 native 잔여값은 원래 receipt 기준 `lifetimeMS − senderElapsedMS − postBudgetMS`다. F는 한 번만 빼고, 관측 post에는 F 이전 비용을 다시 넣지 않는다. 명시 timeout/cancel과 원래 receipt 기준 수명 계약은 유지한다.
+- total 경로 표본은 `M = E − (dispatched−accepted) − nativeElapsed + I`, post 표본은 `M_post = E − F − nativeElapsed`다. E는 서버 수신→응답 종료이며 `I = queueMS − (NativeRunningAt−NativeQueuedAt)`는 직접 관측한 같은 worker의 ingress/admission이다. 복원 시각만 있는 경우는 미관측으로 분류한다. total은 replay가 만드는 서버 slot 대기와 profile service+batch×d의 actor 비용을 중복 산입하지 않는다.
+- capacity/replay 종단 판단·전환 slack은 활성 total을 사용하고, 실제·재생의 batch 선택은 F와 local 경과를 반영한 post를 사용한다. queued/running의 예상 완료에 외부 예산을 한 번만 더하고 returning에는 해당 예산의 아직 소비하지 않은 응답 잔여만 둔다. 실제 span·예상값·F·사용 예산의 출처를 raw context에 연결한다. 선택 모델과 실측 경로의 비교 계약은 [완료 여유 규칙](analytic-planner.md#5-완료-여유-규칙)을 따른다.
+- 필수 `settings.completionMarginMS`는 유한≥0인 configured fallback이다. 기동·결손·표본 부족에서 total·post 추정값으로 사용하며 과거 값의 pre/post를 역산하지 않는다. configured는 F 이전 비용과 native의 F 차감이 중복될 수 있다. 이 한계는 모든 configured 사용 부하의 배칭 축소·처리율 저하·backlog 평가에 포함하며 중복 제거·관측 검증 완료로 표시하지 않는다. 미관측 overhead만으로 serving을 거절하지 않는다.
 
 | snapshot 시간 | 불변식 |
 |---|---|
