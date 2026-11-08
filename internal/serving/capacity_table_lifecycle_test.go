@@ -120,6 +120,23 @@ func assertCapacityGroup(t *testing.T, table *CapacityTable, budget float64, var
 	}
 }
 
+func assertNoActiveCapacityGroup(t *testing.T, table *CapacityTable, budget float64, variants int) []CapacityRow {
+	t.Helper()
+	if rows, budgets := table.Inputs(); len(rows) != 0 || len(budgets) != 0 {
+		t.Fatalf("incomplete group reached applied inputs: rows=%+v budgets=%+v", rows, budgets)
+	}
+	rows := table.Rows()
+	if len(rows) != variants {
+		t.Fatalf("missing diagnostic variants: %+v", rows)
+	}
+	for _, row := range rows {
+		if row.Input.CompletionMarginMS != budget || row.Key != row.Input.Key() {
+			t.Fatalf("diagnostic row does not match desired input: %+v", row)
+		}
+	}
+	return rows
+}
+
 func TestCapacityTableContinuousBudgetsFinishWholeGroups(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(2)
 	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, nil))
@@ -128,7 +145,7 @@ func TestCapacityTableContinuousBudgetsFinishWholeGroups(t *testing.T) {
 	for _, budget := range []float64{2, 3, 4} {
 		table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, budget))
 	}
-	assertCapacityGroup(t, table, 4, 2, CapacityPending)
+	assertNoActiveCapacityGroup(t, table, 4, 2)
 	if first.ctx.Err() != nil || first.budget.TotalMS != 1 {
 		t.Fatal("budget drift canceled or changed admitted work")
 	}
@@ -137,7 +154,7 @@ func TestCapacityTableContinuousBudgetsFinishWholeGroups(t *testing.T) {
 	if second.budget.TotalMS != 1 || second.batch == first.batch {
 		t.Fatalf("running group lost its remaining variant: %+v", second)
 	}
-	assertCapacityGroup(t, table, 4, 2, CapacityPending)
+	assertNoActiveCapacityGroup(t, table, 4, 2)
 	close(second.release)
 	third := nextCapacityBuild(t, started)
 	assertCapacityGroup(t, table, 1, 2, CapacityBuilt)
@@ -254,7 +271,7 @@ func TestCapacityTableCanceledSnapshotCanRestartUnchangedInputs(t *testing.T) {
 	cancel()
 	close(canceled.release)
 	table.Wait()
-	assertCapacityGroup(t, table, 1, 1, CapacityPending)
+	assertNoActiveCapacityGroup(t, table, 1, 1)
 	table.Ensure(context.Background(), settings, desired)
 	replacement := nextCapacityBuild(t, started)
 	if replacement.ctx.Err() != nil {
@@ -280,12 +297,12 @@ func TestCapacityTableStructuralRemovalDiscardsActiveAndOldTask(t *testing.T) {
 	empty.Options = nil
 	table.Ensure(context.Background(), settings, empty)
 	rows, budgets := table.Inputs()
-	if obsolete.ctx.Err() != context.Canceled || len(rows) != 0 || len(budgets) != 1 {
+	if obsolete.ctx.Err() != context.Canceled || len(rows) != 0 || len(budgets) != 0 {
 		t.Fatal("structural removal kept old work or its active inputs")
 	}
 	table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, 2))
 	replacement := nextCapacityBuild(t, started)
-	assertCapacityGroup(t, table, 2, 1, CapacityPending)
+	assertNoActiveCapacityGroup(t, table, 2, 1)
 	other := *snapshot.Workloads[0]
 	other.UID = schedulerTestOther
 	snapshot.Workloads = append(snapshot.Workloads, &other)

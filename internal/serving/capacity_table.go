@@ -145,9 +145,9 @@ func (t *CapacityTable) Wait() {
 	}
 }
 
-// Inputs atomically returns the active rows and their matching budgets. Before
-// the first complete group exists, it returns the latest desired budget and
-// matching recorded or CapacityPending rows. No partially replaced group leaks.
+// Inputs atomically returns only complete active row groups and their matching
+// budgets. A Workload without an active group contributes neither, so consumers
+// retain configured defaults and per-Workload missing-row handling.
 func (t *CapacityTable) Inputs() ([]CapacityRow, []PathBudget) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -164,6 +164,9 @@ func (t *CapacityTable) inputsLocked(withBudgets bool) ([]CapacityRow, []PathBud
 		state := t.groups[uid]
 		g := state.active
 		if g == nil {
+			if withBudgets {
+				continue
+			}
 			g = state.latest
 		}
 		if withBudgets {
@@ -184,7 +187,7 @@ func (t *CapacityTable) inputsLocked(withBudgets bool) ([]CapacityRow, []PathBud
 	return rows, budgets
 }
 
-// Rows returns the management view of the same active groups as Inputs.
+// Rows returns active groups, or desired diagnostic rows before activation.
 func (t *CapacityTable) Rows() []CapacityRow {
 	t.mu.Lock()
 	defer t.mu.Unlock()

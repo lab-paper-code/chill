@@ -141,6 +141,9 @@ func (t *CapacityTable) dropLocked(uid string, state *capacityTableWorkload) {
 }
 
 func (t *CapacityTable) completeLocked(g *capacityGroup, recorded bool) bool {
+	if len(g.items) == 0 {
+		return false
+	}
 	for _, item := range g.items {
 		row, found := t.rows[item.key]
 		if !found && recorded {

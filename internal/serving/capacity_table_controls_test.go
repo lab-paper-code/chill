@@ -79,7 +79,7 @@ func TestCapacityTableDisablingObservationsDropsActiveAndRunningBudgets(t *testi
 	assertCapacityGroup(t, table, 7, 2, CapacityBuilt)
 	settings.CompletionMarginMS = 9
 	table.Ensure(context.Background(), settings, snapshot)
-	assertCapacityGroup(t, table, 9, 2, CapacityPending)
+	assertNoActiveCapacityGroup(t, table, 9, 2)
 	for range 2 {
 		close(nextCapacityBuild(t, started).release)
 	}
@@ -90,7 +90,9 @@ func TestCapacityTableDisablingObservationsDropsActiveAndRunningBudgets(t *testi
 func assertConfiguredCapacityInputs(t *testing.T, table *CapacityTable, margin float64, variants int) []CapacityRow {
 	t.Helper()
 	rows, budgets := table.Inputs()
-	if len(rows) != variants || len(budgets) != 1 || budgets[0].Source != PathBudgetConfigured ||
+	if len(budgets) == 0 {
+		rows = assertNoActiveCapacityGroup(t, table, margin, variants)
+	} else if len(rows) != variants || len(budgets) != 1 || budgets[0].Source != PathBudgetConfigured ||
 		budgets[0].TotalMS != margin || budgets[0].PostMS != margin || budgets[0].JudgmentPercentile != 97.5 {
 		t.Fatalf("configured pair not published: rows=%+v budgets=%+v", rows, budgets)
 	}
