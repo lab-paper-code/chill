@@ -41,11 +41,11 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "table", "table, tick, compare, guard or slo")
+	mode := flag.String("mode", "table", "table, tick, compare, guard, slo or path")
 	schedulerFile := flag.String("scheduler", "", "ChillServer /api/v1/scheduler dump; options carry profile bodies")
 	profilesFile := flag.String("profiles", "", "ChillServer /api/v1/scheduler/profiles dump (compare)")
 	recordsFile := flag.String("records", "", "scheduler record JSONL with decision rows (compare)")
-	rowsFile := flag.String("rows", "", "capacity rows JSON: table writes it, tick and compare read it")
+	rowsFile := flag.String("rows", "", "capacity rows JSON: table writes it, tick, compare and path read it")
 	margin := flag.Float64("margin", -1, "completion margin ms; negative uses the settings of the input")
 	window := flag.Float64("window", 60, "capacityWindow seconds")
 	windows := flag.Int("windows", 20, "capacityWindows")
@@ -57,7 +57,7 @@ func main() {
 	format := flag.String("format", "markdown", "compare/guard: markdown or jsonl")
 	next := flag.Int("next", 3, "guard: revalidate frozen target for this many following decision ticks")
 	catalogFile := flag.String("catalog", "", "compare/guard: archived catalog JSONL restoring workload, cost and baseline references")
-	arrivalsFile := flag.String("arrivals", "", "compare/guard: real request arrival JSONL restoring omitted snapshot arrivals")
+	arrivalsFile := flag.String("arrivals", "", "compare/guard: request arrival JSONL; path: raw RequestRow JSONL or .gz")
 	flag.Parse()
 	snapshot, settings, err := loadScheduler(*schedulerFile)
 	if err == nil {
@@ -92,6 +92,8 @@ func main() {
 			}
 		case "slo":
 			err = slo(settings, snapshot)
+		case "path":
+			err = pathAssessment(settings, snapshot, *rowsFile, *arrivalsFile)
 		default:
 			err = fmt.Errorf("unknown mode %q", *mode)
 		}
