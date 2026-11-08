@@ -9,15 +9,19 @@ import (
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
 )
 
-// This is the same precondition used by dispatch; missing identities and other
-// dependency failures deliberately do not establish an unconfirmed frontier.
-func (c *reservationState) unconfirmedActionReason(action serving.Action, target serving.SchedulerCandidate) string {
-	// An exact stopped source may finish retirement after power changes its
-	// measured mode. Normal remove still owns native drain and termination proof.
-	removingStopped := action.Kind == servingstate.OperationRemove && action.Node.UID != "" && action.Instance != "" &&
+// An exact stopped source may finish retirement after power changes its
+// measured mode. Normal remove still owns native drain and termination proof.
+func (c *reservationState) removingStoppedSource(action serving.Action) bool {
+	return action.Kind == servingstate.OperationRemove && action.Node.UID != "" && action.Instance != "" &&
 		slices.ContainsFunc(c.state.Snapshot.Instances, func(instance serving.SchedulerInstance) bool {
 			return instance.ID == action.Instance && instance.Node == action.Node && (instance.Stopped || instance.Terminated)
 		})
+}
+
+// This is the same precondition used by dispatch; missing identities and other
+// dependency failures deliberately do not establish an unconfirmed frontier.
+func (c *reservationState) unconfirmedActionReason(action serving.Action, target serving.SchedulerCandidate) string {
+	removingStopped := c.removingStoppedSource(action)
 	if action.Kind != servingstate.OperationRoute {
 		for _, node := range c.state.Snapshot.Nodes {
 			if node.Node == action.Node && (!node.Ready || slices.Contains(node.Reasons, serving.NodeInstanceUnavailable) && !removingStopped) {

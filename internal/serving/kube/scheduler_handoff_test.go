@@ -401,6 +401,50 @@ func TestStoppedPowerChangeFinishesNormalRetirement(t *testing.T) {
 	if !c.dependenciesReady(remove, goal, c.runtime) {
 		t.Fatal("normal retirement still depends on measured execution readiness")
 	}
+	requireStoppedRetirementBoundaries(t, c, goal, old)
+
+	// A stopped flag never replaces fresh native drain evidence.
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "native unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(unavailable.Close)
+	proxy, err := url.Parse(unavailable.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	if _, err := c.operations.Execute(ctx, servingstate.Operation{Kind: servingstate.OperationRemove, Node: old.Node, Instance: old.ID}); err == nil {
+		t.Fatal("unconfirmed native removal succeeded")
+	}
+	c.observer.native.HTTPClient = oldHTTP
+	if _, err := kube.CoreV1().Pods(key.Namespace).Get(ctx, key.Name, meta.GetOptions{}); err != nil {
+		t.Fatal("unconfirmed removal discarded the physical source", err)
+	}
+	handoffDispatch(t, c, &goal, remove)
+	requireCompletedContinuationAction(t, c.runs[remove.ID], "normal remove")
+	if state := c.runs[remove.ID].result.DrainNative[old.ID]; !state.Ready || len(state.Requests) != 0 {
+		t.Fatal("normal remove lacks actual native drain readback")
+	}
+	requireRetiredHandoffResources(t, c, key, old)
+	handoffSnapshot(t, c)
+	prepare := scheduledOperation(goal.Actions[4], &goal, c.config, c.powerTargets, snapshot.Workloads)
+	nextHTTP, _ := preparationNativeHTTPClient(t, ctx, prepare.Prepare.Config, profile)
+	c.observer.native.HTTPClient = nextHTTP
+	handoffDispatch(t, c, &goal, goal.Actions[4])
+	requireCompletedContinuationAction(t, c.runs[goal.Actions[4].ID], "replacement prepare")
+	fresh := handoffSnapshot(t, c)
+	if slices.ContainsFunc(fresh.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID }) ||
+		!slices.ContainsFunc(fresh.Instances, func(i serving.SchedulerInstance) bool {
+			return i.TargetID == wanted.ID && i.Node == old.Node && i.Ready && !i.Stopped && i.Profile.ID == profile.ID
+		}) {
+		t.Fatalf("retirement did not make way for the next measured-mode preparation: %+v", fresh.Instances)
+	}
+}
+
+func requireStoppedRetirementBoundaries(t *testing.T, c *SchedulerController, goal serving.SchedulerCandidate, old serving.SchedulerInstance) {
+	t.Helper()
+	index := slices.IndexFunc(c.state.Snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID })
+	remove := goal.Actions[3]
 	if c.unconfirmedActionReason(goal.Actions[0], goal) == "" || c.unconfirmedActionReason(goal.Actions[2], goal) == "" ||
 		c.unconfirmedActionReason(goal.Actions[4], goal) == "" {
 		t.Fatal("retirement permission leaked into stop, power or prepare")
@@ -426,29 +470,11 @@ func TestStoppedPowerChangeFinishesNormalRetirement(t *testing.T) {
 		t.Fatal("NodeNotReady acquired retirement permission")
 	}
 	c.state.Snapshot.Nodes[nodeIndex].Ready = true
+}
 
-	// A stopped flag never replaces fresh native drain evidence.
-	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "native unavailable", http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(unavailable.Close)
-	proxy, err := url.Parse(unavailable.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
-	if _, err := c.operations.Execute(ctx, servingstate.Operation{Kind: servingstate.OperationRemove, Node: old.Node, Instance: old.ID}); err == nil {
-		t.Fatal("unconfirmed native removal succeeded")
-	}
-	c.observer.native.HTTPClient = oldHTTP
-	if _, err := kube.CoreV1().Pods(key.Namespace).Get(ctx, key.Name, meta.GetOptions{}); err != nil {
-		t.Fatal("unconfirmed removal discarded the physical source", err)
-	}
-	handoffDispatch(t, c, &goal, remove)
-	requireCompletedContinuationAction(t, c.runs[remove.ID], "normal remove")
-	if state := c.runs[remove.ID].result.DrainNative[old.ID]; !state.Ready || len(state.Requests) != 0 {
-		t.Fatal("normal remove lacks actual native drain readback")
-	}
+func requireRetiredHandoffResources(t *testing.T, c *SchedulerController, key client.ObjectKey, old serving.SchedulerInstance) {
+	t.Helper()
+	kube := c.kube
 	for _, resource := range []string{"pod", "service", "config"} {
 		var err error
 		switch resource {
@@ -462,18 +488,5 @@ func TestStoppedPowerChangeFinishesNormalRetirement(t *testing.T) {
 		if !apierrors.IsNotFound(err) {
 			t.Fatalf("retired %s still exists: %v", resource, err)
 		}
-	}
-	handoffSnapshot(t, c)
-	prepare := scheduledOperation(goal.Actions[4], &goal, c.config, c.powerTargets, snapshot.Workloads)
-	nextHTTP, _ := preparationNativeHTTPClient(t, ctx, prepare.Prepare.Config, profile)
-	c.observer.native.HTTPClient = nextHTTP
-	handoffDispatch(t, c, &goal, goal.Actions[4])
-	requireCompletedContinuationAction(t, c.runs[goal.Actions[4].ID], "replacement prepare")
-	fresh := handoffSnapshot(t, c)
-	if slices.ContainsFunc(fresh.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID }) ||
-		!slices.ContainsFunc(fresh.Instances, func(i serving.SchedulerInstance) bool {
-			return i.TargetID == wanted.ID && i.Node == old.Node && i.Ready && !i.Stopped && i.Profile.ID == profile.ID
-		}) {
-		t.Fatalf("retirement did not make way for the next measured-mode preparation: %+v", fresh.Instances)
 	}
 }
