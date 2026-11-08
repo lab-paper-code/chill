@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-type capacityWorkload struct {
+type capacityTableWorkload struct {
 	active, building, latest *capacityGroup
 }
 
@@ -17,12 +17,12 @@ type capacityGroup struct {
 	workload  Definition
 	budget    PathBudget
 	at        time.Time
-	items     []capacityItem
+	items     []capacityTableItem
 	structure map[string]bool
 	started   bool
 }
 
-type capacityItem struct {
+type capacityTableItem struct {
 	option SchedulerOption
 	input  CapacityInput
 	key    string
@@ -37,7 +37,7 @@ func newCapacityGroup(ctx context.Context, settings SchedulerSettings, snapshot 
 				continue
 			}
 			in := NewCapacityInput(settings, snapshot.DispatchOccupancy, o, w, g.budget)
-			g.items = append(g.items, capacityItem{option: o, input: in, key: in.Key()})
+			g.items = append(g.items, capacityTableItem{option: o, input: in, key: in.Key()})
 			in.CompletionMarginMS, in.PostMarginMS, in.JudgmentPercentile = 0, 0, 0
 			g.structure[in.Key()] = true
 		}
@@ -62,7 +62,7 @@ func (g *capacityGroup) sameBudget(other *capacityGroup) bool {
 		g.budget.JudgmentPercentile == other.budget.JudgmentPercentile
 }
 
-func (t *CapacityTable) dropLocked(uid string, state *capacityWorkload) {
+func (t *CapacityTable) dropLocked(uid string, state *capacityTableWorkload) {
 	for key, task := range t.running {
 		if task.workload.UID == uid {
 			task.cancel()

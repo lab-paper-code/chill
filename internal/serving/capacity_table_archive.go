@@ -2,13 +2,13 @@ package serving
 
 import "context"
 
-type capacityLoad struct {
+type capacityArchiveLoad struct {
 	ctx  context.Context
 	keys []string
 }
 
 func (t *CapacityTable) startLoadLocked() {
-	request := &capacityLoad{}
+	request := &capacityArchiveLoad{}
 	for _, uid := range t.order {
 		state := t.groups[uid]
 		for _, g := range []*capacityGroup{state.active, state.building, state.latest} {

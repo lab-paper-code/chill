@@ -17,13 +17,13 @@ type CapacityTable struct {
 	rows     map[string]CapacityRow
 	running  map[string]*capacityTask
 	previous map[string]CapacityRow
-	asked    map[string]*capacityLoad
-	groups   map[string]*capacityWorkload
+	asked    map[string]*capacityArchiveLoad
+	groups   map[string]*capacityTableWorkload
 	order    []string
 	next     int
 	parallel int
 	workers  int
-	loading  *capacityLoad
+	loading  *capacityArchiveLoad
 	record   func(CapacityRow) error
 	load     func(context.Context, []string) (map[string]CapacityRow, error)
 	buildRow func(context.Context, SchedulerSettings, []DispatchOccupancy, SchedulerOption, *Definition, time.Time, PathBudget) (CapacityRow, error)
@@ -33,8 +33,8 @@ type CapacityTable struct {
 // built row (the capacity-row-built event) and its error is not retried. load
 // returns the latest recorded rows of keys; record and load may be nil.
 func NewCapacityTable(parallel int, record func(CapacityRow) error, load func(context.Context, []string) (map[string]CapacityRow, error)) *CapacityTable {
-	t := &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]*capacityTask{}, previous: map[string]CapacityRow{}, asked: map[string]*capacityLoad{},
-		groups: map[string]*capacityWorkload{}, parallel: max(1, parallel), record: record, load: load, buildRow: BuildCapacityRow}
+	t := &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]*capacityTask{}, previous: map[string]CapacityRow{}, asked: map[string]*capacityArchiveLoad{},
+		groups: map[string]*capacityTableWorkload{}, parallel: max(1, parallel), record: record, load: load, buildRow: BuildCapacityRow}
 	t.idle = sync.NewCond(&t.mu)
 	return t
 }
@@ -61,7 +61,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 			state = nil
 		}
 		if state == nil {
-			state = &capacityWorkload{}
+			state = &capacityTableWorkload{}
 			t.groups[w.UID] = state
 		}
 		// Refresh provenance without changing a task's frozen inputs or budget.

@@ -17,7 +17,7 @@ type capacityTask struct {
 
 // pickLocked admits directly from the current groups, never from a semaphore
 // backlog. Within each priority class, rows advance round-robin by Workload.
-func (t *CapacityTable) pickLocked() (*capacityGroup, *capacityItem) {
+func (t *CapacityTable) pickLocked() (*capacityGroup, *capacityTableItem) {
 	for _, upward := range []bool{true, false} {
 		for offset := range t.order {
 			index := (t.next + offset) % len(t.order)
