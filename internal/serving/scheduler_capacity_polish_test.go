@@ -52,6 +52,9 @@ func TestCapacityPolishStrictImprovementAndTermination(t *testing.T) {
 
 func TestCapacityPolishEndpointMatchesExact(t *testing.T) {
 	p := capacityTwinSwap(100, 0)
+	// Direct Candidates callers seed the common-window baseline like Engine.Search.
+	adapter := newCapacityExact(p)
+	adapter.SeedKeep(adapter.Evaluate(make([]int, len(p.plans))))
 	problem := p.scalarProblem(p.planTable(), time.Time{})
 	candidates, stats := v2.Candidates(problem, problem.Table, 0, 1, 4, time.Time{})
 	exact := e5Brute(p)

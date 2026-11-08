@@ -23,6 +23,9 @@ func TestCapacityCombineMatchesExact(t *testing.T) {
 	}
 	// This fixture needs a three-node product move beyond the k=1/2 optimum.
 	p = capacityThreeNodeSwap()
+	// Direct Candidates callers seed the common-window baseline like Engine.Search.
+	adapter := newCapacityExact(p)
+	adapter.SeedKeep(adapter.Evaluate(make([]int, len(p.plans))))
 	problem = p.scalarProblem(p.planTable(), time.Time{})
 	candidates, stats = v2.Candidates(problem, problem.Table, 0, 16, 0, time.Time{})
 	if len(candidates) == 0 || !slices.Equal(candidates[0].Choice, []int{1, 1, 1}) ||
