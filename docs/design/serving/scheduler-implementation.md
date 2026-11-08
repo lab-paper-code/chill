@@ -21,7 +21,7 @@ firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`
 | `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 용량표/κ 합·노드 계획; 공통 CHILL I/O·정확/증분 수치·실물 admission adapter와 decision/action DAG 변환 |
 | `internal/scheduler/protocol` | CHILL 비의존 scalar 문제·계획·순위·평가·상태/기록 port; runtime IPC와 별개 |
 | `internal/scheduler/v1`, `internal/scheduler/v2` | protocol만 사용하는 실제 탐색 순회; v1 keep/empty K2/K3, v2 cover/polish/combine/priced·예산·finalists·정확 깔때기 |
-| `internal/scheduler` | 기존 `planSearchStrategy`로 모든 자동제어 Workload의 공식 구현 하나 선택; 기본 v1, 선택 v2와 v1 fallback 연결 |
+| `internal/scheduler` | 기존 `planSearchStrategy`로 모든 자동제어 Workload의 공식 구현 하나 선택; 기본 v2, 선택 v1과 v1 fallback 연결 |
 | `internal/serving/firstfloor` | HTTP/metadata/progress typed 경계, native/client span; request/UID/definition/physical instance 상관 |
 | `internal/serving/kube` | 실제 자원 snapshot·catalog·Pod/policy/power 원자 동작·DAG; API 뒤 실제 readiness/drain/삭제/Node 상태 |
 | `internal/serving/application` | scheduler configuration acceptance, power observation admission, catalog/cost refresh, runtime preparations and profile-reuse retention; settings-change transaction under the existing shared mutation lock |

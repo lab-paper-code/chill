@@ -24,7 +24,7 @@
     },
     "defaultIdlePower": {"nodeWatts": 54, "perInstanceWatts": 8},
     "planSearchWorkers": 3,
-    "planSearchStrategy": "v1",
+    "planSearchStrategy": "v2",
     "planSearchEvaluations": 500000,
     "planExactFinalists": 16,
     "planPolishActive": 8,

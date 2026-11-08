@@ -650,7 +650,7 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
 	settings := in.SchedulerSettings
-	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = protocol.V1, 500000
+	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = protocol.V2, 500000
 	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 8, false
 	settings.PlanPricedStart = true
 	if in.PlanSearchStrategy != nil {

@@ -142,7 +142,7 @@ package-import or architecture check has run:
 | `serving` / `serving-core` scheduler adapter | `scheduler`, `scheduler/protocol`; CHILL I/O, exact/incremental numerical evaluation, physical admission and decision/action lowering |
 
 The existing `settings.planSearchStrategy` selects one official implementation
-for all controlled Workloads; `v1` remains the default and `v2` is the other
+for all controlled Workloads; `v2` is the default and `v1` is the other
 accepted value. See the [planner boundary](../serving/analytic-planner.md).
 
 ```sh

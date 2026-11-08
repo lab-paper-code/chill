@@ -28,7 +28,7 @@ v1/v2는 protocol만 참조하고 서로나 serving을 import하지 않는다.
 기존 snapshot capture·요청 수명·물리 lifecycle 정책과 잠금·예약 권한은 바꾸지 않는다.
 
 `settings.planSearchStrategy`는 모든 자동제어 Workload에 적용하는 공식 선택 하나다.
-허용값은 `v1`(기본)과 `v2`이며 기존 설정 수락 경계와 판단의 settings 기록을 사용한다.
+허용값은 `v1`과 `v2`(기본)이며 기존 설정 수락 경계와 판단의 settings 기록을 사용한다.
 선택하지 않은 구현을 비교 목적으로 함께 실행하거나 별도 비교 진단을 남기지 않는다.
 
 ## 1. 측정한 문제
@@ -143,7 +143,7 @@ route는 그 준비와 전력 사슬, 실제 Ready와 소유권, policy ACK와 �
 
 **에너지.** keep의 노드 에너지는 `P_before × H`, 전환은 `J_pre + J_post + P_mid × max(0, min(r,H) − t_pre) + P_after × max(0,H − r − t_post)`(t는 평균 시간)다. 전환 operation J는 완결 비용이므로 사슬이 H를 넘어도 전부 포함한다. bridge의 시작 지연은 H 안에서만 이전 baseline으로 센다. 요청 에너지는 [0,min(r,H)]의 retained 처리와 overflow, [r,H]의 최종 정수 weight 처리로 나눈다. H 뒤 serving은 0이다. 보호수요는 실제 λ로 비례 축소하고 backlog drain을 요청 J에 더하지 않는다. 비교 집합(`ComparedNodes`) 밖의 노드는 소거한다.
 
-**탐색.** `planSearchStrategy`는 `v1`(현재 기본) 또는 `v2`다. 계획 집합은 노드마다 계획 하나를 고르며, 두 탐색은 3장의 충족·최종 충족·초과량 벡터·keep 대비 에너지 차이(`joules - keepJoules`)·keep·논리 key 순서를 따른다. v2도 같은 고정 H와 keep 기준 전력을 사용하며 pending replica는 용량 없이 복제 수 상한에 포함한다. retirement 허가는 원래 계획을 읽는 serving adapter의 정확 `admits`가 판정한다.
+**탐색.** `planSearchStrategy`는 `v1` 또는 `v2`(현재 기본)다. 계획 집합은 노드마다 계획 하나를 고르며, 두 탐색은 3장의 충족·최종 충족·초과량 벡터·keep 대비 에너지 차이(`joules - keepJoules`)·keep·논리 key 순서를 따른다. v2도 같은 고정 H와 keep 기준 전력을 사용하며 pending replica는 용량 없이 복제 수 상한에 포함한다. retirement 허가는 원래 계획을 읽는 serving adapter의 정확 `admits`가 판정한다.
 
 v1은 keep과 모든 노드를 비운 집합(인스턴스가 없는 적격 계획, 없으면 keep)에서 시작한다. 각 출발점에서 노드 k개 이하를 바꾼 이웃 중 가장 좋은 집합으로 이동하며, 두 출발점의 k = 2를 마친 뒤 각각의 끝에서 k = 3을 이어 간다. 두 끝 중 순서가 앞선 집합이 해다. 평가는 정확한 κ 합과 위 에너지 식을 쓰며 route 시각은 집합에서 가장 긴 route 전 사슬이다. `maxReplicas`·`maxInstances` 초과(replicas OFF이면 Workload별 현재 수 변경), 새 인스턴스의 가중치 0, 보호 중인 분배 인스턴스의 가중치 제거는 허가하지 않는다. 걸음 없이 끝난 빈 출발점도 같은 허가를 거친다. 이웃은 `planSearchWorkers`개 goroutine이 나눠 평가하고 전순서로 합친다. 두 출발점에서도 닿지 않는 해는 놓칠 수 있으며, 고른 해는 14장의 교체 회수와 최소 이득을 거친다.
 

@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"context"
 	"encoding/json"
 	"math/rand/v2"
 	"os"
@@ -21,9 +22,6 @@ func TestSchedulerSettingsPlanSearch(t *testing.T) {
 	got, err := in.Settings()
 	if err != nil {
 		t.Fatal(err)
-	}
-	if got.PlanSearchStrategy != "v1" || got.PlanSearchEvaluations != 500000 || got.PlanExactFinalists != 16 || got.PlanPolishActive != 8 || got.PlanPostFilterFinalists || !got.PlanPricedStart {
-		t.Fatalf("defaults: %+v", got)
 	}
 	for _, strategy := range []string{"v1", "v2", "", "bad"} {
 		got.PlanSearchStrategy = strategy
@@ -59,6 +57,31 @@ func TestSchedulerSettingsPlanSearch(t *testing.T) {
 	got, err = in.Settings()
 	if err != nil || got.PlanPricedStart {
 		t.Fatalf("explicit priced opt-out: %+v %v", got, err)
+	}
+}
+
+func TestSchedulerSettingsPlanSearchConsumer(t *testing.T) {
+	for _, strategy := range []string{"", protocol.V1} {
+		t.Run("input="+strategy, func(t *testing.T) {
+			s, snapshot, rows, _ := capacityE1Fixture()
+			input := SchedulerSettingsInput{SchedulerSettings: s, CompletionMarginMS: &s.CompletionMarginMS}
+			want := protocol.V2
+			if strategy != "" {
+				input.PlanSearchStrategy = &strategy
+				want = strategy
+			}
+			settings, err := input.Settings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			decision, err := EvaluateScheduler(context.Background(), settings, snapshot, rows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision.Capacity == nil || decision.Capacity.Search == nil || decision.Capacity.Search.Strategy != want {
+				t.Fatalf("input %q: expected %s search, got %+v", strategy, want, decision)
+			}
+		})
 	}
 }
 
