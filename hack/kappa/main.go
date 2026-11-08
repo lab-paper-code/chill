@@ -144,7 +144,7 @@ func decodeSnapshot(raw json.RawMessage) (serving.SchedulerSnapshot, error) {
 // every row with its build time and writes the rows.
 func table(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, rowsFile string) error {
 	began := time.Now()
-	t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), nil, nil)
+	t := serving.NewCapacityTable(settings.CapacityWorkers, nil, nil)
 	t.Ensure(context.Background(), settings, snapshot)
 	t.Wait()
 	elapsed := time.Since(began)
@@ -263,7 +263,7 @@ func slo(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot)
 			s, snap := settings, snapshot
 			s.AutonomousWorkloads, snap.Workloads = []string{c.UID}, []*serving.Definition{&c}
 			began := time.Now()
-			t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), nil, nil)
+			t := serving.NewCapacityTable(s.CapacityWorkers, nil, nil)
 			t.Ensure(context.Background(), s, snap)
 			t.Wait()
 			elapsed := time.Since(began)
