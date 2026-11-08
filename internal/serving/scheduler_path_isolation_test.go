@@ -48,12 +48,16 @@ func TestPathInfeasibleRequiresEverySourceVariantProof(t *testing.T) {
 		{name: "missing minimum", mutate: func(_ *SchedulerSnapshot, rows *[]CapacityRow) { (*rows)[3].MinimumServiceNanos = 0 }},
 		{name: "infinite minimum", mutate: func(_ *SchedulerSnapshot, rows *[]CapacityRow) { (*rows)[3].MinimumServiceNanos = math.Inf(1) }},
 		{name: "NaN minimum", mutate: func(_ *SchedulerSnapshot, rows *[]CapacityRow) { (*rows)[3].MinimumServiceNanos = math.NaN() }},
-		{name: "fits boundary", mutate: func(_ *SchedulerSnapshot, rows *[]CapacityRow) { (*rows)[3].MinimumServiceNanos = float64(10 * time.Millisecond) }},
+		{name: "fits boundary", mutate: func(_ *SchedulerSnapshot, rows *[]CapacityRow) {
+			(*rows)[3].MinimumServiceNanos = float64(10 * time.Millisecond)
+		}},
 		{name: "stale budget key", mutate: func(snap *SchedulerSnapshot, _ *[]CapacityRow) { snap.PathBudgets[0].TotalMS = 91 }},
 		{name: "empty universe", mutate: func(snap *SchedulerSnapshot, _ *[]CapacityRow) { snap.Options = nil }},
 		{name: "empty variants", mutate: func(snap *SchedulerSnapshot, _ *[]CapacityRow) { snap.Options[1].Instance.MaxBatch = 0 }},
 		{name: "no compatible source", mutate: func(snap *SchedulerSnapshot, _ *[]CapacityRow) {
-			for j := range snap.Options { snap.Options[j].CompatibleUIDs = []string{"another-uid"} }
+			for j := range snap.Options {
+				snap.Options[j].CompatibleUIDs = []string{"another-uid"}
+			}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,9 +75,13 @@ func TestPathInfeasibleRequiresEverySourceVariantProof(t *testing.T) {
 			snap.Options = append(snap.Options, other)
 			rows := capacityRowsForTest(s, snap, nil)
 			pathIsolationProof(rows, w.UID)
-			if tc.mutate != nil { tc.mutate(&snap, &rows) }
+			if tc.mutate != nil {
+				tc.mutate(&snap, &rows)
+			}
 			p := &capacityPlanner{settings: s, snapshot: snap, rows: map[string]CapacityRow{}}
-			for _, row := range rows { p.rows[row.Key] = row }
+			for _, row := range rows {
+				p.rows[row.Key] = row
+			}
 			if got := p.pathInfeasibleReason(w); got != tc.want {
 				t.Fatalf("path infeasibility = %q, want %q", got, tc.want)
 			}
@@ -138,7 +146,9 @@ func TestPathIsolationAllowsIndependentRetire(t *testing.T) {
 			state := SchedulerDecision{Search: schedulerSearchPopulation(ctx, s, snap), Workloads: schedulerWorkloadStates(s, snap)}
 			p := newCapacityPlanner(ctx, s, snap, keep, rows, state)
 			p.fixCapacityWorkloads(&state)
-			if err := p.build(); err != nil { t.Fatal(err) }
+			if err := p.build(); err != nil {
+				t.Fatal(err)
+			}
 			n := slices.IndexFunc(p.snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == snap.Instances[0].Node })
 			fixed := p.plans[n][0]
 			if !p.fixed(snap.Instances[0]) || fixed.others != 1 || fixed.before != snap.Instances[0].Profile.IdleBaselineWatts ||
@@ -155,7 +165,9 @@ func TestPathGridZeroRemainsControlled(t *testing.T) {
 			s, snap, rows := pathIsolationFixture()
 			s.PlanSearchStrategy = strategy
 			for j := range rows {
-				if rows[j].Input.WorkloadUID == "w1" { rows[j].Reason = "" }
+				if rows[j].Input.WorkloadUID == "w1" {
+					rows[j].Reason = ""
+				}
 			}
 			d := capacityDecideForTest(t, s, snap, rows)
 			state := slices.IndexFunc(d.Workloads, func(w SchedulerWorkloadState) bool { return w.UID == "w1" })

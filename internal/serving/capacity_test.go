@@ -457,7 +457,6 @@ func TestCapacityTableBuildsAutonomousRowsOnce(t *testing.T) {
 	}
 }
 
-
 func TestCapacityTableBuildsEveryCompatibleVariant(t *testing.T) {
 	s, snap := capacityFixture()
 	baseWorkload, baseOption := *snap.Workloads[0], snap.Options[0]

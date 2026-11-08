@@ -349,10 +349,10 @@ type SchedulerRequest struct {
 	ArrivalRate           float64       `json:"arrivalRate"`
 	NativeSenderElapsedMS *float64      `json:"nativeSenderElapsedMS,omitempty"`
 	// CompletionMarginMS is the post-path budget frozen when this request was accepted.
-	CompletionMarginMS    *float64      `json:"completionMarginMS,omitempty"`
+	CompletionMarginMS *float64 `json:"completionMarginMS,omitempty"`
 	// TotalMarginMS preserves the accepted total budget before sender freeze.
-	TotalMarginMS         *float64      `json:"totalMarginMS,omitempty"`
-	NativeOutcome         string        `json:"nativeOutcome,omitempty"`
+	TotalMarginMS *float64 `json:"totalMarginMS,omitempty"`
+	NativeOutcome string   `json:"nativeOutcome,omitempty"`
 }
 type SchedulerArrival struct {
 	ID          string        `json:"id"`
@@ -462,15 +462,15 @@ type SchedulerSnapshot struct {
 	Costs          []OperationCost             `json:"costs"`
 	// DispatchOccupancy holds the selected d and provenance per accepted
 	// node/model/mode/profile/execution path/batch, including configured defaults.
-	DispatchOccupancy []DispatchOccupancy    `json:"dispatchOccupancy"`
+	DispatchOccupancy []DispatchOccupancy `json:"dispatchOccupancy"`
 	// PathBudgets is the active numerical input; observations retain the latest requested input.
-	PathBudgets            []PathBudget `json:"pathBudgets,omitempty"`
-	PathBudgetObservations []PathBudget `json:"pathBudgetObservations,omitempty"`
-	CostRefs          []string               `json:"costRefs,omitempty"`
-	Actions           []Action               `json:"actions"`
-	Reasons           []string               `json:"reasons"`
-	References        []string               `json:"references"`
-	Reservations      []SchedulerReservation `json:"reservations,omitempty"`
+	PathBudgets            []PathBudget           `json:"pathBudgets,omitempty"`
+	PathBudgetObservations []PathBudget           `json:"pathBudgetObservations,omitempty"`
+	CostRefs               []string               `json:"costRefs,omitempty"`
+	Actions                []Action               `json:"actions"`
+	Reasons                []string               `json:"reasons"`
+	References             []string               `json:"references"`
+	Reservations           []SchedulerReservation `json:"reservations,omitempty"`
 }
 
 // SchedulerReservation fixes physical ownership while an operation or its DAG
@@ -550,18 +550,18 @@ type SchedulerWorkloadState struct {
 }
 
 type SchedulerDecision struct {
-	At         time.Time                `json:"at"`
-	Status     string                   `json:"status"`
-	Keep       SchedulerCandidate       `json:"keep"`
-	Target     *SchedulerCandidate      `json:"target"`
-	Reasons    []string                 `json:"reasons"`
-	Settings   SchedulerSettings        `json:"settings"`
-	Search     SchedulerSearch          `json:"search"`
-	Workloads  []SchedulerWorkloadState `json:"workloads"`
-	References []string                 `json:"references"`
-	Capacity   *SchedulerCapacity       `json:"capacity,omitempty"`
-	PathBudgets            []PathBudget `json:"pathBudgets,omitempty"`
-	PathBudgetObservations []PathBudget `json:"pathBudgetObservations,omitempty"`
+	At                     time.Time                `json:"at"`
+	Status                 string                   `json:"status"`
+	Keep                   SchedulerCandidate       `json:"keep"`
+	Target                 *SchedulerCandidate      `json:"target"`
+	Reasons                []string                 `json:"reasons"`
+	Settings               SchedulerSettings        `json:"settings"`
+	Search                 SchedulerSearch          `json:"search"`
+	Workloads              []SchedulerWorkloadState `json:"workloads"`
+	References             []string                 `json:"references"`
+	Capacity               *SchedulerCapacity       `json:"capacity,omitempty"`
+	PathBudgets            []PathBudget             `json:"pathBudgets,omitempty"`
+	PathBudgetObservations []PathBudget             `json:"pathBudgetObservations,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }

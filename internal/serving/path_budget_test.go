@@ -55,8 +55,8 @@ func TestPathBudgetsSupportAndDefinitionSegregation(t *testing.T) {
 	from := time.Unix(1000, 0)
 	to := from.Add(time.Minute)
 	for _, tc := range []struct {
-		p       float64
-		n       int
+		p        float64
+		n        int
 		observed bool
 	}{
 		{95, 118, false}, {95, 119, true}, {99, 597, false}, {99, 598, true}, {100, 1000, false},

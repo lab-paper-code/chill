@@ -32,26 +32,26 @@ const (
 )
 
 type schedulerReplayRequest struct {
-	source       SchedulerRequest
-	identity     string // source.Definition.Identity(), formatted once
-	arrival      float64
-	native       float64
-	queueAt      float64
-	senderMS     float64
-	postMS       float64 // frozen native external margin
-	returnMS     float64 // TOTAL synthetic charge, POST for observed outstanding
+	source          SchedulerRequest
+	identity        string // source.Definition.Identity(), formatted once
+	arrival         float64
+	native          float64
+	queueAt         float64
+	senderMS        float64
+	postMS          float64 // frozen native external margin
+	returnMS        float64 // TOTAL synthetic charge, POST for observed outstanding
 	senderReserveMS float64 // modeled allocation only, not an observed pre quantile
-	completed    bool
-	dispatched   bool
-	returning    bool
-	completion   float64
-	observed     bool
-	running      bool
-	expired      bool
-	deferred     bool
-	dropped      bool
-	expires      float64
-	capacityMiss bool // counted once against the capacity window's fixed population
+	completed       bool
+	dispatched      bool
+	returning       bool
+	completion      float64
+	observed        bool
+	running         bool
+	expired         bool
+	deferred        bool
+	dropped         bool
+	expires         float64
+	capacityMiss    bool // counted once against the capacity window's fixed population
 }
 
 type schedulerReplayInstance struct {

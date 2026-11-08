@@ -45,6 +45,7 @@ func (t *CapacityTable) startLoadLocked() {
 				}
 			}
 		}
+		request.ctx, request.keys = nil, nil
 		t.loading = nil
 		t.startLocked()
 		t.idle.Broadcast()

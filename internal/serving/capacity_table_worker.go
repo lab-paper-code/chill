@@ -83,6 +83,7 @@ func (t *CapacityTable) build(settings SchedulerSettings, occupancy []DispatchOc
 		}
 		t.rows[task.key] = row
 		delete(t.previous, task.key)
+		delete(t.asked, task.key)
 		t.advanceLocked()
 	}
 	t.mu.Unlock()

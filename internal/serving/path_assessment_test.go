@@ -28,7 +28,9 @@ func assessmentTestCandidate(snapshot SchedulerSnapshot) SchedulerCandidate {
 func assessForTest(t *testing.T, settings SchedulerSettings, snapshot SchedulerSnapshot, candidate SchedulerCandidate, rows ...*RequestRow) PathAssessment {
 	t.Helper()
 	report, err := AssessPath(context.Background(), settings, snapshot, candidate, 17, rows)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	return report
 }
 
@@ -50,7 +52,9 @@ func TestAssessPathKeepsZeroMissingAndOutcomePopulations(t *testing.T) {
 	open := assessmentTestRow(snapshot, "open")
 	open.Kind, open.ElapsedNanos, open.Outcome = RequestRowAssigned, nil, ""
 	report := assessForTest(t, settings, snapshot, assessmentTestCandidate(snapshot), zero, missing, failed, incomplete, open)
-	if report.Requests != 5 || len(report.Observed) != 1 { t.Fatalf("lost received population: %+v", report) }
+	if report.Requests != 5 || len(report.Observed) != 1 {
+		t.Fatalf("lost received population: %+v", report)
+	}
 	o := report.Observed[0]
 	if o.Completed != 2 || o.Failed != 1 || o.Incomplete != 2 || o.LatencySamples != 2 || o.PathSamples != 1 {
 		t.Fatalf("outcomes became completed path samples: %+v", o)
@@ -72,7 +76,7 @@ func TestAssessPathComparesFrozenPOSTAndSeparatesPathFromService(t *testing.T) {
 	before := assessForTest(t, settings, snapshot, assessmentTestCandidate(snapshot), base).Observed[0]
 	slow := assessmentTestRow(snapshot, "slow")
 	slow.CompletionMarginMS = &frozen
-	*slow.ElapsedNanos += int64(10*time.Millisecond)
+	*slow.ElapsedNanos += int64(10 * time.Millisecond)
 	after := assessForTest(t, settings, snapshot, assessmentTestCandidate(snapshot), slow).Observed[0]
 	if before.FrozenPostExceedances != 0 || after.FrozenPostExceedances != 1 || after.MaximumFrozenPostExcessMS == nil || *after.MaximumFrozenPostExcessMS != 10 {
 		t.Fatalf("POST compared with current rather than frozen budget: before=%+v after=%+v", before, after)
@@ -91,9 +95,9 @@ func TestAssessPathDeduplicatesPhysicalBatchesAndUsesActualIdleContext(t *testin
 	settings, snapshot := schedulerFixture()
 	zero, long := int64(0), int64(100*time.Millisecond)
 	snapshot.Instances[0].Profile.Batches[0] = schedulerTestPairedBatch(snapshot.Instances[0].Profile.Batches[0], []firstfloor.ServiceSample{
-		{TrialID: "trial", ServiceDurationNanos: int64(5*time.Millisecond)},
-		{TrialID: "trial", PrecedingIdleNanos: &zero, ServiceDurationNanos: int64(10*time.Millisecond)},
-		{TrialID: "trial", PrecedingIdleNanos: &long, ServiceDurationNanos: int64(20*time.Millisecond)},
+		{TrialID: "trial", ServiceDurationNanos: int64(5 * time.Millisecond)},
+		{TrialID: "trial", PrecedingIdleNanos: &zero, ServiceDurationNanos: int64(10 * time.Millisecond)},
+		{TrialID: "trial", PrecedingIdleNanos: &long, ServiceDurationNanos: int64(20 * time.Millisecond)},
 	})
 	a, b := assessmentTestRow(snapshot, "a"), assessmentTestRow(snapshot, "b")
 	c := assessmentTestRow(snapshot, "c")
@@ -103,9 +107,11 @@ func TestAssessPathDeduplicatesPhysicalBatchesAndUsesActualIdleContext(t *testin
 	// This is the actual sparse raw native-supplement contract: no Node/ProfileID.
 	late := &RequestRow{Kind: RequestRowNative, RequestID: failed.RequestID, WorkloadUID: failed.WorkloadUID, DefinitionID: failed.DefinitionID,
 		Instance: failed.Instance, BatchID: 3, BatchSize: 1, NativeExecutionComplete: true, NativeOutcome: outcomeCompleted,
-		ServiceDurationNanos: int64(20*time.Millisecond), PrecedingIdleNanos: &long}
+		ServiceDurationNanos: int64(20 * time.Millisecond), PrecedingIdleNanos: &long}
 	report := assessForTest(t, settings, snapshot, assessmentTestCandidate(snapshot), a, b, c, failed, late)
-	if len(report.Observed) != 1 || report.Requests != 4 { t.Fatalf("native supplement became HTTP sample: %+v", report) }
+	if len(report.Observed) != 1 || report.Requests != 4 {
+		t.Fatalf("native supplement became HTTP sample: %+v", report)
+	}
 	o := report.Observed[0]
 	p := o.Physical
 	if o.Failed != 1 || o.PathSamples != 3 || p.Batches != 3 || p.ServiceSamples != 3 || p.IdleSamples != 3 || p.ComparedBatches != 3 || p.ConditionalExceedances != 1 {
@@ -125,8 +131,8 @@ func TestAssessPathDeduplicatesPhysicalBatchesAndUsesActualIdleContext(t *testin
 func TestAssessPathSeparatesMismatchedDefinitionProfileAndTarget(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	for _, change := range []struct {
-		name string
-		apply func(*RequestRow)
+		name                string
+		apply               func(*RequestRow)
 		definition, profile bool
 	}{
 		{"definition", func(r *RequestRow) { r.DefinitionID = "old-definition" }, false, true},
@@ -142,8 +148,12 @@ func TestAssessPathSeparatesMismatchedDefinitionProfileAndTarget(t *testing.T) {
 			if o.DefinitionMatched != change.definition || o.ProfileMatched != change.profile || o.Physical.ComparedBatches != 0 || o.Requests != 1 {
 				t.Fatalf("historical configuration compared with current model: %+v", report)
 			}
-			if !change.definition && (report.Unmatched["definition"] != 1 || o.LatencyMS != nil) { t.Fatalf("definition mismatch hidden: %+v", report) }
-			if !change.profile && report.Unmatched["profile"] != 1 { t.Fatalf("profile mismatch hidden: %+v", report) }
+			if !change.definition && (report.Unmatched["definition"] != 1 || o.LatencyMS != nil) {
+				t.Fatalf("definition mismatch hidden: %+v", report)
+			}
+			if !change.profile && report.Unmatched["profile"] != 1 {
+				t.Fatalf("profile mismatch hidden: %+v", report)
+			}
 		})
 	}
 	candidate := assessmentTestCandidate(snapshot)
@@ -161,7 +171,9 @@ func TestAssessPathUsesSharedReplayAndKeepsOpenExceedanceAsLowerBound(t *testing
 	snapshot.Arrivals = []SchedulerArrival{{ID: "compute", At: snapshot.At.Add(-time.Second), Definition: d, WorkloadUID: d.UID, Accepted: true, Compute: true}}
 	candidate := assessmentTestCandidate(snapshot)
 	want, err := schedulerReplayEstimate(context.Background(), settings, snapshot, candidate, 17, nil, nil)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	candidate.SLO = []SchedulerEstimate{{UID: "stale", Samples: 900}}
 	row := assessmentTestRow(snapshot, "open")
 	row.Kind, row.ElapsedNanos, row.ReceivedAt = RequestRowAssigned, nil, snapshot.At.Add(-500*time.Millisecond)

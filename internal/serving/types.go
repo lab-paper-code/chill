@@ -323,14 +323,14 @@ type WorkloadState struct {
 // RequestEvent records facts, including responses that failed to reach their
 // caller. An absent assignment or completion is never synthesized.
 type RequestEvent struct {
-	RequestID         string           `json:"requestID"`
-	WorkloadName      string           `json:"workloadName"`
-	WorkloadUID       string           `json:"workloadUID,omitempty"`
-	Definition        string           `json:"definition,omitempty"`
-	Kind              string           `json:"kind"`
-	At                time.Time        `json:"at"`
-	ReceivedAt        time.Time        `json:"receivedAt"`
-	ElapsedNanos      int64            `json:"elapsedNanos"`
+	RequestID    string    `json:"requestID"`
+	WorkloadName string    `json:"workloadName"`
+	WorkloadUID  string    `json:"workloadUID,omitempty"`
+	Definition   string    `json:"definition,omitempty"`
+	Kind         string    `json:"kind"`
+	At           time.Time `json:"at"`
+	ReceivedAt   time.Time `json:"receivedAt"`
+	ElapsedNanos int64     `json:"elapsedNanos"`
 	// DispatchedNanos is the direct monotonic dispatch offset, including zero.
 	DispatchedNanos   *int64           `json:"dispatchedNanos,omitempty"`
 	ServerTiming      RequestTimings   `json:"serverTiming,omitempty"`
@@ -342,9 +342,9 @@ type RequestEvent struct {
 	LifetimeNanos     int64            `json:"lifetimeNanos,omitempty"`
 	SLO               *SLO             `json:"slo,omitempty"`
 	// CompletionMarginMS is the POST margin frozen when Runtime accepts the call.
-	CompletionMarginMS *float64        `json:"completionMarginMS,omitempty"`
-	Outcome           string           `json:"outcome,omitempty"`
-	Error             string           `json:"error,omitempty"`
+	CompletionMarginMS *float64 `json:"completionMarginMS,omitempty"`
+	Outcome            string   `json:"outcome,omitempty"`
+	Error              string   `json:"error,omitempty"`
 }
 
 type ManagementEvent struct {

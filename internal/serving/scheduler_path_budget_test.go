@@ -66,7 +66,9 @@ func TestReplayJudgesSplitTailWithoutChangingNativePercentile(t *testing.T) {
 	r := &schedulerReplayRequest{source: SchedulerRequest{Definition: w}, identity: w.Identity(), postMS: 2, senderMS: 1}
 	state := (&schedulerReplayState{}).nativeRequestState(&schedulerReplayInstance{}, r)
 	durations := make([]float64, 20)
-	for n := range durations { durations[n] = 1e6 }
+	for n := range durations {
+		durations[n] = 1e6
+	}
 	durations[19] = 10e6
 	batch := schedulerTestBatchProfile(BatchProfile{Batch: 1}, durations)
 	policy := firstfloor.Policy{DeadlinePolicy: firstfloor.DeadlineDrop,
@@ -166,14 +168,18 @@ func TestRuntimePathBudgetFreezesAtAcceptanceAndReachesRows(t *testing.T) {
 	}
 	r.mu.Unlock()
 	publish := func(ms float64) {
-		r.SetPathBudgets([]PathBudget{{WorkloadUID: d.UID, DefinitionID: d.Identity(), TotalMS: ms+20, PostMS: ms}})
+		r.SetPathBudgets([]PathBudget{{WorkloadUID: d.UID, DefinitionID: d.Identity(), TotalMS: ms + 20, PostMS: ms}})
 	}
 	accept := func() *Call {
 		t.Helper()
 		receipt, err := r.Receive(d.Name, time.Now())
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		return call
 	}
 	publish(0)
@@ -199,12 +205,16 @@ func TestRuntimePathBudgetFreezesAtAcceptanceAndReachesRows(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	for _, call := range []*Call{first, second} {
-		if _, err := call.Wait(ctx); err != nil { t.Fatal(err) }
+		if _, err := call.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
 		event := requestEvent(call, phaseAccepted, "", "", time.Now())
 		row := RequestRow{}
 		received := requestEvent(&Call{receipt: call.receipt}, phaseReceived, "", "", call.receipt.ReceivedAt)
 		row.Fold(&received)
-		if row.CompletionMarginMS != nil { t.Fatal("receipt before acceptance manufactured a zero budget") }
+		if row.CompletionMarginMS != nil {
+			t.Fatal("receipt before acceptance manufactured a zero budget")
+		}
 		row.Fold(&event)
 		changed := 999.0
 		*event.CompletionMarginMS = changed
@@ -216,7 +226,9 @@ func TestRuntimePathBudgetFreezesAtAcceptanceAndReachesRows(t *testing.T) {
 	for range 2 {
 		select {
 		case dispatch := <-dispatched:
-			if dispatch.CompletionMarginMS != frozen[dispatch.RequestID] { t.Fatalf("dispatch used latest budget: %+v", dispatch) }
+			if dispatch.CompletionMarginMS != frozen[dispatch.RequestID] {
+				t.Fatalf("dispatch used latest budget: %+v", dispatch)
+			}
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		}
@@ -253,17 +265,17 @@ func TestReplayMixedWorkloadsUseTheirOwnBudgets(t *testing.T) {
 
 func TestReplayRetainedRequestsRespectSenderFreezeBoundary(t *testing.T) {
 	for _, tc := range []struct {
-		phase string
-		frozen bool
+		phase               string
+		frozen              bool
 		elapsed, wait, want time.Duration
 	}{
-		{phasePending, false, 12*time.Millisecond, 10*time.Millisecond, 31*time.Millisecond},
-		{phaseAssigned, false, 12*time.Millisecond, 10*time.Millisecond, 31*time.Millisecond},
-		{phaseAssigned, true, 12*time.Millisecond, 10*time.Millisecond, 16*time.Millisecond},
-		{phaseQueued, true, 12*time.Millisecond, 0, 16*time.Millisecond},
+		{phasePending, false, 12 * time.Millisecond, 10 * time.Millisecond, 31 * time.Millisecond},
+		{phaseAssigned, false, 12 * time.Millisecond, 10 * time.Millisecond, 31 * time.Millisecond},
+		{phaseAssigned, true, 12 * time.Millisecond, 10 * time.Millisecond, 16 * time.Millisecond},
+		{phaseQueued, true, 12 * time.Millisecond, 0, 16 * time.Millisecond},
 		// Consumed pre exceeds the modeled allocation: do not make it negative
 		// or subtract actual pre again from native's frozen POST.
-		{phasePending, false, 40*time.Millisecond, 10*time.Millisecond, 44*time.Millisecond},
+		{phasePending, false, 40 * time.Millisecond, 10 * time.Millisecond, 44 * time.Millisecond},
 	} {
 		t.Run(fmt.Sprintf("%s/frozen=%t/elapsed=%s", tc.phase, tc.frozen, tc.elapsed), func(t *testing.T) {
 			s, snap := schedulerFixture()
@@ -274,8 +286,12 @@ func TestReplayRetainedRequestsRespectSenderFreezeBoundary(t *testing.T) {
 			total, post, sender := 20.0, 3.0, float64(tc.elapsed)/1e6
 			request := SchedulerRequest{ID: "retained", Definition: w, ReceivedAt: snap.At.Add(-tc.elapsed), Elapsed: tc.elapsed,
 				QueueAge: tc.wait, Phase: tc.phase, TotalMarginMS: &total, CompletionMarginMS: &post}
-			if tc.phase != phasePending { request.Instance = snap.Instances[0].ID }
-			if tc.frozen { request.NativeSenderElapsedMS = &sender }
+			if tc.phase != phasePending {
+				request.Instance = snap.Instances[0].ID
+			}
+			if tc.frozen {
+				request.NativeSenderElapsedMS = &sender
+			}
 			snap.Outstanding = []SchedulerRequest{request}
 			snap.PathBudgets = []PathBudget{{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: "observed", TotalMS: 900, PostMS: 800, JudgmentPercentile: 100}}
 			estimate := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), w.UID)
@@ -291,7 +307,11 @@ func TestRuntimeCapturesSenderFreezeBeforeBackendReturns(t *testing.T) {
 	d := r.workloads["w1"].definition
 	started, release := make(chan Dispatch, 1), make(chan struct{})
 	released := false
-	defer func() { if !released { close(release) } }()
+	defer func() {
+		if !released {
+			close(release)
+		}
+	}()
 	r.mu.Lock()
 	r.instances[instance.ID].Execute = func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
 		started <- dispatch
@@ -300,18 +320,24 @@ func TestRuntimeCapturesSenderFreezeBeforeBackendReturns(t *testing.T) {
 	}
 	r.mu.Unlock()
 	receipt, err := r.Receive(d.Name, time.Now().Add(-2*time.Millisecond))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	call, err := r.Accept(&receipt, &InferenceInput{Inputs: []RawInput{{Name: "x", Datatype: "BYTES", Data: []byte("1")}}})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case dispatch := <-started:
 		snapshot := r.SchedulerInputs(time.Now)
-		if len(snapshot.Outstanding) != 1 { t.Fatalf("missing active request: %+v", snapshot.Outstanding) }
+		if len(snapshot.Outstanding) != 1 {
+			t.Fatalf("missing active request: %+v", snapshot.Outstanding)
+		}
 		request := snapshot.Outstanding[0]
 		if request.NativeSenderElapsedMS == nil || *request.NativeSenderElapsedMS != float64(dispatch.Elapsed)/1e6 {
 			t.Fatalf("assigned request lost exact frozen sender while Execute remains active: %+v", request)
 		}
-		wantWait := call.assignment.DispatchedAt.Sub(receipt.ReceivedAt)-call.acceptedElapsed
+		wantWait := call.assignment.DispatchedAt.Sub(receipt.ReceivedAt) - call.acceptedElapsed
 		if request.QueueAge != wantWait {
 			t.Fatalf("assigned server slot wait included pre-acceptance or post-assignment path: got=%s want=%s", request.QueueAge, wantWait)
 		}
@@ -322,18 +348,20 @@ func TestRuntimeCapturesSenderFreezeBeforeBackendReturns(t *testing.T) {
 	released = true
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if _, err := call.Wait(ctx); err != nil { t.Fatal(err) }
+	if _, err := call.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRequestPathAndSchedulerWaitIgnoreDispatchWallClockShift(t *testing.T) {
-	for _, dispatched := range []time.Duration{0, 20*time.Millisecond} {
+	for _, dispatched := range []time.Duration{0, 20 * time.Millisecond} {
 		accepted := min(5*time.Millisecond, dispatched)
 		for _, shift := range []time.Duration{-time.Hour, time.Hour} {
 			received := time.Now()
 			d := &Definition{UID: "workload"}
 			call := &Call{receipt: Receipt{ID: "request", ReceivedAt: received}, definition: d,
 				identity: d.Identity(), acceptedElapsed: accepted, dispatchedElapsed: dispatched,
-				assignment: &Assignment{Instance: "instance", DispatchedAt: received.Add(dispatched+shift).UTC()}}
+				assignment: &Assignment{Instance: "instance", DispatchedAt: received.Add(dispatched + shift).UTC()}}
 			call.receipt.ServerTiming.Record(ServerSenderFreeze, 30*time.Millisecond)
 			row := RequestRow{ExecutionComplete: true, NativeExecutionComplete: true, NativeOutcome: outcomeCompleted}
 			queued := time.Unix(500, 0)
@@ -348,12 +376,12 @@ func TestRequestPathAndSchedulerWaitIgnoreDispatchWallClockShift(t *testing.T) {
 			response := requestEvent(call, eventResponseFinished, outcomeCompleted, "", received.Add(100*time.Millisecond))
 			row.Fold(&response)
 			path, reason := RequestPathSample(&row)
-			wait := dispatched-accepted
+			wait := dispatched - accepted
 			if reason != "" || path.TotalNanos != int64(87*time.Millisecond-wait) || path.PostNanos != int64(55*time.Millisecond) {
 				t.Fatalf("diagnostic dispatch clock changed path: dispatch=%s shift=%s path=%+v reason=%s", dispatched, shift, path, reason)
 			}
 			runtime := &Runtime{calls: map[string]*Call{"request": call}}
-			requests := runtime.schedulerOutstandingLocked(received.Add(100*time.Millisecond))
+			requests := runtime.schedulerOutstandingLocked(received.Add(100 * time.Millisecond))
 			if len(requests) != 1 || requests[0].QueueAge != wait {
 				t.Fatalf("scheduler server wait used diagnostic wall clock: %+v", requests)
 			}

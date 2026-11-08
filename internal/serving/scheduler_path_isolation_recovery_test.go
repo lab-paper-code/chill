@@ -19,7 +19,9 @@ func TestPathIsolationPreservesGlobalFailureDiagnostic(t *testing.T) {
 				pathIsolationProof(rows, "w1")
 				d := capacityDecideForTest(t, s, snap, rows)
 				reason := schedulerPathServiceExceedsSLO + ":w1"
-				if total > 100 { reason = schedulerPathBudgetExceedsSLO + ":w1" }
+				if total > 100 {
+					reason = schedulerPathBudgetExceedsSLO + ":w1"
+				}
 				state := slices.IndexFunc(d.Workloads, func(w SchedulerWorkloadState) bool { return w.UID == "w1" })
 				if state < 0 || d.Workloads[state].State != schedulerWorkloadFixed || d.Workloads[state].Reason != reason || !slices.Contains(d.Reasons, reason) {
 					t.Fatalf("global model failure disappeared: %+v", d)
@@ -63,7 +65,10 @@ func TestPathIsolationRechecksRecoveryEachDecision(t *testing.T) {
 				switch tc.name {
 				case "grid zero":
 					for j := range rows {
-						if rows[j].Input.WorkloadUID == "w1" { zero := 0.0; rows[j].Kappa = &zero }
+						if rows[j].Input.WorkloadUID == "w1" {
+							zero := 0.0
+							rows[j].Kappa = &zero
+						}
 					}
 				case "missing proof":
 					rows = slices.DeleteFunc(rows, func(row CapacityRow) bool { return row.Input.WorkloadUID == "w1" })

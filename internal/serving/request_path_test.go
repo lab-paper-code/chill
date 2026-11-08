@@ -52,7 +52,7 @@ func TestRequestPathSampleUsesDirectWorkerSpans(t *testing.T) {
 
 func TestRequestPathSamplePreservesZeroAndExcludesUnusable(t *testing.T) {
 	for _, test := range []struct {
-		name string
+		name   string
 		change func(*RequestRow)
 		reason string
 	}{
@@ -64,7 +64,7 @@ func TestRequestPathSamplePreservesZeroAndExcludesUnusable(t *testing.T) {
 		{"range", func(r *RequestRow) { *r.NativeElapsedMS = math.MaxFloat64 }, "out_of_range"},
 		{"inverted-worker", func(r *RequestRow) { r.NativeRunningAt = r.NativeFinishedAt; r.NativeFinishedAt = r.NativeQueuedAt }, "inverted"},
 		{"negative-ingress", func(r *RequestRow) { r.QueueMS = 1 }, "inverted"},
-		{"negative-post", func(r *RequestRow) { *r.ElapsedNanos = int64(15*time.Millisecond) }, "inverted"},
+		{"negative-post", func(r *RequestRow) { *r.ElapsedNanos = int64(15 * time.Millisecond) }, "inverted"},
 		{"native-failure", func(r *RequestRow) { r.NativeOutcome = "batch_error" }, "native_failed"},
 		{"native-error", func(r *RequestRow) { r.NativeError = "runner failed" }, "native_failed"},
 		{"native-incomplete", func(r *RequestRow) { r.NativeExecutionComplete = false }, "incomplete"},

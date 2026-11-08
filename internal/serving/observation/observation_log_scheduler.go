@@ -332,15 +332,15 @@ type WorkloadLoad struct {
 }
 
 type LoadWindow struct {
-	From       time.Time                   `json:"from"`
-	To         time.Time                   `json:"to"`
-	Duration   time.Duration               `json:"durationNanos"`
-	Population string                      `json:"population"`
-	Workloads  []WorkloadLoad              `json:"workloads"`
-	Arrivals   []serving.SchedulerArrival  `json:"arrivals"`
-	PathBudgets []serving.PathBudget         `json:"pathBudgets"`
-	GapUntil   *time.Time                  `json:"gapUntil,omitempty"`
-	Coverage   serving.ObservationCoverage `json:"coverage"`
+	From        time.Time                   `json:"from"`
+	To          time.Time                   `json:"to"`
+	Duration    time.Duration               `json:"durationNanos"`
+	Population  string                      `json:"population"`
+	Workloads   []WorkloadLoad              `json:"workloads"`
+	Arrivals    []serving.SchedulerArrival  `json:"arrivals"`
+	PathBudgets []serving.PathBudget        `json:"pathBudgets"`
+	GapUntil    *time.Time                  `json:"gapUntil,omitempty"`
+	Coverage    serving.ObservationCoverage `json:"coverage"`
 }
 
 // LoadWindow counts each stage whose time, receipt plus stage offset, lies in

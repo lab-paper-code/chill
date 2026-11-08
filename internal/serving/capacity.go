@@ -408,4 +408,3 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 	}
 	return result, nil
 }
-

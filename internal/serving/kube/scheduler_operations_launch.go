@@ -182,12 +182,8 @@ func (c *SchedulerController) intermediateActions(
 	if !pendingRoute {
 		return target.Actions, nil
 	}
-	var rows []serving.CapacityRow
-	var budgets []serving.PathBudget
-	if c.capacity != nil {
-		rows, budgets = c.capacity.Inputs()
-	}
-	partial := c.readySubset(target, rows, budgets, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.readySubset(target, c.appliedCapacityRows, c.appliedPathBudgets,
+		func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		return target.Actions, nil
 	}

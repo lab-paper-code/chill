@@ -84,11 +84,14 @@ type SchedulerController struct {
 	measurement    *servingops.Operations
 	observationLog *observation.ObservationLog
 	capacity       *serving.CapacityTable
-	config         SchedulerControllerConfig
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	completions    chan struct{}
+	// These inputs move with Runtime budgets, not background table completion.
+	appliedCapacityRows []serving.CapacityRow
+	appliedPathBudgets  []serving.PathBudget
+	config              SchedulerControllerConfig
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
+	completions         chan struct{}
 	// powerTargets holds, by "<Node UID>/<mode>", the maximum actuation
 	// duration of each mode the last capture found requestable.
 	powerTargets map[string]time.Duration
@@ -281,7 +284,10 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
+	c.mu.Lock()
 	c.runtime.SetPathBudgets(snapshot.PathBudgets)
+	c.appliedCapacityRows, c.appliedPathBudgets = rows, snapshot.PathBudgets
+	c.mu.Unlock()
 	// Without a selected target, only finish previously authorized Fixed work.
 	if decision.Target != nil {
 		c.launch(*decision.Target, config)

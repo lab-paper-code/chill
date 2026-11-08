@@ -11,7 +11,7 @@ import (
 
 func appendPathBudgetHTTP(t *testing.T, log *ObservationLog, d *serving.Definition, id string, received time.Time, outcome string, direct bool) {
 	t.Helper()
-	assignment := &serving.Assignment{Instance: "path-instance", Node: serving.NodeReference{UID: "node"}, DispatchedAt: received.Add(30*time.Millisecond)}
+	assignment := &serving.Assignment{Instance: "path-instance", Node: serving.NodeReference{UID: "node"}, DispatchedAt: received.Add(30 * time.Millisecond)}
 	for _, stage := range []struct {
 		kind string
 		ms   int
@@ -19,7 +19,7 @@ func appendPathBudgetHTTP(t *testing.T, log *ObservationLog, d *serving.Definiti
 		{"received", 0}, {"accepted", 10}, {"assigned", 30},
 	} {
 		event := serving.RequestEvent{RequestID: id, WorkloadUID: d.UID, Definition: d.Identity(), Kind: stage.kind,
-			At: received.Add(time.Duration(stage.ms)*time.Millisecond), ReceivedAt: received}
+			At: received.Add(time.Duration(stage.ms) * time.Millisecond), ReceivedAt: received}
 		if stage.kind == "assigned" {
 			event.Assignment = assignment
 		}
@@ -31,8 +31,8 @@ func appendPathBudgetHTTP(t *testing.T, log *ObservationLog, d *serving.Definiti
 		appendPathBudgetNative(t, log, d, id, received, false, "path-instance")
 	}
 	if err := log.RequestEvent(serving.RequestEvent{RequestID: id, WorkloadUID: d.UID, Definition: d.Identity(),
-		Kind: "response_finished", At: received.Add(100*time.Millisecond), ReceivedAt: received,
-		ElapsedNanos: int64(100*time.Millisecond), Outcome: outcome, ExecutionComplete: outcome == "completed"}); err != nil {
+		Kind: "response_finished", At: received.Add(100 * time.Millisecond), ReceivedAt: received,
+		ElapsedNanos: int64(100 * time.Millisecond), Outcome: outcome, ExecutionComplete: outcome == "completed"}); err != nil {
 		t.Fatal(err)
 	}
 	var timing serving.RequestTimings
@@ -51,13 +51,13 @@ func appendPathBudgetNative(t *testing.T, log *ObservationLog, d *serving.Defini
 	}{
 		{"queued", 0}, {"running", 8}, {"finished", 40},
 	} {
-		progress := &serving.BackendProgress{Phase: phase.name, At: worker.Add(time.Duration(phase.ms)*time.Millisecond),
+		progress := &serving.BackendProgress{Phase: phase.name, At: worker.Add(time.Duration(phase.ms) * time.Millisecond),
 			BatchID: 7, BatchSize: 4, QueueMS: 10, NativeElapsedMS: 50}
 		if phase.name == "finished" {
 			progress.ExecutionComplete, progress.Outcome = true, "completed"
 		}
-		event := serving.RequestEvent{RequestID: id, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_"+phase.name,
-			At: received.Add(time.Duration(40+phase.ms)*time.Millisecond), NativeInstance: instance, NativeProgress: progress,
+		event := serving.RequestEvent{RequestID: id, WorkloadUID: d.UID, Definition: d.Identity(), Kind: "backend_" + phase.name,
+			At: received.Add(time.Duration(40+phase.ms) * time.Millisecond), NativeInstance: instance, NativeProgress: progress,
 			ExecutionComplete: phase.name == "finished"}
 		var err error
 		if late {
@@ -95,7 +95,7 @@ func TestLoadWindowPathBudgetsReuseHTTPPopulationAndLateNative(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	received := from.Add(100*time.Millisecond)
+	received := from.Add(100 * time.Millisecond)
 	for i := range 118 {
 		appendPathBudgetHTTP(t, log, d, fmt.Sprintf("complete-%d", i), received, "completed", true)
 	}

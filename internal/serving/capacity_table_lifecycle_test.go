@@ -386,7 +386,7 @@ func TestCapacityTableReclaimsUnreferencedRowsAndGroups(t *testing.T) {
 		assertCapacityGroup(t, table, budget, 1, CapacityBuilt)
 		table.mu.Lock()
 		state := table.groups[snapshot.Workloads[0].UID]
-		retained := len(table.rows) == 1 && len(table.previous) == 0 && len(table.asked) == 1 && len(table.running) == 0 &&
+		retained := len(table.rows) == 1 && len(table.previous) == 0 && len(table.running) == 0 &&
 			state.active == state.latest && state.building == nil
 		table.mu.Unlock()
 		if !retained {

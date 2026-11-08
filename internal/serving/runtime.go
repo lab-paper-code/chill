@@ -70,7 +70,7 @@ type Call struct {
 	totalMarginMS                                float64
 	acceptedElapsed                              time.Duration
 	dispatchedElapsed                            time.Duration
-	hasPostMargin, hasTotalMargin                 bool
+	hasPostMargin, hasTotalMargin                bool
 	senderElapsedNanos                           atomic.Int64
 	senderFrozen                                 atomic.Bool
 	input                                        *InferenceInput

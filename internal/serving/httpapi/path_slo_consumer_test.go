@@ -98,11 +98,11 @@ func newPathSLOHTTPFixture(t *testing.T, ctx context.Context, count int) *pathSL
 }
 
 type pathSLOHTTPFixture struct {
-	runtime *serving.Runtime
-	log *observation.ObservationLog
-	front *httptest.Server
-	entered chan native.Request
-	unblock func()
+	runtime  *serving.Runtime
+	log      *observation.ObservationLog
+	front    *httptest.Server
+	entered  chan native.Request
+	unblock  func()
 	settings serving.SchedulerSettings
 	snapshot serving.SchedulerSnapshot
 }
@@ -184,7 +184,7 @@ func TestPathSLOHTTPObservationCapacityConsumers(t *testing.T) {
 }
 
 type pathSLOHTTPReply struct {
-	id string
+	id  string
 	err error
 }
 
@@ -303,9 +303,9 @@ func pathSLOConsumerModel(t *testing.T) (serving.SchedulerSettings, serving.Sche
 	nativeSettings := &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 100}
 	path := serving.ModelPath{Name: "cpu", Artifact: "model", Files: []string{"/model"}, Format: "onnx", Image: image, RuntimeFamily: "firstfloor", Backend: "ort-cpu", Firstfloor: nativeSettings}
 	definition := &serving.Definition{Name: "workload", UID: "uid", Generation: 2,
-		Model: serving.Model{Name: "model", UID: "model", Generation: 1, Paths: []serving.ModelPath{path}},
+		Model:        serving.Model{Name: "model", UID: "model", Generation: 1, Paths: []serving.ModelPath{path}},
 		Preprocessor: serving.Preprocessor{Name: "pre", Input: []serving.RawField{{Name: "x", Format: "UTF8", MaxBytes: 16}}, Output: []serving.RawField{{Name: "y", Format: "UTF8"}}},
-		Dataset: &serving.DatasetReference{Name: "data", UID: "data"}, SLO: serving.SLO{Percentile: 50, TargetLatency: time.Second}}
+		Dataset:      &serving.DatasetReference{Name: "data", UID: "data"}, SLO: serving.SLO{Percentile: 50, TargetLatency: time.Second}}
 	policy := pathSLONativePolicy(t)
 	gap := int64(0)
 	batch := policy.Batches[0]
@@ -317,16 +317,16 @@ func pathSLOConsumerModel(t *testing.T) (serving.SchedulerSettings, serving.Sche
 	profile := &serving.Profile{ID: "profile", NodeName: node.Name, MeasuredAt: at, IdleBaselineWatts: 12,
 		Reference: evidencestore.ObjectIdentity{Store: "fixture", Key: "curve", Size: 1}, Evidence: []evidencestore.ObjectIdentity{{Store: "fixture", Key: "profile", Size: 1}},
 		Condition: derivation.CurvePlanSpec{LogicalModel: "model", NodeUID: node.UID, DeviceClass: "cpu", RuntimeFamily: "firstfloor", Backend: "ort-cpu", RuntimeImage: image, Firstfloor: nativeSettings, PowerMode: "fixed", PlannedBatchSizes: []int{1},
-			Preprocessor: derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}},
+			Preprocessor:   derivation.CurvePreprocessorContract{Name: "pre", Inputs: []string{"x"}, Outputs: []string{"y"}},
 			ActiveProtocol: derivation.CurveProtocolContract{Dataset: &derivation.CurveDatasetContract{Name: "data", UID: "data"}},
-			Artifact: derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}},
+			Artifact:       derivation.CurveArtifactContract{Name: "model", ExecutionPath: "cpu", Files: []string{"/model"}, Image: image}},
 		RuntimeMetadata: &native.RuntimeMetadata{Runtime: "onnxruntime", RuntimeVersion: "1.19.0", ModelFiles: []string{"/model/model"}, Inputs: []string{"x"}, Outputs: []string{"y"}, Providers: []string{"CPUExecutionProvider"}, Device: "cpu", CPUAffinity: []int{0}, IntraOpThreads: 1, InterOpThreads: 1, InitializedBatches: []int{1}, WarmupIterations: 1},
-		Batches: []serving.BatchProfile{{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100, ServiceSamples: batch.ServiceSamples, ServiceDistribution: distribution}}}
+		Batches:         []serving.BatchProfile{{Batch: 1, EnergyPerInputJoules: 1, MemoryBytes: 100, ServiceSamples: batch.ServiceSamples, ServiceDistribution: distribution}}}
 	instance := serving.SchedulerInstance{ID: "instance", Node: node, Profile: profile, WorkloadUID: definition.UID, Allocation: serving.SchedulerAllocation{MemoryBytes: 1000}, Ready: true, Routable: map[string]bool{definition.UID: true}, Capacity: 100, Weight: 1, MaxBatch: 1, ObservedAt: at, IdleMeter: "wall", IdleScope: "node-exclusive-wall"}
 	settings := serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, ComparisonPeriod: time.Minute, MaxReplicas: 1, MaxInstances: 1, AutonomousWorkloads: []string{definition.UID}, CompletionMarginMS: 2000,
 		CapacityWindow: time.Second, CapacityWindows: 2, CapacityPassingWindows: 1, CapacityMinimumRequests: 32, CapacityGridSteps: 4, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
 		PlanSearchStrategy: "v1", PlanSearchWorkers: 1, PlanSearchEvaluations: 100, PlanExactFinalists: 1, PlanPolishActive: 1,
-		Controls: serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Membership: true},
+		Controls:             serving.SchedulerControls{Placement: true, Resources: true, Replicas: true, Routing: true, Batching: true, Membership: true},
 		DefaultOperationCost: map[string]serving.OperationCostValue{"prepare": {Seconds: 1, Joules: 1}, "remove": {Seconds: 1, Joules: 1}, "power": {Seconds: 1, Joules: 1}}, DefaultIdlePower: &serving.IdlePowerDefault{NodeWatts: 10, PerInstanceWatts: 2}}
 	return settings, serving.SchedulerSnapshot{Workloads: []*serving.Definition{definition},
 		Nodes: []serving.SchedulerNode{{Node: node, PowerMode: "fixed", Ready: true, MemoryBytes: 10000, ObservedAt: at}}, Instances: []serving.SchedulerInstance{instance},

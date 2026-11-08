@@ -49,9 +49,9 @@ type pathBatchKey struct {
 	id       uint64
 }
 type pathBudgetSamples struct {
-	budget PathBudget
-	total  []int64
-	post   []int64
+	budget  PathBudget
+	total   []int64
+	post    []int64
 	batches map[pathBatchKey]int
 }
 

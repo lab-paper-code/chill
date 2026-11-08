@@ -706,7 +706,16 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if c.dependenciesReady(target.Actions[1], target, c.runtime) {
 				t.Fatal("late nano unexpectedly allowed final handoff")
 			}
-			partial := c.readySubset(target, rows, c.state.Snapshot.PathBudgets, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			c.appliedCapacityRows = rows
+			c.appliedPathBudgets = []serving.PathBudget{serving.ResolvePathBudget(c.config.Settings, snapshot.PathBudgets, snapshot.Workloads[0])}
+			c.runtime.SetPathBudgets(c.appliedPathBudgets)
+			// Background rebuilds and fresh observations cannot replace the
+			// inputs already applied to Runtime during an intermediate handoff.
+			c.capacity = serving.NewCapacityTable(1, nil, nil)
+			fresh := c.appliedPathBudgets[0]
+			fresh.TotalMS, fresh.PostMS = 1e6, 1e6
+			snapshot.PathBudgets = []serving.PathBudget{fresh}
+			_, partial := c.intermediateActions(target)
 			if scenario != "admitted" {
 				if partial != nil {
 					t.Fatalf("unsafe expansion: %+v", partial)
