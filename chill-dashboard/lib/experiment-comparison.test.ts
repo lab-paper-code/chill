@@ -42,7 +42,7 @@ test("R18: list facts render without per-item detail requests and absent facts s
   const listHTML=renderToStaticMarkup(createElement(exports.ExperimentResultRow,{run,runs:[run],pending:false,error:false}))
   for(const value of ["기록된 실험","복제 수 상한, 전력모드, 최소 수요 · camera, future.setting","변경 없음","미기록"])assert.ok(listHTML.includes(value),value)
   assert.equal(definitionPolicy(run.stages[0],run),"복제 수 상한, 전력모드, 최소 수요 · camera, future.setting")
-  const detailed=withDefinition(definedRun([run.stages[0]]),definition=>{definition.spec.settingsPatch={maxReplicas:2};definition.spec.stages[0].settingsPatch={controls:{power:false}}})
+  const detailed=withDefinition(definedRun([run.stages[0]]),definition=>{definition.spec.settingsPatch={maxReplicas:2,planSearchStrategy:"v1"};definition.spec.stages[0].settingsPatch={controls:{power:false},planSearchStrategy:"v2"}})
   detailed.facts=run.facts
   const detailHTML=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run:detailed}))
   assert.match(detailHTML,/Run 운영 설정 패치/)
@@ -50,6 +50,9 @@ test("R18: list facts render without per-item detail requests and absent facts s
   assert.ok(detailHTML.includes("maxReplicas"))
   assert.ok(detailHTML.includes("controls.power"))
   assert.ok(detailHTML.includes("false"))
+  assert.match(detailHTML,/스케줄러 \(planSearchStrategy\)/)
+  assert.match(detailHTML,/CHILL v1/)
+  assert.match(detailHTML,/CHILL v2/)
   const sloRow=experimentRows({...run.stages[0],kpis:{requests:{camera:{workloadUID:"camera"}}}})[0]
   assert.equal(frozenP95SLO(sloRow,run),null)
   const absent=renderToStaticMarkup(createElement(exports.ExperimentFacts,{run:{...run,facts:undefined}}))

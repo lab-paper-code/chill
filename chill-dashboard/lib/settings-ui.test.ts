@@ -10,6 +10,7 @@ import * as sourceExport from "./source-export.ts"
 import * as labels from "./labels.ts"
 import * as settingDefinitions from "./scheduler-settings.ts"
 import * as capacity from "./capacity.ts"
+import * as schedulerSelection from "./scheduler-selection.ts"
 
 type Tree={type:unknown;props:Record<string,unknown>}
 const require=createRequire(import.meta.url)
@@ -27,6 +28,7 @@ function hooks() {
 function load(path:string,modules:Record<string,unknown>):Record<string,(props:Record<string,unknown>)=>unknown> {
   const compiled=transpileModule(readFileSync(new URL(path,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   const exports={}
+  modules={"@/lib/scheduler-selection":schedulerSelection,...modules}
   new Function("require","exports",compiled)((name:string)=>Object.hasOwn(modules,name)?modules[name]:name==="@/hooks/use-catalog-resource"?load("../hooks/use-catalog-resource.ts",modules):name==="@/features/catalog-editor"?load("../features/catalog-editor.tsx",modules):name==="@/lib/scheduler-settings"?settingDefinitions:name.startsWith("@/")?{}:require(name),exports)
   return exports
 }
@@ -74,7 +76,7 @@ test("operating setting writes retain exact integers and omit runtime-only field
   const {putSchedulerSettings}=load("../features/scheduler-settings.tsx",{...base,"@/lib/client":{}})
   const sent:{path:string;method:string;body:string}[]=[]
   const preserved={defaultOperationCost:{prepare:{seconds:1.25,joules:2.5},remove:{seconds:0,joules:0},power:{seconds:.5,joules:3}},defaultIdlePower:{nodeWatts:4.25,perInstanceWatts:.75},defaultDispatchOccupancyNanos:9223372036854775807n}
-  const planner={planSearchStrategy:"shadow",planSearchEvaluations:9223372036854775807n,planExactFinalists:9007199254740993n,planPolishActive:0,planPostFilterFinalists:false,planPricedStart:true}
+  const planner={planSearchStrategy:"v2",planSearchEvaluations:9223372036854775807n,planExactFinalists:9007199254740993n,planPolishActive:0,planPostFilterFinalists:false,planPricedStart:true}
   const settings={observationWindowNanos:9007199254740993n,controls:{placement:true},staticRouting:{service:{instance:1}},staticRoutingValidatedAt:"past",powerObservation:{series:"read-only"},meters:{secret:"runtime"},requestTimeout:10}
   const writer=putSchedulerSettings as unknown as (mutate:(input:{path:string;method:string;body:string})=>Promise<{body:string}>,client:{invalidateQueries:()=>Promise<void>},settings:unknown)=>Promise<unknown>
   await writer(async input=>{sent.push(input);return {body:'{"appliedAt":"2026-11-01T00:00:00Z"}'}},{invalidateQueries:async()=>{}},{...settings,...preserved,...planner})
@@ -746,7 +748,7 @@ test("plan search evidence renders v2 diagnostics and historical search without 
     assert.ok(facts.some(([label,value])=>label==="평가 수"&&value==="40"))
     assert.equal(facts.some(([label])=>label==="탐색 전략"),"strategy" in search)
     if("strategy" in search){
-      for(const pair of [["탐색 전략","v2"],["가지치기 · ZeroCapacity","2"],["최종 후보 수","16"],["대체 탐색 사유","ExactKeep"],["출발점","priced"],["증분·정확 에너지 차이 (J)","0"],["후처리 복귀 수","0"]])assert.ok(facts.some(([label,value])=>label===pair[0]&&value===pair[1]))
+      for(const pair of [["탐색 전략","CHILL v2"],["가지치기 · ZeroCapacity","2"],["최종 후보 수","16"],["대체 탐색 사유","ExactKeep"],["출발점","priced"],["증분·정확 에너지 차이 (J)","0"],["후처리 복귀 수","0"]])assert.ok(facts.some(([label,value])=>label===pair[0]&&value===pair[1]))
     }
     const table=tree.find(node=>node.type==="table")!
     const columns=table.props.columns as {key:string;value:(row:unknown)=>unknown}[]
@@ -755,50 +757,48 @@ test("plan search evidence renders v2 diagnostics and historical search without 
   assert.equal(PlanSearchEvidence({}),null)
 })
 
-test("shadow evidence compares keys and raw search energy only when recorded",()=>{
-  const {PlanSearchEvidence}=load("../features/scheduler-capacity.tsx",{...base,"@/lib/capacity":capacity})
-  const search={neighborhood:3,evaluated:40,durationNanos:1000,strategy:"shadow",key:"a=keep",shadow:{key:"a=keep",joules:12,evaluated:100,exactEvaluated:4,durationNanos:9007199254740993n,fallback:"exactK1"}}
-  const facts=(joules?:number)=>elements(PlanSearchEvidence({capacity:{search:{...search,joules}}})).find(node=>node.type==="facts")!.props.items as [string,string][]
-  const recorded=facts(15)
-  for(const pair of [["그림자 · v1 선택 key 동일","예"],["그림자 v2 − v1 에너지 (J)","-3"],["그림자 탐색 시간","9007199254740993 ns"],["그림자 대체 탐색 사유","exactK1"]])assert.ok(recorded.some(([label,value])=>label===pair[0]&&value===pair[1]))
-  assert.ok(facts().some(([label,value])=>label==="그림자 v2 에너지 (J)"&&value==="12"))
-  assert.equal(facts().some(([label])=>label==="그림자 v2 − v1 에너지 (J)"),false)
-  assert.equal(recorded.some(([label])=>label==="그림자 v2 에너지 (J)"),false)
-  assert.ok(facts(0).some(([label,value])=>label==="그림자 v2 − v1 에너지 (J)"&&value==="12"))
-  search.shadow.key="a=other"
-  assert.ok(facts(15).some(([label,value])=>label==="그림자 · v1 선택 key 동일"&&value==="아니요"))
-  search.shadow.key=""
-  search.shadow.fallback="v1"
-  assert.equal(facts(15).some(([label])=>label==="그림자 v2 − v1 에너지 (J)"),false)
+test("scheduler selection stages named choices and preserves unknown historical values",()=>{
+  const runner=hooks(),saved:string[]=[]
+  const {SchedulerSelection}=load("../features/scheduler-selection.tsx",{...base,react:runner.react})
+  const props={current:"future-planner",value:"future-planner",disabled:false,save:(value:string)=>saved.push(value)}
+  let tree=elements(runner.render(SchedulerSelection,props))
+  const select=tree.find(node=>node.type==="select")!
+  assert.equal(select.props.value,"future-planner")
+  assert.deepEqual(tree.filter(node=>node.type==="option").map(node=>[node.props.value,node.props.children]),[["future-planner","future-planner"],["v1","CHILL v1"],["v2","CHILL v2"]])
+  ;(select.props.onChange as (event:unknown)=>void)({target:{value:"v2"}})
+  tree=elements(runner.render(SchedulerSelection,props))
+  ;(tree.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  assert.deepEqual(saved,["v2"])
+  const {SettingChanges,SettingsSummary}=load("../features/scheduler-settings.tsx",{...base,react:runner.react})
+  const before={controls:{},planSearchStrategy:"future-planner"},after={...before,planSearchStrategy:"v2"}
+  const changes=elements(SettingChanges({before,after})).filter(node=>node.type==="td").map(node=>node.props.children)
+  assert.deepEqual(changes,["future-planner","CHILL v2"])
+  assert.ok(((SettingsSummary({settings:after}) as Tree).props.items as [string,string][]).some(([label,value])=>label==="스케줄러"&&value==="CHILL v2"))
 })
 
-test("advanced search settings use strategy select and boolean switches with zero polish allowed",()=>{
+test("advanced search settings validate budgets and boolean switches with zero polish allowed",()=>{
   const runner=hooks(),settings={controls:{},planSearchWorkers:1,planSearchStrategy:"v2",planSearchEvaluations:500000,planExactFinalists:16,planPolishActive:8,planPostFilterFinalists:false,planPricedStart:true}
   const {SchedulerSettingsPage,SettingChanges,SettingsSummary}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"advanced"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({isPending:false}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/scheduler/state"?{results:[]}:undefined})}})
   const table=()=>elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
   const fields=table().props.data as {key:string}[]
-  assert.equal(fields.length,7)
   const editor=(key:string)=>{
     const columns=table().props.columns as {key:string;value:(field:unknown)=>Tree}[]
     return columns.find(column=>column.key==="edit")!.value(fields.find(field=>field.key===key)).props
   }
-  assert.deepEqual(editor("planSearchStrategy").options,["v1","v2","shadow"])
-  assert.equal(editor("planPostFilterFinalists").initial,false)
-  assert.equal(editor("planPricedStart").initial,true)
   for(const key of ["planSearchEvaluations","planExactFinalists","planPolishActive"]){
     const save=editor(key).save as (value:string)=>void
     for(const text of ["-1","1.5","Infinity","9223372036854775808"])assert.throws(()=>save(text))
     if(key!=="planPolishActive")assert.throws(()=>save("0"))
   }
-  for(const [key,value] of Object.entries({planSearchStrategy:"shadow",planSearchEvaluations:"9007199254740993",planExactFinalists:"19",planPolishActive:"0",planPostFilterFinalists:true,planPricedStart:false})){
+  for(const [key,value] of Object.entries({planSearchEvaluations:"9007199254740993",planExactFinalists:"19",planPolishActive:"0",planPostFilterFinalists:true,planPricedStart:false})){
     ;(editor(key).save as (value:string|boolean)=>void)(value)
   }
-  const after={...settings,planSearchStrategy:"shadow",planSearchEvaluations:9007199254740993n,planExactFinalists:19n,planPolishActive:0n,planPostFilterFinalists:true,planPricedStart:false}
+  const after={...settings,planSearchEvaluations:9007199254740993n,planExactFinalists:19n,planPolishActive:0n,planPostFilterFinalists:true,planPricedStart:false}
   const diff=elements(SettingChanges({before:settings,after})).filter(node=>node.type==="tr").slice(1)
-  assert.equal(diff.length,6)
+  assert.equal(diff.length,5)
   const summary=(SettingsSummary({settings:after}) as Tree).props.items as [string,string][]
   const updated=table(),columns=updated.props.columns as {key:string;value:(field:unknown)=>Tree}[]
-  for(const [key,expected] of Object.entries({planSearchStrategy:"shadow",planSearchEvaluations:"9007199254740993회",planExactFinalists:"19개",planPolishActive:"0개",planPostFilterFinalists:"사용",planPricedStart:"사용 안 함"})){
+  for(const [key,expected] of Object.entries({planSearchEvaluations:"9007199254740993회",planExactFinalists:"19개",planPolishActive:"0개",planPostFilterFinalists:"사용",planPricedStart:"사용 안 함"})){
     const field=fields.find(field=>field.key===key)!
     const value=columns.find(column=>column.key==="value")!.value(field)
     assert.equal((value.props.children as unknown[])[0],expected)
@@ -809,8 +809,8 @@ test("advanced search settings use strategy select and boolean switches with zer
   assert.equal(editor("planPricedStart").initial,false)
 })
 
-test("advanced strategy and switch Sheets submit strings and booleans through their native controls",()=>{
-  for(const [key,initial,next] of [["planSearchStrategy","v2","shadow"],["planPostFilterFinalists",false,true],["planPricedStart",true,false]] as const){
+test("advanced switch Sheets submit booleans through native controls",()=>{
+  for(const [key,initial,next] of [["planPostFilterFinalists",false,true],["planPricedStart",true,false]] as const){
     const runner=hooks(),settings={controls:{},planSearchWorkers:1,[key]:initial}
     const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"advanced"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined})}})
     const table=elements(runner.render(SchedulerSettingsPage)).find(node=>node.type==="table")!
@@ -819,8 +819,8 @@ test("advanced strategy and switch Sheets submit strings and booleans through th
     const Component=editor.type as (props:Record<string,unknown>)=>unknown,saved:unknown[]=[]
     const props={...editor.props,save:(value:unknown)=>saved.push(value)}
     let tree=elements(runner.render(Component,props))
-    const control=tree.find(node=>typeof next==="string"?node.type==="select":node.props.role==="switch")!
-    assert.equal(typeof next==="string"?control.props.value:control.props.checked,initial)
+    const control=tree.find(node=>node.props.role==="switch")!
+    assert.equal(control.props.checked,initial)
     ;(control.props.onChange as (event:unknown)=>void)({target:{value:next,checked:next}})
     tree=elements(runner.render(Component,props))
     ;(tree.find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
@@ -837,8 +837,6 @@ test("historical settings keep absent planner fields out of summaries, equality 
   const summary=(SettingsSummary({settings}) as Tree).props.items as [string,string][]
   for(const field of fields){
     const definition=settingDefinitions.settingFields.find(item=>item.key===field.key)!
-    const editor=columns.find(column=>column.key==="edit")!.value(field)
-    assert.equal(editor.props.initial,definition.kind==="boolean"?definition.defaultValue:String(definition.defaultValue))
     assert.equal((columns.find(column=>column.key==="value")!.value(field).props.children as unknown[])[0],"기록 없음")
     assert.ok(summary.some(([label,value])=>label===definition.label&&value==="기록 없음"))
     const equal=scheduler.settingsEqual as (before:unknown,after:unknown)=>boolean

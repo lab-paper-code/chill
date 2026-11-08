@@ -22,7 +22,7 @@ export const settingFields: SettingField[] = [
   {key:"capacityBisectionWidth",label:"용량 이분 탐색 폭",help:"최대 처리율에 대한 탐색 종료 폭이에요. 0 초과 1 이하예요.",group:"capacity"},
   {key:"capacityTailSamples",label:"용량 꼬리 표본 수",help:"SLO 백분위 위에 확보할 창별 표본 수예요. 1 이상이에요.",group:"capacity",unit:"개"},
   {key:"planSearchWorkers",label:"구성 탐색 동시 계산 수",help:"운영 판단이 구성 후보를 동시에 이만큼 계산해요. 탐색은 판단 주기의 절반 안에 끝나요.",group:"advanced",unit:"개"},
-  {key:"planSearchStrategy",label:"구성 탐색 전략",help:"v1은 기존 탐색, v2는 한계비용 탐욕 탐색이에요. shadow는 v1으로 결정하며 v2를 비교 기록해요.",group:"advanced",kind:"strategy",defaultValue:"v1"},
+  {key:"planSearchStrategy",label:"스케줄러",help:"전체 노드 계획을 결정할 CHILL 스케줄러를 선택해요.",group:"advanced",kind:"strategy"},
   {key:"planSearchEvaluations",label:"구성 탐색 평가 예산",help:"v2의 증분 평가를 이 횟수까지 계산해요.",group:"advanced",unit:"회",defaultValue:500000},
   {key:"planExactFinalists",label:"정확 검증 후보 수",help:"증분 평가의 상위 후보를 이만큼 정확히 검증해요.",group:"advanced",unit:"개",defaultValue:16},
   {key:"planPolishActive",label:"결합 연마 활성 계획 수",help:"결합 연마에서 살펴볼 활성 계획 수예요. 0은 전체 계획이에요.",group:"advanced",unit:"개",defaultValue:8},

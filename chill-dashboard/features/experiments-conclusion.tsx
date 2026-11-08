@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query"
 import { ApiError, decodeResponse, relay, useChillQueries, useSession, warmingRetry, warmingDelay } from "@/lib/client"
 import { Button } from "@/components/ui/button"
 import { decodeExperiment, decodeExperimentPage, experimentOutcome, experimentPath, finite, historicalPublicationIDs, injectionRows, object, publishedText, recordedComparisons, type Experiment, type ExperimentFacts as RecordedFacts, type ExperimentPage, type ExperimentStage, type Published } from "@/lib/experiments"
-import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, experimentServiceResults, publishedEnergy, ratio, settingsPatchEntries, settingsPatchKeyLabel, stageLoadParts, stageSeconds } from "@/lib/experiment-comparison"
+import { campaignScoreboard, comparisonValidity, definitionComparisonReason, definitionComparisons, definitionPolicy, experimentRows, experimentServiceResults, publishedEnergy, ratio, settingsPatchEntries, settingsPatchKeyLabel, settingsPatchValueLabel, stageLoadParts, stageSeconds } from "@/lib/experiment-comparison"
 import { formatMeasurementDuration, formatMeasurementNumber, formatMeasurementTime } from "@/lib/measurements"
 
 export function usePublishedExperimentFacts(id:string,enabled=true) {
@@ -178,7 +178,7 @@ export function ExperimentFacts({run}:{run:Experiment}) {
   const patchRows=(label:string,patch:Published|null|undefined):[string,string][]=>{
     if(patch==null)return []
     const entries=settingsPatchEntries(patch)
-    return entries.length?entries.map(([path,value])=>[`${label} · ${settingsPatchKeyLabel(path)} (${path})`,value===null?"null":publishedText(value)]):[[label,"변경 없음"]]
+    return entries.length?entries.map(([path,value])=>[`${label} · ${settingsPatchKeyLabel(path)} (${path})`,settingsPatchValueLabel(path,value)]):[[label,"변경 없음"]]
   }
   const rows:[string,string][]=[
     ["이름",facts?.name??run.definition?.run.name??"미기록"],

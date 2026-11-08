@@ -1,3 +1,4 @@
+import { schedulerLabel } from "./scheduler-selection.ts"
 import type { NodeRef, SchedulerAllocation, SchedulerDefinition, SchedulerSettings, SchedulerPlanSearch, WireInteger } from "./read-types.ts"
 import { explain } from "./labels.ts"
 
@@ -55,21 +56,9 @@ export function planSearchFacts(search:SchedulerPlanSearch):[string,string][] {
     ["exactEvaluated","정확 평가 수"],["fallback","대체 탐색 사유"],["start","출발점"],
     ["surrogateGapJoules","증분·정확 에너지 차이 (J)"],["postFilterReverts","후처리 복귀 수"],
   ] as const
-  for(const [key,label] of fields)if(search[key]!==undefined)rows.push([label,String(search[key])])
+  for(const [key,label] of fields)if(search[key]!==undefined)rows.push([label,key==="strategy"?schedulerLabel(search.strategy):String(search[key])])
   for(const [reason,count] of Object.entries(search.pruned??{}))rows.push([`가지치기 · ${reason}`,String(count)])
   if(search.terminationReason!==undefined)rows.push(["탐색 종료 사유",searchTerminationReasons[search.terminationReason]??search.terminationReason])
   if(search.budgetCut!==undefined)rows.push(["시간 마감 종료",search.budgetCut?"예":"아니요"])
-  if(search.shadow){
-    const shadow=search.shadow
-    rows.push(["그림자 선택 key",shadow.key||"선택해 없음"])
-    if(shadow.key){
-      if(search.key!==undefined)rows.push(["그림자 · v1 선택 key 동일",shadow.key===search.key?"예":"아니요"])
-      rows.push(search.joules===undefined?["그림자 v2 에너지 (J)",String(shadow.joules)]:["그림자 v2 − v1 에너지 (J)",String(shadow.joules-search.joules)])
-    }
-    rows.push(["그림자 증분 평가 수",String(shadow.evaluated)],["그림자 탐색 시간",`${shadow.durationNanos} ns`])
-    if(shadow.exactEvaluated!==undefined)rows.push(["그림자 정확 평가 수",String(shadow.exactEvaluated)])
-    if(shadow.terminationReason!==undefined)rows.push(["그림자 탐색 종료 사유",searchTerminationReasons[shadow.terminationReason]??shadow.terminationReason])
-    rows.push(["그림자 대체 탐색 사유",shadow.fallback||"없음"])
-  }
   return rows
 }

@@ -3,6 +3,8 @@ import type { EvaluationDefinition, ComparisonReference } from "./evaluation-def
 import { stringifySchedulerJSON } from "./scheduler.ts"
 import { formatMeasurementNumber } from "./measurements.ts"
 import { settingControls, settingFields, settingTargets } from "./scheduler-settings.ts"
+import { schedulerLabel } from "./scheduler-selection.ts"
+export const settingsPatchValueLabel = (path:string,value:unknown) => path==="planSearchStrategy"&&typeof value==="string"?schedulerLabel(value):value===null?"null":publishedText(value)
 // Exactly the two publisher shapes. No current registration or live terminal buckets enter these rows.
 export function experimentRows(stage:Pick<ExperimentStage,"kpis">):ExperimentRow[] {
   const k=stage.kpis

@@ -29,6 +29,7 @@
 | 초기 웹 설정 | page 50/최대 200, 기본 구간 1시간/최대 24시간, 갱신 5초, 조회 timeout 10초/변경 60초. 추론은 사용자 timeout과 서버 상한 및 중계 여유 사용. WS 연결 수명에 HTTP 한도를 재사용하지 않음. |
 | 변경 | 작성→전후 정의·제공된 영향 확인→제출→원본 조회. Model/Workload If-Match=metadata.resourceVersion. 409 최신 baseline 명시 채택 시 draft 유지, 같은 UID만 제출. 201/202/실제 완료 구분; 삭제는 원래 UID 제거 확인. 응답 미수신은 결과 미확인, 원본 조회 후 명시 재제출. |
 | 설정 | 전체 SchedulerSettings 마지막 적용값과 서버 ETag가 현재 baseline이다. GET의 ETag를 PUT의 If-Match로 전달하고 409에는 초안을 유지한 채 새 baseline을 명시 채택한다. duration·seed/int64·메모리/uint64는 원문 정밀도를 보존한다. 단계별 settingsPatch도 `lib/scheduler-settings.ts`의 같은 항목 목록·타입을 재사용하며 별도 내부 제어 스키마를 만들지 않는다. |
+| 스케줄러 선택 | 운영 설정의 독립 영역에서 CHILL v1(`v1`)·CHILL v2(`v2`)를 선택한다. `planSearchStrategy` 하나가 전체 노드 계획에 적용되며 `autonomousWorkloads`는 서비스 참여 여부다. 현재값·초안·diff·요약·탐색 진단은 같은 명칭을 쓰고 과거 미등록 값은 원문으로 남긴다. 선택은 기존 PUT/ETag를 재사용하고 실험 settingsPatch와 동일한 필드 계약을 쓴다. |
 | 설정 권한 | unbound scheduler-editor ClusterRole과 serving namespace Role을 관리자가 binding. Role은 지정 ConfigMap 하나 update만 허용. |
 | 조회 | 일반 오류는 자동 retry하지 않으며 focus/reconnect refetch=false. 공통 조회·변경 경계에서만 HTTP 503이고 `code`가 정확히 `CoverageWarming`인 응답을 최대 180회 재시도한다(Retry-After 1–5초, 기본 2초). 일반 503과 응답 미수신·전송 결과 미확인 변경은 재시도하지 않는다. AbortSignal로 이동/logout 취소. 보이는 운영자 영역만 제한 polling; 라이브는 push. 401/403 payload 숨김. 독립 Query로 미지원·빈 값·실패·오래됨·동작 실패 분리. |
 | 원본·안전 | RFC3339Nano·정밀 정수·null/0 구별. 외부 문자열/JSON은 텍스트, export 복사본에서 credential 제거. API code/field/reason 보존; 문장은 `lib/labels.ts`, 미등록 원본도 보존. |
