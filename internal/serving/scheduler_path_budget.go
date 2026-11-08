@@ -8,7 +8,7 @@ func ResolvePathBudget(settings SchedulerSettings, budgets []PathBudget, w *Defi
 	selected := PathBudget{WorkloadUID: w.UID, DefinitionID: identity}
 	for _, budget := range budgets {
 		if budget.WorkloadUID == w.UID && budget.DefinitionID == identity {
-			if budget.Source == PathBudgetObserved {
+			if budget.Source == PathBudgetObserved && settings.UsesObservedPathBudgets() {
 				return budget
 			}
 			selected = budget

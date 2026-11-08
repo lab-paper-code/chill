@@ -56,6 +56,17 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 		order = append(order, w.UID)
 		g := newCapacityGroup(ctx, settings, snapshot, w)
 		state := t.groups[w.UID]
+		// Configured policy takes effect at this boundary, without publishing an
+		// older observed group while configured rows are pending.
+		if state != nil && !settings.UsesObservedPathBudgets() {
+			for _, old := range []*capacityGroup{state.active, state.building, state.latest} {
+				if old != nil && !old.sameBudget(g) {
+					t.dropLocked(w.UID, state)
+					state = nil
+					break
+				}
+			}
+		}
 		if state != nil && !state.latest.sameStructure(g) {
 			t.dropLocked(w.UID, state)
 			state = nil

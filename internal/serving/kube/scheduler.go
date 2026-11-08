@@ -117,6 +117,7 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
 		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
 	}, observationLog.CapacityRecords)
+	runtime.SetPathBudgetPolicy(config.Settings)
 	return c, nil
 }
 
@@ -136,6 +137,7 @@ func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig)
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	previousStatic := c.config.StaticRouting
 	c.config = config
+	c.runtime.SetPathBudgetPolicy(config.Settings)
 	c.mu.Unlock()
 	after := len(config.Settings.AutonomousWorkloads) > 0
 	c.setRoutingControl(before, after)
@@ -159,6 +161,7 @@ func (c *SchedulerController) AcceptSettings(ctx context.Context, settings servi
 	c.mu.Lock()
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
 	c.config.Settings, c.config.Preparations = settings, preparations
+	c.runtime.SetPathBudgetPolicy(settings)
 	c.mu.Unlock()
 	c.setRoutingControl(before, len(settings.AutonomousWorkloads) > 0)
 	return nil

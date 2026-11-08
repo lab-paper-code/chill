@@ -411,3 +411,22 @@ func TestInsufficientPathSummaryKeepsConfiguredCapacityPolicy(t *testing.T) {
 		t.Fatalf("observed zero was replaced by configured margin: %+v", selected)
 	}
 }
+
+func TestReplayDisabledObservationsUseConfiguredBudget(t *testing.T) {
+	s, snap := schedulerFixture()
+	enabled := false
+	s.ObservedPathBudgets, s.CompletionMarginMS = &enabled, 3
+	s.AutonomousWorkloads, snap.Arrivals = nil, nil
+	w := snap.Workloads[0]
+	w.SLO.TargetLatency = time.Second
+	snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{1e6})
+	snap.Arrivals = []SchedulerArrival{{ID: "arrival", At: snap.ObservationEnd.Add(-s.ObservationWindow), Definition: w, Accepted: true}}
+	for _, total := range []float64{0, 900} {
+		snap.PathBudgets = []PathBudget{{WorkloadUID: w.UID, DefinitionID: w.Identity(), Source: PathBudgetObserved,
+			TotalMS: total, PostMS: total / 2, JudgmentPercentile: 100}}
+		estimate := schedulerRequireEstimate(t, schedulerKeepForTest(t, s, snap), w.UID)
+		if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != 4e6 || estimate.Percentile != 97.5 {
+			t.Fatalf("offline replay applied disabled observation: %+v", estimate)
+		}
+	}
+}

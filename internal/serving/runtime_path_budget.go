@@ -4,6 +4,17 @@ type runtimePathMargins struct {
 	totalMS, postMS float64
 }
 
+// SetPathBudgetPolicy applies accepted policy to new calls atomically. Disabling
+// observed budgets removes per-definition overrides; accepted calls stay frozen.
+func (r *Runtime) SetPathBudgetPolicy(settings SchedulerSettings) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.completionMargin = settings.CompletionMarginMS
+	if !settings.UsesObservedPathBudgets() {
+		r.pathBudgets = nil
+	}
+}
+
 // SetPathBudgets publishes active per-definition margins for new calls.
 // Copy only numerical defaults outside the owner lock, never sample diagnostics.
 func (r *Runtime) SetPathBudgets(budgets []PathBudget) {
