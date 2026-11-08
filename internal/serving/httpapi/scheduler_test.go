@@ -178,11 +178,6 @@ func settingsServiceForTest(
 		t.Fatal(err)
 	}
 	objectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if completionAppendFailure && r.URL.Query().Get("prefix") == servingkube.DispatchOccupancyPrefix {
-			if err := observationLog.Close(r.Context()); err != nil {
-				t.Error(err)
-			}
-		}
 		_, _ = io.WriteString(w, "<ListBucketResult></ListBucketResult>")
 	}))
 	t.Cleanup(objectServer.Close)
@@ -207,6 +202,25 @@ func settingsServiceForTest(
 	})
 	service.Controller = controller
 	t.Cleanup(service.Close)
+	// PUT applies to a fully accepted input snapshot, never an injected controller
+	// alone. Read-only fixture callers may intentionally have absent/invalid CM.
+	if cm, err := kube.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{}); err == nil {
+		if _, err := application.DecodeSchedulerConfiguration(cm.Data["scheduler.json"], 1<<20); err == nil {
+			err = service.Refresh(context.Background())
+			if (err != nil) != refreshFailure {
+				t.Fatalf("initial configuration acceptance: %v", err)
+			}
+		}
+	}
+	if completionAppendFailure {
+		kube.(*fake.Clientset).PrependReactor("update", "configmaps", func(ktesting.Action) (bool, runtime.Object, error) {
+			// Intent is already queued. Fail only the post-application append.
+			if err := observationLog.Close(context.Background()); err != nil {
+				t.Error(err)
+			}
+			return false, nil, nil
+		})
+	}
 	return service, execution, refreshes
 }
 
@@ -229,7 +243,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 		{name: "validation prevents write", resourceAllowed: true, invalidSettings: true, want: http.StatusBadRequest},
 		{name: "omitted completion margin prevents write", resourceAllowed: true, omit: `"completionMarginMS":0,`, want: http.StatusBadRequest},
 		{
-			name: "refresh failure does not enable stale catalog", resourceAllowed: true, refreshFailure: true,
+			name: "unaccepted catalog prevents persistence", resourceAllowed: true, refreshFailure: true,
 			autonomous: []string{"workload-uid"}, stored: []string{"workload-uid"}, want: http.StatusServiceUnavailable,
 		},
 		{
@@ -294,7 +308,7 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 					t.Error(err)
 				}
 			})
-			service, execution, refreshes := settingsServiceForTest(t, kube, observationLog, before, tc.refreshFailure, tc.completionAppendFailure)
+			service, execution, _ := settingsServiceForTest(t, kube, observationLog, before, tc.refreshFailure, tc.completionAppendFailure)
 			controller := service.Controller
 			if err := execution.Publish(&serving.Definition{Name: "workload", UID: "workload-uid"}); err != nil {
 				t.Fatal(err)
@@ -331,23 +345,18 @@ func TestSchedulerSettingsPersistAndApplyFailClosed(t *testing.T) {
 			if response.Code != http.StatusOK {
 				if tc.completionAppendFailure {
 					assertSchedulerSettingsUnapplied(t, persisted, controller, after, after)
-					if updates != 1 || refreshes.Load() != 1 {
+					if updates != 1 {
 						t.Fatal("completion failure changed apply sequence")
 					}
 					return
 				}
-				wantDesired := before
-				if tc.refreshFailure {
-					wantDesired = after
-					assertSchedulerSettingsRefreshFailed(t, observationLog, controller, int(refreshes.Load()))
-				}
-				assertSchedulerSettingsUnapplied(t, persisted, controller, before, wantDesired)
-				if (tc.observationLogFailure || !tc.resourceAllowed || tc.invalidSettings || tc.omit != "" || tc.missingRefresh) && updates != 0 {
-					t.Fatal("denied/unrecorded/invalid/unrefreshable settings performed CM write")
+				assertSchedulerSettingsUnapplied(t, persisted, controller, before, before)
+				if (tc.observationLogFailure || !tc.resourceAllowed || tc.invalidSettings || tc.omit != "" || tc.missingRefresh || tc.refreshFailure) && updates != 0 {
+					t.Fatal("denied/unrecorded/invalid/unaccepted settings performed CM write")
 				}
 				return
 			}
-			if !reflect.DeepEqual(controller.Settings(), stored) || updates != 1 || refreshes.Load() != 1 || persisted.Data["other"] != "untouched" {
+			if !reflect.DeepEqual(controller.Settings(), stored) || updates != 1 || persisted.Data["other"] != "untouched" {
 				t.Fatal("settings not durably applied or unrelated CM data altered")
 			}
 			assertSchedulerSettingsAudit(t, persisted, response.Body.Bytes(), observationLog, before, stored)
@@ -368,19 +377,6 @@ func assertSchedulerSettingsUnapplied(
 	}
 	if !reflect.DeepEqual(controller.Settings(), before) || !reflect.DeepEqual(desired.Settings, wantDesired) {
 		t.Fatal("failed settings change lost desired-versus-accepted policy separation")
-	}
-}
-
-func assertSchedulerSettingsRefreshFailed(
-	t *testing.T, observationLog *observation.ObservationLog, controller *servingkube.SchedulerController, refreshes int,
-) {
-	t.Helper()
-	if refreshes != 1 || len(controller.Settings().AutonomousWorkloads) != 0 {
-		t.Fatal("post-persistence refresh failure enabled the previously accepted catalog")
-	}
-	records, _, _, _, err := observationLog.SchedulerObservationPage(context.Background(), time.Now().Add(-time.Minute), time.Now().Add(time.Second), 10, 0, observation.SchedulerObservationSelection{})
-	if err != nil || len(records) != 2 || records[1].Settings.AppliedAt != nil || records[1].Settings.Error == "" {
-		t.Fatalf("refresh failure audit claimed application: %+v %v", records, err)
 	}
 }
 

@@ -61,6 +61,18 @@ ConfigMap 응답에서 읽는다. refresh/Tick의 service 제어 잠금을 기�
 응답도 이 잠금 없이 쓴다. `meters`는 별도로 수락된 구성의 projection이므로 저장된
 ConfigMap과 같은 적용 시점을 보장하지 않는다. 설정 PUT의 ETag 낙관적 동시성 계약은 유지한다.
 
+설정 PUT은 최초 full refresh가 수락한 typed catalog·준비 명세에 새 정책을 동기 적용한다.
+`200`의 `appliedAt`은 이 정책 수락 시각이며 다음 control Tick이 새 설정을 소비한다.
+`servingMemoryBytes`의 큐 cap은 수락된 측정으로 다시 계산하고 completion margin·occupancy
+fallback도 함께 갱신한다. desired ConfigMap의 미수락 reserved·전력·static routing·catalog는
+적용하지 않으며 meter worker를 재시작하거나 profile bundle을 업로드하지 않는다.
+원격 준비는 별도 직렬 잠금으로 실행하고 게시 직전에 ConfigMap resourceVersion을 재확인한다.
+실패·취소·구버전 준비는 기존 수락 상태를 보존한다. 같은 qualified profile ID의 immutable
+bundle만 재사용하며 full preparation의 Node UID·현재 image·큐 검사는 유지한다.
+기존 profile ticker가 catalog와 외부 ConfigMap 수정을 `profileInterval`마다 수락한다.
+control loop는 원격 refresh 완료와 독립적으로 수락된 입력을 사용한다. 최초 수락 전 PUT은 거절한다.
+catalog의 `configVersion`은 마지막 full acceptance를 유지하며 PUT의 새 ETag로 바꾸지 않는다.
+
 | API | 동작 |
 |---|---|
 | `GET /api/v1/scheduler` | settings와 실제 snapshot, decision, actions, results, `costIssues` |

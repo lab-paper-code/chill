@@ -9,13 +9,13 @@ A는 측정·판정 소유자의 기존 입력, B는 실제 환경 입력으로 
 
 ## 2. settings 증거와 실패 해석
 
-판단 당시 적용값의 권위는 기존 `Decision.Settings`다. PUT의 사전 append → ConfigMap 저장 → full refresh → 후속 append를 유지한다. 초기·외부 ConfigMap 값은 그 값을 쓴 Decision의 전체 settings로 해석한다. refresh 합성 변경 행, 초기 before=after 가짜 변경 행, 별도 provenance 저장소는 만들지 않는다. 첫 판단 전 모든 적용 이벤트의 완전 복원을 요구하지 않는다. ConfigMap 출처는 실제 보존된 참조·binding 범위에서만 주장하며 과거 UID/RV를 꾸미지 않는다.
+판단 당시 적용값의 권위는 기존 `Decision.Settings`다. PUT은 사전 append → ConfigMap 저장 → 마지막으로 완전히 수락한 typed 입력에 정책 동기 적용 → 후속 append 순서다. `appliedAt`은 정책 수락을 뜻하며 원격 catalog 전체 수락이나 물리 전환 완료를 뜻하지 않는다. 큐 cap은 수락된 측정 envelope와 새 servingMemory로 재도출하고 미수락 외부 구성은 유지한다. 초기·외부 ConfigMap 값은 기존 profile ticker의 full refresh가 수락한 뒤 Decision의 전체 settings로 해석한다. refresh 합성 변경 행, 초기 before=after 가짜 변경 행, 별도 provenance 저장소는 만들지 않는다. 첫 판단 전 모든 적용 이벤트의 완전 복원을 요구하지 않는다. ConfigMap 출처는 실제 보존된 참조·binding 범위에서만 주장하며 과거 UID/RV를 꾸미지 않는다.
 
 | 상태 | 해석 |
 |---|---|
 | 사전 append 실패 | ConfigMap 변경 전 중단 |
-| 저장 성공·refresh 실패 | 저장 요청과 현재 적용값이 다를 수 있음 |
-| refresh 성공·후속 append 실패 | HTTP 오류가 미적용을 뜻하지 않음; rollback을 주장하지 않음 |
+| 저장 성공·정책 수락 전 요청 만료/적용 실패 | 저장 요청과 현재 적용값이 다를 수 있음; `appliedAt` 없음 |
+| 정책 수락 성공·후속 append 실패 | HTTP 오류가 미적용을 뜻하지 않음; rollback을 주장하지 않음 |
 | 이후 refresh 적용 | 당시 Decision의 실제 settings로 해석 |
 | 적용 증거 부족 | 성공·실패 추정 없이 미확인 |
 
@@ -93,6 +93,9 @@ same field. The aggregation block cannot override it; duplicate
 Invalid blocks are rejected, and POST reads the current ConfigMap rather than
 falling back to a previously accepted policy. The accepted profile snapshot
 must have that same ConfigMap resourceVersion.
+Settings-only PUT intentionally leaves the full-acceptance resourceVersion unchanged.
+Until the existing profile refresh accepts that complete ConfigMap, DOM POST can
+remain unavailable even after a successful policy PUT.
 
 Native DOM creation uses a short **configured closed-loop burst**, not a
 saturation test. No Go scientific defaults or hidden duration/worker derivation

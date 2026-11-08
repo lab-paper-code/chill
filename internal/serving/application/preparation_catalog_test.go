@@ -246,6 +246,8 @@ type preparationCatalogFixture struct {
 	service      *SchedulerService
 	profile      serving.Profile
 	declarations client.Client
+	resources    map[string]any
+	evidence     preparationEvidenceObjects
 	nodeFailed   atomic.Bool
 	imageFailed  atomic.Bool
 }
@@ -320,7 +322,7 @@ func newPreparationCatalogFixture(t *testing.T) *preparationCatalogFixture {
 	if err != nil || len(view.CurrentProfiles()) != 1 || len(view.Insufficiencies) != 0 {
 		t.Fatalf("retained evidence fixture did not pass catalog admission: %+v err=%v", view, err)
 	}
-	fixture := &preparationCatalogFixture{service: service, profile: view.CurrentProfiles()[0]}
+	fixture := &preparationCatalogFixture{service: service, profile: view.CurrentProfiles()[0], resources: resources, evidence: objects}
 	if _, err := service.kube.CoreV1().Nodes().Create(context.Background(), &core.Node{ObjectMeta: meta.ObjectMeta{
 		Name: fixture.profile.NodeName, UID: types.UID(fixture.profile.Condition.NodeUID),
 	}}, meta.CreateOptions{}); err != nil {
@@ -414,8 +416,12 @@ func (preparationEvidenceObjects) List(context.Context, string) ([]evidencestore
 
 // Build the same retained plan/Run/raw contract as kube's catalog evidence tests.
 // The Catalog verifies these records; no prepared map or verified profile is injected.
-func preparationCatalogEvidence(t *testing.T) (map[string]any, preparationEvidenceObjects) {
+func preparationCatalogEvidence(t *testing.T, identity ...string) (map[string]any, preparationEvidenceObjects) {
 	t.Helper()
+	suffix := ""
+	if len(identity) != 0 {
+		suffix = identity[0]
+	}
 	payload, err := os.ReadFile("../../profiling/profiler/evidence/testdata/lattepanda-ort-cpu-bs1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -424,13 +430,16 @@ func preparationCatalogEvidence(t *testing.T) (map[string]any, preparationEviden
 	if err := json.Unmarshal(payload, &active); err != nil {
 		t.Fatal(err)
 	}
+	active.Candidate.Inputs.ModelSpec.Name += suffix
+	active.State.Model += suffix
+	active.Actor.Model += suffix
 	active.State.Firstfloor = &modelcompat.FirstfloorSettings{MaxBatchSize: 1, MaxQueueSize: 32, DeadlinePolicy: "keep"}
 	active.Measurement.DurationToleranceSeconds = .5
 	idle := active
 	idle.Measurement = profilingrun.MeasurementContract{Batch: 1, SettlingDurationSeconds: 60, DurationSeconds: 30, DurationToleranceSeconds: .5,
 		StartupWarmupIterations: active.Measurement.StartupWarmupIterations, WarmupBatchSizes: active.Measurement.WarmupBatchSizes,
 		WorkloadMode: profilingrun.IdleModelLoadedWorkloadMode}
-	spec, err := projection.ProjectCurvePlanSpec("catalog-plan", active, idle, derivation.CurveConversionContract{}, []int{1})
+	spec, err := projection.ProjectCurvePlanSpec("catalog-plan"+suffix, active, idle, derivation.CurveConversionContract{}, []int{1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,10 +460,10 @@ func preparationCatalogEvidence(t *testing.T) (map[string]any, preparationEviden
 	if err != nil {
 		t.Fatal(err)
 	}
-	planRef := campaign.StoredObjectReference{Store: "evidence", Key: "plan.json", SchemaVersion: plan.SchemaVersion(), Size: int64(len(planBytes))}
+	planRef := campaign.StoredObjectReference{Store: "evidence", Key: "plan"+suffix+".json", SchemaVersion: plan.SchemaVersion(), Size: int64(len(planBytes))}
 	objects[evidencestore.ObjectLocation{Store: planRef.Store, Key: planRef.Key}] = planBytes
 	measurement := &edge.BatchEnergyOptimization{
-		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "catalog-campaign", UID: "campaign-uid", Generation: 1, ResourceVersion: "1"},
+		ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "catalog-campaign"+suffix, UID: types.UID("campaign-uid"+suffix), Generation: 1, ResourceVersion: "1"},
 		Spec: edge.BatchEnergyOptimizationSpec{
 			State: edge.MeasurementStateSpec{Candidate: edge.ProfilingRunCandidateSpec{ModelSpec: active.Candidate.Inputs.ModelSpec.Name,
 				Preprocessor: active.State.Preprocessor.Name, DeviceClass: active.State.DeviceClass, ExecutionPath: active.Candidate.ExecutionPath, PowerMode: active.State.PowerMode}, TargetNode: active.TargetNode.Name},
@@ -481,7 +490,7 @@ func preparationCatalogEvidence(t *testing.T) (map[string]any, preparationEviden
 		if index >= 2 {
 			config, watts, mode = idle, 4, campaign.WorkloadModeIdle
 		}
-		name := fmt.Sprintf("trial-%d", index)
+		name := fmt.Sprintf("trial-%d%s", index, suffix)
 		raw, idleRaw, execution := preparationTrialRecords(config, name+"-pod", watts)
 		var rawRef campaign.StoredObjectReference
 		if mode == campaign.WorkloadModeIdle {
@@ -530,8 +539,8 @@ func preparationCatalogEvidence(t *testing.T) (map[string]any, preparationEviden
 	if err != nil {
 		t.Fatal(err)
 	}
-	measurement.Status.Result = &edge.ProfilingRunEvidenceReference{Store: "evidence", Key: "result.json", SchemaVersion: result.SchemaVersion(), Size: int64(len(resultBytes))}
-	objects[evidencestore.ObjectLocation{Store: "evidence", Key: "result.json"}] = resultBytes
+	measurement.Status.Result = &edge.ProfilingRunEvidenceReference{Store: "evidence", Key: "result"+suffix+".json", SchemaVersion: result.SchemaVersion(), Size: int64(len(resultBytes))}
+	objects[evidencestore.ObjectLocation{Store: "evidence", Key: "result"+suffix+".json"}] = resultBytes
 	resources[base+"/namespaces/serving/batchenergyoptimizations"] = edge.BatchEnergyOptimizationList{
 		TypeMeta: meta.TypeMeta{APIVersion: edge.GroupVersion.String(), Kind: "BatchEnergyOptimizationList"}, Items: []edge.BatchEnergyOptimization{*measurement}}
 	return resources, objects
