@@ -18,7 +18,10 @@ firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`
 | 소유자 | 책임·실제 완료 근거 |
 |---|---|
 | `internal/firstfloor` | bounded per-UID queue, frozen SLO, 같은 UID 호환 batch, energy-gain 대기, 단일 runner; 요청별 progress·실제 batch·runner 종료·동기 응답 |
-| `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 용량표/κ 합, 노드 계획, 분배·판단 기록; 실제 native 상태·반환·적용 기록 |
+| `internal/serving` | 정의·receipt·수명·ingress 대기, 운영 부하, 용량표/κ 합·노드 계획; 공통 CHILL I/O·정확/증분 수치·실물 admission adapter와 decision/action DAG 변환 |
+| `internal/scheduler/protocol` | CHILL 비의존 scalar 문제·계획·순위·평가·상태/기록 port; runtime IPC와 별개 |
+| `internal/scheduler/v1`, `internal/scheduler/v2` | protocol만 사용하는 실제 탐색 순회; v1 keep/empty K2/K3, v2 cover/polish/combine/priced·예산·finalists·정확 깔때기 |
+| `internal/scheduler` | 기존 `planSearchStrategy`로 모든 자동제어 Workload의 공식 구현 하나 선택; 기본 v1, 선택 v2와 v1 fallback 연결 |
 | `internal/serving/firstfloor` | HTTP/metadata/progress typed 경계, native/client span; request/UID/definition/physical instance 상관 |
 | `internal/serving/kube` | 실제 자원 snapshot·catalog·Pod/policy/power 원자 동작·DAG; API 뒤 실제 readiness/drain/삭제/Node 상태 |
 | `internal/serving/application` | scheduler configuration acceptance, power observation admission, catalog/cost refresh, runtime preparations and profile-reuse retention; settings-change transaction under the existing shared mutation lock |
@@ -30,6 +33,12 @@ firstfloor Go 큐·배처·persistent Python IPC runner는 `internal/firstfloor`
 | 기존 metric/evidence owner | Node wall-power·sample/failure·적분·immutable raw; 조건·구간·coverage가 확인된 watts/joules |
 
 `firstfloor`는 Serving/Profiler를 역참조하지 않는 leaf다. Serving core가 leaf를 사용하고 Kubernetes/API는 kube adapter에 둔다. Profiler는 자체 evidence 계약에 같은 실행 경로를 연결하며 `.go-arch-lint.yml`도 이 방향을 따른다.
+
+Scheduler 방향은 `serving → scheduler → {v1,v2} → protocol`이며 serving·selector도 protocol을 사용한다.
+알고리즘은 serving·Kubernetes·firstfloor·evidence adapter와 서로를 import하지 않는다.
+정확/증분 수치와 물리 admission·후처리는 serving port로 재사용한다.
+이 경계 변경은 snapshot capture, runtime protocol, 요청 수명, physical lifecycle, 잠금·예약 정책을 바꾸지 않는다.
+탐색 계약과 기록은 [용량표 계획기](analytic-planner.md)가 소유한다.
 
 Operations uses ClusterState methods for removal markers and Observer methods for source restoration/termination/retirement, preparation publication and node-move transitions. Each method owns the original critical section; publishing stopped sources, retiring the operation runtime's Pod and deleting the source remain in that order under the same observation lock. This encapsulation does not merge the observation lock with the scheduler reservation locks.
 
