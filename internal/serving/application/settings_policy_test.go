@@ -191,15 +191,7 @@ func TestSettingsApplyWhileNewProfileUploadHeld(t *testing.T) {
 		t.Fatal("policy acceptance changed private fields, meters or stored declarations")
 	}
 	release()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("older in-flight refresh published over the PUT")
-		}
-		done <- err // retain completion for cleanup
-	case <-time.After(3 * time.Second):
-		t.Fatal("released refresh did not complete")
-	}
+	assertStalePolicyRefreshRejected(t, done)
 	if service.Profiles.Load() != published || !reflect.DeepEqual(service.Controller.Settings(), settings) {
 		t.Fatal("stale refresh restored old settings or accepted incomplete source state")
 	}
@@ -211,6 +203,19 @@ func TestSettingsApplyWhileNewProfileUploadHeld(t *testing.T) {
 	if fresh.ConfigVersion != newVersion || fresh.Preparations[newID].Bundle.Size == 0 ||
 		fresh.Preparations[newID].Config.MaxQueueBytes != 32<<20 || !reflect.DeepEqual(service.Controller.Settings(), settings) {
 		t.Fatal("fresh refresh did not accept new policy and complete catalog together")
+	}
+}
+
+func assertStalePolicyRefreshRejected(t *testing.T, done chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("older in-flight refresh published over the PUT")
+		}
+		done <- err // retain completion for cleanup
+	case <-time.After(3 * time.Second):
+		t.Fatal("released refresh did not complete")
 	}
 }
 
