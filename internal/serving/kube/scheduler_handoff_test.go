@@ -2,17 +2,26 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	edge "github.com/lab-paper-code/chill/api/v1alpha1"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
+	native "github.com/lab-paper-code/chill/internal/firstfloor"
+	chillmeta "github.com/lab-paper-code/chill/internal/metadata"
+	"github.com/lab-paper-code/chill/internal/nodeactuator"
 	"github.com/lab-paper-code/chill/internal/serving"
 	servingstate "github.com/lab-paper-code/chill/internal/serving/state"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -311,4 +320,158 @@ func admitReadyHandoffProposal(t *testing.T, c *SchedulerController) {
 	}
 	c.launch(next, c.config)
 	c.wg.Wait()
+}
+
+// The controller and normal operations consume real actor State/ACK responses.
+// Only runner initialization and Kubernetes/actuator effects use existing fixtures.
+func TestStoppedPowerChangeFinishesNormalRetirement(t *testing.T) {
+	c := handoffController(t)
+	ctx := c.ctx
+	snapshot := handoffSnapshot(t, c)
+	old := snapshot.Instances[slices.IndexFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.Node.Name == "a" })]
+	cm := &core.ConfigMap{}
+	key := client.ObjectKey{Namespace: "chill-system", Name: "a"}
+	if err := c.store.client.Get(ctx, key, cm); err != nil {
+		t.Fatal(err)
+	}
+	var config native.Config
+	if err := json.Unmarshal([]byte(cm.Data["config.json"]), &config); err != nil {
+		t.Fatal(err)
+	}
+	config.Mode = servingstate.NativeServingMode
+	oldHTTP, _ := preparationNativeHTTPClient(t, ctx, config, *old.Profile)
+	c.observer.native.HTTPClient = oldHTTP
+
+	class := &edge.DeviceClass{}
+	if err := c.store.client.Get(ctx, client.ObjectKey{Name: "cpu"}, class); err != nil {
+		t.Fatal(err)
+	}
+	class.Spec.PowerModes = append(class.Spec.PowerModes, edge.PowerMode{Name: lowMode,
+		Actuator: edge.PowerModeActuator{Kind: edge.PowerModeActuatorJetsonNVPModel, JetsonNVPModel: &edge.JetsonNVPModelTarget{ID: 1}}})
+	if err := c.store.client.Update(ctx, class); err != nil {
+		t.Fatal(err)
+	}
+	settle := settleAgent(class)
+	kube := c.kube.(*kubefake.Clientset)
+	node, err := kube.CoreV1().Nodes().Get(ctx, old.Node.Name, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.Labels[chillmeta.PowerMode] = old.Profile.Condition.PowerMode
+	settle(node)
+	if _, err := kube.CoreV1().Nodes().Update(ctx, node, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c.store.client = &nodeAPI{Client: c.store.client, kube: kube, agent: settle}
+	c.config.PowerPolicies = []nodeactuator.ActuationPolicySpec{{Name: "retirement-power", DeviceClass: class.Name, PowerMode: lowMode,
+		ActuatorKind: nodeactuator.ActuatorKindJetsonNVPModel, MaxActuationDurationSeconds: 1}}
+	profile := *old.Profile
+	profile.ID, profile.Condition.PowerMode = "retirement-target-profile", lowMode
+	c.observer.SetProfiles(append(c.observer.Profiles(), profile))
+	wanted := c.config.Preparations[old.Profile.ID].Instance
+	wanted.ID, wanted.Profile = "retirement-replacement", &profile
+	spec := c.config.Preparations[old.Profile.ID]
+	spec.Instance = wanted
+	c.config.Preparations[profile.ID] = spec
+	goal := serving.SchedulerCandidate{ID: "stopped-power-retirement", Instances: []serving.SchedulerInstance{wanted}, Actions: []serving.Action{
+		{ID: "retirement-stop", Kind: servingstate.OperationStop, Instance: old.ID, Node: old.Node},
+		{ID: "retirement-drain", Kind: servingstate.OperationDrain, Instance: old.ID, Node: old.Node, DependsOn: []string{"retirement-stop"}},
+		{ID: "retirement-power", Kind: servingstate.OperationPower, Node: old.Node, To: lowMode, DependsOn: []string{"retirement-drain"}},
+		{ID: "retirement-remove", Kind: servingstate.OperationRemove, Instance: old.ID, Node: old.Node, DependsOn: []string{"retirement-power"}},
+		{ID: "retirement-prepare", Kind: servingstate.OperationPrepare, Instance: wanted.ID, Node: old.Node, DependsOn: []string{"retirement-remove"}},
+	}}
+	for _, action := range goal.Actions[:3] {
+		handoffSnapshot(t, c)
+		handoffDispatch(t, c, &goal, action)
+		requireCompletedContinuationAction(t, c.runs[action.ID], action.Kind)
+	}
+	snapshot = handoffSnapshot(t, c)
+	index := slices.IndexFunc(snapshot.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID })
+	actual := snapshot.Instances[index]
+	physical := schedulerPhysicalState(old.ID, c.runtime.Instances())
+	if actual.Ready || !actual.Stopped || actual.Terminated || physical == nil || physical.Native == nil || !physical.Native.Ready ||
+		!slices.ContainsFunc(snapshot.Nodes, func(n serving.SchedulerNode) bool {
+			return n.Node == old.Node && n.Ready && n.PowerMode == lowMode && slices.Contains(n.Reasons, serving.NodeInstanceUnavailable)
+		}) {
+		t.Fatalf("successful power did not retain the stopped, mode-mismatched physical actor: %+v %+v", actual, physical)
+	}
+	remove := goal.Actions[3]
+	if !c.dependenciesReady(remove, goal, c.runtime) {
+		t.Fatal("normal retirement still depends on measured execution readiness")
+	}
+	if c.unconfirmedActionReason(goal.Actions[0], goal) == "" || c.unconfirmedActionReason(goal.Actions[2], goal) == "" ||
+		c.unconfirmedActionReason(goal.Actions[4], goal) == "" {
+		t.Fatal("retirement permission leaked into stop, power or prepare")
+	}
+	wrongSource := remove
+	wrongSource.Instance = "different-executor"
+	if c.dependenciesReady(wrongSource, goal, c.runtime) {
+		t.Fatal("retirement permission escaped its exact physical source")
+	}
+	c.state.Snapshot.Instances[index].Stopped = false
+	if c.dependenciesReady(remove, goal, c.runtime) {
+		t.Fatal("an active unconfirmed source acquired retirement permission")
+	}
+	c.state.Snapshot.Instances[index].Stopped = true
+	c.state.Snapshot.Instances = append(c.state.Snapshot.Instances, serving.SchedulerInstance{ID: "other-unknown", Node: old.Node, Stopped: true})
+	if c.dependenciesReady(remove, goal, c.runtime) {
+		t.Fatal("a stopped but unconfirmed other occupant was ignored")
+	}
+	c.state.Snapshot.Instances = c.state.Snapshot.Instances[:len(c.state.Snapshot.Instances)-1]
+	nodeIndex := slices.IndexFunc(c.state.Snapshot.Nodes, func(n serving.SchedulerNode) bool { return n.Node == old.Node })
+	c.state.Snapshot.Nodes[nodeIndex].Ready = false
+	if c.dependenciesReady(remove, goal, c.runtime) {
+		t.Fatal("NodeNotReady acquired retirement permission")
+	}
+	c.state.Snapshot.Nodes[nodeIndex].Ready = true
+
+	// A stopped flag never replaces fresh native drain evidence.
+	unavailable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "native unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(unavailable.Close)
+	proxy, err := url.Parse(unavailable.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
+	if _, err := c.operations.Execute(ctx, servingstate.Operation{Kind: servingstate.OperationRemove, Node: old.Node, Instance: old.ID}); err == nil {
+		t.Fatal("unconfirmed native removal succeeded")
+	}
+	c.observer.native.HTTPClient = oldHTTP
+	if _, err := kube.CoreV1().Pods(key.Namespace).Get(ctx, key.Name, meta.GetOptions{}); err != nil {
+		t.Fatal("unconfirmed removal discarded the physical source", err)
+	}
+	handoffDispatch(t, c, &goal, remove)
+	requireCompletedContinuationAction(t, c.runs[remove.ID], "normal remove")
+	if state := c.runs[remove.ID].result.DrainNative[old.ID]; !state.Ready || len(state.Requests) != 0 {
+		t.Fatal("normal remove lacks actual native drain readback")
+	}
+	for _, resource := range []string{"pod", "service", "config"} {
+		var err error
+		switch resource {
+		case "pod":
+			_, err = kube.CoreV1().Pods(key.Namespace).Get(ctx, key.Name, meta.GetOptions{})
+		case "service":
+			_, err = kube.CoreV1().Services(key.Namespace).Get(ctx, servingstate.InstanceServicePrefix+old.PodUID, meta.GetOptions{})
+		case "config":
+			err = c.store.client.Get(ctx, key, &core.ConfigMap{})
+		}
+		if !apierrors.IsNotFound(err) {
+			t.Fatalf("retired %s still exists: %v", resource, err)
+		}
+	}
+	handoffSnapshot(t, c)
+	prepare := scheduledOperation(goal.Actions[4], &goal, c.config, c.powerTargets, snapshot.Workloads)
+	nextHTTP, _ := preparationNativeHTTPClient(t, ctx, prepare.Prepare.Config, profile)
+	c.observer.native.HTTPClient = nextHTTP
+	handoffDispatch(t, c, &goal, goal.Actions[4])
+	requireCompletedContinuationAction(t, c.runs[goal.Actions[4].ID], "replacement prepare")
+	fresh := handoffSnapshot(t, c)
+	if slices.ContainsFunc(fresh.Instances, func(i serving.SchedulerInstance) bool { return i.ID == old.ID }) ||
+		!slices.ContainsFunc(fresh.Instances, func(i serving.SchedulerInstance) bool {
+			return i.TargetID == wanted.ID && i.Node == old.Node && i.Ready && !i.Stopped && i.Profile.ID == profile.ID
+		}) {
+		t.Fatalf("retirement did not make way for the next measured-mode preparation: %+v", fresh.Instances)
+	}
 }

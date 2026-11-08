@@ -12,15 +12,22 @@ import (
 // This is the same precondition used by dispatch; missing identities and other
 // dependency failures deliberately do not establish an unconfirmed frontier.
 func (c *reservationState) unconfirmedActionReason(action serving.Action, target serving.SchedulerCandidate) string {
+	// An exact stopped source may finish retirement after power changes its
+	// measured mode. Normal remove still owns native drain and termination proof.
+	removingStopped := action.Kind == servingstate.OperationRemove && action.Node.UID != "" && action.Instance != "" &&
+		slices.ContainsFunc(c.state.Snapshot.Instances, func(instance serving.SchedulerInstance) bool {
+			return instance.ID == action.Instance && instance.Node == action.Node && (instance.Stopped || instance.Terminated)
+		})
 	if action.Kind != servingstate.OperationRoute {
 		for _, node := range c.state.Snapshot.Nodes {
-			if node.Node == action.Node && (!node.Ready || slices.Contains(node.Reasons, serving.NodeInstanceUnavailable)) {
+			if node.Node == action.Node && (!node.Ready || slices.Contains(node.Reasons, serving.NodeInstanceUnavailable) && !removingStopped) {
 				return fmt.Sprintf("%s: action %s node %s instance %s", serving.NodeInstanceUnavailable, action.ID, node.Node.UID, action.Instance)
 			}
 		}
 	}
 	for _, instance := range c.state.Snapshot.Instances {
-		if action.Kind != servingstate.OperationRoute && action.Node.UID != "" && instance.Node == action.Node && !instance.Ready && !instance.Stopped && !instance.Terminated {
+		if action.Kind != servingstate.OperationRoute && action.Node.UID != "" && instance.Node == action.Node && !instance.Ready && !instance.Terminated &&
+			(!instance.Stopped || removingStopped && instance.ID != action.Instance) {
 			return fmt.Sprintf("%s: action %s node %s instance %s", serving.NodeInstanceUnavailable, action.ID, instance.Node.UID, instance.ID)
 		}
 	}

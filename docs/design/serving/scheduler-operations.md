@@ -56,6 +56,15 @@ loaded-state integrity failures still fail. Facts are not persisted across a
 server restart or transferred to a replacement Node UID; refresh discards facts
 for absent Node UIDs. Unknown is not “no reboot”.
 
+이미 인가된 exact stopped/terminated 실물의 normal remove는 power 뒤 측정 mode가
+달라져 `Ready=false`/Node `InstanceUnavailable`가 되어도 기존 cleanup을 계속한다.
+이 예외는 해당 remove의 launch/dependency gate에만 적용한다. Node 자체 Ready,
+다른 미확인 occupant, 실제 UID/owner/예약/measurement 보호는 유지한다. normal
+`Operations`가 stop/drain, fresh native 빈 request 목록, exact container 종료,
+finalizer와 Pod/Service/config 소멸을 증명하며 scheduler가 native 적격성을 복제하지 않는다.
+측정 readiness·새 route/prepare/power/stop의 gate는 바꾸지 않는다. process-local
+stop 증거를 재시작으로 잃어 `Stopped=false`가 된 옛 실물을 자동 복구하는 계약은 없다.
+
 
 ## Why concealment forces routing
 
@@ -100,7 +109,7 @@ Observer는 실제 startup Config의 model, Pod UID/container/Node UID와 단일
 
 desired/native DecisionID만 다르면 probe는 오류 대신 `PolicyAckPending`을 반환하되 실제 physical ID/Node/profile/allocation/owner/slot/native Ready/policy/요청과 동일 UID/container·단일 executor 검증을 유지한다. scheduler 원본/compact/summary/기록은 instance `reasons`, POOL은 `InstanceState.reason` **반영 대기**로 표시하고 owned/bound/active POOL에 유지한다. ACK 일치 다음 probe에 지운다. desired로 actual을 덮거나 pending을 완료 proof로 쓰지 않는다.
 `ApplyTarget`은 runtime resolve와 같이 `target.routing[workloadUID][instanceID]>0` 목적지만 policy write/ACK 대기한다. 0/생략된 퇴역 대상은 기존 policy/drain을 유지하여 dead executor ACK로 제거 분배를 막지 않는다. 양수 목적지 ACK·exact UID/container fence는 유지한다(SCH-AC-38). 실제 read/metadata/Pod/Service 오류는 관측 실패다.
-SCH-49 실제 `InstanceUnavailable` Node는 같은 Name+UID의 새 prepare/power와 absence 기반 remove 완료를 보류한다. Node identity/이유를 후보/동작에 남기고 필요한 후속 route/제거도 대기한다. 실행 중 actual 상태를 조작하지 않고 정상 다른 Node 독립 동작과 기존 전역 자원 Pending은 유지한다.
+SCH-49 실제 `InstanceUnavailable` Node는 같은 Name+UID의 새 prepare/power와 absence 기반 remove 완료를 보류한다. Node identity/이유를 후보/동작에 남기고 필요한 후속 route/제거도 대기한다. 위 exact stopped 실물의 정상 retirement만 기존 native cleanup 증명으로 계속하며, 실행 중 actual 상태·독립 Node 동작·기존 전역 자원 Pending은 유지한다.
 
 ### 자원 장부와 예약 표시 — SCH-50~52, AC-37~39
 
