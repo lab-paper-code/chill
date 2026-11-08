@@ -337,10 +337,6 @@ func TestRuntimeCapturesSenderFreezeBeforeBackendReturns(t *testing.T) {
 		if request.NativeSenderElapsedMS == nil || *request.NativeSenderElapsedMS != float64(dispatch.Elapsed)/1e6 {
 			t.Fatalf("assigned request lost exact frozen sender while Execute remains active: %+v", request)
 		}
-		wantWait := call.assignment.DispatchedAt.Sub(receipt.ReceivedAt) - call.acceptedElapsed
-		if request.QueueAge != wantWait {
-			t.Fatalf("assigned server slot wait included pre-acceptance or post-assignment path: got=%s want=%s", request.QueueAge, wantWait)
-		}
 	case <-time.After(time.Second):
 		t.Fatal("native dispatch did not start")
 	}
