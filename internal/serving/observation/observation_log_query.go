@@ -143,6 +143,12 @@ type requestEnvelope struct {
 // requestRows merges the captured rows by request: final, else the open row,
 // else assigned.
 func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEnvelope) bool) ([]*serving.RequestRow, error) {
+	return l.requestRowsWithNative(read, keep, nil)
+}
+
+// requestRowsWithNative offers physical supplements to the path reducer during
+// the same scan. Ordinary query rows retain their HTTP-only merge contract.
+func (l *ObservationLog) requestRowsWithNative(read *observationRead, keep func(*requestEnvelope) bool, native func(*serving.RequestRow)) ([]*serving.RequestRow, error) {
 	// Request rows reference definitions only. Retained immutable definitions
 	// normally resolve them without opening hourly catalogs full of raw profile
 	// populations. A cold archive read loads only a selected row's catalog.
@@ -153,7 +159,17 @@ func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEn
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
 		}
-		if envelope.Kind == serving.RequestRowNative || !keep(&envelope) {
+		if envelope.Kind == serving.RequestRowNative {
+			if native != nil {
+				row := &serving.RequestRow{}
+				if err := json.Unmarshal(raw, row); err != nil {
+					return err
+				}
+				native(row)
+			}
+			return nil
+		}
+		if !keep(&envelope) {
 			return nil
 		}
 		if err := mergeRequestRow(rows, raw, keep, nil); err != nil {

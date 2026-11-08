@@ -338,6 +338,7 @@ type LoadWindow struct {
 	Population string                      `json:"population"`
 	Workloads  []WorkloadLoad              `json:"workloads"`
 	Arrivals   []serving.SchedulerArrival  `json:"arrivals"`
+	PathBudgets []serving.PathBudget         `json:"pathBudgets"`
 	GapUntil   *time.Time                  `json:"gapUntil,omitempty"`
 	Coverage   serving.ObservationCoverage `json:"coverage"`
 }
@@ -356,7 +357,15 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 	defer read.close()
 	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}})
 	result.GapUntil = result.Coverage.GapUntil(from)
-	rows, err := l.requestRows(read, func(*requestEnvelope) bool { return true })
+	native := make(map[pathNativeKey]*serving.RequestRow)
+	rows, err := l.requestRowsWithNative(read, func(*requestEnvelope) bool { return true }, func(row *serving.RequestRow) {
+		key := pathNativeKey{row.RequestID, row.Instance}
+		if previous := native[key]; previous != nil {
+			supplementPathNative(previous, row)
+		} else {
+			native[key] = row
+		}
+	})
 	if err != nil {
 		return result, err
 	}
@@ -397,6 +406,18 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 			load.Completed++
 		}
 	}
+	// Enrich a private row copy only for path reduction. Query/arrival outcomes
+	// and the captured open rows retain their original HTTP evidence.
+	for i, row := range rows {
+		if supplement := native[pathNativeKey{row.RequestID, row.Instance}]; supplement != nil &&
+			row.Instance != "" && (supplement.WorkloadUID == "" || supplement.WorkloadUID == row.WorkloadUID) &&
+			(supplement.DefinitionID == "" || supplement.DefinitionID == row.DefinitionID) {
+			enriched := *row
+			supplementPathNative(&enriched, supplement)
+			rows[i] = &enriched
+		}
+	}
+	result.PathBudgets = serving.ObservePathBudgets(rows, read.definitions, from, to)
 	seconds := result.Duration.Seconds()
 	for _, load := range loads {
 		load.ReceivedRate = float64(load.Received) / seconds
@@ -413,6 +434,35 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
 	})
 	return result, nil
+}
+
+type pathNativeKey struct{ request, instance string }
+
+// supplementPathNative fills only direct worker evidence. It never supplies an
+// HTTP outcome, response timestamp, execution flag or reconstructed stage.
+func supplementPathNative(row, supplement *serving.RequestRow) {
+	if row.NativeQueuedAt == nil {
+		row.NativeQueuedAt = supplement.NativeQueuedAt
+	}
+	if row.NativeRunningAt == nil {
+		row.NativeRunningAt = supplement.NativeRunningAt
+	}
+	if row.NativeFinishedAt != nil || supplement.NativeFinishedAt == nil {
+		return
+	}
+	row.NativeFinishedAt = supplement.NativeFinishedAt
+	row.NativeElapsedMS = supplement.NativeElapsedMS
+	row.QueueMS = supplement.QueueMS
+	row.NativeExecutionComplete = supplement.NativeExecutionComplete
+	if row.NativeOutcome == "" {
+		row.NativeOutcome = supplement.NativeOutcome
+	}
+	if row.NativeError == "" {
+		row.NativeError = supplement.NativeError
+	}
+	if row.BatchID == 0 {
+		row.BatchID, row.BatchSize = supplement.BatchID, supplement.BatchSize
+	}
 }
 
 // requestArrival is a received request as the scheduler counts it.
