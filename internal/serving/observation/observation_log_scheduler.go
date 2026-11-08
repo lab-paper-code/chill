@@ -369,20 +369,50 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 	if err != nil {
 		return result, err
 	}
+	if err := result.countRequestStages(ctx, rows, read.definitions); err != nil {
+		return result, err
+	}
+	enrichPathNative(rows, native)
+	result.PathBudgets = serving.ObservePathBudgets(rows, read.definitions, from, to)
+	sort.Slice(result.Arrivals, func(a, b int) bool {
+		if result.Arrivals[a].At.Equal(result.Arrivals[b].At) {
+			return result.Arrivals[a].ID < result.Arrivals[b].ID
+		}
+		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
+	})
+	return result, nil
+}
+
+func enrichPathNative(rows []*serving.RequestRow, native map[pathNativeKey]*serving.RequestRow) {
+	// Enrich a private row copy only for path reduction. Query/arrival outcomes
+	// and the captured open rows retain their original HTTP evidence.
+	for i, row := range rows {
+		if supplement := native[pathNativeKey{row.RequestID, row.Instance}]; supplement != nil &&
+			row.Instance != "" && (supplement.WorkloadUID == "" || supplement.WorkloadUID == row.WorkloadUID) &&
+			(supplement.DefinitionID == "" || supplement.DefinitionID == row.DefinitionID) {
+			enriched := *row
+			supplementPathNative(&enriched, supplement)
+			rows[i] = &enriched
+		}
+	}
+}
+
+func (result *LoadWindow) countRequestStages(ctx context.Context, rows []*serving.RequestRow, definitions map[string]*serving.Definition) error {
 	loads := map[string]*WorkloadLoad{}
+	from, to := result.From, result.To
 	in := func(row *serving.RequestRow, offset *int64) bool {
 		return offset != nil && serving.ObservationInInterval(row.ReceivedAt.Add(time.Duration(*offset)), from, to)
 	}
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
-			return result, err
+			return err
 		}
 		received := serving.ObservationInInterval(row.ReceivedAt, from, to)
 		accepted := row.Accepted() && (row.AcceptedNanos == nil && received || in(row, row.AcceptedNanos))
 		assigned := row.DispatchedAt != nil && serving.ObservationInInterval(*row.DispatchedAt, from, to) || in(row, row.DispatchedNanos)
 		completed := row.Outcome == outcomeCompleted && in(row, row.ElapsedNanos)
 		if received {
-			result.Arrivals = append(result.Arrivals, requestArrival(row, read.definitions))
+			result.Arrivals = append(result.Arrivals, requestArrival(row, definitions))
 		}
 		if !received && !accepted && !assigned && !completed {
 			continue
@@ -406,18 +436,6 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 			load.Completed++
 		}
 	}
-	// Enrich a private row copy only for path reduction. Query/arrival outcomes
-	// and the captured open rows retain their original HTTP evidence.
-	for i, row := range rows {
-		if supplement := native[pathNativeKey{row.RequestID, row.Instance}]; supplement != nil &&
-			row.Instance != "" && (supplement.WorkloadUID == "" || supplement.WorkloadUID == row.WorkloadUID) &&
-			(supplement.DefinitionID == "" || supplement.DefinitionID == row.DefinitionID) {
-			enriched := *row
-			supplementPathNative(&enriched, supplement)
-			rows[i] = &enriched
-		}
-	}
-	result.PathBudgets = serving.ObservePathBudgets(rows, read.definitions, from, to)
 	seconds := result.Duration.Seconds()
 	for _, load := range loads {
 		load.ReceivedRate = float64(load.Received) / seconds
@@ -427,13 +445,7 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 		result.Workloads = append(result.Workloads, *load)
 	}
 	sort.Slice(result.Workloads, func(a, b int) bool { return result.Workloads[a].UID < result.Workloads[b].UID })
-	sort.Slice(result.Arrivals, func(a, b int) bool {
-		if result.Arrivals[a].At.Equal(result.Arrivals[b].At) {
-			return result.Arrivals[a].ID < result.Arrivals[b].ID
-		}
-		return result.Arrivals[a].At.Before(result.Arrivals[b].At)
-	})
-	return result, nil
+	return nil
 }
 
 type pathNativeKey struct{ request, instance string }
