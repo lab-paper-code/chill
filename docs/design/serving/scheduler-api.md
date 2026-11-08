@@ -56,6 +56,11 @@ operations POST 전용이며 settings PUT에는 넣지 않는다. 설정 PUT의 
 
 ## API와 compact projection
 
+설정 GET의 `settings`, `staticRouting`, `powerObservation`과 `ETag`는 한 번의
+ConfigMap 응답에서 읽는다. refresh/Tick의 service 제어 잠금을 기다리지 않고 HTTP
+응답도 이 잠금 없이 쓴다. `meters`는 별도로 수락된 구성의 projection이므로 저장된
+ConfigMap과 같은 적용 시점을 보장하지 않는다. 설정 PUT의 ETag 낙관적 동시성 계약은 유지한다.
+
 | API | 동작 |
 |---|---|
 | `GET /api/v1/scheduler` | settings와 실제 snapshot, decision, actions, results, `costIssues` |

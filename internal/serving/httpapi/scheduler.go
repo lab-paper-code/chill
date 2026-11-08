@@ -241,10 +241,8 @@ func (h *Handler) schedulerObservations(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) schedulerSettingsRead(w http.ResponseWriter, r *http.Request) {
-	// Keep the public settings body and ConfigMap version from one serialized
-	// read relative to public settings/routing mutations.
-	h.config.SchedulerLock.Lock()
-	defer h.config.SchedulerLock.Unlock()
+	// One ConfigMap response supplies the persisted body and ETag without the
+	// service control lock. Meter declarations remain separately accepted state.
 	cm, config, err := application.SchedulerConfigMap(r.Context(), h.authorizer.Client, h.config.SchedulerNamespace,
 		h.config.SchedulerConfigMap, h.config.SchedulerConfigKey)
 	if err != nil {
