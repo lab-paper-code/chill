@@ -448,7 +448,7 @@ func TestReplayDisabledObservationsUseConfiguredBudget(t *testing.T) {
 	s.ObservedPathBudgets, s.CompletionMarginMS = &enabled, 3
 	s.AutonomousWorkloads, snap.Arrivals = nil, nil
 	w := snap.Workloads[0]
-	w.SLO.TargetLatency = time.Second
+	w.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
 	snap.Instances[0].Profile.Batches[0] = schedulerTestBatchProfile(snap.Instances[0].Profile.Batches[0], []float64{1e6})
 	snap.Arrivals = []SchedulerArrival{{ID: "arrival", At: snap.ObservationEnd.Add(-s.ObservationWindow), Definition: w, Accepted: true}}
 	for _, total := range []float64{0, 900} {
