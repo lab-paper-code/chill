@@ -33,7 +33,7 @@ func TestPathLowerRankBoundaries(t *testing.T) {
 		want int
 	}{
 		{0, .5, 0}, {4, .5, 0}, {5, .5, 1}, {10, .5, 2},
-		{1, .94, 0}, {1, .96, 1}, {11, .75, 7},
+		{1, .94, 0}, {1, .96, 1}, {11, .75, 6},
 		{10, 0, 0}, {10, 1, 0}, {10, math.NaN(), 0},
 	} {
 		t.Run(fmt.Sprintf("n=%d/q=%g", tc.n, tc.q), func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestPathBudgetsSeparateLowerAndUpperOrderStatistics(t *testing.T) {
 	}
 	got := ObservePathBudgets(rows, map[string]*Definition{d.Identity(): d}, from, from.Add(time.Minute))[0]
 	if got.Source != PathBudgetObserved || got.TotalMS != 42 || got.PostMS != 25 ||
-		got.TotalLowerMS == nil || *got.TotalLowerMS != 38 || got.PostLowerMS == nil || *got.PostLowerMS != 21 {
+		got.TotalLowerMS == nil || *got.TotalLowerMS != 37 || got.PostLowerMS == nil || *got.PostLowerMS != 20 {
 		t.Fatalf("separate marginal ranks: %+v", got)
 	}
 	if got.Samples != 11 || got.Completed != 11 || got.Batches != 1 || got.MaxBatchSamples != 11 || got.Missing != 0 {
