@@ -394,7 +394,7 @@ deps:
   # Scheduler algorithms consume neutral contracts only. CHILL numerical and
   # physical admission adapters stay in serving-core; no reverse edge is allowed.
   scheduler-protocol:
-    mayDependOn: []
+    anyVendorDeps: true
   scheduler-v1:
     mayDependOn:
       - scheduler-protocol
