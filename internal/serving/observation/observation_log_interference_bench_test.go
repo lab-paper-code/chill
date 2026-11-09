@@ -37,7 +37,7 @@ func BenchmarkRuntimeObservationInterference(b *testing.B) {
 				b.Fatal(err)
 			}
 			if err := runtime.InstallInstances([]serving.ReadyInstance{{
-				State: serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
+				State:   serving.InstanceState{ID: instance.ID, Node: instance.Node, Profile: instance.Profile.ID, Ready: true},
 				Profile: instance.Profile, Routing: map[string]int32{definition.UID: 1}, Capacity: 1,
 				Execute: func(context.Context, serving.Dispatch) (serving.BackendResult, error) {
 					return serving.BackendResult{Finished: true}, nil

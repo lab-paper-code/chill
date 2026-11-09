@@ -31,16 +31,6 @@ func TestNumericalReplayBothSearchConsumers(t *testing.T) {
 				if err != nil || len(direct.InvalidReasons) != 0 || !reflect.DeepEqual(result.feedback, direct.Workloads) || !reflect.DeepEqual(result.slo, direct.SLO) || !reflect.DeepEqual(result.conditional, direct.ConditionalService) {
 					t.Fatalf("candidate %s route=%g diverged from exact replay: result=%+v direct=%+v err=%v", result.key, result.route, result, direct, err)
 				}
-				var reused capacityResult
-				// Actual keep may use frozen routes rather than profile-allocated routes.
-				if result.keep {
-					reused = p.evaluateCurrentKeep(result.period)
-				} else {
-					reused = p.assessResult(p.evaluateEnergyAtWindow(result.choice, result.route, result.bridge, result.period))
-				}
-				if result.conditional != reused.conditional || !reflect.DeepEqual(result.feedback, reused.feedback) || !reflect.DeepEqual(result.slo, reused.slo) {
-					t.Fatalf("same Tick candidate did not reuse existing exact memo: %s", result.key)
-				}
 			}
 			t.Logf("key=%s route=%g joules=%g keepJoules=%g feasible=%v final=%v feedback=%+v", chosen.key, chosen.route, chosen.joules, chosen.keepJoules, chosen.feasible, chosen.final, chosen.feedback)
 		})

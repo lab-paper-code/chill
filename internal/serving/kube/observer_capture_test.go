@@ -127,7 +127,7 @@ func (a *capturePodAPI) inventoryQueries() []string {
 
 func captureForeignPod(memory string) *core.Pod {
 	return &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "release-control", Namespace: "release-system", UID: "release-control"},
-		Spec: core.PodSpec{NodeName: "node", Containers: []core.Container{{Name: "control", Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceMemory: resource.MustParse(memory)}}}}},
+		Spec:   core.PodSpec{NodeName: "node", Containers: []core.Container{{Name: "control", Resources: core.ResourceRequirements{Requests: core.ResourceList{core.ResourceMemory: resource.MustParse(memory)}}}}},
 		Status: core.PodStatus{Phase: core.PodRunning}}
 }
 
