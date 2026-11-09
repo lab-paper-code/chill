@@ -272,7 +272,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, nil)
+	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
