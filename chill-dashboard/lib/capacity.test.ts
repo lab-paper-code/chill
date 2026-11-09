@@ -1,59 +1,40 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { capacityComparison, capacityPath, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, planSearchFacts, selectedCapacityRow, type CapacityInput, type CapacityRow } from "./capacity.ts"
+import { readFileSync } from "node:fs"
+import { capacityKappaHat, capacityPath, capacityTests, capacityWitness, planSearchFacts, type CapacityView } from "./capacity.ts"
+import { parseSchedulerJSON } from "./scheduler.ts"
 
-const input:CapacityInput={
-  workloadUID:"workload-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node-a",uid:"node-uid"},powerMode:"mode-a",profileID:"profile-id",
-  allocation:{memoryBytes:9007199254740993n},maxBatch:4,
-  completionMarginMS:2.5,capacityWindowNanos:9007199254740993n,capacityWindows:5,capacityPassingWindows:4,capacityMinimumRequests:100,
-  capacityGridSteps:10,capacityBisectionWidth:0.01,capacityTailSamples:20,
-  dispatchOccupancy:{node:{name:"node-a",uid:"node-uid"},powerMode:"mode-a",runtimeImage:"image@sha256:abc",model:"model",perRequestNanos:0,source:"measurement identity: kept verbatim"},
-}
-const built:CapacityRow={key:"input-key",input,status:"Built",mu:100,kappa:0,builtAt:"2026-10-30T01:00:00Z",reason:"BatchServiceExceedsSLO",minimumServiceNanos:100000000,elapsedNanos:10}
+const fixture=readFileSync(new URL("./fixtures/scheduler-feedback-capacity.json",import.meta.url),"utf8")
 
-test("capacity selection preserves exact row key and local workload filter, never falling back",()=>{
-  const next={...built,key:"new-input-key",input:{...input,capacityGridSteps:20}}
-  assert.equal(selectedCapacityRow([next],built.key),undefined)
-  assert.deepEqual(capacityRows([built,next],"absent-uid"),[])
-  assert.equal(selectedCapacityRow(capacityRows([built],"other-workload"),built.key),undefined)
-  assert.equal(selectedCapacityRow([built,next],built.key),built)
-  assert.deepEqual(capacityRows([built],""),[built])
-  const path=capacityPath("uid with / space","key+&")
-  assert.equal(path.split("?")[0],"/")
-  assert.deepEqual(Object.fromEntries(new URLSearchParams(path.split("?")[1])),{evidence:"capacity",workload:"uid with / space",row:"key+&"})
+test("HTTP projection fixture preserves tested failure, untested zero and witnessed pass",()=>{
+  const response=parseSchedulerJSON(fixture) as CapacityView
+  assert.deepEqual(Object.keys(response),["tests"])
+  const [failed,untested,passed]=response.tests!
+  assert.equal(failed.kappaHat,0)
+  assert.equal(untested.kappaHat,0)
+  assert.equal(capacityWitness(failed),"검사한 요청률 모두 미충족 · 통과 근거 없음")
+  assert.equal(capacityWitness(untested),"미검사 · 통과 근거 없음")
+  assert.equal(capacityWitness({...untested,tests:null}),capacityWitness(untested))
+  assert.equal(capacityWitness(passed),"검사한 요청률에서 통과 근거 있음")
+  assert.notEqual(capacityKappaHat(failed),capacityKappaHat(untested))
+  assert.equal(capacityKappaHat(undefined),"미기록")
+  assert.equal(failed.tests![0].inputKey,"failed input / +&")
+  assert.deepEqual(failed.tests![0],{inputKey:"failed input / +&",rate:40,met:false,passed:0,requests:100})
+  assert.equal(failed.option.instance.allocation.memoryBytes,9007199254740993n)
+  assert.equal(passed.kappaHat,12.5)
+  assert.deepEqual(passed.tests!.map(test=>test.rate),[12.5,20])
+})
+
+test("current evidence filters only declared compatible workload UIDs and keeps empty diagnostics",()=>{
+  const response=parseSchedulerJSON(fixture) as CapacityView,tests=response.tests!
+  assert.deepEqual(capacityTests(tests,""),tests)
+  assert.deepEqual(capacityTests(tests,"service-uid"),tests)
+  assert.deepEqual(capacityTests(tests,"absent-uid"),[])
+  assert.deepEqual(capacityTests([],"service-uid"),[])
+  assert.deepEqual((parseSchedulerJSON('{"tests":[]}') as CapacityView).tests,[])
+  const path=capacityPath("uid with / space")
+  assert.deepEqual(Object.fromEntries(new URLSearchParams(path.split("?")[1])),{evidence:"capacity",workload:"uid with / space"})
   assert.equal(capacityPath(),"/?evidence=capacity")
-  assert.equal(new URLSearchParams(capacityPath(input.workloadUID).split("?")[1]).has("row"),false)
-})
-
-test("capacity missing kappa is not zero, pending and previous alone need polling",()=>{
-  assert.equal(capacityRate(undefined),"용량 값이 없어요")
-  assert.equal(capacityRate(0),"0 req/s")
-  assert.equal(capacityStatus("Built"),"용량 계산이 끝났어요")
-  assert.equal(capacityStatus("CapacityPending"),"용량을 계산하고 있어요")
-  assert.equal(capacityStatus("CapacityRejected"),"이 조건의 용량을 사용할 수 없어요")
-  assert.equal(capacityStatus("Unknown"),"용량 계산 상태를 확인할 수 없어요")
-  assert.equal(capacityPolling([]),false)
-  assert.equal(capacityPolling([built]),false)
-  assert.equal(capacityPolling([{...built,previous:true}]),true)
-  assert.equal(capacityPolling([{...built,status:"CapacityPending",kappa:undefined,builtAt:"0001-01-01T00:00:00Z"}]),true)
-  assert.equal(capacityPolling([{...built,status:"CapacityRejected",reason:"NonMonotone",kappa:undefined}]),false)
-  assert.equal(capacityReason("MissingDispatchOccupancy"),"분배 점유시간 근거가 없어요")
-  assert.equal(capacityReason("NonMonotone"),"요청률을 높였는데 다시 통과한 구간이 있어 용량을 정하지 않았어요")
-  assert.equal(capacityReason(built.reason),"가장 짧은 배치 실행에도 완료 여유를 더하면 목표 시간을 넘어요")
-})
-
-test("comparison uses eight applied top-level settings with exact wire integers",()=>{
-  const comparison=capacityComparison(input,{...input,capacityWindowNanos:9007199254740992n,capacityGridSteps:11,capacityBisectionWidth:0.02,capacityTailSamples:21})
-  assert.equal(comparison.length,8)
-  assert.deepEqual(comparison.filter(field=>!field.same).map(field=>field.key),["capacityWindowNanos","capacityGridSteps","capacityBisectionWidth","capacityTailSamples"])
-  assert.equal(comparison.find(field=>field.key==="capacityWindowNanos")?.used,9007199254740993n)
-  assert.equal(capacityComparison(input,{...input,capacityWindows:5n}).find(field=>field.key==="capacityWindows")?.same,true)
-})
-
-test("capacity percentile display distinguishes missing latency from zero",()=>{
-  assert.equal(capacityPercentile(-1),"이 창의 지연값 없음(미충족)")
-  assert.equal(capacityPercentile(0),"0 ms")
-  assert.equal(capacityPercentile(12.5),"12.5 ms")
 })
 
 test("plan search termination reasons distinguish evaluation budget from time deadline",()=>{

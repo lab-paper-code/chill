@@ -1,0 +1,82 @@
+{
+  "tests": [
+    {
+      "instanceID": "instance-failed",
+      "option": {
+        "instance": {
+          "id": "instance-failed",
+          "node": {"name": "node-a", "uid": "node-uid"},
+          "profileID": "profile-id",
+          "workloadUID": "service-uid",
+          "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
+          "ready": true,
+          "stopped": false,
+          "routable": null,
+          "capacity": 8,
+          "weight": 2,
+          "maxBatch": 4,
+          "maxWaitNanos": 0,
+          "observedAt": "2026-11-09T00:00:00Z",
+          "idleMeter": "",
+          "idleScope": ""
+        },
+        "compatibleUIDs": ["service-uid"]
+      },
+      "kappaHat": 0,
+      "tests": [{"inputKey": "failed input / +&", "rate": 40, "met": false, "passed": 0, "requests": 100}]
+    },
+    {
+      "instanceID": "instance-untested",
+      "option": {
+        "instance": {
+          "id": "instance-untested",
+          "node": {"name": "node-a", "uid": "node-uid"},
+          "profileID": "profile-id",
+          "workloadUID": "service-uid",
+          "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
+          "ready": true,
+          "stopped": false,
+          "routable": null,
+          "capacity": 8,
+          "weight": 2,
+          "maxBatch": 4,
+          "maxWaitNanos": 0,
+          "observedAt": "2026-11-09T00:00:00Z",
+          "idleMeter": "",
+          "idleScope": ""
+        },
+        "compatibleUIDs": ["service-uid"]
+      },
+      "kappaHat": 0,
+      "tests": []
+    },
+    {
+      "instanceID": "instance-pass",
+      "option": {
+        "instance": {
+          "id": "instance-pass",
+          "node": {"name": "node-a", "uid": "node-uid"},
+          "profileID": "profile-id",
+          "workloadUID": "service-uid",
+          "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
+          "ready": true,
+          "stopped": false,
+          "routable": null,
+          "capacity": 8,
+          "weight": 2,
+          "maxBatch": 4,
+          "maxWaitNanos": 0,
+          "observedAt": "2026-11-09T00:00:00Z",
+          "idleMeter": "",
+          "idleScope": ""
+        },
+        "compatibleUIDs": ["service-uid"]
+      },
+      "kappaHat": 12.5,
+      "tests": [
+        {"inputKey": "pass input", "rate": 12.5, "met": true, "passed": 4, "requests": 100},
+        {"inputKey": "pass input", "rate": 20, "met": false, "passed": 1, "requests": 100}
+      ]
+    }
+  ]
+}

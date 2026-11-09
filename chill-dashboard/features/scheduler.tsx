@@ -8,7 +8,7 @@ import { conditionRows } from "@/features/scheduler-profiles"
 import type { LoadWindow, OperatingPower, SchedulerAllocation, SchedulerCandidate, SchedulerDecision, SchedulerDefinition, SchedulerInstance, SchedulerNode, SchedulerSnapshot, SchedulerView, WireInteger } from "@/lib/read-types"
 import { nanosToMilliseconds, parseSchedulerJSON, stringifySchedulerJSON } from "@/lib/scheduler"
 import { capacityPath } from "@/lib/capacity"
-import { CapacityEvidence, PlanSearchEvidence } from "@/features/scheduler-capacity"
+import { CapacityEvidence, DecisionRateEvidence, PlanSearchEvidence } from "@/features/scheduler-capacity"
 import { safeSource } from "@/lib/source-export"
 import { gapNotice, localDateTime, utcDateTime } from "@/lib/date-time"
 import { DataTable } from "@/components/data-table"
@@ -52,7 +52,7 @@ function SLOs({candidate,decision,snapshot}:{candidate:SchedulerCandidate;decisi
 function Configuration({nodes,instances,routing,snapshot}:{nodes?:SchedulerNode[]|null;instances?:SchedulerInstance[]|null;routing:SchedulerCandidate["routing"];snapshot:SchedulerSnapshot}) {
   return <><h3>노드</h3>{nodes?.length?nodes.map(node=><section key={node.node.uid} className="space-y-2 rounded border p-3"><h4>{node.node.name}{node.measurement&&" / 측정 중"}</h4><p className="break-all">노드 UID {node.node.uid}</p><p>준비 {node.ready?"완료":"확인 대기"} / 전력모드 {node.powerMode||"제공 없음"} / 관측 {time(node.observedAt)}</p>{!!node.reasons?.length&&<Lines values={node.reasons}/>}<p>전체 GPU {node.gpuUUIDs?.join(", ")||"없음"}, 메모리 {String(node.memoryBytes)} bytes</p><p>예약: <Allocation value={node.reserved}/></p><h5>서비스 외 할당</h5>{node.nonServing?.map((allocation,index)=><p key={index}><Allocation value={allocation}/></p>)}{!node.nonServing?.length&&<p>제공된 할당 없음</p>}</section>):<p>제공된 노드 없음</p>}
     <h3>인스턴스와 서비스 연결</h3>{instances?.map(instance=><Instance key={instance.id} instance={instance}/>)}{!instances?.length&&<p>제공된 인스턴스 없음</p>}
-    <h3>요청 분배</h3><p>원래 가중치이며 확률이 아닙니다.</p>{Object.entries(routing??{}).map(([uid,weights])=><div key={uid}><ServiceName uid={uid} snapshot={snapshot}/><ul>{Object.entries(weights).map(([id,weight])=><li key={id}>{id}: {weight}</li>)}</ul></div>)}{!Object.keys(routing??{}).length&&<p>제공된 요청 분배 없음</p>}</>
+    <h3>요청 분배</h3><p>프로파일 요청률의 상대 가중치이며 확률이나 SLO 처리 용량 보장이 아닙니다.</p>{Object.entries(routing??{}).map(([uid,weights])=><div key={uid}><ServiceName uid={uid} snapshot={snapshot}/><ul>{Object.entries(weights).map(([id,weight])=><li key={id}>{id}: {weight}</li>)}</ul></div>)}{!Object.keys(routing??{}).length&&<p>제공된 요청 분배 없음</p>}</>
 }
 function Instance({instance}:{instance:SchedulerInstance}) {
   const profile=instance.profile
@@ -63,7 +63,7 @@ export function SnapshotDetails({snapshot}:{snapshot:SchedulerSnapshot}) {
 }
 
 function CapacityLinks({decision}:{decision:SchedulerDecision}) {
-  return <section className="space-y-2"><PlanSearchEvidence capacity={decision.capacity}/><h3>판단에 참조한 용량 행</h3>{decision.capacity?.workloads?.map(workload=><div key={workload.uid} className="space-y-1"><Link className="break-all" href={capacityPath(workload.uid)}>{workload.uid}</Link>{workload.rows?.map(key=><p key={key}><Link href={capacityPath(workload.uid,key)}>{key}</Link></p>)}</div>)}<Link href={capacityPath()}>용량 계산 근거</Link></section>
+  return <section className="space-y-2"><PlanSearchEvidence capacity={decision.capacity}/><DecisionRateEvidence capacity={decision.capacity}/><Link href={capacityPath()}>현재 요청률 검사 근거</Link></section>
 }
 export function CandidateDetails({candidate,view}:{candidate:SchedulerCandidate;view:SchedulerView}) {
   const {snapshot,decision}=view.state

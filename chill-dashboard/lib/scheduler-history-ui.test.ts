@@ -20,6 +20,13 @@ function nodes(value:unknown):Element[]{
   if(!value||typeof value!=="object"||!("props" in value))return []
   const element=value as Element;return [element,...nodes(element.props.children)]
 }
+function render(value:unknown):unknown {
+  if(Array.isArray(value))return value.map(render)
+  if(!value||typeof value!=="object"||!("props" in value))return value
+  const element=value as Element
+  if(typeof element.type==="function")return render(element.type(element.props))
+  return {...element,props:{...element.props,children:render(element.props.children)}}
+}
 function harness(query="",responses:Record<string,unknown>={}){
   const params=new URLSearchParams(query),calls:string[]=[],urls:string[]=[]
   const modules:Record<string,unknown>={
@@ -44,20 +51,26 @@ function harness(query="",responses:Record<string,unknown>={}){
     return exports
   }
   modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx")
+  const rateEvidence=load("../features/scheduler-capacity.tsx")
+  modules["./scheduler-capacity"]=rateEvidence
+  modules["@/features/scheduler-capacity"]=rateEvidence
   return {load,calls,urls,modules}
 }
 
-test("selected decision capacity renders recorded diagnostics without inventing missing values",()=>{
+test("decision evidence keeps selected and keep tests separate without inventing missing values",()=>{
   const screen=harness().load("../features/scheduler-history.tsx")
-  const capacity={workloads:[{uid:"ic",rate:97.65,kappaNew:128.16703347622592,kappaRetained:110.28686611755043},{uid:"missing"}]}
-  const tree=screen.DecisionCapacity({capacity,headroom:.25,names:new Map([["ic","IC"]])})
-  const cells=nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children)
-  assert.deepEqual(cells.slice(0,6),["IC","128.1670","110.2869","122.0625","97.6500","6.1045"])
-  assert.deepEqual(cells.slice(6),["missing",...Array(5).fill("미기록")])
-  const missing=screen.DecisionCapacity({capacity,headroom:undefined,names:new Map()})
-  const absent=nodes(missing).filter(node=>node.type==="td").map(node=>node.props.children)
-  assert.equal(absent[3],"미기록")
-  assert.equal(absent[5],"미기록")
+  const evidence=scheduler.parseSchedulerJSON(readFileSync(new URL("./fixtures/scheduler-feedback-capacity.json",import.meta.url),"utf8")) as capacity.CapacityView
+  const [failed,,passed]=evidence.tests!
+  const diagnostic={workloads:[{uid:"ic",rate:97.65,queued:0,routingRate:128.16703347622592,retainedRoutingRate:110.28686611755043,weights:{"instance-failed":2},tests:[failed],keepTests:[passed]},{uid:"missing"}]}
+  const tree=render(screen.DecisionCapacity({capacity:diagnostic,names:new Map([["ic","IC"]])}))
+  const facts=nodes(tree).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
+  assert.ok(facts.some(([label,value])=>label==="계획 수요 (req/s)"&&value==="97.6500"))
+  assert.ok(facts.some(([label,value])=>label==="목표 상대 프로파일 요청률 (req/s)"&&value==="128.1670"))
+  assert.ok(facts.some(([label,value])=>label==="전환 중 유지 상대 프로파일 요청률 (req/s)"&&value==="110.2869"))
+  assert.ok(facts.some(([label,value])=>label==="계획 수요 (req/s)"&&value==="미기록"))
+  assert.deepEqual(nodes(tree).filter(node=>node.type==="h5").map(node=>node.props.children),["선택안","유지안","선택안","유지안"])
+  assert.deepEqual(nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children),[40,"미충족",0,100,12.5,"충족",4,100,20,"미충족",1,100])
+  assert.equal(facts.some(([label])=>/보호 수요|여유|목표 κ|유지 κ/.test(label)),false)
   assert.equal(nodes(tree).some(node=>node.type==="badge"),false)
 })
 
@@ -84,15 +97,17 @@ test("current scheduler readout passes the decision budget, never snapshot or cu
   assert.equal(absent,null)
 })
 
-test("capacity demand labels the recorded planning floor rather than zero observed traffic",()=>{
+test("demand labels the recorded planning rate and routing weights remain relative profile rates",()=>{
   const screen=harness().load("../features/scheduler-history.tsx")
-  const decision={search:{loads:[{uid:"idle",inputsPerSecond:0,recentInputsPerSecond:0}]},capacity:{workloads:[{uid:"idle",rate:40,minimumDemand:40,kappaNew:50,kappaRetained:50}]}}
-  const tree=screen.DecisionCapacity({capacity:decision.capacity,headroom:.25,names:new Map()})
-  const headers=nodes(tree).filter(node=>node.type==="th").map(node=>node.props.children)
-  const cells=nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children)
-  assert.equal(headers[4],"계획 수요 (req/s)")
-  assert.equal(cells[4],"40.0000")
-  assert.equal(headers.includes("최근 수요 (req/s)"),false)
+  const diagnostic={workloads:[{uid:"idle",rate:40,queued:0,routingRate:50,retainedRoutingRate:50,weights:{instance:50}}]}
+  const tree=render(screen.DecisionCapacity({capacity:diagnostic,names:new Map()}))
+  const facts=nodes(tree).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
+  assert.ok(facts.some(([label,value])=>label==="계획 수요 (req/s)"&&value==="40.0000"))
+  assert.ok(facts.some(([label,value])=>label==="instance"&&value==="50"))
+  assert.equal(facts.some(([label])=>label==="최근 수요 (req/s)"),false)
+  const text=nodes(tree).flatMap(node=>node.props.children).filter(value=>typeof value==="string").join(" ")
+  assert.match(text,/상대 가중치/)
+  assert.match(text,/SLO 처리 용량 보장이 아니에요/)
 })
 
 test("judgment history defaults to decision/action on the server, not mixed power records",()=>{
@@ -149,31 +164,34 @@ test("history target uses workload names, preserves direct UID and does not repe
   assert.equal(nodes(tree).find(node=>node.type==="range")!.props.target,"서비스 이름")
 })
 
-test("capacity with no returned rows shows purpose-built missing evidence and no empty table",()=>{
+test("empty current diagnostics are successful evidence without pending or completion claims",()=>{
   for(const workload of ["","unknown-service"]){
-    const h=harness(workload?`workload=${workload}`:"",{"v1/scheduler/capacity":{data:{rows:[]},dataUpdatedAt:0}})
-    const tree=h.load("../features/scheduler-capacity.tsx").CapacityEvidence({})
+    const h=harness(workload?`workload=${workload}`:"",{"v1/scheduler/capacity":{data:{tests:[]},dataUpdatedAt:0},"v1/scheduler/state?view=compact":{data:{decision:{at:"2026-11-09T00:00:00Z",capacity:{workloads:[]}}}}})
+    const tree=render(h.load("../features/scheduler-capacity.tsx").CapacityEvidence({}))
     assert.equal(nodes(tree).some(node=>node.type==="table"),false)
-    const facts=nodes(tree).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
-    assert.ok(facts.some(([label,value])=>label==="상태"&&value==="처리 용량 근거 없음"))
-    assert.ok(facts.some(([label,value])=>label==="누락 사유"&&value==="서버 미제공"))
-    assert.equal(JSON.stringify(facts).includes("κ"),false)
+    assert.equal(nodes(tree).some(node=>node.props.role==="alert"),false)
+    const text=nodes(tree).flatMap(node=>node.props.children).filter(value=>typeof value==="string").join(" ")
+    assert.match(text,/기록된 요청률 검사 근거 없음/)
+    assert.match(text,/기록된 Workload 진단 없음/)
+    assert.doesNotMatch(text,/Pending|Built|다시 계산|완료 예정|용량 계산이 끝/)
+    assert.equal(h.calls.includes("v1/scheduler/settings"),false)
   }
 })
 
-test("capacity input facts use shared execution without CPU reservations or thread allocations",()=>{
-  const row:capacity.CapacityRow={key:"shared",status:"Built",mu:10,builtAt:"2026-11-01T00:00:00Z",input:{
-    workloadUID:"service-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node",uid:"node-uid"},powerMode:"fixed",profileID:"profile",
-    allocation:{gpuUUID:"gpu-uuid",memoryBytes:9007199254740993n},maxBatch:4,completionMarginMS:1,capacityWindowNanos:1000000000,
-    capacityWindows:5,capacityPassingWindows:4,capacityMinimumRequests:100,capacityGridSteps:10,capacityBisectionWidth:.01,capacityTailSamples:20,
-  }}
-  const h=harness("row=shared",{"v1/scheduler/capacity":{data:{rows:[row]},dataUpdatedAt:0}})
-  const tree=h.load("../features/scheduler-capacity.tsx").CapacityEvidence({})
-  const details=nodes(tree).find(node=>typeof node.type==="function"&&node.props.row===row)!
-  const facts=nodes((details.type as (props:Record<string,unknown>)=>Element)(details.props)).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
+test("HTTP evidence fixture renders exact input identity and distinguishes failed zero from untested zero",()=>{
+  const evidence=scheduler.parseSchedulerJSON(readFileSync(new URL("./fixtures/scheduler-feedback-capacity.json",import.meta.url),"utf8")) as capacity.CapacityView
+  const h=harness("",{"v1/scheduler/capacity":{data:evidence,dataUpdatedAt:0}})
+  const tree=render(h.load("../features/scheduler-capacity.tsx").CapacityEvidence({}))
+  const facts=nodes(tree).filter(node=>node.type==="facts").flatMap(node=>node.props.items as [string,unknown][])
   assert.ok(facts.some(([label,value])=>label==="GPU UUID"&&value==="gpu-uuid"))
   assert.ok(facts.some(([label,value])=>label==="메모리"&&value==="9007199254740993 bytes"))
+  assert.deepEqual(facts.filter(([label])=>label==="κ̂ (κHat)").map(([,value])=>value),evidence.tests!.map(capacity.capacityKappaHat))
+  assert.ok(nodes(tree).some(node=>node.type==="th"&&node.props.children==="failed input / +&"))
+  assert.deepEqual(nodes(tree).filter(node=>node.type==="td").map(node=>node.props.children),[40,"미충족",0,100,12.5,"충족",4,100,20,"미충족",1,100])
   assert.equal(facts.some(([label])=>/CPU|스레드/.test(label)),false)
+  const text=nodes(tree).flatMap(node=>node.props.children).filter(value=>typeof value==="string").join(" ")
+  assert.match(text,/물리 처리량 0을 뜻하지 않아요/)
+  assert.match(text,/검사한 요청률 없음/)
 })
 
 test("whole power shows shared reasons once and retains distinct node reasons and raw export",()=>{
@@ -193,16 +211,6 @@ test("whole power shows shared reasons once and retains distinct node reasons an
   assert.equal(exported.result,data)
 })
 
-test("missing dispatch occupancy links directly to the matching d request conditions",()=>{
-  const row={key:"missing-d",status:"CapacityRejected",reason:"MissingDispatchOccupancy",mu:0,input:{workloadUID:"service-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node",uid:"node-uid"},powerMode:"15W",profileID:"ns/beo/beo-uid",allocation:{},maxBatch:4}} as capacity.CapacityRow
-  const h=harness("row=missing-d",{"v1/scheduler/capacity":{data:{rows:[row]},dataUpdatedAt:0}})
-  const tree=h.load("../features/scheduler-capacity.tsx").CapacityEvidence({})
-  const details=nodes(tree).find(node=>typeof node.type==="function"&&node.props.row===row)!
-  const link=nodes((details.type as (props:Record<string,unknown>)=>Element)(details.props)).find(node=>node.type==="a"&&node.props.children==="d 측정 요청")!
-  const url=new URL(String(link.props.href),"https://dashboard.invalid")
-  assert.equal(url.pathname,"/measurements/requests/new")
-  for(const [key,value] of Object.entries({kind:"dispatch-occupancy",namespace:"ns",profileID:"ns/beo/beo-uid",node:"node",nodeUID:"node-uid",powerMode:"15W",workloadUID:"service-uid",batch:"4"}))assert.equal(url.searchParams.get(key),value)
-})
 
 test("interval preview requests latest cluster events and keeps exact identity and return selection",()=>{
   const from="2026-11-01T00:00:00.123456789Z",to="2026-11-01T01:00:00.987654321Z"

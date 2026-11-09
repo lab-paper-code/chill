@@ -9,6 +9,11 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { createFront } from './live-proxy.mjs'
 import { fixtureMessages } from '../lib/live-fixture.ts'
 import { initialLiveState, parseLiveMessage, applyLiveMessage, liveActionKey } from '../lib/live.ts'
+import { parseSchedulerJSON, stringifySchedulerJSON } from '../lib/scheduler.ts'
+
+const capacityFixture = readFileSync(new URL('../lib/fixtures/scheduler-feedback-capacity.json', import.meta.url), 'utf8')
+const rateEvidence = parseSchedulerJSON(capacityFixture).tests
+const capacityDiagnostic = {periodNanos:1000000000,routeNanos:0,workloads:[{uid:'service-uid',rate:40,queued:3,routingRate:50,retainedRoutingRate:25,weights:{'instance-failed':2},tests:rateEvidence,keepTests:[rateEvidence[2]]}],plans:[]}
 
 const directory = mkdtempSync(join(tmpdir(), 'chill-s2-tls-'))
 execFileSync('openssl', ['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(directory,'key.pem'),'-out',join(directory,'cert.pem'),'-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1,DNS:localhost'], {stdio:'ignore'})
@@ -79,12 +84,20 @@ const upstream = https.createServer({key,cert}, async (req,res) => {
     if(measurementMode === 'slow')await new Promise(resolve=>setTimeout(resolve,5000))
     res.writeHead(201,{'content-type':'application/json'});res.end(JSON.stringify({request:'Accepted',task}));return
   }
+  if(url.pathname === '/api/v1/scheduler/capacity') {
+    res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    res.end(scene === 'empty' ? JSON.stringify({tests:[]}) : capacityFixture);return
+  }
+  if(url.pathname === '/api/v1/scheduler/state') {
+    res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    res.end(stringifySchedulerJSON({decision:{at:lastAt,capacity:scene === 'empty' ? {...capacityDiagnostic,workloads:[]} : capacityDiagnostic}}));return
+  }
   if(url.pathname === '/api/v1/observations/scheduler') {
     const from = url.searchParams.get('from')
     const at = [...decisionTimes].find(value=>value.replace(/(?:\.(\d+))?Z$/,(_match,fraction='')=>`.${fraction.padEnd(9,'0')}Z`)===from)
     const found = at !== undefined
     res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    res.end(JSON.stringify({from:at,to:url.searchParams.get('to'),events:found?[{at,decision:{at,status:'TransitionInProgress',reasons:['검사용 고정 근거'],keep:{id:'fixture-keep',keep:true,actions:null,status:'Feasible',reasons:null,expectedJoules:1000,worstExceedance:0},target:null,capacity:{gainUncertaintyJoules:25,workloads:[{uid:'pool-alpha',rate:40,minimumDemand:35,kappaNew:1.2,kappaRetained:1.1,queued:3,backlog:2,waitSeconds:0.5,drainSeconds:1}]}}}]:[]}))
+    res.end(stringifySchedulerJSON({from:at,to:url.searchParams.get('to'),events:found?[{at,decision:{at,status:'TransitionInProgress',reasons:['검사용 고정 근거'],keep:{id:'fixture-keep',keep:true,actions:null,status:'Feasible',reasons:null,expectedJoules:1000,worstExceedance:0},target:null,capacity:{...capacityDiagnostic,gainUncertaintyJoules:25}}}]:[]}))
     return
   }
   res.writeHead(404);res.end()

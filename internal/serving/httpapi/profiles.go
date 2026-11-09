@@ -194,8 +194,7 @@ func profileField(profile serving.Profile, status, key string) string {
 	return ""
 }
 
-// schedulerCapacity returns the capacity rows the autonomous Workloads need;
-// a row still being computed is CapacityPending.
+// schedulerCapacity returns only the current decision's tested-rate evidence.
 func (h *Handler) schedulerCapacity(w http.ResponseWriter, r *http.Request) {
 	if err := h.authorize(r); err != nil {
 		sendError(w, err)
@@ -205,9 +204,16 @@ func (h *Handler) schedulerCapacity(w http.ResponseWriter, r *http.Request) {
 		sendError(w, &serving.Error{Code: "SchedulerUnavailable", Message: "scheduler is not enabled"})
 		return
 	}
+	sendSchedulerCapacity(w, h.config.Scheduler.Capacity())
+}
+
+func sendSchedulerCapacity(w http.ResponseWriter, tests []serving.SchedulerFeedbackRate) {
+	if tests == nil {
+		tests = []serving.SchedulerFeedbackRate{}
+	}
 	sendJSON(w, http.StatusOK, struct {
-		Rows []serving.CapacityRow `json:"rows"`
-	}{h.config.Scheduler.Capacity()})
+		Tests []serving.SchedulerFeedbackRate `json:"tests"`
+	}{tests})
 }
 
 func (h *Handler) catalogRead(w http.ResponseWriter, r *http.Request) {

@@ -19,7 +19,7 @@ HTTPS ChillServer는 `--serving-scheduler-configmap=<name>`과
 | `settings` | ns duration의 observationWindowNanos/controlIntervalNanos/comparisonPeriodNanos, 인스턴스 상한 maxReplicas/maxInstances, 메모리 안전 servingMemoryBytes, controls(placement/resources/replicas/routing/batching/power/membership). CPU 할당 상한 maxCPUs를 포함해 미선언 입력은 strict 거절한다. |
 | `settings.servingMemoryBytes` | 서빙 Pod의 memory request와 limit은 profile의 측정 최대 메모리에 이 값을 더한 것이다. 절반(최대 64 MiB)이 firstfloor `maxQueueBytes`이고, Go의 기본 GOGC 100에서 heap이 대기 요청 바이트의 두 배까지 자라는 것을 나머지 절반이 받는다. 2 미만이면 서빙 준비가 `PreparationUnavailable`이다. sample의 128 MiB는 rasp5 q1(측정 198 MiB)이 포아송 40 req/s에서 대기 요청으로 OOMKilled된 m4 r2 사건의 대기열 64 MiB를 담는다 |
 | `settings.completionMarginMS` | 필수, 유한한 0 이상의 ms. firstfloor 처리 완료에 요청마다 더하는 완료 여유이고 ChillServer가 dispatch 때 요청에 넣는다. sample의 `29`는 m4 r3 포아송 40 req/s 포화에서 잰 m(종단 경과 − (`nativeElapsedMS` − ingress))의 p95 29.2 ms다([용량표 계획기 5장](analytic-planner.md#5-완료-여유-규칙)). E1의 p99 138.23 ms는 요청마다 걸리던 TokenReview 지연이 대부분이었고, 인증 결과 재사용(c829518)과 authz singleflight가 그 지연을 없앴다 |
-| `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 용량표 행의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). sample은 60 s, 20, 19, 1,000이다([용량표 계획기](analytic-planner.md#2-용량표)) |
+| `settings.capacityWindowNanos`, `capacityWindows`, `capacityPassingWindows`, `capacityMinimumRequests` | 필수. 요청률 검사의 창 길이(> 0), 요청률마다 재생하는 창 수(≥ 1), 충족 창 수(1 이상 창 수 이하), 창의 최소 요청 수(≥ 1). 현재 결정은 선택안·유지안의 nominal rate만 검사하며 전체 요청률 격자를 계산하지 않는다 |
 | `settings.planSearchWorkers` | 필수 정수≥1. 판단시작부터 controlIntervalNanos 절반 예산, 종료시 capacity.search.budgetCut. sample3은 실행 병렬성 선택이지 CPU 소유/보장이 아니다. 과거 서버6CPU 실측 수치는 당시 조건의 기록이며 새 공유 실행에서 경합·Tick·gateway 성능을 다시 측정한다. |
 | `settings.planSearchStrategy` | 전체 자동제어 Workload에 공통인 공식 scheduler 선택. `v1` 또는 `v2`(기본)만 수락하며, 선택값을 settings 응답과 decision에 그대로 기록한다. 비교용 동시 실행이나 별도 비교 기록은 없다([패키지·탐색 경계](analytic-planner.md)). |
 | `settings.sloPriorityStrategy`, `settings.workloadPriority` | 기존 settings PUT·merge patch·ConfigMap이 함께 받는 정책. 전략은 `excess`(생략 기본값) 또는 `workload`이고 순위는 Workload UID 배열(생략 시 빈 배열)이다. 첫 UID가 최우선이며 미지정 활성 UID는 마지막 동순위 그룹에서 초과 기준을 따른다. 빈 순위는 초과 기준과 같다. 빈 UID와 중복 UID, 명시한 빈/미지원 전략은 설정 경계에서 거절한다. 저장된 미등록·삭제 UID는 보존하고 평가 시 무시하며 현재 Workload·profile·catalog 조회로 검증하지 않는다. 기존 두 필드 없는 구성도 그대로 수락한다. |
@@ -81,7 +81,7 @@ catalog의 `configVersion`은 마지막 full acceptance를 유지하며 PUT의 �
 | `PUT /api/v1/scheduler` 또는 `/settings` | `SchedulerSettings`만 검증·저장·적용한다. `staticRouting`/`staticRoutingValidatedAt` 입력은 400 `InvalidBody`와 해당 `field`로 거절하며, 생략된 기존 선언은 변경하지 않는다. 설정 변경 기록은 actor, before/after, validatedAt, affected, appliedAt을 유지한다 |
 | `POST /api/v1/scheduler/operations` | 기존 prepare/remove와 명시적 route/unroute/release/reset. 본문·ACK·실패·멱등 계약은 [수동 원자 실행](scheduler-operations.md#수동-원자-실행-계약)을 따른다 |
 | `GET /api/v1/scheduler/profiles` | 읽기 전용. `configVersion`, 완료 측정에서 도출한 조건별 최신 `profiles`, profile ID별 `preparations`, profile을 만들지 못한 측정의 `insufficiencies[]`(CatalogIssue `source/code/reason`) |
-| `GET /api/v1/scheduler/capacity` | 읽기 전용. 자동제어 Workload에 필요한 용량표 `rows[]`(`key`, `input`, `status`, `reason`, `mu`, `kappa`, 격자와 이분 탐색 판정, `builtAt`, `elapsedNanos`). 계산 중인 행은 `CapacityPending`, 단조가 아닌 행은 `CapacityRejected`와 `NonMonotone`이다. 표는 메모리에만 있고 행마다 `management` stream의 `capacity-row-built` 사건으로 남는다 |
+| `GET /api/v1/scheduler/capacity` | 읽기 전용. 현재 결정의 선택안 요청률 검사 근거 `{"tests":[]}`. 각 항목은 `instanceID`, 기존 `SchedulerOption` 형태의 `option`, `kappaHat`, `tests[]`를 제공한다. 내부 검사 항목은 `inputKey`, 검사 요청률 `rate`(req/s), 창 판정 `met`, 합격 창 수 `passed`, 창당 요청 수 `requests`다. κ̂는 검사한 요청률 중 최대 통과값이며, 통과 근거 없는 0은 물리 처리량 0을 뜻하지 않는다. 검사하지 않은 요청률을 보간하지 않는다. 현재 근거가 없으면 성공 응답의 빈 배열이며, 전체 격자·용량표 행·Pending/Built 상태는 제공하지 않는다. 인증·인가 경계는 기존과 같다 |
 | `GET /api/v1/pools` | 실제 CHILL 인스턴스의 owner와 binding에서 도출한 `workloads[]`(`workload`, 활성 POOL `nodes`, `instances`), 측정 taint Node의 `measurement[]`, `available[]`와 `other[]`(`node/ready/powerMode/reasons`), `observedAt`, observer `issues` |
 | `GET /api/v1/pools/{uid}` | 해당 Workload의 활성 POOL 하나. 없으면 `PoolNotFound` |
 | `GET /api/v1/observations/load` | 사건 구간의 모든 UID 유입·접수·배정·완료율과 instance assignment 집계 |
@@ -198,8 +198,11 @@ Query owns public progress and per-cell coverage projection.
 
 `/scheduler/state`의 `costIssues[]`(CostIssue `source/code/reason`)는 비용에 기여하지 못한
 측정이다. decision은 `keep`, `target`, `workloads[]`, `capacity`, snapshot Node의 `measurement`와 `reasons`,
-`search.examined`, `search.comparedNodes`를 담는다. `capacity`는 비교 기간, 고른 route 시각, Workload별 κ 합과 판정,
-가중치, 사용한 용량표 행, 모든 노드 계획과 제외 사유다([스케줄러 구현 설계 5.3절](scheduler-implementation.md#53-전환에너지선택)).
+`search.examined`, `search.comparedNodes`를 담는다. `capacity`는 비교 기간, 고른 route 시각, Workload별
+`rate`·`queued`, 상대 프로파일 요청률 `routingRate`·`retainedRoutingRate`, 인스턴스별 상대 가중치 `weights`,
+선택안 `tests`·유지안 `keepTests`와 노드 계획·제외 사유다. 두 검사 배열의 항목은 위 capacity endpoint와 같은
+`SchedulerFeedbackRate`다. 라우팅 값은 SLO 처리 용량 보장이 아니며 κ̂로 실행을 거절하지 않는다.
+현재 capacity endpoint는 현재 결정의 선택안 검사만 평탄화하므로 과거 결정 상세의 대체 자료로 쓰지 않는다.
 탐색이 실행된 decision의 `capacity.search.startedAt`/`finishedAt`은 실제 탐색 진입/결과 반환에서 직접 캡처한 UTC 시각이며 `durationNanos`는 같은 구간의 monotonic 경과다. `search.examined`(만든 node-plan 수)와 `capacity.search.evaluated`(초기 keep/empty 원점을 제외한 sweep의 plan-set 후보 평가 수)는 서로 다른 값이다. 관측 이력 full/compact와 replay decoder는 이 구간을 그대로 전달한다. 탐색하지 않은 decision에 구간을 합성하지 않으며 summary는 기존대로 search를 생략한다. 기존 v3 저장 계약·관측 prefix/version은 유지하고, 과거 원시 기록을 수정하거나 시각을 소급 생성하지 않는다.
 `GET /api/v1/scheduler/state?view=summary`와 `/api/v1/observations/scheduler?view=summary`의 decision도 원본 순서의 `workloads[]`(`uid`, `state`, 선택적 `reason`)를 그대로 제공한다.
 이력 summary는 catalog를 복원하지 않고 저장된 decision의 `workloads[]`를 직접 읽으므로 과거 상태·사유와 순서를 유지한다.
