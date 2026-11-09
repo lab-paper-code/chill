@@ -49,8 +49,9 @@ drains them even when scheduling raises; the arrival path never joins a thread.
 The counter has its own lock, so blocked output does not block later arrivals.
 Workers are daemon threads to avoid Python 3.8 interpreter shutdown-lock
 retention, but replay always waits for their output and connection cleanup.
-Memory after schedule preparation depends on concurrent requests, not completed
-arrivals. The frozen offset trace, per-shard schedule and dataset remain resident.
+Inference bookkeeping retains concurrent requests, not completed request threads.
+The feedback FIFO retains pending reports; failed-report events remain until
+final drain. The frozen offset trace, per-shard schedule and dataset remain resident.
 A failed process shard prevents a complete `drained` event: its missing planned
 requests cannot be silently removed from the SLO denominator; already streamed
 rows from every shard remain evidence.
@@ -237,6 +238,23 @@ still reports its observation identity and duration; never invent a server join.
 The endpoint returns 204 on acceptance. Existing feedback POST authorization
 is required. IDs are opaque; client reports contain no server/native duration.
 
+New offline evaluations use exact `elapsedNanos` from a full successful 2xx
+client response for `completedLatencyNS` and deadline success. Existing server
+`completed`/`executionComplete`, identity quarantine, observation-gap and
+generator-quality guards remain. `gatewayCompletedLatencyNS` retains server
+final elapsed as a separate diagnostic. `actualLatencyNS` and scheduled
+latency keep their reference meanings; neither substitutes for missing exact E.
+`outcomes` now counts client outcomes; `serverOutcomes` keeps server facts.
+`clientFailures` includes issued HTTP errors, timeouts, transport errors and
+cancellations, including failures without a RequestID. These remain in the
+offered denominator, never successful latency samples. Timeout E is a censored
+lower bound. The requested SLO quantile uses `quantileNanos:null` and
+`quantileStatus:"unbounded"` when its rank reaches the failure tail; finite
+quantiles use `"finite"`. Missing exact client evidence stays `"unknown"`,
+counted by `clientUnknown`, without synthesizing completion or timeout.
+Unsent generator work stays a quality fact. Previously stored judgments and
+raw evidence are not rewritten or reinterpreted.
+
 
 E5 retains boundary-inclusive actual/planned gaps, intervals over 50 ms, and
 send lateness as `issuanceFidelity` in its judgment, campaign summary and
@@ -297,8 +315,11 @@ prefix or header whitespace. Keep tokens and sample payloads out of logs.
 `InferenceResponse` retains the raw HTTP status and body, including gateway
 rejections such as `401`, `403`, `429`, `503` and `504`. Its optional
 `request_id` and `workload_uid` fields expose the gateway correlation headers;
-rejections before Workload resolution may have no UID. Transport and TLS errors
-remain standard-library exceptions, distinct from HTTP rejection responses.
+rejections before Workload resolution may have no UID. `elapsed_nanos` holds exact
+send/full-read duration. Interrupted HTTP, transport and TLS exchanges raise
+`InferenceRequestError`, an `OSError` subclass retaining `elapsed_nanos`, `outcome`,
+optional `status_code`/`request_id`/`workload_uid`, and the original exception as
+`__cause__`. These remain distinct from full HTTP rejection responses.
 The client performs no redirects or retries. Use one client per sequential
 worker and close it when finished.
 

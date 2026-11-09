@@ -1,6 +1,6 @@
 """Offline request timing, empirical statistics and generator issuance quality.
 
-Only HTTP receipt/final outcomes and evaluator-owned arrival traces are inputs.
+Client exchange evidence, HTTP receipt/final facts and frozen arrival traces are inputs.
 """
 from datetime import datetime
 import math
@@ -47,7 +47,7 @@ def scheduled_monotonic_ns(row, start_ns):
 
 
 def scheduled_latency_ns(row, start_ns):
-    """Scheduled end-to-end reference only; never the receipt-origin SLO."""
+    """Scheduled reference only; SLO starts at the actual prepared-request send."""
     if row.get('issued') is False or row.get('error') == 'UnsentAtWindowEnd':
         return None
     scheduled = scheduled_monotonic_ns(row, start_ns)
@@ -69,18 +69,48 @@ def generator_quality_config(config):
     return dict(policy)
 
 
+def client_outcome(row):
+    """Keep unsent work and legacy/missing client measurements unknown."""
+    if row.get('issued') is False or row.get('error') == 'UnsentAtWindowEnd':
+        return 'unissued'
+    elapsed = row.get('elapsedNanos')
+    if type(elapsed) is not int or elapsed < 0:
+        return 'unknown'
+    outcome, status = row.get('outcome'), row.get('status')
+    if outcome == 'completed':
+        return outcome if type(status) is int and 200 <= status < 300 and not row.get('error') else 'unknown'
+    if outcome == 'http_error':
+        return outcome if type(status) is int and 100 <= status < 600 and not 200 <= status < 300 else 'unknown'
+    return outcome if outcome in ('timeout', 'transport_error', 'canceled') else 'unknown'
+
+
 def request_timing(row, final, received_ns, start_ns):
-    """Join actual HTTP receipt/final facts; never substitute client RTT for SLO."""
-    elapsed = final.get('elapsedNanos') if final else None
-    suitable = row.get('issued') is not False and row.get('error') != 'UnsentAtWindowEnd' and final and final.get('outcome') == 'completed' and final.get('executionComplete') is True
-    slo = elapsed if suitable and type(elapsed) is int and elapsed >= 0 else None
+    """Use exact client full-read E for SLO; retain native completion guards."""
+    server_elapsed = final.get('elapsedNanos') if final else None
+    server_elapsed = server_elapsed if type(server_elapsed) is int and server_elapsed >= 0 else None
+    executed = final and final.get('outcome') == 'completed' and final.get('executionComplete') is True
+    outcome = client_outcome(row)
+    elapsed = row.get('elapsedNanos') if outcome not in ('unknown', 'unissued') else None
+    slo = elapsed if outcome == 'completed' and executed else None
     sent, finished = row.get('sentMonotonicNS'), row.get('finishedMonotonicNS')
     actual = finished - sent if type(sent) is int and type(finished) is int and finished >= sent and row.get('issued') is not False else None
     wall_sent = row.get('sentAtUnixNS')
     entrance = received_ns - wall_sent if type(received_ns) is int and type(wall_sent) is int and row.get('issued') is not False else None
     return {'sloLatencyNS': slo, 'scheduledLatencyNS': scheduled_latency_ns(row, start_ns),
+            'clientElapsedNS': elapsed, 'clientOutcome': outcome,
+            'serverElapsedNS': server_elapsed, 'gatewayCompletedLatencyNS': server_elapsed if executed else None,
             'actualLatencyNS': actual, 'entranceDelayNS': entrance,
             'entranceDelayMeaning': 'Gateway receivedAt minus client sentAtUnixNS; cross-host clock offset/uncertainty retained, including negative values; not one-way network latency'}
+
+
+def slo_quantile(completed, failures, offered, percentile):
+    """Failures occupy the infinite tail; missing evidence is never completion."""
+    rank = math.ceil(offered * percentile / 100)
+    if rank > offered - failures:
+        return {'quantileNanos': None, 'quantileStatus': 'unbounded'}
+    if not rank or len(completed) + failures != offered:
+        return {'quantileNanos': None, 'quantileStatus': 'unknown'}
+    return {'quantileNanos': sorted(completed)[rank - 1], 'quantileStatus': 'finite'}
 
 
 def issued_calls(client):

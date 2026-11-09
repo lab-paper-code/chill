@@ -58,14 +58,14 @@ class RecoveryGapTests(unittest.TestCase):
                 evidence_io.save(folder / 'phase.json', phase)
                 clients = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': offset,
                             'issued': True, 'sentMonotonicNS': 100 + offset,
-                            'finishedMonotonicNS': 100_000_100 + offset}
+                            'finishedMonotonicNS': 100_000_100 + offset,
+                            'status': 200, 'outcome': 'completed',
+                            'elapsedNanos': 2_000_000_000 if label == 'ordinary-slo-failure' else 120_000_000}
                            for i, offset in enumerate(config['traceOffsets'][NAME])]
                 (folder / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in clients))
                 final = {'workloadUID': 'workload', 'definitionID': 'definition', 'kind': 'final', 'requestID': 'r0',
                          'receivedAt': '2026-11-03T00:00:01Z', 'outcome': 'completed',
                          'executionComplete': True, 'elapsedNanos': 100_000_000}
-                if label == 'ordinary-slo-failure':
-                    final['elapsedNanos'] = 2_000_000_000
                 inventory = {'hour': '20261103T00', 'at': '2026-11-03T00:02:00Z', 'status': 'closed-local',
                              'kinds': [{'kind': stream, 'available': available if stream == 'requests' else False,
                                         'segments': [], 'archive': None} for stream in ('requests', 'resources', 'scheduler')],

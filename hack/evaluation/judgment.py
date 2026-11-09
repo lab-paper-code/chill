@@ -46,18 +46,23 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
         mismatched = [row for row in rows if row.get('workloadUID') not in (None, workload['uid'])]
         usable = [row for row in rows if row.get('requestID') not in quarantined and
                   row.get('workloadUID') in (None, workload['uid'])]
-        supported = any(row.get('requestID') in indexed['finals'] for row in usable)
+        client_failures = {'http_error', 'timeout', 'transport_error', 'canceled'}
+        failure_rows = [row for row in usable if analysis.client_outcome(row) in client_failures]
+        supported = bool(failure_rows) or any(row.get('requestID') in indexed['finals'] and
+                                            analysis.client_outcome(row) == 'completed' for row in usable)
         recorded_gaps = indexed['summary'].get('observationGaps', [])
         window_start = evidence_io.timestamp_ns(phase['startUTC']) if recorded_gaps else 0
         window_end = evidence_io.timestamp_ns(closed_through or phase['endUTC']) if recorded_gaps else 0
         gaps = raw.overlapping_gaps(recorded_gaps, window_start, window_end) if recorded_gaps else []
         start = phase['starts'].get(name, {}).get('monotonicNS')
         quality = analysis.issuance_fidelity(rows, trace['offsetsNS'], start, round(stage['seconds'] * 1e9), analysis.stats, config['generatorQuality'])
-        completed, actual, scheduled, outcomes = [], [], [], Counter()
+        completed, gateway, actual, scheduled, outcomes, server_outcomes = [], [], [], [], Counter(), Counter()
         for row in usable:
             final = indexed['finals'].get(row.get('requestID'))
-            outcomes[final.get('outcome') if final else 'unfinished-or-no-final'] += 1
+            server_outcomes[final.get('outcome') if final else 'unfinished-or-no-final'] += 1
             timing = analysis.request_timing(row, final, None, start)
+            outcomes[timing['clientOutcome']] += 1
+            gateway.append(timing['gatewayCompletedLatencyNS'])
             if timing['sloLatencyNS'] is not None:
                 completed.append(timing['sloLatencyNS'])
             actual.append(timing['actualLatencyNS'])
@@ -68,20 +73,24 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
         required = math.ceil(offered * workload['slo']['percentile'] / 100)
         qstatus = quality['generatorQuality']['status']
         identities = indexed['identities']
-        identity_known = (supported and len(identities) == 1 and identities[0]['workloadUID'] == workload['uid']
+        identity_known = (any(row.get('requestID') in indexed['finals'] for row in usable)
+                          and len(identities) == 1 and identities[0]['workloadUID'] == workload['uid']
                           and bool(identities[0]['definitionID']))
         substages, base = [], 0
         for part in stage['parts']:
             stop = base + round(part['seconds'] * 1e9)
             planned = sum(base <= offset < stop for offset in trace['offsetsNS'])
-            latencies = []
+            latencies, failures = [], 0
             part_rows = [row for row in rows if base <= row['scheduledOffsetNs'] < stop]
             part_issued = analysis.issued_calls(part_rows)
-            part_supported = any(row.get('requestID') in indexed['finals'] for row in usable
-                                 if base <= row['scheduledOffsetNs'] < stop)
+            part_supported = any((row.get('requestID') in indexed['finals'] and analysis.client_outcome(row) == 'completed') or
+                                 analysis.client_outcome(row) in client_failures
+                                 for row in usable if base <= row['scheduledOffsetNs'] < stop)
             for row in usable:
                 if base <= row['scheduledOffsetNs'] < stop:
-                    latency = analysis.request_timing(row, indexed['finals'].get(row.get('requestID')), None, start)['sloLatencyNS']
+                    timing = analysis.request_timing(row, indexed['finals'].get(row.get('requestID')), None, start)
+                    latency = timing['sloLatencyNS']
+                    failures += timing['clientOutcome'] in client_failures
                     if latency is not None:
                         latencies.append(latency)
             successes = sum(value <= workload['slo']['targetLatencyNanos'] for value in latencies)
@@ -92,17 +101,23 @@ def reduce_requests(config, phase, clients, indexes, *, closed_through=None):
                 part_gaps = raw.overlapping_gaps(gaps, part_start + base, min(part_start + stop, window_end))
             substages.append({'id': part['id'], 'durationSeconds': part['seconds'], 'rate': part['rates'][name], 'offered': planned,
                               'completedLatencyNS': analysis.stats(latencies), 'deadlineSuccess': successes, 'requiredSuccessfulRank': rank,
+                              'clientFailures': failures, **analysis.slo_quantile(latencies, failures, planned, workload['slo']['percentile']),
                               'D1': 'NOT_OFFERED' if not planned else 'NOT_EVALUATED' if part_gaps else
                                     'INVALID_NO_LOAD' if not part_issued else 'NOT_EVALUATED' if not part_supported else
                                     'FAIL' if successes < rank else 'OBSERVED_THRESHOLD_MET',
                               'observationGaps': part_gaps})
             base = stop
         results[name] = {'offered': offered, 'clientRows': len(rows), 'outcomes': dict(outcomes), 'completedLatencyNS': analysis.stats(completed),
-                         'gatewayCompletedLatencyNS': analysis.stats(completed), 'actualLatencyNS': analysis.stats(actual), 'scheduledLatencyNS': analysis.stats(scheduled),
-                         'latencyScope': 'CHILL HTTP receipt to final elapsedNanos; client RTT and scheduled latency are references only',
+                         'gatewayCompletedLatencyNS': analysis.stats(gateway), 'serverOutcomes': dict(server_outcomes),
+                         'actualLatencyNS': analysis.stats(actual), 'scheduledLatencyNS': analysis.stats(scheduled),
+                         'latencyScope': 'Client prepared-request send to full response-body read (elapsedNanos); server elapsed and caller/scheduled durations are diagnostics',
+                         'clientFailures': len(failure_rows), 'clientUnknown': max(0, offered - len(completed) - len(failure_rows)),
+                         **analysis.slo_quantile(completed, len(failure_rows), offered, workload['slo']['percentile']),
                          'deadlineSuccess': hits, 'deadlineSuccessFraction': hits / offered if offered else None, 'requiredSuccessfulRank': required,
-                         'unfinishedOrUnsent': max(0, offered - len(completed) - loss), 'collectionLoss': loss, 'issuanceFidelity': quality,
-                         'reachable': hits + max(0, offered - sum(row.get('requestID') in indexed['finals'] for row in usable)) >= required,
+                         'unfinishedOrUnsent': max(0, offered - len(completed) - len(failure_rows) - loss),
+                         'collectionLoss': loss, 'issuanceFidelity': quality,
+                         'reachable': hits + max(0, offered - sum(row.get('requestID') in indexed['finals'] or
+                                                               analysis.client_outcome(row) in client_failures for row in usable)) >= required,
                          'D1': 'NOT_OFFERED' if not offered else 'NOT_EVALUATED' if gaps else
                                'INVALID_NO_LOAD' if qstatus == 'INVALID_NO_LOAD' else
                                'NOT_EVALUATED' if not supported else 'FAIL' if hits < required else 'OBSERVED_THRESHOLD_MET',

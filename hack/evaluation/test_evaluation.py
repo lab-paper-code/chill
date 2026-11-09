@@ -193,7 +193,8 @@ class EvaluationTests(unittest.TestCase):
                          'starts': {NAME: {'at': START, 'monotonicNS': 100}},
                          'producerCapture': {NAME: {'drained': True}}}
                 client = {'requestIndex': 0, 'requestID': 'r0', 'scheduledOffsetNs': 1, 'issued': True,
-                          'sentMonotonicNS': 101, 'finishedMonotonicNS': 100_000_101}
+                          'sentMonotonicNS': 101, 'finishedMonotonicNS': 100_000_101,
+                          'status': 200, 'outcome': 'completed', 'elapsedNanos': 120_000_000}
                 result = judgment_rules.reduce_requests(config, phase, {NAME: [client]}, {'workload': indexed})[NAME]
                 self.assertEqual(result['offered'], 1)
                 self.assertEqual(result['deadlineSuccess'], 0 if conflict else 1)
@@ -500,7 +501,8 @@ class EvaluationTests(unittest.TestCase):
             for workload in config['workloads']:
                 name, uid = workload['name'], workload['uid']
                 rows = [{'requestIndex': i, 'requestID': name + str(i), 'workloadUID': uid, 'scheduledOffsetNs': i+1,
-                         'issued': True, 'sentMonotonicNS': 1000000101+i} for i in range(2)]
+                         'issued': True, 'sentMonotonicNS': 1000000101+i,
+                         'status': 200, 'outcome': 'completed', 'elapsedNanos': 120000000} for i in range(2)]
                 clients[name] = rows
                 (root / (name + '-client.jsonl')).write_text(''.join(json.dumps(row)+'\n' for row in rows))
                 indexed[uid] = {'errors': [{'error': 'one unrelated raw hour/provenance error'}],
@@ -1653,7 +1655,9 @@ class EvaluationTests(unittest.TestCase):
             for name in ('power.json', 'power-drain-inclusive.json'):
                 evidence_io.save(root / name, power)
             rows = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': i + 1, 'scheduledMonotonicNS': i + 101,
-                     'sentMonotonicNS': i + 101, 'finishedMonotonicNS': 3000000000, 'issued': True} for i in range(2)]
+                     'sentMonotonicNS': i + 101, 'finishedMonotonicNS': 3000000000, 'issued': True,
+                     'status': 200, 'outcome': 'completed' if i == 0 else 'timeout',
+                     'elapsedNanos': 2200000000 if i == 0 else 2000000000} for i in range(2)]
             (root / (NAME + '-client.jsonl')).write_text(''.join(json.dumps(row) + '\n' for row in rows))
             indexed = {config['workloads'][0]['uid']: {'errors': [], 'identities': [{'workloadUID': 'workload', 'definitionID': 'definition'}],
                                                      'summary': {'uniqueRequests': 2}, 'finals': {
@@ -1696,7 +1700,8 @@ class EvaluationTests(unittest.TestCase):
                  'traces': {NAME: {'offsetsNS': [0, 1000000000], 'offered': 2}}}
         phase = {'stage': stage, 'starts': {NAME: {'at': START, 'monotonicNS': 100}}}
         rows = [{'requestIndex': i, 'scheduledOffsetNs': offset, 'requestID': 'r' + str(i),
-                 'sentMonotonicNS': 3000000100, 'issued': True} for i, offset in enumerate([0, 1000000000])]
+                 'sentMonotonicNS': 3000000100, 'issued': True, 'status': 200,
+                 'outcome': 'completed', 'elapsedNanos': 2} for i, offset in enumerate([0, 1000000000])]
         indexed = {workload['uid']: {'errors': [], 'identities': [], 'summary': {},
                     'finals': {'r0': {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1},
                                'r1': {'outcome': 'error', 'elapsedNanos': 1}}}}
@@ -1740,7 +1745,8 @@ class EvaluationTests(unittest.TestCase):
         phase = {'stage': {'seconds': 2, 'parts': [{'id': 'all', 'seconds': 2, 'rates': {NAME: 1}}],
                            'traces': {NAME: {'offsetsNS': [0, 1, 2], 'offered': 3}}},
                  'starts': {NAME: {'at': START, 'monotonicNS': 100}}}
-        rows = [{'requestIndex': 0, 'scheduledOffsetNs': 0, 'requestID': 'one', 'issued': True},
+        rows = [{'requestIndex': 0, 'scheduledOffsetNs': 0, 'requestID': 'one', 'issued': True,
+                 'status': 200, 'outcome': 'completed', 'elapsedNanos': 2},
                 {'requestIndex': 1, 'scheduledOffsetNs': 1, 'issued': False, 'error': 'UnsentAtWindowEnd'}]
         indexes = {workload['uid']: {'errors': [], 'identities': [], 'summary': {},
                                      'finals': {'one': {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1}}}}
@@ -1770,7 +1776,8 @@ class EvaluationTests(unittest.TestCase):
                  'starts': {name: {'at': START, 'monotonicNS': 100} for name in (NAME, 'second')}}
         def rows(prefix, uid):
             return [{'requestIndex': i, 'scheduledOffsetNs': i, 'requestID': prefix + str(i), 'workloadUID': uid,
-                     'sentMonotonicNS': 100 + i, 'issued': True} for i in range(2)]
+                     'sentMonotonicNS': 100 + i, 'issued': True,
+                     'status': 200, 'outcome': 'completed', 'elapsedNanos': 2} for i in range(2)]
         clients = {NAME: rows('a', first['uid']), 'second': rows('b', 'second-uid')}
         clients[NAME][1]['workloadUID'] = 'someone-else'
         finals = {rid: {'outcome': 'completed', 'executionComplete': True, 'elapsedNanos': 1}
@@ -1800,7 +1807,8 @@ class EvaluationTests(unittest.TestCase):
                                for i in range(2)}}}
         for anomaly in ('missing', 'duplicate', 'schedule'):
             rows = [{'requestIndex': i, 'requestID': 'r' + str(i), 'scheduledOffsetNs': offset,
-                     'sentMonotonicNS': 100 + offset, 'issued': True} for i, offset in enumerate([0, 1000000000])]
+                     'sentMonotonicNS': 100 + offset, 'issued': True, 'status': 200,
+                     'outcome': 'completed', 'elapsedNanos': 2} for i, offset in enumerate([0, 1000000000])]
             if anomaly == 'missing':
                 rows[0].pop('requestIndex')
             elif anomaly == 'duplicate':
