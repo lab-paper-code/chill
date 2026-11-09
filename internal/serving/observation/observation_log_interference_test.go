@@ -32,7 +32,7 @@ func interferenceRuntime(t testing.TB, log *ObservationLog) (*serving.Runtime, [
 	slow.Name, fast.Name, fast.UID = "slow", "fast", "fast-uid"
 	profiles := []serving.Profile{*snapshot.Instances[0].Profile, *snapshot.Instances[0].Profile}
 	profiles[0].ID, profiles[1].ID = "slow-profile", "fast-profile"
-	profiles[0].RuntimeDelivery = json.RawMessage(`{"payload":"` + strings.Repeat("x", 1<<20) + `"}`)
+	profiles[0] = *repeatedPairedObservationProfile(t, &profiles[0], 8192)
 	runtime.SetProfiles(profiles)
 	definitions := []*serving.Definition{&slow, &fast}
 	instances := make([]serving.ReadyInstance, 0, len(definitions))

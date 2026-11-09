@@ -10,7 +10,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
-// This public-consumer-only benchmark can be overlaid unchanged on 02b521a0.
+// Overlay this benchmark and the testing.TB clocked-log fixture on 02b521a0.
 // One synchronous scheduler producer drains each record, bounding its backlog.
 func BenchmarkRuntimeObservationInterference(b *testing.B) {
 	for _, recording := range []bool{false, true} {
@@ -21,11 +21,7 @@ func BenchmarkRuntimeObservationInterference(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			log, err := NewObservationLog(ObservationLogConfig{Directory: b.TempDir(), Store: "evidence", Writer: &observationArchive{directory: b.TempDir()}, Retention: time.Hour})
-			if err != nil {
-				b.Fatal(err)
-			}
-			defer func() { _ = log.Close(ctx) }()
+			log, _ := clockedObservationLog(b, ObservationLogConfig{}, time.Now().UTC())
 			runtime, err := serving.NewRuntime(ctx, serving.RuntimeConfig{QueueLimit: 2, ObservationLog: log})
 			if err != nil {
 				b.Fatal(err)
@@ -44,6 +40,10 @@ func BenchmarkRuntimeObservationInterference(b *testing.B) {
 				},
 			}}); err != nil {
 				b.Fatal(err)
+			}
+			states := runtime.Instances()
+			if len(states) != 1 || !states[0].Ready || states[0].RecoveryUnknown || !states[0].Routable[definition.UID] {
+				b.Fatalf("benchmark executor was not admitted to the live route: %+v", states)
 			}
 			if err := log.Drain(ctx); err != nil {
 				b.Fatal(err)
@@ -81,8 +81,11 @@ func BenchmarkRuntimeObservationInterference(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				if _, err := call.Wait(ctx); err != nil {
-					b.Fatal(err)
+				waitContext, waitCancel := context.WithTimeout(ctx, 5*time.Second)
+				_, waitErr := call.Wait(waitContext)
+				waitCancel()
+				if waitErr != nil {
+					b.Fatal(waitErr)
 				}
 				if err := runtime.Response(receipt, outcomeCompleted, ""); err != nil {
 					b.Fatal(err)

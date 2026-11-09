@@ -117,7 +117,7 @@ func (c *observationClock) set(at time.Time) {
 var observationTestHour = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
 
 // clockedObservationLog writes at clock time; its process started at started.
-func clockedObservationLog(t *testing.T, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
+func clockedObservationLog(t testing.TB, config ObservationLogConfig, started time.Time) (*ObservationLog, *observationClock) {
 	t.Helper()
 	if config.Retention == 0 {
 		config.Retention = 2 * time.Hour

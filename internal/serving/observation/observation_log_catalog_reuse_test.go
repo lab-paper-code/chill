@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 )
 
@@ -99,19 +99,94 @@ func TestRuntimeCatalogAdoptsRepublishedImmutableSource(t *testing.T) {
 	}
 }
 
+// Repeat complete physical-trial pairs, then hydrate the same published raw
+// population. Equal trial shapes retain the fixture's conditional quantiles.
+func repeatedPairedObservationProfile(t testing.TB, source *serving.Profile, trials int) *serving.Profile {
+	t.Helper()
+	profile := *source
+	profile.Batches = slices.Clone(source.Batches)
+	profile.TrialsPerBatch = trials
+	for index, batch := range source.Batches {
+		samples := make([]firstfloor.ServiceSample, 0, trials*len(batch.ServiceSamples))
+		for trial := range trials {
+			suffix := fmt.Sprintf("-%d", trial)
+			for _, original := range batch.ServiceSamples {
+				sample := original.Clone()
+				sample.TrialID += suffix
+				samples = append(samples, sample)
+			}
+		}
+		distribution, err := firstfloor.NewServiceDistribution(samples)
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile.Batches[index].ServiceSamples = samples
+		profile.Batches[index].ServiceDistribution = distribution
+	}
+	return &profile
+}
+
+func TestObservationPairedProfileFixtureKeepsNumericConsumer(t *testing.T) {
+	_, snapshot := schedulerFixture()
+	source := snapshot.Instances[0].Profile
+	const trials = 8192
+	profile := repeatedPairedObservationProfile(t, source, trials)
+	data, err := json.Marshal(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) < 1<<20 {
+		t.Fatalf("paired fixture is not a large serialized profile: %d bytes", len(data))
+	}
+	var stored serving.Profile
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	for index, batch := range stored.Batches {
+		original := source.Batches[index]
+		if len(original.ServiceSamples) != 2 || len(batch.ServiceSamples) != 2*trials || profile.Batches[index].ServiceDistribution == original.ServiceDistribution {
+			t.Fatalf("fixture lost pairs or retained stale hydration: source=%d stored=%d", len(original.ServiceSamples), len(batch.ServiceSamples))
+		}
+		for pair := range trials {
+			startup, warm := batch.ServiceSamples[2*pair], batch.ServiceSamples[2*pair+1]
+			if startup.TrialID != warm.TrialID || startup.PrecedingIdleNanos != nil || warm.PrecedingIdleNanos == nil ||
+				startup.ServiceDurationNanos != original.ServiceSamples[0].ServiceDurationNanos ||
+				warm.ServiceDurationNanos != original.ServiceSamples[1].ServiceDurationNanos ||
+				*warm.PrecedingIdleNanos != *original.ServiceSamples[1].PrecedingIdleNanos {
+				t.Fatalf("stored trial %d lost its original paired measurements", pair)
+			}
+		}
+		distribution, err := firstfloor.NewServiceDistribution(batch.ServiceSamples)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, gap := range []*int64{nil, original.ServiceSamples[1].PrecedingIdleNanos} {
+			for _, percentile := range []float64{0, 50, 95, 100} {
+				want, support, ok := original.ServiceDistribution.QuantileNanos(gap, percentile)
+				got, repeatedSupport, repeatedOK := distribution.QuantileNanos(gap, percentile)
+				if !ok || !repeatedOK || got != want || repeatedSupport.TrialCount != trials ||
+					repeatedSupport.DistanceNanos != support.DistanceNanos || repeatedSupport.OutsideSupport != support.OutsideSupport {
+					t.Fatalf("paired fixture changed conditional service: percentile=%g got=%d want=%d support=%+v", percentile, got, want, repeatedSupport)
+				}
+			}
+		}
+	}
+}
+
 // Overlay this source on 02b521a0 and compare with C1 at the same Go/toolchain.
 // Draining outside the timer bounds the real FIFO without measuring fsync.
 func BenchmarkRequestCatalogRepublication(b *testing.B) {
-	for _, size := range []int{1 << 10, 1 << 20} {
-		b.Run(fmt.Sprint(size), func(b *testing.B) {
+	for _, trials := range []int{8, 8192} {
+		b.Run(fmt.Sprintf("paired-trials=%d", trials), func(b *testing.B) {
 			ctx := context.Background()
 			at := observationTestHour
-			log, err := NewObservationLog(ObservationLogConfig{Directory: b.TempDir(), Store: "evidence", Writer: &observationArchive{directory: b.TempDir()}, Retention: time.Hour, Now: func() time.Time { return at }})
+			log, _ := clockedObservationLog(b, ObservationLogConfig{}, at)
+			_, snapshot := schedulerFixture()
+			original := repeatedPairedObservationProfile(b, snapshot.Instances[0].Profile, trials)
+			body, err := json.Marshal(original)
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer func() { _ = log.Close(ctx) }()
-			original := &serving.Profile{ID: "profile", RuntimeDelivery: json.RawMessage(`{"payload":"` + strings.Repeat("x", size) + `"}`)}
 			seed := func(id string, profile *serving.Profile) {
 				if err := log.RequestEvent(serving.RequestEvent{RequestID: id, Kind: serving.RequestRowAssigned, At: at, ReceivedAt: at, Assignment: &serving.Assignment{Instance: "physical", Profile: profile.ID, ProfileBody: profile, DispatchedAt: at}}); err != nil {
 					b.Fatal(err)
@@ -137,6 +212,7 @@ func BenchmarkRequestCatalogRepublication(b *testing.B) {
 					b.StartTimer()
 				}
 			}
+			b.ReportMetric(float64(len(body)), "profile-bytes")
 		})
 	}
 }
