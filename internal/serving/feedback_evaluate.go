@@ -71,7 +71,7 @@ func EvaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, 
 	}
 	conditional := replay.conditional
 	return FeedbackCandidateResult{
-		Workloads: replay.feedback, InvalidReasons: appendUnique(replay.reasons, replay.invalidReasons...),
+		Workloads: replay.feedback, InvalidReasons: replay.reasons,
 		SLO: feedbackReplayEstimates(snapshot, replay), ConditionalService: &conditional,
 		Assumptions: replay.assumptions, Sources: replay.sources,
 	}, nil
@@ -405,5 +405,5 @@ func (s *schedulerReplayState) potentialRouteReady(action Action, instance *sche
 
 // Preserve the existing failure vocabulary for consumers of Candidate.SLO.
 func feedbackFailedOutcome(kind string) bool {
-	return kind == "timeout" || kind == "unfinished" || kind == firstfloor.OutcomePreprocessFailed || kind == firstfloor.OutcomeBatchError || strings.HasPrefix(kind, "expired-")
+	return kind == schedulerOutcomeTimeout || kind == "unfinished" || kind == firstfloor.OutcomePreprocessFailed || kind == firstfloor.OutcomeBatchError || strings.HasPrefix(kind, "expired-")
 }

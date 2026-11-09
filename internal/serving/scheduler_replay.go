@@ -28,6 +28,7 @@ const (
 	schedulerActionComplete = "complete"
 	schedulerActionFailed   = "failed"
 	schedulerActionCancel   = "cancel"
+	schedulerOutcomeTimeout = "timeout"
 )
 
 type schedulerReplayRequest struct {
@@ -88,7 +89,6 @@ type schedulerReplayResult struct {
 	outcomes         map[string]map[string]int
 	conditional      ConditionalServiceEvidence
 	feedback         []FeedbackWorkloadScore
-	invalidReasons   []string
 	observedArrivals map[string]int
 }
 
@@ -244,7 +244,7 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 	}
 	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.ComparisonPeriod), compared: compared, capacity: capacity, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
 	defer func() {
-		if s.capacity == nil {
+		if s.capacity == nil && err == nil {
 			s.finishFeedback()
 		}
 		result = s.out
@@ -446,7 +446,7 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			if s.out.outcomes[key] == nil {
 				s.out.outcomes[key] = map[string]int{}
 			}
-			s.out.outcomes[key]["timeout"]++
+			s.out.outcomes[key][schedulerOutcomeTimeout]++
 		} else if r.NativeOutcome == firstfloor.OutcomePreprocessFailed || r.NativeOutcome == firstfloor.OutcomeBatchError {
 			x.failed = true
 			if s.out.outcomes[x.identity] == nil {

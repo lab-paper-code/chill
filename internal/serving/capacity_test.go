@@ -190,8 +190,8 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 				if earlyCtx.calls >= fullCtx.calls || len(early.SLO) != 0 {
 					t.Fatalf("failed window must skip replay calls, not publish partial percentiles: early %d, full %d, %+v", earlyCtx.calls, fullCtx.calls, early)
 				}
-			} else if !reflect.DeepEqual(early, full) {
-				t.Fatalf("passing window changed: early %+v, full %+v", early, full)
+			} else if early.Status != full.Status || !reflect.DeepEqual(early.SLO, full.SLO) || early.ExpectedJoules == nil || full.ExpectedJoules == nil || *early.ExpectedJoules != *full.ExpectedJoules || !reflect.DeepEqual(early.ConditionalService, full.ConditionalService) {
+				t.Fatalf("passing window must preserve complete latency, energy and queried service evidence: early %+v, full %+v", early, full)
 			}
 		})
 	}

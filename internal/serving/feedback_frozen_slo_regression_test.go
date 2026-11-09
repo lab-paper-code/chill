@@ -33,3 +33,28 @@ func TestFeedbackConsumerFrozenDefinitionSLOSurvivesCurrentRelaxation(t *testing
 		}
 	}
 }
+
+func TestFeedbackConsumerFrozenDefinitionPercentileSurvivesCurrentChange(t *testing.T) {
+	settings, snapshot, candidate := feedbackFixture()
+	snapshot.Arrivals = nil
+	snapshot.Instances[0].MaxBatch = 1
+	definition := snapshot.Workloads[0]
+	definition.SLO.TargetLatency = 50 * time.Millisecond
+	frozen := *definition
+	frozen.SLO.Percentile = 100
+	definition.Generation++
+	definition.SLO.Percentile = 1
+	zero := 0.0
+	snapshot.Outstanding = []SchedulerRequest{
+		{ID: "old-a", Definition: &frozen, Phase: phaseQueued, Instance: "i1", CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &zero},
+		{ID: "old-b", Definition: &frozen, Phase: phaseQueued, Instance: "i1", QueueOrder: 1, CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &zero},
+	}
+	result, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1)
+	if err != nil || len(result.InvalidReasons) != 0 || len(result.Workloads) != 1 {
+		t.Fatalf("frozen percentile evaluation: %+v %v", result, err)
+	}
+	score := result.Workloads[0]
+	if score.Satisfied || score.Completed != 2 || score.SuccessQuantileNanos == nil || *score.SuccessQuantileNanos != 60e6 {
+		t.Fatalf("old p100 must judge 30/60ms at 60ms despite current p1: %+v", result)
+	}
+}

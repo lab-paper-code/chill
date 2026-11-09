@@ -331,42 +331,9 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			gapDecision := i.idleNanos(s.now)
 			choice := firstfloor.ChooseBatch(i.policy, states, gapDecision)
 			if choice.Reason == firstfloor.OutcomeDeadlineDrop || choice.Reason == firstfloor.ReasonDeadlineDefer {
-				index := -1
-				for j, r := range i.queue {
-					if r.source.ID == choice.RequestID {
-						index = j
-						break
-					}
-				}
-				if index < 0 {
-					s.out.reasons = append(s.out.reasons, "BatchPolicyUnknownTransitionRequest:"+i.config.ID)
+				if !s.transitionQueuedChoice(i, choice) {
 					return false
 				}
-				r := i.queue[index]
-				if choice.Reason == firstfloor.OutcomeDeadlineDrop {
-					s.capturePotential(r, i)
-				}
-				copy(i.queue[index:], i.queue[index+1:])
-				i.queue[len(i.queue)-1] = nil
-				i.queue = i.queue[:len(i.queue)-1]
-				if choice.Reason == firstfloor.ReasonDeadlineDefer {
-					r.deferred = true
-					i.queue = append(i.queue, r)
-				} else {
-					r.dropped = true
-					r.completed = true
-					i.outstanding--
-					key := r.identity
-					if s.out.outcomes[key] == nil {
-						s.out.outcomes[key] = map[string]int{}
-					}
-					s.out.outcomes[key]["timeout"]++
-					if s.capacity != nil {
-						s.capacity.failed = true // Any timeout already fails a capacity window.
-						return false
-					}
-				}
-				i.wake = s.now
 				continue
 			}
 			if len(i.batch) > 0 || i.wake > s.now {
@@ -414,6 +381,44 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 			break
 		}
 	}
+	return true
+}
+
+func (s *schedulerReplayState) transitionQueuedChoice(i *schedulerReplayInstance, choice firstfloor.BatchChoice) bool {
+	index := -1
+	for j, r := range i.queue {
+		if r.source.ID == choice.RequestID {
+			index = j
+			break
+		}
+	}
+	if index < 0 {
+		s.out.reasons = append(s.out.reasons, "BatchPolicyUnknownTransitionRequest:"+i.config.ID)
+		return false
+	}
+	r := i.queue[index]
+	if choice.Reason == firstfloor.OutcomeDeadlineDrop {
+		s.capturePotential(r, i)
+	}
+	copy(i.queue[index:], i.queue[index+1:])
+	i.queue[len(i.queue)-1] = nil
+	i.queue = i.queue[:len(i.queue)-1]
+	if choice.Reason == firstfloor.ReasonDeadlineDefer {
+		r.deferred = true
+		i.queue = append(i.queue, r)
+	} else {
+		r.dropped, r.completed = true, true
+		i.outstanding--
+		if s.out.outcomes[r.identity] == nil {
+			s.out.outcomes[r.identity] = map[string]int{}
+		}
+		s.out.outcomes[r.identity][schedulerOutcomeTimeout]++
+		if s.capacity != nil {
+			s.capacity.failed = true // Any timeout already fails a capacity window.
+			return false
+		}
+	}
+	i.wake = s.now
 	return true
 }
 

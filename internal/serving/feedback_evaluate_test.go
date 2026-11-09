@@ -70,7 +70,7 @@ func TestFeedbackConsumerZeroWitnessRetainsDropAndPotential(t *testing.T) {
 	snapshot.Instances[0].Profile.Condition.Firstfloor.DeadlinePolicy = firstfloor.DeadlineDrop
 	snapshot.Instances[0].MaxBatch = 1
 	snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID}}
-	var potentials []float64
+	potentials := make([]float64, 0, 2)
 	for _, service := range []float64{30e6, 60e6} {
 		snapshot.Instances[0].Profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1}, []float64{service})}
 		snapshot.Options[0].Instance = snapshot.Instances[0]
@@ -81,7 +81,7 @@ func TestFeedbackConsumerZeroWitnessRetainsDropAndPotential(t *testing.T) {
 		}
 		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 		score := result.Workloads[0]
-		if score.Population != 2 || score.DeadlineDropped != 2 || score.FailureFraction != 1 || score.Completed != 0 || score.SuccessQuantileNanos != nil || score.PotentialExcess == nil || result.SLO[0].ExpectedNanos != nil || result.SLO[0].PredictedOutcomes["timeout"] != 2 {
+		if score.Population != 2 || score.DeadlineDropped != 2 || score.FailureFraction != 1 || score.Completed != 0 || score.SuccessQuantileNanos != nil || score.PotentialExcess == nil || result.SLO[0].ExpectedNanos != nil || result.SLO[0].PredictedOutcomes[schedulerOutcomeTimeout] != 2 {
 			t.Fatalf("drop became successful latency or disappeared: %+v", result)
 		}
 		potentials = append(potentials, *score.PotentialExcess)
@@ -246,7 +246,7 @@ func TestFeedbackConsumerCapturedNativeFailuresRemainFixedOutcomes(t *testing.T)
 			score := result.Workloads[0]
 			key, dropped, failed := outcome, 0, 1
 			if outcome == firstfloor.OutcomeDeadlineDrop {
-				key, dropped, failed = "timeout", 1, 0
+				key, dropped, failed = schedulerOutcomeTimeout, 1, 0
 			}
 			if score.Population != 1 || score.DeadlineDropped != dropped || score.Failed != failed || score.FailureFraction != 1 || score.Completed != 0 || score.SuccessQuantileNanos != nil || score.PotentialExcess != nil || len(score.PotentialUnavailableReasons) == 0 || result.SLO[0].PredictedOutcomes[key] != 1 || result.SLO[0].ExpectedNanos != nil {
 				t.Fatalf("fixed native failure became success or blocked current control: %+v", result)
