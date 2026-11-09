@@ -1,13 +1,10 @@
 package serving
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"os"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 )
@@ -263,8 +260,8 @@ func TestOperationCostSettingsValidation(t *testing.T) {
 	}
 }
 
-// Optional offline smoke consumes captured API data and caches actual computed
-// capacity rows. It never contacts a cluster or replaces measured service data.
+// Optional offline smoke consumes captured API/profile data with current feedback.
+// It never contacts a cluster or warms an unused full-grid capacity table.
 func TestOperationCostLiveSnapshotReplay(t *testing.T) {
 	filename := os.Getenv("CHILL_OPERATION_COST_REPLAY")
 	if filename == "" {
@@ -288,11 +285,6 @@ func TestOperationCostLiveSnapshotReplay(t *testing.T) {
 	if err := s.Validate(); err != nil {
 		t.Fatalf("capture must contain explicit proposed scheduler settings: %v", err)
 	}
-	table, cachedCount := operationCostReplayTable(t)
-	table.Ensure(context.Background(), s, snap)
-	table.Wait()
-	rows := table.Rows()
-	t.Logf("actual capacity rows=%d cached=%d", len(rows), cachedCount)
 	before := capacityPlannerForTest(t, s, snap)
 	beforeEligible := 0
 	for _, plans := range before.plans {
@@ -356,41 +348,6 @@ const (
 	operationCostTestProfile = "cost-current-profile"
 )
 
-func operationCostReplayTable(t *testing.T) (*CapacityTable, int) {
-	t.Helper()
-	cached := map[string]CapacityRow{}
-	var record func(CapacityRow) error
-	if filename := os.Getenv("CHILL_OPERATION_COST_ROWS"); filename != "" {
-		raw, err := os.ReadFile(filename)
-		if err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		for {
-			var row CapacityRow
-			err := decoder.Decode(&row)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			cached[row.Key] = row
-		}
-		file, err := os.OpenFile(filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = file.Close() })
-		var mu sync.Mutex
-		record = func(row CapacityRow) error { mu.Lock(); defer mu.Unlock(); return json.NewEncoder(file).Encode(row) }
-	}
-	table := NewCapacityTable(2, record, nil)
-	// Explicit offline full-grid analysis may reuse fully computed rows.
-	// Native online planning never consumes this table or its readiness.
-	table.rows = cached
-	return table, len(cached)
-}
 
 func operationCostReplayReport(t *testing.T, report map[string]any) {
 	t.Helper()
