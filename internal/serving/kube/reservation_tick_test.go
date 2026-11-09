@@ -190,7 +190,9 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 			}
 			// A new demand is evaluated by Tick while the actual power wait remains live.
 			settings.MinimumDemand[w2.UID] = 2
-			time.Sleep(2 * time.Millisecond)
+			waitReservationTest(t, ctx, func() bool {
+				return !time.Now().Before(first.ObservedSince.Add(settings.ObservationWindow))
+			})
 			decision, err := c.Tick(ctx, time.Now())
 			if err != nil {
 				t.Fatal(err)
