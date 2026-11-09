@@ -30,6 +30,7 @@ func newPathSLOHTTPFixture(t *testing.T, ctx context.Context, count int) *pathSL
 	t.Helper()
 	entered := make(chan native.Request, count)
 	release := make(chan struct{})
+	holdNext := make(chan chan struct{}, 1)
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(unblock)
@@ -48,6 +49,14 @@ func newPathSLOHTTPFixture(t *testing.T, ctx context.Context, count int) *pathSL
 			t.Error("native transport changed the raw sample")
 		}
 		entered <- request
+		select {
+		case resume := <-holdNext:
+			select {
+			case <-resume:
+			case <-ctx.Done():
+			}
+		default:
+		}
 		first.Do(func() {
 			select {
 			case <-release:
@@ -87,14 +96,18 @@ func newPathSLOHTTPFixture(t *testing.T, ctx context.Context, count int) *pathSL
 	if err := runtime.Publish(definition); err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "instance", Node: snapshot.Instances[0].Node, Ready: true},
-		Profile: snapshot.Instances[0].Profile, Capacity: 1, Routing: map[string]int32{definition.UID: 1}, Execute: execute}}); err != nil {
-		t.Fatal(err)
+	install := func() {
+		t.Helper()
+		if err := runtime.InstallInstances([]serving.ReadyInstance{{State: serving.InstanceState{ID: "instance", Node: snapshot.Instances[0].Node, Ready: true},
+			Profile: snapshot.Instances[0].Profile, Capacity: 1, Routing: map[string]int32{definition.UID: 1}, Execute: execute}}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	install()
 	front := httptest.NewServer(h)
 	t.Cleanup(front.Close)
 	t.Cleanup(unblock)
-	return &pathSLOHTTPFixture{runtime: runtime, log: log, front: front, entered: entered, unblock: unblock, settings: settings, snapshot: snapshot}
+	return &pathSLOHTTPFixture{runtime: runtime, log: log, front: front, entered: entered, unblock: unblock, install: install, holdNext: holdNext, settings: settings, snapshot: snapshot}
 }
 
 type pathSLOHTTPFixture struct {
@@ -103,6 +116,8 @@ type pathSLOHTTPFixture struct {
 	front    *httptest.Server
 	entered  chan native.Request
 	unblock  func()
+	install  func()
+	holdNext chan chan struct{}
 	settings serving.SchedulerSettings
 	snapshot serving.SchedulerSnapshot
 }

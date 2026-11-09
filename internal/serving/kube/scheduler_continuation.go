@@ -33,6 +33,8 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Continuation observes paths but cannot activate another capacity group.
+	snapshot.PathBudgetObservations, snapshot.PathBudgets = snapshot.PathBudgets, c.appliedPathBudgets
 	c.publishSnapshotLocked(&snapshot)
 	c.continueTransitionsLocked(config.Settings, true, func(target serving.SchedulerCandidate) {
 		c.launchTargetLocked(target, config)

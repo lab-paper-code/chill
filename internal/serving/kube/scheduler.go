@@ -280,6 +280,11 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		c.mu.Unlock()
 		return serving.SchedulerDecision{}, err
 	}
+	// Completed numerical inputs are committed before either state or the
+	// persistence callback exposes them. Physical actions still require a
+	// successfully recorded decision and a live Tick context below.
+	c.runtime.SetPathBudgets(snapshot.PathBudgets)
+	c.appliedCapacityRows, c.appliedPathBudgets = rows, snapshot.PathBudgets
 	c.publishDecisionLocked(&snapshot, &decision)
 	c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -293,10 +298,6 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	c.mu.Lock()
-	c.runtime.SetPathBudgets(snapshot.PathBudgets)
-	c.appliedCapacityRows, c.appliedPathBudgets = rows, snapshot.PathBudgets
-	c.mu.Unlock()
 	// Without a selected target, only finish previously authorized Fixed work.
 	if decision.Target != nil {
 		c.launch(*decision.Target, config)
