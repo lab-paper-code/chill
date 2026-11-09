@@ -11,7 +11,7 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
-// FeedbackWorkloadScore separates actual finite outcomes from conditional
+// FeedbackWorkloadScore separates replayed finite outcomes from conditional
 // compute potential. Null quantile means no successful completion.
 type FeedbackWorkloadScore struct {
 	UID                  string   `json:"uid"`
@@ -52,9 +52,6 @@ func EvaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, 
 	for _, request := range snapshot.Outstanding {
 		if request.Phase == phaseReturning && (request.NativeOutcome == firstfloor.OutcomeDeadlineDrop || request.NativeOutcome == firstfloor.OutcomePreprocessFailed || request.NativeOutcome == firstfloor.OutcomeBatchError) {
 			continue // known terminal failure needs no new execution prediction
-		}
-		if request.CompletionMarginMS == nil {
-			invalid = appendUnique(invalid, "MissingFrozenCompletionMargin:"+request.ID)
 		}
 		if request.Phase == phaseQueued || request.Phase == phaseDeferred || request.Phase == phaseRunning || request.Phase == phaseReturning {
 			if request.NativeSenderElapsedMS == nil || request.NativeElapsedNanos == nil {

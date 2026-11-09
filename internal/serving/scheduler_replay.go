@@ -417,6 +417,9 @@ func (s *schedulerReplayState) initializeOutstanding() {
 		x.accountedAge = float64(r.Elapsed)
 		if r.CompletionMarginMS != nil {
 			x.marginNanos = *r.CompletionMarginMS * 1e6
+		} else {
+			s.out.sources = appendUnique(s.out.sources, "configured-initial-post")
+			s.out.assumptions = appendUnique(s.out.assumptions, "accepted/historical request has no captured POST; configured CompletionMarginMS is an initial model assumption, not frozen evidence")
 		}
 		if r.NativeElapsedNanos != nil {
 			x.nativeAge = *r.NativeElapsedNanos

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -281,6 +282,38 @@ func TestFeedbackConsumerPreparationDrainsFiniteCohortAndFixesPotential(t *testi
 				}
 			} else if score.Completed != 2 || *score.SuccessQuantileNanos != 130e6 {
 				t.Fatalf("finite cohort must wait for prepare/route then drain two batches after horizon: %+v", result)
+			}
+		})
+	}
+}
+
+func TestFeedbackConsumerHistoricalPOSTFallbackPreservesRealZero(t *testing.T) {
+	for _, missing := range []bool{true, false} {
+		t.Run(fmt.Sprint(missing), func(t *testing.T) {
+			settings, snapshot, candidate := feedbackFixture()
+			settings.CompletionMarginMS = 7
+			snapshot.Arrivals = nil
+			snapshot.Instances[0].MaxBatch = 1
+			zero := 0.0
+			margin := &zero
+			want := 30e6
+			if missing {
+				margin, want = nil, 37e6
+			}
+			snapshot.Outstanding = []SchedulerRequest{{
+				ID: "historical", Definition: snapshot.Workloads[0], Phase: phaseQueued, Instance: "i1",
+				Elapsed: 100 * time.Millisecond, CompletionMarginMS: margin,
+				NativeSenderElapsedMS: &zero, NativeElapsedNanos: &zero,
+			}}
+			snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 500e6, PostNanos: 400e6}}
+			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
+			if *result.Workloads[0].SuccessQuantileNanos != want || slices.Contains(result.Sources, "configured-initial-post") != missing || (len(result.Assumptions) > 0) != missing {
+				t.Fatalf("absent POST needs explicit configured model; real zero stays frozen: want=%g result=%+v", want, result)
+			}
+			snapshot.Outstanding[0].NativeElapsedNanos = nil
+			invalid, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1)
+			if err != nil || len(invalid.InvalidReasons) != 1 || invalid.InvalidReasons[0] != "MissingNativeElapsedContext:historical" {
+				t.Fatalf("POST fallback must not fabricate native elapsed: %+v %v", invalid, err)
 			}
 		})
 	}
