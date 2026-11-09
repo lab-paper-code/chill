@@ -50,6 +50,7 @@ if reader:
                and d["metadata"]["namespace"] == "chill-system" for d in documents)
     reader_resources, reader_urls = effective(reader)
     assert reader_objects and reader_urls
+    assert ("get", "/chill/api/v1/observations/clients") in reader_urls, "reader lacks client observation GET"
     assert all(verb == "get" for verb, _ in reader_urls), "reader acquired HTTP writes"
     assert all(row[3] in {"get", "list", "watch"} for row in reader_resources), "reader acquired native writes"
     assert not any(row[2] == "secrets" for row in reader_resources)
@@ -125,7 +126,8 @@ if config:
         expected.add((settings_binding["metadata"]["namespace"], "", "configmaps", "update", ("chill-scheduler",)))
     assert resources == expected, ("evaluation action resource permissions differ", resources ^ expected)
     expected_urls = {("get", "/chill/api/v1/" + path) for path in (
-        "workloads", "workloads/*", "scheduler", "scheduler/settings", "observations/power", "observations/raw", "observations/raw/*"
+        "workloads", "workloads/*", "scheduler", "scheduler/settings", "observations/power",
+        "observations/clients", "observations/raw", "observations/raw/*"
     )} | {("put", "/chill/api/v1/scheduler/settings")}
     assert urls == expected_urls, ("evaluation action public URLs differ", urls ^ expected_urls)
     assert effective(config["data"]["publishServiceAccount"]) == (set(), set()), "publisher acquired API rights"
@@ -208,6 +210,9 @@ def caller_path_grants(path, verb):
                for rule in manager.get("rules", []))
 assert caller_path_grants("/chill/api/v1/observations/occupancy", "get"), "dashboard lacks occupancy GET"
 assert not caller_path_grants("/chill/api/v1/observations/occupancy", "post"), "dashboard acquired occupancy write"
+assert caller_path_grants("/chill/api/v1/observations/clients", "get"), "dashboard lacks client observation GET"
+assert not any(caller_path_grants("/chill/api/v1/observations/clients", verb)
+               for verb in ("post", "put", "patch", "delete")), "dashboard acquired client observation writes"
 
 def caller_resource_grants(role, resource, verb, name=""):
     return any("edge.dacs.io" in rule.get("apiGroups", []) and

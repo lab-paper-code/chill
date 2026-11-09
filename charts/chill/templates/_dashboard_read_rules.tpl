@@ -8,7 +8,7 @@
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/models", "/chill/api/v1/models/*", "/chill/api/v1/preprocessors", "/chill/api/v1/preprocessors/*", "/chill/api/v1/datasets", "/chill/api/v1/datasets/*", "/chill/api/v1/workloads", "/chill/api/v1/workloads/*"]
     verbs: [get]
-  - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power", "/chill/api/v1/observations/events"]
+  - nonResourceURLs: ["/chill/api/v1/pools", "/chill/api/v1/pools/*", "/chill/api/v1/observations/workloads/*", "/chill/api/v1/observations/load", "/chill/api/v1/observations/scheduler", "/chill/api/v1/observations/power", "/chill/api/v1/observations/events", "/chill/api/v1/observations/clients"]
     verbs: [get]
   - nonResourceURLs: ["/chill/api/v1/observations/occupancy"]
     verbs: [get]
