@@ -43,7 +43,7 @@ function CapacityDetails({row,settings,capacityAt}:{row:CapacityRow;settings:{da
   const input=row.input,allocation=input.allocation,d=input.dispatchOccupancy
   const {config}=useSession()
   return <div className="min-w-0 space-y-6 [&_dd]:break-all">
-    <section className="space-y-3"><h3 className="font-semibold">결과</h3><StatusBadge tone={row.status==="Built"?"ok":row.status==="CapacityRejected"?"warn":"idle"}>{capacityStatus(row.status)}</StatusBadge><p>{capacityReason(row.reason)}</p>{row.previous&&<p>이전 계산 결과 · 다시 계산 중</p>}
+    <section className="space-y-3"><h3 className="font-semibold">결과</h3><StatusBadge tone={row.status==="Built"?"ok":row.status==="CapacityRejected"?"warn":"idle"}>{capacityStatus(row.status)}</StatusBadge><p>{capacityReason(row.reason)}</p>
       <Facts items={[["행 key",row.key],["처리량 상한",row.status==="CapacityPending"&&row.mu===0?"값 없음":`${row.mu} req/s`],["처리 용량",capacityRate(row.kappa)],["가장 짧은 배치 실행",value(row.minimumServiceNanos,"ns")],["계산 시각",at(row.builtAt)],["계산 경과",nanos(row.elapsedNanos)],["용량 조회 시각",checked(capacityAt)]]}/>
       {row.reason==="MissingDispatchOccupancy"&&<Link href={occupancyRequestHref(input.profileID.split("/")[0]||config.namespace,{profileID:input.profileID,node:input.node.name,nodeUID:input.node.uid,powerMode:input.powerMode,workloadUID:input.workloadUID,batch:String(input.maxBatch)})}>d 측정 요청</Link>}
     </section>
@@ -90,7 +90,6 @@ export function CapacityEvidence() {
         {key:"status",label:"상태·사유",value:row=><><StatusBadge tone={row.status==="Built"?"ok":row.status==="CapacityRejected"?"warn":"idle"}>{capacityStatus(row.status)}</StatusBadge>{row.reason&&<p>{capacityReason(row.reason)}</p>}</>},
         {key:"kappa",label:"처리 용량",unit:"req/s",numeric:true,value:row=>row.kappa??"판정 불가"},
         {key:"built",label:"계산 시각",value:row=>at(row.builtAt)},
-        {key:"previous",label:"이전 결과",value:row=>row.previous?"다시 계산 중":"해당 없음"},
       ]}/>}
       <SourceExport value={exportValue} filename="chill-scheduler-capacity.json"/><SourceJSON inline value={query.data}/>
     </>}</QueryGate>

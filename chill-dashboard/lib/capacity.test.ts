@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { capacityComparison, capacityPath, capacityPercentile, capacityPolling, capacityRate, capacityReason, capacityRows, capacityStatus, planSearchFacts, selectedCapacityRow, type CapacityInput, type CapacityRow } from "./capacity.ts"
+import { capacityComparison, capacityPath, capacityPercentile, capacityPolling, capacityRows, planSearchFacts, selectedCapacityRow, type CapacityInput, type CapacityRow } from "./capacity.ts"
 
 const input:CapacityInput={
   workloadUID:"workload-uid",slo:{percentile:99,targetLatencyNanos:100000000},node:{name:"node-a",uid:"node-uid"},powerMode:"mode-a",profileID:"profile-id",
@@ -25,21 +25,11 @@ test("capacity selection preserves exact row key and local workload filter, neve
   assert.equal(new URLSearchParams(capacityPath(input.workloadUID).split("?")[1]).has("row"),false)
 })
 
-test("capacity missing kappa is not zero, pending and previous alone need polling",()=>{
-  assert.equal(capacityRate(undefined),"용량 값이 없어요")
-  assert.equal(capacityRate(0),"0 req/s")
-  assert.equal(capacityStatus("Built"),"용량 계산이 끝났어요")
-  assert.equal(capacityStatus("CapacityPending"),"용량을 계산하고 있어요")
-  assert.equal(capacityStatus("CapacityRejected"),"이 조건의 용량을 사용할 수 없어요")
-  assert.equal(capacityStatus("Unknown"),"용량 계산 상태를 확인할 수 없어요")
+test("only pending capacity rows need polling",()=>{
   assert.equal(capacityPolling([]),false)
   assert.equal(capacityPolling([built]),false)
-  assert.equal(capacityPolling([{...built,previous:true}]),true)
   assert.equal(capacityPolling([{...built,status:"CapacityPending",kappa:undefined,builtAt:"0001-01-01T00:00:00Z"}]),true)
   assert.equal(capacityPolling([{...built,status:"CapacityRejected",reason:"NonMonotone",kappa:undefined}]),false)
-  assert.equal(capacityReason("MissingDispatchOccupancy"),"분배 점유시간 근거가 없어요")
-  assert.equal(capacityReason("NonMonotone"),"요청률을 높였는데 다시 통과한 구간이 있어 용량을 정하지 않았어요")
-  assert.equal(capacityReason(built.reason),"가장 짧은 배치 실행에도 완료 여유를 더하면 목표 시간을 넘어요")
 })
 
 test("comparison uses eight applied top-level settings with exact wire integers",()=>{

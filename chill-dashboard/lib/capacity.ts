@@ -23,7 +23,7 @@ export type CapacityJudgment = {rate:number;requests:WireInteger;passed:WireInte
 export type CapacityRow = {
   key:string;input:CapacityInput;status:string;reason?:string;mu:number;kappa?:number
   minimumServiceNanos?:number;grid?:CapacityJudgment[];bisection?:CapacityJudgment[]
-  builtAt:string;elapsedNanos?:WireInteger;previous?:boolean
+  builtAt:string;elapsedNanos?:WireInteger
 }
 export type CapacityView = {rows:CapacityRow[]|null}
 export const capacityPath=(workload="",row="")=>{
@@ -34,7 +34,7 @@ export const capacityPath=(workload="",row="")=>{
 }
 export const capacityRows=(rows:CapacityRow[],workload:string)=>workload?rows.filter(row=>row.input.workloadUID===workload):rows
 export const selectedCapacityRow=(rows:CapacityRow[],key:string)=>rows.find(row=>row.key===key)
-export const capacityPolling=(rows:CapacityRow[])=>rows.some(row=>row.status==="CapacityPending"||row.previous)
+export const capacityPolling=(rows:CapacityRow[])=>rows.some(row=>row.status==="CapacityPending")
 export const capacityRate=(value:number|undefined)=>value==null?"용량 값이 없어요":`${value} req/s`
 export const capacityStatus=(status:string)=>({Built:"용량 계산이 끝났어요",CapacityPending:"용량을 계산하고 있어요",CapacityRejected:"이 조건의 용량을 사용할 수 없어요"}[status]??"용량 계산 상태를 확인할 수 없어요")
 export const capacityReason=(reason?:string)=>!reason?"사유 제공 없음":({
