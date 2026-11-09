@@ -609,16 +609,16 @@ CHILL 설치, 업그레이드와 제거는 Helm 또는 GitOps의 배포 경로�
 요구사항: DB-FR-16~17, DB-FR-55, DB-OP-05, DB-NFR-01~03.
 
 - **Given** Built(양수 및 κ=0), CapacityPending, CapacityRejected(점유시간 누락 및
-  NonMonotone), previous=true와 κ 누락 행, 현재 설정과 다른 세 탐색 입력이 있다.
+  NonMonotone), κ 누락 행, 현재 설정과 다른 세 탐색 입력이 있다.
 - **When** `/scheduler/capacity?row=<key>`를 새로고침하고 입력, grid, bisection,
   현재 설정 대조를 열며 `/configuration?section=capacity`로 이동한다.
 - **Then** key가 일치하는 행만 열리고 모든 CapacityInput 필드와 서버 판정이 보인다.
   grid와 bisection의 실행 순서, rate, requests, passed, met와 percentileMS를 표시하며
   조기 종료한 구간을 전체 구간 합격률로 바꾸지 않고 -1을 음의 지연으로 그리지 않는다.
 - **Then** 과거 입력과 현재 설정을 별도 열로 보이며 세 필드 변경 시 다른 key의 행으로
-  식별된다. previous는 “이전 계산 결과 · 다시 계산 중”, 없는 key는 “이 용량 행을
+  식별된다. Pending 행이 있을 때만 자동 갱신하며, 없는 key는 “이 용량 행을
   찾을 수 없어요”로 표시하고 최신 행으로 대체하지 않는다. 설정 조회만 실패해도
-  용량 행은 유지되며 κ가 실제 부하·처리량 또는 현재 SLO 충족 관측으로 표현되지 않는다.
+  용량 행은 유지되며 κ를 실제 부하·처리량 또는 현재 SLO 충족 관측으로 표현하지 않는다.
 
 ### 선언 후보 커버리지와 조회 범위 (M1)
 

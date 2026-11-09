@@ -65,7 +65,7 @@ v1/v2는 protocol만 참조하고 서로나 serving을 import하지 않는다.
 **검증된 모양.** 이분 탐색에 쓰지 않은 seed 21~40에서 0.9κ는 모든 option이 20/20, 1.0κ는 16~20/20, 1.2κ는 0/20이다. κ는 절벽의 무릎이다. d 없이 profile 실행시간만 재생한 E1 tight(p95 1 s, m 139 ms) κ: rasp5 q1 34.3, jetsonx 18.3, orangepi 8.1, jetsono 48.1~49.7, orin-nano 38.9~41.3 req/s. rasp5 q1은 실측 처리율 26.9 req/s에서 34.3이 과대임이 드러났고, d를 넣은 값은 위 문단의 25.3이다.
 
 **계산하는 때와 대상.**
-- ChillServer의 용량표 worker가 시작할 때 대상 행을 계산한다. 그 뒤에는 자동제어가 켜진 Workload의 SLO, profile, 경로 예산, 디스패치 점유, 용량표 설정 변경을 최신 계산 요구로 병합한다. 관측 변화만으로 실행 중 계산을 반복 취소하거나 같은 요구를 재시작하지 않는다. 표는 메모리에만 있고 시작마다 비어 있으므로 재생, 배칭 규칙, κ 계산 코드가 바뀐 image도 그 코드로 계산한 표를 쓴다.
+- ChillServer는 현재 계산 계약·수치 입력에 맞는 보관행을 먼저 읽고, 없는 행만 worker로 계산한다. 자동제어 Workload의 SLO, profile, 경로 예산, 디스패치 점유, 용량표 설정 변경은 최신 요구로 병합한다. 관측 변화만으로 실행 중 계산을 반복 취소하거나 같은 요구를 재시작하지 않는다.
 - 대상은 자동제어가 켜진 Workload의 SLO와 그 Workload에 측정 근거가 있는 option 변형이다. 꺼진 Workload의 노드는 keep뿐이라(4장) 그 κ를 쓰지 않는다. E1에서는 tight 하나라 option 변형 38개, 38행이다(SLO 3개 전체는 114행).
 - 행 하나가 작업 하나이고 행끼리 독립이라 병렬로 계산한다. capacity worker 수는 runtime GOMAXPROCS의 실행 병렬성일 뿐 CPU 예약·limit이 아니다. ChillServer는 CPU request/limit이나 limits.cpu 기반 GOMAXPROCS를 설정하지 않는다.
 - 빠진 행은 Workload별 round-robin으로 실행 슬롯에 직접 배정한다. 대기 계산은 예산 상향을 우선하며, 실행 중 작업은 완료시킨다. 대기 행마다 goroutine을 만들지 않는다.
@@ -73,15 +73,15 @@ v1/v2는 protocol만 참조하고 서로나 serving을 import하지 않는다.
 - 상향이 없는 순수 하강은 감소하는 모든 좌표에서 `새 상한 < 활성 하한`일 때만 계산한다. 등호·겹침·하한 부재는 활성 쌍을 유지하며, 그대로인 좌표에는 분리 조건이 없다. 보류한 다른 수치 쌍은 활성 창·신뢰구간을 덮지 않는다. 같은 수치 쌍은 계산 없이 자기 최신 창·하한을 갱신한다.
 - 실행 중 계산은 마치고 최신 대기 요구를 새 활성 쌍과 다시 비교한다. 최초 입력, configured↔observed 전환, 명시적 configured margin 변경, 정의·판단 분위수 변경은 기존 계산 수명 규칙을 따른다. 출처·창·표본 수·하한은 수치 행 key에 넣지 않는다.
 - 이 규칙은 재계산 hysteresis이며 결합 95%나 반복 시점의 통계 보장을 뜻하지 않는다. 순수 하강에만 신뢰구간 분리를 요구한다. 혼합 방향의 낮아진 좌표는 새 창의 유효한 단측 상한을 사용하며 분리된 하강이라고 주장하지 않는다. 배치 상관·비정상성·완료 선택의 기존 추정 한계는 유지한다.
-- 필요한 행이 완성되면 Workload별 활성 예산·κ·slack·신규 요청 기본값을 함께 전환한다. `Inputs`는 완성된 활성 행 그룹과 그 예산만 반환한다. 첫 완성 전·구조적 무효화 뒤에는 해당 UID의 행과 적용 관측 예산을 모두 생략한다. 신규 요청은 기존 configured 기본값을 쓰고 planner는 해당 UID의 기존 missing-row `CapacityPending` 경로를 따른다. `Rows`는 관리용 최신 요구의 Pending·부분 완료 진단을 보존한다. 이전 archive도 Built/Rejected가 그룹 전체에 있을 때만 활성화하며 terminal Rejected를 유지한다. 더 최신 관측만으로 실행 중 유효한 완료 결과를 버리지 않는다. 활성 예산보다 최신 요구가 높은 동안의 판단을 최신 관측의 검증 결과로 표시하지 않는다.
-- Runtime에 적용한 예산·행 쌍을 중간 Ready 확장과 Continue에서도 사용한다. background 계산 완료만으로 실행 중 handoff의 수치 입력을 바꾸지 않는다.
+- 필요한 행이 완성되면 Workload별 활성 예산·κ·slack·신규 요청 기본값을 함께 전환한다. `Inputs`는 완성된 활성 행 그룹과 그 예산만 반환한다. 첫 완성 전·구조적 무효화 뒤에는 해당 UID의 행과 적용 관측 예산을 모두 생략한다. 신규 요청은 configured 기본값을 쓰고 planner는 UID별 `CapacityPending`을 유지한다. `Rows`는 최신 요구의 Pending·부분 완료를 표시한다. 현재 계산 계약의 archive Built·NonMonotone 행은 수치 캐시로 재사용한다. 일반 오류·부적합 행은 새 계산으로 처리한다. 최신 요구가 높은 동안의 활성 판단을 최신 관측의 검증 결과로 표시하지 않는다.
+- Tick은 완료된 수치 입력을 Runtime과 공개 snapshot에 함께 반영한 뒤 판단을 기록한다. 이후 기록 실패·취소는 물리 동작을 막으며 이미 적용한 수치 상태는 유지한다. 중간 Ready 확장과 Continue도 이 행·예산 쌍을 사용한다. Continue의 새 관측은 `pathBudgetObservations`에만 보관하고 `pathBudgets`는 실제 적용값을 유지한다. background 계산 완료만으로 실행 중 handoff의 입력을 바꾸지 않는다.
 - 행마다 `management` stream에 `capacity-row-built` 사건(행 전체, 계산 시각, 걸린 시간)을 남긴다. 이 사건은 기록이고 판단은 읽지 않는다.
 - 각 Tick의 planner는 병렬 탐색 전에 option/Workload별 행 키·κ·사유와 현재 인스턴스별 κ·행을 한 번 해석한다. 누락·거절 결과도 포함한 이 읽기 전용 표는 그 planner에서만 살며, 후보 평가는 디스패치 점유 조회나 행 키 직렬화·해시를 반복하지 않는다. 다음 Tick은 새 snapshot과 행으로 다시 만든다.
 
-**계산 시간과 행 수명.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. 동일 수치 키의 이전 완료 행만 재사용한다. profile·SLO·option 등 구조적 입력 무효화는 기존 queued/running 취소 경계를 따르며 부분 결과를 버린다. 활성 행·실행 중 계산·최신 요구가 참조하는 상태만 유지하고 참조가 끝난 rows/previous/asked를 회수한다. 별도 사다리·TTL·epoch·retry 체계는 추가하지 않는다.
+**계산 시간과 행 수명.** 재생은 미완료 도착을 훑고 다음 도착은 정렬목록 선두, Definition.Identity는 도착 원형당1회, 배치는 정렬 분위수 색인·재사용 공간을 쓴다. E1 tight38행 단일코어1,386초; m4/r7 합성d114행은 GOMAXPROCS12에서132초/CPU804초였다. 최종 evaluation는 같은 dump로 source별 측정한다. 구조 변경은 활성 그룹을 철회하되 새 그룹에 필요한 동일 수치 행·실행 중 계산을 유지하고 불필요한 작업만 취소한다. 활성·진행·최신 그룹이 참조하지 않는 rows/asked는 회수한다. 출처 갱신은 현재 입력에 표시하며 κ를 다시 계산하지 않는다.
 
 **κ와 현재 실행 가능성(R1).** BuildCapacityRow는 profile·SLO·선택한 dispatch occupancy·수치 정책과 모의 도착만 사용한다. 현재 Node snapshot/baseline/readiness/CPU inventory/예약/GPU inventory/memory 가용성은 입력이 아니며 Ready를 덮어 통과시키지 않는다. 장치·메모리 부재 중에도 κ는 계산·재사용하고 planner/prepare가 현재 상태로 실행을 거절한다. 복구 뒤 같은 key/κ로 다시 배치 판단한다. NonMonotone/수치 오류와 κ=0의 의미는 유지한다.
-공유 실행 key는 `shared-cpu/` namespace다. local/archived management의 이전 controlled key는 새 계산의 previous 행이 될 수 없으며 원본 archive를 변경하지 않는다. 새 namespace 안에서는 같은 측정 조건의 previous/pending·취소·수치 재사용을 유지한다. TTL/retry knob나 changing snapshot 전체 hash는 없다.
+수치 key의 `shared-cpu-alpha2-path-budget/` namespace는 공유 CPU 재생·α/2 판단·TOTAL/POST 계산 계약을 나타낸다. 재생·κ·배칭의 계산 의미가 바뀔 때 namespace를 바꾸며 source SHA·빌드·출처만 바뀌면 유지한다. 다른 namespace의 원본 archive는 보존하고 캐시 miss로 처리한다. 이 cutover의 첫 배포는 한 번의 warm 계산이 필요하며, 이후 같은 계약·수치 입력은 재시작해도 재사용한다.
 
 **imagenet.** imagenet(p99 100 ms)은 E1 설정 m 139 ms에서 모든 option의 κ가 0이었다(m > 목표 100 ms, `hack/kappa`). 이 Workload는 꺼진 채로 두므로 행을 계산하지 않는다.
 
@@ -266,7 +266,7 @@ Timing이 없는 비용의 미기록 B를 관측한 0으로 취급하지 않는�
 - 과거 mobilenet CPU8/GPU2 및 D2/Smol 원시·status·publication은 그대로 보존한다. CPU request/quota/affinity를 선택했던 실행은 새 공유 실행과 동등한 profile/κ로 소비하지 않는다. 의존 캠페인 종료 뒤 strict 계약을 단일 전환하고 새 조건에서 측정한다. d 없으면 설정 fallback을 쓰고, 정확 비용 없으면 MissingOperationCost다.
 - signed d와 max0 정책은 구분한다. Smol D04/D09/D14/D23/D33의 profile 포함95% 근사구간<0은 systematic profile-versus-serving bias이며 인과 기여 미확정; identity·harness/warmup/timing/시점 차이는 남기고 보정·추정정책은 M5 후보다. 근거: `ops/pools-deploy/audit-20261024/smol-systematic-bias-20261024.{json,txt}`.
 - `E±B`, `B=S+G`는 [측정 API](measurement-api.md)를 따른다. minimumGain은 선택 evidence B만 전파하며 profile 통계·BEO fallback CI·시점/센서/모델 오차를 포괄하는 global95% 보장이 아니다.
-- 검사 계약: 재생 결정성/NonMonotone/창·m·SLO 경계, 입력별 재계산/previous/pending, 현재 memory·장치 부재→복구와 동일 κ 재사용, κ_new/κ_ret/B/W·make-before-break, 노드단일소유·전력모드, brute force/k3/빈 출발/replica/예산·동률, 동일H 에너지·signed 상쇄·문턱 equality/keep infeasible, weight1000·ACK·budgetCut을 확인한다. 이 목록은 새 source의 통과 기록이 아니다.
+- 검사 계약: 재생 결정성/NonMonotone/창·m·SLO 경계, 입력별 재계산/보관행 재사용/pending, 현재 memory·장치 부재→복구와 동일 κ 재사용, κ_new/κ_ret/B/W·make-before-break, 노드단일소유·전력모드, brute force/k3/빈 출발/replica/예산·동률, 동일H 에너지·signed 상쇄·문턱 equality/keep infeasible, weight1000·ACK·budgetCut을 확인한다. 이 목록은 새 source의 통과 기록이 아니다.
 - 최종 dump의 source별 `hack/kappa`는 provenance·κ/status·시간·에너지 차를 남긴다. 승인 rev72 BEFORE/D2 AFTER는 자율MNV/native8 paired의 Tick/CPU/GC/mesh/요청/physical G를 비교한다. E1 무부하→유부하, E4 이동, E5-0~6/E5-S는 두 관측률·λ·보호κ·route시각·사슬·유효 offered 전체 결과·전환 포함 전체 POOL J를 연결한다.
 - 최종 d/G/m에서 SLO/κ/R·threshold를 정한다. 과거 E1/m4와 새 evaluation는 Run ID/원시로 구분한다. 요청 에너지는 κ 비례(λ 무관)로 정한 최종 정수 weight와 일치하며, 모델 κ와 실제 장치 처리율·배치상태의 차이는 추정 한계로 유지한다.
 - BEFORE·유한 진단 최대1회·최종D2 최대1회 순서는 [POOL 검증](workload-pools.md)을 따른다. runtime7 digest·기존 자원·evidence store를 유지하며 paired 물리 보존 실패는 unknown/mismatch로 보고하고 paired 주장을 중단한다. 조건·판정·범위 변경은 승인 대상이다.
