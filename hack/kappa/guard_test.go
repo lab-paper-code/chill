@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -87,5 +89,51 @@ func TestReplayGuardWithoutTargetDoesNotInventAdmission(t *testing.T) {
 	got, err := evaluateReplayTick([]*replayTick{tick}, 0)
 	if err != nil || len(got.Checks) != 0 || got.TargetKey != "-" || !got.At.Equal(at) {
 		t.Fatalf("targetless guard fabricated an admission check: %+v, %v", got, err)
+	}
+}
+
+func TestReplayGuardPreservesExclusiveOwnerReservation(t *testing.T) {
+	at := time.Unix(100, 0)
+	settings := serving.SchedulerSettings{
+		ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+		MaxReplicas: 1, MaxInstances: 1, AutonomousWorkloads: []string{"w"},
+		CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1,
+		CapacityGridSteps: 1, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
+		PlanSearchWorkers: 1, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1, PlanExactFinalists: 1,
+		DefaultOperationCost: map[string]serving.OperationCostValue{"prepare": {Seconds: 1}, "remove": {Seconds: 1}, "power": {Seconds: 1}},
+		DefaultIdlePower: &serving.IdlePowerDefault{NodeWatts: 1, PerInstanceWatts: 1},
+	}
+	if err := settings.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	node := serving.SchedulerNode{Node: serving.NodeReference{Name: "n", UID: "n-uid"}, PowerMode: "current", Ready: true, ObservedAt: at}
+	workload := &serving.Definition{UID: "w", SLO: serving.SLO{Percentile: 99, TargetLatency: time.Second}}
+	target := &serving.SchedulerCandidate{ID: "reserved-target", Nodes: []serving.SchedulerNode{node}}
+	target.Nodes[0].PowerMode = "reserved"
+	snapshot := serving.SchedulerSnapshot{
+		At: at, ObservationEnd: at, Nodes: []serving.SchedulerNode{node}, Workloads: []*serving.Definition{workload},
+		Options: []serving.SchedulerOption{{CompatibleUIDs: []string{workload.UID}}},
+		Arrivals: []serving.SchedulerArrival{{ID: "accepted", At: at.Add(-time.Millisecond), Accepted: true, Compute: true, Definition: workload, WorkloadUID: workload.UID}},
+		Reservations: []serving.SchedulerReservation{{Owner: "exclusive-owner", Nodes: []serving.NodeReference{node.Node}, WorkloadUIDs: []string{workload.UID}, Target: target}},
+	}
+	capture := func() []byte {
+		t.Helper()
+		raw, err := json.Marshal(struct {
+			Snapshot serving.SchedulerSnapshot
+			Target   *serving.SchedulerCandidate
+		}{snapshot, target})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	before := capture()
+	tick := &replayTick{r: record{At: at, Decision: &serving.SchedulerDecision{Target: target}}, snap: snapshot, settings: settings}
+	got, err := evaluateReplayTick([]*replayTick{tick}, 0)
+	if err != nil || len(got.Checks) != 1 || !got.Checks[0].Rejected || got.Checks[0].Reason != "TargetWorkloadOutsideControl" {
+		t.Fatalf("exclusive owner reservation escaped new admission: %+v, %v", got, err)
+	}
+	if !bytes.Equal(before, capture()) {
+		t.Fatal("new-admission diagnostic changed original snapshot, accepted arrivals or reserved target")
 	}
 }

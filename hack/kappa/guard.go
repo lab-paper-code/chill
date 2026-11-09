@@ -235,8 +235,9 @@ func evaluateReplayTick(queue []*replayTick, next int) (replayResult, error) {
 		r.Disagreement = r.TargetKey != r.ReplayTargetKey
 		r.ReplayDemand = replayDemands(&d)
 	} else if target := t.r.Decision.Target; target != nil {
-		// Revalidate the immutable recorded target through the same current
-		// physical admission and exact comparison boundary as production.
+		// Check new admission of the immutable recorded target against the
+		// untouched snapshot. This does not authorize cancelling an existing
+		// transition or overriding its owner's continuation rules.
 		for offset, future := range queue {
 			reason, err := serving.SchedulerTargetAdmission(context.Background(), t.settings, future.snap, *target)
 			if err != nil {
@@ -306,7 +307,7 @@ func replay(base serving.SchedulerSettings, profilesFile, recordsFile, catalogFi
 		catalog: catalog, arrivals: arrivals, restoreArrivals: arrivalsFile != "", definitions: definitions,
 	}
 	if format == "markdown" {
-		fmt.Println("| at | status | target key | offset / snapshot at | guard rejected / reason |\n|---|---|---|---|---|")
+		fmt.Println("| at | status | target key | offset / snapshot at | new admission rejected / reason |\n|---|---|---|---|---|")
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	queue := []*replayTick{}
