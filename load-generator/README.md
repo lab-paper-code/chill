@@ -56,11 +56,14 @@ requests cannot be silently removed from the SLO denominator; already streamed
 rows from every shard remain evidence.
 `scheduledMonotonicNS` anchors the request; `latenessNs` is actual send minus
 scheduled time, a generator-quality metric rather than SLO time.
-`latencyMs` and `serviceLatencyMs` retain actual-send HTTP duration;
+`latencyMs` and `serviceLatencyMs` retain the caller-bracket duration;
 `scheduledLatencyMs` is scheduled-to-completion reference latency only.
-`sentAtUnixNS` and `finishedAtUnixNS` support joining actual server `receivedAt`
-by request ID: send→receipt is entrance delay (cross-host clocks require
-uncertainty evidence), while receipt→response is the routing SLO interval.
+`elapsedNanos` is the exact client E2E duration measured inside `infer`, immediately
+before sending the prepared request through full response-body read. Preparation,
+result formatting and feedback reporting are outside that interval.
+`sentAtUnixNS` and `finishedAtUnixNS` support joining server `receivedAt` by
+request ID. Send→receipt retains cross-host clock uncertainty; server elapsed
+is a separate diagnostic, not the client SLO interval.
 Existing fields remain. Offered is the entire planned trace, including failures
 and missing issuance. Generator lateness tolerance and allowed exceedance
 fraction belong to the frozen experiment config; exceeding them invalidates
@@ -193,10 +196,13 @@ Each request prints one JSON line on stdout:
 {"workload": "vqa-service", "record": "262148000", "scheduledOffsetNs": 200000000, "delayed": false, "status": 200, "requestID": "…", "workloadUID": "…", "sentMonotonicNS": 1000000000, "finishedMonotonicNS": 1812400000, "latencyMs": 812.4}
 ```
 
-`latencyMs` is client-observed time from send to response. `delayed` marks a
-request sent more than 10 ms after its scheduled time; it means the replay fell
-behind the schedule. A transport, TLS or timeout failure replaces `status`,
-`requestID` and `workloadUID` with `error`, the exception class name.
+`latencyMs` brackets the inference call and transport-error handling. `delayed`
+marks a request sent more than 10 ms after its scheduled time.
+`elapsedNanos` preserves exact successful full-body duration or the observed
+lower bound before a timeout/transport failure. `outcome` is `completed`,
+`http_error`, `timeout` or `transport_error`. `error` retains the original
+exception class. Any received `status`, `requestID` and `workloadUID` survive
+partial-body failures; absent headers stay unknown.
 Response bodies and tokens are never printed. For a heterogeneous mix, run one
 `replay` process per Workload concurrently.
 
@@ -207,6 +213,30 @@ measure issuance gaps; completion/JSONL order is not send order. JSON encoding
 runs outside the shared output lock, while one whole line plus flush remains
 locked. Workers still wait for their own output before refilling; this is not
 an asynchronous logger or a claim that observed long gaps have been cured.
+
+Each issued exchange gets an opaque `observationID` before inference. Replay
+queues its immutable evidence after measurement to one reporting worker using
+a separate connection and the existing socket timeout. Scheduled arrivals and
+closed-loop refills never wait for feedback HTTP or feedback-log flushing.
+Shutdown drains inference workers, then feedback, including when scheduling
+raises. Reporting never changes inference outcome. `feedbackStatus:"queued"`
+means queued, not acknowledged; a failed attempt produces a separate
+`clientFeedbackEvent:"failed"` JSONL event with `observationID`, `workload` and
+`error` during final drain. Such events are not inference rows.
+No retries, backoff, disk spool or extra reporting configuration are used.
+Unsent generator work (`issued:false`) produces no inference feedback.
+
+External clients can use `report_observation(workload_id, observation)` on an
+independent `new_connection()`. It posts authenticated JSON to
+`/api/v1/workloads/{id}/feedback`, where `{id}` is the inference Workload name.
+The public body contains `observationID`, integer `elapsedNanos`, `outcome`,
+and optional `requestID`, `workloadUID`, `statusCode`. Outcomes are `completed`
+(full 2xx), `http_error` (full non-2xx), `timeout`, `transport_error`, `canceled`.
+Only include status/identities actually received. A timeout without headers
+still reports its observation identity and duration; never invent a server join.
+The endpoint returns 204 on acceptance. Existing feedback POST authorization
+is required. IDs are opaque; client reports contain no server/native duration.
+
 
 E5 retains boundary-inclusive actual/planned gaps, intervals over 50 ms, and
 send lateness as `issuanceFidelity` in its judgment, campaign summary and

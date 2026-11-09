@@ -35,6 +35,11 @@ class LocalHTTPSmoke(unittest.TestCase):
             def do_POST(self):
                 nonlocal active, maximum
                 self.rfile.read(int(self.headers["Content-Length"]))
+                if self.path.endswith("/feedback"):
+                    self.send_response(204)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 now = time.monotonic()
                 with lock:
                     starts.append(now)
@@ -79,13 +84,17 @@ class LocalHTTPSmoke(unittest.TestCase):
                     client._connection.connect()
                     self.assertGreater(client._connection.sock.gettimeout(), 129 + 0.01)
                     clients.append(client)
-                available = iter(clients)
+                def new_client():
+                    return WorkloadHTTPClient(
+                        f"https://127.0.0.1:{server.server_port}", bearer_token="local",
+                        timeout_seconds=129.02, request_lifetime_seconds=129, ca_file=str(cert),
+                    )
                 output = io.StringIO()
                 started = time.monotonic()
                 replay(
                     [("one", {"image": b"sample"})], workload="smol", rate=None,
                     duration=0.30, workers=3, arrivals="closed-loop",
-                    new_client=lambda: next(available), out=output,
+                    new_client=new_client, out=output,
                 )
                 ended = time.monotonic()
                 rows = [json.loads(line) for line in output.getvalue().splitlines()]

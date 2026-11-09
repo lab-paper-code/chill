@@ -3,7 +3,7 @@ import ssl
 import unittest
 from unittest.mock import Mock, patch
 
-from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, encode_inputs
+from chill_loadgen.http_client import InferenceRequestError, InferenceResponse, WorkloadHTTPClient, encode_inputs
 
 
 class WorkloadHTTPClientTest(unittest.TestCase):
@@ -39,8 +39,9 @@ class WorkloadHTTPClientTest(unittest.TestCase):
                 response.status = status
                 result = client.infer("image-service", request_body)
                 self.assertEqual(
-                    InferenceResponse(status, body, "request-1", "uid-1"), result
+                    InferenceResponse(status, body, "request-1", "uid-1", result.elapsed_nanos), result
                 )
+                self.assertGreaterEqual(result.elapsed_nanos, 0)
                 args, kwargs = connection.request.call_args
                 self.assertEqual(("POST", "/api/v1/workloads/image-service/infer"), args)
                 self.assertEqual(
@@ -157,8 +158,12 @@ class WorkloadHTTPClientTest(unittest.TestCase):
         )
         connection_type.return_value.sock = None
         connection_type.return_value.request.side_effect = TimeoutError()
-        with self.assertRaises(TimeoutError):
+        with self.assertRaises(InferenceRequestError) as raised:
             client.infer("image-service", encode_inputs({"value": b"1"}))
+        self.assertIsInstance(raised.exception.__cause__, TimeoutError)
+        self.assertEqual(raised.exception.outcome, "timeout")
+        self.assertIsNone(raised.exception.request_id)
+        self.assertGreaterEqual(raised.exception.elapsed_nanos, 0)
         connection_type.return_value.request.assert_called_once()
 
 

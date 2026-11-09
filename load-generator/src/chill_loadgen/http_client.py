@@ -9,8 +9,9 @@ import math
 import re
 import select
 import ssl
+import time
 from dataclasses import dataclass
-from http.client import HTTPSConnection
+from http.client import HTTPException, HTTPSConnection
 from typing import Mapping, Optional
 from urllib.parse import urlsplit
 
@@ -32,6 +33,20 @@ class InferenceResponse:
     body: bytes
     request_id: Optional[str] = None
     workload_uid: Optional[str] = None
+    elapsed_nanos: int = 0
+
+
+class InferenceRequestError(OSError):
+    """An interrupted exchange, retaining headers and its observed duration."""
+
+    def __init__(self, error: Exception, elapsed_nanos: int, response=None) -> None:
+        super().__init__(str(error))
+        self.error_type = type(error).__name__
+        self.elapsed_nanos = elapsed_nanos
+        self.outcome = "timeout" if isinstance(error, TimeoutError) else "transport_error"
+        self.status_code = response.status if response is not None else None
+        self.request_id = response.getheader("X-Chill-Request-ID") if response is not None else None
+        self.workload_uid = response.getheader("X-Chill-Workload-UID") if response is not None else None
 
 
 def encode_inputs(inputs: Mapping[str, bytes]) -> bytes:
@@ -151,19 +166,40 @@ class WorkloadHTTPClient:
         }
         if self._request_lifetime is not None:
             headers["X-Chill-Request-Timeout"] = self._request_lifetime
-        self._connection.request(
-            "POST",
-            f"/api/v1/workloads/{workload_id}/infer",
-            body=body,
-            headers=headers,
-        )
-        response = self._connection.getresponse()
+        path = f"/api/v1/workloads/{workload_id}/infer"
+        response = None
+        started = time.monotonic_ns()
+        try:
+            self._connection.request("POST", path, body=body, headers=headers)
+            response = self._connection.getresponse()
+            result = response.read()
+            elapsed = time.monotonic_ns() - started
+        except (OSError, HTTPException) as error:
+            elapsed = time.monotonic_ns() - started
+            raise InferenceRequestError(error, elapsed, response) from error
         return InferenceResponse(
-            response.status,
-            response.read(),
+            response.status, result,
             request_id=response.getheader("X-Chill-Request-ID"),
             workload_uid=response.getheader("X-Chill-Workload-UID"),
+            elapsed_nanos=elapsed,
         )
+
+    def report_observation(self, workload_id: str, observation: Mapping[str, object]) -> None:
+        """Post client evidence on this connection, without retries."""
+        if not _valid_identifier(workload_id):
+            raise ValueError("workload_id must be a Kubernetes DNS subdomain name")
+        body = json.dumps(observation, allow_nan=False).encode("utf-8")
+        sock = self._connection.sock
+        if sock is not None and select.select([sock], [], [], 0)[0]:
+            self._connection.close()
+        self._connection.request(
+            "POST", f"/api/v1/workloads/{workload_id}/feedback", body=body,
+            headers={"Content-Type": "application/json", "Authorization": self._authorization},
+        )
+        response = self._connection.getresponse()
+        response.read()
+        if not 200 <= response.status < 300:
+            raise OSError(f"Client feedback HTTP {response.status}")
 
     def close(self) -> None:
         self._connection.close()

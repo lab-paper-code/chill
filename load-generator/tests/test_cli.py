@@ -63,7 +63,7 @@ class CLITest(unittest.TestCase):
                         "--gateway-timeout", "2",
                     ]), 0)
                 context.assert_called_once_with(cafile=None)
-                self.assertEqual(connection.call_count, 4)
+                self.assertEqual(connection.call_count, 5)  # Prepared, inference and separate feedback connections.
                 self.assertTrue(all(call.kwargs["context"] is context.return_value
                                     for call in connection.call_args_list))
             self.assertEqual(len(output.getvalue().splitlines()), 3)
@@ -98,6 +98,10 @@ class FakeClient:
     def __init__(self) -> None:
         self.sent = []
         self.closed = 0
+        self.reports = []
+
+    def report_observation(self, workload, observation):
+        self.reports.append((workload, observation))
 
     def infer(self, workload_id, inputs):
         self.sent.append((workload_id, inputs))
@@ -130,6 +134,9 @@ class ReplayTest(unittest.TestCase):
         original_start = threading.Thread.start
 
         def start(thread):
+            if thread.name == "chill-client-feedback":
+                original_start(thread)
+                return
             original_start(thread)
             thread.join()
             completed.append(weakref.ref(thread))
@@ -278,7 +285,9 @@ class ReplayTest(unittest.TestCase):
                 )
                 row = json.loads(output.getvalue())
                 self.assertEqual(row["requestIndex"], 0)
-                self.assertEqual(connection.return_value.request.call_args.kwargs["headers"]["X-Chill-Request-Timeout"], "1.000000000s")
+                infer_call = next(call for call in connection.return_value.request.call_args_list
+                                  if call.args[1].endswith("/infer"))
+                self.assertEqual(infer_call.kwargs["headers"]["X-Chill-Request-Timeout"], "1.000000000s")
                 self.assertTrue(row["issued"])
                 self.assertEqual(row["latenessNs"], delay)
                 self.assertIn("sentAtUnixNS", row)
@@ -288,6 +297,9 @@ class ReplayTest(unittest.TestCase):
         original_start = threading.Thread.start
         attempts = []
         def start(thread):
+            if thread.name == "chill-client-feedback":
+                original_start(thread)
+                return
             attempts.append(thread)
             if len(attempts) == 1:
                 raise RuntimeError("can't start new thread")
@@ -355,15 +367,15 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual([0.5, 0.5], sleeps)
         self.assertEqual(["q1", "q2", "q1"], [line["record"] for line in lines])
         self.assertEqual([0, 500_000_000, 1_000_000_000], [line["scheduledOffsetNs"] for line in lines])
-        self.assertEqual(
-            {"workload": "vqa", "record": "q1", "scheduledOffsetNs": 0, "delayed": False,
-             "status": 200, "requestID": "r1", "workloadUID": "uid", "latencyMs": 0.0,
-             "sentMonotonicNS": 0, "finishedMonotonicNS": 0},
-            lines[0],
-        )
+        self.assertEqual("q1", lines[0]["record"])
+        self.assertEqual(0.0, lines[0]["latencyMs"])
+        self.assertEqual(0, lines[0]["elapsedNanos"])
+        self.assertEqual("completed", lines[0]["outcome"])
+        self.assertEqual("queued", lines[0]["feedbackStatus"])
+        self.assertTrue(lines[0]["observationID"])
         self.assertEqual("TimeoutError", lines[1]["error"])
         self.assertNotIn("status", lines[1])
-        self.assertEqual(2, client.closed)  # after the failure and at the end
+        self.assertEqual(3, client.closed)  # Failure, inference drain and feedback drain reuse this fake.
 
     def test_stops_sending_when_duration_elapses_behind_schedule(self) -> None:
         # Each request takes 0.4 s at 10 req/s: the sender falls behind and must

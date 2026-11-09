@@ -9,12 +9,14 @@ import random
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, TextIO, Tuple
 
 from chill_loadgen import __version__
-from chill_loadgen.http_client import InferenceResponse, WorkloadHTTPClient, _valid_identifier, encode_inputs
+from chill_loadgen.feedback import ClientObservationReporter
+from chill_loadgen.http_client import InferenceRequestError, WorkloadHTTPClient, _valid_identifier, encode_inputs
 from chill_loadgen.schedule import ScheduledRequest, partition_schedule, run_schedule
 
 # A request sent this late after its scheduled time is reported as delayed.
@@ -82,6 +84,38 @@ def shard_schedule(offsets: Sequence[int], shard_index: int, shard_count: int) -
             for index in range(shard_index, len(offsets), shard_count)]
 
 
+def _infer(client: WorkloadHTTPClient, workload: str, body: bytes, row: dict,
+           reporter: ClientObservationReporter) -> None:
+    """Freeze inference evidence before queueing independent reporting work."""
+    observation = {"observationID": uuid.uuid4().hex}
+    row["observationID"] = observation["observationID"]
+    try:
+        response = client.infer(workload, body)
+        outcome = "completed" if 200 <= response.status_code < 300 else "http_error"
+        row.update(status=response.status_code, requestID=response.request_id,
+                   workloadUID=response.workload_uid, elapsedNanos=response.elapsed_nanos,
+                   outcome=outcome)
+    except InferenceRequestError as error:
+        row.update(error=error.error_type, elapsedNanos=error.elapsed_nanos, outcome=error.outcome)
+        if error.status_code is not None:
+            row["status"] = error.status_code
+        if error.request_id:
+            row["requestID"] = error.request_id
+        if error.workload_uid:
+            row["workloadUID"] = error.workload_uid
+        client.close()
+    except OSError as error:
+        client.close()
+        row["error"] = type(error).__name__
+    if "elapsedNanos" in row:
+        observation.update(elapsedNanos=row["elapsedNanos"], outcome=row["outcome"])
+        for key, field in (("requestID", "requestID"), ("workloadUID", "workloadUID"), ("status", "statusCode")):
+            if row.get(key) is not None:
+                observation[field] = row[key]
+        row["feedbackStatus"] = "queued"
+        reporter.enqueue(observation)
+
+
 def replay_open_loop(
     records: Sequence[PreparedRecord], *, workload: str, offsets: Sequence[int],
     new_client: Callable[[], WorkloadHTTPClient], out: TextIO, start_ns: int,
@@ -111,6 +145,7 @@ def replay_open_loop(
             out.write(encoded)
             out.flush()
 
+
     def send(request: ScheduledRequest) -> None:
         nonlocal active, failure
         client = None
@@ -124,12 +159,7 @@ def replay_open_loop(
             row.update(sentMonotonicNS=sent, sentAtUnixNS=time.time_ns(),
                        latenessNs=sent - scheduled,
                        delayed=sent - scheduled > DELAY_TOLERANCE_NS, issued=True)
-            try:
-                response = client.infer(workload, body)
-                row.update(status=response.status_code, requestID=response.request_id,
-                           workloadUID=response.workload_uid)
-            except OSError as error:
-                row["error"] = type(error).__name__
+            _infer(client, workload, body, row, reporter)
             finished = clock_ns()
             row.update(finishedMonotonicNS=finished, finishedAtUnixNS=time.time_ns(),
                        latencyMs=(finished - sent) / 1_000_000,
@@ -169,17 +199,19 @@ def replay_open_loop(
             emit(row)
             return
 
-    try:
-        run_schedule(
-            shard_schedule(offsets, shard_index, shard_count),
-            submit, start_ns=start_ns, delay_tolerance_ns=DELAY_TOLERANCE_NS,
-            clock_ns=clock_ns, sleep=sleep,
-        )
-    finally:
-        with drained:
-            drained.wait_for(lambda: active == 0)
-    if failure is not None:
-        raise RuntimeError("Open-loop request failed") from failure
+    reporter = ClientObservationReporter(workload, new_client, emit)
+    with reporter:
+        try:
+            run_schedule(
+                shard_schedule(offsets, shard_index, shard_count),
+                submit, start_ns=start_ns, delay_tolerance_ns=DELAY_TOLERANCE_NS,
+                clock_ns=clock_ns, sleep=sleep,
+            )
+        finally:
+            with drained:
+                drained.wait_for(lambda: active == 0)
+        if failure is not None:
+            raise RuntimeError("Open-loop request failed") from failure
 
 
 def replay(
@@ -217,9 +249,17 @@ def replay(
     lock = threading.Lock()
     duration_ns = round(duration * 1_000_000_000)
     start_ns = clock_ns()
+    failures = []
+
+    def emit(line: dict) -> None:
+        encoded = json.dumps(line) + "\n"
+        with lock:
+            out.write(encoded)
+            out.flush()
+
 
     def run_worker(requests: Sequence[ScheduledRequest], worker: int = 0) -> None:
-        client = new_client()
+        client = None
 
         def submit(request: ScheduledRequest, delayed: bool) -> None:
             # A sender behind schedule stops at the duration instead of draining it.
@@ -234,25 +274,15 @@ def replay(
             }
             sent_ns = clock_ns()
             line["sentMonotonicNS"] = sent_ns
-            try:
-                response: InferenceResponse = client.infer(workload, body)
-                line.update(
-                    status=response.status_code,
-                    requestID=response.request_id,
-                    workloadUID=response.workload_uid,
-                )
-            except OSError as error:  # transport, TLS and timeout failures
-                client.close()  # the connection reopens on the next request
-                line["error"] = type(error).__name__
+            line["issued"] = True
+            _infer(client, workload, body, line, reporter)
             finished_ns = clock_ns()
             line["finishedMonotonicNS"] = finished_ns
             line["latencyMs"] = (finished_ns - sent_ns) / 1_000_000
-            encoded = json.dumps(line) + "\n"
-            with lock:
-                out.write(encoded)
-                out.flush()
+            emit(line)
 
         try:
+            client = new_client()
             if arrivals == "closed-loop":
                 index = worker
                 while clock_ns() - start_ns < duration_ns:
@@ -267,8 +297,12 @@ def replay(
                     clock_ns=clock_ns,
                     sleep=sleep,
                 )
+        except BaseException as error:
+            with lock:
+                failures.append(error)
         finally:
-            client.close()
+            if client is not None:
+                client.close()
 
     threads = (
         [threading.Thread(target=run_worker, args=((), worker)) for worker in range(workers)]
@@ -279,10 +313,18 @@ def replay(
             if requests
         ]
     )
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
+    reporter = ClientObservationReporter(workload, new_client, emit)
+    with reporter:
+        started = []
+        try:
+            for thread in threads:
+                thread.start()
+                started.append(thread)
+        finally:
+            for thread in started:
+                thread.join()
+        if failures:
+            raise RuntimeError("Request worker failed") from failures[0]
 
 
 def _positive(kind: Callable[[str], float]) -> Callable[[str], float]:
