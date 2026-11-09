@@ -81,6 +81,8 @@ Pod Running·목표 배정은 준비/연결 증거가 아니다. 실제 연결�
 | `PUT /api/v1/workloads/{id}` | `{spec}` 전체 목표 교체; 같은 실행 경로 `200`, drain 변경 `202` |
 | `DELETE /api/v1/workloads/{id}` | 실제 gate 중지·삭제 의도 저장 후 `202`; 실제 완료는 조회 `404` |
 | `POST /api/v1/workloads/{id}/infer` | 독립 원시 표본 한 건, backend 해당 결과 |
+| `POST /api/v1/workloads/{id}/feedback` | 클라이언트 E2E 관측을 기존 FIFO에 수락한 뒤 `204`; `{id}`는 추론과 같은 Workload 이름 |
+| `GET /api/v1/observations/clients` | 명시 `from,to` 보고 수신 창의 불변 원본 보고를 append 순서·bounded `limit,cursor`로 조회 |
 | `GET /api/v1/pools[/{id}]` | 현재 Node·Workload 참조·인스턴스·전환, 운영자 조회 |
 | `/api/v1/models[/{id}]` | ModelSpec 목록/상세/CRUD, 참조 보호·공유 변경. 무참조 삭제 `204` |
 | `GET /api/v1/observations/workloads/{uid}` | 삭제 UID도 구간 요청·관리 raw/집계 조회 |
@@ -106,6 +108,15 @@ H는 명시 단위의 양수·129s 이하이며 먼저 검증한다. 잘못된 H
 만료 후 오류 응답에 기존 D 길이의 유한 delivery 구간을 예약한다. body drain/flush 전 connection deadline을 지우지 않고 전달 구간도 완료 지연에 포함한다.
 API 타입·CEL·`ValidateWorkload`, manager `validatedReferences/CreateWorkload/UpdateWorkload`, `snapshot/appliedStatus/restoreDefinition`, core `Definition`의 선택 수명·retained snapshot을 함께 맞춘다. failed PUT은 desired/applied/resourceVersion/generation/operation을 유지한다. CRD/deepcopy는 `make manifests generate`로 생성하며 수작업 schema·별도 검증 경로는 없다.
 loadgen의 `request_lifetime_seconds=None`과 선택 `--request-lifetime`을 재사용한다. W=120s 헤더 생략은 socket `--timeout`을 120s+delivery보다 크게 지정한다. socket 기본 30s를 gateway 수명으로 오인하거나 자동 조회를 추가하지 않는다. 고정 측정의 명시 H 경로는 유지한다.
+
+### 클라이언트 E2E 피드백
+
+`POST /api/v1/workloads/{id}/feedback` 본문은 `observationID`, 선택 `requestID/workloadUID`, 정수 `elapsedNanos≥0`, `outcome`, 선택 `statusCode`뿐이다. `observationID`는 비어 있지 않은 opaque 값이며 UUID/hex 형식을 강제하지 않는다. 서버 응답 `X-Chill-Request-ID`가 있으면 보존한다. header를 받지 못한 실패는 RequestID 없이 보고하며 현재 동명 Workload UID를 임의로 붙이지 않는다.
+
+`outcome`은 `completed`, `http_error`, `timeout`, `transport_error`, `canceled`다. `completed`는 전체 body 수신을 마친 2xx이고 `http_error`는 전체 body 수신을 마친 non-2xx다. 두 결과는 실제 `statusCode`를 요구한다. 나머지는 호출 중단까지의 관측 하한이며 성공 latency로 쓰지 않는다. `elapsedNanos`는 클라이언트 monotonic send→full body read 또는 중단 구간이며 서버 timestamp 차감값이 아니다.
+
+기존 Bearer TokenReview와 `/chill/api/v1/workloads/<name>/feedback` POST SAR를 먼저 적용한다. 기존 strict bounded body decode를 사용하며 `workloadName`, `reportedAt`, `actorUsername/actorUID`는 서버만 채운다. retained RequestID의 실제 이름·UID와 다른 assertion은 `400 InvalidClientObservation`이다. 권한을 가진 client의 신뢰 telemetry이며 실제 추론 수행을 암호학적으로 증명하지 않는다. 최초·후속 보고 모두 FIFO append 수락 뒤 `204`이며 local fsync 완료를 뜻하지 않는다. 중복 본문 비교·409 conflict·보고 재시도 장치는 없다.
+
 
 ### 오류·인증·단일 writer
 
@@ -173,6 +184,7 @@ POOL 전환은 신규 인스턴스 실제 준비/연결 후 route 편입, 제외
 |---|---|
 | `definitions.jsonl` | 지우지 않는 루트; UID/적용 identity/서비스 이름/모델·입력/SLO |
 | `requests` | 요청당 배정/최종 행, 수신·검증·접수·분배·큐·실행·교환·응답의 수신 기준 offset, 마지막 batch, 결과/오류 |
+| `clients` | 클라이언트 E2E·결과·선택 RequestID/UID, 서버 보고 수신 시각·Workload 이름·검증한 actor; 중복 원본도 보존 |
 | `management` | UID·종류·전후 정의·저장/수락/실제 적용 시각·단계/결과 |
 | `scheduler`, `catalog` | 설정/snapshot/decision/action/power raw; 불변 정의/profile/비용/baseline/meter는 catalog key 참조 |
 

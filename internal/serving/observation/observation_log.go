@@ -23,13 +23,14 @@ const (
 	observationCatalogStream     = "catalog"
 	observationResourcesStream   = "resources"
 	observationClusterStream     = "cluster"
+	observationClientStream      = "clients"
 	observationDefinitionsFile   = "definitions.jsonl"
 	observationHourLayout        = "20060102T15"
 	observationDefinitionCatalog = "definition"
 	observationProfileCatalog    = "profile"
 )
 
-var observationStreams = []string{observationRequestStream, observationSchedulerStream, observationManagementStream, observationCatalogStream, observationResourcesStream, observationClusterStream}
+var observationStreams = []string{observationRequestStream, observationSchedulerStream, observationManagementStream, observationCatalogStream, observationResourcesStream, observationClusterStream, observationClientStream}
 
 type ObservationLogConfig struct {
 	Directory   string

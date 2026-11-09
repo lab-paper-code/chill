@@ -115,6 +115,7 @@ func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorize
 	h.mux.HandleFunc("PUT /api/v1/workloads/{id}", h.management)
 	h.mux.HandleFunc("DELETE /api/v1/workloads/{id}", h.management)
 	h.mux.HandleFunc("POST /api/v1/workloads/{id}/infer", h.infer)
+	h.mux.HandleFunc("POST "+ClientFeedbackPath, h.clientFeedback)
 	h.mux.HandleFunc("GET /api/v1/models", h.management)
 	h.mux.HandleFunc("POST /api/v1/models", h.management)
 	h.mux.HandleFunc("GET /api/v1/models/{id}", h.management)
@@ -149,6 +150,7 @@ func NewHandler(manager *management.Manager, runtime *serving.Runtime, authorize
 	h.mux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/dispatch-occupancy-measurements/{name}", h.measurements)
 	h.mux.HandleFunc("GET /api/v1/observations/load", h.schedulerObservations)
 	h.mux.HandleFunc("GET /api/v1/observations/scheduler", h.schedulerObservations)
+	h.mux.HandleFunc("GET /api/v1/observations/clients", h.clientObservations)
 	h.mux.HandleFunc("POST /api/v1/internal/observations/resources", h.resources)
 	h.mux.HandleFunc("GET /api/v1/observations/power", h.operatingPower)
 	h.mux.HandleFunc("GET "+occupancyObservationsPath, h.occupancyObservations)
@@ -767,7 +769,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusPreconditionRequired
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "ResourceVersionRequired", "MeasurementPreflightRejected", "OccupancyInfeasible":
+	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "InvalidClientObservation", "ResourceVersionRequired", "MeasurementPreflightRejected", "OccupancyInfeasible":
 		status = http.StatusBadRequest
 	case "ObservationNotReady", "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict

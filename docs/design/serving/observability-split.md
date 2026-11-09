@@ -30,6 +30,9 @@ M1은 요청 행·불변 ID·S3 시간 세그먼트/로컬 버퍼·범위 읽기
 `queuedNanos/runningNanos`는 닫기 전 firstfloor `backend_queued/backend_running`에서 온다. final 때 빈 값은 열린 행의 마지막 실행 배치 finished(교환 결과/로그)에서 같은 worker 시계로 채운다. 시작=`At−nativeElapsedMS+queueMS`, 큐 진입=`At−nativeElapsedMS`(본문 읽기/decode만큼 로그보다 이르다); `queueMS−(runningNanos−queuedNanos)=0`.
 profile 본문(근거/confidence/조건 artifact·실행 경로)은 `profileID`, SLO·이름은 `definitionID`로 해당 시간 catalog에서 읽는다(`WM-27`). 지연은 `aggregate` 규칙을 유지하며 `delivery_failed,incomplete,canceled` 제외; 실행 완료 때만 잔여=`elapsedNanos−dispatchedNanos−nativeElapsedMS`(`SCH-31`,`WM-28`).
 기존 RequestEvent를 열린 행에 접고 assigned에서만 append한다. Runtime의 `releaseLocked` 또는 살아 있는 호출 없는 Response(접수 전 거절)에서 `RequestClosed(id)`→final append→열린 행 삭제다. 열린 행 없는 사건은 버리고 수신/검증/접수는 메모리만 사용하므로 거절은 observationError가 맡는다. 열린 행 수는 처리 중 요청 수; final989B(E1 실제121건)+assigned약300B≈요청당1.3KB다.
+
+`clients`는 공개 `POST /api/v1/workloads/{id}/feedback`로 수락한 별도 불변 원본 stream이다. 본문은 `observationID`, 선택 `requestID/workloadUID`, `elapsedNanos`, `outcome`, 선택 `statusCode`이며 서버가 이름·`reportedAt`·인증 actor를 붙인다. 원본 중복도 기록하고 requests의 final/outcome/accepted 정의를 덮지 않는다. 기존 단일 FIFO·분 파일·시간 archive·Retention·raw export를 그대로 사용한다. `GET /api/v1/observations/clients?from=...&to=...&limit=...&cursor=...`는 보고 수신 `[from,to)` 기준 append-order 원본 페이지와 coverage를 반환한다. `GET /api/v1/observations/raw/<hour>/clients`도 다른 stream과 같은 닫힌 분/권한 규칙을 적용한다.
+
 ### 3.2 재시작
 배정 전 수신/검증/큐는 crash 때 손실을 수락했으며 loadgen requestID join의 `sent−recorded`로 드러난다. runtimeFacts는 로컬 requests의 final 없는 assigned만 RestartDrain으로 복원한다. `dispatchedNanos=dispatchedAt−receivedAt`으로 접수/배정을 세고 backend 완료 뒤 `final(incomplete,EntrypointRestarted)`을 쓴다.
 firstfloor follow는 인스턴스 복원 배정의 가장 이른 dispatchedAt(없으면 프로세스 시작)부터 읽고 열린 행 없는 줄은 버린다. `RetainedDefinition`은 삭제하지 않는 루트 definitions.jsonl(KB·정의 수 비례)에서 복원하며 같은 identity/본문 재게시를 생략한다.
@@ -96,7 +99,7 @@ GOMEMLIMIT3072MiB/limit4Gi 유지(rev96 확인). 관측 heap최대880MiB와 soft
 
 ### 5.2 v3 asynchronous CephFS observation admission (D44)
 
-All six streams and root definitions submit frozen bytes to one unbounded FIFO
+All registered streams and root definitions submit frozen bytes to one unbounded FIFO
 and one disk worker. RequestEvent/RequestClosed return after admission, never
 after Write/Sync; B invariant 8 (Write before Execute) intentionally changes.
 No producer-visible lock covers filesystem work. Sustained CephFS stalls can
