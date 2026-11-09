@@ -64,7 +64,8 @@ type Table struct {
 	Pruned                                  map[string]int
 }
 
-// State owns reusable numerical scratch. Returned ranks borrow it until the next call.
+// State owns reusable numerical scratch for the scalar heuristic, not replay.
+// Returned ranks borrow it until the next call.
 type State interface {
 	Choice() []int
 	Reset([]int)

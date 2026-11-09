@@ -1,8 +1,6 @@
 package v2
 
-import (
-	"slices"
-)
+import "slices"
 
 func (c *v2Search) combine() {
 	t := c.s.Table
@@ -38,6 +36,8 @@ func (c *v2Search) combine() {
 	c.combineAt(0)
 }
 
+// Profile routing sums and heuristic feasibility do not bound exact failure or
+// delay. Enumerate the configured active product under the existing budgets.
 func (c *v2Search) combineAt(depth int) {
 	if c.expired() {
 		return

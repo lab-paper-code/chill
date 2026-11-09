@@ -28,8 +28,7 @@ type v2Finalists struct {
 }
 
 func newV2Key(t *protocol.Table, workloads int) protocol.Rank {
-	return protocol.Rank{Table: t, Choice: make([]int, len(t.ByPlan)), Excesses: make([]float64, workloads),
-		Demand: make([]float64, workloads), Supply: make([]float64, workloads), Satisfied: make([]bool, workloads)}
+	return protocol.Rank{Table: t, Choice: make([]int, len(t.ByPlan)), Excesses: make([]float64, workloads)}
 }
 
 func newV2Finalists(t *protocol.Table, workloads, size int) v2Finalists {
@@ -65,7 +64,6 @@ func (f *v2Finalists) add(key protocol.Rank, start string) {
 
 type v2Search struct {
 	s                         *state
-	problem                   protocol.Problem
 	current, best             protocol.Rank
 	finalists                 v2Finalists
 	stats                     CoreStats
@@ -86,7 +84,7 @@ func newV2Search(p protocol.Problem, t *protocol.Table, choice []int, evaluation
 			active = max(active, len(plans))
 		}
 	}
-	c := &v2Search{problem: p, s: newState(p, t, choice), current: newV2Key(t, len(p.Workloads)), best: newV2Key(t, len(p.Workloads)),
+	c := &v2Search{s: newState(p, t, choice), current: newV2Key(t, len(p.Workloads)), best: newV2Key(t, len(p.Workloads)),
 		finalists: newV2Finalists(t, len(p.Workloads), finalists), limit: evaluations, active: active, Deadline: deadline,
 		moves: make([][]int, len(p.Plans)), ranked: make([][]v2Merit, len(p.Plans)), activePlans: make([][]int, len(p.Plans)),
 		allActive: allActive}

@@ -40,16 +40,19 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 		if res == nil {
 			continue
 		}
-		filtered := exact.PostFilter(*res)
-		if !exact.FilterKept(filtered) {
-			anySurvivor = true
+		filtered := *res
+		if p.PostFilter {
+			filtered = exact.PostFilter(*res)
+			if !exact.FilterKept(filtered) {
+				anySurvivor = true
+			}
 		}
 		if exact.Better(*res, rawBest) {
 			rawBest, rawFiltered = res, filtered
 			rawGap = candidate.Joules - exact.Point(*res).Joules
 			rawStart = candidate.Start
 		}
-		if exact.Better(filtered, filteredBest) {
+		if p.PostFilter && exact.Better(filtered, filteredBest) {
 			filteredBest = &filtered
 			filteredGap = candidate.Joules - exact.Point(filtered).Joules
 			filteredStart = candidate.Start
@@ -59,7 +62,7 @@ func Funnel[R any](p protocol.Problem, exact protocol.Exact[R], candidates []pro
 			}
 		}
 	}
-	if rawBest != nil && !exact.FilterKept(*rawBest) && exact.FilterKept(rawFiltered) && anySurvivor {
+	if p.PostFilter && rawBest != nil && !exact.FilterKept(*rawBest) && exact.FilterKept(rawFiltered) && anySurvivor {
 		stats.Reverts++
 	}
 	selected, stats.Gap, stats.Start = rawBest, rawGap, rawStart

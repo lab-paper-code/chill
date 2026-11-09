@@ -14,13 +14,12 @@ type v2Merit struct {
 }
 
 func (c *v2Search) rankMove(n, q int, key protocol.Rank) {
-	if c.allActive || c.active == 0 {
+	if c.allActive || c.active == 0 || !key.Searchable || key.UnroutedPrepare {
 		return
 	}
-	move := v2Merit{q: q, key: key}
 	ranked := c.ranked[n]
 	at := 0
-	for at < len(ranked) && !c.meritLess(move, ranked[at]) {
+	for at < len(ranked) && !key.Better(&ranked[at].key) {
 		at++
 	}
 	if at >= c.active {
@@ -35,10 +34,6 @@ func (c *v2Search) rankMove(n, q int, key protocol.Rank) {
 	key.CopyInto(&slot.key)
 	ranked[at] = slot
 	c.ranked[n] = ranked
-}
-
-func (c *v2Search) meritLess(a, b v2Merit) bool {
-	return a.key.Better(&b.key)
 }
 
 func (c *v2Search) polish() {
