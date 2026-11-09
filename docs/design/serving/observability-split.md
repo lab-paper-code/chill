@@ -33,6 +33,10 @@ profile 본문(근거/confidence/조건 artifact·실행 경로)은 `profileID`,
 
 `clients`는 공개 `POST /api/v1/workloads/{id}/feedback`로 수락한 별도 불변 원본 stream이다. 본문은 `observationID`, 선택 `requestID/workloadUID`, `elapsedNanos`, `outcome`, 선택 `statusCode`이며 서버가 이름·`reportedAt`·인증 actor를 붙인다. 원본 중복도 기록하고 requests의 final/outcome/accepted 정의를 덮지 않는다. 기존 단일 FIFO·분 파일·시간 archive·Retention·raw export를 그대로 사용한다. `GET /api/v1/observations/clients?from=...&to=...&limit=...&cursor=...`는 보고 수신 `[from,to)` 기준 append-order 원본 페이지와 coverage를 반환한다. `GET /api/v1/observations/raw/<hour>/clients`도 다른 stream과 같은 닫힌 분/권한 규칙을 적용한다.
 
+`LoadWindow.ClientObservations`는 같은 Workload의 observationID와 선택 RequestID를 연결해 append-order 첫 보고만 집계한다. 이후 보고는 원본으로 남고 첫 duration/outcome을 바꾸지 않는다. 두 stream을 같은 capture에서 읽으며 final보다 먼저 온 보고도 다음 capture에서 결합한다. 결합 시 서버 row의 정확한 UID와 retained definition 이름을 사용하고 supplied UID는 assertion으로 검사한다. 요청 없는 timeout에 현재 동명 UID를 붙이지 않는다. 결합 관측은 `receivedAt∈[from,to)`, 미결합 관측은 서버 `reportedAt∈[from,to)`인 report receipt cohort다. cutoff 뒤 보고는 다음 capture에서 receipt가 아직 창 안일 때만 반영한다.
+
+온라인 identity lookup·집계 horizon은 기존 Retention이다. archive 원본은 계속 조회할 수 있지만 온라인 horizon 밖 요청/보고는 path reserve로 부활하지 않는다. `LoadWindow.PathSamples`는 순수 domain 산술이 유한 회계값을 만들 수 있는 표본만 담는다. `TOTAL=E−Q−N`, `POST=E−S−N`이며 POST는 client 외부 왕복까지 포함한 회계 reserve다. timeout/transport/canceled 실패의 elapsed 하한을 완료 N에서 빼지 않는다. 전체 client 결과·실패 모집단은 `ClientObservations`에 별도로 남는다.
+
 ### 3.2 재시작
 배정 전 수신/검증/큐는 crash 때 손실을 수락했으며 loadgen requestID join의 `sent−recorded`로 드러난다. runtimeFacts는 로컬 requests의 final 없는 assigned만 RestartDrain으로 복원한다. `dispatchedNanos=dispatchedAt−receivedAt`으로 접수/배정을 세고 backend 완료 뒤 `final(incomplete,EntrypointRestarted)`을 쓴다.
 firstfloor follow는 인스턴스 복원 배정의 가장 이른 dispatchedAt(없으면 프로세스 시작)부터 읽고 열린 행 없는 줄은 버린다. `RetainedDefinition`은 삭제하지 않는 루트 definitions.jsonl(KB·정의 수 비례)에서 복원하며 같은 identity/본문 재게시를 생략한다.
@@ -165,7 +169,7 @@ errors. Failed Close leaves active evidence and withholds graceful flock handoff
 | 조회 | 범위·모집단 |
 |---|---|
 | Query(`/observations/workloads/{uid}`) | requests는 from 분~최신(늦은 final 포함), management는[from,to], 열린 행. 모집단은[from,to)에 접수된 요청 |
-| LoadWindow | requests from 분~최신+열린 행; receivedAt+오프셋이 구간 안인 단계 수, 처리 중도 도착 포함 |
+| LoadWindow | 같은 capture의 requests·clients와 열린 행; 기존 단계 count/Arrivals 유지. retained first-report 관측과 finite PathSamples는 receipt/report receipt cohort를 구분 |
 | OperatingPower | scheduler[from−1분,to+1분], 기준 snapshot은 from부터 거꾸로 첫 snapshot 분까지; maximumBoundaryDistance≤1분, meter catalog coverage 사용 |
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
 파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.
@@ -422,7 +426,7 @@ catalog dependencies, immutable profile/definition reuse, and event values.
 
 ### 17.2 원시 내보내기 (`SCH-67`)
 
-`hour`는 UTC의 안전한 단일 경로 요소 `YYYYMMDDTHH`다. 누락·중복 hour, 잘못된 시각, 허용되지 않은 kind, 추가 경로/쿼리·경로 이탈은 400으로 거절한다. 파일명·store/key를 요청 입력으로 받지 않는다. kind는 `requests`, `scheduler`, `catalog`, `management`, `resources`, `cluster` 여섯 개뿐이다.
+`hour`는 UTC의 안전한 단일 경로 요소 `YYYYMMDDTHH`다. 누락·중복 hour, 잘못된 시각, 허용되지 않은 kind, 추가 경로/쿼리·경로 이탈은 400으로 거절한다. 파일명·store/key를 요청 입력으로 받지 않는다. kind는 `requests`, `scheduler`, `catalog`, `management`, `resources`, `cluster`, `clients`다.
 
 | 요청 | 응답 계약 |
 |---|---|
@@ -436,7 +440,7 @@ catalog dependencies, immutable profile/definition reuse, and event values.
 - `mu` 아래에서 시간·현재 분 경계·선택한 fd·길이를 잡고 잠금 밖에서 한정된 길이만 복사한다. 원본 fd가 열렸으면 archive 삭제와 충돌하지 않는다. 현재 열린 분은 파일 크기나 개행 유무와 관계없이 제외한다. 목록과 다운로드는 각각 독립 snapshot이며 목록 시각을 고정하는 서버 영속 receipt/manifest나 재시도 세션은 만들지 않는다.
 - `definitions`도 mutex 아래에서 fd와 마지막 완결 행 끝을 확보하고 이후 append를 전송에 섞지 않는다. 기존 시작 시 torn-tail 복구와 append rollback을 유지한다.
 - 시간 자체가 양쪽에 없거나 선택한 stream이 없으면 404(`ObservationUnavailable`), 현재 시간에 아직 내보낼 닫힌 분이 없으면 409(`ObservationNotReady`)다. 목록의 kind별 `available=false`는 부재이지 0건의 관측을 뜻하지 않는다. 열린 시간의 빈 segments도 수집 완료가 아니다.
-- 새 stream은 [ADR 0030](../../adr/0030-observation-evidence-api-streams.md)대로 같은 prefix에 추가한다. 배포 이전 resources/cluster 부재는 결손이 아니며 #213의 기존 네 stream 조회를 막지 않는다. 적용 이후 필요한 stream의 부재는 소비자가 수집 적용 구간·실제 표본 시각으로 결손을 드러낸다. 새 stream 여섯 개의 존재를 모든 시간의 필수 조건으로 삼지 않는다.
+- 새 stream은 [ADR 0030](../../adr/0030-observation-evidence-api-streams.md)대로 같은 prefix에 추가한다. 배포 이전 resources/cluster/clients 부재는 결손이 아니며 #213의 기존 네 stream 조회를 막지 않는다. 적용 이후 필요한 stream의 부재는 소비자가 수집 적용 구간·실제 표본 시각으로 결손을 드러낸다. 모든 등록 stream의 존재를 모든 시간의 필수 조건으로 삼지 않는다.
 - archive List/Open 오류는 5xx, 처리 마감은 기존 timeout 오류다. 읽기 오류를 빈 200/404로 바꾸지 않는다. 전송 시작 뒤 실패는 응답을 중단하며 JSON 오류를 JSONL/gzip 뒤에 덧붙이지 않는다. 알려진 길이는 Content-Length로 제공해 조기 종료가 드러나게 한다. 하네스는 HTTP 완료·JSONL 개행/구조·gzip 종료 오류를 검사하고 불완전 수집을 성공으로 판정하지 않는다. digest/바이트 대조 관문은 만들지 않는다.
 
 **마감:** `httpapi.Handler.ServeHTTP`의 `longOperation` 선택을 확장하여 raw 목록/전송/definitions 및 가공 `GET /api/v1/observations/scheduler`에 기존 `OperationTimeout`을 처리 상한으로 적용한다. 별도 무제한 timeout이나 원시 전용 서버를 만들지 않는다. Request context의 처리 마감·취소는 로컬 복사와 archive List/Open/read까지 전달한다. 쓰기 마감은 기존 방식 `처리 deadline + RequestTimeout`으로 별도 설정한다. 추가 쓰기 시간은 오류 전달 여유이며 처리/read context를 연장하지 않는다. archive 네트워크와 대용량 복사는 ObservationLog mutex 밖이다. 기존 가공 조회의 catalog 해석·페이지·coverage는 유지한다.
@@ -457,7 +461,7 @@ agent는 읽기 전용 호스트 `/sys/fs/cgroup` 트리를 kubelet의 systemd/c
 - 표본 주기 기본 `1s`, 묶음 주기 기본 `10s`를 수집 설정으로 제공하고 실행 조건에 고정한다. Node당 한 POST/한 resources 행에 묶음 표본을 넣는다. 주기마다 새 묶음을 보내며 요청은 유한 timeout을 갖는다. **실패 묶음은 버리고 재전송·spool·backoff queue를 만들지 않는다.** 실패 후 다음 주기는 새 표본/handshake만 보낸다.
 - 비어 있지 않은 묶음은 서버 append 성공일 때만 200과 다음 targets를 보낸다. 빈 handshake는 append 없이 targets를 반환한다. append 실패는 기존 log health와 오류 응답으로 드러낸다. 응답만 유실되어도 같은 묶음을 다시 보내지 않는다. 수신 순서로 기록하며 Node 표본 시각으로 저장 분을 역선택하지 않는다.
 
-**저장 행:** 여섯 stream은 동일 ObservationLog writer를 쓰며 다음 새 resources 행은 `<write-hour>/resources.<write-minute>.jsonl`에 들어간다. Node 묶음은 `kind:"node"` 한 행이고 서버 누적값은 별도 `kind:"server"`다.
+**저장 행:** 모든 등록 stream은 동일 ObservationLog writer를 쓰며 다음 새 resources 행은 `<write-hour>/resources.<write-minute>.jsonl`에 들어간다. Node 묶음은 `kind:"node"` 한 행이고 서버 누적값은 별도 `kind:"server"`다.
 
 | 행/필드 | 의미·단위 |
 |---|---|

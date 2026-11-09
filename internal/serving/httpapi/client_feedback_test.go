@@ -128,6 +128,22 @@ func TestClientFeedbackBoundaryAndDurableEvidence(t *testing.T) {
 	if err != nil || len(page.Observations) != 1 || page.Observations[0].Outcome != "timeout" {
 		t.Fatalf("later raw report lost: %+v %v", page, err)
 	}
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/observations/clients?from="+base.Format(time.RFC3339Nano)+"&to="+base.Add(time.Minute).Format(time.RFC3339Nano)+"&limit=1&cursor=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer token")
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var public observation.ClientObservationPage
+	decodeErr := json.NewDecoder(response.Body).Decode(&public)
+	closeErr := response.Body.Close()
+	if response.StatusCode != http.StatusOK || decodeErr != nil || closeErr != nil ||
+		len(public.Observations) != 1 || public.Observations[0].Outcome != "timeout" {
+		t.Fatalf("public clients query: status=%d page=%+v decode=%v close=%v", response.StatusCode, public, decodeErr, closeErr)
+	}
 	clock.Store(base.Add(2 * time.Minute).UnixNano())
 	raw, err := h.observationLog.OpenRaw(context.Background(), base.Format("20060102T15"), "clients")
 	if err != nil {
@@ -159,5 +175,112 @@ func TestClientFeedbackExistingAuthorization(t *testing.T) {
 	defer server.Close()
 	if status, _ := feedbackPOST(t, server, "workload", "broken", "token"); status != http.StatusForbidden {
 		t.Fatalf("feedback bypassed path SAR: %d", status)
+	}
+}
+
+func feedbackServerRequest(t *testing.T, log *observation.ObservationLog, id string, received time.Time, definition *serving.Definition) {
+	t.Helper()
+	if err := log.DefinitionRecord(definition); err != nil {
+		t.Fatal(err)
+	}
+	var timing serving.RequestTimings
+	timing.Record(serving.ServerAssigned, 28*time.Millisecond)
+	timing.Record(serving.ServerSenderElapsedFrozen, 30*time.Millisecond)
+	assigned := received.Add(28 * time.Millisecond)
+	events := []serving.RequestEvent{
+		{Kind: "received", At: received},
+		{Kind: "accepted", At: received.Add(8 * time.Millisecond)},
+		{Kind: "assigned", At: assigned, Assignment: &serving.Assignment{Instance: "instance", DispatchedAt: assigned}, ServerTiming: timing},
+		{Kind: "backend_finished", At: received.Add(90 * time.Millisecond), NativeInstance: "instance", NativeProgress: &serving.BackendProgress{
+			Phase: "finished", At: received.Add(90 * time.Millisecond), NativeElapsedMS: 60, ExecutionComplete: true, Outcome: "completed",
+		}},
+		{Kind: "backend_exchange_finished", At: received.Add(95 * time.Millisecond), ExecutionComplete: true},
+		{Kind: "response_finished", At: received.Add(101 * time.Millisecond), Outcome: "completed"},
+	}
+	for _, event := range events {
+		event.RequestID, event.WorkloadUID, event.Definition = id, definition.UID, definition.Identity()
+		if err := log.RequestEvent(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := log.RequestClosed(id, serving.RequestTimings{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientFeedbackHTTPToLoadWindow(t *testing.T) {
+	h, clock, base := feedbackHTTPHandler(t, true)
+	server := httptest.NewServer(h)
+	defer server.Close()
+	post := func(body string) {
+		t.Helper()
+		if status, data := feedbackPOST(t, server, "workload", body, "token"); status != http.StatusNoContent {
+			t.Fatalf("feedback admission: %d %s", status, data)
+		}
+	}
+	from, to := base, base.Add(2*time.Second)
+	post(`{"observationID":"client-first","requestID":"request/opaque","elapsedNanos":120000000,"outcome":"completed","statusCode":200}`)
+	pending, err := h.observationLog.LoadWindow(context.Background(), from, to)
+	if err != nil || len(pending.PathSamples) != 0 || len(pending.ClientObservations) != 1 ||
+		pending.ClientObservations[0].WorkloadUID != "" {
+		t.Fatalf("client-first evidence: %+v %v", pending, err)
+	}
+	definition := &serving.Definition{Name: "workload", UID: "server-uid", Generation: 1}
+	feedbackServerRequest(t, h.observationLog, "request/opaque", base.Add(100*time.Millisecond), definition)
+	joined, err := h.observationLog.LoadWindow(context.Background(), from, to)
+	if err != nil || len(joined.PathSamples) != 1 || len(joined.ClientObservations) != 1 {
+		t.Fatalf("server-later join needs no new report: %+v %v", joined, err)
+	}
+	if sample := joined.PathSamples[0]; sample.TotalNanos != 40e6 || sample.PostNanos != 30e6 || sample.WorkloadUID != definition.UID {
+		t.Fatalf("TOTAL/POST or server identity changed: %+v", sample)
+	}
+	if joined.ClientObservations[0].WorkloadUID != definition.UID {
+		t.Fatalf("joined identity did not use server row: %+v", joined.ClientObservations)
+	}
+	post(`{"observationID":"client-first","requestID":"request/opaque","elapsedNanos":999000000,"outcome":"timeout"}`)
+	post(`{"observationID":"another-id","requestID":"request/opaque","elapsedNanos":500000000,"outcome":"completed","statusCode":200}`)
+	post(`{"observationID":"timeout/no-id","elapsedNanos":80000000,"outcome":"timeout"}`)
+	// A duplicate can connect an observation ID and request ID without adding a
+	// population member. Its later alias must not count as another inference.
+	post(`{"observationID":"timeout/no-id","requestID":"alias-request","elapsedNanos":90000000,"outcome":"timeout"}`)
+	post(`{"observationID":"alias-observation","requestID":"alias-request","elapsedNanos":100000000,"outcome":"timeout"}`)
+	feedbackServerRequest(t, h.observationLog, "late", base.Add(-30*time.Second), definition)
+	post(`{"observationID":"late-report","requestID":"late","elapsedNanos":120000000,"outcome":"completed","statusCode":200}`)
+	after, err := h.observationLog.LoadWindow(context.Background(), from, to)
+	if err != nil || len(after.PathSamples) != 1 || len(after.ClientObservations) != 2 {
+		t.Fatalf("duplicates, failure or late receipt cohort changed: %+v %v", after, err)
+	}
+	if after.PathSamples[0] != joined.PathSamples[0] || after.ClientObservations[0].Outcome != "completed" ||
+		after.ClientObservations[1].Outcome != "timeout" || after.ClientObservations[1].WorkloadUID != "" ||
+		after.ClientObservations[1].RequestID != "" {
+		t.Fatalf("first evidence or unknown timeout identity changed: %+v", after)
+	}
+	if status, _ := feedbackPOST(t, server, "workload", `{"observationID":"wrong-uid","requestID":"request/opaque","workloadUID":"new-uid","elapsedNanos":1,"outcome":"timeout"}`, "token"); status != http.StatusBadRequest {
+		t.Fatalf("retained UID mismatch accepted: %d", status)
+	}
+	if status, _ := feedbackPOST(t, server, "other", `{"observationID":"wrong-name","requestID":"request/opaque","elapsedNanos":1,"outcome":"timeout"}`, "token"); status != http.StatusBadRequest {
+		t.Fatalf("retained name mismatch accepted: %d", status)
+	}
+	// A report accepted exactly at the cutoff belongs only to the next capture,
+	// and only while its server receipt still belongs to that capture's window.
+	clock.Store(to.UnixNano())
+	feedbackServerRequest(t, h.observationLog, "cutoff", base.Add(200*time.Millisecond), definition)
+	post(`{"observationID":"cutoff-report","requestID":"cutoff","elapsedNanos":120000000,"outcome":"completed","statusCode":200}`)
+	cutoff, err := h.observationLog.LoadWindow(context.Background(), from, to)
+	if err != nil || len(cutoff.PathSamples) != 1 {
+		t.Fatalf("cutoff included a new report: %+v %v", cutoff, err)
+	}
+	next, err := h.observationLog.LoadWindow(context.Background(), from, to.Add(time.Second))
+	if err != nil || len(next.PathSamples) != 2 {
+		t.Fatalf("next capture failed to join a retained receipt: %+v %v", next, err)
+	}
+	clock.Store(base.Add(3*time.Minute).UnixNano())
+	expired, err := h.observationLog.LoadWindow(context.Background(), base.Add(2*time.Minute), base.Add(3*time.Minute))
+	if err != nil || len(expired.PathSamples) != 0 || len(expired.ClientObservations) != 0 {
+		t.Fatalf("old receipts resurrected: %+v %v", expired, err)
+	}
+	raw, err := h.observationLog.ClientObservationPage(context.Background(), from, to.Add(time.Second), 100, 0)
+	if err != nil || len(raw.Observations) != 8 || raw.Observations[0].WorkloadUID != "" {
+		t.Fatalf("raw reports mutated or lost: %+v %v", raw, err)
 	}
 }

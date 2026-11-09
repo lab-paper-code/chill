@@ -340,6 +340,8 @@ type LoadWindow struct {
 	Arrivals   []serving.SchedulerArrival  `json:"arrivals"`
 	GapUntil   *time.Time                  `json:"gapUntil,omitempty"`
 	Coverage   serving.ObservationCoverage `json:"coverage"`
+	PathSamples        []serving.PathTimingSample  `json:"pathSamples"`
+	ClientObservations []serving.ClientObservation `json:"clientObservations"`
 }
 
 // LoadWindow counts each stage whose time, receipt plus stage offset, lies in
@@ -349,14 +351,24 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 	if from.IsZero() || !from.Before(to) {
 		return result, &serving.Error{Code: "InvalidQuery", Message: "positive explicit load window is required"}
 	}
-	read, err := l.prepare(ctx, map[string][2]time.Time{observationRequestStream: {from, {}}})
+	// Client joins use the retained receipt horizon, including earlier receipts
+	// whose reports arrived in this window. Both streams share one capture.
+	retainedFrom := l.now().Add(-l.config.Retention)
+	read, err := l.prepare(ctx, map[string][2]time.Time{
+		observationRequestStream: {minTime(from, retainedFrom), {}},
+		observationClientStream:  {retainedFrom, to},
+	})
 	if err != nil {
 		return result, err
 	}
 	defer read.close()
-	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}})
+	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}, observationClientStream: {from, to}})
 	result.GapUntil = result.Coverage.GapUntil(from)
 	rows, err := l.requestRows(read, func(*requestEnvelope) bool { return true })
+	if err != nil {
+		return result, err
+	}
+	result.PathSamples, result.ClientObservations, err = l.clientWindow(read, rows, from, to)
 	if err != nil {
 		return result, err
 	}
