@@ -191,9 +191,6 @@ func (s *schedulerReplayState) collectFailurePotential(population *feedbackPopul
 		s.capturePotential(request, s.byID[request.source.Instance])
 	}
 	if !request.hasPotential {
-		if !population.missing {
-			s.out.invalidReasons = appendUnique(s.out.invalidReasons, "MissingConditionalFailurePotential:"+population.definition.UID)
-		}
 		population.missing = true
 	} else {
 		population.potentials = append(population.potentials, request.potential)
@@ -211,6 +208,9 @@ func (population *feedbackPopulation) finish(samples []float64) FeedbackWorkload
 	}
 	if population.fixedFailure {
 		score.PotentialUnavailableReasons = []string{"TerminalNativeOutcomeNoExecutionAlternative"}
+	}
+	if population.missing {
+		score.PotentialUnavailableReasons = append(score.PotentialUnavailableReasons, "MissingConditionalFailurePotential:"+population.definition.UID)
 	}
 	if !population.missing && (!population.fixedFailure || len(population.potentials) > 0) {
 		potential := 0.0
@@ -266,55 +266,69 @@ func (s *schedulerReplayState) capturePotential(request *schedulerReplayRequest,
 		if !ready {
 			continue
 		}
-		base := request.accountedAge + s.now - request.arrival + wait + request.marginNanos
-		if request.returning {
-			if request.source.NativeOutcome == "" || request.source.NativeOutcome == "completed" {
-				best = min(best, request.accountedAge+request.completion-request.arrival)
-			}
-			continue
-		}
-		if request.running {
-			// initializeRunning already drew conditioned residual; reuse it.
-			best = min(best, base+max(0, instance.finish-s.now))
-			continue
-		}
-		count, contains := 0, false
-		if !request.dispatched || request.source.Phase == phaseAssigned {
-			count = 1
-		}
-		for _, queued := range instance.queue {
-			if queued.expired || queued.dropped || queued.deferred != request.deferred {
-				continue
-			}
-			if queued.identity == request.identity {
-				count++
-				contains = contains || queued == request
-			} else if request.deferred {
-				if contains {
-					break
-				}
-				count = 0
-			}
-		}
-		gap := instance.idleNanos(s.now)
-		if !instance.ready {
-			gap = nil
-		}
-		for _, batch := range instance.config.Profile.Batches {
-			if batch.Batch > instance.config.MaxBatch || batch.Batch > count || batch.ServiceDistribution == nil {
-				continue
-			}
-			service, support, ok := batch.ServiceDistribution.QuantileNanos(gap, request.source.Definition.SLO.Percentile)
-			s.out.conditional.record(gap, support)
-			if ok {
-				best = min(best, base+float64(service)+float64(batch.Batch)*instance.occupancy)
-			}
-		}
+		best = min(best, s.potentialLatency(instance, request, wait))
 	}
 	if !math.IsInf(best, 1) {
 		request.potential = max(0, best/float64(request.source.Definition.SLO.TargetLatency)-1)
 		request.hasPotential = true
 	}
+}
+
+func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstance, request *schedulerReplayRequest, wait float64) float64 {
+	if request.returning {
+		if request.source.NativeOutcome == "" || request.source.NativeOutcome == "completed" {
+			return request.accountedAge + request.completion - request.arrival
+		}
+		return math.Inf(1)
+	}
+	base := request.accountedAge + s.now - request.arrival + wait + request.marginNanos
+	residual := 0.0
+	if len(instance.batch) > 0 {
+		residual = max(0, instance.finish-s.now)
+	}
+	if request.running {
+		return base + residual // reuse the already sampled nonpreemptive residual
+	}
+	base += residual
+	count := potentialBatchCount(instance, request)
+	gap := instance.idleNanos(s.now)
+	if !instance.ready {
+		gap = nil
+	}
+	best := math.Inf(1)
+	for _, batch := range instance.config.Profile.Batches {
+		if batch.Batch > instance.config.MaxBatch || batch.Batch > count || batch.ServiceDistribution == nil {
+			continue
+		}
+		service, support, ok := batch.ServiceDistribution.QuantileNanos(gap, request.source.Definition.SLO.Percentile)
+		s.out.conditional.record(gap, support)
+		if ok {
+			best = min(best, base+float64(service)+float64(batch.Batch)*instance.occupancy)
+		}
+	}
+	return best
+}
+
+func potentialBatchCount(instance *schedulerReplayInstance, request *schedulerReplayRequest) int {
+	count, contains := 0, false
+	for _, queued := range instance.queue {
+		if queued.expired || queued.dropped || queued.deferred != request.deferred {
+			continue
+		}
+		if queued.identity == request.identity {
+			count++
+			contains = contains || queued == request
+		} else if request.deferred {
+			if contains {
+				break
+			}
+			count = 0
+		}
+	}
+	if !contains && (!request.dispatched || request.source.Phase == phaseAssigned) {
+		count++
+	}
+	return count
 }
 
 func (s *schedulerReplayState) potentialReady(instance *schedulerReplayInstance, request *schedulerReplayRequest) (float64, bool) {
@@ -336,7 +350,7 @@ func (s *schedulerReplayState) potentialReady(instance *schedulerReplayInstance,
 		return 0, true
 	}
 	// Future potential needs both a sampled preparation and a fixed route DAG.
-	// Unsampled operations and unresolved external prerequisites stay invalid.
+	// Unsampled operations and unresolved prerequisites leave potential unknown.
 	readyAt := math.Inf(1)
 	for _, action := range s.actions {
 		if action.action.Kind == schedulerActionPrepare && action.action.Instance == instance.config.ID && action.started && !action.done {
@@ -350,37 +364,43 @@ func (s *schedulerReplayState) potentialReady(instance *schedulerReplayInstance,
 		if action.action.Kind != schedulerActionRoute || action.done {
 			continue
 		}
-		target := s.goal
-		if action.action.RouteTarget != nil {
-			target = *action.action.RouteTarget
-		}
-		routed := false
-		for _, wanted := range target.Instances {
-			if s.byID[wanted.ID] != instance || wanted.WorkloadUID != request.source.Definition.UID {
-				continue
-			}
-			weight := wanted.Weight
-			if route, explicit := target.Routing[wanted.WorkloadUID]; explicit {
-				weight = route[wanted.ID]
-			}
-			routed = weight > 0
-		}
-		at, known := readyAt, routed
-		for _, id := range action.action.DependsOn {
-			dependency := s.actionByID[id]
-			if dependency == nil || !dependency.done && (!dependency.started || !schedulerFinite(dependency.finish)) {
-				known = false
-				break
-			}
-			if !dependency.done {
-				at = max(at, dependency.finish)
-			}
-		}
+		at, known := s.potentialRouteReady(action.action, instance, request.source.Definition.UID, readyAt)
 		if known {
 			return max(0, at-s.now), true
 		}
 	}
 	return 0, false
+}
+
+func (s *schedulerReplayState) potentialRouteReady(action Action, instance *schedulerReplayInstance, uid string, readyAt float64) (float64, bool) {
+	target := s.goal
+	if action.RouteTarget != nil {
+		target = *action.RouteTarget
+	}
+	routed := false
+	for _, wanted := range target.Instances {
+		if s.byID[wanted.ID] != instance || wanted.WorkloadUID != uid {
+			continue
+		}
+		weight := wanted.Weight
+		if route, explicit := target.Routing[uid]; explicit {
+			weight = route[wanted.ID]
+		}
+		routed = weight > 0
+	}
+	if !routed {
+		return 0, false
+	}
+	for _, id := range action.DependsOn {
+		dependency := s.actionByID[id]
+		if dependency == nil || !dependency.done && (!dependency.started || !schedulerFinite(dependency.finish)) {
+			return 0, false
+		}
+		if !dependency.done {
+			readyAt = max(readyAt, dependency.finish)
+		}
+	}
+	return readyAt, true
 }
 
 // Preserve the existing failure vocabulary for consumers of Candidate.SLO.
