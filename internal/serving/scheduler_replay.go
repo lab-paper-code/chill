@@ -31,30 +31,30 @@ const (
 )
 
 type schedulerReplayRequest struct {
-	source       SchedulerRequest
-	identity     string // source.Definition.Identity(), formatted once
-	arrival      float64
-	native       float64
-	queueAt      float64
-	senderMS     float64
-	completed    bool
-	dispatched   bool
-	returning    bool
-	completion   float64
-	observed     bool
-	running      bool
-	expired      bool
-	deferred     bool
-	dropped      bool
-	failed       bool
-	expires      float64
-	capacityMiss bool // counted once against the capacity window's fixed population
-	preNanos     float64 // synthetic PRE, never added to accepted requests
-	marginNanos  float64 // frozen POST
-	nativeAge    float64 // captured native age; advances only after native receipt
-	accountedAge float64 // S+N for native requests, actual server age otherwise
-	potential    float64 // conditional failure excess, never a completion time
-	hasPotential bool
+	source        SchedulerRequest
+	identity      string // source.Definition.Identity(), formatted once
+	arrival       float64
+	native        float64
+	queueAt       float64
+	senderMS      float64
+	completed     bool
+	dispatched    bool
+	returning     bool
+	completion    float64
+	observed      bool
+	running       bool
+	expired       bool
+	deferred      bool
+	dropped       bool
+	failed        bool
+	expires       float64
+	capacityMiss  bool    // counted once against the capacity window's fixed population
+	preNanos      float64 // synthetic PRE, never added to accepted requests
+	marginNanos   float64 // frozen POST
+	nativeAge     float64 // captured native age; advances only after native receipt
+	accountedAge  float64 // S+N for native requests, actual server age otherwise
+	potential     float64 // conditional failure excess, never a completion time
+	hasPotential  bool
 	minimumDemand bool
 }
 
@@ -78,17 +78,17 @@ type schedulerReplayInstance struct {
 }
 
 type schedulerReplayResult struct {
-	energy        float64
-	requestJoules float64
-	samples       map[string][]float64
-	definitions   map[string]*Definition
-	reasons       []string
-	assumptions   []string
-	sources       []string
-	outcomes      map[string]map[string]int
-	conditional   ConditionalServiceEvidence
-	feedback      []FeedbackWorkloadScore
-	invalidReasons []string
+	energy           float64
+	requestJoules    float64
+	samples          map[string][]float64
+	definitions      map[string]*Definition
+	reasons          []string
+	assumptions      []string
+	sources          []string
+	outcomes         map[string]map[string]int
+	conditional      ConditionalServiceEvidence
+	feedback         []FeedbackWorkloadScore
+	invalidReasons   []string
 	observedArrivals map[string]int
 }
 

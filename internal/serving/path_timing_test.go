@@ -27,9 +27,9 @@ func pathTimingEvidence(accepted, assigned, sender, nativeMS, elapsed, finalMS i
 
 func TestPathTimingSampleAccounting(t *testing.T) {
 	for _, tc := range []struct {
-		name                                                     string
-		accepted, assigned, sender, native, elapsed, final          int64
-		total, post                                              float64
+		name                                               string
+		accepted, assigned, sender, native, elapsed, final int64
+		total, post                                        float64
 	}{
 		{"normal", 8, 28, 30, 60, 120, 101, 40, 30},
 		{"serving wait is not counted twice", 8, 48, 50, 60, 140, 121, 40, 30},
@@ -133,11 +133,11 @@ func TestPathTimingSampleKeepsFullNativeFailuresSeparate(t *testing.T) {
 
 func TestBuildPathFeedbackEmpiricalQuantileAndFallback(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		percentile float64
-		samples    []PathTimingSample
+		name        string
+		percentile  float64
+		samples     []PathTimingSample
 		total, post float64
-		source     string
+		source      string
 	}{
 		{name: "no samples", percentile: 95, total: 7, post: 7, source: "configured"},
 		{name: "first sample applies", percentile: 95, samples: []PathTimingSample{{TotalNanos: 40, PostNanos: 30}}, total: 40, post: 30, source: "empirical"},
@@ -172,7 +172,7 @@ func TestPathFeedbackObservedMeanUsesSameCausalSamples(t *testing.T) {
 	var samples []PathTimingSample
 	for _, evidence := range []struct {
 		accepted, assigned, sender, native, elapsed, final int64
-		outcome                                         string
+		outcome                                            string
 	}{
 		{8, 28, 30, 60, 120, 101, "completed"},
 		{8, 48, 50, 40, 160, 101, "completed"},

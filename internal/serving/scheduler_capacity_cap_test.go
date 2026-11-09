@@ -25,14 +25,20 @@ func TestCapacityEveryProfileVariantRetained(t *testing.T) {
 	seen := make(map[int]bool)
 	for _, entry := range problem.Table.Entries {
 		for _, q := range entry.Variants {
-			if seen[q] { t.Fatalf("duplicate variant %d", q) }
+			if seen[q] {
+				t.Fatalf("duplicate variant %d", q)
+			}
 			seen[q] = true
 		}
 	}
 	for _, q := range tab.byPlan[0] {
-		if !seen[q] || !tab.searchable[q] { t.Fatalf("profile variant %d removed before heuristic scoring", q) }
+		if !seen[q] || !tab.searchable[q] {
+			t.Fatalf("profile variant %d removed before heuristic scoring", q)
+		}
 	}
-	if len(tab.pruned) != 0 { t.Fatalf("unjustified scalar pruning: %v", tab.pruned) }
+	if len(tab.pruned) != 0 {
+		t.Fatalf("unjustified scalar pruning: %v", tab.pruned)
+	}
 }
 
 func TestCapacityDeltaFrozen130And190ms(t *testing.T) {

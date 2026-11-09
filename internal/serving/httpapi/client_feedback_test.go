@@ -278,7 +278,7 @@ func TestClientFeedbackHTTPToLoadWindow(t *testing.T) {
 	if err != nil || len(next.PathSamples) != 2 {
 		t.Fatalf("next capture failed to join a retained receipt: %+v %v", next, err)
 	}
-	clock.Store(base.Add(3*time.Minute).UnixNano())
+	clock.Store(base.Add(3 * time.Minute).UnixNano())
 	expired, err := h.observationLog.LoadWindow(context.Background(), base.Add(2*time.Minute), base.Add(3*time.Minute))
 	if err != nil || len(expired.PathSamples) != 0 || len(expired.ClientObservations) != 0 {
 		t.Fatalf("old receipts resurrected: %+v %v", expired, err)

@@ -28,15 +28,15 @@ func (p *capacityPlanner) transitionConstraints(choice []int) (string, []Schedul
 
 // SchedulerTransitionReserve records modeled surviving profile-rate margin.
 type SchedulerTransitionReserve struct {
-	UID          string  `json:"uid"`
-	Fraction     float64 `json:"fraction"`
-	Demand       float64 `json:"demand"`
-	RequiredRate float64 `json:"requiredRate"`
+	UID             string  `json:"uid"`
+	Fraction        float64 `json:"fraction"`
+	Demand          float64 `json:"demand"`
+	RequiredRate    float64 `json:"requiredRate"`
 	BeforeRouteRate float64 `json:"beforeRouteRate"`
-	AfterRouteRate float64 `json:"afterRouteRate"`
-	Allowed      bool    `json:"allowed"`
-	Reason       string  `json:"reason,omitempty"`
-	CandidateKey string  `json:"candidateKey,omitempty"`
+	AfterRouteRate  float64 `json:"afterRouteRate"`
+	Allowed         bool    `json:"allowed"`
+	Reason          string  `json:"reason,omitempty"`
+	CandidateKey    string  `json:"candidateKey,omitempty"`
 }
 
 // transitionReserve applies configured margin to estimated surviving profile rate.

@@ -75,12 +75,14 @@ func TestPlannerNativeQueueUsesFiniteDemandSLO(t *testing.T) {
 			snap.Outstanding = r.SchedulerInputs(func() time.Time { return snap.At }).Outstanding
 			decision := SchedulerDecision{Workloads: []SchedulerWorkloadState{{UID: snap.Workloads[0].UID, State: WorkloadControlled}}}
 			p := newCapacityPlanner(context.Background(), s, snap, SchedulerCandidate{}, decision)
-			snap.Arrivals=nil
-			keep:=SchedulerCandidate{Keep:true,Nodes:snap.Nodes,Instances:snap.Instances,Routing:schedulerInstanceRouting(context.Background(),snap.Workloads,snap.Instances)}
-			result,err:=EvaluateFeedbackCandidate(context.Background(),s,snap,keep,0)
-			if err!=nil {t.Fatal(err)}
-			if p.ws[0].queued!=3 || owner.outstanding!=3 || len(result.Workloads)!=1 || result.Workloads[0].Population!=3 || result.Workloads[0].Satisfied {
-				t.Fatalf("native queue lost finite-demand obligation: q=%d slots=%d result=%+v",p.ws[0].queued,owner.outstanding,result)
+			snap.Arrivals = nil
+			keep := SchedulerCandidate{Keep: true, Nodes: snap.Nodes, Instances: snap.Instances, Routing: schedulerInstanceRouting(context.Background(), snap.Workloads, snap.Instances)}
+			result, err := EvaluateFeedbackCandidate(context.Background(), s, snap, keep, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.ws[0].queued != 3 || owner.outstanding != 3 || len(result.Workloads) != 1 || result.Workloads[0].Population != 3 || result.Workloads[0].Satisfied {
+				t.Fatalf("native queue lost finite-demand obligation: q=%d slots=%d result=%+v", p.ws[0].queued, owner.outstanding, result)
 			}
 		})
 	}
@@ -112,10 +114,12 @@ func TestPlannerRunningAndExpiredOwnershipDoNotTriggerExpansion(t *testing.T) {
 			snap.Outstanding = r.SchedulerInputs(func() time.Time { return snap.At }).Outstanding
 			got := capacityDecideForTest(t, s, snap)
 			expanded := got.Target != nil && poolsOn(*got.Target, n2)
-			wantQueued:=0
-			if tc.expand {wantQueued=1}
+			wantQueued := 0
+			if tc.expand {
+				wantQueued = 1
+			}
 			if expanded && !tc.expand || got.Capacity == nil || got.Capacity.Workloads[0].Queued != wantQueued {
-				t.Fatalf("backlog/expansion=%v status=%s reasons=%v capacity=%+v",expanded,got.Status,got.Reasons,got.Capacity)
+				t.Fatalf("backlog/expansion=%v status=%s reasons=%v capacity=%+v", expanded, got.Status, got.Reasons, got.Capacity)
 			}
 			if !tc.expand && (got.Capacity.Workloads[0].Queued != 0 || got.Keep.Status != schedulerStatusFeasible) {
 				t.Fatalf("keep must remain feasible: %+v", got)

@@ -40,8 +40,8 @@ func (e *capacityExact) Point(r capacityResult) protocol.Point {
 	return protocol.Point{Key: r.key, Joules: r.joules, KeepJoules: r.keepJoules, Period: r.period, Feasible: r.feasible, Final: r.final}
 }
 func (e *capacityExact) SeedKeep(r capacityResult) {
-	actual:=e.p.evaluateCurrentKeep(r.period)
-	e.p.keepWatts=actual.joules/r.period
+	actual := e.p.evaluateCurrentKeep(r.period)
+	e.p.keepWatts = actual.joules / r.period
 }
 func (e *capacityExact) PostFilter(r capacityResult) capacityResult {
 	return e.p.minimumGain(e.p.payback(r))

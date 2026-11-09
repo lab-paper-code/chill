@@ -105,4 +105,3 @@ func (c *v2Search) sweepTwo() {
 		}
 	}
 }
-

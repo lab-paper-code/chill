@@ -9,12 +9,12 @@ import (
 
 // PathFeedback is one Workload's immutable additive-budget estimate.
 type PathFeedback struct {
-	WorkloadUID string  `json:"workloadUID"`
-	Percentile  float64 `json:"percentile"`
-	TotalNanos  float64 `json:"totalNanos"`
-	PostNanos   float64 `json:"postNanos"`
-	SampleCount int     `json:"sampleCount"`
-	Source      string  `json:"source"`
+	WorkloadUID  string            `json:"workloadUID"`
+	Percentile   float64           `json:"percentile"`
+	TotalNanos   float64           `json:"totalNanos"`
+	PostNanos    float64           `json:"postNanos"`
+	SampleCount  int               `json:"sampleCount"`
+	Source       string            `json:"source"`
 	ObservedMean *PathObservedMean `json:"observedMean,omitempty"`
 }
 

@@ -23,7 +23,6 @@ import (
 	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
-
 func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
 	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}, Definitions: []string{"unrelated"}, Outcomes: []string{"completed"}})
 	if err != nil {
@@ -481,10 +480,9 @@ func TestSchedulerRecordStoresCompactDecision(t *testing.T) {
 		Status: "evaluated", Reasons: []string{"reason"}, ExpectedJoules: &joules, WorstExceedance: 0.25,
 		SLO: []serving.SchedulerEstimate{{UID: "w1", Definition: definition.Identity(), Samples: 100, Percentile: 95}}, Assumptions: []string{"assumption"}, Sources: []string{"source"},
 	}
-	plans := repeated([]serving.SchedulerNodePlan{{Node: nodes[0].Node, Key: "profile/b4/w1", Eligible: true, Kappa: map[string]float64{"w1": 34.3}, KappaRetained: map[string]float64{"w1": 0}, Pre: 20 * time.Second, Joules: 140, EnergyUncertaintyJoules: 7}}, 60)
-	wait := 0.42
+	plans := repeated([]serving.SchedulerNodePlan{{Node: nodes[0].Node, Key: "profile/b4/w1", Eligible: true, RoutingRate: map[string]float64{"w1": 34.3}, RetainedRoutingRate: map[string]float64{"w1": 0}, Pre: 20 * time.Second, Joules: 140, EnergyUncertaintyJoules: 7}}, 60)
 	capacity := &serving.SchedulerCapacity{Period: 197 * time.Second, Route: 20 * time.Second, Search: &serving.SchedulerPlanSearch{Neighborhood: 3, Evaluated: 25272, Duration: time.Second}, Plans: plans, GainUncertaintyJoules: 12,
-		Workloads: []serving.SchedulerCapacityWorkload{{UID: "w1", Rate: 40, KappaNew: 144, Backlog: 61, WaitSeconds: &wait, Weights: map[string]int32{"i1": 1000}, Rows: []string{"row"}}}}
+		Workloads: []serving.SchedulerCapacityWorkload{{UID: "w1", Rate: 40, RoutingRate: 144, Queued: 61, Weights: map[string]int32{"i1": 1000}}}}
 	decision := serving.SchedulerDecision{At: at, Status: "target", Keep: candidate, Target: &candidate, Capacity: capacity, EvaluationElapsed: 3 * time.Millisecond}
 	event := SchedulerObservation{At: at, Decision: &decision, Snapshot: &snapshot}
 	if err := observationLog.SchedulerRecord(event); err != nil {

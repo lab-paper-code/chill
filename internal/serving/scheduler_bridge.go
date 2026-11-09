@@ -15,13 +15,13 @@ const schedulerBridgeRoute = "handoff-bridge"
 // SchedulerBridgeStage is a prediction conditional on its prepare/ACK
 // dependencies, never a claim that a planned executor is already live supply.
 type SchedulerBridgeStage struct {
-	Action         string        `json:"action"`
-	UID            string        `json:"uid"`
-	At             time.Duration `json:"atNanos"`
-	Demand         float64       `json:"demand"`
-	Backlog        float64       `json:"backlog"`
-	RoutingRate float64 `json:"routingRate"`
-	Reserve        float64       `json:"reserveFraction"`
+	Action      string        `json:"action"`
+	UID         string        `json:"uid"`
+	At          time.Duration `json:"atNanos"`
+	Demand      float64       `json:"demand"`
+	Backlog     float64       `json:"backlog"`
+	RoutingRate float64       `json:"routingRate"`
+	Reserve     float64       `json:"reserveFraction"`
 }
 
 type schedulerBridgeSchedule struct {
@@ -373,7 +373,7 @@ func (b *schedulerBridgeCompiler) peers(uid string) (map[string]SchedulerInstanc
 			items = append(items, capacityItem{id: i.ID, routingWeight: profileRoutingWeight(k), e: capacityInputEnergy(i)})
 		}
 	}
-	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Or(cmp.Compare(a.e,c.e),cmp.Compare(a.id,c.id)) })
+	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Or(cmp.Compare(a.e, c.e), cmp.Compare(a.id, c.id)) })
 	return available, items
 }
 

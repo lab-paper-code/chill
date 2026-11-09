@@ -24,9 +24,9 @@ func TestMovesRetainEverySearchableRoutingVariant(t *testing.T) {
 		ByPlan: [][]int{{0, 1, 2, 3, 4}}, Index: []int{0, 1, 2, 3, 4},
 		NodeUID: []string{"n"}, Options: []string{"keep", "option", "option", "option", "option"},
 		Modes: []string{"m", "m", "m", "m", "m"}, PlanKeys: []string{"keep", "a", "b", "c", "d"},
-		KeyParts: []string{"n=keep", "n=a", "n=b", "n=c", "n=d"},
-		Searchable: []bool{true, true, true, true, false},
-		Count: [][]int{{1}, {1}, {1}, {1}, {1}},
+		KeyParts:    []string{"n=keep", "n=a", "n=b", "n=c", "n=d"},
+		Searchable:  []bool{true, true, true, true, false},
+		Count:       [][]int{{1}, {1}, {1}, {1}, {1}},
 		RoutingRate: [][]float64{{5}, {10}, {50}, {25}, {100}},
 	}
 	Group(tab)

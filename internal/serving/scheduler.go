@@ -571,17 +571,17 @@ type SchedulerWorkloadState struct {
 }
 
 type SchedulerDecision struct {
-	At         time.Time                `json:"at"`
-	Status     string                   `json:"status"`
-	Keep       SchedulerCandidate       `json:"keep"`
-	Target     *SchedulerCandidate      `json:"target"`
-	Reasons    []string                 `json:"reasons"`
-	Settings   SchedulerSettings        `json:"settings"`
-	Search     SchedulerSearch          `json:"search"`
-	Workloads  []SchedulerWorkloadState `json:"workloads"`
-	References []string                 `json:"references"`
-	Capacity   *SchedulerCapacity       `json:"capacity,omitempty"`
-	PathFeedback []PathFeedback `json:"pathFeedback,omitempty"`
+	At           time.Time                `json:"at"`
+	Status       string                   `json:"status"`
+	Keep         SchedulerCandidate       `json:"keep"`
+	Target       *SchedulerCandidate      `json:"target"`
+	Reasons      []string                 `json:"reasons"`
+	Settings     SchedulerSettings        `json:"settings"`
+	Search       SchedulerSearch          `json:"search"`
+	Workloads    []SchedulerWorkloadState `json:"workloads"`
+	References   []string                 `json:"references"`
+	Capacity     *SchedulerCapacity       `json:"capacity,omitempty"`
+	PathFeedback []PathFeedback           `json:"pathFeedback,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }

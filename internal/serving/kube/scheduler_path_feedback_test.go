@@ -18,7 +18,7 @@ func recordSchedulerPathSample(t *testing.T, c *SchedulerController, workload *s
 	timing.Record(serving.ServerAssigned, 30*time.Millisecond)
 	timing.Record(serving.ServerSenderElapsedFrozen, 40*time.Millisecond)
 	for _, stage := range []struct {
-		kind string
+		kind    string
 		elapsed time.Duration
 	}{{"received", 0}, {"accepted", 10 * time.Millisecond}, {"assigned", 30 * time.Millisecond}, {"backend_exchange_finished", 110 * time.Millisecond}, {"response_finished", 120 * time.Millisecond}} {
 		event := serving.RequestEvent{RequestID: "path-sample", WorkloadName: workload.Name, WorkloadUID: workload.UID,
@@ -91,7 +91,7 @@ func TestSchedulerCapacityProjectsOnlyCurrentCommittedRateTests(t *testing.T) {
 		t.Fatalf("uncommitted rate evidence: %+v", got)
 	}
 	test := serving.SchedulerFeedbackRate{InstanceID: "selected-instance",
-		Input: serving.CapacityInput{WorkloadUID: "workload", DispatchOccupancy: &serving.DispatchOccupancy{PerRequest: time.Millisecond}},
+		Input:            serving.CapacityInput{WorkloadUID: "workload", DispatchOccupancy: &serving.DispatchOccupancy{PerRequest: time.Millisecond}},
 		FeedbackCapacity: serving.FeedbackCapacity{KappaHat: 2, Tests: []serving.FeedbackRateTest{{Requests: 3}}},
 	}
 	c.state.Decision.Capacity = &serving.SchedulerCapacity{Workloads: []serving.SchedulerCapacityWorkload{{

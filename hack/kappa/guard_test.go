@@ -101,7 +101,7 @@ func TestReplayGuardPreservesExclusiveOwnerReservation(t *testing.T) {
 		CapacityGridSteps: 1, CapacityBisectionWidth: .1, CapacityTailSamples: 1,
 		PlanSearchWorkers: 1, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1, PlanExactFinalists: 1,
 		DefaultOperationCost: map[string]serving.OperationCostValue{"prepare": {Seconds: 1}, "remove": {Seconds: 1}, "power": {Seconds: 1}},
-		DefaultIdlePower: &serving.IdlePowerDefault{NodeWatts: 1, PerInstanceWatts: 1},
+		DefaultIdlePower:     &serving.IdlePowerDefault{NodeWatts: 1, PerInstanceWatts: 1},
 	}
 	if err := settings.Validate(); err != nil {
 		t.Fatal(err)
@@ -112,8 +112,8 @@ func TestReplayGuardPreservesExclusiveOwnerReservation(t *testing.T) {
 	target.Nodes[0].PowerMode = "reserved"
 	snapshot := serving.SchedulerSnapshot{
 		At: at, ObservationEnd: at, Nodes: []serving.SchedulerNode{node}, Workloads: []*serving.Definition{workload},
-		Options: []serving.SchedulerOption{{CompatibleUIDs: []string{workload.UID}}},
-		Arrivals: []serving.SchedulerArrival{{ID: "accepted", At: at.Add(-time.Millisecond), Accepted: true, Compute: true, Definition: workload, WorkloadUID: workload.UID}},
+		Options:      []serving.SchedulerOption{{CompatibleUIDs: []string{workload.UID}}},
+		Arrivals:     []serving.SchedulerArrival{{ID: "accepted", At: at.Add(-time.Millisecond), Accepted: true, Compute: true, Definition: workload, WorkloadUID: workload.UID}},
 		Reservations: []serving.SchedulerReservation{{Owner: "exclusive-owner", Nodes: []serving.NodeReference{node.Node}, WorkloadUIDs: []string{workload.UID}, Target: target}},
 	}
 	capture := func() []byte {

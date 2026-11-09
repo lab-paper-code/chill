@@ -277,7 +277,6 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 	return p
 }
 
-
 var e5Mixes = func() []map[int]float64 {
 	mixes := []map[int]float64{}
 	for _, mnv2 := range []float64{20, 60, 110} {

@@ -13,20 +13,31 @@ import (
 func capacityHeuristicBrute(p *capacityPlanner, tab *planTable) protocol.Rank {
 	problem := p.scalarProblem(tab, time.Time{})
 	choice := make([]int, len(p.plans))
-	for n := range choice { choice[n] = tab.byPlan[n][0] }
+	for n := range choice {
+		choice[n] = tab.byPlan[n][0]
+	}
 	s := newSearchState(p, tab, choice)
 	var best protocol.Rank
 	found := false
 	var visit func(int)
 	visit = func(n int) {
 		if n < len(choice) {
-			for _, q := range tab.byPlan[n] { if tab.searchable[q] { choice[n] = q; visit(n+1) } }
+			for _, q := range tab.byPlan[n] {
+				if tab.searchable[q] {
+					choice[n] = q
+					visit(n + 1)
+				}
+			}
 			return
 		}
 		s.reset(choice)
 		rank := capacityRank(s.delta(0, choice[0]), problem.Table)
-		if !rank.Searchable || !rank.Bounded { return }
-		if !found || rank.Better(&best) { best, found = capacityDeltaSaved(rank), true }
+		if !rank.Searchable || !rank.Bounded {
+			return
+		}
+		if !found || rank.Better(&best) {
+			best, found = capacityDeltaSaved(rank), true
+		}
 	}
 	visit(0)
 	return best
@@ -60,7 +71,9 @@ func TestCapacityCombineFrozenProduct(t *testing.T) {
 	if len(candidates) == 0 || !slices.Equal(candidates[0].Choice, []int{1, 1, 1}) || stats.Deadline || stats.Exhausted {
 		t.Fatalf("three-node scalar product missing: candidates=%+v stats=%+v", candidates, stats)
 	}
-	if !slices.ContainsFunc(stats.SearchSteps, func(step protocol.Step) bool { return step.Start == capacitySearchStartKeep && step.Phase == protocol.Combine && step.K == 3 && step.Evaluated > 0 }) {
+	if !slices.ContainsFunc(stats.SearchSteps, func(step protocol.Step) bool {
+		return step.Start == capacitySearchStartKeep && step.Phase == protocol.Combine && step.K == 3 && step.Evaluated > 0
+	}) {
 		t.Fatalf("missing product move: %+v", stats.SearchSteps)
 	}
 }
@@ -72,13 +85,19 @@ func TestCapacityCombineMatchesFrozenExhaustiveOracle(t *testing.T) {
 		tab := p.planTable()
 		problem := p.scalarProblem(tab, time.Time{})
 		candidates, stats := v2.Candidates(problem, problem.Table, 0, 16, 0, time.Time{})
-		if len(candidates) == 0 || stats.Deadline || stats.Exhausted { t.Fatalf("H=%g missing scalar endpoint: %+v", horizon, stats) }
+		if len(candidates) == 0 || stats.Deadline || stats.Exhausted {
+			t.Fatalf("H=%g missing scalar endpoint: %+v", horizon, stats)
+		}
 		want := capacityHeuristicBrute(p, tab)
 		choice := make([]int, len(p.plans))
-		for n, j := range candidates[0].Choice { choice[n] = tab.byPlan[n][j] }
+		for n, j := range candidates[0].Choice {
+			choice[n] = tab.byPlan[n][j]
+		}
 		state := newSearchState(p, tab, choice)
 		got := capacityRank(state.delta(0, choice[0]), problem.Table)
-		if got.Better(&want) || want.Better(&got) { t.Fatalf("H=%g scalar exhaustive mismatch: got=%+v want=%+v", horizon, got, want) }
+		if got.Better(&want) || want.Better(&got) {
+			t.Fatalf("H=%g scalar exhaustive mismatch: got=%+v want=%+v", horizon, got, want)
+		}
 	}
 }
 
@@ -90,14 +109,22 @@ func TestCapacityCombineAllActiveIncludesEveryProfileVariant(t *testing.T) {
 		multiple := false
 		for n, plans := range problem.Table.ByPlan {
 			for _, q := range plans {
-				if !problem.Table.Searchable[q] { continue }
+				if !problem.Table.Searchable[q] {
+					continue
+				}
 				entry := problem.Table.Entries[problem.Table.EntryOf[q]]
-				if entry.Node != n || !slices.Contains(entry.Variants, q) { t.Fatalf("active=%d omitted profile variant %d", active, q) }
+				if entry.Node != n || !slices.Contains(entry.Variants, q) {
+					t.Fatalf("active=%d omitted profile variant %d", active, q)
+				}
 				multiple = multiple || len(entry.Variants) > 1
 			}
 		}
-		if !multiple { t.Fatal("fixture needs multiple profile variants") }
+		if !multiple {
+			t.Fatal("fixture needs multiple profile variants")
+		}
 		candidates, stats := v2.Candidates(problem, problem.Table, 0, 16, active, time.Time{})
-		if len(candidates) == 0 || stats.Deadline || stats.Exhausted { t.Fatalf("active=%d missing endpoint: %+v", active, stats) }
+		if len(candidates) == 0 || stats.Deadline || stats.Exhausted {
+			t.Fatalf("active=%d missing endpoint: %+v", active, stats)
+		}
 	}
 }

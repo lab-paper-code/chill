@@ -31,7 +31,7 @@ func TestSchedulerCapacityProjectionMatchesDashboardFixture(t *testing.T) {
 				CompletionMarginMS: 2.5, Window: time.Second, Windows: 5, PassingWindows: 4, MinimumRequests: 100,
 				GridSteps: 10, BisectionWidth: .01, TailSamples: 20,
 			},
-			PathFeedback: serving.PathFeedback{WorkloadUID: "service-uid", Percentile: 99, Source: "configured"},
+			PathFeedback:     serving.PathFeedback{WorkloadUID: "service-uid", Percentile: 99, Source: "configured"},
 			FeedbackCapacity: serving.FeedbackCapacity{Tests: []serving.FeedbackRateTest{}},
 		})
 	}

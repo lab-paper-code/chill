@@ -154,8 +154,8 @@ func TestOperationCostRetainedKappaUsesCurrentCell(t *testing.T) {
 	newer.Profile = &p
 	snap.Options = []SchedulerOption{poolsOption(newer)}
 	planner := capacityPlannerForTest(t, s, snap)
-	if rate := planner.currentRoutingRate(old); rate != capacityThroughput(old.Profile,old.MaxBatch) || rate<=0 {
-		t.Fatalf("old executor lost raw profile routing support: %g",rate)
+	if rate := planner.currentRoutingRate(old); rate != capacityThroughput(old.Profile, old.MaxBatch) || rate <= 0 {
+		t.Fatalf("old executor lost raw profile routing support: %g", rate)
 	}
 }
 
@@ -347,7 +347,6 @@ const (
 	operationCostLatestRef   = "cost-latest-tie"
 	operationCostTestProfile = "cost-current-profile"
 )
-
 
 func operationCostReplayReport(t *testing.T, report map[string]any) {
 	t.Helper()

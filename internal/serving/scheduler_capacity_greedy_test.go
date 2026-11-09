@@ -17,7 +17,9 @@ import (
 
 func capacityDeltaChoice(tab *planTable, choice []int) []int {
 	result := make([]int, len(choice))
-	for n, q := range choice { result[n] = tab.index[q] }
+	for n, q := range choice {
+		result[n] = tab.index[q]
+	}
 	return result
 }
 
@@ -29,7 +31,9 @@ func capacityDeltaSaved(key protocol.Rank) protocol.Rank {
 
 func capacityDeltaKey(key orderKey) string {
 	var text strings.Builder
-	for _, q := range key.choice { text.WriteString(key.table.keyParts[q]) }
+	for _, q := range key.choice {
+		text.WriteString(key.table.keyParts[q])
+	}
 	return text.String()
 }
 
@@ -40,8 +44,10 @@ func capacityDeltaAssert(t testing.TB, p *capacityPlanner, s *searchState, n, q 
 	key := s.delta(n, q)
 	choice := capacityDeltaChoice(s.table, key.choice)
 	energy := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
-	physicalKeep:=true
-	for node,j:=range choice {physicalKeep=physicalKeep && p.plans[node][j].keep}
+	physicalKeep := true
+	for node, j := range choice {
+		physicalKeep = physicalKeep && p.plans[node][j].keep
+	}
 	if key.keep != physicalKeep || key.route != energy.route || capacityDeltaKey(key) != energy.key || key.bounded != p.bounded(choice) {
 		t.Fatalf("move=(%d,%d) key=%+v energy=%+v", n, q, key, energy)
 	}
@@ -51,11 +57,19 @@ func capacityDeltaAssert(t testing.TB, p *capacityPlanner, s *searchState, n, q 
 	if p.settings.Controls.Routing {
 		for w := range p.ws {
 			total := 0.0
-			for node, j := range choice { for _, item := range p.plans[node][j].items[w] { total += float64(item.routingWeight) } }
-			if total == 0 { continue }
 			for node, j := range choice {
 				for _, item := range p.plans[node][j].items[w] {
-					if math.Abs(float64(energy.weights[w][item.id])/schedulerRouteUnits-float64(item.routingWeight)/total) > 1e-14 { equalShares = false }
+					total += float64(item.routingWeight)
+				}
+			}
+			if total == 0 {
+				continue
+			}
+			for node, j := range choice {
+				for _, item := range p.plans[node][j].items[w] {
+					if math.Abs(float64(energy.weights[w][item.id])/schedulerRouteUnits-float64(item.routingWeight)/total) > 1e-14 {
+						equalShares = false
+					}
 				}
 			}
 		}
@@ -83,13 +97,23 @@ func capacityDeltaWalk(t testing.TB, p *capacityPlanner, rng *rand.Rand) {
 	t.Helper()
 	tab := p.planTable()
 	choice := make([]int, len(p.plans))
-	for n := range choice { choice[n] = tab.byPlan[n][0] }
+	for n := range choice {
+		choice[n] = tab.byPlan[n][0]
+	}
 	s, fresh := newSearchState(p, tab, choice), newSearchState(p, tab, choice)
 	eligible := make([][]int, len(choice))
-	for n, plans := range tab.byPlan { for _, q := range plans { if tab.searchable[q] { eligible[n] = append(eligible[n], q) } } }
+	for n, plans := range tab.byPlan {
+		for _, q := range plans {
+			if tab.searchable[q] {
+				eligible[n] = append(eligible[n], q)
+			}
+		}
+	}
 	for sample := range 96 {
 		if sample%8 == 0 {
-			for n := range choice { choice[n] = eligible[n][rng.IntN(len(eligible[n]))] }
+			for n := range choice {
+				choice[n] = eligible[n][rng.IntN(len(eligible[n]))]
+			}
 			s.reset(choice)
 		}
 		n := rng.IntN(len(choice))
@@ -129,35 +153,57 @@ func TestCapacityDeltaClampBoundaries(t *testing.T) {
 		p.period = horizon
 		tab := p.planTable()
 		choice := make([]int, len(p.plans))
-		for n := range choice { choice[n] = tab.byPlan[n][0] }
+		for n := range choice {
+			choice[n] = tab.byPlan[n][0]
+		}
 		s := newSearchState(p, tab, choice)
-		for n, plans := range tab.byPlan { for _, q := range plans {
-			key, _ := capacityDeltaAssert(t, p, s, n, q)
-			if !tab.keep[q] {
-				if min(key.route, horizon) < tab.tauPre[q] { beforePre++ }
-				if horizon-key.route < tab.tauPost[q] { afterPost++ }
-				if key.route > horizon { beyondH++ }
+		for n, plans := range tab.byPlan {
+			for _, q := range plans {
+				key, _ := capacityDeltaAssert(t, p, s, n, q)
+				if !tab.keep[q] {
+					if min(key.route, horizon) < tab.tauPre[q] {
+						beforePre++
+					}
+					if horizon-key.route < tab.tauPost[q] {
+						afterPost++
+					}
+					if key.route > horizon {
+						beyondH++
+					}
+				}
 			}
-		} }
+		}
 	}
-	if beforePre == 0 || afterPost == 0 || beyondH == 0 { t.Fatalf("missing clamps: pre=%d post=%d beyond=%d", beforePre, afterPost, beyondH) }
+	if beforePre == 0 || afterPost == 0 || beyondH == 0 {
+		t.Fatalf("missing clamps: pre=%d post=%d beyond=%d", beforePre, afterPost, beyondH)
+	}
 }
 
 func TestCapacityDeltaFrozenInputs(t *testing.T) {
 	p := e5Planner(map[int]float64{0: 20}, evaluationScaled(2, 0), e5Start, nil)
 	tab := p.planTable()
 	choice := make([]int, len(p.plans))
-	for n := range choice { choice[n] = tab.byPlan[n][0] }
+	for n := range choice {
+		choice[n] = tab.byPlan[n][0]
+	}
 	s := newSearchState(p, tab, choice)
 	table := p.scalarProblem(tab, time.Time{}).Table
 	before := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][1]), table))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	p.ctx = ctx
-	for _, plans := range p.plans { for _, plan := range plans { for _, instance := range plan.instances { instance.Profile.Batches = nil } } }
+	for _, plans := range p.plans {
+		for _, plan := range plans {
+			for _, instance := range plan.instances {
+				instance.Profile.Batches = nil
+			}
+		}
+	}
 	p.snapshot.Instances, p.snapshot.Workloads, p.snapshot.Arrivals = nil, nil, nil
 	after := capacityRank(s.delta(0, tab.byPlan[0][1]), table)
-	if !reflect.DeepEqual(before, capacityDeltaSaved(after)) { t.Fatal("Delta read replay/raw inputs after freezing table") }
+	if !reflect.DeepEqual(before, capacityDeltaSaved(after)) {
+		t.Fatal("Delta read replay/raw inputs after freezing table")
+	}
 }
 
 func TestCapacityDeltaIntegerRoutingIsNotCapacityGate(t *testing.T) {
@@ -176,7 +222,9 @@ func TestCapacityDeltaZeroWeightPrepare(t *testing.T) {
 	tab := p.planTable()
 	s := newSearchState(p, tab, []int{tab.byPlan[0][0], tab.byPlan[1][0]})
 	_, energy := capacityDeltaAssert(t, p, s, 0, s.choice[0])
-	if !energy.unroutedPrepare { t.Fatal("finalist integer route must retain zero-weight prepare guard") }
+	if !energy.unroutedPrepare {
+		t.Fatal("finalist integer route must retain zero-weight prepare guard")
+	}
 }
 
 func TestCapacityGreedyKeyOrder(t *testing.T) {
@@ -193,14 +241,20 @@ func TestCapacityGreedyKeyOrder(t *testing.T) {
 	table := p.scalarProblem(tab, time.Time{}).Table
 	var keys []protocol.Rank
 	var texts []string
-	for _, a := range tab.byPlan[0] { for _, b := range tab.byPlan[1] {
-		s := newSearchState(p, tab, []int{a, b})
-		key, energy := capacityDeltaAssert(t, p, s, 0, a)
-		keys, texts = append(keys, capacityDeltaSaved(capacityRank(key, table))), append(texts, energy.key)
-	} }
-	for a := range keys { for b := range keys {
-		if keys[a].CompareKey(keys[b]) != cmp.Compare(texts[a], texts[b]) { t.Fatalf("key order mismatch %q vs %q", texts[a], texts[b]) }
-	} }
+	for _, a := range tab.byPlan[0] {
+		for _, b := range tab.byPlan[1] {
+			s := newSearchState(p, tab, []int{a, b})
+			key, energy := capacityDeltaAssert(t, p, s, 0, a)
+			keys, texts = append(keys, capacityDeltaSaved(capacityRank(key, table))), append(texts, energy.key)
+		}
+	}
+	for a := range keys {
+		for b := range keys {
+			if keys[a].CompareKey(keys[b]) != cmp.Compare(texts[a], texts[b]) {
+				t.Fatalf("key order mismatch %q vs %q", texts[a], texts[b])
+			}
+		}
+	}
 }
 
 var capacityDeltaBenchmarkResult protocol.Rank
@@ -210,11 +264,15 @@ func BenchmarkCapacityDelta(b *testing.B) {
 	tab := p.planTable()
 	table := p.scalarProblem(tab, time.Time{}).Table
 	choice := make([]int, len(p.plans))
-	for n := range choice { choice[n] = tab.byPlan[n][0] }
+	for n := range choice {
+		choice[n] = tab.byPlan[n][0]
+	}
 	s := newSearchState(p, tab, choice)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N { capacityDeltaBenchmarkResult = capacityRank(s.delta(0, tab.byPlan[0][1]), table) }
+	for range b.N {
+		capacityDeltaBenchmarkResult = capacityRank(s.delta(0, tab.byPlan[0][1]), table)
+	}
 }
 
 func TestCapacityDeltaNoAllocations(t *testing.T) {
@@ -222,15 +280,25 @@ func TestCapacityDeltaNoAllocations(t *testing.T) {
 	tab := p.planTable()
 	table := p.scalarProblem(tab, time.Time{}).Table
 	choice := make([]int, len(p.plans))
-	for n := range choice { choice[n] = tab.byPlan[n][0] }
+	for n := range choice {
+		choice[n] = tab.byPlan[n][0]
+	}
 	s := newSearchState(p, tab, choice)
-	if got := testing.AllocsPerRun(100, func() { capacityDeltaBenchmarkResult = capacityRank(s.delta(0, tab.byPlan[0][1]), table) }); got != 0 { t.Fatalf("delta allocs/op=%g", got) }
+	if got := testing.AllocsPerRun(100, func() { capacityDeltaBenchmarkResult = capacityRank(s.delta(0, tab.byPlan[0][1]), table) }); got != 0 {
+		t.Fatalf("delta allocs/op=%g", got)
+	}
 	move := 0
-	if got := testing.AllocsPerRun(100, func() { s.apply(0, tab.byPlan[0][move%2]); move++ }); got != 0 { t.Fatalf("apply allocs/op=%g", got) }
+	if got := testing.AllocsPerRun(100, func() { s.apply(0, tab.byPlan[0][move%2]); move++ }); got != 0 {
+		t.Fatalf("apply allocs/op=%g", got)
+	}
 }
 
 func TestCapacityDeltaBounds(t *testing.T) {
-	for _, tc := range []struct { name string; maxReplicas, maxInstances int; replicas bool }{
+	for _, tc := range []struct {
+		name                      string
+		maxReplicas, maxInstances int
+		replicas                  bool
+	}{
 		{"total-including-others", 10, 4, true}, {"workload-replicas", 2, 100, true}, {"replicas-off", 100, 100, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -246,9 +314,13 @@ func TestCapacityDeltaBounds(t *testing.T) {
 			tab := p.planTable()
 			s := newSearchState(p, tab, []int{tab.byPlan[0][0], tab.byPlan[1][0]})
 			key, _ := capacityDeltaAssert(t, p, s, 0, tab.byPlan[0][1])
-			if s.total != 4 || key.bounded { t.Fatalf("total=%d bounded=%t", s.total, key.bounded) }
+			if s.total != 4 || key.bounded {
+				t.Fatalf("total=%d bounded=%t", s.total, key.bounded)
+			}
 			s.apply(0, tab.byPlan[0][1])
-			if s.total != 5 || s.sums[0].count != 3 { t.Fatalf("total=%d count=%d", s.total, s.sums[0].count) }
+			if s.total != 5 || s.sums[0].count != 3 {
+				t.Fatalf("total=%d count=%d", s.total, s.sums[0].count)
+			}
 		})
 	}
 }
@@ -265,6 +337,10 @@ func TestCapacityDeltaPendingReplicaBounds(t *testing.T) {
 		p.settings.Controls.Replicas = replicas
 		tab := p.planTable()
 		s := newSearchState(p, tab, []int{tab.byPlan[0][0]})
-		for _, q := range tab.byPlan[0] { capacityDeltaAssert(t, p, s, 0, q); s.apply(0, q); capacityDeltaAssert(t, p, s, 0, q) }
+		for _, q := range tab.byPlan[0] {
+			capacityDeltaAssert(t, p, s, 0, q)
+			s.apply(0, q)
+			capacityDeltaAssert(t, p, s, 0, q)
+		}
 	}
 }

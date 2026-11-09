@@ -142,7 +142,7 @@ func TestRuntimeSchedulerInputsUsesNativeElapsedAndStopsAgingTerminalProgress(t 
 	ready.State.ObservedAt = observed
 	ready.State.Native = &native.State{Requests: []native.RequestState{{
 		Context: native.RequestContext{RequestID: receipt.ID, WorkloadUID: receipt.UID, Definition: dispatch.Definition.Identity(), SenderElapsedMS: sender},
-		Phase: "queued", ElapsedMS: 0,
+		Phase:   "queued", ElapsedMS: 0,
 	}}}
 	if err := r.InstallInstances([]ReadyInstance{ready}); err != nil {
 		t.Fatal(err)

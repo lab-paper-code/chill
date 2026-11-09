@@ -11,11 +11,11 @@ import (
 // Prices linearize the scalar h<=Target constraint at the previous selection.
 // Neither this start nor its energy proxy certifies exact demand feasibility.
 type heuristicPrices struct {
-	planner protocol.Problem
-	Table   *protocol.Table
-	Choice  []int
+	planner                                               protocol.Problem
+	Table                                                 *protocol.Table
+	Choice                                                []int
 	price, coefficient, Demand, Supply, retained, service []float64
-	Route float64
+	Route                                                 float64
 }
 
 func pricedMedian(values []float64) float64 {
@@ -133,7 +133,7 @@ func (c *heuristicPrices) aggregate() {
 			continue
 		}
 		backlog := max(0, float64(workload.Queued)+(workload.Rate-c.retained[w])*c.Route)
-		c.coefficient[w] = (workload.TargetNanos-workload.TotalNanos-1e9*c.Route)/workload.TargetNanos
+		c.coefficient[w] = (workload.TargetNanos - workload.TotalNanos - 1e9*c.Route) / workload.TargetNanos
 		c.Demand[w] = 1e9 * backlog / workload.TargetNanos
 		if c.Supply[w] < workload.Rate {
 			horizon := max(c.Table.Period-c.Route, 0)

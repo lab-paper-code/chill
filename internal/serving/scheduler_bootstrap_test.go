@@ -148,12 +148,16 @@ func TestStartupMissingRawSupportNeverUsesElapsedTimeFallback(t *testing.T) {
 	s, snapshot := schedulerFixture()
 	snapshot.Instances = nil
 	snapshot.Routing = map[string]map[string]int32{}
-	for _,option:=range snapshot.Options {
-		for k:=range option.Instance.Profile.Batches {option.Instance.Profile.Batches[k].ServiceDistribution=nil}
+	for _, option := range snapshot.Options {
+		for k := range option.Instance.Profile.Batches {
+			option.Instance.Profile.Batches[k].ServiceDistribution = nil
+		}
 	}
 	for _, elapsed := range []time.Duration{0, time.Hour} {
 		snapshot.At = snapshot.ObservationEnd.Add(elapsed)
-		for k := range snapshot.Nodes {snapshot.Nodes[k].ObservedAt = snapshot.At}
+		for k := range snapshot.Nodes {
+			snapshot.Nodes[k].ObservedAt = snapshot.At
+		}
 		got := capacityDecideForTest(t, s, snapshot)
 		if got.Status != CapacityRejected || got.Target != nil {
 			t.Fatalf("missing raw support became executable after %v: %+v", elapsed, got)
@@ -184,9 +188,11 @@ func TestStartupMissingRawSupportIgnoresIncompatibleModels(t *testing.T) {
 			}
 			snapshot.Instances = nil
 			snapshot.Routing = map[string]map[string]int32{}
-			missing:=snapshot.Options[0].Instance.Profile
-			missing.Batches=slices.Clone(missing.Batches)
-			for k:=range missing.Batches {missing.Batches[k].ServiceDistribution=nil}
+			missing := snapshot.Options[0].Instance.Profile
+			missing.Batches = slices.Clone(missing.Batches)
+			for k := range missing.Batches {
+				missing.Batches[k].ServiceDistribution = nil
+			}
 			decision := capacityDecideForTest(t, s, snapshot)
 			if !slices.Contains(decision.Reasons, CapacityRejected+":w1") || slices.Contains(decision.Reasons, CapacityPending+":w1") {
 				t.Fatalf("unrelated model's absent row hid terminal w1 capacity: %+v", decision)
@@ -194,7 +200,9 @@ func TestStartupMissingRawSupportIgnoresIncompatibleModels(t *testing.T) {
 			if decision.Target == nil || len(decision.Target.Instances) != 1 || len(decision.Target.Routing["w2"]) != 1 || len(decision.Target.Routing["w1"]) != 0 {
 				t.Fatalf("ready w2 failed independent startup: %+v", decision)
 			}
-			for k:=range option.Profile.Batches {option.Profile.Batches[k].ServiceDistribution=nil}
+			for k := range option.Profile.Batches {
+				option.Profile.Batches[k].ServiceDistribution = nil
+			}
 			decision = capacityDecideForTest(t, s, snapshot)
 			if decision.Status != CapacityRejected || decision.Target != nil || !slices.Contains(decision.Reasons, CapacityRejected+":w2") {
 				t.Fatalf("terminal compatible rows remained pending: %+v", decision)

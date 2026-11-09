@@ -23,14 +23,14 @@ type ClientObservation struct {
 // PathTimingSample contains only an attributable finite reserve sample.
 // Full client/server/native evidence remains in their original records.
 type PathTimingSample struct {
-	WorkloadUID string    `json:"workloadUID"`
-	RequestID   string    `json:"requestID"`
-	ReceivedAt  time.Time `json:"receivedAt"`
-	TotalNanos  float64   `json:"totalNanos"`
-	PostNanos   float64   `json:"postNanos"`
-	ClientNanos       float64 `json:"clientNanos"`
-	ServingQueueNanos float64 `json:"servingQueueNanos"`
-	NativeNanos       float64 `json:"nativeNanos"`
+	WorkloadUID       string    `json:"workloadUID"`
+	RequestID         string    `json:"requestID"`
+	ReceivedAt        time.Time `json:"receivedAt"`
+	TotalNanos        float64   `json:"totalNanos"`
+	PostNanos         float64   `json:"postNanos"`
+	ClientNanos       float64   `json:"clientNanos"`
+	ServingQueueNanos float64   `json:"servingQueueNanos"`
+	NativeNanos       float64   `json:"nativeNanos"`
 }
 
 // PathTimingSampleFromRequest decomposes a full client reply using local elapsed

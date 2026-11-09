@@ -31,13 +31,13 @@ type clientObservationIdentityReceipt struct {
 }
 
 type clientObservationEnvelope struct {
-	ObservationID string    `json:"observationID"`
-	RequestID     string    `json:"requestID"`
-	WorkloadName  string    `json:"workloadName"`
-	ReportedAt    time.Time `json:"reportedAt"`
-	Duplicate     bool      `json:"duplicate"`
-	NewObservationID bool   `json:"newObservationID"`
-	NewRequestID     bool   `json:"newRequestID"`
+	ObservationID    string    `json:"observationID"`
+	RequestID        string    `json:"requestID"`
+	WorkloadName     string    `json:"workloadName"`
+	ReportedAt       time.Time `json:"reportedAt"`
+	Duplicate        bool      `json:"duplicate"`
+	NewObservationID bool      `json:"newObservationID"`
+	NewRequestID     bool      `json:"newRequestID"`
 }
 
 // ClientObservation admits immutable evidence, including later duplicate reports.
@@ -266,4 +266,3 @@ func requestWorkloadName(read *observationRead, row *serving.RequestRow) string 
 	}
 	return ""
 }
-

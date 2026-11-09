@@ -45,23 +45,23 @@ type Problem struct {
 }
 
 type Table struct {
-	ByPlan                                  [][]int
-	Entries                                 []Entry
-	NodeOrder                               []int
-	EntryOrder                              [][]int
-	EntryOf, Index                          []int
-	NodeUID, KeyParts                       []string
-	Options, Modes, PlanKeys                []string
+	ByPlan                   [][]int
+	Entries                  []Entry
+	NodeOrder                []int
+	EntryOrder               [][]int
+	EntryOf, Index           []int
+	NodeUID, KeyParts        []string
+	Options, Modes, PlanKeys []string
 	// Additive profile routing terms, indexed [plan][workload]. These are
 	// heuristic inputs, independent of current tested-rate capacity witnesses.
 	RoutingRate, RetainedRoutingRate, RoutingRateServiceNanos [][]float64
-	Count                                   [][]int
-	Keep, Searchable, Compared, Nonnegative []bool
-	Mid, After, TPre                        []float64
-	Period                                  float64
-	Energy                                  func(int, float64, float64) float64
-	EnergyLowerBound                        func(int, float64, float64, float64) float64
-	Pruned                                  map[string]int
+	Count                                                     [][]int
+	Keep, Searchable, Compared, Nonnegative                   []bool
+	Mid, After, TPre                                          []float64
+	Period                                                    float64
+	Energy                                                    func(int, float64, float64) float64
+	EnergyLowerBound                                          func(int, float64, float64, float64) float64
+	Pruned                                                    map[string]int
 }
 
 // State owns reusable numerical scratch for the scalar heuristic, not replay.

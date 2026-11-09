@@ -9,32 +9,32 @@ import (
 // assigned row of the same request. Stage offsets count from ReceivedAt; an
 // unreached stage stays empty.
 type RequestRow struct {
-	Kind              string         `json:"kind"`
-	RequestID         string         `json:"requestID"`
-	WorkloadUID       string         `json:"workloadUID,omitempty"`
-	DefinitionID      string         `json:"definitionID,omitempty"`
-	Node              *NodeReference `json:"node,omitempty"`
-	Instance          string         `json:"instance,omitempty"`
-	ProfileID         string         `json:"profileID,omitempty"`
-	DecisionID        string         `json:"decisionID,omitempty"`
-	Outcome           string         `json:"outcome,omitempty"`
-	Error             string         `json:"error,omitempty"`
-	ExecutionComplete bool           `json:"executionComplete,omitempty"`
-	ClientSpanNanos   int64          `json:"clientSpanNanos,omitempty"`
-	ReceivedAt        time.Time      `json:"receivedAt"`
-	LifetimeNanos     int64          `json:"lifetimeNanos,omitempty"`
-	CompletionMarginMS *float64        `json:"completionMarginMS,omitempty"`
-	DispatchedAt      *time.Time     `json:"dispatchedAt,omitempty"`
-	ElapsedNanos      *int64         `json:"elapsedNanos,omitempty"`
-	ValidatedNanos    *int64         `json:"validatedNanos,omitempty"`
-	AcceptedNanos     *int64         `json:"acceptedNanos,omitempty"`
-	DispatchedNanos   *int64         `json:"dispatchedNanos,omitempty"`
-	QueuedNanos       *int64         `json:"queuedNanos,omitempty"`
-	RunningNanos      *int64         `json:"runningNanos,omitempty"`
-	ExecutedNanos     *int64         `json:"executedNanos,omitempty"`
-	ExchangeNanos     *int64         `json:"exchangeNanos,omitempty"`
-	ServerTiming      RequestTimings `json:"serverTiming,omitempty"`
-	BatchID           uint64         `json:"batchID,omitempty"`
+	Kind               string         `json:"kind"`
+	RequestID          string         `json:"requestID"`
+	WorkloadUID        string         `json:"workloadUID,omitempty"`
+	DefinitionID       string         `json:"definitionID,omitempty"`
+	Node               *NodeReference `json:"node,omitempty"`
+	Instance           string         `json:"instance,omitempty"`
+	ProfileID          string         `json:"profileID,omitempty"`
+	DecisionID         string         `json:"decisionID,omitempty"`
+	Outcome            string         `json:"outcome,omitempty"`
+	Error              string         `json:"error,omitempty"`
+	ExecutionComplete  bool           `json:"executionComplete,omitempty"`
+	ClientSpanNanos    int64          `json:"clientSpanNanos,omitempty"`
+	ReceivedAt         time.Time      `json:"receivedAt"`
+	LifetimeNanos      int64          `json:"lifetimeNanos,omitempty"`
+	CompletionMarginMS *float64       `json:"completionMarginMS,omitempty"`
+	DispatchedAt       *time.Time     `json:"dispatchedAt,omitempty"`
+	ElapsedNanos       *int64         `json:"elapsedNanos,omitempty"`
+	ValidatedNanos     *int64         `json:"validatedNanos,omitempty"`
+	AcceptedNanos      *int64         `json:"acceptedNanos,omitempty"`
+	DispatchedNanos    *int64         `json:"dispatchedNanos,omitempty"`
+	QueuedNanos        *int64         `json:"queuedNanos,omitempty"`
+	RunningNanos       *int64         `json:"runningNanos,omitempty"`
+	ExecutedNanos      *int64         `json:"executedNanos,omitempty"`
+	ExchangeNanos      *int64         `json:"exchangeNanos,omitempty"`
+	ServerTiming       RequestTimings `json:"serverTiming,omitempty"`
+	BatchID            uint64         `json:"batchID,omitempty"`
 	// Native timestamps are direct worker-clock progress, never reconstructed
 	// from QueueMS (which also includes ingress and is not actor queue wait).
 	NativeQueuedAt          *time.Time `json:"nativeQueuedAt,omitempty"`

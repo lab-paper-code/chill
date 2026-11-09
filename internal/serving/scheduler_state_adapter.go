@@ -33,14 +33,15 @@ type capacityState struct {
 	table *protocol.Table
 }
 
-
-func (s *capacityState) Choice() []int {return s.state.choice}
-func (s *capacityState) Reset(choice []int) {s.state.reset(choice)}
-func (s *capacityState) Apply(n,q int) {s.state.apply(n,q)}
-func (s *capacityState) Delta(n,q int) protocol.Rank {return capacityRank(s.state.delta(n,q),s.table)}
-func capacityRank(key orderKey,table *protocol.Table) protocol.Rank {
-	return protocol.Rank{Feasible:key.feasible,Final:key.final,Keep:key.keep,WeightsExceeded:key.weightsExceeded,
-		UnroutedPrepare:key.unroutedPrepare,Searchable:key.searchable,Bounded:key.bounded,Joules:key.joules,Route:key.route,
-		KeepJoules:key.keepJoules,Period:key.period,Excesses:key.excesses,Demand:key.demand,Supply:key.supply,Satisfied:key.satisfied,
-		Instances:key.instances,CountExcess:key.countExcess,Choice:key.choice,Table:table}
+func (s *capacityState) Choice() []int      { return s.state.choice }
+func (s *capacityState) Reset(choice []int) { s.state.reset(choice) }
+func (s *capacityState) Apply(n, q int)     { s.state.apply(n, q) }
+func (s *capacityState) Delta(n, q int) protocol.Rank {
+	return capacityRank(s.state.delta(n, q), s.table)
+}
+func capacityRank(key orderKey, table *protocol.Table) protocol.Rank {
+	return protocol.Rank{Feasible: key.feasible, Final: key.final, Keep: key.keep, WeightsExceeded: key.weightsExceeded,
+		UnroutedPrepare: key.unroutedPrepare, Searchable: key.searchable, Bounded: key.bounded, Joules: key.joules, Route: key.route,
+		KeepJoules: key.keepJoules, Period: key.period, Excesses: key.excesses, Demand: key.demand, Supply: key.supply, Satisfied: key.satisfied,
+		Instances: key.instances, CountExcess: key.countExcess, Choice: key.choice, Table: table}
 }

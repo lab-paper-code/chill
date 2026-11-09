@@ -89,7 +89,7 @@ func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
 		poolsCost(schedulerActionRemove, old.Node, schedulerState(old), "unloaded", "fixed", schedulerState(old)),
 	}
 	capacityLoad(s, &snap, snap.Workloads[0], 80)
-    capacityServiceRatesForTest(&snap, map[string]float64{old.Profile.ID: 40, replacement.Profile.ID: 100})
+	capacityServiceRatesForTest(&snap, map[string]float64{old.Profile.ID: 40, replacement.Profile.ID: 100})
 	d := capacityDecideForTest(t, s, snap)
 	if d.Status != schedulerStatusFeasible || d.Target == nil || d.Target.Keep ||
 		len(d.Target.Instances) != 1 || d.Target.Instances[0].Node != destination {
@@ -105,14 +105,14 @@ func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
 	if !slices.Equal(kinds, []string{schedulerActionPrepare, schedulerActionRoute, schedulerActionStop, schedulerActionDrain, schedulerActionRemove}) {
 		t.Fatalf("recovery lost prepare/route/retire ordering: %v", kinds)
 	}
-    // No passing rate witness is needed to admit an improved infeasible target.
-    capacityServiceRatesForTest(&snap, map[string]float64{old.Profile.ID: 40, replacement.Profile.ID: 60})
-    d = capacityDecideForTest(t, s, snap)
-    if d.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Keep || len(d.Target.Instances) != 1 || d.Target.Instances[0].Node != destination {
-        t.Fatalf("improved infeasible recovery lost final admission: status=%s target=%+v reasons=%v", d.Status, d.Target, d.Reasons)
-    }
-    if len(d.Target.Feedback) != 1 || len(d.Keep.Feedback) != 1 || d.Target.Feedback[0].Satisfied {
-        t.Fatalf("infeasible recovery lost common outcome evidence: %+v", d)
-    }
+	// No passing rate witness is needed to admit an improved infeasible target.
+	capacityServiceRatesForTest(&snap, map[string]float64{old.Profile.ID: 40, replacement.Profile.ID: 60})
+	d = capacityDecideForTest(t, s, snap)
+	if d.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Keep || len(d.Target.Instances) != 1 || d.Target.Instances[0].Node != destination {
+		t.Fatalf("improved infeasible recovery lost final admission: status=%s target=%+v reasons=%v", d.Status, d.Target, d.Reasons)
+	}
+	if len(d.Target.Feedback) != 1 || len(d.Keep.Feedback) != 1 || d.Target.Feedback[0].Satisfied {
+		t.Fatalf("infeasible recovery lost common outcome evidence: %+v", d)
+	}
 
 }

@@ -26,7 +26,7 @@ func TestHeuristicPricesUseCurrentScalarResidual(t *testing.T) {
 			coefficient: make([]float64, 1), Demand: make([]float64, 1), Supply: make([]float64, 1),
 			retained: make([]float64, 1), service: make([]float64, 1)}
 		c.aggregate()
-		if got := c.Demand[0]-c.Supply[0]; math.Abs(got-trial.want) > 1e-10 {
+		if got := c.Demand[0] - c.Supply[0]; math.Abs(got-trial.want) > 1e-10 {
 			t.Fatalf("trial=%+v scalar residual=%g want=%g", trial, got, trial.want)
 		}
 		if allocations := testing.AllocsPerRun(100, func() {

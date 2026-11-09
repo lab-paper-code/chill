@@ -14,29 +14,29 @@ import (
 // FeedbackWorkloadScore separates replayed finite outcomes from conditional
 // compute potential. Null quantile means no successful completion.
 type FeedbackWorkloadScore struct {
-	UID                  string   `json:"uid"`
-	Population           int      `json:"population"`
-	ObservedArrivals     int      `json:"observedArrivals"`
-	ReplayedArrivals     int      `json:"replayedArrivals"`
-	MinimumDemandArrivals int     `json:"minimumDemandArrivals"`
-	Completed            int      `json:"completed"`
-	DeadlineDropped      int      `json:"deadlineDropped"`
-	LifetimeExpired      int      `json:"lifetimeExpired"`
-	Failed               int      `json:"failed"`
-	Unfinished           int      `json:"unfinished"`
-	FailureFraction      float64  `json:"failureFraction"`
-	SuccessQuantileNanos *float64 `json:"successQuantileNanos"`
-	PotentialExcess      *float64 `json:"potentialExcess"`
+	UID                         string   `json:"uid"`
+	Population                  int      `json:"population"`
+	ObservedArrivals            int      `json:"observedArrivals"`
+	ReplayedArrivals            int      `json:"replayedArrivals"`
+	MinimumDemandArrivals       int      `json:"minimumDemandArrivals"`
+	Completed                   int      `json:"completed"`
+	DeadlineDropped             int      `json:"deadlineDropped"`
+	LifetimeExpired             int      `json:"lifetimeExpired"`
+	Failed                      int      `json:"failed"`
+	Unfinished                  int      `json:"unfinished"`
+	FailureFraction             float64  `json:"failureFraction"`
+	SuccessQuantileNanos        *float64 `json:"successQuantileNanos"`
+	PotentialExcess             *float64 `json:"potentialExcess"`
 	PotentialUnavailableReasons []string `json:"potentialUnavailableReasons,omitempty"`
-	Satisfied            bool     `json:"satisfied"`
+	Satisfied                   bool     `json:"satisfied"`
 }
 
 // FeedbackCandidateResult owns scalars and reduced evidence, never replay state
 // or raw request/profile populations. SLO shares the existing consumer reducer.
 type FeedbackCandidateResult struct {
-	Workloads          []FeedbackWorkloadScore      `json:"workloads"`
-	InvalidReasons     []string                     `json:"invalidReasons"`
-	SLO                []SchedulerEstimate          `json:"slo"`
+	Workloads          []FeedbackWorkloadScore     `json:"workloads"`
+	InvalidReasons     []string                    `json:"invalidReasons"`
+	SLO                []SchedulerEstimate         `json:"slo"`
 	ConditionalService *ConditionalServiceEvidence `json:"conditionalService,omitempty"`
 	Assumptions        []string                    `json:"assumptions,omitempty"`
 	Sources            []string                    `json:"sources,omitempty"`
@@ -115,24 +115,24 @@ func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayR
 }
 
 func (s *schedulerReplayState) finishFeedback() {
-	type population struct {
-		score      FeedbackWorkloadScore
-		definition *Definition
-		successes  []float64
-		potentials []float64
-		missing    bool
+	type feedbackPopulation struct {
+		score        FeedbackWorkloadScore
+		definition   *Definition
+		successes    []float64
+		potentials   []float64
+		missing      bool
 		fixedFailure bool
 		sampleGroups int
 	}
-	populations := map[string]*population{}
+	populations := map[string]*feedbackPopulation{}
 	for _, definition := range s.snap.Workloads {
-		populations[definition.UID] = &population{score: FeedbackWorkloadScore{UID: definition.UID}, definition: definition}
+		populations[definition.UID] = &feedbackPopulation{score: FeedbackWorkloadScore{UID: definition.UID}, definition: definition}
 	}
 	for _, request := range s.requests {
 		definition := request.source.Definition
 		population := populations[definition.UID]
 		if population == nil {
-			population = &population{score: FeedbackWorkloadScore{UID: definition.UID}, definition: definition}
+			population = &feedbackPopulation{score: FeedbackWorkloadScore{UID: definition.UID}, definition: definition}
 			populations[definition.UID] = population
 		}
 		population.score.Population++

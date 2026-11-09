@@ -61,4 +61,3 @@ func (c *v2Search) combineAt(depth int) {
 		}
 	}
 }
-

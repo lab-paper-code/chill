@@ -18,12 +18,12 @@ test("selected service evidence retains configured percentile, zero prediction, 
   const from="2026-10-31T01:02:03.123456789Z",to="2026-10-31T01:03:03.987654321Z",calls:string[]=[]
   const definition={uid:"selected",name:"선택 서비스",slo:{percentile:99,targetLatencyNanos:100000000}}
   const view={state:{snapshot:{at:from,workloads:[definition,{...definition,uid:"other",name:"다른 서비스"}]},decision:{at:from,search:{windowStart:from,windowEnd:to},keep:{id:"keep",keep:true,status:"Keep",expectedJoules:0,slo:[{uid:"selected",expectedNanos:0,samples:2,normalizedExceedance:0}]},target:{id:"target",keep:false,status:"Pending",expectedJoules:null,slo:[{uid:"selected",expectedNanos:null,samples:0}]}}}}
-  const load={from,to,population:"사건 시각",workloads:[{uid:"selected",received:0,accepted:0,assigned:0,completed:0,receivedInputsPerSecond:0,acceptedInputsPerSecond:0,assignedInputsPerSecond:0,completionEventsPerSecond:0,instanceAssignments:{}}]}
+  const loadWindow={from,to,population:"사건 시각",workloads:[{uid:"selected",received:0,accepted:0,assigned:0,completed:0,receivedInputsPerSecond:0,acceptedInputsPerSecond:0,assignedInputsPerSecond:0,completionEventsPerSecond:0,instanceAssignments:{}}]}
   const container=({children}:{children?:ReactNode})=>createElement("div",null,children)
   const modules:Record<string,unknown>={
     "react":require("react"),"next/link":{default:({children,href}:{children?:ReactNode;href:string})=>createElement("a",{href},children)},
     "next/navigation":{useSearchParams:()=>params,useRouter:()=>({replace:()=>{}})},
-    "@/lib/client":{useSession:()=>({config:{maxWindowHours:24}}),useWorkloadDefinitions:()=>[],useChillQuery:(path:string)=>{calls.push(path);return {data:path==="v1/scheduler"?view:path.startsWith("v1/observations/load?")?load:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:definition.uid,name:definition.name}}}]:[],error:null}}},
+    "@/lib/client":{useSession:()=>({config:{maxWindowHours:24}}),useWorkloadDefinitions:()=>[],useChillQuery:(path:string)=>{calls.push(path);return {data:path==="v1/scheduler"?view:path.startsWith("v1/observations/load?")?loadWindow:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:definition.uid,name:definition.name}}}]:[],error:null}}},
     "@/lib/scheduler":scheduler,"@/lib/workload-identity":identity,"@/lib/date-time":dates,
     "@/lib/live-display":liveDisplay,
     "@/components/ui/chart":{},"recharts":{},
@@ -61,7 +61,7 @@ test("snapshot deep links freeze the first response and require explicit latest 
     react:{useState:(initial:unknown)=>{const index=cursor++;if(!(index in cells))cells[index]=typeof initial==="function"?initial():initial;return [cells[index],(value:unknown)=>{cells[index]=value;changed=true}]}},
     "next/navigation":{useSearchParams:()=>params},
     "@/lib/client":{useChillQuery:()=>({data})},"@/lib/scheduler":scheduler,
-    "@/lib/labels":{},"@/lib/capacity":{},"@/lib/date-time":{},"@/lib/workload-identity":{},
+    "@/lib/labels":{},"@/lib/capacity":{},"@/lib/date-time":{},"@/lib/workload-identity":identity,
     "@/lib/live-display":liveDisplay,
     "@/components/ui/chart":{},"recharts":{},
     "./power-series":{PowerTimeline:()=>null},

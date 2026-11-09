@@ -3,7 +3,6 @@ package serving
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -141,22 +140,22 @@ type SchedulerPlanSearchStep struct {
 
 // SchedulerCapacityWorkload separates routing heuristics and current tested-rate evidence.
 type SchedulerCapacityWorkload struct {
-	UID                  string           `json:"uid"`
-	Rate                 float64          `json:"rate"`
-	MinimumDemand        float64          `json:"minimumDemand"`
-	Queued               int              `json:"queued"`
-	RoutingRate float64 `json:"routingRate"`
-	RetainedRoutingRate float64 `json:"retainedRoutingRate"`
-	Tests []SchedulerFeedbackRate `json:"tests"`
-	KeepTests []SchedulerFeedbackRate `json:"keepTests"`
-	Weights              map[string]int32 `json:"weights"`
+	UID                 string                  `json:"uid"`
+	Rate                float64                 `json:"rate"`
+	MinimumDemand       float64                 `json:"minimumDemand"`
+	Queued              int                     `json:"queued"`
+	RoutingRate         float64                 `json:"routingRate"`
+	RetainedRoutingRate float64                 `json:"retainedRoutingRate"`
+	Tests               []SchedulerFeedbackRate `json:"tests"`
+	KeepTests           []SchedulerFeedbackRate `json:"keepTests"`
+	Weights             map[string]int32        `json:"weights"`
 }
 
 // SchedulerFeedbackRate records tested queries, not a complete grid certificate.
 type SchedulerFeedbackRate struct {
-	InstanceID string `json:"instanceID"`
-	Input CapacityInput `json:"input"`
-	PathFeedback PathFeedback `json:"pathFeedback"`
+	InstanceID   string        `json:"instanceID"`
+	Input        CapacityInput `json:"input"`
+	PathFeedback PathFeedback  `json:"pathFeedback"`
 	FeedbackCapacity
 }
 
@@ -169,8 +168,8 @@ type SchedulerNodePlan struct {
 	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
 	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
-	RoutingRate map[string]float64 `json:"routingRate,omitempty"`
-	RetainedRoutingRate map[string]float64 `json:"retainedRoutingRate,omitempty"`
+	RoutingRate             map[string]float64             `json:"routingRate,omitempty"`
+	RetainedRoutingRate     map[string]float64             `json:"retainedRoutingRate,omitempty"`
 	Pre                     time.Duration                  `json:"preNanos"`
 	Post                    time.Duration                  `json:"postNanos"`
 	Joules                  float64                        `json:"joules"`
@@ -298,26 +297,26 @@ func schedulerCanonical(s SchedulerSnapshot) SchedulerSnapshot {
 }
 
 type capacityPlanner struct {
-	ctx          context.Context
-	settings     SchedulerSettings
-	snapshot     SchedulerSnapshot
-	keep         SchedulerCandidate
-	feedbackCache sync.Map // Tick-local exact replay results; v1 workers share immutable values
-	options      []SchedulerOption
-	pending      []SchedulerInstance // uncreated commitments, counted once without capacity
-	ws           []capacityWorkload
+	ctx                      context.Context
+	settings                 SchedulerSettings
+	snapshot                 SchedulerSnapshot
+	keep                     SchedulerCandidate
+	feedbackCache            sync.Map // Tick-local exact replay results; v1 workers share immutable values
+	options                  []SchedulerOption
+	pending                  []SchedulerInstance // uncreated commitments, counted once without capacity
+	ws                       []capacityWorkload
 	keepRates, selectedRates [][]SchedulerFeedbackRate
-	index        map[string]int
-	plans        [][]*capacityPlan // per Node; plans[n][0] is keep
-	compared     []bool
-	period       float64
-	keepWatts    float64 // keep energy is linear in the common comparison window
-	examined     int
-	searched     SchedulerPlanSearch
+	index                    map[string]int
+	plans                    [][]*capacityPlan // per Node; plans[n][0] is keep
+	compared                 []bool
+	period                   float64
+	keepWatts                float64 // keep energy is linear in the common comparison window
+	examined                 int
+	searched                 SchedulerPlanSearch
 	// Resolved once during construction; every plan and sweep worker only reads.
 	optionCapacity  map[int][]capacityChoice
 	currentCapacity map[capacityInstanceKey]capacityItem
-	profileScalars map[profileTermsKey]profileScalar
+	profileScalars  map[profileTermsKey]profileScalar
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.
@@ -425,7 +424,9 @@ func (p *capacityPlanner) fixCapacityWorkloads(decision *SchedulerDecision) {
 // control intervals that tile the observed part of the observation window.
 func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arrivals []SchedulerArrival, uid string) float64 {
 	covered := search.WindowEnd.Sub(search.WindowStart)
-	if covered<=0 {return 0}
+	if covered <= 0 {
+		return 0
+	}
 	buckets := max(1, int(covered/settings.ControlInterval))
 	width := covered / time.Duration(buckets)
 	start := search.WindowEnd.Add(-time.Duration(buckets) * width)

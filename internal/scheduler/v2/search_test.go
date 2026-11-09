@@ -23,9 +23,9 @@ type finiteState struct {
 	raw       []float64
 }
 
-func (s *finiteState) Choice() []int          { return s.choice }
-func (s *finiteState) Reset(choice []int)     { copy(s.choice, choice) }
-func (s *finiteState) Apply(n, q int)         { s.choice[n] = q }
+func (s *finiteState) Choice() []int      { return s.choice }
+func (s *finiteState) Reset(choice []int) { copy(s.choice, choice) }
+func (s *finiteState) Apply(n, q int)     { s.choice[n] = q }
 func (s *finiteState) Delta(n, q int) protocol.Rank {
 	r, tab := s.result, s.table
 	copy(r.Choice, s.choice)
@@ -69,8 +69,12 @@ func (s *finiteState) Delta(n, q int) protocol.Rank {
 	copy(r.Excesses, s.raw)
 	if len(s.priority) == 0 {
 		slices.SortFunc(r.Excesses, func(a, b float64) int {
-			if a > b { return -1 }
-			if a < b { return 1 }
+			if a > b {
+				return -1
+			}
+			if a < b {
+				return 1
+			}
 			return 0
 		})
 	} else {
@@ -120,7 +124,9 @@ func finiteProblem(nodes int, workloads []protocol.Workload, rates, services [][
 
 func exhaustiveFiniteBest(p protocol.Problem) protocol.Rank {
 	choice := make([]int, len(p.Plans))
-	for n := range choice { choice[n] = p.Table.ByPlan[n][0] }
+	for n := range choice {
+		choice[n] = p.Table.ByPlan[n][0]
+	}
 	s := p.NewState(choice)
 	best, found := newV2Key(p.Table, len(p.Workloads)), false
 	var visit func(int)
@@ -128,7 +134,7 @@ func exhaustiveFiniteBest(p protocol.Problem) protocol.Rank {
 		for _, q := range p.Table.ByPlan[n] {
 			s.Apply(n, q)
 			if n+1 < len(choice) {
-				visit(n+1)
+				visit(n + 1)
 				continue
 			}
 			key := s.Delta(n, q)
@@ -145,12 +151,12 @@ func exhaustiveFiniteBest(p protocol.Problem) protocol.Rank {
 func TestCandidatesMatchSmallFiniteProducts(t *testing.T) {
 	for nodes := 1; nodes <= 3; nodes++ {
 		for _, trial := range []struct {
-			name string
-			workloads []protocol.Workload
+			name            string
+			workloads       []protocol.Workload
 			rates, services [][]float64
-			energies []float64
-			prepare float64
-			priority []int
+			energies        []float64
+			prepare         float64
+			priority        []int
 		}{
 			{"all-infeasible", []protocol.Workload{{Rate: 10, Queued: 2, TargetNanos: 100e6, TotalNanos: 20e6}},
 				[][]float64{{10}, {25}, {50}, {80}}, [][]float64{{80e6}, {40e6}, {20e6}, {140e6}}, []float64{1, 5, 10, 2}, 0.05, nil},
@@ -166,13 +172,17 @@ func TestCandidatesMatchSmallFiniteProducts(t *testing.T) {
 				best := exhaustiveFiniteBest(p)
 				got, stats := Candidates(p, p.Table, 0, 8, 0, time.Time{})
 				want := make([]int, nodes)
-				for n, q := range best.Choice { want[n] = p.Table.Index[q] }
+				for n, q := range best.Choice {
+					want[n] = p.Table.Index[q]
+				}
 				if len(got) == 0 || !slices.Equal(got[0].Choice, want) || stats.Exhausted || stats.Deadline {
 					t.Fatalf("finite optimum lost: got=%v want=%v stats=%+v", got, want, stats)
 				}
 				if nodes == 1 {
 					wantPlan := map[string]int{"all-infeasible": 2, "feasible-energy": 1, "worst-first": 2, "workload-first": 1}[trial.name]
-					if want[0] != wantPlan { t.Fatalf("wrong semantic oracle: got=%v want=%d", want, wantPlan) }
+					if want[0] != wantPlan {
+						t.Fatalf("wrong semantic oracle: got=%v want=%d", want, wantPlan)
+					}
 				}
 			})
 		}
@@ -185,14 +195,24 @@ func TestActiveMoveRankingPreservesPriorityWithoutAllocations(t *testing.T) {
 			[][]float64{{10, 10}, {10, 10}, {10, 10}}, [][]float64{{500e6, 500e6}, {110e6, 80e6}, {140e6, 55e6}}, []float64{1, 2, 2}, 0, priority)
 		Group(p.Table)
 		c := newV2Search(p, p.Table, []int{0}, 0, 4, 2, time.Time{})
-		for _, q := range []int{1, 2} { c.rankMove(0, q, c.s.delta(0, q)) }
+		for _, q := range []int{1, 2} {
+			c.rankMove(0, q, c.s.delta(0, q))
+		}
 		want := 2
-		if len(priority) > 0 { want = 1 }
-		if c.ranked[0][0].q != want { t.Fatalf("priority=%v ranked=%v want=%d", priority, c.ranked[0], want) }
+		if len(priority) > 0 {
+			want = 1
+		}
+		if c.ranked[0][0].q != want {
+			t.Fatalf("priority=%v ranked=%v want=%d", priority, c.ranked[0], want)
+		}
 		if allocations := testing.AllocsPerRun(100, func() {
 			c.ranked[0] = c.ranked[0][:0]
-			for _, q := range []int{1, 2} { c.rankMove(0, q, c.s.delta(0, q)) }
-		}); allocations != 0 { t.Fatalf("active move ranking allocated %g times", allocations) }
+			for _, q := range []int{1, 2} {
+				c.rankMove(0, q, c.s.delta(0, q))
+			}
+		}); allocations != 0 {
+			t.Fatalf("active move ranking allocated %g times", allocations)
+		}
 	}
 }
 

@@ -78,7 +78,7 @@ func TestDefectEResidualPendingOccupancyKeepsReplicaAndInstanceLimits(t *testing
 						t.Fatalf("pending occupancy exceeded or double-counted %s=%d: target=%+v reasons=%v", budget, limit, d.Target, d.Reasons)
 					}
 					for _, plan := range d.Capacity.Plans {
-						if plan.Node == wanted.Node && plan.Key == capacitySearchStartKeep && plan.Kappa[wanted.WorkloadUID] != 0 {
+						if plan.Node == wanted.Node && plan.Key == capacitySearchStartKeep && plan.RoutingRate[wanted.WorkloadUID] != 0 {
 							t.Fatalf("pending occupancy supplied capacity: %+v", plan)
 						}
 					}

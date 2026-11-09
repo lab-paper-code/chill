@@ -323,25 +323,25 @@ type WorkloadState struct {
 // RequestEvent records facts, including responses that failed to reach their
 // caller. An absent assignment or completion is never synthesized.
 type RequestEvent struct {
-	RequestID         string           `json:"requestID"`
-	WorkloadName      string           `json:"workloadName"`
-	WorkloadUID       string           `json:"workloadUID,omitempty"`
-	Definition        string           `json:"definition,omitempty"`
-	Kind              string           `json:"kind"`
-	At                time.Time        `json:"at"`
-	ReceivedAt        time.Time        `json:"receivedAt"`
-	ElapsedNanos      int64            `json:"elapsedNanos"`
-	ServerTiming      RequestTimings   `json:"serverTiming,omitempty"`
-	Assignment        *Assignment      `json:"assignment,omitempty"`
-	NativeInstance    string           `json:"nativeInstance,omitempty"`
-	NativeProgress    *BackendProgress `json:"nativeProgress,omitempty"`
-	ClientSpanNanos   int64            `json:"clientSpanNanos,omitempty"`
-	ExecutionComplete bool             `json:"executionComplete"`
-	LifetimeNanos     int64            `json:"lifetimeNanos,omitempty"`
+	RequestID          string           `json:"requestID"`
+	WorkloadName       string           `json:"workloadName"`
+	WorkloadUID        string           `json:"workloadUID,omitempty"`
+	Definition         string           `json:"definition,omitempty"`
+	Kind               string           `json:"kind"`
+	At                 time.Time        `json:"at"`
+	ReceivedAt         time.Time        `json:"receivedAt"`
+	ElapsedNanos       int64            `json:"elapsedNanos"`
+	ServerTiming       RequestTimings   `json:"serverTiming,omitempty"`
+	Assignment         *Assignment      `json:"assignment,omitempty"`
+	NativeInstance     string           `json:"nativeInstance,omitempty"`
+	NativeProgress     *BackendProgress `json:"nativeProgress,omitempty"`
+	ClientSpanNanos    int64            `json:"clientSpanNanos,omitempty"`
+	ExecutionComplete  bool             `json:"executionComplete"`
+	LifetimeNanos      int64            `json:"lifetimeNanos,omitempty"`
 	CompletionMarginMS *float64         `json:"completionMarginMS,omitempty"`
-	SLO               *SLO             `json:"slo,omitempty"`
-	Outcome           string           `json:"outcome,omitempty"`
-	Error             string           `json:"error,omitempty"`
+	SLO                *SLO             `json:"slo,omitempty"`
+	Outcome            string           `json:"outcome,omitempty"`
+	Error              string           `json:"error,omitempty"`
 }
 
 type ManagementEvent struct {

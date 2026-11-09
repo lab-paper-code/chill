@@ -23,7 +23,7 @@ func TestDefectEIdleKeepRetainsUnavailablePhysicalTarget(t *testing.T) {
 	const nodeNotReady = "node-not-ready"
 	for _, unavailable := range []string{nodeNotReady, "probe", "native", "identity", "stopped"} {
 		t.Run(unavailable, func(t *testing.T) {
-			s, snap, rows, healthy, badNode := capacityR5Fixture()
+			s, snap, healthy, badNode := capacityR5Fixture()
 			s.Controls.Routing = false
 			since := snap.At.Add(-s.ObservationWindow)
 			for k := 1; k < len(snap.Instances); k++ {
@@ -106,7 +106,7 @@ func TestDefectEUnavailableTrafficWithdrawalRetainsOccupancy(t *testing.T) {
 				t.Fatalf("withdrawal erased physical occupancy: %+v", d.Target.Instances)
 			}
 			defectERequireNoPhysicalActions(t, d.Target.Actions, bad.Node)
-			if d.Capacity.Workloads[0].RoutingRate != capacityThroughput(snap.Instances[0].Profile,snap.Instances[0].MaxBatch) {
+			if d.Capacity.Workloads[0].RoutingRate != capacityThroughput(snap.Instances[0].Profile, snap.Instances[0].MaxBatch) {
 				t.Fatalf("unconfirmed occupancy supplied routing rate: %+v", d.Capacity.Workloads)
 			}
 		})
@@ -116,7 +116,7 @@ func TestDefectEUnavailableTrafficWithdrawalRetainsOccupancy(t *testing.T) {
 // The incident-shaped candidate has five idle physical sources, not five held
 // cleanup scopes: only the four confirmed nodes get stop/drain/remove work.
 func TestDefectEFiveNodeCandidateExcludesUnconfirmedCleanup(t *testing.T) {
-	s, snap, _, _, badNode := capacityR5Fixture()
+	s, snap, _, badNode := capacityR5Fixture()
 	s.Controls.Routing = false
 	s.MaxInstances, s.MaxReplicas = 5, 5
 	for _, name := range []string{"Nano", "Latte"} {

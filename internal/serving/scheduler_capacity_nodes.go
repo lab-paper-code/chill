@@ -3,19 +3,19 @@ package serving
 import (
 	"cmp"
 	"fmt"
-	"slices"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 )
 
 type capacityWorkload struct {
-	d       *Definition
-	rate    float64 // λ, req/s
-	minRate float64 // the least arrival rate of one control interval in the observation window
-	queued  int     // q
-	current int     // instances serving it now
+	d          *Definition
+	rate       float64 // λ, req/s
+	minRate    float64 // the least arrival rate of one control interval in the observation window
+	queued     int     // q
+	current    int     // instances serving it now
 	totalNanos float64 // frozen current-window TOTAL, heuristic only
 }
 
@@ -24,12 +24,12 @@ type profileRoutingWeight float64
 
 // capacityItem holds Tick-fixed profile terms and original per-input energy.
 type capacityItem struct {
-	id      string
+	id            string
 	routingWeight profileRoutingWeight
-	serviceNanos float64
-	e       float64
-	weight  int32
-	prepare bool
+	serviceNanos  float64
+	e             float64
+	weight        int32
+	prepare       bool
 }
 
 type capacityPlan struct {
@@ -96,7 +96,6 @@ func (p *capacityPlanner) resolveCapacity() {
 	}
 }
 
-
 func capacityInputEnergy(i SchedulerInstance) float64 {
 	if b := schedulerBatch(i.Profile, 1); b != nil {
 		return b.EnergyPerInputJoules
@@ -156,11 +155,11 @@ func planKey(instances []SchedulerInstance) string {
 }
 
 type capacityChoice struct {
-	option SchedulerOption
-	w      int
+	option        SchedulerOption
+	w             int
 	routingWeight profileRoutingWeight
-	serviceNanos float64
-	reason string
+	serviceNanos  float64
+	reason        string
 }
 
 // Uncreated targets consume the shared instance limit, not current capacity or
@@ -372,7 +371,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		added = added || !used[i.ID]
 		plan.instances = append(plan.instances, i)
 		if used[i.ID] {
-			c.routingWeight,c.serviceNanos,c.reason=p.profileTerms(i,p.ws[c.w].d)
+			c.routingWeight, c.serviceNanos, c.reason = p.profileTerms(i, p.ws[c.w].d)
 		}
 		chosenItems[i.ID] = capacityItem{routingWeight: c.routingWeight, serviceNanos: c.serviceNanos}
 		if c.reason != "" && plan.record.Reason == "" {
@@ -512,19 +511,20 @@ func currentCapacityKey(i SchedulerInstance) capacityInstanceKey {
 
 // currentRoutingRate reads Tick-fixed optimistic profile support.
 func (p *capacityPlanner) currentRoutingRate(i SchedulerInstance) float64 {
-	if item,ok:=p.currentCapacity[currentCapacityKey(i)];ok {return float64(item.routingWeight)}
+	if item, ok := p.currentCapacity[currentCapacityKey(i)]; ok {
+		return float64(item.routingWeight)
+	}
 	// Prepared target IDs differ from catalog option IDs, but use that same
 	// immutable profile rate. No distribution is queried during bridge replay.
-	if w,ok:=p.index[i.WorkloadUID];ok && !i.Terminated {
-		for option,o:=range p.options {
-			if o.Instance.Profile==i.Profile && o.Instance.Node==i.Node && o.Instance.MaxBatch==i.MaxBatch {
+	if w, ok := p.index[i.WorkloadUID]; ok && !i.Terminated {
+		for option, o := range p.options {
+			if o.Instance.Profile == i.Profile && o.Instance.Node == i.Node && o.Instance.MaxBatch == i.MaxBatch {
 				return float64(p.optionCapacity[option][w].routingWeight)
 			}
 		}
 	}
 	return 0
 }
-
 
 // annotate fills per-Workload profile scalars and current/configured route
 // weights. Keep retains only captured Ready, routed physical executors.
@@ -582,18 +582,18 @@ func (p *capacityPlanner) sum(plan *capacityPlan) {
 }
 
 type profileTermsKey struct {
-	profile *Profile
+	profile    *Profile
 	definition *Definition
-	node NodeReference
-	maxBatch int
-	occupancy time.Duration
-	gap int64
-	hasGap bool
+	node       NodeReference
+	maxBatch   int
+	occupancy  time.Duration
+	gap        int64
+	hasGap     bool
 }
 type profileScalar struct {
 	routingWeight profileRoutingWeight
-	serviceNanos float64
-	reason string
+	serviceNanos  float64
+	reason        string
 }
 
 // profileTerms performs raw distribution queries once per option/Workload/Tick.
@@ -601,15 +601,19 @@ func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (prof
 	if i.Profile == nil || d == nil || i.Terminated {
 		return 0, 0, "MissingProfile"
 	}
-	key:=profileTermsKey{profile:i.Profile,definition:d,node:i.Node,maxBatch:i.MaxBatch}
+	key := profileTermsKey{profile: i.Profile, definition: d, node: i.Node, maxBatch: i.MaxBatch}
 	var gap *int64
 	if slices.ContainsFunc(p.snapshot.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
 		gap = i.LastServiceEndAgeNanos
 	}
 	occupancy := ResolveDispatchOccupancy(p.settings, p.snapshot.DispatchOccupancy, i)
-	key.occupancy=occupancy.PerRequest
-	if gap!=nil {key.hasGap,key.gap=true,*gap}
-	if cached,ok:=p.profileScalars[key];ok {return cached.routingWeight,cached.serviceNanos,cached.reason}
+	key.occupancy = occupancy.PerRequest
+	if gap != nil {
+		key.hasGap, key.gap = true, *gap
+	}
+	if cached, ok := p.profileScalars[key]; ok {
+		return cached.routingWeight, cached.serviceNanos, cached.reason
+	}
 	mu := capacityThroughput(i.Profile, i.MaxBatch)
 	service := math.Inf(1)
 	for _, batch := range i.Profile.Batches {
@@ -621,11 +625,13 @@ func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (prof
 			service = min(service, float64(q)+float64(batch.Batch)*float64(occupancy.PerRequest))
 		}
 	}
-	result:=profileScalar{routingWeight:profileRoutingWeight(mu),serviceNanos:service}
+	result := profileScalar{routingWeight: profileRoutingWeight(mu), serviceNanos: service}
 	if mu <= 0 || !schedulerFinite(mu) || !schedulerFinite(service) {
-		result=profileScalar{reason:"MissingConditionalService"}
+		result = profileScalar{reason: "MissingConditionalService"}
 	}
-	if p.profileScalars==nil {p.profileScalars=map[profileTermsKey]profileScalar{}}
-	p.profileScalars[key]=result
-	return result.routingWeight,result.serviceNanos,result.reason
+	if p.profileScalars == nil {
+		p.profileScalars = map[profileTermsKey]profileScalar{}
+	}
+	p.profileScalars[key] = result
+	return result.routingWeight, result.serviceNanos, result.reason
 }
