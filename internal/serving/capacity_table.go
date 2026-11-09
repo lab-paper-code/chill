@@ -121,7 +121,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 		}
 		t.mergeGroupLocked(state, g)
 	}
-	for uid, state := range t.groups {
+	for uid := range t.groups {
 		if !wanted[uid] {
 			t.dropLocked(uid, nil)
 			delete(t.groups, uid)
