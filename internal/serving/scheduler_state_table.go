@@ -31,7 +31,7 @@ func (t *planTable) initSearch(p *capacityPlanner) {
 		if n+1 < len(p.plans) {
 			t.keyParts[q] += "|"
 		}
-		t.searchable[q] = t.eligible[q]
+		t.searchable[q] = t.eligible[q] && (t.keep[q] || p.compared[n])
 	}
 }
 

@@ -107,6 +107,16 @@ func schedulerReadyExpansionInputs(settings SchedulerSettings, snapshot Schedule
 			len(schedulerValidateInstance(settings, snapshot.Nodes[node], i, nil)) > 0 {
 			return nil, false
 		}
+		allocations := append([]SchedulerAllocation{snapshot.Nodes[node].Reserved}, snapshot.Nodes[node].NonServing...)
+		for _, actual := range snapshot.Instances {
+			if actual.Node == i.Node && actual.ID != i.ID {
+				allocations = append(allocations, actual.Allocation)
+			}
+		}
+		allocations = append(allocations, i.Allocation)
+		if len(ValidateNodeBudget(snapshot.Nodes[node], allocations, nil)) > 0 {
+			return nil, false
+		}
 		nodes[i.Node] = true
 		inputs[k] = FeedbackRouteInput{InstanceID: i.ID, Profile: i.Profile, MaxBatch: i.MaxBatch, ExistingWeight: i.Weight}
 	}
