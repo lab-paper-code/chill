@@ -20,6 +20,9 @@ Cold start는 TLS·인증·HTTP 구성을 완료한 뒤 listener를 먼저 열�
 | [decision-record-diet](decision-record-diet.md) | completed: M0 결과·저장projection 요약 |
 | [observability-split](observability-split.md) | active: 요청/catalog/시간세그먼트·evaluation raw/resources/cluster API(ADR0030) |
 | [analytic-planner](analytic-planner.md) | active: 공통 CHILL adapter·v1/v2 알고리즘 경계·전역 선택/κ/노드계획/하강창/예비·고정H |
+| [path-aware-problem-statement](path-aware-problem-statement.md) | E2E 관측·제어 범위와 SLO 개선 목표 |
+| [path-aware-design-answers-draft](path-aware-design-answers-draft.md) | 사용자 의견을 반영한 2차 설계 답안 |
+| [path-aware-implementation-plan](path-aware-implementation-plan.md) | Before 기반 수치 계약·커밋 분할·통합 검증 |
 | [capacity-table-evidence](capacity-table-evidence.md) | completed: κ·탐색 선택의 입력별 근거(현행수식은 계획기) |
 | [scheduler-operations](scheduler-operations.md) | active: Pod-bound Service/수동원자실행 |
 | [scheduler-srs-audit](scheduler-srs-audit.md) | completed: 당시 SRS대조 결과·증거 경계 |
