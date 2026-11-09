@@ -1134,14 +1134,16 @@ func (r *Runtime) SetCompletionMargin(ms float64) {
 	r.completionMargin = ms
 }
 
-// SetPathFeedback publishes the committed Tick's POST reserves without changing
-// the configured fallback. Only scalar values cross the runtime boundary.
+// SetPathFeedback publishes the committed Tick's empirical POST reserves.
+// Configured rows use the current fallback at acceptance; accepted calls stay frozen.
 func (r *Runtime) SetPathFeedback(feedback []PathFeedback) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pathFeedback = make(map[string]float64, len(feedback))
 	for _, value := range feedback {
-		r.pathFeedback[value.WorkloadUID] = value.PostNanos / float64(time.Millisecond)
+		if value.Source == "empirical" {
+			r.pathFeedback[value.WorkloadUID] = value.PostNanos / float64(time.Millisecond)
+		}
 	}
 }
 
