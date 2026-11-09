@@ -77,7 +77,7 @@ func TestPublicV1WorkerOrderAndDeadline(t *testing.T) {
 
 func TestRootOwnsV2FallbackAndNativeResult(t *testing.T) {
 	p := protocol.Problem{Context: context.Background(), Workers: 1, Deadline: time.Now().Add(-time.Second), Plans: [][]protocol.Plan{{{Eligible: true}}}}
-	p.Table = &protocol.Table{ByPlan: [][]int{{0}}, Index: []int{0}, Options: []string{"keep"}, Modes: []string{"mode"}, PlanKeys: []string{"keep"}, KeyParts: []string{"n=keep"}, NodeUID: []string{"n"}, Count: [][]int{{}}, Kappa: [][]float64{{}}, Keep: []bool{true}, Searchable: []bool{true}}
+	p.Table = &protocol.Table{ByPlan: [][]int{{0}}, Index: []int{0}, Options: []string{"keep"}, Modes: []string{"mode"}, PlanKeys: []string{"keep"}, KeyParts: []string{"n=keep"}, NodeUID: []string{"n"}, Count: [][]int{{}}, RoutingRate: [][]float64{{}}, Keep: []bool{true}, Searchable: []bool{true}}
 	p.NewState = func(choice []int) protocol.State {
 		return &oneNodeState{choice: slices.Clone(choice), result: make([]int, len(choice)), table: p.Table}
 	}
@@ -97,7 +97,6 @@ func TestRootOwnsV2FallbackAndNativeResult(t *testing.T) {
 type oneNodeState struct {
 	choice, result []int
 	table          *protocol.Table
-	route          [1]float64
 }
 
 func (s *oneNodeState) Choice() []int      { return s.choice }
@@ -108,8 +107,3 @@ func (s *oneNodeState) Delta(n, q int) protocol.Rank {
 	s.result[n] = q
 	return protocol.Rank{Choice: s.result, Table: s.table, Feasible: true, Final: true, Bounded: true, Searchable: true}
 }
-func (*oneNodeState) MoveTerms(int, int, int) (protocol.Workload, float64, float64, float64) {
-	return protocol.Workload{}, 0, 0, 0
-}
-func (s *oneNodeState) RouteTimes() []float64 { return s.route[:] }
-func (*oneNodeState) Overloaded() bool        { return false }
