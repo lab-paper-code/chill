@@ -26,6 +26,7 @@ type FeedbackWorkloadScore struct {
 	Unfinished                  int      `json:"unfinished"`
 	FailureFraction             float64  `json:"failureFraction"`
 	SuccessQuantileNanos        *float64 `json:"successQuantileNanos"`
+	SuccessExcess               float64  `json:"successExcess"`
 	PotentialExcess             *float64 `json:"potentialExcess"`
 	PotentialUnavailableReasons []string `json:"potentialUnavailableReasons,omitempty"`
 	Satisfied                   bool     `json:"satisfied"`
@@ -114,107 +115,137 @@ func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayR
 	return estimates
 }
 
+type feedbackPopulation struct {
+	score        FeedbackWorkloadScore
+	definition   *Definition
+	potentials   []float64
+	missing      bool
+	fixedFailure bool
+}
+
 func (s *schedulerReplayState) finishFeedback() {
-	type feedbackPopulation struct {
-		score        FeedbackWorkloadScore
-		definition   *Definition
-		successes    []float64
-		potentials   []float64
-		missing      bool
-		fixedFailure bool
-		sampleGroups int
-	}
-	populations := map[string]*feedbackPopulation{}
-	for _, definition := range s.snap.Workloads {
-		populations[definition.UID] = &feedbackPopulation{score: FeedbackWorkloadScore{UID: definition.UID}, definition: definition}
-	}
+	populations := make(map[string]*feedbackPopulation, len(s.out.definitions))
 	for _, request := range s.requests {
-		definition := request.source.Definition
-		population := populations[definition.UID]
+		population := populations[request.identity]
 		if population == nil {
-			population = &feedbackPopulation{score: FeedbackWorkloadScore{UID: definition.UID}, definition: definition}
-			populations[definition.UID] = population
+			population = &feedbackPopulation{score: FeedbackWorkloadScore{UID: request.source.Definition.UID}, definition: request.source.Definition}
+			populations[request.identity] = population
 		}
-		population.score.Population++
-		if request.minimumDemand {
-			population.score.MinimumDemandArrivals++
-		} else if !request.observed {
-			population.score.ReplayedArrivals++
-		}
-		switch {
-		case request.dropped:
-			population.score.DeadlineDropped++
-		case request.failed:
-			population.score.Failed++
-		case request.expired:
-			population.score.LifetimeExpired++
-		case request.completed:
-			population.score.Completed++
-			continue
-		default:
-			population.score.Unfinished++
-			if s.out.outcomes[request.identity] == nil {
-				s.out.outcomes[request.identity] = map[string]int{}
-			}
-			s.out.outcomes[request.identity]["unfinished"]++
-		}
-		if request.observed && request.source.Phase == phaseReturning {
-			population.fixedFailure = true
-			continue // no remaining compute alternative for this terminal request
-		}
-		if !request.hasPotential && !request.dropped && !request.failed && !request.expired {
-			s.capturePotential(request, s.byID[request.source.Instance])
-		}
-		if !request.hasPotential {
-			if !population.missing {
-				s.out.invalidReasons = appendUnique(s.out.invalidReasons, "MissingConditionalFailurePotential:"+definition.UID)
-			}
-			population.missing = true
-		} else {
-			population.potentials = append(population.potentials, request.potential)
-		}
+		s.countFeedbackRequest(population, request)
 	}
-	for key, samples := range s.out.samples {
-		population := populations[s.out.definitions[key].UID]
-		if population.sampleGroups == 0 {
-			population.successes = samples // reuse single-definition population
-		} else {
-			if population.sampleGroups == 1 {
-				combined := make([]float64, len(population.successes), population.score.Completed)
-				copy(combined, population.successes)
-				population.successes = combined
-			}
-			population.successes = append(population.successes, samples...)
-		}
-		population.sampleGroups++
+	workloads := make(map[string]FeedbackWorkloadScore, len(s.snap.Workloads))
+	for _, definition := range s.snap.Workloads {
+		workloads[definition.UID] = FeedbackWorkloadScore{UID: definition.UID, Satisfied: true}
 	}
-	for _, population := range populations {
-		score := population.score
+	for key, population := range populations {
+		score := population.finish(s.out.samples[key])
+		previous, exists := workloads[score.UID]
+		if !exists {
+			previous = FeedbackWorkloadScore{UID: score.UID, Satisfied: true}
+		}
+		workloads[score.UID] = mergeFeedbackScore(previous, score)
+	}
+	for _, score := range workloads {
 		score.ObservedArrivals = s.out.observedArrivals[score.UID]
-		percentile := population.definition.SLO.Percentile / 100
 		if score.Population > 0 {
 			score.FailureFraction = float64(score.DeadlineDropped+score.Failed+score.LifetimeExpired+score.Unfinished) / float64(score.Population)
 		}
-		if len(population.successes) > 0 {
-			sort.Float64s(population.successes)
-			quantile := stat.Quantile(percentile, stat.Empirical, population.successes, nil)
-			score.SuccessQuantileNanos = &quantile
-		}
-		if population.fixedFailure {
-			score.PotentialUnavailableReasons = []string{"TerminalNativeOutcomeNoExecutionAlternative"}
-		}
-		if !population.missing && (!population.fixedFailure || len(population.potentials) > 0) {
-			potential := 0.0
-			if len(population.potentials) > 0 {
-				sort.Float64s(population.potentials)
-				potential = stat.Quantile(percentile, stat.Empirical, population.potentials, nil)
-			}
-			score.PotentialExcess = &potential
-		}
-		score.Satisfied = score.FailureFraction == 0 && (score.Population == 0 || score.SuccessQuantileNanos != nil && *score.SuccessQuantileNanos <= float64(population.definition.SLO.TargetLatency))
 		s.out.feedback = append(s.out.feedback, score)
 	}
 	sort.Slice(s.out.feedback, func(a, b int) bool { return s.out.feedback[a].UID < s.out.feedback[b].UID })
+}
+
+func (s *schedulerReplayState) countFeedbackRequest(population *feedbackPopulation, request *schedulerReplayRequest) {
+	population.score.Population++
+	if request.minimumDemand {
+		population.score.MinimumDemandArrivals++
+	} else if !request.observed {
+		population.score.ReplayedArrivals++
+	}
+	switch {
+	case request.dropped:
+		population.score.DeadlineDropped++
+	case request.failed:
+		population.score.Failed++
+	case request.expired:
+		population.score.LifetimeExpired++
+	case request.completed:
+		population.score.Completed++
+		return
+	default:
+		population.score.Unfinished++
+		if s.out.outcomes[request.identity] == nil {
+			s.out.outcomes[request.identity] = map[string]int{}
+		}
+		s.out.outcomes[request.identity]["unfinished"]++
+	}
+	s.collectFailurePotential(population, request)
+}
+
+func (s *schedulerReplayState) collectFailurePotential(population *feedbackPopulation, request *schedulerReplayRequest) {
+	if request.observed && request.source.Phase == phaseReturning {
+		population.fixedFailure = true
+		return // no remaining compute alternative for this terminal request
+	}
+	if !request.hasPotential && !request.dropped && !request.failed && !request.expired {
+		s.capturePotential(request, s.byID[request.source.Instance])
+	}
+	if !request.hasPotential {
+		if !population.missing {
+			s.out.invalidReasons = appendUnique(s.out.invalidReasons, "MissingConditionalFailurePotential:"+population.definition.UID)
+		}
+		population.missing = true
+	} else {
+		population.potentials = append(population.potentials, request.potential)
+	}
+}
+
+func (population *feedbackPopulation) finish(samples []float64) FeedbackWorkloadScore {
+	score := population.score
+	percentile := population.definition.SLO.Percentile / 100
+	if len(samples) > 0 {
+		sort.Float64s(samples)
+		quantile := stat.Quantile(percentile, stat.Empirical, samples, nil)
+		score.SuccessQuantileNanos = &quantile
+		score.SuccessExcess = max(0, quantile/float64(population.definition.SLO.TargetLatency)-1)
+	}
+	if population.fixedFailure {
+		score.PotentialUnavailableReasons = []string{"TerminalNativeOutcomeNoExecutionAlternative"}
+	}
+	if !population.missing && (!population.fixedFailure || len(population.potentials) > 0) {
+		potential := 0.0
+		if len(population.potentials) > 0 {
+			sort.Float64s(population.potentials)
+			potential = stat.Quantile(percentile, stat.Empirical, population.potentials, nil)
+		}
+		score.PotentialExcess = &potential
+	}
+	score.Satisfied = score.DeadlineDropped+score.Failed+score.LifetimeExpired+score.Unfinished == 0 && score.SuccessExcess == 0
+	return score
+}
+
+func mergeFeedbackScore(previous, score FeedbackWorkloadScore) FeedbackWorkloadScore {
+	if score.SuccessQuantileNanos != nil && (previous.SuccessQuantileNanos == nil || score.SuccessExcess > previous.SuccessExcess || score.SuccessExcess == previous.SuccessExcess && *score.SuccessQuantileNanos > *previous.SuccessQuantileNanos) {
+		previous.SuccessQuantileNanos, previous.SuccessExcess = score.SuccessQuantileNanos, score.SuccessExcess
+	}
+	if previous.Population == 0 {
+		previous.PotentialExcess = score.PotentialExcess
+	} else if previous.PotentialExcess == nil || score.PotentialExcess == nil {
+		previous.PotentialExcess = nil
+	} else if *score.PotentialExcess > *previous.PotentialExcess {
+		previous.PotentialExcess = score.PotentialExcess
+	}
+	previous.Population += score.Population
+	previous.ReplayedArrivals += score.ReplayedArrivals
+	previous.MinimumDemandArrivals += score.MinimumDemandArrivals
+	previous.Completed += score.Completed
+	previous.DeadlineDropped += score.DeadlineDropped
+	previous.LifetimeExpired += score.LifetimeExpired
+	previous.Failed += score.Failed
+	previous.Unfinished += score.Unfinished
+	previous.PotentialUnavailableReasons = appendUnique(previous.PotentialUnavailableReasons, score.PotentialUnavailableReasons...)
+	previous.Satisfied = previous.Satisfied && score.Satisfied
+	return previous
 }
 
 // capturePotential queries only currently assemblable same-definition batches.
