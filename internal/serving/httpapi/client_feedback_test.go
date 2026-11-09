@@ -101,9 +101,9 @@ func TestClientFeedbackBoundaryAndDurableEvidence(t *testing.T) {
 		`{"observationID":"x","elapsedNanos":0,"outcome":"completed"}`,
 		`{"observationID":"x","elapsedNanos":0,"outcome":"http_error","statusCode":200}`,
 		`{"observationID":"x","elapsedNanos":0,"outcome":"timeout","statusCode":600}`,
-		`{"observationID":"x","requestID":"","elapsedNanos":0,"outcome":"timeout"}`,
 		`{"observationID":"x","elapsedNanos":0,"outcome":"timeout","actorUsername":"forged"}`,
 		`{"observationID":"x","elapsedNanos":0,"outcome":"timeout","reportedAt":"2026-11-09T00:00:00Z"}`,
+		`{"observationID":"x","elapsedNanos":0,"outcome":"timeout","duplicate":false}`,
 		valid + `{}`,
 		strings.Repeat(" ", 1024) + valid,
 	} {
@@ -111,7 +111,11 @@ func TestClientFeedbackBoundaryAndDurableEvidence(t *testing.T) {
 			t.Fatalf("invalid feedback accepted: %d %s body=%s", status, data, body)
 		}
 	}
-	for _, body := range []string{valid, `{"observationID":"opaque / not-a-uuid","elapsedNanos":900000000,"outcome":"timeout"}`} {
+	for _, body := range []string{
+		valid,
+		`{"observationID":"opaque / not-a-uuid","elapsedNanos":900000000,"outcome":"timeout"}`,
+		`{"observationID":"empty-optional-identities","requestID":"","workloadUID":"","elapsedNanos":0,"outcome":"timeout"}`,
+	} {
 		if status, data := feedbackPOST(t, server, "workload", body, "token"); status != http.StatusNoContent || data != "" {
 			t.Fatalf("FIFO admission failed: %d %s", status, data)
 		}
@@ -151,7 +155,7 @@ func TestClientFeedbackBoundaryAndDurableEvidence(t *testing.T) {
 	}
 	defer func() { _ = raw.Reader.Close() }()
 	decoder := json.NewDecoder(raw.Reader)
-	for range 2 {
+	for range 3 {
 		var report serving.ClientObservation
 		if err := decoder.Decode(&report); err != nil {
 			t.Fatal(err)
@@ -255,11 +259,11 @@ func TestClientFeedbackHTTPToLoadWindow(t *testing.T) {
 		after.ClientObservations[1].RequestID != "" {
 		t.Fatalf("first evidence or unknown timeout identity changed: %+v", after)
 	}
-	if status, _ := feedbackPOST(t, server, "workload", `{"observationID":"wrong-uid","requestID":"request/opaque","workloadUID":"new-uid","elapsedNanos":1,"outcome":"timeout"}`, "token"); status != http.StatusBadRequest {
-		t.Fatalf("retained UID mismatch accepted: %d", status)
-	}
-	if status, _ := feedbackPOST(t, server, "other", `{"observationID":"wrong-name","requestID":"request/opaque","elapsedNanos":1,"outcome":"timeout"}`, "token"); status != http.StatusBadRequest {
-		t.Fatalf("retained name mismatch accepted: %d", status)
+	// Identity assertions are retained without a per-report history lookup.
+	// The captured join rejects attribution to a different server identity.
+	post(`{"observationID":"wrong-uid","requestID":"request/opaque","workloadUID":"new-uid","elapsedNanos":1,"outcome":"timeout"}`)
+	if status, _ := feedbackPOST(t, server, "other", `{"observationID":"wrong-name","requestID":"request/opaque","elapsedNanos":1,"outcome":"timeout"}`, "token"); status != http.StatusNoContent {
+		t.Fatalf("raw identity assertion was not retained: %d", status)
 	}
 	// A report accepted exactly at the cutoff belongs only to the next capture,
 	// and only while its server receipt still belongs to that capture's window.
@@ -280,7 +284,7 @@ func TestClientFeedbackHTTPToLoadWindow(t *testing.T) {
 		t.Fatalf("old receipts resurrected: %+v %v", expired, err)
 	}
 	raw, err := h.observationLog.ClientObservationPage(context.Background(), from, to.Add(time.Second), 100, 0)
-	if err != nil || len(raw.Observations) != 8 || raw.Observations[0].WorkloadUID != "" {
+	if err != nil || len(raw.Observations) != 10 || raw.Observations[0].WorkloadUID != "" {
 		t.Fatalf("raw reports mutated or lost: %+v %v", raw, err)
 	}
 }

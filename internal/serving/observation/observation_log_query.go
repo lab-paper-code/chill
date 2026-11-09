@@ -143,6 +143,12 @@ type requestEnvelope struct {
 // requestRows merges the captured rows by request: final, else the open row,
 // else assigned.
 func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEnvelope) bool) ([]*serving.RequestRow, error) {
+	return l.requestRowsAndNative(read, keep, nil, time.Time{}, time.Time{})
+}
+
+// requestRowsAndNative collects current-cohort supplements during the existing
+// request scan. Normal HTTP request queries never merge physical supplements.
+func (l *ObservationLog) requestRowsAndNative(read *observationRead, keep func(*requestEnvelope) bool, nativeRows map[string]serving.RequestRow, from, to time.Time) ([]*serving.RequestRow, error) {
 	// Request rows reference definitions only. Retained immutable definitions
 	// normally resolve them without opening hourly catalogs full of raw profile
 	// populations. A cold archive read loads only a selected row's catalog.
@@ -153,7 +159,26 @@ func (l *ObservationLog) requestRows(read *observationRead, keep func(*requestEn
 		if err := json.Unmarshal(raw, &envelope); err != nil {
 			return err
 		}
-		if envelope.Kind == serving.RequestRowNative || !keep(&envelope) {
+		if envelope.Kind == serving.RequestRowNative {
+			row := rows[envelope.RequestID]
+			if nativeRows != nil && row != nil && serving.ObservationInInterval(row.ReceivedAt, from, to) &&
+				(envelope.WorkloadUID == "" || envelope.WorkloadUID == row.WorkloadUID) {
+				var native serving.RequestRow
+				if err := json.Unmarshal(raw, &native); err != nil {
+					return err
+				}
+				previous := nativeRows[envelope.RequestID]
+				if native.NativeFinishedAt != nil {
+					native.ServerTiming.Merge(previous.ServerTiming)
+					nativeRows[envelope.RequestID] = native
+				} else {
+					previous.ServerTiming.Merge(native.ServerTiming)
+					nativeRows[envelope.RequestID] = previous
+				}
+			}
+			return nil
+		}
+		if !keep(&envelope) {
 			return nil
 		}
 		if err := mergeRequestRow(rows, raw, keep, nil); err != nil {

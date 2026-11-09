@@ -351,12 +351,11 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 	if from.IsZero() || !from.Before(to) {
 		return result, &serving.Error{Code: "InvalidQuery", Message: "positive explicit load window is required"}
 	}
-	// Client joins use the retained receipt horizon, including earlier receipts
-	// whose reports arrived in this window. Both streams share one capture.
-	retainedFrom := l.now().Add(-l.config.Retention)
+	// Both streams share one capture. Persisted first-report eligibility keeps
+	// client reads at observation-window scale, without a retained-history scan.
 	read, err := l.prepare(ctx, map[string][2]time.Time{
-		observationRequestStream: {minTime(from, retainedFrom), {}},
-		observationClientStream:  {retainedFrom, to},
+		observationRequestStream: {from, {}},
+		observationClientStream:  {from, to},
 	})
 	if err != nil {
 		return result, err
@@ -364,11 +363,12 @@ func (l *ObservationLog) LoadWindow(ctx context.Context, from, to time.Time) (Lo
 	defer read.close()
 	result.Coverage = read.coverage(map[string][2]time.Time{observationRequestStream: {from, to}, observationClientStream: {from, to}})
 	result.GapUntil = result.Coverage.GapUntil(from)
-	rows, err := l.requestRows(read, func(*requestEnvelope) bool { return true })
+	nativeRows := map[string]serving.RequestRow{}
+	rows, err := l.requestRowsAndNative(read, func(*requestEnvelope) bool { return true }, nativeRows, from, to)
 	if err != nil {
 		return result, err
 	}
-	result.PathSamples, result.ClientObservations, err = l.clientWindow(read, rows, from, to)
+	result.PathSamples, result.ClientObservations, err = l.clientWindow(read, rows, nativeRows, from, to)
 	if err != nil {
 		return result, err
 	}

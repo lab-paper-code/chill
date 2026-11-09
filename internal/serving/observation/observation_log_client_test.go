@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,7 +35,7 @@ func TestClientStreamUsesCapturedPrefixAndArchiveRetention(t *testing.T) {
 	if err := log.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
-	samples, clients, err := log.clientWindow(read, nil, from, to)
+	samples, clients, err := log.clientWindow(read, nil, nil, from, to)
 	if err != nil || len(samples) != 0 || len(clients) != 1 || clients[0].ObservationID != "first" {
 		t.Fatalf("client capture leaked later FIFO admission: %+v %+v %v", samples, clients, err)
 	}
@@ -167,5 +169,156 @@ func TestClientWindowAddsNativeEvidenceWithoutRewritingReports(t *testing.T) {
 		if row.NativeElapsedMS != nil || row.NativeExecutionComplete {
 			t.Fatalf("path join rewrote immutable HTTP evidence: %+v", row)
 		}
+	}
+}
+
+func TestClientFeedbackAdmissionDoesNotReadRequestHistory(t *testing.T) {
+	ctx := context.Background()
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	if err := log.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	resume := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(resume)
+	var once sync.Once
+	log.writeFile = func(file *os.File, data []byte) (int, error) {
+		once.Do(func() { close(entered); <-release })
+		return file.Write(data)
+	}
+	if err := log.SchedulerRecord(SchedulerObservation{At: clock.now()}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("disk worker did not enter the blocked write")
+	}
+	admitted := make(chan error, 1)
+	go func() {
+		admitted <- log.ClientObservation(ctx, serving.ClientObservation{
+			ObservationID: "without-history-read", RequestID: "opaque-request", WorkloadName: "workload", Outcome: "timeout",
+		})
+	}()
+	select {
+	case err := <-admitted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("feedback admission waited for a request-history read barrier")
+	}
+	resume()
+}
+
+func TestClientWindowBoundsRequestReadsAndDecodesOnlySelectedFirstReports(t *testing.T) {
+	ctx := context.Background()
+	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
+	old := observationTestHour.Add(time.Second)
+	clock.set(old)
+	// These unrelated old payloads have readable identities but deliberately
+	// undecodable duration bodies. A current tick must not hydrate those bodies.
+	if err := log.submitRecord(observationRequestStream, map[string]any{
+		"kind": "final", "requestID": "old-request", "receivedAt": old, "nativeElapsedMS": "unrelated payload",
+	}, nil, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.submitRecord(observationClientStream, map[string]any{
+		"observationID": "unrelated-history", "workloadName": "workload", "reportedAt": old,
+		"elapsedNanos": "unrelated payload", "outcome": "timeout",
+	}, nil, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.ClientObservation(ctx, serving.ClientObservation{
+		ObservationID: "first-outside-current-window", WorkloadName: "workload", Outcome: "timeout",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	from := observationTestHour.Add(2 * time.Minute)
+	to := from.Add(time.Minute)
+	clock.set(from)
+	if err := log.ClientObservation(ctx, serving.ClientObservation{
+		ObservationID: "first-outside-current-window", WorkloadName: "workload", Outcome: "timeout",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	window, err := log.LoadWindow(ctx, from, to)
+	if err != nil || len(window.PathSamples) != 0 || len(window.ClientObservations) != 0 || len(window.Arrivals) != 0 {
+		t.Fatalf("current window hydrated unrelated history or resurrected a duplicate: %+v %v", window, err)
+	}
+}
+
+func TestClientFirstReportEligibilitySurvivesRestartAndExpires(t *testing.T) {
+	ctx := context.Background()
+	log, clock := clockedObservationLog(t, ObservationLogConfig{Retention: time.Minute}, observationTestHour)
+	appendClient := func(id, request string) {
+		t.Helper()
+		if err := log.ClientObservation(ctx, serving.ClientObservation{
+			ObservationID: id, RequestID: request, WorkloadName: "workload", Outcome: "timeout",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reopen := func() {
+		t.Helper()
+		if err := log.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+		reopened, err := NewObservationLog(log.config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		log = reopened
+		t.Cleanup(func() {
+			if err := reopened.Close(ctx); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	clock.set(observationTestHour.Add(time.Second))
+	appendClient("original", "request")
+	clock.set(observationTestHour.Add(10 * time.Second))
+	appendClient("original", "request-alias")
+	clock.set(observationTestHour.Add(11 * time.Second))
+	appendClient("observation-alias", "request")
+	clock.set(observationTestHour.Add(20 * time.Second))
+	appendClient("original", "")
+	clock.set(observationTestHour.Add(30 * time.Second))
+	reopen()
+	appendClient("original", "request")
+	window, err := log.LoadWindow(ctx, clock.now(), clock.now().Add(time.Second))
+	if err != nil || len(window.ClientObservations) != 0 || len(window.PathSamples) != 0 {
+		t.Fatalf("restart counted a duplicate as a new observation: %+v %v", window, err)
+	}
+	// Old duplicate reports must not refresh the original identities at restore.
+	clock.set(observationTestHour.Add(62 * time.Second))
+	reopen()
+	appendClient("original", "request")
+	window, err = log.LoadWindow(ctx, clock.now(), clock.now().Add(time.Second))
+	if err != nil || len(window.ClientObservations) != 1 || len(window.PathSamples) != 0 ||
+		window.ClientObservations[0].WorkloadUID != "" || len(log.clientSeen) != 4 {
+		t.Fatalf("expiry, alias restoration or unknown join changed: %+v %v identities=%d", window, err, len(log.clientSeen))
+	}
+	raw, err := log.ClientObservationPage(ctx, observationTestHour, clock.now().Add(time.Second), 100, 0)
+	if err != nil || len(raw.Observations) != 6 {
+		t.Fatalf("restart/expiry changed immutable raw reports: %+v %v", raw, err)
+	}
+	clock.set(observationTestHour.Add(125 * time.Second))
+	appendClient("fresh", "")
+	if len(log.clientSeen) != 1 || len(log.clientExpiry) != 1 || log.clientExpiryHead != 0 {
+		t.Fatalf("expired identity storage retained: ids=%d queue=%d head=%d", len(log.clientSeen), len(log.clientExpiry), log.clientExpiryHead)
+	}
+}
+
+func TestClientIdentityExpiryCompactsBackingStorage(t *testing.T) {
+	log := &ObservationLog{}
+	at := observationTestHour
+	for index := range 64 {
+		log.rememberClientIdentityLocked(clientObservationIdentity{workload: "workload", id: string(rune('a' + index))}, at)
+	}
+	log.rememberClientIdentityLocked(clientObservationIdentity{workload: "workload", id: "retained"}, at.Add(30*time.Second))
+	log.pruneClientIdentitiesLocked(at.Add(time.Second))
+	if len(log.clientSeen) != 1 || len(log.clientExpiry) != 1 || cap(log.clientExpiry) > 4 || log.clientExpiryHead != 0 {
+		t.Fatalf("expiry left a large dead backing array: ids=%d queue=%d cap=%d head=%d", len(log.clientSeen), len(log.clientExpiry), cap(log.clientExpiry), log.clientExpiryHead)
 	}
 }

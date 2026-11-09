@@ -103,6 +103,10 @@ type ObservationLog struct {
 	finalQueued       map[string]*serving.RequestRow
 	// references tracks FIFO-admitted dependencies, never committed reader metadata.
 	references map[string]observationCatalogEntry
+	// Submission-owned, retention-bounded client identity eligibility.
+	clientSeen       map[clientObservationIdentity]struct{}
+	clientExpiry     []clientObservationIdentityReceipt
+	clientExpiryHead int
 	// run is submission-owned; runCommitted is published under mu after I/O.
 	run          observationRunState
 	runCommitted observationRunState

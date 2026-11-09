@@ -115,7 +115,7 @@ loadgen의 `request_lifetime_seconds=None`과 선택 `--request-lifetime`을 재
 
 `outcome`은 `completed`, `http_error`, `timeout`, `transport_error`, `canceled`다. `completed`는 전체 body 수신을 마친 2xx이고 `http_error`는 전체 body 수신을 마친 non-2xx다. 두 결과는 실제 `statusCode`를 요구한다. 나머지는 호출 중단까지의 관측 하한이며 성공 latency로 쓰지 않는다. `elapsedNanos`는 클라이언트 monotonic send→full body read 또는 중단 구간이며 서버 timestamp 차감값이 아니다.
 
-기존 Bearer TokenReview와 `/chill/api/v1/workloads/<name>/feedback` POST SAR를 먼저 적용한다. 기존 strict bounded body decode를 사용하며 `workloadName`, `reportedAt`, `actorUsername/actorUID`는 서버만 채운다. retained RequestID의 실제 이름·UID와 다른 assertion은 `400 InvalidClientObservation`이다. 권한을 가진 client의 신뢰 telemetry이며 실제 추론 수행을 암호학적으로 증명하지 않는다. 최초·후속 보고 모두 FIFO append 수락 뒤 `204`이며 local fsync 완료를 뜻하지 않는다. 중복 본문 비교·409 conflict·보고 재시도 장치는 없다.
+기존 Bearer TokenReview와 `/chill/api/v1/workloads/<name>/feedback` POST SAR를 먼저 적용한다. 기존 strict bounded body decode를 사용하며 `workloadName`, `reportedAt`, `actorUsername/actorUID`는 서버만 채운다. 이름·UID assertion은 capture의 실제 서버 identity와 결합할 때 확인하며 불일치 원본은 미결합 evidence로 남긴다. 수락 경로에서 요청 이력을 읽거나 완료를 기다리지 않는다. 권한을 가진 client의 신뢰 telemetry이며 실제 추론 수행을 암호학적으로 증명하지 않는다. 최초·후속 보고 모두 FIFO append 수락 뒤 `204`이며 local fsync 완료를 뜻하지 않는다. 중복 본문 비교·409 conflict·보고 재시도 장치는 없다.
 
 `LoadWindow.ClientObservations`는 같은 Workload 범위에서 observationID와 선택 RequestID로 첫 FIFO 보고만 선택한다. 뒤 보고는 원본 stream에 남으며 첫 결과·duration을 바꾸지 않는다. requests와 clients는 같은 read capture로 읽는다. retained 요청과 결합한 관측은 서버 `receivedAt` 창에, 미결합·RequestID 없는 관측은 서버 `reportedAt` 창(report receipt cohort)에 속한다. client-first 보고는 이후 capture가 요청을 발견하면 재보고 없이 결합한다. 늦은 보고는 과거 receipt를 현재 창으로 되살리지 않는다. 실패 관측과 유한 reserve 표본인 `LoadWindow.PathSamples`는 별도 모집단이다.
 

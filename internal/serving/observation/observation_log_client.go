@@ -9,34 +9,41 @@ import (
 	serving "github.com/lab-paper-code/chill/internal/serving"
 )
 
+// Duplicate is server-owned admission metadata; every report body remains raw.
+type clientObservationLine struct {
+	serving.ClientObservation
+	Duplicate bool `json:"duplicate,omitempty"`
+	// Duplicate reports can introduce a new alias for an existing identity.
+	// Preserve those introductions so restart does not refresh older IDs.
+	NewObservationID bool `json:"newObservationID,omitempty"`
+	NewRequestID     bool `json:"newRequestID,omitempty"`
+}
+
+type clientObservationIdentity struct {
+	workload string
+	id       string
+	request  bool
+}
+
+type clientObservationIdentityReceipt struct {
+	identity clientObservationIdentity
+	at       time.Time
+}
+
+type clientObservationEnvelope struct {
+	ObservationID string    `json:"observationID"`
+	RequestID     string    `json:"requestID"`
+	WorkloadName  string    `json:"workloadName"`
+	ReportedAt    time.Time `json:"reportedAt"`
+	Duplicate     bool      `json:"duplicate"`
+	NewObservationID bool   `json:"newObservationID"`
+	NewRequestID     bool   `json:"newRequestID"`
+}
+
 // ClientObservation admits immutable evidence, including later duplicate reports.
-// Identity lookup uses only the existing retention horizon, never archived history.
 func (l *ObservationLog) ClientObservation(ctx context.Context, observation serving.ClientObservation) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if observation.RequestID != "" {
-		// ponytail: scan retained request evidence; add an index only if measured
-		// feedback ingestion cost requires it, keeping the same retention bound.
-		from := l.now().Add(-l.config.Retention)
-		read, err := l.capture(ctx, map[string][2]time.Time{observationRequestStream: {from, {}}})
-		if err != nil {
-			return err
-		}
-		defer read.close()
-		rows, err := l.requestRows(read, func(row *requestEnvelope) bool {
-			return row.RequestID == observation.RequestID && !row.ReceivedAt.Before(from)
-		})
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			name := requestWorkloadName(read, row)
-			if name != "" && name != observation.WorkloadName ||
-				observation.WorkloadUID != "" && row.WorkloadUID != "" && observation.WorkloadUID != row.WorkloadUID {
-				return &serving.Error{Code: "InvalidClientObservation", Message: "request identity does not match the reported Workload"}
-			}
-		}
 	}
 	l.submitMu.Lock()
 	defer l.submitMu.Unlock()
@@ -45,11 +52,97 @@ func (l *ObservationLog) ClientObservation(ctx context.Context, observation serv
 	}
 	at := l.receiptLocked()
 	observation.ReportedAt = at
-	batch, err := l.freezeBatchLocked(observationClientStream, at, observation, nil, at)
+	l.pruneClientIdentitiesLocked(at.Add(-l.config.Retention))
+	observationID := clientObservationIdentity{workload: observation.WorkloadName, id: observation.ObservationID}
+	requestID := clientObservationIdentity{workload: observation.WorkloadName, id: observation.RequestID, request: true}
+	_, observed := l.clientSeen[observationID]
+	_, requested := l.clientSeen[requestID]
+	line := clientObservationLine{ClientObservation: observation, Duplicate: observed || observation.RequestID != "" && requested}
+	line.NewObservationID = line.Duplicate && !observed
+	line.NewRequestID = line.Duplicate && observation.RequestID != "" && !requested
+	batch, err := l.freezeBatchLocked(observationClientStream, at, line, nil, at)
 	if err == nil {
+		l.rememberClientIdentityLocked(observationID, at)
+		if observation.RequestID != "" {
+			l.rememberClientIdentityLocked(requestID, at)
+		}
 		l.enqueueLocked(batch)
 	}
 	return err
+}
+
+func (l *ObservationLog) rememberClientIdentityLocked(identity clientObservationIdentity, at time.Time) {
+	if l.clientSeen == nil {
+		l.clientSeen = map[clientObservationIdentity]struct{}{}
+	}
+	if _, exists := l.clientSeen[identity]; !exists {
+		l.clientSeen[identity] = struct{}{}
+		l.clientExpiry = append(l.clientExpiry, clientObservationIdentityReceipt{identity: identity, at: at})
+	}
+}
+
+// Each identity enters and leaves once. Zero expired slots immediately and
+// compact at half consumption, keeping both work and retained storage bounded.
+func (l *ObservationLog) pruneClientIdentitiesLocked(from time.Time) {
+	for l.clientExpiryHead < len(l.clientExpiry) && l.clientExpiry[l.clientExpiryHead].at.Before(from) {
+		expired := l.clientExpiry[l.clientExpiryHead]
+		delete(l.clientSeen, expired.identity)
+		l.clientExpiry[l.clientExpiryHead] = clientObservationIdentityReceipt{}
+		l.clientExpiryHead++
+	}
+	if l.clientExpiryHead == len(l.clientExpiry) {
+		l.clientSeen, l.clientExpiry, l.clientExpiryHead = nil, nil, 0
+	} else if l.clientExpiryHead > 0 && l.clientExpiryHead >= len(l.clientExpiry)/2 {
+		remaining := len(l.clientExpiry) - l.clientExpiryHead
+		if cap(l.clientExpiry) > 4*remaining {
+			compacted := make([]clientObservationIdentityReceipt, remaining)
+			copy(compacted, l.clientExpiry[l.clientExpiryHead:])
+			l.clientExpiry = compacted
+		} else {
+			copy(l.clientExpiry, l.clientExpiry[l.clientExpiryHead:])
+			clear(l.clientExpiry[remaining:])
+			l.clientExpiry = l.clientExpiry[:remaining]
+		}
+		l.clientExpiryHead = 0
+	}
+}
+
+// Startup reuses the local stream lifecycle, without an archive recovery service.
+func (l *ObservationLog) restoreClientIdentities(hours []time.Time) error {
+	from := l.now().Add(-l.config.Retention)
+	for _, hour := range hours {
+		if !hour.Add(time.Hour).After(from) {
+			continue
+		}
+		files, err := l.hourFiles(hour, observationClientStream)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			if !file.at.Add(time.Minute).After(from) {
+				continue
+			}
+			if err := scanObservationFile(file.path, func(raw []byte) error {
+				var envelope clientObservationEnvelope
+				if err := json.Unmarshal(raw, &envelope); err != nil {
+					return err
+				}
+				if envelope.ReportedAt.Before(from) {
+					return nil
+				}
+				if !envelope.Duplicate || envelope.NewObservationID {
+					l.rememberClientIdentityLocked(clientObservationIdentity{workload: envelope.WorkloadName, id: envelope.ObservationID}, envelope.ReportedAt)
+				}
+				if envelope.RequestID != "" && (!envelope.Duplicate || envelope.NewRequestID) {
+					l.rememberClientIdentityLocked(clientObservationIdentity{workload: envelope.WorkloadName, id: envelope.RequestID, request: true}, envelope.ReportedAt)
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ClientObservationPage exposes raw reports in FIFO append order, without dedup.
@@ -101,61 +194,53 @@ func (l *ObservationLog) ClientObservationPage(ctx context.Context, from, to tim
 
 // clientWindow selects first reports before applying cohort filters. A later
 // report can link both identities, but cannot replace the first observation.
-func (l *ObservationLog) clientWindow(read *observationRead, rows []*serving.RequestRow, from, to time.Time) ([]serving.PathTimingSample, []serving.ClientObservation, error) {
+func (l *ObservationLog) clientWindow(read *observationRead, rows []*serving.RequestRow, nativeRows map[string]serving.RequestRow, from, to time.Time) ([]serving.PathTimingSample, []serving.ClientObservation, error) {
 	retainedFrom := read.now.Add(-l.config.Retention)
 	requests := make(map[string]*serving.RequestRow, len(rows))
 	for _, row := range rows {
 		if !row.ReceivedAt.Before(retainedFrom) && row.ReceivedAt.Before(to) {
+			if native, ok := nativeRows[row.RequestID]; ok {
+				merged := *row
+				merged.ServerTiming.Merge(native.ServerTiming)
+				if native.NativeFinishedAt != nil {
+					merged.NativeFinishedAt = native.NativeFinishedAt
+					merged.NativeExecutionComplete = native.NativeExecutionComplete
+					merged.NativeOutcome, merged.NativeError = native.NativeOutcome, native.NativeError
+					merged.NativeElapsedMS = native.NativeElapsedMS
+				}
+				requests[row.RequestID] = &merged
+				continue
+			}
 			requests[row.RequestID] = row
 		}
 	}
-	if err := l.clientNativeSupplements(read, requests); err != nil {
-		return nil, nil, err
-	}
-	type identity struct{ workload, id string }
-	observations, requestIDs := map[identity]bool{}, map[identity]bool{}
+	from = serving.LaterTime(from, retainedFrom)
 	samples := []serving.PathTimingSample{}
 	clients := []serving.ClientObservation{}
 	err := l.scanStream(read, observationClientStream, func(raw []byte) error {
+		var envelope clientObservationEnvelope
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return err
+		}
+		if envelope.Duplicate || !serving.ObservationInInterval(envelope.ReportedAt, from, to) {
+			return nil
+		}
 		var client serving.ClientObservation
 		if err := json.Unmarshal(raw, &client); err != nil {
 			return err
-		}
-		if !serving.ObservationInInterval(client.ReportedAt, retainedFrom, to) {
-			return nil
-		}
-		observationID := identity{client.WorkloadName, client.ObservationID}
-		requestID := identity{client.WorkloadName, client.RequestID}
-		duplicate := observations[observationID] || client.RequestID != "" && requestIDs[requestID]
-		observations[observationID] = true
-		if client.RequestID != "" {
-			requestIDs[requestID] = true
-		}
-		if duplicate {
-			return nil
 		}
 		row := requests[client.RequestID]
 		name := ""
 		if row != nil {
 			name = requestWorkloadName(read, row)
 		}
-		if row == nil || name == "" {
-			// Unknown/pending reports stay in the report receipt cohort.
-			if serving.ObservationInInterval(client.ReportedAt, from, to) {
-				clients = append(clients, client)
-			}
+		joined := row != nil && name != "" && name == client.WorkloadName &&
+			(client.WorkloadUID == "" || client.WorkloadUID == row.WorkloadUID)
+		if joined && !serving.ObservationInInterval(row.ReceivedAt, from, to) {
 			return nil
 		}
-		if name != client.WorkloadName ||
-			client.WorkloadUID != "" && client.WorkloadUID != row.WorkloadUID {
-			// A request captured after ingestion can reveal a false assertion.
-			// Keep its raw evidence, but never attribute it to that request.
-			if serving.ObservationInInterval(client.ReportedAt, from, to) {
-				clients = append(clients, client)
-			}
-			return nil
-		}
-		if !serving.ObservationInInterval(row.ReceivedAt, from, to) {
+		if !joined {
+			clients = append(clients, client)
 			return nil
 		}
 		client.WorkloadUID = row.WorkloadUID
@@ -182,35 +267,3 @@ func requestWorkloadName(read *observationRead, row *serving.RequestRow) string 
 	return ""
 }
 
-// Native supplements add direct physical evidence without changing the HTTP
-// outcome or claiming that a timed-out native result reached the client.
-func (l *ObservationLog) clientNativeSupplements(read *observationRead, requests map[string]*serving.RequestRow) error {
-	if len(requests) == 0 {
-		return nil
-	}
-	return l.scanStream(read, observationRequestStream, func(raw []byte) error {
-		var envelope requestEnvelope
-		if err := json.Unmarshal(raw, &envelope); err != nil {
-			return err
-		}
-		row := requests[envelope.RequestID]
-		if envelope.Kind != serving.RequestRowNative || row == nil ||
-			envelope.WorkloadUID != "" && envelope.WorkloadUID != row.WorkloadUID {
-			return nil
-		}
-		var native serving.RequestRow
-		if err := json.Unmarshal(raw, &native); err != nil {
-			return err
-		}
-		merged := *row
-		merged.ServerTiming.Merge(native.ServerTiming)
-		if native.NativeFinishedAt != nil {
-			merged.NativeFinishedAt = native.NativeFinishedAt
-			merged.NativeExecutionComplete = native.NativeExecutionComplete
-			merged.NativeOutcome, merged.NativeError = native.NativeOutcome, native.NativeError
-			merged.NativeElapsedMS = native.NativeElapsedMS
-		}
-		requests[envelope.RequestID] = &merged
-		return nil
-	})
-}

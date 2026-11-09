@@ -35,7 +35,7 @@ profile 본문(근거/confidence/조건 artifact·실행 경로)은 `profileID`,
 
 `LoadWindow.ClientObservations`는 같은 Workload의 observationID와 선택 RequestID를 연결해 append-order 첫 보고만 집계한다. 이후 보고는 원본으로 남고 첫 duration/outcome을 바꾸지 않는다. 두 stream을 같은 capture에서 읽으며 final보다 먼저 온 보고도 다음 capture에서 결합한다. 결합 시 서버 row의 정확한 UID와 retained definition 이름을 사용하고 supplied UID는 assertion으로 검사한다. 요청 없는 timeout에 현재 동명 UID를 붙이지 않는다. 결합 관측은 `receivedAt∈[from,to)`, 미결합 관측은 서버 `reportedAt∈[from,to)`인 report receipt cohort다. cutoff 뒤 보고는 다음 capture에서 receipt가 아직 창 안일 때만 반영한다.
 
-온라인 identity lookup·집계 horizon은 기존 Retention이다. archive 원본은 계속 조회할 수 있지만 온라인 horizon 밖 요청/보고는 path reserve로 부활하지 않는다. `LoadWindow.PathSamples`는 순수 domain 산술이 유한 회계값을 만들 수 있는 표본만 담는다. `TOTAL=E−Q−N`, `POST=E−S−N`이며 POST는 client 외부 왕복까지 포함한 회계 reserve다. timeout/transport/canceled 실패의 elapsed 하한을 완료 N에서 빼지 않는다. 전체 client 결과·실패 모집단은 `ClientObservations`에 별도로 남는다.
+첫 보고 identity 선택 horizon은 기존 Retention이다. feedback 수락은 이력을 읽지 않고 submission-owned clientSeen/expiry FIFO로 판정하여 원본과 server-only `duplicate` 표식을 저장한다. 중복 보고가 새 ID alias를 소개하면 `newObservationID/newRequestID` 표식도 남겨 재시작이 기존 identity의 만료를 연장하지 않게 한다. 생성자는 retained local clients의 identity envelope를 한 번 읽어 재구축하고, 기존 append·archive maintenance·hour 삭제가 만료 ID를 지운다. expiry slot은 즉시 zero하고 절반 소비 시 compact하며 큰 backing array도 줄인다. 새 저장소·worker·복구 계층은 없다. Tick은 기존 requests `from` 분~최신 범위와 clients `[from,to)`만 읽고, 요청의 기존 단일 스캔에서 현재 receipt cohort의 native supplement를 모은다. archive 원본은 계속 조회할 수 있지만 온라인 horizon 밖 요청/보고는 path reserve로 부활하지 않는다. `LoadWindow.PathSamples`는 순수 domain 산술이 유한 회계값을 만들 수 있는 표본만 담는다. `TOTAL=E−Q−N`, `POST=E−S−N`이며 POST는 client 외부 왕복까지 포함한 회계 reserve다. timeout/transport/canceled 실패의 elapsed 하한을 완료 N에서 빼지 않는다. 전체 client 결과·실패 모집단은 `ClientObservations`에 별도로 남는다.
 
 ### 3.2 재시작
 배정 전 수신/검증/큐는 crash 때 손실을 수락했으며 loadgen requestID join의 `sent−recorded`로 드러난다. runtimeFacts는 로컬 requests의 final 없는 assigned만 RestartDrain으로 복원한다. `dispatchedNanos=dispatchedAt−receivedAt`으로 접수/배정을 세고 backend 완료 뒤 `final(incomplete,EntrypointRestarted)`을 쓴다.
@@ -169,7 +169,7 @@ errors. Failed Close leaves active evidence and withholds graceful flock handoff
 | 조회 | 범위·모집단 |
 |---|---|
 | Query(`/observations/workloads/{uid}`) | requests는 from 분~최신(늦은 final 포함), management는[from,to], 열린 행. 모집단은[from,to)에 접수된 요청 |
-| LoadWindow | 같은 capture의 requests·clients와 열린 행; 기존 단계 count/Arrivals 유지. retained first-report 관측과 finite PathSamples는 receipt/report receipt cohort를 구분 |
+| LoadWindow | 같은 capture의 requests `from` 분~최신·열린 행과 clients `[from,to)`; 저장된 duplicate 표식으로 첫 보고만 full decode. 기존 단계 count/Arrivals 유지 |
 | OperatingPower | scheduler[from−1분,to+1분], 기준 snapshot은 from부터 거꾸로 첫 snapshot 분까지; maximumBoundaryDistance≤1분, meter catalog coverage 사용 |
 | SchedulerObservationPage | scheduler[from,to], 기존 limit에서 종료 |
 파일 이름을 색인으로 envelope 먼저 decode하고 필요한 본문만 읽으며 참조는 해당 시간 catalog로 푼다. archive 이후 실제 없는 범위만 gapUntil/coverage gaps이고 power complete=false를 유지한다. SchedulerHistoryWindow는 현재 없고 도착 경로는 LoadWindow의 Arrivals다. Tick60s는1~2분 파일·5req/s<1MB(이전3.3~6.7MB); 메모리는 선택 요청 수 비례, 기본2h/5req/s는36k행≈47MB다.

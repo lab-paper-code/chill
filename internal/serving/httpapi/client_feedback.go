@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -19,38 +17,9 @@ type ClientObservationReport struct {
 	ObservationID string `json:"observationID"`
 	RequestID     string `json:"requestID,omitempty"`
 	WorkloadUID   string `json:"workloadUID,omitempty"`
-	ElapsedNanos  int64  `json:"elapsedNanos"`
+	ElapsedNanos  *int64 `json:"elapsedNanos"`
 	Outcome       string `json:"outcome"`
 	StatusCode    *int   `json:"statusCode,omitempty"`
-}
-
-// UnmarshalJSON retains strict field decoding and distinguishes a required zero
-// duration from absent/null, while keeping the public DTO's scalar field types.
-func (report *ClientObservationReport) UnmarshalJSON(data []byte) error {
-	type reportFields ClientObservationReport
-	fields := struct {
-		*reportFields
-		ElapsedNanos *int64  `json:"elapsedNanos"`
-		RequestID    *string `json:"requestID"`
-		WorkloadUID  *string `json:"workloadUID"`
-	}{reportFields: (*reportFields)(report)}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&fields); err != nil {
-		return err
-	}
-	if fields.ElapsedNanos == nil || fields.RequestID != nil && *fields.RequestID == "" ||
-		fields.WorkloadUID != nil && *fields.WorkloadUID == "" {
-		return errors.New("elapsedNanos is required; supplied identities must be nonempty")
-	}
-	report.ElapsedNanos = *fields.ElapsedNanos
-	if fields.RequestID != nil {
-		report.RequestID = *fields.RequestID
-	}
-	if fields.WorkloadUID != nil {
-		report.WorkloadUID = *fields.WorkloadUID
-	}
-	return nil
 }
 
 func (h *Handler) clientFeedback(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +40,7 @@ func (h *Handler) clientFeedback(w http.ResponseWriter, r *http.Request) {
 	err := h.observationLog.ClientObservation(r.Context(), serving.ClientObservation{
 		ObservationID: report.ObservationID, RequestID: report.RequestID,
 		WorkloadName: r.PathValue("id"), WorkloadUID: report.WorkloadUID,
-		ElapsedNanos: report.ElapsedNanos, Outcome: report.Outcome, StatusCode: report.StatusCode,
+		ElapsedNanos: *report.ElapsedNanos, Outcome: report.Outcome, StatusCode: report.StatusCode,
 		ActorUsername: actor, ActorUID: uid,
 	})
 	if err != nil {
@@ -87,7 +56,7 @@ func (h *Handler) clientFeedback(w http.ResponseWriter, r *http.Request) {
 
 func (report ClientObservationReport) validate() error {
 	invalid := &serving.Error{Code: "InvalidClientObservation", Message: "nonempty observationID, nonnegative elapsedNanos and consistent outcome/statusCode are required"}
-	if report.ObservationID == "" || report.ElapsedNanos < 0 {
+	if report.ObservationID == "" || report.ElapsedNanos == nil || *report.ElapsedNanos < 0 {
 		return invalid
 	}
 	if report.StatusCode != nil && (*report.StatusCode < 100 || *report.StatusCode > 599) {

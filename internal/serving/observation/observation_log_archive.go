@@ -31,6 +31,9 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	l.submitMu.Lock()
+	l.pruneClientIdentitiesLocked(now.Add(-l.config.Retention))
+	l.submitMu.Unlock()
 	deleting := true
 	hours, err := l.hours()
 	if err != nil {
@@ -52,6 +55,12 @@ func (l *ObservationLog) archive(ctx context.Context) error {
 		deleting = deleting && failed == nil && !now.Before(hour.Add(l.config.Retention))
 		if deleting {
 			deleting, failed = l.removeHour(hour)
+			if deleting {
+				// Match the existing hour-retention deletion boundary on restart.
+				l.submitMu.Lock()
+				l.pruneClientIdentitiesLocked(hour.Add(time.Hour))
+				l.submitMu.Unlock()
+			}
 		}
 		result = errors.Join(result, failed)
 	}

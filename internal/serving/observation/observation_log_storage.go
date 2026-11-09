@@ -62,7 +62,7 @@ func (l *ObservationLog) restore(hours []time.Time) error {
 			l.open[row.RequestID] = &open
 		}
 	}
-	return nil
+	return l.restoreClientIdentities(hours)
 }
 
 func restoreRequestRow(rows map[string]*serving.RequestRow, row *serving.RequestRow, hour time.Time) {
