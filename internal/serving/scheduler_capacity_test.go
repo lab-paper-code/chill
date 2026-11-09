@@ -512,8 +512,8 @@ func TestCapacityExactOutcomeTupleIgnoresFinalFlag(t *testing.T) {
 	s, snap, _ := capacityE1Fixture()
 	p := capacityPlannerForTest(t, s, snap)
 	quantile, potential := float64(2*time.Second), .25
-	worse := capacityResult{final: true, joules: 1, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, Completed: 5, DeadlineDropped: 5, FailureFraction: .5, SuccessQuantileNanos: &quantile, PotentialExcess: &potential}}}
-	better := capacityResult{joules: 100, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, Completed: 8, DeadlineDropped: 2, FailureFraction: .2, SuccessQuantileNanos: &quantile, PotentialExcess: &potential}}}
+	worse := capacityResult{final: true, joules: 1, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, Completed: 5, DeadlineDropped: 5, FailureFraction: .5, SuccessQuantileNanos: &quantile, SuccessExcess: 1, PotentialExcess: &potential}}}
+	better := capacityResult{joules: 100, feedback: []FeedbackWorkloadScore{{UID: "w1", Population: 10, Completed: 8, DeadlineDropped: 2, FailureFraction: .2, SuccessQuantileNanos: &quantile, SuccessExcess: 1, PotentialExcess: &potential}}}
 	p.rankFeedback(&worse)
 	p.rankFeedback(&better)
 	worse.final = true
@@ -524,12 +524,14 @@ func TestCapacityExactOutcomeTupleIgnoresFinalFlag(t *testing.T) {
 	worse.feedback[0].Completed, worse.feedback[0].DeadlineDropped = 8, 2
 	lowerQuantile := float64(1500 * time.Millisecond)
 	better.feedback[0].SuccessQuantileNanos = &lowerQuantile
+	better.feedback[0].SuccessExcess = .5
 	p.rankFeedback(&worse)
 	p.rankFeedback(&better)
 	if !better.better(&worse) {
 		t.Fatal("finite success excess did not break failure tie")
 	}
 	worse.feedback[0].SuccessQuantileNanos = &lowerQuantile
+	worse.feedback[0].SuccessExcess = .5
 	largerPotential := .75
 	worse.feedback[0].PotentialExcess = &largerPotential
 	p.rankFeedback(&worse)
@@ -1425,7 +1427,7 @@ func TestCapacityDecisionRecordsSearch(t *testing.T) {
 func TestCapacitySearchStepRecordSize(t *testing.T) {
 	// Existing evaluation fixture: eight fleet Nodes, three Workloads, and
 	// two power modes on the Jetson stand-ins, at the real five-second budget.
-	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(1, 2), e5Start, nil)
+	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(1, 2), e5Start)
 	if _, err := p.search(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -2334,7 +2336,8 @@ func TestSchedulerReplayFixedPowerIsNotFreeOrInstant(t *testing.T) {
 }
 
 func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "not-ready", "terminated", "wrong-allocation", "overload", "backlog", "routing-off", "future"} {
+	const terminated = "terminated"
+	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "not-ready", terminated, "wrong-allocation", "overload", "backlog", "routing-off", "future"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, snap, _ := capacityE1Fixture()
 			old := snap.Instances[0]
@@ -2353,7 +2356,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 				snap.Routing[other.WorkloadUID] = map[string]int32{other.ID: schedulerRouteUnits}
 			case "not-ready":
 				added.Ready = false
-			case "terminated":
+			case terminated:
 				added.Terminated = true
 			case "wrong-allocation":
 				added.Allocation.GPUUUID = "different-device"
@@ -2368,7 +2371,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 			case "future":
 				snap.Nodes[0].ObservedAt = snap.At.Add(time.Second)
 			}
-			weights, ok := SchedulerReadyExpansion(s, snap, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added})
+			weights, ok := SchedulerReadyExpansion(context.Background(), s, snap, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added})
 			// SLO-infeasible improvements are admissible, including existing backlog.
 			want := scenario == "admitted" || scenario == "overload" || scenario == "backlog"
 			if ok != want {

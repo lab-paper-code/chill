@@ -13,7 +13,7 @@ import (
 // Search must still retain deterministic starts and physically fixed nodes.
 func TestCapacityFrozenStartsDeterministic(t *testing.T) {
 	for _, priced := range []bool{false, true} {
-		p := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(2, 0), e5Start, nil)
+		p := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(2, 0), e5Start)
 		p.settings.PlanPricedStart = priced
 		problem := p.scalarProblem(p.planTable(), time.Time{})
 		a, sa := v2.Candidates(problem, problem.Table, 10000, 16, 4, time.Time{})
@@ -35,7 +35,7 @@ func TestCapacityFrozenStartsFixedMultiWorkloadKeep(t *testing.T) {
 		current[id] = present
 	}
 	current["rasp5/plc/q1"] = true
-	p := e5Planner(map[int]float64{0: 60, 1: 15}, evaluationScaled(2, 0), current, nil)
+	p := e5Planner(map[int]float64{0: 60, 1: 15}, evaluationScaled(2, 0), current)
 	p.compared[0], p.settings.PlanPricedStart = false, true
 	problem := p.scalarProblem(p.planTable(), time.Time{})
 	keep := problem.Table.ByPlan[0][0]

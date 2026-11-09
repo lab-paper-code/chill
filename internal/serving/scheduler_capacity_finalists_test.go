@@ -11,7 +11,7 @@ import (
 
 func TestCapacityV2CorePlanOrder(t *testing.T) {
 	for _, space := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
-		p := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(space.variants, space.modes), e5Start, nil)
+		p := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(space.variants, space.modes), e5Start)
 		problem := p.scalarProblem(p.planTable(), time.Time{})
 		got, stats := v2.Candidates(problem, problem.Table, 50000, 16, 4, time.Time{})
 		if len(got) == 0 || stats.Deadline {
@@ -27,8 +27,7 @@ func TestCapacityV2CorePlanOrder(t *testing.T) {
 			return capacityDeltaKey(state.delta(0, global[0]))
 		}
 		want := keys(p, got[0].Choice)
-		shuffled := *p
-		shuffled.plans = make([][]*capacityPlan, len(p.plans))
+		shuffled := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(space.variants, space.modes), e5Start)
 		rng := rand.New(rand.NewPCG(20261109, 4))
 		for n, plans := range p.plans {
 			shuffled.plans[n] = slices.Clone(plans)
@@ -38,14 +37,14 @@ func TestCapacityV2CorePlanOrder(t *testing.T) {
 		}
 		other := shuffled.scalarProblem(shuffled.planTable(), time.Time{})
 		again, repeated := v2.Candidates(other, other.Table, 50000, 16, 4, time.Time{})
-		if len(again) == 0 || keys(&shuffled, again[0].Choice) != want || got[0].Joules != again[0].Joules || stats.SurrogateEvaluated != repeated.SurrogateEvaluated {
+		if len(again) == 0 || keys(shuffled, again[0].Choice) != want || got[0].Joules != again[0].Joules || stats.SurrogateEvaluated != repeated.SurrogateEvaluated {
 			t.Fatalf("plan order changed heuristic endpoint: first=%+v again=%+v", got, again)
 		}
 	}
 }
 
 func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
-	p := e5Planner(e5Mixes[0], evaluationNodes(), e5Start, nil)
+	p := e5Planner(e5Mixes[0], evaluationNodes(), e5Start)
 	problem := p.scalarProblem(p.planTable(), time.Time{})
 	got, stats := v2.Candidates(problem, problem.Table, 10, 1, 4, time.Time{})
 	if len(got) == 0 || !stats.Exhausted || stats.Deadline || stats.SurrogateEvaluated != 10 {
@@ -64,7 +63,7 @@ func TestCapacityV2CoreBudgetAndDeadline(t *testing.T) {
 func TestCapacityExactFeedbackTupleOrdering(t *testing.T) {
 	p := capacityDeltaTiny([]float64{10}, 1)
 	score := func(failure, success, potential float64) FeedbackWorkloadScore {
-		return FeedbackWorkloadScore{UID: "w", Population: 10, FailureFraction: failure, SuccessQuantileNanos: &success, PotentialExcess: &potential, Satisfied: failure == 0 && success <= 1e9}
+		return FeedbackWorkloadScore{UID: "w", Population: 10, FailureFraction: failure, SuccessQuantileNanos: &success, SuccessExcess: max(0, success/1e9-1), PotentialExcess: &potential, Satisfied: failure == 0 && success <= 1e9}
 	}
 	for _, tc := range []struct {
 		name string
@@ -102,12 +101,12 @@ func TestCapacityExactFeedbackTupleOrdering(t *testing.T) {
 func TestCapacityExactFeedbackWorkloadPriority(t *testing.T) {
 	p := capacityDeltaTiny([]float64{10}, 1)
 	d := *p.ws[0].d
-	d.UID = "other"
+	d.UID = schedulerTestOther
 	p.ws = append(p.ws, capacityWorkload{d: &d, rate: 1})
 	for _, strategy := range []string{SLOPriorityExcess, SLOPriorityWorkload} {
 		p.settings.SLOPriorityStrategy, p.settings.WorkloadPriority = strategy, []string{"w"}
-		a := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .1}, {UID: "other", FailureFraction: .9}}}
-		b := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .2}, {UID: "other", FailureFraction: .3}}}
+		a := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .1}, {UID: schedulerTestOther, FailureFraction: .9}}}
+		b := capacityResult{feedback: []FeedbackWorkloadScore{{UID: "w", FailureFraction: .2}, {UID: schedulerTestOther, FailureFraction: .3}}}
 		p.rankFeedback(&a)
 		p.rankFeedback(&b)
 		if a.better(&b) != (strategy == SLOPriorityWorkload) {

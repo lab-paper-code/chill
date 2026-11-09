@@ -133,11 +133,12 @@ var e5Start = map[string]bool{
 // e5Planner builds the node plans the planner would hold for the pairs from
 // the current instances: keep, each pair alone (one model and one instance per
 // Workload on a Node) and removing every instance. plans[n][0] keeps the
-// current instances at the routed weights (μ-proportional when routed is nil).
+// current instances at μ-proportional weights.
 // Removals run after the route.
-func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[string]bool, routed map[string]int32) *capacityPlanner {
-	_, base := schedulerFixture()
+func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[string]bool) *capacityPlanner {
+	defaults, base := schedulerFixture()
 	s := capacityTestSettings
+	s.DefaultOperationCost, s.DefaultIdlePower = defaults.DefaultOperationCost, defaults.DefaultIdlePower
 	s.ObservationWindow = 10 * time.Second
 	s.ControlInterval = time.Second
 	s.ComparisonPeriod, s.MaxReplicas, s.MaxInstances, s.PlanSearchWorkers = 10*time.Minute, 8, 16, 3
@@ -179,9 +180,6 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 				weights[c.id] = left
 			}
 			left -= weights[c.id]
-			if routed != nil {
-				weights[c.id] = routed[c.id]
-			}
 			if weights[c.id] > 0 {
 				p.keep.Routing[uid][c.id] = weights[c.id]
 			}
@@ -294,7 +292,7 @@ func TestCapacityPlanSearchEvaluation(t *testing.T) {
 	}
 	for _, space := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {2, 4}} {
 		for mix, rates := range e5Mixes {
-			p := e5Planner(rates, evaluationScaled(space.variants, space.modes), e5Start, nil)
+			p := e5Planner(rates, evaluationScaled(space.variants, space.modes), e5Start)
 			problem := p.scalarProblem(p.planTable(), time.Time{})
 			candidates, stats := v2.Candidates(problem, problem.Table, 150000, 16, 8, time.Time{})
 			if len(candidates) == 0 {

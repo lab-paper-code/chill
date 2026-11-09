@@ -145,7 +145,7 @@ func TestSchedulerSamplePlanSearchDefaults(t *testing.T) {
 }
 
 func TestCapacityFunnelExactAndFallback(t *testing.T) {
-	p := e5Planner(e5Mixes[0], evaluationScaled(1, 0), e5Start, nil)
+	p := e5Planner(e5Mixes[0], evaluationScaled(1, 0), e5Start)
 	keep := make([]int, len(p.plans))
 	exact := p.evaluate(slices.Clone(keep), p.routeOf(keep))
 	problem := p.searchProblem(time.Time{})
@@ -198,7 +198,7 @@ func TestCapacitySearchV2Determinism(t *testing.T) {
 	var baseline capacityResult
 	var counts [2]int
 	for trial := range 4 {
-		p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 2), e5Start, nil)
+		p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 2), e5Start)
 		p.settings.PlanSearchStrategy = "v2"
 		p.settings.PlanSearchWorkers = 1 + 2*(trial%2)
 		if trial > 0 {
@@ -233,7 +233,7 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 	capacityLoad(cover.settings, &cover.snapshot, cover.ws[0].d, cover.ws[0].rate)
 	countRecovery := capacityThreeNodeSwap()
 	countRecovery.settings.MaxInstances = 2
-	priced := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(2, 0), e5Start, nil)
+	priced := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(2, 0), e5Start)
 	priced.settings.PlanPricedStart = true
 	for _, tc := range []struct {
 		name, phase string
@@ -297,6 +297,35 @@ func TestCapacitySearchV2Deadline(t *testing.T) {
 }
 
 func TestSchedulerV2ZeroWitnessUsesPriorityThroughFinalAdmission(t *testing.T) {
+	settings, snapshot, recoveryNode := capacityZeroWitnessFixture()
+	first, second := snapshot.Workloads[0], snapshot.Workloads[1]
+	// Offline Pending rows are deliberately unrelated: EvaluateScheduler has no row input.
+	offline := []CapacityRow{{Status: CapacityPending}}
+	chosen := map[string]string{}
+	for _, uid := range []string{first.UID, second.UID} {
+		settings.WorkloadPriority = []string{uid}
+		decision, err := EvaluateScheduler(context.Background(), settings, snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		capacityCheckZeroWitnessDecision(t, decision, uid, recoveryNode)
+		capacityCheckZeroWitnessAdmission(t, settings, snapshot, decision, uid, recoveryNode)
+		chosen[uid] = decision.Target.ID
+		offline[0].Status = CapacityRejected
+		again, err := EvaluateScheduler(context.Background(), settings, snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if again.Target == nil || again.Target.ID != decision.Target.ID {
+			t.Fatalf("offline row affected scheduling: %+v rows=%+v", again, offline)
+		}
+	}
+	if chosen[first.UID] == chosen[second.UID] {
+		t.Fatal("Workload priority failed to switch infeasible choice")
+	}
+}
+
+func capacityZeroWitnessFixture() (SchedulerSettings, SchedulerSnapshot, NodeReference) {
 	settings, snapshot := schedulerFixture()
 	settings.PlanSearchStrategy = protocol.V2
 	settings.SLOPriorityStrategy = SLOPriorityWorkload
@@ -325,125 +354,112 @@ func TestSchedulerV2ZeroWitnessUsesPriorityThroughFinalAdmission(t *testing.T) {
 	capacityLoad(settings, &snapshot, first, 10)
 	capacityLoad(settings, &snapshot, second, 10)
 	capacityFeedbackForTest(settings, &snapshot)
-	// Offline Pending rows are deliberately unrelated: EvaluateScheduler has no row input.
-	offline := []CapacityRow{{Status: CapacityPending}}
-	chosen := map[string]string{}
-	for _, uid := range []string{first.UID, second.UID} {
-		settings.WorkloadPriority = []string{uid}
-		decision, err := EvaluateScheduler(context.Background(), settings, snapshot)
-		if err != nil {
-			t.Fatal(err)
+	return settings, snapshot, recoveryNode
+}
+
+func capacityCheckZeroWitnessDecision(t *testing.T, decision SchedulerDecision, uid string, recoveryNode NodeReference) {
+	t.Helper()
+	if decision.Status != SchedulerStatusOverload || decision.Target == nil || decision.Target.Keep || decision.Capacity == nil || decision.Capacity.Search.Strategy != protocol.V2 {
+		t.Fatalf("priority %s lost improved infeasible target: %+v", uid, decision)
+	}
+	if !slices.ContainsFunc(decision.Target.Instances, func(instance SchedulerInstance) bool {
+		return instance.Node == recoveryNode && instance.WorkloadUID == uid
+	}) {
+		t.Fatalf("priority %s did not receive recovery: %+v", uid, decision.Target)
+	}
+	for _, workload := range decision.Capacity.Workloads {
+		if len(workload.KeepTests) == 0 || len(workload.Tests) == 0 {
+			t.Fatalf("missing current nominal tests: %+v", workload)
 		}
-		if decision.Status != SchedulerStatusOverload || decision.Target == nil || decision.Target.Keep || decision.Capacity == nil || decision.Capacity.Search.Strategy != protocol.V2 {
-			t.Fatalf("priority %s lost improved infeasible target: %+v", uid, decision)
-		}
-		if !slices.ContainsFunc(decision.Target.Instances, func(instance SchedulerInstance) bool {
-			return instance.Node == recoveryNode && instance.WorkloadUID == uid
-		}) {
-			t.Fatalf("priority %s did not receive recovery: %+v", uid, decision.Target)
-		}
-		for _, workload := range decision.Capacity.Workloads {
-			if len(workload.KeepTests) == 0 || len(workload.Tests) == 0 {
-				t.Fatalf("missing current nominal tests: %+v", workload)
+		for _, evidence := range append(slices.Clone(workload.KeepTests), workload.Tests...) {
+			if evidence.KappaHat != 0 || len(evidence.Tests) == 0 {
+				t.Fatalf("fixture requires zero passing witness with completed tests: %+v", evidence)
 			}
-			for _, evidence := range append(slices.Clone(workload.KeepTests), workload.Tests...) {
-				if evidence.KappaHat != 0 || len(evidence.Tests) == 0 {
-					t.Fatalf("fixture requires zero passing witness with completed tests: %+v", evidence)
-				}
-				if !slices.ContainsFunc(decision.Keep.Instances, func(instance SchedulerInstance) bool { return instance.ID == evidence.InstanceID }) &&
-					!slices.ContainsFunc(decision.Target.Instances, func(instance SchedulerInstance) bool { return instance.ID == evidence.InstanceID }) {
-					t.Fatalf("rate query escaped keep/selected instances: %+v", evidence)
-				}
+			if !slices.ContainsFunc(decision.Keep.Instances, func(instance SchedulerInstance) bool { return instance.ID == evidence.InstanceID }) &&
+				!slices.ContainsFunc(decision.Target.Instances, func(instance SchedulerInstance) bool { return instance.ID == evidence.InstanceID }) {
+				t.Fatalf("rate query escaped keep/selected instances: %+v", evidence)
 			}
-		}
-		selected := slices.IndexFunc(decision.Target.Feedback, func(score FeedbackWorkloadScore) bool { return score.UID == uid })
-		baseline := slices.IndexFunc(decision.Keep.Feedback, func(score FeedbackWorkloadScore) bool { return score.UID == uid })
-		if selected < 0 || baseline < 0 {
-			t.Fatal("common feedback missing")
-		}
-		targetScore, keepScore := decision.Target.Feedback[selected], decision.Keep.Feedback[baseline]
-		if targetScore.Satisfied || targetScore.FailureFraction != 1 || targetScore.SuccessQuantileNanos != nil || targetScore.PotentialExcess == nil || keepScore.PotentialExcess == nil || *targetScore.PotentialExcess >= *keepScore.PotentialExcess {
-			t.Fatalf("infeasible recovery did not improve conditional potential: target=%+v keep=%+v", targetScore, keepScore)
-		}
-		reason, err := SchedulerTargetAdmission(context.Background(), settings, snapshot, *decision.Target)
-		if err != nil || reason != "" {
-			t.Fatalf("improved infeasible target failed final admission: reason=%s err=%v", reason, err)
-		}
-		// NEW admission cannot take authority from an existing reservation,
-		// even when that owner holds this exact frozen target.
-		reserved := snapshot
-		reservedTarget := *decision.Target
-		reserveTargetForTest(&reserved, &reservedTarget)
-		if reserved.Reservations[0].Owner != reservedTarget.ID || reserved.Reservations[0].Target != &reservedTarget {
-			t.Fatal("fixture lost exact reservation ownership")
-		}
-		frozen := struct {
-			Snapshot SchedulerSnapshot
-			Target   SchedulerCandidate
-		}{reserved, reservedTarget}
-		before, err := json.Marshal(frozen)
-		if err != nil {
-			t.Fatal(err)
-		}
-		reason, err = SchedulerTargetAdmission(context.Background(), settings, reserved, reservedTarget)
-		if err != nil || reason == "" {
-			t.Fatalf("NEW admission accepted reserved owner target: reason=%s err=%v", reason, err)
-		}
-		after, err := json.Marshal(struct {
-			Snapshot SchedulerSnapshot
-			Target   SchedulerCandidate
-		}{reserved, reservedTarget})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(after) != string(before) {
-			t.Fatal("NEW admission changed reserved snapshot or frozen target")
-		}
-		for _, changed := range []string{"allocation", "owner", "unavailable node"} {
-			current := snapshot
-			target := *decision.Target
-			target.Instances = slices.Clone(target.Instances)
-			current.Instances, current.Nodes, current.Workloads = slices.Clone(snapshot.Instances), slices.Clone(snapshot.Nodes), slices.Clone(snapshot.Workloads)
-			switch changed {
-			case "allocation":
-				for k := range target.Instances {
-					if target.Instances[k].Node == recoveryNode {
-						target.Instances[k].Allocation.MemoryBytes++
-					}
-				}
-			case "owner":
-				foreign := *first
-				foreign.UID = "external-owner"
-				current.Workloads = append(current.Workloads, &foreign)
-				for k := range current.Instances {
-					if current.Instances[k].WorkloadUID == uid {
-						current.Instances[k].OwnerWorkloadUID = foreign.UID
-					}
-				}
-			case "unavailable node":
-				for k := range current.Nodes {
-					if current.Nodes[k].Node == recoveryNode {
-						current.Nodes[k].Ready = false
-					}
-				}
-			}
-			reason, err := SchedulerTargetAdmission(context.Background(), settings, current, target)
-			if err != nil || reason == "" {
-				t.Fatalf("%s escaped final physical admission: reason=%s err=%v", changed, reason, err)
-			}
-		}
-		chosen[uid] = decision.Target.ID
-		offline[0].Status = CapacityRejected
-		again, err := EvaluateScheduler(context.Background(), settings, snapshot)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if again.Target == nil || again.Target.ID != decision.Target.ID {
-			t.Fatalf("offline row affected scheduling: %+v rows=%+v", again, offline)
 		}
 	}
-	if chosen[first.UID] == chosen[second.UID] {
-		t.Fatal("Workload priority failed to switch infeasible choice")
+	selected := slices.IndexFunc(decision.Target.Feedback, func(score FeedbackWorkloadScore) bool { return score.UID == uid })
+	baseline := slices.IndexFunc(decision.Keep.Feedback, func(score FeedbackWorkloadScore) bool { return score.UID == uid })
+	if selected < 0 || baseline < 0 {
+		t.Fatal("common feedback missing")
+	}
+	targetScore, keepScore := decision.Target.Feedback[selected], decision.Keep.Feedback[baseline]
+	if targetScore.Satisfied || targetScore.FailureFraction != 1 || targetScore.SuccessQuantileNanos != nil || targetScore.PotentialExcess == nil || keepScore.PotentialExcess == nil || *targetScore.PotentialExcess >= *keepScore.PotentialExcess {
+		t.Fatalf("infeasible recovery did not improve conditional potential: target=%+v keep=%+v", targetScore, keepScore)
+	}
+}
+
+func capacityCheckZeroWitnessAdmission(t *testing.T, settings SchedulerSettings, snapshot SchedulerSnapshot, decision SchedulerDecision, uid string, recoveryNode NodeReference) {
+	t.Helper()
+	reason, err := SchedulerTargetAdmission(context.Background(), settings, snapshot, *decision.Target)
+	if err != nil || reason != "" {
+		t.Fatalf("improved infeasible target failed final admission: reason=%s err=%v", reason, err)
+	}
+	// NEW admission cannot take authority from an existing reservation,
+	// even when that owner holds this exact frozen target.
+	reserved := snapshot
+	reservedTarget := *decision.Target
+	reserveTargetForTest(&reserved, &reservedTarget)
+	if reserved.Reservations[0].Owner != reservedTarget.ID || reserved.Reservations[0].Target != &reservedTarget {
+		t.Fatal("fixture lost exact reservation ownership")
+	}
+	frozen := struct {
+		Snapshot SchedulerSnapshot
+		Target   SchedulerCandidate
+	}{reserved, reservedTarget}
+	before, err := json.Marshal(frozen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason, err = SchedulerTargetAdmission(context.Background(), settings, reserved, reservedTarget)
+	if err != nil || reason == "" {
+		t.Fatalf("NEW admission accepted reserved owner target: reason=%s err=%v", reason, err)
+	}
+	after, err := json.Marshal(struct {
+		Snapshot SchedulerSnapshot
+		Target   SchedulerCandidate
+	}{reserved, reservedTarget})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("NEW admission changed reserved snapshot or frozen target")
+	}
+	for _, changed := range []string{"allocation", "owner", "unavailable node"} {
+		current := snapshot
+		target := *decision.Target
+		target.Instances = slices.Clone(target.Instances)
+		current.Instances, current.Nodes, current.Workloads = slices.Clone(snapshot.Instances), slices.Clone(snapshot.Nodes), slices.Clone(snapshot.Workloads)
+		switch changed {
+		case "allocation":
+			for k := range target.Instances {
+				if target.Instances[k].Node == recoveryNode {
+					target.Instances[k].Allocation.MemoryBytes++
+				}
+			}
+		case "owner":
+			foreign := *snapshot.Workloads[0]
+			foreign.UID = "external-owner"
+			current.Workloads = append(current.Workloads, &foreign)
+			for k := range current.Instances {
+				if current.Instances[k].WorkloadUID == uid {
+					current.Instances[k].OwnerWorkloadUID = foreign.UID
+				}
+			}
+		case "unavailable node":
+			for k := range current.Nodes {
+				if current.Nodes[k].Node == recoveryNode {
+					current.Nodes[k].Ready = false
+				}
+			}
+		}
+		reason, err := SchedulerTargetAdmission(context.Background(), settings, current, target)
+		if err != nil || reason == "" {
+			t.Fatalf("%s escaped final physical admission: reason=%s err=%v", changed, reason, err)
+		}
 	}
 }
 

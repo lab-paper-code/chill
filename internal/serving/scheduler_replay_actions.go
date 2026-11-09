@@ -258,6 +258,9 @@ func (s *schedulerReplayState) operationCost(a *schedulerReplayAction) *Operatio
 }
 
 func (s *schedulerReplayState) sampleOperation(a *schedulerReplayAction, cost *OperationCost) bool {
+	if cost == nil {
+		return false
+	}
 	trialOptions := []OperationTrial{}
 	for _, t := range cost.Trials {
 		if t.Duration <= 0 || !schedulerFinite(t.Joules) || !schedulerValidHalfWidth(t.EnergyUncertaintyJoules) || (cost.EnergyScope == "whole-wall" && t.Joules < 0) {
@@ -269,6 +272,10 @@ func (s *schedulerReplayState) sampleOperation(a *schedulerReplayAction, cost *O
 		trialOptions = append(trialOptions, t)
 	}
 	if len(trialOptions) == 0 {
+		if a.action.CostProvenance != nil && a.action.CostProvenance.Source == operationSourceDefault {
+			s.out.reasons = appendUnique(s.out.reasons, "InvalidDefaultOperationCost:"+a.action.Kind)
+			return false
+		}
 		return s.sampleOperation(a, s.defaultOperation(a, "operation exceeded measured duration"))
 	}
 	a.trial = trialOptions[s.rng.IntN(len(trialOptions))]

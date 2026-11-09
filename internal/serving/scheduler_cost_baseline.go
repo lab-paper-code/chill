@@ -2,6 +2,10 @@ package serving
 
 func (s *schedulerReplayState) defaultOperation(a *schedulerReplayAction, reason string) *OperationCost {
 	value := s.settings.DefaultOperationCost[a.action.Kind]
+	if !schedulerFinite(value.Seconds) || value.Seconds <= 0 || !schedulerFinite(value.Joules) || value.Joules < 0 {
+		s.out.reasons = appendUnique(s.out.reasons, "InvalidDefaultOperationCost:"+a.action.Kind)
+		return nil
+	}
 	a.action.CostID = ""
 	a.action.CostProvenance = &OperationCostProvenance{Source: operationSourceDefault, Value: &value}
 	s.out.assumptions = appendUnique(s.out.assumptions, "configured default whole-wall operation cost: "+reason)

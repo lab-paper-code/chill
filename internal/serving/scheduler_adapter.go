@@ -101,7 +101,7 @@ func (p *capacityPlanner) searchProblem(deadline time.Time) protocol.Problem {
 	for n, plans := range p.plans {
 		problem.Plans[n] = make([]protocol.Plan, len(plans))
 		for j, plan := range plans {
-			problem.Plans[n][j] = protocol.Plan{Eligible: plan.record.Eligible, Empty: len(plan.instances) == 0}
+			problem.Plans[n][j] = protocol.Plan{Eligible: plan.record.Eligible && (j == 0 || p.compared[n]), Empty: len(plan.instances) == 0}
 		}
 	}
 	for w, ws := range p.ws {

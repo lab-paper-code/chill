@@ -52,7 +52,7 @@ func TestCapacityTableScalars(t *testing.T) {
 
 func TestCapacityTableVariants(t *testing.T) {
 	for mix, rates := range e5Mixes {
-		p := e5Planner(rates, evaluationScaled(2, 0), e5Start, nil)
+		p := e5Planner(rates, evaluationScaled(2, 0), e5Start)
 		tab := p.planTable()
 		problem := p.scalarProblem(tab, time.Time{})
 		v2.Group(problem.Table)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestCapacityPolishStrictImprovementAndTermination(t *testing.T) {
-	p := e5Planner(map[int]float64{0: 20, 1: 15}, evaluationNodes(), e5Start, nil)
+	p := e5Planner(map[int]float64{0: 20, 1: 15}, evaluationNodes(), e5Start)
 	problem := p.scalarProblem(p.planTable(), time.Time{})
 	candidates, stats := v2.Candidates(problem, problem.Table, 500000, 16, 4, time.Time{})
 	if len(candidates) == 0 || stats.Deadline || stats.Exhausted {

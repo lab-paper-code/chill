@@ -33,8 +33,8 @@ func (p *capacityPlanner) bounded(choice []int) bool {
 // SchedulerReadyExpansion admits independently placed, already-Ready peers.
 // Physical identity/policy ACK remain caller obligations. SLO assessment uses
 // the same finite-demand replay and tuple ordering as exact planner finalists.
-func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnapshot, uid string, current, added []SchedulerInstance) (map[string]int32, bool) {
-	if len(current) == 0 || len(added) == 0 || !settings.Controls.Routing || settings.ObservationWindow <= 0 || settings.ControlInterval <= 0 || len(schedulerValidateObservationTimes(&snapshot)) != 0 {
+func SchedulerReadyExpansion(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, uid string, current, added []SchedulerInstance) (map[string]int32, bool) {
+	if ctx.Err() != nil || len(current) == 0 || len(added) == 0 || !settings.Controls.Routing || settings.ObservationWindow <= 0 || settings.ControlInterval <= 0 || len(schedulerValidateObservationTimes(&snapshot)) != 0 {
 		return nil, false
 	}
 	var definition *Definition
@@ -47,6 +47,54 @@ func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnaps
 	if definition == nil {
 		return nil, false
 	}
+	inputs, ok := schedulerReadyExpansionInputs(settings, snapshot, uid, current, added)
+	if !ok {
+		return nil, false
+	}
+	weights, err := BuildFeedbackRouting(inputs, true)
+	if err != nil {
+		return nil, false
+	}
+	routing := map[string]int32{}
+	for k, input := range inputs {
+		if weights[k] <= 0 {
+			return nil, false
+		}
+		routing[input.InstanceID] = weights[k]
+	}
+	keep := SchedulerCandidate{Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
+	target := keep
+	target.Keep = false
+	target.Instances = slices.Clone(snapshot.Instances)
+	for _, i := range added {
+		if !slices.ContainsFunc(target.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
+			target.Instances = append(target.Instances, i)
+		}
+	}
+	target.Routing = map[string]map[string]int32{}
+	for other, route := range snapshot.Routing {
+		target.Routing[other] = route
+	}
+	target.Routing[uid] = routing
+	a, err := EvaluateFeedbackCandidate(ctx, settings, snapshot, keep, 0)
+	if err != nil || len(a.InvalidReasons) > 0 {
+		return nil, false
+	}
+	b, err := EvaluateFeedbackCandidate(ctx, settings, snapshot, target, 0)
+	if err != nil || len(b.InvalidReasons) > 0 {
+		return nil, false
+	}
+	p := newCapacityPlanner(ctx, settings, snapshot, keep, SchedulerDecision{Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: []SchedulerWorkloadState{{UID: uid, State: WorkloadControlled}}})
+	old, next := capacityResult{feedback: a.Workloads}, capacityResult{feedback: b.Workloads}
+	p.rankFeedback(&old)
+	p.rankFeedback(&next)
+	if old.feasible && !next.feasible || !old.feasible && slices.Compare(next.excesses, old.excesses) > 0 {
+		return nil, false
+	}
+	return routing, ctx.Err() == nil
+}
+
+func schedulerReadyExpansionInputs(settings SchedulerSettings, snapshot SchedulerSnapshot, uid string, current, added []SchedulerInstance) ([]FeedbackRouteInput, bool) {
 	nodes := map[NodeReference]bool{}
 	instances := append(slices.Clone(current), added...)
 	inputs := make([]FeedbackRouteInput, len(instances))
@@ -80,47 +128,7 @@ func SchedulerReadyExpansion(settings SchedulerSettings, snapshot SchedulerSnaps
 		}
 		return cmp.Or(cmp.Compare(energy(a.InstanceID), energy(b.InstanceID)), cmp.Compare(a.InstanceID, b.InstanceID))
 	})
-	weights, err := BuildFeedbackRouting(inputs, true)
-	if err != nil {
-		return nil, false
-	}
-	routing := map[string]int32{}
-	for k, input := range inputs {
-		if weights[k] <= 0 {
-			return nil, false
-		}
-		routing[input.InstanceID] = weights[k]
-	}
-	keep := SchedulerCandidate{Keep: true, Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
-	target := keep
-	target.Keep = false
-	target.Instances = slices.Clone(snapshot.Instances)
-	for _, i := range added {
-		if !slices.ContainsFunc(target.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
-			target.Instances = append(target.Instances, i)
-		}
-	}
-	target.Routing = map[string]map[string]int32{}
-	for other, route := range snapshot.Routing {
-		target.Routing[other] = route
-	}
-	target.Routing[uid] = routing
-	a, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, keep, 0)
-	if err != nil || len(a.InvalidReasons) > 0 {
-		return nil, false
-	}
-	b, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, target, 0)
-	if err != nil || len(b.InvalidReasons) > 0 {
-		return nil, false
-	}
-	p := newCapacityPlanner(context.Background(), settings, snapshot, keep, SchedulerDecision{Search: schedulerSearchPopulation(context.Background(), settings, snapshot), Workloads: []SchedulerWorkloadState{{UID: uid, State: WorkloadControlled}}})
-	old, next := capacityResult{feedback: a.Workloads}, capacityResult{feedback: b.Workloads}
-	p.rankFeedback(&old)
-	p.rankFeedback(&next)
-	if old.feasible && !next.feasible || !old.feasible && slices.Compare(next.excesses, old.excesses) > 0 {
-		return nil, false
-	}
-	return routing, true
+	return inputs, true
 }
 
 // capacityWeights allocates actual integer routes from positive profile weights.
@@ -404,12 +412,12 @@ func (p *capacityPlanner) rankFeedback(res *capacityResult) {
 			continue
 		}
 		score := res.feedback[at]
-		value := tuple{uid: score.UID, failure: score.FailureFraction}
-		if score.SuccessQuantileNanos != nil {
-			value.success = max(0, *score.SuccessQuantileNanos/float64(ws.d.SLO.TargetLatency)-1)
-		}
-		if score.FailureFraction > 0 && score.PotentialExcess != nil {
-			value.potential = *score.PotentialExcess
+		value := tuple{uid: score.UID, failure: score.FailureFraction, success: score.SuccessExcess}
+		if score.FailureFraction > 0 {
+			value.potential = math.Inf(1)
+			if score.PotentialExcess != nil {
+				value.potential = *score.PotentialExcess
+			}
 		}
 		values = append(values, value)
 		res.feasible = res.feasible && score.Satisfied

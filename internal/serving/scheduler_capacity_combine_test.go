@@ -80,7 +80,7 @@ func TestCapacityCombineFrozenProduct(t *testing.T) {
 
 func TestCapacityCombineMatchesFrozenExhaustiveOracle(t *testing.T) {
 	for _, horizon := range []float64{1, 10, 30} {
-		p := e5Planner(map[int]float64{0: 20, 1: 40}, evaluationNodes(), e5Start, nil)
+		p := e5Planner(map[int]float64{0: 20, 1: 40}, evaluationNodes(), e5Start)
 		p.period = horizon
 		tab := p.planTable()
 		problem := p.scalarProblem(tab, time.Time{})
@@ -103,7 +103,7 @@ func TestCapacityCombineMatchesFrozenExhaustiveOracle(t *testing.T) {
 
 func TestCapacityCombineAllActiveIncludesEveryProfileVariant(t *testing.T) {
 	for _, active := range []int{0, -1} {
-		p := e5Planner(map[int]float64{0: 20}, evaluationScaled(2, 0), e5Start, nil)
+		p := e5Planner(map[int]float64{0: 20}, evaluationScaled(2, 0), e5Start)
 		problem := p.scalarProblem(p.planTable(), time.Time{})
 		v2.Group(problem.Table)
 		multiple := false

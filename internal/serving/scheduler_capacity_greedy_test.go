@@ -84,7 +84,7 @@ func TestCapacityDeltaFrozenWalk(t *testing.T) {
 	rng := rand.New(rand.NewPCG(20261107, 3))
 	for _, space := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
 		for _, rates := range e5Mixes {
-			p := e5Planner(rates, evaluationScaled(space.variants, space.modes), e5Start, nil)
+			p := e5Planner(rates, evaluationScaled(space.variants, space.modes), e5Start)
 			for _, routing := range []bool{true, false} {
 				p.settings.Controls.Routing = routing
 				capacityDeltaWalk(t, p, rng)
@@ -149,7 +149,7 @@ func capacityDeltaTiny(rates []float64, rate float64) *capacityPlanner {
 func TestCapacityDeltaClampBoundaries(t *testing.T) {
 	beforePre, afterPost, beyondH := 0, 0, 0
 	for _, horizon := range []float64{1, 10, 30} {
-		p := e5Planner(map[int]float64{0: 20, 1: 40, 2: .3}, evaluationNodes(), e5Start, nil)
+		p := e5Planner(map[int]float64{0: 20, 1: 40, 2: .3}, evaluationNodes(), e5Start)
 		p.period = horizon
 		tab := p.planTable()
 		choice := make([]int, len(p.plans))
@@ -180,7 +180,7 @@ func TestCapacityDeltaClampBoundaries(t *testing.T) {
 }
 
 func TestCapacityDeltaFrozenInputs(t *testing.T) {
-	p := e5Planner(map[int]float64{0: 20}, evaluationScaled(2, 0), e5Start, nil)
+	p := e5Planner(map[int]float64{0: 20}, evaluationScaled(2, 0), e5Start)
 	tab := p.planTable()
 	choice := make([]int, len(p.plans))
 	for n := range choice {
@@ -260,7 +260,7 @@ func TestCapacityGreedyKeyOrder(t *testing.T) {
 var capacityDeltaBenchmarkResult protocol.Rank
 
 func BenchmarkCapacityDelta(b *testing.B) {
-	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 4), e5Start, nil)
+	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 4), e5Start)
 	tab := p.planTable()
 	table := p.scalarProblem(tab, time.Time{}).Table
 	choice := make([]int, len(p.plans))
@@ -276,7 +276,7 @@ func BenchmarkCapacityDelta(b *testing.B) {
 }
 
 func TestCapacityDeltaNoAllocations(t *testing.T) {
-	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 4), e5Start, nil)
+	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 4), e5Start)
 	tab := p.planTable()
 	table := p.scalarProblem(tab, time.Time{}).Table
 	choice := make([]int, len(p.plans))
