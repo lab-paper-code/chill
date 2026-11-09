@@ -13,6 +13,7 @@ import * as identity from "./workload-identity.ts"
 import * as live from "./live.ts"
 import * as sourceExport from "./source-export.ts"
 import type { ObservationResult } from "./read-types.ts"
+import * as capacity from "./capacity.ts"
 
 const require=createRequire(import.meta.url)
 const box=({children}:{children?:ReactNode})=>createElement("div",null,children)
@@ -32,6 +33,9 @@ test("power journal queries ignore workload UID while retaining its navigation c
   const params=new URLSearchParams("kind=power&uid=service&from=2026-10-31T01:00:00.123456789Z&to=2026-10-31T02:00:00.987654321Z&limit=17&cursor=81"),calls:string[]=[]
   const modules=modulesFor(params,(path,options)=>{if(options?.enabled===false)return {};if(path==="v1/workloads?view=summary")return {data:[]};calls.push(path);return {data:{events:[]},isSuccess:true}})
   modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
+  modules["@/lib/capacity"]=capacity
+  modules["@/components/data-table"]={DataTable:"table"}
+  modules["./scheduler-capacity"]=load("../features/scheduler-capacity.tsx",modules)
   modules["@/lib/live"]=live
   const exports=load("../features/scheduler-history.tsx",modules)
   renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))
@@ -57,6 +61,9 @@ test("incomplete historical references never mount current-state evidence",()=>{
   for(const search of ["view=history&id=same&from=start&to=end","view=history&id=same&node=node","id=same&offset=17&from=start&to=end"]){
     const modules=modulesFor(new URLSearchParams(search),path=>({data:path==="v1/workloads?view=summary"?[]:{events:[]},isSuccess:true}))
     modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
+    modules["@/lib/capacity"]=capacity
+    modules["@/components/data-table"]={DataTable:"table"}
+    modules["./scheduler-capacity"]=load("../features/scheduler-capacity.tsx",modules)
     modules["@/lib/live"]=live
     const exports=load("../features/scheduler-history.tsx",modules)
     const html=renderToStaticMarkup(createElement(exports.SchedulerHistoryPage as ()=>ReactNode))

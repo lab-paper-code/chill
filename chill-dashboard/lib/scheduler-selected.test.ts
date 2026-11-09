@@ -10,6 +10,7 @@ import * as identity from "./workload-identity.ts"
 import * as dates from "./date-time.ts"
 import * as liveDisplay from "./live-display.ts"
 import type * as Screen from "../features/scheduler.tsx"
+import { load } from "./evaluation-author-test-helpers.ts"
 
 test("selected service evidence retains configured percentile, zero prediction, missing prediction and exact load window",()=>{
   const require=createRequire(import.meta.url)
@@ -32,6 +33,7 @@ test("selected service evidence retains configured percentile, zero prediction, 
     "@/components/ui/button":{Button:container},"@/components/screen":{Facts:()=>null},
     "@/components/data-table":{DataTable:({data,columns}:{data:unknown[];columns:{key:string;value:(row:unknown)=>ReactNode}[]})=>createElement("table",null,createElement("tbody",null,data.map((row,index)=>createElement("tr",{key:index},columns.map(column=>createElement("td",{key:column.key},column.value(row)))))))},
   }
+  modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
   const exports:Record<string,unknown>={}
   const source=readFileSync(new URL("../features/scheduler.tsx",import.meta.url),"utf8")
   const compiled=transpileModule(source,{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
@@ -67,6 +69,7 @@ test("snapshot deep links freeze the first response and require explicit latest 
     "@/components/read-region":{},"@/components/screen":{},"@/components/ui/button":{},
     "@/components/data-table":{},"@/lib/source-export":{},"next/link":{},
   }
+  modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
   const exports:Record<string,unknown>={}
   const compiled=transpileModule(readFileSync(new URL("../features/scheduler.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)
@@ -115,6 +118,7 @@ test("power overview preserves server interval aggregates and zero versus unavai
     recharts:{BarChart:wrap,Bar:()=>null,CartesianGrid:()=>null,XAxis:()=>null,YAxis:()=>null},
     "./power-series":{PowerTimeline:()=>null},
   }
+  modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
   const exports:Record<string,unknown>={}
   const compiled=transpileModule(readFileSync(new URL("../features/scheduler.tsx",import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText
   new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports)

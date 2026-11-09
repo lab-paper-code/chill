@@ -20,7 +20,7 @@ export function PlanSearchEvidence({capacity}:{capacity?:SchedulerCapacity}) {
       {key:"key",label:"계획",value:plan=>plan.key},
       {key:"eligible",label:"적격",value:plan=>plan.eligible?"예":"아니요"},
       {key:"reason",label:"사유",value:plan=>plan.reason??"없음"},
-    ]}/>
+    ]}/>}
   </section>
 }
 

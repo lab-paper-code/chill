@@ -77,7 +77,7 @@ test("decision evidence keeps selected and keep tests separate without inventing
 test("current scheduler readout passes the decision budget, never snapshot or current settings substitutes",()=>{
   const fixture=JSON.parse(readFileSync(new URL("./fixtures/e5-scheduler-control.json",import.meta.url),"utf8"))
   const pathFeedback=[{workloadUID:"decision-only",percentile:95,totalNanos:0,postNanos:0,sampleCount:0,source:"configured"}]
-  const view={state:{snapshot:{...fixture.snapshot,pathFeedback:[{...pathFeedback[0],totalNanos:9000000,source:"empirical"}]},decision:{...fixture.decision,pathFeedback,settings:{...fixture.decision.settings,completionMarginMS:123}}}}
+  const view={state:{snapshot:{...fixture.snapshot,pathFeedback:[{...pathFeedback[0],totalNanos:9000000,source:"empirical"}]},decision:{...fixture.decision,keep:{id:"keep",keep:true,actions:[],status:"Feasible",reasons:[],expectedJoules:0,worstExceedance:0},target:null,search:{windowStart:fixture.at,windowEnd:fixture.at},pathFeedback,settings:{completionMarginMS:123}}}}
   const h=harness("",{"v1/scheduler":{data:view}})
   const screen=h.load("../features/scheduler.tsx")
   const components=h.modules["./scheduler-workload-states"] as Record<string,unknown>
@@ -87,7 +87,9 @@ test("current scheduler readout passes the decision budget, never snapshot or cu
     const tree=(entry.type as (props:Record<string,unknown>)=>Element)(entry.props)
     const readout=nodes(tree).find(node=>node.type===component)!
     assert.ok(readout)
-    assert.equal(readout.props.decision,view.state.decision)
+    const displayed=render((component as (props:Record<string,unknown>)=>unknown)(readout.props))
+    assert.deepEqual(nodes(displayed).filter(node=>node.type==="td").map(node=>node.props.children),[95,0,0,"configured",0])
+    assert.ok(nodes(displayed).some(node=>node.type==="th"&&Array.isArray(node.props.children)&&node.props.children[0]==="decision-only"))
   }
   Reflect.deleteProperty(view.state.decision,"pathFeedback")
   const entry=screen.SchedulerEvidence({kind:"estimates"})

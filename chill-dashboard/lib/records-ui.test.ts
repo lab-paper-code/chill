@@ -10,6 +10,7 @@ import * as scheduler from "./scheduler.ts"
 import * as kinds from "./records.ts"
 import * as identity from "./workload-identity.ts"
 import * as live from "./live.ts"
+import * as capacity from "./capacity.ts"
 
 const require=createRequire(import.meta.url)
 function load(file:string,modules:Record<string,unknown>){const exports:Record<string,unknown>={};const compiled=transpileModule(readFileSync(new URL(file,import.meta.url),"utf8"),{compilerOptions:{target:ScriptTarget.ES2022,module:ModuleKind.CommonJS,jsx:JsxEmit.ReactJSX}}).outputText;new Function("require","exports",compiled)((name:string)=>name in modules?modules[name]:require(name),exports);return exports}
@@ -25,6 +26,9 @@ test("records renders real journal rows and exact server page scope without a hu
   api.useChillQuery=(path,options)=>path==="v1/workloads?view=summary"?{data:[]}:originalQuery(path,options)
   modules["@/components/records-navigation"]=load("../components/records-navigation.tsx",modules)
   modules["./scheduler-workload-states"]=load("../features/scheduler-workload-states.tsx",modules)
+  modules["@/lib/capacity"]=capacity
+  modules["@/components/data-table"]={DataTable:"table"}
+  modules["./scheduler-capacity"]=load("../features/scheduler-capacity.tsx",modules)
   modules["@/lib/workload-identity"]=identity
   modules["@/lib/live"]=live
   const exports=load("../features/scheduler-history.tsx",modules)
