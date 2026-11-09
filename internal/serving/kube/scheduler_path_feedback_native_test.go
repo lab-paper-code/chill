@@ -26,16 +26,7 @@ func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *tes
 	}
 	snapshot := c.State().Snapshot
 	workload := snapshot.Workloads[0]
-	var ready serving.SchedulerInstance
-	for _, instance := range snapshot.Instances {
-		if instance.Ready {
-			ready = instance
-			break
-		}
-	}
-	if ready.Profile == nil || ready.Capacity <= 0 {
-		t.Fatalf("fixture has no usable native capacity: %+v", ready)
-	}
+	ready := readyNativeFeedbackInstance(t, snapshot.Instances)
 	seen, release := interceptNativeFeedbackCalls(t, c, ctx, ready)
 	var calls []*serving.Call
 	var receipts []serving.Receipt
@@ -121,6 +112,21 @@ func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *tes
 		t.Fatal(err)
 	}
 	verifyFrozenNativeFeedback(t, rows.Requests, actual, want, len(calls))
+}
+
+func readyNativeFeedbackInstance(t *testing.T, instances []serving.SchedulerInstance) serving.SchedulerInstance {
+	t.Helper()
+	var ready serving.SchedulerInstance
+	for _, instance := range instances {
+		if instance.Ready {
+			ready = instance
+			break
+		}
+	}
+	if ready.Profile == nil || ready.Capacity <= 0 {
+		t.Fatalf("fixture has no usable native capacity: %+v", ready)
+	}
+	return ready
 }
 
 func verifyFrozenNativeFeedback(t *testing.T, rows []serving.RequestRow, actual map[string]native.Request, want map[string]float64, count int) {

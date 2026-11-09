@@ -594,7 +594,7 @@ func (h *Handler) infer(w http.ResponseWriter, r *http.Request) {
 		outcome := "error"
 		switch errorCode(err) {
 		case requestTimeoutCode, "SLODeadlineDrop":
-			outcome = "timeout"
+			outcome = timingOutcomeTimeout
 		case requestCanceledCode:
 			outcome = "canceled"
 		case "PreprocessFailed":

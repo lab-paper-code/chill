@@ -146,12 +146,7 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 			t.Fatalf("archive provenance missing: %+v", source)
 		}
 	}
-	load, err := restarted.LoadWindow(ctx, from, to)
-	wantClientGap := serving.ObservationGap{From: from, To: to, Stream: observationClientStream, Reason: "StreamUnavailable"}
-	if err != nil || !reflect.DeepEqual(load.Workloads, wantLoad.Workloads) || !reflect.DeepEqual(load.Arrivals, wantLoad.Arrivals) ||
-		load.GapUntil == nil || !load.GapUntil.Equal(to) || !reflect.DeepEqual(load.Coverage.Gaps, []serving.ObservationGap{wantClientGap}) {
-		t.Fatalf("archive load: %+v %v", load, err)
-	}
+	checkArchivedLoadWindow(t, restarted, from, to, wantLoad)
 	page, next, gap, coverage, err := restarted.SchedulerObservationPage(ctx, from, to, 1, 0, SchedulerObservationSelection{})
 	if err != nil || len(page) != 1 || page[0].Snapshot.Workloads[0].UID != archiveTestUID || next != 1 || gap != nil || coverage.Sources[0].Source != observationArchiveSource {
 		t.Fatalf("archive first page/catalog: %+v %d %v", page, next, err)
@@ -161,6 +156,16 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 		t.Fatalf("archive terminal page: %+v %d %v", page, next, err)
 	}
 	checkArchiveSelectedPages(t, restarted, ctx, from, to)
+}
+
+func checkArchivedLoadWindow(t *testing.T, log *ObservationLog, from, to time.Time, want LoadWindow) {
+	t.Helper()
+	load, err := log.LoadWindow(context.Background(), from, to)
+	wantClientGap := serving.ObservationGap{From: from, To: to, Stream: observationClientStream, Reason: "StreamUnavailable"}
+	if err != nil || !reflect.DeepEqual(load.Workloads, want.Workloads) || !reflect.DeepEqual(load.Arrivals, want.Arrivals) ||
+		load.GapUntil == nil || !load.GapUntil.Equal(to) || !reflect.DeepEqual(load.Coverage.Gaps, []serving.ObservationGap{wantClientGap}) {
+		t.Fatalf("archive load: %+v %v", load, err)
+	}
 }
 
 func checkArchiveSelectedPages(t *testing.T, log *ObservationLog, ctx context.Context, from, to time.Time) {
