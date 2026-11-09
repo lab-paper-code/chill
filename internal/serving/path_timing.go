@@ -28,6 +28,9 @@ type PathTimingSample struct {
 	ReceivedAt  time.Time `json:"receivedAt"`
 	TotalNanos  float64   `json:"totalNanos"`
 	PostNanos   float64   `json:"postNanos"`
+	ClientNanos       float64 `json:"clientNanos"`
+	ServingQueueNanos float64 `json:"servingQueueNanos"`
+	NativeNanos       float64 `json:"nativeNanos"`
 }
 
 // PathTimingSampleFromRequest decomposes a full client reply using local elapsed
@@ -75,5 +78,6 @@ func PathTimingSampleFromRequest(row RequestRow, client ClientObservation) (Path
 	return PathTimingSample{
 		WorkloadUID: row.WorkloadUID, RequestID: row.RequestID, ReceivedAt: row.ReceivedAt,
 		TotalNanos: total, PostNanos: post,
+		ClientNanos: elapsed, ServingQueueNanos: float64(wait), NativeNanos: nativeNanos,
 	}, true
 }

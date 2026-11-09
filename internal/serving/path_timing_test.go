@@ -45,10 +45,13 @@ func TestPathTimingSampleAccounting(t *testing.T) {
 			row.NativeFinishedAt = &remoteFinished
 			sample, ok := PathTimingSampleFromRequest(row, client)
 			if !ok || sample.TotalNanos != tc.total*float64(time.Millisecond) || sample.PostNanos != tc.post*float64(time.Millisecond) ||
-				sample.RequestID != row.RequestID || sample.WorkloadUID != row.WorkloadUID || sample.ReceivedAt != row.ReceivedAt {
+				sample.RequestID != row.RequestID || sample.WorkloadUID != row.WorkloadUID || sample.ReceivedAt != row.ReceivedAt ||
+				sample.ClientNanos != float64(client.ElapsedNanos) ||
+				sample.ServingQueueNanos != float64(tc.assigned-tc.accepted)*float64(time.Millisecond) ||
+				sample.NativeNanos != float64(tc.native)*float64(time.Millisecond) {
 				t.Fatalf("wrong reserve: %+v, available=%v", sample, ok)
 			}
-			if float64(tc.assigned-tc.accepted+tc.native)*float64(time.Millisecond)+sample.TotalNanos != float64(client.ElapsedNanos) ||
+			if sample.ServingQueueNanos+sample.NativeNanos+sample.TotalNanos != sample.ClientNanos ||
 				float64(tc.sender+tc.native)*float64(time.Millisecond)+sample.PostNanos != float64(client.ElapsedNanos) {
 				t.Fatal("planning or native accounting counted a duration twice")
 			}
@@ -151,9 +154,53 @@ func TestBuildPathFeedbackEmpiricalQuantileAndFallback(t *testing.T) {
 				feedback.TotalNanos != tc.total || feedback.PostNanos != tc.post || feedback.Source != tc.source {
 				t.Fatalf("wrong path feedback: %+v", feedback)
 			}
+			if len(tc.samples) == 0 {
+				if feedback.ObservedMean != nil {
+					t.Fatal("configured feedback fabricated observed means")
+				}
+			} else if feedback.ObservedMean == nil {
+				t.Fatal("finite sample lost observed means, including observed zero")
+			}
 			if !reflect.DeepEqual(tc.samples, before) {
 				t.Fatal("quantile calculation reordered input evidence")
 			}
 		})
+	}
+}
+
+func TestPathFeedbackObservedMeanUsesSameCausalSamples(t *testing.T) {
+	var samples []PathTimingSample
+	for _, evidence := range []struct {
+		accepted, assigned, sender, native, elapsed, final int64
+		outcome                                         string
+	}{
+		{8, 28, 30, 60, 120, 101, "completed"},
+		{8, 48, 50, 40, 160, 101, "completed"},
+		{8, 28, 30, 60, 999, 101, "timeout"},
+	} {
+		row, client := pathTimingEvidence(evidence.accepted, evidence.assigned, evidence.sender, evidence.native, evidence.elapsed, evidence.final)
+		client.Outcome = evidence.outcome
+		if sample, ok := PathTimingSampleFromRequest(row, client); ok {
+			samples = append(samples, sample)
+		}
+	}
+	feedback := BuildPathFeedback("workload", samples, SLO{Percentile: 95}, 7*time.Millisecond)
+	mean := feedback.ObservedMean
+	if feedback.SampleCount != 2 || mean == nil {
+		t.Fatalf("mean population differs from finite reserve population: %+v", feedback)
+	}
+	ms := float64(time.Millisecond)
+	if mean.ClientNanos != 140*ms || mean.ServingQueueNanos != 30*ms ||
+		mean.NativeNanos != 50*ms || mean.NonComputeNanos != 60*ms ||
+		mean.ClientNanos != mean.ServingQueueNanos+mean.NativeNanos+mean.NonComputeNanos {
+		t.Fatalf("joined-sample mean decomposition changed: %+v", mean)
+	}
+	if feedback.TotalNanos != 80*ms || feedback.PostNanos != 70*ms ||
+		mean.NonComputeNanos == feedback.TotalNanos {
+		t.Fatalf("descriptive means replaced empirical budgets: %+v", feedback)
+	}
+	zero := BuildPathFeedback("workload", []PathTimingSample{{WorkloadUID: "workload"}}, SLO{Percentile: 95}, 7*time.Millisecond)
+	if zero.ObservedMean == nil || *zero.ObservedMean != (PathObservedMean{}) || zero.TotalNanos != 0 || zero.Source != "empirical" {
+		t.Fatalf("real zero sample became unknown/configured: %+v", zero)
 	}
 }
