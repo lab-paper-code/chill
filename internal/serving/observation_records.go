@@ -114,7 +114,9 @@ func (r *RequestRow) foldTiming(e *RequestEvent) {
 		r.FoldNative(p)
 	}
 	offset := e.ElapsedNanos
-	if offset == 0 && !r.ReceivedAt.IsZero() {
+	if assigned, ok := e.ServerTiming.Elapsed(ServerAssigned); e.Kind == phaseAssigned && ok {
+		offset = int64(assigned)
+	} else if offset == 0 && !r.ReceivedAt.IsZero() {
 		offset = e.At.Sub(r.ReceivedAt).Nanoseconds()
 	}
 	var stage **int64

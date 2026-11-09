@@ -26,8 +26,10 @@ const (
 	ServerAcceptLockAttempt
 	ServerAcceptLockAcquired
 	ServerAcceptDone
+	ServerAssigned
 	ServerExecuteStart
 	ServerAssignedEventDone
+	ServerSenderElapsedFrozen
 	ServerWorkerHTTPStart
 	ServerWorkerHTTPDone
 	ServerResultLockAttempt
@@ -58,8 +60,10 @@ var serverStageNames = [serverStageCount]string{
 	"acceptLockAttempt",
 	"acceptLockAcquired",
 	"acceptDone",
+	"assigned",
 	"executeStart",
 	"assignedEventDone",
+	"senderElapsedFrozen",
 	"workerHTTPStart",
 	"workerHTTPDone",
 	"resultLockAttempt",

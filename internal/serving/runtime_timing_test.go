@@ -177,7 +177,9 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 			r.mu.Recorder, r.config.Diagnostics = d, d
 			defer d.Stop()
 			started, finish := make(chan struct{}), make(chan struct{})
+			senderElapsed := make(chan time.Duration, 1)
 			r.instances[instance.ID].Execute = func(_ context.Context, dispatch Dispatch) (BackendResult, error) {
+				senderElapsed <- dispatch.Elapsed
 				result := BackendResult{Finished: true}
 				result.ServerTiming.Mark(ServerWorkerHTTPStart, dispatch.ReceivedAt)
 				close(started)
@@ -265,8 +267,20 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 				t.Fatalf("assignment/final boundary changed: %+v", rows)
 			}
 			assigned, final := rows[0], rows[1]
+			dispatched := runtimeTimingStage(t, assigned.ServerTiming, ServerAssigned)
+			if final.DispatchedNanos == nil || *final.DispatchedNanos != int64(dispatched) ||
+				runtimeTimingStage(t, final.ServerTiming, ServerAssigned) != dispatched {
+				t.Fatalf("assignment offset changed between event and final: assigned=%v final=%+v", dispatched, final)
+			}
+			frozen := runtimeTimingStage(t, final.ServerTiming, ServerSenderElapsedFrozen)
+			if consumed := <-senderElapsed; frozen != consumed {
+				t.Fatalf("sender timing differs from native input: recorded=%v consumed=%v", frozen, consumed)
+			}
+			if runtimeTimingStage(t, result.ServerTiming, ServerSenderElapsedFrozen) != frozen {
+				t.Fatal("backend result lost sender freeze")
+			}
 			runtimeTimingStage(t, assigned.ServerTiming, ServerExecuteStart)
-			runtimeTimingMissing(t, assigned.ServerTiming, ServerAssignedEventDone, ServerWorkerHTTPStart, ServerResultLockAttempt, ServerReplyReceived)
+			runtimeTimingMissing(t, assigned.ServerTiming, ServerAssignedEventDone, ServerSenderElapsedFrozen, ServerWorkerHTTPStart, ServerResultLockAttempt, ServerReplyReceived)
 			runtimeTimingStage(t, final.ServerTiming, ServerAssignedEventDone)
 			runtimeTimingStage(t, final.ServerTiming, ServerResultLockAcquired)
 			sent := runtimeTimingStage(t, final.ServerTiming, ServerReplySent)
@@ -315,7 +329,7 @@ func TestRuntimeTimingQueuedDeadlineDoesNotInventExecution(t *testing.T) {
 		t.Fatalf("queued deadline changed: %v", err)
 	}
 	runtimeTimingStage(t, result.ServerTiming, ServerReplyReceived)
-	runtimeTimingMissing(t, result.ServerTiming, ServerExecuteStart, ServerAssignedEventDone, ServerWorkerHTTPStart, ServerResultLockAttempt)
+	runtimeTimingMissing(t, result.ServerTiming, ServerAssigned, ServerExecuteStart, ServerAssignedEventDone, ServerSenderElapsedFrozen, ServerWorkerHTTPStart, ServerResultLockAttempt)
 	receipt.ServerTiming.Merge(result.ServerTiming)
 	if err := r.Response(receipt, "timeout", "RequestTimeout"); err != nil {
 		t.Fatal(err)
@@ -329,7 +343,7 @@ func TestRuntimeTimingQueuedDeadlineDoesNotInventExecution(t *testing.T) {
 		t.Fatalf("queued rejection created assignment: %+v", rows)
 	}
 	runtimeTimingStage(t, rows[0].ServerTiming, ServerReplySent)
-	runtimeTimingMissing(t, rows[0].ServerTiming, ServerExecuteStart, ServerWorkerHTTPStart)
+	runtimeTimingMissing(t, rows[0].ServerTiming, ServerAssigned, ServerExecuteStart, ServerSenderElapsedFrozen, ServerWorkerHTTPStart)
 }
 
 func TestRuntimeTimingRestoresOnlyAssignedStagesAndKeepsFinalClosed(t *testing.T) {

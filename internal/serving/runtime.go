@@ -566,7 +566,9 @@ func (r *Runtime) dispatchLocked() {
 				break
 			}
 			i := entry.instance
-			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: time.Now().UTC()}
+			assignedAt := time.Now()
+			c.receipt.ServerTiming.Record(ServerAssigned, assignedAt.Sub(c.receipt.ReceivedAt))
+			c.assignment = &Assignment{Node: i.State.Node, Instance: i.State.ID, Artifact: entry.path.Artifact, ExecutionPath: entry.path.Name, Profile: i.Profile.ID, DispatchedAt: assignedAt.UTC()}
 			c.assignment.ProfileBody = i.Profile
 			// Reserve physical ownership before FIFO admission; native execution
 			// starts after enqueue, not after the assignment's disk Write.
@@ -575,9 +577,9 @@ func (r *Runtime) dispatchLocked() {
 			c.phase = phaseAssigned
 			i.outstanding++
 			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
-			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Elapsed: time.Since(c.receipt.ReceivedAt), Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
+			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
 			c.input = nil // Only this Dispatch reads the sample, and no path requeues the call.
-			assigned := requestEvent(c, phaseAssigned, "", "", c.assignment.DispatchedAt)
+			assigned := requestEvent(c, phaseAssigned, "", "", assignedAt)
 			r.executions.Add(1)
 			execute := i.Execute
 			go func() {
@@ -608,6 +610,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		err = failure("RequestTimeout", "request lifetime expired before native dispatch")
 	} else {
 		dispatch.Elapsed = time.Since(dispatch.ReceivedAt)
+		timing.Record(ServerSenderElapsedFrozen, dispatch.Elapsed)
 		result, err = execute(c.backendContext, dispatch)
 	}
 	finishedAt := time.Now()

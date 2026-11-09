@@ -95,3 +95,14 @@ func TestRequestTimingMarkersDoNotAllocate(t *testing.T) {
 		t.Fatal("missing origin invented a reached stage")
 	}
 }
+
+func TestRequestTimingAssignedZeroDoesNotUseUTCBackfill(t *testing.T) {
+	received := time.Now()
+	event := RequestEvent{Kind: phaseAssigned, ReceivedAt: received, At: received.Add(time.Hour).UTC()}
+	event.ServerTiming.Record(ServerAssigned, 0)
+	var row RequestRow
+	row.Fold(&event)
+	if row.DispatchedNanos == nil || *row.DispatchedNanos != 0 {
+		t.Fatalf("exact assignment zero replaced by UTC difference: %+v", row)
+	}
+}
