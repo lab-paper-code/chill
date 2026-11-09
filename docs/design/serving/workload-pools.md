@@ -4,6 +4,7 @@
 
 요구사항 원본은 [시스템 명세](../../spec/README.md), [측정 POOL](../../spec/00_measurement.md), [scheduler SRS](../../spec/scheduler/SRS.md) `SCH-02,08,09,13,15,16,21,32,33,34`, `SCH-AC-22,24,25,26`, [Workload SRS](../../spec/workloads/SRS.md) `WM-25`, [Dashboard SRS](../../spec/dashboard/SRS.md) `DB-FR-10,33,34`다.
 [ADR 0022](../../adr/0022-workload-pool-membership-boundary.md)·[측정 admission](measurement-admission.md)·[Workload 관리](workload-management.md)·[scheduler 구현](scheduler-implementation.md)·[이기종 계약](heterogeneous-workloads.md)을 따른다.
+온라인 수치·시간·우선순위는 [승인 M0](path-aware-implementation-plan.md#3-수치시간-계약--m0)를 따른다. 이 문서는 해당 변경 계약을 반영하며 구현 통합 검증·실배포·실측은 대기 중이다.
 
 | 결정 | 이유 |
 |---|---|
@@ -14,7 +15,7 @@
 | 가용 Node는 항상 최저 unloaded baseline 모드로 | DeviceClass에 모드 순서가 없고 baseline은 에너지 계산에도 필요 |
 | 바뀌는 Node만 후보 에너지 비교, 전체 POOL은 실측 | SCH-16 공통 항 소거로 무관 Node의 baseline 부재가 판단을 막지 않음 |
 | 완료 측정의 조건별 최신 성공에서 후보/비용 도출 | 운영자 profileCampaigns/preparations/costReferences/powerCostSources 선언 제거 |
-| 완료 여유는 settings.completionMarginMS 하나 | 요청마다 firstfloor 전달, 인스턴스 policy 재작성 없음 |
+| 완료 여유는 Workload별 피드백과 요청별 frozen POST | `completionMarginMS`는 유효 표본이 없을 때 초기값; 인스턴스 policy 재작성 없음 |
 | 외부 Pod 목록/CHILL 역할을 측정에 기록 | 외부 운영 책임과 CHILL 배치 예산 분리 |
 | producer/consumer는 한 저장 계약 | [ADR 0019](../../adr/0019-durable-stored-contract-compatibility.md)의 단일 reader |
 
@@ -60,9 +61,9 @@ Dashboard의 `labels.ts`, `live-display.ts`, `features/resources.tsx`는 기존 
 유지한다. `PowerModeObservationUnavailable`은 이 예외에 포함하지 않는다.
 
 lowest는 unloaded `NodeBaseline`(State empty)의 최소 Watts, 동률 이름순이다. DeviceClass.powerModes에는 순서/전력이 없다.
-Controls.Power가 켜지면 keep 포함 모든 DAG는 판단 시점 가용 Node를 시각0부터 lowest에 둔 공통 상태로 계산한다. 현재 모드와 다르면 첫 power를 `Action.Fixed=true`로 넣고 공통 시간/에너지는 비교에서 소거한다. target 없으면 keep Fixed만 실행하며 빈 Node 내림 비용 측정은 불필요하다. 빈 Node 공통 절전은 다른 Node route와 독립이나 사용할 Node는 Fixed→power→prepare 순서/실제 Ready·소유권·policy ACK·기존 요청 인계 후 분배한다. 소비·전환 결과는 전체 실측에 포함한다.
+Controls.Power가 켜져도 빈 Node의 새 `Fixed` 절전은 일반 후보로 동일 H의 keep 대비 비용·minimumGain·payback을 통과해야 한다. 모든 후보와 keep에 절전을 선반영해 비용을 소거하지 않는다. 허가된 빈 Node 절전은 다른 Node route와 독립이나 사용할 Node는 기존 power→prepare 순서와 실제 Ready·소유권·policy ACK·기존 요청 인계 뒤 분배한다. 소비·전환 결과는 전체 실측에 포함한다.
 재편입은 lowest→profile mode의 빈 BeforeState power 비용+동일 mode prepare 비용을 비교한다. 재부팅 장비 jetsono도 측정 POOL serving-operation으로 측정하고 annotation 적용/독립 read-back+settlingDurationSeconds(E1 60s) 전체를 잰다. jetsonx 적용≈1.5s도63.5s 창 Accepted이며 settling 에너지를 포함한다. 비용 없으면 `MissingOperationCost`다.
-모든 계획의 공통 비교기간은 `T=max(comparisonPeriodNanos,최장 route전 사슬+최장 route뒤 remove)`, 각 동작은 측정 trial 최대시간이다([용량표 계획기](analytic-planner.md)). E1 빈 전환 jetsonx63.5s/jetsono134.5s/orin-nano197.1s가 있는 판단은 하한60s보다 길었고, power/prepare 전체 에너지+남은 적재 baseline을 같은 T로 비교한다.
+모든 계획은 `H=comparisonPeriodNanos` 하나를 동일하게 사용한다. 후보의 사슬 때문에 H를 늘리지 않는다. 동작 trial 최대시간과 평균 wall joules를 구분하며 H 밖 baseline/Serving 꼬리는 clamp한다([계획기 에너지](analytic-planner.md#4-노드-계획과-탐색)).
 비교 Node는 keep 외 적격 계획이 있는 집합, `SchedulerSearch.ComparedNodes`에 기록하며 keep/target ExpectedJoules도 이 집합만 합한다. 집합 밖(측정/keep-only) 공통 항을 소거한다. 필요한 unloaded baseline 없으면 그 계획만 `MissingUnloadedNodeBaseline:<node>:<mode>`다. 전체 에너지는 ObservationLog.OperatingPower 실측으로 보고한다.
 
 ### 최신 profile·비용 도출
@@ -81,8 +82,8 @@ profile 변경은 영향받는 d/비용/baseline 목록을 함께 남긴다. 정
 ### 완료 여유·수동 변경
 
 필수 `SchedulerSettings.CompletionMarginMS float64`/JSON completionMarginMS는 유한≥0. decode는 *float64로 생략/0을 구분하여 생략을 `completionMarginMS required`로 거절한다.
-완료 예상은 native 완료+m. replay는 CompletionOverhead 대신 설정값, firstfloor `requestSlack=RemainingSLOMS−m−serviceCost`, lifetime에도 m을 한 번 뺀다. senderElapsed는 원래 transport lifetime에서 별도로 뺀다. 관측/calibration Pending을 요구하지 않는다.
-`ObservationCohort.completionResidualNanos=종단 ElapsedNanos−전달시점 elapsed−NativeElapsedMS`를 완료 표본에서 수집하고 Dashboard는 설정 m과 분포를 함께 표시한다. MNV29ms는 p95 관측값; D2 뒤 Workload별 최종 SLO percentile residual 추정의 최댓값을 단일 m으로 고른다. relaxed 측정 SLO를 자동 채택하지 않는다.
+Workload별 TOTAL·POST는 현재 관측창의 SLO percentile로 가공한다. 유효 표본이 없으면 위 설정을 초기값으로 사용하며 첫 표본부터 갱신한다. 실제 요청은 accept 때 POST를 동결하고 native에는 실제 sender elapsed와 함께 전달한다. 새 Tick·설정은 접수된 요청의 POST를 바꾸지 않는다. 합성·진행 중 요청의 중복 없는 회계는 [M0 §3.1~3.2](path-aware-implementation-plan.md#31-시간-회계)를 따른다.
+설정값·가공 TOTAL/POST·결합 표본 수·실패 포함 client E2E를 구분한다. 기존 server/native residual이나 과거 고정 m을 현재 client E2E로 표시하지 않는다. 관측/calibration Pending이나 새 sample gate는 두지 않으며 relaxed 측정 SLO를 자동 채택하지 않는다.
 수동 변경은 꺼진 Workload 하나: staticRouting은 꺼진 UID만 부분 map, 생략은 현 route 유지, 켜진 UID 거절, target 제외는 그 binding만 해제한다. execute-config manifest는 workloadUID 하나, prepare owner는 그 UID, remove는 유일 owner+binding일 때만 허용한다. 공유 사용은 route/binding만 해제하며 action 조건/staticRouting ACK를 확인한다. 후속 현재 작업 API는 [scheduler API](scheduler-api.md)를 따른다.
 
 ### 외부 Pod
@@ -100,10 +101,10 @@ snapshot은 전체 POOL/꺼진 인스턴스까지 포함하고 option은 최신 
 | MeasurementEvidenceMissing | 켜졌으나 option 없음, 해당 Workload만 계획 제외 |
 | Controlled | 켜졌고 option 있음, 계획/SLO 판정 대상 |
 
-노드 계획 원본은 [용량표 계획기](analytic-planner.md)다. Controlled만 인스턴스/분배를 바꾸고 Disabled owner/binding 또는 strict fixed-size baseline Node는 `FixedWorkload` keep뿐이다. 노드당 serving1, membership off는 기존 해당 Workload Node만 option이다.
-Controlled는 부하0에도 인스턴스≥1이 최종 충족이며 무연결 인스턴스 정리/공통 Fixed절전을 포함한다. 활성 POOL 직접 이동은 같은 Node remove+prepare DAG/비용합, membership 동작 없음. 첫 구성(인스턴스0)은 option 배치를 쓰며 placement/resources/batching/membership control gate가 켜져야 한다.
-수요 λ는 max(장기관측률,최근1제어주기 계산도착률)+기존 미완료 기여1회. 실제 관측 범위만 쓰고 용량/지연/route/요청 에너지에 같은 λ를 사용한다. 최근률이 큰 Workload는 기존 인스턴스 제거/교체/route0 보호, 확장·다른 변경은 계속한다. 두 구간/관측/최종λ·진행 target 유지 규칙은 planner 기록에 남긴다.
-SLO 판정 대상은 Controlled 전체. Disabled Node는 전력/인스턴스도 불변, 에너지는 비교 Node 집합 합이다. Target이 있으면 적용, 기록은 keep/target/decision.capacity/snapshot. 저장 SchedulerInstance는 profileID만, 본문은 catalog GET에서 제공한다. HTTP 압축은 조회 경계 유지; 결정 축소 M0는 [아키텍처 검토](../architecture-rethink/README.md)·[기록 다이어트](decision-record-diet.md)를 따른다.
+노드 계획 원본은 [계획기](analytic-planner.md)다. Controlled만 인스턴스/분배를 바꾸고 Disabled owner/binding 또는 strict fixed-size baseline Node는 `FixedWorkload` keep뿐이다. 노드당 serving1, membership off는 기존 해당 Workload Node만 option이다.
+Controlled는 부하0에도 인스턴스≥1의 배치 조건을 유지한다. 현재 평가 모집단이 0이면 성공 0ms로 만들지 않는다. 물리 option·replica/instance 상한과 제어 gate는 유지하며 첫 구성은 profile option으로 직접 평가한다. online capacity row의 준비 여부를 기다리지 않는다. 활성 POOL 직접 이동은 같은 Node remove+prepare DAG/비용합이고 별도 membership 동작은 없다.
+수요 λ는 max(장기관측률,최근1제어주기 계산도착률)+waiting-demand 기여1회에 minimumDemand 하한을 적용한다. 같은 현재 수요로 후보·전환·routing·요청 에너지를 비교하며 추세만으로 축소·교체를 금지하지 않는다. 부분 관측·accepted work 보호와 owner frozen target은 유지한다([계획기](analytic-planner.md#3-판정과-순서)).
+SLO 판정 대상은 Controlled 전체다. profile `RoutingWeight`로 먼저 분배하고 cheap heuristic→exact finalists를 구분한다. exact는 전체 충족 우선·미충족 tuple을 `excess` 또는 `workload` 순서로 비교한다. κ̂는 현재 tested-rate lower witness이며 0만으로 배치·retirement를 막지 않는다. Disabled Node는 전력/인스턴스 불변이고 물리 Ready·소유·정상 handback·예비·기존 에너지 보호는 유지한다. 기록 projection은 [scheduler API](scheduler-api.md), 기록 축소는 [기록 M0](decision-record-diet.md)를 따른다.
 
 ## 5. API와 Dashboard
 
@@ -132,12 +133,12 @@ numeric ring16MiB/64byte event, Go trace 저장32MiB/30s. native반환·mutex at
 
 ## 9. 검증 계획
 
-계약 검사는 원래 lifetime−senderElapsed−m1회, native완료+m replay, owner/binding/unowned 소속, 전체 Node/사유·비교집합 공통항, Disabled고정/최소1/Node당1/직접이동, Fixed최저선행·빈재진입비용, 조건별 최신/부분실패/나열실패 유지, 수동route 보호, taint격리·직전거절·toleration/측정runner보호, 역할Pod·외부예산/NodeReady, m누락거부/0수락을 다룬다. 실행 완료/PASS 주장이 아니다.
+계약 검사는 요청별 frozen POST·실제 sender elapsed·새 feedback의 chooser 재실행, profile routing·현재 tested rates·두 정책·exact admission, owner/binding/unowned 소속, 전체 Node·비교집합 공통항, Disabled·단일 Node 소유·직접이동, 동일 H clamp·Fixed 본전, 조건별 최신·부분실패·나열실패 유지, 수동 route 보호·taint 격리·정상 handback, m 누락 거부/0 수락을 다룬다. 실행 완료/PASS 주장이 아니다.
 E1은 최초 구성/무부하/부하/완료여유(`SCH-AC-24`), E2는 Disabled/근거없음/Controlled 공존(`SCH-AC-25`), E3은 측정격리/Pod/evidence/자연반환(`SCH-AC-26`), E4는 직접이동 DAG/비용/소속(`SCH-AC-22`), evaluation은 혼합 SLO/비교·전체에너지/residual을 확인한다. live는 [AGENTS](../../../AGENTS.md)의 승인 조건, window/결정/측정 상태/메모리/PVC를 보존한다.
 
 ### 9.2 실클러스터 E2E
 
-정량 결과의 권위는 [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가)와 [평가 보고서](../../reports/e5-evaluation-20261030.md), 원시 정본이다. 반복된 거대3회차 표 대신 아래 조건/결론/출처를 유지한다. 제어요소12행/rev102 식별력 한계는 [명세 비교](../../spec/README.md#제어요소-비교), 7행 커버리지는 [평가 보고서](../../reports/e5-evaluation-20261030.md)가 원본이다.
+이 절의 고정 m·전체 격자 κ·B/W와 단계별 결과는 당시 평가 계약의 역사적 증거다. 정량 결과의 권위는 [명세 평가 표](../../spec/README.md#실클러스터-검증과-평가)와 [평가 보고서](../../reports/e5-evaluation-20261030.md), 원시 정본이다. 반복된 거대3회차 표 대신 아래 조건/결론/출처를 유지한다. 제어요소12행/rev102 식별력 한계는 [명세 비교](../../spec/README.md#제어요소-비교), 7행 커버리지는 [평가 보고서](../../reports/e5-evaluation-20261030.md)가 원본이다.
 
 #### evaluation 입력·입구
 

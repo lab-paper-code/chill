@@ -102,8 +102,8 @@
 
 ### 3.3 SLO와 전환·Serving 비용 비교
 
-- `SCH-13` 실행시간 분포에 firstfloor의 배칭과 큐 선택 규칙을 적용한 인스턴스 재생으로 실행 조건과 SLO마다 SLO를 지키는 최대 요청률(용량)을 미리 계산하고, 후보의 SLO 충족은 그 용량의 합을 현재 요청률과 대기량에 비교해 판정한다. 인스턴스가 요청마다 배치 실행시간 밖에서 점유되는 시간은 노드, 전력모드, runtime image, 모델마다 측정한 디스패치 점유를 재생의 배치 시간에 더해 반영하고, 그 측정이 없는 실행 조건은 용량을 계산하지 않는다. 그 밖의 유입, 전달, 응답 비용은 시스템 전체에 하나로 둔 완료 여유 설정으로 반영한다. 판단은 요청의 예상 완료 시각을 firstfloor 처리가 끝날 예상 시각에 완료 여유를 더해 계산하고, firstfloor 배칭도 같은 완료 여유를 사용한다. Serving 관측은 완료 여유를 검증하는 데 사용한다. 완료 여유는 관측 여부와 상관없이 항상 적용할 수 있으므로 후보 평가를 대기시키는 근거가 되지 않는다. 용량 계산은 포아송 도착의 독립 창마다 요청별 종단 지연 분포에서 SLO 백분위를 구하고, 설정한 수 이상의 창이 SLO를 지키는 최대 요청률을 용량으로 둔다.
-- `SCH-14` SLO는 워크로드별 지정 백분위와 목표 시간으로 판단한다. 각 워크로드는 자기 인스턴스의 용량으로 평가한다(`SCH-13`).
+- `SCH-13` 실행시간 분포·firstfloor의 배칭과 큐 선택·실제 진행 요청·전환을 사용해 후보의 유한 수요를 직접 재생하고 SLO를 평가한다. 시간 피드백·요청별 POST 동결·profile routing과 현재 tested-rate κ̂의 의미는 [승인 M0 §3](../../design/serving/path-aware-implementation-plan.md#3-수치시간-계약--m0)을 따른다. κ̂는 검사한 rate의 최대 통과값이며 전체 영역의 완료된 용량을 뜻하지 않는다. 전체 격자 κ는 명시적 offline 계산에 한정하고 online row 준비 여부나 κ̂=0을 후보 제거 gate로 사용하지 않는다. 디스패치 점유의 측정·설정 선택과 provenance는 [계획기 §2](../../design/serving/analytic-planner.md#2-routingweight와-현재-tested-rate-κ̂)를 따른다. 유효 시간 표본이 없으면 기존 완료 여유 설정으로 초기화하며 새 관측 대기 gate를 두지 않는다.
+- `SCH-14` SLO는 워크로드별 지정 백분위와 목표 시간으로 판단한다. 각 워크로드의 직접 replay 결과에서 실패와 성공 지연을 구분해 평가한다(`SCH-13`).
 - `SCH-15` 후보의 최종 상태와 준비·전환 중 가용 처리 능력·요청 지연을 함께 평가한다. 노드 전력모드 변경이나 인스턴스 제거에 영향받는 모든 워크로드의 SLO를 함께 평가한다. 자동제어가 켜진 모든 워크로드의 SLO를 함께 만족하는 후보를 우선하고 그 범위에서 전체 POOL의 에너지를 비교한다.
 - `SCH-16` 유지와 변경 후보는 같은 시간축·부하 조건·전체 POOL 범위에서 전환과 이후 Serving의 총에너지로 비교한다. 준비 시점부터 새 용량을 반영하고 유지 후보에도 비교 기간의 Serving 소비를 포함한다. Serving 참여 여부에 따른 모든 노드와 필요한 임시 자원의 소비를 집계한다. 후보 사이에 같은 항(상태가 바뀌지 않는 노드와 구간)은 소거해 차이로 비교할 수 있다. 전체 POOL 총에너지는 실측으로 집계해 보고한다.
 - `SCH-17` 모델 로드와 유휴 비용은 인스턴스당 한 번, 전체 노드 전력은 노드당 한 번, 각 소비 구간은 시간축에서 한 번 집계한다. 증분 에너지에 해당 기준 소비를 연결해 전체 에너지로 비교하고, 공존 비용은 자원 조건과 실제 관측에 대응시킨다.
@@ -113,10 +113,10 @@
 
 - `SCH-19` 선택 결과는 유지 또는 목표 구성, 영향받는 워크로드·노드·인스턴스, 분배·배칭 정책과 전환 동작을 실행 계층에 전달한다. 실제 현재 구성·비교 후보·선택 목표·적용 조건을 구분해 제공한다. 판단 대기와 판단 결과는 각각의 상태로 표현한다.
 - `SCH-20` **변경(2026-11-02)** 요청은 해당 모델을 실제로 처리할 준비가 되고 해당 워크로드에 `routable`인 인스턴스 하나로 분배한다. 확인된 준비 상태와 가용 용량을 사용하고 수용 가능한 대상이 준비되면 요청을 전달한다. 분배 비율은 0 이상이며 대상이 있을 때 합이 1이다. 실현된 부하·배칭·SLO·에너지 영향을 다음 판단에 반영한다. 최종 handoff 뒤 정리 중인 범위도 원래 DAG와 예약을 유지하며, 새 target의 재분배는 예약 반환 뒤 다시 허가받는다.
-  목표 양수 목적지 일부가 준비 중이어도 old serving 공급을 보존하면서 현재 serving이 없는 독립 Node의 새 Ready 공급을 추가할 수 있다. 새 목적지의 exact identity·native policy ACK와 기존 λ·q·slack·capacity row·목적지별 κ·전환 B/W·양수 weight 판정을 통과해야 하며, 같은 Node의 old/new κ를 합산하거나 현재 총 공급 κ를 줄여서는 안 된다. 확인 불능·용량 미달이면 current를 보존한다.
-- `SCH-21` 배칭 정책은 evidence·워크로드 SLO와 최초 CHILL 수신 이후 요청별 경과 시간을 적용할 정보를 제공한다. firstfloor 큐 진입 이전 소비 시간, 현재 큐 대기·진행 중 실행, 후보의 실행 시간과 `SCH-13`의 설정 여유를 포함해 요청별 추가 대기 여유를 판단한다.
+  목표 양수 목적지 일부가 준비 중이어도 old serving 공급을 보존하면서 현재 serving이 없는 독립 Node의 새 Ready 공급을 추가할 수 있다. exact identity·native policy ACK·양수 weight·현재 수요와 timing의 직접 평가를 사용한다. 같은 Node 공급을 중복 합산하지 않고 old 공급·accepted work를 보존한다. 물리 상태·support·평가가 미확인이면 current를 유지하며 old capacity row나 κ̂ 미검사만으로 차단하지 않는다.
+- `SCH-21` 배칭 정책은 evidence·워크로드 SLO와 최초 CHILL 수신 이후 요청별 경과 시간을 적용할 정보를 제공한다. firstfloor 큐 진입 이전 소비 시간, 현재 큐 대기·진행 중 실행, 후보 실행시간과 `SCH-13`의 요청별 frozen POST를 포함해 추가 대기 여유를 판단한다.
 - `SCH-22` firstfloor 내부 배처가 현재 요청·큐·실행 상태에 CHILL 정책을 적용해 실제 배치 구성·추가 대기·실행 시점을 판단한다. CHILL은 정책과 요청별 정보를 제공하고 기존 firstfloor 큐·배처·모델 runner를 재사용한다.
-- `SCH-23` 실행 배치는 같은 워크로드/불변 정의의 호환 요청으로 구성한다. normal queue는 stable EDF, deferred queue는 normal 이후 FIFO로 실행한다. SLO 여유와 evidence 기반 energy gain으로 배치·대기를 정하고 모델의 deadlinePolicy(drop/keep/defer, 기본 keep)를 actual과 용량 계산 재생에 동일하게 적용한다. keep의 overdue/infeasible 및 deferred 선택은 현재 fillable·MaxBatch 이내 batch 중 항목당 p-quantile service 비용이 최소인 batch(동률은 큰 batch, `maximum_throughput`)이며 drop은 queued 요청 종료, defer는 후순위 이동이다. explicit timeout/cancel은 세 모드에 별도로 적용하며 active batch는 SLO만으로 취소하지 않는다.
+- `SCH-23` 실행 배치는 같은 워크로드/불변 정의의 호환 요청으로 구성한다. normal queue는 stable EDF, deferred queue는 normal 이후 FIFO로 실행한다. SLO 여유와 evidence 기반 energy gain으로 배치·대기를 정하고 모델의 deadlinePolicy(drop/keep/defer, 기본 keep)를 actual과 후보·rate 판정 replay에 동일하게 적용한다. keep의 overdue/infeasible 및 deferred 선택은 현재 fillable·MaxBatch 이내 batch 중 항목당 p-quantile service 비용이 최소인 batch(동률은 큰 batch, `maximum_throughput`)이며 drop은 queued 요청 종료, defer는 후순위 이동이다. explicit timeout/cancel은 세 모드에 별도로 적용하며 active batch는 SLO만으로 취소하지 않는다.
 - `SCH-39` 배분 선언의 변경은 `route`(워크로드별 인스턴스 가중치 지정), `unroute`(선언을 유지한 배분 해제), `release`(선언 삭제 후 Pod 기본 표시 적용)를 구분하는 명시적 작업으로만 받는다. 각 작업은 실제 적용 ACK와 readback을 반환하고, 설정의 `staticRouting`은 읽기 전용으로 제공한다.
 
 ### 3.5 전환·실패와 재판단
@@ -135,13 +135,13 @@
 - `SCH-51` 작업 시작 시 건드리는 Node·Workload UID·실물 Pod UID의 범위를 장부에 예약한다. 자동제어와 수동 작업을 포함한 모든 변경 경로의 허가·범위 충돌 검사·예약 해제는 같은 범위를 사용하는 단일 지점에서 수행하고, 겹치는 변경은 시작 전에 거절하며 사유와 소유 작업을 제공한다. 완료·실패·취소에 따른 실행 종료와 예약 해제를 구분하며, 실패 시에도 실제 효과가 확인되면 예약을 해제한다. 취소·timeout 뒤 원격 효과를 확인하지 못한 경우에는 실행은 종료하되 효과 확인 또는 reset에 의한 실제 정리 완료까지 예약을 유지한다. 예약 해제는 실물 장부 삭제나 원복 완료를 뜻하지 않으며 실제 상태와 실패 원인은 남긴다.
   Workload 삭제도 삭제 시작 전에 Workload UID와 소유 실물의 범위를 같은 예약 경로로 획득하고, 자식 종료·정리와 finalizer 해제 이후 정확한 Workload UID의 실제 삭제 확인까지 유지한다.
 - `SCH-52` 계획기는 전역 하나를 유지하며 진행 중 작업이 예약한 범위만 고정하고, 그 밖의 Node·Workload·실물에 대해서는 현재 부하와 상태로 후보 평가·확장 판단·실행 및 준비된 용량의 배분을 계속한다. 모든 작업의 완료를 기다리는 전체 완료 장벽이나 `InProgressTarget`을 근거로 한 전역 판단 대기를 두지 않는다. 예약을 침범하거나 예약 대상의 상태 변경을 전제하는 후보는 허가하지 않으며, 기존 자원·SLO 제약은 유지한다.
-- `SCH-53` 과부하 후보는 기존 전체 충족·최종 충족 우선순위를 유지한 뒤, 각 Workload의 최종·전환 초과량 중 큰 값을 나쁜 순으로 정렬한 목록을 사전식 최소화한다. 최악 값이 같으면 다음 값을 비교하고 모든 값이 같은 경우에만 에너지를 비교한다. 용량 없는 Workload의 무한 초과량이 다른 Workload의 개선을 가리지 않아야 한다.
-- `SCH-54` 빈 출발의 선택 가능한 capacity row가 missing/pending이면 Pending과 원인을 기록한다. 경과 시간 fallback은 없으며 실제 Built/rejected 근거로 평가한다.
+- `SCH-53` 전체 SLO 충족 후보를 먼저 비교하고 충족 후보끼리는 기존 에너지 순서를 사용한다. 미충족 후보의 failure fraction·finite-success excess·conditional potential tuple과 `excess`/`workload` 우선순위는 [승인 M0 §3.4](../../design/serving/path-aware-implementation-plan.md#34-비교-정책)를 따른다. old 최종 충족/κ-only 순서를 tuple 앞에 두지 않으며 SLO 미충족만으로 물리적으로 유효한 개선 후보의 retirement를 일괄 거절하지 않는다. Ready·소유·accepted work·정상 handback과 기존 에너지 보호는 유지한다.
+- `SCH-54` 빈 출발도 profile·현재 timing·수요로 직접 평가한다. no-profile·raw support 부재·물리 관측 실패는 원인을 기록하되 전체 grid나 capacity row의 Built/pending을 기다리지 않는다. 경과 시간 fallback이나 새 bootstrap 대기 상태는 두지 않는다.
 - `SCH-55` 분배·증설·축소·교체 후보를 매 제어 주기에 같은 현재 유효 수요와 물리 규칙으로 비교한다. 기존 예약·자원·SLO·실제 Ready/ACK 제약을 유지한다.
-  최종 하강 route·idle 후처리는 현재 유효 수요×(1+h)를 실제 양수 정수 weight/각 κ로 검사한다. bridge/reserve 수요·실제 요청 J는 할증하지 않는다.
+  최종 하강 route·idle 후처리의 현재 유효 수요×(1+h) 보호와 configured h를 유지하며 현재 routing·수요 평가에 연결한다. old row/κ̂-only 보장을 사용하지 않는다. bridge/reserve 수요·실제 요청 J는 할증하지 않는다.
 - `SCH-56` 현재 유효 수요는 max(장기 관측률, 최근 관측률) + outstanding/실제 관측 길이에 minimumDemand 하한을 적용한다. reductionDemand는 같은 현재 수요이며 별도 이력 최대값·증가 추세·지속 시간 허가를 두지 않는다. 빈 Node 절전도 동일 수요와 gain/minimumGain/payback을 적용한다.
   정책 시간은 ControlInterval, ObservationWindow, ComparisonPeriod 세 개다. API·ConfigMap·Dashboard·sample·결정·Run binding은 동일 계약을 사용한다.
-- `SCH-57` 전환 중 수요 대비 예비 용량 비율을 scheduler 설정으로 제공한다(기본 0, 0=별도 예비 없음, 유한한 0~1). 양수이면 영향을 받는 워크로드마다 실제 준비·ACK된 가용 용량으로 수요와 설정 예비를 감당하고 기존 전환 SLO 검사도 통과해야 한다. 예비를 위한 준비·유지·해제 에너지도 evaluation 전체 POOL 에너지에 포함하고 비율·판정·미확보 이유를 결정과 `binding.schedulerSettings`에 기록한다.
+- `SCH-57` 전환 중 수요 대비 예비 비율을 scheduler 설정으로 제공한다(기본 0, 0=별도 예비 없음, 유한한 0~1). 양수이면 실제 Ready·ACK·ownership·예약상 사용 가능한 공급의 profile-rate estimate로 수요와 설정 예비를 비교한다. 이는 SLO 용량 보장이 아니며 SLO는 별도 직접 replay로 평가한다. 예비 준비·유지·해제 에너지도 evaluation 전체 POOL 에너지에 포함하고 비율·판정·미확보 이유를 결정과 `binding.schedulerSettings`에 기록한다.
 - `SCH-58` 에너지 비교 기간 H는 양수인 하나의 scheduler 설정으로 고정하여 같은 판단의 keep과 모든 후보에 동일하게 사용한다. 후보의 전환 시간이나 미선택 후보의 추가·삭제로 H를 늘리지 않으며 사용한 H와 부하 가정을 결정 및 `binding.schedulerSettings`에 기록한다. H는 실제 전환 완료 확인이나 동작 timeout을 대체하지 않는다.
 - `SCH-59` 빈 Node의 새 `Fixed` 절전도 일반 교체와 동일한 keep 대비 에너지 허가를 받는다. 같은 H 안 nominal 이득이 양수이고 기존 minimumGain 문턱 및 payback을 모두 통과해야 하며, Fixed라는 이유로 비용을 공통 경로에서 소거하거나 검사를 면제하지 않는다. 별도 절전 계산기·기간·문턱을 추가하지 않는다. 이미 실행 중인 허가된 동작의 완료 의무는 유지한다.
 
@@ -184,7 +184,7 @@ Serving 평가에서 검증한다.
 | SCH-AC-06 | 운영 이동 구간과 지정 실험 구간 조회 | 구간·경계·시각·모집단·계산 방법, 제어 주기·발행·집계 구간을 각각 제공 | SCH-06, SCH-07, SCH-32 |
 | SCH-AC-07 | 같은 실행 조건을 쓰는 다른 SLO의 워크로드 | 근거 재사용, 워크로드별 인스턴스, UID, 큐, SLO, 결과 분리 | SCH-03, SCH-05, SCH-06, SCH-09, SCH-14, SCH-23 |
 | SCH-AC-08 | 여러 파드 자원 할당과 기존 인스턴스 자원 변경 | 실제 예산·전용 할당, 단일 실행기·스레드·순차 배치 계약 유지, 배치 가능성과 SLO 각각 판단 | SCH-10, SCH-11, SCH-12 |
-| SCH-AC-09 | 실행시간 분포·큐 상태가 다른 후보 | 인스턴스 재생으로 구한 용량과 현재 부하로 SLO 평가 | SCH-13, SCH-14, SCH-21 |
+| SCH-AC-09 | 실행시간 분포·큐 상태가 다른 후보 | 현재 timing·배치 정책·진행 요청·전환을 포함한 직접 수요 replay로 SLO 평가 | SCH-13, SCH-14, SCH-21 |
 | SCH-AC-10 | 여러 파드, Serving 참여 여부, 임시 노드 비용 | 각 노드·인스턴스·구간을 한 번 집계해 총에너지 비교, 시간·에너지 단위 구분 | SCH-16, SCH-17, SCH-18 |
 | SCH-AC-11 | 인스턴스 준비·격리와 준비 완료 후 분배 | 준비된 가용 용량에 요청 전달, 대상·비율·적용 조건 제공 | SCH-19, SCH-20, SCH-24 |
 | SCH-AC-12 | 유입 대기를 소비한 요청의 firstfloor 배칭 | 최초 수신 기준 경과 시간과 firstfloor 내부 판단, 허용 여유·에너지 이득·Workload 배치 분리 유지 | SCH-11, SCH-21, SCH-22, SCH-23 |
@@ -204,7 +204,7 @@ Serving 평가에서 검증한다.
 | SCH-AC-26 | 가용 노드, 서빙 중인 노드, CHILL이 배치하지 않은 파드가 있는 노드에 대한 측정 요청 | 가용 노드는 측정 POOL로 이동 후 측정하고 반환, 서빙 중인 노드는 거절과 사유 제공, 외부 파드가 있는 노드는 측정하고 그 파드 목록 기록 | SCH-34 |
 | SCH-AC-27 | 고정 배치 크기 B 인스턴스에 B-1, B+1개 요청 유입, SLO 경과, 취소, 종료 | B개가 모일 때만 정확히 B개 실행, 남은 요청은 대기하고 종료 시 미실행, SLO 경과 요청도 실행 후 초과로 기록, 취소 요청은 제외, 자동제어 후보에서 제외 | SCH-23, SCH-31, SCH-35 |
 | SCH-AC-28 | 한 노드에 측정 요청 여럿, 여러 노드의 동시 요청, 측정 파드가 있는 노드의 대기 요청, 서빙 예약과 겹치는 CPU 할당, 쓸 수 없는 측정 근거를 가리키는 요청 | 노드마다 요청 순서대로 실행하고 노드끼리 동시 진행, 측정 파드로 거절하지 않음, 거절과 사유 뒤 다음 요청 진행 | SCH-34 |
-| SCH-AC-29 | 디스패치 점유를 한 전력모드에서만 잰 노드의 같은 실행 조건 | 잰 모드는 최신 측정으로 계산한 용량과 출처, 다른 모드는 용량 없음과 사유 | SCH-08, SCH-13 |
+| SCH-AC-29 | 디스패치 점유를 한 전력모드에서만 잰 노드의 같은 실행 조건 | 잰 모드는 측정값, 다른 모드는 configured default로 재생하고 선택값·출처를 구분 | SCH-08, SCH-13 |
 
 ### 4.1 전환·운영 작업 추가 수용 시나리오
 
@@ -261,7 +261,7 @@ Serving 평가에서 검증한다.
 - When: B의 시작 허가를 검사하고, 이어 A가 완료·실패·취소로 종료되며 실제 효과가 확인된 경우와 취소·timeout 뒤 원격 효과가 미확인인 경우를 각각 진행한다.
 - Then: B는 공통 허가 지점에서 시작 전에 거절되고 충돌 범위·소유 작업·사유가 제공된다. 실제 효과가 확인된 A는 실패한 경우에도 예약을 해제하여 후속 작업이 현재 실제 상태에서 다시 허가받을 수 있다. 원격 효과가 미확인인 A는 실행 종료 후에도 예약을 유지하여 겹치는 변경을 계속 거절하고, 이후 효과 확인 또는 reset의 실제 정리 완료 뒤에만 해제한다. 해제 후에도 실물 항목·일부 적용 상태·실패 원인은 유지된다.
 - 성공 cleanup 추가 판정 / S4: 최종 route complete 이후 recent 95.3→100.2→97.5/s의 세 제어 주기에서도 예약된 Workload는 Fixed이며 새 target의 route를 원래 owner로 인계하지 않는다. 원래 성공 receipt·stop 안전 의존성과 old Pod/physical/Node의 stop/drain/remove 의무를 보존하고, 원래 DAG와 효과 반환 확인이 끝난 뒤 예약을 해제한다. 같은 owner 안의 기존 인가 route ACK 직렬화와 중간 순증은 유지한다.
-- 중간 순증 추가 판정: old Ready를 유지하고 genesis3만 새 Ready이며 nano가 준비 중인 steady-mixed 조건에서, 같은 owner 예약 안의 capacity-checked positive 중간 route가 old+genesis3에 적용된다. nano 지연은 순증을 막지 않는다. 같은 Node 중복·미지원 row·양수 목적지 policy ACK/identity 실패·불가한 전환 backlog에서는 current를 보존한다. 최종 DAG·예약 반환·기존 R1 bootstrap/stopped/unroutable/retiring 판정은 유지한다.
+- 중간 순증 추가 판정: old Ready를 유지하고 genesis3만 새 Ready이며 nano가 준비 중인 steady-mixed 조건에서, 같은 owner 예약 안의 현재 demand 평가를 거친 양수 중간 route가 old+genesis3에 적용된다. nano 지연은 순증을 막지 않는다. 같은 Node 중복·support 부재·양수 목적지 policy ACK/identity 실패·물리 실행 불가에서는 current를 보존한다. old row pending만으로 막지 않는다. 최종 DAG·예약 반환·기존 bootstrap/stopped/unroutable/retiring 판정은 유지한다.
 - Cycle 7 생명주기 판정 / S3b: 순수 `changedWorkloads=[]` route는 부모·자식·예약을 만들지 않는다. 비어 있지 않은 route·prepare/power/resize는 admission하여 route-only 회복도 전체 NotReady 대기 중 Ready 생존자 subset을 적용할 수 있다. retirement만 있으면 현재 dependency/Ready/exact handoff 충족 시에만 admission하고 그 외에는 다음 Tick에 재계획한다. omission 표식·기존 빈 orphan의 no-effect 반환·미시작 retirement partial 종결은 없으며 성공 ACK 합성·frozen DependsOn/RouteTarget 삭제 없이 완료 consumer 또는 frozen empty 최종 scope 판정을 완료·launch·예약 진단에서 공유한다. 다른 sibling이 진행 중이어도 소비된 bridge를 재실행하거나 부족 proof로 표시하지 않는다. Create 성공/검증 GET의 Pod UID·Node UID·인가 prepare·created/reused 증거는 error·최종 Capture와 독립 보존하고 terminal 공개 전에 owner scope에 편입한다. 같은 RestartPolicyNever UID의 첫 exact container만 terminal 뒤에도 one-shot 결합하며 타 UID/재결합·baseline 변경은 금지한다. late 정상 ACK는 원 실패 receipt·Pod를 보존하고 기존 fresh exact/terminal sibling/power proof 뒤 반환한다. reused/생성 불명은 신규 생성 보상으로 취급하지 않고, 증거/dirty/receipt는 owner 책임 전체 반환까지 GC/reset 경합에도 유지한다. 예약 reason은 blocking action/identity·부족 proof·해소 경로를 결정적으로 제공한다.
 - 요구사항: SCH-20, SCH-24, SCH-26, SCH-41, SCH-50, SCH-51.
 
@@ -271,29 +271,29 @@ Serving 평가에서 검증한다.
 - Then: 단일 전역 계획기가 예약 범위를 유지하면서 다른 Node의 확장 후보를 평가·선택하고 준비 작업을 시작한다. 준비된 용량은 늦어도 다음 제어 주기에 실제 분배에 편입되어 요청을 받으며, 이 판단·준비·분배 시각은 jetsono 전환 완료보다 앞선다. jetsono 예약을 침범하는 변경과 중복 작업은 없고 전체 완료 장벽으로 대기하지 않는다.
 - 요구사항: SCH-20, SCH-25, SCH-27, SCH-40, SCH-50, SCH-51, SCH-52.
 
-#### SCH-AC-40 — 무한 초과량에서도 독립 개선 선택
-- Given: 한 Workload는 모든 후보에서 용량이 없고 다른 Workload에는 양수 용량 후보가 있다.
-- When: 공동 후보와 아무것도 하지 않는 keep을 비교한다.
-- Then: 같은 무한 초과량 다음의 초과량을 비교하여 나머지 Workload를 살리는 후보가 keep을 이긴다. 모든 초과량이 같은 경우에만 에너지·keep·논리 key 순서를 적용한다.
+#### SCH-AC-40 — 미충족에서도 독립 개선 선택
+- Given: 한 Workload는 모든 후보에서 같은 실패 결과이고 다른 Workload에는 개선 후보가 있다.
+- When: 공동 후보와 keep을 승인 M0의 우선순위로 비교한다.
+- Then: 동률 Workload 다음의 tuple을 비교하여 나머지 Workload의 개선을 반영한다. 모든 비교값이 같은 경우에만 에너지·keep·논리 key 순서를 적용한다.
 - 요구사항: SCH-53.
 
-#### SCH-AC-41 — 빈 출발 κ 완료 순서 독립
-- Given: 실물과 예약이 없고 Smol/PLC/MNV의 수요가 .3/40/20이며 Smol genesis2 FP32 행, PLC 행, MNV 행 순서로 계산 결과가 도착한다.
-- When: 부분 결과와 전체 terminal 결과로 각각 판단한다.
-- Then: missing/pending 근거는 Pending과 원인으로 남고 terminal 근거로 공동 배치한다. 경과 시간 fallback은 없으며 실물이 있는 독립 확장은 scoped 규칙을 따른다.
+#### SCH-AC-41 — 빈 출발의 online row 대기 제거
+- Given: 실물과 예약이 없고 Smol/PLC/MNV의 수요가 .3/40/20이며 유효 profile은 있고 전체 격자 행은 없다.
+- When: 현재 timing과 같은 수요 집단으로 공동 후보를 직접 평가한다.
+- Then: 전체 grid·Built/pending을 기다리지 않고 평가하며 κ̂=0이나 빈 tests를 물리 처리량 0으로 해석하지 않는다. no-profile·support 부재와 실제 물리 실패는 별도 원인으로 남기고 scoped 소유·예약을 유지한다.
 - 요구사항: SCH-52, SCH-54.
 
 #### SCH-AC-42 — 현재 수요의 공통 후보 비교
 - Given: 동일한 실제 공급·SLO·에너지 근거와 축소·교체·빈 Node 절전 후보가 있다.
 - When: v1/v2에 낮은 현재 유효 수요와 높은 현재 유효 수요를 각각 입력한다.
-- Then: 낮은 수요에서는 기존 물리·SLO·에너지 검사를 통과한 축소 후보를 즉시 비교한다. 높은 수요에서는 현재 수요를 감당하지 못하는 후보를 거절한다. 별도 안정화·체류·age TTL·bootstrap timeout이나 증가 추세 gate는 없다.
+- Then: 낮은 수요와 높은 수요 모두 같은 물리·직접 SLO·에너지 계약으로 후보를 비교한다. 전체 미충족에서도 승인 M0의 개선 순서를 실행 수용까지 유지한다. 별도 안정화·체류·age TTL·bootstrap timeout이나 증가 추세 gate는 없다.
 - 실제 가용 수요가 없는 부분 관측, 실패한 live capture, 미상·미래 시각, Ready/ACK·소유권·backlog·전환 peak/bridge/reserve와 owner DAG 후속 정리는 기존 계약대로 처리한다.
 - 요구사항: SCH-40, SCH-52, SCH-54, SCH-55, SCH-56.
 
 #### SCH-AC-43 — 양수 예비 비율의 전환 SLO와 에너지
-- Given: 양수 예비 비율과 이를 감당할 실측 용량·자원이 있는 전력 변경 후보가 있다.
+- Given: 양수 예비 비율과 이를 평가할 profile·실제 Ready 공급·자원이 있는 전력 변경 후보가 있다.
 - When: 준비되지 않은 공급만 있는 경우와 실제 Ready·ACK 예비가 확보된 경우를 실행한다.
-- Then: 전자는 변경을 허가하지 않고 후자는 수요 대비 예비와 기존 전환 SLO를 만족하며 전환 중 실제 요청 SLO를 확인한다. 비율 0은 추가 예비 제약만 끄며 SLO 검사는 유지한다. 예비의 준비·Serving·해제 소비는 evaluation 에너지에서 빠지지 않는다.
+- Then: 전자는 변경을 허가하지 않고 후자는 Ready profile-rate estimate로 예비를 검사하고 직접 replay로 SLO를 평가한다. 실제 전환 중 요청 SLO를 따로 확인한다. 비율 0은 추가 예비 제약만 끄며 SLO 검사는 유지한다. 예비의 준비·Serving·해제 소비는 evaluation 에너지에서 빠지지 않는다.
 - 요구사항: SCH-15, SCH-16, SCH-25, SCH-57.
 
 #### SCH-AC-44 — 후보와 무관한 고정 H
@@ -485,6 +485,7 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 ## 9. 설정 소유권과 기록 (활성 요구사항)
 
 2026-10-30 추가. §8의 보류 제안과 독립이며 다음 하드코딩 정리 구현의 기준이다.
+이 절의 전체 grid·이분 설정과 관련 수용 수치는 명시적 offline κ 계산에 적용한다. online tested-rate κ̂·직접 후보 평가의 범위는 `SCH-13`과 승인 M0를 따른다. 기존 설정 범위·기록 계약은 유지한다.
 아래 기본값은 새 정책이 아니라 현재 리터럴을 옮긴 값이다. 아직 구현·검증 완료를 뜻하지 않는다.
 
 - `SCH-71` 운영 중 조정할 serving 정책은 기존 settings API에서 조회·변경한다. 아래 필드를 생략하면 현재 기본값을 채우고 응답·판단에는 실제 선택값을 남긴다. 유효 범위의 비기본값도 실제 소비해야 하며 하나의 값만 허용하는 필드는 두지 않는다.
@@ -500,8 +501,8 @@ evidence API 작업의 활성 수용 기준이 아니다. 미배선 구현(`e947
 | capacityBisectionWidth | μ 대비 이분 종료 폭 | finite (0,1] | 0.005 |
 | capacityTailSamples | SLO 분위 위 꼬리 표본 목표 수 | 정수 ≥1 | 100 |
 
-추가 필드는 위 3개뿐이며 기존 settings는 유지한다. 정수는 Go 필드 표현 범위 안이다. capacityGridSteps는 전체 격자 순회·격자율, capacityBisectionWidth는 width×μ 종료 조건, capacityTailSamples는 ceil(tailSamples/(1−p/100)) 계산에 쓰며 p=100 현재 분기는 유지한다. 세 값 모두 CapacityInput→용량 행에 동결한다.
-기본값도 새 κ 키를 만들므로 cache miss·재계산은 의도된 결과다. 옛 키 우회·omitempty·dual lookup은 없다. CI CLI/values/생성자 경로는 삭제하고 측정별 단일 정책을 사용한다.
+이 절에서 추가한 필드는 위 3개이며 기존 settings는 유지한다. 정수는 Go 필드 표현 범위 안이다. capacityGridSteps는 offline 전체 격자 순회·격자율, capacityBisectionWidth는 width×μ 종료 조건에 쓴다. capacityTailSamples는 기존 rate 판정의 ceil(tailSamples/(1−p/100)) 계산에 쓰며 p=100 현재 분기는 유지한다. 세 값 모두 offline CapacityInput→용량 행에 동결한다.
+offline 기본값도 새 κ 키를 만들므로 cache miss·재계산은 의도된 결과다. 옛 키 우회·omitempty·dual lookup은 없다. CI CLI/values/생성자 경로는 삭제하고 측정별 단일 정책을 사용한다.
 source/profile interval은 API 조정 후보였지만 이 작업에서는 기동값으로 유지한다.
 기존 powerObservation.sampling/coverage·읽기 전용 meters는 settings로 중복 이동하지 않는다.
 
