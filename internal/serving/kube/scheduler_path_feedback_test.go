@@ -72,9 +72,14 @@ func TestTickCapturesAndPublishesSameWindowPathFeedback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := serving.PathFeedback{WorkloadUID: workload.UID, Percentile: workload.SLO.Percentile,
-		TotalNanos: float64(50 * time.Millisecond), PostNanos: float64(30 * time.Millisecond), SampleCount: 1, Source: "empirical"}
-	if !reflect.DeepEqual(second.PathFeedback, []serving.PathFeedback{want}) || !reflect.DeepEqual(published.PathFeedback, second.PathFeedback) {
+	if len(second.PathFeedback) != 1 {
+		t.Fatalf("Tick omitted workload feedback: %+v", second.PathFeedback)
+	}
+	feedback := second.PathFeedback[0]
+	if feedback.WorkloadUID != workload.UID || feedback.Percentile != workload.SLO.Percentile ||
+		feedback.TotalNanos != float64(50*time.Millisecond) || feedback.PostNanos != float64(30*time.Millisecond) ||
+		feedback.SampleCount != 1 || feedback.Source != "empirical" ||
+		!reflect.DeepEqual(published.PathFeedback, second.PathFeedback) {
 		t.Fatalf("Tick omitted joined reserve sample: %+v", second.PathFeedback)
 	}
 	if first.PathFeedback[0].Source != "configured" || first.PathFeedback[0].PostNanos != float64(7*time.Millisecond) {

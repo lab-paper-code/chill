@@ -15,11 +15,12 @@ import (
 )
 
 const reusedEvidence = "reused"
+const otherUIDEvidence = "other-uid"
 
 // Raw plan-d2a9daa9759a: Create -> cancel -> empty Capture -> terminal ->
 // first exact container and complete prepare ACK, without rewriting failure.
 func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
-	for _, mode := range []string{"create-confirmed", reusedEvidence, "other-uid", "unknown-create", "other-node", "different-owner", "other-profile"} {
+	for _, mode := range []string{"create-confirmed", reusedEvidence, otherUIDEvidence, "unknown-create", "other-node", "different-owner", "other-profile"} {
 		t.Run(mode, func(t *testing.T) {
 			pod, node, profile, _ := observerSourceFixture()
 			pod.OwnerReferences = []meta.OwnerReference{{APIVersion: edge.GroupVersion.String(), Kind: "Workload", UID: "workload"}}
@@ -38,7 +39,7 @@ func TestCreatedUIDLateBindingReturnsAC38(t *testing.T) {
 			actual.ID = servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
 			actual.TargetID, actual.OwnerWorkloadUID = wanted.ID, wanted.WorkloadUID
 			switch mode {
-			case "other-uid":
+			case otherUIDEvidence:
 				actual.PodUID = "replacement"
 				actual.ID = "replacement/container"
 			case "unknown-create":

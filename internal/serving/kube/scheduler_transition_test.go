@@ -38,6 +38,7 @@ const (
 	slowNodeName           = "slow"
 	raisedPowerMode        = "max"
 	policyAckPendingReason = "PolicyAckPending"
+	noRateWitness          = "no-rate-witness"
 )
 
 func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.SchedulerCandidate, serving.ReadyInstance) {
@@ -76,7 +77,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	if err := manager.runtime.ApplySchedulerTarget(oldTarget); err != nil {
 		t.Fatal(err)
 	}
-	controller := &SchedulerController{runtime: manager.runtime, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{
+	controller := &SchedulerController{ctx: ctx, runtime: manager.runtime, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{
 		"acknowledged-route": {
 			action: serving.Action{ID: "acknowledged-route", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationComplete},
 			result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &oldTarget}, Status: servingstate.NativeOperationComplete},
@@ -642,7 +643,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 
 // E5-1: old rasp5 stays serving while genesis3 is Ready and nano is late.
 func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", "no-rate-witness", "same-node", "missing-raw", "unready", "other-uid", "policy-ack", "identity"} {
+	for _, scenario := range []string{"admitted", noRateWitness, "same-node", "missing-raw", "unready", "other-uid", "policy-ack", "identity"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, target, physical := acknowledgedHandoffFixture(t)
 			old := target.Instances[0]
@@ -708,7 +709,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			snapshot.ObservationEnd = snapshot.At
 			snapshot.ObservedSince = snapshot.At.Add(-time.Minute)
 			definition := *c.runtime.SchedulerInputs(time.Now).Workloads[0]
-			if scenario == "no-rate-witness" {
+			if scenario == noRateWitness {
 				definition.SLO.TargetLatency = time.Nanosecond
 			}
 			snapshot.Workloads = []*serving.Definition{&definition}
@@ -730,7 +731,7 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true},
 				CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, CapacityTailSamples: 1,
 			})
-			if scenario == "no-rate-witness" {
+			if scenario == noRateWitness {
 				evidence, err := serving.JudgeFeedbackRates(context.Background(), c.config.Settings, serving.SchedulerOption{Instance: added}, &definition,
 					serving.DispatchOccupancy{}, serving.PathFeedback{}, []float64{23.383333})
 				if err != nil {
@@ -740,30 +741,37 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 					t.Fatalf("strict SLO unexpectedly produced a pass witness: %+v", evidence)
 				}
 			}
-			if c.dependenciesReady(target.Actions[1], target, c.runtime) {
-				t.Fatal("late nano unexpectedly allowed final handoff")
-			}
-			partial := c.readySubset(target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-			if scenario != "admitted" && scenario != "no-rate-witness" {
-				if partial != nil {
-					t.Fatalf("unsafe expansion: %+v", partial)
-				}
-				routing, _ := c.runtime.SchedulerRouting()
-				if !reflect.DeepEqual(routing, snapshot.Routing) {
-					t.Fatalf("current route changed on rejected expansion: %v", routing)
-				}
-				return
-			}
-			if partial == nil || partial.Routing[uid][old.ID] <= 0 || partial.Routing[uid][added.ID] <= 0 || partial.Routing[uid][nano.ID] != 0 {
-				t.Fatalf("Ready independent supply not added: %+v", partial)
-			}
-			if err := c.runtime.ApplySchedulerTarget(*partial); err != nil {
-				t.Fatal(err)
-			}
-			if !c.routingTargetPresent(partial, *snapshot, c.runtime.Instances(), true, c.runtime) {
-				t.Fatal("expanded route lacks exact native ACK")
-			}
+			verifyIndependentReadySubset(t, c, target, old, added, nano, scenario)
 		})
+	}
+}
+
+func verifyIndependentReadySubset(t *testing.T, c *SchedulerController, target serving.SchedulerCandidate, old, added, nano serving.SchedulerInstance, scenario string) {
+	t.Helper()
+	uid := old.WorkloadUID
+	snapshot := &c.state.Snapshot
+	if c.dependenciesReady(target.Actions[1], target, c.runtime) {
+		t.Fatal("late nano unexpectedly allowed final handoff")
+	}
+	partial := c.readySubset(context.Background(), target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	if scenario != "admitted" && scenario != noRateWitness {
+		if partial != nil {
+			t.Fatalf("unsafe expansion: %+v", partial)
+		}
+		routing, _ := c.runtime.SchedulerRouting()
+		if !reflect.DeepEqual(routing, snapshot.Routing) {
+			t.Fatalf("current route changed on rejected expansion: %v", routing)
+		}
+		return
+	}
+	if partial == nil || partial.Routing[uid][old.ID] <= 0 || partial.Routing[uid][added.ID] <= 0 || partial.Routing[uid][nano.ID] != 0 {
+		t.Fatalf("Ready independent supply not added: %+v", partial)
+	}
+	if err := c.runtime.ApplySchedulerTarget(*partial); err != nil {
+		t.Fatal(err)
+	}
+	if !c.routingTargetPresent(partial, *snapshot, c.runtime.Instances(), true, c.runtime) {
+		t.Fatal("expanded route lacks exact native ACK")
 	}
 }
 
@@ -1736,7 +1744,7 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	target.Instances = []serving.SchedulerInstance{first, second}
 	target.Routing = map[string]map[string]int32{first.WorkloadUID: {first.ID: 1000}, second.WorkloadUID: {second.ID: 1000}}
 	target.Actions = nil
-	partial := c.readySubset(target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.readySubset(context.Background(), target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		t.Fatal("independent Ready UID made no progress")
 	}

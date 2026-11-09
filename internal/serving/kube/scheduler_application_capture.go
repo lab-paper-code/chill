@@ -104,16 +104,7 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	current := c.runtime.SchedulerInputs(time.Now)
 	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding
 	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
-	samples := make(map[string][]serving.PathTimingSample)
-	for _, sample := range window.PathSamples {
-		samples[sample.WorkloadUID] = append(samples[sample.WorkloadUID], sample)
-	}
-	s.PathFeedback = make([]serving.PathFeedback, 0, len(s.Workloads))
-	for _, workload := range s.Workloads {
-		s.PathFeedback = append(s.PathFeedback, serving.BuildPathFeedback(
-			workload.UID, samples[workload.UID], workload.SLO,
-			time.Duration(config.Settings.CompletionMarginMS*float64(time.Millisecond))))
-	}
+	capturePathFeedback(&s, window.PathSamples, config.Settings.CompletionMarginMS)
 	for _, profile := range profiles {
 		template, ok := config.Preparations[profile.ID]
 		// A strict fixed-size preparation is a baseline, never an autonomous candidate.
@@ -139,6 +130,19 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	}
 	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
 	return s, nil
+}
+
+func capturePathFeedback(s *serving.SchedulerSnapshot, pathSamples []serving.PathTimingSample, completionMarginMS float64) {
+	samples := make(map[string][]serving.PathTimingSample)
+	for _, sample := range pathSamples {
+		samples[sample.WorkloadUID] = append(samples[sample.WorkloadUID], sample)
+	}
+	s.PathFeedback = make([]serving.PathFeedback, 0, len(s.Workloads))
+	for _, workload := range s.Workloads {
+		s.PathFeedback = append(s.PathFeedback, serving.BuildPathFeedback(
+			workload.UID, samples[workload.UID], workload.SLO,
+			time.Duration(completionMarginMS*float64(time.Millisecond))))
+	}
 }
 
 func schedulerRequestCoverageError(gaps []serving.ObservationGap, from, to time.Time) error {

@@ -1150,7 +1150,8 @@ func TestCatalogRetainsAdmittedFactsWithCallerOwnedViews(t *testing.T) {
 
 func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T) {
 	const recreatedSource = "recreated"
-	for _, change := range []string{"version", "pending", "unselected", "deleted", recreatedSource} {
+	const pendingSource = "pending"
+	for _, change := range []string{"version", pendingSource, "unselected", "deleted", recreatedSource} {
 		t.Run(change, func(t *testing.T) {
 			catalog, source, objects, _ := catalogEvidenceFixture(t, 4096)
 			ctx := context.Background()
@@ -1170,7 +1171,7 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 			case "version":
 				campaign.Annotations = map[string]string{"catalog-test-revision": "changed"}
 				err = catalog.store.client.Update(ctx, campaign)
-			case "pending":
+			case pendingSource:
 				campaign.Status.Phase = "Measuring"
 				err = catalog.store.client.Status().Update(ctx, campaign)
 				issues = 0
@@ -1199,7 +1200,7 @@ func TestCatalogInvalidatesChangedPendingRemovedAndRecreatedSources(t *testing.T
 				return
 			}
 			maps.Copy(objects, retainedObjects)
-			if change == "pending" {
+			if change == pendingSource {
 				if err := catalog.store.client.Get(ctx, source, campaign); err != nil {
 					t.Fatal(err)
 				}

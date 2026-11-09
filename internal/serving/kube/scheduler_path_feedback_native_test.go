@@ -36,41 +36,7 @@ func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *tes
 	if ready.Profile == nil || ready.Capacity <= 0 {
 		t.Fatalf("fixture has no usable native capacity: %+v", ready)
 	}
-	releaseContext, release := context.WithCancel(ctx)
-	defer release()
-	seen := make(chan native.Request, ready.Capacity+2)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request native.Request
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Error(err)
-			return
-		}
-		seen <- request
-		<-releaseContext.Done()
-		progress := native.Progress{RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID,
-			Definition: request.Context.Definition, Phase: "finished", At: time.Now(), BatchID: 1,
-			BatchSize: 1, ProfileID: ready.Profile.ID, ExecutionComplete: true, Outcome: "completed", NativeElapsedMS: 1}
-		if err := json.NewEncoder(w).Encode(native.Response{ModelName: ready.Profile.Condition.Actor.Model,
-			ID: request.ID, ExecutionComplete: true, Progress: progress,
-			Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}}); err != nil {
-			t.Error(err)
-		}
-	}))
-	defer func() {
-		release()
-		server.Close()
-	}()
-	proxy, err := url.Parse(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := c.observer.native.HTTPClient.Transport.(*http.Transport).Proxy
-	c.observer.native.HTTPClient.Transport = &http.Transport{Proxy: func(r *http.Request) (*url.URL, error) {
-		if r.Method == http.MethodPost {
-			return proxy, nil
-		}
-		return previous(r)
-	}}
+	seen, release := interceptNativeFeedbackCalls(t, c, ctx, ready)
 	var calls []*serving.Call
 	var receipts []serving.Receipt
 	want := map[string]float64{}
@@ -154,8 +120,13 @@ func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
+	verifyFrozenNativeFeedback(t, rows.Requests, actual, want, len(calls))
+}
+
+func verifyFrozenNativeFeedback(t *testing.T, rows []serving.RequestRow, actual map[string]native.Request, want map[string]float64, count int) {
+	t.Helper()
 	finals := 0
-	for _, row := range rows.Requests {
+	for _, row := range rows {
 		margin, selected := want[row.RequestID]
 		if !selected {
 			continue
@@ -168,7 +139,46 @@ func TestTickFeedbackUpdatesNewCallsWithoutRewritingAcceptedNativeContext(t *tes
 			t.Fatalf("decision, accepted final row and native arguments diverged: row=%+v native=%+v want=%v", row, request.Context, margin)
 		}
 	}
-	if finals != len(calls) {
-		t.Fatalf("got %d final rows for %d accepted calls", finals, len(calls))
+	if finals != count {
+		t.Fatalf("got %d final rows for %d accepted calls", finals, count)
 	}
+}
+
+func interceptNativeFeedbackCalls(t *testing.T, c *SchedulerController, ctx context.Context, ready serving.SchedulerInstance) (<-chan native.Request, context.CancelFunc) {
+	t.Helper()
+	releaseContext, release := context.WithCancel(ctx)
+	seen := make(chan native.Request, ready.Capacity+2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request native.Request
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		seen <- request
+		<-releaseContext.Done()
+		progress := native.Progress{RequestID: request.ID, WorkloadUID: request.Context.WorkloadUID,
+			Definition: request.Context.Definition, Phase: "finished", At: time.Now(), BatchID: 1,
+			BatchSize: 1, ProfileID: ready.Profile.ID, ExecutionComplete: true, Outcome: "completed", NativeElapsedMS: 1}
+		if err := json.NewEncoder(w).Encode(native.Response{ModelName: ready.Profile.Condition.Actor.Model,
+			ID: request.ID, ExecutionComplete: true, Progress: progress,
+			Outputs: []native.Field{{Name: "output", Data: [][]byte{[]byte("result")}}}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(func() {
+		release()
+		server.Close()
+	})
+	proxy, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := c.observer.native.HTTPClient.Transport.(*http.Transport).Proxy
+	c.observer.native.HTTPClient.Transport = &http.Transport{Proxy: func(r *http.Request) (*url.URL, error) {
+		if r.Method == http.MethodPost {
+			return proxy, nil
+		}
+		return previous(r)
+	}}
+	return seen, release
 }
