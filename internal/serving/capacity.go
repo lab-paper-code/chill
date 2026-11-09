@@ -329,6 +329,17 @@ func (s *schedulerReplayState) capacityWindowFailed() bool {
 	return limit.failed
 }
 
+func (s *schedulerReplayState) finishCapacityWindow() {
+	for _, request := range s.requests {
+		if !request.completed && !request.dropped && !request.failed && !request.expired {
+			if s.out.outcomes[request.identity] == nil {
+				s.out.outcomes[request.identity] = map[string]int{}
+			}
+			s.out.outcomes[request.identity]["unfinished"]++
+		}
+	}
+}
+
 // window replays one window of n Poisson arrivals at lambda that starts empty.
 // Failed early-stop windows have no complete percentile or energy population.
 func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int) (capacityWindowResult, error) {

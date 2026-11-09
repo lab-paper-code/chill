@@ -21,6 +21,7 @@ func feedbackPercentileFixture(n, misses, late int, percentile float64, outcome 
 	for j := range n {
 		native := 100e6
 		request := SchedulerRequest{ID: fmt.Sprintf("r%04d", j), Definition: definition, Phase: phaseReturning, Instance: snapshot.Instances[0].ID, CompletionMarginMS: &zero, NativeSenderElapsedMS: &zero, NativeElapsedNanos: &native}
+		request.ReceivedAt = snapshot.At
 		if j < misses {
 			switch outcome {
 			case "expired":

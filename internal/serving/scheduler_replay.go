@@ -6,7 +6,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
@@ -244,14 +243,7 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 		if s.capacity == nil && err == nil {
 			s.finishFeedback()
 		} else if s.capacity != nil && !s.capacity.failed && err == nil {
-			for _, request := range s.requests {
-				if !request.completed && !request.dropped && !request.failed && !request.expired {
-					if s.out.outcomes[request.identity] == nil {
-						s.out.outcomes[request.identity] = map[string]int{}
-					}
-					s.out.outcomes[request.identity]["unfinished"]++
-				}
-			}
+			s.finishCapacityWindow()
 		}
 		result = s.out
 	}()
