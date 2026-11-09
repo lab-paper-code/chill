@@ -441,6 +441,13 @@ func (l *ObservationLog) freezeBatchLocked(stream string, at time.Time, value an
 			}
 		}
 		if known && entry.hour == observationHour(at) && bytes.Equal(entry.body, body) {
+			// Equal republications replace the source too: otherwise every
+			// request using the new immutable pointer repeats the full marshal.
+			switch ref.body.(type) {
+			case *serving.Profile, *serving.Definition:
+				entry.source = ref.body
+				l.references[id] = entry
+			}
 			continue
 		}
 		data, err := json.Marshal(CatalogRow{Kind: ref.kind, Key: ref.key, At: eventAt, Body: body})
@@ -623,7 +630,9 @@ func (l *ObservationLog) writeBatch(batch *observationBatch) error {
 			err = l.writeLocked(row.stream, row.at, row.data)
 		}
 		if err == nil && row.catalog != nil {
-			l.catalog[row.catalogID] = *row.catalog
+			committed := *row.catalog
+			committed.source = nil // Only submission uses immutable source identity.
+			l.catalog[row.catalogID] = committed
 		}
 		l.mu.Unlock()
 		if err != nil {
