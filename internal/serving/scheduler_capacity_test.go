@@ -185,12 +185,16 @@ func TestCapacityMinimumDemandPreservesCapacityAtNoLoad(t *testing.T) {
 	snap.Options = append(snap.Options, poolsOption(i2))
 	snap.Routing = map[string]map[string]int32{"w1": {"i1": 500, "i2": 500}}
 	snap.Costs = []OperationCost{poolsCost(schedulerActionRemove, n2, schedulerState(i2), "unloaded", "fixed")}
-	capacityServiceRatesForTest(&snap, map[string]float64{snap.Instances[0].Profile.ID: 25})
+	capacityServiceRatesForTest(&snap, map[string]float64{snap.Instances[0].Profile.ID: 25, i2.Profile.ID: 25})
 
+	// An empty replay has no SLO obligation to preserve a particular profile rate.
 	cheap := capacityDecideForTest(t, s, snap)
-	if cheap.Target == nil || poolsOn(*cheap.Target, n2) || cheap.Capacity == nil ||
-		cheap.Capacity.Workloads[0].Rate != 0 || cheap.Capacity.Workloads[0].RoutingRate != 25 {
-		t.Fatalf("without demand the cheaper 25 req/s configuration must win: %+v", cheap)
+	if cheap.Target == nil || cheap.Capacity == nil || cheap.Capacity.Workloads[0].Rate != 0 ||
+		cheap.Target.ExpectedJoules == nil || cheap.Keep.ExpectedJoules == nil || *cheap.Target.ExpectedJoules >= *cheap.Keep.ExpectedJoules {
+		t.Fatalf("empty demand must allow a cheaper configuration without a capacity floor: %+v", cheap)
+	}
+	if len(cheap.Target.Feedback) != 1 || cheap.Target.Feedback[0].Population != 0 || !cheap.Target.Feedback[0].Satisfied || cheap.Target.Feedback[0].SuccessQuantileNanos != nil {
+		t.Fatalf("empty demand must not fabricate a successful latency observation: %+v", cheap.Target.Feedback)
 	}
 	s.MinimumDemand = map[string]float64{"w1": 40}
 	floored := capacityDecideForTest(t, s, snap)
@@ -200,6 +204,9 @@ func TestCapacityMinimumDemandPreservesCapacityAtNoLoad(t *testing.T) {
 	w := floored.Capacity.Workloads[0]
 	if w.MinimumDemand != 40 || w.Rate != 40 || w.RoutingRate < w.Rate {
 		t.Fatalf("effective demand and selected capacity must cover the floor: %+v", w)
+	}
+	if len(floored.Target.Feedback) != 1 || floored.Target.Feedback[0].MinimumDemandArrivals != 2400 || floored.Target.Feedback[0].Completed != 2400 || !floored.Target.Feedback[0].Satisfied {
+		t.Fatalf("the 40 req/s floor must be consumed as a successful finite replay population: %+v", floored.Target.Feedback)
 	}
 }
 
@@ -2201,6 +2208,11 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	}
 	p := capacityPlannerForTest(t, s, snap)
 	best := capacitySearchForTest(t, p)
+	load(35, 35, 35, 35, 35, 5)
+	if d := capacityDecideForTest(t, s, snap); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementUnpaid+":n2") {
+		t.Fatalf("replacement unpaid at 5 req/s was chosen: %+v %v", d.Target, d.Reasons)
+	}
+	// Recovery changes shared profile pointers; test normal payback before that mutation.
 	for _, plans := range p.plans {
 		for w := range plans[0].items {
 			for k := range plans[0].items[w] {
@@ -2216,10 +2228,6 @@ func TestCapacityReplacementRepaysAtLeastLoad(t *testing.T) {
 	}
 	if got := p.payback(best); !slices.Equal(got.choice, best.choice) {
 		t.Fatalf("keep infeasible recovery must bypass optional payback: %+v", got)
-	}
-	load(35, 35, 35, 35, 35, 5)
-	if d := capacityDecideForTest(t, s, snap); replaced(d) || !slices.Contains(d.Reasons, schedulerReplacementUnpaid+":n2") {
-		t.Fatalf("replacement unpaid at 5 req/s was chosen: %+v %v", d.Target, d.Reasons)
 	}
 }
 
