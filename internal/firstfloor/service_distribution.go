@@ -28,7 +28,10 @@ type serviceTrial struct {
 	groups  []serviceGroup
 }
 
-// ServiceDistribution is immutable after hydration. Query methods allocate nothing.
+type serviceNeighbors struct{ a, b []ServiceSample }
+
+// ServiceDistribution is immutable after hydration. Quantile queries use local
+// scratch; up to 32 physical trials need no heap-backed scratch.
 type ServiceDistribution struct {
 	trials   []serviceTrial
 	services []int64
@@ -206,17 +209,35 @@ func (d *ServiceDistribution) SampleResidual(gap *int64, elapsed int64, rng *ran
 // QuantileNanos is the empirical inverse CDF of uniform physical trials and
 // uniform actual nearest records within each trial; percentiles use [0,100].
 func (d *ServiceDistribution) QuantileNanos(gap *int64, percentile float64) (int64, ConditionalSupport, bool) {
-	support := d.support(gap)
+	var support ConditionalSupport
+	if d == nil || gap != nil && *gap < 0 {
+		return 0, support, false
+	}
+	var local [32]serviceNeighbors
+	nearest := local[:0]
+	for j := range d.trials {
+		a, b, distance, outside := d.trials[j].nearest(gap)
+		if len(a)+len(b) == 0 {
+			continue
+		}
+		if len(nearest) == cap(nearest) {
+			all := make([]serviceNeighbors, len(nearest), len(d.trials))
+			copy(all, nearest)
+			nearest = all
+		}
+		nearest = append(nearest, serviceNeighbors{a, b})
+		support.TrialCount++
+		support.DistanceNanos = max(support.DistanceNanos, distance)
+		support.OutsideSupport = support.OutsideSupport || outside
+	}
 	if support.TrialCount == 0 || math.IsNaN(percentile) || percentile < 0 || percentile > 100 {
 		return 0, support, false
 	}
 	index := sort.Search(len(d.services), func(i int) bool {
 		mass := 0.0
-		for j := range d.trials {
-			a, b, _, _ := d.trials[j].nearest(gap)
-			if n := len(a) + len(b); n > 0 {
-				mass += float64(serviceUpperBound(a, d.services[i])+serviceUpperBound(b, d.services[i])) / float64(n)
-			}
+		for _, trial := range nearest {
+			n := len(trial.a) + len(trial.b)
+			mass += float64(serviceUpperBound(trial.a, d.services[i])+serviceUpperBound(trial.b, d.services[i])) / float64(n)
 		}
 		return mass > 0 && mass/float64(support.TrialCount) >= percentile/100
 	})

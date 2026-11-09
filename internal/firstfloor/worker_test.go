@@ -123,7 +123,8 @@ func TestCompletionMarginIsReservedOnceRegardlessOfSenderElapsed(t *testing.T) {
 	p.Batches = []BatchProfile{testBatch(1, 1, startupSample("trial-a", 100))}
 	q := testState("uid", 507, 0)
 	q.Context.SenderElapsedMS, q.Context.CompletionMarginMS = 400, 7
-	if slack := requestSlack(q, p.Batches[0], nil); slack != 0 {
+	var costs serviceCosts
+	if slack := requestSlack(q, p.Batches[0], nil, &costs); slack != 0 {
 		t.Fatalf("400ms sender + 100ms service + 7ms margin must fit 507ms exactly: %v", slack)
 	}
 	if c := ChooseBatch(p, []RequestState{q}, nil); c.Size != 1 || c.Reason == OutcomeDeadlineDrop {
