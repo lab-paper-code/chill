@@ -190,7 +190,6 @@ func TestPathBudgetApplicationCompletedTickReachesNativeAndDurableFinal(t *testi
 			t.Fatal(ctx.Err())
 		}
 	}
-	f.install()
 	resumeOld()
 	old := <-oldReply
 	if old.err != nil {
@@ -200,6 +199,10 @@ func TestPathBudgetApplicationCompletedTickReachesNativeAndDurableFinal(t *testi
 	if oldRow.CompletionMarginMS == nil || *oldRow.CompletionMarginMS != 29 {
 		t.Fatalf("completed Tick rewrote old acceptance: %+v", oldRow.CompletionMarginMS)
 	}
+	// The empty Kubernetes inventory invalidated the named native double.
+	// Reinstall it after the old call drains: the runtime correctly refuses
+	// profile replacement while that synthetic executor is still outstanding.
+	f.install()
 	reply := f.invoke(ctx)
 	if reply.err != nil {
 		t.Fatal(reply.err)
