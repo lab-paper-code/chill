@@ -45,6 +45,7 @@ func withSchedulerEstimateFixture(settings serving.SchedulerSettings) serving.Sc
 		"power":   {Seconds: 166, Joules: 2229},
 	}
 	settings.DefaultIdlePower = &serving.IdlePowerDefault{NodeWatts: 54, PerInstanceWatts: 8}
+	settings.SLOPriorityStrategy, settings.WorkloadPriority = "excess", []string{}
 	return settings
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -12,6 +13,11 @@ import (
 	jsonpatch "github.com/evanphx/json-patch/v5"
 	"github.com/lab-paper-code/chill/internal/evidencestore"
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
+)
+
+const (
+	SLOPriorityExcess   = "excess"
+	SLOPriorityWorkload = "workload"
 )
 
 // SchedulerSettings separates the observed population from the control cadence
@@ -30,6 +36,10 @@ type SchedulerSettings struct {
 	ServingMemoryBytes        uint64        `json:"servingMemoryBytes"`
 	CompletionMarginMS        float64       `json:"completionMarginMS"`
 	AutonomousWorkloads       []string      `json:"autonomousWorkloads"`
+	// SLOPriorityStrategy selects excess order (the zero-value default) or
+	// the supplied Workload order. Unknown UIDs remain stored for evaluation.
+	SLOPriorityStrategy string   `json:"sloPriorityStrategy,omitempty"`
+	WorkloadPriority    []string `json:"workloadPriority"`
 	// MinimumDemand floors planning demand in requests/second by Workload UID.
 	MinimumDemand map[string]float64 `json:"minimumDemand,omitempty"`
 	// ExcludedNodes names Nodes the planner keeps as they are, like
@@ -61,6 +71,20 @@ type SchedulerSettings struct {
 	PlanPostFilterFinalists bool              `json:"planPostFilterFinalists"`
 	PlanPricedStart         bool              `json:"planPricedStart"`
 	Controls                SchedulerControls `json:"controls"`
+}
+
+// Clone detaches mutable settings values for accepted policy and decision snapshots.
+func (s SchedulerSettings) Clone() SchedulerSettings {
+	s.AutonomousWorkloads = slices.Clone(s.AutonomousWorkloads)
+	s.WorkloadPriority = slices.Clone(s.WorkloadPriority)
+	s.ExcludedNodes = slices.Clone(s.ExcludedNodes)
+	s.MinimumDemand = maps.Clone(s.MinimumDemand)
+	s.DefaultOperationCost = maps.Clone(s.DefaultOperationCost)
+	if s.DefaultIdlePower != nil {
+		idle := *s.DefaultIdlePower
+		s.DefaultIdlePower = &idle
+	}
+	return s
 }
 
 // ValidateSchedulerSettingsPatch applies a public settings merge patch without
@@ -579,6 +603,9 @@ func (s SchedulerSettings) Validate() error {
 	if err := s.validateEstimateDefaults(); err != nil {
 		return err
 	}
+	if err := s.validateSLOPriority(); err != nil {
+		return err
+	}
 	for uid, rate := range s.MinimumDemand {
 		if uid == "" || !schedulerFinite(rate) || rate < 0 {
 			return fmt.Errorf("minimumDemand entries need nonempty Workload UIDs and finite nonnegative rates")
@@ -594,6 +621,20 @@ func (s SchedulerSettings) Validate() error {
 		return err
 	}
 	return s.validateExcludedNodes()
+}
+
+func (s SchedulerSettings) validateSLOPriority() error {
+	if s.SLOPriorityStrategy != "" && s.SLOPriorityStrategy != SLOPriorityExcess && s.SLOPriorityStrategy != SLOPriorityWorkload {
+		return fmt.Errorf("sloPriorityStrategy must be excess or workload")
+	}
+	priority := make(map[string]bool, len(s.WorkloadPriority))
+	for _, uid := range s.WorkloadPriority {
+		if uid == "" || priority[uid] {
+			return fmt.Errorf("workloadPriority entries need unique nonempty Workload UIDs")
+		}
+		priority[uid] = true
+	}
+	return nil
 }
 
 func (s SchedulerSettings) validatePlanSearch() error {
@@ -637,6 +678,7 @@ type SchedulerSettingsInput struct {
 	CapacityBisectionWidth  *float64 `json:"capacityBisectionWidth"`
 	CapacityTailSamples     *int     `json:"capacityTailSamples"`
 	PlanSearchStrategy      *string  `json:"planSearchStrategy,omitempty"`
+	SLOPriorityStrategy     *string  `json:"sloPriorityStrategy,omitempty"`
 	PlanSearchEvaluations   *int     `json:"planSearchEvaluations,omitempty"`
 	PlanExactFinalists      *int     `json:"planExactFinalists,omitempty"`
 	PlanPolishActive        *int     `json:"planPolishActive,omitempty"`
@@ -649,7 +691,17 @@ func (in SchedulerSettingsInput) Settings() (SchedulerSettings, error) {
 	if in.CompletionMarginMS == nil {
 		return SchedulerSettings{}, fmt.Errorf("completionMarginMS required")
 	}
-	settings := in.SchedulerSettings
+	settings := in.SchedulerSettings.Clone()
+	settings.SLOPriorityStrategy = SLOPriorityExcess
+	if in.SLOPriorityStrategy != nil {
+		if *in.SLOPriorityStrategy == "" {
+			return SchedulerSettings{}, fmt.Errorf("sloPriorityStrategy must be excess or workload")
+		}
+		settings.SLOPriorityStrategy = *in.SLOPriorityStrategy
+	}
+	if settings.WorkloadPriority == nil {
+		settings.WorkloadPriority = []string{}
+	}
 	settings.PlanSearchStrategy, settings.PlanSearchEvaluations = protocol.V2, 500000
 	settings.PlanExactFinalists, settings.PlanPolishActive, settings.PlanPostFilterFinalists = 16, 8, false
 	settings.PlanPricedStart = true

@@ -233,7 +233,7 @@ func (o *SchedulerService) AcceptedSettings() (serving.SchedulerSettings, bool) 
 	if config == nil {
 		return serving.SchedulerSettings{}, false
 	}
-	return config.Settings, true
+	return config.Settings.Clone(), true
 }
 
 // schedulerMeters projects only the complete configuration accepted by refresh.

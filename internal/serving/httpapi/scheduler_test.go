@@ -64,6 +64,7 @@ func schedulerSettingsForTest() serving.SchedulerSettings {
 		MaxReplicas:      1, TransitionReserveFraction: .25,
 		CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 		PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
+		SLOPriorityStrategy: "excess", WorkloadPriority: []string{},
 		MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1}
 }
 

@@ -47,7 +47,7 @@ func (o *SchedulerService) applySchedulerSettings(ctx context.Context, settings 
 		return err
 	}
 	config := *o.configuration.Load()
-	config.Settings = settings
+	config.Settings = settings.Clone()
 	o.execution.SetCompletionMargin(settings.CompletionMarginMS)
 	o.configuration.Store(&config)
 	// ConfigVersion and resourceVersion still name the last full acceptance.

@@ -105,6 +105,7 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	if err := validateSchedulerConfiguration(config); err != nil {
 		return nil, err
 	}
+	config.Settings = config.Settings.Clone()
 	ctx, cancel := context.WithCancel(context.Background())
 	measurement := *operations
 	measurement.Config.Measurement = true
@@ -120,13 +121,14 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 func (c *SchedulerController) Settings() serving.SchedulerSettings {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.config.Settings
+	return c.config.Settings.Clone()
 }
 
 func (c *SchedulerController) SetConfiguration(config SchedulerControllerConfig) error {
 	if err := validateSchedulerConfiguration(config); err != nil {
 		return err
 	}
+	config.Settings = config.Settings.Clone()
 	c.tickMu.Lock()
 	defer c.tickMu.Unlock()
 	c.mu.Lock()
@@ -155,7 +157,7 @@ func (c *SchedulerController) AcceptSettings(ctx context.Context, settings servi
 	}
 	c.mu.Lock()
 	before := len(c.config.Settings.AutonomousWorkloads) > 0
-	c.config.Settings, c.config.Preparations = settings, preparations
+	c.config.Settings, c.config.Preparations = settings.Clone(), preparations
 	c.mu.Unlock()
 	c.setRoutingControl(before, len(settings.AutonomousWorkloads) > 0)
 	return nil

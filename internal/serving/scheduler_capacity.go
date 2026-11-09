@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -190,14 +189,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
 	}
-	settings.AutonomousWorkloads = slices.Clone(settings.AutonomousWorkloads)
-	settings.ExcludedNodes = slices.Clone(settings.ExcludedNodes)
-	settings.MinimumDemand = maps.Clone(settings.MinimumDemand)
-	settings.DefaultOperationCost = maps.Clone(settings.DefaultOperationCost)
-	if settings.DefaultIdlePower != nil {
-		idle := *settings.DefaultIdlePower
-		settings.DefaultIdlePower = &idle
-	}
+	settings = settings.Clone()
 	snapshot = schedulerCanonical(snapshot)
 	decision = SchedulerDecision{At: snapshot.At, Status: schedulerStatusPending, Settings: settings, Search: schedulerSearchPopulation(ctx, settings, snapshot), Workloads: schedulerWorkloadStates(settings, snapshot), References: slices.Clone(snapshot.References)}
 	fixSchedulerWorkloads(&decision, snapshot)
