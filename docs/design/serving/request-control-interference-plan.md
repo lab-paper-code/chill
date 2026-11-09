@@ -151,7 +151,7 @@ SLO가 계속 미달하면 이번 변경의 성능 효과와 전체 목표 미�
 - 실제 Runtime/ObservationLog의 병행 요청·원문 순서·오류·drain 소비자와 race 검사 통과.
 - 보존된 112 profile/508 batch의 quantile 경계와 startup/busy batch 선택 일치. v1/v2 fixture의 선택 key·route·J·feasible·final 일치.
 - frozen `b221b128`의 `make test` 통과. lint·architecture·pinned gopls 통과. 기존 SmolVLM preprocessor skip 3건 유지.
-- 최종 benchmark-only 변경은 영향 범위에서 별도 확인했다. 생산 코드가 같은 frozen full gate를 재사용한다.
+- 최종 benchmark·fixture 변경은 영향 범위에서 별도 확인했다. 생산 코드가 같은 frozen full gate를 재사용한다.
 
 재현 benchmark는 `BenchmarkRetainedServiceSamples`, `BenchmarkNumericalPlannerConsumers`, `BenchmarkRequestCatalogRepublication`, `BenchmarkRuntimeObservationInterference`다. 실제 분포 입력은 `CHILL_NUMERICAL_PROFILES`로 지정한다. `BenchmarkRetainedServiceSamples`의 한 op는 전체 표본 묶음 순회이며, planner fixture·관측 소비자 비용을 실클러스터 전체 Tick으로 확대하지 않는다.
 
