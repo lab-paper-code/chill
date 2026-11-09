@@ -36,6 +36,8 @@ const nodeList = (names:string[]) => {
   return selected
 }
 const mib = (bytes:WireInteger|string) => `약 ${(Number(bytes)/1048576).toLocaleString("ko-KR",{maximumFractionDigits:3})}MiB`
+const priorityLabel = (strategy:SchedulerSettings["sloPriorityStrategy"]) => strategy==="workload"?"Workload 순위 기준":"SLO 초과 기준"
+const priorityList = (settings:SchedulerSettings,names:Record<string,string>={}) => settings.workloadPriority?.map((uid,index)=>`${index+1}. ${names[uid]??uid}`).join(" → ")||"없음"
 const time = (at:string) => new Date(at).toLocaleString("ko-KR")
 function plain(field:Field,value:WireInteger|string|boolean|undefined):string {
   if(value==null)return "기록 없음"
@@ -54,6 +56,8 @@ function changedRows(before:SchedulerSettings,after:SchedulerSettings,names:Reco
     if(was!==now)rows.push([`CHILL 자동 운영 · ${service(uid)}`,was?"켜짐":"꺼짐",now?"켜짐":"꺼짐"])
   }
   if(String(before.excludedNodes??[])!==String(after.excludedNodes??[]))rows.push(["계획 제외 장비",excludedNodes(before),excludedNodes(after)])
+  if((before.sloPriorityStrategy??"excess")!==(after.sloPriorityStrategy??"excess"))rows.push(["SLO 우선순위 기준",priorityLabel(before.sloPriorityStrategy),priorityLabel(after.sloPriorityStrategy)])
+  if(stringifySchedulerJSON(before.workloadPriority??[])!==stringifySchedulerJSON(after.workloadPriority??[]))rows.push(["Workload 순위",priorityList(before,names),priorityList(after,names)])
   for(const uid of new Set([...Object.keys(before.minimumDemand??{}),...Object.keys(after.minimumDemand??{})])) {
     const was=before.minimumDemand?.[uid],now=after.minimumDemand?.[uid]
     if(was!==now)rows.push([`최소 수요 · ${service(uid)}`,was===undefined?"미설정":`${was} req/s`,now===undefined?"미설정":`${now} req/s`])
@@ -67,7 +71,7 @@ export function SettingChanges({before,after,stored=false,names={}}:{before:Sche
   return rows.length?<table className="w-full text-left text-sm"><thead><tr><th className="p-2">항목</th><th className="p-2">변경 전</th><th className="p-2">변경 후</th></tr></thead><tbody>{rows.map(([label,previous,next])=><tr key={label} className="border-t"><th scope="row" className="p-2 font-normal">{label}</th><td className="break-all p-2">{previous}</td><td className="break-all p-2">{next}</td></tr>)}</tbody></table>:<p>{stored?"기록의 전후 설정이 같아요.":"바꾼 값과 현재 설정이 같아요."}</p>
 }
 export function SettingsSummary({settings}:{settings:SchedulerSettings}) {
-  return <Facts items={[["CHILL 자동 운영 서비스",autonomous(settings)],["계획 제외 장비",excludedNodes(settings)],...Object.entries(settings.minimumDemand??{}).map(([uid,rate])=>[`최소 수요 · ${uid}`,`${rate} req/s`] as [string,string]),...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
+  return <Facts items={[["CHILL 자동 운영 서비스",autonomous(settings)],["계획 제외 장비",excludedNodes(settings)],["SLO 우선순위 기준",priorityLabel(settings.sloPriorityStrategy)],["Workload 순위",priorityList(settings)],...Object.entries(settings.minimumDemand??{}).map(([uid,rate])=>[`최소 수요 · ${uid}`,`${rate} req/s`] as [string,string]),...fields.map(field=>[field.label,plain(field,settings[field.key])] as [string,string]),...controls.map(control=>[control.label,onOff(settings.controls[control.key])] as [string,string])]}/>
 }
 
 // The settings page is the only caller. Editable and preserved server settings cross PUT.
@@ -125,6 +129,39 @@ function ServiceSettingsEdit({editKey,label,help,initial,version=null,services,l
       {!uids.length&&<p>설정된 서비스 없음</p>}
       {editKey==="minimumDemand"&&<label className="grid gap-2">최소 수요 서비스 추가<select className="min-h-11 w-full rounded-md border bg-background px-2" value="" onChange={event=>{if(event.target.value)update({demand:{...demand,[event.target.value]:""}})}}><option value="">서비스 선택</option>{services.filter(service=>!Object.hasOwn(demand,service.uid)).map(service=><option key={service.uid} value={service.uid}>{service.name}</option>)}</select></label>}
       {error&&<p role="alert">{error}</p>}
+      <Button type="submit" disabled={disabled}>변경 목록에 담기</Button>
+    </form>
+  </SheetContent></Sheet>
+}
+
+type PrioritySettings=Pick<SchedulerSettings,"sloPriorityStrategy"|"workloadPriority">
+function PrioritySettingsEdit({editKey,initial,version,services,loadError,disabled,changed,save}:{editKey:"sloPriorityStrategy";initial:SchedulerSettings;version:string|null;services:ServiceChoice[];loadError?:string;disabled:boolean;changed:boolean;save:(value:PrioritySettings,source:SchedulerSettings,version:string|null)=>void}) {
+  const params=useSearchParams(),router=useRouter(),open=params.get("edit")===editKey
+  const [draft,setDraft]=React.useState<{settings:SchedulerSettings;version:string|null;value:PrioritySettings}|null>(null)
+  const form=draft??{settings:initial,version,value:{sloPriorityStrategy:initial.sloPriorityStrategy,workloadPriority:initial.workloadPriority}}
+  const selected=form.value.workloadPriority??[],known=new Map(services.map(service=>[service.uid,service.name]))
+  function update(value:PrioritySettings) {setDraft({...form,value:{...form.value,...value}})}
+  function setOpen(next:boolean) {
+    const query=new URLSearchParams(params.toString())
+    if(next)query.set("edit",editKey);else query.delete("edit")
+    router[next?"push":"replace"](`/settings?${query}`,{scroll:false});setDraft(null)
+  }
+  function move(index:number,offset:number) {
+    const next=[...selected]
+    ;[next[index],next[index+offset]]=[next[index+offset],next[index]]
+    update({workloadPriority:next})
+  }
+  return <Sheet open={open} onOpenChange={setOpen}><SheetTrigger asChild><Button variant="outline" disabled={disabled} aria-label="SLO 우선순위 수정">수정{changed?" · 변경":""}</Button></SheetTrigger><SheetContent className="w-full overflow-y-auto sm:max-w-2xl" aria-describedby={undefined}><SheetHeader><SheetTitle>SLO 우선순위</SheetTitle></SheetHeader>
+    <form className="grid gap-4 px-4 pb-6" onSubmit={event=>{event.preventDefault();save(form.value,form.settings,form.version);setOpen(false)}}>
+      <fieldset className="grid gap-2"><legend>비교 기준</legend>{(["excess","workload"] as const).map(strategy=><label key={strategy} className="flex min-h-11 items-center gap-2"><input type="radio" name="sloPriorityStrategy" value={strategy} checked={(form.value.sloPriorityStrategy??"excess")===strategy} onChange={()=>update({sloPriorityStrategy:strategy})}/>{priorityLabel(strategy)}</label>)}</fieldset>
+      <p className="text-sm text-muted-foreground">위에 있는 Workload부터 우선해요. 미지정 Workload는 마지막 동순위에서 SLO 초과 기준으로 비교해요. 순위가 비어 있으면 SLO 초과 기준을 사용해요.</p>
+      {loadError&&<p role="status">{loadError} · 저장된 Workload 순위는 유지돼요.</p>}
+      <ol aria-label="Workload 우선순위" className="grid gap-2">{selected.map((uid,index)=><li key={uid} className="flex flex-wrap items-center gap-2 rounded-md border p-2"><span className="min-w-0 flex-1 break-all">{index+1}. {known.get(uid)??`${uid} · 현재 목록에 없음`}</span>
+        <Button type="button" variant="outline" aria-label={`${uid} 순위 위로`} disabled={index===0} onClick={()=>move(index,-1)}>위로</Button>
+        <Button type="button" variant="outline" aria-label={`${uid} 순위 아래로`} disabled={index===selected.length-1} onClick={()=>move(index,1)}>아래로</Button>
+        <Button type="button" variant="outline" aria-label={`${uid} 순위 제거`} onClick={()=>update({workloadPriority:selected.filter(item=>item!==uid)})}>제거</Button>
+      </li>)}</ol>
+      <label className="grid gap-2">Workload 순위 추가<select className="min-h-11 w-full rounded-md border bg-background px-2" value="" onChange={event=>{if(event.target.value)update({workloadPriority:[...selected,event.target.value]})}}><option value="">Workload 선택</option>{services.filter(service=>!selected.includes(service.uid)).map(service=><option key={service.uid} value={service.uid}>{service.name}</option>)}</select></label>
       <Button type="submit" disabled={disabled}>변경 목록에 담기</Button>
     </form>
   </SheetContent></Sheet>
@@ -424,6 +461,10 @@ export function SchedulerSettingsPage() {
     <label className="grid max-w-sm gap-2 text-sm">운영 설정 범위<select className="min-h-11 rounded-md border bg-background px-3" value={category} onChange={event=>{const query=new URLSearchParams(params.toString());query.set("section",event.target.value);query.delete("edit");router.push(`/settings?${query}`,{scroll:false})}}>{([["targets","서비스·장비"],["cycle","판단 주기와 범위"],["limit","자원 한도"],["controls","자동 조정 항목"],["capacity","용량 설정"],["advanced","고급"]] as const).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
     <QueryGate query={settings}>{shown&&<>
       <SchedulerSelection current={currentSettings?.planSearchStrategy} value={shown.planSearchStrategy} disabled={blocked} save={value=>edit(base=>({...base,planSearchStrategy:value}))}/>
+      {category==="advanced"&&<section aria-label="SLO 우선순위" className="grid gap-3 rounded-md border p-3">
+        <Facts items={[["SLO 우선순위 기준",priorityLabel(shown.sloPriorityStrategy)],["Workload 순위",priorityList(shown,serviceNames)]]}/>
+        <PrioritySettingsEdit editKey="sloPriorityStrategy" initial={shown} version={count?baseline!.etag:snapshot!.etag} services={services} loadError={workloads.error?"Workload 목록 조회 실패":!workloads.data?"Workload 목록 조회 중":undefined} disabled={blocked} changed={!!count&&((baseline!.settings.sloPriorityStrategy??"excess")!==(shown.sloPriorityStrategy??"excess")||stringifySchedulerJSON(baseline!.settings.workloadPriority??[])!==stringifySchedulerJSON(shown.workloadPriority??[]))} save={(value,source,version)=>edit(base=>({...base,...value}),source,version)}/>
+      </section>}
       <section aria-label="현재값·정의 표">{category==="targets"?<table className="w-full text-left text-sm"><thead><tr><th className="p-3">항목</th><th className="p-3">현재값 / 적용 전</th><th className="p-3">작업</th></tr></thead><tbody>{settingTargets.map(target=><tr key={target.key} className={count&&stringifySchedulerJSON(baseline!.settings[target.key])!==stringifySchedulerJSON(shown[target.key])?"border-t bg-accent":"border-t"}>
         <th scope="row" className="p-3 font-normal">{target.label}{!!count&&stringifySchedulerJSON(baseline!.settings[target.key])!==stringifySchedulerJSON(shown[target.key])&&<span className="ml-2 inline-block rounded border px-2 py-1 text-xs font-medium">적용 전</span>}</th>
         <td className="p-3">{target.key==="autonomousWorkloads"?(shown.autonomousWorkloads?.map(uid=>serviceNames[uid]??uid).join(", ")||"없음"):target.key==="excludedNodes"?excludedNodes(shown):services.length||Object.keys(shown.minimumDemand??{}).length?<table aria-label="서비스별 최소 수요" className="text-left text-sm"><thead><tr><th className="pr-4 font-normal">서비스</th><th className="text-right font-normal">req/s</th></tr></thead><tbody>{[...new Set([...services.map(service=>service.uid),...Object.keys(shown.minimumDemand??{})])].map(uid=><tr key={uid}><th scope="row" className="pr-4 font-normal">{serviceNames[uid]??uid}</th><td className="text-right tabular-nums">{shown.minimumDemand?.[uid]??"미설정"}</td></tr>)}</tbody></table>:"미설정"}</td>

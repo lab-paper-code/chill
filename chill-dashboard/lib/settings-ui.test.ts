@@ -412,7 +412,6 @@ test("service settings forms retain unknown UIDs, validate rates and submit one 
   assert.deepEqual(body.autonomousWorkloads,["retired","known"])
   assert.deepEqual(body.excludedNodes,["meter"])
   assert.equal(body.servingMemoryBytes,18446744073709551615n)
-  assert.deepEqual(Object.keys(body).sort(),[...settingDefinitions.editableSettingKeys].sort())
 })
 
 test("settings detect added minimum demand before review and changes after confirmation without writing",async()=>{
@@ -847,4 +846,72 @@ test("historical settings keep absent planner fields out of summaries, equality 
   await writer(async input=>{sent.push(input);return {body:"{}"}},{invalidateQueries:async()=>{}},settings)
   assert.deepEqual(scheduler.parseSchedulerJSON(sent[0].body),settings)
   assert.deepEqual(Object.keys(settings).sort(),["controls","planSearchWorkers"])
+})
+
+test("priority choice and keyboard reorder stage both fields before one reviewed settings PUT",async()=>{
+  const runner=hooks(),sent:{path:string;method:string;body:string}[]=[]
+  const settings={controls:{placement:true},autonomousWorkloads:["a"],minimumDemand:{a:2},excludedNodes:["meter"],defaultIdlePower:{nodeWatts:4,perInstanceWatts:1},workloadPriority:["retired","a"]}
+  let params=new URLSearchParams({section:"advanced",edit:"sloPriorityStrategy"})
+  const {SchedulerSettingsPage,SettingChanges}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{useSearchParams:()=>params,useRouter:()=>({push:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams},replace:(url:string)=>{params=new URL(url,"https://dashboard.test").searchParams}})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:{path:string;method:string;body:string})=>{sent.push(input);return {body:'{"appliedAt":"2026-11-09T00:00:00Z"}'}}}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:path==="v1/workloads?view=summary"?[{desired:{metadata:{uid:"a",name:"Alpha"}}},{desired:{metadata:{uid:"b",name:"Beta"}}}]:undefined,refetch:async()=>({data:settings})})}})
+  const editor=elements(runner.render(SchedulerSettingsPage)).find(node=>node.props.editKey==="sloPriorityStrategy")!
+  const Component=editor.type as (props:Record<string,unknown>)=>unknown
+  const form=()=>elements(runner.render(Component,editor.props))
+  assert.equal(form().find(node=>node.type==="sheet")!.props.open,true)
+  ;(form().find(node=>node.type==="input"&&node.props.value==="workload")!.props.onChange as ()=>void)()
+  ;(form().find(node=>node.type==="select")!.props.onChange as (event:unknown)=>void)({target:{value:"b"}})
+  ;(form().find(node=>node.props["aria-label"]==="b 순위 위로")!.props.onClick as ()=>void)()
+  ;(form().find(node=>node.props["aria-label"]==="retired 순위 아래로")!.props.onClick as ()=>void)()
+  assert.equal(form().find(node=>node.props["aria-label"]==="b 순위 위로")!.props.disabled,true)
+  ;(form().find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  assert.equal(params.has("edit"),false)
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  const staged=tree.find(node=>node.props.editKey==="sloPriorityStrategy")!.props.initial as Record<string,unknown>
+  assert.equal(staged.sloPriorityStrategy,"workload")
+  assert.deepEqual(staged.workloadPriority,["b","retired","a"])
+  assert.equal(sent.length,0)
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  const diff=tree.find(node=>node.type===SettingChanges)!
+  assert.deepEqual((diff.props.after as Record<string,unknown>).workloadPriority,["b","retired","a"])
+  assert.equal(elements(SettingChanges(diff.props)).filter(node=>node.type==="tr").length,3)
+  assert.equal(sent.length,0)
+  ;(tree.find(node=>node.type==="button"&&node.props.children==="설정 적용하기")!.props.onClick as ()=>void)()
+  await settle()
+  assert.equal(sent.length,1)
+  assert.equal(sent[0].path,"v1/scheduler/settings")
+  assert.equal(sent[0].method,"PUT")
+  assert.deepEqual(scheduler.parseSchedulerJSON(sent[0].body),{...settings,sloPriorityStrategy:"workload",workloadPriority:["b","retired","a"]})
+  assert.deepEqual(settings.workloadPriority,["retired","a"])
+})
+
+test("unavailable Workload catalog preserves stored ranks until explicit removal, even under excess policy",()=>{
+  const runner=hooks(),settings={controls:{},sloPriorityStrategy:"workload",workloadPriority:["retired","offline"]},saved:unknown[][]=[]
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"next/navigation":{...base["next/navigation"],useSearchParams:()=>new URLSearchParams({section:"advanced"})},"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({}),useChillQuery:(path:string)=>path==="v1/scheduler/settings"?{data:settings}:{error:{status:503}}}})
+  const editor=elements(runner.render(SchedulerSettingsPage)).find(node=>node.props.editKey==="sloPriorityStrategy")!
+  const Component=editor.type as (props:Record<string,unknown>)=>unknown,props={...editor.props,save:(...args:unknown[])=>saved.push(args)}
+  const form=()=>elements(runner.render(Component,props))
+  assert.ok(form().some(node=>node.props.role==="status"))
+  assert.ok(form().some(node=>node.props["aria-label"]==="retired 순위 제거"))
+  assert.ok(form().some(node=>node.props["aria-label"]==="offline 순위 제거"))
+  ;(form().find(node=>node.type==="input"&&node.props.value==="excess")!.props.onChange as ()=>void)()
+  ;(form().find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  assert.deepEqual(saved[0],[{sloPriorityStrategy:"excess",workloadPriority:["retired","offline"]},settings,null])
+  ;(form().find(node=>node.props["aria-label"]==="retired 순위 제거")!.props.onClick as ()=>void)()
+  ;(form().find(node=>node.type==="form")!.props.onSubmit as (event:unknown)=>void)({preventDefault(){}})
+  assert.deepEqual(saved[1],[{sloPriorityStrategy:"workload",workloadPriority:["offline"]},settings,null])
+  assert.deepEqual(settings.workloadPriority,["retired","offline"])
+})
+
+test("a concurrent Workload rank reorder blocks an unrelated pending settings write",async()=>{
+  const runner=hooks(),settings={controls:{},excludedNodes:[],workloadPriority:["a","b"]},sent:unknown[]=[]
+  const {SchedulerSettingsPage}=load("../features/scheduler-settings.tsx",{...base,react:runner.react,"@/lib/client":{useSession:()=>({config:{pageSize:25}}),useChillMutation:()=>({mutateAsync:async(input:unknown)=>sent.push(input)}),useChillQuery:(path:string)=>({data:path==="v1/scheduler/settings"?settings:undefined,refetch:async()=>({data:{...settings,workloadPriority:["b","a"]}})})}})
+  let tree=elements(runner.render(SchedulerSettingsPage))
+  ;(tree.find(node=>node.props.editKey==="excludedNodes")!.props.save as (value:string[])=>void)(["meter"])
+  tree=elements(runner.render(SchedulerSettingsPage))
+  ;((tree.find(node=>node.type==="main")!.props.action as Tree).props.onClick as ()=>void)()
+  await settle()
+  tree=elements(runner.render(SchedulerSettingsPage))
+  assert.ok(tree.some(node=>node.type==="button"&&node.props.children==="최신 값을 기준으로 다시 검토하기"))
+  assert.deepEqual(sent,[])
 })

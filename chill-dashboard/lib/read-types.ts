@@ -67,6 +67,8 @@ export type SchedulerSettings = {
   // Historical decisions can omit v2 search settings.
   planSearchStrategy?:string; planSearchEvaluations?:WireInteger; planExactFinalists?:WireInteger; planPolishActive?:WireInteger
   planPostFilterFinalists?:boolean; planPricedStart?:boolean
+  // Omitted policy means excess; listed Workload UIDs are highest priority first.
+  sloPriorityStrategy?:"excess"|"workload"; workloadPriority?:string[]
   autonomousWorkloads:string[]|null
   minimumDemand?:Record<string,number>
   // Nodes the planner never changes (reason ExcludedNode).

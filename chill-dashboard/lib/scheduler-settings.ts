@@ -39,7 +39,7 @@ export const settingTargets = [
   {key:"minimumDemand",label:"최소 수요",help:"서비스 UID별 계획 수요의 하한이에요. 단위는 req/s, 0 이상의 유한한 수이며 상한은 없어요. 미설정과 0을 구분해서 저장해요."},
   {key:"excludedNodes",label:"계획 제외 장비",help:"운영 판단의 배치·제거·전력모드 변경 제외 대상이에요. 중복 없는 장비 이름으로 저장해요."},
 ] as const
-export const editableSettingKeys = [...settingFields.map(field=>field.key),"controls",...settingTargets.map(field=>field.key)] as const
+export const editableSettingKeys = [...settingFields.map(field=>field.key),"controls",...settingTargets.map(field=>field.key),"sloPriorityStrategy","workloadPriority"] as const
 // Server settings without editing controls still cross PUT and conflict checks.
 export const preservedSettingKeys = ["defaultOperationCost","defaultIdlePower","defaultDispatchOccupancyNanos"] as const
 export const writableSettingKeys = [...editableSettingKeys,...preservedSettingKeys] as const
