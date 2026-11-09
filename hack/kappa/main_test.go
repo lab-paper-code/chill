@@ -32,6 +32,17 @@ func TestDecodeSnapshotUsesCurrentWorkloadUID(t *testing.T) {
 	}
 }
 
+func TestTickWithoutCapacityRows(t *testing.T) {
+	at := time.Unix(100, 0)
+	snapshot := serving.SchedulerSnapshot{At: at, ObservationEnd: at}
+	if err := tick(serving.SchedulerSettings{}, snapshot, 0, 1); err != nil {
+		t.Fatalf("offline tick without a rows file: %v", err)
+	}
+	if !snapshot.At.Equal(at) || !snapshot.ObservationEnd.Equal(at) {
+		t.Fatal("tick changed captured timestamp boundaries")
+	}
+}
+
 // Synthetic PLC-like Nodes, margin 1 ms and d 1 ms: the b1 latency is the p99
 // sample + 2 ms, the fastest option per Node counts. The unmeasured fast option
 // uses configured d=20ms rather than disappearing or assuming zero. The widest

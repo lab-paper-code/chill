@@ -19,12 +19,10 @@ import (
 const replayJSONL = "jsonl"
 
 type replayDemand struct {
-	UID            string  `json:"uid"`
-	Rate           float64 `json:"rate"`
-	KeepKappa      float64 `json:"keepKappa"`
-	TargetKappa    float64 `json:"targetKappa"`
-	KeepShort      bool    `json:"keepShort"`
-	SupplyIncrease bool    `json:"supplyIncrease"`
+	UID    string                         `json:"uid"`
+	Rate   float64                        `json:"rate"`
+	Keep   *serving.FeedbackWorkloadScore `json:"keep,omitempty"`
+	Target *serving.FeedbackWorkloadScore `json:"target,omitempty"`
 }
 
 type replayResult struct {
@@ -35,23 +33,20 @@ type replayResult struct {
 	ReplayStatus       string         `json:"replayStatus,omitempty"`
 	ReplayTargetKey    string         `json:"replayTargetKey,omitempty"`
 	Disagreement       bool           `json:"disagreement"`
-	LostRecovery       bool           `json:"lostRecovery"`
 	PopulationMismatch bool           `json:"populationMismatch"`
 	RecordedCounts     [3]int         `json:"recordedCounts"`
 	ReplayCounts       [3]int         `json:"replayCounts"`
-	GuardAvailable     bool           `json:"guardAvailable"`
 	Checks             []guardCheck   `json:"checks,omitempty"`
 	Demand             []replayDemand `json:"demand"`
+	ReplayDemand       []replayDemand `json:"replayDemand,omitempty"`
 	ElapsedSeconds     float64        `json:"elapsedSeconds"`
 }
 
 type guardCheck struct {
-	At        time.Time      `json:"at"`
-	Offset    int            `json:"offset"`
-	Rejected  bool           `json:"rejected"`
-	Reason    string         `json:"reason,omitempty"`
-	Workloads []string       `json:"workloads"`
-	Demand    []replayDemand `json:"demand"`
+	At       time.Time `json:"at"`
+	Offset   int       `json:"offset"`
+	Rejected bool      `json:"rejected"`
+	Reason   string    `json:"reason,omitempty"`
 }
 
 // replayKey also compares integer routes and wait limits: placement alone misses
@@ -74,7 +69,7 @@ func replayKey(t *serving.SchedulerCandidate) string {
 
 func replaySettings(base, recorded serving.SchedulerSettings, margin float64) serving.SchedulerSettings {
 	// Preserve all recorded control policy, including minimum demand, exclusions,
-	// and headroom; only row-building parameters come from base.
+	// and headroom; only offline numerical settings come from base.
 	recorded.CapacityWindow, recorded.CapacityWindows, recorded.CapacityPassingWindows = base.CapacityWindow, base.CapacityWindows, base.CapacityPassingWindows
 	recorded.CapacityMinimumRequests, recorded.CapacityGridSteps = base.CapacityMinimumRequests, base.CapacityGridSteps
 	recorded.CapacityBisectionWidth, recorded.CapacityTailSamples = base.CapacityBisectionWidth, base.CapacityTailSamples
@@ -85,43 +80,28 @@ func replaySettings(base, recorded serving.SchedulerSettings, margin float64) se
 	return recorded
 }
 
-func replaySupply(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows map[string]serving.CapacityRow, instances []serving.SchedulerInstance, routing map[string]map[string]int32, uid string, live bool) float64 {
-	var d *serving.Definition
-	for _, w := range snap.Workloads {
-		if w != nil && w.UID == uid {
-			d = w
-			break
-		}
-	}
-	if d == nil {
-		return 0
-	}
-	kappa := 0.0
-	for _, i := range instances {
-		if routing[uid][i.ID] <= 0 || i.Terminated || i.Stopped || i.WorkloadUID != uid || live && !i.Ready {
-			continue
-		}
-		row := rows[serving.NewCapacityInput(s, snap.DispatchOccupancy, serving.SchedulerOption{Instance: i}, d).Key()]
-		if row.Kappa != nil && row.Status != serving.CapacityPending {
-			kappa += *row.Kappa
-		}
-	}
-	return kappa
-}
-
-func replayDemands(s serving.SchedulerSettings, snap serving.SchedulerSnapshot, rows map[string]serving.CapacityRow, decision *serving.SchedulerDecision, target *serving.SchedulerCandidate) []replayDemand {
+// replayDemands reports recorded direct outcomes. Missing evidence stays absent;
+// a missing or zero tested-rate witness never becomes a shortage diagnosis.
+func replayDemands(decision *serving.SchedulerDecision) []replayDemand {
 	out := []replayDemand{}
 	if decision.Capacity == nil {
 		return out
 	}
 	for _, workload := range decision.Capacity.Workloads {
-		uid, rate := workload.UID, workload.Rate
-		keep := replaySupply(s, snap, rows, snap.Instances, snap.Routing, uid, true)
-		next := keep
-		if target != nil {
-			next = replaySupply(s, snap, rows, target.Instances, target.Routing, uid, false)
+		demand := replayDemand{UID: workload.UID, Rate: workload.Rate}
+		for j := range decision.Keep.Feedback {
+			if score := &decision.Keep.Feedback[j]; score.UID == workload.UID {
+				demand.Keep = score
+			}
 		}
-		out = append(out, replayDemand{uid, rate, keep, next, rate > keep*(1+1e-12), next > keep*(1+1e-12)})
+		if decision.Target != nil {
+			for j := range decision.Target.Feedback {
+				if score := &decision.Target.Feedback[j]; score.UID == workload.UID {
+					demand.Target = score
+				}
+			}
+		}
+		out = append(out, demand)
 	}
 	return out
 }
@@ -236,15 +216,15 @@ func (reader *replayReader) readTick() (*replayTick, error) {
 	return nil, reader.scanner.Err()
 }
 
-func evaluateReplayTick(queue []*replayTick, rows []serving.CapacityRow, index map[string]serving.CapacityRow, next int) (replayResult, error) {
+func evaluateReplayTick(queue []*replayTick, next int) (replayResult, error) {
 	t := queue[0]
 	began := time.Now()
-	r := replayResult{At: t.r.At, Status: t.r.Decision.Status, TargetKey: replayKey(t.r.Decision.Target), GuardAvailable: guardAvailable, Demand: replayDemands(t.settings, t.snap, index, t.r.Decision, t.r.Decision.Target)}
+	r := replayResult{At: t.r.At, Status: t.r.Decision.Status, TargetKey: replayKey(t.r.Decision.Target), Demand: replayDemands(t.r.Decision)}
 	if target := t.r.Decision.Target; target != nil {
 		r.TargetID = target.ID
 	}
 	if next < 0 {
-		d, err := serving.EvaluateScheduler(context.Background(), t.settings, t.snap, rows)
+		d, err := serving.EvaluateScheduler(context.Background(), t.settings, t.snap)
 		if err != nil {
 			return r, err
 		}
@@ -253,35 +233,25 @@ func evaluateReplayTick(queue []*replayTick, rows []serving.CapacityRow, index m
 		r.ReplayCounts = [3]int{d.Search.Received, d.Search.Accepted, d.Search.ComputeInputs}
 		r.PopulationMismatch = r.RecordedCounts != r.ReplayCounts
 		r.Disagreement = r.TargetKey != r.ReplayTargetKey
-		for _, demand := range r.Demand {
-			if demand.KeepShort && demand.SupplyIncrease && (d.Target == nil || d.Target.Keep) {
-				r.LostRecovery = true
-			}
-		}
+		r.ReplayDemand = replayDemands(&d)
 	} else if target := t.r.Decision.Target; target != nil {
-		// Freeze once at admission, like the production owner; never reclassify
-		// a reduction as recovery after a later demand spike.
-		uids := reductionWorkloads(t.settings, t.snap, rows, *target)
+		// Revalidate the immutable recorded target through the same current
+		// physical admission and exact comparison boundary as production.
 		for offset, future := range queue {
-			reason := reductionCommit(t.settings, future.snap, rows, *target, uids)
-			r.Checks = append(r.Checks, guardCheck{future.r.At, offset, guardAvailable && reason != "", reason, uids, replayDemands(t.settings, future.snap, index, future.r.Decision, target)})
+			reason, err := serving.SchedulerTargetAdmission(context.Background(), t.settings, future.snap, *target)
+			if err != nil {
+				return r, err
+			}
+			r.Checks = append(r.Checks, guardCheck{future.r.At, offset, reason != "", reason})
 		}
 	}
 	r.ElapsedSeconds = time.Since(began).Seconds()
 	return r, nil
 }
 
-func replay(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile, catalogFile, arrivalsFile string, margin float64, next int, format string) error {
+func replay(base serving.SchedulerSettings, profilesFile, recordsFile, catalogFile, arrivalsFile string, margin float64, next int, format string) error {
 	if format != replayJSONL && format != "markdown" {
 		return fmt.Errorf("unknown format %q", format)
-	}
-	rows, err := readRows(rowsFile)
-	if err != nil {
-		return err
-	}
-	index := map[string]serving.CapacityRow{}
-	for _, row := range rows {
-		index[row.Key] = row
 	}
 	var profileCatalog struct {
 		Profiles []serving.Profile `json:"profiles"`
@@ -336,7 +306,7 @@ func replay(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile,
 		catalog: catalog, arrivals: arrivals, restoreArrivals: arrivalsFile != "", definitions: definitions,
 	}
 	if format == "markdown" {
-		fmt.Println("| at | status | target key | offset / snapshot at | guard rejected / reason | demand vs kappa (keep short) |\n|---|---|---|---|---|---|")
+		fmt.Println("| at | status | target key | offset / snapshot at | guard rejected / reason |\n|---|---|---|---|---|")
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	queue := []*replayTick{}
@@ -359,7 +329,7 @@ func replay(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile,
 		if len(queue) == 0 {
 			break
 		}
-		r, err := evaluateReplayTick(queue, rows, index, next)
+		r, err := evaluateReplayTick(queue, next)
 		if err != nil {
 			return err
 		}
@@ -369,7 +339,7 @@ func replay(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile,
 			}
 		} else {
 			for _, c := range r.Checks {
-				fmt.Printf("| %s | %s | %s | %d / %s | %t %s | %+v |\n", r.At.Format(time.RFC3339Nano), r.Status, strings.ReplaceAll(r.TargetKey, "|", "/"), c.Offset, c.At.Format(time.RFC3339Nano), c.Rejected, c.Reason, c.Demand)
+				fmt.Printf("| %s | %s | %s | %d / %s | %t %s |\n", r.At.Format(time.RFC3339Nano), r.Status, strings.ReplaceAll(r.TargetKey, "|", "/"), c.Offset, c.At.Format(time.RFC3339Nano), c.Rejected, c.Reason)
 			}
 		}
 		queue[0] = nil

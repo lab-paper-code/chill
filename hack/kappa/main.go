@@ -2,19 +2,16 @@
 // (serving.EvaluateScheduler) offline.
 //
 //	go run ./hack/kappa -mode table   -scheduler scheduler-pre.json [-margin 139] [-workloads image-classification-tight-slo] [-rows rows.json]
-//	go run ./hack/kappa -mode tick    -scheduler scheduler-pre.json -rows rows.json [-margin 139] [-workloads ...] [-rate 40] [-repeat 200]
-//	go run ./hack/kappa -mode compare -scheduler scheduler-pre.json -profiles profiles-pre.json -records records.jsonl -rows rows.json [-margin 139]
+//	go run ./hack/kappa -mode tick    -scheduler scheduler-pre.json [-margin 139] [-workloads ...] [-rate 40] [-repeat 200]
+//	go run ./hack/kappa -mode compare -scheduler scheduler-pre.json -profiles profiles-pre.json -records records.jsonl [-margin 139]
 //	go run ./hack/kappa -mode slo     -scheduler scheduler.json -workloads plc-anomaly,smolvlm2-vqa
 //
-// table builds every row the named autonomous Workloads need, the way
-// ChillServer does on start, and writes them to -rows. tick times the planner
-// on the dump's snapshot, optionally with Poisson arrivals at -rate req/s in
-// its observation window. compare replans each recorded decision with the
-// rows and reports agreement with the recorded target and the planner time.
-// slo proposes an SLO target for each named Workload and builds its rows at
-// p95 and p99. The /api/v1/scheduler dump carries the profile bodies and the
-// dispatch occupancy for every Workload; /api/v1/scheduler/capacity holds rows
-// only for autonomous Workloads.
+// table explicitly builds the full offline capacity grid and writes CapacityRows
+// to -rows. tick times the path-aware planner on the dump's snapshot, optionally
+// with Poisson arrivals at -rate req/s in its observation window. compare replans
+// recorded decisions without generated rows. slo proposes an SLO target for each
+// named Workload and builds its full offline rows at p95 and p99.
+// The /api/v1/scheduler dump carries profile bodies and dispatch occupancy.
 package main
 
 import (
@@ -43,9 +40,9 @@ import (
 func main() {
 	mode := flag.String("mode", "table", "table, tick, compare, guard or slo")
 	schedulerFile := flag.String("scheduler", "", "ChillServer /api/v1/scheduler dump; options carry profile bodies")
-	profilesFile := flag.String("profiles", "", "ChillServer /api/v1/scheduler/profiles dump (compare)")
-	recordsFile := flag.String("records", "", "scheduler record JSONL with decision rows (compare)")
-	rowsFile := flag.String("rows", "", "capacity rows JSON: table writes it, tick and compare read it")
+	profilesFile := flag.String("profiles", "", "ChillServer /api/v1/scheduler/profiles dump (compare/guard)")
+	recordsFile := flag.String("records", "", "scheduler record JSONL with decisions (compare/guard)")
+	rowsFile := flag.String("rows", "", "table: output full offline capacity rows JSON")
 	margin := flag.Float64("margin", -1, "completion margin ms; negative uses the settings of the input")
 	window := flag.Float64("window", 60, "capacityWindow seconds")
 	windows := flag.Int("windows", 20, "capacityWindows")
@@ -59,6 +56,10 @@ func main() {
 	catalogFile := flag.String("catalog", "", "compare/guard: archived catalog JSONL restoring workload, cost and baseline references")
 	arrivalsFile := flag.String("arrivals", "", "compare/guard: real request arrival JSONL restoring omitted snapshot arrivals")
 	flag.Parse()
+	if *rowsFile != "" && *mode != "table" {
+		fmt.Fprintln(os.Stderr, "-rows is only valid with -mode table")
+		os.Exit(1)
+	}
 	snapshot, settings, err := loadScheduler(*schedulerFile)
 	if err == nil {
 		if *margin >= 0 {
@@ -77,18 +78,18 @@ func main() {
 		case "table":
 			err = table(settings, snapshot, *rowsFile)
 		case "tick":
-			err = tick(settings, snapshot, *rowsFile, *rate, *repeat)
+			err = tick(settings, snapshot, *rate, *repeat)
 		case "compare":
 			if *format == replayJSONL {
-				err = replay(settings, *profilesFile, *recordsFile, *rowsFile, *catalogFile, *arrivalsFile, *margin, -1, *format)
+				err = replay(settings, *profilesFile, *recordsFile, *catalogFile, *arrivalsFile, *margin, -1, *format)
 			} else {
-				err = compare(settings, *profilesFile, *recordsFile, *rowsFile, *margin)
+				err = compare(settings, *profilesFile, *recordsFile, *margin)
 			}
 		case "guard":
 			if *next < 0 {
 				err = errors.New("-next must be nonnegative")
 			} else {
-				err = replay(settings, *profilesFile, *recordsFile, *rowsFile, *catalogFile, *arrivalsFile, *margin, *next, *format)
+				err = replay(settings, *profilesFile, *recordsFile, *catalogFile, *arrivalsFile, *margin, *next, *format)
 			}
 		case "slo":
 			err = slo(settings, snapshot)
@@ -138,8 +139,8 @@ func decodeSnapshot(raw json.RawMessage) (serving.SchedulerSnapshot, error) {
 	return snapshot, nil
 }
 
-// table builds the server capacity table for the autonomous Workloads, prints
-// every row with its build time and writes the rows.
+// table explicitly builds every full-grid row for the autonomous Workloads,
+// prints its build time and writes CapacityRows.
 func table(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, rowsFile string) error {
 	began := time.Now()
 	t := serving.NewCapacityTable(runtime.GOMAXPROCS(0), nil, nil)
@@ -176,29 +177,17 @@ func table(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapsho
 	return os.WriteFile(rowsFile, data, 0o644)
 }
 
-func readRows(name string) ([]serving.CapacityRow, error) {
-	var rows []serving.CapacityRow
-	data, err := os.ReadFile(name)
-	if err == nil {
-		err = json.Unmarshal(data, &rows)
-	}
-	return rows, err
-}
-
 // tick times the planner on one snapshot and prints its choice.
-func tick(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, rowsFile string, rate float64, repeat int) error {
-	rows, err := readRows(rowsFile)
-	if err != nil {
-		return err
-	}
+func tick(settings serving.SchedulerSettings, snapshot serving.SchedulerSnapshot, rate float64, repeat int) error {
 	if rate > 0 {
 		snapshot.Arrivals = poisson(snapshot, settings, rate)
 	}
 	times := []float64{}
 	var decision serving.SchedulerDecision
+	var err error
 	for range repeat {
 		began := time.Now()
-		if decision, err = serving.EvaluateScheduler(context.Background(), settings, snapshot, rows); err != nil {
+		if decision, err = serving.EvaluateScheduler(context.Background(), settings, snapshot); err != nil {
 			return err
 		}
 		times = append(times, time.Since(began).Seconds()*1e3)
@@ -391,14 +380,9 @@ type record struct {
 	Snapshot json.RawMessage            `json:"snapshot"`
 }
 
-// compare replans every recorded decision with the server planner. The rows
-// carry the capacity settings, so each record runs with base's capacity and
-// margin settings and the record's own control settings.
-func compare(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile string, margin float64) error {
-	rows, err := readRows(rowsFile)
-	if err != nil {
-		return err
-	}
+// compare replans every recorded decision without offline capacity rows.
+// Each record retains its captured control policy.
+func compare(base serving.SchedulerSettings, profilesFile, recordsFile string, margin float64) error {
 	var catalog struct {
 		Profiles []serving.Profile `json:"profiles"`
 	}
@@ -442,23 +426,18 @@ func compare(base serving.SchedulerSettings, profilesFile, recordsFile, rowsFile
 		}
 		hydrate(s.Instances)
 		for j := range s.Options {
-			s.Options[j].Instance.Profile = profiles[s.Options[j].Instance.ProfileID]
+			if s.Options[j].Instance.Profile == nil {
+				s.Options[j].Instance.Profile = profiles[s.Options[j].Instance.ProfileID]
+			}
 		}
 		for _, reservation := range s.Reservations {
 			if reservation.Target != nil {
 				hydrate(reservation.Target.Instances)
 			}
 		}
-		settings := base
-		recorded := r.Decision.Settings
-		settings.ObservationWindow, settings.ControlInterval, settings.ComparisonPeriod = recorded.ObservationWindow, recorded.ControlInterval, recorded.ComparisonPeriod
-		settings.MaxReplicas, settings.MaxInstances, settings.Controls = recorded.MaxReplicas, recorded.MaxInstances, recorded.Controls
-		settings.AutonomousWorkloads = recorded.AutonomousWorkloads
-		if margin < 0 {
-			settings.CompletionMarginMS = recorded.CompletionMarginMS
-		}
+		settings := replaySettings(base, r.Decision.Settings, margin)
 		began := time.Now()
-		d, err := serving.EvaluateScheduler(context.Background(), settings, s, rows)
+		d, err := serving.EvaluateScheduler(context.Background(), settings, s)
 		if err != nil {
 			return err
 		}

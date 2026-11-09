@@ -45,25 +45,47 @@ func TestReplayRestoresRealArrivalWindowAndDefinition(t *testing.T) {
 	}
 }
 
-func TestReplaySupplyUsesPolicyCapacity(t *testing.T) {
-	d := &serving.Definition{UID: "w"}
-	s := serving.SchedulerSettings{AutonomousWorkloads: []string{d.UID}, MinimumDemand: map[string]float64{d.UID: 30}}
-	i := serving.SchedulerInstance{ID: "current", WorkloadUID: d.UID, Ready: true, MaxBatch: 4, Profile: &serving.Profile{ID: "profile"}}
-	snap := serving.SchedulerSnapshot{Workloads: []*serving.Definition{d}, Instances: []serving.SchedulerInstance{i},
-		Routing: map[string]map[string]int32{d.UID: {i.ID: 1000}}}
-	in := serving.NewCapacityInput(s, snap.DispatchOccupancy, serving.SchedulerOption{Instance: i}, d)
-	policy, b1 := 40.0, 26.0
-	rows := map[string]serving.CapacityRow{in.Key(): {Status: serving.CapacityBuilt, Kappa: &policy}}
-	in.MaxBatch = 1
-	rows[in.Key()] = serving.CapacityRow{Status: serving.CapacityBuilt, Kappa: &b1}
-	decision := &serving.SchedulerDecision{Capacity: &serving.SchedulerCapacity{Workloads: []serving.SchedulerCapacityWorkload{{UID: d.UID, Rate: 50}}}}
-	got := replayDemands(s, snap, rows, decision, nil)
-	if len(got) != 1 || got[0].KeepKappa != policy || got[0].TargetKappa != policy || !got[0].KeepShort {
-		t.Fatalf("current demand above policy supply must be short: %+v", got)
+func TestReplayHydrationPreservesCapturedProfile(t *testing.T) {
+	captured := &serving.Profile{ID: "captured"}
+	catalog := &serving.Profile{ID: "catalog"}
+	instances := []serving.SchedulerInstance{{ProfileID: "p", Profile: captured}, {ProfileID: "p"}}
+	if err := hydrateReplayInstances(instances, map[string]*serving.Profile{"p": catalog}); err != nil {
+		t.Fatal(err)
 	}
-	decision.Capacity.Workloads[0].Rate = 35
-	got = replayDemands(s, snap, rows, decision, nil)
-	if len(got) != 1 || got[0].KeepShort {
-		t.Fatalf("current demand below policy supply must fit: %+v", got)
+	if instances[0].Profile != captured || instances[1].Profile != catalog {
+		t.Fatalf("captured profile replaced or omitted profile not restored: %+v", instances)
+	}
+}
+
+func TestReplayDemandUsesDirectOutcomesWithoutRows(t *testing.T) {
+	decision := &serving.SchedulerDecision{
+		Keep: serving.SchedulerCandidate{Feedback: []serving.FeedbackWorkloadScore{
+			{UID: "other", Population: 2},
+			{UID: "w", Population: 10, DeadlineDropped: 4, FailureFraction: .4},
+		}},
+		Target: &serving.SchedulerCandidate{Feedback: []serving.FeedbackWorkloadScore{
+			{UID: "w", Population: 10, Completed: 10, Satisfied: true},
+		}},
+		Capacity: &serving.SchedulerCapacity{Workloads: []serving.SchedulerCapacityWorkload{{UID: "w", Rate: 50}}},
+	}
+	got := replayDemands(decision)
+	if len(got) != 1 || got[0].Rate != 50 || got[0].Keep == nil || got[0].Target == nil ||
+		got[0].Keep.FailureFraction != .4 || !got[0].Target.Satisfied {
+		t.Fatalf("direct workload outcomes lost: %+v", got)
+	}
+	decision.Keep.Feedback = nil
+	decision.Target.Feedback = nil
+	got = replayDemands(decision)
+	if len(got) != 1 || got[0].Keep != nil || got[0].Target != nil {
+		t.Fatalf("missing direct evidence became a fabricated score: %+v", got)
+	}
+}
+
+func TestReplayGuardWithoutTargetDoesNotInventAdmission(t *testing.T) {
+	at := time.Unix(100, 0)
+	tick := &replayTick{r: record{At: at, Decision: &serving.SchedulerDecision{Status: "Keep"}}}
+	got, err := evaluateReplayTick([]*replayTick{tick}, 0)
+	if err != nil || len(got.Checks) != 0 || got.TargetKey != "-" || !got.At.Equal(at) {
+		t.Fatalf("targetless guard fabricated an admission check: %+v, %v", got, err)
 	}
 }
