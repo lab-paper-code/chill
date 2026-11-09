@@ -129,7 +129,7 @@ func TestClientFeedbackBoundaryAndDurableEvidence(t *testing.T) {
 		t.Fatalf("server-owned evidence: %+v", first)
 	}
 	page, err = h.observationLog.ClientObservationPage(context.Background(), base, base.Add(time.Minute), 1, 1)
-	if err != nil || len(page.Observations) != 1 || page.Observations[0].Outcome != "timeout" {
+	if err != nil || len(page.Observations) != 1 || page.Observations[0].Outcome != timingOutcomeTimeout {
 		t.Fatalf("later raw report lost: %+v %v", page, err)
 	}
 	verifyPublicClientTimeout(t, server, base)
@@ -173,7 +173,7 @@ func verifyPublicClientTimeout(t *testing.T, server *httptest.Server, base time.
 	decodeErr := json.NewDecoder(response.Body).Decode(&public)
 	closeErr := response.Body.Close()
 	if response.StatusCode != http.StatusOK || decodeErr != nil || closeErr != nil ||
-		len(public.Observations) != 1 || public.Observations[0].Outcome != "timeout" {
+		len(public.Observations) != 1 || public.Observations[0].Outcome != timingOutcomeTimeout {
 		t.Fatalf("public clients query: status=%d page=%+v decode=%v close=%v", response.StatusCode, public, decodeErr, closeErr)
 	}
 }
@@ -251,7 +251,7 @@ func TestClientFeedbackHTTPToLoadWindow(t *testing.T) {
 		t.Fatalf("duplicates, failure or late receipt cohort changed: %+v %v", after, err)
 	}
 	if after.PathSamples[0] != joined.PathSamples[0] || after.ClientObservations[0].Outcome != "completed" ||
-		after.ClientObservations[1].Outcome != "timeout" || after.ClientObservations[1].WorkloadUID != "" ||
+		after.ClientObservations[1].Outcome != timingOutcomeTimeout || after.ClientObservations[1].WorkloadUID != "" ||
 		after.ClientObservations[1].RequestID != "" {
 		t.Fatalf("first evidence or unknown timeout identity changed: %+v", after)
 	}
