@@ -107,6 +107,7 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 
 결정 상세는 `decision.capacity.workloads`의 계획 수요 `rate`, 상대 프로파일 요청률 `routingRate`·`retainedRoutingRate`, 분배 가중치와 선택안 `tests`·유지안 `keepTests`를 표시한다. 라우팅 값은 SLO 처리 용량 보장이 아니다. `/?evidence=capacity`는 현재 `GET /scheduler/capacity`의 `tests`와 현재 결정의 선택안·유지안을 따로 조회한다. κ̂(`kappaHat`)와 실제 검사한 요청률·판정·합격 창 수·창당 요청 수·입력 식별자를 함께 표시하며, 실패한 검사만 있는 0과 미검사 0을 구분한다. 통과 근거 없는 0은 물리 처리량 0이 아니다. 빈 현재 근거는 오류나 계산 대기가 아니다. 과거 결정은 저장된 검사만 사용하고 현재값으로 대체하지 않는다.
 검사 입력은 scalar `input`(Workload·SLO·Node·모드·profile ID·할당·최대 배치·검사 창 설정)과 별도 `pathFeedback` TOTAL·POST를 보존한다. raw profile·option 본문은 응답이나 결정에 복제하지 않는다.
+`PathFeedback.observedMean`이 있으면 같은 결합 표본의 산술평균 E·Q·N·TOTAL을 별도 “결합 표본 평균” 표에 표시한다. 평균 E = 평균 Q + 평균 N + 평균 TOTAL이며 native N은 내부 대기와 처리를 포함한다. 이는 전체 클라이언트 성공·실패 모집단이나 가속기 연산만의 시간, 분위수 합이 아니다. 설정값·과거 기록에 평균이 없으면 표를 만들지 않고 실제 0은 그대로 표시한다. 기존 TOTAL·POST 분위수 예산과 섞지 않는다.
 
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.

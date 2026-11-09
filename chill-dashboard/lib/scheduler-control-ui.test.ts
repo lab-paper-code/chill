@@ -73,6 +73,34 @@ test("decision path budgets preserve configured zero, empirical fractions and ab
   }
 })
 
+test("joined observed means preserve additive timing, real zero and separate percentile budgets",()=>{
+  const {SchedulerPathFeedback}=controlComponents()
+  const pathFeedback=scheduler.parseSchedulerJSON(JSON.stringify([
+    {workloadUID:"joined",percentile:99,totalNanos:95000000,postNanos:70000000,sampleCount:2,source:"empirical",observedMean:{clientNanos:120000000,servingQueueNanos:20000000,nativeNanos:60000000,nonComputeNanos:40000000}},
+    {workloadUID:"zero",percentile:95,totalNanos:0,postNanos:0,sampleCount:1,source:"empirical",observedMean:{clientNanos:0,servingQueueNanos:0,nativeNanos:0,nonComputeNanos:0}},
+    {workloadUID:"configured",percentile:99,totalNanos:29000000,postNanos:29000000,sampleCount:0,source:"configured"},
+    {workloadUID:"historical",percentile:99,totalNanos:40000000,postNanos:30000000,sampleCount:2},
+  ])) as PathFeedback[]
+  const names=new Map([["joined","결합 서비스"]])
+  const html=renderToStaticMarkup(createElement(SchedulerPathFeedback,{decision:{pathFeedback},names}))
+  const tables=html.match(/<table\b[^>]*>[\s\S]*?<\/table>/g)!
+  const means=tables.find(table=>table.includes(">결합 표본 평균</caption>"))!
+  const rows=means.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)!.slice(1)
+  assert.equal(rows.length,2)
+  assert.match(rows[0],/결합 서비스/)
+  assert.match(rows[0],/joined/)
+  assert.deepEqual(rows.map(row=>[...row.matchAll(/<td\b[^>]*>(.*?)<\/td>/g)].map(match=>match[1])),[["120","20","60","40","2"],["0","0","0","0","1"]])
+  assert.doesNotMatch(means,/configured|historical|분위수|p99/)
+  const budget=tables.find(table=>table.includes(">결정의 서비스별 경로 예산</caption>"))!
+  assert.match(budget,/>95<\/td>/)
+  assert.match(budget,/>70<\/td>/)
+  assert.match(html,/평균 E = 평균 Q \+ 평균 N \+ 평균 TOTAL/)
+  assert.match(html,/native N은 내부 대기와 처리를 포함/)
+  assert.match(html,/전체 클라이언트 성공·실패 모집단을 나타내지 않습니다/)
+  const absent=renderToStaticMarkup(createElement(SchedulerPathFeedback,{decision:{pathFeedback:pathFeedback.slice(2)},names}))
+  assert.doesNotMatch(absent,/결합 표본 평균/)
+})
+
 
 test("rendered timeline shows only loaded-page transitions and does not fetch remaining pages",()=>{
   const params=new URLSearchParams({from:"2026-11-03T19:44:00Z",to:"2026-11-03T20:16:00Z",cursor:"50",limit:"3",timeline:"scope"})
