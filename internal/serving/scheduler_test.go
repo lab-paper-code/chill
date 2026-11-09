@@ -170,7 +170,7 @@ func TestPlannerConsumesAdmittedDistributionWithoutProvenanceReadmission(t *test
 	for index := range profile.Batches[0].ServiceSamples {
 		profile.Batches[0].ServiceSamples[index].TrialID = ""
 	}
-	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if slices.Contains(decision.Reasons, "MissingProfileEvidence:i1") || slices.Contains(decision.Reasons, "InvalidServiceSample:i1") {
 		t.Fatalf("planner re-admitted sample provenance: %+v", decision)
 	}
@@ -251,7 +251,7 @@ func TestSchedulerObservationTimeBounds(t *testing.T) {
 				}
 				reason = "UnknownOrFutureInstance:" + snapshot.Instances[0].ID
 			}
-			decision, err := EvaluateScheduler(context.Background(), settings, snapshot, nil)
+			decision, err := EvaluateScheduler(context.Background(), settings, snapshot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -824,7 +824,7 @@ func TestSchedulerCanceledComputationReturnsContextError(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if decision, err := EvaluateScheduler(ctx, settings, snapshot, nil); !errors.Is(err, context.Canceled) || decision.Target != nil {
+	if decision, err := EvaluateScheduler(ctx, settings, snapshot); !errors.Is(err, context.Canceled) || decision.Target != nil {
 		t.Fatalf("canceled evaluation returned decision=%+v err=%v", decision, err)
 	}
 }

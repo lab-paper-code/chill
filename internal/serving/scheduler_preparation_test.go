@@ -53,8 +53,7 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 				failed.RunnerCommand = []string{"runner", "--warmup-iterations", "2"}
 			}
 			snapshot.Options[len(snapshot.Options)-2] = poolsOption(failed)
-			rows := capacityRowsForTest(settings, snapshot, nil)
-			decision := capacityDecideForTest(t, settings, snapshot, rows)
+			decision := capacityDecideForTest(t, settings, snapshot)
 			plans := poolsPlans(decision, failedNode)
 			excluded := slices.ContainsFunc(plans, func(p SchedulerNodePlan) bool {
 				return p.Reason == schedulerPlanPreparationFailed && p.PreparationFailure != nil &&
@@ -90,8 +89,7 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 			first := Action{ID: "first-attempt", Kind: schedulerActionPrepare, Node: node, Status: schedulerActionFailed,
 				PreparationFailure: NewPreparationFailure(wanted, "pod-one", observed)}
 			snapshot.Actions = []Action{first}
-			rows := capacityRowsForTest(settings, snapshot, nil)
-			initial := capacityDecideForTest(t, settings, snapshot, rows)
+			initial := capacityDecideForTest(t, settings, snapshot)
 			if !slices.ContainsFunc(poolsPlans(initial, node), func(p SchedulerNodePlan) bool {
 				return p.Eligible && p.PreparationFailure != nil && p.PreparationFailure.Classification == classification
 			}) {
@@ -101,7 +99,7 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 				PreparationFailure: NewPreparationFailure(wanted, "pod-two", observed)}
 			ObserveRepeatedPreparationFailure(&second, first)
 			snapshot.Actions = append(snapshot.Actions, second)
-			reproduced := capacityDecideForTest(t, settings, snapshot, rows)
+			reproduced := capacityDecideForTest(t, settings, snapshot)
 			wantClass, excluded := classification, false
 			if classification == PreparationUnknownTransient {
 				wantClass, excluded = PreparationPromoted, true
@@ -116,13 +114,13 @@ func TestRetryablePreparationReproductionPromotesOnlySameInputs(t *testing.T) {
 				snapshot.Nodes[len(snapshot.Nodes)-1].MemoryBytes++
 				snapshot.At = snapshot.At.Add(1)
 				snapshot.Nodes[len(snapshot.Nodes)-1].ObservedAt = snapshot.At
-				recovered := capacityDecideForTest(t, settings, snapshot, rows)
+				recovered := capacityDecideForTest(t, settings, snapshot)
 				if !slices.ContainsFunc(poolsPlans(recovered, node), func(p SchedulerNodePlan) bool { return p.Reason == schedulerPlanPreparationFailed }) {
 					t.Fatal("unrelated observation drift erased a reproduced unknown failure")
 				}
 			}
 			snapshot.Options[len(snapshot.Options)-1].Instance.RunnerCommand = []string{"runner", "--warmup-batch=1"}
-			changed := capacityDecideForTest(t, settings, snapshot, rows)
+			changed := capacityDecideForTest(t, settings, snapshot)
 			if !slices.ContainsFunc(poolsPlans(changed, node), func(p SchedulerNodePlan) bool { return p.Eligible }) {
 				t.Fatal("changed startup input did not release a promoted constraint")
 			}
@@ -164,7 +162,7 @@ func TestTransientPreparationRepetitionEvidenceStaysBounded(t *testing.T) {
 		previous = current
 	}
 	snapshot.Actions = []Action{previous}
-	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if !slices.ContainsFunc(poolsPlans(decision, node), func(p SchedulerNodePlan) bool {
 		return p.Eligible && p.PreparationFailure != nil && p.PreparationFailure.RepeatCount == repetitions
 	}) {

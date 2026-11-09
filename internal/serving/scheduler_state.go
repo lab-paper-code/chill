@@ -73,20 +73,12 @@ func (s *searchState) addPlan(sum *searchSum,q,w int, sign float64) {
 	sum.count += int(sign)*t.count[q][w]
 	sum.pending += int(sign)*t.pending[q][w]
 }
+// Rebase committed moves in canonical order. This avoids accumulated roundoff
+// changing a choice's rank after Reset; hot Delta uses additive scalars only.
 func (s *searchState) apply(n,q int) {
-	old:=s.choice[n]
-	if old==q {return}
-	s.total+=s.table.others[q]-s.table.others[old]
-	for w:=range s.sums {
-		s.addPlan(&s.sums[w],old,w,-1)
-		s.addPlan(&s.sums[w],q,w,1)
-		s.total+=s.table.count[q][w]-s.table.count[old][w]
-	}
+	if s.choice[n]==q {return}
 	s.choice[n]=q
-	s.tPre[n]=s.table.tPre[q]
-	if s.table.keep[q] {s.tPre[n]=0}
-	s.r=0
-	for _,pre:=range s.tPre {s.r=max(s.r,pre)}
+	s.recount()
 }
 
 func (s *searchState) delta(n,q int) orderKey {

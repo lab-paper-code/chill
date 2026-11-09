@@ -79,13 +79,13 @@ func loadRev76Fixture(t *testing.T) rev76Fixture {
 func TestControlledRawReplayCapacityDoesNotCrossSharedCutover(t *testing.T) {
 	fixture := loadRev76Fixture(t)
 	settings, snapshot := fixture.Settings, fixture.Cold
-	decision := capacityDecideForTest(t, settings, snapshot, fixture.Rows)
-	if decision.Status != CapacityPending || decision.Target != nil {
-		t.Fatalf("controlled raw rows were relabeled as current shared capacity: status=%s reasons=%v", decision.Status, decision.Reasons)
+	decision := capacityDecideForTest(t, settings, snapshot)
+	if decision.Status != CapacityRejected || decision.Target != nil {
+		t.Fatalf("historical rows bypassed missing conditional raw support: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
 }
 
-func sharedBootstrapFixture() (SchedulerSettings, SchedulerSnapshot, []CapacityRow) {
+func sharedBootstrapFixture() (SchedulerSettings, SchedulerSnapshot) {
 	settings, snapshot := schedulerFixture()
 	base := snapshot.Instances[0]
 	settings.MaxReplicas, settings.MaxInstances = 3, 3
@@ -105,26 +105,18 @@ func sharedBootstrapFixture() (SchedulerSettings, SchedulerSnapshot, []CapacityR
 	}
 	snapshot.Instances = nil
 	snapshot.Routing = map[string]map[string]int32{}
-	return settings, snapshot, capacityRowsForTest(settings, snapshot, nil)
+	return settings, snapshot
 }
 
-func TestSharedStartupUsesPreparedCapacityPerUIDAC41(t *testing.T) {
-	settings, snapshot, rows := sharedBootstrapFixture()
-	pending := capacityDecideForTest(t, settings, snapshot, nil)
-	if pending.Status != CapacityPending || pending.Target != nil || len(pending.Keep.Actions) != 0 {
-		t.Fatalf("missing capacity committed startup: %+v", pending)
-	}
-	partial := capacityDecideForTest(t, settings, snapshot, rows[:1])
-	if partial.Target == nil || partial.Target.Keep {
-		t.Fatalf("prepared UID did not progress independently: %+v", partial)
-	}
-	decision := capacityDecideForTest(t, settings, snapshot, rows)
+func TestSharedStartupUsesProfilesWithoutCapacityRowsAC41(t *testing.T) {
+	settings, snapshot := sharedBootstrapFixture()
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Target == nil || decision.Target.Keep {
-		t.Fatalf("complete shared rows did not release bootstrap: status=%s reasons=%v", decision.Status, decision.Reasons)
+		t.Fatalf("profile-backed startup was gated: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
 	for _, uid := range settings.AutonomousWorkloads {
 		if !slices.ContainsFunc(decision.Capacity.Workloads, func(workload SchedulerCapacityWorkload) bool {
-			return workload.UID == uid && workload.KappaNew > 0 && len(workload.Weights) > 0
+			return workload.UID == uid && workload.RoutingRate > 0 && len(workload.Weights) > 0
 		}) {
 			t.Fatalf("joint bootstrap omitted %s: %+v", uid, decision.Capacity.Workloads)
 		}
@@ -135,12 +127,12 @@ func TestSharedStartupUsesPreparedCapacityPerUIDAC41(t *testing.T) {
 }
 
 func TestSharedBootstrapReservationAllowsIndependentProgressAC40(t *testing.T) {
-	settings, snapshot, rows := sharedBootstrapFixture()
+	settings, snapshot := sharedBootstrapFixture()
 	reserved := snapshot.Options[len(snapshot.Options)-1].Instance
 	reserved.WorkloadUID = "w3"
 	target := SchedulerCandidate{ID: "in-flight-owner", Instances: []SchedulerInstance{reserved}, Routing: map[string]map[string]int32{"w3": {reserved.ID: 1000}}}
 	reserveTargetForTest(&snapshot, &target)
-	decision := capacityDecideForTest(t, settings, snapshot, rows)
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Target == nil || decision.Target.Keep {
 		t.Fatalf("reservation restarted empty-pool barrier or blocked independent progress: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
@@ -152,36 +144,29 @@ func TestSharedBootstrapReservationAllowsIndependentProgressAC40(t *testing.T) {
 	}
 }
 
-func TestStartupCapacityNeverUsesElapsedTimeFallback(t *testing.T) {
+func TestStartupMissingRawSupportNeverUsesElapsedTimeFallback(t *testing.T) {
 	s, snapshot := schedulerFixture()
 	snapshot.Instances = nil
 	snapshot.Routing = map[string]map[string]int32{}
+	for _,option:=range snapshot.Options {
+		for k:=range option.Instance.Profile.Batches {option.Instance.Profile.Batches[k].ServiceDistribution=nil}
+	}
 	for _, elapsed := range []time.Duration{0, time.Hour} {
 		snapshot.At = snapshot.ObservationEnd.Add(elapsed)
-		for k := range snapshot.Nodes {
-			snapshot.Nodes[k].ObservedAt = snapshot.At
+		for k := range snapshot.Nodes {snapshot.Nodes[k].ObservedAt = snapshot.At}
+		got := capacityDecideForTest(t, s, snapshot)
+		if got.Status != CapacityRejected || got.Target != nil {
+			t.Fatalf("missing raw support became executable after %v: %+v", elapsed, got)
 		}
-		got := capacityDecideForTest(t, s, snapshot, nil)
-		if got.Status != CapacityPending || got.Target != nil {
-			t.Fatalf("missing rows gained capacity after %v: %+v", elapsed, got)
-		}
-	}
-	rows := capacityRowsForTest(s, snapshot, nil)
-	for k := range rows {
-		rows[k].Status, rows[k].Kappa = CapacityRejected, nil
-	}
-	got := capacityDecideForTest(t, s, snapshot, rows)
-	if got.Target != nil || !slices.Contains(got.Reasons, CapacityRejected+":w1") {
-		t.Fatalf("rejected capacity was used: %+v", got)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := EvaluateScheduler(ctx, s, snapshot, nil); err == nil {
+	if _, err := EvaluateScheduler(ctx, s, snapshot); err == nil {
 		t.Fatal("canceled evaluation succeeded")
 	}
 }
 
-func TestStartupTerminalCapacityIgnoresIncompatibleModels(t *testing.T) {
+func TestStartupMissingRawSupportIgnoresIncompatibleModels(t *testing.T) {
 	for _, strategy := range []string{"v1", "v2"} {
 		t.Run(strategy, func(t *testing.T) {
 			s, snapshot := schedulerFixture()
@@ -199,23 +184,18 @@ func TestStartupTerminalCapacityIgnoresIncompatibleModels(t *testing.T) {
 			}
 			snapshot.Instances = nil
 			snapshot.Routing = map[string]map[string]int32{}
-			rows := capacityRowsForTest(s, snapshot, nil)
-			for k := range rows {
-				if rows[k].Input.WorkloadUID == "w1" {
-					rows[k].Status, rows[k].Kappa = CapacityRejected, nil
-				}
-			}
-			decision := capacityDecideForTest(t, s, snapshot, rows)
+			missing:=snapshot.Options[0].Instance.Profile
+			missing.Batches=slices.Clone(missing.Batches)
+			for k:=range missing.Batches {missing.Batches[k].ServiceDistribution=nil}
+			decision := capacityDecideForTest(t, s, snapshot)
 			if !slices.Contains(decision.Reasons, CapacityRejected+":w1") || slices.Contains(decision.Reasons, CapacityPending+":w1") {
 				t.Fatalf("unrelated model's absent row hid terminal w1 capacity: %+v", decision)
 			}
 			if decision.Target == nil || len(decision.Target.Instances) != 1 || len(decision.Target.Routing["w2"]) != 1 || len(decision.Target.Routing["w1"]) != 0 {
 				t.Fatalf("ready w2 failed independent startup: %+v", decision)
 			}
-			for k := range rows {
-				rows[k].Status, rows[k].Kappa = CapacityRejected, nil
-			}
-			decision = capacityDecideForTest(t, s, snapshot, rows)
+			for k:=range option.Profile.Batches {option.Profile.Batches[k].ServiceDistribution=nil}
+			decision = capacityDecideForTest(t, s, snapshot)
 			if decision.Status != CapacityRejected || decision.Target != nil || !slices.Contains(decision.Reasons, CapacityRejected+":w2") {
 				t.Fatalf("terminal compatible rows remained pending: %+v", decision)
 			}

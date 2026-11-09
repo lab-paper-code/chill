@@ -70,7 +70,7 @@ func TestDefectEResidualPendingOccupancyKeepsReplicaAndInstanceLimits(t *testing
 					if len(pending) != wantPending || len(schedulerUncreatedReservations(snap, returned)) != 0 {
 						t.Fatalf("residual reservation deduplication changed: %+v", pending)
 					}
-					d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+					d := capacityDecideForTest(t, s, snap)
 					expanded := d.Target != nil && slices.ContainsFunc(d.Target.Actions, func(a Action) bool {
 						return a.Kind == schedulerActionPrepare && a.Node == returned
 					})

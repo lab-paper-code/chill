@@ -56,7 +56,7 @@ func TestSchedulerSharedCPURetainsResourceGuards(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
 			tc.change(&snapshot)
-			decision, err := EvaluateScheduler(context.Background(), settings, snapshot, nil)
+			decision, err := EvaluateScheduler(context.Background(), settings, snapshot)
 			if err != nil {
 				t.Fatal(err)
 			}

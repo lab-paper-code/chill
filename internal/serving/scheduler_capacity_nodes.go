@@ -16,7 +16,6 @@ type capacityWorkload struct {
 	minRate float64 // the least arrival rate of one control interval in the observation window
 	queued  int     // q
 	current int     // instances serving it now
-	slack   float64 // L − m, seconds
 	totalNanos float64 // frozen current-window TOTAL, heuristic only
 }
 

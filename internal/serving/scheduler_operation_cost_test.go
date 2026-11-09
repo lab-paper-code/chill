@@ -28,8 +28,7 @@ func TestOperationCostDefaultAndRequiredSettings(t *testing.T) {
 	snap.Options = append(snap.Options, poolsOption(wanted))
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
 	s.DefaultOperationCost["prepare"] = OperationCostValue{Seconds: .001, Joules: .01}
-	rows := capacityRowsForTest(s, snap, nil)
-	d := capacityDecideForTest(t, s, snap, rows)
+	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, n) {
 		t.Fatalf("default did not admit expansion: %+v", d)
 	}
@@ -157,9 +156,9 @@ func TestOperationCostRetainedKappaUsesCurrentCell(t *testing.T) {
 	p.MeasuredAt = p.MeasuredAt.Add(time.Second)
 	newer.Profile = &p
 	snap.Options = []SchedulerOption{poolsOption(newer)}
-	planner := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
-	if k, row := planner.currentKappa(old); k != 100 || row == "" {
-		t.Fatalf("old executor lost latest cell capacity: %g %s", k, row)
+	planner := capacityPlannerForTest(t, s, snap)
+	if rate := planner.currentRoutingRate(old); rate != capacityThroughput(old.Profile,old.MaxBatch) || rate<=0 {
+		t.Fatalf("old executor lost raw profile routing support: %g",rate)
 	}
 }
 
@@ -169,7 +168,7 @@ func TestOperationCostHorizonIsScoredOverCommonWindow(t *testing.T) {
 	wanted := poolsInstance(snap.Instances[0], "new", n, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(wanted))
 	s.DefaultOperationCost["prepare"] = OperationCostValue{Seconds: 2, Joules: 30}
-	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	p := capacityPlannerForTest(t, s, snap)
 	choice := capacityChoiceForTest(t, p, map[string]string{n.UID: planKey([]SchedulerInstance{wanted})})
 	res := p.evaluate(choice, p.routeOf(choice))
 	if res.exclusion == schedulerTransitionHorizon || res.period != s.ComparisonPeriod.Seconds() {
@@ -294,7 +293,7 @@ func TestOperationCostLiveSnapshotReplay(t *testing.T) {
 	table.Wait()
 	rows := table.Rows()
 	t.Logf("actual capacity rows=%d cached=%d", len(rows), cachedCount)
-	before := capacityPlannerForTest(t, s, snap, rows)
+	before := capacityPlannerForTest(t, s, snap)
 	beforeEligible := 0
 	for _, plans := range before.plans {
 		for _, p := range plans {
@@ -311,7 +310,7 @@ func TestOperationCostLiveSnapshotReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("before horizon removal: eligible=%d choice=%s final=%v feasible=%v", beforeEligible, old.key, old.final, old.feasible)
-	d, err := EvaluateScheduler(context.Background(), s, snap, rows)
+	d, err := EvaluateScheduler(context.Background(), s, snap)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,8 +386,8 @@ func operationCostReplayTable(t *testing.T) (*CapacityTable, int) {
 		record = func(row CapacityRow) error { mu.Lock(); defer mu.Unlock(); return json.NewEncoder(file).Encode(row) }
 	}
 	table := NewCapacityTable(2, record, nil)
-	// Offline fixtures already contain fully computed rows. Production's load
-	// callback intentionally supplies only Previous rows while recomputing.
+	// Explicit offline full-grid analysis may reuse fully computed rows.
+	// Native online planning never consumes this table or its readiness.
 	table.rows = cached
 	return table, len(cached)
 }

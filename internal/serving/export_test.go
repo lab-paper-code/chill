@@ -89,8 +89,8 @@ func blockRuntimeObservationWrites(t *testing.T, log *runtimeTestLog) {
 
 func CapacityBridgeObservationFixture(t *testing.T) (SchedulerDecision, RuntimeTestObservationConfig) {
 	t.Helper()
-	settings, snapshot, rows, _, _ := capacityBridgeFixture(t)
-	decision := capacityDecideForTest(t, settings, snapshot, rows)
+	settings, snapshot, _, _ := capacityBridgeFixture(t)
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Target == nil {
 		t.Fatal("bridge fixture lost its target")
 	}

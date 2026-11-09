@@ -373,7 +373,7 @@ func (b *schedulerBridgeCompiler) peers(uid string) (map[string]SchedulerInstanc
 			items = append(items, capacityItem{id: i.ID, routingWeight: profileRoutingWeight(k), e: capacityInputEnergy(i)})
 		}
 	}
-	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Compare(a.id, c.id) })
+	slices.SortFunc(items, func(a, c capacityItem) int { return cmp.Or(cmp.Compare(a.e,c.e),cmp.Compare(a.id,c.id)) })
 	return available, items
 }
 

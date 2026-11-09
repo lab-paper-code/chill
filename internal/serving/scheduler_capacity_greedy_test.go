@@ -40,7 +40,9 @@ func capacityDeltaAssert(t testing.TB, p *capacityPlanner, s *searchState, n, q 
 	key := s.delta(n, q)
 	choice := capacityDeltaChoice(s.table, key.choice)
 	energy := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
-	if key.keep != energy.keep || key.route != energy.route || capacityDeltaKey(key) != energy.key || key.bounded != p.bounded(choice) {
+	physicalKeep:=true
+	for node,j:=range choice {physicalKeep=physicalKeep && p.plans[node][j].keep}
+	if key.keep != physicalKeep || key.route != energy.route || capacityDeltaKey(key) != energy.key || key.bounded != p.bounded(choice) {
 		t.Fatalf("move=(%d,%d) key=%+v energy=%+v", n, q, key, energy)
 	}
 	// Integer routing and continuous fluid routing have identical request energy

@@ -22,7 +22,7 @@ func TestPendingPrepareRespectsReplicaBudget(t *testing.T) {
 			next := poolsInstance(wanted, "independent-slot", node, "fixed", wanted.WorkloadUID)
 			snap.Options = append(snap.Options, poolsOption(next))
 			snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(next), "fixed"))
-			d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+			d := capacityDecideForTest(t, s, snap)
 			expanded := d.Target != nil && poolsOn(*d.Target, node)
 			if expanded != (limit == 2) {
 				t.Errorf("created=%v maxReplicas=%d pending=1 secondPrepare=%v", created, limit, expanded)
@@ -55,7 +55,7 @@ func TestPendingInventoryLossKeepsBudget(t *testing.T) {
 	next := poolsInstance(wanted, "independent-slot", node, "fixed", wanted.WorkloadUID)
 	snap.Options = append(snap.Options, poolsOption(next))
 	snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(next), "fixed"))
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	d := capacityDecideForTest(t, s, snap)
 	if d.Target != nil && poolsOn(*d.Target, node) {
 		t.Fatal("missing placement inventory made the pending reservation disappear from both budgets")
 	}

@@ -86,12 +86,11 @@ func TestPlacementReusesReadyUnboundPhysicalSlotWithoutDuplicatePreparation(t *t
 	prepared := preparedSlot(snapshot, n2)
 	snapshot.Instances = append(snapshot.Instances, prepared)
 	capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
-	rows := capacityRowsForTest(settings, snapshot, nil)
-	planner := capacityPlannerForTest(t, settings, snapshot, rows)
+	planner := capacityPlannerForTest(t, settings, snapshot)
 	choice := capacityChoiceForTest(t, planner, map[string]string{n2.UID: prepared.Profile.ID + "/b1/w1"})
 	reuse := planner.evaluate(choice, 0)
 	d := planner.decide(SchedulerDecision{Keep: planner.keep}, reuse)
-	optimized := capacityDecideForTest(t, settings, snapshot, rows)
+	optimized := capacityDecideForTest(t, settings, snapshot)
 	if optimized.Target == nil {
 		t.Fatal("no optimizer target")
 	}
@@ -281,8 +280,7 @@ func TestUnboundPreparedReuseRetainsActualOwnershipFenceAndSlotProvenance(t *tes
 			}
 			snapshot.Instances = append(snapshot.Instances, prepared)
 			capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
-			rows := capacityRowsForTest(settings, snapshot, nil)
-			planner := capacityPlannerForTest(t, settings, snapshot, rows)
+			planner := capacityPlannerForTest(t, settings, snapshot)
 			reused := false
 			for _, plans := range planner.plans {
 				for _, plan := range plans {
@@ -304,7 +302,7 @@ func TestUnboundPreparedReuseRetainsActualOwnershipFenceAndSlotProvenance(t *tes
 			if want := owner == "scheduler-slot" || owner == "same-owner"; reused != want {
 				t.Fatalf("ownership/slot fact %s reusable=%v, want %v", owner, reused, want)
 			}
-			d := capacityDecideForTest(t, settings, snapshot, rows)
+			d := capacityDecideForTest(t, settings, snapshot)
 			if d.Target == nil {
 				t.Fatal("no decision target")
 			}
@@ -480,7 +478,7 @@ func TestResourceReservationSurvivesActualZeroBindingInterval(t *testing.T) {
 	reserveTargetForTest(&snapshot, &target)
 	snapshot.Instances = nil
 	snapshot.Routing = map[string]map[string]int32{"w1": {}}
-	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Target == nil || !decision.Target.Keep || len(decision.Target.Instances) != 0 ||
 		len(snapshot.Reservations[0].Target.Instances) != 1 {
 		t.Fatalf("empty physical interval changed the reserved intent: %+v", decision)
@@ -500,7 +498,7 @@ func TestRunningRouteFixesOnlyItsOwnerScope(t *testing.T) {
 	current.Actions = []Action{running}
 	snapshot.Actions = []Action{running}
 	reserveTargetForTest(&snapshot, &current)
-	decision := capacityDecideForTest(t, settings, snapshot, capacityRowsForTest(settings, snapshot, nil))
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Target == nil || decision.Target.ID == current.ID || len(decision.Target.Actions) != 0 {
 		t.Fatalf("planner adopted the owner's pending route: %+v", decision)
 	}
@@ -542,7 +540,7 @@ func TestInstanceUnavailableDefersOnlyMatchingNodeAC34(t *testing.T) {
 		t.Fatalf("deferred target lost reason/Node identity: %+v", route)
 	}
 	reserveTargetForTest(&snapshot, &target)
-	decision := capacityDecideForTest(t, settings, snapshot, nil)
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Target == nil || len(decision.Target.Actions) != 0 || len(decision.Workloads) == 0 || decision.Workloads[0].State != "Fixed" {
 		t.Fatalf("unknown reserved scope became executable: %+v", decision)
 	}
@@ -570,7 +568,7 @@ func TestPolicyAckPendingRetainsRouteEffectAndReplicaCountAC34(t *testing.T) {
 		t.Fatalf("ACK marker caused distribution effect retransmission: %+v", reused)
 	}
 	decision := SchedulerDecision{Workloads: schedulerWorkloadStates(settings, snapshot), Search: schedulerSearchPopulation(context.Background(), settings, snapshot)}
-	planner := newCapacityPlanner(context.Background(), settings, snapshot, target, nil, decision)
+	planner := newCapacityPlanner(context.Background(), settings, snapshot, target, decision)
 	if len(planner.ws) != 1 || planner.ws[0].current != 1 {
 		t.Fatalf("ACK wait changed existing replica count: %+v", planner.ws)
 	}

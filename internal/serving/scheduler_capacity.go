@@ -357,7 +357,6 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		w.rate = max(w.rate, settings.MinimumDemand[w.d.UID])
 		w.minRate = max(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), settings.MinimumDemand[w.d.UID])
 		w.totalNanos = p.pathFeedback(w.d).TotalNanos
-		w.slack = w.d.SLO.TargetLatency.Seconds() - w.totalNanos/1e9
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
 				w.current++

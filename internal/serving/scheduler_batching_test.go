@@ -19,7 +19,7 @@ func TestBatchingOffMeasuredPolicySet(t *testing.T) {
 	if len(options) != 1 || options[0].Instance.MaxBatch != 1 {
 		t.Fatalf("measured variants: %+v", options)
 	}
-	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	p := capacityPlannerForTest(t, s, snap)
 	if !p.controlAllows(0, options[0].Instance, snap.Instances) {
 		t.Fatal("current cap1 excluded")
 	}
@@ -43,7 +43,7 @@ func TestBatchingOffMeasuredPolicySet(t *testing.T) {
 	}
 }
 
-// TestBatchingOffSnapshotReplay uses the existing switch-replay inputs and rows.
+// TestBatchingOffSnapshotReplay uses raw switch-replay inputs, without SLO-capacity rows.
 // Keep the large captured production evidence outside the source tree.
 func TestBatchingOffSnapshotReplay(t *testing.T) {
 	root := os.Getenv("SWITCH_REPLAY_DIR")
@@ -65,9 +65,7 @@ func TestBatchingOffSnapshotReplay(t *testing.T) {
 		Snapshot SchedulerSnapshot      `json:"snapshot"`
 		Settings SchedulerSettingsInput `json:"settings"`
 	}
-	var rows []CapacityRow
 	load("inputs.json", &cases)
-	load("capacity.json", &rows)
 	for _, c := range cases {
 		t.Run(c.ID, func(t *testing.T) {
 			s, err := c.Settings.Settings()
@@ -76,16 +74,8 @@ func TestBatchingOffSnapshotReplay(t *testing.T) {
 			}
 			snap := c.Snapshot
 			schedulerHydrateCapture(t, snap)
-			// Raw captures remain unchanged; these rows belong to this replay's
-			// current-contract input, not the archived keys.
-			currentRows := slices.Clone(rows)
-			for index := range currentRows {
-				in := &currentRows[index].Input
-				in.GridSteps, in.BisectionWidth, in.TailSamples = s.CapacityGridSteps, s.CapacityBisectionWidth, s.CapacityTailSamples
-				currentRows[index].Key = in.Key()
-			}
 			s.Controls = SchedulerControls{true, true, true, true, false, true, true}
-			p := capacityPlannerForTest(t, s, snap, currentRows)
+			p := capacityPlannerForTest(t, s, snap)
 			before, after, compatible := 0, 0, 0
 			caps := map[int]bool{}
 			count := func(options []SchedulerOption, old bool) {
@@ -113,7 +103,7 @@ func TestBatchingOffSnapshotReplay(t *testing.T) {
 			if after <= before {
 				t.Fatalf("fixed policy variants not restored: before=%d after=%d", before, after)
 			}
-			d, err := EvaluateScheduler(context.Background(), s, snap, currentRows)
+			d, err := EvaluateScheduler(context.Background(), s, snap)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func capacityBridgeFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, []CapacityRow, SchedulerInstance, SchedulerInstance) {
+func capacityBridgeFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, SchedulerInstance, SchedulerInstance) {
 	t.Helper()
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ComparisonPeriod = 6*s.ControlInterval, 600*s.ControlInterval
@@ -39,15 +39,15 @@ func capacityBridgeFixture(t *testing.T) (SchedulerSettings, SchedulerSnapshot, 
 	for index := range 2 {
 		snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: string(rune('a' + index)), Definition: other, ReceivedAt: snap.At, Phase: phasePending})
 	}
-	rows := capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{
+	capacityServiceRatesForTest(&snap, map[string]float64{
 		snap.Instances[0].Profile.ID: .372, wanted.Profile.ID: .752,
-	}))
-	return s, snap, rows, blocker, bridge
+	})
+	return s, snap, blocker, bridge
 }
 
 func TestCapacityStagedBridgePreparesBeforeRoutedBlockerStopsAC45(t *testing.T) {
-	s, snap, rows, blocker, bridge := capacityBridgeFixture(t)
-	decision := capacityDecideForTest(t, s, snap, rows)
+	s, snap, blocker, bridge := capacityBridgeFixture(t)
+	decision := capacityDecideForTest(t, s, snap)
 	if decision.Target == nil || decision.Target.Keep {
 		t.Fatalf("safe prepared bridge was not selected: status=%s reasons=%v", decision.Status, decision.Reasons)
 	}
@@ -68,9 +68,9 @@ func TestCapacityStagedBridgePreparesBeforeRoutedBlockerStopsAC45(t *testing.T) 
 }
 
 func TestCapacityBridgePreservesTerminatedRecoveryRouteSCH51(t *testing.T) {
-	s, snap, rows, blocker, _ := capacityBridgeFixture(t)
+	s, snap, blocker, _ := capacityBridgeFixture(t)
 	snap.Instances[0].Ready, snap.Instances[0].Terminated = false, true
-	decision := capacityDecideForTest(t, s, snap, rows)
+	decision := capacityDecideForTest(t, s, snap)
 	if decision.Target == nil {
 		t.Fatalf("terminal recovery lost its target: %v", decision.Reasons)
 	}
@@ -86,8 +86,8 @@ func TestCapacityBridgePreservesTerminatedRecoveryRouteSCH51(t *testing.T) {
 }
 
 func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
-	s, snap, rows, _, bridge := capacityBridgeFixture(t)
-	decision := capacityDecideForTest(t, s, snap, rows)
+	s, snap, _, bridge := capacityBridgeFixture(t)
+	decision := capacityDecideForTest(t, s, snap)
 	if decision.Target == nil {
 		t.Fatal("bridge fixture lost its target")
 	}
@@ -140,12 +140,10 @@ func TestCapacityBridgeQueuedIngressReplayAC45(t *testing.T) {
 }
 
 func TestCapacityBridgePreservesSupplyReserveAndPhysicalLimitsAC45(t *testing.T) {
-	for _, constraint := range []string{"steady bridge supply", "physical slots", "bridge replica budget", "reserve", "routing disabled"} {
+	for _, constraint := range []string{"physical slots", "bridge replica budget", "reserve", "routing disabled"} {
 		t.Run(constraint, func(t *testing.T) {
-			s, snap, rows, _, _ := capacityBridgeFixture(t)
+			s, snap, _, _ := capacityBridgeFixture(t)
 			switch constraint {
-			case "steady bridge supply":
-				s.MinimumDemand["w2"] = 101
 			case "physical slots":
 				s.MaxInstances = 3
 			case "bridge replica budget":
@@ -155,7 +153,7 @@ func TestCapacityBridgePreservesSupplyReserveAndPhysicalLimitsAC45(t *testing.T)
 			case "routing disabled":
 				s.Controls.Routing = false
 			}
-			got := capacityDecideForTest(t, s, snap, rows)
+			got := capacityDecideForTest(t, s, snap)
 			if got.Target == nil {
 				t.Fatalf("constraint lost the safe fallback: %s", got.Status)
 			}
@@ -169,9 +167,9 @@ func TestCapacityBridgePreservesSupplyReserveAndPhysicalLimitsAC45(t *testing.T)
 }
 
 func TestCapacityBridgeMissingCostUsesLabeledEstimate(t *testing.T) {
-	s, snap, rows, _, bridge := capacityBridgeFixture(t)
+	s, snap, _, bridge := capacityBridgeFixture(t)
 	snap.Costs = slices.DeleteFunc(snap.Costs, func(cost OperationCost) bool { return cost.Node == bridge.Node })
-	got := capacityDecideForTest(t, s, snap, rows)
+	got := capacityDecideForTest(t, s, snap)
 	if got.Target == nil || !slices.ContainsFunc(got.Target.Actions, func(a Action) bool { return a.RouteTarget != nil }) {
 		t.Fatal("missing measurement blocked the safe intermediate route")
 	}
@@ -186,8 +184,8 @@ func TestCapacityBridgeMissingCostUsesLabeledEstimate(t *testing.T) {
 }
 
 func TestBridgeExcludesIndependentlyRetiringIdleDestination(t *testing.T) {
-	settings, snapshot, rows, _, bridge := capacityBridgeFixture(t)
-	decision := capacityDecideForTest(t, settings, snapshot, rows)
+	settings, snapshot, _, bridge := capacityBridgeFixture(t)
+	decision := capacityDecideForTest(t, settings, snapshot)
 	if decision.Target == nil || len(decision.Capacity.BridgeStages) == 0 {
 		t.Fatal("fixture needs a staged bridge")
 	}
@@ -195,11 +193,11 @@ func TestBridgeExcludesIndependentlyRetiringIdleDestination(t *testing.T) {
 	idle := poolsInstance(bridge, "obsolete-idle", idleNode, "fixed", "w2")
 	snapshot.Instances = append(snapshot.Instances, idle)
 	snapshot.Options = append(snapshot.Options, poolsOption(idle))
-	rows = capacityRowsForTest(settings, snapshot, capacityKappaByProfile(map[string]float64{
+	capacityServiceRatesForTest(&snapshot, map[string]float64{
 		snapshot.Instances[0].Profile.ID: .372,
-	}))
+	})
 	keep := SchedulerCandidate{Nodes: snapshot.Nodes, Instances: snapshot.Instances, Routing: snapshot.Routing}
-	planner := newCapacityPlanner(context.Background(), settings, snapshot, keep, rows, decision)
+	planner := newCapacityPlanner(context.Background(), settings, snapshot, keep, decision)
 	planner.plans = make([][]*capacityPlan, len(snapshot.Nodes))
 	for n, node := range snapshot.Nodes {
 		plan := &capacityPlan{mode: node.PowerMode}

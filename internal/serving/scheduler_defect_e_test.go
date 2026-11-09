@@ -53,7 +53,7 @@ func TestDefectEIdleKeepRetainsUnavailablePhysicalTarget(t *testing.T) {
 				bad.Ready, bad.Stopped = false, true // Stop is not native drain proof.
 			}
 			before := *bad
-			d := capacityDecideForTest(t, s, snap, rows)
+			d := capacityDecideForTest(t, s, snap)
 			if d.Target == nil {
 				t.Fatal("missing target")
 			}
@@ -72,7 +72,7 @@ func TestDefectEIdleKeepRetainsUnavailablePhysicalTarget(t *testing.T) {
 			// new E cooldown or an owner reset.
 			snap.Nodes[2].Ready, snap.Nodes[2].Reasons = true, nil
 			bad.Ready, bad.Stopped, bad.Reasons, bad.ObservedAt = true, false, nil, snap.At
-			recovered := capacityDecideForTest(t, s, snap, rows)
+			recovered := capacityDecideForTest(t, s, snap)
 			if recovered.Target == nil || poolsOn(*recovered.Target, badNode) || !slices.ContainsFunc(recovered.Target.Actions, func(a Action) bool {
 				return a.Node == badNode && a.Kind == schedulerActionRemove
 			}) {
@@ -98,7 +98,7 @@ func TestDefectEUnavailableTrafficWithdrawalRetainsOccupancy(t *testing.T) {
 			snap.Nodes[1].Reasons = []string{NodeInstanceUnavailable}
 			snap.Routing = map[string]map[string]int32{"w1": {"i1": 1, bad.ID: 1}}
 			capacityLoad(s, &snap, snap.Workloads[0], 10)
-			d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+			d := capacityDecideForTest(t, s, snap)
 			if d.Target == nil || d.Workloads[0].State != WorkloadControlled || d.Target.Routing["w1"][bad.ID] != 0 || d.Target.Routing["w1"]["i1"] <= 0 {
 				t.Fatalf("withdrawal froze workload or lost healthy destination: %+v", d)
 			}
@@ -106,8 +106,8 @@ func TestDefectEUnavailableTrafficWithdrawalRetainsOccupancy(t *testing.T) {
 				t.Fatalf("withdrawal erased physical occupancy: %+v", d.Target.Instances)
 			}
 			defectERequireNoPhysicalActions(t, d.Target.Actions, bad.Node)
-			if d.Capacity.Workloads[0].KappaNew != 100 {
-				t.Fatalf("unconfirmed occupancy supplied capacity: %+v", d.Capacity.Workloads)
+			if d.Capacity.Workloads[0].RoutingRate != capacityThroughput(snap.Instances[0].Profile,snap.Instances[0].MaxBatch) {
+				t.Fatalf("unconfirmed occupancy supplied routing rate: %+v", d.Capacity.Workloads)
 			}
 		})
 	}

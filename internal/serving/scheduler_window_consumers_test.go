@@ -26,8 +26,7 @@ func TestSchedulerCurrentDemandReductionV1V2(t *testing.T) {
 					snapshot.Costs = append(snapshot.Costs, poolsCost(schedulerActionRemove, instance.Node, schedulerState(instance), "unloaded", "fixed"))
 				}
 				capacityLoad(s, &snapshot, snapshot.Workloads[0], rate)
-				rows := capacityRowsForTest(s, snapshot, nil)
-				decision, err := EvaluateScheduler(context.Background(), s, snapshot, rows)
+				decision, err := EvaluateScheduler(context.Background(), s, snapshot)
 				if err != nil {
 					t.Fatal(err)
 				}

@@ -177,7 +177,7 @@ func TestSchedulerDecisionRecordsWorkloadStates(t *testing.T) {
 		{UID: "w2", State: WorkloadMeasurementEvidenceMissing, Reason: "NoCompletedMeasurementMatches"},
 		{UID: "w3", State: WorkloadDisabled, Reason: "AutonomousControlOff"},
 	}
-	if got := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil)).Workloads; !reflect.DeepEqual(got, want) {
+	if got := capacityDecideForTest(t, s, snap).Workloads; !reflect.DeepEqual(got, want) {
 		t.Fatalf("workload states %+v, want %+v", got, want)
 	}
 }
@@ -197,7 +197,7 @@ func TestSchedulerNodeReasonsKeepNodeWithoutPlacement(t *testing.T) {
 				poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), schedulerTestEcoMode),
 				poolsCost(schedulerActionPower, node, "fixed", schedulerTestEcoMode, ""),
 			}
-			d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+			d := capacityDecideForTest(t, s, snap)
 			if !slices.Equal(d.Keep.Nodes[1].Reasons, snap.Nodes[1].Reasons) {
 				t.Fatalf("Node reasons lost: %+v", d.Keep.Nodes[1])
 			}
@@ -238,7 +238,7 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 		poolsCost(schedulerActionPower, eco, "fixed", schedulerTestEcoMode, ""),
 		poolsCost(schedulerActionPrepare, eco, "unloaded", schedulerState(raised), schedulerTestEcoMode),
 	}
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	d := capacityDecideForTest(t, s, snap)
 	if want := []NodeReference{base.Node, empty, move, eco}; !slices.Equal(d.Search.ComparedNodes, want) {
 		t.Fatalf("ComparedNodes %v, want %v", d.Search.ComparedNodes, want)
 	}
@@ -266,7 +266,7 @@ func TestSchedulerDisabledWorkloadInstanceIsFixed(t *testing.T) {
 	snap.Options = append(snap.Options, poolsOption(option))
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(option), "fixed")}
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 100 }))
+	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, node) {
 		t.Fatalf("fixture must add the n2 instance: %+v", d)
 	}
@@ -289,7 +289,7 @@ func TestSchedulerMinimumInstanceSelectsFirstConfiguration(t *testing.T) {
 	option := snap.Options[0].Instance
 	snap.Instances = nil
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, option.Node, "unloaded", schedulerState(option), "fixed")}
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	d := capacityDecideForTest(t, s, snap)
 	if d.Keep.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Keep || d.Status != schedulerStatusFeasible || !poolsOn(*d.Target, option.Node) {
 		t.Fatalf("first configuration was not the target: %+v", d)
 	}
@@ -316,7 +316,7 @@ func TestSchedulerNodeServesOneInstance(t *testing.T) {
 			snap.Instances = append(snap.Instances, added)
 			snap.Routing["w1"]["opt"] = 1
 		}
-		d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+		d := capacityDecideForTest(t, s, snap)
 		if slices.ContainsFunc(poolsPlans(d, node), func(p SchedulerNodePlan) bool { return strings.Contains(p.Key, "+") }) {
 			t.Fatalf("%+v planned two instances on one Node: %+v", c, poolsPlans(d, node))
 		}
@@ -341,12 +341,12 @@ func TestSchedulerDirectMoveBetweenActivePools(t *testing.T) {
 		poolsCost(schedulerActionRemove, shared, schedulerState(current), "unloaded", "fixed"),
 		poolsCost(schedulerActionPrepare, shared, "unloaded", schedulerState(w1), "fixed"),
 	}
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	d := capacityDecideForTest(t, s, snap)
 	i := slices.IndexFunc(poolsPlans(d, shared), func(p SchedulerNodePlan) bool { return p.Key == "profile-other-cpu@n2-fixed/b1/w1" })
 	if i < 0 {
 		t.Fatalf("no plan moved the Node from w2's to w1's active POOL: %+v", poolsPlans(d, shared))
 	}
-	if plan := poolsPlans(d, shared)[i]; !plan.Eligible || plan.Pre == 0 || plan.Post == 0 || plan.KappaRetained["w2"] == 0 {
+	if plan := poolsPlans(d, shared)[i]; !plan.Eligible || plan.Pre == 0 || plan.Post == 0 || plan.RetainedRoutingRate["w2"] == 0 {
 		t.Fatalf("move must prepare before and remove after the route, w2 serving until then: %+v", plan)
 	}
 }
@@ -369,8 +369,7 @@ func TestSchedulerAvailableNodeSavingAndReentry(t *testing.T) {
 	loaded.Trials = []OperationTrial{{Duration: 9 * time.Second, Joules: 90}}
 	prepare := poolsCost(schedulerActionPrepare, reentry, "unloaded", schedulerState(option), "fixed")
 	snap.Costs = []OperationCost{loaded, power, prepare, poolsCost(schedulerActionPower, idle, "fixed", schedulerTestEcoMode, "")}
-	rows := capacityRowsForTest(s, snap, nil)
-	d := capacityDecideForTest(t, s, snap, rows)
+	d := capacityDecideForTest(t, s, snap)
 	if schedulerNodeMode(d.Keep.Nodes, idle) != "fixed" || slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && a.Fixed }) {
 		t.Fatalf("new saving changed keep: %+v", d.Keep)
 	}
@@ -383,7 +382,7 @@ func TestSchedulerAvailableNodeSavingAndReentry(t *testing.T) {
 		t.Fatalf("re-entry did not use the empty-Node raise and the target-mode prepare: %+v", plans)
 	}
 	snap.Costs = []OperationCost{loaded, prepare}
-	if !slices.ContainsFunc(poolsPlans(capacityDecideForTest(t, s, snap, rows), reentry), func(p SchedulerNodePlan) bool { return p.Eligible && len(p.ActionCosts) > 0 }) {
+	if !slices.ContainsFunc(poolsPlans(capacityDecideForTest(t, s, snap), reentry), func(p SchedulerNodePlan) bool { return p.Eligible && len(p.ActionCosts) > 0 }) {
 		t.Fatal("re-entry without an exact raise measurement lost its estimated plan")
 	}
 }
@@ -394,7 +393,6 @@ func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 	s, snap := schedulerFixture()
 	idle := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	snap.Costs = nil
-	rows := capacityRowsForTest(s, snap, nil)
 	keep := SchedulerCandidate{Nodes: slices.Clone(snap.Nodes), Instances: snap.Instances}
 	keep.Nodes[1].PowerMode = schedulerTestEcoMode
 	lowering := Action{ID: "authorized-lowering", Kind: schedulerActionPower, Node: idle, From: "fixed", To: schedulerTestEcoMode, Fixed: true, Status: phaseRunning}
@@ -402,7 +400,7 @@ func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 	snap.Reservations = []SchedulerReservation{{Owner: "lowering", Nodes: []NodeReference{idle}, Target: &keep}}
 	snap.Nodes[1].PowerMode = ""
 	snap.Nodes[1].Reasons = []string{NodePowerModeUnavailable}
-	d := capacityDecideForTest(t, s, snap, rows)
+	d := capacityDecideForTest(t, s, snap)
 	if slices.ContainsFunc(d.Keep.Actions, func(a Action) bool { return a.Node == idle && !a.Fixed }) || d.Capacity == nil {
 		t.Fatalf("running Fixed lowering held planning or became a compared power change: %+v", d)
 	}
@@ -424,7 +422,7 @@ func TestSchedulerMeasurementNodeIsFixed(t *testing.T) {
 		poolsOption(elsewhere))
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, other, "unloaded", schedulerState(elsewhere), "fixed")}
 	capacityLoad(s, &snap, snap.Workloads[0], 150)
-	d := capacityDecideForTest(t, s, snap, capacityRowsForTest(s, snap, func(SchedulerOption) float64 { return 100 }))
+	d := capacityDecideForTest(t, s, snap)
 	if d.Target == nil || !poolsOn(*d.Target, other) {
 		t.Fatalf("fixture must add the n4 instance: %+v", d)
 	}

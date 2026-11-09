@@ -31,8 +31,7 @@ func TestCapacityTerminalLedgerAllowsIndependentRecoveryAC45(t *testing.T) {
 			replacement := poolsInstance(snap.Options[0].Instance, "replacement", node, "fixed", "w1")
 			snap.Options = append(snap.Options, poolsOption(replacement))
 			snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, node, "unloaded", schedulerState(replacement), "fixed")}
-			rows := capacityRowsForTest(s, snap, nil)
-			decision := capacityDecideForTest(t, s, snap, rows)
+			decision := capacityDecideForTest(t, s, snap)
 			if decision.Target == nil || decision.Target.Keep || decision.Status == schedulerStatusPending {
 				t.Fatalf("non-serving ledger blocked independent replacement: status=%s reasons=%v", decision.Status, decision.Reasons)
 			}
@@ -71,8 +70,7 @@ func TestCapacityTerminalSlotIsRepreparedWithoutReuseAC45(t *testing.T) {
 		poolsCost(schedulerActionRemove, old.Node, schedulerState(*old), "unloaded", "fixed"),
 		poolsCost(schedulerActionPrepare, old.Node, "unloaded", schedulerState(*old), "fixed"),
 	}
-	rows := capacityRowsForTest(s, snap, nil)
-	decision := capacityDecideForTest(t, s, snap, rows)
+	decision := capacityDecideForTest(t, s, snap)
 	if decision.Target == nil || decision.Target.Keep || !slices.ContainsFunc(decision.Target.Actions, func(a Action) bool {
 		return a.Kind == schedulerActionPrepare && a.Node == old.Node && a.Instance != old.ID
 	}) {

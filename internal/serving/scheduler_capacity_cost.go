@@ -210,6 +210,9 @@ func (p *capacityPlanner) payback(best capacityResult) capacityResult {
 		alt[n] = 0
 		r := p.routeOf(alt)
 		kept := p.evaluate(alt, r)
+		if best.feasible && !kept.feasible || !best.feasible && !kept.feasible && slices.Compare(best.excesses,kept.excesses)<0 {
+			continue
+		}
 		paid := p.leastLoadJoules(alt, r) > p.leastLoadJoules(best.choice, best.route)
 		bound, withinUncertainty := 0.0, false
 		if emptySaving {
@@ -240,7 +243,7 @@ func (p *capacityPlanner) minimumGain(best capacityResult) capacityResult {
 	if !best.feasible || best.keep {
 		return best
 	}
-	keep := p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, best.period)
+	keep := p.evaluateCurrentKeep(best.period)
 	keep.keepJoules = keep.joules
 	if !keep.feasible {
 		return best
@@ -296,9 +299,10 @@ func (p *capacityPlanner) leastLoadJoules(choice []int, r float64) float64 {
 		rates[w], p.ws[w].rate = p.ws[w].rate, p.ws[w].minRate
 	}
 	oldKeepWatts := p.keepWatts
-	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
-	result := p.evaluate(choice, r)
-	joules := result.joules - result.keepJoules
+	p.keepWatts = p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing).joules
+	bridge,_:=p.bridgeSchedule(choice)
+	result := p.evaluateEnergyAtWindow(choice, r, bridge, p.period)
+	joules := result.joules-p.keepWatts*p.period
 	p.keepWatts = oldKeepWatts
 	for w := range p.ws {
 		p.ws[w].rate = rates[w]

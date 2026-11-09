@@ -43,7 +43,7 @@ func TestNodePlanHoldsOneInstancePerWorkload(t *testing.T) {
 	for _, i := range []SchedulerInstance{cpu0, cpu1} {
 		snap.Costs = append(snap.Costs, poolsCost(schedulerActionPrepare, n2, "unloaded", schedulerState(i), "fixed"))
 	}
-	p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+	p := capacityPlannerForTest(t, s, snap)
 	n := slices.IndexFunc(p.snapshot.Nodes, func(node SchedulerNode) bool { return node.Node == n2 })
 	single := 0
 	for _, plan := range p.plans[n] {
@@ -76,8 +76,7 @@ func TestDisabledControlsGateNodePlans(t *testing.T) {
 			case "replicas":
 				s.Controls.Replicas = false
 			}
-			rows := capacityRowsForTest(s, snap, nil)
-			d := capacityDecideForTest(t, s, snap, rows)
+			d := capacityDecideForTest(t, s, snap)
 			plans := poolsPlans(d, n2)
 			has := func(prefix string) bool {
 				return slices.ContainsFunc(plans, func(p SchedulerNodePlan) bool {
@@ -100,7 +99,7 @@ func TestDisabledControlsGateNodePlans(t *testing.T) {
 				}
 			case "replicas":
 				// Moving i1 to n2 keeps one instance; adding n2 beside i1 does not.
-				p := capacityPlannerForTest(t, s, snap, rows)
+				p := capacityPlannerForTest(t, s, snap)
 				moved := capacityChoiceForTest(t, p, map[string]string{"n1": "", "n2": "profile@n2-fixed/b2/w1"})
 				if !p.bounded(moved) {
 					t.Fatal("replicas OFF rejected a move that keeps the instance count")

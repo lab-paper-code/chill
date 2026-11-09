@@ -13,12 +13,17 @@ import (
 // decide turns the chosen plan set into the decision: keep, a route-only
 // target, or a target whose actions come from schedulerPlan.
 func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult) SchedulerDecision {
-	keepChoice := make([]int, len(p.plans))
-	keepResult := p.evaluateAtWindow(keepChoice, 0, nil, best.period)
+	keepResult := p.evaluateCurrentKeep(best.period)
 	keep := &decision.Keep
+	keep.Feedback, keep.SLO, keep.ConditionalService = keepResult.feedback, keepResult.slo, keepResult.conditional
+	keep.Assumptions,keep.Sources=keepResult.assumptions,keepResult.sources
 	keep.ExpectedJoules, keep.WorstExceedance, keep.Status = &keepResult.joules, capacityWorst(keepResult.worst), schedulerStatusFeasible
 	if !keepResult.feasible {
 		keep.Status = SchedulerStatusOverload
+	}
+	if keepResult.exclusion!="" {
+		keep.Status=schedulerStatusPending
+		keep.Reasons=appendUnique(keep.Reasons,keepResult.exclusion)
 	}
 	decision.Search.Examined = p.examined
 	for n, compared := range p.compared {
@@ -35,14 +40,18 @@ func (p *capacityPlanner) decide(decision SchedulerDecision, best capacityResult
 		}
 	}
 	for w, ws := range p.ws {
-		j := best.judgments[w]
+		tests, keepTests := []SchedulerFeedbackRate{}, []SchedulerFeedbackRate{}
+		if w<len(p.selectedRates) {tests=p.selectedRates[w]}
+		if w<len(p.keepRates) {keepTests=p.keepRates[w]}
 		record.Workloads = append(record.Workloads, SchedulerCapacityWorkload{
-			UID: ws.d.UID, Rate: ws.rate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued, KappaNew: best.sums[w][0], KappaRetained: best.sums[w][1], Backlog: j.backlog,
-			WaitSeconds: j.wait, DrainSeconds: j.drain, FinalExceedance: j.final, TransitionExceedance: j.transition, Weights: best.weights[w], Rows: best.rows[w],
+			UID: ws.d.UID, Rate: ws.rate, MinimumDemand: p.settings.MinimumDemand[ws.d.UID], Queued: ws.queued,
+			RoutingRate: best.sums[w][0], RetainedRoutingRate: best.sums[w][1], Weights: best.weights[w], Tests: tests, KeepTests: keepTests,
 		})
 	}
 	decision.Capacity = record
 	target := SchedulerCandidate{Nodes: slices.Clone(p.keep.Nodes), Routing: map[string]map[string]int32{}, ExpectedJoules: &best.joules, WorstExceedance: capacityWorst(best.worst), Status: schedulerStatusFeasible}
+	target.Feedback, target.SLO, target.ConditionalService = best.feedback, best.slo, best.conditional
+	target.Assumptions,target.Sources=best.assumptions,best.sources
 	for _, d := range p.snapshot.Workloads {
 		if d == nil {
 			continue
@@ -117,4 +126,56 @@ func (p *capacityPlanner) sameRouting(routing map[string]map[string]int32) bool 
 // largest float for an unbounded one (no capacity), which JSON can carry.
 func capacityWorst(worst float64) float64 {
 	return min(max(0, worst), math.MaxFloat64)
+}
+
+// testDecisionRates queries only keep/selected nominal positive routed shares.
+// A failed test is evidence, never a second candidate admission gate.
+func (p *capacityPlanner) testDecisionRates(best capacityResult) error {
+	type queryKey struct {
+		profile *Profile
+		node NodeReference
+		allocation SchedulerAllocation
+		maxBatch int
+		maxWait time.Duration
+		fixedBatch int
+		uid string
+		occupancy time.Duration
+		feedback PathFeedback
+		rate float64
+	}
+	cache:=map[queryKey]FeedbackCapacity{}
+	test:=func(candidate SchedulerCandidate) ([][]SchedulerFeedbackRate,error) {
+		results:=make([][]SchedulerFeedbackRate,len(p.ws))
+		for w,ws:=range p.ws {
+			results[w]=[]SchedulerFeedbackRate{}
+			units:=0.0
+			for _,weight:=range candidate.Routing[ws.d.UID] {units+=float64(max(0,weight))}
+			if units==0 || ws.rate==0 {continue}
+			for _,instance:=range candidate.Instances {
+				weight:=candidate.Routing[ws.d.UID][instance.ID]
+				if weight<=0 || instance.Profile==nil {continue}
+				rate:=ws.rate*float64(weight)/units
+				occupancy:=ResolveDispatchOccupancy(p.settings,p.snapshot.DispatchOccupancy,instance)
+				feedback:=p.pathFeedback(ws.d)
+				key:=queryKey{instance.Profile,instance.Node,instance.Allocation,instance.MaxBatch,instance.MaxWait,instance.FixedBatchSize,ws.d.UID,occupancy.PerRequest,feedback,rate}
+				value,found:=cache[key]
+				option:=SchedulerOption{Instance:instance,CompatibleUIDs:[]string{ws.d.UID}}
+				if !found {
+					var err error
+					value,err=JudgeFeedbackRates(p.ctx,p.settings,option,ws.d,*occupancy,feedback,[]float64{rate})
+					if err!=nil {return nil,err}
+					cache[key]=value
+				}
+				input:=NewCapacityInput(p.settings,p.snapshot.DispatchOccupancy,option,ws.d)
+				input.CompletionMarginMS=feedback.PostNanos/1e6
+				results[w]=append(results[w],SchedulerFeedbackRate{InstanceID:instance.ID,Input:input,PathFeedback:feedback,FeedbackCapacity:value})
+			}
+		}
+		return results,nil
+	}
+	var err error
+	p.keepRates,err=test(p.keep)
+	if err!=nil {return err}
+	p.selectedRates,err=test(p.candidate(best))
+	return err
 }

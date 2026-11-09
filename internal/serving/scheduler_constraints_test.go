@@ -30,36 +30,36 @@ func TestCapacityCombinedHorizonBoundary(t *testing.T) {
 	p := &capacityPlanner{period: 60, settings: capacityTestSettings}
 	for n := range 2 {
 		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{UID: string(rune('a' + n))}})
-		p.plans = append(p.plans, []*capacityPlan{{keep: true}, {record: SchedulerNodePlan{Eligible: true}}})
+		p.plans = append(p.plans, []*capacityPlan{{keep: true, record: SchedulerNodePlan{Eligible: true}}, {record: SchedulerNodePlan{Eligible: true}}})
 		p.compared = append(p.compared, true)
 	}
 	p.plans[0][1].preMax = 10
 	p.plans[1][1].postMax = 51
 	for _, choice := range [][]int{{1, 0}, {0, 1}} {
-		res := p.evaluate(choice, p.routeOf(choice))
+		res := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
 		if res.exclusion != "" {
 			t.Fatalf("individual chain rejected: %s", res.exclusion)
 		}
 	}
 	choice := []int{1, 1}
-	res := p.evaluate(choice, p.routeOf(choice))
+	res := p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
 	if res.exclusion != "" || !p.admits(&res) || res.period != 60 {
 		t.Fatal("combined chain changed the common horizon or eligibility")
 	}
 	p.plans[1][1].postMax = 50
-	res = p.evaluate(choice, p.routeOf(choice))
+	res = p.evaluateEnergyAtWindow(choice, p.routeOf(choice), nil, p.period)
 	if res.exclusion != "" || !p.admits(&res) || res.period != 60 {
 		t.Fatal("exact horizon boundary changed the common window rule")
 	}
 }
 
-func TestTransitionReserveActualSupply(t *testing.T) {
+func TestTransitionReserveEstimatedSurvivingRate(t *testing.T) {
 	uid := "w"
 	a, b := NodeReference{UID: "a"}, NodeReference{UID: "b"}
 	p := &capacityPlanner{settings: SchedulerSettings{TransitionReserveFraction: .5}, ws: []capacityWorkload{{d: &Definition{UID: uid}, rate: 10}}}
 	p.snapshot.Nodes = []SchedulerNode{{Node: a, PowerMode: "fixed"}, {Node: b, PowerMode: "fixed"}}
 	p.snapshot.Instances = []SchedulerInstance{{ID: "a", Node: a, WorkloadUID: uid, Ready: true, Routable: map[string]bool{uid: true}}, {ID: "b", Node: b, WorkloadUID: uid, Ready: true, Routable: map[string]bool{uid: true}}}
-	itemA, itemB := capacityItem{id: "a", kappa: 10}, capacityItem{id: "b", kappa: 20}
+	itemA, itemB := capacityItem{id: "a", routingWeight: 10}, capacityItem{id: "b", routingWeight: 20}
 	p.plans = [][]*capacityPlan{
 		{{keep: true, mode: "fixed", items: [][]capacityItem{{itemA}}, retained: [][]capacityItem{{itemA}}}, {mode: "fixed", items: [][]capacityItem{{}}, retained: [][]capacityItem{{itemA}}}},
 		{{keep: true, mode: "fixed", items: [][]capacityItem{{itemB}}, retained: [][]capacityItem{{itemB}}}},
@@ -68,7 +68,7 @@ func TestTransitionReserveActualSupply(t *testing.T) {
 	check := func(want bool) {
 		t.Helper()
 		records := p.transitionReserve(choice)
-		if len(records) != 1 || records[0].Allowed != want || records[0].Required != 15 {
+		if len(records) != 1 || records[0].Allowed != want || records[0].RequiredRate != 15 || records[0].BeforeRouteRate < 0 || records[0].AfterRouteRate < 0 {
 			t.Fatalf("reserve want %v: %+v", want, records)
 		}
 	}
