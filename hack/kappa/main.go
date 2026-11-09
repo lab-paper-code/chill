@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"github.com/lab-paper-code/chill/internal/serving"
 	"gonum.org/v1/gonum/stat"
 )
@@ -135,6 +136,30 @@ func decodeSnapshot(raw json.RawMessage) (serving.SchedulerSnapshot, error) {
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return serving.SchedulerSnapshot{}, errors.New("one current-contract scheduler snapshot required")
+	}
+	hydrate := func(profile *serving.Profile) error {
+		if profile == nil {
+			return nil
+		}
+		for index := range profile.Batches {
+			batch := &profile.Batches[index]
+			var err error
+			batch.ServiceDistribution, err = firstfloor.NewServiceDistribution(batch.ServiceSamples)
+			if err != nil {
+				return fmt.Errorf("hydrate profile %s batch %d service pairs: %w", profile.ID, batch.Batch, err)
+			}
+		}
+		return nil
+	}
+	for _, instance := range snapshot.Instances {
+		if err := hydrate(instance.Profile); err != nil {
+			return serving.SchedulerSnapshot{}, err
+		}
+	}
+	for _, option := range snapshot.Options {
+		if err := hydrate(option.Instance.Profile); err != nil {
+			return serving.SchedulerSnapshot{}, err
+		}
 	}
 	return snapshot, nil
 }
