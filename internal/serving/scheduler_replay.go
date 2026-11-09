@@ -55,6 +55,7 @@ type schedulerReplayRequest struct {
 	accountedAge float64 // S+N for native requests, actual server age otherwise
 	potential    float64 // conditional failure excess, never a completion time
 	hasPotential bool
+	minimumDemand bool
 }
 
 type schedulerReplayInstance struct {
@@ -88,6 +89,7 @@ type schedulerReplayResult struct {
 	conditional   ConditionalServiceEvidence
 	feedback      []FeedbackWorkloadScore
 	invalidReasons []string
+	observedArrivals map[string]int
 }
 
 // ConditionalServiceEvidence describes the support actually queried by replay.
@@ -491,12 +493,14 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 	}
 	start := s.snap.ObservationEnd.Add(-s.settings.ObservationWindow)
 	arrivals := []SchedulerArrival{}
+	s.out.observedArrivals = map[string]int{}
 	for _, a := range s.snap.Arrivals {
 		if ctx.Err() != nil {
 			return false
 		}
 		if !a.At.Before(start) && a.At.Before(s.snap.ObservationEnd) && (a.Compute || a.Accepted) && a.Definition != nil {
 			arrivals = append(arrivals, a)
+			s.out.observedArrivals[a.Definition.UID]++
 		}
 	}
 	sort.SliceStable(arrivals, func(i, j int) bool {
@@ -521,11 +525,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 				identity = a.Definition.Identity()
 				identities[a.Definition] = identity
 			}
-			x := &schedulerReplayRequest{source: r, identity: identity, arrival: at, native: math.Inf(1), expires: math.Inf(1)}
-			feedback := s.feedbackFor(a.Definition)
-			x.preNanos = feedback.TotalNanos - feedback.PostNanos
-			x.marginNanos = feedback.PostNanos
-			x.accountedAge = x.preNanos
+			x := s.feedbackArrivalRequest(r, identity, at)
 			if a.Lifetime > 0 {
 				x.expires = at + float64(a.Lifetime)
 			}
@@ -533,7 +533,7 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 			s.out.definitions[x.identity] = a.Definition
 		}
 	}
-	return true
+	return s.addMinimumDemand(ctx)
 }
 
 func (s *schedulerReplayState) initializeRunning() bool {

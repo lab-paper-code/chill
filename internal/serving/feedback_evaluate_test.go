@@ -2,6 +2,7 @@ package serving
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -184,6 +185,11 @@ func TestFeedbackRatesCurrentTimingChangesKeyAndVerdict(t *testing.T) {
 	if err != nil || low.KappaHat != 1 || len(low.Tests) != 1 {
 		t.Fatalf("low path reserve: %+v %v", low, err)
 	}
+	settings.MinimumDemand = map[string]float64{definition.UID: 1e6}
+	floored, err := JudgeFeedbackRates(context.Background(), settings, snapshot.Options[0], definition, snapshot.DispatchOccupancy[0], feedback, []float64{1})
+	if err != nil || !reflect.DeepEqual(low, floored) {
+		t.Fatalf("explicit rate experiment acquired planning demand floor: low=%+v floor=%+v %v", low, floored, err)
+	}
 	feedback.TotalNanos, feedback.PostNanos = 40e6, 30e6
 	high, err := JudgeFeedbackRates(context.Background(), settings, snapshot.Options[0], definition, snapshot.DispatchOccupancy[0], feedback, []float64{1})
 	if err != nil || high.KappaHat != 0 || len(high.Tests) != 1 || low.Tests[0].InputKey == high.Tests[0].InputKey {
@@ -243,6 +249,38 @@ func TestFeedbackConsumerCapturedNativeFailuresRemainFixedOutcomes(t *testing.T)
 			}
 			if score.Population != 1 || score.DeadlineDropped != dropped || score.Failed != failed || score.FailureFraction != 1 || score.Completed != 0 || score.SuccessQuantileNanos != nil || score.PotentialExcess != nil || len(score.PotentialUnavailableReasons) == 0 || result.SLO[0].PredictedOutcomes[key] != 1 || result.SLO[0].ExpectedNanos != nil {
 				t.Fatalf("fixed native failure became success or blocked current control: %+v", result)
+			}
+		})
+	}
+}
+
+func TestFeedbackConsumerPreparationDrainsFiniteCohortAndFixesPotential(t *testing.T) {
+	for _, expires := range []bool{false, true} {
+		t.Run(fmt.Sprint(expires), func(t *testing.T) {
+			settings, snapshot, candidate := feedbackFixture()
+			settings.DefaultOperationCost[schedulerActionPrepare] = OperationCostValue{Seconds: .05, Joules: 1}
+			target := snapshot.Instances[0]
+			target.ID, target.MaxBatch = "prepared", 1
+			snapshot.Instances = nil
+			snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 20e6, PostNanos: 10e6}}
+			if expires {
+				for index := range snapshot.Arrivals {
+					snapshot.Arrivals[index].Lifetime = time.Millisecond
+				}
+			}
+			candidate.Keep, candidate.Instances = false, []SchedulerInstance{target}
+			candidate.Actions = []Action{
+				{ID: "prepare", Kind: schedulerActionPrepare, Instance: target.ID, Node: target.Node, From: "unloaded", To: schedulerState(target)},
+				{ID: "route", Kind: schedulerActionRoute, DependsOn: []string{"prepare"}},
+			}
+			result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
+			score := result.Workloads[0]
+			if expires {
+				if score.LifetimeExpired != 2 || score.Completed != 0 || score.PotentialExcess == nil || math.Abs(*score.PotentialExcess) > 1e-12 {
+					t.Fatalf("started 50ms prepare + 30ms service + TOTAL20 must give conditional 100ms, not completion: %+v", result)
+				}
+			} else if score.Completed != 2 || *score.SuccessQuantileNanos != 130e6 {
+				t.Fatalf("finite cohort must wait for prepare/route then drain two batches after horizon: %+v", result)
 			}
 		})
 	}

@@ -16,6 +16,9 @@ import (
 type FeedbackWorkloadScore struct {
 	UID                  string   `json:"uid"`
 	Population           int      `json:"population"`
+	ObservedArrivals     int      `json:"observedArrivals"`
+	ReplayedArrivals     int      `json:"replayedArrivals"`
+	MinimumDemandArrivals int     `json:"minimumDemandArrivals"`
 	Completed            int      `json:"completed"`
 	DeadlineDropped      int      `json:"deadlineDropped"`
 	LifetimeExpired      int      `json:"lifetimeExpired"`
@@ -35,6 +38,8 @@ type FeedbackCandidateResult struct {
 	InvalidReasons     []string                     `json:"invalidReasons"`
 	SLO                []SchedulerEstimate          `json:"slo"`
 	ConditionalService *ConditionalServiceEvidence `json:"conditionalService,omitempty"`
+	Assumptions        []string                    `json:"assumptions,omitempty"`
+	Sources            []string                    `json:"sources,omitempty"`
 }
 
 // EvaluateFeedbackCandidate drains the finite comparison-period arrival cohort
@@ -70,6 +75,7 @@ func EvaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, 
 	return FeedbackCandidateResult{
 		Workloads: replay.feedback, InvalidReasons: appendUnique(replay.reasons, replay.invalidReasons...),
 		SLO: feedbackReplayEstimates(snapshot, replay), ConditionalService: &conditional,
+		Assumptions: replay.assumptions, Sources: replay.sources,
 	}, nil
 }
 
@@ -133,6 +139,11 @@ func (s *schedulerReplayState) finishFeedback() {
 			populations[definition.UID] = population
 		}
 		population.score.Population++
+		if request.minimumDemand {
+			population.score.MinimumDemandArrivals++
+		} else if !request.observed {
+			population.score.ReplayedArrivals++
+		}
 		switch {
 		case request.dropped:
 			population.score.DeadlineDropped++
@@ -182,6 +193,7 @@ func (s *schedulerReplayState) finishFeedback() {
 	}
 	for _, population := range populations {
 		score := population.score
+		score.ObservedArrivals = s.out.observedArrivals[score.UID]
 		percentile := population.definition.SLO.Percentile / 100
 		if score.Population > 0 {
 			score.FailureFraction = float64(score.DeadlineDropped+score.Failed+score.LifetimeExpired+score.Unfinished) / float64(score.Population)
