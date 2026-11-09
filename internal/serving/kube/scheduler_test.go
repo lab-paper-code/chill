@@ -323,7 +323,7 @@ func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarge
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			recordErr := errors.New("decision persistence failed")
-			wantErr := error(context.Canceled)
+			wantErr := context.Canceled
 			if mode == "persistence-failure" {
 				wantErr = recordErr
 			}
