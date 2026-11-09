@@ -92,6 +92,9 @@ func (s *schedulerReplayState) applyRoute(target SchedulerCandidate) bool {
 	}
 	for _, i := range s.instances {
 		for _, v := range target.Instances {
+			if v.WorkloadUID == "" {
+				continue // unbound physical occupancy is not an ingress destination
+			}
 			weight := v.Weight
 			if route, explicit := target.Routing[v.WorkloadUID]; explicit {
 				weight = route[v.ID]

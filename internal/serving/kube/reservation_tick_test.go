@@ -229,7 +229,13 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				t.Fatal(err)
 			}
 			physical := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)
-			waitReservationTest(t, ctx, func() bool { route, _ := c.runtime.SchedulerRouting(); return route[w2.UID][physical] > 0 })
+			waitReservationTest(t, ctx, func() bool {
+				if err := c.Continue(ctx, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				route, _ := c.runtime.SchedulerRouting()
+				return route[w2.UID][physical] > 0
+			})
 			executed := make(chan native.Request, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var request native.Request

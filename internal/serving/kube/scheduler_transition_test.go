@@ -650,7 +650,10 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			uid := old.WorkloadUID
 			old.Routable = map[string]bool{uid: true}
 			oldProfile := *old.Profile
-			oldProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: catalogServiceSamples(int64(30 * time.Millisecond))}}
+			oldProfile.Batches = []serving.BatchProfile{{
+				Batch: 1, MemoryBytes: old.Allocation.MemoryBytes, EnergyPerInputJoules: 1,
+				ServiceSamples: catalogServiceSamples(int64(30 * time.Millisecond)),
+			}}
 			old.Profile = &oldProfile
 			added := old
 			added.ID = "genesis3-ready"
@@ -661,7 +664,8 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			addedProfile := oldProfile
 			addedProfile.ID = "genesis3-profile"
 			addedProfile.NodeName, addedProfile.Condition.NodeUID = added.Node.Name, added.Node.UID
-			addedProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: catalogServiceSamples(int64(10 * time.Millisecond))}}
+			addedProfile.Batches = slices.Clone(oldProfile.Batches)
+			addedProfile.Batches[0].ServiceSamples = catalogServiceSamples(int64(10 * time.Millisecond))
 			if scenario == "missing-raw" {
 				addedProfile.Batches[0].ServiceSamples = nil
 			}
@@ -708,6 +712,12 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			snapshot.At = time.Now()
 			snapshot.ObservationEnd = snapshot.At
 			snapshot.ObservedSince = snapshot.At.Add(-time.Minute)
+			for _, instance := range []serving.SchedulerInstance{old, added} {
+				snapshot.Nodes = append(snapshot.Nodes, serving.SchedulerNode{
+					Node: instance.Node, PowerMode: instance.Profile.Condition.PowerMode, Ready: true,
+					MemoryBytes: instance.Allocation.MemoryBytes, ObservedAt: snapshot.At,
+				})
+			}
 			definition := *c.runtime.SchedulerInputs(time.Now).Workloads[0]
 			if scenario == noRateWitness {
 				definition.SLO.TargetLatency = time.Nanosecond

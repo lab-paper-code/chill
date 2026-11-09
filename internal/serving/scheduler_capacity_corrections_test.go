@@ -68,3 +68,22 @@ func TestReplayInvalidDefaultOperationCostTerminates(t *testing.T) {
 		t.Fatal("invalid operation estimate lost its rejection reason")
 	}
 }
+
+func TestReplayRouteRetainsUnboundPreparingOccupancy(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	unbound := snapshot.Instances[0]
+	unbound.ID, unbound.WorkloadUID, unbound.Ready = "preparing-occupancy", "", false
+	snapshot.Instances = append(snapshot.Instances, unbound)
+	target := SchedulerCandidate{Instances: snapshot.Instances, Routing: map[string]map[string]int32{
+		snapshot.Workloads[0].UID: {snapshot.Instances[0].ID: schedulerRouteUnits},
+	}}
+	state := schedulerReplayState{settings: settings, snap: snapshot, c: target, routeCredits: map[string][]int64{}}
+	state.initializeInstances()
+	if !state.applyRoute(target) {
+		t.Fatalf("unbound occupancy blocked an independent route: %v", state.out.reasons)
+	}
+	retained := state.byID[unbound.ID]
+	if retained == nil || !retained.loaded || retained.ready || retained.config.Allocation != unbound.Allocation {
+		t.Fatal("route changed retained preparing occupancy")
+	}
+}
