@@ -20,10 +20,11 @@ func TestFeedbackConsumerBusyPotentialUsesNextBatchGap(t *testing.T) {
 		snapshot.Workloads[0].SLO.TargetLatency = 10 * time.Millisecond
 		busy, idle := int64(0), int64(100e6)
 		snapshot.Instances[0].LastServiceEndAgeNanos = &idle
+		// Conditional gap selection happens within each physical trial.
 		snapshot.Instances[0].Profile.Batches = []BatchProfile{schedulerTestPairedBatch(BatchProfile{Batch: 1}, []firstfloor.ServiceSample{
-			{ServiceDurationNanos: 30e6, TrialID: "running-startup"},
-			{ServiceDurationNanos: service.busy, PrecedingIdleNanos: &busy, TrialID: "busy-successor"},
-			{ServiceDurationNanos: service.idle, PrecedingIdleNanos: &idle, TrialID: "idle-successor"},
+			{ServiceDurationNanos: 30e6, TrialID: "physical-a"},
+			{ServiceDurationNanos: service.busy, PrecedingIdleNanos: &busy, TrialID: "physical-a"},
+			{ServiceDurationNanos: service.idle, PrecedingIdleNanos: &idle, TrialID: "physical-a"},
 		})}
 		post, sender, native := 0.0, 0.0, 20e6
 		elapsed := int64(20e6)
@@ -35,8 +36,11 @@ func TestFeedbackConsumerBusyPotentialUsesNextBatchGap(t *testing.T) {
 		result := feedbackEvaluateForTest(t, settings, snapshot, candidate)
 		score := result.Workloads[0]
 		want := float64(service.busy) / 10e6
-		if score.LifetimeExpired != 1 || score.Completed != 1 || score.PotentialExcess == nil || math.Abs(*score.PotentialExcess-want) > 1e-12 {
-			t.Fatalf("potential must use 1ms age + 9ms residual + busy successor service, not last idle gap: want=%g result=%+v", want, result)
+		if score.PotentialExcess == nil {
+			t.Fatalf("expired queued request lost conditional potential: %+v", result)
+		}
+		if score.LifetimeExpired != 1 || score.Completed != 1 || math.Abs(*score.PotentialExcess-want) > 1e-12 {
+			t.Fatalf("potential must use 1ms age + 9ms residual + busy successor service, not last idle gap: want=%g actual=%g result=%+v", want, *score.PotentialExcess, result)
 		}
 		potentials = append(potentials, *score.PotentialExcess)
 	}
