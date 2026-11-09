@@ -307,38 +307,65 @@ func TestSchedulerTickDeadlinePreservesPublishedStateAndAllowsControlsOff(t *tes
 }
 
 func TestSchedulerTickCanceledAfterDecisionCannotCommitHistoryOrLaunchOldONTarget(t *testing.T) {
-	controller, _ := tickReadySubsetController(t, nil)
-	if _, err := controller.Tick(context.Background(), time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
-	snapshot := controller.State().Snapshot
-	ready := snapshot.Instances[0]
-	uid := snapshot.Workloads[0].UID
-	ready.WorkloadUID = uid
-	installTestTransition(controller, &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: snapshot.Nodes, Instances: []serving.SchedulerInstance{ready},
-		Routing: map[string]map[string]int32{uid: {ready.ID: 500}}, Actions: []serving.Action{{ID: "unfinished-route", Kind: servingstate.OperationRoute, Status: "planned"}}})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var publishedAt time.Time
-	controller.config.OnDecision = func(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
-		if fixtureTarget(controller) == nil || len(fixtureTarget(controller).Actions) == 0 {
-			t.Fatal("fixture did not produce an actionable ON continuation")
-		}
-		if err := controller.observationLog.SchedulerRecord(observation.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
-			return err
-		}
-		publishedAt = decision.At
-		cancel()
-		return nil
-	}
-	if decision, err := controller.Tick(ctx, time.Now().UTC()); !errors.Is(err, context.Canceled) || decision.Status != "" {
-		t.Fatalf("late cancellation became a successful ON decision: %+v %v", decision, err)
-	}
-	if len(controller.State().Actions) != 0 {
-		t.Fatal("late canceled ON result advanced history or launched its route")
-	}
-	if publishedAt.IsZero() || !controller.State().Decision.At.Equal(publishedAt) {
-		t.Fatal("late cancellation hid an already published and recorded valid decision")
+	for _, mode := range []string{"cancel", "persistence-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			controller, _ := tickReadySubsetController(t, nil)
+			if _, err := controller.Tick(context.Background(), time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := controller.State().Snapshot
+			ready := snapshot.Instances[0]
+			uid := snapshot.Workloads[0].UID
+			ready.WorkloadUID = uid
+			target := &serving.SchedulerCandidate{ID: "unfinished-route", Nodes: snapshot.Nodes, Instances: []serving.SchedulerInstance{ready},
+				Routing: map[string]map[string]int32{uid: {ready.ID: 500}}, Actions: []serving.Action{{ID: "unfinished-route", Kind: servingstate.OperationRoute, Status: "planned"}}}
+			installTestTransition(controller, target)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			recordErr := errors.New("decision persistence failed")
+			wantErr := error(context.Canceled)
+			if mode == "persistence-failure" {
+				wantErr = recordErr
+			}
+			var publishedAt time.Time
+			controller.config.OnDecision = func(decision serving.SchedulerDecision, snapshot serving.SchedulerSnapshot) error {
+				target := fixtureTarget(controller)
+				if target == nil || len(target.Actions) == 0 {
+					t.Fatal("fixture did not produce an actionable ON continuation")
+				}
+				action := target.Actions[0]
+				if _, empty := controller.routeOperationScopeLocked(*target, *target, false); empty ||
+					!controller.dependenciesReady(action, *target, controller.runtime) ||
+					controller.omittedRouteCompleteLocked(action, *target) {
+					t.Fatal("pending physical route was not eligible before the injected failure")
+				}
+				publishedAt = decision.At
+				if mode == "persistence-failure" {
+					return recordErr
+				}
+				if err := controller.observationLog.SchedulerRecord(observation.SchedulerObservation{At: decision.At, Snapshot: &snapshot, Decision: &decision}); err != nil {
+					return err
+				}
+				cancel()
+				return nil
+			}
+			if _, err := controller.Tick(ctx, time.Now().UTC()); !errors.Is(err, wantErr) {
+				t.Fatalf("late failure became a successful ON decision: %v", err)
+			}
+			if len(controller.State().Actions) != 0 || controller.runs["unfinished-route"] != nil {
+				t.Fatal("failed/canceled decision launched its eligible physical route")
+			}
+			if publishedAt.IsZero() || !controller.State().Decision.At.Equal(publishedAt) {
+				t.Fatal("late failure hid an already committed numerical decision")
+			}
+			// Positive control: the same frozen target must execute once fresh
+			// continuation authorizes it, without another candidate or decision.
+			if err := controller.Continue(context.Background(), time.Now().UTC()); err != nil {
+				t.Fatal(err)
+			}
+			controller.wg.Wait()
+			requireCompletedContinuationAction(t, controller.runs["unfinished-route"], "eligible route did not execute after fresh continuation")
+		})
 	}
 }
 
