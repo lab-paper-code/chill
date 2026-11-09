@@ -315,7 +315,7 @@ func TestProgressSinceReachesRestoredAssignments(t *testing.T) {
 	}
 }
 
-func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
+func TestReturningPOSTIncludesExchangeReturnAfterEarlySDKCompletion(t *testing.T) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil
 	settings.CompletionMarginMS = 100
@@ -333,6 +333,7 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	received := time.Now().Add(-10 * time.Millisecond)
 	deadline := received.Add(time.Second)
 	call := &Call{receipt: Receipt{ID: "early-sdk", UID: d.UID, ReceivedAt: received, Deadline: deadline}, definition: d, identity: d.Identity(), assignment: &Assignment{Instance: "i1", DispatchedAt: time.Now().UTC()}, backendContext: context.Background()}
+	call.completionMarginMS, call.completionMarginSet = 100, true
 	r.calls[call.receipt.ID] = call
 	progress := BackendProgress{RequestID: call.receipt.ID, WorkloadUID: d.UID, Definition: d.Identity(), Phase: "finished", At: time.Now(), ExecutionComplete: true, NativeElapsedMS: 6}
 	r.execute(call, func(context.Context, Dispatch) (BackendResult, error) {
@@ -355,8 +356,12 @@ func TestReturningTailStartsAtExchangeNotEarlySDKCompletion(t *testing.T) {
 	current := r.SchedulerInputs(func() time.Time { return snapshot.At })
 	snapshot.At, snapshot.Outstanding = current.At, current.Outstanding
 	estimate := schedulerRequireEstimate(t, schedulerKeepForTest(t, settings, snapshot), d.UID)
-	if want := float64(call.exchangeFinishedAt.Sub(received) + 100*time.Millisecond); estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != want {
-		t.Fatalf("completion margin must start at exchange completion, not the early SDK callback: %+v want %v", estimate, want)
+	captured := snapshot.Outstanding[0]
+	if captured.NativeSenderElapsedMS == nil || captured.NativeElapsedNanos == nil || captured.CompletionMarginMS == nil {
+		t.Fatalf("returning request lost frozen S/N/POST: %+v", captured)
+	}
+	if want := *captured.NativeSenderElapsedMS*1e6 + *captured.NativeElapsedNanos + *captured.CompletionMarginMS*1e6; estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != want {
+		t.Fatalf("exchange return must consume frozen POST within S+N+POST: %+v want %v", estimate, want)
 	}
 	if call.receipt.Deadline != deadline || snapshot.Outstanding[0].RemainingLifetime == nil || *snapshot.Outstanding[0].RemainingLifetime != deadline.Sub(snapshot.At) {
 		t.Fatal("exchange accounting changed the original accepted deadline")
@@ -1023,16 +1028,17 @@ func TestRuntimeReplayRunningResidualUsesExchangeGapAndElapsed(t *testing.T) {
 			prior = nil
 		}
 		call := &Call{
-			receipt:    Receipt{ID: "running", UID: d.UID, ReceivedAt: snapshot.At.Add(-60 * time.Millisecond)},
+			receipt:    Receipt{ID: "running", UID: d.UID, ReceivedAt: snapshot.At.Add(-80 * time.Millisecond)},
 			definition: d, identity: d.Identity(), assignment: &Assignment{Instance: "i1"},
+			completionMarginSet: true,
 		}
 		runtime := &Runtime{
 			calls: map[string]*Call{"running": call},
 			instances: map[string]*runtimeInstance{"i1": {ReadyInstance: ReadyInstance{State: InstanceState{
 				ID: "i1", ObservedAt: snapshot.At.Add(-3 * time.Millisecond),
 				Native: &native.State{Requests: []native.RequestState{{
-					Context: native.RequestContext{RequestID: "running", WorkloadUID: d.UID, Definition: d.Identity()},
-					Phase:   phaseRunning, BatchID: 1, ServiceElapsedMS: 50,
+					Context: native.RequestContext{RequestID: "running", WorkloadUID: d.UID, Definition: d.Identity(), SenderElapsedMS: 10},
+					Phase:   phaseRunning, BatchID: 1, ElapsedMS: 50, ServiceElapsedMS: 45,
 					PrecedingIdleNanos: prior, ExchangeElapsedNanos: &elapsed,
 				}}},
 			}}}},
@@ -1040,9 +1046,10 @@ func TestRuntimeReplayRunningResidualUsesExchangeGapAndElapsed(t *testing.T) {
 		snapshot.Outstanding = runtime.SchedulerInputs(func() time.Time { return snapshot.At }).Outstanding
 		got := schedulerKeepForTest(t, settings, snapshot)
 		estimate := schedulerRequireEstimate(t, got, d.UID)
-		want := float64(72 * time.Millisecond)
+		// Frozen S10 + captured N53 + conditioned service residual12 (startup22).
+		want := float64(75 * time.Millisecond)
 		if startup {
-			want = float64(82 * time.Millisecond)
+			want = float64(85 * time.Millisecond)
 		}
 		if estimate.ExpectedNanos == nil || *estimate.ExpectedNanos != want {
 			t.Fatalf("startup=%t residual must use actual prior gap and exchange age, not actor elapsed: %+v reasons=%v", startup, estimate, got.Reasons)

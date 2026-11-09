@@ -477,11 +477,14 @@ func (s *schedulerReplayState) initializeOutstanding() {
 				i.batch = append(i.batch, x)
 			case phaseReturning:
 				x.returning = true
-				// Native completion precedes the observed response age; the margin starts there.
-				x.completion = math.Max(0, x.marginNanos-float64(r.ReturnElapsed))
-				// Native elapsed is terminal for returning requests.
 				if r.NativeElapsedNanos != nil && r.NativeSenderElapsedMS != nil {
-					x.accountedAge -= x.completion - x.marginNanos
+					// POST is measured from S+N, including native return and marshalling.
+					consumed := max(0, float64(r.Elapsed)-x.accountedAge)
+					x.completion = max(0, x.marginNanos-consumed)
+					x.accountedAge += x.marginNanos - x.completion
+				} else {
+					// Historical requests without captured S/N retain the explicit model.
+					x.completion = max(0, x.marginNanos-float64(r.ReturnElapsed))
 				}
 			}
 		}
