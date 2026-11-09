@@ -61,6 +61,29 @@ test("selected decision capacity renders recorded diagnostics without inventing 
   assert.equal(nodes(tree).some(node=>node.type==="badge"),false)
 })
 
+test("current scheduler readout passes the decision budget, never snapshot or current settings substitutes",()=>{
+  const fixture=JSON.parse(readFileSync(new URL("./fixtures/e5-scheduler-control.json",import.meta.url),"utf8"))
+  const pathFeedback=[{workloadUID:"decision-only",percentile:95,totalNanos:0,postNanos:0,sampleCount:0,source:"configured"}]
+  const view={state:{snapshot:{...fixture.snapshot,pathFeedback:[{...pathFeedback[0],totalNanos:9000000,source:"empirical"}]},decision:{...fixture.decision,pathFeedback,settings:{...fixture.decision.settings,completionMarginMS:123}}}}
+  const h=harness("",{"v1/scheduler":{data:view}})
+  const screen=h.load("../features/scheduler.tsx")
+  const components=h.modules["./scheduler-workload-states"] as Record<string,unknown>
+  const component=components.SchedulerPathFeedback
+  for(const kind of ["candidates","estimates"]){
+    const entry=screen.SchedulerEvidence({kind})
+    const tree=(entry.type as (props:Record<string,unknown>)=>Element)(entry.props)
+    const readout=nodes(tree).find(node=>node.type===component)!
+    assert.ok(readout)
+    assert.equal(readout.props.decision,view.state.decision)
+  }
+  Reflect.deleteProperty(view.state.decision,"pathFeedback")
+  const entry=screen.SchedulerEvidence({kind:"estimates"})
+  const tree=(entry.type as (props:Record<string,unknown>)=>Element)(entry.props)
+  const readout=nodes(tree).find(node=>node.type===component)!
+  const absent=(component as (props:Record<string,unknown>)=>unknown)(readout.props)
+  assert.equal(absent,null)
+})
+
 test("capacity demand labels the recorded planning floor rather than zero observed traffic",()=>{
   const screen=harness().load("../features/scheduler-history.tsx")
   const decision={search:{loads:[{uid:"idle",inputsPerSecond:0,recentInputsPerSecond:0}]},capacity:{workloads:[{uid:"idle",rate:40,minimumDemand:40,kappaNew:50,kappaRetained:50}]}}

@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { RecordsNavigation, RecordsRange } from "@/components/records-navigation"
 import { HistoryActionDetails, CurrentTransitionEvidence } from "./scheduler-transitions"
-import { SchedulerDecisionSummary, SchedulerWorkloadStates } from "./scheduler-workload-states"
+import { SchedulerDecisionSummary, SchedulerPathFeedback, SchedulerWorkloadStates } from "./scheduler-workload-states"
 import { resolveWorkloadIdentities } from "@/lib/workload-identity"
 import { compareAt } from "@/lib/live"
 
@@ -106,6 +106,7 @@ function RecordDetails({row,names}:{row:SchedulerHistoryRow;names:ReadonlyMap<st
     {decision&&<>
       <SchedulerDecisionSummary at={when(decision.at)} status={`${judgmentLabels[decision.status]??"판단 미확인"} (${decision.status})`} reasons={decision.reasons}/>
       <SchedulerWorkloadStates workloads={decision.workloads} names={serviceNames}/>
+      <SchedulerPathFeedback decision={decision} names={serviceNames}/>
       <details><summary>판단 입력·설정</summary><Facts items={[["자동 운영 설정 대상",decision.settings.autonomousWorkloads==null?"미기록":`${decision.settings.autonomousWorkloads.length}개`],["입력 관측 KST",`${when(decision.search.windowStart)} ~ ${when(decision.search.windowEnd)}`],["에너지 비교 기간",decision.capacity?`${nanosToMilliseconds(decision.capacity.periodNanos)} ms`:"미기록"]]}/></details>
       <DecisionCapacity capacity={decision.capacity} headroom={decision.settings.scaleDownHeadroomFraction} names={serviceNames}/>
       {view?<>{candidatePlans(decision.keep,decision.target).map(candidate=><details key={candidate.id}><summary>{candidate.keep?"유지안 근거":"선택 목표 근거"}</summary><CandidateDetails candidate={candidate} view={view}/></details>)}</>:<p>같은 기록에 실제 구성이 없어요. 후보 원본은 아래 원본에서 확인해요.</p>}

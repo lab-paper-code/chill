@@ -172,11 +172,11 @@ function RequestDetails({row,target,service,definition}:{row:RequestRow;target?:
     <SourceExport value={row} filename="chill-request-selected.json"/>
     {reached.length?<Facts items={reached}/>:<p className="text-sm text-muted-foreground">아직 지난 단계가 없어요.</p>}
     <details className="space-y-4 [&_dd]:break-all"><summary>실행 자세히</summary>
-      <Facts items={[["요청",row.requestID],["서비스",info(row.workloadUID)],["적용 설정",info(row.definitionID)],["수신 시각",row.receivedAt],["요청 유효 시간",ms(row.lifetimeNanos)],["클라이언트 관측 시간",ms(row.clientSpanNanos)],["실행 완료 관측",row.executionComplete?"완료 확인":"완료 확인 대기"]]}/>
+      <Facts items={[["요청",row.requestID],["서비스",info(row.workloadUID)],["적용 설정",info(row.definitionID)],["수신 시각",row.receivedAt],["요청 유효 시간",ms(row.lifetimeNanos)],["serving↔native HTTP 교환",ms(row.clientSpanNanos)],["실행 완료 관측",row.executionComplete?"완료 확인":"완료 확인 대기"]]}/>
       <h3 className="font-semibold">CHILL 배정</h3>
       <Facts items={[["노드",row.node?`${row.node.name} / ${row.node.uid}`:"정보 없음"],["인스턴스와 배정 시각",`${info(row.instance)} / ${info(row.dispatchedAt)}`],["프로파일과 판단 ID",`${info(row.profileID)} / ${info(row.decisionID)}`]]}/>
       <h3 className="font-semibold">실행 기록</h3>
-      {stages?<Facts items={[["배치 ID와 크기",`${info(row.batchID)} / ${info(row.batchSize)}`],["큐 대기 / 서비스 실행 / 실행 경과",`${duration(row.queueMS??0)} / ${duration(row.serviceMS??0)} / ${duration(row.nativeElapsedMS??0)}`],["배치 단계 · 전처리 / 추론 / 후처리",`${duration(stages.preprocessMS)} / ${duration(stages.backendMS)} / ${duration(stages.postprocessMS)}`],["첫 토큰",row.firstTokenMS===undefined?"정보 없음":duration(row.firstTokenMS)],["이 요청의 처리 단위",row.units===undefined?"정보 없음":`${row.units}개`]]}/>:<p>실행 기록이 들어오면 배치와 단계 시간을 보여드려요.</p>}
+      {stages?<Facts items={[["배치 ID와 크기",`${info(row.batchID)} / ${info(row.batchSize)}`],["큐 대기 / 서비스 실행 / native 처리 (대기 포함)",`${duration(row.queueMS??0)} / ${duration(row.serviceMS??0)} / ${duration(row.nativeElapsedMS??0)}`],["배치 단계 · 전처리 / 추론 / 후처리",`${duration(stages.preprocessMS)} / ${duration(stages.backendMS)} / ${duration(stages.postprocessMS)}`],["첫 토큰",row.firstTokenMS===undefined?"정보 없음":duration(row.firstTokenMS)],["이 요청의 처리 단위",row.units===undefined?"정보 없음":`${row.units}개`]]}/>:<p>실행 기록이 들어오면 배치와 단계 시간을 보여드려요.</p>}
       <SourceJSON inline value={row}/>
     </details>
   </div>

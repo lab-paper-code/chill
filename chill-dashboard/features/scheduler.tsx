@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { resolveWorkloadIdentities, type IdentityWorkload } from "@/lib/workload-identity"
 import { liveReason, candidatePlans, candidateEvaluation } from "@/lib/live-display"
 import { PowerTimeline } from "./power-series"
+import { SchedulerPathFeedback } from "./scheduler-workload-states"
 
 export const judgmentLabels:Record<string,string>={Pending:"판단 대기",Keep:"현재 구성 유지",Feasible:"실행 가능",Overload:"예상 부하가 목표 초과",InfeasibleLifetime:"요청 유효기간 충족 어려움",InfeasibleResources:"자원 조건 충족 어려움",InfeasibleTransition:"변경 조건 충족 어려움",ExecutionError:"실행 오류 확인"}
 export const judgmentTones:Record<string,Tone>={Keep:"ok",Feasible:"ok",Pending:"idle",Overload:"warn",InfeasibleLifetime:"warn",InfeasibleResources:"warn",InfeasibleTransition:"warn",ExecutionError:"fail"}
@@ -88,6 +89,7 @@ function CurrentEvidence({kind}:{kind:"candidates"|"estimates"}) {
   const services=(snapshot?.workloads??[]).filter((row):row is SchedulerDefinition=>!!row&&(!uid||row.uid===uid))
   return <section className="space-y-4"><h3>{kind==="candidates"?"구성·후보 근거":"응답 목표 예상"}</h3><QueryGate query={query}>{view&&decision&&snapshot&&<>
     <Facts items={[["판단 시각",time(decision.at)],["구성 관측",time(snapshot.at)],["입력 시작",time(decision.search.windowStart)],["입력 종료",time(decision.search.windowEnd)]]}/>
+    <SchedulerPathFeedback decision={decision} names={resolveWorkloadIdentities([],[],snapshot.workloads)}/>
     {kind==="candidates"?<>
       <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>setSelection({key:"snapshot",view})}>실제 구성</Button>{candidates.map(candidate=><Button key={candidate.id} variant="outline" onClick={()=>setSelection({key:candidate.id,view})}>{candidate.keep?"유지안":"변경 후보"}</Button>)}</div>
       {selection&&query.data&&(selection.view.state.decision.at!==query.data.state.decision.at||selection.view.state.snapshot.at!==query.data.state.snapshot.at)&&<div role="status"><span>새 판단 수신</span><Button variant="outline" onClick={()=>setSelection({key:selection.key,view:query.data!})}>최신 응답</Button></div>}

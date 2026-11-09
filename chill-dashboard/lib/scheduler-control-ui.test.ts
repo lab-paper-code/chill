@@ -12,6 +12,7 @@ import * as dates from "./date-time.ts"
 import * as identity from "./workload-identity.ts"
 import * as labels from "./labels.ts"
 import { compareAt } from "./live.ts"
+import type { PathFeedback } from "./read-types.ts"
 
 const require=createRequire(import.meta.url)
 const fixture=JSON.parse(readFileSync(new URL("./fixtures/e5-scheduler-control.json",import.meta.url),"utf8"))
@@ -40,6 +41,36 @@ test("recorded Keep retains PLC/Smol Controlled and only IC carries the instance
   const reasons=renderToStaticMarkup(createElement(components.SchedulerDecisionReasons,{reasons:fixture.decision.reasons}))
   assert.match(reasons,/인스턴스 미확인/)
   assert.match(renderToStaticMarkup(createElement(components.SchedulerWorkloadStates,{workloads:null,names})),/미기록/)
+})
+
+test("decision path budgets preserve configured zero, empirical fractions and absent source",()=>{
+  const {SchedulerPathFeedback}=controlComponents()
+  const pathFeedback:PathFeedback[]=[
+    {workloadUID:"configured-uid",percentile:95,totalNanos:0,postNanos:0,sampleCount:0,source:"configured"},
+    {workloadUID:"empirical-uid",percentile:99,totalNanos:40000000.5,postNanos:30000000.25,sampleCount:17,source:"empirical"},
+    {workloadUID:"unknown-source-uid",percentile:90,totalNanos:7100000,postNanos:3200000,sampleCount:2},
+  ]
+  const names=new Map(pathFeedback.map(row=>[row.workloadUID,`service-${row.workloadUID}`]))
+  const html=renderToStaticMarkup(createElement(SchedulerPathFeedback,{decision:{pathFeedback},names}))
+  const rows=html.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/g)!.slice(1)
+  assert.equal(rows.length,pathFeedback.length)
+  rows.forEach((row,index)=>{
+    const feedback=pathFeedback[index]
+    assert.ok(row.includes(names.get(feedback.workloadUID)!))
+    assert.ok(row.includes(feedback.workloadUID))
+    const cells=[...row.matchAll(/<td\b[^>]*>(.*?)<\/td>/g)].map(match=>match[1])
+    assert.deepEqual(cells.slice(0,3),[feedback.percentile,feedback.totalNanos/1e6,feedback.postNanos/1e6].map(String))
+    assert.equal(cells[4],String(feedback.sampleCount))
+    if(feedback.source)assert.equal(cells[3],feedback.source)
+    else {
+      assert.ok(cells[3].length>0)
+      assert.ok(!["0","configured","empirical"].includes(cells[3]))
+    }
+    assert.equal(cells.length,5)
+  })
+  for(const decision of [{},{pathFeedback:null},{pathFeedback:[]}]){
+    assert.equal(renderToStaticMarkup(createElement(SchedulerPathFeedback,{decision,names})),"")
+  }
 })
 
 
