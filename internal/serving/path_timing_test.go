@@ -200,7 +200,7 @@ func TestPathFeedbackObservedMeanUsesSameCausalSamples(t *testing.T) {
 		t.Fatalf("descriptive means replaced empirical budgets: %+v", feedback)
 	}
 	zero := BuildPathFeedback("workload", []PathTimingSample{{WorkloadUID: "workload"}}, SLO{Percentile: 95}, 7*time.Millisecond)
-	if zero.ObservedMean == nil || *zero.ObservedMean != (PathObservedMean{}) || zero.TotalNanos != 0 || zero.Source != "empirical" {
+	if zero.ObservedMean == nil || *zero.ObservedMean != (PathObservedMean{}) || zero.TotalNanos != 0 || zero.Source != pathFeedbackEmpirical {
 		t.Fatalf("real zero sample became unknown/configured: %+v", zero)
 	}
 }

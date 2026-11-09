@@ -1141,7 +1141,7 @@ func (r *Runtime) SetPathFeedback(feedback []PathFeedback) {
 	defer r.mu.Unlock()
 	r.pathFeedback = make(map[string]float64, len(feedback))
 	for _, value := range feedback {
-		if value.Source == "empirical" {
+		if value.Source == pathFeedbackEmpirical {
 			r.pathFeedback[value.WorkloadUID] = value.PostNanos / float64(time.Millisecond)
 		}
 	}

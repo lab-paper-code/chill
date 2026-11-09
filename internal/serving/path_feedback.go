@@ -7,6 +7,8 @@ import (
 	"gonum.org/v1/gonum/stat"
 )
 
+const pathFeedbackEmpirical = "empirical"
+
 // PathFeedback is one Workload's immutable additive-budget estimate.
 type PathFeedback struct {
 	WorkloadUID  string            `json:"workloadUID"`
@@ -37,7 +39,7 @@ func BuildPathFeedback(workloadUID string, samples []PathTimingSample, slo SLO, 
 	if len(samples) == 0 {
 		return feedback
 	}
-	feedback.Source = "empirical"
+	feedback.Source = pathFeedbackEmpirical
 	mean := &PathObservedMean{
 		ClientNanos: samples[0].ClientNanos, ServingQueueNanos: samples[0].ServingQueueNanos,
 		NativeNanos: samples[0].NativeNanos, NonComputeNanos: samples[0].TotalNanos,
