@@ -25,6 +25,14 @@ let settings = {...parseSchedulerJSON(readFileSync(new URL('../../config/samples
 let settingsVersion = 1
 const settingsChanges = []
 
+function schedulerState(at) {
+  const pathFeedback = [rateEvidence[0].pathFeedback,{...rateEvidence[0].pathFeedback,workloadUID:'pool-alpha'}]
+  const snapshot = {at,workloads:[],nodes:[],instances:[],routing:{},routingCredits:{},outstanding:[],arrivals:[],options:[],baselines:[],costs:[],dispatchOccupancy:[],actions:[],reasons:[],references:[],reservations:[],pathFeedback}
+  const keep = {id:'fixture-keep',keep:true,nodes:[],instances:[],routing:{},actions:[],status:'Feasible',reasons:[],slo:[],expectedJoules:1000,worstExceedance:0}
+  const decision = {at,status:'Keep',keep,target:null,reasons:['검사용 고정 근거'],settings,workloads:[],search:{examined:0,bounds:settings,windowStart:at,windowEnd:at,received:0,accepted:0,computeInputs:0,population:'검사용 고정 입력',loads:[],comparedNodes:[]},references:[],pathFeedback,capacity:scene === 'empty' ? {...capacityDiagnostic,workloads:[]} : capacityDiagnostic}
+  return {snapshot,decision,actions:[],results:[],costIssues:[]}
+}
+
 const directory = mkdtempSync(join(tmpdir(), 'chill-s2-tls-'))
 execFileSync('openssl', ['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(directory,'key.pem'),'-out',join(directory,'cert.pem'),'-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1,DNS:localhost'], {stdio:'ignore'})
 const cert = readFileSync(join(directory,'cert.pem')), key = readFileSync(join(directory,'key.pem'))
@@ -140,12 +148,8 @@ const upstream = https.createServer({key,cert}, async (req,res) => {
     res.end(stringifySchedulerJSON({tests:scene === 'empty' ? [] : rateEvidence}));return
   }
   if(url.pathname === '/api/v1/scheduler/state') {
-    const pathFeedback = [rateEvidence[0].pathFeedback]
-    const snapshot = {at:lastAt,workloads:[],nodes:[],instances:[],routing:{},routingCredits:{},outstanding:[],arrivals:[],options:[],baselines:[],costs:[],dispatchOccupancy:[],actions:[],reasons:[],references:[],reservations:[],pathFeedback}
-    const keep = {id:'fixture-keep',keep:true,nodes:[],instances:[],routing:{},actions:[],status:'Feasible',reasons:[],slo:[],expectedJoules:1000,worstExceedance:0}
-    const decision = {at:lastAt,status:'Keep',keep,target:null,reasons:['검사용 고정 근거'],settings,workloads:[],search:{examined:0,bounds:settings,windowStart:lastAt,windowEnd:lastAt,received:0,accepted:0,computeInputs:0,population:'검사용 고정 입력',loads:[],comparedNodes:[]},references:[],pathFeedback,capacity:scene === 'empty' ? {...capacityDiagnostic,workloads:[]} : capacityDiagnostic}
     res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    res.end(stringifySchedulerJSON({snapshot,decision,actions:[],results:[],costIssues:[]}));return
+    res.end(stringifySchedulerJSON(schedulerState(lastAt)));return
   }
   if(url.pathname === '/api/v1/observations/scheduler') {
     if(url.searchParams.get('filter') === 'settings') {
@@ -158,7 +162,7 @@ const upstream = https.createServer({key,cert}, async (req,res) => {
     const at = [...decisionTimes].find(value=>value.replace(/(?:\.(\d+))?Z$/,(_match,fraction='')=>`.${fraction.padEnd(9,'0')}Z`)===from)
     const found = at !== undefined
     res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    res.end(stringifySchedulerJSON({from:at,to:url.searchParams.get('to'),events:found?[{at,decision:{at,status:'TransitionInProgress',reasons:['검사용 고정 근거'],keep:{id:'fixture-keep',keep:true,actions:null,status:'Feasible',reasons:null,expectedJoules:1000,worstExceedance:0},target:null,capacity:{...capacityDiagnostic,gainUncertaintyJoules:25}}}]:[]}))
+    res.end(stringifySchedulerJSON({from:at,to:url.searchParams.get('to'),events:found?[{at,...schedulerState(at)}]:[]}))
     return
   }
   res.writeHead(404);res.end()
