@@ -4,11 +4,12 @@ import { useSearchParams } from "next/navigation"
 import { useChillQuery, useSession } from "@/lib/client"
 import type { SchedulerCapacity, SchedulerControllerState, SchedulerFeedbackRate } from "@/lib/read-types"
 import { planSearchFacts, capacityKappaHat, capacityTests, type CapacityView } from "@/lib/capacity"
-import { parseSchedulerJSON } from "@/lib/scheduler"
+import { nanosToMilliseconds, parseSchedulerJSON } from "@/lib/scheduler"
 import { DataTable } from "@/components/data-table"
 import { QueryGate, SourceExport, SourceJSON } from "@/components/read-region"
 import { Facts } from "@/components/screen"
 import { Button } from "@/components/ui/button"
+import { SchedulerPathFeedback } from "./scheduler-workload-states"
 
 export function PlanSearchEvidence({capacity}:{capacity?:SchedulerCapacity}) {
   if(!capacity?.search&&!capacity?.plans?.length)return null
@@ -19,7 +20,6 @@ export function PlanSearchEvidence({capacity}:{capacity?:SchedulerCapacity}) {
       {key:"key",label:"계획",value:plan=>plan.key},
       {key:"eligible",label:"적격",value:plan=>plan.eligible?"예":"아니요"},
       {key:"reason",label:"사유",value:plan=>plan.reason??"없음"},
-      {key:"dominated",label:"가지치기 사유",value:plan=>plan.dominated??"없음"},
     ]}/>
   </section>
 }
@@ -27,9 +27,10 @@ export function PlanSearchEvidence({capacity}:{capacity?:SchedulerCapacity}) {
 export function FeedbackRateEvidence({tests}:{tests?:SchedulerFeedbackRate[]|null}) {
   if(!tests?.length)return <p>기록된 요청률 검사 근거 없음</p>
   return <div className="min-w-0 space-y-4">{tests.map((evidence,index)=>{
-    const instance=evidence.option.instance
+    const input=evidence.input
     return <section key={index} className="min-w-0 space-y-3 border-t pt-3 [&_dd]:break-all">
-      <Facts items={[["인스턴스",evidence.instanceID],["κ̂ (κHat)",capacityKappaHat(evidence)],["장치 이름 / UID",`${instance.node.name} / ${instance.node.uid}`],["전력모드",instance.profile?.condition.powerMode??"미기록"],["프로파일 ID",instance.profileID??instance.profile?.id??"미기록"],["적격 서비스 UID",evidence.option.compatibleUIDs?.join(", ")||"없음"],["GPU UUID",instance.allocation.gpuUUID??"없음"],["메모리",`${instance.allocation.memoryBytes} bytes`],["최대 배치",String(instance.maxBatch)]]}/>
+      <Facts items={[["인스턴스",evidence.instanceID],["κ̂ (κHat)",capacityKappaHat(evidence)],["서비스 UID",input.workloadUID],["장치 이름 / UID",`${input.node.name} / ${input.node.uid}`],["전력모드",input.powerMode],["프로파일 ID",input.profileID],["GPU UUID",input.allocation.gpuUUID??"없음"],["메모리",`${input.allocation.memoryBytes} bytes`],["최대 배치",String(input.maxBatch)],["SLO 분위수",`p${input.slo.percentile}`],["SLO 목표",`${nanosToMilliseconds(input.slo.targetLatencyNanos)} ms`],["판정 창 길이",`${nanosToMilliseconds(input.capacityWindowNanos)} ms`],["설정한 창 수",String(input.capacityWindows)],["필요 합격 창 수",String(input.capacityPassingWindows)]]}/>
+      <SchedulerPathFeedback decision={{pathFeedback:[evidence.pathFeedback]}} names={new Map()}/>
       {evidence.tests?.length?<div className="overflow-x-auto"><table className="w-full text-sm">
         <caption className="sr-only">현재 조건에서 검사한 요청률과 창 판정</caption>
         <thead><tr>{["입력 식별자", "검사 요청률 (req/s)", "판정", "합격 창 수", "창당 요청 수"].map(label=><th key={label} scope="col" className="p-3 text-left">{label}</th>)}</tr></thead>
@@ -65,7 +66,7 @@ export function CapacityEvidence() {
   return <section className="min-w-0 space-y-4"><header className="flex flex-wrap items-center justify-between gap-2"><h3>현재 요청률 검사 근거</h3><Button variant="outline" onClick={()=>{void query.refetch();void current.refetch()}} disabled={!token||query.isFetching||current.isFetching}>새로고침</Button></header>
     <QueryGate query={query}>{query.data&&<>
       <p>현재 조건의 모델 검사예요. κ̂는 검사한 요청률 중 최대 통과값이며, 통과 근거 없는 0은 물리 처리량 0을 뜻하지 않아요.</p>
-      <Facts items={[["대상 적격 UID",workload||"전체"],["조회 시각",query.dataUpdatedAt?new Date(query.dataUpdatedAt).toISOString():"미확인"]]}/>
+      <Facts items={[["대상 서비스 UID",workload||"전체"],["조회 시각",query.dataUpdatedAt?new Date(query.dataUpdatedAt).toISOString():"미확인"]]}/>
       <FeedbackRateEvidence tests={tests}/>
       <SourceExport value={{source:"v1/scheduler/capacity",workload,capacityReadAt:query.dataUpdatedAt,response:query.data}} filename="chill-scheduler-capacity.json"/>
     </>}</QueryGate>

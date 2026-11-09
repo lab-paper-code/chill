@@ -8,7 +8,7 @@ export const capacityPath=(workload="")=>{
   if(workload)query.set("workload",workload)
   return `/?${query}`
 }
-export const capacityTests=(tests:SchedulerFeedbackRate[],workload:string)=>workload?tests.filter(test=>test.option.compatibleUIDs?.includes(workload)):tests
+export const capacityTests=(tests:SchedulerFeedbackRate[],workload:string)=>workload?tests.filter(test=>test.input.workloadUID===workload):tests
 export const capacityWitness=(capacity?:FeedbackCapacity)=>{
   if(!capacity)return "미기록"
   if(!capacity.tests?.length)return "미검사 · 통과 근거 없음"

@@ -2,76 +2,70 @@
   "tests": [
     {
       "instanceID": "instance-failed",
-      "option": {
-        "instance": {
-          "id": "instance-failed",
-          "node": {"name": "node-a", "uid": "node-uid"},
-          "profileID": "profile-id",
-          "workloadUID": "service-uid",
-          "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
-          "ready": true,
-          "stopped": false,
-          "routable": null,
-          "capacity": 8,
-          "weight": 2,
-          "maxBatch": 4,
-          "maxWaitNanos": 0,
-          "observedAt": "2026-11-09T00:00:00Z",
-          "idleMeter": "",
-          "idleScope": ""
-        },
-        "compatibleUIDs": ["service-uid"]
+      "input": {
+        "workloadUID": "service-uid",
+        "slo": {"percentile": 99, "targetLatencyNanos": 100000000},
+        "node": {"name": "node-a", "uid": "node-uid"},
+        "powerMode": "15W",
+        "profileID": "profile-id",
+        "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
+        "maxBatch": 4,
+        "completionMarginMS": 2.5,
+        "capacityWindowNanos": 1000000000,
+        "capacityWindows": 5,
+        "capacityPassingWindows": 4,
+        "capacityMinimumRequests": 100,
+        "capacityGridSteps": 10,
+        "capacityBisectionWidth": 0.01,
+        "capacityTailSamples": 20
       },
+      "pathFeedback": {"workloadUID": "service-uid", "percentile": 99, "totalNanos": 40000000, "postNanos": 30000000, "sampleCount": 1, "source": "empirical"},
       "kappaHat": 0,
       "tests": [{"inputKey": "failed input / +&", "rate": 40, "met": false, "passed": 0, "requests": 100}]
     },
     {
       "instanceID": "instance-untested",
-      "option": {
-        "instance": {
-          "id": "instance-untested",
-          "node": {"name": "node-a", "uid": "node-uid"},
-          "profileID": "profile-id",
-          "workloadUID": "service-uid",
-          "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
-          "ready": true,
-          "stopped": false,
-          "routable": null,
-          "capacity": 8,
-          "weight": 2,
-          "maxBatch": 4,
-          "maxWaitNanos": 0,
-          "observedAt": "2026-11-09T00:00:00Z",
-          "idleMeter": "",
-          "idleScope": ""
-        },
-        "compatibleUIDs": ["service-uid"]
+      "input": {
+        "workloadUID": "service-uid",
+        "slo": {"percentile": 99, "targetLatencyNanos": 100000000},
+        "node": {"name": "node-a", "uid": "node-uid"},
+        "powerMode": "15W",
+        "profileID": "profile-id",
+        "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
+        "maxBatch": 4,
+        "completionMarginMS": 2.5,
+        "capacityWindowNanos": 1000000000,
+        "capacityWindows": 5,
+        "capacityPassingWindows": 4,
+        "capacityMinimumRequests": 100,
+        "capacityGridSteps": 10,
+        "capacityBisectionWidth": 0.01,
+        "capacityTailSamples": 20
       },
+      "pathFeedback": {"workloadUID": "service-uid", "percentile": 99, "totalNanos": 0, "postNanos": 0, "sampleCount": 0, "source": "configured"},
       "kappaHat": 0,
       "tests": []
     },
     {
       "instanceID": "instance-pass",
-      "option": {
-        "instance": {
-          "id": "instance-pass",
-          "node": {"name": "node-a", "uid": "node-uid"},
-          "profileID": "profile-id",
-          "workloadUID": "service-uid",
-          "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
-          "ready": true,
-          "stopped": false,
-          "routable": null,
-          "capacity": 8,
-          "weight": 2,
-          "maxBatch": 4,
-          "maxWaitNanos": 0,
-          "observedAt": "2026-11-09T00:00:00Z",
-          "idleMeter": "",
-          "idleScope": ""
-        },
-        "compatibleUIDs": ["service-uid"]
+      "input": {
+        "workloadUID": "service-uid",
+        "slo": {"percentile": 99, "targetLatencyNanos": 100000000},
+        "node": {"name": "node-a", "uid": "node-uid"},
+        "powerMode": "15W",
+        "profileID": "profile-id",
+        "allocation": {"gpuUUID": "gpu-uuid", "memoryBytes": 9007199254740993},
+        "maxBatch": 4,
+        "completionMarginMS": 2.5,
+        "capacityWindowNanos": 1000000000,
+        "capacityWindows": 5,
+        "capacityPassingWindows": 4,
+        "capacityMinimumRequests": 100,
+        "capacityGridSteps": 10,
+        "capacityBisectionWidth": 0.01,
+        "capacityTailSamples": 20
       },
+      "pathFeedback": {"workloadUID": "service-uid", "percentile": 99, "totalNanos": 10000000, "postNanos": 0, "sampleCount": 2, "source": "empirical"},
       "kappaHat": 12.5,
       "tests": [
         {"inputKey": "pass input", "rate": 12.5, "met": true, "passed": 4, "requests": 100},

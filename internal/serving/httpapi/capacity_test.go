@@ -24,20 +24,20 @@ func TestSchedulerCapacityProjectionMatchesDashboardFixture(t *testing.T) {
 	for _, id := range []string{"instance-failed", "instance-untested", "instance-pass"} {
 		tests = append(tests, serving.SchedulerFeedbackRate{
 			InstanceID: id,
-			Option: serving.SchedulerOption{
-				Instance: serving.SchedulerInstance{
-					ID: id, Node: serving.NodeReference{Name: "node-a", UID: "node-uid"},
-					ProfileID: "profile-id", WorkloadUID: "service-uid",
-					Allocation: serving.SchedulerAllocation{GPUUUID: "gpu-uuid", MemoryBytes: 9007199254740993},
-					Ready: true, Capacity: 8, Weight: 2, MaxBatch: 4,
-					ObservedAt: time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC),
-				},
-				CompatibleUIDs: []string{"service-uid"},
+			Input: serving.CapacityInput{
+				WorkloadUID: "service-uid", SLO: serving.SLO{Percentile: 99, TargetLatency: 100 * time.Millisecond},
+				Node: serving.NodeReference{Name: "node-a", UID: "node-uid"}, PowerMode: "15W", ProfileID: "profile-id",
+				Allocation: serving.SchedulerAllocation{GPUUUID: "gpu-uuid", MemoryBytes: 9007199254740993}, MaxBatch: 4,
+				CompletionMarginMS: 2.5, Window: time.Second, Windows: 5, PassingWindows: 4, MinimumRequests: 100,
+				GridSteps: 10, BisectionWidth: .01, TailSamples: 20,
 			},
+			PathFeedback: serving.PathFeedback{WorkloadUID: "service-uid", Percentile: 99, Source: "configured"},
 			FeedbackCapacity: serving.FeedbackCapacity{Tests: []serving.FeedbackRateTest{}},
 		})
 	}
 	tests[0].Tests = []serving.FeedbackRateTest{{InputKey: "failed input / +&", Rate: 40, Met: false, Passed: 0, Requests: 100}}
+	tests[0].PathFeedback = serving.PathFeedback{WorkloadUID: "service-uid", Percentile: 99, TotalNanos: 40000000, PostNanos: 30000000, SampleCount: 1, Source: "empirical"}
+	tests[2].PathFeedback = serving.PathFeedback{WorkloadUID: "service-uid", Percentile: 99, TotalNanos: 10000000, SampleCount: 2, Source: "empirical"}
 	tests[2].KappaHat = 12.5
 	tests[2].Tests = []serving.FeedbackRateTest{
 		{InputKey: "pass input", Rate: 12.5, Met: true, Passed: 4, Requests: 100},

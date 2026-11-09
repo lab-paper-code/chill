@@ -93,10 +93,13 @@ export type CurvePlanSpec = {name:string;logicalModel:string;deviceClass:string;
 export type SchedulerProfile = {id:string;reference:unknown;evidence:unknown[]|null;nodeName:string;condition:CurvePlanSpec;batches:{batch:number;durationNanos:number[]|null;durationSampleCount?:number;energyPerInputJoules:number;memoryBytes:WireInteger}[]|null;confidenceLevel:number;idleBaselineWatts:number;measuredAt:string;runtimeMetadata?:unknown;metricSource:PowerSource;reuse?:{sourceProfileID:string;confirmationProfileID:string;sourceNode:NodeRef;targetNode:NodeRef;outcome:string;reason?:string}} & {assessment?:MeasurementAssessment;resultRows?:ResultRow[]}
 // Stored decision records carry profileID only; GET v1/scheduler/profiles serves the profile body.
 export type SchedulerInstance = {id:string;node:NodeRef;ownerWorkloadUID?:string;terminated?:boolean;profile?:SchedulerProfile|null;profileID?:string;workloadUID:string;allocation:SchedulerAllocation;ready:boolean;stopped:boolean;capacity:number;weight:number;maxBatch:number;maxWaitNanos:WireInteger;observedAt:string;idleMeter:string;idleScope:string;unroutedSince?:string;heldUntil?:string}
-export type SchedulerOption = {instance:SchedulerInstance;compatibleUIDs:string[]|null}
+export type CapacityInput = Pick<SchedulerSettings,"completionMarginMS"|"capacityWindowNanos"|"capacityWindows"|"capacityPassingWindows"|"capacityMinimumRequests"|"capacityGridSteps"|"capacityBisectionWidth"|"capacityTailSamples"> & {
+  workloadUID:string;slo:SchedulerDefinition["slo"];node:NodeRef;powerMode:string;profileID:string;allocation:SchedulerAllocation;maxBatch:WireInteger
+  dispatchOccupancy?:{node:NodeRef;powerMode:string;runtimeImage:string;model:string;perRequestNanos:WireInteger;source:string}
+}
 export type FeedbackRateTest = {inputKey:string;rate:number;met:boolean;passed:number;requests:number}
 export type FeedbackCapacity = {kappaHat:number;tests:FeedbackRateTest[]|null}
-export type SchedulerFeedbackRate = FeedbackCapacity & {instanceID:string;option:SchedulerOption}
+export type SchedulerFeedbackRate = FeedbackCapacity & {instanceID:string;input:CapacityInput;pathFeedback:PathFeedback}
 export type SchedulerRequest = {id:string;queueOrder:number;remainingLifetimeNanos?:WireInteger;definition:SchedulerDefinition|null;definitionID?:string;receivedAt:string;elapsedNanos:WireInteger;queueAgeNanos:WireInteger;phase:string;instance?:string;batchID?:string;runningElapsedNanos:WireInteger;returnElapsedNanos:WireInteger;arrivalRate:number;nativeSenderElapsedMS?:number;nativeOutcome?:string}
 export type SchedulerArrival = {id:string;lifetimeNanos:WireInteger;at:string;definition?:SchedulerDefinition;accepted:boolean;compute:boolean;workloadUID?:string;outcome?:string}
 export type NodeBaseline = {id:string;node:NodeRef;powerMode:string;state:string[]|null;watts:number;wattsUncertainty?:number;meter:string;scope:string;measuredAt:string;reference:unknown}
@@ -114,7 +117,7 @@ export type SchedulerDecisionScope = {at:string;workloads?:SchedulerWorkloadStat
 export type SchedulerStateSummary = {decision:SchedulerDecisionScope}
 // Relative profile rates drive routing; tested-rate evidence does not bound physical throughput.
 export type SchedulerCapacityWorkload = {uid:string;rate:number;queued:number;routingRate:number;retainedRoutingRate:number;weights:Record<string,number>|null;tests?:SchedulerFeedbackRate[]|null;keepTests?:SchedulerFeedbackRate[]|null}
-export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason?:string;dominated?:string;routingRate?:Record<string,number>;retainedRoutingRate?:Record<string,number>;preNanos:WireInteger;postNanos:WireInteger;joules:number;energyUncertaintyJoules?:number}
+export type SchedulerNodePlan = {node:NodeRef;key:string;eligible:boolean;reason?:string;routingRate?:Record<string,number>;retainedRoutingRate?:Record<string,number>;preNanos:WireInteger;postNanos:WireInteger;joules:number;energyUncertaintyJoules?:number}
 // search records the plan search scope, termination reason, and whether the time deadline cut it.
 export type SchedulerPlanSearch = {neighborhood:number;evaluated:number;durationNanos:WireInteger;budgetCut?:boolean;terminationReason?:string;strategy?:string;key?:string;joules?:number;pruned?:Record<string,number>;surrogateEvaluated?:number;finalists?:number;exactEvaluated?:number;surrogateGapJoules?:number;postFilterReverts?:number;fallback?:string;dualBound?:number;start?:string}
 export type SchedulerCapacity = {periodNanos:WireInteger;routeNanos:WireInteger;search?:SchedulerPlanSearch;workloads:SchedulerCapacityWorkload[]|null;plans:SchedulerNodePlan[]|null;gainUncertaintyJoules?:number}

@@ -86,6 +86,7 @@ test("rendered timeline shows only loaded-page transitions and does not fetch re
     "@/lib/live":{compareAt},
     "@/features/scheduler":{judgmentLabels:{Keep:"현재 구성 유지"}},"@/features/scheduler-settings":{},"./scheduler-transitions":{},
     "./scheduler-workload-states":controlComponents(),
+    "./scheduler-capacity":{DecisionRateEvidence:none},
     "@/components/read-region":{QueryGate:wrap,SourceJSON:none,SourceExport:none},
     "@/components/screen":{Screen:wrap,Rows:wrap,Row:none,RowDialog:none,Facts:none,Empty:wrap},
     "@/components/ui/button":{Button:"button"},"@/components/ui/input":{Input:"input"},

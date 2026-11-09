@@ -20,12 +20,18 @@ test("HTTP projection fixture preserves tested failure, untested zero and witnes
   assert.equal(capacityKappaHat(undefined),"미기록")
   assert.equal(failed.tests![0].inputKey,"failed input / +&")
   assert.deepEqual(failed.tests![0],{inputKey:"failed input / +&",rate:40,met:false,passed:0,requests:100})
-  assert.equal(failed.option.instance.allocation.memoryBytes,9007199254740993n)
+  assert.equal(failed.input.allocation.memoryBytes,9007199254740993n)
+  assert.equal(failed.input.profileID,"profile-id")
+  assert.equal(failed.input.powerMode,"15W")
+  assert.deepEqual(failed.pathFeedback,{workloadUID:"service-uid",percentile:99,totalNanos:40000000,postNanos:30000000,sampleCount:1,source:"empirical"})
+  assert.equal(untested.pathFeedback.totalNanos,0)
+  assert.equal(untested.pathFeedback.postNanos,0)
+  assert.equal(Object.hasOwn(failed,"option"),false)
   assert.equal(passed.kappaHat,12.5)
   assert.deepEqual(passed.tests!.map(test=>test.rate),[12.5,20])
 })
 
-test("current evidence filters only declared compatible workload UIDs and keeps empty diagnostics",()=>{
+test("current evidence filters exact input workload identity and keeps empty diagnostics",()=>{
   const response=parseSchedulerJSON(fixture) as CapacityView,tests=response.tests!
   assert.deepEqual(capacityTests(tests,""),tests)
   assert.deepEqual(capacityTests(tests,"service-uid"),tests)

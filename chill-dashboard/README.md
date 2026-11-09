@@ -106,6 +106,7 @@ Scheduler history keeps default/ascending unfiltered reads bounded, including ex
 결과 조회·d 측정 요청·최근 사건 복원의 원래 오류는 공통 “문제 자세히 보기” 안에만 보존한다(status, 구조화 code/message, transport 예외 name/message, 요청 pathname). d 셀은 coverage/BEO 조회를 구분한다. 요청 쿼리 전체·헤더·본문·원시 응답 body는 상세에 넣지 않으며 새 로깅/전송이나 재시도는 추가하지 않는다. 이 진단 보존은 과거 실패 원인 확정이나 실패 자체의 해결을 뜻하지 않는다.
 
 결정 상세는 `decision.capacity.workloads`의 계획 수요 `rate`, 상대 프로파일 요청률 `routingRate`·`retainedRoutingRate`, 분배 가중치와 선택안 `tests`·유지안 `keepTests`를 표시한다. 라우팅 값은 SLO 처리 용량 보장이 아니다. `/?evidence=capacity`는 현재 `GET /scheduler/capacity`의 `tests`와 현재 결정의 선택안·유지안을 따로 조회한다. κ̂(`kappaHat`)와 실제 검사한 요청률·판정·합격 창 수·창당 요청 수·입력 식별자를 함께 표시하며, 실패한 검사만 있는 0과 미검사 0을 구분한다. 통과 근거 없는 0은 물리 처리량 0이 아니다. 빈 현재 근거는 오류나 계산 대기가 아니다. 과거 결정은 저장된 검사만 사용하고 현재값으로 대체하지 않는다.
+검사 입력은 scalar `input`(Workload·SLO·Node·모드·profile ID·할당·최대 배치·검사 창 설정)과 별도 `pathFeedback` TOTAL·POST를 보존한다. raw profile·option 본문은 응답이나 결정에 복제하지 않는다.
 
 
 실험 게시 디코딩·타입은 `lib/experiments.ts`, 비교·차트 projection은 `lib/experiment-comparison.ts`, 정밀 scheduler 근거 구간·활동은 `lib/scheduler-history.ts`, 실험 선택 URL·History 변경은 `lib/dashboard-routes.ts`가 소유한다. 호출부는 소유 모듈을 직접 import하며 게시 identity·나노초 경계·null/0·표시 정밀도·URL 매개변수 계약은 그대로 유지한다.
@@ -495,6 +496,7 @@ authentication/resume counts and active upstream sockets without credentials.
 `instance-failed`의 검사율 40·미충족·합격 창 0, `instance-untested`의 미검사 0,
 `instance-pass`의 κ̂ 12.5와 검사율 12.5/20을 구분해서 확인한다.
 입력 식별자 `failed input / +&`, 메모리 `9007199254740993 bytes`, 선택안·유지안 분리와 상대 프로파일 요청률 라벨을 확인한다.
+scalar 입력의 전력모드·프로파일 ID·판정 창 설정과 별도 TOTAL·POST 예산(실제 0 포함)을 확인한다.
 브라우저에서 `fetch('/__fixture/scene?name=empty',{method:'POST'})` 후 새로고침하면 두 조회 모두 빈 진단이며 오류·Pending/Built 표시가 없어야 한다.
 이 경로는 browser smoke 실행법이며 실행 결과를 뜻하지 않는다.
 No cluster or deployment is involved. Exit the fixture process to remove its

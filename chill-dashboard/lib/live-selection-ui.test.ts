@@ -14,6 +14,7 @@ test("service decision evidence stays at opening selection until the user select
   let state=live.initialLiveState(),params=new URLSearchParams(),active=hookRunner()
   for(const frame of fixtureMessages("first",at))state=live.applyLiveMessage(state,live.parseLiveMessage(frame)!,Date.parse(at))
   const initial=state.snapshot!.decision!.at,calls:string[]=[],buttons:Tree[]=[],mounted=new Map<string,typeof active>()
+  let recorded:unknown
   const wrap=({children}:{children:React.ReactNode})=>children
   const modules:Record<string,unknown>={
     react:{...React,useState:(value:unknown)=>active.react.useState(value),useRef:(value:unknown)=>active.react.useRef(value),useEffect:()=>{},useCallback:(value:unknown)=>value,useMemo:(value:()=>unknown)=>value()},
@@ -22,7 +23,7 @@ test("service decision evidence stays at opening selection until the user select
       if(path.startsWith("v1/observations/scheduler")){
         assert.ok(!options?.poll,"selected historical evidence has no polling timer")
         calls.push(path)
-        return {data:{events:[]}}
+        return {data:{events:recorded?[recorded]:[]}}
       }
       return {}
     }},
@@ -67,6 +68,13 @@ test("service decision evidence stays at opening selection until the user select
   assert.equal(calls.length,1)
   const original=calls[0]
   assert.equal(new URL(original,"https://local").searchParams.get("from"),history.decisionRange(initial)!.from)
+  recorded={at:initial,decision:{at:initial,status:"Keep",keep:{id:"keep",keep:true,status:"Feasible",expectedJoules:1000},target:null,search:{windowStart:initial,windowEnd:initial,received:0,accepted:0,computeInputs:0,examined:1},capacity:{workloads:[{uid:state.snapshot!.workloads[0].uid,rate:42.5,queued:0,routingRate:50,retainedRoutingRate:25}]}}}
+  const recordedHTML=render()
+  assert.match(recordedHTML,/계획 수요 req\/s/)
+  assert.match(recordedHTML,/상대 프로파일/)
+  assert.match(recordedHTML,/42\.5/)
+  assert.match(recordedHTML,/SLO 처리 용량 보장이 아닙니다/)
+  assert.doesNotMatch(recordedHTML,/처리 잔량|예상 대기 s|최소 수요 req\/s/)
   const later="2026-11-04T10:00:10.000Z"
   state={...state,snapshot:{...state.snapshot!,decision:{...state.snapshot!.decision!,at:later}}}
   render();render()

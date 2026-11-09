@@ -739,19 +739,20 @@ test("omitted editable fields stay unset after PUT success and failed GET withou
 })
 
 test("plan search evidence renders v2 diagnostics and historical search without new fields",()=>{
-  const {PlanSearchEvidence}=load("../features/scheduler-capacity.tsx",{...base,"@/lib/capacity":capacity})
+  const {PlanSearchEvidence}=load("../features/scheduler-capacity.tsx",{...base,"@/lib/capacity":capacity,"./scheduler-workload-states":{}})
   const old={neighborhood:3,evaluated:40,durationNanos:1000}
-  for(const search of [old,{...old,strategy:"v2",pruned:{ZeroCapacity:2},surrogateEvaluated:100,finalists:16,exactEvaluated:19,fallback:"ExactKeep",start:"priced",surrogateGapJoules:0,postFilterReverts:0}]){
-    const tree=elements(PlanSearchEvidence({capacity:{search,plans:[{node:{name:"a"},key:"plan",eligible:false,reason:"Excluded",dominated:"ZeroCapacity"}]}}))
+  for(const search of [old,{...old,strategy:"v2",surrogateEvaluated:100,finalists:16,exactEvaluated:19,fallback:"ExactKeep",start:"priced",surrogateGapJoules:0,postFilterReverts:0}]){
+    const tree=elements(PlanSearchEvidence({capacity:{search,plans:[{node:{name:"a"},key:"plan",eligible:false,reason:"Excluded"}]}}))
     const facts=tree.find(node=>node.type==="facts")!.props.items as [string,string][]
     assert.ok(facts.some(([label,value])=>label==="평가 수"&&value==="40"))
     assert.equal(facts.some(([label])=>label==="탐색 전략"),"strategy" in search)
     if("strategy" in search){
-      for(const pair of [["탐색 전략","CHILL v2"],["가지치기 · ZeroCapacity","2"],["최종 후보 수","16"],["대체 탐색 사유","ExactKeep"],["출발점","priced"],["증분·정확 에너지 차이 (J)","0"],["후처리 복귀 수","0"]])assert.ok(facts.some(([label,value])=>label===pair[0]&&value===pair[1]))
+      for(const pair of [["탐색 전략","CHILL v2"],["최종 후보 수","16"],["대체 탐색 사유","ExactKeep"],["출발점","priced"],["증분·정확 에너지 차이 (J)","0"],["후처리 복귀 수","0"]])assert.ok(facts.some(([label,value])=>label===pair[0]&&value===pair[1]))
     }
     const table=tree.find(node=>node.type==="table")!
     const columns=table.props.columns as {key:string;value:(row:unknown)=>unknown}[]
-    assert.equal(columns.find(column=>column.key==="dominated")!.value((table.props.data as unknown[])[0]),"ZeroCapacity")
+    assert.equal(columns.find(column=>column.key==="eligible")!.value((table.props.data as unknown[])[0]),"아니요")
+    assert.equal(columns.find(column=>column.key==="reason")!.value((table.props.data as unknown[])[0]),"Excluded")
   }
   assert.equal(PlanSearchEvidence({}),null)
 })
