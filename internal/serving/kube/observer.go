@@ -199,12 +199,19 @@ func (o *Observer) issue(source string, err error) {
 
 // Refresh publishes the Pod ledger independently of current native readiness.
 func (o *Observer) Refresh(ctx context.Context) error {
+	_, err := o.refresh(ctx)
+	return err
+}
+
+// refresh returns this cycle's complete cluster Pod baseline when OnCluster
+// requires one. The caller owns the list; no later refresh or watch updates it.
+func (o *Observer) refresh(ctx context.Context) (*corev1.PodList, error) {
 	o.refreshMu.Lock()
 	defer o.refreshMu.Unlock()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	return o.refreshLocked(ctx)
 }
@@ -223,15 +230,16 @@ func (o *Observer) RefreshWithin(ctx context.Context, age time.Duration) error {
 	if time.Since(o.refreshed) < age {
 		return nil
 	}
-	return o.refreshLocked(ctx)
+	_, err := o.refreshLocked(ctx)
+	return err
 }
-func (o *Observer) refreshLocked(ctx context.Context) error {
+func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 	if o.closed {
-		return errors.New("observer is closed")
+		return nil, errors.New("observer is closed")
 	}
 	nodes, err := o.kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return o.refreshFailure(err)
+		return nil, o.refreshFailure(err)
 	}
 	podOptions := metav1.ListOptions{}
 	if o.podWatch != nil && o.config.OnCluster == nil {
@@ -241,27 +249,29 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	}
 	pods, err := o.kube.CoreV1().Pods(o.clusterWatchNamespace()).List(ctx, podOptions)
 	if err != nil {
-		return o.refreshFailure(err)
+		return nil, o.refreshFailure(err)
 	}
 	o.observeClusterList(pods.Items)
+	var clusterPods *corev1.PodList
 	if o.config.OnCluster != nil {
 		// Cluster facts include release control Pods outside the serving namespace;
 		// native execution and ownership continue to use only the selected namespace.
-		selected := pods.Items[:0]
+		clusterPods = pods
+		selected := &corev1.PodList{ListMeta: pods.ListMeta}
 		for _, pod := range pods.Items {
 			if pod.Namespace == o.config.Namespace {
-				selected = append(selected, pod)
+				selected.Items = append(selected.Items, pod)
 			}
 		}
-		pods.Items = selected
+		pods = selected
 	}
 	resources, err := o.store.SourceResources(ctx, pods.Items, o.config.Namespace)
 	if err != nil {
-		return o.refreshFailure(err)
+		return nil, o.refreshFailure(err)
 	}
 	var classes edgev1alpha1.DeviceClassList
 	if err = o.store.client.List(ctx, &classes); err != nil {
-		return o.refreshFailure(err)
+		return nil, o.refreshFailure(err)
 	}
 	measurement := []serving.NodeReference{}
 	byName := map[string]*corev1.Node{}
@@ -283,7 +293,7 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	if o.podWatch == nil {
 		w, e := o.kube.CoreV1().Pods(o.clusterWatchNamespace()).Watch(o.ctx, metav1.ListOptions{ResourceVersion: pods.ResourceVersion})
 		if e != nil {
-			return o.refreshFailure(e)
+			return nil, o.refreshFailure(e)
 		}
 		o.podWatch = w
 		o.issue("pod-watch", nil)
@@ -343,7 +353,10 @@ func (o *Observer) refreshLocked(ctx context.Context) error {
 	o.mu.Unlock()
 	probes.Wait()
 	o.mu.Lock()
-	return o.finishRefreshLocked(ctx, observed)
+	if err := o.finishRefreshLocked(ctx, observed); err != nil {
+		return nil, err
+	}
+	return clusterPods, nil
 }
 
 // finishRefreshLocked finalizes the source ledger after every probe has published.

@@ -30,7 +30,8 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 		s.DispatchOccupancy = config.DispatchOccupancySnapshot()
 	}
 	// Historical reads must finish before refreshing authoritative live sources.
-	if err = c.observer.Refresh(ctx); err != nil {
+	pods, err := c.observer.refresh(ctx)
+	if err != nil {
 		return s, err
 	}
 	// Observer state is read before the Node list: another refresh holding the
@@ -43,9 +44,18 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	if err != nil {
 		return s, err
 	}
-	pods, err := c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: nonTerminalPodSelector})
-	if err != nil {
-		return s, err
+	if pods == nil {
+		// A namespace-only observer cannot prove occupancy across the POOL.
+		pods, err = c.kube.CoreV1().Pods("").List(ctx, meta.ListOptions{FieldSelector: nonTerminalPodSelector})
+		if err != nil {
+			return s, err
+		}
+	} else {
+		// Keep the scheduler's nonterminal projection separate from OnCluster's
+		// complete baseline and the observer's exact terminal executor ledger.
+		pods.Items = slices.DeleteFunc(pods.Items, func(p core.Pod) bool {
+			return p.Status.Phase == core.PodSucceeded || p.Status.Phase == core.PodFailed
+		})
 	}
 	var classes edge.DeviceClassList
 	if err = c.store.client.List(ctx, &classes); err != nil {
