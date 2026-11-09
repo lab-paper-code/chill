@@ -38,6 +38,9 @@ func (t *CapacityTable) pickLocked() (*capacityGroup, *capacityTableItem) {
 			}
 			for i := range g.items {
 				item := &g.items[i]
+				if t.load != nil && (t.asked[item.key] == nil || t.asked[item.key] == t.loading) {
+					continue
+				}
 				if _, built := t.rows[item.key]; !built && t.running[item.key] == nil {
 					t.next = (index + 1) % len(t.order)
 					return g, item
@@ -51,6 +54,9 @@ func (t *CapacityTable) pickLocked() (*capacityGroup, *capacityTableItem) {
 func (t *CapacityTable) startLocked() {
 	t.advanceLocked()
 	t.pruneLocked()
+	if t.load != nil && t.loading == nil {
+		t.startLoadLocked()
+	}
 	for t.workers < t.parallel {
 		g, item := t.pickLocked()
 		if g == nil {
@@ -63,9 +69,6 @@ func (t *CapacityTable) startLocked() {
 		t.running[item.key] = task
 		t.workers++
 		go t.build(g.settings, g.occupancy, task, g.at)
-	}
-	if t.load != nil && t.loading == nil {
-		t.startLoadLocked()
 	}
 }
 
@@ -82,7 +85,6 @@ func (t *CapacityTable) build(settings SchedulerSettings, occupancy []DispatchOc
 			row.Status, row.Reason, row.Kappa, row.BuiltAt = CapacityRejected, err.Error(), nil, time.Now().UTC()
 		}
 		t.rows[task.key] = row
-		delete(t.previous, task.key)
 		delete(t.asked, task.key)
 		t.advanceLocked()
 	}

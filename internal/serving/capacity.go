@@ -71,9 +71,7 @@ type CapacityRow struct {
 	Bisection           []CapacityJudgment `json:"bisection,omitempty"`
 	BuiltAt             time.Time          `json:"builtAt"`
 	Elapsed             time.Duration      `json:"elapsedNanos,omitempty"`
-	// Previous marks a recorded row from an earlier build that stands in while
-	// this build computes the row.
-	Previous           bool                        `json:"previous,omitempty"`
+
 	ConditionalService *ConditionalServiceEvidence `json:"conditionalService,omitempty"`
 }
 
@@ -110,7 +108,8 @@ func NewCapacityInput(settings SchedulerSettings, occupancy []DispatchOccupancy,
 
 // Key is the stable row key of the input.
 func (in CapacityInput) Key() string {
-	// The CPU-sharing cutover must not reuse controlled-execution archive keys.
+	// This namespace pins shared-CPU replay, alpha/2 judgment and TOTAL/POST budgets.
+	// Change it for replay, kappa or batching semantics, not provenance-only builds.
 	if in.DispatchOccupancy != nil {
 		occupancy := *in.DispatchOccupancy
 		occupancy.RuntimeImage = ""
@@ -119,7 +118,7 @@ func (in CapacityInput) Key() string {
 	}
 	data, _ := json.Marshal(in)
 	sum := sha256.Sum256(data)
-	return "shared-cpu/" + hex.EncodeToString(sum[:12])
+	return "shared-cpu-alpha2-path-budget/" + hex.EncodeToString(sum[:12])
 }
 
 // capacityThroughput opens search with an optimistic observed-support ceiling.

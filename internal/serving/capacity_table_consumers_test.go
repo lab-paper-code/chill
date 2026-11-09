@@ -80,10 +80,16 @@ func TestCapacityTableAppliedInputsKeepMissingUIDLocalAcrossEngines(t *testing.T
 			snapshot.Workloads[1] = &changed
 			snapshot = capacityLifecycleBudgets(snapshot, 5, 900)
 			table.Ensure(context.Background(), settings, snapshot)
-			replacement := nextCapacityBuild(t, started)
-			assertLocal()
-			close(replacement.release)
 			table.Wait()
+			rows, budgets = table.Inputs()
+			if len(rows) != 2 || len(budgets) != 2 || budgets[1].DefinitionID != changed.Identity() {
+				t.Fatalf("definition provenance refresh lost shared numerical rows: rows=%+v budgets=%+v", rows, budgets)
+			}
+			select {
+			case running := <-started:
+				t.Fatalf("definition provenance refresh repeated numerical work: %+v", running)
+			default:
+			}
 		})
 	}
 }

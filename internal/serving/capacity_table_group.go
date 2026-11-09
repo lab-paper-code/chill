@@ -122,33 +122,26 @@ func (t *CapacityTable) mergeGroupLocked(state *capacityTableWorkload, g *capaci
 	}
 }
 
-func (t *CapacityTable) dropLocked(uid string, state *capacityTableWorkload) {
+func (t *CapacityTable) dropLocked(uid string, keep *capacityGroup) {
 	for key, task := range t.running {
-		if task.workload.UID == uid {
-			task.cancel()
-			delete(t.running, key)
+		if task.workload.UID != uid {
+			continue
 		}
-	}
-	for _, g := range []*capacityGroup{state.active, state.building, state.latest} {
-		if g != nil {
-			for _, item := range g.items {
-				delete(t.rows, item.key)
-				delete(t.previous, item.key)
-				delete(t.asked, item.key)
-			}
+		if keep != nil && slices.ContainsFunc(keep.items, func(item capacityTableItem) bool { return item.key == key }) {
+			keep.started = true
+			continue
 		}
+		task.cancel()
+		delete(t.running, key)
 	}
 }
 
-func (t *CapacityTable) completeLocked(g *capacityGroup, recorded bool) bool {
+func (t *CapacityTable) completeLocked(g *capacityGroup) bool {
 	if len(g.items) == 0 {
 		return false
 	}
 	for _, item := range g.items {
 		row, found := t.rows[item.key]
-		if !found && recorded {
-			row, found = t.previous[item.key]
-		}
 		if !found || row.Status != CapacityBuilt && row.Status != CapacityRejected {
 			return false
 		}
@@ -163,16 +156,13 @@ func (t *CapacityTable) advanceLocked() {
 			case <-g.ctx.Done():
 				g.started, state.building = false, nil
 			default:
-				if t.completeLocked(g, true) {
-					state.active = g
-				}
-				if t.completeLocked(g, false) {
+				if t.completeLocked(g) {
 					state.active, state.building = g, nil
 				}
 			}
 		}
 		if state.building == nil && state.active.allowsBudget(state.latest) {
-			if t.completeLocked(state.latest, false) {
+			if t.completeLocked(state.latest) {
 				state.active = state.latest
 			} else {
 				select {

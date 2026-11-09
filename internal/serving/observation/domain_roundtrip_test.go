@@ -39,7 +39,7 @@ func TestCapacityArchiveCutoverDoesNotLoadControlledExecutionRows(t *testing.T) 
 	table := serving.NewCapacityTable(1, nil, observationLog.CapacityRecords)
 	table.Ensure(context.Background(), settings, snapshot)
 	table.Wait()
-	if row := table.Rows()[0]; row.Status != serving.CapacityBuilt || row.Previous {
+	if row := table.Rows()[0]; row.Status != serving.CapacityBuilt {
 		t.Fatalf("old archived rejection survived fresh build: %+v", row)
 	}
 }

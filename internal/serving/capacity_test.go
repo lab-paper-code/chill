@@ -501,24 +501,24 @@ func TestCapacityTableBuildsEveryCompatibleVariant(t *testing.T) {
 	}
 }
 
-// A recorded row stands in for a row being computed and gives way once built.
-func TestCapacityTableUsesRecordedRowUntilBuilt(t *testing.T) {
+func TestCapacityTableReusesRecordedNumericalRowBeforeAdmission(t *testing.T) {
 	s, snap := capacityFixture()
-
-	recordedKappa := 1.0
+	recorded := capacityBuildForTest(t, s, snap)
 	table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
-		return map[string]CapacityRow{keys[0]: {Key: keys[0], Status: CapacityBuilt, Kappa: &recordedKappa}}, nil
+		return map[string]CapacityRow{recorded.Key: recorded}, nil
 	}))
 	table.Ensure(context.Background(), s, snap)
-	running := nextCapacityBuild(t, started)
 	waitCapacityLoad(t, table)
-	if row := table.Rows()[0]; !row.Previous || row.Kappa == nil || *row.Kappa != recordedKappa {
-		t.Fatalf("recorded row must stand in until rebuilt: %+v", row)
+	select {
+	case running := <-started:
+		close(running.release)
+		table.Wait()
+		t.Fatal("matching archived row was admitted for duplicate calculation")
+	default:
 	}
-	close(running.release)
 	table.Wait()
-	if row := table.Rows()[0]; row.Previous || row.Kappa == nil || *row.Kappa <= recordedKappa {
-		t.Fatalf("the built row must replace the recorded one: %+v", row)
+	if row := table.Rows()[0]; row.Kappa == nil || *row.Kappa != *recorded.Kappa || !row.BuiltAt.Equal(recorded.BuiltAt) {
+		t.Fatalf("completed archive did not become numerical cache: %+v", row)
 	}
 }
 

@@ -255,7 +255,7 @@ func TestCapacityTableUnchangedNumbersRefreshProvenanceWithoutRestart(t *testing
 	table.mu.Lock()
 	busy := table.workers != 0 || len(table.running) != 0
 	table.mu.Unlock()
-	if busy || rows[0].Key != before.Key || rows[0].BuiltAt != before.BuiltAt || rows[0].Previous ||
+	if busy || rows[0].Key != before.Key || rows[0].BuiltAt != before.BuiltAt ||
 		budgets[0].To != desired.At || rows[0].Input.DispatchOccupancy.Source != "refreshed-evidence" {
 		t.Fatalf("unchanged numerical input restarted or lost provenance: rows=%+v budgets=%+v", rows, budgets)
 	}
@@ -330,6 +330,8 @@ func TestCapacityTableStructuralRemovalDiscardsActiveAndOldTask(t *testing.T) {
 
 func TestCapacityTableLateLoadCannotResurrectRemovedRows(t *testing.T) {
 	settings, snapshot := capacityLifecycleFixture(1)
+	snapshot = capacityLifecycleBudgets(snapshot, 1)
+	recorded := capacityBuildForTest(t, settings, snapshot)
 	table, started, stop := gateCapacityTableBuilds(t, NewCapacityTable(2, nil, nil))
 	type loadBoundary struct {
 		keys    []string
@@ -348,8 +350,7 @@ func TestCapacityTableLateLoadCannotResurrectRemovedRows(t *testing.T) {
 		case <-stop:
 			return nil, context.Canceled
 		}
-		kappa := 123.0
-		return map[string]CapacityRow{keys[0]: {Key: keys[0], Status: CapacityBuilt, Kappa: &kappa}}, nil
+		return map[string]CapacityRow{recorded.Key: recorded}, nil
 	}
 	nextLoad := func() loadBoundary {
 		t.Helper()
@@ -361,32 +362,29 @@ func TestCapacityTableLateLoadCannotResurrectRemovedRows(t *testing.T) {
 			return loadBoundary{}
 		}
 	}
-	table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, 1))
-	obsoleteBuild, obsoleteLoad := nextCapacityBuild(t, started), nextLoad()
+	table.Ensure(context.Background(), settings, snapshot)
+	obsoleteLoad := nextLoad()
 	empty := snapshot
 	empty.Workloads = nil
 	table.Ensure(context.Background(), settings, empty)
-	table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, 1))
-	replacement := nextCapacityBuild(t, started)
+	table.Ensure(context.Background(), settings, snapshot)
 	close(obsoleteLoad.release)
-	currentLoad := nextLoad() // The old callback finished before this load started.
+	currentLoad := nextLoad()
 	if currentLoad.keys[0] != obsoleteLoad.keys[0] {
 		t.Fatal("test did not recreate the removed numerical input")
 	}
-	row := table.Rows()[0]
-	if row.Previous || row.Kappa != nil || row.Status != CapacityPending {
-		t.Fatalf("old load resurrected a removed row: %+v", row)
+	if row := table.Rows()[0]; row.Kappa != nil || row.Status != CapacityPending || table.WorkerStatus().Active != 0 {
+		t.Fatalf("old load resurrected a removed row or admitted duplicate work: %+v", row)
 	}
 	close(currentLoad.release)
-	waitCapacityLoad(t, table)
-	if row = table.Rows()[0]; !row.Previous || row.Kappa == nil || *row.Kappa != 123 {
-		t.Fatalf("current recorded row did not stand in for its rebuild: %+v", row)
-	}
-	close(obsoleteBuild.release)
-	close(replacement.release)
 	table.Wait()
-	if row = table.Rows()[0]; row.Previous || row.Kappa == nil || *row.Kappa != 0 {
-		t.Fatalf("recorded row survived the current build: %+v", row)
+	if row := table.Rows()[0]; !row.BuiltAt.Equal(recorded.BuiltAt) || row.Kappa == nil || *row.Kappa != *recorded.Kappa {
+		t.Fatalf("current completed archive was not reused: %+v", row)
+	}
+	select {
+	case running := <-started:
+		t.Fatalf("archive recovery admitted duplicate work: %+v", running)
+	default:
 	}
 }
 
@@ -405,7 +403,7 @@ func TestCapacityTableReclaimsUnreferencedRowsAndGroups(t *testing.T) {
 		assertCapacityGroup(t, table, budget, 1)
 		table.mu.Lock()
 		state := table.groups[snapshot.Workloads[0].UID]
-		retained := len(table.rows) == 1 && len(table.previous) == 0 && len(table.running) == 0 &&
+		retained := len(table.rows) == 1 && len(table.running) == 0 &&
 			state.active == state.latest && state.building == nil
 		table.mu.Unlock()
 		if !retained {
@@ -416,7 +414,7 @@ func TestCapacityTableReclaimsUnreferencedRowsAndGroups(t *testing.T) {
 	table.Wait()
 	table.mu.Lock()
 	defer table.mu.Unlock()
-	if len(table.rows)+len(table.previous)+len(table.asked)+len(table.running)+len(table.groups)+len(table.order) != 0 || table.loading != nil {
+	if len(table.rows)+len(table.asked)+len(table.running)+len(table.groups)+len(table.order) != 0 || table.loading != nil {
 		t.Fatal("removed Workload still retains capacity state")
 	}
 }

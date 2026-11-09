@@ -1,6 +1,9 @@
 package serving
 
-import "context"
+import (
+	"context"
+	"math"
+)
 
 type capacityArchiveLoad struct {
 	ctx  context.Context
@@ -39,9 +42,9 @@ func (t *CapacityTable) startLoadLocked() {
 		t.mu.Lock()
 		if err == nil {
 			for key, row := range rows {
-				if _, built := t.rows[key]; !built && t.asked[key] == request {
-					row.Previous = true
-					t.previous[key] = row
+				if _, built := t.rows[key]; !built && t.asked[key] == request && row.Key == key && reusableCapacityArchiveRow(row) {
+					t.rows[key] = row
+					delete(t.asked, key)
 				}
 			}
 		}
@@ -69,14 +72,25 @@ func (t *CapacityTable) pruneLocked() {
 			delete(t.rows, key)
 		}
 	}
-	for key := range t.previous {
-		if !keys[key] {
-			delete(t.previous, key)
-		}
-	}
 	for key := range t.asked {
 		if !keys[key] {
 			delete(t.asked, key)
 		}
+	}
+}
+
+// Only completed scientific outcomes survive recovery; operational errors retry
+// through the normal builder on the next process, never as archived rejections.
+func reusableCapacityArchiveRow(row CapacityRow) bool {
+	if row.BuiltAt.IsZero() {
+		return false
+	}
+	switch row.Status {
+	case CapacityBuilt:
+		return row.Kappa != nil && *row.Kappa >= 0 && *row.Kappa <= row.Mu && !math.IsInf(row.Mu, 0)
+	case CapacityRejected:
+		return row.Reason == CapacityNonMonotone && row.Kappa == nil
+	default:
+		return false
 	}
 }

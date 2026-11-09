@@ -10,14 +10,13 @@ import (
 
 // CapacityTable publishes one coherent budget and complete row group per
 // autonomous Workload. A budget refresh keeps running work and coalesces queued
-// work; a structural change discards the old group. Recorded rows can stand in
-// for matching rows while this process rebuilds them.
+// work; a structural change withdraws the old group. Matching completed numerical
+// rows are reused from memory or the current calculation-contract archive.
 type CapacityTable struct {
 	mu       sync.Mutex
 	idle     *sync.Cond
 	rows     map[string]CapacityRow
 	running  map[string]*capacityTask
-	previous map[string]CapacityRow
 	asked    map[string]*capacityArchiveLoad
 	groups   map[string]*capacityTableWorkload
 	order    []string
@@ -33,9 +32,9 @@ type CapacityTable struct {
 // NewCapacityTable runs up to parallel rows at once; zero selects half of
 // GOMAXPROCS, with at least one builder. record receives each built row (the
 // capacity-row-built event) and its error is not retried. load returns the latest
-// recorded rows of keys; record and load may be nil.
+// recorded rows of keys before builder admission; record and load may be nil.
 func NewCapacityTable(parallel int, record func(CapacityRow) error, load func(context.Context, []string) (map[string]CapacityRow, error)) *CapacityTable {
-	t := &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]*capacityTask{}, previous: map[string]CapacityRow{}, asked: map[string]*capacityArchiveLoad{},
+	t := &CapacityTable{rows: map[string]CapacityRow{}, running: map[string]*capacityTask{}, asked: map[string]*capacityArchiveLoad{},
 		groups: map[string]*capacityTableWorkload{}, parallel: capacityWorkerLimit(parallel), record: record, load: load, buildRow: BuildCapacityRow}
 	t.idle = sync.NewCond(&t.mu)
 	return t
@@ -113,7 +112,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 		g := newCapacityGroup(ctx, settings, snapshot, w)
 		state := t.groups[w.UID]
 		if state != nil && !state.latest.sameStructure(g) {
-			t.dropLocked(w.UID, state)
+			t.dropLocked(w.UID, g)
 			state = nil
 		}
 		if state == nil {
@@ -124,7 +123,7 @@ func (t *CapacityTable) Ensure(ctx context.Context, settings SchedulerSettings, 
 	}
 	for uid, state := range t.groups {
 		if !wanted[uid] {
-			t.dropLocked(uid, state)
+			t.dropLocked(uid, nil)
 			delete(t.groups, uid)
 		}
 	}
@@ -174,9 +173,6 @@ func (t *CapacityTable) inputsLocked(withBudgets bool) ([]CapacityRow, []PathBud
 		}
 		for _, item := range g.items {
 			row, found := t.rows[item.key]
-			if !found {
-				row, found = t.previous[item.key]
-			}
 			if !found {
 				row = CapacityRow{Key: item.key, Status: CapacityPending}
 			}

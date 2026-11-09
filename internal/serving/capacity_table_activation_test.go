@@ -36,54 +36,53 @@ func TestCapacityTableArchiveActivatesOnlyWholeTerminalGroups(t *testing.T) {
 	for _, whole := range []bool{false, true} {
 		t.Run(map[bool]string{false: "partial archive", true: "built and rejected archive"}[whole], func(t *testing.T) {
 			settings, snapshot := capacityLifecycleFixture(2)
-			load := func(_ context.Context, keys []string) (map[string]CapacityRow, error) {
-				kappa := 123.0
-				rows := map[string]CapacityRow{keys[0]: {Key: keys[0], Status: CapacityBuilt, Kappa: &kappa}}
-				if whole {
-					rows[keys[1]] = CapacityRow{Key: keys[1], Status: CapacityRejected, Reason: CapacityNonMonotone}
+			snapshot = capacityLifecycleBudgets(snapshot, 10)
+			archived := map[string]CapacityRow{}
+			for _, option := range CapacityVariants(snapshot.Options[0]) {
+				row, err := BuildCapacityRow(context.Background(), settings, snapshot.DispatchOccupancy, option, snapshot.Workloads[0], snapshot.At, snapshot.PathBudgets[0])
+				if err != nil {
+					t.Fatal(err)
 				}
-				return rows, nil
+				if option.Instance.MaxBatch == 2 {
+					if !whole {
+						continue
+					}
+					row.Status, row.Reason, row.Kappa = CapacityRejected, CapacityNonMonotone, nil
+				}
+				archived[row.Key] = row
 			}
+			load := func(context.Context, []string) (map[string]CapacityRow, error) { return archived, nil }
 			table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, load))
-			table.Ensure(context.Background(), settings, capacityLifecycleBudgets(snapshot, 10))
-			first := nextCapacityBuild(t, started)
+			table.Ensure(context.Background(), settings, snapshot)
 			waitCapacityLoad(t, table)
 			if whole {
+				table.Wait()
 				rows, budgets := table.Inputs()
 				if len(rows) != 2 || len(budgets) != 1 || rows[0].Status != CapacityBuilt || rows[1].Status != CapacityRejected ||
-					!rows[0].Previous || !rows[1].Previous || rows[1].Reason != CapacityNonMonotone || rows[1].Kappa != nil {
-					t.Fatalf("complete terminal archive was not activated intact: rows=%+v budgets=%+v", rows, budgets)
-				}
-				for _, row := range rows {
-					if row.Key != row.Input.Key() || row.Input.CompletionMarginMS != budgets[0].TotalMS || row.Input.PostMarginMS != budgets[0].PostMS {
-						t.Fatalf("archived row mismatches active input: %+v", row)
-					}
+					rows[1].Reason != CapacityNonMonotone || rows[1].Kappa != nil || table.WorkerStatus().Active != 0 {
+					t.Fatalf("complete scientific archive was not activated intact: rows=%+v budgets=%+v", rows, budgets)
 				}
 			} else {
+				running := nextCapacityBuild(t, started)
 				rows := assertNoActiveCapacityGroup(t, table, 10, 2)
-				if !rows[0].Previous || rows[0].Status != CapacityBuilt || rows[1].Status != CapacityPending {
-					t.Fatalf("partial archive diagnostics disappeared: %+v", rows)
+				if rows[0].Status != CapacityBuilt || rows[1].Status != CapacityPending || running.batch != 2 {
+					t.Fatalf("partial archive admitted duplicate work: rows=%+v task=%+v", rows, running)
 				}
+				close(running.release)
+				table.Wait()
+				assertCapacityGroup(t, table, 10, 2)
 			}
-			close(first.release)
-			second := nextCapacityBuild(t, started)
-			if !whole {
-				assertNoActiveCapacityGroup(t, table, 10, 2)
-			}
-			close(second.release)
-			table.Wait()
-			assertCapacityGroup(t, table, 10, 2)
-			for _, row := range table.Rows() {
-				if row.Previous {
-					t.Fatal("fresh whole build retained an archived stand-in")
-				}
+			select {
+			case running := <-started:
+				t.Fatalf("completed archived row was rebuilt: %+v", running)
+			default:
 			}
 		})
 	}
 }
 
 func TestCapacityTableStructuralInvalidationWithdrawsAppliedInputs(t *testing.T) {
-	for _, change := range []string{"definition", "profile", "occupancy", "capacity settings", "no variants"} {
+	for _, change := range []string{"profile", "occupancy", "capacity settings", "no variants"} {
 		t.Run(change, func(t *testing.T) {
 			settings, snapshot := capacityLifecycleFixture(1)
 			table, started, _ := gateCapacityTableBuilds(t, NewCapacityTable(1, nil, nil))
@@ -92,11 +91,6 @@ func TestCapacityTableStructuralInvalidationWithdrawsAppliedInputs(t *testing.T)
 			close(nextCapacityBuild(t, started).release)
 			table.Wait()
 			switch change {
-			case "definition":
-				w := *snapshot.Workloads[0]
-				w.Generation++
-				snapshot.Workloads = []*Definition{&w}
-				snapshot = capacityLifecycleBudgets(snapshot, 10)
 			case "profile":
 				p := *snapshot.Options[0].Instance.Profile
 				p.ID += "-replacement"
