@@ -62,27 +62,7 @@ func TestSchedulerPrioritySettingsRoundTrip(t *testing.T) {
 	}
 	assertConsumers := func(want serving.SchedulerSettings) string {
 		t.Helper()
-		response := request(http.MethodGet, nil, "")
-		var shown serving.SchedulerSettings
-		if err := json.Unmarshal(response.Body.Bytes(), &shown); err != nil || response.Code != http.StatusOK || !reflect.DeepEqual(shown, want) {
-			t.Fatalf("GET settings: status=%d body=%s error=%v", response.Code, response.Body, err)
-		}
-		stored, err := h.authorizer.Client.CoreV1().ConfigMaps("serving").Get(context.Background(), "scheduler", meta.GetOptions{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		config, err := application.DecodeSchedulerConfiguration(stored.Data["scheduler.json"], 1<<20)
-		if err != nil {
-			t.Fatal(err)
-		}
-		accepted, ok := service.AcceptedSettings()
-		if !ok || !reflect.DeepEqual(accepted, want) || !reflect.DeepEqual(service.Controller.Settings(), want) || !reflect.DeepEqual(config.Settings, want) {
-			t.Fatal("GET, ConfigMap and accepted priority settings diverged")
-		}
-		if stored.Data["other"] != "preserved" || !reflect.DeepEqual(config.Reserved, reserved) {
-			t.Fatal("priority update changed unrelated configuration")
-		}
-		return response.Header().Get("ETag")
+		return verifyPrioritySettingsConsumers(t, h, service, request, reserved, want)
 	}
 	want := before
 	tag := assertConsumers(want)
@@ -148,4 +128,29 @@ func TestSchedulerPrioritySettingsRoundTrip(t *testing.T) {
 		}
 		tag = assertConsumers(want)
 	}
+}
+
+func verifyPrioritySettingsConsumers(t *testing.T, h *Handler, service *application.SchedulerService, request func(string, []byte, string) *httptest.ResponseRecorder, reserved map[string]serving.SchedulerAllocation, want serving.SchedulerSettings) string {
+	t.Helper()
+	response := request(http.MethodGet, nil, "")
+	var shown serving.SchedulerSettings
+	if err := json.Unmarshal(response.Body.Bytes(), &shown); err != nil || response.Code != http.StatusOK || !reflect.DeepEqual(shown, want) {
+		t.Fatalf("GET settings: status=%d body=%s error=%v", response.Code, response.Body, err)
+	}
+	stored, err := h.authorizer.Client.CoreV1().ConfigMaps(settingsTestNamespace).Get(context.Background(), settingsTestConfigMap, meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := application.DecodeSchedulerConfiguration(stored.Data["scheduler.json"], 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, ok := service.AcceptedSettings()
+	if !ok || !reflect.DeepEqual(accepted, want) || !reflect.DeepEqual(service.Controller.Settings(), want) || !reflect.DeepEqual(config.Settings, want) {
+		t.Fatal("GET, ConfigMap and accepted priority settings diverged")
+	}
+	if stored.Data["other"] != "preserved" || !reflect.DeepEqual(config.Reserved, reserved) {
+		t.Fatal("priority update changed unrelated configuration")
+	}
+	return response.Header().Get("ETag")
 }

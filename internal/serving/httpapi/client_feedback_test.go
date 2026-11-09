@@ -46,10 +46,10 @@ func feedbackHTTPHandler(t *testing.T, allowed bool) (*Handler, *atomic.Int64, t
 		sar := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
 		attributes := sar.Spec.NonResourceAttributes
 		if attributes == nil || !strings.HasPrefix(attributes.Path, "/chill/api/v1/") ||
-			attributes.Verb != "post" && attributes.Verb != "get" {
+			attributes.Verb != strings.ToLower(http.MethodPost) && attributes.Verb != measurementGetVerb {
 			t.Errorf("wrong feedback SAR: %+v", sar.Spec)
 		}
-		if attributes != nil && attributes.Verb == "post" && attributes.Path != "/chill/api/v1/workloads/workload/feedback" && attributes.Path != "/chill/api/v1/workloads/other/feedback" {
+		if attributes != nil && attributes.Verb == strings.ToLower(http.MethodPost) && attributes.Path != "/chill/api/v1/workloads/workload/feedback" && attributes.Path != "/chill/api/v1/workloads/other/feedback" {
 			t.Errorf("feedback did not use path authorization: %+v", attributes)
 		}
 		return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
@@ -132,22 +132,7 @@ func TestClientFeedbackBoundaryAndDurableEvidence(t *testing.T) {
 	if err != nil || len(page.Observations) != 1 || page.Observations[0].Outcome != "timeout" {
 		t.Fatalf("later raw report lost: %+v %v", page, err)
 	}
-	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/observations/clients?from="+base.Format(time.RFC3339Nano)+"&to="+base.Add(time.Minute).Format(time.RFC3339Nano)+"&limit=1&cursor=1", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Authorization", "Bearer token")
-	response, err := server.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var public observation.ClientObservationPage
-	decodeErr := json.NewDecoder(response.Body).Decode(&public)
-	closeErr := response.Body.Close()
-	if response.StatusCode != http.StatusOK || decodeErr != nil || closeErr != nil ||
-		len(public.Observations) != 1 || public.Observations[0].Outcome != "timeout" {
-		t.Fatalf("public clients query: status=%d page=%+v decode=%v close=%v", response.StatusCode, public, decodeErr, closeErr)
-	}
+	verifyPublicClientTimeout(t, server, base)
 	clock.Store(base.Add(2 * time.Minute).UnixNano())
 	raw, err := h.observationLog.OpenRaw(context.Background(), base.Format("20060102T15"), "clients")
 	if err != nil {
@@ -170,6 +155,26 @@ func TestClientFeedbackBoundaryAndDurableEvidence(t *testing.T) {
 	}
 	if status, _ := feedbackPOST(t, server, "workload", valid, "token"); status != http.StatusServiceUnavailable {
 		t.Fatalf("closed log admission: %d", status)
+	}
+}
+
+func verifyPublicClientTimeout(t *testing.T, server *httptest.Server, base time.Time) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/observations/clients?from="+base.Format(time.RFC3339Nano)+"&to="+base.Add(time.Minute).Format(time.RFC3339Nano)+"&limit=1&cursor=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer token")
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var public observation.ClientObservationPage
+	decodeErr := json.NewDecoder(response.Body).Decode(&public)
+	closeErr := response.Body.Close()
+	if response.StatusCode != http.StatusOK || decodeErr != nil || closeErr != nil ||
+		len(public.Observations) != 1 || public.Observations[0].Outcome != "timeout" {
+		t.Fatalf("public clients query: status=%d page=%+v decode=%v close=%v", response.StatusCode, public, decodeErr, closeErr)
 	}
 }
 
@@ -231,16 +236,7 @@ func TestClientFeedbackHTTPToLoadWindow(t *testing.T) {
 	}
 	definition := &serving.Definition{Name: "workload", UID: "server-uid", Generation: 1}
 	feedbackServerRequest(t, h.observationLog, "request/opaque", base.Add(100*time.Millisecond), definition)
-	joined, err := h.observationLog.LoadWindow(context.Background(), from, to)
-	if err != nil || len(joined.PathSamples) != 1 || len(joined.ClientObservations) != 1 {
-		t.Fatalf("server-later join needs no new report: %+v %v", joined, err)
-	}
-	if sample := joined.PathSamples[0]; sample.TotalNanos != 40e6 || sample.PostNanos != 30e6 || sample.WorkloadUID != definition.UID {
-		t.Fatalf("TOTAL/POST or server identity changed: %+v", sample)
-	}
-	if joined.ClientObservations[0].WorkloadUID != definition.UID {
-		t.Fatalf("joined identity did not use server row: %+v", joined.ClientObservations)
-	}
+	joined := verifyServerJoinedFeedback(t, h.observationLog, from, to, definition.UID)
 	post(`{"observationID":"client-first","requestID":"request/opaque","elapsedNanos":999000000,"outcome":"timeout"}`)
 	post(`{"observationID":"another-id","requestID":"request/opaque","elapsedNanos":500000000,"outcome":"completed","statusCode":200}`)
 	post(`{"observationID":"timeout/no-id","elapsedNanos":80000000,"outcome":"timeout"}`)
@@ -287,4 +283,19 @@ func TestClientFeedbackHTTPToLoadWindow(t *testing.T) {
 	if err != nil || len(raw.Observations) != 10 || raw.Observations[0].WorkloadUID != "" {
 		t.Fatalf("raw reports mutated or lost: %+v %v", raw, err)
 	}
+}
+
+func verifyServerJoinedFeedback(t *testing.T, log *observation.ObservationLog, from, to time.Time, uid string) observation.LoadWindow {
+	t.Helper()
+	joined, err := log.LoadWindow(context.Background(), from, to)
+	if err != nil || len(joined.PathSamples) != 1 || len(joined.ClientObservations) != 1 {
+		t.Fatalf("server-later join needs no new report: %+v %v", joined, err)
+	}
+	if sample := joined.PathSamples[0]; sample.TotalNanos != 40e6 || sample.PostNanos != 30e6 || sample.WorkloadUID != uid {
+		t.Fatalf("TOTAL/POST or server identity changed: %+v", sample)
+	}
+	if joined.ClientObservations[0].WorkloadUID != uid {
+		t.Fatalf("joined identity did not use server row: %+v", joined.ClientObservations)
+	}
+	return joined
 }

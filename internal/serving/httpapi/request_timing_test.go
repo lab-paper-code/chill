@@ -30,9 +30,6 @@ const (
 	timingScenarioDecode     = "decode"
 	timingScenarioWorker     = "worker"
 	timingScenarioCancel     = "cancel"
-	timingOutcomeCompleted   = "completed"
-	timingOutcomeTimeout     = "timeout"
-	timingOutcomeCanceled    = "canceled"
 )
 
 func timingHandler(t *testing.T, execute func(context.Context, serving.Dispatch) (serving.BackendResult, error)) (*Handler, *observation.ObservationLog) {

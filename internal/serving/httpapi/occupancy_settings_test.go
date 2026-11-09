@@ -14,6 +14,11 @@ import (
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	settingsTestNamespace = "serving"
+	settingsTestConfigMap = "scheduler"
+)
+
 func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	h, _ := occupancyHandler(t, "")
 	h.config.MaxRequestBytes = 1 << 20
@@ -39,9 +44,9 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cm := &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: "serving", Name: "scheduler", ResourceVersion: "1"},
+	cm := &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Namespace: settingsTestNamespace, Name: settingsTestConfigMap, ResourceVersion: "1"},
 		Data: map[string]string{"scheduler.json": string(raw)}}
-	if _, err = h.authorizer.Client.CoreV1().ConfigMaps("serving").Create(context.Background(), cm, meta.CreateOptions{}); err != nil {
+	if _, err = h.authorizer.Client.CoreV1().ConfigMaps(settingsTestNamespace).Create(context.Background(), cm, meta.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = service.Refresh(context.Background()); err != nil {
@@ -50,8 +55,8 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 	controller := service.Controller
 	h.runtime = execution
 	h.config.Scheduler = controller
-	h.config.SchedulerNamespace = "serving"
-	h.config.SchedulerConfigMap = "scheduler"
+	h.config.SchedulerNamespace = settingsTestNamespace
+	h.config.SchedulerConfigMap = settingsTestConfigMap
 	h.config.SchedulerConfigKey = "scheduler.json"
 	h.config.ChangeSchedulerSettings = service.ChangeSchedulerSettings
 	after := before
@@ -69,8 +74,8 @@ func TestSettingsPutPreservesDispatchOccupancyBlock(t *testing.T) {
 		t.Fatalf("settings PUT: %d %s", response.Code, response.Body.String())
 	}
 	persisted, err := h.authorizer.Client.CoreV1().
-		ConfigMaps("serving").
-		Get(context.Background(), "scheduler", meta.GetOptions{})
+		ConfigMaps(settingsTestNamespace).
+		Get(context.Background(), settingsTestConfigMap, meta.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

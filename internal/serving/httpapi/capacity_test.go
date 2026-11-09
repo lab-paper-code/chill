@@ -20,7 +20,7 @@ import (
 )
 
 func TestSchedulerCapacityProjectionMatchesDashboardFixture(t *testing.T) {
-	var tests []serving.SchedulerFeedbackRate
+	tests := make([]serving.SchedulerFeedbackRate, 0, 3)
 	for _, id := range []string{"instance-failed", "instance-untested", "instance-pass"} {
 		tests = append(tests, serving.SchedulerFeedbackRate{
 			InstanceID: id,
@@ -99,7 +99,7 @@ func TestSchedulerCapacityKeepsAuthorizationBoundary(t *testing.T) {
 			})
 			kube.PrependReactor("create", "subjectaccessreviews", func(action ktesting.Action) (bool, runtime.Object, error) {
 				sar := action.(ktesting.CreateAction).GetObject().(*authorizationv1.SubjectAccessReview)
-				if sar.Spec.NonResourceAttributes == nil || sar.Spec.NonResourceAttributes.Path != "/chill/api/v1/scheduler/capacity" || sar.Spec.NonResourceAttributes.Verb != "get" {
+				if sar.Spec.NonResourceAttributes == nil || sar.Spec.NonResourceAttributes.Path != "/chill/api/v1/scheduler/capacity" || sar.Spec.NonResourceAttributes.Verb != measurementGetVerb {
 					t.Fatalf("changed capacity authorization: %+v", sar.Spec)
 				}
 				return true, &authorizationv1.SubjectAccessReview{Status: authorizationv1.SubjectAccessReviewStatus{Allowed: tc.allowed}}, nil

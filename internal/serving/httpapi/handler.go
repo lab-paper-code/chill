@@ -28,8 +28,12 @@ import (
 )
 
 const (
-	requestTimeoutCode  = "RequestTimeout"
-	requestCanceledCode = "RequestCanceled"
+	requestTimeoutCode     = "RequestTimeout"
+	requestCanceledCode    = "RequestCanceled"
+	invalidBodyCode        = "InvalidBody"
+	timingOutcomeCompleted = "completed"
+	timingOutcomeTimeout   = "timeout"
+	timingOutcomeCanceled  = "canceled"
 	// MaximumInferenceRequestTimeout is the actual infer handler/header cap,
 	// independent of the management request timeout.
 	MaximumInferenceRequestTimeout = 129 * time.Second
@@ -222,11 +226,11 @@ func (h *Handler) decode(w http.ResponseWriter, r *http.Request, value any) erro
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
-		return &serving.Error{Code: "InvalidBody", Message: "body must be bounded valid JSON with declared fields", Field: "body"}
+		return &serving.Error{Code: invalidBodyCode, Message: "body must be bounded valid JSON with declared fields", Field: "body"}
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return &serving.Error{Code: "InvalidBody", Message: "one JSON object is required", Field: "body"}
+		return &serving.Error{Code: invalidBodyCode, Message: "one JSON object is required", Field: "body"}
 	}
 	// Once the body is consumed, only the operation context bounds processing.
 	if err := http.NewResponseController(w).SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
@@ -769,7 +773,7 @@ func writeError(w http.ResponseWriter, err error) error {
 		status = http.StatusPreconditionRequired
 	case "NotFound", "WorkloadNotFound", "PoolNotFound":
 		status = http.StatusNotFound
-	case "InvalidBody", "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "InvalidClientObservation", "ResourceVersionRequired", "MeasurementPreflightRejected", "OccupancyInfeasible":
+	case invalidBodyCode, "InvalidInput", "InvalidWorkload", "InvalidModel", "InvalidModelReference", "InvalidPreprocessorReference", "InvalidDatasetReference", "IncompatibleDataset", "InvalidPreprocessor", "InvalidDataset", "InvalidQuery", "InvalidCoverageQuery", "InvalidRequestTimeout", "InvalidClientObservation", "ResourceVersionRequired", "MeasurementPreflightRejected", "OccupancyInfeasible":
 		status = http.StatusBadRequest
 	case "ObservationNotReady", "AlreadyExists", "ModelReferenced", "ModelArtifactReferenced", "PreprocessorReferenced", "DatasetReferenced", "ModelDeleting", "PreprocessorDeleting", "DatasetDeleting", "ResourceVersionConflict", "OperationConflict", "NodeBusy", "NodeServing", "NodeMissing", "RegistrationConflict", "CatalogIdentityConflict", "DefinitionChanged", "WorkloadChanged", "MeasurementInUse":
 		status = http.StatusConflict

@@ -63,7 +63,7 @@ func (report ClientObservationReport) validate() error {
 		return invalid
 	}
 	switch report.Outcome {
-	case "completed":
+	case timingOutcomeCompleted:
 		if report.StatusCode == nil || *report.StatusCode < 200 || *report.StatusCode >= 300 {
 			return invalid
 		}
@@ -71,7 +71,7 @@ func (report ClientObservationReport) validate() error {
 		if report.StatusCode == nil || *report.StatusCode >= 200 && *report.StatusCode < 300 {
 			return invalid
 		}
-	case "timeout", "transport_error", "canceled":
+	case timingOutcomeTimeout, "transport_error", timingOutcomeCanceled:
 	default:
 		return invalid
 	}
