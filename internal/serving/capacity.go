@@ -294,6 +294,7 @@ type capacityReplay struct {
 	w           *Definition
 	gaps        map[[2]int][]float64
 	conditional ConditionalServiceEvidence
+	feedback    *PathFeedback // nil preserves explicit offline row inputs
 }
 
 // capacityWindowLimit can only disprove a window; a passing window still
@@ -323,7 +324,7 @@ func (s *schedulerReplayState) capacityWindowFailed() bool {
 		if r.completed {
 			end = r.completion
 		}
-		if float64(r.source.Elapsed)+end-r.arrival > float64(limit.slo.TargetLatency) {
+		if r.accountedAge+end-r.arrival > float64(limit.slo.TargetLatency) {
 			r.capacityMiss = true
 			limit.missed++
 		}
@@ -367,6 +368,9 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 		Instances: []SchedulerInstance{instance}, Routing: map[string]map[string]int32{w.UID: {instance.ID: 1}},
 		Arrivals: arrivals, Options: []SchedulerOption{o}, DispatchOccupancy: []DispatchOccupancy{b.occupancy},
 	}
+	if b.feedback != nil {
+		snapshot.PathFeedback = []PathFeedback{*b.feedback}
+	}
 	settings := b.settings
 	settings.AutonomousWorkloads = nil
 	settings.ObservationWindow, settings.ComparisonPeriod = span, span
@@ -394,7 +398,7 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 		}
 		result.latency = *e.ExpectedNanos / 1e6
 		for kind, count := range e.PredictedOutcomes {
-			if count > 0 && (kind == "timeout" || strings.HasPrefix(kind, "expired-")) {
+			if count > 0 && feedbackFailedOutcome(kind) {
 				return result, nil
 			}
 		}

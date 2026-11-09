@@ -93,9 +93,10 @@ func (s *schedulerReplayState) admitArrivals() {
 
 func (s *schedulerReplayState) expireRequests() {
 	for _, r := range s.live {
-		if r.completed || r.expired || r.dropped || r.expires > s.now {
+		if r.completed || r.expired || r.dropped || r.failed || r.expires > s.now {
 			continue
 		}
+		s.capturePotential(r, s.byID[r.source.Instance])
 		r.expired = true
 		kind := "expired-pending"
 		if r.dispatched {
@@ -123,9 +124,9 @@ func (s *schedulerReplayState) expireRequests() {
 					}
 				}
 				i.queue = kept
-				r.completion = s.now + s.settings.CompletionMarginMS*1e6
+				r.completion = s.now + r.marginNanos
 				if !math.IsInf(r.native, 1) {
-					r.completion = math.Max(s.now, r.native) + s.settings.CompletionMarginMS*1e6
+					r.completion = math.Max(s.now, r.native) + r.marginNanos
 				}
 				r.native = math.Inf(1)
 			}
@@ -140,7 +141,7 @@ func (s *schedulerReplayState) completeExecution() {
 			for _, r := range i.batch {
 				r.running = false
 				r.returning = true
-				r.completion = s.now + s.settings.CompletionMarginMS*1e6
+				r.completion = s.now + r.marginNanos
 			}
 			i.batch = nil
 			i.finish = math.Inf(1)
@@ -155,8 +156,8 @@ func (s *schedulerReplayState) completeExecution() {
 				i.outstanding--
 			}
 			key := r.identity
-			if !r.expired && !r.dropped {
-				latency := float64(r.source.Elapsed) + r.completion - r.arrival
+			if !r.expired && !r.dropped && !r.failed {
+				latency := r.accountedAge + r.completion - r.arrival
 				s.out.samples[key] = append(s.out.samples[key], latency)
 				if s.out.outcomes[key] == nil {
 					s.out.outcomes[key] = map[string]int{}
@@ -223,7 +224,7 @@ func (s *schedulerReplayState) routeRequests() {
 		i := s.instances[selected]
 		r.dispatched = true
 		r.source.Instance = i.config.ID
-		r.senderMS = math.Max(0, float64(r.source.Elapsed)+s.now-r.arrival) / 1e6
+		r.senderMS = math.Max(0, float64(r.source.Elapsed)+r.preNanos+s.now-r.arrival) / 1e6
 		r.native = s.now
 		i.outstanding++
 	}
@@ -234,6 +235,7 @@ func (s *schedulerReplayState) receiveNative() {
 		if r.dispatched && !r.returning && !r.completed && r.native <= s.now {
 			r.native = math.Inf(1)
 			r.queueAt = s.now
+			r.nativeAge = -s.now
 			i := s.byID[r.source.Instance]
 			i.queue = append(i.queue, r)
 			uid := r.source.Definition.UID
@@ -287,13 +289,23 @@ func (s *schedulerReplayState) nativeRequestState(i *schedulerReplayInstance, r 
 	} else if r.deferred {
 		phase = phaseDeferred
 	}
-	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: s.settings.CompletionMarginMS, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now - r.queueAt) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
+	return firstfloor.RequestState{Context: firstfloor.RequestContext{RequestID: r.source.ID, WorkloadUID: d.UID, Definition: r.identity, ReceivedAt: r.source.ReceivedAt, SenderElapsedMS: r.senderMS, CompletionMarginMS: r.marginNanos / 1e6, SLO: firstfloor.SLO{Percentile: d.SLO.Percentile, TargetMS: float64(d.SLO.TargetLatency) / 1e6}}, Phase: phase, ElapsedMS: (s.now + r.nativeAge) / 1e6, QueueMS: (s.now - r.queueAt) / 1e6, ArrivalRate: rate}
 }
 
 func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 	for _, i := range s.instances {
 		if !i.loaded || !i.ready || len(i.queue) == 0 {
 			continue
+		}
+		if i.config.Profile == nil {
+			s.out.reasons = appendUnique(s.out.reasons, "MissingFeedbackProfile:"+i.config.ID)
+			return false
+		}
+		for _, batch := range i.config.Profile.Batches {
+			if batch.Batch <= i.config.MaxBatch && batch.ServiceDistribution == nil {
+				s.out.reasons = appendUnique(s.out.reasons, "MissingConditionalServiceSupport:"+i.config.ID)
+				return false
+			}
 		}
 		entries, states := s.entries[:0], s.states[:0]
 		for len(i.queue) > 0 {
@@ -331,6 +343,9 @@ func (s *schedulerReplayState) chooseBatches(ctx context.Context) bool {
 					return false
 				}
 				r := i.queue[index]
+				if choice.Reason == firstfloor.OutcomeDeadlineDrop {
+					s.capturePotential(r, i)
+				}
 				copy(i.queue[index:], i.queue[index+1:])
 				i.queue[len(i.queue)-1] = nil
 				i.queue = i.queue[:len(i.queue)-1]

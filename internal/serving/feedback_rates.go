@@ -3,6 +3,7 @@ package serving
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // FeedbackRateTest records a completed positive-rate experiment at current input.
@@ -18,6 +19,28 @@ type FeedbackRateTest struct {
 type FeedbackCapacity struct {
 	KappaHat float64            `json:"kappaHat"`
 	Tests    []FeedbackRateTest `json:"tests"`
+}
+
+// JudgeFeedbackRates judges only supplied positive nominal shares under current
+// TOTAL/POST. Seeded Poisson gaps and the conditional sampler are unchanged.
+func JudgeFeedbackRates(ctx context.Context, settings SchedulerSettings, option SchedulerOption, definition *Definition, occupancy DispatchOccupancy, feedback PathFeedback, rates []float64) (FeedbackCapacity, error) {
+	if err := ctx.Err(); err != nil {
+		return FeedbackCapacity{}, err
+	}
+	if option.Instance.Profile == nil {
+		return FeedbackCapacity{}, fmt.Errorf("missing feedback rate profile: %s", option.Instance.ID)
+	}
+	settings.CompletionMarginMS = feedback.PostNanos / 1e6
+	input := NewCapacityInput(settings, []DispatchOccupancy{occupancy}, option, definition)
+	input.DispatchOccupancy = &occupancy
+	replay := capacityReplay{
+		settings: settings, at: time.Unix(0, 0), occupancy: occupancy,
+		option: option, w: definition, feedback: &feedback, gaps: map[[2]int][]float64{},
+	}
+	policy := schedulerPolicy(option.Instance)
+	key := fmt.Sprintf("%s/total=%g/post=%g/wait=%d/policy=%s", input.Key(), feedback.TotalNanos, feedback.PostNanos, option.Instance.MaxWait, policy.DeadlinePolicy)
+	builder := capacityBuilder{settings: settings, percentile: definition.SLO.Percentile, replay: replay.window}
+	return judgeFeedbackRates(ctx, builder, key, rates)
 }
 
 // judgeFeedbackRates reuses the Poisson judge without grid search, interpolation,

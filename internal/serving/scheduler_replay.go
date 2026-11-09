@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
-	"gonum.org/v1/gonum/stat"
 )
 
 const (
@@ -47,8 +46,15 @@ type schedulerReplayRequest struct {
 	expired      bool
 	deferred     bool
 	dropped      bool
+	failed       bool
 	expires      float64
 	capacityMiss bool // counted once against the capacity window's fixed population
+	preNanos     float64 // synthetic PRE, never added to accepted requests
+	marginNanos  float64 // frozen POST
+	nativeAge    float64 // captured native age; advances only after native receipt
+	accountedAge float64 // S+N for native requests, actual server age otherwise
+	potential    float64 // conditional failure excess, never a completion time
+	hasPotential bool
 }
 
 type schedulerReplayInstance struct {
@@ -80,6 +86,8 @@ type schedulerReplayResult struct {
 	sources       []string
 	outcomes      map[string]map[string]int
 	conditional   ConditionalServiceEvidence
+	feedback      []FeedbackWorkloadScore
+	invalidReasons []string
 }
 
 // ConditionalServiceEvidence describes the support actually queried by replay.
@@ -169,35 +177,19 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	energy := r.energy
 	c.ExpectedJoules = &energy
 	c.Status = schedulerStatusFeasible
-	for _, d := range snapshot.Workloads {
-		r.definitions[d.Identity()] = d
-	}
-	keys := []string{}
-	for key := range r.definitions {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		d := r.definitions[key]
-		samples := r.samples[key]
-		e := SchedulerEstimate{UID: d.UID, Definition: key, Samples: len(samples), Percentile: d.SLO.Percentile, TargetNanos: int64(d.SLO.TargetLatency), PredictedOutcomes: r.outcomes[key]}
-		if len(samples) > 0 {
-			sort.Float64s(samples)
-			q := stat.Quantile(d.SLO.Percentile/100, stat.Empirical, samples, nil)
-			e.ExpectedNanos = &q
-			e.NormalizedExceedance = math.Max(0, q/float64(d.SLO.TargetLatency)-1)
-			c.WorstExceedance = math.Max(c.WorstExceedance, e.NormalizedExceedance)
-		}
-		c.SLO = append(c.SLO, e)
+	c.SLO, c.Feedback = feedbackReplayEstimates(snapshot, r), r.feedback
+	c.WorstExceedance = 0
+	for _, estimate := range c.SLO {
+		c.WorstExceedance = max(c.WorstExceedance, estimate.NormalizedExceedance)
 	}
 	if c.WorstExceedance > 0 {
 		c.Status = SchedulerStatusOverload
 	}
 	for _, counts := range r.outcomes {
-		if counts["timeout"] > 0 && c.Status != schedulerStatusLifetime {
-			c.Status = SchedulerStatusOverload
-		}
 		for kind, count := range counts {
+			if count > 0 && feedbackFailedOutcome(kind) && c.Status != schedulerStatusLifetime {
+				c.Status = SchedulerStatusOverload
+			}
 			if strings.HasPrefix(kind, "expired-") && count > 0 {
 				c.Status = schedulerStatusLifetime
 			}
@@ -244,15 +236,21 @@ func (s *schedulerReplayState) counted(node NodeReference) bool {
 
 // schedulerReplay replays candidate c over the horizon; energy counts the
 // compared Nodes only (nil counts every Node).
-func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit) (schedulerReplayResult, error) {
+func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap SchedulerSnapshot, c SchedulerCandidate, rng *rand.Rand, compared map[NodeReference]bool, capacity *capacityWindowLimit) (result schedulerReplayResult, err error) {
 	if err := ctx.Err(); err != nil {
 		return schedulerReplayResult{}, err
 	}
 	s := schedulerReplayState{settings: settings, snap: snap, c: c, rng: rng, horizon: float64(settings.ComparisonPeriod), compared: compared, capacity: capacity, out: schedulerReplayResult{samples: map[string][]float64{}, definitions: map[string]*Definition{}, outcomes: map[string]map[string]int{}}}
+	defer func() {
+		if s.capacity == nil {
+			s.finishFeedback()
+		}
+		result = s.out
+	}()
 	s.initializeInstances()
 	s.initializeActions()
 	s.initializeOutstanding()
-	if !s.initializeArrivals(ctx) || !s.initializeRunning() {
+	if !s.initializeArrivals(ctx) || len(s.out.reasons) != 0 || !s.initializeRunning() {
 		return s.out, ctx.Err()
 	}
 	s.routeCredits = map[string][]int64{}
@@ -413,6 +411,22 @@ func (s *schedulerReplayState) initializeOutstanding() {
 	})
 	for _, r := range outstanding {
 		x := &schedulerReplayRequest{source: r, identity: r.Definition.Identity(), observed: true, arrival: 0, native: math.Inf(1), expires: math.Inf(1), queueAt: -float64(r.QueueAge), running: r.Phase == phaseRunning, deferred: r.Phase == phaseDeferred}
+		x.marginNanos = s.settings.CompletionMarginMS * 1e6
+		x.accountedAge = float64(r.Elapsed)
+		if r.CompletionMarginMS != nil {
+			x.marginNanos = *r.CompletionMarginMS * 1e6
+		}
+		if r.NativeElapsedNanos != nil {
+			x.nativeAge = *r.NativeElapsedNanos
+			if r.NativeSenderElapsedMS != nil {
+				x.accountedAge = *r.NativeSenderElapsedMS*1e6 + x.nativeAge
+			}
+		} else {
+			x.nativeAge = float64(r.QueueAge)
+			if r.NativeSenderElapsedMS != nil {
+				x.nativeAge = max(0, float64(r.Elapsed)-*r.NativeSenderElapsedMS*1e6)
+			}
+		}
 		if r.NativeSenderElapsedMS != nil {
 			x.senderMS = *r.NativeSenderElapsedMS
 		}
@@ -428,16 +442,30 @@ func (s *schedulerReplayState) initializeOutstanding() {
 				s.out.outcomes[key] = map[string]int{}
 			}
 			s.out.outcomes[key]["timeout"]++
+		} else if r.NativeOutcome == firstfloor.OutcomePreprocessFailed || r.NativeOutcome == firstfloor.OutcomeBatchError {
+			x.failed = true
+			if s.out.outcomes[x.identity] == nil {
+				s.out.outcomes[x.identity] = map[string]int{}
+			}
+			s.out.outcomes[x.identity][r.NativeOutcome]++
 		}
 		if r.Phase == phaseAssigned || r.Phase == phaseQueued || r.Phase == phaseDeferred || r.Phase == phaseRunning || r.Phase == phaseReturning {
 			x.dispatched = true
 			i := s.byID[r.Instance]
+			if i == nil {
+				s.out.reasons = appendUnique(s.out.reasons, "MissingOutstandingInstance:"+r.Instance)
+				continue
+			}
 			i.outstanding++
 			switch r.Phase {
 			case phaseAssigned:
 				// In transit: it reaches the tail of the native queue at replay start.
 				x.native = 0
-				x.senderMS = float64(r.Elapsed) / 1e6
+				if r.NativeSenderElapsedMS == nil {
+					x.senderMS = float64(r.Elapsed) / 1e6
+				} else {
+					x.accountedAge = x.senderMS * 1e6
+				}
 			case phaseQueued, phaseDeferred:
 				i.queue = append(i.queue, x)
 			case phaseRunning:
@@ -445,7 +473,11 @@ func (s *schedulerReplayState) initializeOutstanding() {
 			case phaseReturning:
 				x.returning = true
 				// Native completion precedes the observed response age; the margin starts there.
-				x.completion = math.Max(0, s.settings.CompletionMarginMS*1e6-float64(r.ReturnElapsed))
+				x.completion = math.Max(0, x.marginNanos-float64(r.ReturnElapsed))
+				// Native elapsed is terminal for returning requests.
+				if r.NativeElapsedNanos != nil && r.NativeSenderElapsedMS != nil {
+					x.accountedAge -= x.completion - x.marginNanos
+				}
 			}
 		}
 	}
@@ -453,6 +485,10 @@ func (s *schedulerReplayState) initializeOutstanding() {
 
 func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 	window := float64(s.settings.ObservationWindow)
+	if window <= 0 {
+		s.out.reasons = appendUnique(s.out.reasons, "InvalidReplayObservationWindow")
+		return false
+	}
 	start := s.snap.ObservationEnd.Add(-s.settings.ObservationWindow)
 	arrivals := []SchedulerArrival{}
 	for _, a := range s.snap.Arrivals {
@@ -486,6 +522,10 @@ func (s *schedulerReplayState) initializeArrivals(ctx context.Context) bool {
 				identities[a.Definition] = identity
 			}
 			x := &schedulerReplayRequest{source: r, identity: identity, arrival: at, native: math.Inf(1), expires: math.Inf(1)}
+			feedback := s.feedbackFor(a.Definition)
+			x.preNanos = feedback.TotalNanos - feedback.PostNanos
+			x.marginNanos = feedback.PostNanos
+			x.accountedAge = x.preNanos
 			if a.Lifetime > 0 {
 				x.expires = at + float64(a.Lifetime)
 			}

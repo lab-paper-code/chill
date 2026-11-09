@@ -70,7 +70,7 @@ func TestCapacityTableRecoversCurrentPlacementWithoutPoisoningMeasuredRow(t *tes
 			table.Ensure(context.Background(), settings, snapshot)
 			table.Wait()
 			initial := table.Rows()[0]
-			blocked, err := EvaluateScheduler(context.Background(), settings, snapshot, table.Rows())
+			blocked, err := EvaluateScheduler(context.Background(), settings, snapshot)
 			if err != nil || len(blocked.Keep.Reasons) == 0 || blocked.Target != nil {
 				t.Fatalf("current resource absence did not block execution: %+v %v", blocked, err)
 			}
@@ -81,7 +81,7 @@ func TestCapacityTableRecoversCurrentPlacementWithoutPoisoningMeasuredRow(t *tes
 			if restored.Status != CapacityBuilt || restored.Kappa == nil || *restored.Kappa <= 0 {
 				t.Fatalf("recovered placement stuck at old rejection: initial=%+v restored=%+v", initial, restored)
 			}
-			recovered, err := EvaluateScheduler(context.Background(), settings, snapshot, table.Rows())
+			recovered, err := EvaluateScheduler(context.Background(), settings, snapshot)
 			if err != nil || len(recovered.Keep.Reasons) != 0 {
 				t.Fatalf("recovered current resources remain rejected: %+v %v", recovered.Keep, err)
 			}
