@@ -12,6 +12,8 @@ import (
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 )
 
+const feedbackPreparedInstanceID = "prepared"
+
 func feedbackFixture() (SchedulerSettings, SchedulerSnapshot, SchedulerCandidate) {
 	settings, snapshot := schedulerFixture()
 	settings.AutonomousWorkloads = nil
@@ -261,7 +263,7 @@ func TestFeedbackConsumerPreparationDrainsFiniteCohortAndFixesPotential(t *testi
 			settings, snapshot, candidate := feedbackFixture()
 			settings.DefaultOperationCost[schedulerActionPrepare] = OperationCostValue{Seconds: .05, Joules: 1}
 			target := snapshot.Instances[0]
-			target.ID, target.MaxBatch = "prepared", 1
+			target.ID, target.MaxBatch = feedbackPreparedInstanceID, 1
 			snapshot.Instances = nil
 			snapshot.PathFeedback = []PathFeedback{{WorkloadUID: snapshot.Workloads[0].UID, TotalNanos: 20e6, PostNanos: 10e6}}
 			if expires {
