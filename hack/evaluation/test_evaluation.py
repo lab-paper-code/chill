@@ -956,7 +956,7 @@ class EvaluationTests(unittest.TestCase):
             started = time.monotonic_ns()
             cli.replay_open_loop(cli.prepare_records([('record', {'input': b'input'})]), workload=NAME,
                                  offsets=offsets, new_client=lambda: SimpleNamespace(infer=unavailable, close=lambda: None),
-                                 out=output, start_ns=started)
+                                 out=output, start_ns=started, workers=config['workloads'][0]['workers'])
             rows = sorted((json.loads(line) for line in output.getvalue().splitlines()), key=lambda row: row['requestIndex'])
             phase = {'stage': stage, 'starts': {NAME: {'monotonicNS': started}},
                      'producerCapture': {NAME: {'drained': True}}}

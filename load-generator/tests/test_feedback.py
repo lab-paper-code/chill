@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
 from chill_loadgen.cli import prepare_records, replay, replay_open_loop
+from chill_loadgen.feedback import ClientObservationReporter
 from chill_loadgen.http_client import WorkloadHTTPClient
 
 
@@ -22,6 +23,8 @@ class ClientFeedbackTest(unittest.TestCase):
         self.reports = []
         self.third_inference = threading.Event()
         self.feedback_wait_succeeded = []
+        self.feedback_holds = []
+        self.feedback_entered = threading.Event()
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -34,6 +37,10 @@ class ClientFeedbackTest(unittest.TestCase):
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 if self.path.endswith("/feedback"):
                     owner.reports.append((self.path, json.loads(body), dict(self.headers), self.client_address))
+                    owner.feedback_entered.set()
+                    index = len(owner.reports) - 1
+                    if index < len(owner.feedback_holds):
+                        owner.feedback_holds[index].wait(2)
                     if owner.slow_feedback and len(owner.reports) == 1:
                         owner.feedback_wait_succeeded.append(owner.third_inference.wait(2))
                     self.send_response(503 if owner.reject_feedback else 204)
@@ -86,7 +93,8 @@ class ClientFeedbackTest(unittest.TestCase):
     def run_open(self, offsets=(0,)):
         output = io.StringIO()
         replay_open_loop(prepare_records([("one", {"input": b"sample"})]), workload="model",
-                         offsets=offsets, start_ns=time.monotonic_ns(), new_client=self.new_client, out=output)
+                         offsets=offsets, start_ns=time.monotonic_ns(), new_client=self.new_client, out=output,
+                         workers=len(offsets))
         return [json.loads(line) for line in output.getvalue().splitlines()]
 
     def test_full_body_duration_and_public_report_use_separate_connection(self):
@@ -118,11 +126,15 @@ class ClientFeedbackTest(unittest.TestCase):
                     output = io.StringIO()
                     replay([("one", {"input": b"sample"})], workload="model", rate=None,
                            duration=.2, workers=1, arrivals="closed-loop", new_client=self.new_client, out=output)
+                    rows = [json.loads(line) for line in output.getvalue().splitlines()]
                 else:
-                    self.run_open((0, 10_000_000, 20_000_000))
+                    rows = self.run_open((0, 10_000_000, 20_000_000))
                 self.assertEqual(self.feedback_wait_succeeded, [True])
                 self.assertGreaterEqual(len(self.inferences), 3)
-                self.assertEqual(len(self.reports), len(self.inferences))
+                self.assertEqual(len(rows), len(self.inferences))
+                self.assertEqual(len(self.reports), sum(row["feedbackStatus"] == "queued" for row in rows))
+                self.assertTrue(all(row.get("feedbackError") == "ReporterBackpressure"
+                                    for row in rows if row["feedbackStatus"] == "not_reported"))
 
     def test_timeout_retains_missing_or_partial_header_evidence(self):
         self.timeout = .05
@@ -162,4 +174,82 @@ class ClientFeedbackTest(unittest.TestCase):
         with patch("chill_loadgen.cli.run_schedule", side_effect=schedule), \
              self.assertRaisesRegex(ValueError, "original schedule error"):
             self.run_open()
+        self.assertEqual(len(self.reports), 1)
+
+    def test_backpressure_bounds_reports_and_streams_each_failure_without_losing_inference(self):
+        workers, count = 2, 9
+        first, tail = threading.Event(), threading.Event()
+        all_rows, first_failure, finished = threading.Event(), threading.Event(), threading.Event()
+        self.feedback_holds = [first] + [tail] * workers
+        self.reject_feedback = True
+        errors = []
+        seen = []
+
+        class Output(io.StringIO):
+            def write(self, text):
+                row = json.loads(text)
+                seen.append(row)
+                if sum("scheduledOffsetNs" in item for item in seen) == count:
+                    all_rows.set()
+                if row.get("clientFeedbackEvent") == "failed":
+                    first_failure.set()
+                return super().write(text)
+
+        output = Output()
+        prepared_client = self.new_client()
+
+        def schedule(requests, submit, **kwargs):
+            submit(requests[0], False)
+            if not self.feedback_entered.wait(2):
+                raise AssertionError("first report did not enter local HTTP handler")
+            for request in requests[1:]:
+                submit(request, False)
+
+        def run():
+            try:
+                replay_open_loop(prepare_records([("one", {"input": b"sample"})]), workload="model",
+                                 offsets=[0] * count, workers=workers, start_ns=time.monotonic_ns(),
+                                 new_client=prepared_client.new_connection, out=output)
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        caller = threading.Thread(target=run)
+        try:
+            with patch("chill_loadgen.cli.run_schedule", side_effect=schedule):
+                caller.start()
+                self.assertTrue(all_rows.wait(2), "slow feedback blocked inference completion")
+                self.assertFalse(finished.is_set())
+                first.set()
+                self.assertTrue(first_failure.wait(2), "failure was retained until shutdown")
+                self.assertFalse(finished.is_set())
+                tail.set()
+                self.assertTrue(finished.wait(2))
+        finally:
+            first.set()
+            tail.set()
+            caller.join(5)
+            prepared_client.close()
+        self.assertFalse(errors, errors)
+        rows = [row for row in seen if "scheduledOffsetNs" in row]
+        failures = [row for row in seen if row.get("clientFeedbackEvent") == "failed"]
+        queued = [row for row in rows if row["feedbackStatus"] == "queued"]
+        skipped = [row for row in rows if row["feedbackStatus"] == "not_reported"]
+        self.assertEqual(len(rows), count)
+        self.assertTrue(all(row["outcome"] == "completed" and row["elapsedNanos"] >= 30_000_000 for row in rows))
+        self.assertEqual(len(queued), workers + 1)  # One active report plus the existing worker budget.
+        self.assertEqual(len(skipped), count - workers - 1)
+        self.assertTrue(all(row["feedbackError"] == "ReporterBackpressure" for row in skipped))
+        self.assertEqual(len(self.reports), workers + 1)
+        self.assertEqual(len(failures), workers + 1)
+        self.assertEqual({row["observationID"] for row in queued}, {row["observationID"] for row in failures})
+
+    def test_repeated_close_does_not_report_again_or_accept_new_work(self):
+        reporter = ClientObservationReporter("model", self.new_client, lambda row: self.fail(row), workers=2)
+        observation = {"observationID": "one", "elapsedNanos": 1, "outcome": "timeout"}
+        self.assertIsNone(reporter.enqueue(observation))
+        reporter.close()
+        reporter.close()
+        self.assertEqual(reporter.enqueue(observation), "ReporterClosed")
         self.assertEqual(len(self.reports), 1)

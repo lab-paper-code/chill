@@ -10,19 +10,32 @@ from chill_loadgen.http_client import WorkloadHTTPClient
 
 
 class ClientObservationReporter:
-    def __init__(self, workload: str, new_client: Callable[[], WorkloadHTTPClient], emit: Callable) -> None:
+    def __init__(self, workload: str, new_client: Callable[[], WorkloadHTTPClient], emit: Callable, workers: int) -> None:
         self._workload = workload
         self._new_client = new_client
         self._emit = emit
-        self._queue = queue.SimpleQueue()
+        if workers < 1:
+            raise ValueError("workers must be positive")
+        self._queue = queue.Queue(maxsize=workers)
+        self._lock = threading.Lock()
+        self._closed = False
         self._done = threading.Event()
         self._failure = None
-        self._errors = []
         self._thread = threading.Thread(target=self._run, name="chill-client-feedback", daemon=True)
         self._thread.start()
 
-    def enqueue(self, observation: dict) -> None:
-        self._queue.put(observation)
+    def enqueue(self, observation: dict):
+        """Return an explicit non-reporting reason without waiting for capacity."""
+        with self._lock:
+            if self._closed:
+                return "ReporterClosed"
+            if self._done.is_set():
+                return "ReporterUnavailable"
+            try:
+                self._queue.put_nowait(observation)
+            except queue.Full:
+                return "ReporterBackpressure"
+        return None
 
     def _run(self) -> None:
         client = None
@@ -36,10 +49,13 @@ class ClientObservationReporter:
                         client = self._new_client()
                     client.report_observation(self._workload, observation)
                 except Exception as error:
-                    self._errors.append({"clientFeedbackEvent": "failed", "workload": self._workload,
-                                         "observationID": observation["observationID"], "error": type(error).__name__})
+                    self._emit({"clientFeedbackEvent": "failed", "workload": self._workload,
+                                "observationID": observation["observationID"], "error": type(error).__name__})
                     if client is not None:
                         client.close()
+                with self._lock:
+                    if self._closed and self._queue.empty():
+                        break
         except BaseException as error:
             self._failure = error
         finally:
@@ -63,9 +79,13 @@ class ClientObservationReporter:
                 raise
 
     def close(self) -> None:
-        self._queue.put(None)
+        with self._lock:
+            if not self._closed:
+                self._closed = True
+                try:
+                    self._queue.put_nowait(None)
+                except queue.Full:
+                    pass  # The worker observes closed after draining the bounded queue.
         self._done.wait()
-        for event in self._errors:
-            self._emit(event)
         if self._failure is not None:
             raise RuntimeError("Client feedback output failed") from self._failure

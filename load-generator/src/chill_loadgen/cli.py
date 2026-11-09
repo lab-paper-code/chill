@@ -112,13 +112,16 @@ def _infer(client: WorkloadHTTPClient, workload: str, body: bytes, row: dict,
         for key, field in (("requestID", "requestID"), ("workloadUID", "workloadUID"), ("status", "statusCode")):
             if row.get(key) is not None:
                 observation[field] = row[key]
-        row["feedbackStatus"] = "queued"
-        reporter.enqueue(observation)
+        reason = reporter.enqueue(observation)
+        row["feedbackStatus"] = "not_reported" if reason else "queued"
+        if reason:
+            row["feedbackError"] = reason
 
 
 def replay_open_loop(
     records: Sequence[PreparedRecord], *, workload: str, offsets: Sequence[int],
     new_client: Callable[[], WorkloadHTTPClient], out: TextIO, start_ns: int,
+    workers: int,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     sleep: Callable[[float], None] = time.sleep,
     shard_index: int = 0,
@@ -199,7 +202,7 @@ def replay_open_loop(
             emit(row)
             return
 
-    reporter = ClientObservationReporter(workload, new_client, emit)
+    reporter = ClientObservationReporter(workload, new_client, emit, workers)
     with reporter:
         try:
             run_schedule(
@@ -239,7 +242,7 @@ def replay(
             prepared, workload=workload,
             offsets=arrival_offsets_ns(arrivals, rate, duration, seed),
             new_client=new_client, out=out, start_ns=clock_ns(),
-            clock_ns=clock_ns, sleep=sleep,
+            clock_ns=clock_ns, sleep=sleep, workers=workers,
         )
         return
     schedule = [] if arrivals == "closed-loop" else [
@@ -313,7 +316,7 @@ def replay(
             if requests
         ]
     )
-    reporter = ClientObservationReporter(workload, new_client, emit)
+    reporter = ClientObservationReporter(workload, new_client, emit, workers)
     with reporter:
         started = []
         try:

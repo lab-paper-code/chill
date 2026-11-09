@@ -145,7 +145,7 @@ class ReplayTest(unittest.TestCase):
         output = io.StringIO()
         with patch.object(threading.Thread, "start", start):
             replay_open_loop(
-                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0] * 100,
+                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0] * 100, workers=1,
                 new_client=FakeClient, out=output, start_ns=0, clock_ns=lambda: 0,
             )
         self.assertEqual(len(output.getvalue().splitlines()), 100)
@@ -178,7 +178,7 @@ class ReplayTest(unittest.TestCase):
         output = Output()
         with patch("chill_loadgen.cli.run_schedule", side_effect=schedule):
             replay_open_loop(
-                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0] * 3,
+                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0] * 3, workers=1,
                 new_client=Client, out=output, start_ns=0, clock_ns=lambda: 0,
             )
         self.assertEqual(len(output.getvalue().splitlines()), 3)
@@ -201,7 +201,7 @@ class ReplayTest(unittest.TestCase):
         def run():
             try:
                 replay_open_loop(
-                    prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0],
+                    prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0], workers=1,
                     new_client=SlowClient, out=io.StringIO(), start_ns=0,
                 )
             except ValueError as error:
@@ -249,7 +249,7 @@ class ReplayTest(unittest.TestCase):
                  patch("chill_loadgen.cli.arrival_offsets_ns", side_effect=AssertionError("trace regenerated")):
                 producer.replay_shards(
                     [("q1", {"image": b"a"})], offsets, 0, binding,
-                    {"workload": "vqa", "new_client": FakeClient},
+                    {"workload": "vqa", "new_client": FakeClient, "workers": 3},
                 )
             output.seek(0)
             lines = [json.loads(line) for line in output]
@@ -277,7 +277,7 @@ class ReplayTest(unittest.TestCase):
                 response.getheader.return_value = None
                 output = io.StringIO()
                 replay_open_loop(
-                    prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0],
+                    prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0], workers=1,
                     new_client=lambda: WorkloadHTTPClient(
                         "https://chill.example", bearer_token="token",
                         timeout_seconds=2, request_lifetime_seconds=1),
@@ -307,7 +307,7 @@ class ReplayTest(unittest.TestCase):
         output = io.StringIO()
         with patch.object(threading.Thread, "start", start):
             replay_open_loop(
-                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0, 0, 0],
+                prepare_records([("q1", {"image": b"a"})]), workload="vqa", offsets=[0, 0, 0], workers=1,
                 new_client=FakeClient, out=output, start_ns=0, clock_ns=lambda: 0,
             )
         rows = [json.loads(line) for line in output.getvalue().splitlines()]

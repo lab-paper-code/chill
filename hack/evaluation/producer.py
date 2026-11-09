@@ -56,7 +56,7 @@ def replay_shards(records, offsets, duration_ns, binding, kw):
         cli.replay_open_loop(
             records, workload=kw['workload'], offsets=offsets,
             new_client=kw['new_client'], out=output, start_ns=start_ns.value,
-            shard_index=index, shard_count=count,
+            shard_index=index, shard_count=count, workers=kw['workers'],
         )
     children = []
     try:

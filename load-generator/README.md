@@ -26,7 +26,8 @@ same send times.
 
 With the evaluation contract (`--workload-slo` and `--gateway-timeout`), every frozen
 arrival starts an independent request on the original timeline; `--workers`
-does not cap in-flight evaluation requests. The injected `hack/evaluation/producer.py` uses
+caps pending feedback reports per process, not in-flight evaluation requests.
+The injected `hack/evaluation/producer.py` uses
 the same dispatcher for its frozen segmented trace. Late arrivals are still
 sent and drained, not silently dropped at the issue-window boundary.
 Endpoint/token validation and TLS context/CA loading occur once before replay
@@ -50,8 +51,9 @@ The counter has its own lock, so blocked output does not block later arrivals.
 Workers are daemon threads to avoid Python 3.8 interpreter shutdown-lock
 retention, but replay always waits for their output and connection cleanup.
 Inference bookkeeping retains concurrent requests, not completed request threads.
-The feedback FIFO retains pending reports; failed-report events remain until
-final drain. The frozen offset trace, per-shard schedule and dataset remain resident.
+The feedback FIFO retains at most `workers` pending reports plus one active
+exchange per process; failures stream directly to JSONL without a retained
+failure list. The frozen offset trace, per-shard schedule and dataset remain resident.
 A failed process shard prevents a complete `drained` event: its missing planned
 requests cannot be silently removed from the SLO denominator; already streamed
 rows from every shard remain evidence.
@@ -217,13 +219,20 @@ an asynchronous logger or a claim that observed long gaps have been cured.
 
 Each issued exchange gets an opaque `observationID` before inference. Replay
 queues its immutable evidence after measurement to one reporting worker using
-a separate connection and the existing socket timeout. Scheduled arrivals and
-closed-loop refills never wait for feedback HTTP or feedback-log flushing.
-Shutdown drains inference workers, then feedback, including when scheduling
-raises. Reporting never changes inference outcome. `feedbackStatus:"queued"`
-means queued, not acknowledged; a failed attempt produces a separate
-`clientFeedbackEvent:"failed"` JSONL event with `observationID`, `workload` and
-`error` during final drain. Such events are not inference rows.
+a separate connection and the existing socket timeout. Its bounded queue reuses
+the existing `workers` budget in every replay process; there is no new knob.
+Enqueue never waits for space. If full, the inference row retains its exact E,
+IDs, status and outcome with `feedbackStatus:"not_reported"` and
+`feedbackError:"ReporterBackpressure"`; that feedback is not sent or retried.
+`ReporterClosed`/`ReporterUnavailable` similarly record an unavailable sink.
+Scheduled arrivals and closed-loop refills do not await feedback HTTP.
+Shutdown drains inference workers, then the bounded feedback backlog, including
+when scheduling raises. Repeated reporter close is safe.
+Reporting never changes inference outcome. `feedbackStatus:"queued"` means
+queued, not acknowledged; a failed attempt immediately emits a separate
+`clientFeedbackEvent:"failed"` JSONL event with `observationID`, `workload`
+and `error` through the existing thread-safe output boundary. Normal JSONL
+output backpressure still applies. These events are not inference rows.
 No retries, backoff, disk spool or extra reporting configuration are used.
 Unsent generator work (`issued:false`) produces no inference feedback.
 
