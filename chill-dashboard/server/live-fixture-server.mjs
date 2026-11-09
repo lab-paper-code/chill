@@ -10,10 +10,20 @@ import { createFront } from './live-proxy.mjs'
 import { fixtureMessages } from '../lib/live-fixture.ts'
 import { initialLiveState, parseLiveMessage, applyLiveMessage, liveActionKey } from '../lib/live.ts'
 import { parseSchedulerJSON, stringifySchedulerJSON } from '../lib/scheduler.ts'
+import { writableSettingKeys } from '../lib/scheduler-settings.ts'
 
 const capacityFixture = readFileSync(new URL('../lib/fixtures/scheduler-feedback-capacity.json', import.meta.url), 'utf8')
 const rateEvidence = parseSchedulerJSON(capacityFixture).tests
+rateEvidence[0].pathFeedback.observedMean = {clientNanos:120000000,servingQueueNanos:20000000,nativeNanos:60000000,nonComputeNanos:40000000}
 const capacityDiagnostic = {periodNanos:1000000000,routeNanos:0,workloads:[{uid:'service-uid',rate:40,queued:3,routingRate:50,retainedRoutingRate:25,weights:{'instance-failed':2},tests:rateEvidence,keepTests:[rateEvidence[2]]}],plans:[]}
+const workloadSummaries = [
+  {desired:{metadata:{uid:'service-uid',name:'검사용 검사 서비스'}}},
+  {desired:{metadata:{uid:'pool-alpha',name:'검사용 서비스 A'}}},
+  {desired:{metadata:{uid:'pool-beta',name:'검사용 서비스 B'}}},
+]
+let settings = {...parseSchedulerJSON(readFileSync(new URL('../../config/samples/serving-scheduler.json', import.meta.url), 'utf8')).settings,sloPriorityStrategy:'excess',workloadPriority:[],autonomousWorkloads:workloadSummaries.map(row=>row.desired.metadata.uid)}
+let settingsVersion = 1
+const settingsChanges = []
 
 const directory = mkdtempSync(join(tmpdir(), 'chill-s2-tls-'))
 execFileSync('openssl', ['req','-x509','-newkey','rsa:2048','-nodes','-keyout',join(directory,'key.pem'),'-out',join(directory,'cert.pem'),'-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1,DNS:localhost'], {stdio:'ignore'})
@@ -59,6 +69,47 @@ function changeScene(next) {
 const upstream = https.createServer({key,cert}, async (req,res) => {
   if(req.headers.authorization !== `Bearer ${token}`){res.writeHead(401);res.end();return}
   const url = new URL(req.url,'https://localhost')
+  if(url.pathname === '/api/v1/workloads' && req.method === 'GET' && url.searchParams.get('view') === 'summary') {
+    res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+    res.end(JSON.stringify(workloadSummaries));return
+  }
+  if(url.pathname === '/api/v1/scheduler/settings') {
+    const etag = `"fixture-settings-${settingsVersion}"`
+    if(req.method === 'GET') {
+      res.writeHead(200,{'content-type':'application/json','cache-control':'no-store',ETag:etag})
+      res.end(stringifySchedulerJSON(settings));return
+    }
+    if(req.method !== 'PUT'){res.writeHead(405,{Allow:'GET, PUT'});res.end();return}
+    if(!req.headers['if-match']) {
+      res.writeHead(428,{'content-type':'application/json'})
+      res.end(JSON.stringify({code:'SettingsPreconditionRequired',message:'GET settings and supply its ETag in If-Match'}));return
+    }
+    req.setEncoding('utf8')
+    let raw = ''
+    for await (const chunk of req) {
+      raw += chunk
+      if(Buffer.byteLength(raw)>1<<20){res.writeHead(413);res.end();return}
+    }
+    let next
+    try { next=parseSchedulerJSON(raw) } catch {
+      res.writeHead(400,{'content-type':'application/json'})
+      res.end(JSON.stringify({code:'InvalidBody',message:'Settings must be valid JSON'}));return
+    }
+    if(req.headers['if-match'] !== `"fixture-settings-${settingsVersion}"`) {
+      res.writeHead(409,{'content-type':'application/json'})
+      res.end(JSON.stringify({code:'SettingsConflict',message:'The synthetic settings version changed'}));return
+    }
+    if(!next || typeof next !== 'object' || Array.isArray(next) || Object.keys(settings).some(key=>!Object.hasOwn(next,key)) || Object.keys(next).some(key=>!writableSettingKeys.includes(key)) || !['excess','workload'].includes(next.sloPriorityStrategy) || !Array.isArray(next.workloadPriority) || next.workloadPriority.some(uid=>typeof uid !== 'string' || !uid.trim()) || new Set(next.workloadPriority).size !== next.workloadPriority.length) {
+      res.writeHead(400,{'content-type':'application/json'})
+      res.end(JSON.stringify({code:'InvalidBody',message:'Use declared settings and a unique Workload UID priority list'}));return
+    }
+    const before = settings, at = new Date().toISOString()
+    settings = next;settingsVersion++
+    const change = {actorUsername:'fixture-operator',actorUID:'fixture-operator-uid',before,after:settings,validatedAt:at,appliedAt:at,affected:[]}
+    settingsChanges.push({at,settings:change})
+    res.writeHead(200,{'content-type':'application/json','cache-control':'no-store',ETag:`"fixture-settings-${settingsVersion}"`})
+    res.end(stringifySchedulerJSON(change));return
+  }
   if(url.pathname === '/api/v1/namespaces/lab/batch-energy-optimizations' && req.method === 'GET') {
     res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({items:requests}));return
   }
@@ -86,13 +137,19 @@ const upstream = https.createServer({key,cert}, async (req,res) => {
   }
   if(url.pathname === '/api/v1/scheduler/capacity') {
     res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    res.end(scene === 'empty' ? JSON.stringify({tests:[]}) : capacityFixture);return
+    res.end(stringifySchedulerJSON({tests:scene === 'empty' ? [] : rateEvidence}));return
   }
   if(url.pathname === '/api/v1/scheduler/state') {
     res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    res.end(stringifySchedulerJSON({decision:{at:lastAt,capacity:scene === 'empty' ? {...capacityDiagnostic,workloads:[]} : capacityDiagnostic}}));return
+    res.end(stringifySchedulerJSON({actions:[],results:[],decision:{at:lastAt,settings,pathFeedback:[rateEvidence[0].pathFeedback],capacity:scene === 'empty' ? {...capacityDiagnostic,workloads:[]} : capacityDiagnostic}}));return
   }
   if(url.pathname === '/api/v1/observations/scheduler') {
+    if(url.searchParams.get('filter') === 'settings') {
+      const from = url.searchParams.get('from'), to = url.searchParams.get('to')
+      const events = settingsChanges.filter(event=>(!from || event.at>=from) && (!to || event.at<=to))
+      res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
+      res.end(stringifySchedulerJSON({from,to,events}));return
+    }
     const from = url.searchParams.get('from')
     const at = [...decisionTimes].find(value=>value.replace(/(?:\.(\d+))?Z$/,(_match,fraction='')=>`.${fraction.padEnd(9,'0')}Z`)===from)
     const found = at !== undefined

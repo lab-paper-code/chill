@@ -498,8 +498,14 @@ authentication/resume counts and active upstream sockets without credentials.
 `instance-pass`의 κ̂ 12.5와 검사율 12.5/20을 구분해서 확인한다.
 입력 식별자 `failed input / +&`, 메모리 `9007199254740993 bytes`, 선택안·유지안 분리와 상대 프로파일 요청률 라벨을 확인한다.
 scalar 입력의 전력모드·프로파일 ID·판정 창 설정과 별도 TOTAL·POST 예산(실제 0 포함)을 확인한다.
+fixture 서버의 합성 view는 첫 검사 입력에 결합 표본 평균 `120 = 20 + 60 + 40 ms`를 추가한다. “결합 표본 평균” E/Q/N/TOTAL과 별도 TOTAL 40·POST 30 ms 예산을 확인한다. Go HTTP 공통 JSON 자료 자체는 변경하지 않는다.
 브라우저에서 `fetch('/__fixture/scene?name=empty',{method:'POST'})` 후 새로고침하면 두 조회 모두 빈 진단이며 오류·Pending/Built 표시가 없어야 한다.
 이 경로는 browser smoke 실행법이며 실행 결과를 뜻하지 않는다.
+
+같은 localhost fixture의 `/settings?tab=configuration&section=targets`에서 SLO 비교 기준과 Workload 순위를 편집한다.
+“검사용 검사 서비스”, “검사용 서비스 A/B”를 골라 변경 목록·최종 검토를 거쳐 저장하고, GET 재조회 뒤 값과 새 ETag가 유지되는지 확인한다.
+서버 fixture는 기존 인증 경계 안에서 전체 settings GET·If-Match PUT·변경 응답을 제공한다. 누락 If-Match는 428, 오래된 값은 409이며 저장 이력은 합성 settings 사건으로 조회한다.
+재시작하면 저장값은 고정 sample과 초기 합성 정책으로 돌아간다. 이 fixture는 실제 클러스터나 제어기를 호출하지 않는다.
 No cluster or deployment is involved. Exit the fixture process to remove its
 temporary certificate/key. Run `pnpm test`, `pnpm typecheck` and `pnpm lint` for
 the repeatable reducer, boundary, transport lifecycle and display regressions.
