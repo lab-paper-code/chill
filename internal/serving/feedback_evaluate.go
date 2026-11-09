@@ -86,6 +86,7 @@ func (s *schedulerReplayState) feedbackFor(definition *Definition) PathFeedback 
 	return PathFeedback{WorkloadUID: definition.UID, TotalNanos: s.settings.CompletionMarginMS * 1e6, PostNanos: s.settings.CompletionMarginMS * 1e6, Source: "configured"}
 }
 
+// Finite replay has sorted its samples in finishFeedback; capacity windows have not.
 func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayResult, sorted bool) []SchedulerEstimate {
 	definitions := make(map[string]*Definition, len(replay.definitions)+len(snapshot.Workloads))
 	for key, definition := range replay.definitions {

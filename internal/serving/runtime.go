@@ -1353,7 +1353,10 @@ func profilePath(d *Definition, p *Profile) *ModelPath {
 	}
 	c := p.Condition
 	pre := d.Preprocessor
-	if c.LogicalModel != d.Model.Name || c.Preprocessor.Name != pre.Name || !slices.Equal(c.Preprocessor.Inputs, rawFieldNames(pre.Input)) || !slices.Equal(c.Preprocessor.Outputs, rawFieldNames(pre.Output)) || c.Preprocessor.MaxNewTokens != int(pre.MaxNewTokens) {
+	fieldMatches := func(name string, field RawField) bool { return name == field.Name }
+	if c.LogicalModel != d.Model.Name || c.Preprocessor.Name != pre.Name ||
+		!slices.EqualFunc(c.Preprocessor.Inputs, pre.Input, fieldMatches) ||
+		!slices.EqualFunc(c.Preprocessor.Outputs, pre.Output, fieldMatches) || c.Preprocessor.MaxNewTokens != int(pre.MaxNewTokens) {
 		return nil
 	}
 	for n := range d.Model.Paths {

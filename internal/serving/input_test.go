@@ -46,12 +46,18 @@ func TestValidateInputChecksRawContract(t *testing.T) {
 func TestProfilePathRequiresAppliedPreprocessor(t *testing.T) {
 	_, snapshot := schedulerFixture()
 	d, measured := snapshot.Workloads[0], *snapshot.Instances[0].Profile
+	d.Preprocessor.Input = []RawField{{Name: "a"}, {Name: "b"}}
+	measured.Condition.Preprocessor.Inputs = []string{"a", "b"}
 	if profilePath(d, &measured) == nil {
 		t.Fatal("fixture profile must match its definition")
+	}
+	if allocations := testing.AllocsPerRun(100, func() { profilePath(d, &measured) }); allocations != 0 {
+		t.Fatalf("profile compatibility allocates in the replay routing loop: %g", allocations)
 	}
 	for name, mutate := range map[string]func(*Definition, *Profile){
 		"preprocessor image": func(_ *Definition, p *Profile) { p.Condition.Preprocessor.Image = "other@sha256:1" },
 		"preprocessor name":  func(d *Definition, _ *Profile) { d.Preprocessor.Name = schedulerTestOther },
+		"input order":        func(d *Definition, _ *Profile) { d.Preprocessor.Input = []RawField{{Name: "b"}, {Name: "a"}} },
 		"output fields":      func(d *Definition, _ *Profile) { d.Preprocessor.Output = []RawField{{Name: "z"}} },
 		"max new tokens":     func(d *Definition, _ *Profile) { d.Preprocessor.MaxNewTokens = 8 },
 	} {
