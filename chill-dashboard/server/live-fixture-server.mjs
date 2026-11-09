@@ -140,8 +140,12 @@ const upstream = https.createServer({key,cert}, async (req,res) => {
     res.end(stringifySchedulerJSON({tests:scene === 'empty' ? [] : rateEvidence}));return
   }
   if(url.pathname === '/api/v1/scheduler/state') {
+    const pathFeedback = [rateEvidence[0].pathFeedback]
+    const snapshot = {at:lastAt,workloads:[],nodes:[],instances:[],routing:{},routingCredits:{},outstanding:[],arrivals:[],options:[],baselines:[],costs:[],dispatchOccupancy:[],actions:[],reasons:[],references:[],reservations:[],pathFeedback}
+    const keep = {id:'fixture-keep',keep:true,nodes:[],instances:[],routing:{},actions:[],status:'Feasible',reasons:[],slo:[],expectedJoules:1000,worstExceedance:0}
+    const decision = {at:lastAt,status:'Keep',keep,target:null,reasons:['검사용 고정 근거'],settings,workloads:[],search:{examined:0,bounds:settings,windowStart:lastAt,windowEnd:lastAt,received:0,accepted:0,computeInputs:0,population:'검사용 고정 입력',loads:[],comparedNodes:[]},references:[],pathFeedback,capacity:scene === 'empty' ? {...capacityDiagnostic,workloads:[]} : capacityDiagnostic}
     res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'})
-    res.end(stringifySchedulerJSON({actions:[],results:[],decision:{at:lastAt,settings,pathFeedback:[rateEvidence[0].pathFeedback],capacity:scene === 'empty' ? {...capacityDiagnostic,workloads:[]} : capacityDiagnostic}}));return
+    res.end(stringifySchedulerJSON({snapshot,decision,actions:[],results:[],costIssues:[]}));return
   }
   if(url.pathname === '/api/v1/observations/scheduler') {
     if(url.searchParams.get('filter') === 'settings') {
