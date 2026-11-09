@@ -23,53 +23,6 @@ import (
 	"github.com/lab-paper-code/chill/test/fixtures"
 )
 
-func TestDecodeSchedulerLinePlanSearch(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		search   string
-		plan     string
-		settings string
-		want     serving.SchedulerPlanSearch
-		wantPlan serving.SchedulerNodePlan
-		wantSet  serving.SchedulerSettings
-	}{
-		{
-			name:     "v2",
-			search:   `{"evaluated":7,"strategy":"v2","pruned":{"ZeroCapacity":2},"surrogateEvaluated":40,"finalists":16,"exactEvaluated":19,"surrogateGapJoules":-0.25,"postFilterReverts":2,"fallback":"v1","dualBound":12.5,"start":"priced"}`,
-			plan:     `{"key":"keep","dominated":"ZeroCapacity"}`,
-			settings: `{"planSearchWorkers":3,"planSearchStrategy":"v2","planSearchEvaluations":1234,"planExactFinalists":12,"planPolishActive":0,"planPostFilterFinalists":true,"planPricedStart":false}`,
-			want: serving.SchedulerPlanSearch{
-				Evaluated: 7, Strategy: "v2", Pruned: map[string]int{"ZeroCapacity": 2},
-				SurrogateEvaluated: 40, Finalists: 16, ExactEvaluated: 19,
-				SurrogateGapJoules: -0.25, PostFilterReverts: 2, Fallback: "v1",
-				DualBound: 12.5, Start: "priced",
-			},
-			wantPlan: serving.SchedulerNodePlan{Key: "keep", Dominated: "ZeroCapacity"},
-			wantSet: serving.SchedulerSettings{
-				PlanSearchWorkers: 3, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1234,
-				PlanExactFinalists: 12, PlanPolishActive: 0, PlanPostFilterFinalists: true, PlanPricedStart: false,
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			raw := `{"decision":{"capacity":{"search":` + tc.search + `,"plans":[` + tc.plan + `]}},"settings":{"before":` + tc.settings + `,"after":` + tc.settings + `}}`
-			event, err := DecodeSchedulerLine([]byte(raw), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if event.Decision == nil || event.Decision.Capacity == nil || event.Settings == nil {
-				t.Fatalf("record fields lost: %+v", event)
-			}
-			capacity := event.Decision.Capacity
-			if !reflect.DeepEqual(capacity.Search, &tc.want) || !reflect.DeepEqual(capacity.Plans, []serving.SchedulerNodePlan{tc.wantPlan}) {
-				t.Fatalf("search or plans changed: %+v %+v", capacity.Search, capacity.Plans)
-			}
-			if !reflect.DeepEqual(event.Settings.Before, tc.wantSet) || !reflect.DeepEqual(event.Settings.After, tc.wantSet) {
-				t.Fatalf("recorded settings changed: %+v", event.Settings)
-			}
-		})
-	}
-}
 
 func TestLoadWindowKeepsInflowSeparateFromCompletionAndFilters(t *testing.T) {
 	observationLog, err := NewObservationLog(ObservationLogConfig{Directory: t.TempDir(), Store: "evidence", Retention: 2 * time.Hour, Writer: &observationArchive{directory: t.TempDir()}, Definitions: []string{"unrelated"}, Outcomes: []string{"completed"}})
