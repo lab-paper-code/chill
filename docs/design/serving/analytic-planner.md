@@ -94,9 +94,7 @@ keep와 exact finalists는 현재 outstanding, 실제 transition schedule, 정�
 
 최종 순서는 물리 eligibility 다음 전체 Workload의 SLO 충족 여부다. 충족 후보끼리는 기존 에너지·keep·논리 key 순으로 비교한다. 미충족 후보는 Workload별 실패 비율, 성공 요청의 상대 지연 초과, 조건부 potential 초과 순서의 tuple을 비교한다. potential은 실제 실패의 완료시간이 아니며 성공 표본이 없으면 성공 percentile은 null이다. 모집단이 0인 Workload에는 현재 비교 의무가 없다.
 
-충족 판정은 불변 Definition별 전체 요청 n건에서 `ceil(n × percentile / 100)`번째 지연을 선택한다. 완료 지연과 함께 drop·실패·만료·미완료를 수학적 +∞로 포함하며, 늦은 완료와 실패가 같은 허용 tail을 쓴다. 목표와 같은 지연은 충족한다. p99/1,000건은 목표 이내 990건과 miss 10건이면 충족하고 989건이면 미충족이다. p100은 miss를 허용하지 않는다. 별도의 실패 0건·만료 0건 gate는 없으며 직접 replay, 현재 rate 검사와 offline capacity window가 같은 판정을 사용한다. window의 조기 종료도 허용 miss 수를 넘었을 때만 가능하다.
-
-`SuccessQuantileNanos`·`SuccessExcess`는 성공 완료만의 진단값이다. `SchedulerEstimate.ExpectedNanos`는 전체 모집단의 선택 순위가 유한한 완료에 닿을 때만 숫자로 남기고, 실패·미완료 tail에 닿거나 모집단이 없으면 null이다. `Samples`는 성공 완료 표본 수다. 원 outcome별 수와 실패 비율은 그대로 보존하며 실패에 완료시간을 만들거나 JSON +∞를 기록하지 않는다. v1/v2는 이 공통 충족 판정 뒤 충족 후보끼리 에너지를 비교한다.
+충족 판정은 불변 Definition별 전체 요청의 설정 분위수를 따른다. 늦은 완료·drop·실패·만료·미완료는 같은 허용 tail을 쓰며 실패 0건을 요구하지 않는다. v1/v2·직접 replay·capacity window의 공통 수식과 성공 전용 진단값의 구분은 [M0 §3.3](path-aware-implementation-plan.md#33-처리율탐색최종-평가)에 둔다.
 
 Workload 순서는 [M0 §3.4](path-aware-implementation-plan.md#34-비교-정책)의 두 정책을 사용한다. 기본 `excess`는 나쁜 tuple부터 비교한다. `workload`는 설정 UID 순서, 미지정 UID의 worst-first 순서로 비교한다. 빈 순위는 `excess`와 같고 저장된 미등록 UID는 보존하되 현재 판단에서는 제외한다. tuple 동률 뒤에만 기존 에너지·keep·key를 사용하며 old `Final` 우선순위를 앞에 두지 않는다.
 
