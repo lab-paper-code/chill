@@ -4,8 +4,10 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 type capacityWorkload struct {
@@ -15,17 +17,19 @@ type capacityWorkload struct {
 	queued  int     // q
 	current int     // instances serving it now
 	slack   float64 // L − m, seconds
+	totalNanos float64 // frozen current-window TOTAL, heuristic only
 }
 
-// capacityItem is one instance serving a Workload: its κ, per-input energy e
-// (batch 1) and its route weight now (a new instance: its option's weight).
-// prepare marks a new instance.
+// profileRoutingWeight is optimistic observed support, not an SLO certificate.
+type profileRoutingWeight float64
+
+// capacityItem holds Tick-fixed profile terms and original per-input energy.
 type capacityItem struct {
 	id      string
-	kappa   float64
+	routingWeight profileRoutingWeight
+	serviceNanos float64
 	e       float64
 	weight  int32
-	row     string
 	prepare bool
 }
 
@@ -57,15 +61,15 @@ func (p *capacityPlanner) held(i SchedulerInstance) bool {
 	return !i.Terminated && i.HeldUntil != nil && i.HeldUntil.After(p.snapshot.At)
 }
 
-// resolveCapacity freezes all option/workload and current-instance results for
-// this planner, including missing and rejected rows, before any sweep workers.
+// resolveCapacity freezes profile routing and conditional service terms once.
+// Offline capacity rows never decide online option eligibility.
 func (p *capacityPlanner) resolveCapacity() {
 	p.optionCapacity = make(map[int][]capacityChoice, len(p.options))
 	for option, o := range p.options {
 		choices := make([]capacityChoice, len(p.ws))
 		for w := range p.ws {
 			c := capacityChoice{option: o, w: w}
-			c.kappa, c.row, c.reason = p.kappa(o, w)
+			c.routingWeight, c.serviceNanos, c.reason = p.profileTerms(o.Instance, p.ws[w].d)
 			choices[w] = c
 		}
 		p.optionCapacity[option] = choices
@@ -74,8 +78,11 @@ func (p *capacityPlanner) resolveCapacity() {
 	resolve := func(instance SchedulerInstance) {
 		key := currentCapacityKey(instance)
 		if _, ok := p.currentCapacity[key]; !ok {
-			k, row := p.resolveCurrentKappa(instance)
-			p.currentCapacity[key] = capacityItem{kappa: k, row: row}
+			item := capacityItem{}
+			if w, ok := p.index[instance.WorkloadUID]; ok && !instance.Terminated {
+				item.routingWeight, item.serviceNanos, _ = p.profileTerms(instance, p.ws[w].d)
+			}
+			p.currentCapacity[key] = item
 		}
 	}
 	for _, o := range p.options {
@@ -90,18 +97,6 @@ func (p *capacityPlanner) resolveCapacity() {
 	}
 }
 
-// kappa looks up the row of option variant o for Workload w.
-func (p *capacityPlanner) kappa(o SchedulerOption, w int) (float64, string, string) {
-	key := NewCapacityInput(p.settings, p.snapshot.DispatchOccupancy, o, p.ws[w].d).Key()
-	row, ok := p.rows[key]
-	switch {
-	case !ok || row.Status == CapacityPending:
-		return 0, key, CapacityPending
-	case row.Kappa == nil:
-		return 0, key, CapacityRejected
-	}
-	return *row.Kappa, key, ""
-}
 
 func capacityInputEnergy(i SchedulerInstance) float64 {
 	if b := schedulerBatch(i.Profile, 1); b != nil {
@@ -142,8 +137,8 @@ func (p *capacityPlanner) build() error {
 		}
 		p.examined += len(p.plans[n])
 	}
-	keep := p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1)
-	p.keepWatts, p.keepFeasible = keep.joules, keep.feasible
+	keep := p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing)
+	p.keepWatts = keep.joules
 	return nil
 }
 
@@ -164,8 +159,8 @@ func planKey(instances []SchedulerInstance) string {
 type capacityChoice struct {
 	option SchedulerOption
 	w      int
-	kappa  float64
-	row    string
+	routingWeight profileRoutingWeight
+	serviceNanos float64
 	reason string
 }
 
@@ -377,7 +372,10 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		}
 		added = added || !used[i.ID]
 		plan.instances = append(plan.instances, i)
-		chosenItems[i.ID] = capacityItem{kappa: c.kappa, row: c.row}
+		if used[i.ID] {
+			c.routingWeight,c.serviceNanos,c.reason=p.profileTerms(i,p.ws[c.w].d)
+		}
+		chosenItems[i.ID] = capacityItem{routingWeight: c.routingWeight, serviceNanos: c.serviceNanos}
 		if c.reason != "" && plan.record.Reason == "" {
 			plan.record.Reason = c.reason
 		}
@@ -445,8 +443,9 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 	for _, i := range current {
 		w, ok := p.index[i.WorkloadUID]
 		if weight := p.keep.Routing[i.WorkloadUID][i.ID]; ok && !stopped[i.ID] && i.Ready && !i.Stopped && weight > 0 {
-			k, row := p.currentKappa(i)
-			plan.retained[w] = append(plan.retained[w], capacityItem{id: i.ID, kappa: k, e: capacityInputEnergy(i), weight: weight, row: row})
+			item := p.currentCapacity[currentCapacityKey(i)]
+			item.id, item.e, item.weight = i.ID, capacityInputEnergy(i), weight
+			plan.retained[w] = append(plan.retained[w], item)
 		}
 	}
 	p.sum(plan)
@@ -461,7 +460,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		oldKappa := 0.0
 		for _, old := range current {
 			if old.WorkloadUID == ws.d.UID || old.OwnerWorkloadUID == ws.d.UID {
-				k, _ := p.currentKappa(old)
+				k := p.currentRoutingRate(old)
 				oldKappa += k
 				affected = affected || !used[old.ID] || mode != node.PowerMode
 				policy = policy || changed[old.ID]
@@ -470,7 +469,7 @@ func (p *capacityPlanner) plan(n int, m0 string, current []SchedulerInstance, ch
 		hasCurrent := slices.ContainsFunc(current, func(old SchedulerInstance) bool {
 			return !old.Terminated && (old.WorkloadUID == ws.d.UID || old.OwnerWorkloadUID == ws.d.UID)
 		})
-		slow := hasCurrent && (affected || policy && plan.record.Kappa[ws.d.UID] <= oldKappa)
+		slow := hasCurrent && (affected || policy && plan.record.RoutingRate[ws.d.UID] <= oldKappa)
 		if slow {
 			plan.reduces = true
 			if p.partial {
@@ -505,49 +504,31 @@ type capacityInstanceKey struct {
 	workload   string
 	maxBatch   int
 	terminated bool
+	instanceID string
 }
 
 func currentCapacityKey(i SchedulerInstance) capacityInstanceKey {
-	return capacityInstanceKey{i.Profile, i.Node, i.WorkloadUID, i.MaxBatch, i.Terminated}
+	return capacityInstanceKey{i.Profile, i.Node, i.WorkloadUID, i.MaxBatch, i.Terminated, i.ID}
 }
 
-// currentKappa reads the tick's resolved capacity, including unresolved instances.
-func (p *capacityPlanner) currentKappa(i SchedulerInstance) (float64, string) {
-	item := p.currentCapacity[currentCapacityKey(i)]
-	return item.kappa, item.row
-}
-
-// resolveCurrentKappa reads the row through the current profile and batch
-// variant; without one the instance counts no capacity.
-func (p *capacityPlanner) resolveCurrentKappa(i SchedulerInstance) (float64, string) {
-	w, ok := p.index[i.WorkloadUID]
-	if i.Terminated || i.Profile == nil || !ok {
-		return 0, ""
-	}
-	v, ok := p.variants[fmt.Sprint(i.Profile.ID, "/", i.MaxBatch)]
-	if !ok {
-		cell, mode := MeasurementProfileIdentity(i.Profile), schedulerNodeMode(p.snapshot.Nodes, i.Node)
-		for _, option := range p.options {
-			j := option.Instance
-			if j.Profile != nil && j.Node.UID == i.Node.UID && j.MaxBatch == i.MaxBatch &&
-				j.Profile.Condition.PowerMode == mode && MeasurementProfileIdentity(j.Profile) == cell {
-				v, ok = option, true
-				break
+// currentRoutingRate reads Tick-fixed optimistic profile support.
+func (p *capacityPlanner) currentRoutingRate(i SchedulerInstance) float64 {
+	if item,ok:=p.currentCapacity[currentCapacityKey(i)];ok {return float64(item.routingWeight)}
+	// Prepared target IDs differ from catalog option IDs, but use that same
+	// immutable profile rate. No distribution is queried during bridge replay.
+	if w,ok:=p.index[i.WorkloadUID];ok && !i.Terminated {
+		for option,o:=range p.options {
+			if o.Instance.Profile==i.Profile && o.Instance.Node==i.Node && o.Instance.MaxBatch==i.MaxBatch {
+				return float64(p.optionCapacity[option][w].routingWeight)
 			}
 		}
 	}
-	if !ok {
-		return 0, ""
-	}
-	k, row, _ := p.kappa(v, w)
-	return k, row
+	return 0
 }
 
-// annotate fills the plan's per-Workload items from chosen (κ and row per
-// instance ID). An item's weight is the instance's current route weight, or
-// its option's weight for a new instance. Keep (chosen nil) reads the κ of
-// its ready instances and counts the routed ones as retained; a stopped one
-// serves nothing.
+
+// annotate fills per-Workload profile scalars and current/configured route
+// weights. Keep retains only captured Ready, routed physical executors.
 func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacityItem) {
 	k := len(p.ws)
 	plan.items, plan.retained = make([][]capacityItem, k), make([][]capacityItem, k)
@@ -572,7 +553,8 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 		}
 		if plan.keep {
 			if i.Ready {
-				item.kappa, item.row = p.currentKappa(i)
+				resolved := p.currentCapacity[currentCapacityKey(i)]
+				item.routingWeight, item.serviceNanos = resolved.routingWeight, resolved.serviceNanos
 			}
 			if item.weight > 0 && i.Ready {
 				plan.retained[w] = append(plan.retained[w], item)
@@ -587,15 +569,64 @@ func (p *capacityPlanner) annotate(plan *capacityPlan, chosen map[string]capacit
 
 // sum records the plan's κ sums per Workload.
 func (p *capacityPlanner) sum(plan *capacityPlan) {
-	plan.record.Kappa, plan.record.KappaRetained = map[string]float64{}, map[string]float64{}
+	plan.record.RoutingRate, plan.record.RetainedRoutingRate = map[string]float64{}, map[string]float64{}
 	for w, ws := range p.ws {
 		knew, kret := 0.0, 0.0
 		for _, item := range plan.items[w] {
-			knew += item.kappa
+			knew += float64(item.routingWeight)
 		}
 		for _, item := range plan.retained[w] {
-			kret += item.kappa
+			kret += float64(item.routingWeight)
 		}
-		plan.record.Kappa[ws.d.UID], plan.record.KappaRetained[ws.d.UID] = knew, kret
+		plan.record.RoutingRate[ws.d.UID], plan.record.RetainedRoutingRate[ws.d.UID] = knew, kret
 	}
+}
+
+type profileTermsKey struct {
+	profile *Profile
+	definition *Definition
+	node NodeReference
+	maxBatch int
+	occupancy time.Duration
+	gap int64
+	hasGap bool
+}
+type profileScalar struct {
+	routingWeight profileRoutingWeight
+	serviceNanos float64
+	reason string
+}
+
+// profileTerms performs raw distribution queries once per option/Workload/Tick.
+func (p *capacityPlanner) profileTerms(i SchedulerInstance, d *Definition) (profileRoutingWeight, float64, string) {
+	if i.Profile == nil || d == nil || i.Terminated {
+		return 0, 0, "MissingProfile"
+	}
+	key:=profileTermsKey{profile:i.Profile,definition:d,node:i.Node,maxBatch:i.MaxBatch}
+	var gap *int64
+	if slices.ContainsFunc(p.snapshot.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
+		gap = i.LastServiceEndAgeNanos
+	}
+	occupancy := ResolveDispatchOccupancy(p.settings, p.snapshot.DispatchOccupancy, i)
+	key.occupancy=occupancy.PerRequest
+	if gap!=nil {key.hasGap,key.gap=true,*gap}
+	if cached,ok:=p.profileScalars[key];ok {return cached.routingWeight,cached.serviceNanos,cached.reason}
+	mu := capacityThroughput(i.Profile, i.MaxBatch)
+	service := math.Inf(1)
+	for _, batch := range i.Profile.Batches {
+		if batch.Batch > i.MaxBatch {
+			continue
+		}
+		q, _, ok := batch.ServiceDistribution.QuantileNanos(gap, d.SLO.Percentile)
+		if ok {
+			service = min(service, float64(q)+float64(batch.Batch)*float64(occupancy.PerRequest))
+		}
+	}
+	result:=profileScalar{routingWeight:profileRoutingWeight(mu),serviceNanos:service}
+	if mu <= 0 || !schedulerFinite(mu) || !schedulerFinite(service) {
+		result=profileScalar{reason:"MissingConditionalService"}
+	}
+	if p.profileScalars==nil {p.profileScalars=map[profileTermsKey]profileScalar{}}
+	p.profileScalars[key]=result
+	return result.routingWeight,result.serviceNanos,result.reason
 }

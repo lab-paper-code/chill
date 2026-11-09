@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
@@ -138,40 +139,38 @@ type SchedulerPlanSearchStep struct {
 	BudgetCut        bool            `json:"budgetCut,omitempty"`
 }
 
-// SchedulerCapacityWorkload is one controlled Workload of the chosen plan set.
-// Rate is λ (req/s), Backlog B (requests). A missing wait, drain or exceedance
-// is unbounded: no capacity serves the Workload.
+// SchedulerCapacityWorkload separates routing heuristics and current tested-rate evidence.
 type SchedulerCapacityWorkload struct {
 	UID                  string           `json:"uid"`
 	Rate                 float64          `json:"rate"`
 	MinimumDemand        float64          `json:"minimumDemand"`
 	Queued               int              `json:"queued"`
-	KappaNew             float64          `json:"kappaNew"`
-	KappaRetained        float64          `json:"kappaRetained"`
-	Backlog              float64          `json:"backlog"`
-	WaitSeconds          *float64         `json:"waitSeconds,omitempty"`
-	DrainSeconds         *float64         `json:"drainSeconds,omitempty"`
-	FinalExceedance      *float64         `json:"finalExceedance,omitempty"`
-	TransitionExceedance *float64         `json:"transitionExceedance,omitempty"`
+	RoutingRate float64 `json:"routingRate"`
+	RetainedRoutingRate float64 `json:"retainedRoutingRate"`
+	Tests []SchedulerFeedbackRate `json:"tests"`
+	KeepTests []SchedulerFeedbackRate `json:"keepTests"`
 	Weights              map[string]int32 `json:"weights"`
-	Rows                 []string         `json:"rows"`
 }
 
-// SchedulerNodePlan is one Node's plan: keep, or a set of option variants at
-// one power mode. Kappa and KappaRetained are per Workload UID; Pre and Post
-// are the longest chains before and after the route; Joules is the mean chain
-// energy.
+// SchedulerFeedbackRate records tested queries, not a complete grid certificate.
+type SchedulerFeedbackRate struct {
+	InstanceID string `json:"instanceID"`
+	Input CapacityInput `json:"input"`
+	PathFeedback PathFeedback `json:"pathFeedback"`
+	FeedbackCapacity
+}
+
+// SchedulerNodePlan records profile routing sums, transition timing and original energy.
 type SchedulerNodePlan struct {
 	Node               NodeReference       `json:"node"`
 	Key                string              `json:"key"`
 	Eligible           bool                `json:"eligible"`
 	Reason             string              `json:"reason,omitempty"`
 	PreparationFailure *PreparationFailure `json:"preparationFailure,omitempty"`
-	Dominated          string              `json:"dominated,omitempty"`
 	// RequiresBridge is a conditional candidate, never permission to stop first.
 	RequiresBridge          []string                       `json:"requiresBridge,omitempty"`
-	Kappa                   map[string]float64             `json:"kappa,omitempty"`
-	KappaRetained           map[string]float64             `json:"kappaRetained,omitempty"`
+	RoutingRate map[string]float64 `json:"routingRate,omitempty"`
+	RetainedRoutingRate map[string]float64 `json:"retainedRoutingRate,omitempty"`
 	Pre                     time.Duration                  `json:"preNanos"`
 	Post                    time.Duration                  `json:"postNanos"`
 	Joules                  float64                        `json:"joules"`
@@ -180,11 +179,9 @@ type SchedulerNodePlan struct {
 	IdleCosts               map[string]IdlePowerProvenance `json:"idleCosts,omitempty"`
 }
 
-// EvaluateScheduler plans with capacity sums: node plans, the transient and
-// final SLO rule over exact κ sums, a neighborhood search over plan sets and
-// analytic energy over one comparison period. capacity holds the rows
-// CapacityTable.Rows returns.
-func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, capacity []CapacityRow) (decision SchedulerDecision, err error) {
+// EvaluateScheduler uses cheap profile heuristics and exact finite-demand finalists.
+// Offline BuildCapacityRow/CapacityTable remain explicit full-grid analysis APIs.
+func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot) (decision SchedulerDecision, err error) {
 	started := time.Now()
 	if err := ctx.Err(); err != nil {
 		return SchedulerDecision{}, err
@@ -214,7 +211,7 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 		decision.Keep.Reasons, decision.Reasons = reasons, reasons
 		return decision, ctx.Err()
 	}
-	planner := newCapacityPlanner(ctx, settings, snapshot, keep, capacity, decision)
+	planner := newCapacityPlanner(ctx, settings, snapshot, keep, decision)
 	planner.fixCapacityWorkloads(&decision)
 	if len(planner.ws) == 0 {
 		if len(snapshot.Instances) == 0 && slices.ContainsFunc(decision.Workloads, func(w SchedulerWorkloadState) bool {
@@ -253,6 +250,9 @@ func EvaluateScheduler(ctx context.Context, settings SchedulerSettings, snapshot
 	}
 	if settings.PlanSearchStrategy != protocol.V2 || !settings.PlanPostFilterFinalists {
 		best = planner.minimumGain(planner.payback(best))
+	}
+	if err := planner.testDecisionRates(best); err != nil {
+		return SchedulerDecision{}, err
 	}
 	decision = planner.decide(decision, best)
 	markFixedEstimates(&decision)
@@ -302,33 +302,30 @@ type capacityPlanner struct {
 	settings     SchedulerSettings
 	snapshot     SchedulerSnapshot
 	keep         SchedulerCandidate
-	rows         map[string]CapacityRow
+	feedbackCache sync.Map // Tick-local exact replay results; v1 workers share immutable values
 	options      []SchedulerOption
 	pending      []SchedulerInstance // uncreated commitments, counted once without capacity
 	ws           []capacityWorkload
+	keepRates, selectedRates [][]SchedulerFeedbackRate
 	index        map[string]int
 	plans        [][]*capacityPlan // per Node; plans[n][0] is keep
 	compared     []bool
 	period       float64
 	keepWatts    float64 // keep energy is linear in the common comparison window
-	keepFeasible bool    // full Keep judgment, shared by admission and recovery
 	examined     int
 	searched     SchedulerPlanSearch
-	variants     map[string]SchedulerOption // capacity variants by profile ID and batch limit
 	// Resolved once during construction; every plan and sweep worker only reads.
 	optionCapacity  map[int][]capacityChoice
 	currentCapacity map[capacityInstanceKey]capacityItem
+	profileScalars map[profileTermsKey]profileScalar
 	// partial marks a window observed for less than its length since the
 	// process started: arrivals there still reflect the restart, so plans
 	// only add instances and keep every route.
 	partial bool
 }
 
-func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, keep SchedulerCandidate, rows []CapacityRow, decision SchedulerDecision) *capacityPlanner {
-	p := &capacityPlanner{ctx: ctx, settings: settings, snapshot: snapshot, keep: keep, rows: map[string]CapacityRow{}, index: map[string]int{}, variants: map[string]SchedulerOption{}}
-	for _, row := range rows {
-		p.rows[row.Key] = row
-	}
+func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapshot SchedulerSnapshot, keep SchedulerCandidate, decision SchedulerDecision) *capacityPlanner {
+	p := &capacityPlanner{ctx: ctx, settings: settings, snapshot: snapshot, keep: keep, index: map[string]int{}}
 	for _, state := range decision.Workloads {
 		if state.State != WorkloadControlled {
 			continue
@@ -359,7 +356,8 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 		w.rate = max(w.rate, settings.MinimumDemand[w.d.UID])
 		w.minRate = max(capacityMinimumRate(settings, decision.Search, snapshot.Arrivals, w.d.UID), settings.MinimumDemand[w.d.UID])
-		w.slack = w.d.SLO.TargetLatency.Seconds() - settings.CompletionMarginMS/1e3
+		w.totalNanos = p.pathFeedback(w.d).TotalNanos
+		w.slack = w.d.SLO.TargetLatency.Seconds() - w.totalNanos/1e9
 		for _, i := range snapshot.Instances {
 			if i.WorkloadUID == w.d.UID || i.OwnerWorkloadUID == w.d.UID {
 				w.current++
@@ -377,21 +375,12 @@ func newCapacityPlanner(ctx context.Context, settings SchedulerSettings, snapsho
 		}
 	}
 	p.options = schedulerMeasuredOptions(ctx, snapshot)
-	// The capacity table keys rows by the variants of the snapshot options.
-	for _, option := range snapshot.Options {
-		for _, v := range CapacityVariants(option) {
-			key := fmt.Sprint(v.Instance.Profile.ID, "/", v.Instance.MaxBatch)
-			if _, seen := p.variants[key]; !seen {
-				p.variants[key] = v
-			}
-		}
-	}
 	p.resolveCapacity()
 	return p
 }
 
-// fixCapacityWorkloads uses the planner's resolved row selections. Missing
-// capacity fixes only its own UID; independent prepared UIDs remain controlled.
+// fixCapacityWorkloads fixes only Workloads lacking valid raw profile support.
+// Pending and zero-witness offline rows never gate control.
 func (p *capacityPlanner) fixCapacityWorkloads(decision *SchedulerDecision) {
 	kept := 0
 	for w, ws := range p.ws {
@@ -437,6 +426,7 @@ func (p *capacityPlanner) fixCapacityWorkloads(decision *SchedulerDecision) {
 // control intervals that tile the observed part of the observation window.
 func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arrivals []SchedulerArrival, uid string) float64 {
 	covered := search.WindowEnd.Sub(search.WindowStart)
+	if covered<=0 {return 0}
 	buckets := max(1, int(covered/settings.ControlInterval))
 	width := covered / time.Duration(buckets)
 	start := search.WindowEnd.Add(-time.Duration(buckets) * width)
@@ -448,4 +438,13 @@ func capacityMinimumRate(settings SchedulerSettings, search SchedulerSearch, arr
 		counts[min(buckets-1, int(a.At.Sub(start)/width))]++
 	}
 	return float64(slices.Min(counts)) / width.Seconds()
+}
+
+func (p *capacityPlanner) pathFeedback(d *Definition) PathFeedback {
+	for _, feedback := range p.snapshot.PathFeedback {
+		if feedback.WorkloadUID == d.UID {
+			return feedback
+		}
+	}
+	return BuildPathFeedback(d.UID, nil, d.SLO, time.Duration(p.settings.CompletionMarginMS*1e6))
 }

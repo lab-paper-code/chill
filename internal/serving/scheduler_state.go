@@ -1,197 +1,145 @@
 package serving
 
+import (
+	"cmp"
+	"math"
+	"slices"
+)
+
 type orderKey struct {
 	feasible, final, keep, weightsExceeded bool
-	unroutedPrepare, searchable, bounded   bool
-	joules, route, keepJoules, period      float64
-	excesses, demand, supply               []float64
-	satisfied                              []bool
-	instances, countExcess                 int
-	choice                                 []int // table indices, not v1 plan indices
-	table                                  *planTable
+	unroutedPrepare, searchable, bounded bool
+	joules, route, keepJoules, period float64
+	excesses, demand, supply []float64
+	satisfied []bool
+	instances, countExcess int
+	choice []int
+	table *planTable
 }
 
 type searchSum struct {
-	kappa, kappaE, kappaRet, weightRet, energyWeightRet float64
-	count, pending, slow                                int
+	routingRate, retainedRoutingRate, serviceNanos float64
+	energyRate, weight, weightedEnergy, retainedWeight, retainedEnergy float64
+	count, pending int
 }
 
-// searchState owns all mutable storage for one sequential search. The table is
-// immutable after initSearch. Scratch writes in delta never change its choice,
-// sums, timing list or route. Item capacity covers even multi-instance keep.
+// searchState keeps additive Tick-fixed terms. Delta never queries raw service
+// distributions, allocates integer routes, or invokes demand replay.
 type searchState struct {
-	planner   *capacityPlanner
-	table     *planTable
-	choice    []int
-	sums      []searchSum
-	workloads []searchWorkload
-	total     int
-	tPre      []float64
-	r         float64
-	nodeJ     []float64
-	items     []capacityItem
-	weights   []int32
-	load      []float64
-	result    orderKey
+	planner *capacityPlanner
+	table *planTable
+	choice []int
+	sums []searchSum
+	total int
+	tPre []float64
+	r float64
+	result orderKey
 }
 
 func newSearchState(p *capacityPlanner, t *planTable, choice []int) *searchState {
 	t.initSearch(p)
-	n, w, size := len(p.plans), len(p.ws), 0
-	for _, plans := range t.byPlan {
-		largest := 0
-		for _, q := range plans {
-			for _, count := range t.count[q] {
-				largest = max(largest, count)
-			}
-		}
-		size += largest
-	}
-	s := &searchState{planner: p, table: t, choice: make([]int, n), sums: make([]searchSum, w),
-		tPre: make([]float64, n), nodeJ: make([]float64, n), items: make([]capacityItem, size),
-		weights: make([]int32, size), load: make([]float64, size), workloads: make([]searchWorkload, w),
-		result: orderKey{choice: make([]int, n), excesses: make([]float64, w), table: t,
-			demand: make([]float64, w), supply: make([]float64, w), satisfied: make([]bool, w)}}
+	n, w := len(p.plans), len(p.ws)
+	s := &searchState{planner:p, table:t, choice:make([]int,n), sums:make([]searchSum,w), tPre:make([]float64,n),
+		result:orderKey{choice:make([]int,n), excesses:make([]float64,w), demand:make([]float64,w), supply:make([]float64,w), satisfied:make([]bool,w), table:t}}
 	s.reset(choice)
 	return s
 }
 
-func (s *searchState) reset(choice []int) {
-	copy(s.choice, choice)
-	s.recount()
-}
-
-// recount uses canonical Node/item order. Repeated subtract/add would accumulate
-// rounding error, which can flip better on an otherwise exact energy tie.
+func (s *searchState) reset(choice []int) { copy(s.choice,choice); s.recount() }
 func (s *searchState) recount() {
-	s.total, s.r = 0, 0
-	for n, q := range s.choice {
-		s.tPre[n] = 0
-		if !s.table.keep[q] {
-			s.tPre[n] = s.table.tPre[q]
-		}
-		s.r = max(s.r, s.tPre[n])
+	clear(s.sums)
+	s.total, s.r = 0,0
+	for n,q := range s.choice {
+		s.tPre[n] = s.table.tPre[q]
+		if s.table.keep[q] { s.tPre[n] = 0 }
+		s.r = max(s.r,s.tPre[n])
 		s.total += s.table.others[q]
-	}
-	for w := range s.sums {
-		s.recountWorkload(w)
-		s.total += s.sums[w].count
-		s.workloads[w] = s.workloadTerms(w, -1, 0)
-	}
-	for n, q := range s.choice {
-		if s.planner.compared[n] {
-			s.nodeJ[n] = s.table.energy(q, s.r, s.planner.period)
+		for w := range s.sums {
+			s.addPlan(&s.sums[w],q,w,1)
+			s.total += s.table.count[q][w]
 		}
 	}
 }
-
-func (s *searchState) recountWorkload(w int) {
-	s.sums[w] = searchSum{}
-	sum := &s.sums[w]
-	for _, q := range s.choice {
-		sum.pending += s.table.pending[q][w]
-		for _, item := range s.table.items[q][w] {
-			sum.kappa += item.kappa
-			sum.kappaE += item.kappa * item.e
-			sum.count++
-		}
-		for _, item := range s.table.retained[q][w] {
-			sum.kappaRet += item.kappa
-			sum.weightRet += float64(item.weight)
-			sum.energyWeightRet += item.e * float64(item.weight)
-		}
-		if s.table.slowWorkload[q][w] {
-			sum.slow++
-		}
+func (s *searchState) addPlan(sum *searchSum,q,w int, sign float64) {
+	t := s.table
+	sum.routingRate += sign*t.routingRate[q][w]
+	sum.retainedRoutingRate += sign*t.retainedRoutingRate[q][w]
+	sum.serviceNanos += sign*t.routingRateServiceNanos[q][w]
+	sum.energyRate += sign*t.energyRate[q][w]
+	sum.weight += sign*t.weight[q][w]
+	sum.weightedEnergy += sign*t.weightedEnergy[q][w]
+	sum.retainedWeight += sign*t.weightRet[q][w]
+	sum.retainedEnergy += sign*t.energyWeightRet[q][w]
+	sum.count += int(sign)*t.count[q][w]
+	sum.pending += int(sign)*t.pending[q][w]
+}
+func (s *searchState) apply(n,q int) {
+	old:=s.choice[n]
+	if old==q {return}
+	s.total+=s.table.others[q]-s.table.others[old]
+	for w:=range s.sums {
+		s.addPlan(&s.sums[w],old,w,-1)
+		s.addPlan(&s.sums[w],q,w,1)
+		s.total+=s.table.count[q][w]-s.table.count[old][w]
 	}
+	s.choice[n]=q
+	s.tPre[n]=s.table.tPre[q]
+	if s.table.keep[q] {s.tPre[n]=0}
+	s.r=0
+	for _,pre:=range s.tPre {s.r=max(s.r,pre)}
 }
 
-func (s *searchState) apply(n, q int) {
-	t, old, previousRoute := s.table, s.choice[n], s.r
-	if old == q {
-		return
-	}
-	s.choice[n] = q
-	s.total += t.others[q] - t.others[old]
-	for w := range s.sums {
-		if t.sameWorkload(old, q, w) {
-			continue
-		}
-		s.total += t.count[q][w] - t.count[old][w]
-		s.recountWorkload(w)
-		s.workloads[w] = s.workloadTerms(w, -1, 0)
-	}
-	s.tPre[n] = 0
-	if !t.keep[q] {
-		s.tPre[n] = t.tPre[q]
-	}
-	s.r = 0
-	for _, pre := range s.tPre {
-		s.r = max(s.r, pre)
-	}
-	for node, current := range s.choice {
-		if s.planner.compared[node] && (node == n || s.r != previousRoute && !t.keep[current]) {
-			s.nodeJ[node] = t.energy(current, s.r, s.planner.period)
-		}
-	}
-}
-
-// delta evaluates a one-Node move without allocation. r changes invalidate all
-// transitioning Node energies. Otherwise only the moved Node is recalculated;
-// the final fold always follows v1's order, avoiding a subtract/add ulp drift.
-func (s *searchState) delta(n, q int) orderKey {
-	t, p := s.table, s.planner
+func (s *searchState) delta(n,q int) orderKey {
+	p,t := s.planner,s.table
 	key := s.result
-	key.feasible, key.final, key.keep, key.searchable, key.bounded = true, true, true, true, true
-	key.weightsExceeded, key.unroutedPrepare = false, false
-	key.joules, key.route = 0, 0
-	key.period, key.keepJoules = p.period, p.keepWatts*p.period
-	key.countExcess = 0
-	for node, pre := range s.tPre {
-		if node == n {
-			pre = 0
-			if !t.keep[q] {
-				pre = t.tPre[q]
-			}
-		}
-		key.route = max(key.route, pre)
-	}
-	for node, current := range s.choice {
-		if node == n {
-			current = q
-		}
-		key.choice[node] = current
+	key.feasible,key.final,key.keep,key.searchable,key.bounded = true,true,true,true,true
+	key.weightsExceeded,key.unroutedPrepare = false,false
+	key.joules,key.route,key.countExcess = 0,0,0
+	key.period,key.keepJoules = p.period,p.keepWatts*p.period
+	for node,current := range s.choice {
+		if node==n {current=q}
+		key.choice[node]=current
 		key.keep = key.keep && t.keep[current]
 		key.searchable = key.searchable && t.searchable[current]
-		if p.compared[node] {
-			energy := s.nodeJ[node]
-			if node == n || key.route != s.r && !t.keep[current] {
-				energy = t.energy(current, key.route, p.period)
-			}
-			key.joules += energy
-		}
+		if !t.keep[current] {key.route=max(key.route,t.tPre[current])}
 	}
-	old, total := s.choice[n], s.total+t.others[q]-t.others[s.choice[n]]
-	for w, ws := range p.ws {
-		count := s.sums[w].count + s.sums[w].pending - t.count[old][w] - t.pending[old][w] + t.count[q][w] + t.pending[q][w]
-		total += t.count[q][w] - t.count[old][w]
-		key.bounded = key.bounded && count <= p.settings.MaxReplicas && (p.settings.Controls.Replicas || count == ws.current)
-		key.countExcess += max(0, count-p.settings.MaxReplicas)
-		key.joules += s.workload(w, n, q, key.route, &key)
+	for node,current := range key.choice {if p.compared[node] {key.joules+=t.energy(current,key.route,p.period)}}
+	total := s.total+t.others[q]-t.others[s.choice[n]]
+	for w,ws := range p.ws {
+		sum := s.sums[w]
+		s.addPlan(&sum,s.choice[n],w,-1)
+		s.addPlan(&sum,q,w,1)
+		total += sum.count-s.sums[w].count
+		count := sum.count+sum.pending
+		key.bounded = key.bounded && count<=p.settings.MaxReplicas && (p.settings.Controls.Replicas || count==ws.current)
+		key.countExcess += max(0,count-p.settings.MaxReplicas)
+		excess,eligible := capacityHeuristic(ws,sum.routingRate,sum.retainedRoutingRate,sum.serviceNanos,key.route,p.period)
+		key.excesses[t.excessIndex[w]],key.satisfied[w] = excess,excess==0 && eligible
+		key.demand[w],key.supply[w] = ws.rate,sum.routingRate
+		key.feasible = key.feasible && key.satisfied[w]
+		key.final = key.feasible
+		key.searchable = key.searchable && eligible
+		mean := 0.0
+		if p.settings.Controls.Routing && sum.routingRate>0 {mean=sum.energyRate/sum.routingRate} else if sum.weight>0 {mean=sum.weightedEnergy/sum.weight}
+		initial := 0.0
+		if sum.retainedWeight>0 {initial=min(ws.rate,sum.retainedRoutingRate)*sum.retainedEnergy/sum.retainedWeight}
+		before:=min(key.route,p.period)
+		key.joules += initial*before+max(0,ws.rate-sum.retainedRoutingRate)*before*mean+ws.rate*mean*max(0,p.period-key.route)
 	}
-	if key.keep {
-		key.keepJoules = key.joules
-	}
-	key.bounded = key.bounded && total <= p.settings.MaxInstances
-	key.instances = total
-	key.countExcess += max(0, total-p.settings.MaxInstances)
-	for k := 1; k < len(key.excesses); k++ {
-		value, at := key.excesses[k], k
-		for at > 0 && value > key.excesses[at-1] {
-			key.excesses[at] = key.excesses[at-1]
-			at--
-		}
-		key.excesses[at] = value
-	}
+	key.bounded = key.bounded && total<=p.settings.MaxInstances
+	key.instances=total
+	key.countExcess+=max(0,total-p.settings.MaxInstances)
+	if key.keep {key.keepJoules=key.joules}
+	slices.SortFunc(key.excesses[t.priorityCount:],func(a,b float64)int{return cmp.Compare(b,a)})
 	return key
+}
+
+// capacityHeuristic is an optimistic fluid search score, not predicted E2E.
+func capacityHeuristic(w capacityWorkload,mu,retained,service,route,period float64) (float64,bool) {
+	if w.rate==0 && w.queued==0 {return 0,true}
+	if mu<=0 {return math.Inf(1),false}
+	backlog:=max(0,float64(w.queued)+(w.rate-retained)*route)
+	backlog+=max(w.rate-mu,0)*max(period-route,0)
+	h:=w.totalNanos+1e9*route+1e9*backlog/mu+service/mu
+	return max(0,h/float64(w.d.SLO.TargetLatency)-1),true
 }

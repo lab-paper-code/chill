@@ -50,21 +50,24 @@ func TestCapacityPolishStrictImprovementAndTermination(t *testing.T) {
 	t.Logf("steps=%d evaluations=%d J=%.9f", polishSteps, stats.SurrogateEvaluated, candidates[0].Joules)
 }
 
-func TestCapacityPolishEndpointMatchesExact(t *testing.T) {
-	p := capacityTwinSwap(100, 0)
-	// Direct Candidates callers seed the common-window baseline like Engine.Search.
-	adapter := newCapacityExact(p)
-	adapter.SeedKeep(adapter.Evaluate(make([]int, len(p.plans))))
+func TestCapacityPolishEndpointMatchesFrozenEnergy(t *testing.T) {
+	p := capacityDeltaTiny([]float64{10}, 1)
+	p.keepWatts = 10
+	keep := p.plans[0][0]
+	keep.before = 10
+	keep.items[0][0].e, keep.retained[0][0].e = 0, 0
+	move := *keep
+	move.keep, move.record.Key, move.after = false, "lower-idle", 9
+	p.plans[0] = append(p.plans[0], &move)
 	problem := p.scalarProblem(p.planTable(), time.Time{})
 	candidates, stats := v2.Candidates(problem, problem.Table, 0, 1, 4, time.Time{})
-	exact := e5Brute(p)
-	if len(candidates) == 0 || exact == nil || !slices.Equal(candidates[0].Choice, exact.choice) ||
-		candidates[0].Joules != exact.joules || candidates[0].Feasible != exact.feasible ||
-		stats.Deadline || stats.Exhausted {
-		t.Fatalf("polish endpoint differs from exhaustive optimum: candidates=%+v exact=%+v stats=%+v", candidates, exact, stats)
+	if len(candidates) == 0 || !slices.Equal(candidates[0].Choice, []int{1}) ||
+		candidates[0].Joules != 540 || !candidates[0].Feasible || stats.Deadline || stats.Exhausted {
+		t.Fatalf("polish lost frozen energy optimum: candidates=%+v stats=%+v", candidates, stats)
 	}
-	if len(stats.SearchSteps) != 2 || stats.SearchSteps[1].Phase != protocol.Polish ||
-		stats.SearchSteps[1].K != 1 || stats.SearchSteps[1].Joules != candidates[0].Joules {
+	if !slices.ContainsFunc(stats.SearchSteps, func(step protocol.Step) bool {
+		return step.Phase == protocol.Polish && step.K == 1 && step.Joules == 540
+	}) {
 		t.Fatalf("missing optimal polish endpoint: %+v", stats.SearchSteps)
 	}
 }

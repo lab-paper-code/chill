@@ -26,21 +26,21 @@ func (p *capacityPlanner) transitionConstraints(choice []int) (string, []Schedul
 	return "", records
 }
 
-// SchedulerTransitionReserve records actual supply, not future target capacity.
+// SchedulerTransitionReserve records modeled surviving profile-rate margin.
 type SchedulerTransitionReserve struct {
 	UID          string  `json:"uid"`
 	Fraction     float64 `json:"fraction"`
 	Demand       float64 `json:"demand"`
-	Required     float64 `json:"requiredKappa"`
-	BeforeRoute  float64 `json:"beforeRouteKappa"`
-	AfterRoute   float64 `json:"afterRouteKappa"`
+	RequiredRate float64 `json:"requiredRate"`
+	BeforeRouteRate float64 `json:"beforeRouteRate"`
+	AfterRouteRate float64 `json:"afterRouteRate"`
 	Allowed      bool    `json:"allowed"`
 	Reason       string  `json:"reason,omitempty"`
 	CandidateKey string  `json:"candidateKey,omitempty"`
 }
 
-// transitionReserve checks the minimum surviving actual supply before and after
-// route. A planned prepare is not supply; reservations cannot collateralize twice.
+// transitionReserve applies configured margin to estimated surviving profile rate.
+// A planned prepare is excluded; physical readiness/ownership stays independent.
 func (p *capacityPlanner) transitionReserve(choice []int) []SchedulerTransitionReserve {
 	f := p.settings.TransitionReserveFraction
 	if f == 0 {
@@ -68,7 +68,7 @@ func (p *capacityPlanner) transitionReserve(choice []int) []SchedulerTransitionR
 		if !affected {
 			continue
 		}
-		record := SchedulerTransitionReserve{UID: ws.d.UID, Fraction: f, Demand: ws.rate, Required: ws.rate * (1 + f)}
+		record := SchedulerTransitionReserve{UID: ws.d.UID, Fraction: f, Demand: ws.rate, RequiredRate: ws.rate * (1 + f)}
 		for n, j := range choice {
 			plan := p.plans[n][j]
 			if schedulerReservedNode(p.snapshot, p.snapshot.Nodes[n].Node) {
@@ -76,18 +76,18 @@ func (p *capacityPlanner) transitionReserve(choice []int) []SchedulerTransitionR
 			}
 			for _, item := range plan.retained[w] {
 				if p.reserveAvailable(item.id, ws.d.UID) {
-					record.BeforeRoute += item.kappa
+					record.BeforeRouteRate += float64(item.routingWeight)
 				}
 			}
 			if plan.mode == p.snapshot.Nodes[n].PowerMode {
 				for _, item := range plan.items[w] {
 					if !item.prepare && p.reserveAvailable(item.id, ws.d.UID) {
-						record.AfterRoute += item.kappa
+						record.AfterRouteRate += float64(item.routingWeight)
 					}
 				}
 			}
 		}
-		record.Allowed = record.BeforeRoute >= record.Required && record.AfterRoute >= record.Required
+		record.Allowed = record.BeforeRouteRate >= record.RequiredRate && record.AfterRouteRate >= record.RequiredRate
 		if !record.Allowed {
 			record.Reason = schedulerTransitionReserveInsufficient
 		}

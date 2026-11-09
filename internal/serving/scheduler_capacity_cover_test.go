@@ -11,14 +11,16 @@ import (
 func TestCapacityCoverSatisfiedAndOverload(t *testing.T) {
 	for _, test := range []struct {
 		name     string
-		rates    map[int]float64
+		rate     float64
 		feasible bool
 	}{
-		{"recover", map[int]float64{0: 110, 1: 15}, true},
-		{"overload", map[int]float64{0: 1000000}, false},
+		{"recover", 45, true},
+		{"overload", 1000000, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			p := e5Planner(test.rates, evaluationNodes(), e5Start, nil)
+			p := capacityScalarProductFixture()
+			p.ws[0].rate = test.rate
+			p.plans[0][1].items[0][0].routingWeight = 60
 			problem := p.scalarProblem(p.planTable(), time.Time{})
 			candidates, stats := v2.Candidates(problem, problem.Table, 500000, 16, 4, time.Time{})
 			if len(candidates) == 0 || candidates[0].Feasible != test.feasible {

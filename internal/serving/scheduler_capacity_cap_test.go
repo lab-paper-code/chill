@@ -2,174 +2,93 @@ package serving
 
 import (
 	"math"
-	"math/rand/v2"
 	"slices"
 	"testing"
 	"time"
 
-	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
-func TestCapacityCapSelection(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		e          float64
-		state      v2.CapState
-		variants   []int
-		candidates []int
-		preferred  int
-	}{
-		{"cheap", 1, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 12}, []int{0, 1, 2}, []int{2, 1}, 2},
-		{"expensive", 3, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 12}, []int{0, 1, 2}, []int{2, 1}, 1},
-		{"equal-energy", 2, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 12}, []int{0, 1, 2}, []int{2, 1}, 2},
-		{"no-others", 3, v2.CapState{Demand: 2}, []int{0, 1, 2}, []int{2, 1}, 2},
-		{"no-satisfying", 3, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 15}, []int{0, 1, 2}, []int{2}, 2},
-		{"overload-backlog", 3, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 12, Overload: true, Backlog: true}, []int{0, 1, 2}, []int{2}, 2},
-		{"overload-zero-backlog", 3, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 12, Overload: true}, []int{0, 1, 2}, []int{2, 1}, 1},
-		{"one", 3, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 12}, []int{1}, []int{1}, 1},
-		{"same-endpoint", 3, v2.CapState{KappaOthers: 10, KappaEOthers: 20, Demand: 14}, []int{0, 1, 2}, []int{2}, 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tab := &protocol.Table{Kappa: [][]float64{{1}, {2}, {4}}, KappaE: [][]float64{{tc.e}, {2 * tc.e}, {4 * tc.e}}}
-			got := v2.SelectCaps(tab, protocol.Entry{Workload: 0, Variants: tc.variants}, tc.state)
-			if !slices.Equal(got.Candidates[:got.Count], tc.candidates) || got.Preferred != tc.preferred {
-				t.Fatalf("got=%+v candidates=%v preferred=%d", got, tc.candidates, tc.preferred)
-			}
-		})
+func TestCapacityEveryProfileVariantRetained(t *testing.T) {
+	p := capacityDeltaTiny([]float64{50}, 10)
+	for _, mu := range []float64{0, 25, 50, 75} {
+		plan := *p.plans[0][0]
+		plan.keep, plan.option, plan.record.Key = false, "same-profile-option", time.Duration(mu).String()
+		item := plan.items[0][0]
+		item.routingWeight = profileRoutingWeight(mu)
+		plan.items = [][]capacityItem{{item}}
+		p.plans[0] = append(p.plans[0], &plan)
+	}
+	tab := p.planTable()
+	problem := p.scalarProblem(tab, time.Time{})
+	v2.Group(problem.Table)
+	seen := make(map[int]bool)
+	for _, entry := range problem.Table.Entries {
+		for _, q := range entry.Variants {
+			if seen[q] { t.Fatalf("duplicate variant %d", q) }
+			seen[q] = true
+		}
+	}
+	for _, q := range tab.byPlan[0] {
+		if !seen[q] || !tab.searchable[q] { t.Fatalf("profile variant %d removed before heuristic scoring", q) }
+	}
+	if len(tab.pruned) != 0 { t.Fatalf("unjustified scalar pruning: %v", tab.pruned) }
+}
+
+func TestCapacityDeltaFrozen130And190ms(t *testing.T) {
+	p := capacityDeltaTiny([]float64{50}, 10)
+	p.period, p.ws[0].queued, p.ws[0].totalNanos = 1, 2, 20e6
+	p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
+	base := p.plans[0][0]
+	for _, spec := range []struct{ mu, service float64 }{{50, 20e6}, {25, 40e6}} {
+		plan := *base
+		plan.keep, plan.option, plan.preMean, plan.preMax = false, "profile", .05, .05
+		item := base.items[0][0]
+		item.routingWeight, item.serviceNanos = profileRoutingWeight(spec.mu), spec.service
+		plan.items = [][]capacityItem{{item}}
+		retained := item
+		retained.routingWeight = 10
+		plan.retained = [][]capacityItem{{retained}}
+		p.plans[0] = append(p.plans[0], &plan)
+	}
+	tab := p.planTable()
+	s := newSearchState(p, tab, []int{tab.byPlan[0][0]})
+	problem := p.scalarProblem(tab, time.Time{})
+	a := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][1]), problem.Table))
+	b := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][2]), problem.Table))
+	if math.Abs(a.Excesses[0]-.3) > 1e-14 || math.Abs(b.Excesses[0]-.9) > 1e-14 || !a.Better(&b) || b.Better(&a) {
+		t.Fatalf("frozen h130/h190 ordering: A=%+v B=%+v", a, b)
+	}
+	s.apply(0, tab.byPlan[0][2])
+	if !slices.Equal(s.choice, []int{tab.byPlan[0][2]}) || s.sums[0].routingRate != 25 || s.sums[0].serviceNanos != 25*40e6 {
+		t.Fatalf("apply lost frozen sums: %+v", s.sums)
 	}
 }
 
-func TestCapacityCapExact(t *testing.T) {
-	rng := rand.New(rand.NewPCG(20261107, 2))
-	states, moves, mismatches, preferredMatches := 0, 0, 0, 0
-	failures := map[string]int{}
-	for mix, rates := range e5Mixes {
-		p := e5Planner(rates, evaluationScaled(2, 0), e5Start, nil)
+func TestCapacityDeltaFrozenWorkloadPriority(t *testing.T) {
+	for _, strategy := range []string{SLOPriorityExcess, SLOPriorityWorkload} {
+		p := capacityDeltaTiny([]float64{10}, 1)
+		p.ws[0].d.UID = "b"
+		p.ws[0].d.SLO.TargetLatency = 100 * time.Millisecond
+		a := *p.ws[0].d
+		a.UID = "a"
+		p.ws = append(p.ws, capacityWorkload{d: &a, rate: 1})
+		p.index = map[string]int{"b": 0, "a": 1}
+		p.settings.SLOPriorityStrategy, p.settings.WorkloadPriority = strategy, []string{"a"}
+		makePlan := func(bService, aService float64, key string) *capacityPlan {
+			return &capacityPlan{items: [][]capacityItem{
+				{{id: "b", routingWeight: 10, serviceNanos: bService}},
+				{{id: "a", routingWeight: 10, serviceNanos: aService}},
+			}, retained: make([][]capacityItem, 2), record: SchedulerNodePlan{Key: key, Eligible: true}}
+		}
+		p.plans[0] = []*capacityPlan{makePlan(190e6, 130e6, "A"), makePlan(150e6, 140e6, "B")}
 		tab := p.planTable()
 		problem := p.scalarProblem(tab, time.Time{})
-		v2.Group(problem.Table)
-		choices := make([][]int, 34)
-		for i := range choices {
-			choice := make([]int, len(p.plans))
-			for n, plans := range p.plans {
-				switch i {
-				case 0: // keep
-				case 1: // empty, or keep when no empty plan exists
-					for j, plan := range plans {
-						if plan.record.Eligible && len(plan.instances) == 0 {
-							choice[n] = j
-							break
-						}
-					}
-				default:
-					eligible := []int{}
-					for j, plan := range plans {
-						if plan.record.Eligible {
-							eligible = append(eligible, j)
-						}
-					}
-					choice[n] = eligible[rng.IntN(len(eligible))]
-				}
-			}
-			choices[i] = choice
-		}
-		for stateIndex, choice := range choices {
-			states++
-			for _, entry := range problem.Table.Entries {
-				current := p.plans[entry.Node][choice[entry.Node]]
-				first := entry.Variants[0]
-				if current.keep == tab.keep[first] && current.option == entry.Option && current.mode == entry.Mode {
-					continue
-				}
-				state := capacityCapMoveState(p, tab, choice, entry)
-				selected := v2.SelectCaps(problem.Table, entry, state)
-				best := capacityCapBest(p, tab, choice, entry.Node, entry.Variants)
-				if best == nil { // bounded rejects all variants of this option
-					continue
-				}
-				got := capacityCapBest(p, tab, choice, entry.Node, selected.Candidates[:selected.Count])
-				preferred := capacityCapBest(p, tab, choice, entry.Node, []int{selected.Preferred})
-				moves++
-				if capacityCapEquivalent(preferred, best) {
-					preferredMatches++
-				}
-				if !capacityCapEquivalent(got, best) {
-					mismatches++
-					reason := "non-overload"
-					if state.Overload {
-						reason = "overload"
-					}
-					if got.joules == best.joules && got.feasible == best.feasible && got.final == best.final && slices.Equal(got.excesses, best.excesses) {
-						reason += "-key"
-					}
-					failures[reason]++
-					if failures[reason] == 1 {
-						t.Errorf("reason=%s mix=%d rates=%v state=%d choice=%v node=%d option=%q input=%+v candidates=%v got={key:%s feasible:%t final:%t excess:%v J:%.17g} all={key:%s feasible:%t final:%t excess:%v J:%.17g}",
-							reason, mix, rates, stateIndex, choice, entry.Node, entry.Option, state, selected.Candidates[:selected.Count], got.key, got.feasible, got.final, got.excesses, got.joules, best.key, best.feasible, best.final, best.excesses, best.joules)
-					}
-				}
-			}
+		s := newSearchState(p, tab, []int{tab.byPlan[0][0]})
+		first := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][0]), problem.Table))
+		second := capacityDeltaSaved(capacityRank(s.delta(0, tab.byPlan[0][1]), problem.Table))
+		if first.Better(&second) != (strategy == SLOPriorityWorkload) {
+			t.Fatalf("strategy=%s A=%v B=%v", strategy, first.Excesses, second.Excesses)
 		}
 	}
-	t.Logf("states=%d moves=%d mismatches=%d preferred-alone=%d/%d (%.2f%%)", states, moves, mismatches, preferredMatches, moves, 100*float64(preferredMatches)/float64(moves))
-	t.Logf("mismatch classes=%v", failures)
-	if mismatches > 0 {
-		t.Fatalf("cap sub-selection disagrees with exact evaluator on %d moves", mismatches)
-	}
-}
-
-// capacityCapMoveState uses table sums after the move. The route and retained
-// supply do not depend on cap, so one variant gives the common λ̃.
-func capacityCapMoveState(p *capacityPlanner, tab *planTable, choice []int, entry protocol.Entry) v2.CapState {
-	moved := slices.Clone(choice)
-	moved[entry.Node] = tab.index[entry.Variants[0]]
-	r := p.routeOf(moved)
-	state := v2.CapState{}
-	for w, ws := range p.ws {
-		kappa, retained, kappaE := 0.0, 0.0, 0.0
-		for n, j := range moved {
-			q := tab.byPlan[n][j]
-			retained += tab.kappaRet[q][w]
-			if n != entry.Node {
-				kappa += tab.kappa[q][w]
-				kappaE += tab.kappaE[q][w]
-			}
-		}
-		demand := ws.rate
-		backlog := math.Max(0, ws.rate-retained) * r // this gate has q=0
-		if ws.slack > 0 {
-			demand = math.Max(demand, backlog/ws.slack)
-		} else if backlog > 0 {
-			demand = math.Inf(1)
-		}
-		if w == entry.Workload {
-			state.KappaOthers, state.KappaEOthers, state.Demand = kappa, kappaE, demand
-			state.Backlog = backlog > 0
-		} else {
-			q := entry.Variants[0]
-			state.Overload = state.Overload || kappa+tab.kappa[q][w] < demand
-		}
-	}
-	return state
-}
-
-func capacityCapBest(p *capacityPlanner, tab *planTable, choice []int, n int, variants []int) *capacityResult {
-	var best *capacityResult
-	for _, q := range variants {
-		moved := slices.Clone(choice)
-		moved[n] = tab.index[q]
-		if !p.bounded(moved) {
-			continue
-		}
-		res := p.evaluate(moved, p.routeOf(moved))
-		if res.better(best) {
-			best = &res
-		}
-	}
-	return best
-}
-
-func capacityCapEquivalent(a, b *capacityResult) bool {
-	return a != nil && b != nil && (a.key == b.key || !a.better(b) && !b.better(a))
 }

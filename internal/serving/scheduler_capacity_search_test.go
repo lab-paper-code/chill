@@ -4,23 +4,21 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"maps"
 	"math"
 	"os"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
+
+	v2 "github.com/lab-paper-code/chill/internal/scheduler/v2"
 )
 
-// evaluationOption is one measured mobilenet option of m4 r7 (2026-10-21): κ from
-// the recorded node plans (dispatch-calibrated, tight SLO, b1), e (J/input, b1)
-// and loaded idle watts from the snapshot profiles, prepare seconds and
-// whole-wall joules from the recorded plan chains.
+// evaluationOption uses the recorded energy/timing values with an explicit
+// synthetic routing rate. These fixtures are not measured SLO evidence.
 type evaluationOption struct {
 	name                 string
-	kappa, e, idle       float64
+	mu, e, idle          float64
 	prepareS, prepareJ   float64
 	plc, vlmCPU, vlmCUDA bool // derives the synthetic PLC / SmolVLM-like options
 	unloaded, removeS    float64
@@ -39,27 +37,27 @@ func evaluationNodes() [][]evaluationOption {
 	}
 	return [][]evaluationOption{
 		node("rasp5", 4.8866, 3.603, 18.092,
-			evaluationOption{name: "q1", kappa: 25.288, e: 0.07068, idle: 4.8985, prepareS: 19.256, prepareJ: 113.906, plc: true, vlmCPU: true},
-			evaluationOption{name: "q1-lut", kappa: 25.688, e: 0.07453, idle: 4.9041, prepareS: 20.190, prepareJ: 120.089},
-			evaluationOption{name: "q2", kappa: 29.300, e: 0.09886, idle: 4.8768, prepareS: 15.926, prepareJ: 101.666}),
+			evaluationOption{name: "q1", mu: 25.288, e: 0.07068, idle: 4.8985, prepareS: 19.256, prepareJ: 113.906, plc: true, vlmCPU: true},
+			evaluationOption{name: "q1-lut", mu: 25.688, e: 0.07453, idle: 4.9041, prepareS: 20.190, prepareJ: 120.089},
+			evaluationOption{name: "q2", mu: 29.300, e: 0.09886, idle: 4.8768, prepareS: 15.926, prepareJ: 101.666}),
 		node("orangepi", 2.7264, 3.979, 11.378,
-			evaluationOption{name: "q1", kappa: 7.533, e: 0.09943, idle: 2.7128, prepareS: 36.859, prepareJ: 126.737, plc: true}),
+			evaluationOption{name: "q1", mu: 7.533, e: 0.09943, idle: 2.7128, prepareS: 36.859, prepareJ: 126.737, plc: true}),
 		node("lattepanda", 9.3047, 3.695, 34.689,
-			evaluationOption{name: "q1", kappa: 30.067, e: 0.12079, idle: 9.4955, prepareS: 18.278, prepareJ: 202.782, plc: true, vlmCPU: true},
-			evaluationOption{name: "q2", kappa: 39.079, e: 0.13780, idle: 9.4869, prepareS: 15.764, prepareJ: 177.609}),
+			evaluationOption{name: "q1", mu: 30.067, e: 0.12079, idle: 9.4955, prepareS: 18.278, prepareJ: 202.782, plc: true, vlmCPU: true},
+			evaluationOption{name: "q2", mu: 39.079, e: 0.13780, idle: 9.4869, prepareS: 15.764, prepareJ: 177.609}),
 		node("genesis2", 54.0631, 4.361, 232.881,
-			evaluationOption{name: "cpu-q1", kappa: 82.901, e: 0.32292, idle: 54.8725, prepareS: 12.357, prepareJ: 756.903, plc: true, vlmCPU: true},
-			evaluationOption{name: "cuda-q1", kappa: 104.338, e: 0.26299, idle: 109.6394, prepareS: 13.159, prepareJ: 1164.312, vlmCUDA: true}),
+			evaluationOption{name: "cpu-q1", mu: 82.901, e: 0.32292, idle: 54.8725, prepareS: 12.357, prepareJ: 756.903, plc: true, vlmCPU: true},
+			evaluationOption{name: "cuda-q1", mu: 104.338, e: 0.26299, idle: 109.6394, prepareS: 13.159, prepareJ: 1164.312, vlmCUDA: true}),
 		node("genesis3", 49.9728, 4.236, 211.444,
-			evaluationOption{name: "cpu-q1", kappa: 63.596, e: 0.27643, idle: 51.6730, prepareS: 13.110, prepareJ: 712.615, plc: true, vlmCPU: true},
-			evaluationOption{name: "cpu-q2", kappa: 69.151, e: 0.32284, idle: 49.7983, prepareS: 10.681, prepareJ: 635.085}),
+			evaluationOption{name: "cpu-q1", mu: 63.596, e: 0.27643, idle: 51.6730, prepareS: 13.110, prepareJ: 712.615, plc: true, vlmCPU: true},
+			evaluationOption{name: "cpu-q2", mu: 69.151, e: 0.32284, idle: 49.7983, prepareS: 10.681, prepareJ: 635.085}),
 	}
 }
 
-// evaluationScaled grows evaluationNodes toward the evaluation space: every option gets a b2 variant
-// (κ 1.3×, unchanged b1 input energy) when variants is 2, and copies of genesis3, rasp5 and
-// lattepanda stand in for jetsono, jetsonx and jetson-nano with modes power
-// modes each (mode m: κ and loaded watts (1 − 0.15m)×, prepare (1 + 0.1m)×).
+// evaluationScaled adds synthetic faster-service variants and copied nodes.
+// The historical "-b2" suffix names a profile variant, not an actual batch-2
+// chooser experiment. Modes scale μ and loaded watts by (1 − 0.15m), and
+// preparation time by (1 + 0.1m).
 func evaluationScaled(variants, modes int) [][]evaluationOption {
 	nodes := evaluationNodes()
 	if modes > 0 {
@@ -70,7 +68,7 @@ func evaluationScaled(variants, modes int) [][]evaluationOption {
 				for _, o := range nodes[k] {
 					f := 1 - 0.15*float64(m)
 					o.node, o.name = name, fmt.Sprint(o.name, "@", m)
-					o.kappa, o.idle, o.prepareS = f*o.kappa, o.unloaded+f*(o.idle-o.unloaded), (1+0.1*float64(m))*o.prepareS
+					o.mu, o.idle, o.prepareS = f*o.mu, o.unloaded+f*(o.idle-o.unloaded), (1+0.1*float64(m))*o.prepareS
 					copied = append(copied, o)
 				}
 			}
@@ -80,7 +78,7 @@ func evaluationScaled(variants, modes int) [][]evaluationOption {
 	for n := range nodes {
 		for _, o := range slices.Clone(nodes[n]) {
 			if variants > 1 {
-				o.name, o.kappa = o.name+"-b2", 1.3*o.kappa
+				o.name, o.mu = o.name+"-b2", 1.3*o.mu
 				nodes[n] = append(nodes[n], o)
 			}
 		}
@@ -88,13 +86,12 @@ func evaluationScaled(variants, modes int) [][]evaluationOption {
 	return nodes
 }
 
-// e5Workloads: mobilenet (measured), PLC-like (synthetic: κ 1.5×, e 0.4×
-// of the node's q1 CPU option) and SmolVLM-like (synthetic: CPU int8 κ/120,
-// e×240; CUDA κ/50, e×150; prepare 2×). L − m: 1 s − 29 ms; 10 s − 29 ms.
+// All three workloads use synthetic deterministic raw service laws. Recorded
+// node energy and transition timings remain unchanged.
 var e5Workloads = []struct {
-	name  string
-	slack float64
-}{{"mnv2", 0.971}, {"plc", 0.971}, {"vlm", 9.971}}
+	name   string
+	target time.Duration
+}{{"mnv2", time.Second}, {"plc", time.Second}, {"vlm", 10 * time.Second}}
 
 // e5Pair is one instance a node plan can hold: Workload w on an option.
 type e5Pair struct {
@@ -112,14 +109,14 @@ func e5Pairs(options []evaluationOption) []e5Pair {
 		add(0, o, "")
 		if o.plc {
 			p := o
-			p.kappa, p.e = 1.5*o.kappa, 0.4*o.e
+			p.mu, p.e = 1.5*o.mu, 0.4*o.e
 			add(1, p, "")
 		}
 		if o.vlmCPU || o.vlmCUDA {
 			v := o
-			v.kappa, v.e, v.prepareS, v.prepareJ = o.kappa/120, 240*o.e, 2*o.prepareS, 2*o.prepareJ
+			v.mu, v.e, v.prepareS, v.prepareJ = o.mu/120, 240*o.e, 2*o.prepareS, 2*o.prepareJ
 			if o.vlmCUDA {
-				v.kappa, v.e = o.kappa/50, 150*o.e
+				v.mu, v.e = o.mu/50, 150*o.e
 			}
 			add(2, v, "-vlm")
 		}
@@ -127,9 +124,7 @@ func e5Pairs(options []evaluationOption) []e5Pair {
 	return pairs
 }
 
-// e5Start is the first configuration, one model per node as the planner
-// places them: mobilenet on rasp5 q1, orangepi q1 and genesis3 q2 (κ 102.0),
-// PLC on lattepanda (κ 45.1), SmolVLM on genesis2 CUDA (κ 2.09).
+// e5Start retains the original five-node placement.
 var e5Start = map[string]bool{
 	"rasp5/mnv2/q1": true, "orangepi/mnv2/q1": true, "genesis3/mnv2/cpu-q2": true,
 	"lattepanda/plc/q1": true, "genesis2/vlm/cuda-q1-vlm": true,
@@ -138,12 +133,16 @@ var e5Start = map[string]bool{
 // e5Planner builds the node plans the planner would hold for the pairs from
 // the current instances: keep, each pair alone (one model and one instance per
 // Workload on a Node) and removing every instance. plans[n][0] keeps the
-// current instances at the routed weights (κ-proportional when routed is nil).
+// current instances at the routed weights (μ-proportional when routed is nil).
 // Removals run after the route.
 func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[string]bool, routed map[string]int32) *capacityPlanner {
+	_, base := schedulerFixture()
 	s := capacityTestSettings
+	s.ObservationWindow = 10 * time.Second
+	s.ControlInterval = time.Second
 	s.ComparisonPeriod, s.MaxReplicas, s.MaxInstances, s.PlanSearchWorkers = 10*time.Minute, 8, 16, 3
 	p := &capacityPlanner{ctx: context.Background(), settings: s, index: map[string]int{}}
+	p.snapshot.At, p.snapshot.ObservationEnd = base.At, base.ObservationEnd
 	p.keep.Routing = map[string]map[string]int32{}
 	index := map[int]int{}
 	for w := range e5Workloads {
@@ -151,7 +150,14 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 			index[w] = len(p.ws)
 			uid := e5Workloads[w].name
 			p.index[uid] = len(p.ws)
-			p.ws = append(p.ws, capacityWorkload{d: &Definition{UID: uid}, rate: rate, minRate: rate, slack: e5Workloads[w].slack})
+			d := *base.Workloads[0]
+			d.UID, d.Name = uid, uid
+			d.SLO = SLO{Percentile: 100, TargetLatency: e5Workloads[w].target}
+			p.ws = append(p.ws, capacityWorkload{d: &d, rate: rate, minRate: rate, totalNanos: 29e6})
+			p.snapshot.Workloads = append(p.snapshot.Workloads, &d)
+			p.snapshot.PathFeedback = append(p.snapshot.PathFeedback, PathFeedback{WorkloadUID: uid, TotalNanos: 29e6})
+			p.settings.AutonomousWorkloads = append(p.settings.AutonomousWorkloads, uid)
+			capacityLoad(p.settings, &p.snapshot, &d, rate)
 			p.keep.Routing[uid] = map[string]int32{}
 		}
 	}
@@ -162,13 +168,13 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 		for _, options := range nodes {
 			for _, c := range e5Pairs(options) {
 				if current[c.id] && e5Workloads[c.w].name == uid {
-					currents, total = append(currents, c), total+c.opt.kappa
+					currents, total = append(currents, c), total+c.opt.mu
 				}
 			}
 		}
 		left := int32(schedulerRouteUnits)
 		for k, c := range currents {
-			weights[c.id] = int32(math.Floor(c.opt.kappa / total * schedulerRouteUnits))
+			weights[c.id] = int32(math.Floor(c.opt.mu / total * schedulerRouteUnits))
 			if k == len(currents)-1 {
 				weights[c.id] = left
 			}
@@ -184,7 +190,32 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 	for _, options := range nodes {
 		pairs := slices.DeleteFunc(e5Pairs(options), func(c e5Pair) bool { _, ok := index[c.w]; return !ok })
 		now := slices.DeleteFunc(slices.Clone(pairs), func(c e5Pair) bool { return !current[c.id] })
-		p.snapshot.Nodes = append(p.snapshot.Nodes, SchedulerNode{Node: NodeReference{Name: options[0].node, UID: options[0].node}})
+		node := base.Nodes[0]
+		node.Node = NodeReference{Name: options[0].node, UID: options[0].node}
+		p.snapshot.Nodes = append(p.snapshot.Nodes, node)
+		instances := map[string]SchedulerInstance{}
+		for _, c := range pairs {
+			profile := *base.Instances[0].Profile
+			profile.ID, profile.NodeName = c.id, node.Node.Name
+			profile.Condition.NodeUID = node.Node.UID
+			profile.IdleBaselineWatts = c.opt.idle
+			service := 1e9 / c.opt.mu
+			profile.Batches = []BatchProfile{schedulerTestBatchProfile(BatchProfile{Batch: 1, EnergyPerInputJoules: c.opt.e, MemoryBytes: 100}, []float64{service})}
+			instance := base.Instances[0]
+			instance.ID, instance.Node, instance.Profile = c.id, node.Node, &profile
+			instance.WorkloadUID, instance.Weight = e5Workloads[c.w].name, weights[c.id]
+			instance.Routable = map[string]bool{instance.WorkloadUID: true}
+			instances[c.id] = instance
+			p.snapshot.Options = append(p.snapshot.Options, poolsOption(instance))
+			if current[c.id] {
+				p.snapshot.Instances = append(p.snapshot.Instances, instance)
+			}
+		}
+		itemFor := func(c e5Pair) capacityItem {
+			instance := instances[c.id]
+			service := float64(instance.Profile.Batches[0].ServiceSamples[0].ServiceDurationNanos)
+			return capacityItem{id: c.id, routingWeight: profileRoutingWeight(capacityThroughput(instance.Profile, instance.MaxBatch)), serviceNanos: service, e: c.opt.e, weight: weights[c.id], prepare: !current[c.id]}
+		}
 		watts := func(set []e5Pair) float64 {
 			x := options[0].unloaded
 			for _, c := range set {
@@ -200,17 +231,19 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 			for _, c := range set {
 				w := index[c.w]
 				plan.option = strings.Replace(c.id, "-b2", "", 1)
-				item := capacityItem{id: c.id, kappa: c.opt.kappa, e: c.opt.e, weight: weights[c.id], row: c.id, prepare: !current[c.id]}
+				item := itemFor(c)
 				if !current[c.id] {
 					plan.preMean, plan.preMax, plan.preJ = plan.preMean+c.opt.prepareS, plan.preMax+c.opt.prepareS, plan.preJ+c.opt.prepareJ
 					mid = append(mid, c)
 				}
 				plan.items[w] = append(plan.items[w], item)
-				plan.instances = append(plan.instances, SchedulerInstance{ID: c.id})
+				plan.instances = append(plan.instances, instances[c.id])
 				ids = append(ids, c.id)
 			}
 			for _, c := range now {
-				plan.retained[index[c.w]] = append(plan.retained[index[c.w]], capacityItem{id: c.id, kappa: c.opt.kappa, e: c.opt.e, weight: weights[c.id], row: c.id})
+				item := itemFor(c)
+				item.prepare = false
+				plan.retained[index[c.w]] = append(plan.retained[index[c.w]], item)
 				if !slices.ContainsFunc(set, func(x e5Pair) bool { return x.id == c.id }) {
 					plan.postMean, plan.postMax, plan.postJ = plan.postMean+c.opt.removeS, plan.postMax+c.opt.removeS, plan.postJ+c.opt.removeJ
 				}
@@ -237,92 +270,13 @@ func e5Planner(rates map[int]float64, nodes [][]evaluationOption, current map[st
 		p.compared = append(p.compared, true)
 	}
 	p.period = s.ComparisonPeriod.Seconds()
-	// Exhaustive callers bypass search's common-H keep-baseline initialization.
-	p.keepWatts = p.evaluate(make([]int, len(p.plans)), 0).joules / p.period
+	p.snapshot.Routing = p.keep.Routing
+	p.keep.Nodes, p.keep.Instances = p.snapshot.Nodes, p.snapshot.Instances
+	// The baseline uses only the unchanged energy equations, without replay.
+	p.keepWatts = p.evaluateEnergyAtWindow(make([]int, len(p.plans)), 0, nil, p.period).joules / p.period
 	return p
 }
 
-// e5Brute is capacityBruteForce split over the plans of the first Node,
-// eight at a time.
-func e5Brute(p *capacityPlanner) *capacityResult {
-	results := make([]*capacityResult, len(p.plans[0]))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 8)
-	for j := range p.plans[0] {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			q := *p
-			q.plans = slices.Clone(p.plans)
-			q.plans[0] = p.plans[0][j : j+1]
-			if res := capacityBruteForce(&q); res != nil {
-				res.choice[0] = j
-				results[j] = res
-			}
-		}()
-	}
-	wg.Wait()
-	var best *capacityResult
-	for _, res := range results {
-		if res != nil && res.better(best) {
-			best = res
-		}
-	}
-	return best
-}
-
-// e5Converge repeats Ticks, each from the configuration and route weights the
-// previous decision chose (after payback and minimum gain), until a Tick keeps
-// both or returns to a configuration and weights it left (a cycle), at most
-// 10 Ticks. It returns the first Tick's search result, the energy over T of
-// keeping the last configuration, the Ticks taken (−1 without a fixed point or
-// cycle) and whether it cycled. A nil result keeps.
-func e5Converge(rates map[int]float64, nodes [][]evaluationOption, solve func(*capacityPlanner) *capacityResult) (*capacityResult, float64, int, bool) {
-	current := e5Start
-	var routed map[string]int32
-	var first *capacityResult
-	seen := map[string]bool{}
-	for tick := 1; tick <= 10; tick++ {
-		p := e5Planner(rates, nodes, current, routed)
-		keepJ := p.evaluate(make([]int, len(p.plans)), 0).joules
-		key := fmt.Sprint(current, routed) // fmt sorts map keys
-		if seen[key] {
-			return first, keepJ, tick, true
-		}
-		seen[key] = true
-		res := solve(p)
-		if tick == 1 {
-			first = res
-		}
-		if res != nil {
-			paid := p.minimumGain(p.payback(*res)) // as decide receives it
-			res = &paid
-		}
-		next, now := map[string]int32{}, map[string]int32{}
-		for _, weights := range p.keep.Routing {
-			maps.Copy(now, weights)
-		}
-		if res != nil {
-			for _, weights := range res.weights {
-				maps.Copy(next, weights)
-			}
-		}
-		if res == nil || res.keep && maps.Equal(next, now) {
-			return first, keepJ, tick, false
-		}
-		current, routed = map[string]bool{}, next
-		for n, j := range res.choice {
-			for _, items := range p.plans[n][j].items {
-				for _, item := range items {
-					current[item.id] = true
-				}
-			}
-		}
-	}
-	return first, math.NaN(), -1, false
-}
 
 var e5Mixes = func() []map[int]float64 {
 	mixes := []map[int]float64{}
@@ -333,159 +287,22 @@ var e5Mixes = func() []map[int]float64 {
 	return mixes
 }()
 
-func configure(p *capacityPlanner, strategy string) {
-	p.settings.PlanSearchStrategy = strategy
-	p.settings.PlanPolishActive, p.settings.PlanPricedStart = 0, false
-	if strategy == "v2" {
-		p.settings.PlanPolishActive, p.settings.PlanPricedStart = 8, true
-	}
-}
-
-// Plan search at evaluation scale (capacity-table-evidence §7.8.5). GAP compares
-// v1 and v2 (active=8, priced=true) with exact search over 24 mixes in three
-// spaces, without evaluation or wall budgets. e5Converge retains payback,
-// minimum gain, fixed-point and cycle behavior. SCALE keeps v1's budget/full
-// baseline and measures v2 with 500,000/150,000 evaluations and a 5 s wall budget.
-// CHILL_PLAN_SEARCH=1 go test ./internal/serving -run PlanSearchEvaluation -v -timeout 0.
+// The optional sweep reports heuristic cost only. It makes no exact quality,
+// capacity, latency, or global-optimality claim for the synthetic node space.
 func TestCapacityPlanSearchEvaluation(t *testing.T) {
 	if os.Getenv("CHILL_PLAN_SEARCH") == "" {
-		t.Skip("measurement sweep; set CHILL_PLAN_SEARCH=1")
+		t.Skip("heuristic sweep; set CHILL_PLAN_SEARCH=1")
 	}
-	// GAP runs v1 and v2 without an evaluation budget, then v2 at the default
-	// and the candidate default budgets so the budget's quality cost is measured.
-	unlimited := int(^uint(0) >> 1)
-	strategies := []struct {
-		name        string
-		evaluations int
-	}{{"v1", unlimited}, {"v2", unlimited}, {"v2", 500000}, {"v2", 150000}}
-	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}} {
-		nodes := evaluationScaled(c.variants, c.modes)
-		type gapStats struct {
-			differs, over, cycles, exactCycles, maxTicks, maxExactTicks int
-			worst, worstFixed, bestFixed                                float64
-			starts, firstStarts                                         map[string]int
-			dualMin, dualMax                                            float64
-			dualSamples                                                 int
-		}
-		stats := make([]gapStats, len(strategies))
-		for i := range stats {
-			stats[i].starts, stats[i].firstStarts = map[string]int{}, map[string]int{}
-			stats[i].dualMin, stats[i].dualMax = math.Inf(1), math.Inf(-1)
-		}
+	for _, space := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {2, 4}} {
 		for mix, rates := range e5Mixes {
-			exact, exactJ, exactTicks, exactCycled := e5Converge(rates, nodes, e5Brute)
-			for i, cfg := range strategies {
-				strategy := cfg.name
-				s := &stats[i]
-				tick, active, priced := 0, 0, false
-				if strategy == "v2" {
-					active, priced = 8, true
-				}
-				var firstSearch SchedulerPlanSearch
-				search := func(p *capacityPlanner) *capacityResult {
-					configure(p, strategy)
-					p.settings.PlanSearchEvaluations = cfg.evaluations
-					r := capacitySearchForTest(t, p)
-					tick++
-					d := p.searched
-					s.starts[d.Start]++
-					if tick == 1 {
-						firstSearch = d
-						s.firstStarts[d.Start]++
-					}
-					t.Logf("SEARCH strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v tick=%d start=%q dualBound=%.9f rawJ=%.9f feasible=%v evaluated=%d durationNS=%d surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g cut=%v terminationReason=%s",
-						strategy, active, priced, cfg.evaluations, c.variants, c.modes, mix, rates, tick, d.Start, d.DualBound, r.joules, r.feasible, d.Evaluated, d.Duration.Nanoseconds(),
-						d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, d.BudgetCut, d.TerminationReason)
-					return &r
-				}
-				got, gotJ, ticks, cycled := e5Converge(rates, nodes, search)
-				s.maxTicks, s.maxExactTicks = max(s.maxTicks, ticks), max(s.maxExactTicks, exactTicks)
-				if cycled {
-					s.cycles++
-				}
-				if exactCycled {
-					s.exactCycles++
-				}
-				exactRawJ, gap, fixed, ratio := math.NaN(), math.NaN(), math.NaN(), math.NaN()
-				exactKey := ""
-				if exact == nil {
-					if got.feasible {
-						t.Errorf("strategy=%s active=%d priced=%v %+v %v: search feasible, exact infeasible", strategy, active, priced, c, rates)
-					}
-				} else {
-					exactRawJ, exactKey = exact.joules, exact.key
-					if !got.feasible {
-						t.Errorf("strategy=%s active=%d priced=%v %+v %v: search infeasible, exact feasible", strategy, active, priced, c, rates)
-					} else {
-						gap, fixed = (got.joules-exact.joules)/exact.joules, (gotJ-exactJ)/exactJ
-						if got.key != exact.key {
-							s.differs++
-						}
-						if fixed > 0.005 {
-							s.over++
-						}
-						s.worst, s.worstFixed, s.bestFixed = max(s.worst, gap), max(s.worstFixed, fixed), min(s.bestFixed, fixed)
-					}
-					if priced && exactRawJ != 0 {
-						ratio = firstSearch.DualBound / exactRawJ
-						if !math.IsNaN(ratio) && !math.IsInf(ratio, 0) {
-							s.dualMin, s.dualMax = min(s.dualMin, ratio), max(s.dualMax, ratio)
-							s.dualSamples++
-						}
-					}
-				}
-				t.Logf("QUALITY strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mix=%d rates=%v feasible=%v exactFeasible=%v rawJ=%.9f exactRawJ=%.9f fixedJ=%.9f exactFixedJ=%.9f oneGap=%.6f%% fixedGap=%.6f%% ticks=%d cycled=%v exactTicks=%d exactCycled=%v start=%q dualBound=%.9f dualExactRatio=%.9f rawKey=%q exactRawKey=%q",
-					strategy, active, priced, cfg.evaluations, c.variants, c.modes, mix, rates, got.feasible, exact != nil, got.joules, exactRawJ, gotJ, exactJ, 100*gap, 100*fixed,
-					ticks, cycled, exactTicks, exactCycled, firstSearch.Start, firstSearch.DualBound, ratio, got.key, exactKey)
+			p := e5Planner(rates, evaluationScaled(space.variants, space.modes), e5Start, nil)
+			problem := p.scalarProblem(p.planTable(), time.Time{})
+			candidates, stats := v2.Candidates(problem, problem.Table, 150000, 16, 8, time.Time{})
+			if len(candidates) == 0 {
+				t.Fatalf("space=%+v mix=%d: no heuristic finalists", space, mix)
 			}
-		}
-		for i, cfg := range strategies {
-			strategy := cfg.name
-			s := stats[i]
-			active, priced := 0, false
-			if strategy == "v2" {
-				active, priced = 8, true
-			}
-			if s.dualSamples == 0 {
-				s.dualMin, s.dualMax = math.NaN(), math.NaN()
-			}
-			t.Logf("GAP strategy=%s active=%d priced=%v evaluationBudget=%d variants=%d modes=%d mixes=%d differs=%d worstOne=%.3f%% fixed: worst=%.3f%% best=%.3f%% over0.5%%=%d cycles=%d exactCycles=%d ticks<=%d exactTicks<=%d starts=%v firstStarts=%v dualExactSamples=%d dualExactMin=%.9f dualExactMax=%.9f",
-				strategy, active, priced, cfg.evaluations, c.variants, c.modes, len(e5Mixes), s.differs, 100*s.worst, 100*s.worstFixed, 100*s.bestFixed, s.over, s.cycles, s.exactCycles,
-				s.maxTicks, s.maxExactTicks, s.starts, s.firstStarts, s.dualSamples, s.dualMin, s.dualMax)
-		}
-	}
-	evaluationScale(t)
-}
-
-func evaluationScale(t *testing.T) {
-	rates := map[int]float64{0: 60, 1: 40, 2: 1.2}
-	for _, c := range []struct{ variants, modes int }{{1, 0}, {2, 0}, {1, 2}, {1, 4}, {2, 1}, {2, 2}, {2, 4}} {
-		for _, run := range []struct {
-			strategy, mode string
-			evaluations    int
-			wallBudget     time.Duration
-		}{
-			{"v1", "budget", int(^uint(0) >> 1), 5 * time.Second},
-			{"v1", "full", int(^uint(0) >> 1), time.Hour},
-			{"v2", "budget", 500000, 5 * time.Second},
-			{"v2", "budget", 150000, 5 * time.Second},
-		} {
-			p := e5Planner(rates, evaluationScaled(c.variants, c.modes), e5Start, nil)
-			configure(p, run.strategy)
-			p.settings.PlanSearchEvaluations = run.evaluations
-			counts, sets := []int{}, 1.0
-			for _, plans := range p.plans {
-				counts, sets = append(counts, len(plans)), sets*float64(len(plans))
-			}
-			result, err := p.search(time.Now().Add(run.wallBudget))
-			if err != nil {
-				t.Fatal(err)
-			}
-			d := p.searched
-			t.Logf("SCALE strategy=%s active=%d priced=%v variants=%d modes=%d run=%s plans=%v sets=%.3g evaluationBudget=%d wallBudgetNS=%d k=%d evaluated=%d durationNS=%d cut=%v terminationReason=%s rawJ=%.9f feasible=%v start=%q dualBound=%.9f surrogateEvaluated=%d finalists=%d exactEvaluated=%d fallback=%q postFilterReverts=%d surrogateGap=%g rawKey=%q",
-				run.strategy, p.settings.PlanPolishActive, p.settings.PlanPricedStart, c.variants, c.modes, run.mode, counts, sets, p.settings.PlanSearchEvaluations, run.wallBudget.Nanoseconds(),
-				d.Neighborhood, d.Evaluated, d.Duration.Nanoseconds(), d.BudgetCut, d.TerminationReason, result.joules, result.feasible, d.Start, d.DualBound,
-				d.SurrogateEvaluated, d.Finalists, d.ExactEvaluated, d.Fallback, d.PostFilterReverts, d.SurrogateGapJoules, result.key)
+			t.Logf("HEURISTIC variants=%d modes=%d mix=%d J=%g searchFeasible=%t evaluations=%d exhausted=%t",
+				space.variants, space.modes, mix, candidates[0].Joules, candidates[0].Feasible, stats.SurrogateEvaluated, stats.Exhausted)
 		}
 	}
 }

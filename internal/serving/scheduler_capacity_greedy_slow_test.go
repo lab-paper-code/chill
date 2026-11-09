@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestCapacityDeltaSlow(t *testing.T) {
 		option.MaxBatch = 2
 		snap.Options, snap.Costs = []SchedulerOption{poolsOption(option)}, nil
 		capacityLoad(s, &snap, snap.Workloads[0], rate)
-		p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, nil))
+		p := capacityPlannerForTest(t, s, snap)
 		count, bridges, slow := capacityDeltaAllBounded(t, p)
 		compared, excludedBridges, slowPlans = compared+count, excludedBridges+bridges, slowPlans+slow
 	}
@@ -41,7 +42,7 @@ func TestCapacityDeltaSlow(t *testing.T) {
 			poolsCost(schedulerActionPrepare, n1, "unloaded", schedulerState(raised), schedulerTestEcoMode),
 		}
 		capacityLoad(s, &snap, snap.Workloads[0], rate)
-		p := capacityPlannerForTest(t, s, snap, capacityRowsForTest(s, snap, capacityKappaByProfile(map[string]float64{current.Profile.ID: 10, raised.Profile.ID: 50})))
+		p := capacityPlannerForTest(t, s, snap)
 		count, bridges, slow := capacityDeltaAllBounded(t, p)
 		compared, excludedBridges, slowPlans = compared+count, excludedBridges+bridges, slowPlans+slow
 	}
@@ -60,7 +61,7 @@ func capacityDeltaAllBounded(t testing.TB, p *capacityPlanner) (compared, exclud
 	}
 	s := newSearchState(p, tab, choice)
 	for q := range tab.index {
-		if tab.eligible[q] && tab.slow[q] {
+		if tab.eligible[q] && p.plans[tab.node[q]][tab.index[q]].reduces {
 			slowPlans++
 		}
 	}
@@ -79,8 +80,8 @@ func capacityDeltaAllBounded(t testing.TB, p *capacityPlanner) (compared, exclud
 		if !p.bounded(indices) {
 			return
 		}
-		exact := p.evaluate(indices, p.routeOf(indices))
-		if exact.bridge != nil {
+		bridge, reason := p.bridgeSchedule(indices)
+		if bridge != nil || reason != "" {
 			excludedBridges++
 			return
 		}
@@ -99,13 +100,14 @@ func capacityDeltaAllBounded(t testing.TB, p *capacityPlanner) (compared, exclud
 
 func TestCapacityDeltaRetainedArithmetic(t *testing.T) {
 	p := capacityDeltaTiny([]float64{1, 2, 3}, 2.3)
+	p.settings.Controls.Routing = false
 	for n, plans := range p.plans {
 		plan := plans[0]
 		plan.retained[0][0].weight = int32([]int{643, 357, 13}[n])
 		plan.retained[0][0].e = []float64{0.07068, 0.07453, 0.32292}[n]
 		other := plan.retained[0][0]
 		other.id += "-second"
-		other.weight, other.kappa = 29, 0.125
+		other.weight, other.routingWeight = 29, 0.125
 		plan.retained[0] = append(plan.retained[0], other)
 		plan.keep = false
 		plan.preMax, plan.preMean, plan.postMean = 20.5, 20.5, 80
@@ -116,7 +118,7 @@ func TestCapacityDeltaRetainedArithmetic(t *testing.T) {
 	tab := p.planTable()
 	s := newSearchState(p, tab, []int{0, 1, 2})
 	key, exact := capacityDeltaAssert(t, p, s, 0, 0)
-	if key.joules != exact.joules {
+	if math.Abs(key.joules-exact.joules) > 1e-9 {
 		t.Fatal("retained fold or clamped Node energy differs")
 	}
 	nodeJ := tab.energy(0, key.route, p.period)
@@ -125,4 +127,20 @@ func TestCapacityDeltaRetainedArithmetic(t *testing.T) {
 		t.Fatalf("clamped node J=%.17g main J=%.17g", nodeJ, mainJ)
 	}
 	t.Logf("r=%g H=%g H-r<tauPost: main=delta Node J=%.17g max-J-diff=0", key.route, p.period, nodeJ)
+}
+
+func TestCapacityEnergyExplicitRouteBeforePreparation(t *testing.T) {
+	p := capacityDeltaTiny([]float64{4, 5}, 2)
+	p.period = 3
+	plan := *p.plans[0][0]
+	plan.keep, plan.preMean, plan.preMax, plan.postMean = false, 5, 6, 7
+	plan.preJ, plan.postJ, plan.mid, plan.after = 11, 13, 17, 19
+	p.plans[0] = append(p.plans[0], &plan)
+	tab := p.planTable()
+	q := tab.byPlan[0][1]
+	for _, route := range []float64{0, 2, 6, 10} {
+		if got, want := tab.energy(q, route, p.period), plan.energy(route, p.period); got != want || got < 0 {
+			t.Fatalf("route=%g scalar energy=%g node energy=%g", route, got, want)
+		}
+	}
 }

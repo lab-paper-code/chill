@@ -1,34 +1,29 @@
 package serving
 
-import (
-	"slices"
-)
 
-const capacityZeroCapacity = "ZeroCapacity"
 
 // planTable owns the Tick's scalar columns. Search needs no capacityPlan reads.
 // Workload columns and item lists are indexed [table plan][Workload].
 type planTable struct {
 	byPlan                       [][]int
 	node, index                  []int
-	kappa, kappaE, kappaRet      [][]float64
+	routingRate, routingRateServiceNanos, retainedRoutingRate [][]float64
 	weightRet, energyWeightRet   [][]float64
+	energyRate, weight, weightedEnergy [][]float64
 	count                        [][]int
 	pending                      [][]int // replica occupancy; not capacity or extra total occupancy
-	items                        [][][]capacityItem
-	retained                     [][][]capacityItem
+	nonnegative []bool
 	others                       []int
-	joules, before, mid, after   []float64
+	before, mid, after []float64
 	preJ, postJ                  []float64
-	tauPre, tauPost, tPre, tPost []float64
-	keep, replaces, bridge, slow []bool
+	tauPre, tauPost, tPre []float64
+	keep []bool
 	eligible                     []bool
-	dominated                    []string
 	pruned                       map[string]int
 	// Search-only columns are initialized once with the reusable search state.
 	searchable           []bool
-	slowWorkload, outage [][]bool
-	keepInsufficient     []bool
+	excessIndex []int
+	priorityCount int
 	keyParts             []string
 }
 
@@ -45,52 +40,47 @@ func (p *capacityPlanner) planTable() *planTable {
 
 func (t *planTable) appendPlan(n, j int, plan *capacityPlan, ws []capacityWorkload) int {
 	q, k := len(t.index), len(ws)
-	kappa, kappaE, kappaRet := make([]float64, k), make([]float64, k), make([]float64, k)
+	routingRate, service, retainedRate := make([]float64, k), make([]float64, k), make([]float64, k)
 	weightRet, energyWeightRet := make([]float64, k), make([]float64, k)
-	count, items := make([]int, k), make([][]capacityItem, k)
-	pending := make([]int, k)
-	retained := make([][]capacityItem, k)
-	plan.record.Dominated = ""
+	energyRate, weight, weightedEnergy := make([]float64,k), make([]float64,k), make([]float64,k)
+	count:=make([]int,k)
+	pending:=make([]int,k)
+	nonnegative:=true
 	for w := range ws {
-		if w < len(plan.items) {
-			items[w] = slices.Clone(plan.items[w])
-		}
-		count[w] = len(items[w])
+		if w < len(plan.items) {count[w]=len(plan.items[w])}
 		if w < len(plan.pendingReplicas) {
 			pending[w] = plan.pendingReplicas[w]
 		}
-		for _, item := range items[w] {
-			kappa[w] += item.kappa
-			kappaE[w] += item.kappa * item.e
-			if !plan.keep && plan.record.Eligible && item.kappa == 0 && ws[w].rate > 0 {
-				plan.record.Dominated = capacityZeroCapacity
-			}
+		var items []capacityItem
+		if w<len(plan.items) {items=plan.items[w]}
+		for _, item := range items {
+			routingRate[w] += float64(item.routingWeight)
+			service[w] += float64(item.routingWeight) * item.serviceNanos
+			energyRate[w] += float64(item.routingWeight)*item.e
+			weight[w] += float64(item.weight)
+			weightedEnergy[w] += float64(item.weight)*item.e
+			nonnegative=nonnegative && item.e>=0
 		}
 		if w < len(plan.retained) {
-			retained[w] = slices.Clone(plan.retained[w])
 			for _, item := range plan.retained[w] {
-				kappaRet[w] += item.kappa
+				retainedRate[w] += float64(item.routingWeight)
 				weightRet[w] += float64(item.weight)
 				energyWeightRet[w] += item.e * float64(item.weight)
+				nonnegative=nonnegative && item.e>=0
 			}
 		}
 	}
-	if plan.record.Dominated != "" {
-		t.pruned[plan.record.Dominated]++
-	}
 	t.node, t.index = append(t.node, n), append(t.index, j)
-	t.kappa, t.kappaE, t.kappaRet = append(t.kappa, kappa), append(t.kappaE, kappaE), append(t.kappaRet, kappaRet)
+	t.routingRate, t.routingRateServiceNanos, t.retainedRoutingRate = append(t.routingRate, routingRate), append(t.routingRateServiceNanos, service), append(t.retainedRoutingRate, retainedRate)
+	t.energyRate,t.weight,t.weightedEnergy=append(t.energyRate,energyRate),append(t.weight,weight),append(t.weightedEnergy,weightedEnergy)
 	t.weightRet, t.energyWeightRet = append(t.weightRet, weightRet), append(t.energyWeightRet, energyWeightRet)
-	t.count, t.items, t.others = append(t.count, count), append(t.items, items), append(t.others, plan.others)
+	t.count,t.others,t.nonnegative=append(t.count,count),append(t.others,plan.others),append(t.nonnegative,nonnegative)
 	t.pending = append(t.pending, pending)
-	t.retained = append(t.retained, retained)
-	t.joules = append(t.joules, plan.preJ+plan.postJ)
 	t.preJ, t.postJ = append(t.preJ, plan.preJ), append(t.postJ, plan.postJ)
 	t.before, t.mid, t.after = append(t.before, plan.before), append(t.mid, plan.mid), append(t.after, plan.after)
 	t.tauPre, t.tauPost = append(t.tauPre, plan.preMean), append(t.tauPost, plan.postMean)
-	t.tPre, t.tPost = append(t.tPre, plan.preMax), append(t.tPost, plan.postMax)
-	t.keep, t.replaces = append(t.keep, plan.keep), append(t.replaces, plan.replaces)
-	t.bridge, t.slow = append(t.bridge, len(plan.record.RequiresBridge) > 0), append(t.slow, plan.reduces)
-	t.eligible, t.dominated = append(t.eligible, plan.record.Eligible), append(t.dominated, plan.record.Dominated)
+	t.tPre=append(t.tPre,plan.preMax)
+	t.keep=append(t.keep,plan.keep)
+	t.eligible=append(t.eligible,plan.record.Eligible)
 	return q
 }

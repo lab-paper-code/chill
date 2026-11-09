@@ -102,7 +102,7 @@ func (p *capacityPlanner) searchProblem(deadline time.Time) protocol.Problem {
 		}
 	}
 	for w, ws := range p.ws {
-		problem.Workloads[w] = protocol.Workload{Rate: ws.rate, Queued: ws.queued, Slack: ws.slack}
+		problem.Workloads[w] = protocol.Workload{Rate: ws.rate, Queued: ws.queued, TargetNanos: float64(ws.d.SLO.TargetLatency), TotalNanos: ws.totalNanos}
 	}
 	return problem
 }
