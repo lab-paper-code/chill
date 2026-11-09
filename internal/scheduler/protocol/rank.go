@@ -4,7 +4,8 @@ import "slices"
 
 // Rank borrows State's result buffers until its next Delta, Apply or Reset.
 // Retain a candidate with CopyInto and caller-owned buffers, allocated once.
-// Admission flags are separate from Better's unchanged v1 ordering.
+// Excesses contains heuristic e_h in the adapter's Workload priority order.
+// Better preserves that order; exact outcomes are ranked by the native port.
 type Rank struct {
 	Feasible, Final, Keep, WeightsExceeded bool
 	UnroutedPrepare, Searchable, Bounded   bool
@@ -40,9 +41,6 @@ func (a Rank) Better(b *Rank) bool {
 	}
 	if a.Feasible != b.Feasible {
 		return a.Feasible
-	}
-	if !a.Feasible && a.Final != b.Final {
-		return a.Final
 	}
 	if !a.Feasible {
 		if order := slices.Compare(a.Excesses, b.Excesses); order != 0 {
