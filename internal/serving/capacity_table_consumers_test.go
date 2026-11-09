@@ -34,35 +34,7 @@ func TestCapacityTableAppliedInputsKeepMissingUIDLocalAcrossEngines(t *testing.T
 			if missing.uid != other.UID {
 				t.Fatalf("missing UID did not remain queued: %+v", missing)
 			}
-			assertLocal := func() {
-				t.Helper()
-				rows, budgets := table.Inputs()
-				if len(rows) != 1 || len(budgets) != 1 || budgets[0].WorkloadUID != first.uid || rows[0].Input.WorkloadUID != first.uid {
-					t.Fatalf("missing UID leaked rows or budget: rows=%+v budgets=%+v", rows, budgets)
-				}
-				applied := snapshot
-				applied.PathBudgetObservations, applied.PathBudgets = snapshot.PathBudgets, budgets
-				fallback := ResolvePathBudget(settings, applied.PathBudgets, applied.Workloads[1])
-				if fallback.Source != PathBudgetConfigured || fallback.TotalMS != 3 || fallback.PostMS != 3 {
-					t.Fatalf("missing UID lost configured fallback: %+v", fallback)
-				}
-				decision := capacityDecideForTest(t, settings, applied, rows)
-				for _, workload := range decision.Workloads {
-					if workload.UID == first.uid && workload.State != WorkloadControlled ||
-						workload.UID == other.UID && (workload.State != schedulerWorkloadFixed || workload.Reason != CapacityPending+":"+other.UID) {
-						t.Fatalf("missing UID blocked independent active capacity: %+v", decision)
-					}
-				}
-				if !reflect.DeepEqual(decision.PathBudgets, budgets) || !reflect.DeepEqual(decision.PathBudgetObservations, snapshot.PathBudgets) ||
-					decision.Capacity == nil || len(decision.Capacity.Workloads) != 1 || decision.Capacity.Workloads[0].UID != first.uid {
-					t.Fatalf("engine consumed desired rather than active evidence: %+v", decision)
-				}
-				planner := newCapacityPlanner(context.Background(), settings, applied, decision.Keep, rows, decision)
-				if len(planner.ws) != 1 || planner.ws[0].slack != applied.Workloads[0].SLO.TargetLatency.Seconds()-.005 || rows[0].Key != rows[0].Input.Key() {
-					t.Fatalf("slack or row key lost the active numerical pair: %+v", planner.ws)
-				}
-			}
-			assertLocal()
+			requireActiveCapacityUID(t, table, settings, snapshot)
 			if rows := table.Rows(); len(rows) != 2 || rows[1].Status != CapacityPending {
 				t.Fatalf("management lost pending UID: %+v", rows)
 			}
@@ -91,6 +63,36 @@ func TestCapacityTableAppliedInputsKeepMissingUIDLocalAcrossEngines(t *testing.T
 			default:
 			}
 		})
+	}
+}
+
+func requireActiveCapacityUID(t *testing.T, table *CapacityTable, settings SchedulerSettings, snapshot SchedulerSnapshot) {
+	t.Helper()
+	readyUID, missingUID := snapshot.Workloads[0].UID, snapshot.Workloads[1].UID
+	rows, budgets := table.Inputs()
+	if len(rows) != 1 || len(budgets) != 1 || budgets[0].WorkloadUID != readyUID || rows[0].Input.WorkloadUID != readyUID {
+		t.Fatalf("missing UID leaked rows or budget: rows=%+v budgets=%+v", rows, budgets)
+	}
+	applied := snapshot
+	applied.PathBudgetObservations, applied.PathBudgets = snapshot.PathBudgets, budgets
+	fallback := ResolvePathBudget(settings, applied.PathBudgets, applied.Workloads[1])
+	if fallback.Source != PathBudgetConfigured || fallback.TotalMS != 3 || fallback.PostMS != 3 {
+		t.Fatalf("missing UID lost configured fallback: %+v", fallback)
+	}
+	decision := capacityDecideForTest(t, settings, applied, rows)
+	for _, workload := range decision.Workloads {
+		if workload.UID == readyUID && workload.State != WorkloadControlled ||
+			workload.UID == missingUID && (workload.State != schedulerWorkloadFixed || workload.Reason != CapacityPending+":"+missingUID) {
+			t.Fatalf("missing UID blocked independent active capacity: %+v", decision)
+		}
+	}
+	if !reflect.DeepEqual(decision.PathBudgets, budgets) || !reflect.DeepEqual(decision.PathBudgetObservations, snapshot.PathBudgets) ||
+		decision.Capacity == nil || len(decision.Capacity.Workloads) != 1 || decision.Capacity.Workloads[0].UID != readyUID {
+		t.Fatalf("engine consumed desired rather than active evidence: %+v", decision)
+	}
+	planner := newCapacityPlanner(context.Background(), settings, applied, decision.Keep, rows, decision)
+	if len(planner.ws) != 1 || planner.ws[0].slack != applied.Workloads[0].SLO.TargetLatency.Seconds()-.005 || rows[0].Key != rows[0].Input.Key() {
+		t.Fatalf("slack or row key lost the active numerical pair: %+v", planner.ws)
 	}
 }
 
