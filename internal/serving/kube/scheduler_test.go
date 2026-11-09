@@ -119,7 +119,7 @@ func schedulerCaptureClockController(t *testing.T, onLiveNodes func(*Observer)) 
 		t.Fatal(err)
 	}
 	manager.observer.native.HTTPClient = &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxy)}}
-	return &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{
+	return &SchedulerController{store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{}}, config: SchedulerControllerConfig{
 		Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxReplicas: 1, MaxInstances: 1, CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100, PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4}),
 	}}
 }
@@ -502,7 +502,7 @@ func TestScheduledPreparationOwnsItsWorkload(t *testing.T) {
 
 func TestSchedulerLaunchReservesFixedAndNonFixedDAGs(t *testing.T) {
 	for _, fixed := range []bool{true, false} {
-		controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &reservationState{runs: map[string]*actionRun{}}}
+		controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
 		// Completed actions are skipped, so launch starts no operation.
 		controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
 			{ID: "lower", Kind: servingstate.OperationPower, Fixed: fixed, Status: servingstate.NativeOperationComplete},
@@ -574,7 +574,7 @@ func TestRemoveRejectsPhysicalInstanceOnDifferentNodeBeforeMutation(t *testing.T
 func TestPreparedSlotCompletionExpiresWhenActualInstanceRemoved(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	observer := manager.observer
-	controller := &SchedulerController{reservationState: &reservationState{}, capacity: serving.NewCapacityTable(1, nil, nil), runtime: observer.runtime}
+	controller := &SchedulerController{reservationState: &reservationState{}, runtime: observer.runtime}
 	profile := &serving.Profile{ID: "profile"}
 	node := serving.NodeReference{Name: "node", UID: "node-uid"}
 	run := &actionRun{action: serving.Action{Kind: "prepare", Instance: "slot", Node: node}, result: &servingstate.OperationResult{Status: "complete", Operation: servingstate.Operation{Prepare: &servingstate.PrepareSpec{Instance: serving.SchedulerInstance{ID: "slot", Node: node, Profile: profile}}}}}

@@ -76,7 +76,7 @@ func acknowledgedHandoffFixture(t *testing.T) (*SchedulerController, serving.Sch
 	if err := manager.runtime.ApplySchedulerTarget(oldTarget); err != nil {
 		t.Fatal(err)
 	}
-	controller := &SchedulerController{capacity: serving.NewCapacityTable(1, nil, nil), runtime: manager.runtime, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{
+	controller := &SchedulerController{runtime: manager.runtime, observationLog: manager.observationLog, reservationState: &reservationState{runs: map[string]*actionRun{
 		"acknowledged-route": {
 			action: serving.Action{ID: "acknowledged-route", Kind: servingstate.OperationRoute, Status: servingstate.NativeOperationComplete},
 			result: &servingstate.OperationResult{Operation: servingstate.Operation{Target: &oldTarget}, Status: servingstate.NativeOperationComplete},
@@ -642,28 +642,56 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 
 // E5-1: old rasp5 stays serving while genesis3 is Ready and nano is late.
 func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
-	for _, scenario := range []string{"admitted", "same-node", "unsupported", "policy-ack", "identity", "insufficient"} {
+	for _, scenario := range []string{"admitted", "no-rate-witness", "same-node", "missing-raw", "unready", "other-uid", "policy-ack", "identity"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, target, physical := acknowledgedHandoffFixture(t)
 			old := target.Instances[0]
 			uid := old.WorkloadUID
 			old.Routable = map[string]bool{uid: true}
+			oldProfile := *old.Profile
+			oldProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: catalogServiceSamples(int64(30 * time.Millisecond))}}
+			old.Profile = &oldProfile
 			added := old
 			added.ID = "genesis3-ready"
 			added.Node = serving.NodeReference{Name: "genesis3", UID: "genesis3-uid"}
 			if scenario == "same-node" {
 				added.Node = old.Node
 			}
-			newPhysical := physical
-			newPhysical.State.ID, newPhysical.State.Node = added.ID, added.Node
-			nativeState := *physical.State.Native
-			newPhysical.State.Native = &nativeState
-			if scenario == "policy-ack" {
-				newPhysical.State.Native.Metadata.Policy.MaxBatchSize = 2
+			addedProfile := oldProfile
+			addedProfile.ID = "genesis3-profile"
+			addedProfile.NodeName, addedProfile.Condition.NodeUID = added.Node.Name, added.Node.UID
+			addedProfile.Batches = []serving.BatchProfile{{Batch: 1, ServiceSamples: catalogServiceSamples(int64(10 * time.Millisecond))}}
+			if scenario == "missing-raw" {
+				addedProfile.Batches[0].ServiceSamples = nil
 			}
-			if scenario == "identity" {
+			for _, profile := range []*serving.Profile{&oldProfile, &addedProfile} {
+				if len(profile.Batches[0].ServiceSamples) > 0 {
+					distribution, err := native.NewServiceDistribution(profile.Batches[0].ServiceSamples)
+					if err != nil {
+						t.Fatal(err)
+					}
+					profile.Batches[0].ServiceDistribution = distribution
+				}
+			}
+			added.Profile = &addedProfile
+			physical.Profile = &oldProfile
+			newPhysical := physical
+			newPhysical.State.ID, newPhysical.State.Node, newPhysical.State.Profile = added.ID, added.Node, addedProfile.ID
+			newPhysical.Profile = &addedProfile
+			nativeState := *physical.State.Native
+			nativeState.Metadata.ProfileID, nativeState.Metadata.Policy.ProfileID = addedProfile.ID, addedProfile.ID
+			newPhysical.State.Native = &nativeState
+			switch scenario {
+			case "unready":
+				newPhysical.State.Ready = false
+			case "other-uid":
+				added.WorkloadUID = "other-uid"
+			case "policy-ack":
+				newPhysical.State.Native.Metadata.Policy.MaxBatchSize = 2
+			case "identity":
 				newPhysical.State.Native.Metadata.ProfileID = "wrong-profile"
 			}
+			c.runtime.SetProfiles([]serving.Profile{oldProfile, addedProfile})
 			if err := c.runtime.InstallInstances([]serving.ReadyInstance{physical, newPhysical}); err != nil {
 				t.Fatal(err)
 			}
@@ -678,9 +706,16 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			snapshot := &c.state.Snapshot
 			snapshot.At = time.Now()
 			snapshot.ObservationEnd = snapshot.At
-			snapshot.Workloads = c.runtime.SchedulerInputs(time.Now).Workloads
-			for range 41 {
-				snapshot.Outstanding = append(snapshot.Outstanding, serving.SchedulerRequest{Definition: snapshot.Workloads[0]})
+			snapshot.ObservedSince = snapshot.At.Add(-time.Minute)
+			definition := *c.runtime.SchedulerInputs(time.Now).Workloads[0]
+			if scenario == "no-rate-witness" {
+				definition.SLO.TargetLatency = time.Nanosecond
+			}
+			snapshot.Workloads = []*serving.Definition{&definition}
+			for n := range 41 {
+				snapshot.Outstanding = append(snapshot.Outstanding, serving.SchedulerRequest{
+					ID: fmt.Sprintf("queued-%d", n), QueueOrder: n, Definition: &definition, ReceivedAt: snapshot.At, Phase: "pending",
+				})
 			}
 			snapshot.Instances = []serving.SchedulerInstance{old, added}
 			for n := range snapshot.Instances {
@@ -690,24 +725,26 @@ func TestReadySubsetAddsIndependentCapacityBeforeNanoSCH20AC38(t *testing.T) {
 			if err := c.runtime.ApplySchedulerTarget(serving.SchedulerCandidate{Instances: []serving.SchedulerInstance{old}, Routing: snapshot.Routing}); err != nil {
 				t.Fatal(err)
 			}
-			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Minute, ControlInterval: time.Second, MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true}})
-			rows := []serving.CapacityRow{}
-			for n, i := range []serving.SchedulerInstance{old, added} {
-				in := serving.NewCapacityInput(c.config.Settings, nil, serving.SchedulerOption{Instance: i}, snapshot.Workloads[0])
-				k := []float64{26.322718, 68.45}[n]
-				if scenario == "insufficient" {
-					k = 1
+			c.config.Settings = withSchedulerEstimateFixture(serving.SchedulerSettings{
+				ObservationWindow: time.Minute, ControlInterval: time.Second, ComparisonPeriod: time.Second,
+				MinimumDemand: map[string]float64{uid: 23.383333}, Controls: serving.SchedulerControls{Routing: true},
+				CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, CapacityTailSamples: 1,
+			})
+			if scenario == "no-rate-witness" {
+				evidence, err := serving.JudgeFeedbackRates(context.Background(), c.config.Settings, serving.SchedulerOption{Instance: added}, &definition,
+					serving.DispatchOccupancy{}, serving.PathFeedback{}, []float64{23.383333})
+				if err != nil {
+					t.Fatal(err)
 				}
-				rows = append(rows, serving.CapacityRow{Key: in.Key(), Input: in, Status: serving.CapacityBuilt, Kappa: &k})
-			}
-			if scenario == "unsupported" {
-				rows = rows[:1]
+				if evidence.KappaHat != 0 || len(evidence.Tests) != 1 || evidence.Tests[0].Met {
+					t.Fatalf("strict SLO unexpectedly produced a pass witness: %+v", evidence)
+				}
 			}
 			if c.dependenciesReady(target.Actions[1], target, c.runtime) {
 				t.Fatal("late nano unexpectedly allowed final handoff")
 			}
-			partial := c.readySubset(target, rows, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
-			if scenario != "admitted" {
+			partial := c.readySubset(target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+			if scenario != "admitted" && scenario != "no-rate-witness" {
 				if partial != nil {
 					t.Fatalf("unsafe expansion: %+v", partial)
 				}
@@ -978,7 +1015,7 @@ func tickReadySubsetController(t *testing.T, observe func(int, *native.State), e
 		t.Fatal(err)
 	}
 	controller := &SchedulerController{ctx: ctx, store: manager.store, kube: kube, runtime: manager.runtime, observer: manager.observer,
-		operations: operations, observationLog: manager.observationLog, capacity: serving.NewCapacityTable(1, nil, nil), reservationState: &manager.reservations.reservation, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
+		operations: operations, observationLog: manager.observationLog, reservationState: &manager.reservations.reservation, config: SchedulerControllerConfig{Settings: withSchedulerEstimateFixture(serving.SchedulerSettings{ObservationWindow: time.Second, ControlInterval: time.Second, ComparisonPeriod: time.Second, MaxReplicas: 3, MaxInstances: 3, CapacityGridSteps: 20, CapacityBisectionWidth: .005, CapacityTailSamples: 100,
 			CapacityWindow: time.Second, CapacityWindows: 1, CapacityPassingWindows: 1, CapacityMinimumRequests: 1, PlanSearchWorkers: 1,
 			PlanSearchStrategy: "v1", PlanSearchEvaluations: 500000, PlanExactFinalists: 16, PlanPolishActive: 4,
 			AutonomousWorkloads: []string{d.UID}})}}
@@ -1699,7 +1736,7 @@ func TestReadySubsetMixedUIDPreservesNotReadyDeclarationE56(t *testing.T) {
 	target.Instances = []serving.SchedulerInstance{first, second}
 	target.Routing = map[string]map[string]int32{first.WorkloadUID: {first.ID: 1000}, second.WorkloadUID: {second.ID: 1000}}
 	target.Actions = nil
-	partial := c.readySubset(target, nil, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.readySubset(target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		t.Fatal("independent Ready UID made no progress")
 	}

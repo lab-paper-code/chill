@@ -31,7 +31,7 @@ import (
 
 //nolint:gocyclo // One end-to-end fixture proves Tick, prepare, route and native completion for each blocked-owner variant.
 func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testing.T) {
-	for _, variant := range []string{"slow-power", "unconfirmed-source", "pending-kappa", "preparing-source"} {
+	for _, variant := range []string{"slow-power", "unconfirmed-source", "preparing-source"} {
 		t.Run(variant, func(t *testing.T) {
 			var unconfirmed atomic.Bool
 			c, ready := tickReadySubsetController(t, func(index int, state *native.State) {
@@ -144,28 +144,16 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				c.config.Meters = append(c.config.Meters, servingops.MeterDeclaration{ID: "wall-" + profile.NodeName, Node: spec.Instance.Node, Scope: "node-exclusive-wall", Source: profile.MetricSource})
 				c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded", To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: evidencestore.ObjectIdentity{Store: "raw", Key: "prepare-" + profile.ID, Size: 1}})
 			}
-			// Build real capacity rows from the fixture's measured durations/occupancy.
-			settings.CapacityWindow = 10 * time.Millisecond
-			c.capacity = serving.NewCapacityTable(1, nil, nil)
 			first, err := c.capture(ctx, time.Now(), c.config)
 			if err != nil {
 				t.Fatal(err)
 			}
 			c.state.Snapshot = first
-			warm := *settings
-			if variant == "pending-kappa" {
-				warm.AutonomousWorkloads = []string{w2.UID}
-			}
-			c.capacity.Ensure(ctx, warm, first)
-			c.capacity.Wait()
-			// Capacity replay is deterministic fixture setup, not part of the
-			// live expansion/power ownership window guarded below.
+			// Direct assessment consumes measured profiles and this captured input;
+			// no capacity-row warm-up precedes the independent expansion.
 			actionCtx, stopActions := context.WithTimeout(ctx, 15*time.Second)
 			t.Cleanup(stopActions)
 			ctx, c.ctx = actionCtx, actionCtx
-			if !slices.ContainsFunc(c.capacity.Rows(), func(row serving.CapacityRow) bool { return row.Input.WorkloadUID == w2.UID && row.Kappa != nil }) {
-				t.Fatalf("W2 capacity fixture rejected: %+v", c.capacity.Rows())
-			}
 			if err = c.runtime.ApplySchedulerWorkloadsTarget(serving.SchedulerCandidate{ID: "retain-w1", Instances: first.Instances, Routing: first.Routing}, []string{w1.UID}); err != nil {
 				t.Fatal(err)
 			}
@@ -365,14 +353,7 @@ func TestTickPositiveReserveServesDuringRemovalAndCountsEnergyAC43(t *testing.T)
 	if result, err := c.operations.Execute(ctx, servingstate.Operation{ID: seed.ID, Kind: servingstate.OperationRoute, Target: &seed}); err != nil {
 		t.Fatalf("seed route: %v %+v", err, result)
 	}
-	warm, err := c.capture(ctx, time.Now(), c.config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.capacity.Ensure(ctx, *settings, warm)
-	c.capacity.Wait()
-	// Start the existing execution watchdog after catalog/capacity setup;
-	// race instrumentation must not consume the live removal/reserve window.
+	// Start the execution watchdog after the native route ACK.
 	actionCtx, stopActions := context.WithTimeout(ctx, 15*time.Second)
 	t.Cleanup(stopActions)
 	ctx, c.ctx = actionCtx, actionCtx

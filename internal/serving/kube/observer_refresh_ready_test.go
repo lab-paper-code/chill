@@ -40,7 +40,6 @@ func TestObserverKeepsServingAcrossRuntimeDeclarationChange(t *testing.T) {
 	if _, err := c.Tick(context.Background(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	c.capacity.Wait()
 	if _, err := c.Tick(context.Background(), time.Now()); err != nil {
 		t.Fatal(err)
 	}

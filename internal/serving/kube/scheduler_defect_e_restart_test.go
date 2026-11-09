@@ -22,7 +22,7 @@ func TestDefectENewLedgerDoesNotReformUnavailablePhysicalOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := &SchedulerController{reservationState: &cluster.reservation, store: old.store, kube: old.kube, runtime: old.runtime, observer: old.observer,
-		operations: operations, observationLog: old.observationLog, capacity: old.capacity, config: old.config, ctx: old.ctx}
+		operations: operations, observationLog: old.observationLog, config: old.config, ctx: old.ctx}
 	t.Cleanup(func() { c.wg.Wait() })
 	if len(c.runs) != 0 {
 		t.Fatal("new ledger inherited volatile owner evidence")

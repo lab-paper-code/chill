@@ -455,7 +455,7 @@ func TestDefectEPartialReturnKeepsPendingReplicaBudget(t *testing.T) {
 				snapshot.ObservedSince = snapshot.ObservationEnd.Add(-settings.ObservationWindow)
 				settings.MaxReplicas, settings.MaxInstances = limit, limit
 				settings.MinimumDemand = map[string]float64{uid: 1}
-				decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot, c.capacity.Rows())
+				decision, err := serving.EvaluateScheduler(context.Background(), settings, snapshot)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -474,8 +474,8 @@ func TestDefectEPartialReturnKeepsPendingReplicaBudget(t *testing.T) {
 					t.Fatalf("pending=1 maxReplicas/instances=%d independent prepares=%d reasons=%v", limit, prepares, decision.Reasons)
 				}
 				for _, plan := range decision.Capacity.Plans {
-					if plan.Node == pending.Node && plan.Key == decision.Keep.ID && plan.Kappa[uid] != 0 {
-						t.Fatal("held pending executor supplied invented kappa")
+					if plan.Node == pending.Node && plan.Key == decision.Keep.ID && (plan.RoutingRate[uid] != 0 || plan.RetainedRoutingRate[uid] != 0) {
+						t.Fatal("held pending executor supplied invented routing weight")
 					}
 				}
 			})

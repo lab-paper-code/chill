@@ -182,11 +182,7 @@ func (c *SchedulerController) intermediateActions(
 	if !pendingRoute {
 		return target.Actions, nil
 	}
-	var rows []serving.CapacityRow
-	if c.capacity != nil {
-		rows = c.capacity.Rows()
-	}
-	partial := c.readySubset(target, rows, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.readySubset(target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		return target.Actions, nil
 	}
@@ -200,9 +196,9 @@ func (c *SchedulerController) intermediateActions(
 }
 
 // readySubset preserves serving sources while positive targets prepare, admitting
-// independently placed Ready additions only through the capacity/weight judgment.
+// independently placed Ready additions only through the shared feedback judgment.
 // Without a serving route, it normalizes the goal's matching Ready subset.
-func (c *reservationState) readySubset(target serving.SchedulerCandidate, rows []serving.CapacityRow, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) *serving.SchedulerCandidate {
+func (c *reservationState) readySubset(target serving.SchedulerCandidate, configuration func() serving.SchedulerSettings, runtime *serving.Runtime) *serving.SchedulerCandidate {
 	snapshot, physical := c.state.Snapshot, runtime.Instances()
 	partial := serving.SchedulerCandidate{Routing: map[string]map[string]int32{}}
 	retiring := map[string]bool{}
@@ -243,7 +239,7 @@ func (c *reservationState) readySubset(target serving.SchedulerCandidate, rows [
 				}
 				selected, weights = current, snapshot.Routing[uid]
 				if len(added) > 0 {
-					if expanded, ok := serving.SchedulerReadyExpansion(configuration(), snapshot, rows, uid, current, added); ok {
+					if expanded, ok := serving.SchedulerReadyExpansion(configuration(), snapshot, uid, current, added); ok {
 						selected, weights = append(selected, added...), expanded
 					}
 				}

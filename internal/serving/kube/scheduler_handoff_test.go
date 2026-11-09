@@ -109,10 +109,8 @@ func handoffController(t *testing.T, extraNodes ...string) *SchedulerController 
 		c.config.Baselines = append(c.config.Baselines, serving.NodeBaseline{ID: ref.Key, Node: spec.Instance.Node, PowerMode: "fixed", Watts: 10, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", Reference: ref, MeasuredAt: time.Now()})
 		c.config.Costs = append(c.config.Costs, serving.OperationCost{ID: "prepare-" + profile.ID, Node: spec.Instance.Node, Kind: servingstate.OperationPrepare, From: "unloaded", To: serving.SchedulerInstanceState(spec.Instance), PowerMode: "fixed", Trials: []serving.OperationTrial{{Duration: time.Millisecond, Joules: 0.01}}, Meter: "wall-" + profile.NodeName, Scope: "node-exclusive-wall", EnergyScope: "whole-wall", Reference: ref})
 	}
-	snapshot := handoffSnapshot(t, c)
+	handoffSnapshot(t, c)
 	c.runtime.EnableSchedulerRouting()
-	c.capacity.Ensure(ctx, *settings, snapshot)
-	c.capacity.Wait()
 	return c
 }
 
