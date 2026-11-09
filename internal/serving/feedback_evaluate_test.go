@@ -149,12 +149,12 @@ func TestFeedbackConsumerRunningExpiryUsesSameResidualSample(t *testing.T) {
 	}
 }
 
-func TestFeedbackConsumerNoExecutionPreservesUnfinishedAndInvalid(t *testing.T) {
+func TestFeedbackConsumerNoExecutionPreservesUnfinishedAndDiagnostic(t *testing.T) {
 	settings, snapshot, candidate := feedbackFixture()
 	snapshot.Instances[0].Ready = false
 	result, err := EvaluateFeedbackCandidate(context.Background(), settings, snapshot, candidate, 1)
-	if err != nil || len(result.InvalidReasons) == 0 || len(result.Workloads) != 1 || result.Workloads[0].Unfinished != 2 || result.Workloads[0].Population != 2 || result.Workloads[0].PotentialExcess != nil || result.Workloads[0].SuccessQuantileNanos != nil {
-		t.Fatalf("no execution must stay unfinished/invalid: %+v %v", result, err)
+	if err != nil || len(result.InvalidReasons) != 0 || len(result.Workloads) != 1 || result.Workloads[0].Unfinished != 2 || result.Workloads[0].Population != 2 || result.Workloads[0].PotentialExcess != nil || result.Workloads[0].SuccessQuantileNanos != nil || len(result.Workloads[0].PotentialUnavailableReasons) == 0 {
+		t.Fatalf("no executable route must preserve unfinished outcomes and unknown potential: %+v %v", result, err)
 	}
 }
 

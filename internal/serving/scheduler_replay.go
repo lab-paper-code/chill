@@ -292,10 +292,11 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 			continue
 		}
 		if math.IsInf(next, 1) {
-			if remaining {
+			if remaining && s.blockedReplayPrerequisite() {
 				s.out.reasons = append(s.out.reasons, "NoReadyCapacityOrTransitionPrerequisite")
 				return s.out, ctx.Err()
 			}
+			remaining = false // unassigned requests remain explicit unfinished outcomes
 			next = math.Max(s.now, s.horizon)
 		}
 		if !s.accumulateEnergy(math.Min(next, s.horizon)) {
@@ -314,6 +315,20 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 		s.out.reasons = append(s.out.reasons, "ExpectedEnergyOutsidePhysicalNumericalRange")
 	}
 	return s.out, ctx.Err()
+}
+
+func (s *schedulerReplayState) blockedReplayPrerequisite() bool {
+	for _, action := range s.actions {
+		if !action.done {
+			return true
+		}
+	}
+	for _, request := range s.live {
+		if !request.completed && request.dispatched {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *schedulerReplayState) initializeInstances() {
