@@ -72,7 +72,7 @@ func EvaluateFeedbackCandidate(ctx context.Context, settings SchedulerSettings, 
 	conditional := replay.conditional
 	return FeedbackCandidateResult{
 		Workloads: replay.feedback, InvalidReasons: replay.reasons,
-		SLO: feedbackReplayEstimates(snapshot, replay), ConditionalService: &conditional,
+		SLO: feedbackReplayEstimates(snapshot, replay, true), ConditionalService: &conditional,
 		Assumptions: replay.assumptions, Sources: replay.sources,
 	}, nil
 }
@@ -86,7 +86,7 @@ func (s *schedulerReplayState) feedbackFor(definition *Definition) PathFeedback 
 	return PathFeedback{WorkloadUID: definition.UID, TotalNanos: s.settings.CompletionMarginMS * 1e6, PostNanos: s.settings.CompletionMarginMS * 1e6, Source: "configured"}
 }
 
-func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayResult) []SchedulerEstimate {
+func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayResult, sorted bool) []SchedulerEstimate {
 	definitions := make(map[string]*Definition, len(replay.definitions)+len(snapshot.Workloads))
 	for key, definition := range replay.definitions {
 		definitions[key] = definition
@@ -105,7 +105,9 @@ func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayR
 		samples := replay.samples[key]
 		estimate := SchedulerEstimate{UID: definition.UID, Definition: key, Samples: len(samples), Percentile: definition.SLO.Percentile, TargetNanos: int64(definition.SLO.TargetLatency), PredictedOutcomes: replay.outcomes[key]}
 		if len(samples) > 0 {
-			sort.Float64s(samples)
+			if !sorted {
+				sort.Float64s(samples)
+			}
 			quantile := stat.Quantile(definition.SLO.Percentile/100, stat.Empirical, samples, nil)
 			estimate.ExpectedNanos = &quantile
 			estimate.NormalizedExceedance = max(0, quantile/float64(definition.SLO.TargetLatency)-1)

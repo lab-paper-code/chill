@@ -179,7 +179,7 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	energy := r.energy
 	c.ExpectedJoules = &energy
 	c.Status = schedulerStatusFeasible
-	c.SLO, c.Feedback = feedbackReplayEstimates(snapshot, r), r.feedback
+	c.SLO, c.Feedback = feedbackReplayEstimates(snapshot, r, capacity == nil), r.feedback
 	c.WorstExceedance = 0
 	for _, estimate := range c.SLO {
 		c.WorstExceedance = max(c.WorstExceedance, estimate.NormalizedExceedance)
