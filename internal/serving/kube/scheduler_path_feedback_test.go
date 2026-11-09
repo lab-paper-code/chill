@@ -91,7 +91,7 @@ func TestSchedulerCapacityProjectsOnlyCurrentCommittedRateTests(t *testing.T) {
 		t.Fatalf("uncommitted rate evidence: %+v", got)
 	}
 	test := serving.SchedulerFeedbackRate{InstanceID: "selected-instance",
-		Option: serving.SchedulerOption{CompatibleUIDs: []string{"workload"}},
+		Input: serving.CapacityInput{WorkloadUID: "workload", DispatchOccupancy: &serving.DispatchOccupancy{PerRequest: time.Millisecond}},
 		FeedbackCapacity: serving.FeedbackCapacity{KappaHat: 2, Tests: []serving.FeedbackRateTest{{Requests: 3}}},
 	}
 	c.state.Decision.Capacity = &serving.SchedulerCapacity{Workloads: []serving.SchedulerCapacityWorkload{{
@@ -104,9 +104,9 @@ func TestSchedulerCapacityProjectsOnlyCurrentCommittedRateTests(t *testing.T) {
 	}
 	got[0].InstanceID = "changed"
 	got[0].Tests[0].Requests = 99
-	got[0].Option.CompatibleUIDs[0] = "changed"
+	got[0].Input.DispatchOccupancy.PerRequest = time.Second
 	retained := c.state.Decision.Capacity.Workloads[0].Tests[0]
-	if retained.Tests[0].Requests != 3 || retained.Option.CompatibleUIDs[0] != "workload" {
+	if retained.Tests[0].Requests != 3 || retained.Input.DispatchOccupancy.PerRequest != time.Millisecond {
 		t.Fatalf("query caller mutated nested committed evidence: %+v", retained)
 	}
 	if next := c.Capacity(); !reflect.DeepEqual(next, []serving.SchedulerFeedbackRate{test}) {

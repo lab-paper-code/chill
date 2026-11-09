@@ -233,7 +233,10 @@ func (c *SchedulerController) Capacity() []serving.SchedulerFeedbackRate {
 	for _, workload := range capacity.Workloads {
 		for _, test := range workload.Tests {
 			test.Tests = slices.Clone(test.Tests)
-			test.Option.CompatibleUIDs = slices.Clone(test.Option.CompatibleUIDs)
+			if test.Input.DispatchOccupancy != nil {
+				occupancy := *test.Input.DispatchOccupancy
+				test.Input.DispatchOccupancy = &occupancy
+			}
 			result = append(result, test)
 		}
 	}
