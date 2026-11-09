@@ -96,10 +96,10 @@ func TestPathTimingSampleRequiresClosedEvidence(t *testing.T) {
 		{"client transport error", func(_ *RequestRow, c *ClientObservation) { c.Outcome = "transport_error" }},
 		{"client canceled", func(_ *RequestRow, c *ClientObservation) { c.Outcome = "canceled" }},
 		{"server timeout with late native completion", func(r *RequestRow, c *ClientObservation) {
-			r.Outcome, r.Error, c.Outcome = "timeout", "RequestTimeout", "http_error"
+			r.Outcome, r.Error, c.Outcome = "timeout", "RequestTimeout", clientOutcomeHTTPError
 		}},
 		{"transport failure with late native completion", func(r *RequestRow, c *ClientObservation) {
-			r.Outcome, r.Error, c.Outcome = outcomeError, "BackendUnavailable", "http_error"
+			r.Outcome, r.Error, c.Outcome = outcomeError, "BackendUnavailable", clientOutcomeHTTPError
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,17 +114,17 @@ func TestPathTimingSampleRequiresClosedEvidence(t *testing.T) {
 
 func TestPathTimingSampleKeepsFullNativeFailuresSeparate(t *testing.T) {
 	for _, tc := range []struct{ outcome, code, native string }{
-		{"preprocess_failed", "PreprocessFailed", "preprocess_failed"},
+		{"preprocess_failed", preprocessFailedCode, "preprocess_failed"},
 		{outcomeError, "BackendError", "batch_error"},
 		{"timeout", "SLODeadlineDrop", "deadline_drop"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			row, client := pathTimingEvidence(8, 28, 30, 60, 120, 101)
 			row.Outcome, row.Error, row.NativeOutcome = tc.outcome, tc.code, tc.native
-			client.Outcome, client.WorkloadUID = "http_error", ""
+			client.Outcome, client.WorkloadUID = clientOutcomeHTTPError, ""
 			sample, ok := PathTimingSampleFromRequest(row, client)
 			if !ok || sample.TotalNanos != 40*float64(time.Millisecond) || sample.PostNanos != 30*float64(time.Millisecond) ||
-				row.Outcome != tc.outcome || row.NativeOutcome != tc.native || client.Outcome != "http_error" {
+				row.Outcome != tc.outcome || row.NativeOutcome != tc.native || client.Outcome != clientOutcomeHTTPError {
 				t.Fatalf("full native failure lost finite timing or changed outcome: %+v, available=%v", sample, ok)
 			}
 		})

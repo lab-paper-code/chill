@@ -187,7 +187,7 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 				result.ServerTiming.Mark(ServerWorkerHTTPDone, dispatch.ReceivedAt)
 				switch outcome {
 				case "domain-error":
-					return result, failure("PreprocessFailed", "input rejected by native preprocessor")
+					return result, failure(preprocessFailedCode, "input rejected by native preprocessor")
 				case "backend-error":
 					return result, errors.New("transport failed")
 				default:
@@ -229,10 +229,10 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 			responseOutcome, responseCode := outcomeCompleted, ""
 			switch outcome {
 			case "domain-error":
-				if !hasRuntimeError(err, "PreprocessFailed") {
+				if !hasRuntimeError(err, preprocessFailedCode) {
 					t.Fatalf("domain error changed: %v", err)
 				}
-				responseOutcome, responseCode = outcomeError, "PreprocessFailed"
+				responseOutcome, responseCode = outcomeError, preprocessFailedCode
 			case "backend-error":
 				if !hasRuntimeError(err, "BackendUnavailable") {
 					t.Fatalf("backend error classification changed: %v", err)
@@ -263,30 +263,36 @@ func TestRuntimeTimingResultLockReplyAndCanceledFinal(t *testing.T) {
 				t.Fatal(err)
 			}
 			rows := readRequestRows(t, log.config.Directory)
-			if len(rows) != 2 || rows[0].Kind != RequestRowAssigned || rows[1].Kind != RequestRowFinal {
-				t.Fatalf("assignment/final boundary changed: %+v", rows)
-			}
-			assigned, final := rows[0], rows[1]
-			dispatched := runtimeTimingStage(t, assigned.ServerTiming, ServerAssigned)
-			if final.DispatchedNanos == nil || *final.DispatchedNanos != int64(dispatched) ||
-				runtimeTimingStage(t, final.ServerTiming, ServerAssigned) != dispatched {
-				t.Fatalf("assignment offset changed between event and final: assigned=%v final=%+v", dispatched, final)
-			}
-			frozen := runtimeTimingStage(t, final.ServerTiming, ServerSenderElapsedFrozen)
-			if consumed := <-senderElapsed; frozen != consumed {
-				t.Fatalf("sender timing differs from native input: recorded=%v consumed=%v", frozen, consumed)
-			}
-			if runtimeTimingStage(t, result.ServerTiming, ServerSenderElapsedFrozen) != frozen {
-				t.Fatal("backend result lost sender freeze")
-			}
-			runtimeTimingStage(t, assigned.ServerTiming, ServerExecuteStart)
-			runtimeTimingMissing(t, assigned.ServerTiming, ServerAssignedEventDone, ServerSenderElapsedFrozen, ServerWorkerHTTPStart, ServerResultLockAttempt, ServerReplyReceived)
-			runtimeTimingStage(t, final.ServerTiming, ServerAssignedEventDone)
-			runtimeTimingStage(t, final.ServerTiming, ServerResultLockAcquired)
+			final := runtimeTimingAssertRecordedStages(t, rows, result, <-senderElapsed)
 			sent := runtimeTimingStage(t, final.ServerTiming, ServerReplySent)
 			runtimeTimingAssertFinal(t, final, outcome, responseOutcome, responseCode, responseFinishedBefore.Sub(receipt.ReceivedAt), attempt, sent)
 		})
 	}
+}
+
+func runtimeTimingAssertRecordedStages(t *testing.T, rows []RequestRow, result BackendResult, senderElapsed time.Duration) RequestRow {
+	t.Helper()
+	if len(rows) != 2 || rows[0].Kind != RequestRowAssigned || rows[1].Kind != RequestRowFinal {
+		t.Fatalf("assignment/final boundary changed: %+v", rows)
+	}
+	assigned, final := rows[0], rows[1]
+	dispatched := runtimeTimingStage(t, assigned.ServerTiming, ServerAssigned)
+	if final.DispatchedNanos == nil || *final.DispatchedNanos != int64(dispatched) ||
+		runtimeTimingStage(t, final.ServerTiming, ServerAssigned) != dispatched {
+		t.Fatalf("assignment offset changed between event and final: assigned=%v final=%+v", dispatched, final)
+	}
+	frozen := runtimeTimingStage(t, final.ServerTiming, ServerSenderElapsedFrozen)
+	if frozen != senderElapsed {
+		t.Fatalf("sender timing differs from native input: recorded=%v consumed=%v", frozen, senderElapsed)
+	}
+	if runtimeTimingStage(t, result.ServerTiming, ServerSenderElapsedFrozen) != frozen {
+		t.Fatal("backend result lost sender freeze")
+	}
+	runtimeTimingStage(t, assigned.ServerTiming, ServerExecuteStart)
+	runtimeTimingMissing(t, assigned.ServerTiming, ServerAssignedEventDone, ServerSenderElapsedFrozen, ServerWorkerHTTPStart, ServerResultLockAttempt, ServerReplyReceived)
+	runtimeTimingStage(t, final.ServerTiming, ServerAssignedEventDone)
+	runtimeTimingStage(t, final.ServerTiming, ServerResultLockAcquired)
+	return final
 }
 
 func runtimeTimingAssertFinal(t *testing.T, final RequestRow, outcome, responseOutcome, responseCode string, responseElapsed, attempt, sent time.Duration) {

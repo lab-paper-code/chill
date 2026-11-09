@@ -3,6 +3,13 @@ package serving
 import (
 	"math"
 	"time"
+
+	"github.com/lab-paper-code/chill/internal/firstfloor"
+)
+
+const (
+	clientOutcomeHTTPError = "http_error"
+	preprocessFailedCode   = "PreprocessFailed"
 )
 
 // ClientObservation is immutable client-reported evidence.
@@ -37,24 +44,12 @@ type PathTimingSample struct {
 // evidence. POST includes the external client roundtrip, not one-way return time.
 // Missing evidence and client failures remain in their original records.
 func PathTimingSampleFromRequest(row RequestRow, client ClientObservation) (PathTimingSample, bool) {
-	if row.RequestID == "" || row.RequestID != client.RequestID || row.WorkloadUID == "" ||
-		client.WorkloadUID != "" && row.WorkloadUID != client.WorkloadUID || row.ReceivedAt.IsZero() ||
-		client.Outcome != "completed" && client.Outcome != "http_error" || client.ElapsedNanos < 0 {
+	if !pathTimingJoinedReply(row, client) {
 		return PathTimingSample{}, false
 	}
 	if row.AcceptedNanos == nil || row.NativeElapsedMS == nil || !row.NativeExecutionComplete ||
 		!row.ExecutionComplete || row.ExchangeNanos == nil || row.ElapsedNanos == nil ||
 		*row.ExchangeNanos > *row.ElapsedNanos {
-		return PathTimingSample{}, false
-	}
-	// These existing outcomes prove a synchronous terminal native reply. A late
-	// native supplement cannot turn an interrupted exchange into that proof.
-	switch {
-	case row.Outcome == outcomeCompleted && row.Error == "":
-	case row.Outcome == "preprocess_failed" && row.Error == "PreprocessFailed":
-	case row.Outcome == outcomeError && row.Error == "BackendError":
-	case row.Outcome == "timeout" && row.Error == "SLODeadlineDrop":
-	default:
 		return PathTimingSample{}, false
 	}
 	assigned, assignedOK := row.ServerTiming.Elapsed(ServerAssigned)
@@ -80,4 +75,23 @@ func PathTimingSampleFromRequest(row RequestRow, client ClientObservation) (Path
 		TotalNanos: total, PostNanos: post,
 		ClientNanos: elapsed, ServingQueueNanos: float64(wait), NativeNanos: nativeNanos,
 	}, true
+}
+
+func pathTimingJoinedReply(row RequestRow, client ClientObservation) bool {
+	if row.RequestID == "" || row.RequestID != client.RequestID || row.WorkloadUID == "" ||
+		client.WorkloadUID != "" && row.WorkloadUID != client.WorkloadUID || row.ReceivedAt.IsZero() ||
+		client.Outcome != outcomeCompleted && client.Outcome != clientOutcomeHTTPError || client.ElapsedNanos < 0 {
+		return false
+	}
+	// These existing outcomes prove a synchronous terminal native reply. A late
+	// native supplement cannot turn an interrupted exchange into that proof.
+	switch {
+	case row.Outcome == outcomeCompleted && row.Error == "":
+	case row.Outcome == firstfloor.OutcomePreprocessFailed && row.Error == preprocessFailedCode:
+	case row.Outcome == outcomeError && row.Error == "BackendError":
+	case row.Outcome == "timeout" && row.Error == "SLODeadlineDrop":
+	default:
+		return false
+	}
+	return true
 }

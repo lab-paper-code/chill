@@ -24,7 +24,7 @@ func TestRuntimeFreezesAcceptedPostThroughQueueSettingsAndFailure(t *testing.T) 
 				case <-release:
 				case <-ctx.Done():
 				}
-				return BackendResult{Finished: true}, failure("PreprocessFailed", "test native failure")
+				return BackendResult{Finished: true}, failure(preprocessFailedCode, "test native failure")
 			}
 			var calls []*Call
 			var receipts []Receipt
@@ -67,10 +67,10 @@ func TestRuntimeFreezesAcceptedPostThroughQueueSettingsAndFailure(t *testing.T) 
 				release <- struct{}{}
 			}
 			for index, call := range calls {
-				if _, err := call.Wait(ctx); !hasRuntimeError(err, "PreprocessFailed") {
+				if _, err := call.Wait(ctx); !hasRuntimeError(err, preprocessFailedCode) {
 					t.Fatalf("native error changed: %v", err)
 				}
-				if err := r.Response(receipts[index], "preprocess_failed", "PreprocessFailed"); err != nil {
+				if err := r.Response(receipts[index], "preprocess_failed", preprocessFailedCode); err != nil {
 					t.Fatal(err)
 				}
 			}

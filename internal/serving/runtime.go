@@ -640,8 +640,8 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		switch domain.Code {
 		case "SLODeadlineDrop":
 			outcome = "timeout"
-		case "PreprocessFailed":
-			outcome = "preprocess_failed"
+		case preprocessFailedCode:
+			outcome = firstfloor.OutcomePreprocessFailed
 		}
 	}
 	timing.Merge(result.ServerTiming)
