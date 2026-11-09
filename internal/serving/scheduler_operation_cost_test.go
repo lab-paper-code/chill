@@ -20,6 +20,7 @@ func schedulerEstimateSettingsForTest() SchedulerSettings {
 
 func TestOperationCostDefaultAndRequiredSettings(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Second
 	n := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	wanted := poolsInstance(snap.Instances[0], "new", n, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(wanted))
@@ -186,11 +187,11 @@ func TestOperationCostCandidatesShareDecisionHorizon(t *testing.T) {
 		{preMax: 100, preMean: 100, preJ: 1000, after: 5},
 		{preMax: 700, preMean: 700, preJ: 7000, postJ: 50, after: 5},
 	}}
-	keep := p.evaluate([]int{0}, 0)
+	keep := p.evaluateEnergyAtWindow([]int{0}, 0, nil, p.period)
 	for _, j := range []int{1, 2, 3} {
-		res := p.evaluate([]int{j}, p.routeOf([]int{j}))
-		if res.period != 600 || res.keepJoules != keep.joules {
-			t.Fatalf("candidate %d: H=%g keep=%g, want H=600 keep=%g", j, res.period, res.keepJoules, keep.joules)
+		res := p.evaluateEnergyAtWindow([]int{j}, p.routeOf([]int{j}), nil, p.period)
+		if res.period != 600 || keep.joules != p.keepWatts*res.period {
+			t.Fatalf("candidate %d: H=%g keep=%g, want H=600 keep=%g", j, res.period, keep.joules, p.keepWatts*res.period)
 		}
 		plan := p.plans[0][j]
 		want := plan.preJ + plan.postJ + 5*max(0, 600-res.route)

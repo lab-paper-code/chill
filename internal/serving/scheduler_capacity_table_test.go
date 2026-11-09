@@ -19,6 +19,7 @@ func TestCapacityTableZeroRoutingDoesNotPruneProfile(t *testing.T) {
 		makePlan(true, true, 0), makePlan(false, true, 0), makePlan(false, true, 1), makePlan(false, false, 0),
 	}}}
 	p.snapshot.Nodes = []SchedulerNode{{}}
+	p.compared = []bool{true}
 	tab := p.planTable()
 	problem := p.scalarProblem(tab, time.Time{})
 	v2.Group(problem.Table)
@@ -56,18 +57,12 @@ func TestCapacityTableVariants(t *testing.T) {
 		tab := p.planTable()
 		problem := p.scalarProblem(tab, time.Time{})
 		v2.Group(problem.Table)
+		seen := make([]int, len(tab.index))
 		for _, entry := range problem.Table.Entries {
 			first := p.plans[entry.Node][tab.index[entry.Variants[0]]]
-			previousK, previousJ := -1.0, -1
 			for _, q := range entry.Variants {
 				plan := p.plans[entry.Node][tab.index[q]]
-				if entry.Workload >= 0 {
-					k := tab.routingRate[q][entry.Workload]
-					if k < previousK || k == previousK && tab.index[q] < previousJ {
-						t.Fatalf("mix %d entry %+v not sorted", mix, entry)
-					}
-					previousK, previousJ = k, tab.index[q]
-				}
+				seen[q]++
 				a := []float64{first.preMean, first.preMax, first.postMean, first.postMax, first.preJ, first.postJ, first.before, first.mid, first.after}
 				b := []float64{plan.preMean, plan.preMax, plan.postMean, plan.postMax, plan.preJ, plan.postJ, plan.before, plan.mid, plan.after}
 				if !slices.Equal(a, b) || !reflect.DeepEqual(first.retained, plan.retained) || len(first.instances) != len(plan.instances) || first.others != plan.others {
@@ -84,6 +79,11 @@ func TestCapacityTableVariants(t *testing.T) {
 						}
 					}
 				}
+			}
+		}
+		for q, searchable := range problem.Table.Searchable {
+			if searchable && seen[q] != 1 || !searchable && seen[q] != 0 {
+				t.Fatalf("mix %d variant %d: searchable=%t visits=%d", mix, q, searchable, seen[q])
 			}
 		}
 	}

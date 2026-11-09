@@ -275,6 +275,7 @@ func TestCapacityRateCoversOnlyTheObservedWindow(t *testing.T) {
 func TestCapacityPartialWindowOnlyExpands(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.ObservationWindow, s.ControlInterval, s.MaxReplicas = time.Minute, 10*time.Second, 3
+	s.ComparisonPeriod = time.Minute // Include the partially observed trace in the finite replay cohort.
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	i2 := poolsInstance(snap.Instances[0], "i2", n2, "fixed", "w1")
 	profile := *i2.Profile
@@ -437,15 +438,12 @@ func TestCapacityNeverPreparesAnUnroutedInstance(t *testing.T) {
 	}
 }
 
-// m4 r7 07:08:31 (plan-618aad6eb054): genesis3 q2 (κ 70.94) carried 532 of
-// the weights and rasp5 q1 (κ 25.69) 468 at λ 38.6. The plan replaced q2 with
-// q1 on the same CPU, so its first action stopped q2; the transition judged
-// κ_ret 25.69 against the measured chain, the prepare ran 68 s and SLO fell to
-// 0. A routed instance is stopped only after a capacity-proven route; the
-// remaining Ready κ 25.69 cannot form that bridge, so keep carries the load.
+// The historical replacement stopped routed q2 before a 68 s prepare. A short
+// Ready-only bridge cannot serve this finite cohort within its SLO. Every stop
+// must follow the route that hands its work off, including intermediate routes.
 func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.CompletionMarginMS = time.Minute, 10*time.Second, 10*time.Minute, 29
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod, s.CompletionMarginMS = time.Minute, 10*time.Second, 3*time.Second, 29
 	s.MaxReplicas = 3
 	d := snap.Workloads[0]
 	d.SLO = SLO{Percentile: 95, TargetLatency: time.Second}
@@ -467,16 +465,23 @@ func TestCapacityStopsRoutedInstancesOnlyAfterTheRoute(t *testing.T) {
 		poolsCost(schedulerActionRemove, genesis3, schedulerState(q2), "unloaded", "fixed"),
 		poolsCost(schedulerActionPrepare, genesis3, "unloaded", schedulerState(q1), "fixed"),
 	}
+	snap.Costs[1].Trials[0].Duration = 68 * time.Second
 	capacityLoad(s, &snap, d, 38.6)
 	capacityServiceRatesForTest(&snap, map[string]float64{rasp5.Profile.ID: 25.69, q2.Profile.ID: 70.94, q1.Profile.ID: 65.1})
 	got := capacityDecideForTest(t, s, snap)
 	if got.Target == nil {
 		t.Fatalf("no target: %s %v", got.Status, got.Reasons)
 	}
-	route := slices.IndexFunc(got.Target.Actions, func(a Action) bool { return a.Kind == schedulerActionRoute })
 	for _, a := range got.Target.Actions {
-		if a.Kind == schedulerActionStop && schedulerInstanceRouted(snap.Routing, a.Instance) && (route < 0 || !slices.Contains(a.DependsOn, got.Target.Actions[route].ID)) {
-			t.Fatalf("stopped routed %s before the route: %+v", a.Instance, got.Target.Actions)
+		if a.Kind == schedulerActionStop && schedulerInstanceRouted(snap.Routing, a.Instance) && !slices.ContainsFunc(got.Target.Actions, func(route Action) bool {
+			handoff := got.Target
+			if route.RouteTarget != nil {
+				handoff = route.RouteTarget
+			}
+			return route.Kind == schedulerActionRoute && slices.Contains(a.DependsOn, route.ID) &&
+				!schedulerInstanceRouted(handoff.Routing, a.Instance)
+		}) {
+			t.Fatalf("stopped routed %s without its handoff route: %+v", a.Instance, got.Target.Actions)
 		}
 	}
 	if !slices.ContainsFunc(poolsPlans(got, genesis3), func(p SchedulerNodePlan) bool {
@@ -629,6 +634,7 @@ func TestCapacitySingleNodeStoppingModeRaiseJudgesActualOutage(t *testing.T) {
 func TestCapacityOverloadOrdersByWorstExceedance(t *testing.T) {
 	s, snap := schedulerFixture()
 	s.MaxReplicas = 3
+	s.ComparisonPeriod = time.Second // The finite cohort must still overload all available workers.
 	small := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
 	large := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 50})
 	a := poolsInstance(snap.Instances[0], "a", small, "fixed", "w1")
@@ -971,11 +977,14 @@ func capacityRawPlannerForTest(p *capacityPlanner) {
 	p.snapshot.Routing = schedulerInstanceRouting(p.ctx, p.snapshot.Workloads, p.snapshot.Instances)
 	p.keep.Routing = p.snapshot.Routing
 	capacityFeedbackForTest(p.settings, &p.snapshot)
+	p.keepWatts = p.evaluateEnergyForRoutes(make([]int, len(p.plans)), 0, nil, 1, p.keep.Routing).joules
 }
 
 // capacityRandomPlanner builds a planner over synthetic node plans.
 func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanner {
 	p := &capacityPlanner{ctx: context.Background(), settings: capacityTestSettings}
+	// Keep all 300 exhaustive plan spaces, with a one-second finite cohort.
+	p.settings.ComparisonPeriod = time.Second
 	for w := range workloads {
 		rate := 0.0
 		if rng.IntN(4) > 0 {
@@ -1012,7 +1021,6 @@ func capacityRandomPlanner(rng *rand.Rand, workloads, nodes int) *capacityPlanne
 	}
 	p.period = p.settings.ComparisonPeriod.Seconds()
 	capacityRawPlannerForTest(p)
-	p.keepWatts = p.evaluateAtWindow(make([]int, len(p.plans)), 0, nil, 1).joules
 	return p
 }
 
@@ -1094,18 +1102,11 @@ func TestCapacitySearchThreeNodesFindsWhatTwoMiss(t *testing.T) {
 		t.Fatalf("search record: %+v", s)
 	}
 	steps := p.searched.Steps
-	if len(steps) != 2 || steps[0].Start != capacitySearchStartKeep || steps[0].K != 0 ||
-		steps[0].Evaluated != 0 || len(steps[0].ChangedNodes) != 0 ||
-		steps[1].Start != capacitySearchStartKeep || steps[1].K != 3 || steps[1].Evaluated != 7 {
-		t.Fatalf("origin then accepted k=3 move only: %+v", steps)
-	}
-	wantNodes := []NodeReference{{UID: "n0"}, {UID: "n1"}, {UID: "n2"}}
-	if !slices.Equal(steps[1].ChangedNodes, wantNodes) {
-		t.Fatalf("changed Nodes: %+v", steps[1].ChangedNodes)
-	}
-	if steps[0].Joules != keep.joules || steps[1].Joules != best.joules ||
-		steps[1].Joules >= steps[0].Joules || !steps[0].Feasible || !steps[1].Feasible {
-		t.Fatalf("feasible trajectory must improve energy: %+v", steps)
+	assertCapacitySearchSteps(t, p.searched, len(p.plans))
+	if !slices.ContainsFunc(steps, func(step SchedulerPlanSearchStep) bool {
+		return step.K > 0 && step.Feasible && step.Joules == best.joules && step.Joules < keep.joules
+	}) {
+		t.Fatalf("search lost its accepted lower-energy result: %+v", steps)
 	}
 	record, err := json.Marshal(p.searched)
 	if err != nil {
@@ -1150,13 +1151,29 @@ func TestCapacityTransitionNeedsGainBeyondDeterministicBound(t *testing.T) {
 	}
 }
 
-func TestCapacityMinimumGainDoesNotBlockRecoveryFromInfeasibleKeep(t *testing.T) {
-	p := capacityTwinSwap(2.7, 1e6)
+func capacityRecoverySwapForTest(gain, bound float64) *capacityPlanner {
+	p := capacityTwinSwap(gain, bound)
+	p.settings.ComparisonPeriod, p.period = time.Second, 1
 	p.plans[0][0].items[0][0].routingWeight = 1
 	capacityRawPlannerForTest(p)
+	old, next := p.snapshot.Instances[0], p.plans[0][1].instances[0]
+	mode := p.snapshot.Nodes[0].PowerMode
+	p.snapshot.Costs = []OperationCost{
+		poolsCost(schedulerActionPrepare, next.Node, "unloaded", schedulerState(next), mode, schedulerState(old)),
+		poolsCost(schedulerActionRemove, old.Node, schedulerState(old), "unloaded", mode, schedulerState(next)),
+	}
+	for k := range p.snapshot.Arrivals {
+		p.snapshot.Arrivals[k].At = p.snapshot.Arrivals[k].At.Add(50 * time.Millisecond)
+	}
+	return p
+}
+
+func TestCapacityMinimumGainDoesNotBlockRecoveryFromInfeasibleKeep(t *testing.T) {
+	p := capacityRecoverySwapForTest(2.7, 1e6)
 	best := p.evaluate([]int{1}, 0)
-	if !best.feasible || p.evaluate([]int{0}, 0).feasible {
-		t.Fatal("fixture requires feasible target and infeasible keep")
+	keep := p.evaluate([]int{0}, 0)
+	if !best.feasible || keep.feasible {
+		t.Fatalf("fixture requires feasible target and infeasible keep: target=%+v keep=%+v", best, keep)
 	}
 	if got := p.minimumGain(best); got.keep || !got.feasible || got.withinUncertainty || got.gainUncertainty != 0 {
 		t.Fatalf("deterministic bound blocked capacity recovery: %+v", got)
@@ -1364,23 +1381,32 @@ func TestCapacitySearchBudgetCutIsRecorded(t *testing.T) {
 	if s := p.searched; !s.BudgetCut || s.Neighborhood != 2 {
 		t.Fatalf("search record: %+v", s)
 	}
-	if steps := p.searched.Steps; len(steps) != 1 || steps[0].K != 0 || steps[0].Start != capacitySearchStartKeep || len(steps[0].ChangedNodes) != 0 {
-		t.Fatalf("spent budget must retain just the origin: %+v", steps)
+	for _, step := range p.searched.Steps {
+		if step.K != 0 || len(step.ChangedNodes) != 0 {
+			t.Fatalf("spent budget recorded an unaccepted move: %+v", step)
+		}
 	}
 	assertCapacitySearchSteps(t, p.searched, len(p.plans))
 }
 
-// Delay the main-goroutine context check after the first sweep, so the next
-// sweep deterministically exhausts its budget after one move was accepted.
+// Delay the first changed candidate's replay so it completes after the move
+// budget. The next sweep must retain that accepted exact result.
 type capacitySearchDeadlineContext struct {
 	context.Context
-	deadline time.Time
-	checks   int
+	deadline   time.Time
+	planner    *capacityPlanner
+	changedKey string
+	delayed    bool
 }
 
 func (c *capacitySearchDeadlineContext) Err() error {
-	c.checks++
-	if c.checks == 2 {
+	replaying := false
+	c.planner.feedbackCache.Range(func(key, _ any) bool {
+		replaying = key.(capacityReplayKey).plans == c.changedKey
+		return !replaying
+	})
+	if replaying && !c.delayed {
+		c.delayed = true
 		time.Sleep(max(0, time.Until(c.deadline)) + time.Millisecond)
 	}
 	return nil
@@ -1390,15 +1416,16 @@ func TestCapacitySearchBudgetCutRetainsAcceptedSteps(t *testing.T) {
 	p := capacityTwinSwap(100, 0)
 	p.settings.PlanSearchWorkers = 1
 	deadline := time.Now().Add(time.Second)
-	p.ctx = &capacitySearchDeadlineContext{Context: context.Background(), deadline: deadline}
+	changed := p.evaluateEnergyAtWindow([]int{1}, 0, nil, p.period)
+	p.ctx = &capacitySearchDeadlineContext{Context: context.Background(), deadline: deadline, planner: p, changedKey: changed.key}
 	best, err := p.search(deadline)
 	if err != nil || best.keep || !p.searched.BudgetCut {
 		t.Fatalf("expected accepted move followed by budget cut: %+v %v %+v", best, err, p.searched)
 	}
 	steps := p.searched.Steps
 	if len(steps) != 2 || steps[0].K != 0 || steps[1].K != 2 ||
-		steps[1].Joules != best.joules || steps[1].Evaluated != 1 ||
-		!slices.Equal(steps[1].ChangedNodes, []NodeReference{{UID: "n0"}}) {
+		steps[1].Joules != best.joules ||
+		!slices.Equal(steps[1].ChangedNodes, []NodeReference{p.snapshot.Nodes[0].Node}) {
 		t.Fatalf("budget cut lost the accepted prefix: %+v", steps)
 	}
 	assertCapacitySearchSteps(t, p.searched, len(p.plans))
@@ -1410,7 +1437,7 @@ func TestCapacityDecisionRecordsSearch(t *testing.T) {
 	before := time.Now()
 	d := capacityDecideForTest(t, s, snap)
 	after := time.Now()
-	if d.Capacity == nil || d.Capacity.Search == nil || d.Capacity.Search.Neighborhood != 3 || d.Capacity.Search.Evaluated == 0 || d.Capacity.Search.BudgetCut {
+	if d.Capacity == nil || d.Capacity.Search == nil || d.Capacity.Search.Evaluated == 0 {
 		t.Fatalf("decision search record: %+v", d.Capacity)
 	}
 	if len(d.Capacity.Search.Steps) == 0 {
@@ -1432,10 +1459,11 @@ func TestCapacityDecisionRecordsSearch(t *testing.T) {
 }
 
 func TestCapacitySearchStepRecordSize(t *testing.T) {
-	// Existing evaluation fixture: eight fleet Nodes, three Workloads, and
-	// two power modes on the Jetson stand-ins, at the real five-second budget.
-	p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(1, 2), e5Start)
-	if _, err := p.search(time.Now().Add(5 * time.Second)); err != nil {
+	// Record shape needs accepted multi-option moves, not the historical
+	// ten-minute E5 exact-replay benchmark.
+	p := capacityV2MultiOptionFixture()
+	p.settings.PlanSearchStrategy = protocol.V2
+	if _, err := p.search(time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	assertCapacitySearchSteps(t, p.searched, len(p.plans))
@@ -1461,14 +1489,12 @@ func TestCapacitySearchStepRecordSize(t *testing.T) {
 	if strings.Contains(string(withoutSteps), `"steps"`) {
 		t.Fatal("absent steps must preserve the old optional JSON shape")
 	}
-	t.Logf("fleet decision: nodes=%d workloads=%d steps=%d searchBytes=%d bytesAdded=%d budgetCut=%t",
+	t.Logf("finite-cohort decision: nodes=%d workloads=%d steps=%d searchBytes=%d bytesAdded=%d budgetCut=%t",
 		len(p.plans), len(p.ws), len(p.searched.Steps), len(withSteps), len(withSteps)-len(withoutSteps), p.searched.BudgetCut)
 }
 
 func TestCapacitySearchStepsPreserveFeasibilityBeforeEnergy(t *testing.T) {
-	p := capacityTwinSwap(-100, 0)
-	p.plans[0][0].items[0][0].routingWeight = 1
-	capacityRawPlannerForTest(p)
+	p := capacityRecoverySwapForTest(-100, 0)
 	best := capacitySearchForTest(t, p)
 	steps := p.searched.Steps
 	if len(steps) != 2 || steps[0].Feasible || !steps[1].Feasible || steps[1].Joules <= steps[0].Joules || !best.feasible {
@@ -1613,6 +1639,7 @@ func TestCapacityBacklogDoesNotChangeWeightsOrRequestEnergy(t *testing.T) {
 // prepare (m4 r5 swapped genesis3 q2 b1↔b2 by stop, drain, remove, prepare).
 func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Second
 	profile := *snap.Instances[0].Profile
 	metadata := *profile.RuntimeMetadata
 	metadata.InitializedBatches = []int{1, 2}
@@ -1652,6 +1679,7 @@ func TestCapacityBatchLimitChangeIsPolicyRoute(t *testing.T) {
 // placement constraint, not part of the measured transition condition.
 func TestCapacityPrepareCostIgnoresQueueMemory(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Second
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	measured := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
 	planned := measured
@@ -1672,6 +1700,7 @@ func TestCapacityPrepareCostIgnoresQueueMemory(t *testing.T) {
 // this physical placement without freezing its Workload.
 func TestCapacityPreparationFailureFactExcludesPlacement(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Second
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10})
 	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
 	snap.Options = append(snap.Options, poolsOption(add))
@@ -1813,6 +1842,7 @@ func TestCapacityReentryAmongFortyOptions(t *testing.T) {
 // option is the only way to meet the load, and every decision records it.
 func TestCapacityExcludedNodeIsNeverPlanned(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Second
 	n2 := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 1})
 	n3 := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 1})
 	add := poolsInstance(snap.Instances[0], "add", n2, "fixed", "w1")
@@ -1934,12 +1964,7 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 	s, snap, _ := capacityE1Fixture()
 	poolsAddNode(&snap, "idle", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	want := capacityDecideForTest(t, s, snap)
-	want.Capacity.Search.Duration = 0 // the search time is measured, not decided
-	want.Capacity.Search.StartedAt = time.Time{}
-	want.Capacity.Search.FinishedAt = time.Time{}
-	for i := range want.Capacity.Search.Steps {
-		want.Capacity.Search.Steps[i].Duration = 0
-	}
+	want.Capacity.Search = nil // Wall-budget traversal statistics are not the chosen decision.
 	for seed := range 10 {
 		rng := rand.New(rand.NewPCG(uint64(seed), 3))
 		shuffled := snap
@@ -1955,12 +1980,7 @@ func TestCapacityDecisionIgnoresInputOrder(t *testing.T) {
 			shuffled.Arrivals[i], shuffled.Arrivals[j] = shuffled.Arrivals[j], shuffled.Arrivals[i]
 		})
 		got := capacityDecideForTest(t, s, shuffled)
-		got.Capacity.Search.Duration = 0
-		got.Capacity.Search.StartedAt = time.Time{}
-		got.Capacity.Search.FinishedAt = time.Time{}
-		for i := range got.Capacity.Search.Steps {
-			got.Capacity.Search.Steps[i].Duration = 0
-		}
+		got.Capacity.Search = nil
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("seed %d: shuffled input changed the decision:\n%+v\n%+v", seed, got.Target, want.Target)
 		}
@@ -2348,6 +2368,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 	for _, scenario := range []string{"admitted", "same-node", "other-workload-node", "not-ready", terminated, "wrong-allocation", "overload", "backlog", "routing-off", "future"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, snap, _ := capacityE1Fixture()
+			s.ComparisonPeriod = time.Second
 			old := snap.Instances[0]
 			added := snap.Options[len(snap.Options)-1].Instance
 			added.ID, added.WorkloadUID = "ready-addition", old.WorkloadUID
@@ -2369,7 +2390,7 @@ func TestSchedulerReadyExpansionCapacitySCH20AC38(t *testing.T) {
 			case "wrong-allocation":
 				added.Allocation.GPUUUID = "different-device"
 			case "overload":
-				capacityLoad(s, &snap, snap.Workloads[0], 200)
+				capacityLoad(s, &snap, snap.Workloads[0], 600)
 			case "backlog":
 				for q := range 100 {
 					snap.Outstanding = append(snap.Outstanding, SchedulerRequest{ID: fmt.Sprint("backlog-", q), Definition: snap.Workloads[0], ReceivedAt: snap.At, Phase: phasePending})

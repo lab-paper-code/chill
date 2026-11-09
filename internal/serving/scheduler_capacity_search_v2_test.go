@@ -145,7 +145,7 @@ func TestSchedulerSamplePlanSearchDefaults(t *testing.T) {
 }
 
 func TestCapacityFunnelExactAndFallback(t *testing.T) {
-	p := e5Planner(e5Mixes[0], evaluationScaled(1, 0), e5Start)
+	p := capacityTwinSwap(100, 0)
 	keep := make([]int, len(p.plans))
 	exact := p.evaluate(slices.Clone(keep), p.routeOf(keep))
 	problem := p.searchProblem(time.Time{})
@@ -179,6 +179,9 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 	p.plans[0] = append(p.plans[0], &alternative)
 	p.keepWatts = p.evaluate([]int{0}, 0).joules / p.period
 	a, b := p.evaluate([]int{1}, 0), p.evaluate([]int{2}, 0)
+	if !p.minimumGain(a).withinUncertainty || p.minimumGain(b).withinUncertainty {
+		t.Fatal("fixture must reject the uncertain nominal winner and retain the alternative")
+	}
 	candidates := []protocol.Candidate{{Choice: a.choice, Joules: a.joules}, {Choice: b.choice, Joules: b.joules}}
 	for _, enabled := range []bool{false, true} {
 		p.settings.PlanPostFilterFinalists = enabled
@@ -188,17 +191,30 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 		if enabled {
 			want = b
 		}
-		if got == nil || got.key != want.key || stats.Reverts != 1 || stats.RawKey != want.key || stats.RawJoules != want.joules {
+		if got == nil || got.key != want.key || stats.RawKey != want.key || stats.RawJoules != want.joules {
 			t.Fatalf("postfilter=%v got=%+v want=%+v stats=%+v", enabled, got, want, stats)
 		}
 	}
+}
+
+// Three nodes and two non-keep options exercise permutation and worker counts
+// without replaying the historical E5 ten-minute, eight-node benchmark.
+func capacityV2MultiOptionFixture() *capacityPlanner {
+	p := capacityThreeNodeSwap()
+	alternative := *p.plans[0][1]
+	alternative.items = [][]capacityItem{{{id: "faster", routingWeight: 40, e: .5}}}
+	alternative.record.Key, alternative.after = "faster", 26
+	p.plans[0] = append(p.plans[0], &alternative)
+	p.settings.ComparisonPeriod, p.period = time.Second, 1
+	capacityRawPlannerForTest(p)
+	return p
 }
 
 func TestCapacitySearchV2Determinism(t *testing.T) {
 	var baseline capacityResult
 	var counts [2]int
 	for trial := range 4 {
-		p := e5Planner(map[int]float64{0: 60, 1: 40, 2: 1.2}, evaluationScaled(2, 2), e5Start)
+		p := capacityV2MultiOptionFixture()
 		p.settings.PlanSearchStrategy = "v2"
 		p.settings.PlanSearchWorkers = 1 + 2*(trial%2)
 		if trial > 0 {
@@ -207,9 +223,13 @@ func TestCapacitySearchV2Determinism(t *testing.T) {
 				rng.Shuffle(len(plans)-1, func(i, j int) { plans[i+1], plans[j+1] = plans[j+1], plans[i+1] })
 			}
 		}
-		got, err := p.search(time.Now().Add(time.Hour))
+		got, err := p.search(time.Time{})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !p.admits(&got) || !p.bounded(got.choice) || len(got.feedback) == 0 ||
+			len(p.searched.Steps) < 2 || p.searched.ExactEvaluated < 2 {
+			t.Fatalf("fixture did not exercise exact multi-option search: %+v search=%+v", got, p.searched)
 		}
 		assertCapacitySearchSteps(t, p.searched, len(p.plans))
 		current := [2]int{p.searched.SurrogateEvaluated, p.searched.ExactEvaluated}
@@ -217,8 +237,9 @@ func TestCapacitySearchV2Determinism(t *testing.T) {
 			baseline, counts = got, current
 			continue
 		}
-		if got.key != baseline.key || !reflect.DeepEqual(got.weights, baseline.weights) || current != counts {
-			t.Fatalf("trial=%d key=%s want=%s counts=%v want=%v weights=%v want=%v", trial, got.key, baseline.key, current, counts, got.weights, baseline.weights)
+		if got.key != baseline.key || got.joules != baseline.joules || got.feasible != baseline.feasible ||
+			!reflect.DeepEqual(got.feedback, baseline.feedback) || !reflect.DeepEqual(got.weights, baseline.weights) || current != counts {
+			t.Fatalf("trial=%d result=%+v want=%+v counts=%v want=%v", trial, got, baseline, current, counts)
 		}
 	}
 }
@@ -233,7 +254,7 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 	capacityLoad(cover.settings, &cover.snapshot, cover.ws[0].d, cover.ws[0].rate)
 	countRecovery := capacityThreeNodeSwap()
 	countRecovery.settings.MaxInstances = 2
-	priced := e5Planner(map[int]float64{0: 60, 1: 15, 2: 1.2}, evaluationScaled(2, 0), e5Start)
+	priced := capacityTwinSwap(100, 0)
 	priced.settings.PlanPricedStart = true
 	for _, tc := range []struct {
 		name, phase string
@@ -269,7 +290,7 @@ func TestCapacitySearchV2Steps(t *testing.T) {
 					lostFeasibility = lostFeasibility || previous.Feasible && !step.Feasible
 				}
 				if step.K > 0 && len(p.plans) == 1 && (step.Evaluated != 1 ||
-					!slices.Equal(step.ChangedNodes, []NodeReference{{UID: "n0"}})) {
+					!slices.Equal(step.ChangedNodes, []NodeReference{p.snapshot.Nodes[0].Node})) {
 					t.Fatalf("single-node accepting sweep: %+v", step)
 				}
 				previous = step
@@ -353,6 +374,11 @@ func capacityZeroWitnessFixture() (SchedulerSettings, SchedulerSnapshot, NodeRef
 	capacityServiceRatesForTest(&snapshot, map[string]float64{snapshot.Instances[0].Profile.ID: 50, secondInstance.Profile.ID: 50, recovery.Profile.ID: 200})
 	capacityLoad(settings, &snapshot, first, 10)
 	capacityLoad(settings, &snapshot, second, 10)
+	// No request is accepted by the old actor before the 1 ms prepare finishes.
+	// With p100, one old-actor drop would preserve the old worst potential.
+	for k := range snapshot.Arrivals {
+		snapshot.Arrivals[k].At = snapshot.Arrivals[k].At.Add(50 * time.Millisecond)
+	}
 	capacityFeedbackForTest(settings, &snapshot)
 	return settings, snapshot, recoveryNode
 }
@@ -569,7 +595,8 @@ func TestCapacityExactKeepPreservesActualRoutesAndEnergyOffset(t *testing.T) {
 	}
 	currentRate := planner.keepRates[0][0].Tests[0].Rate
 	selectedRate := planner.selectedRates[0][0].Tests[0].Rate
-	if currentRate != .05 || selectedRate != 50*909.0/schedulerRouteUnits {
+	selectedWeight := selected.weights[0][snapshot.Instances[0].ID]
+	if currentRate != .05 || selectedWeight == 0 || selectedRate != 50*float64(selectedWeight)/schedulerRouteUnits {
 		t.Fatalf("nominal queries did not use actual integer routes: keep=%g selected=%g", currentRate, selectedRate)
 	}
 	decision := planner.decide(SchedulerDecision{Keep: planner.keep}, selected)

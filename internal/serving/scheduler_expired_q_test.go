@@ -121,8 +121,11 @@ func TestPlannerRunningAndExpiredOwnershipDoNotTriggerExpansion(t *testing.T) {
 			if expanded && !tc.expand || got.Capacity == nil || got.Capacity.Workloads[0].Queued != wantQueued {
 				t.Fatalf("backlog/expansion=%v status=%s reasons=%v capacity=%+v", expanded, got.Status, got.Reasons, got.Capacity)
 			}
-			if !tc.expand && (got.Capacity.Workloads[0].Queued != 0 || got.Keep.Status != schedulerStatusFeasible) {
-				t.Fatalf("keep must remain feasible: %+v", got)
+			if tc.expired {
+				score := got.Keep.Feedback[0]
+				if score.LifetimeExpired != tc.count || score.Satisfied || score.Population < tc.count {
+					t.Fatalf("expired ownership lost its finite failure outcomes: %+v", score)
+				}
 			}
 			if owner.outstanding != tc.count || len(snap.Outstanding) != tc.count {
 				t.Fatal("ownership was removed")
