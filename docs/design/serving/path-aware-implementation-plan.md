@@ -64,6 +64,10 @@ e_h  = max(0, h / SLO − 1)
 
 keep와 최종 후보는 기존 chooser·conditional raw service·seed·진행 중 요청·전환을 사용해 유한 요청 집단을 replay한다. 비교기간 이후 새 요청 없이 완료·drop·만료·미완료를 수집한다. 기존 에너지 식은 유지한다. 전체 rate grid를 매 Tick 재생하거나 move마다 replay하지 않는다.
 
+SLO 충족 여부는 불변 Definition별 **전체 요청 모집단의 경험 분위수**로 판정한다. 모집단 크기 n, 설정 percentile p의 선택 순위는 `ceil(n × p / 100)`이다. 완료 요청은 실제 replay 지연을 사용하고, drop·실패·만료·미완료 요청은 수학적으로 +∞인 미충족 요청으로 포함한다. 늦은 완료와 실패는 같은 허용 tail을 소모한다. 목표와 같은 완료시간은 충족이며, 별도의 실패 0건·만료 0건 조건은 두지 않는다. 예를 들어 p99/1,000건은 목표 이내 990건과 miss 10건이면 충족하고, 목표 이내 989건이면 미충족이다. p100은 miss를 허용하지 않으며 모집단이 없으면 비교 의무도 없다. 진행 중 요청은 각자 동결된 Definition의 목표·percentile을 유지한다.
+
+실패에 가짜 완료시간을 만들거나 JSON에 +∞를 저장하지 않는다. `SuccessQuantileNanos`·`SuccessExcess`는 성공 완료만의 진단값으로 유지하며 전체 SLO 충족 여부와 구분한다. `SchedulerEstimate.ExpectedNanos`는 전체 모집단의 선택 순위가 유한한 완료에 닿을 때만 숫자이고, 미완료·실패 tail에 닿거나 표본이 없으면 null이다. `Samples`는 성공 완료 표본 수이며 원 outcome별 수와 전체 모집단은 보존한다. 직접 후보 replay와 현재 rate/offline capacity window가 같은 판정을 사용하고 v1/v2의 공통 충족 후보 비교는 에너지를 우선한다.
+
 기존 `MinimumDemand`가 관측 요청률보다 크면 비교기간의 최소 요청 수까지 균등 간격의 합성 요청만 보충한다. 모든 후보에 같은 집단을 사용한다. 실제 관측·raw는 그대로 두고 합성 수요를 구분해 기록한다.
 
 ### 3.4 비교 정책
