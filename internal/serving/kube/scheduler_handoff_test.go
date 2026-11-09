@@ -242,11 +242,10 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 		receipts.Store(result.Operation.ID+"/"+result.Status, result)
 		return nil
 	}
-	var decision serving.SchedulerDecision
+	// Completion notifications use Continue in the service loop. A full Tick
+	// may admit a new retirement as soon as the failed owner returns.
 	for range 4 {
-		var err error
-		decision, err = c.Tick(c.ctx, time.Now())
-		if err != nil {
+		if err := c.Continue(c.ctx, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		c.wg.Wait()
@@ -267,15 +266,20 @@ func finishFailedHandoff(t *testing.T, c *SchedulerController, goal *serving.Sch
 			}
 		}
 	}
-	// Replanning returns held nodes to eligibility; actual IC admission must
-	// reach previously unrouted Ready capacity without a UID/writer fence.
+	// Evaluate returned nodes without launching the optimizer's next target;
+	// actual IC admission must reach previously unrouted Ready capacity.
+	snapshot := handoffSnapshot(t, c)
+	decision, err := serving.EvaluateScheduler(c.ctx, c.config.Settings, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.ContainsFunc(decision.Capacity.Plans, func(plan serving.SchedulerNodePlan) bool { return plan.Node.Name == "c" && plan.Eligible }) {
 		t.Fatalf("released Ready node did not return to planner candidates: %v", decision.Reasons)
 	}
 	// Exercise a proposed Ready expansion through the normal admission boundary;
 	// the candidate gate, not an optimizer choice, is the contract under test.
 	admitReadyHandoffProposal(t, c)
-	snapshot := handoffSnapshot(t, c)
+	snapshot = handoffSnapshot(t, c)
 	routing, _ := c.runtime.SchedulerRouting()
 	if _, started := receipts.Load("post-return-ic-route/" + starting); !started {
 		t.Fatal("no actual IC route was admitted after physical return")
