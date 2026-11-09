@@ -94,7 +94,7 @@ func TestRuntimeCatalogAdoptsRepublishedImmutableSource(t *testing.T) {
 		}
 	}
 	page, _, _, _, err := log.SchedulerObservationPage(ctx, log.started.Add(-time.Second), time.Now().Add(time.Second), 1, 0, SchedulerObservationSelection{})
-	if err != nil || len(page) != 1 || page[0].Snapshot.Instances[0].Profile.ID != instance.Profile.ID {
+	if err != nil || len(page) != 1 || page[0].Snapshot.Instances[0].ProfileID != instance.Profile.ID {
 		t.Fatalf("catalog consumer lost republished profile: %+v %v", page, err)
 	}
 }
