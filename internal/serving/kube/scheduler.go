@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -83,7 +82,6 @@ type SchedulerController struct {
 	// measurement acts only on measurement POOL Nodes: operation measurements and hand-back.
 	measurement    *servingops.Operations
 	observationLog *observation.ObservationLog
-	capacity       *serving.CapacityTable
 	config         SchedulerControllerConfig
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -112,9 +110,6 @@ func NewSchedulerController(cluster *ClusterState, store *Store, kube kubernetes
 	c := &SchedulerController{store: store, kube: kube, runtime: runtime, observer: observer, operations: operations, measurement: &measurement, observationLog: observationLog, config: config, reservationState: &cluster.reservation, ctx: ctx, cancel: cancel}
 	c.completions = make(chan struct{}, 1)
 	c.measureStep = c.measureOperation
-	c.capacity = serving.NewCapacityTable(goruntime.GOMAXPROCS(0), func(row serving.CapacityRow) error {
-		return observationLog.ManagementEvent(serving.ManagementEvent{WorkloadUID: row.Input.WorkloadUID, Kind: serving.CapacityRowBuiltEvent, Phase: row.Status, At: row.BuiltAt, Capacity: &row})
-	}, observationLog.CapacityRecords)
 	return c, nil
 }
 
@@ -220,10 +215,30 @@ func (c *SchedulerController) State() SchedulerControllerState {
 	return result
 }
 
-func (c *SchedulerController) Close() { c.cancel(); c.capacity.Wait(); c.wg.Wait() }
+func (c *SchedulerController) Close() { c.cancel(); c.wg.Wait() }
 
-// Capacity returns the capacity rows the autonomous Workloads need.
-func (c *SchedulerController) Capacity() []serving.CapacityRow { return c.capacity.Rows() }
+// Capacity returns the rate tests used by the current committed decision.
+func (c *SchedulerController) Capacity() []serving.SchedulerFeedbackRate {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	capacity := c.state.Decision.Capacity
+	if capacity == nil {
+		return nil
+	}
+	count := 0
+	for _, workload := range capacity.Workloads {
+		count += len(workload.Tests)
+	}
+	result := make([]serving.SchedulerFeedbackRate, 0, count)
+	for _, workload := range capacity.Workloads {
+		for _, test := range workload.Tests {
+			test.Tests = slices.Clone(test.Tests)
+			test.Option.CompatibleUIDs = slices.Clone(test.Option.CompatibleUIDs)
+			result = append(result, test)
+		}
+	}
+	return result
+}
 
 func (c *reservationState) actionsLocked(now time.Time) []serving.Action {
 	result := make([]serving.Action, 0, len(c.runs))
@@ -257,7 +272,7 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
-	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, c.capacity.Rows())
+	decision, err := serving.EvaluateScheduler(ctx, config.Settings, snapshot, nil)
 	if err != nil {
 		return serving.SchedulerDecision{}, err
 	}
