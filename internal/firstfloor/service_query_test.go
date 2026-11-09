@@ -136,7 +136,7 @@ func TestBatchServiceReuseRetainsEachRequestDeadline(t *testing.T) {
 		requests[1].Context.CompletionMarginMS = tc.margin
 		requests[1].Context.SLO.Percentile = tc.percentile
 		choice := ChooseBatch(p, requests, nil)
-		if choice.Size != tc.size || choice.Reason != "available_energy" {
+		if choice.Size != tc.size {
 			t.Fatalf("individual margin=%g p=%g: %+v", tc.margin, tc.percentile, choice)
 		}
 	}

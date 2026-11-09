@@ -31,6 +31,7 @@ type serviceCosts struct {
 
 // Costs live for one ChooseBatch call. Gap values, not caller scratch pointers,
 // identify queries; every request still checks its own remaining deadline.
+// ponytail: linear lookup fits few distinct queries; index if mixed-query scans dominate.
 func (costs *serviceCosts) cost(b BatchProfile, percentile float64, gap *int64) float64 {
 	query := serviceCostQuery{distribution: b.Distribution, percentile: percentile, startup: gap == nil}
 	if gap != nil {
