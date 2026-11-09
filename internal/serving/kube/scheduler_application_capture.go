@@ -115,8 +115,18 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding
 	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
 	capturePathFeedback(&s, window.PathSamples, config.Settings.CompletionMarginMS)
+	capturePreparationOptions(&s, profiles, profileByID, config.Preparations, now)
+	bindProfileMeters(&s, config.Meters)
+	if err := ctx.Err(); err != nil {
+		return s, err
+	}
+	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
+	return s, nil
+}
+
+func capturePreparationOptions(s *serving.SchedulerSnapshot, profiles []serving.Profile, profileByID map[string]*serving.Profile, preparations map[string]servingstate.PrepareSpec, now time.Time) {
 	for _, profile := range profiles {
-		template, ok := config.Preparations[profile.ID]
+		template, ok := preparations[profile.ID]
 		// A strict fixed-size preparation is a baseline, never an autonomous candidate.
 		if !ok || template.Config.Policy.FixedBatchSize > 0 {
 			continue
@@ -134,12 +144,6 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 			s.Options = append(s.Options, serving.SchedulerOption{Instance: instance, CompatibleUIDs: compatible})
 		}
 	}
-	bindProfileMeters(&s, config.Meters)
-	if err := ctx.Err(); err != nil {
-		return s, err
-	}
-	c.releaseObservedScopes(nodes.Items, pods.Items, physicalStates, now)
-	return s, nil
 }
 
 func capturePathFeedback(s *serving.SchedulerSnapshot, pathSamples []serving.PathTimingSample, completionMarginMS float64) {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -54,7 +55,8 @@ func newCapturePodAPI(t *testing.T, c *SchedulerController) *capturePodAPI {
 			http.Error(w, "Pod not found", http.StatusNotFound)
 			return
 		}
-		if !strings.HasSuffix(r.URL.Path, "/pods") || r.URL.Query().Get("watch") == "true" {
+		watch, _ := strconv.ParseBool(r.URL.Query().Get("watch"))
+		if !strings.HasSuffix(r.URL.Path, "/pods") || watch {
 			proxy.ServeHTTP(w, r)
 			return
 		}
@@ -243,7 +245,7 @@ func TestSchedulerSharedCaptureChangesTerminationAbsenceAndFailure(t *testing.T)
 	api.failPods = false
 	api.mu.Unlock()
 	pod.Status.Phase = core.PodRunning
-	status.ContainerID = "containerd://replacement"
+	status.ContainerID = "containerd://capture-recovery"
 	status.State = core.ContainerState{Running: &core.ContainerStateRunning{}}
 	api.setPods(pod)
 	recovered := capture()

@@ -257,13 +257,7 @@ func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 		// Cluster facts include release control Pods outside the serving namespace;
 		// native execution and ownership continue to use only the selected namespace.
 		clusterPods = pods
-		selected := &corev1.PodList{ListMeta: pods.ListMeta}
-		for _, pod := range pods.Items {
-			if pod.Namespace == o.config.Namespace {
-				selected.Items = append(selected.Items, pod)
-			}
-		}
-		pods = selected
+		pods = o.sourceNamespacePods(pods)
 	}
 	resources, err := o.store.SourceResources(ctx, pods.Items, o.config.Namespace)
 	if err != nil {
@@ -357,6 +351,16 @@ func (o *Observer) refreshLocked(ctx context.Context) (*corev1.PodList, error) {
 		return nil, err
 	}
 	return clusterPods, nil
+}
+
+func (o *Observer) sourceNamespacePods(pods *corev1.PodList) *corev1.PodList {
+	selected := &corev1.PodList{ListMeta: pods.ListMeta}
+	for _, pod := range pods.Items {
+		if pod.Namespace == o.config.Namespace {
+			selected.Items = append(selected.Items, pod)
+		}
+	}
+	return selected
 }
 
 // finishRefreshLocked finalizes the source ledger after every probe has published.
