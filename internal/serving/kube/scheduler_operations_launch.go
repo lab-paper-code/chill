@@ -131,43 +131,45 @@ func (c *SchedulerController) launchTargetLocked(ctx context.Context, target ser
 				c.recordRouteWriterLocked(target.ID, operation, routeTouches)
 			}
 			c.wg.Add(1)
-			go func(operation servingstate.Operation, run *actionRun) {
-				defer c.wg.Done()
-				result := initial
-				var err error
-				if config.OnAction != nil {
-					err = config.OnAction(result)
-				}
-				effectStarted := err == nil
-				if err == nil {
-					result, err = c.operations.Execute(runCtx, operation)
-					result.StartedAt = initial.StartedAt
-				} else {
-					result.Status = servingstate.NativeOperationFailed
-					result.Error = "persist action start before physical effect: " + err.Error()
-					result.EndedAt = time.Now().UTC()
-				}
-				// Publish creation evidence into the responsibility scope before
-				// terminal state or the completion notification becomes visible.
-				c.recordPreparation(run, result.Preparation)
-				if config.OnAction != nil {
-					if recordErr := config.OnAction(result); recordErr != nil {
-						err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))
-						result.Error = err.Error()
-						if result.Status == servingstate.NativeOperationComplete {
-							result.Status = servingstate.NativeOperationPartial
-						}
-					}
-				}
-				c.completeRun(run, &result, effectStarted, err, runCtx)
-				select {
-				case c.completions <- struct{}{}:
-				default:
-				}
-			}(operation, run)
+			go c.executeScheduledAction(runCtx, initial, run, config)
 		}
 	}
 	c.failUnconfirmedTransitionLocked(target, actions, blocked, config)
+}
+
+func (c *SchedulerController) executeScheduledAction(ctx context.Context, initial servingstate.OperationResult, run *actionRun, config SchedulerControllerConfig) {
+	defer c.wg.Done()
+	result := initial
+	var err error
+	if config.OnAction != nil {
+		err = config.OnAction(result)
+	}
+	effectStarted := err == nil
+	if err == nil {
+		result, err = c.operations.Execute(ctx, initial.Operation)
+		result.StartedAt = initial.StartedAt
+	} else {
+		result.Status = servingstate.NativeOperationFailed
+		result.Error = "persist action start before physical effect: " + err.Error()
+		result.EndedAt = time.Now().UTC()
+	}
+	// Publish creation evidence into the responsibility scope before
+	// terminal state or the completion notification becomes visible.
+	c.recordPreparation(run, result.Preparation)
+	if config.OnAction != nil {
+		if recordErr := config.OnAction(result); recordErr != nil {
+			err = errors.Join(err, fmt.Errorf("record physical operation outcome: %w", recordErr))
+			result.Error = err.Error()
+			if result.Status == servingstate.NativeOperationComplete {
+				result.Status = servingstate.NativeOperationPartial
+			}
+		}
+	}
+	c.completeRun(run, &result, effectStarted, err, ctx)
+	select {
+	case c.completions <- struct{}{}:
+	default:
+	}
 }
 
 func (c *SchedulerController) intermediateActions(

@@ -229,7 +229,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				}
 				return false
 			})
-			if _, err = c.Tick(ctx, time.Now()); err != nil {
+			if err = c.Continue(ctx, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			physical := servingstate.PhysicalID(pod.UID, servingstate.FirstfloorStatus(pod).ContainerID)

@@ -3,6 +3,7 @@ package kube
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -25,10 +26,14 @@ func TestContinueReadyExpansionUsesCallerCancellation(t *testing.T) {
 		if instance.Node.Name == "b" {
 			added = instance
 			added.WorkloadUID = uid
+			added.Routable = map[string]bool{uid: true}
 		}
 	}
 	if added.ID == "" {
 		t.Fatal("missing independently Ready fixture executor")
+	}
+	if !schedulerTargetReady(added, snapshot, controller.runtime.Instances(), true) {
+		t.Fatal("fixture destination lacks exact Ready/native policy evidence")
 	}
 	late := added
 	late.ID, late.Node = "late-executor", serving.NodeReference{Name: "late", UID: "late"}
@@ -57,5 +62,9 @@ func TestContinueReadyExpansionUsesCallerCancellation(t *testing.T) {
 	defer controller.mu.Unlock()
 	if lifetime.Err() != nil || !parent.reserved || parent.result.Operation.Target != goal {
 		t.Fatal("caller cancellation changed controller lifetime or frozen reservation")
+	}
+	route, _ := controller.runtime.SchedulerRouting()
+	if controller.runs["late-prepare"] != nil || !reflect.DeepEqual(route, snapshot.Routing) {
+		t.Fatal("caller cancellation started physical work or changed serving routing")
 	}
 }

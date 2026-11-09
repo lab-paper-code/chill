@@ -67,7 +67,9 @@ func SchedulerReadyExpansion(ctx context.Context, settings SchedulerSettings, sn
 	target.Keep = false
 	target.Instances = slices.Clone(snapshot.Instances)
 	for _, i := range added {
-		if !slices.ContainsFunc(target.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }) {
+		if at := slices.IndexFunc(target.Instances, func(old SchedulerInstance) bool { return old.ID == i.ID }); at >= 0 {
+			target.Instances[at] = i
+		} else {
 			target.Instances = append(target.Instances, i)
 		}
 	}
@@ -77,7 +79,9 @@ func SchedulerReadyExpansion(ctx context.Context, settings SchedulerSettings, sn
 	}
 	target.Routing[uid] = routing
 	target.Actions = []Action{{ID: "ready-expansion-route", Kind: schedulerActionRoute}}
-	snapshot.Instances = target.Instances
+	if len(target.Instances) > len(snapshot.Instances) {
+		snapshot.Instances = slices.Concat(snapshot.Instances, target.Instances[len(snapshot.Instances):])
+	}
 	a, err := EvaluateFeedbackCandidate(ctx, settings, snapshot, keep, 0)
 	if err != nil || len(a.InvalidReasons) > 0 {
 		return nil, false
