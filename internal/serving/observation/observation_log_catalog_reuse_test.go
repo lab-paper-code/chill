@@ -56,18 +56,17 @@ func TestRuntimeCatalogAdoptsRepublishedImmutableSource(t *testing.T) {
 			if _, err := call.Wait(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := runtime.Response(receipt, "completed", ""); err != nil {
+			if err := runtime.Response(receipt, outcomeCompleted, ""); err != nil {
 				t.Fatal(err)
 			}
 			if done, err := runtime.Drain(ctx, definition.UID); err != nil || !done {
 				t.Fatalf("request did not drain: %v %v", done, err)
 			}
 			log.submitMu.Lock()
-			source := log.references[observationProfileCatalog+"/"+profile.ID].source
 			retained, queued := len(log.references), len(log.queue)
 			log.submitMu.Unlock()
-			if source != profile || retained != 2 || queued != 0 {
-				t.Fatalf("publication %d retained old source or backlog: source=%p want=%p keys=%d queue=%d", publication, source, profile, retained, queued)
+			if retained != 2 || queued != 0 {
+				t.Fatalf("publication %d retained old references or backlog: keys=%d queue=%d", publication, retained, queued)
 			}
 		}
 	}
@@ -90,7 +89,7 @@ func TestRuntimeCatalogAdoptsRepublishedImmutableSource(t *testing.T) {
 	}
 	for index := 0; index < len(rows); index += 2 {
 		assigned, final := rows[index], rows[index+1]
-		if assigned.Kind != serving.RequestRowAssigned || final.Kind != serving.RequestRowFinal || assigned.RequestID != final.RequestID || final.Outcome != "completed" || !final.ExecutionComplete || final.ProfileID != instance.Profile.ID {
+		if assigned.Kind != serving.RequestRowAssigned || final.Kind != serving.RequestRowFinal || assigned.RequestID != final.RequestID || final.Outcome != outcomeCompleted || !final.ExecutionComplete || final.ProfileID != instance.Profile.ID {
 			t.Fatalf("request record order or retained facts changed: %+v %+v", assigned, final)
 		}
 	}

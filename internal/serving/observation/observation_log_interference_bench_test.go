@@ -84,7 +84,7 @@ func BenchmarkRuntimeObservationInterference(b *testing.B) {
 				if _, err := call.Wait(ctx); err != nil {
 					b.Fatal(err)
 				}
-				if err := runtime.Response(receipt, "completed", ""); err != nil {
+				if err := runtime.Response(receipt, outcomeCompleted, ""); err != nil {
 					b.Fatal(err)
 				}
 				if index%64 == 63 {
