@@ -1,6 +1,6 @@
 # 요청·관측·제어 간섭 해소 계획
 
-상태: 구현 계획. 이번 문서 작성에서는 코드·설정·클러스터를 변경하지 않는다.
+상태: C1–C4 구현·독립 소스 리뷰 완료. 통합 소비자·성능·저장소 검사 후 main이 배포·실수용을 수행한다.
 목표와 수치 계약은 [문제 정의](path-aware-problem-statement.md), [설계 답안](path-aware-design-answers-draft.md), [구현 계획](path-aware-implementation-plan.md)을 따른다.
 
 ## 1. 목표와 기준선
@@ -11,7 +11,7 @@ CHILL이 관측·제어를 수행하면서 추론 요청에 만드는 대기를 
 
 - 분석 기준: 배포 `500ea262012af508c528230698cfd200b89014bf`, control371의 실제 E5. 후속 `536af77e5aeef86b1201337e8bc4f5cd115de323`은 reader RBAC만 변경했다.
 - 구현은 해당 변경을 포함하는 최신 통합 소스에서 별도 브랜치로 시작한다. 앞선 문서의 Before 커밋으로 되돌리지 않는다. 현재 문서를 저장하는 checkout과 구현 기준선은 구분한다.
-- 별도 SLO 판정 수정은 위 실측에 포함되지 않았다. 실제 코드 변경을 포함한 커밋 묶음의 통합 상태를 확인한다. `190739fb`는 그 브랜치의 최종 문서 커밋이다. 성능 비교는 동일 판정의 기준선과 개선본으로 수행한다.
+- 동일 판정의 성능 기준선은 `02b521a0`이다. 전체 모집단 SLO 수정 `190739fb`와 reader RBAC를 포함한다. 원실험 `500ea262`와 비교할 때 SLO 판정 변경 효과를 성능 효과와 구분한다.
 
 ## 2. 확인한 문제와 남은 불확실성
 
@@ -79,7 +79,7 @@ C2는 `RequestEvent`뿐 아니라 `observationErrLocked → Err → submitMu`도
 | C2 요청·관측 잠금 분리 | Runtime 이벤트 전달과 observation 접수. `runtime.go`, observation 요청·scheduler 기록 경계 | 무거운 기록 작업과 병행해 다른 요청이 접수·실행·완료됨. 같은 요청의 원문·실패·종료 순서와 admission 오류 의미 보존 |
 | C3 capture 중복 제거 | `kube/observer.go`, `scheduler_application_capture.go`의 사실 수집·공유 | 동일 관측 주기에서 공유 가능한 목록의 중복 조회·decode를 제거. 필요한 권위 조회·최신성 및 변경·terminal·watch 재연결·조회 실패의 반영 유지 |
 | C4 service 조회 경량화 | `firstfloor/service_distribution.go`, `policy.go` | 같은 실제 분포·gap·분위수에서 quantile과 batch 선택 동일. 경계·동률·trial 가중치 보존, 할당·연산 감소 |
-| C5 후보 평가 중복 정리 | `scheduler_capacity_evaluate.go`, replay·v1/v2 adapter 호출 경계 | 기존 memo와 겹치는 새 캐시 없이 동일 평가의 중복을 제거. κ·후보 평가·선택·실패 분류 동일, 전체 평가 비용 감소 |
+| C5 후보 평가 중복 정리 | 기존 `feedbackCache`·`sync.Once` 재사용 | 실제 후보 소비 경로에 추가 중복이 없어 생산 코드 변경 없이 닫았다. keep·target·v1/v2 소비 회귀로 기존 수치 의미를 확인한다. |
 | C6 통합과 수용 자료 | 통합 owner: 요청→관측→Tick→신규 접수 연결, 기존 문서·호출자 정리 | 아래 5·6절의 소비자·품질·실측 기준을 만족하는 정확 source와 실행 자료 완성 |
 
 의존성: `C1 → C2`, `C4 → C5`, `C2 + C3 + C5 → C6`.
@@ -136,3 +136,12 @@ SLO가 계속 미달하면 이번 변경의 성능 효과와 전체 목표 미�
 - 원자료 분석: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/path-feedback-raw-dig-20261110/`의 `findings.json`, `request-decomposition.json`, `independent-request-spots.json`, `representative-pairs.json`, `scheduler_timeline.py`, `scheduler-timeline.json`.
 - 주요 소스 근거: `runtime.go:456–467,607–628`; `observation_log_requests.go:17–65`; `observation_log.go:423–477`; `kube/observer.go:228–258`; `kube/scheduler.go:273–305`; `scheduler/v2/search.go:12–38`. 경로·행은 `500ea262` 기준이다.
 - 최종 산출물: 최소 변경 커밋 묶음, 기준선/개선본의 재현 결과, 독립 품질 리뷰, main용 배포·실수용 인계. 원실험 자료는 유지한다.
+
+### 구현 경계
+
+- `observation_log_prepare.go`: 큰 catalog와 scheduler 본문을 동기식으로 준비한 뒤 기존 FIFO에 접수한다. 같은 불변 본문의 새 source를 채택해 반복 직렬화를 줄인다. 디스크 catalog는 source 객체를 보유하지 않는다.
+- `observation_log_requests.go`: 잠금 밖 준비 후 요청 상태를 다시 확인한다. assignment admission, native 실행 순서와 finalizing/drain을 유지한다. Runtime의 상태 전이 코드는 변경하지 않았다.
+- `Observer.refresh`: 이번 호출의 전체 Pod 목록을 capture에 전달한다. terminal·exact executor 확인을 유지하면서 뒤따르던 중복 nonterminal 목록 조회를 제거한다.
+- `ServiceDistribution`·`ChooseBatch`: 한 quantile의 trial 이웃을 재사용하고, 한 batch 선택의 동일 query만 재사용한다. 요청별 남은 시간·POST와 v1/v2 탐색·순위는 그대로다.
+
+기존 큐와 catalog의 보유 정책은 유지한다. 동시 cold 준비에는 일시적 본문 중복이 가능하며, 모든 직렬화·잠금 비용이 제거된 것은 아니다. 전체 Tick·실부하 heap·GC 수용은 로컬 수치 회귀와 별도로 판단한다.
