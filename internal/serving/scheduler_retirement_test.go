@@ -26,6 +26,7 @@ func TestPlannerRetirementUsesSLOAndHorizonGain(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, snap, idleNode, badNode := capacityR5Fixture()
+			s.ComparisonPeriod = 15 * time.Second
 			s.Controls.Routing = false
 			snap.Costs[0].Trials[0].Joules = 100
 			snap.Workloads[0].SLO.TargetLatency = time.Second
@@ -74,7 +75,7 @@ func TestPlannerRetirementUsesSLOAndHorizonGain(t *testing.T) {
 // not optional shrinkage. MaxReplicas leaves no room to retain the old source.
 func TestPlannerCrossNodeRecoveryAllowsHigherEnergy(t *testing.T) {
 	s, snap := schedulerFixture()
-	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, 10*time.Minute
+	s.ObservationWindow, s.ControlInterval, s.ComparisonPeriod = time.Minute, 10*time.Second, 5*time.Second
 	s.MaxReplicas, s.MaxInstances = 1, 4
 	s.Controls.Power = false
 	snap.Workloads[0].SLO.TargetLatency = time.Second

@@ -1158,9 +1158,10 @@ func capacityRecoverySwapForTest(gain, bound float64) *capacityPlanner {
 	capacityRawPlannerForTest(p)
 	old, next := p.snapshot.Instances[0], p.plans[0][1].instances[0]
 	mode := p.snapshot.Nodes[0].PowerMode
+	// Whole-wall rows include the focal model and its co-resident replica.
 	p.snapshot.Costs = []OperationCost{
-		poolsCost(schedulerActionPrepare, next.Node, "unloaded", schedulerState(next), mode, schedulerState(old)),
-		poolsCost(schedulerActionRemove, old.Node, schedulerState(old), "unloaded", mode, schedulerState(next)),
+		poolsCost(schedulerActionPrepare, next.Node, "unloaded", schedulerState(next), mode, schedulerState(old), schedulerState(next)),
+		poolsCost(schedulerActionRemove, old.Node, schedulerState(old), "unloaded", mode, schedulerState(old), schedulerState(next)),
 	}
 	for k := range p.snapshot.Arrivals {
 		p.snapshot.Arrivals[k].At = p.snapshot.Arrivals[k].At.Add(50 * time.Millisecond)

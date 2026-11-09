@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 )
 
 func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
@@ -13,6 +14,7 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 	for _, change := range []string{unchanged, "allocation", "profile-memory", nodeMemoryDrift, "observation-time", "runtime-image", "warmup-arguments", "runner-command", "runner-flag", "runner-iterations"} {
 		t.Run(change, func(t *testing.T) {
 			settings, snapshot := schedulerFixture()
+			settings.ComparisonPeriod = time.Second
 			failedNode := poolsAddNode(&snapshot, "failed-node", map[string]float64{"fixed": 10})
 			otherNode := poolsAddNode(&snapshot, "other-node", map[string]float64{"fixed": 11})
 			failed := poolsInstance(snapshot.Instances[0], "failed", failedNode, "fixed", "w1")
@@ -20,6 +22,10 @@ func TestFailedPreparationExcludesOnlyUnchangedPlacement(t *testing.T) {
 			failed.RuntimeImage = "runtime-before"
 			failed.RunnerCommand = []string{"runner", "--warmup-iterations", "1"}
 			snapshot.Options = append(snapshot.Options, poolsOption(failed), poolsOption(other))
+			snapshot.Costs = []OperationCost{
+				poolsCost(schedulerActionPrepare, failedNode, "unloaded", schedulerState(failed), "fixed"),
+				poolsCost(schedulerActionPrepare, otherNode, "unloaded", schedulerState(other), "fixed"),
+			}
 			capacityLoad(settings, &snapshot, snapshot.Workloads[0], 150)
 			nodeIndex := slices.IndexFunc(snapshot.Nodes, func(n SchedulerNode) bool { return n.Node == failedNode })
 			fact := NewPreparationFailure(failed, "oom-pod-uid",

@@ -256,6 +256,7 @@ func TestSchedulerComparedNodesLimitEnergyAndBaselineNeeds(t *testing.T) {
 // that Workload is never judged.
 func TestSchedulerDisabledWorkloadInstanceIsFixed(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Second
 	poolsAddWorkload(&snap, "w2")
 	disabled := schedulerTestCPU(snap.Instances[0])
 	disabled.ID, disabled.WorkloadUID = "i2", "w2"
@@ -283,14 +284,21 @@ func TestSchedulerDisabledWorkloadInstanceIsFixed(t *testing.T) {
 	}
 }
 
-// §3: a controlled Workload needs an instance even at zero load.
-func TestSchedulerMinimumInstanceSelectsFirstConfiguration(t *testing.T) {
+// A zero-population Workload has no SLO obligation. Explicit minimum demand
+// creates one and selects the first physical configuration.
+func TestSchedulerMinimumDemandSelectsFirstConfiguration(t *testing.T) {
 	s, snap := schedulerFixture()
 	option := snap.Options[0].Instance
 	snap.Instances = nil
 	snap.Costs = []OperationCost{poolsCost(schedulerActionPrepare, option.Node, "unloaded", schedulerState(option), "fixed")}
 	d := capacityDecideForTest(t, s, snap)
-	if d.Keep.Status != SchedulerStatusOverload || d.Target == nil || d.Target.Keep || d.Status != schedulerStatusFeasible || !poolsOn(*d.Target, option.Node) {
+	if d.Target == nil || !d.Target.Keep || len(d.Target.Instances) != 0 || len(d.Target.Feedback) != 1 ||
+		d.Target.Feedback[0].Population != 0 || !d.Target.Feedback[0].Satisfied {
+		t.Fatalf("zero demand invented a finite SLO obligation: %+v", d)
+	}
+	s.MinimumDemand = map[string]float64{snap.Workloads[0].UID: 1}
+	d = capacityDecideForTest(t, s, snap)
+	if d.Target == nil || d.Target.Keep || d.Status != schedulerStatusFeasible || !poolsOn(*d.Target, option.Node) {
 		t.Fatalf("first configuration was not the target: %+v", d)
 	}
 }
@@ -409,6 +417,7 @@ func TestSchedulerKeepWithRunningFixedLoweringNeedsNoPowerCost(t *testing.T) {
 // §3.4 측정 POOL (serving side): a measurement Node takes no plan.
 func TestSchedulerMeasurementNodeIsFixed(t *testing.T) {
 	s, snap := schedulerFixture()
+	s.ComparisonPeriod = time.Second
 	empty := poolsAddNode(&snap, "n2", map[string]float64{"fixed": 10, schedulerTestEcoMode: 6})
 	busy := poolsAddNode(&snap, "n3", map[string]float64{"fixed": 10})
 	other := poolsAddNode(&snap, "n4", map[string]float64{"fixed": 10})

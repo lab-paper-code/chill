@@ -188,10 +188,12 @@ func TestCapacityFunnelPostFilterReverts(t *testing.T) {
 		stats := v2.FunnelStats{}
 		got := v2.Funnel(p.searchProblem(time.Time{}), newCapacityExact(p), candidates, &stats)
 		want := a
+		wantReverts := 0
 		if enabled {
 			want = b
+			wantReverts = 1
 		}
-		if got == nil || got.key != want.key || stats.RawKey != want.key || stats.RawJoules != want.joules {
+		if got == nil || got.key != want.key || stats.RawKey != want.key || stats.RawJoules != want.joules || stats.Reverts != wantReverts {
 			t.Fatalf("postfilter=%v got=%+v want=%+v stats=%+v", enabled, got, want, stats)
 		}
 	}

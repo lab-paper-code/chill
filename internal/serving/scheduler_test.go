@@ -739,11 +739,12 @@ func TestSchedulerCurrentBatchPolicyUsesFrozenNativeSenderContext(t *testing.T) 
 	b.Generation++
 	snap.Workloads = append(snap.Workloads, &b)
 	zero, forty := 0.0, 40.0
-	snap.Outstanding = []SchedulerRequest{{ID: "a", Definition: a, ReceivedAt: snap.At.Add(-80 * time.Millisecond), Elapsed: 80 * time.Millisecond, QueueAge: 10 * time.Millisecond, QueueOrder: 0, Phase: "queued", Instance: "i1", NativeSenderElapsedMS: &zero}, {ID: "b", Definition: &b, ReceivedAt: snap.At.Add(-50 * time.Millisecond), Elapsed: 50 * time.Millisecond, QueueOrder: 1, Phase: "queued", Instance: "i1", NativeSenderElapsedMS: &forty}}
+	native := float64(10 * time.Millisecond)
+	snap.Outstanding = []SchedulerRequest{{ID: "a", Definition: a, ReceivedAt: snap.At.Add(-80 * time.Millisecond), Elapsed: 80 * time.Millisecond, QueueAge: 10 * time.Millisecond, QueueOrder: 0, Phase: "queued", Instance: "i1", NativeSenderElapsedMS: &zero, NativeElapsedNanos: &native, CompletionMarginMS: &zero}, {ID: "b", Definition: &b, ReceivedAt: snap.At.Add(-50 * time.Millisecond), Elapsed: 50 * time.Millisecond, QueueOrder: 1, Phase: "queued", Instance: "i1", NativeSenderElapsedMS: &forty, NativeElapsedNanos: &native, CompletionMarginMS: &zero}}
 	keep := schedulerKeepForTest(t, s, snap)
 	ae := schedulerRequireEstimate(t, keep, a.Identity())
 	be := schedulerRequireEstimate(t, keep, b.Identity())
-	if ae.ExpectedNanos == nil || be.ExpectedNanos == nil || *ae.ExpectedNanos != float64(100*time.Millisecond) || *be.ExpectedNanos != float64(60*time.Millisecond) {
+	if ae.ExpectedNanos == nil || be.ExpectedNanos == nil || *ae.ExpectedNanos != float64(30*time.Millisecond) || *be.ExpectedNanos != float64(60*time.Millisecond) {
 		t.Fatalf("actor policy uses real sender context, not reconstructed total age: %+v", keep)
 	}
 	snap.Outstanding[0].NativeSenderElapsedMS = nil
