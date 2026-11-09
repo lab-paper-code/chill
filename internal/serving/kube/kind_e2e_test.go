@@ -453,23 +453,15 @@ func kindDefinition(uid, model string, profile *serving.Profile) *serving.Defini
 	}
 }
 
-// kindDecide ticks after one observation window until the capacity rows of
-// the controlled Workloads are built.
+// kindDecide evaluates current profiles and feedback after one observation window.
 func kindDecide(t *testing.T, c *SchedulerController) serving.SchedulerDecision {
 	t.Helper()
 	time.Sleep(c.Settings().ObservationWindow)
-	for deadline := time.Now().Add(120 * time.Second); ; time.Sleep(200 * time.Millisecond) {
-		d, err := c.Tick(context.Background(), time.Now().UTC())
-		if err != nil {
-			t.Fatal(err)
-		}
-		if d.Status != serving.CapacityPending {
-			return d
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("capacity rows not built: %+v %+v", d.Reasons, c.Capacity())
-		}
+	decision, err := c.Tick(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
 	}
+	return decision
 }
 
 func kindPrepares(c *serving.SchedulerCandidate, node *core.Node) bool {
@@ -497,9 +489,11 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 	measured := kindNode(t, kube, "chill-e2e-measured-"+suffix)
 	other := kindNode(t, kube, "chill-e2e-other-"+suffix)
 	profile := measuredProfile(measured)
-	c := kindScheduler(t, kube, []string{"w-on"}, []*serving.Profile{profile}, nil, []*core.Node{measured, other}, kindDefinition("w-on", "model", profile))
+	definition := kindDefinition("w-on", "model", profile)
+	c := kindScheduler(t, kube, []string{"w-on"}, []*serving.Profile{profile}, nil, []*core.Node{measured, other}, definition)
 	config := c.config
 	config.Settings.CompletionMarginMS = 139
+	config.Settings.MinimumDemand = map[string]float64{definition.UID: 1}
 	if err := c.SetConfiguration(config); err != nil {
 		t.Fatal(err)
 	}
@@ -520,11 +514,20 @@ func TestE2EKindSCHAC24FirstConfiguration(t *testing.T) {
 			t.Fatalf("other available Node mode %q", n.PowerMode)
 		}
 	}
-	rows := c.Capacity()
-	if first.Settings.CompletionMarginMS != 139 || len(rows) == 0 || rows[0].Input.CompletionMarginMS != 139 || rows[0].Kappa == nil {
-		t.Fatalf("capacity not evaluated with the completion margin: %+v", rows)
+	rates := c.Capacity()
+	if first.Settings.CompletionMarginMS != 139 || len(rates) != 1 || len(rates[0].Tests) != 1 {
+		t.Fatalf("selected nominal rate lacks current feedback evidence: %+v", rates)
 	}
-	t.Logf("capacity row %s κ=%v margin=%vms built in %s", rows[0].Status, *rows[0].Kappa, rows[0].Input.CompletionMarginMS, rows[0].Elapsed)
+	feedback := serving.BuildPathFeedback(definition.UID, nil, definition.SLO, 139*time.Millisecond)
+	expected, err := serving.JudgeFeedbackRates(context.Background(), first.Settings, rates[0].Option, definition,
+		config.DispatchOccupancy[0], feedback, []float64{rates[0].Tests[0].Rate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expected.Tests) != 1 || rates[0].Tests[0] != expected.Tests[0] || rates[0].KappaHat != expected.KappaHat {
+		t.Fatalf("selected rate did not use the configured completion margin: got=%+v expected=%+v", rates[0], expected)
+	}
+	t.Logf("selected instance %s κHat=%g tested rate=%g margin=139ms", rates[0].InstanceID, rates[0].KappaHat, rates[0].Tests[0].Rate)
 	next := kindDecide(t, c)
 	if !next.At.After(first.At) || kindWorkloadState(next, "w-on").State != serving.WorkloadControlled {
 		t.Fatalf("next control interval did not decide again: %+v", next.Workloads)
