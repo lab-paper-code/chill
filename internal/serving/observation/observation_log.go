@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -141,6 +142,7 @@ type ObservationLog struct {
 	lastError       error
 	syncFile        func(*os.File) error
 	writeFile       func(*os.File, []byte) (int, error)
+	marshal         func(any) ([]byte, error)
 	removeAll       func(string) error
 }
 
@@ -167,7 +169,7 @@ func NewObservationLog(config ObservationLogConfig) (*ObservationLog, error) {
 		retained: map[string]*serving.Definition{}, open: map[string]*serving.RequestRow{}, catalog: map[string]observationCatalogEntry{},
 		archived: map[time.Time]bool{},
 		syncFile: (*os.File).Sync, removeAll: os.RemoveAll,
-		writeFile: (*os.File).Write,
+		writeFile: (*os.File).Write, marshal: json.Marshal,
 	}
 	l.writerMu.Recorder, l.writerMu.ID = config.Diagnostics, 2
 	l.failureSignal, l.workerDone = make(chan struct{}), make(chan struct{})
@@ -357,6 +359,7 @@ type observationAppend struct {
 	data      []byte
 	catalogID string
 	catalog   *observationCatalogEntry
+	catalogAt time.Time
 }
 
 type observationBatch struct {
@@ -430,10 +433,11 @@ func (l *ObservationLog) freezeBatchLocked(stream string, at time.Time, value an
 		if known && entry.hour == observationHour(at) && entry.source != nil && entry.source == ref.body {
 			continue
 		}
-		var body []byte
+		body := ref.encoded
 		if known && entry.source != nil && entry.source == ref.body {
 			body = entry.body
-		} else {
+		} else if body == nil {
+			// Flush retry can revisit a closing row that failed before preparation.
 			var err error
 			body, err = json.Marshal(ref.body)
 			if err != nil {
@@ -450,7 +454,9 @@ func (l *ObservationLog) freezeBatchLocked(stream string, at time.Time, value an
 			}
 			continue
 		}
-		data, err := json.Marshal(CatalogRow{Kind: ref.kind, Key: ref.key, At: eventAt, Body: body})
+		// Validate the envelope now. Its already-valid immutable body is wrapped
+		// by the existing disk worker, outside submission ordering.
+		_, err := json.Marshal(CatalogRow{Kind: ref.kind, Key: ref.key, At: eventAt})
 		if err != nil {
 			return nil, err
 		}
@@ -461,11 +467,15 @@ func (l *ObservationLog) freezeBatchLocked(stream string, at time.Time, value an
 		}
 		entry = observationCatalogEntry{hour: observationHour(at), body: body, source: source}
 		batch.appends = append(batch.appends, observationAppend{stream: observationCatalogStream, at: at,
-			data: append(data, '\n'), catalogID: id, catalog: &entry})
+			catalogAt: eventAt, catalogID: id, catalog: &entry})
 	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
+	data, ok := value.(preparedObservationRecord)
+	if !ok {
+		var err error
+		data, err = json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
 	}
 	batch.appends = append(batch.appends, observationAppend{stream: stream, at: at, data: append(data, '\n')})
 	return batch, nil
@@ -473,11 +483,27 @@ func (l *ObservationLog) freezeBatchLocked(stream string, at time.Time, value an
 
 func (l *ObservationLog) submitRecord(stream string, value any, refs []observationReference, eventAt time.Time) error {
 	l.submitMu.Lock()
+	err := l.submissionErrorLocked()
+	l.submitMu.Unlock()
+	if err != nil {
+		return err
+	}
+	refs, err = l.prepareReferences(refs)
+	if err != nil {
+		return err
+	}
+	l.config.Diagnostics.Mark(serving.DiagnosticMarshal, serving.DiagnosticBegin, "", 0)
+	data, err := l.marshal(value)
+	l.config.Diagnostics.Mark(serving.DiagnosticMarshal, serving.DiagnosticEnd, "", 0)
+	if err != nil {
+		return err
+	}
+	l.submitMu.Lock()
 	defer l.submitMu.Unlock()
 	if err := l.submissionErrorLocked(); err != nil {
 		return err
 	}
-	batch, err := l.freezeBatchLocked(stream, l.receiptLocked(), value, refs, eventAt)
+	batch, err := l.freezeBatchLocked(stream, l.receiptLocked(), preparedObservationRecord(data), refs, eventAt)
 	if err == nil {
 		l.enqueueLocked(batch)
 	}
@@ -486,9 +512,13 @@ func (l *ObservationLog) submitRecord(stream string, value any, refs []observati
 
 // Err reports the sticky first disk-worker failure without waiting for I/O.
 func (l *ObservationLog) Err() error {
-	l.submitMu.Lock()
-	defer l.submitMu.Unlock()
-	return l.failure
+	select {
+	case <-l.failureSignal:
+		// Closing the signal publishes the first failure; it never changes.
+		return l.failure
+	default:
+		return nil
+	}
 }
 
 // Failure closes once when the worker publishes its first failure.
@@ -611,6 +641,15 @@ func (l *ObservationLog) writeBatch(batch *observationBatch) error {
 	}
 	for batch.next < len(batch.appends) {
 		row := &batch.appends[batch.next]
+		if row.catalog != nil && row.data == nil {
+			// Admission validated both components before transferring owned bytes.
+			kind, key, _ := strings.Cut(row.catalogID, "/")
+			data, err := json.Marshal(CatalogRow{Kind: kind, Key: key, At: row.catalogAt, Body: row.catalog.body})
+			if err != nil {
+				return err
+			}
+			row.data = append(data, '\n')
+		}
 		l.mu.Lock()
 		if row.catalog != nil {
 			old, known := l.catalog[row.catalogID]

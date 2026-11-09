@@ -104,6 +104,7 @@ func (o *observationReferences) add(kind, key string, body any) {
 type observationReference struct {
 	kind, key string
 	body      any
+	encoded   []byte
 }
 
 type observationReferences struct{ rows []observationReference }
