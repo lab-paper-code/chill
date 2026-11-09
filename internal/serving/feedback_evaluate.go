@@ -291,9 +291,15 @@ func (s *schedulerReplayState) potentialLatency(instance *schedulerReplayInstanc
 	}
 	base += residual
 	count := potentialBatchCount(instance, request)
-	gap := instance.idleNanos(s.now)
-	if !instance.ready {
-		gap = nil
+	var gap *int64
+	if instance.ready {
+		if len(instance.batch) > 0 {
+			// The next decision follows this batch's service and retained occupancy.
+			instance.gapNanos = int64(max(0, instance.finish-instance.nativeFinish))
+			gap = &instance.gapNanos
+		} else {
+			gap = instance.idleNanos(s.now)
+		}
 	}
 	best := math.Inf(1)
 	for _, batch := range instance.config.Profile.Batches {
