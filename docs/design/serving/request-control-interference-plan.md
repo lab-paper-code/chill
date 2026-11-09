@@ -1,6 +1,6 @@
 # 요청·관측·제어 간섭 해소 계획
 
-상태: C1–C4 구현·독립 소스 리뷰 완료. 통합 소비자·성능·저장소 검사 후 main이 배포·실수용을 수행한다.
+상태: 구현·독립 리뷰·소비자·저장소 검사 완료. main이 공식 배포 후 같은 E5에서 실수용을 확인한다.
 목표와 수치 계약은 [문제 정의](path-aware-problem-statement.md), [설계 답안](path-aware-design-answers-draft.md), [구현 계획](path-aware-implementation-plan.md)을 따른다.
 
 ## 1. 목표와 기준선
@@ -145,3 +145,14 @@ SLO가 계속 미달하면 이번 변경의 성능 효과와 전체 목표 미�
 - `ServiceDistribution`·`ChooseBatch`: 한 quantile의 trial 이웃을 재사용하고, 한 batch 선택의 동일 query만 재사용한다. 요청별 남은 시간·POST와 v1/v2 탐색·순위는 그대로다.
 
 기존 큐와 catalog의 보유 정책은 유지한다. 동시 cold 준비에는 일시적 본문 중복이 가능하며, 모든 직렬화·잠금 비용이 제거된 것은 아니다. 전체 Tick·실부하 heap·GC 수용은 로컬 수치 회귀와 별도로 판단한다.
+
+### 로컬 검증
+
+- 실제 Runtime/ObservationLog의 병행 요청·원문 순서·오류·drain 소비자와 race 검사 통과.
+- 보존된 112 profile/508 batch의 quantile 경계와 startup/busy batch 선택 일치. v1/v2 fixture의 선택 key·route·J·feasible·final 일치.
+- frozen `b221b128`의 `make test` 통과. lint·architecture·pinned gopls 통과. 기존 SmolVLM preprocessor skip 3건 유지.
+- 최종 benchmark-only 변경은 영향 범위에서 별도 확인했다. 생산 코드가 같은 frozen full gate를 재사용한다.
+
+재현 benchmark는 `BenchmarkRetainedServiceSamples`, `BenchmarkNumericalPlannerConsumers`, `BenchmarkRequestCatalogRepublication`, `BenchmarkRuntimeObservationInterference`다. 실제 분포 입력은 `CHILL_NUMERICAL_PROFILES`로 지정한다. `BenchmarkRetainedServiceSamples`의 한 op는 전체 표본 묶음 순회이며, planner fixture·관측 소비자 비용을 실클러스터 전체 Tick으로 확대하지 않는다.
+
+근거: `/home/genesis1/.cache/chill-assets/ops/pools-deploy/intent/request-control-interference-20261110/verification.md`. main은 `EvaluationElapsed`와 전체 Tick을 구분하고, 호출 전체 span이 없으면 그 수용 항목을 미검증으로 남긴다.
