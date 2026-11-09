@@ -22,7 +22,7 @@ Cold start는 TLS·인증·HTTP 구성을 완료한 뒤 listener를 먼저 열�
 | [analytic-planner](analytic-planner.md) | active: 공통 adapter·v1/v2 경계·profile routing·저비용 탐색/직접 후보 평가·노드계획·고정 H |
 | [path-aware-problem-statement](path-aware-problem-statement.md) | E2E 관측·제어 범위와 SLO 개선 목표 |
 | [path-aware-design-answers-draft](path-aware-design-answers-draft.md) | 사용자 의견을 반영한 2차 설계 답안 |
-| [path-aware-implementation-plan](path-aware-implementation-plan.md) | 승인 M0: E2E 피드백·요청별 POST 동결·현재 tested-rate κ̂·두 SLO 우선순위; 구현 통합 검증 대기 |
+| [path-aware-implementation-plan](path-aware-implementation-plan.md) | implemented: E2E 피드백·요청별 POST 동결·현재 tested-rate κ̂·두 SLO 우선순위; 실배포 수용은 별도 |
 | [capacity-table-evidence](capacity-table-evidence.md) | completed: 당시 전체 격자 κ·탐색의 역사적 근거; 현행 수치 계약은 승인 M0 |
 | [scheduler-operations](scheduler-operations.md) | active: Pod-bound Service/수동원자실행 |
 | [scheduler-srs-audit](scheduler-srs-audit.md) | completed: 당시 SRS대조 결과·증거 경계 |
