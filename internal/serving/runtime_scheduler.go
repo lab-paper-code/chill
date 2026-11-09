@@ -497,6 +497,10 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 			continue
 		}
 		request := SchedulerRequest{ID: call.receipt.ID, Definition: call.definition, QueueOrder: queueOrder[call], ReceivedAt: call.receipt.ReceivedAt, Elapsed: now.Sub(call.receipt.ReceivedAt), Phase: phasePending}
+		if call.completionMarginSet {
+			margin := call.completionMarginMS
+			request.CompletionMarginMS = &margin
+		}
 		if request.Elapsed < 0 {
 			request.Elapsed = 0
 		}
@@ -517,10 +521,16 @@ func (r *Runtime) schedulerOutstandingLocked(now time.Time) []SchedulerRequest {
 		if call.backendDone {
 			if call.progress != nil {
 				request.NativeOutcome = call.progress.Outcome
+				elapsed := call.progress.NativeElapsedMS * float64(time.Millisecond)
+				request.NativeElapsedNanos = &elapsed
 			}
 			if !call.exchangeFinishedAt.IsZero() {
 				request.Phase = phaseReturning
 				request.ReturnElapsed = now.Sub(call.exchangeFinishedAt)
+			}
+			if sender, ok := call.receipt.ServerTiming.Elapsed(ServerSenderElapsedFrozen); ok {
+				ms := float64(sender) / float64(time.Millisecond)
+				request.NativeSenderElapsedMS = &ms
 			}
 		}
 		result = append(result, request)
@@ -551,10 +561,14 @@ func (r *Runtime) extendNativeOutstandingLocked(request *SchedulerRequest, call 
 				request.ExchangeElapsedNanos = &elapsed
 			}
 			request.ArrivalRate = native.ArrivalRate
-			request.NativeSenderElapsedMS = &native.Context.SenderElapsedMS
+			sender := native.Context.SenderElapsedMS
+			request.NativeSenderElapsedMS = &sender
+			elapsed := native.ElapsedMS * float64(time.Millisecond)
+			request.NativeElapsedNanos = &elapsed
 			request.BatchID = strconv.FormatUint(native.BatchID, 10)
 			age := now.Sub(instance.State.ObservedAt)
 			if age > 0 {
+				*request.NativeElapsedNanos += float64(age)
 				if request.Phase == phaseRunning {
 					request.RunningElapsed += age
 					if request.ExchangeElapsedNanos != nil {

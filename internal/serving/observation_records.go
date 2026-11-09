@@ -23,6 +23,7 @@ type RequestRow struct {
 	ClientSpanNanos   int64          `json:"clientSpanNanos,omitempty"`
 	ReceivedAt        time.Time      `json:"receivedAt"`
 	LifetimeNanos     int64          `json:"lifetimeNanos,omitempty"`
+	CompletionMarginMS *float64        `json:"completionMarginMS,omitempty"`
 	DispatchedAt      *time.Time     `json:"dispatchedAt,omitempty"`
 	ElapsedNanos      *int64         `json:"elapsedNanos,omitempty"`
 	ValidatedNanos    *int64         `json:"validatedNanos,omitempty"`
@@ -83,6 +84,10 @@ func (r *RequestRow) foldIdentity(e *RequestEvent) {
 	}
 	if e.Definition != "" {
 		r.DefinitionID = e.Definition
+	}
+	if e.CompletionMarginMS != nil {
+		margin := *e.CompletionMarginMS
+		r.CompletionMarginMS = &margin
 	}
 	if a := e.Assignment; a != nil {
 		node, dispatched := a.Node, a.DispatchedAt

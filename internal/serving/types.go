@@ -338,6 +338,7 @@ type RequestEvent struct {
 	ClientSpanNanos   int64            `json:"clientSpanNanos,omitempty"`
 	ExecutionComplete bool             `json:"executionComplete"`
 	LifetimeNanos     int64            `json:"lifetimeNanos,omitempty"`
+	CompletionMarginMS *float64         `json:"completionMarginMS,omitempty"`
 	SLO               *SLO             `json:"slo,omitempty"`
 	Outcome           string           `json:"outcome,omitempty"`
 	Error             string           `json:"error,omitempty"`
@@ -368,7 +369,7 @@ type Dispatch struct {
 	ReceivedAt time.Time
 	Elapsed    time.Duration
 	Deadline   time.Time
-	// CompletionMarginMS is the scheduler setting current at dispatch.
+	// CompletionMarginMS is the POST reserve frozen when this call was accepted.
 	CompletionMarginMS float64
 }
 

@@ -372,6 +372,8 @@ type SchedulerRequest struct {
 	ReturnElapsed         time.Duration `json:"returnElapsedNanos"`
 	ArrivalRate           float64       `json:"arrivalRate"`
 	NativeSenderElapsedMS *float64      `json:"nativeSenderElapsedMS,omitempty"`
+	NativeElapsedNanos    *float64      `json:"nativeElapsedNanos,omitempty"`
+	CompletionMarginMS    *float64      `json:"completionMarginMS,omitempty"`
 	NativeOutcome         string        `json:"nativeOutcome,omitempty"`
 }
 type SchedulerArrival struct {
@@ -522,7 +524,7 @@ type SchedulerCandidate struct {
 	Status             string                      `json:"status"`
 	Reasons            []string                    `json:"reasons"`
 	SLO                []SchedulerEstimate         `json:"slo,omitempty"`
-	Feedback           []FeedbackWorkloadPrediction `json:"feedback,omitempty"`
+	Feedback           []FeedbackWorkloadScore     `json:"feedback,omitempty"`
 	ExpectedJoules     *float64                    `json:"expectedJoules"`
 	WorstExceedance    float64                     `json:"worstExceedance"`
 	Assumptions        []string                    `json:"assumptions,omitempty"`

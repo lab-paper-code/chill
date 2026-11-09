@@ -74,6 +74,8 @@ type Call struct {
 	progress                                     *BackendProgress
 	exchangeFinishedAt                           time.Time
 	clientSpan                                   time.Duration
+	completionMarginMS                           float64
+	completionMarginSet                          bool
 	backendContext                               context.Context
 	cancelBackend                                context.CancelFunc
 	transportDone, backendDone, responseRecorded bool
@@ -174,6 +176,9 @@ func NewRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 		}
 		assignment := &Assignment{Node: *row.Node, Instance: row.Instance, Profile: row.ProfileID, DispatchedAt: *row.DispatchedAt}
 		c := &Call{runtime: r, receipt: Receipt{ID: row.RequestID, Name: d.Name, UID: d.UID, ReceivedAt: row.ReceivedAt, ServerTiming: row.ServerTiming}, definition: d, identity: row.DefinitionID, assignment: assignment, phase: phaseAssigned, transportDone: true}
+		if row.CompletionMarginMS != nil {
+			c.completionMarginMS, c.completionMarginSet = *row.CompletionMarginMS, true
+		}
 		if row.LifetimeNanos > 0 {
 			c.receipt.Deadline = c.receipt.ReceivedAt.Add(time.Duration(row.LifetimeNanos))
 		}
@@ -277,6 +282,10 @@ func requestEvent(c *Call, kind, outcome, code string, now time.Time) RequestEve
 	e.ClientSpanNanos = int64(c.clientSpan)
 	e.ExecutionComplete = c.backendDone
 	e.ServerTiming = c.receipt.ServerTiming
+	if c.completionMarginSet {
+		margin := c.completionMarginMS
+		e.CompletionMarginMS = &margin
+	}
 	if c.definition != nil {
 		e.SLO = &c.definition.SLO
 	}
@@ -393,6 +402,10 @@ func (r *Runtime) Accept(receipt *Receipt, input *InferenceInput) (*Call, error)
 		return nil, failure(reasonGatewayOverloaded, "gateway live heap is near its memory limit")
 	}
 	c := &Call{runtime: r, receipt: *receipt, definition: w.definition, identity: w.identity, input: input, reply: make(chan callResult, 1)}
+	c.completionMarginMS, c.completionMarginSet = r.completionMargin, true
+	if margin, ok := r.pathFeedback[receipt.UID]; ok {
+		c.completionMarginMS = margin
+	}
 	if err := r.event(c, phaseAccepted, "", ""); err != nil {
 		return nil, failure(ObservationUnavailableCode, "cannot persist request acceptance")
 	}
@@ -578,7 +591,7 @@ func (r *Runtime) dispatchLocked() {
 			c.phase = phaseAssigned
 			i.outstanding++
 			c.backendContext, c.cancelBackend = context.WithCancel(r.ctx)
-			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Deadline: c.receipt.Deadline, CompletionMarginMS: r.completionMargin}
+			dispatch := Dispatch{RequestID: c.receipt.ID, Definition: c.definition, Input: c.input, Assignment: *c.assignment, ReceivedAt: c.receipt.ReceivedAt, Deadline: c.receipt.Deadline, CompletionMarginMS: c.completionMarginMS}
 			c.input = nil // Only this Dispatch reads the sample, and no path requeues the call.
 			assigned := requestEvent(c, phaseAssigned, "", "", assignedAt)
 			r.executions.Add(1)
@@ -1114,7 +1127,7 @@ func (r *Runtime) SetMeasurementNodes(nodes []NodeReference) {
 	r.signal()
 }
 
-// SetCompletionMargin applies the configured completion margin to later dispatches.
+// SetCompletionMargin changes the configured fallback for later accepted calls.
 func (r *Runtime) SetCompletionMargin(ms float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
