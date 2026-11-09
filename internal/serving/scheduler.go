@@ -476,6 +476,7 @@ type SchedulerSnapshot struct {
 	RoutingCredits map[string]map[string]int64 `json:"routingCredits"` // Workload UID, instance ID
 	Outstanding    []SchedulerRequest          `json:"outstanding"`
 	Arrivals       []SchedulerArrival          `json:"arrivals"`
+	PathFeedback   []PathFeedback              `json:"pathFeedback,omitempty"`
 	Options        []SchedulerOption           `json:"options"`
 	Baselines      []NodeBaseline              `json:"baselines"`
 	BaselineRefs   []string                    `json:"baselineRefs,omitempty"`
@@ -521,6 +522,7 @@ type SchedulerCandidate struct {
 	Status             string                      `json:"status"`
 	Reasons            []string                    `json:"reasons"`
 	SLO                []SchedulerEstimate         `json:"slo,omitempty"`
+	Feedback           []FeedbackWorkloadPrediction `json:"feedback,omitempty"`
 	ExpectedJoules     *float64                    `json:"expectedJoules"`
 	WorstExceedance    float64                     `json:"worstExceedance"`
 	Assumptions        []string                    `json:"assumptions,omitempty"`
@@ -577,6 +579,7 @@ type SchedulerDecision struct {
 	Workloads  []SchedulerWorkloadState `json:"workloads"`
 	References []string                 `json:"references"`
 	Capacity   *SchedulerCapacity       `json:"capacity,omitempty"`
+	PathFeedback []PathFeedback `json:"pathFeedback,omitempty"`
 	// EvaluationElapsed is the monotonic Tick time from capture to the decision.
 	EvaluationElapsed time.Duration `json:"evaluationElapsedNanos"`
 }

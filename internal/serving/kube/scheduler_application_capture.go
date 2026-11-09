@@ -104,6 +104,16 @@ func (c *SchedulerController) capture(ctx context.Context, now time.Time, config
 	current := c.runtime.SchedulerInputs(time.Now)
 	s.At, s.Workloads, s.Outstanding = current.At, current.Workloads, current.Outstanding
 	s.Routing, s.RoutingCredits = current.Routing, current.RoutingCredits
+	samples := make(map[string][]serving.PathTimingSample)
+	for _, sample := range window.PathSamples {
+		samples[sample.WorkloadUID] = append(samples[sample.WorkloadUID], sample)
+	}
+	s.PathFeedback = make([]serving.PathFeedback, 0, len(s.Workloads))
+	for _, workload := range s.Workloads {
+		s.PathFeedback = append(s.PathFeedback, serving.BuildPathFeedback(
+			workload.UID, samples[workload.UID], workload.SLO,
+			time.Duration(config.Settings.CompletionMarginMS*float64(time.Millisecond))))
+	}
 	for _, profile := range profiles {
 		template, ok := config.Preparations[profile.ID]
 		// A strict fixed-size preparation is a baseline, never an autonomous candidate.

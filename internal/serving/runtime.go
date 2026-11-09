@@ -128,6 +128,7 @@ type Runtime struct {
 	measurement       []NodeReference
 	routingControlled bool
 	completionMargin  float64
+	pathFeedback      map[string]float64
 	routeTargets      map[string]map[string]int32
 	calls             map[string]*Call
 	definitions       map[string]*Definition
@@ -1118,6 +1119,17 @@ func (r *Runtime) SetCompletionMargin(ms float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.completionMargin = ms
+}
+
+// SetPathFeedback publishes the committed Tick's POST reserves without changing
+// the configured fallback. Only scalar values cross the runtime boundary.
+func (r *Runtime) SetPathFeedback(feedback []PathFeedback) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pathFeedback = make(map[string]float64, len(feedback))
+	for _, value := range feedback {
+		r.pathFeedback[value.WorkloadUID] = value.PostNanos / float64(time.Millisecond)
+	}
 }
 
 func (r *Runtime) InstallInstances(instances []ReadyInstance) (err error) {

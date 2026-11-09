@@ -263,12 +263,14 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 		return serving.SchedulerDecision{}, err
 	}
 	decision.EvaluationElapsed = time.Since(started)
+	decision.PathFeedback = slices.Clone(snapshot.PathFeedback)
 	c.mu.Lock()
 	if err := ctx.Err(); err != nil {
 		c.mu.Unlock()
 		return serving.SchedulerDecision{}, err
 	}
 	c.publishDecisionLocked(&snapshot, &decision)
+	c.runtime.SetPathFeedback(decision.PathFeedback)
 	c.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return serving.SchedulerDecision{}, err
