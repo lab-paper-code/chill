@@ -129,30 +129,35 @@ func TestRetainedServiceSamples(t *testing.T) {
 	}
 }
 
+// Each operation is a complete retained-evidence sweep: every batch quantile
+// or every profile's batch choice, in the same order on baseline and changes.
 func BenchmarkRetainedServiceSamples(b *testing.B) {
 	_, policies := retainedServicePolicies(b)
+	requests := make([][]RequestState, len(policies))
 	for i, p := range policies {
-		b.Run(fmt.Sprintf("profile%03d", i), func(b *testing.B) {
-			gap := int64(0)
-			for _, batch := range p.Batches {
-				b.Run(fmt.Sprintf("quantile/batch%d", batch.Size), func(b *testing.B) {
-					b.ReportAllocs()
-					for range b.N {
-						if _, _, ok := batch.Distribution.QuantileNanos(&gap, 99); !ok {
-							b.Fatal("retained batch lacks known-gap support")
-						}
-					}
-				})
-			}
-			requests := retainedServiceRequests(p)
-			b.Run("choose", func(b *testing.B) {
-				b.ReportAllocs()
-				for range b.N {
-					if choice := ChooseBatch(p, requests, &gap); choice.Size <= 0 {
-						b.Fatalf("retained batch not executable: %+v", choice)
+		requests[i] = retainedServiceRequests(p)
+	}
+	gap := int64(0)
+	b.Run("quantile-all", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			for _, p := range policies {
+				for _, batch := range p.Batches {
+					if _, _, ok := batch.Distribution.QuantileNanos(&gap, 99); !ok {
+						b.Fatal("retained batch lacks known-gap support")
 					}
 				}
-			})
-		})
-	}
+			}
+		}
+	})
+	b.Run("choose-all", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			for i, p := range policies {
+				if choice := ChooseBatch(p, requests[i], &gap); choice.Size <= 0 {
+					b.Fatalf("retained batch not executable: %+v", choice)
+				}
+			}
+		}
+	})
 }
