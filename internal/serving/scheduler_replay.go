@@ -16,7 +16,6 @@ const (
 	schedulerStatusPending  = "Pending"
 	schedulerStatusFeasible = "Feasible"
 	SchedulerStatusOverload = "Overload"
-	schedulerStatusLifetime = "InfeasibleLifetime"
 	schedulerNodeWallScope  = "node-exclusive-wall"
 	schedulerActionPrepare  = "prepare"
 	schedulerActionRemove   = "remove"
@@ -183,17 +182,15 @@ func schedulerReplayEstimate(ctx context.Context, settings SchedulerSettings, sn
 	c.WorstExceedance = 0
 	for _, estimate := range c.SLO {
 		c.WorstExceedance = max(c.WorstExceedance, estimate.NormalizedExceedance)
-	}
-	if c.WorstExceedance > 0 {
-		c.Status = SchedulerStatusOverload
-	}
-	for _, counts := range r.outcomes {
-		for kind, count := range counts {
-			if count > 0 && feedbackFailedOutcome(kind) && c.Status != schedulerStatusLifetime {
-				c.Status = SchedulerStatusOverload
-			}
-			if strings.HasPrefix(kind, "expired-") && count > 0 {
-				c.Status = schedulerStatusLifetime
+		if estimate.NormalizedExceedance > 0 {
+			c.Status = SchedulerStatusOverload
+		}
+		if estimate.ExpectedNanos == nil {
+			for _, count := range estimate.PredictedOutcomes {
+				if count > 0 {
+					c.Status = SchedulerStatusOverload
+					break
+				}
 			}
 		}
 	}
@@ -246,6 +243,15 @@ func schedulerReplay(ctx context.Context, settings SchedulerSettings, snap Sched
 	defer func() {
 		if s.capacity == nil && err == nil {
 			s.finishFeedback()
+		} else if s.capacity != nil && !s.capacity.failed && err == nil {
+			for _, request := range s.requests {
+				if !request.completed && !request.dropped && !request.failed && !request.expired {
+					if s.out.outcomes[request.identity] == nil {
+						s.out.outcomes[request.identity] = map[string]int{}
+					}
+					s.out.outcomes[request.identity]["unfinished"]++
+				}
+			}
 		}
 		result = s.out
 	}()

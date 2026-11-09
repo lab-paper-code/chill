@@ -5,7 +5,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"sort"
-	"strings"
 
 	"github.com/lab-paper-code/chill/internal/firstfloor"
 	"gonum.org/v1/gonum/stat"
@@ -86,6 +85,24 @@ func (s *schedulerReplayState) feedbackFor(definition *Definition) PathFeedback 
 	return PathFeedback{WorkloadUID: definition.UID, TotalNanos: s.settings.CompletionMarginMS * 1e6, PostNanos: s.settings.CompletionMarginMS * 1e6, Source: "configured"}
 }
 
+// empiricalSLORank is the whole-population empirical percentile's 1-based rank.
+func empiricalSLORank(population int, percentile float64) int {
+	return int(math.Ceil(float64(population) * percentile / 100))
+}
+
+// empiricalSLOQuantile treats requests without a successful completion as +Inf.
+// completed must be sorted; the infinite tail never enters stored sample arrays.
+func empiricalSLOQuantile(completed []float64, population int, percentile float64) float64 {
+	if population == 0 {
+		return 0
+	}
+	rank := empiricalSLORank(population, percentile)
+	if rank > len(completed) {
+		return math.Inf(1)
+	}
+	return completed[rank-1]
+}
+
 // Finite replay has sorted its samples in finishFeedback; capacity windows have not.
 func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayResult, sorted bool) []SchedulerEstimate {
 	definitions := make(map[string]*Definition, len(replay.definitions)+len(snapshot.Workloads))
@@ -105,11 +122,15 @@ func feedbackReplayEstimates(snapshot SchedulerSnapshot, replay schedulerReplayR
 		definition := definitions[key]
 		samples := replay.samples[key]
 		estimate := SchedulerEstimate{UID: definition.UID, Definition: key, Samples: len(samples), Percentile: definition.SLO.Percentile, TargetNanos: int64(definition.SLO.TargetLatency), PredictedOutcomes: replay.outcomes[key]}
-		if len(samples) > 0 {
-			if !sorted {
-				sort.Float64s(samples)
-			}
-			quantile := stat.Quantile(definition.SLO.Percentile/100, stat.Empirical, samples, nil)
+		population := 0
+		for _, count := range estimate.PredictedOutcomes {
+			population += count
+		}
+		if !sorted {
+			sort.Float64s(samples)
+		}
+		quantile := empiricalSLOQuantile(samples, population, definition.SLO.Percentile)
+		if population > 0 && !math.IsInf(quantile, 1) {
 			estimate.ExpectedNanos = &quantile
 			estimate.NormalizedExceedance = max(0, quantile/float64(definition.SLO.TargetLatency)-1)
 		}
@@ -223,7 +244,7 @@ func (population *feedbackPopulation) finish(samples []float64) FeedbackWorkload
 		}
 		score.PotentialExcess = &potential
 	}
-	score.Satisfied = score.DeadlineDropped+score.Failed+score.LifetimeExpired+score.Unfinished == 0 && score.SuccessExcess == 0
+	score.Satisfied = empiricalSLOQuantile(samples, score.Population, population.definition.SLO.Percentile) <= float64(population.definition.SLO.TargetLatency)
 	return score
 }
 
@@ -410,9 +431,4 @@ func (s *schedulerReplayState) potentialRouteReady(action Action, instance *sche
 		}
 	}
 	return readyAt, true
-}
-
-// Preserve the existing failure vocabulary for consumers of Candidate.SLO.
-func feedbackFailedOutcome(kind string) bool {
-	return kind == schedulerOutcomeTimeout || kind == "unfinished" || kind == firstfloor.OutcomePreprocessFailed || kind == firstfloor.OutcomeBatchError || strings.HasPrefix(kind, "expired-")
 }

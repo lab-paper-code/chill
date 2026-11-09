@@ -631,7 +631,7 @@ func TestSchedulerExpiredLifetimesDoNotBecomeCheapSuccessfulSamples(t *testing.T
 	}
 	keep := schedulerKeepForTest(t, s, snap)
 	e := schedulerRequireEstimate(t, keep, d.UID)
-	if keep.Status != schedulerStatusLifetime || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["expired-running"] != 1 || e.PredictedOutcomes["expired-queued"] != 1 || math.Abs(*keep.ExpectedJoules-2.2) > 1e-9 {
+	if keep.Status != SchedulerStatusOverload || e.ExpectedNanos != nil || e.Samples != 0 || e.PredictedOutcomes["expired-running"] != 1 || e.PredictedOutcomes["expired-queued"] != 1 || math.Abs(*keep.ExpectedJoules-2.2) > 1e-9 {
 		t.Fatalf("expired running work stays physical; queued expires; no successful fake zero percentile: %+v", keep)
 	}
 	snap.Outstanding = nil

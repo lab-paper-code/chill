@@ -413,8 +413,7 @@ func (s *schedulerReplayState) transitionQueuedChoice(i *schedulerReplayInstance
 			s.out.outcomes[r.identity] = map[string]int{}
 		}
 		s.out.outcomes[r.identity][schedulerOutcomeTimeout]++
-		if s.capacity != nil {
-			s.capacity.failed = true // Any timeout already fails a capacity window.
+		if s.capacityWindowFailed() {
 			return false
 		}
 	}

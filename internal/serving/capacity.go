@@ -313,10 +313,6 @@ func (s *schedulerReplayState) capacityWindowFailed() bool {
 		return false
 	}
 	for _, r := range s.live {
-		if r.expired || r.dropped {
-			limit.failed = true
-			return true
-		}
 		if r.capacityMiss {
 			continue
 		}
@@ -324,12 +320,12 @@ func (s *schedulerReplayState) capacityWindowFailed() bool {
 		if r.completed {
 			end = r.completion
 		}
-		if r.accountedAge+end-r.arrival > float64(limit.slo.TargetLatency) {
+		if r.expired || r.dropped || r.failed || r.accountedAge+end-r.arrival > float64(limit.slo.TargetLatency) {
 			r.capacityMiss = true
 			limit.missed++
 		}
 	}
-	limit.failed = limit.missed > limit.requests-int(math.Ceil(float64(limit.requests)*limit.slo.Percentile/100))
+	limit.failed = limit.missed > limit.requests-empiricalSLORank(limit.requests, limit.slo.Percentile)
 	return limit.failed
 }
 
@@ -397,11 +393,6 @@ func (b *capacityReplay) window(ctx context.Context, lambda float64, n, seed int
 			continue
 		}
 		result.latency = *e.ExpectedNanos / 1e6
-		for kind, count := range e.PredictedOutcomes {
-			if count > 0 && feedbackFailedOutcome(kind) {
-				return result, nil
-			}
-		}
 		result.met = *e.ExpectedNanos <= float64(w.SLO.TargetLatency)
 		return result, nil
 	}

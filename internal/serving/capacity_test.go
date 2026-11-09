@@ -211,6 +211,26 @@ func TestCapacityWindowStopsOnlyAfterCertainFailure(t *testing.T) {
 	}
 }
 
+func TestCapacityWindowDropTailAllowance(t *testing.T) {
+	limit := capacityWindowLimit{requests: 1000, slo: SLO{Percentile: 99, TargetLatency: time.Millisecond}}
+	instance := &schedulerReplayInstance{outstanding: 11}
+	state := schedulerReplayState{capacity: &limit, out: schedulerReplayResult{outcomes: map[string]map[string]int{}}}
+	for range 11 {
+		request := &schedulerReplayRequest{source: SchedulerRequest{ID: "drop"}, identity: "workload"}
+		instance.queue = append(instance.queue, request)
+		state.live = append(state.live, request)
+	}
+	for j := range 11 {
+		continued := state.transitionQueuedChoice(instance, firstfloor.BatchChoice{RequestID: "drop", Reason: firstfloor.OutcomeDeadlineDrop})
+		if continued != (j < 10) || limit.missed != j+1 || state.capacityWindowFailed() != (j == 10) || limit.missed != j+1 {
+			t.Fatalf("drop %d must consume one percentile-tail slot: continued=%v limit=%+v", j+1, continued, limit)
+		}
+	}
+	if state.out.outcomes["workload"][schedulerOutcomeTimeout] != 11 || instance.outstanding != 0 || len(instance.queue) != 0 {
+		t.Fatalf("tail allowance changed physical drops: outcomes=%v instance=%+v", state.out.outcomes, instance)
+	}
+}
+
 func TestCapacityRowWithoutOccupancyUsesConfiguredDefault(t *testing.T) {
 	s, snap := capacityFixture()
 	snap.DispatchOccupancy = nil
