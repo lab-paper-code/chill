@@ -6,19 +6,18 @@ import (
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
-// v2Merit ranks positive-coverage moves by ΔE/Δcov. Nonpositive coverage
-// follows every positive-coverage move, ordered by ΔE, then logical plan key.
-// Each cap variant is a separate active item, not an option-level proxy.
+// Each cap variant keeps its own heuristic projection in preallocated buffers.
+// Active-product selection uses the same Workload priority as every other move.
 type v2Merit struct {
-	q                int
-	Energy, coverage float64
+	q   int
+	key protocol.Rank
 }
 
 func (c *v2Search) rankMove(n, q int, key protocol.Rank) {
-	if c.active == 0 {
+	if c.allActive || c.active == 0 {
 		return
 	}
-	move := v2Merit{q: q, Energy: key.Joules - c.current.Joules, coverage: coverageDelta(c.current, key)}
+	move := v2Merit{q: q, key: key}
 	ranked := c.ranked[n]
 	at := 0
 	for at < len(ranked) && !c.meritLess(move, ranked[at]) {
@@ -28,25 +27,18 @@ func (c *v2Search) rankMove(n, q int, key protocol.Rank) {
 		return
 	}
 	if len(ranked) < c.active {
-		ranked = append(ranked, v2Merit{})
+		ranked = ranked[:len(ranked)+1]
 	}
+	slot := ranked[len(ranked)-1]
 	copy(ranked[at+1:], ranked[at:len(ranked)-1])
-	ranked[at] = move
+	slot.q = q
+	key.CopyInto(&slot.key)
+	ranked[at] = slot
 	c.ranked[n] = ranked
 }
 
 func (c *v2Search) meritLess(a, b v2Merit) bool {
-	if (a.coverage > 0) != (b.coverage > 0) {
-		return a.coverage > 0
-	}
-	av, bv := a.Energy, b.Energy
-	if a.coverage > 0 {
-		av, bv = av/a.coverage, bv/b.coverage
-	}
-	if av != bv {
-		return av < bv
-	}
-	return c.s.Table.KeyParts[a.q] < c.s.Table.KeyParts[b.q]
+	return a.key.Better(&b.key)
 }
 
 func (c *v2Search) polish() {
@@ -78,7 +70,7 @@ func (c *v2Search) polish() {
 func (c *v2Search) sweepOne() {
 	for _, n := range c.s.Table.NodeOrder {
 		c.ranked[n] = c.ranked[n][:0]
-		c.moves[n] = c.movePlans(n, !c.current.Feasible, c.moves[n])
+		c.moves[n] = c.movePlans(n, c.moves[n])
 		for _, q := range c.moves[n] {
 			key, ok := c.evaluate(n, q)
 			if !ok {
@@ -100,8 +92,8 @@ func (c *v2Search) sweepTwo() {
 		for _, q := range c.moves[n] {
 			c.s.apply(n, q)
 			for _, other := range nodes[i+1:] {
-				// The second cap selection sees the first move, including r and κret.
-				c.second = c.movePlans(other, c.overloaded(), c.second)
+				// Every searchable second variant remains reachable after the first move.
+				c.second = c.movePlans(other, c.second)
 				for _, second := range c.second {
 					key, ok := c.evaluate(other, second)
 					if !ok {
@@ -119,4 +111,3 @@ func (c *v2Search) sweepTwo() {
 	}
 }
 
-func (c *v2Search) overloaded() bool { return c.s.port.Overloaded() }

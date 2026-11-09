@@ -20,9 +20,10 @@ const (
 
 type Plan struct{ Eligible, Empty bool }
 type Workload struct {
-	Rate   float64
-	Queued int
-	Slack  float64
+	Rate        float64
+	Queued      int
+	TargetNanos float64
+	TotalNanos  float64
 }
 type Entry struct {
 	Node         int
@@ -51,7 +52,9 @@ type Table struct {
 	EntryOf, Index                          []int
 	NodeUID, KeyParts                       []string
 	Options, Modes, PlanKeys                []string
-	Kappa, KappaE, KappaRet                 [][]float64
+	// Additive profile routing terms, indexed [plan][workload]. These are
+	// heuristic inputs, independent of current tested-rate capacity witnesses.
+	RoutingRate, RetainedRoutingRate, RoutingRateServiceNanos [][]float64
 	Count                                   [][]int
 	Keep, Searchable, Compared, Nonnegative []bool
 	Mid, After, TPre                        []float64
@@ -67,9 +70,6 @@ type State interface {
 	Reset([]int)
 	Apply(int, int)
 	Delta(int, int) Rank
-	MoveTerms(int, int, int) (Workload, float64, float64, float64)
-	RouteTimes() []float64
-	Overloaded() bool
 }
 
 type Point struct {

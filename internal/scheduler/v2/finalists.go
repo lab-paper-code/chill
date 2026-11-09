@@ -76,11 +76,7 @@ type v2Search struct {
 	second                    []int
 	ranked                    [][]v2Merit
 	activePlans               [][]int
-	suffix                    [][]float64
-	optimistic                []float64
 	allActive                 bool
-	suffixEnergy, suffixRoute []float64
-	energyBoundValid          bool
 }
 
 func newV2Search(p protocol.Problem, t *protocol.Table, choice []int, evaluations, finalists, active int, deadline time.Time) *v2Search {
@@ -93,19 +89,22 @@ func newV2Search(p protocol.Problem, t *protocol.Table, choice []int, evaluation
 	c := &v2Search{problem: p, s: newState(p, t, choice), current: newV2Key(t, len(p.Workloads)), best: newV2Key(t, len(p.Workloads)),
 		finalists: newV2Finalists(t, len(p.Workloads), finalists), limit: evaluations, active: active, Deadline: deadline,
 		moves: make([][]int, len(p.Plans)), ranked: make([][]v2Merit, len(p.Plans)), activePlans: make([][]int, len(p.Plans)),
-		suffix: make([][]float64, len(p.Plans)+1), optimistic: make([]float64, len(p.Workloads)), allActive: allActive,
-		suffixEnergy: make([]float64, len(p.Plans)+1), suffixRoute: make([]float64, len(p.Plans)+1)}
+		allActive: allActive}
 	largest := 0
 	for n := range p.Plans {
 		c.moves[n] = make([]int, 0, len(p.Plans[n]))
-		c.ranked[n] = make([]v2Merit, 0, min(c.active, len(p.Plans[n])))
+		if !allActive {
+			c.ranked[n] = make([]v2Merit, min(c.active, len(p.Plans[n])))
+			for i := range c.ranked[n] {
+				c.ranked[n][i].key = protocol.Rank{Table: t,
+					Choice: make([]int, len(p.Plans)), Excesses: make([]float64, len(p.Workloads))}
+			}
+			c.ranked[n] = c.ranked[n][:0]
+		}
 		c.activePlans[n] = make([]int, 0, min(c.active+2, len(p.Plans[n])))
 		largest = max(largest, len(p.Plans[n]))
 	}
 	c.second = make([]int, 0, largest)
-	for i := range c.suffix {
-		c.suffix[i] = make([]float64, len(p.Workloads))
-	}
 	return c
 }
 

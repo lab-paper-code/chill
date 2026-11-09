@@ -7,7 +7,7 @@ import (
 	"github.com/lab-paper-code/chill/internal/scheduler/protocol"
 )
 
-// Group builds option/mode cap groups once. Keep always has a separate entry.
+// Group builds option/mode groups once. Every searchable cap remains reachable.
 func Group(t *protocol.Table) {
 	if t.Entries != nil {
 		return
@@ -43,11 +43,7 @@ func Group(t *protocol.Table) {
 	for e := range t.Entries {
 		entry := &t.Entries[e]
 		slices.SortFunc(entry.Variants, func(a, b int) int {
-			ka, kb := 0.0, 0.0
-			if entry.Workload >= 0 {
-				ka, kb = t.Kappa[a][entry.Workload], t.Kappa[b][entry.Workload]
-			}
-			return cmp.Or(cmp.Compare(ka, kb), cmp.Compare(t.PlanKeys[a], t.PlanKeys[b]))
+			return cmp.Or(cmp.Compare(t.PlanKeys[a], t.PlanKeys[b]), cmp.Compare(t.Index[a], t.Index[b]))
 		})
 	}
 	t.NodeOrder, t.EntryOrder, t.EntryOf = make([]int, len(t.ByPlan)), make([][]int, len(t.ByPlan)), make([]int, len(t.Index))
