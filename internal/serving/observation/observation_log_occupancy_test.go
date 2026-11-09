@@ -13,7 +13,6 @@ import (
 )
 
 func TestScanOccupancyRowsKeepsErrorsOpenAndLateNative(t *testing.T) {
-	const timedOut = "timeout"
 	l, clock := clockedObservationLog(t, ObservationLogConfig{OccupancyTail: 3 * time.Minute}, observationTestHour)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

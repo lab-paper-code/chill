@@ -55,7 +55,6 @@ func TestEventRecoveryPreservesUTCIdentity(t *testing.T) {
 }
 
 func TestArchivedEventRecoverySkipsCatalogHydration(t *testing.T) {
-	const timedOut = "timeout"
 	ctx := context.Background()
 	archive := &requestQueryArchive{readableObservationArchive: newReadableObservationArchive(t)}
 	log, clock := clockedObservationLog(t, ObservationLogConfig{Writer: archive}, observationTestHour)
@@ -302,7 +301,6 @@ func TestEventRangeAppendHourAndRowContinuation(t *testing.T) {
 }
 
 func TestEventRangeRecoversAppendAfterFirstPage(t *testing.T) {
-	const firstReason = "first"
 	log, clock := clockedObservationLog(t, ObservationLogConfig{}, observationTestHour)
 	from := observationTestHour.Add(time.Minute)
 	clock.set(from)

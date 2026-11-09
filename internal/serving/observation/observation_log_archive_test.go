@@ -147,7 +147,9 @@ func TestObservationArchiveTransparentReadsAndCatalog(t *testing.T) {
 		}
 	}
 	load, err := restarted.LoadWindow(ctx, from, to)
-	if err != nil || !reflect.DeepEqual(load.Workloads, wantLoad.Workloads) || !reflect.DeepEqual(load.Arrivals, wantLoad.Arrivals) || load.GapUntil != nil {
+	wantClientGap := serving.ObservationGap{From: from, To: to, Stream: observationClientStream, Reason: "StreamUnavailable"}
+	if err != nil || !reflect.DeepEqual(load.Workloads, wantLoad.Workloads) || !reflect.DeepEqual(load.Arrivals, wantLoad.Arrivals) ||
+		load.GapUntil == nil || !load.GapUntil.Equal(to) || !reflect.DeepEqual(load.Coverage.Gaps, []serving.ObservationGap{wantClientGap}) {
 		t.Fatalf("archive load: %+v %v", load, err)
 	}
 	page, next, gap, coverage, err := restarted.SchedulerObservationPage(ctx, from, to, 1, 0, SchedulerObservationSelection{})

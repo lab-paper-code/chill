@@ -16,7 +16,7 @@ func TestObservationRestoreRetainsOnlyUnfinishedRows(t *testing.T) {
 	const completed, unfinished = 10000, 7
 	hour := observationTestHour
 	rows := map[string]*serving.RequestRow{}
-	log := &ObservationLog{root: t.TempDir(), started: hour, open: map[string]*serving.RequestRow{}}
+	log := &ObservationLog{root: t.TempDir(), started: hour, now: func() time.Time { return hour }, config: ObservationLogConfig{Retention: 2 * time.Hour}, open: map[string]*serving.RequestRow{}}
 	name := log.segment(observationRequestStream, hour)
 	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
 		t.Fatal(err)
