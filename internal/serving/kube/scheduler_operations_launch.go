@@ -32,9 +32,9 @@ func slotName(slot string) string {
 	return "serving-" + hex.EncodeToString(sum[:10])
 }
 
-func (c *SchedulerController) launch(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
+func (c *SchedulerController) launch(ctx context.Context, target serving.SchedulerCandidate, config SchedulerControllerConfig) {
 	dispatch := func(candidate serving.SchedulerCandidate) {
-		c.launchTargetLocked(candidate, config)
+		c.launchTargetLocked(ctx, candidate, config)
 	}
 	c.startTransition(&target, config.Settings.Controls, func() {
 		c.compensatePreparationsLocked(c.runtime, dispatch)
@@ -51,8 +51,11 @@ func (c *SchedulerController) launch(target serving.SchedulerCandidate, config S
 	})
 }
 
-func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandidate, config SchedulerControllerConfig) {
-	actions, intermediate := c.intermediateActions(target)
+func (c *SchedulerController) launchTargetLocked(ctx context.Context, target serving.SchedulerCandidate, config SchedulerControllerConfig) {
+	actions, intermediate := c.intermediateActions(ctx, target)
+	if ctx != nil && ctx.Err() != nil {
+		return
+	}
 	var blocked map[string]string
 	// Decide eligible old-source stops before starting policy refreshes that can
 	// supersede the existing acknowledged handoff proof in this same tick.
@@ -168,6 +171,7 @@ func (c *SchedulerController) launchTargetLocked(target serving.SchedulerCandida
 }
 
 func (c *SchedulerController) intermediateActions(
+	ctx context.Context,
 	target serving.SchedulerCandidate,
 ) ([]serving.Action, *serving.SchedulerCandidate) {
 	target.Actions = slices.Clone(target.Actions)
@@ -182,7 +186,7 @@ func (c *SchedulerController) intermediateActions(
 	if !pendingRoute {
 		return target.Actions, nil
 	}
-	partial := c.readySubset(c.ctx, target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
+	partial := c.readySubset(ctx, target, func() serving.SchedulerSettings { return c.config.Settings }, c.runtime)
 	if partial == nil {
 		return target.Actions, nil
 	}

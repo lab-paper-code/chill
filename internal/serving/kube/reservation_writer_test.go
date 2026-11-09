@@ -78,7 +78,7 @@ func TestRouteWriterSurvivesReturnAndLostReceipts(t *testing.T) {
 				}
 				return nil
 			}
-			c.startTransition(&goalB, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() { c.launchTargetLocked(goalB, c.config) })
+			c.startTransition(&goalB, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() { c.launchTargetLocked(c.ctx, goalB, c.config) })
 			c.wg.Wait()
 			if run := c.runs[goalB.Actions[0].ID]; run == nil || run.result == nil {
 				t.Fatal("B never reached the real operation dispatcher")
@@ -101,7 +101,7 @@ func TestRouteWriterSurvivesReturnAndLostReceipts(t *testing.T) {
 					}
 				}
 			}
-			c.launchTargetLocked(goalA, c.config)
+			c.launchTargetLocked(c.ctx, goalA, c.config)
 			c.mu.Unlock()
 			c.wg.Wait()
 			applied, _ := c.runtime.SchedulerRouting()
@@ -131,7 +131,7 @@ func TestRouteWriterSurvivesReturnAndLostReceipts(t *testing.T) {
 			c.mu.Unlock()
 			a.MaxWait = 3 * time.Millisecond
 			goalC := serving.SchedulerCandidate{ID: ownerC, Instances: []serving.SchedulerInstance{a}, Routing: map[string]map[string]int32{uid: {a.ID: 1000}}, Actions: []serving.Action{{ID: "route-writer-c", Kind: servingstate.OperationRoute, Node: a.Node}}}
-			c.startTransition(&goalC, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() { c.launchTargetLocked(goalC, c.config) })
+			c.startTransition(&goalC, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() { c.launchTargetLocked(c.ctx, goalC, c.config) })
 			c.wg.Wait()
 			applied, _ = c.runtime.SchedulerRouting()
 			if applied[uid][a.ID] != 1000 || applied[uid][b.ID] != 0 {
@@ -173,7 +173,7 @@ func TestRouteWritersPreserveEveryNewerCommittedShare(t *testing.T) {
 		Actions: []serving.Action{{ID: "old-route", Kind: servingstate.OperationRoute, Node: a.Node}}}
 	c.startTransition(&old, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() {})
 	dispatch := func(goal serving.SchedulerCandidate) {
-		c.startTransition(&goal, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() { c.launchTargetLocked(goal, c.config) })
+		c.startTransition(&goal, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() { c.launchTargetLocked(c.ctx, goal, c.config) })
 		c.wg.Wait()
 		if run := c.runs[goal.Actions[0].ID]; run == nil || run.result == nil || run.result.Status != servingstate.NativeOperationComplete {
 			t.Fatalf("actual dispatch did not finish: %+v", run)
@@ -207,7 +207,7 @@ func TestRouteWritersPreserveEveryNewerCommittedShare(t *testing.T) {
 	c.mu.Unlock()
 	refresh()
 	c.mu.Lock()
-	c.launchTargetLocked(old, c.config)
+	c.launchTargetLocked(c.ctx, old, c.config)
 	c.mu.Unlock()
 	c.wg.Wait()
 	after, _ := c.runtime.SchedulerRouting()

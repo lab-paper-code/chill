@@ -97,7 +97,7 @@ func TestDefectEFiveNodeOwnerReturnsOnlyProvedScopes(t *testing.T) {
 		{ID: "post-partial-prepare", Kind: servingstate.OperationPrepare, Node: wanted.Node, Instance: wanted.ID},
 		{ID: "post-partial-route", Kind: servingstate.OperationRoute, DependsOn: []string{"post-partial-prepare"}},
 	}}
-	c.launch(next, c.config)
+	c.launch(c.ctx, next, c.config)
 	c.wg.Wait()
 	for range 3 {
 		if err := c.Continue(c.ctx, time.Now()); err != nil {

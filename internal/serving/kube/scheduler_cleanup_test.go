@@ -92,7 +92,7 @@ func TestCleanupRetainsOwnershipUntilRetirementCompletesAC38(t *testing.T) {
 		if !c.dependenciesReady(goal.Actions[1], goal, c.runtime) {
 			t.Fatal("safe old-source stop lost its completed handoff dependency")
 		}
-		if actions, partial := c.intermediateActions(goal); partial != nil || len(actions) != len(goal.Actions) {
+		if actions, partial := c.intermediateActions(c.ctx, goal); partial != nil || len(actions) != len(goal.Actions) {
 			t.Fatal("independent refresh changed the original retirement DAG")
 		}
 	}

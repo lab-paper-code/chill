@@ -76,6 +76,8 @@ func SchedulerReadyExpansion(ctx context.Context, settings SchedulerSettings, sn
 		target.Routing[other] = route
 	}
 	target.Routing[uid] = routing
+	target.Actions = []Action{{ID: "ready-expansion-route", Kind: schedulerActionRoute}}
+	snapshot.Instances = target.Instances
 	a, err := EvaluateFeedbackCandidate(ctx, settings, snapshot, keep, 0)
 	if err != nil || len(a.InvalidReasons) > 0 {
 		return nil, false

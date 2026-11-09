@@ -164,7 +164,7 @@ func TestPartialPrepareLateACKMultiNodeReturnsAC38(t *testing.T) {
 	if !c.reserveRun(child.action.ID, child, child.result.Operation) {
 		t.Fatal("Node-local prepare authorization failed")
 	}
-	c.launch(serving.SchedulerCandidate{}, c.config)
+	c.launch(c.ctx, serving.SchedulerCandidate{}, c.config)
 	c.wg.Wait()
 	if api.deleteCalls.Load() != 0 {
 		t.Fatal("late ACK was compensated")

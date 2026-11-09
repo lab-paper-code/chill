@@ -63,7 +63,7 @@ func TestDefectEConfirmedDestinationWithUnknownNeighbor(t *testing.T) {
 				goal.Actions[1].DependsOn = []string{goal.Actions[0].ID}
 			}
 			c.startTransition(&goal, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, func() {
-				c.launchTargetLocked(goal, c.config)
+				c.launchTargetLocked(c.ctx, goal, c.config)
 			})
 			c.wg.Wait()
 			parent := c.runs[transitionRunKind+"/"+goal.ID]

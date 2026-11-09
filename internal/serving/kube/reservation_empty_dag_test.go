@@ -23,7 +23,7 @@ func TestEmptyRouteAdmissionAC38(t *testing.T) {
 			if kind != "" {
 				target.Actions = append(target.Actions, serving.Action{ID: "waiting-duty", Kind: kind, DependsOn: []string{route.ID}})
 			}
-			c.launch(target, SchedulerControllerConfig{})
+			c.launch(c.ctx, target, SchedulerControllerConfig{})
 			if kind == "" || kind == servingstate.OperationStop {
 				if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 					t.Fatal("empty route/unproved retirement acquired ownership")
@@ -45,14 +45,14 @@ func TestEmptyRouteAdmissionReplansWithoutOwnershipAC38(t *testing.T) {
 	manager, _ := newManagerHarness(t)
 	c := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}, runtime: manager.runtime}
 	for range 2 {
-		c.launch(target, SchedulerControllerConfig{})
+		c.launch(c.ctx, target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, c.runtime)
 		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 			t.Fatal("empty declaration left a parent, child, or reservation")
 		}
 	}
 	target.Actions = append(target.Actions, serving.Action{ID: "prepare", Kind: servingstate.OperationPrepare, DependsOn: []string{"empty-route"}})
-	c.launch(target, SchedulerControllerConfig{})
+	c.launch(c.ctx, target, SchedulerControllerConfig{})
 	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["prepare"] != nil {
 		t.Fatal("new physical work was not admitted with its frozen dependency")
 	}
@@ -83,7 +83,7 @@ func TestRouteAdmissionAppliesReadySurvivorSubsetS3b(t *testing.T) {
 		Routing: map[string]map[string]int32{uid: {a.ID: 500, b.ID: 500}},
 		Actions: []serving.Action{{ID: "route", Kind: servingstate.OperationRoute}}}
 	c.state.Snapshot = snapshot
-	c.launch(target, c.config)
+	c.launch(c.ctx, target, c.config)
 	c.wg.Wait()
 	if c.runs[transitionRunKind+"/"+target.ID] == nil || c.runs["route"] != nil {
 		t.Fatal("route-only recovery was not admitted while its full route waited")
@@ -108,12 +108,12 @@ func TestEmptyRouteNotReadyAndRetirementAC38(t *testing.T) {
 		routing := map[string]map[string]int32{"w": {"a": 500, "b": 500}}
 		c.state.Snapshot = serving.SchedulerSnapshot{Instances: instances, Routing: routing}
 		target := serving.SchedulerCandidate{ID: "unchanged", Instances: instances, Routing: routing, Actions: []serving.Action{{ID: "noop", Kind: servingstate.OperationRoute}}}
-		c.launch(target, SchedulerControllerConfig{})
+		c.launch(c.ctx, target, SchedulerControllerConfig{})
 		if len(c.runs) != 0 {
 			t.Fatalf("ready=%d: declaration-identical route acquired ownership", ready)
 		}
 		target.Actions = append(target.Actions, serving.Action{ID: "retire", Kind: servingstate.OperationStop, DependsOn: []string{"noop"}})
-		c.launch(target, SchedulerControllerConfig{})
+		c.launch(c.ctx, target, SchedulerControllerConfig{})
 		c.reconcileSnapshot(c.state.Snapshot, time.Now(), time.Minute, c.runtime)
 		if len(c.runs) != 0 || len(c.reservationsLocked()) != 0 {
 			t.Fatalf("ready=%d: unproved retirement acquired ownership", ready)

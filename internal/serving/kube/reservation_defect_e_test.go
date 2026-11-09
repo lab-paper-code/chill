@@ -291,7 +291,7 @@ func TestDefectEPartialReturnContinuesThroughRealNativeRoute(t *testing.T) {
 				}
 				return nil
 			}
-			c.launch(next, c.config)
+			c.launch(c.ctx, next, c.config)
 			c.wg.Wait()
 			child := c.runs["new-healthy-route"]
 			if child == nil || child.result == nil {

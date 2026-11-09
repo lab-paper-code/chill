@@ -96,6 +96,10 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 					if err := cl.Create(ctx, o, opts...); err != nil {
 						return err
 					}
+					pod.Status = old.Status
+					if err := cl.Status().Update(ctx, pod); err != nil {
+						return err
+					}
 					if err := c.kube.(*kubefake.Clientset).Tracker().Create(core.SchemeGroupVersion.WithResource("pods"), pod.DeepCopy(), pod.Namespace); err != nil {
 						return err
 					}
@@ -168,7 +172,7 @@ func TestTickIndependentExpansionExecutesNativeBeforePowerCompletesAC39(t *testi
 				{ID: "w1-route", Kind: servingstate.OperationRoute, DependsOn: []string{"w1-prepare"}},
 			}}
 			c.powerTargets = map[string]time.Duration{waiting.Node.UID + "/fixed": time.Hour}
-			c.launch(frozen, c.config)
+			c.launch(ctx, frozen, c.config)
 			waitReservationTest(t, ctx, func() bool {
 				node, _ := c.kube.CoreV1().Nodes().Get(ctx, slow.Name, meta.GetOptions{})
 				return node != nil && node.Labels[chillmeta.PowerModeState] == chillmeta.PowerModePending

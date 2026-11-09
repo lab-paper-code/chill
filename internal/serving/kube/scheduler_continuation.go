@@ -35,9 +35,9 @@ func (c *SchedulerController) Continue(ctx context.Context, now time.Time) error
 	}
 	c.publishSnapshotLocked(&snapshot)
 	c.continueTransitionsLocked(config.Settings, true, func(target serving.SchedulerCandidate) {
-		c.launchTargetLocked(target, config)
+		c.launchTargetLocked(ctx, target, config)
 	})
-	return nil
+	return ctx.Err()
 }
 
 func (c *reservationState) continueTransitionsLocked(

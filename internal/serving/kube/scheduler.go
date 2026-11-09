@@ -302,15 +302,15 @@ func (c *SchedulerController) Tick(ctx context.Context, now time.Time) (serving.
 	}
 	// Without a selected target, only finish previously authorized Fixed work.
 	if decision.Target != nil {
-		c.launch(*decision.Target, config)
+		c.launch(ctx, *decision.Target, config)
 	} else {
 		keep := decision.Keep
 		keep.Actions = slices.DeleteFunc(slices.Clone(keep.Actions), func(a serving.Action) bool {
 			return !authorizedFixedContinuation(a, snapshot.Actions)
 		})
-		c.launch(keep, config)
+		c.launch(ctx, keep, config)
 	}
-	return decision, nil
+	return decision, ctx.Err()
 }
 
 // captureReconciled keeps Tick and completion observation effects in one order.

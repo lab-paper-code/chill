@@ -29,7 +29,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 			ctx := c.ctx
 			writes := api.podWrites.Load()
 			status, failure := child.result.Status, child.result.Error
-			c.launch(serving.SchedulerCandidate{}, c.config)
+			c.launch(c.ctx, serving.SchedulerCandidate{}, c.config)
 			c.wg.Wait()
 			cleanupID := child.action.ID + "/compensate/" + actual.ID
 			cleanup := c.runs[cleanupID]
@@ -63,7 +63,7 @@ func TestFailedPrepareCompensatesOnlyOwnUnclaimedPodAC38(t *testing.T) {
 				t.Fatal("normal serving Pod changed", err)
 			}
 			c.state.Snapshot = fresh
-			c.launch(serving.SchedulerCandidate{}, c.config)
+			c.launch(c.ctx, serving.SchedulerCandidate{}, c.config)
 			c.wg.Wait()
 			if api.deleteCalls.Load() != 1 {
 				t.Fatal("compensation was not idempotent")
@@ -106,7 +106,7 @@ func TestUnacknowledgedPrepareCannotBorrowPreviousRoutePolicyAC38(t *testing.T) 
 		t.Fatal("a sibling's previous policy released an unacknowledged new source")
 	}
 	c.state.Snapshot = fresh
-	c.launch(serving.SchedulerCandidate{}, c.config)
+	c.launch(c.ctx, serving.SchedulerCandidate{}, c.config)
 	c.wg.Wait()
 	if api.deleteCalls.Load() != 1 || !parent.reserved || !child.reserved {
 		t.Fatal("R4b did not retire once while retaining the physical-return obligation")

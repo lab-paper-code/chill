@@ -52,7 +52,7 @@ func TestDefectELostCreateRetainsOwnUnknownResponsibility(t *testing.T) {
 		{ID: "lost-create-independent-drain", Kind: servingstate.OperationDrain, Node: independent.Node, Instance: independent.ID, DependsOn: []string{"lost-create-independent-stop"}},
 		{ID: "lost-create-independent-remove", Kind: servingstate.OperationRemove, Node: independent.Node, Instance: independent.ID, DependsOn: []string{"lost-create-independent-drain"}},
 	}}
-	c.launch(goal, c.config)
+	c.launch(c.ctx, goal, c.config)
 	c.wg.Wait()
 	child := c.runs[goal.Actions[0].ID]
 	parent := c.runs[transitionRunKind+"/"+goal.ID]

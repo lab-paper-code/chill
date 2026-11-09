@@ -130,7 +130,7 @@ func handoffDispatch(t *testing.T, c *SchedulerController, goal *serving.Schedul
 	t.Helper()
 	selected := *goal
 	selected.Actions = actions
-	dispatch := func() { c.launchTargetLocked(selected, c.config) }
+	dispatch := func() { c.launchTargetLocked(c.ctx, selected, c.config) }
 	if c.runs[transitionRunKind+"/"+goal.ID] == nil {
 		c.startTransition(goal, c.config.Settings.Controls, func() {}, func(serving.Action) bool { return true }, dispatch)
 	} else {
@@ -316,7 +316,7 @@ func admitReadyHandoffProposal(t *testing.T, c *SchedulerController) {
 			next.Instances = append(next.Instances, instance)
 		}
 	}
-	c.launch(next, c.config)
+	c.launch(c.ctx, next, c.config)
 	c.wg.Wait()
 }
 

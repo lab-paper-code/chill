@@ -189,11 +189,11 @@ func TestRunningGlobalRouteSerializesDifferentTargetAndKeepsFrozenActualContext(
 	existing.scope, existing.reserved, existing.owner = controller.operationScope(existing.result.Operation), true, frozen.ID
 	target.Actions[0].To = "different-route-effect"
 	installTestTransition(controller, frozen)
-	controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true}, SchedulerControllerConfig{})
+	controller.launch(controller.ctx, serving.SchedulerCandidate{ID: "keep", Keep: true}, SchedulerControllerConfig{})
 	if fixtureTarget(controller) != frozen {
 		t.Fatal("Keep erased the unfinished operation target")
 	}
-	controller.launch(target, SchedulerControllerConfig{})
+	controller.launch(controller.ctx, target, SchedulerControllerConfig{})
 	if _, launched := controller.runs[target.Actions[0].ID]; launched {
 		t.Fatal("a different global route overwrote the policy path before the existing native ACK")
 	}
@@ -225,7 +225,7 @@ func TestIndependentPreparationRecordsFrozenTargetBeforeCompletionDuringGlobalRo
 		}
 		return nil
 	}}
-	controller.launch(target, config)
+	controller.launch(controller.ctx, target, config)
 	var initial servingstate.OperationResult
 	select {
 	case initial = <-started:
@@ -398,12 +398,12 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 		}
 		return nil
 	}
-	controller.launch(*decision.Target, config)
+	controller.launch(controller.ctx, *decision.Target, config)
 	controller.wg.Wait()
 	staleCancel := *decision.Target
 	staleCancel.Actions = append([]serving.Action(nil), staleCancel.Actions...)
 	staleCancel.Actions[0].Status = servingstate.NativeOperationCancel
-	controller.launch(staleCancel, config)
+	controller.launch(controller.ctx, staleCancel, config)
 	if starts != 0 || canceled || controller.runs[action.ID] != run || run.result != &receipt ||
 		run.action.Status != servingstate.NativeOperationComplete || len(controller.State().Results) != 1 {
 		t.Fatalf("stale target replayed/canceled or overwrote the completed receipt: starts=%d canceled=%v results=%+v",
@@ -436,7 +436,7 @@ func TestLaunchPreservesCompletedPreparationAcrossPhysicalContinuationAndEffectL
 		}
 		return nil
 	}
-	controller.launch(fresh, config)
+	controller.launch(controller.ctx, fresh, config)
 	select {
 	case initial := <-started:
 		controller.mu.Lock()
@@ -511,7 +511,7 @@ func TestPrepareTimeoutFailsGoal(t *testing.T) {
 		}
 		return nil
 	}}
-	controller.launch(goal, config)
+	controller.launch(controller.ctx, goal, config)
 	controller.wg.Wait()
 	parent := controller.runs[transitionRunKind+"/"+goal.ID]
 	if len(parent.result.Before.Instances) != 1 || parent.result.Before.Instances[0].ID != baseline.ID ||
@@ -616,7 +616,7 @@ func TestReadySubsetPreservesE53ServingSnapshotSCH20AC38(t *testing.T) {
 				controller.runs["prepare-nano"] = &actionRun{action: serving.Action{Status: servingstate.NativeOperationComplete}}
 				want = target.Routing
 			}
-			actions, partial := controller.intermediateActions(target)
+			actions, partial := controller.intermediateActions(controller.ctx, target)
 			if state == "serving" && (partial != nil || len(actions) != len(target.Actions)) {
 				t.Fatalf("partly Ready goal withdrew the existing route: %+v", partial)
 			}
@@ -835,7 +835,7 @@ func TestReadySubsetBootstrapRoutesBeforeIndependentPreparationsAndPowerFinish(t
 	}
 	target.Actions = append(target.Actions, serving.Action{ID: finalRouteActionID, Kind: servingstate.OperationRoute, DependsOn: deps})
 	var recorded []servingstate.OperationResult
-	controller.launch(target, SchedulerControllerConfig{OnAction: func(result servingstate.OperationResult) error {
+	controller.launch(controller.ctx, target, SchedulerControllerConfig{OnAction: func(result servingstate.OperationResult) error {
 		recorded = append(recorded, result)
 		// Keep this controller/runtime test independent of Kubernetes/native
 		// policy transport (covered by operations_test.go). Freeze the actual
@@ -1176,7 +1176,7 @@ func TestPolicyAckPendingPreservesPhysicalOccupancyAcrossTicksAC34(t *testing.T)
 		return nil
 	}
 	controller.state.Snapshot = snapshot
-	controller.launch(goal, controller.config)
+	controller.launch(controller.ctx, goal, controller.config)
 	select {
 	case <-waiting:
 	case <-ctx.Done():
@@ -1695,7 +1695,7 @@ func TestReadyDestinationsPreserveServingRouteOnPreparationClock(t *testing.T) {
 		}
 		controller.runs["prepare-"+newlyReady.ID].action.Status = servingstate.NativeOperationComplete
 		var intermediate *serving.SchedulerCandidate
-		controller.launch(target, SchedulerControllerConfig{Settings: controller.config.Settings, OnAction: func(result servingstate.OperationResult) error {
+		controller.launch(controller.ctx, target, SchedulerControllerConfig{Settings: controller.config.Settings, OnAction: func(result servingstate.OperationResult) error {
 			if result.Status == starting && result.Operation.Target != nil {
 				intermediate = result.Operation.Target
 			}

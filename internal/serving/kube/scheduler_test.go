@@ -504,7 +504,7 @@ func TestSchedulerLaunchReservesFixedAndNonFixedDAGs(t *testing.T) {
 	for _, fixed := range []bool{true, false} {
 		controller := &SchedulerController{reservationState: &reservationState{runs: map[string]*actionRun{}}}
 		// Completed actions are skipped, so launch starts no operation.
-		controller.launch(serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
+		controller.launch(controller.ctx, serving.SchedulerCandidate{ID: "keep", Keep: true, Actions: []serving.Action{
 			{ID: "lower", Kind: servingstate.OperationPower, Fixed: fixed, Status: servingstate.NativeOperationComplete},
 		}}, SchedulerControllerConfig{})
 		if fixtureTarget(controller) == nil {

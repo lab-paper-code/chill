@@ -239,7 +239,7 @@ func TestOrderTickDuringMeasurement(t *testing.T) {
 	h.controller.startNodeRun(servingstate.Operation{ID: "held", Kind: operationCostKind, Node: testNode}, SchedulerControllerConfig{},
 		func(context.Context, *servingstate.OperationResult) error { <-release; return nil })
 	defer close(release)
-	h.controller.launch(serving.SchedulerCandidate{ID: "target", Actions: []serving.Action{{ID: "remove", Kind: servingstate.OperationRemove, Node: testNode, Instance: "p/c"}}}, h.controller.config)
+	h.controller.launch(h.controller.ctx, serving.SchedulerCandidate{ID: "target", Actions: []serving.Action{{ID: "remove", Kind: servingstate.OperationRemove, Node: testNode, Instance: "p/c"}}}, h.controller.config)
 	h.controller.mu.Lock()
 	_, launched := h.controller.runs["remove"]
 	h.controller.mu.Unlock()

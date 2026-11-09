@@ -87,3 +87,19 @@ func TestReplayRouteRetainsUnboundPreparingOccupancy(t *testing.T) {
 		t.Fatal("route changed retained preparing occupancy")
 	}
 }
+
+func TestReadyExpansionRejectsSlowerIntegerRoute(t *testing.T) {
+	settings, snapshot := schedulerFixture()
+	settings.ObservationWindow, settings.ComparisonPeriod = time.Second, time.Second
+	settings.MinimumDemand = map[string]float64{snapshot.Workloads[0].UID: 10}
+	snapshot.Workloads[0].SLO.TargetLatency = 50 * time.Millisecond
+	old := snapshot.Instances[0]
+	node := poolsAddNode(&snapshot, "slow-ready", map[string]float64{"fixed": 10})
+	added := poolsInstance(old, "slow-ready", node, "fixed", old.WorkloadUID)
+	snapshot.Instances = append(snapshot.Instances, added)
+	snapshot.Routing = map[string]map[string]int32{old.WorkloadUID: {old.ID: schedulerRouteUnits}}
+	capacityServiceRatesForTest(&snapshot, map[string]float64{old.Profile.ID: 1 / .03, added.Profile.ID: 1 / .07})
+	if weights, admitted := SchedulerReadyExpansion(context.Background(), settings, snapshot, old.WorkloadUID, []SchedulerInstance{old}, []SchedulerInstance{added}); admitted {
+		t.Fatalf("30ms serving route admitted a 70ms destination under a 50ms SLO: %v", weights)
+	}
+}
