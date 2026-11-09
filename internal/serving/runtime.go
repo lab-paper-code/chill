@@ -639,7 +639,7 @@ func (r *Runtime) execute(c *Call, execute func(context.Context, Dispatch) (Back
 		outcome, code = outcomeError, domain.Code
 		switch domain.Code {
 		case "SLODeadlineDrop":
-			outcome = "timeout"
+			outcome = schedulerOutcomeTimeout
 		case preprocessFailedCode:
 			outcome = firstfloor.OutcomePreprocessFailed
 		}

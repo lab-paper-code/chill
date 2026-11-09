@@ -88,7 +88,7 @@ func hydrationTickFixture() (serving.SchedulerSettings, serving.SchedulerSnapsho
 		PlanSearchWorkers: 1, PlanSearchStrategy: "v2", PlanSearchEvaluations: 1, PlanExactFinalists: 1,
 		DefaultOperationCost: map[string]serving.OperationCostValue{"prepare": {Seconds: 1}, "remove": {Seconds: 1}, "power": {Seconds: 1}},
 		DefaultIdlePower:     &serving.IdlePowerDefault{NodeWatts: 1, PerInstanceWatts: 1},
-		Controls:            serving.SchedulerControls{Routing: true},
+		Controls:             serving.SchedulerControls{Routing: true},
 	}
 	node := serving.SchedulerNode{Node: serving.NodeReference{Name: "n", UID: "n-uid"}, PowerMode: "fixed", Ready: true, MemoryBytes: 1024, ObservedAt: at}
 	definition := &serving.Definition{UID: "w", Model: serving.Model{Name: "model", UID: "model-uid", Paths: []serving.ModelPath{{Name: "cpu", Artifact: "model", Files: []string{"/model"}, RuntimeFamily: "firstfloor", Backend: "ort-cpu"}}}, SLO: serving.SLO{Percentile: 100, TargetLatency: time.Second}}

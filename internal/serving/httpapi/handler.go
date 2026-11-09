@@ -684,9 +684,9 @@ func flushInference(controller *http.ResponseController, d *serving.Diagnostics,
 }
 func contextOutcome(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout"
+		return timingOutcomeTimeout
 	}
-	return "canceled"
+	return timingOutcomeCanceled
 }
 func contextRequestError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
