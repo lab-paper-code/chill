@@ -63,7 +63,7 @@ excess의 실패는 전부 증설 전 51초에 났다. 부하 시작 14:18:21, �
 |---|---|---|---|
 | 1 | A1 Pod-only 검증 | Pod-only operation은 같은 `PodUID`의 runtime 관측만 Node와 비교한다. executor operation은 기존처럼 exact ID로 비교한다. Pod UID·Node·종료 검증은 유지 | 다른 Node에 Pod-only 재고가 있어도 종료 Pod remove가 complete. 다른 Node로 실제 바뀐 같은 Pod는 계속 거부 |
 | 2 | A2 실패 owner의 준비된 공급 | 14:49 snapshot은 Node·Workload 범위가 빈 채 genesis2 Pod/instance 예약만 남았다. 기존 반환 경계(`reservation.go` fresh exact known-effect 반환)가 왜 이 executor를 반환하지 않았는지 먼저 확정한다(`freezePreparingExecutorsLocked`가 반환 뒤 identity를 다시 넣는 순서가 후보). 확정된 경계만 고치며 fresh ACK·terminal/future writer·settled power 조건은 유지 | 형제 prepare가 실패해도 complete된 prepare의 Ready executor가 다음 Tick의 Ready 재고로 반환·route |
-| 3 | B1 실행 중 batch 잔여 시간 | D40 계약을 명시적으로 바꾼다. 실행 중 batch의 잔여 시간은 `S > elapsed`인 기록만으로 같은 1-nearest gap mixture를 만든다(생존 기록 중 gap이 가장 가까운 기록, trial 균등). 생존 기록이 하나도 없으면 기존처럼 그 replay만 무효다. 즉시 완료 같은 임의 값은 쓰지 않는다. 선택 기록의 거리·trial 수는 기존 conditional evidence로 남긴다 | 14:49 입력에서 정밀 평가가 진행되고 production Search가 IC 증설 배치를 선택. 새 batch의 service 표본 선택(`Sample`)은 불변 |
+| 3 | B1 실행 중 batch 잔여 시간 | D40 계약을 명시적으로 바꾼다. 어떤 trial이든 기존 nearest 그룹에 `S > elapsed` 기록이 있으면 기존 규칙(생존 비율 posterior trial 가중)을 그대로 쓴다. 모든 trial의 nearest 그룹에 생존이 없을 때만, 생존 기록 중 gap이 가장 가까운 기록으로 1-nearest mixture를 만든다(생존 있는 trial 균등). 그래도 생존이 없으면 기존처럼 그 replay만 무효다. 즉시 완료 같은 임의 값은 쓰지 않는다. 선택 기록의 거리·trial 수는 기존 conditional evidence로 남긴다 | 14:49 입력에서 정밀 평가가 진행되고 production Search가 IC 증설 배치를 선택. 새 batch의 service 표본 선택(`Sample`)은 불변 |
 | 4 | B2 실패한 진행 action | 실패한 action의 미래 실행 효과를 replay에 추가하지 않는다. 현재 snapshot의 실제 공급·배분·점유는 그대로다. 실패 action은 성공 의존성으로 소비되지 않아 그 action에 의존한 후속 action도 시작하지 않는다 | 같은 입력의 keep 평가가 Pending이 아님. 실패 action에 의존한 action이 replay에서 실행되지 않음 |
 | 5 | C1 정밀 평가 병렬화 | v2 `Funnel`과 payback 재평가의 candidate replay를 기존 `planSearchWorkers`로 병렬 실행한다. `Observe`·PostFilter·`Better`는 원래 candidate 순서로 순차 집계하고 worker별 exact slot을 쓴다 | 같은 입력·cold planner에서 선택·diagnostics 동일(postfilter ON/OFF, 동률, 취소). exact 시간 감소 |
 | 6 | C2 capture 중복 조회 제거와 분해 | refresh가 이미 읽은 Node·DeviceClass를 capture가 재사용한다. capture 하위 구간(window 읽기, refresh List, source probe, 나머지)을 기존 control 기록에 추가 | 다음 실측에서 capture 지배 항목 확정 |
@@ -93,6 +93,19 @@ A1이 이번 workload 붕괴의 직접 원인이다. B1은 같은 입력에서 �
 - 같은 입력: 14:49:21(`Q/overload-decision-full.json`)과 06:50:51(control374) production Search 전후.
 - 독립 리뷰: 시스템 목적·책임 경계·과구현, 메모리·경쟁·연산 비용.
 - gate: `make lint`, `make test`, `make arch-check`, `make gopls-check`.
+
+### 로컬 결과
+
+같은 입력의 memo 없는 production Search(`I/fixed-*.jsonl`):
+
+| 입력 | 소스 | 정밀 평가 수 | 선택 | IC 실패율 | Search(exact) 초 |
+|---|---|---:|---|---:|---:|
+| 14:49:21 workload | `4b2a25f1` | 0 | 무변경(v1 fallback) | — | 16.0 |
+| 14:49:21 workload | 통합본 | 16 | 준비된 genesis2 IC executor route, 전체 SLO 충족 | 0.004 | 5.9 (5.0) |
+| 06:50:51 control374 | `4b2a25f1` | 16 | genesis2 IC 추가, 전체 SLO 충족 | 0.019 | 9.95 (8.6) |
+| 06:50:51 control374 | 통합본 | 16 | 동일 | 0.019 | 6.5 (5.1) |
+
+14:49 keep 평가는 B1·B2 뒤 Pending이 아니다(IC 0.961). 독립 리뷰 2건의 지적(실패 action의 종료 판정 제외, Pod GC 오류의 진행 차단, operator Pod 캐시 범위, 병렬 slot 테스트 결합)을 반영했다. capture 8초는 로컬에서 재현할 수 없어 실측 하위 구간으로 판정한다.
 
 ## 6. main 실수용
 
