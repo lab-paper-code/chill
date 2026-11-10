@@ -38,7 +38,7 @@ control375에서 탐색 처리율 수정은 동작했다. excess는 genesis2 IC 
 
 같은 입력 재생으로 재현했다(`I/replay-1449-cold.jsonl`): 정밀 평가 0, v1 fallback, 무변경. B1·B2 방향을 실험으로 적용하면 같은 입력에서 keep이 평가되고(IC 실패율 0.961) production v2 Search가 준비된 genesis2 IC executor를 route하는 배치를 선택했다. IC 0.004, PLC·Smol 0, 전체 SLO 충족(`I/replay-1449-b1b2.jsonl`, 실험 diff `I/experiment-b1b2.diff`).
 
-설계는 이미 "out-of-support 관측은 보이는 한계로 남기고 새 admission 벽을 만들지 않는다"고 정했다([runtime measurement](scheduler-runtime-measurement.md) D40). 현재 동작은 그 계약을 어긴다.
+현재 [runtime measurement](scheduler-runtime-measurement.md) D40 계약에는 선택된 분포에서 `P(S > elapsed) = 0`일 때의 재선택 규칙이 없어 판단이 정지한다. B1에서 이 residual 계약을 변경한다. 위 실험 수치는 다른 알고리즘(전체 기록 marginal) 결과이므로 B1 검증으로 쓰지 않는다.
 
 ### 2.3 반응 시간: Tick이 제어 주기의 2배 — 확정(분해는 부분)
 
