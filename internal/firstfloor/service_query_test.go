@@ -89,7 +89,7 @@ func TestQuantileIntegerNeighborTieAndSupport(t *testing.T) {
 // trial lacks the right gap, so ties must not turn into uniform record weights.
 func selectedGroupFixture(tb testing.TB, records int) *ServiceDistribution {
 	tb.Helper()
-	var rows []ServiceSample
+	rows := make([]ServiceSample, 0, 8*records+3)
 	left, right, unrelated := int64(0), int64(2), int64(100_000)
 	for trial, id := range []string{"c", "a", "b"} {
 		for record := range records {
