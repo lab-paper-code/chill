@@ -169,11 +169,11 @@ test-e2e: ## Run e2e tests; requires the current kube context to be kind-*.
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
-	$(GOLANGCI_LINT) run
+	GOTOOLCHAIN=$(GOLANGCI_LINT_GO_VERSION) $(GOLANGCI_LINT) run
 
 .PHONY: lint-fix
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
-	$(GOLANGCI_LINT) run --fix
+	GOTOOLCHAIN=$(GOLANGCI_LINT_GO_VERSION) $(GOLANGCI_LINT) run --fix
 
 .PHONY: dashboard-check
 dashboard-check: ## Install frozen Dashboard dependencies, lint, typecheck, test, and build.
@@ -618,6 +618,10 @@ KUSTOMIZE_VERSION ?= v5.4.3
 CONTROLLER_TOOLS_VERSION ?= v0.16.1
 ENVTEST_VERSION ?= release-0.19
 GOLANGCI_LINT_VERSION ?= v1.64.5
+# golangci-lint analyzes only Go versions up to the one that built it; a newer
+# analysis toolchain makes its SSA linters exhaust memory. Build and run with one
+# pinned version (the official v1.64.5 release toolchain).
+GOLANGCI_LINT_GO_VERSION ?= go1.24.0
 KUBECONFORM_VERSION ?= v0.6.7
 GOPLS_VERSION ?= v0.23.0
 GOPLS_GO_VERSION ?= go1.26.4
@@ -654,9 +658,16 @@ $(KUBECONFORM): | $(LOCALBIN)
 	$(call go-install-tool,$(KUBECONFORM),github.com/yannh/kubeconform/cmd/kubeconform,$(KUBECONFORM_VERSION))
 
 .PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+golangci-lint: $(LOCALBIN) ## Download golangci-lint built with its pinned analysis Go version.
+	@[ -f "$(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_LINT_GO_VERSION)" ] || { \
+	set -e; \
+	package=github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) ;\
+	echo "Downloading $${package} with $(GOLANGCI_LINT_GO_VERSION)" ;\
+	rm -f $(GOLANGCI_LINT) ;\
+	GOTOOLCHAIN=$(GOLANGCI_LINT_GO_VERSION) GOBIN=$(LOCALBIN) go install $${package} ;\
+	mv $(GOLANGCI_LINT) $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_LINT_GO_VERSION) ;\
+	} ;\
+	ln -sf $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_LINT_GO_VERSION) $(GOLANGCI_LINT)
 
 .PHONY: gopls
 gopls: $(LOCALBIN) ## Download the pinned gopls with its supported tooling Go version.

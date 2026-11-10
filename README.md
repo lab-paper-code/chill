@@ -89,8 +89,9 @@ make arch-check           # package dependency rules (.go-arch-lint.yml)
 make build                # bin/chill-server, bin/kubectl-chill, ...
 ```
 
-If lint package loading times out, run `bin/golangci-lint run --timeout=15m`
-without changing the Makefile's default timeout.
+`make lint` builds and runs golangci-lint with `GOLANGCI_LINT_GO_VERSION`
+regardless of an exported `GOTOOLCHAIN`. Run `bin/golangci-lint` directly only
+under that same toolchain; a newer analysis toolchain exhausts memory.
 
 E2E tests require a repository-local kind context; never point them at a shared
 cluster:
